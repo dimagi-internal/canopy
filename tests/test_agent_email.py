@@ -710,3 +710,22 @@ def test_fetch_attachment_raises_when_no_path():
     with pytest.raises(AgentEmailError) as e:
         fetch_attachment(_ACE, "m", "a", runner=out)
     assert "no path" in str(e.value)
+
+
+def test_read_thread_decodes_and_trims_body_text():
+    # base64url of: "Hello team, please review.\n\n> quoted old line\nOn Mon someone wrote:\nold"
+    b64 = ("SGVsbG8gdGVhbSwgcGxlYXNlIHJldmlldy4KCj4gcXVvdGVkIG9sZCBsaW5lCk9u"
+           "IE1vbiBzb21lb25lIHdyb3RlOgpvbGQ=")
+    parts = [{"mimeType": "text/plain", "body": {"size": 10, "data": b64}}]
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json(parts)))
+    assert res["messages"][0]["body_text"] == "Hello team, please review."
+
+
+def test_read_thread_computes_reply_all():
+    parts = [{"mimeType": "text/plain", "body": {"size": 2, "data": "aGk="}}]
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json(parts)))
+    ra = res["reply_all"]
+    # latest (only) sender is e@spark.org; self (ace@) dropped from Cc; sam@ kept
+    assert ra["to"] == "e@spark.org"
+    assert ra["cc"] == "sam@dimagi-associate.com"
+    assert ra["reply_to_message_id"] == "msg-123"
