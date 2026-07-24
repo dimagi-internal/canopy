@@ -75,7 +75,9 @@ unless `ddd-run` passes `--ddd-orchestrated` (override only via an explicit
 render/judge/upload work, check whether the feature already has a run:
 
 ```bash
-ls "$(bash "$CANOPY/scripts/ddd/resolve_ddd_dir.sh" --runs)"/*/run_state.yaml \
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+ls "$(bash "$DDD_REPO/scripts/ddd/resolve_ddd_dir.sh" --runs)"/*/run_state.yaml \
   .canopy/ddd/runs/*/run_state.yaml 2>/dev/null   # a run exists → resume it (runs root is OUTSIDE the repo; the second path is pre-split runs)
 ls docs/walkthroughs/*.yaml 2>/dev/null            # a narrative spec exists
 ```
@@ -253,15 +255,15 @@ bootstrap pattern exactly.
    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)   # target repo — for spec + branch signals
    # The run lives under the TARGET repo's .canopy/ddd. EXPORT DDD_DIR tied to
    # REPO_ROOT so every `scripts.ddd` call below — which runs from $DDD_REPO (the
-   # canopy checkout, a DIFFERENT git repo) — reads the run via DDD_DIR (resolver
-   # precedence #2) instead of resolving to $DDD_REPO's own .canopy/ddd (#3,
-   # git-toplevel-of-cwd). WITHOUT this export, runstate.load / findings_review
-   # post silently read a stale sibling run in the canopy checkout and the gate
+   # canopy runtime root, a DIFFERENT directory) — reads the run via DDD_DIR
+   # (resolver precedence #2) instead of resolving to $DDD_REPO's own .canopy/ddd
+   # (#3, git-toplevel-of-cwd). WITHOUT this export, runstate.load / findings_review
+   # post silently read a stale sibling run in the canopy runtime and the gate
    # posts nothing. Resolver: scripts/ddd/resolve_ddd_dir.sh / runstate._resolve_ddd_dir.
    export DDD_DIR="$REPO_ROOT/.canopy/ddd"; mkdir -p "$DDD_DIR"
-   # scripts/ddd ships in the canopy repo, not the plugin cache — resolve it:
-   DDD_REPO="$HOME/emdash-projects/canopy"; [ -d "$DDD_REPO/scripts/ddd" ] || DDD_REPO="$HOME/.claude/plugins/marketplaces/canopy"
-   if [ ! -d "$DDD_REPO/scripts/ddd" ]; then echo "ERROR: scripts/ddd not found — run /canopy:update to sync the canopy checkout"; exit 1; fi
+   # resolve the canopy runtime (scripts/ddd ships inside it):
+   _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+   DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
    ```
 
    `$DDD_REPO` is used throughout the agent for all `scripts.ddd` invocations;

@@ -6,16 +6,9 @@ description: Run a full canopy improvement cycle — analyze recent sessions, pr
 ## Preamble (run first)
 
 ```bash
-# Resolve the canopy checkout location dynamically — this machine may have
-# canopy at ~/emdash/repositories/canopy, ~/emdash-projects/canopy, or
-# elsewhere depending on which login created it. Don't hardcode.
-_CANOPY_DIR="$(python3 -c "from orchestrator.repo_paths import resolve_repo_path as r; p=r('canopy'); print(p) if p else None" 2>/dev/null || true)"
-if [ -z "$_CANOPY_DIR" ]; then
-  for cand in ~/emdash/repositories/canopy ~/emdash-projects/canopy; do
-    [ -d "$cand/.git" ] && _CANOPY_DIR="$cand" && break
-  done
-fi
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+_CANOPY_DIR="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -37,7 +30,9 @@ and gaps, propose concrete improvements, then dispatch agents to implement them.
 Run this to get recent session metadata:
 
 ```bash
-uv run canopy sessions list --hours 168 --json-output 2>/dev/null
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy sessions list --hours 168 --json-output 2>/dev/null
 ```
 
 Then read the run logs from `~/.claude/canopy/runs/` to find already-processed

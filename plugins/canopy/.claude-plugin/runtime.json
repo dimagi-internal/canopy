@@ -1,0 +1,10 @@
+{
+  "_comment": "Runtime-bundle manifest. The canopy plugin's Python runtime (the orchestrator package, scripts/, evals/) lives at the REPO root, one level above plugins/canopy/, so a plain plugin install would exclude it. The updaters (skills/update Step 2 and hooks/fleet_session_start_update.py) read this manifest and rsync each listed repo-root path into <plugin-cache>/<dest>/ right after syncing the plugin itself, so every installed plugin version carries the exact matching runtime. Skills resolve it via scripts/canopy-runtime.sh — never via a dev checkout.",
+  "dest": "runtime",
+  "paths": [
+    "src",
+    "scripts",
+    "evals",
+    "pyproject.toml"
+  ]
+}

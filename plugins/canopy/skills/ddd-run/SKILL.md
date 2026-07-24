@@ -16,7 +16,8 @@ description: |
 ## Preamble (run first)
 
 ```bash
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])" 2>/dev/null)"
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -51,12 +52,12 @@ gate → render → judge (concept + user-artifact in parallel) → assemble →
 ### Step 1 — Gate: spec QA
 
 Before rendering, verify the spec is structurally sound (the script lives in the
-canopy repo):
+canopy runtime):
 
 ```bash
-# scripts/ddd ships in the canopy repo, not the plugin cache — resolve it:
-DDD_REPO="$HOME/emdash-projects/canopy"; [ -d "$DDD_REPO/scripts/ddd" ] || DDD_REPO="$HOME/.claude/plugins/marketplaces/canopy"
-if [ ! -d "$DDD_REPO/scripts/ddd" ]; then echo "ERROR: scripts/ddd not found — run /canopy:update to sync the canopy checkout"; exit 1; fi
+# resolve the canopy runtime (scripts/ddd ships inside it):
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 # pass the file arg as an absolute path (resolved before the cd):
 UNIFIED_SPEC_ABS="$(realpath <unified_spec>)"
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.spec_qa "$UNIFIED_SPEC_ABS")
@@ -81,6 +82,8 @@ web review edits onto the spec (so a web edit is never silently dropped), then
 auto-versions the result — one command, no per-edit human pause:
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 SPEC_ABS="$(realpath <unified_spec>)"
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.narrative sync "$SPEC_ABS" "<run_id>")
 ```
@@ -175,7 +178,10 @@ flags below.
 `record_video.py`:
 
 ```bash
-python3 "$REC" \
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+REC="$DDD_REPO/scripts/walkthrough/record_video.py"
+uv run --project "$DDD_REPO" python "$REC" \
   --spec "<unified_spec>" \
   --output "<run_dir>/iter${state.iteration}_clip.mp4" \
   --cookies "<session-cookies>" \
@@ -239,13 +245,15 @@ hosted links the user can open from any device (per the pause-policy
 artifact-link contract in `agents/ddd.md`).
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 # Generate the deck for this iteration. Same generator
 # /canopy:walkthrough uses; scene_index + scene_total + scenes_run +
 # scene_filter all flow through and the generator emits id="scene-<N>"
 # anchors on every scene slide for deep-linking.
 GEN="$DDD_REPO/scripts/walkthrough/generate_presentation.py"
 ITER_DECK="<run_dir>/iter${state.iteration}_deck.html"
-python3 "$GEN" \
+uv run --project "$DDD_REPO" python "$GEN" \
   --input "<run_dir>/walkthrough-run-data.json" \
   --output "$ITER_DECK"
 
@@ -258,7 +266,7 @@ python3 "$GEN" \
 # packages in canopy-web's /ddd views. Pass state.run_id and state.feature; the
 # per-iteration deck is role=deck, the clip is role=clip.
 UPLOAD="$DDD_REPO/scripts/walkthrough-share/upload.py"
-DECK_URL=$(python3 "$UPLOAD" "$ITER_DECK" \
+DECK_URL=$(uv run --project "$DDD_REPO" python "$UPLOAD" "$ITER_DECK" \
   --title "<unified_spec.name> iter${state.iteration}" \
   --run-id "<state.run_id>" --narrative-slug "<state.feature>" --role deck \
   --public 2>&1 | grep -oE 'https://[^ ]*' | tail -1)
@@ -278,16 +286,19 @@ into the app pages the demo visited.
   clickable and live.
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+UPLOAD="$DDD_REPO/scripts/walkthrough-share/upload.py"
 ITER_CLIP="<run_dir>/iter${state.iteration}_clip.mp4"  # if recorded
 if [ -f "$ITER_CLIP" ]; then
-  NARRATIVE_URL=$(python3 -c "from scripts.ddd.runstate import load; print(load('$run_id').narrative_review_url or '')")
+  NARRATIVE_URL=$(PYTHONPATH="$DDD_REPO" uv run --project "$DDD_REPO" python -c "from scripts.ddd.runstate import load; print(load('$run_id').narrative_review_url or '')")
   CLIP_ARGS=( "$ITER_CLIP" --public
     --title "<unified_spec.name> iter${state.iteration} (video)"
     --run-id "<state.run_id>" --narrative-slug "<state.feature>" --role clip
     --spec "<unified_spec>" )
   [ -n "$DECK_URL" ] && CLIP_ARGS+=( --companion-url "$DECK_URL" )
   [ -n "$NARRATIVE_URL" ] && CLIP_ARGS+=( --narrative-url "$NARRATIVE_URL" )
-  CLIP_URL=$(python3 "$UPLOAD" "${CLIP_ARGS[@]}" 2>&1 | grep -oE 'https://[^ ]*' | tail -1)
+  CLIP_URL=$(uv run --project "$DDD_REPO" python "$UPLOAD" "${CLIP_ARGS[@]}" 2>&1 | grep -oE 'https://[^ ]*' | tail -1)
 fi
 ```
 
@@ -323,6 +334,8 @@ measurable from the final mp4 + the run-report, with no LLM and no variance. Run
 the pacing audit on the rendered clip before dispatching the judges:
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.render_pacing_audit \
   "<run_dir>/iter${state.iteration}_clip.mp4" "<run_dir>/run-report.json" "<unified_spec.name>")
 ```
@@ -664,6 +677,9 @@ default `autonomous`) decides what happens to PRODUCT findings after the
 report. Check it before acting on `auto_iterate_next_action`:
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+UNIFIED_SPEC_ABS="$(realpath <unified_spec>)"
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.findings_review mode "$UNIFIED_SPEC_ABS")
 # prints: autonomous | human
 ```
@@ -675,6 +691,8 @@ report. Check it before acting on `auto_iterate_next_action`:
   **product-findings review** instead and stop the loop until it resolves:
 
   ```bash
+  _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+  DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
   (cd "$DDD_REPO" && uv run python -m scripts.ddd.findings_review post "<run_id>")
   ```
 

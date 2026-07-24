@@ -51,11 +51,12 @@ Parse arguments from the command invocation:
 4. **Capture recent canopy commits.** Before any analysis, run:
 
    ```bash
-   # Resolve canopy's checkout dynamically — different logins on the same
-   # machine put canopy under different roots; never hardcode either.
-   CANOPY_DIR="$(cd ~/emdash/repositories/canopy 2>/dev/null && pwd \
-                 || cd ~/emdash-projects/canopy 2>/dev/null && pwd)"
-   cd "$CANOPY_DIR" && git log --since="14 days ago" --pretty=format:'%h %s' main
+   # Git history needs a real checkout — the bundled cache runtime is an rsync
+   # with no .git. `--git` resolves the first git-capable tier (marketplace
+   # clone / dev checkout) instead.
+   _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+   CANOPY_GIT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh" --git)" || { echo "ERROR: no git-capable canopy runtime — run /canopy:update"; exit 1; }
+   git -C "$CANOPY_GIT" log --since="14 days ago" --pretty=format:'%h %s' main
    ```
 
    Hold this list in your context. You will use it in Step 5 to filter out any
@@ -74,13 +75,17 @@ Step 4 (Check Version Staleness) using the provided transcript path. Run
 `canopy analyze` on just that one file:
 
 ```bash
-cd ~/emdash/repositories/canopy && uv run canopy analyze <transcript-path> --propose
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy analyze <transcript-path> --propose
 ```
 
-Otherwise, fetch the session list from the canopy repo working directory:
+Otherwise, fetch the session list via the canopy runtime:
 
 ```bash
-cd ~/emdash/repositories/canopy && uv run canopy sessions list --json-output --hours <H> [--project <name>]
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy sessions list --json-output --hours <H> [--project <name>]
 ```
 
 Where:
@@ -135,12 +140,13 @@ Skip this step if a direct `path` was provided (already analyzed in Step 2).
 For each unreviewed session, run:
 
 ```bash
-cd ~/emdash/repositories/canopy && uv run canopy analyze <transcript_path> --propose
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy analyze <transcript_path> --propose
 ```
 
-(`~/emdash-projects/canopy` is a legacy path that may not exist on every
-machine; the canonical canopy checkout is `~/emdash/repositories/canopy`.
-Resolve via `git config --get remote.origin.url` if both fail.)
+(The canopy runtime is resolved via `scripts/canopy-runtime.sh` — do not
+hardcode a checkout path; different machines keep canopy in different places.)
 
 Collect the output. Each analysis produces observations (friction, gaps, issues)
 with type, severity, description, and related servers, plus proposals. As of
@@ -156,7 +162,7 @@ Run one analysis at a time. Do **NOT** use `Bash` with `run_in_background:
 true` (or `&` / `nohup` / launchd) to fan out `canopy analyze` calls. Two
 failure modes have been observed in real runs:
 
-1. **uv venv contention:** N parallel `uv run canopy analyze ...` invocations
+1. **uv venv contention:** N parallel uv-run `canopy analyze ...` invocations
    from N concurrent shells race on the same `.venv` lockfile. Most exit
    silently with empty stdout while one wins.
 2. **claude-p concurrency limits:** each `canopy analyze` runs `claude -p`
@@ -208,9 +214,9 @@ deterministic Python implementation lives in
 `src/orchestrator/verify_findings.py` and is invoked via:
 
 ```bash
-CANOPY_DIR="$(cd ~/emdash/repositories/canopy 2>/dev/null && pwd \
-              || cd ~/emdash-projects/canopy 2>/dev/null && pwd)"
-cd "$CANOPY_DIR" && uv run canopy verify-findings \
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_DIR="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_DIR" canopy verify-findings \
   <id-prefix-1> <id-prefix-2> ... --json-output
 ```
 

@@ -57,18 +57,18 @@ Either:
 
 ## How to invoke
 
-Resolve the canopy checkout dynamically (different logins on this
-machine put canopy under different roots) and run the CLI:
+Resolve the canopy runtime (via `scripts/canopy-runtime.sh`) and run
+the CLI:
 
 ```bash
-CANOPY_DIR="$(cd ~/emdash/repositories/canopy 2>/dev/null && pwd \
-              || cd ~/emdash-projects/canopy 2>/dev/null && pwd)"
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_DIR="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 
 # Specific proposals
-cd "$CANOPY_DIR" && uv run canopy verify-findings <id1> <id2> ... [--json-output]
+uv run --project "$CANOPY_DIR" canopy verify-findings <id1> <id2> ... [--json-output]
 
 # Or all pending
-cd "$CANOPY_DIR" && uv run canopy verify-findings --all-pending [--json-output]
+uv run --project "$CANOPY_DIR" canopy verify-findings --all-pending [--json-output]
 ```
 
 Use `--json-output` from session-review's Step 5 (so the agent can parse
@@ -131,7 +131,9 @@ The session-review agent invokes this skill as Step 5 of its pipeline.
 The recommended invocation from the agent:
 
 ```bash
-cd "$CANOPY_DIR" && uv run canopy verify-findings <ids...> --json-output
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_DIR="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_DIR" canopy verify-findings <ids...> --json-output
 ```
 
 The agent then parses the JSON `verdicts` array, drops `shipped` rows

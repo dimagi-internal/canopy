@@ -16,7 +16,9 @@ environment-specific and/or network-dependent).
 Run the structured health check:
 
 ```bash
-canopy doctor
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy doctor
 ```
 
 This runs read-only checks for hook registration, session log, repo map,
@@ -28,7 +30,9 @@ For machine-readable output (one object with `ok` and a `checks[]` array of
 `{name, ok, detail}`):
 
 ```bash
-canopy doctor --json-output
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy doctor --json-output
 ```
 
 Report the per-check `name` + `detail`. If `ok` is false, surface the failing
@@ -47,13 +51,10 @@ caller's system python, which the CLI (running under the venv) cannot see.
 ```bash
 SYS_PY=$(command -v python3)
 PY_VER=$(python3 --version 2>&1 | awk '{print $2}')
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 HOOK_DIR=""
-for cand in \
-  "$HOME/.claude/plugins/marketplaces/canopy/hooks" \
-  "$HOME/emdash/repositories/canopy/hooks" \
-  "$HOME/emdash-projects/canopy/hooks"; do
-  [ -d "$cand" ] && HOOK_DIR="$cand" && break
-done
+[ -d "$CANOPY_ROOT/hooks" ] && HOOK_DIR="$CANOPY_ROOT/hooks"
 
 if [ -z "$HOOK_DIR" ]; then
   echo "WARN: could not locate hooks dir — skipping compat check"
@@ -82,7 +83,9 @@ fresh, run the auth preflight (the same checks are available standalone via
 `canopy:auth-preflight`):
 
 ```bash
-bash scripts/canopy-auth-preflight.sh || true
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+bash "$CANOPY_ROOT/scripts/canopy-auth-preflight.sh" || true
 ```
 
 Treat auth-preflight results as informational — they do not change overall

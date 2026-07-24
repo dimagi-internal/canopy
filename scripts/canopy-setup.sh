@@ -7,10 +7,12 @@
 # Steps:
 #   1. ~/.claude/canopy/ state dir (session-log + repo-map will land here)
 #   2. ~/emdash-projects/canopy/ main checkout (stable path used by emdash worktrees + CLI)
-#   3. PostToolUse hook registered in ~/.claude/settings.json
-#      (registered to point at the main-checkout path so it survives plugin updates)
+#   3. PostToolUse capture hook — now PLUGIN-MANAGED (plugins/canopy/hooks/hooks.json
+#      registers it via ${CLAUDE_PLUGIN_ROOT}); this step only REMOVES a legacy
+#      settings.json registration pointing at a checkout, so the two never double-fire
 #   4. workbench-token (per-human PAT; mint via /canopy:canopy-web-pat-mint)
-#   5. canopy CLI installed from main checkout
+#   5. canopy CLI installed non-editable from the marketplace clone (same source
+#      /canopy:update deploys from — never an editable dev-checkout install)
 #   6. video-engine node deps (npm ci) for local Remotion render (best-effort)
 #   7. canopy-gws MCP node deps (npm install in the installed plugin dir; best-effort)
 #
@@ -78,18 +80,37 @@ sys.exit(0 if found else 1)
 PY
 }
 
+# The capture hook is plugin-managed now (plugins/canopy/hooks/hooks.json). If a
+# legacy settings.json registration from an older setup exists, remove it so the
+# plugin-managed hook takes over (the plugin copy defers while a working legacy
+# entry is present, so removal here is what flips it).
 if hook_already_registered; then
-  echo "[3/7] post-tool hook  : OK (already registered)"
-elif [ -f "$MAIN_CHECKOUT/hooks/install.py" ]; then
-  if python3 "$MAIN_CHECKOUT/hooks/install.py" >/dev/null 2>&1; then
-    echo "[3/7] post-tool hook  : REGISTERED → $MAIN_CHECKOUT/hooks/post_tool_use.py"
+  if python3 - <<'PY' >/dev/null 2>&1
+import json
+from pathlib import Path
+s = Path.home() / ".claude" / "settings.json"
+d = json.loads(s.read_text())
+matchers = d.get("hooks", {}).get("PostToolUse", [])
+changed = False
+for entry in matchers:
+    kept = [h for h in entry.get("hooks", []) if "post_tool_use.py" not in h.get("command", "")]
+    if len(kept) != len(entry.get("hooks", [])):
+        entry["hooks"] = kept
+        changed = True
+d["hooks"]["PostToolUse"] = [e for e in matchers if e.get("hooks")]
+if not d["hooks"]["PostToolUse"]:
+    del d["hooks"]["PostToolUse"]
+if changed:
+    s.write_text(json.dumps(d, indent=2) + "\n")
+PY
+  then
+    echo "[3/7] post-tool hook  : MIGRATED — legacy settings.json entry removed; plugin-managed hook active"
   else
-    echo "[3/7] post-tool hook  : FAIL — $MAIN_CHECKOUT/hooks/install.py errored"
+    echo "[3/7] post-tool hook  : FAIL — could not remove legacy settings.json entry"
     FAILED=1
   fi
 else
-  echo "[3/7] post-tool hook  : SKIP — $MAIN_CHECKOUT/hooks/install.py missing (step 2 must succeed first)"
-  FAILED=1
+  echo "[3/7] post-tool hook  : OK (plugin-managed via hooks.json — nothing to register)"
 fi
 
 # ---------- 4. Workbench token ----------
@@ -130,27 +151,32 @@ ensure_uv() {
   fi
 }
 
+# Non-editable, from the marketplace clone — the SAME source /canopy:update
+# deploys from, so the CLI always matches main. An editable checkout install
+# silently drifts with whatever branch is checked out; a "skip if present"
+# check is how the CLI once went 67 versions stale. Always reinstall (cheap).
+CLI_SOURCE="$HOME/.claude/plugins/marketplaces/canopy"
+[ -f "$CLI_SOURCE/pyproject.toml" ] || CLI_SOURCE="$MAIN_CHECKOUT"
+
 install_cli() {
   local target="$1"
-  if command -v pipx >/dev/null 2>&1; then
-    if pipx install --force -e "$target" >/dev/null 2>&1; then
-      echo "pipx"
+  if ensure_uv; then
+    if uv tool install --reinstall --force "$target" >/dev/null 2>&1; then
+      echo "uv tool"
       return 0
     fi
   fi
-  if ensure_uv; then
-    if uv tool install --force --editable "$target" >/dev/null 2>&1; then
-      echo "uv tool"
+  if command -v pipx >/dev/null 2>&1; then
+    if pipx install --force "$target" >/dev/null 2>&1; then
+      echo "pipx"
       return 0
     fi
   fi
   return 1
 }
 
-if command -v canopy >/dev/null 2>&1; then
-  echo "[5/7] canopy CLI      : OK ($(command -v canopy))"
-elif [ -f "$MAIN_CHECKOUT/pyproject.toml" ]; then
-  METHOD=$(install_cli "$MAIN_CHECKOUT") || true
+if [ -f "$CLI_SOURCE/pyproject.toml" ]; then
+  METHOD=$(install_cli "$CLI_SOURCE") || true
   if [ -n "${METHOD:-}" ] && command -v canopy >/dev/null 2>&1; then
     echo "[5/7] canopy CLI      : INSTALLED via $METHOD ($(command -v canopy))"
   elif [ -n "${METHOD:-}" ]; then
@@ -171,7 +197,7 @@ elif [ -f "$MAIN_CHECKOUT/pyproject.toml" ]; then
     FAILED=1
   fi
 else
-  echo "[5/7] canopy CLI      : SKIP — main checkout missing (step 2 must succeed first)"
+  echo "[5/7] canopy CLI      : SKIP — no marketplace clone or main checkout with pyproject.toml found"
   FAILED=1
 fi
 

@@ -15,7 +15,8 @@ description: |
 ## Preamble (run first)
 
 ```bash
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])" 2>/dev/null)"
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -68,12 +69,12 @@ tell?"*  That is the defect this gate fixes.
 
 ## Procedure
 
-### Step 1 — Resolve the canopy repo
+### Step 1 — Resolve the canopy runtime
 
 ```bash
-# scripts/ddd ships in the canopy repo, not the plugin cache — resolve it:
-DDD_REPO="$HOME/emdash-projects/canopy"; [ -d "$DDD_REPO/scripts/ddd" ] || DDD_REPO="$HOME/.claude/plugins/marketplaces/canopy"
-if [ ! -d "$DDD_REPO/scripts/ddd" ]; then echo "ERROR: scripts/ddd not found — run /canopy:update to sync the canopy checkout"; exit 1; fi
+# resolve the canopy runtime (scripts/ddd ships inside it):
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 ```
 
 ### Step 1b — Narration voice check (do this BEFORE posting)
@@ -84,6 +85,8 @@ as an abstract UI claim, not a story. Before posting, confirm every scene carrie
 a persona-voiced `narrative` beat:
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 SPEC_ABS="$(realpath <spec_path>)"
 (cd "$DDD_REPO" && uv run python -c "
 import sys, yaml
@@ -128,6 +131,8 @@ the loop will surface it again as a redraft decision.
 Pass the spec path as an absolute path resolved before the `cd`:
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 SPEC_ABS="$(realpath <spec_path>)"
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.narrative post "$SPEC_ABS" "<run_id>")
 ```
@@ -209,6 +214,9 @@ user's inline response.  Once resolved, write the `response_json` to a
 temporary file and apply edits:
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+SPEC_ABS="$(realpath <spec_path>)"
 RESPONSE_JSON_FILE="$(mktemp /tmp/narrative_response_XXXXXX.json)"
 # Write the resolved response_json to $RESPONSE_JSON_FILE, then:
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.narrative apply "$SPEC_ABS" "$RESPONSE_JSON_FILE")

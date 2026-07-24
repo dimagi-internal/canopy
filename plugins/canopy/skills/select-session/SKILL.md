@@ -6,7 +6,8 @@ description: Menu-driven session picker — select a project, browse session his
 ## Preamble (run first)
 
 ```bash
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])" 2>/dev/null)"
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -27,7 +28,9 @@ Interactive menu-driven flow to pick a session, analyze it, and propose improvem
 Run this command, substituting the hours argument (default 24):
 
 ```bash
-cd ~/emdash-projects/canopy && uv run canopy sessions list --json-output --hours <HOURS>
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy sessions list --json-output --hours <HOURS>
 ```
 
 Parse the JSON output. If no sessions found, tell the user and suggest increasing the hours window.
@@ -80,7 +83,9 @@ Wait for the user to pick a number.
 Run the analyzer with `--propose` to get both observations and implementation suggestions:
 
 ```bash
-cd ~/emdash-projects/canopy && uv run canopy analyze --propose <PATH>
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy analyze --propose <PATH>
 ```
 
 **Show the full output directly to the user** — do not summarize or hide it in a tool call. Present each observation with its severity, then each proposal with its implementation plan.
@@ -115,14 +120,14 @@ For any proposals the user marked "Implement":
 
 1. Identify the target repo from the session data
 2. Tell the user what will be implemented and in which repo
-3. Use `uv run canopy analyze` output as the implementation spec
+3. Use the `canopy analyze` output as the implementation spec
 4. Create a branch, implement the fix, and verify
 
 If no proposals were marked for implementation, summarize what was backlogged/skipped and end.
 
 ## Rules
 
-- Always use `uv run` to invoke the orchestrator CLI
+- Always invoke the orchestrator CLI via `uv run --project "$CANOPY_ROOT" canopy …`, resolving `CANOPY_ROOT` with the canonical two-liner at the top of each bash block (blocks don't share variables)
 - Use plain text numbered menus for project and session selection (no item limit)
 - Use `AskUserQuestion` only for proposal disposition (fixed 3 options per proposal)
 - Show analysis and proposal output directly to the user, not hidden in tool results
