@@ -692,6 +692,56 @@ def _attachments_of(msg: dict) -> list[dict]:
     return found
 
 
+def _decode_plain(payload: dict) -> str:
+    """Recursively concatenate the base64url-decoded text/plain parts of a message payload.
+    gog's --json hands back base64 MIME parts (not decoded text) — this is the decode every
+    read wrapper reimplemented (echo's bin/echo_read.py._plain)."""
+    import base64
+    out = ""
+    body = payload.get("body", {}) or {}
+    if payload.get("mimeType", "").startswith("text/plain") and body.get("data"):
+        out += base64.urlsafe_b64decode(body["data"] + "===").decode("utf-8", "replace")
+    for part in payload.get("parts", []) or []:
+        out += _decode_plain(part)
+    return out
+
+
+def _trim_quoted_tail(text: str) -> str:
+    """Drop the quoted reply chain — stop at the first `>`, `On … wrote:`, or `-----Original`
+    line (echo_read.py._trim_quotes). Keeps the message's own prose, sheds the history."""
+    lines = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s.startswith(">") or (s.startswith("On ") and s.endswith("wrote:")) \
+                or s.startswith("-----Original"):
+            break
+        lines.append(ln)
+    return "\n".join(lines).strip()
+
+
+def _reply_all_of(raw_messages: list[dict], self_account: str) -> dict:
+    """Compute reply-all recipients for a thread: To = the latest non-self sender, Cc =
+    everyone else on that message's To+Cc minus self and the To, deduped; reply_to_message_id
+    = that message's id. Same algorithm as derive_reply_all's thread mode, computed from the
+    already-parsed messages so `read` needs only ONE gog read."""
+    from email.utils import getaddresses
+    if not raw_messages:
+        return {"to": "", "cc": "", "reply_to_message_id": ""}
+    me = self_account.lower()
+    latest = next((m for m in reversed(raw_messages)
+                   if me not in _headers_of(m).get("from", "").lower()), raw_messages[-1])
+    h = _headers_of(latest)
+    sender = [e for _, e in getaddresses([h.get("from", "")]) if e]
+    to = sender[0] if sender else ""
+    cc, seen = [], {me, to.lower()}
+    for _, e in getaddresses([h.get("to", ""), h.get("cc", "")]):
+        el = e.lower()
+        if e and el not in seen:
+            seen.add(el)
+            cc.append(e)
+    return {"to": to, "cc": ", ".join(cc), "reply_to_message_id": latest.get("id", "")}
+
+
 def read_thread(
     identity: EmailIdentity,
     thread_id: str,
@@ -699,13 +749,18 @@ def read_thread(
     runner=subprocess.run,
 ) -> dict:
     """Read a Gmail THREAD as the agent → a normalized dict the fleet can rely on:
-      {thread_id, messages: [{message_id, from, to, cc, subject, date, snippet,
-                              attachments: [{attachment_id, filename, mime_type, size}]}]}
+      {thread_id,
+       messages: [{message_id, from, to, cc, subject, date, snippet, body_text,
+                   attachments: [{attachment_id, filename, mime_type, size}]}],
+       reply_all: {to, cc, reply_to_message_id}}
 
-    `gog gmail read` is a THREAD reader and 404s on a bare message id (the bug that bit
-    echo live — see derive_reply_all). Uses --json because the default text view omits Cc
-    and attachment ids. This is the fleet's sanctioned inbound READ path — agents should
-    call this instead of hand-rolling `gog gmail read` + payload-walking per skill."""
+    `body_text` is the decoded plain-text (base64 MIME parts decoded, quoted reply tail
+    trimmed); `reply_all` is the ready recipient set (latest non-self sender = To, the rest
+    = Cc, minus self). Together those are the whole reason agents hand-rolled read wrappers
+    (echo's bin/echo_read.py) — folded into the engine so they don't. `gog gmail read` is a
+    THREAD reader and 404s on a bare message id (the bug that bit echo live — see
+    derive_reply_all). Uses --json because the default text view omits Cc and attachment ids.
+    This is the fleet's sanctioned inbound READ path."""
     r = runner(
         ["gog", "gmail", "read", thread_id, "--account", identity.account,
          "--client", identity.client, "--json"],
@@ -721,8 +776,9 @@ def read_thread(
         data = json.loads(r.stdout)
     except ValueError:
         raise AgentEmailError(f"read: unparseable gog read output for {thread_id}")
+    raw = data.get("thread", {}).get("messages", [])
     messages = []
-    for m in data.get("thread", {}).get("messages", []):
+    for m in raw:
         h = _headers_of(m)
         messages.append({
             "message_id": m.get("id"),
@@ -732,9 +788,14 @@ def read_thread(
             "subject": h.get("subject", ""),
             "date": h.get("date", ""),
             "snippet": m.get("snippet", ""),
+            "body_text": _trim_quoted_tail(_decode_plain(m.get("payload", {}) or {})),
             "attachments": _attachments_of(m),
         })
-    return {"thread_id": thread_id, "messages": messages}
+    return {
+        "thread_id": thread_id,
+        "messages": messages,
+        "reply_all": _reply_all_of(raw, identity.account),
+    }
 
 
 def fetch_attachment(
@@ -1041,9 +1102,11 @@ def email_mark_read(repo, agent, account, client, thread_ids):
 @_with_identity_options
 @click.argument("thread_id")
 def email_read(repo, agent, account, client, thread_id):
-    """Read a Gmail THREAD as the agent → normalized JSON (messages, headers, and each
-    attachment's id). Pass a THREAD id (gog 404s on a bare message id). The attachment
-    ids feed `fetch-attachment`. The fleet's sanctioned inbound read path."""
+    """Read a Gmail THREAD as the agent → normalized JSON: per message the headers, the
+    decoded plain-text `body_text` (quoted tail trimmed), and each attachment's id; plus a
+    thread-level `reply_all` recipient set (To/Cc/reply_to_message_id). Pass a THREAD id
+    (gog 404s on a bare message id). Attachment ids feed `fetch-attachment`. The fleet's
+    sanctioned inbound read path — replaces per-agent gog read + base64-decode wrappers."""
     try:
         ident = _identity_from_opts(repo, agent, account, client)
         result = read_thread(ident, thread_id)
