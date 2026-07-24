@@ -20,7 +20,8 @@ description: |
 ## Preamble (run first)
 
 ```bash
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])" 2>/dev/null)"
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -135,17 +136,19 @@ appear. The `apply` subcommand parses this into `{implement, skip, commented, co
 
 ## Procedure
 
-### Step 1 — Resolve the canopy repo
+### Step 1 — Resolve the canopy runtime
 
 ```bash
-# scripts/ddd ships in the canopy repo, not the plugin cache — resolve it:
-DDD_REPO="$HOME/emdash-projects/canopy"; [ -d "$DDD_REPO/scripts/ddd" ] || DDD_REPO="$HOME/.claude/plugins/marketplaces/canopy"
-if [ ! -d "$DDD_REPO/scripts/ddd" ]; then echo "ERROR: scripts/ddd not found — run /canopy:update to sync the canopy checkout"; exit 1; fi
+# resolve the canopy runtime (scripts/ddd ships inside it):
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 ```
 
 ### Step 2 — Check the mode (skip this gate in autonomous mode)
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 SPEC_ABS="$(realpath docs/walkthroughs/<narrative-slug>.yaml)"
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.findings_review mode "$SPEC_ABS")
 # prints: autonomous | human
@@ -158,9 +161,11 @@ auto-apply).
 ### Step 3 — Post the findings review
 
 Run from the TARGET repo's directory (the run dir resolves from the CWD's git
-toplevel), with `uv run` pointed at the canopy repo:
+toplevel), with `uv run` pointed at the canopy runtime:
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 (cd "$DDD_REPO" && uv run --project "$DDD_REPO" python -m scripts.ddd.findings_review post "<run_id>")
 # To run from the target repo's CWD instead (so .canopy/ddd resolves there):
 PYTHONPATH="$DDD_REPO" uv run --project "$DDD_REPO" python -m scripts.ddd.findings_review post "<run_id>"
@@ -223,6 +228,8 @@ Poll `review.await_resolution` (or wait for the inline response). Once
 resolved, write the `response_json` to a temp file and parse the selection:
 
 ```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 RESPONSE_JSON_FILE="$(mktemp /tmp/findings_response_XXXXXX.json)"
 # Write the resolved response_json to $RESPONSE_JSON_FILE, then:
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.findings_review apply "$RESPONSE_JSON_FILE")

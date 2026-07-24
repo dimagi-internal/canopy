@@ -28,11 +28,12 @@ over time to measure whether prompt changes improve the walkthrough.
 
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 EVAL_DIR=""
 for P in \
   "$_ROOT/evals/walkthrough" \
-  ~/emdash-projects/canopy/evals/walkthrough \
-  ~/.claude/plugins/marketplaces/canopy/evals/walkthrough; do
+  "$CANOPY_ROOT/evals/walkthrough"; do
   [ -d "$P/fixtures" ] && EVAL_DIR="$P" && break
 done
 echo "${EVAL_DIR:-NOT_FOUND}"

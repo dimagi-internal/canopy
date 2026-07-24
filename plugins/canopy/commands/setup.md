@@ -10,7 +10,11 @@ idempotent — already-completed steps print `OK` and are skipped.
 
 ```bash
 PLUGIN_PATH=$(python3 -c "import json; d=json.load(open('$HOME/.claude/plugins/installed_plugins.json')); print(d['plugins']['canopy@canopy'][0]['installPath'])")
-bash "$PLUGIN_PATH/scripts/canopy-setup.sh"
+SETUP="$PLUGIN_PATH/runtime/scripts/canopy-setup.sh"
+# Bootstrap fallback: a cache that predates the runtime bundle doesn't carry the
+# script yet — the marketplace clone (the install channel, always present) does.
+[ -f "$SETUP" ] || SETUP="$HOME/.claude/plugins/marketplaces/canopy/scripts/canopy-setup.sh"
+bash "$SETUP"
 ```
 
 Report the script's output verbatim so the user sees each step's status. If

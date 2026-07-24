@@ -346,16 +346,20 @@ def test_skill_uses_ddd_repo_resolution() -> None:
     assert "DDD_REPO" in content, (
         "SKILL.md must resolve DDD_REPO so scripts/ddd is found correctly"
     )
-    assert "emdash-projects/canopy" in content, (
-        "DDD_REPO must include the primary lookup path '$HOME/emdash-projects/canopy'"
+    assert "canopy-runtime.sh" in content, (
+        "DDD_REPO must resolve via the shared resolver scripts/canopy-runtime.sh "
+        "(the bundled-runtime idiom; direct checkout paths are banned by "
+        "tests/test_plugin_runtime_resolution.py)"
     )
 
 
 def test_skill_ddd_repo_has_fallback() -> None:
     """DDD_REPO resolution must have the marketplace fallback."""
     content = SKILL_FILE.read_text()
-    assert "marketplaces/canopy" in content, (
-        "DDD_REPO must fall back to '$HOME/.claude/plugins/marketplaces/canopy'"
+    assert "installed_plugins.json" in content, (
+        "DDD_REPO resolution must locate the resolver via installPath from "
+        "installed_plugins.json (the ladder inside canopy-runtime.sh handles "
+        "marketplace/dev fallbacks)"
     )
 
 

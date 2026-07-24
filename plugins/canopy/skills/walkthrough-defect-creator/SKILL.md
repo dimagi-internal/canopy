@@ -17,15 +17,17 @@ eval suite can measure scoring accuracy.
 ## Input
 
 A clean page at `evals/walkthrough/source/<name>/index.html` in the current repo,
-or in the canopy repo at `~/emdash-projects/canopy/evals/walkthrough/source/<name>/index.html`.
+or at `evals/walkthrough/source/<name>/index.html` in the canopy runtime
+(resolved via `scripts/canopy-runtime.sh`).
 
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 SOURCE=""
 for P in \
   "$_ROOT/evals/walkthrough/source/$1/index.html" \
-  ~/emdash-projects/canopy/evals/walkthrough/source/$1/index.html \
-  ~/.claude/plugins/marketplaces/canopy/evals/walkthrough/source/$1/index.html; do
+  "$CANOPY_ROOT/evals/walkthrough/source/$1/index.html"; do
   [ -f "$P" ] && SOURCE="$P" && break
 done
 echo "${SOURCE:-NOT_FOUND}"

@@ -21,7 +21,9 @@ the user says "deploy", "ship", "push to prod", or similar long-running flows
 on labs repos. Fast: completes in well under 3 seconds.
 
 ```bash
-bash scripts/canopy-auth-preflight.sh
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+bash "$CANOPY_ROOT/scripts/canopy-auth-preflight.sh"
 ```
 
 If a check fails, run the printed recovery command and re-run the preflight.

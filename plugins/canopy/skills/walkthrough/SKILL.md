@@ -10,7 +10,8 @@ description: |
 ## Preamble (run first)
 
 ```bash
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])" 2>/dev/null)"
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -659,27 +660,16 @@ persona intros, and scorecard.
 
 The deck comes from the same engine-produced manifest you just scored — the
 input is `/tmp/walkthrough-run-data.json` (with merged `ai_evaluation` and
-the framing slides added), NOT a hand-authored file. Find the generator
-script:
+the framing slides added), NOT a hand-authored file. Resolve the generator
+(a project-local copy wins if present; otherwise the canopy runtime,
+resolved via `scripts/canopy-runtime.sh`) and run it:
 
 ```bash
-# Resolve the generator: dev checkout first, then the plugin marketplace
-# clone (what a portable, non-dev install pulls via /canopy:update), then a
-# project-local copy. generate_presentation.py is pure stdlib, so bare
-# python3 runs it anywhere it's found.
-GEN=""
-for P in \
-  ~/emdash-projects/canopy/scripts/walkthrough/generate_presentation.py \
-  ~/.claude/plugins/marketplaces/canopy/scripts/walkthrough/generate_presentation.py \
-  tools/walkthrough/generate_presentation.py; do
-  [ -f "$P" ] && GEN="$P" && break
-done
-echo "${GEN:-NOT_FOUND}"
-```
-
-Run it:
-```bash
-python3 "$GEN" --input /tmp/walkthrough-run-data.json --output screenshots/walkthroughs/<name>.html
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+GEN="tools/walkthrough/generate_presentation.py"
+[ -f "$GEN" ] || GEN="$CANOPY_ROOT/scripts/walkthrough/generate_presentation.py"
+uv run --project "$CANOPY_ROOT" python "$GEN" --input /tmp/walkthrough-run-data.json --output screenshots/walkthroughs/<name>.html
 ```
 
 Then open the result:
@@ -1211,9 +1201,10 @@ Semantics:
 > manifest + screenshots (not just the mp4), this dependency is required
 > for the whole flow, not only for video. On a portable install without
 > it, the script exits with the exact install command. Run it once against
-> the resolved checkout: `pip install 'playwright>=1.40' && python -m
+> the canopy runtime (resolved via `scripts/canopy-runtime.sh`):
+> `pip install 'playwright>=1.40' && python -m
 > playwright install chromium` (or `pip install -e
-> '<canopy-checkout>[browser]'`). The deck generator
+> '<canopy-runtime>[browser]'`). The deck generator
 > (`generate_presentation.py`) itself stays pure stdlib.
 
 Export live browse cookies so the engine inherits the auth you established
@@ -1226,15 +1217,11 @@ screenshots + page-text JSON (`--snapshots`), and the manifest
 ```bash
 $B cookies > /tmp/walkthrough-cookies-<name>.json
 
-REC=""
-for P in \
-  ~/emdash-projects/canopy/scripts/walkthrough/record_video.py \
-  ~/.claude/plugins/marketplaces/canopy/scripts/walkthrough/record_video.py; do
-  [ -f "$P" ] && REC="$P" && break
-done
-[ -z "$REC" ] && echo "NOT_FOUND" && exit 1
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+REC="$CANOPY_ROOT/scripts/walkthrough/record_video.py"
 
-python3 "$REC" \
+uv run --project "$CANOPY_ROOT" python "$REC" \
   --spec docs/walkthroughs/<name>.yaml \
   --output screenshots/walkthroughs/<name>.mp4 \
   --snapshots screenshots/walkthroughs/<name>/ \
