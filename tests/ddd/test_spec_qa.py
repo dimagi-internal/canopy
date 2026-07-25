@@ -917,3 +917,71 @@ def test_blocking_reason_names_scene_and_non_effecting_kinds():
     assert "Dana creates the solicitation" in result.blocking_reason
     assert "hover" in result.blocking_reason
     assert "scroll_to" in result.blocking_reason
+
+
+# ---------------------------------------------------------------------------
+# Full-demo (≥4 scenes) must have an overview scene + per-scene narrative VO.
+# Regression: nutrition-demo shipped with neither, so the render opened cold on
+# scene 1 and read `show` aloud as the voiceover. Scoped to ≥4 scenes so tiny
+# utility walkthroughs + the single-scene fixtures above stay exempt.
+# ---------------------------------------------------------------------------
+def _demo_spec_4_scenes(*, with_overview: bool = True, all_narratives: bool = True) -> dict:
+    def _sc(title: str, *, overview: bool = False) -> dict:
+        s: dict = {
+            "persona": "alice",
+            "title": title,
+            "show": "navigate to /form, fill fields, click Submit",
+            "concept_claim": "Users can submit a form and see confirmation within 2 seconds",
+            "provenance": "S1",
+            "design_intent": "immediate feedback",
+            "narrative": (f"Alice {title.lower()}." if all_narratives else ""),
+        }
+        if overview:
+            s["role"] = "overview"
+        else:
+            s["features"] = [
+                {
+                    "id": "F1",
+                    "description": "Submit button triggers a POST request",
+                    "verify": "pytest: POST /form returns 200 and response contains confirmation_id",
+                }
+            ]
+        return s
+
+    first = _sc("The goal", overview=True) if with_overview else _sc("Opens the form")
+    scenes = [first, _sc("Fills the form"), _sc("Submits"), _sc("Sees confirmation")]
+    return {
+        "name": "Demo",
+        "narrative": "the arc",
+        "base_url": "http://localhost:8000",
+        "why_brief": None,
+        "personas": {"alice": {"name": "Alice", "role": "PM", "color": "#3B82F6", "intro": "Alice."}},
+        "scenes": scenes,
+    }
+
+
+def test_full_demo_with_overview_and_narratives_passes():
+    from scripts.ddd.spec_qa import spec_qa
+    result = spec_qa(_demo_spec_4_scenes())
+    assert result.verdict == "pass", result.blocking_reason
+
+
+def test_full_demo_without_overview_scene_fails():
+    from scripts.ddd.spec_qa import spec_qa
+    result = spec_qa(_demo_spec_4_scenes(with_overview=False))
+    assert result.verdict == "fail"
+    assert "overview" in result.blocking_reason
+
+
+def test_full_demo_scene_without_narrative_fails():
+    from scripts.ddd.spec_qa import spec_qa
+    result = spec_qa(_demo_spec_4_scenes(all_narratives=False))
+    assert result.verdict == "fail"
+    assert "narrative" in result.blocking_reason
+
+
+def test_small_walkthrough_under_4_scenes_exempt():
+    from scripts.ddd.spec_qa import spec_qa
+    # the single-scene minimal fixture has no overview/narrative and must still pass
+    result = spec_qa(_spec_data())
+    assert result.verdict == "pass", result.blocking_reason

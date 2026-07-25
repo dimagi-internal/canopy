@@ -401,6 +401,36 @@ def spec_qa(
                             "'assert confirm_message visible in DOM')"
                         )
 
+    # A full narrated demo must open with a goal-setting `overview` scene (the
+    # holistic "why", whose `narrative` is the opening voiceover) and give every
+    # scene a `narrative` VO. Without them the render opens cold on scene 1 and
+    # reads `show` aloud as the voiceover — narrating a screen description
+    # instead of the story (the nutrition-demo regression). Scoped to real
+    # walkthroughs (≥4 scenes); small utility demos and single-scene fixtures
+    # are exempt. The 3 canonical narratives (verified-monitoring /
+    # create-survey-solicitation / microplans-study-groups) are the template.
+    if spec is not None and spec.scenes and len(spec.scenes) >= 4:
+        overviews = [s for s in spec.scenes if (getattr(s, "role", "") or "") == "overview"]
+        if not overviews:
+            violations.append(
+                "spec has no `role: overview` scene — a full demo (≥4 scenes) must open "
+                "with a goal-setting overview scene (the holistic 'why', carrying its own "
+                "`narrative` VO) so the video opens with an overview instead of cold on "
+                "scene 1. See verified-monitoring / create-survey-solicitation / "
+                "microplans-study-groups."
+            )
+        for s in spec.scenes:
+            if not (getattr(s, "narrative", "") or "").strip():
+                role = getattr(s, "role", "") or ""
+                what = "the overview's narrative IS the opening voiceover" if role == "overview" else (
+                    "without it the render reads `show` aloud as a screen description "
+                    "instead of narrating the story"
+                )
+                violations.append(
+                    f"scene '{s.title}': has no `narrative` VO — {what}. Write a "
+                    "`narrative:` for the scene."
+                )
+
     # --------------------------------------------------------------- verdict
     if not violations:
         return Verdict(
