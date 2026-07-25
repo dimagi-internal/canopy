@@ -38,29 +38,74 @@ def _claude_dir(home: Path) -> Path:
     return home / ".claude"
 
 
-def check_hook_registered(home: Path | None = None) -> CheckResult:
-    """The PostToolUse hook must be registered in ~/.claude/settings.json."""
-    home = home or Path.home()
-    settings = _claude_dir(home) / "settings.json"
-    name = "Hook registration"
-    if not settings.exists():
-        return CheckResult(name, False, f"{settings} not found — run /canopy:setup")
-    try:
-        data = json.loads(settings.read_text())
-    except (json.JSONDecodeError, OSError) as e:
-        return CheckResult(name, False, f"could not read {settings}: {e}")
+def _registers_post_tool_use(data: dict) -> bool:
+    """True if a hooks mapping registers the capture hook on PostToolUse.
 
-    hooks = data.get("hooks", {}).get("PostToolUse", [])
-    found = any(
+    ``settings.json`` and a plugin's ``hooks.json`` share this shape.
+    """
+    entries = data.get("hooks", {}).get("PostToolUse", [])
+    return any(
         "post_tool_use.py" in h.get("command", "")
-        for entry in hooks
+        for entry in entries
         if isinstance(entry, dict)
         for h in entry.get("hooks", [])
         if isinstance(h, dict)
     )
-    if found:
-        return CheckResult(name, True, "PostToolUse hook registered")
-    return CheckResult(name, False, "PostToolUse hook not registered — run /canopy:setup")
+
+
+def _installed_plugin_dir(home: Path) -> Path | None:
+    """Install path of the canopy plugin, per installed_plugins.json."""
+    f = _claude_dir(home) / "plugins" / "installed_plugins.json"
+    try:
+        data = json.loads(f.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    for key, val in data.get("plugins", {}).items():
+        if "canopy" in key:
+            entries = val if isinstance(val, list) else [val]
+            if entries and isinstance(entries[0], dict):
+                path = entries[0].get("installPath")
+                if path:
+                    return Path(path)
+    return None
+
+
+def check_hook_registered(home: Path | None = None) -> CheckResult:
+    """The PostToolUse capture hook must be registered — by EITHER path.
+
+    The hook is plugin-managed now (``plugins/canopy/hooks/hooks.json``), and
+    ``/canopy:setup`` deliberately removes the legacy ``~/.claude/settings.json``
+    entry. Checking only settings.json therefore failed on every correctly
+    configured machine, and its remediation ("run /canopy:setup") could never
+    clear it — setup is what removed the thing it was looking for. Accept the
+    plugin registration first, then fall back to the legacy one, which stays
+    valid because the plugin copy defers to it.
+    """
+    home = home or Path.home()
+    name = "Hook registration"
+
+    plugin_dir = _installed_plugin_dir(home)
+    if plugin_dir is not None:
+        hooks_json = plugin_dir / "hooks" / "hooks.json"
+        try:
+            if _registers_post_tool_use(json.loads(hooks_json.read_text())):
+                return CheckResult(name, True, f"registered by the canopy plugin ({hooks_json})")
+        except (json.JSONDecodeError, OSError):
+            pass  # fall through to the legacy registration
+
+    settings = _claude_dir(home) / "settings.json"
+    try:
+        if _registers_post_tool_use(json.loads(settings.read_text())):
+            return CheckResult(name, True, f"registered via legacy {settings}")
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    return CheckResult(
+        name,
+        False,
+        "PostToolUse hook not registered by the plugin or settings.json — "
+        "run /canopy:update (plugin-managed), or /canopy:setup if canopy is not installed",
+    )
 
 
 def check_session_log(canopy_dir: Path | None = None) -> CheckResult:
