@@ -1,5 +1,7 @@
 # Agent-aware shareout ("on behalf of the user")
 
+> **Status: shipped (PR #346) — historical record, not current-state.**
+
 **Date:** 2026-07-21
 **Status:** approved (design), pending implementation
 **Repos:** `canopy` (CLI + skill), `canopy-web` (storage + display)

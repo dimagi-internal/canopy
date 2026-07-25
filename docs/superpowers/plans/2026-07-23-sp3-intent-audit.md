@@ -1,5 +1,7 @@
 # SP3 — harvest intent-audit Implementation Plan
 
+> **Status: shipped (PR #374) — `canopy harvest intent-audit` live. Historical record, not current-state.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use checkbox syntax.
 
 **Goal:** Add the judgment layer harvest deliberately omits — an intent-fidelity audit that reconstructs what Jonathan asked/decided from HIS OWN words and flags intent-misses (approved-X/shipped-Y, question-read-as-approval, unapproved-judgment, eroded-discipline), emitting findings that pass SP1's evidence-record validator.

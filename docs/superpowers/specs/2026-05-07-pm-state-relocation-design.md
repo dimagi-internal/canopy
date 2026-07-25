@@ -1,5 +1,7 @@
 # Move PM state from `~/.canopy/pm/` to `<repo>/.canopy/pm/`
 
+> **Status: shipped — historical record, not current-state.**
+
 **Date:** 2026-05-07
 **Status:** Approved design — ready for implementation plan
 **Origin:** Brainstormed with jjackson while figuring out how to share canopy state across two macOS user accounts on one machine.

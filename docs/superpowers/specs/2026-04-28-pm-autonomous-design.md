@@ -1,5 +1,7 @@
 # Autonomous mode for `canopy:product-management`
 
+> **Status: shipped — historical record, not current-state. NOTE: the `.claude/pm/autonomous.yaml` location described here was superseded by the 2026-05-07 PM-state relocation to `<repo>/.canopy/pm/`.**
+
 **Date:** 2026-04-28
 **Status:** Approved design — ready for implementation plan
 **Origin:** Brainstormed with jjackson during ace-web PM session 2026-04-28

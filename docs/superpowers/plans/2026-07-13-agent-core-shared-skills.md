@@ -1,5 +1,7 @@
 # Agent-Core Shared Skills Implementation Plan (chunk A)
 
+> **Status: shipped (PR #312, chunk A) — `plugins/canopy/agent-core/` live. Historical record, not current-state.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move the fleet's shared process-skill text (`turn`, `task-tracker`) to one canonical home in canopy (`plugins/canopy/agent-core/`), shrink the factory templates to runtime-read stubs, and migrate echo, eva, and hal onto the stubs.
