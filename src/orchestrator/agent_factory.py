@@ -564,6 +564,16 @@ import os
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
+    # This is a WRAPPER, not a subcommand. Do NOT forward --help to
+    # `canopy email send` — its click usage line reads `Usage: canopy email send`,
+    # which misleads you into calling `bin/{{AGENT_SLUG}}-email send ...` (an
+    # "unexpected extra argument" error). Print THIS script's own usage instead.
+    print((__doc__ or "").strip())
+    print()
+    print("Wraps `canopy email send` — pass the OPTIONS above directly, with NO "
+          "`send` subcommand. Full flag list: canopy email send --help")
+    sys.exit(0)
 try:
     os.execvp("canopy", ["canopy", "email", "send", "--repo", REPO, *sys.argv[1:]])
 except FileNotFoundError:

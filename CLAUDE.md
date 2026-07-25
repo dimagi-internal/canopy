@@ -10,9 +10,28 @@ skill runner for review, QA, and implementation quality.
 
 ## Git Worktree Rules
 This repo uses emdash which manages git worktrees. If you are in a worktree
-(check: `git rev-parse --git-dir` contains `/worktrees/`), then `main` is
-checked out in the main repo at `~/emdash-projects/canopy/`.
-You CANNOT `git checkout main` from a worktree — it will fail.
+(check: `git rev-parse --git-dir` contains `/worktrees/`), you CANNOT
+`git checkout main` from it — it will fail.
+
+**There may be more than one non-worktree clone, and both parent worktrees.**
+On the primary machine there are two: `~/emdash-projects/canopy/` and
+`~/emdash/repositories/canopy/` (same origin). Run `git worktree list` to see
+which clone parents the worktree you're in — don't assume. Two consequences:
+
+- **`main` is often checked out in a *worktree*, not in the clone itself**, so
+  `git checkout main` in the clone fails with "already checked out at …". To
+  refresh `main` in that case, fast-forward it through the worktree holding it:
+  `git -C <worktree-on-main> merge --ff-only origin/main`.
+- **A clone's local `main` ref can sit far behind `origin/main`** (one was found
+  530 commits stale, which silently starts every new worktree from an ancient
+  base). Before branching new work: `git fetch origin` and confirm
+  `git rev-list --left-right --count origin/main...main` reads `0 0`.
+
+The `pre_tool_use_main_branch_guard.py` hook enforces "stay on main" in **any**
+non-worktree checkout (it keys off `/worktrees/` in the git-dir, not a hardcoded
+path) — but it only sees `git` run as a Bash tool call. Branch switches made by
+emdash itself bypass it, which is how a clone ends up parked on a dead feature
+branch. Check, don't assume.
 
 To merge to main:
 ```bash
@@ -81,8 +100,9 @@ Then follow the plugin-update steps below (`/canopy:update` etc.) if
 - `canopy agent-publish {register|skills|sync|work} [--repo DIR ...]` — publish an agent repo to its canopy-web workspace (`/agents/<slug>`): register, mirror the skill catalog, post a sync, or push work products. Run from an agent repo root; identity resolved from its `.claude-plugin/plugin.json` + `config/agent.json`. The shared generalization of echo's `bin/echo_canopy.py`.
 - `canopy agent-review <slug-or-path> [--hours N --no-llm --model --json-output]` — Build 2 of the operating model: review an agent's recent TURNS for friction (tool failures, retries, gating blocks, auth friction, checklist gaps) and synthesize ranked findings + fixes scoped to the agent repo. Deterministic signals always; `claude -p` synthesis unless `--no-llm`.
 - `canopy issue {create|context|delete} ...` — architect-routed GitHub issues with `canopy.origin/v1` provenance. **`create`** (reads a JSON record on stdin) files a CLEAN, portable GitHub issue (mandate + done-criteria + a pointer — NO local paths/yaml) and stores the rich *understanding* (provenance, intent, evidence, POINTERS to the drilled sessions) as a record locally + synced to canopy-web (`/api/issues`, django-ninja, Bearer-auth). **`context <owner/repo#n>`** hydrates that understanding (local, else canopy-web) + emits the `canopy harvest strip` commands to recover the local transcripts (flagging which exist on this machine — sessions stay local, never in the web record). **`delete <owner/repo#n> [--close-gh]`** removes the canopy-web + local record for cleanup. Backed by `src/orchestrator/issue_origin.py` + canopy-web `apps/issues/`.
-- `canopy harvest {map|strip|corpus} ...` — cross-user session reading for Hal-as-architect (reads every readable `/Users/*/.claude/projects`; flags `confidence: half-blind`). **`map <initiative> --match terms`** = a tiny per-session digest of EVERY matched session (your inputs + final output, tool noise stripped) — the whole arc in one cheap read (~54K tokens for DDD's 236 sessions); then **`strip <session-path> [--mode final|full]`** drills into an interesting session (full stripped conversation). `corpus` is the older ends-only sampler (superseded by map). Deterministic material; intent/drift judgment is the agent's job. See memory `harvester-architect`.
-- `canopy email {send|mark-read|preflight} [--repo DIR | --agent SLUG | --account/--client]` — the fleet's shared guarded email engine (docs/architecture/shared-gog-gdrive.md §3): **`send`** = the echo/ACE HTML multipart wrapper (Gmail display-wraps plain text at ~72 cols; HTML reflows) with body-file contract, `--reply-to-message-id`, `--dry-run`, and a JSON result whose `thread_id` every caller must record into the agent's state layer; **`mark-read`** = Gmail API UNREAD removal via the agent's own gog OAuth (gog has no mark-read; API reads don't clear the flag); **`preflight`** = gog auth liveness with the exact `gog login` remediation. Identity (mailbox + gog client) resolves from the agent repo's `config/agent.json` (`email`, `gog_client`); agents keep only a thin `bin/<slug>-email` shim (factory-templated) plus a deny rail blocking raw `gog gmail send/reply`. Backed by `src/orchestrator/agent_email.py`.
+- `canopy harvest {map|strip|intent-audit|corpus} ...` — cross-user session reading for Hal-as-architect (reads every readable `/Users/*/.claude/projects`; flags `confidence: half-blind`). **`map <initiative> --match terms`** = a tiny per-session digest of EVERY matched session (your inputs + final output, tool noise stripped) — the whole arc in one cheap read (~54K tokens for DDD's 236 sessions); then **`strip <session-path> [--mode final|full]`** drills into an interesting session (full stripped conversation). **`intent-audit <session-path>`** = the one judgment lens harvest otherwise omits: reconstruct what the human asked/decided from their OWN words and flag intent-misses (approved-X/shipped-Y, question-read-as-approval, unapproved-judgment) as evidence-backed findings (PR #374). `corpus` is the older ends-only sampler (superseded by map). Deterministic material otherwise; intent/drift judgment is the agent's job. See memory `harvester-architect`.
+- `canopy email {send|read|fetch-attachment|mark-read|apply-filters|review-receipt|preflight} [--repo DIR | --agent SLUG | --account/--client]` — the fleet's shared guarded email engine (docs/architecture/shared-gog-gdrive.md §3): **`send`** = the echo/ACE HTML multipart wrapper (Gmail display-wraps plain text at ~72 cols; HTML reflows) with body-file contract, `--reply-to-message-id`, `--dry-run`, reply-all-by-default on threads, and a JSON result whose `thread_id` every caller must record into the agent's state layer; **`read`** = inbound thread read as normalized JSON (decoded `body_text` + `reply_all` recipients, PRs #391/#394) and **`fetch-attachment`** = download ONE attachment; **`mark-read`** = Gmail API UNREAD removal via the agent's own gog OAuth (gog has no mark-read; API reads don't clear the flag); **`apply-filters`** = push the fleet-wide inbox junk filters (`inbox_filters.py`) to an agent mailbox; **`review-receipt`** = record that agent-turn-review ran against THIS body — send refuses without a matching receipt (the rail is keyed to the body, not the agent's memory); **`preflight`** = gog auth liveness with the exact `gog login` remediation. Identity (mailbox + gog client) resolves from the agent repo's `config/agent.json` (`email`, `gog_client`); agents keep only a thin `bin/<slug>-email` shim (factory-templated) plus a deny rail blocking raw `gog gmail send/reply`. Backed by `src/orchestrator/agent_email.py`.
+- `canopy gdoc publish [--repo DIR | --agent SLUG] ...` — shared Google-Doc authoring engine for the fleet (shared-gog-gdrive.md §5 interim): publish markdown as a rendered Google Doc authored as the agent; `--replace` edits native Docs **in place** via the Docs API (stable URL — no trash+recreate churn, #353). Backed by `src/orchestrator/agent_gdoc.py`.
 - `canopy provision [--repo DIR --check --json-output]` — materialize an agent/provider repo's secrets from 1Password per its `config/secrets.yaml` (declarative refs + targets, no values) — two block types: `secrets:` (one file per secret) and `env:` (many `KEY=value`, op refs + non-secret literals, into ONE `.env` at a **worktree-clean global home** like `~/.<slug>/.env`, NOT a per-worktree repo `.env`). Portable across machines/operators/worktrees; idempotent; `--check` dry-runs. The agent factory stamps this by default (+ a `bin/_env.py` that reads the global home), so new agents never recreate `.env` per worktree. Backed by `src/orchestrator/provision.py`. See `docs/agent-operating-model.md` §4e.
 - `canopy openclaw-harvest {snapshot|inventory|compare|bootstrap|reconcile}` — bridge a live OpenClaw into the fleet: snapshot its readable workspace (persona/skills/memory, NEVER creds), compare to the agent's GitHub repo, then bootstrap a new agent repo from it or reconcile its novel skills into the existing one. Engine is offline/testable; only `snapshot` needs ssh.
 - `canopy improve` — run a full improvement cycle (analyze → propose → implement)
@@ -105,8 +125,10 @@ Then follow the plugin-update steps below (`/canopy:update` etc.) if
 - `canopy version verify-bump` — fail if `plugins/canopy/` changed without a VERSION bump past origin/main (the check CI and the push guard run)
 - `canopy version bump` — bump VERSION + plugin.json by `max(local, origin/main) + patch+1`. Fetches origin first so a parallel worktree's bump is visible before deciding the next number. Use this instead of editing the two files by hand.
 - `canopy doctor` — diagnose canopy plugin health (workbench token, repo-map, session log, hook registration)
-- `canopy agent doctor [--repo DIR | --slug SLUG]` — diagnose ONE agent's readiness on THIS machine (identity, gating rails, secrets manifest, live gog email auth, canopy-web registration + board); exits non-zero on failure
+- `canopy agent doctor [--repo DIR | --slug SLUG]` — diagnose ONE agent's readiness on THIS machine (identity, gating rails, secrets manifest, live gog email auth, canopy-web registration + board); exits non-zero on failure. `--all` sweeps the fleet; `--fix` remediates what it safely can.
+- `canopy agent health [--repo DIR | --slug SLUG]` — work-state readiness for the agent's NEXT turn (open board items + unread inbox), distinct from `doctor` (machine/install readiness). Backed by `src/orchestrator/agent_health.py`.
 - `canopy agent turn [--title ... --summary ... --task-ext-id ID --work-product-url URL --upload-transcript]` — package one turn of work as a unit (optionally reducing + uploading its transcript to a `/share/<token>` link hung off the turn). Part of the `canopy agent …` operator plane. Backed by `src/orchestrator/session_upload.py`.
+- `canopy fleet-align` — CLI entry for the cross-agent improvement spread (the `fleet-align` skill's analysis half). Backed by `src/orchestrator/fleet_align.py`.
 - `canopy eval {score|record} ...` — the eval runner: `score` weighted-grades a rubric, `record` writes the score → verdict path so any agent self-grades against the run lifecycle. Backed by `src/orchestrator/eval_cli.py` + `eval_rubric.py`.
 - `canopy shareout [...]` — gather a date range of sessions + PRs into a teammate-facing work briefing for the canopy-web /shareouts feed
 - `canopy portfolio-discover` — list local emdash repos with recent activity that canopy can act on
@@ -224,14 +246,21 @@ merged. A future framework judge-prompt follows the framework rule: inline it.
 - `src/orchestrator/agent_factory.py` — agent factory: stamps out a new agent repo from the operating-model templates (persona, turn, the config-driven gating hook). Backs `canopy create-agent`. Templates are embedded as the editable starting point every agent inherits. See `docs/agent-operating-model.md` (§4 Build 1, §4a topology).
 - `src/orchestrator/canopy_web.py` — the single source of canopy-web transport + auth: `resolve_base_url`/`resolve_token` (PAT precedence: arg → `CANOPY_WEB_PAT` → `~/.claude/canopy/workbench-token`), `CanopyError`, an injectable `Transport`, and the low-level `call()`. stdlib `urllib` only (no `requests`). Everything that talks to canopy-web resolves auth through here (agent_client, agent_web, scripts/ddd/auth, shareout, the share-session/walkthrough-share uploaders).
 - `src/orchestrator/agent_client.py` — typed operator-plane client for `/api/agents` over `canopy_web`: `AgentIdentity`, `BoardCommand`, `AgentClient` (register/syncs/work-products/skills/tasks-sync/command-drain/patch-task), and the shared `catalog_from_repo` + `_frontmatter` skill-catalog helper. Explicit identity + injectable transport (unit-testable, no network). Backs the `canopy agent` CLI. REST contract: `docs/architecture/agent-client-rest-contract.md`.
-- `src/orchestrator/agent_cli.py` — `canopy agent …` CLI (`register`/`sync`/`work`/`turn`/`skills`/`tasks-sync`/`tasks`/`commands`/`apply`/`set`/`doctor`), a thin shell over `AgentClient` for shell-driven agents. Registered on `main` in `cli.py`.
+- `src/orchestrator/agent_cli.py` — `canopy agent …` CLI (`register`/`sync`/`syncs`/`sync-delete`/`work`/`turn`/`skills`/`tasks-sync`/`tasks`/`add`/`commands`/`apply`/`set`/`doctor`/`health`/`coverage`), a thin shell over `AgentClient` for shell-driven agents. Registered on `main` in `cli.py`.
 - `src/orchestrator/session_upload.py` — reduces + uploads a Claude session transcript to canopy-web's `/api/sessions/upload` and returns a `/share/<token>` link; the transcript-packaging half behind `canopy agent turn`.
 - `src/orchestrator/fleet_align.py` — cross-agent improvement spread (the *spread* verb of the operating model): compares the factory-stamped fleet against the current template and each other, weighs recent-session evidence, and dispatches PRs. Backs the `fleet-align` skill. FRAMEWORK tier.
 - `src/orchestrator/eval_cli.py` + `eval_rubric.py` — the eval runner behind `canopy eval {score|record}`: `eval_rubric` is the generic weighted-rubric scorer (ACE's verdict-schema math, decoupled), `eval_cli` records the score → verdict path so any agent self-grades against the run lifecycle.
 - `src/orchestrator/turn_synthesis.py` — generic, stdlib-only transcript reducer: prompt + final-reply per turn, with `active_seconds` + session timespan. The agent-agnostic substrate shared by share-session, harvest, and `session_upload`. See memory `turn-synthesis`.
 - `src/orchestrator/issue_origin.py` — `canopy.origin/v1` provenance for architect-routed GitHub issues (backs `canopy issue create/context/delete`). Splits the CLEAN portable GitHub issue from the rich local+canopy-web understanding record.
 - `src/orchestrator/test_audit.py` — builds a test corpus for the agent to judge and prune dumb tests (backs `canopy test-audit`). PRODUCT tier.
-- `src/orchestrator/agent_doctor.py` — per-agent health checks (backs `canopy agent doctor`): identity, gating rails, secrets manifest, live gog email auth (via `agent_email.preflight`), canopy-web registration + board. The agent-level counterpart of `doctor.py`.
+- `src/orchestrator/agent_doctor.py` — per-agent health checks (backs `canopy agent doctor`): identity, gating rails, secrets manifest, live gog email auth (via `agent_email.preflight`), canopy-web registration + board. The agent-level counterpart of `doctor.py`. Supports `--all` (fleet sweep) and `--fix`.
+- `src/orchestrator/agent_health.py` — per-agent WORK-state readiness (backs `canopy agent health`): open board items + unread inbox for the agent's next turn. Complements `agent_doctor.py` (machine/install readiness).
+- `src/orchestrator/agent_coverage.py` — per-agent bring-up coverage probe (backs `canopy agent coverage`): how much of an agent's promised surface is actually wired.
+- `src/orchestrator/agent_gdoc.py` — shared Google-Doc authoring engine (backs `canopy gdoc`): markdown → rendered Doc as the agent; `--replace` edits native Docs in place via the Docs API (#353).
+- `src/orchestrator/inbox_filters.py` — fleet inbox junk filters, defined ONCE and applied to any agent mailbox via gog Gmail filters (backs `canopy email apply-filters`). Conservative: only obviously automated/marketing mail is skipped-inbox, never a real person.
+- `src/orchestrator/review_receipt.py` — the pre-send review rail: a receipt keyed to the BODY (not the agent's memory) recording that agent-turn-review ran; `canopy email send` refuses without it. Backs `canopy email review-receipt`.
+- `src/orchestrator/repo_evidence.py` — generic git-repo evidence helpers (FRAMEWORK tier, stdlib + git only), shared by the evidence-weighing passes in agent-review/fleet-align.
+- `src/orchestrator/session_sources.py` — injectable session-corpus sources: the seam that lets harvest/review read cross-user session roots without hard-coding discovery.
 - `src/orchestrator/agent_email.py` — shared guarded email engine for the agent fleet (backs `canopy email {send|mark-read|preflight}`): the generalization of echo's `bin/echo_email.py` + `bin/echo_mark_read.py` / ACE's `bin/ace-email` + `bin/ace-mark-read`. HTML multipart send via gog, Gmail-API mark-read, gog preflight with exact remediation (incl. the API-not-enabled self-heal). Per-agent identity from `config/agent.json` (`email` + `gog_client`, client defaults to slug — never share another agent's client). Injectable runner/opener, fully unit-testable offline. Implements shared-gog-gdrive.md §3.
 - `src/orchestrator/agent_web.py` — repo-identity convenience layer over the shared core: resolves an agent's identity from its `.claude-plugin/plugin.json` + `config/agent.json` (and a git-origin skill-URL template), then publishes via `AgentClient`. Backs `canopy agent-publish`. Transport/auth/frontmatter are NOT duplicated here — they delegate to `canopy_web`/`agent_client` (keeps `base_url`/`token`/`_call` shims for `issue_origin` + back-compat). The "common" half of the §4a boundary — canopy owns the client, the agent repo owns only its identity (`config/agent.json`).
 - `src/orchestrator/harvest.py` — harvest corpus engine (the deterministic half of Hal-as-architect): cross-user session discovery (`user_session_roots` walks `/Users/*`), origin-anchored initiative filtering (`find_initiative_sessions`, oldest-first), `assemble_corpus` (origin + recent slices, human-message extraction, `confidence` half-blind flag). NO judgment — intent/drift is the agent's native job. Backs `canopy harvest corpus`. See memory `harvester-architect`.
@@ -240,9 +269,10 @@ merged. A future framework judge-prompt follows the framework rule: inline it.
 - `src/orchestrator/agent_review.py` — agent self-improvement lens (Build 2): finds an agent's recent turn transcripts (by cwd, across repo + worktrees), extracts deterministic friction signals (failures/retries/gating-blocks/auth/checklist-gaps), and runs an optional `claude -p` synthesis into ranked findings + fixes. Backs `canopy agent-review` + the `agent-review` skill. Reuses transcripts.py / repo_paths.py / the analyzer pattern — a lens on the existing loop, not a fork. See `docs/agent-operating-model.md` §4 Build 2.
 
 ### Plugin (Claude Code skills, commands, agents)
-- `plugins/canopy/skills/` — skill definitions (agent-review, alignment, auth-preflight, brief, canopy-doctor, context-ingestion, create-agent, ddd-ace-render, ddd-concept-eval, ddd-evidence-audit, ddd-findings-review, ddd-narrative-actionability-eval, ddd-narrative-coherence, ddd-narrative-review, ddd-run, ddd-spec, ddd-spec-qa, ddd-timing-eval, ddd-upload, ddd-video-improve, ddd-video-judge, ddd-why-brief, ddd-why-eval, ddd-why-qa, doc-regeneration, find-session, fleet-align, improve, improve-lens, information-architecture, issue-triage, openclaw-harvest, patch-gstack-browse, patterns, portfolio-guide, portfolio-review, product-management, project-status, select-session, share-session, shareout, test-audit, update, verify-findings, visual-judge, walkthrough, walkthrough-defect-creator, walkthrough-eval, walkthrough-share, website-builder)
+- `plugins/canopy/skills/` — skill definitions (agent-review, agent-turn-review, alignment, auth-preflight, brief, canopy-doctor, context-ingestion, create-agent, ddd-ace-render, ddd-concept-eval, ddd-evidence-audit, ddd-findings-review, ddd-narrative-actionability-eval, ddd-narrative-coherence, ddd-narrative-review, ddd-run, ddd-spec, ddd-spec-qa, ddd-timing-eval, ddd-upload, ddd-video-improve, ddd-video-judge, ddd-why-brief, ddd-why-eval, ddd-why-qa, doc-regeneration, find-session, fleet-align, improve, improve-lens, information-architecture, issue-triage, openclaw-harvest, patch-gstack-browse, patterns, portfolio-guide, portfolio-review, product-management, project-status, select-session, share-session, shareout, test-audit, update, verify-findings, visual-judge, walkthrough, walkthrough-defect-creator, walkthrough-eval, walkthrough-share, website-builder)
 - `plugins/canopy/commands/` — slash commands (alignment, auth-preflight, brief, canopy-web-pat-mint, ddd, ddd-ace-render, ddd-concept-eval, ddd-evidence-audit, ddd-findings-review, ddd-narrative-actionability-eval, ddd-narrative-review, ddd-run, ddd-spec, ddd-spec-qa, ddd-upload, ddd-why-brief, ddd-why-eval, ddd-why-qa, doc-regen, find-session, improve, issue-triage, patch-gstack-browse, patterns, pm-autonomous, pm-autonomous-loop, pm-scout, pm-status, portfolio-guide, portfolio-review, project-status, select-session, session-review, setup, test-audit, update, verify-findings, walkthrough, walkthrough-defect-creator, walkthrough-eval, website-builder)
 - `plugins/canopy/agents/` — autonomous agents (ddd, pm-supervisor, session-review, walkthrough, website-builder)
+- `plugins/canopy/agent-core/` — canonical fleet process docs, read at RUNTIME by the ~20-line stubs stamped into every agent repo (NOT under `skills/`, so they cost zero skill-description budget): `turn.md`, `task-tracker.md`, `manager-sync.md`, `deliverables.md`, `agent-runtime.md`, plus `gating-baseline.json` (fleet-baseline deny rails keyed by channel mount — the factory-stamped `gating_guard.py` merges baseline + local rails at call time, fail-closed if the baseline is unresolvable). A rail or process fix here propagates by `/canopy:update`, no per-agent PRs. Shipped as chunks A+B (PRs #312, #315); design: `docs/superpowers/specs/2026-07-13-agent-core-shared-skills-design.md`.
 - `plugins/canopy/mcp/` — TypeScript MCP servers shipped with the plugin (ESM, run via `npx tsx`, no build step). `gws-server.ts` = **canopy-gws**, the domain-neutral Google Workspace server ported from ACE's `ace-gdrive` (32 atoms: `drive_*` / `docs_*` / `sheets_*` / `slides_*` + `get_google_form_definition` + `read_personal_drive_doc`; the ACE-aware atoms stayed in ACE). Per-agent identity resolves from SESSION env — `GWS_IDENTITY_MODE=sa` + `GWS_SA_KEY_PATH` (required; `gog` mode is a tracked follow-up), optional `GWS_ROOT_FOLDER_ID` default root + `GWS_ALLOWED_DRIVE_IDS` write allowlist enforced by the Shared-Drive write probe. **Fails loud at startup when identity env is absent — no default identity fallback.** Node toolchain lives in `plugins/canopy/package.json` (installed by `/canopy:setup` step 7 and the `/canopy:update` rsync step; `node_modules` is uncommitted). Offline vitest suites in `plugins/canopy/test/gws/` (registration-coverage drift gate, identity contract, mocked-client handler tests) run in CI via `.github/workflows/gws-tests.yml`.
 - `.claude-plugin/marketplace.json` — plugin marketplace manifest
 
@@ -341,6 +371,52 @@ python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugi
 For the same shape per skill, use `canopy skills list --json-output` —
 each entry now carries `installed_version` and `cache_path` fields. No more
 string-concatenated versions.
+
+## Plugin Runtime Bundle — how skills reach the Python runtime
+
+The installed plugin cache is **self-contained**: the updaters (`/canopy:update`
+Step 2 and the fleet session-start hook) sync the repo-root runtime — `src/`,
+`scripts/`, `evals/`, `pyproject.toml`, declared in
+`plugins/canopy/.claude-plugin/runtime.json` — into `<installPath>/runtime/`
+alongside the plugin. The runtime a skill executes is therefore version-locked
+to the installed plugin **by construction** (same rsync, same SHA), not by a
+process step that can be forgotten (the global CLI once drifted 67 versions
+stale exactly that way).
+
+**The ONE idiom.** Every bash block in plugin markdown that touches the runtime
+starts with the canonical two-liner and goes through the shared resolver:
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+```
+
+then either `uv run --project "$CANOPY_ROOT" canopy <subcommand> …` (CLI; cwd
+is preserved, so cwd-sensitive commands like `test-audit collect .` still work)
+or `(cd "$CANOPY_ROOT" && uv run python -m scripts.ddd.<module> …)` (module
+runs). `uv` materializes `.venv` inside the runtime dir on first use.
+
+Resolver ladder (`plugins/canopy/scripts/canopy-runtime.sh`): `$CANOPY_RUNTIME_ROOT`
+env override → `<plugin>/runtime` (production) → the script's containing repo
+(when run from a checkout's copy) → marketplace clone (bootstrap/fresh-install
+gap, self-heals next session start) → dev checkouts **last**, deliberately — an
+edited checkout must never silently shadow the installed version.
+
+**Rules (CI-enforced by `tests/test_plugin_runtime_resolution.py`):**
+- Plugin markdown must NOT reference `~/emdash-projects/canopy`,
+  `~/emdash/repositories/canopy`, or `~/.claude/plugins/marketplaces/canopy`
+  directly, and must not use bare `uv run canopy`. Allowlisted exceptions
+  (update/setup/doctor/video-engine) are enumerated in the test with reasons.
+- The global `canopy` CLI on PATH is a convenience (humans at a shell, fleet
+  shims like ACE's `bin/ace-email`) — **never a skill dependency**.
+- `video-engine/` is the one dev-checkout exception: Remotion's `node_modules`
+  is too heavy to bundle per plugin version, so local render resolves a dev
+  checkout where `/canopy:setup` ran `npm ci`, with a loud error otherwise.
+- The PostToolUse capture hook is **plugin-managed**
+  (`plugins/canopy/hooks/hooks.json` → `${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py`).
+  Repo-root `hooks/post_tool_use.py` is a legacy-compat shim; the plugin copy
+  defers while a working legacy settings.json registration exists, and
+  `/canopy:setup` removes that legacy entry.
 
 ## Tool Hygiene (Read, Bash, parallel calls)
 
@@ -567,9 +643,12 @@ The global "self-improvement brain" (`~/.claude/canopy/observations/`, `proposal
 
 These ship in **this repo**, not the plugin cache:
 
-- `scripts/ddd/` (DDD loop helpers). Skills resolve it via
-  `DDD_REPO=$HOME/emdash-projects/canopy` (fallback
-  `~/.claude/plugins/marketplaces/canopy`) and run `uv run python -m scripts.ddd.<mod>`.
+- `scripts/ddd/` (DDD loop helpers). Since the runtime bundle (PR #395),
+  `scripts/ddd/` ships INSIDE the plugin runtime: skills resolve
+  `DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")"` (the canonical
+  two-liner in § Plugin Runtime Bundle) and run
+  `(cd "$DDD_REPO" && uv run python -m scripts.ddd.<mod> …)`. The old
+  `DDD_REPO=$HOME/emdash-projects/canopy` hardcode is gone.
 - `scripts/narrative/` — the neutral narrative substrate (schemas, models,
   `${var}` substitution) extracted out of `scripts.ddd` so non-DDD callers can
   reuse it (PR #160, repointed in #162). DDD builds on top of it.
@@ -581,4 +660,4 @@ These ship in **this repo**, not the plugin cache:
   See `plugins/canopy/agents/ddd.md` § Pause policy.
 
 ## Testing
-- `uv run pytest` from project root (~2,235 tests across 165 test files). A handful of browser-dep tests error on collection unless the optional extras are installed: `pip install -e '.[browser]'`.
+- `uv run pytest` from project root (~2,260 tests across 175 test files). A handful of browser-dep tests error on collection unless the optional extras are installed: `pip install -e '.[browser]'`.

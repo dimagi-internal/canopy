@@ -6,7 +6,8 @@ description: Generate a teammate-facing work briefing for a date range (default 
 ## Preamble (run first)
 
 ```bash
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])" 2>/dev/null)"
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -34,11 +35,13 @@ Only stop to ask if the range is genuinely ambiguous.
 
 ### 1. Gather the corpus (deterministic)
 
-Run from the canopy repo. Write the corpus to a temp file so you can read it fully:
+Run against the canopy runtime (resolved via `scripts/canopy-runtime.sh`). Write the
+corpus to a temp file so you can read it fully:
 
 ```bash
-cd ~/emdash-projects/canopy
-uv run canopy shareout gather --json-out /tmp/shareout-corpus.json
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy shareout gather --json-out /tmp/shareout-corpus.json
 # add --days 7 / --from 2026-06-01 --to 2026-06-03 / --project canopy as needed
 ```
 
@@ -96,8 +99,9 @@ Write an authoring doc to a temp file in this shape:
 ### 3. Post
 
 ```bash
-cd ~/emdash-projects/canopy
-uv run canopy shareout post /tmp/shareout-authoring.json --corpus /tmp/shareout-corpus.json
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy shareout post /tmp/shareout-authoring.json --corpus /tmp/shareout-corpus.json
 ```
 
 `--corpus` auto-fills each project's full PR list (`all_prs`, rendered as a collapsed
@@ -111,14 +115,16 @@ is correct; do not attribute it to yourself. Just record that *you* assembled it
 passing your own slug:
 
 ```bash
-uv run canopy shareout post /tmp/shareout-authoring.json --corpus /tmp/shareout-corpus.json \
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy shareout post /tmp/shareout-authoring.json --corpus /tmp/shareout-corpus.json \
   --produced-by-agent <your-slug>   # e.g. eva — read it from your repo's config/agent.json
 ```
 
 The feed then shows a subtle "· produced by <you>" byline while the briefing remains the
-human's. Pass the flag explicitly: this command runs from the canopy repo dir, so the
-CLI can't reliably auto-detect your identity from the working directory (it only falls
-back to `$CANOPY_AGENT_SLUG` or a `config/agent.json` in `cwd`). The reusable rule, for
+human's. Pass the flag explicitly: don't rely on the CLI auto-detecting your identity from the
+working directory (it only falls back to `$CANOPY_AGENT_SLUG` or a `config/agent.json`
+in `cwd`, and the cwd this runs from isn't guaranteed to be your agent repo). The reusable rule, for
 any future "agent uploads on behalf of the user" action: **the author is the subject, the
 producer is the agent, the auth is the subject's PAT.** A human running this themselves
 omits the flag entirely.

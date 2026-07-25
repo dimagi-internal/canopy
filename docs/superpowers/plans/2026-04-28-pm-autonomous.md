@@ -1,5 +1,7 @@
 # Autonomous mode for canopy:product-management — Implementation Plan
 
+> **Status: shipped — `/canopy:pm-autonomous(-loop)` live. Historical record, not current-state (PM state later moved to `<repo>/.canopy/pm/`).**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an autonomous mode to the `canopy:product-management` skill — single command runs a full working-backwards sprint (scout → email draft → ship → email-and-stop) with a multi-layer convince-self-it's-clean gate, no per-proposal approval. Existing `/canopy:pm-scout` human-gated path must keep working unchanged.

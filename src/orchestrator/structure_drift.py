@@ -65,10 +65,52 @@ RESERVED_BUILTINS: frozenset[str] = frozenset({
 })
 
 
+# The plugin clone every agent's canopy install is served from. Same precedent
+# as `agent_email.MARKETPLACE_CLONE` — it is a full canopy checkout on disk.
+MARKETPLACE_CLONE = Path.home() / ".claude/plugins/marketplaces/canopy"
+
+
+def is_canopy_checkout(path: Path) -> bool:
+    """True when `path` is the root of a canopy source checkout.
+
+    The two files every invariant check needs to mean anything: VERSION (the
+    version triple) and the plugin tree (skills / commands / agents).
+    """
+    return (
+        (path / "VERSION").is_file()
+        and (path / "plugins" / "canopy" / ".claude-plugin" / "plugin.json").is_file()
+    )
+
+
 def default_repo_root() -> Path:
-    """Repo root for the canopy checkout this module ships from."""
-    # src/orchestrator/structure_drift.py -> repo root is two parents up from src.
-    return Path(__file__).resolve().parent.parent.parent
+    """Best-effort canopy checkout to audit when `--repo` isn't given.
+
+    Under `uv tool install` — how every agent actually runs canopy — this module
+    lives in site-packages, so the shipped-from path is `.../lib/python3.x` and
+    holds no plugin tree at all. Auditing it is worse than useless: three of the
+    four invariant checks take their "directory missing -> return empty" path and
+    report zero findings, so the audit LOOKS clean while checking nothing. Prefer,
+    in order, any path that is genuinely a canopy checkout.
+    """
+    # 1. The checkout this module ships from (source / editable installs).
+    #    src/orchestrator/structure_drift.py -> repo root is two parents up.
+    shipped_from = Path(__file__).resolve().parent.parent.parent
+    if is_canopy_checkout(shipped_from):
+        return shipped_from
+
+    # 2. CWD or an ancestor — running inside a canopy checkout or worktree.
+    cwd = Path.cwd().resolve()
+    for candidate in (cwd, *cwd.parents):
+        if is_canopy_checkout(candidate):
+            return candidate
+
+    # 3. The marketplace clone the installed plugin is served from.
+    if is_canopy_checkout(MARKETPLACE_CLONE):
+        return MARKETPLACE_CLONE
+
+    # Nothing resolved. Return the shipped-from path unchanged; the caller
+    # reports it as a `repo_root` finding rather than auditing it silently.
+    return shipped_from
 
 
 def _plugin_root(repo_root: Path) -> Path:
@@ -137,6 +179,28 @@ INVARIANT_PATTERN_B = "command_skill_pattern_b"
 INVARIANT_RESERVED_NAME = "reserved_builtin_name"
 INVARIANT_VERSION_SYNC = "version_sync"
 INVARIANT_SKILL_DESCRIPTION_BUDGET = "skill_description_budget"
+INVARIANT_REPO_ROOT = "repo_root"
+
+
+def check_repo_root(repo_root: Path) -> list[dict]:
+    """The audit target must actually be a canopy checkout.
+
+    Every other check degrades to "no findings" against a directory with no
+    plugin tree, so a bad root reports a clean bill of health for invariants
+    that were never scanned. Fail loudly instead.
+    """
+    if is_canopy_checkout(repo_root):
+        return []
+    return [{
+        "invariant": INVARIANT_REPO_ROOT,
+        "severity": "error",
+        "detail": (
+            f"{repo_root} is not a canopy checkout (no VERSION and/or "
+            f"plugins/canopy/.claude-plugin/plugin.json), so NO invariant was "
+            f"actually checked — this is not a clean result. Re-run from inside "
+            f"a canopy checkout, or pass `--repo <path-to-canopy>`."
+        ),
+    }]
 
 
 def check_command_skill_pattern_b(repo_root: Path) -> list[dict]:
@@ -283,10 +347,16 @@ def run_structure_drift(
     root = repo_root or default_repo_root()
 
     findings: list[dict] = []
-    findings += check_command_skill_pattern_b(root)
-    findings += check_reserved_builtin_names(root)
-    findings += check_version_sync(root)
-    findings += check_skill_description_budget(root, per_skill_limit=per_skill_limit)
+    # Gate: against a non-checkout every check below silently reports nothing,
+    # so report the bad root alone rather than three fabricated passes.
+    root_findings = check_repo_root(root)
+    if root_findings:
+        findings += root_findings
+    else:
+        findings += check_command_skill_pattern_b(root)
+        findings += check_reserved_builtin_names(root)
+        findings += check_version_sync(root)
+        findings += check_skill_description_budget(root, per_skill_limit=per_skill_limit)
 
     by_invariant: dict[str, list[dict]] = {}
     for f in findings:

@@ -78,6 +78,26 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
     right, Neal asked, so it's his note" and "fixed on both counts," both answering the operator's
     in-session correction, into an email whose recipients had never seen that exchange; the operator
     flagged it as a turn-review miss.)
+10b. **Politeness is fine; manufactured value is not — never attribute a benefit, feeling, or worth
+    you can't back up.** Thanking, welcoming, and acknowledging are allowed and good. What is banned
+    is dressing a courtesy up as a substantive claim the agent has no basis to assert. Two forms,
+    both banned: **(i) unbackable benefit** — *"it's genuinely useful to know you're a message
+    away"*, *"this will be a huge help"*, *"great to have you onboard"*, *"your input has been
+    invaluable"*; **(ii) effusive emotion / flattery** — *"that genuinely means a lot coming from
+    you"*, *"I'm so grateful for the careful reviews throughout"*, *"I'm honored"*, *"that's the best
+    example"*. An agent has no feelings to be moved and no standing to flatter, and it cannot vouch
+    for a value it hasn't observed — so these read as performed warmth, not substance. Keep the
+    courtesy **plain and objective** — *"thank you for offering it."* / *"thank you for the careful
+    review."* full stop — and let a value, benefit, or praise statement stand ONLY where it's
+    grounded in something specific you actually observed (*"your note caught a line that over-read the
+    data"* — you can point to the line; *"the field definitions let us wire the indicator directly"*
+    — you read them). Grounded-and-specific is fine; effusive-and-general is filler. This is the
+    presentation-twin of §B/§5a grounding: same rule — don't assert what you can't substantiate —
+    applied to warmth rather than to commitments and done-claims. (Origin: Jon, 2026-07-24 — TWO
+    same-day ACE replies: one padded a call-decline with "it's genuinely useful to know you're a
+    message away," another opened to a reviewer with "that genuinely means a lot coming from you …
+    Grateful for the careful reviews throughout." Both passed the rest of the review because no lens
+    tested for unbackable warmth; the fix in each was to cut to the plain thank-you.)
 
 ## D. Revision check — full re-review + repetition pass, EVERY revision
 

@@ -40,10 +40,17 @@ SLUG="<narrative-slug>"                 # e.g. verified-monitoring
 SPEC="docs/walkthroughs/$SLUG.yaml"     # in the current project repo
 [ -f "$SPEC" ] || { echo "no spec at $SPEC — run from the project repo that owns the narrative"; exit 1; }
 
-# canopy checkout (dev first, then marketplace clone)
-for C in ~/emdash-projects/canopy ~/.claude/plugins/marketplaces/canopy; do
-  [ -f "$C/scripts/walkthrough/record_video.py" ] && CANOPY="$C" && break
+# canopy runtime — bundled with the installed plugin, resolved by the shared resolver
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+
+# video-engine — the ONE documented dev-checkout exception: Remotion's
+# node_modules is too heavy to bundle per plugin version, so local render
+# needs a checkout where `npm ci` ran (/canopy:setup step 6).
+for V in ~/emdash-projects/canopy ~/emdash/repositories/canopy; do
+  [ -d "$V/video-engine/node_modules" ] && VE="$V/video-engine" && break
 done
+[ -n "${VE:-}" ] || { echo "ERROR: no canopy checkout with video-engine/node_modules — run /canopy:setup on a dev checkout first"; exit 1; }
 WORK="$(mktemp -d)"
 ```
 
@@ -52,7 +59,7 @@ WORK="$(mktemp -d)"
 live cookies first for session-auth specs:
 ```bash
 $B cookies > "$WORK/cookies.json"          # $B = the browse binary (see /canopy:walkthrough)
-python3 "$CANOPY/scripts/walkthrough/record_video.py" \
+uv run --project "$CANOPY" python "$CANOPY/scripts/walkthrough/record_video.py" \
   --spec "$SPEC" \
   --output   "$WORK/master.mp4" \
   --report   "$WORK/report.json" \
@@ -64,7 +71,7 @@ python3 "$CANOPY/scripts/walkthrough/record_video.py" \
 **2. Emit the connect-ddd-walkthrough spec** from the fresh capture (no
 run-state needed — slug comes from the spec's `name`):
 ```bash
-( cd "$CANOPY" && python3 -m scripts.ddd.snippets explainer-from-capture \
+( cd "$CANOPY" && uv run python -m scripts.ddd.snippets explainer-from-capture \
     "$(cd "$OLDPWD" && pwd)/$SPEC" "$WORK/report.json" \
     --clip "$WORK/master.mp4" --out "$WORK/explainer_spec.yaml" )
 ```
@@ -76,7 +83,7 @@ This writes `explainer_spec.yaml`: per-beat clip ranges from the report,
 container) with `ELEVENLABS_API_KEY` in the environment:
 ```bash
 ELEVENLABS_API_KEY="$(…fetch the key…)" \
-python3 "$CANOPY/video-engine/render_locally.py" \
+python3 "$VE/render_locally.py" \
   --local-spec "$WORK/explainer_spec.yaml" \
   --master     "$WORK/master.mp4" \
   --final            # omit for a faster --draft preview

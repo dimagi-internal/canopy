@@ -1,5 +1,7 @@
 # PM State Relocation Implementation Plan
 
+> **Status: shipped — `resolve_pm_dir.sh` + `<repo>/.canopy/pm/` live. Historical record, not current-state.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Relocate `canopy:product-management` per-project state from `~/.canopy/pm/<project>/` into `<repo>/.canopy/pm/` so it's portable across machines and accounts via git.

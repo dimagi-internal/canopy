@@ -2,25 +2,24 @@
 name: ddd-concept-eval
 description: |
   LLM-as-judge eval for a rendered walkthrough. Scores six weighted dimensions
-  (concept_clarity .20, design_soundness .20, visual_polish .15, why_groundedness .20,
-  claim_reality_coherence .10 advisory, motion_friction .15) using the rubric bundled
-  with this skill. visual_polish was carved out of design_soundness in v0.2.153 so the
-  visual-judge has a place to land pure-aesthetic failures (misaligned elements,
-  inconsistent button styles, bad type, garish colors) that the prior interaction-
-  coherence anchors didn't catch. Gated by ddd-spec-qa — if QA fails, this eval is skipped.
-  Per scene, dispatches canopy:visual-judge with the concept rubric and the scene's
-  concept_claim / provenance / captured page text as anchors. Aggregates to a
-  weakest-link overall_score. Collects design_findings[] tagged with PRODUCT /
-  CONCEPT / RESEARCH / DEFER routes. Writes verdict-concept.yaml + design_findings.json.
-  claim_reality_coherence findings are surfaced and scored but NEVER set verdict=blocked.
-  Use when asked to "eval the concept", "score the walkthrough concept", or after
-  ddd-spec-qa passes.
+  (concept_clarity .20, design_soundness .20, why_groundedness .20, visual_polish .15,
+  motion_friction .15, claim_reality_coherence .10 advisory) against the rubric bundled
+  with this skill. visual_polish is where pure-aesthetic failures land — misaligned
+  elements, inconsistent button styles, bad type, garish colors. Gated by ddd-spec-qa:
+  if QA fails, this eval is skipped. Per scene, dispatches canopy:visual-judge with the
+  concept rubric and that scene's concept_claim / provenance / captured page text as
+  anchors, then aggregates to a weakest-link overall_score. Collects design_findings[]
+  tagged PRODUCT / CONCEPT / RESEARCH / DEFER. Writes verdict-concept.yaml +
+  design_findings.json. claim_reality_coherence findings are surfaced and scored but
+  NEVER set verdict=blocked. Use when asked to "eval the concept", "score the
+  walkthrough concept", or after ddd-spec-qa passes.
 ---
 
 ## Preamble (run first)
 
 ```bash
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])" 2>/dev/null)"
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -55,12 +54,12 @@ concept** is sound — not whether the video is pretty. Emits structured
 ### Step 0 — Check QA gate
 
 Before scoring, verify ddd-spec-qa has passed for this spec (the script lives in
-the canopy repo):
+the canopy runtime):
 
 ```bash
-# scripts/ddd ships in the canopy repo, not the plugin cache — resolve it:
-DDD_REPO="$HOME/emdash-projects/canopy"; [ -d "$DDD_REPO/scripts/ddd" ] || DDD_REPO="$HOME/.claude/plugins/marketplaces/canopy"
-if [ ! -d "$DDD_REPO/scripts/ddd" ]; then echo "ERROR: scripts/ddd not found — run /canopy:update to sync the canopy checkout"; exit 1; fi
+# resolve the canopy runtime (scripts/ddd ships inside it):
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 # pass the file arg as an absolute path (resolved before the cd):
 SPEC_ABS="$(realpath <run_dir>/unified_spec.yaml)"
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.spec_qa "$SPEC_ABS")

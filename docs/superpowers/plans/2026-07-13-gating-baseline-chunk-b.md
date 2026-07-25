@@ -1,5 +1,7 @@
 # Gating Baseline Centralization (chunk B) Implementation Plan
 
+> **Status: shipped (PR #315, chunk B) — `agent-core/gating-baseline.json` live. Historical record, not current-state.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox syntax.
 
 **Goal:** Fleet-baseline deny rails live once in canopy, keyed by channel mount; agent repos keep only mounts + agent-specific additions (add-only); a rail fix propagates by `/canopy:update`.

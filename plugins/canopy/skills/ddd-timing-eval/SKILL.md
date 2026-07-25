@@ -63,15 +63,21 @@ narration enumerates fields in a different ORDER than the form lays them out).
 The render writes it automatically:
 
 ```bash
-python3 video-engine/render_locally.py --local-spec <explainer_spec.yaml> --master <master.mp4>
+# video-engine is the ONE dev-checkout exception (Remotion node_modules is too
+# heavy to bundle per plugin version — /canopy:setup step 6 installs it):
+for V in ~/emdash-projects/canopy ~/emdash/repositories/canopy; do
+  [ -d "$V/video-engine/node_modules" ] && VE="$V/video-engine" && break
+done
+[ -n "${VE:-}" ] || { echo "ERROR: no canopy checkout with video-engine/node_modules — run /canopy:setup on a dev checkout first"; exit 1; }
+python3 "$VE/render_locally.py" --local-spec <explainer_spec.yaml> --master <master.mp4>
 # → prints "DDD timing eval: PASS|WARN|FAIL (field-sync N/5) …"
-# → writes programs/<slug>/runs/<run>/verdict-timing.json
+# → writes $VE/programs/<slug>/runs/<run>/verdict-timing.json
 ```
 
 Read the verdict:
 
 ```bash
-python3 -c "import json; d=json.load(open('programs/<slug>/runs/<run>/verdict-timing.json')); \
+python3 -c "import json; d=json.load(open('$VE/programs/<slug>/runs/<run>/verdict-timing.json')); \
 print(d['verdict'], d['overallScore'], 'coverage', d['coverage']); \
 [print(' ·', f) for f in d['findings']]"
 ```

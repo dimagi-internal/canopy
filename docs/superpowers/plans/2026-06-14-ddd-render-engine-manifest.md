@@ -1,5 +1,7 @@
 # DDD ↔ Walkthrough Render Engine + Manifest — Implementation Plan
 
+> **Status: shipped — one render engine + `walkthrough-run-data.json` manifest live. Historical record, not current-state.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Collapse the two-renderer split into one render engine that emits a single manifest (`walkthrough-run-data.json`), consumed identically by the standalone walkthrough skill and by ddd — fixing empty decks, `${…}` links, the missing audit URL, the `narrative` NameError, cwd coupling, and SKILL↔code drift.

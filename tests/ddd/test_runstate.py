@@ -254,3 +254,105 @@ def test_save_still_persists_valid_mutations(tmp_path, monkeypatch):
     state.phase = "judged"
     save(state)
     assert load(run_id).phase == "judged"
+
+
+# ---------------------------------------------------------------------------
+# Run artifacts must not be written into the project repo (connect-labs reached
+# 107MB of tracked DDD run artifacts because they were).
+# ---------------------------------------------------------------------------
+
+def _fake_repo(tmp_path):
+    """A directory that looks like a git checkout with a canopy DDD dir."""
+    repo = tmp_path / "some-project"
+    (repo / ".git").mkdir(parents=True)
+    ddd = repo / ".canopy" / "ddd"
+    ddd.mkdir(parents=True)
+    return repo, ddd
+
+
+def test_new_run_does_not_write_inside_the_repo(tmp_path, monkeypatch):
+    import scripts.ddd.runstate as rs
+    repo, ddd = _fake_repo(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    run_id = rs.new_run("demo", ddd_dir=ddd)
+
+    assert not (ddd / "runs" / run_id).exists(), "run landed in the repo"
+    external = tmp_path / "home" / ".canopy" / "ddd" / "runs" / repo.name / run_id
+    assert (external / "run_state.yaml").exists()
+    # and it round-trips through the public API
+    assert rs.load(run_id, ddd_dir=ddd).run_id == run_id
+
+
+def test_context_and_learnings_stay_repo_local(tmp_path, monkeypatch):
+    """Only runs/ moves out — the durable per-project notes belong in the repo."""
+    import scripts.ddd.runstate as rs
+    repo, ddd = _fake_repo(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda *a, **k: ddd)
+
+    rs.append_learning("something worth keeping")
+
+    assert (ddd / "learnings.md").exists()
+    assert "something worth keeping" in (ddd / "learnings.md").read_text()
+
+
+def test_legacy_in_repo_run_is_still_read_and_written_in_place(tmp_path, monkeypatch):
+    """A run created before this change must not split across two roots."""
+    import scripts.ddd.runstate as rs
+    repo, ddd = _fake_repo(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    legacy = ddd / "runs" / "demo-2020-01-01-001"
+    legacy.mkdir(parents=True)
+    (legacy / "run_state.yaml").write_text(yaml.safe_dump({
+        "run_id": "demo-2020-01-01-001", "narrative_slug": "demo",
+        "phase": "phase0", "schema_version": 1,
+    }))
+
+    state = rs.load("demo-2020-01-01-001", ddd_dir=ddd)
+    state.phase = "judged"
+    rs.save(state, ddd_dir=ddd)
+
+    assert (legacy / "run_state.yaml").exists()
+    assert yaml.safe_load((legacy / "run_state.yaml").read_text())["phase"] == "judged"
+    assert not (tmp_path / "home" / ".canopy" / "ddd" / "runs" / repo.name
+                / "demo-2020-01-01-001").exists()
+
+
+def test_run_id_does_not_collide_with_a_legacy_run_from_today(tmp_path, monkeypatch):
+    """Numbering off a single root would re-mint an id that already exists."""
+    import scripts.ddd.runstate as rs
+    from datetime import date
+    repo, ddd = _fake_repo(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    today = date.today().strftime("%Y-%m-%d")
+    (ddd / "runs" / f"demo-{today}-001").mkdir(parents=True)
+
+    run_id = rs.new_run("demo", ddd_dir=ddd)
+    assert run_id == f"demo-{today}-002", f"collided with the legacy run: {run_id}"
+
+
+def test_runs_dir_env_override(tmp_path, monkeypatch):
+    import scripts.ddd.runstate as rs
+    repo, ddd = _fake_repo(tmp_path)
+    override = tmp_path / "elsewhere"
+    monkeypatch.setenv("CANOPY_DDD_RUNS_DIR", str(override))
+
+    run_id = rs.new_run("demo", ddd_dir=ddd)
+    assert (override / run_id / "run_state.yaml").exists()
+
+
+def test_worktree_dot_git_file_still_counts_as_a_repo(tmp_path, monkeypatch):
+    """In a worktree `.git` is a FILE; treating that as 'no repo' would put
+    artifacts straight back into the checkout."""
+    import scripts.ddd.runstate as rs
+    repo = tmp_path / "wt-project"
+    ddd = repo / ".canopy" / "ddd"
+    ddd.mkdir(parents=True)
+    (repo / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    run_id = rs.new_run("demo", ddd_dir=ddd)
+    assert not (ddd / "runs" / run_id).exists()

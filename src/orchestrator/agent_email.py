@@ -665,6 +665,194 @@ def granted_services(
     return None
 
 
+READ_TIMEOUT = 60  # seconds — a hung gog read/fetch must not hang the whole turn
+
+
+def _attachments_of(msg: dict) -> list[dict]:
+    """Walk a message payload's parts (recursively) for real attachments — a part with a
+    filename AND a body.attachmentId. Returns [{attachment_id, filename, mime_type, size}].
+    Surfacing the attachment_id here is the point: it's what `fetch_attachment` needs, and
+    hand-walking the raw payload parts to find it is exactly what agents kept fumbling."""
+    found: list[dict] = []
+
+    def walk(part: dict) -> None:
+        body = part.get("body", {}) or {}
+        filename = part.get("filename") or ""
+        if filename and body.get("attachmentId"):
+            found.append({
+                "attachment_id": body["attachmentId"],
+                "filename": filename,
+                "mime_type": part.get("mimeType", ""),
+                "size": body.get("size"),
+            })
+        for sub in part.get("parts", []) or []:
+            walk(sub)
+
+    walk(msg.get("payload", {}) or {})
+    return found
+
+
+def _decode_plain(payload: dict) -> str:
+    """Recursively concatenate the base64url-decoded text/plain parts of a message payload.
+    gog's --json hands back base64 MIME parts (not decoded text) — this is the decode every
+    read wrapper reimplemented (echo's bin/echo_read.py._plain)."""
+    import base64
+    out = ""
+    body = payload.get("body", {}) or {}
+    if payload.get("mimeType", "").startswith("text/plain") and body.get("data"):
+        out += base64.urlsafe_b64decode(body["data"] + "===").decode("utf-8", "replace")
+    for part in payload.get("parts", []) or []:
+        out += _decode_plain(part)
+    return out
+
+
+def _trim_quoted_tail(text: str) -> str:
+    """Drop the quoted reply chain — stop at the first `>`, `On … wrote:`, or `-----Original`
+    line (echo_read.py._trim_quotes). Keeps the message's own prose, sheds the history."""
+    lines = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s.startswith(">") or (s.startswith("On ") and s.endswith("wrote:")) \
+                or s.startswith("-----Original"):
+            break
+        lines.append(ln)
+    return "\n".join(lines).strip()
+
+
+def _reply_all_of(raw_messages: list[dict], self_account: str) -> dict:
+    """Compute reply-all recipients for a thread: To = the latest non-self sender, Cc =
+    everyone else on that message's To+Cc minus self and the To, deduped; reply_to_message_id
+    = that message's id. Same algorithm as derive_reply_all's thread mode, computed from the
+    already-parsed messages so `read` needs only ONE gog read."""
+    from email.utils import getaddresses
+    if not raw_messages:
+        return {"to": "", "cc": "", "reply_to_message_id": ""}
+    me = self_account.lower()
+    latest = next((m for m in reversed(raw_messages)
+                   if me not in _headers_of(m).get("from", "").lower()), raw_messages[-1])
+    h = _headers_of(latest)
+    sender = [e for _, e in getaddresses([h.get("from", "")]) if e]
+    to = sender[0] if sender else ""
+    cc, seen = [], {me, to.lower()}
+    for _, e in getaddresses([h.get("to", ""), h.get("cc", "")]):
+        el = e.lower()
+        if e and el not in seen:
+            seen.add(el)
+            cc.append(e)
+    return {"to": to, "cc": ", ".join(cc), "reply_to_message_id": latest.get("id", "")}
+
+
+def read_thread(
+    identity: EmailIdentity,
+    thread_id: str,
+    *,
+    runner=subprocess.run,
+) -> dict:
+    """Read a Gmail THREAD as the agent → a normalized dict the fleet can rely on:
+      {thread_id,
+       messages: [{message_id, from, to, cc, subject, date, snippet, body_text,
+                   attachments: [{attachment_id, filename, mime_type, size}]}],
+       reply_all: {to, cc, reply_to_message_id}}
+
+    `body_text` is the decoded plain-text (base64 MIME parts decoded, quoted reply tail
+    trimmed); `reply_all` is the ready recipient set (latest non-self sender = To, the rest
+    = Cc, minus self). Together those are the whole reason agents hand-rolled read wrappers
+    (echo's bin/echo_read.py) — folded into the engine so they don't. `gog gmail read` is a
+    THREAD reader and 404s on a bare message id (the bug that bit echo live — see
+    derive_reply_all). Uses --json because the default text view omits Cc and attachment ids.
+    This is the fleet's sanctioned inbound READ path."""
+    r = runner(
+        ["gog", "gmail", "read", thread_id, "--account", identity.account,
+         "--client", identity.client, "--json"],
+        capture_output=True, text=True, timeout=READ_TIMEOUT,
+    )
+    if r.returncode != 0:
+        raise AgentEmailError(
+            f"read: could not read thread {thread_id} as {identity.account}: "
+            f"{(r.stderr or '').strip()[:200]} "
+            "(pass a THREAD id — gog reads threads, not bare message ids)"
+        )
+    try:
+        data = json.loads(r.stdout)
+    except ValueError:
+        raise AgentEmailError(f"read: unparseable gog read output for {thread_id}")
+    raw = data.get("thread", {}).get("messages", [])
+    messages = []
+    for m in raw:
+        h = _headers_of(m)
+        messages.append({
+            "message_id": m.get("id"),
+            "from": h.get("from", ""),
+            "to": h.get("to", ""),
+            "cc": h.get("cc", ""),
+            "subject": h.get("subject", ""),
+            "date": h.get("date", ""),
+            "snippet": m.get("snippet", ""),
+            "body_text": _trim_quoted_tail(_decode_plain(m.get("payload", {}) or {})),
+            "attachments": _attachments_of(m),
+        })
+    return {
+        "thread_id": thread_id,
+        "messages": messages,
+        "reply_all": _reply_all_of(raw, identity.account),
+    }
+
+
+def fetch_attachment(
+    identity: EmailIdentity,
+    message_id: str,
+    attachment_id: str,
+    *,
+    out_dir: str | None = None,
+    runner=subprocess.run,
+) -> dict:
+    """Download ONE attachment as the agent → {message_id, attachment_id, path, bytes,
+    cached, saved_to}.
+
+    Two gotchas this wraps so no agent re-fumbles them (both seen live in an ACE turn):
+      - `gog gmail attachment` has NO `-o`/`--out` flag. It writes the bytes into gog's
+        cache dir and emits JSON `{bytes, cached, path}` — read `.path`; there is no
+        base64 `data` field to decode.
+      - The subcommand is `attachment` (singular); the attachment_id comes from walking
+        the thread payload (use `read_thread`, whose `attachments[]` hands it to you).
+    With out_dir, the cached file is copied there and `saved_to` is that path. To parse an
+    xlsx/docx, use Python stdlib (zipfile + xml) — the runtime env is externally-managed,
+    so a `pip install openpyxl` fails; don't reach for it."""
+    r = runner(
+        ["gog", "gmail", "attachment", message_id, attachment_id,
+         "--account", identity.account, "--client", identity.client, "--json"],
+        capture_output=True, text=True, timeout=READ_TIMEOUT,
+    )
+    if r.returncode != 0:
+        raise AgentEmailError(
+            f"fetch-attachment: gog failed for {message_id}/{attachment_id} "
+            f"as {identity.account}: {(r.stderr or '').strip()[:200]}"
+        )
+    try:
+        data = json.loads(r.stdout)
+    except ValueError:
+        raise AgentEmailError("fetch-attachment: unparseable gog attachment output")
+    path = data.get("path")
+    if not path:
+        raise AgentEmailError(
+            f"fetch-attachment: gog returned no path (keys: {sorted(data)})"
+        )
+    saved_to = None
+    if out_dir:
+        import shutil
+        os.makedirs(out_dir, exist_ok=True)
+        saved_to = os.path.join(out_dir, os.path.basename(path))
+        shutil.copyfile(path, saved_to)
+    return {
+        "message_id": message_id,
+        "attachment_id": attachment_id,
+        "path": path,
+        "bytes": data.get("bytes"),
+        "cached": data.get("cached"),
+        "saved_to": saved_to,
+    }
+
+
 def preflight(
     identity: EmailIdentity,
     *,
@@ -908,6 +1096,42 @@ def email_mark_read(repo, agent, account, client, thread_ids):
             click.echo(f"{res['thread_id']} -> ERROR {res['error']}")
     if failed:
         sys.exit(1)
+
+
+@email_group.command("read")
+@_with_identity_options
+@click.argument("thread_id")
+def email_read(repo, agent, account, client, thread_id):
+    """Read a Gmail THREAD as the agent → normalized JSON: per message the headers, the
+    decoded plain-text `body_text` (quoted tail trimmed), and each attachment's id; plus a
+    thread-level `reply_all` recipient set (To/Cc/reply_to_message_id). Pass a THREAD id
+    (gog 404s on a bare message id). Attachment ids feed `fetch-attachment`. The fleet's
+    sanctioned inbound read path — replaces per-agent gog read + base64-decode wrappers."""
+    try:
+        ident = _identity_from_opts(repo, agent, account, client)
+        result = read_thread(ident, thread_id)
+    except AgentEmailError as e:
+        raise click.ClickException(str(e))
+    click.echo(json.dumps(result, indent=2))
+
+
+@email_group.command("fetch-attachment")
+@_with_identity_options
+@click.argument("message_id")
+@click.argument("attachment_id")
+@click.option("--out", "out_dir", type=click.Path(file_okay=False),
+              help="Copy the downloaded file into this dir (else it stays in gog's cache).")
+def email_fetch_attachment(repo, agent, account, client, message_id, attachment_id, out_dir):
+    """Download ONE attachment as the agent → JSON {path, bytes, saved_to}. There is NO -o
+    flag; the file lands in gog's cache and this returns its .path (no base64 `data`). Get
+    the attachment_id from `email read`'s attachments[]. Parse xlsx/docx with Python stdlib
+    (zipfile+xml) — the env is externally-managed, so don't pip install."""
+    try:
+        ident = _identity_from_opts(repo, agent, account, client)
+        result = fetch_attachment(ident, message_id, attachment_id, out_dir=out_dir)
+    except AgentEmailError as e:
+        raise click.ClickException(str(e))
+    click.echo(json.dumps(result, indent=2))
 
 
 @email_group.command("apply-filters")

@@ -13,10 +13,12 @@ from orchestrator.agent_email import (
     EmailIdentity,
     build_send_command,
     derive_reply_all,
+    fetch_attachment,
     mark_read,
     normalize,
     parse_send_result,
     preflight,
+    read_thread,
     resolve_email_identity,
     send,
     to_html,
@@ -625,3 +627,105 @@ def test_granted_services_none_when_account_absent_or_gog_fails():
     # gog fails -> None
     assert granted_services(ident, runner=lambda *a, **k: SimpleNamespace(
         returncode=1, stdout="", stderr="boom")) is None
+
+
+# --- inbound read + attachment (canopy email read / fetch-attachment) --------------
+
+_ACE = EmailIdentity(slug="ace", account="ace@dimagi-ai.com", client="ace")
+
+
+def _runner_ok(stdout):
+    return lambda *a, **k: SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+
+def _inbound_thread_json(parts):
+    return json.dumps({"thread": {"messages": [{
+        "id": "msg-123", "snippet": "hi",
+        "payload": {"headers": [
+            {"name": "From", "value": "Enock <e@spark.org>"},
+            {"name": "To", "value": "ace@dimagi-ai.com"},
+            {"name": "Cc", "value": "sam@dimagi-associate.com"},
+            {"name": "Subject", "value": "FCAP"},
+            {"name": "Date", "value": "Fri, 24 Jul 2026 02:47:00 -0000"},
+        ], "parts": parts},
+    }]}})
+
+
+def test_read_thread_normalizes_headers_and_finds_attachment():
+    parts = [
+        {"mimeType": "text/plain", "body": {"size": 5, "data": "aGk="}},
+        {"filename": "fcap.xlsx", "mimeType": "application/xlsx",
+         "body": {"attachmentId": "ATT_1", "size": 444892}},
+    ]
+    res = read_thread(_ACE, "thr-1", runner=_runner_ok(_inbound_thread_json(parts)))
+    assert res["thread_id"] == "thr-1"
+    m = res["messages"][0]
+    assert m["from"] == "Enock <e@spark.org>" and m["cc"] == "sam@dimagi-associate.com"
+    assert m["subject"] == "FCAP" and m["message_id"] == "msg-123"
+    assert m["attachments"] == [{"attachment_id": "ATT_1", "filename": "fcap.xlsx",
+                                 "mime_type": "application/xlsx", "size": 444892}]
+
+
+def test_read_thread_finds_nested_attachment():
+    parts = [{"mimeType": "multipart/mixed", "parts": [
+        {"filename": "deep.pdf", "mimeType": "application/pdf",
+         "body": {"attachmentId": "ATT_D", "size": 10}},
+    ]}]
+    res = read_thread(_ACE, "thr-1", runner=_runner_ok(_inbound_thread_json(parts)))
+    assert res["messages"][0]["attachments"][0]["attachment_id"] == "ATT_D"
+
+
+def test_read_thread_no_attachments_when_only_body():
+    parts = [{"mimeType": "text/plain", "body": {"size": 5, "data": "aGk="}}]
+    res = read_thread(_ACE, "thr-1", runner=_runner_ok(_inbound_thread_json(parts)))
+    assert res["messages"][0]["attachments"] == []
+
+
+def test_read_thread_raises_on_gog_failure():
+    bad = lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="404 not found")
+    with pytest.raises(AgentEmailError) as e:
+        read_thread(_ACE, "bad", runner=bad)
+    assert "THREAD id" in str(e.value)
+
+
+def test_fetch_attachment_returns_path_not_data():
+    out = _runner_ok('{"bytes": 444892, "cached": false, "path": "/cache/fcap.xlsx"}')
+    res = fetch_attachment(_ACE, "msg-123", "ATT_1", runner=out)
+    assert res["path"] == "/cache/fcap.xlsx" and res["bytes"] == 444892
+    assert res["saved_to"] is None
+
+
+def test_fetch_attachment_copies_to_out_dir(tmp_path):
+    src = tmp_path / "src.xlsx"
+    src.write_bytes(b"xlsxdata")
+    out = _runner_ok(json.dumps({"bytes": 8, "cached": True, "path": str(src)}))
+    dest = tmp_path / "landing"
+    res = fetch_attachment(_ACE, "m", "a", out_dir=str(dest), runner=out)
+    assert res["saved_to"] == str(dest / "src.xlsx")
+    assert (dest / "src.xlsx").read_bytes() == b"xlsxdata"
+
+
+def test_fetch_attachment_raises_when_no_path():
+    out = _runner_ok('{"bytes": 5, "cached": false}')
+    with pytest.raises(AgentEmailError) as e:
+        fetch_attachment(_ACE, "m", "a", runner=out)
+    assert "no path" in str(e.value)
+
+
+def test_read_thread_decodes_and_trims_body_text():
+    # base64url of: "Hello team, please review.\n\n> quoted old line\nOn Mon someone wrote:\nold"
+    b64 = ("SGVsbG8gdGVhbSwgcGxlYXNlIHJldmlldy4KCj4gcXVvdGVkIG9sZCBsaW5lCk9u"
+           "IE1vbiBzb21lb25lIHdyb3RlOgpvbGQ=")
+    parts = [{"mimeType": "text/plain", "body": {"size": 10, "data": b64}}]
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json(parts)))
+    assert res["messages"][0]["body_text"] == "Hello team, please review."
+
+
+def test_read_thread_computes_reply_all():
+    parts = [{"mimeType": "text/plain", "body": {"size": 2, "data": "aGk="}}]
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json(parts)))
+    ra = res["reply_all"]
+    # latest (only) sender is e@spark.org; self (ace@) dropped from Cc; sam@ kept
+    assert ra["to"] == "e@spark.org"
+    assert ra["cc"] == "sam@dimagi-associate.com"
+    assert ra["reply_to_message_id"] == "msg-123"
