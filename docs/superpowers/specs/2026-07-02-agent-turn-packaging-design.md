@@ -1,5 +1,7 @@
 # Agent turn packaging — end-of-turn "unit of work" record with an optional transcript link
 
+> **Status: shipped — `canopy agent turn` + `session_upload.py` live. Historical record, not current-state.**
+
 Status: **design / awaiting approval** (2026-07-02)
 Scope: canopy (framework: client + CLI + turn-skill template) + canopy-web (agents/sessions) + echo (backfill)
 

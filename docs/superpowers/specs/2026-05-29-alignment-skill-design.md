@@ -1,5 +1,7 @@
 # `canopy:alignment` — cross-system drift sweep
 
+> **Status: shipped — `canopy:alignment` live. Historical record, not current-state.**
+
 **Date:** 2026-05-29
 **Status:** Design approved, pending spec review
 

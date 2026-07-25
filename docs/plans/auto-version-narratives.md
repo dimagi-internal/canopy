@@ -1,5 +1,7 @@
 # Auto-version narratives on any change
 
+> **Status: shipped — auto-versioning entry point lives in `scripts/ddd/narrative.py`. Historical record, not current-state.**
+
 ## Rule
 
 Any change to a spec's **narrative content** automatically posts a new narrative

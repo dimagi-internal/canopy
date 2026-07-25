@@ -1,5 +1,7 @@
 # Session Review Agent Implementation Plan
 
+> **Status: shipped — session-review agent/command live in `plugins/canopy/`. Historical record, not current-state.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a session-review agent that batch-reviews recent sessions, detects stale skill versions, cross-references prior improvement attempts, and produces a ranked findings table with confidence scores.

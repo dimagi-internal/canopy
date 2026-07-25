@@ -1,5 +1,7 @@
 # Agent-Based Improve Pipeline
 
+> **Status: shipped (`a6991a6`) — `/canopy:improve` is the agent-dispatch orchestrator; pipeline stops after proposals. Historical record, not current-state.**
+
 Replace the `claude -p` subprocess implementation pipeline with native Claude Code
 agent dispatch. Analysis and proposal generation happen directly in-context.
 Implementation happens via parallel agents with worktree isolation.
