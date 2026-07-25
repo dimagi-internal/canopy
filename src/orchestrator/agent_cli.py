@@ -168,8 +168,11 @@ def agent_commands(slug):
               help="Agent slug — locate its local repo instead of --repo.")
 @click.option("--all", "all_agents", is_flag=True,
               help="Run across EVERY discovered agent in the fleet (ignores --repo/--slug).")
+@click.option("--fix", "do_fix", is_flag=True,
+              help="Attempt the safe, non-interactive repairs (provision secrets, register on "
+                   "canopy-web), then re-check. Interactive steps are still only printed.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
-def agent_doctor(repo, slug, all_agents, as_json):
+def agent_doctor(repo, slug, all_agents, do_fix, as_json):
     """Diagnose ONE agent's operational readiness on THIS machine (or the whole fleet with --all).
 
     Read-only composition of the existing point-checks: identity
@@ -182,19 +185,37 @@ def agent_doctor(repo, slug, all_agents, as_json):
     """
     from pathlib import Path
 
-    from orchestrator.agent_doctor import run_agent_doctor
+    from orchestrator.agent_doctor import heal_agent, run_agent_doctor
     from orchestrator.agent_email import AgentEmailError, find_agent_repo
 
+    def _heal_and_recheck(path, results):
+        """Apply the safe fixers, then re-run the checks so the verdict reflects reality."""
+        actions = heal_agent(path, results)
+        if not actions:
+            return results, all(r.ok for r in results), []
+        fresh, ok = run_agent_doctor(path)
+        return fresh, ok, actions
+
     if all_agents:
-        from orchestrator.fleet_align import discover_agents
+        from orchestrator.fleet_align import checkout_warnings, discover_agents
         fleet = []
+        healed = []
         for a in sorted(discover_agents(), key=lambda x: x.slug):
             results, ok = run_agent_doctor(a.path)
+            if do_fix and not ok:
+                results, ok, actions = _heal_and_recheck(a.path, results)
+                healed.extend((a.slug, *act) for act in actions)
             fleet.append((a.slug, str(a.path), results, ok))
+        # An agent whose checkout is parked off its default branch is INVISIBLE to discovery —
+        # it produces no row at all, so a fleet-wide "all ready" can be a confident green over a
+        # fleet that is quietly missing members. Surface that before the per-agent verdicts.
+        drift = checkout_warnings()
         any_fail = any(not ok for *_, ok in fleet)
         if as_json:
             click.echo(json.dumps({
                 "ok": not any_fail,
+                "discovered": len(fleet),
+                "checkout_warnings": drift,
                 "agents": [
                     {"slug": s, "repo": p, "ok": ok,
                      "checks": [r.to_dict() for r in rs]}
@@ -202,6 +223,17 @@ def agent_doctor(repo, slug, all_agents, as_json):
                 ],
             }, indent=2))
         else:
+            for slug_, label, ok_, detail in healed:
+                click.echo(f"  [{'FIXED' if ok_ else 'FAILED'}] {slug_}: {label} — {detail}")
+            if healed:
+                click.echo()
+            if drift:
+                # NOT auto-healed: a checkout can carry unpushed commits, and blindly
+                # fast-forwarding is how that work gets stranded. Report and let a human look.
+                click.echo(f"Checkout drift — {len(drift)} repo(s) may be hidden from discovery:")
+                for w in drift:
+                    click.echo(f"  ! {w}")
+                click.echo()
             for s, p, rs, ok in fleet:
                 click.echo(f"[{'OK  ' if ok else 'FAIL'}] {s}")
                 for r in rs:
@@ -209,8 +241,12 @@ def agent_doctor(repo, slug, all_agents, as_json):
                         click.echo(f"         - {r.name}: {r.detail}")
             click.echo()
             n_fail = sum(1 for *_, ok in fleet if not ok)
-            click.echo(f"{n_fail}/{len(fleet)} agent(s) have failing checks — fix above."
-                       if any_fail else f"All {len(fleet)} agent(s) ready on this machine.")
+            # Never print a bare "all ready" under a drift list — a stale or off-branch
+            # checkout is exactly how an agent goes missing from the sweep unnoticed.
+            caveat = f" ({len(drift)} checkout warning(s) above)" if drift else ""
+            click.echo(f"{n_fail}/{len(fleet)} agent(s) have failing checks — fix above.{caveat}"
+                       if any_fail
+                       else f"All {len(fleet)} discovered agent(s) ready on this machine.{caveat}")
         if any_fail:
             raise SystemExit(1)
         return
@@ -220,16 +256,25 @@ def agent_doctor(repo, slug, all_agents, as_json):
     except AgentEmailError as e:
         raise click.ClickException(str(e))
     results, overall_ok = run_agent_doctor(repo_dir)
+    actions = []
+    if do_fix and not overall_ok:
+        results, overall_ok, actions = _heal_and_recheck(repo_dir, results)
 
     if as_json:
-        click.echo(json.dumps({"ok": overall_ok, "repo": str(repo_dir),
-                               "checks": [r.to_dict() for r in results]}, indent=2))
+        click.echo(json.dumps({
+            "ok": overall_ok, "repo": str(repo_dir),
+            "fixes": [{"action": a, "ok": o, "detail": d} for a, o, d in actions],
+            "checks": [r.to_dict() for r in results]}, indent=2))
     else:
         width = max(len(r.name) for r in results)
         for r in results:
             status = "OK  " if r.ok else "FAIL"
             click.echo(f"  [{status}] {r.name.ljust(width)}  {r.detail}")
         click.echo()
+        for label, ok_, detail in actions:
+            click.echo(f"  [{'FIXED' if ok_ else 'FAILED'}] {label} — {detail}")
+        if actions:
+            click.echo()
         if overall_ok:
             click.echo(f"All checks passed — agent at {repo_dir} is ready on this machine.")
         else:
@@ -256,6 +301,22 @@ def agent_syncs(slug, limit):
     the latest sync's period_end → today, so the window state lives here."""
     try:
         _emit(_client(slug).list_syncs(limit=limit))
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
+@agent.command("sync-delete")
+@click.option("--slug", required=True)
+@click.option("--id", "sync_id", type=int, required=True, help="Sync id from `agent syncs`.")
+def agent_sync_delete(slug, sync_id):
+    """Delete ONE manager sync by id.
+
+    `agent sync` upserts per (period, source), so re-posting corrects a sync for the
+    SAME window — use this only for one filed under the WRONG period, or a stray row.
+    """
+    try:
+        _client(slug).delete_sync(sync_id)
+        _emit({"deleted": sync_id, "slug": slug})
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 

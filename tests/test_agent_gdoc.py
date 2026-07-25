@@ -12,10 +12,14 @@ from orchestrator.agent_gdoc import (
     build_replace_commands,
     build_share_command,
     build_upload_command,
+    find_child_folder,
     md_to_html,
+    parse_list_result,
+    parse_mkdir_result,
     parse_upload_result,
     publish,
     resolve_gdoc_identity,
+    resolve_subfolder,
     verify_permissions,
 )
 
@@ -57,6 +61,26 @@ def test_resolve_identity_defaults(tmp_path):
     assert ident.client == "hal"           # client defaults to slug
     assert ident.root_folder == ""         # optional
     assert ident.share_default == "domain"  # safe default
+
+
+def test_root_folder_from_env_wins_over_agent_json(tmp_path, monkeypatch):
+    # The Drive root is environment-specific and vault-resolved: the reconciler injects
+    # GDRIVE_ROOT_FOLDER from op://Agent-<Slug>/gdrive-root-folder. It must beat any
+    # legacy committed value in agent.json.
+    monkeypatch.setenv("GDRIVE_ROOT_FOLDER", "FROM_VAULT")
+    ident = resolve_gdoc_identity(_agent_repo(tmp_path, root_folder="STALE_IN_GIT"))
+    assert ident.root_folder == "FROM_VAULT"
+
+
+def test_root_folder_falls_back_to_agent_json_when_env_absent(tmp_path, monkeypatch):
+    monkeypatch.delenv("GDRIVE_ROOT_FOLDER", raising=False)
+    ident = resolve_gdoc_identity(_agent_repo(tmp_path, root_folder="LEGACY"))
+    assert ident.root_folder == "LEGACY"
+
+
+def test_root_folder_empty_when_neither_present(tmp_path, monkeypatch):
+    monkeypatch.delenv("GDRIVE_ROOT_FOLDER", raising=False)
+    assert resolve_gdoc_identity(_agent_repo(tmp_path)).root_folder == ""
 
 
 def test_resolve_identity_rejects_bad_share_default(tmp_path):
@@ -275,3 +299,87 @@ def test_publish_raises_on_upload_failure(tmp_path):
     with pytest.raises(AgentGdocError, match="upload failed"):
         publish(_ident(), name="Doc", parent="F1", md_path=str(md), share="domain",
                 runner=_FakeGog(upload_ok=False))
+
+
+# --------------------------------------------------------------------------------------
+# subfolder resolution — <agent root>/<area>[/<project>] (agent-core/deliverables.md layout)
+# --------------------------------------------------------------------------------------
+
+FOLDER = "application/vnd.google-apps.folder"
+
+
+class _FakeDrive:
+    """Fakes `gog drive ls` + `gog drive mkdir` over an in-memory {parent: [children]} tree.
+
+    Each mkdir mints a new id and appends a folder child; ls returns the parent's children.
+    Records mkdir'd (parent, name) pairs so a test can assert nothing was created."""
+
+    def __init__(self, tree=None):
+        self.tree = {k: list(v) for k, v in (tree or {}).items()}
+        self.created = []
+        self._n = 0
+
+    def __call__(self, cmd, capture_output=True, text=True, timeout=None):
+        verb = cmd[2]
+        parent = cmd[cmd.index("--parent") + 1]
+        if verb == "ls":
+            return SimpleNamespace(returncode=0, stderr="",
+                                   stdout=json.dumps({"files": self.tree.get(parent, [])}))
+        if verb == "mkdir":
+            name = cmd[3]
+            self._n += 1
+            fid = f"NEW{self._n}"
+            self.created.append((parent, name))
+            self.tree.setdefault(parent, []).append(
+                {"id": fid, "name": name, "mimeType": FOLDER})
+            return SimpleNamespace(returncode=0, stderr="",
+                                   stdout=json.dumps({"folder": {"id": fid, "name": name}}))
+        return SimpleNamespace(returncode=1, stdout="", stderr="unexpected")
+
+
+def test_parse_list_and_mkdir_shapes():
+    files = parse_list_result(json.dumps({"files": [{"id": "A", "name": "Projects",
+                                                     "mimeType": FOLDER}]}))
+    assert files[0]["id"] == "A"
+    assert parse_mkdir_result(json.dumps({"folder": {"id": "F9", "name": "x"}})) == "F9"
+    assert parse_list_result("not json") == []
+    assert parse_mkdir_result("not json") == ""
+
+
+def test_find_child_folder_matches_folder_not_file():
+    # a same-named FILE must never shadow the folder we're resolving
+    drive = _FakeDrive({"ROOT": [
+        {"id": "FILE", "name": "Projects", "mimeType": "application/pdf"},
+        {"id": "DIR", "name": "Projects", "mimeType": FOLDER},
+    ]})
+    assert find_child_folder(_ident(root_folder="ROOT"), "ROOT", "Projects", runner=drive) == "DIR"
+    assert find_child_folder(_ident(root_folder="ROOT"), "ROOT", "Missing", runner=drive) == ""
+
+
+def test_resolve_subfolder_reuses_existing_project():
+    drive = _FakeDrive({
+        "ROOT": [{"id": "PROJ", "name": "Projects", "mimeType": FOLDER}],
+        "PROJ": [{"id": "POD", "name": "Podcasting", "mimeType": FOLDER}],
+    })
+    got = resolve_subfolder(_ident(root_folder="ROOT"), project="Podcasting", runner=drive)
+    assert got == "POD"
+    assert drive.created == []  # both folders existed → nothing created
+
+
+def test_resolve_subfolder_creates_project_under_projects():
+    drive = _FakeDrive({"ROOT": [{"id": "PROJ", "name": "Projects", "mimeType": FOLDER}]})
+    got = resolve_subfolder(_ident(root_folder="ROOT"), project="New Thing", runner=drive)
+    assert got == "NEW1"
+    assert drive.created == [("PROJ", "New Thing")]  # area existed, project created
+
+
+def test_resolve_subfolder_process_state_area_no_project():
+    drive = _FakeDrive({"ROOT": []})
+    got = resolve_subfolder(_ident(root_folder="ROOT"), area="Process State", runner=drive)
+    assert got == "NEW1"
+    assert drive.created == [("ROOT", "Process State")]
+
+
+def test_resolve_subfolder_requires_root():
+    with pytest.raises(AgentGdocError, match="no Drive root resolved"):
+        resolve_subfolder(_ident(root_folder=""), project="X", runner=_FakeDrive())

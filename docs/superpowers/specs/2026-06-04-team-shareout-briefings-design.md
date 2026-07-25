@@ -1,5 +1,7 @@
 # Team Shareout Briefings — Design
 
+> **Status: shipped — `canopy shareout` + /shareouts feed live. Historical record, not current-state.**
+
 **Date:** 2026-06-04
 **Status:** Approved (design), building.
 

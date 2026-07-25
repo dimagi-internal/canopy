@@ -1387,7 +1387,7 @@ def create_agent_cmd(slug, name, mandate, mailbox, stakeholders, target, force, 
 
 
 @main.command("agent-review")
-@click.argument("agent")
+@click.argument("agent", required=False)
 @click.option("--hours", default=168, type=int, help="Look back this many hours (default: 7 days)")
 @click.option("--no-llm", is_flag=True, help="Deterministic friction signals only; skip claude -p")
 @click.option("--no-verify", is_flag=True,
@@ -1396,8 +1396,15 @@ def create_agent_cmd(slug, name, mandate, mailbox, stakeholders, target, force, 
 @click.option("--model", default="sonnet", help="Model for the synthesis pass")
 @click.option("--max-budget-usd", default=2.0, type=float,
               help="USD cap for the claude -p synthesis pass (default: 2.0)")
+@click.option("--timeout", "timeout", default=None, type=int,
+              help="Seconds to allow the claude -p synthesis pass (default: 180). On timeout "
+                   "the run returns no findings and a descriptive error — raise it for big corpora.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
-def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, as_json):
+@click.option("--qualify-file", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Validate a YAML findings file against the SP1 evidence-record schema "
+                   "(qualify_findings) and print qualified/dropped; skips the review.")
+def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, timeout,
+                     as_json, qualify_file):
     """Review an agent's recent TURNS for operating-model friction and recommend fixes.
 
     AGENT is a slug (e.g. `echo`) or a path to the agent repo. Build 2 of the agent operating
@@ -1405,10 +1412,47 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, as_
     docs/agent-operating-model.md §4 Build 2.
     """
     import json as json_mod
-    from orchestrator.agent_review import run_review, FRICTION_TYPES
+
+    if qualify_file:
+        import yaml
+        from orchestrator.agent_review import qualify_findings
+
+        try:
+            with open(qualify_file) as fh:
+                findings = yaml.safe_load(fh)
+        except (yaml.YAMLError, OSError) as e:
+            raise click.ClickException(f"could not read qualify-file: {e}")
+        if not isinstance(findings, list):
+            raise click.ClickException("qualify-file must contain a YAML list of findings")
+        qualified, dropped = qualify_findings(findings)
+        if as_json:
+            click.echo(json_mod.dumps({"qualified": qualified, "dropped": dropped}, indent=2, default=str))
+            return
+        click.echo(f"Qualified ({len(qualified)}):")
+        for f in qualified:
+            title = f.get("title", "(untitled)") if isinstance(f, dict) else "(untitled)"
+            click.echo(f"  ✓ {title}")
+        click.echo(f"Dropped ({len(dropped)}):")
+        for f in dropped:
+            if isinstance(f, dict):
+                title = f.get("title", "(untitled)")
+                reason = f.get("_drop_reason", "")
+                if "_raw" in f:
+                    click.echo(f"  ✗ {f['_raw']} — {reason}")
+                else:
+                    click.echo(f"  ✗ {title} — {reason}")
+            else:
+                click.echo(f"  ✗ {f}")
+        return
+
+    if not agent:
+        raise click.ClickException("provide an AGENT slug, or --qualify-file <path>")
+
+    from orchestrator.agent_review import run_review, FRICTION_TYPES, SYNTHESIS_TIMEOUT
 
     result = run_review(agent, hours=hours, use_llm=not no_llm, verify=not no_verify,
-                        model=model, max_budget_usd=max_budget_usd)
+                        model=model, max_budget_usd=max_budget_usd,
+                        timeout=SYNTHESIS_TIMEOUT if timeout is None else timeout)
 
     if as_json:
         click.echo(json_mod.dumps(result, indent=2, default=str))
@@ -1464,10 +1508,13 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, as_
         click.echo(f"\n⚠  SOURCE GATE DID NOT RUN — the {len(findings)} finding(s) above are "
                    f"UNVERIFIED against current origin/main.\n   reason: {verify_error}\n"
                    "   Re-verify each finding against source before acting on it.")
-    if not findings and dropped:
+    if result.get("error"):
+        # A costed synthesis pass that yielded nothing must be LOUD, not a parenthetical:
+        # a live cron read the quiet version as "no findings" and moved on.
+        click.echo(f"\n⚠  SYNTHESIS PASS DID NOT COMPLETE — this run's findings are NOT a "
+                   f"clean bill of health.\n   reason: {result['error']}")
+    elif not findings and dropped:
         pass  # all findings were already-shipped; the drop list above says so
-    elif result.get("error"):
-        click.echo(f"\n(no LLM findings — {result['error']})")
     elif not no_llm:
         click.echo("\nNo findings synthesized.")
 
@@ -1582,6 +1629,48 @@ def harvest_strip(session_path, mode):
     """Drill into ONE session: print it stripped to (your inputs + assistant outputs), tool noise removed."""
     from orchestrator.harvest import strip_session
     click.echo(strip_session(session_path, mode=mode))
+
+
+@harvest.command("intent-audit")
+@click.argument("session_path", type=click.Path(exists=True))
+@click.option("--no-llm", is_flag=True, help="Skip the LLM pass; just assemble material (no findings)")
+@click.option("--model", default="sonnet", help="Model for the intent-fidelity audit pass")
+@click.option("--max-budget-usd", default=2.0, type=float,
+              help="USD cap for the claude -p audit pass (default: 2.0)")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+def harvest_intent_audit(session_path, no_llm, model, max_budget_usd, as_json):
+    """Intent-fidelity audit for ONE session: reconstruct what Jonathan was actually going for
+    (in his own words) and judge whether the agent did that — not whether its output looks
+    reasonable in isolation. Findings are validated against the SP1 evidence-record schema
+    before they're trusted (see `orchestrator.harvest.intent_audit`)."""
+    import json as json_mod
+    from orchestrator.harvest import intent_audit
+
+    out = intent_audit(session_path, use_llm=not no_llm, model=model, max_budget_usd=max_budget_usd)
+
+    if as_json:
+        click.echo(json_mod.dumps(out, indent=2, default=str))
+        return
+
+    if out["error"]:
+        click.echo(f"⚠  intent audit did not run: {out['error']}")
+
+    qualified, dropped = out["qualified"], out["dropped"]
+    click.echo(f"Qualified ({len(qualified)}):")
+    for f in qualified:
+        title = f.get("title", "(untitled)") if isinstance(f, dict) else "(untitled)"
+        click.echo(f"  ✓ {title}")
+    click.echo(f"Dropped ({len(dropped)}):")
+    for f in dropped:
+        if isinstance(f, dict):
+            title = f.get("title", "(untitled)")
+            reason = f.get("_drop_reason", "")
+            if "_raw" in f:
+                click.echo(f"  ✗ {f['_raw']} — {reason}")
+            else:
+                click.echo(f"  ✗ {title} — {reason}")
+        else:
+            click.echo(f"  ✗ {f}")
 
 
 @harvest.command("corpus")
@@ -1807,6 +1896,23 @@ def agent_publish_work(repo, items_json):
         register(_agent_repo(repo))
         items = json_mod.load(open(items_json))
         click.echo(json_mod.dumps(push_work(_agent_repo(repo), items)))
+    except AgentWebError as e:
+        raise click.ClickException(str(e))
+
+
+@agent_publish.command("items")
+@click.option("--repo", default=None, type=click.Path(), help="Agent repo (default: cwd)")
+@click.argument("items_json", type=click.Path(exists=True))
+def agent_publish_items(repo, items_json):
+    """Post a review-items batch from a JSON file (must be a JSON list)."""
+    import json as json_mod
+    from orchestrator.agent_web import push_items, register, AgentWebError
+    try:
+        register(_agent_repo(repo))
+        items = json_mod.load(open(items_json))
+        if not isinstance(items, list):
+            raise click.ClickException("items file must be a JSON list")
+        click.echo(json_mod.dumps(push_items(_agent_repo(repo), items)))
     except AgentWebError as e:
         raise click.ClickException(str(e))
 

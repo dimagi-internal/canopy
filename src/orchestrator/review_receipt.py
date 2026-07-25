@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -75,14 +76,99 @@ def _path_for(slug: str, fp: str) -> Path:
     return receipts_root() / slug / f"{fp}.json"
 
 
+# ── Commitment scan: §6 as a gate, not a checklist line ──────────────────────
+# Why this is enforced by the tool: on 2026-07-23 a review ran, caught three real
+# body defects, recorded "clean" — and still shipped "Happy to walk anyone through
+# it live", a real-time human session the agent has no way to hold. The RULE was
+# already written (§6: name the executable mechanism or cut it). What failed was
+# applying it to every instance — a completeness problem, and completeness is
+# exactly what prose cannot enforce. So the tool enumerates the phrases and
+# refuses the receipt until each is ruled; the send stays blocked by the gate
+# rather than by whether the reviewer remembered to look at the sign-off line.
+_COMMITMENT_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"walk\s+(?:you|him|her|them|anyone|someone|folks|the\s+team)\b[^.\n]{0,40}\bthrough\b",
+     "real-time human"),
+    (r"\bhop\s+on\b|\bjump\s+on\b|\bon\s+a\s+call\b|\bset\s+up\s+a\s+call\b|\bget\s+on\s+a\s+call\b",
+     "real-time human"),
+    (r"\bin\s+person\b|\bface[-\s]to[-\s]face\b", "real-time human"),
+    (r"\bsync\s+(?:up\s+)?with\b|\bloop\s+in\b|\bcheck\s+with\b|\brun\s+it\s+by\b"
+     r"|\bcoordinate\s+with\b|\balign\s+with\b|\breach\s+out\s+to\b", "human dependency"),
+    (r"\bhappy\s+to\b|\bglad\s+to\b", "offer"),
+)
+
+
+def scan_commitments(body_text: str) -> list[dict]:
+    """Every commitment-class phrase in the body, with surrounding context.
+
+    Recall-biased on purpose: a false positive costs a two-second
+    ``grounded:re-render`` ruling; a missed offer ships to the recipients.
+    """
+    hits: list[dict] = []
+    for pattern, kind in _COMMITMENT_PATTERNS:
+        for m in re.finditer(pattern, body_text, re.IGNORECASE):
+            start, end = max(0, m.start() - 40), min(len(body_text), m.end() + 60)
+            hits.append({
+                "kind": kind,
+                "match": m.group(0).strip(),
+                "context": " ".join(body_text[start:end].split()),
+            })
+    return hits
+
+
+def unruled_commitments(body_text: str, rulings=None) -> list[dict]:
+    """Commitment hits not accounted for by a ruling.
+
+    A ruling is ``"<substring>=grounded:<mechanism>"`` or ``"<substring>=cut"``; it
+    covers any hit whose match or surrounding context contains that substring.
+    """
+    keys = [r.split("=", 1)[0].strip().lower() for r in (rulings or []) if "=" in r]
+    out: list[dict] = []
+    for hit in scan_commitments(body_text):
+        haystack = f"{hit['match']} {hit['context']}".lower()
+        if not any(k and k in haystack for k in keys):
+            out.append(hit)
+    return out
+
+
+def commitment_block_message(hits: list[dict]) -> str:
+    """The refusal: enumerate what must be ruled, and how."""
+    lines = [
+        f"REFUSED: {len(hits)} commitment-class phrase(s) in this body are unruled.",
+        "",
+        "Each asserts something you will DO. Name the executable mechanism, or cut it",
+        "(canopy:agent-turn-review §6). Rule every hit below, then re-record:",
+        "",
+    ]
+    for h in hits:
+        lines.append(f'  • [{h["kind"]}] "{h["match"]}"')
+        lines.append(f'      …{h["context"]}…')
+    lines += [
+        "",
+        '  --commitment "<substring>=grounded:<how you will actually do it>"',
+        '  --commitment "<substring>=cut"',
+        "",
+        "GROUNDED for an agent: re-render, reply on the thread, open a PR, produce a doc.",
+        "NOT grounded: anything needing you to be a person in real time — a live",
+        "walkthrough, a call, meeting someone, or syncing with a human.",
+    ]
+    return "\n".join(lines)
+
+
 def record(slug: str, body_text: str, *, caught=None, verdict: str = "clean",
-           reviewer: str = "agent-turn-review") -> Path:
+           reviewer: str = "agent-turn-review", commitments=None) -> Path:
     """Record that `body_text` was reviewed. Returns the receipt path.
 
     `caught` is the list of things the review actually found (and you then fixed). An
     empty list is a legitimate answer — but per the review skill's own §13, "none found"
     is only valid AFTER reading the draft back, not as a default.
+
+    Refuses to issue while any commitment-class phrase is unruled (see the scan above):
+    no receipt means no send, so §6 is enforced by the gate rather than remembered.
     """
+    unruled = unruled_commitments(body_text, commitments)
+    if unruled:
+        from orchestrator.agent_email import AgentEmailError  # local: circular import
+        raise AgentEmailError(commitment_block_message(unruled))
     fp = fingerprint(body_text)
     p = _path_for(slug, fp)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +179,7 @@ def record(slug: str, body_text: str, *, caught=None, verdict: str = "clean",
         "reviewer": reviewer,
         "verdict": verdict,
         "caught": list(caught or []),
+        "commitments": list(commitments or []),
     }
     p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return p

@@ -1,4 +1,10 @@
-"""Tests for hooks/post_tool_use.py."""
+"""Tests for the canopy PostToolUse capture hook.
+
+The canonical implementation is the PLUGIN-MANAGED copy at
+plugins/canopy/hooks/post_tool_use.py (registered via hooks.json /
+${CLAUDE_PLUGIN_ROOT}); hooks/post_tool_use.py at the repo root is a
+legacy-compat shim that forwards to it.
+"""
 
 import importlib
 import io
@@ -13,7 +19,9 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
-HOOK_PATH = Path(__file__).parent.parent / "hooks" / "post_tool_use.py"
+HOOK_PATH = (
+    Path(__file__).parent.parent / "plugins" / "canopy" / "hooks" / "post_tool_use.py"
+)
 
 
 def _load_hook():
@@ -25,11 +33,17 @@ def _load_hook():
 
 
 def _run_main(hook_module, stdin_data: str, log_file: Path, env: dict | None = None):
-    """Run hook_module.main() with mocked stdin and LOG_FILE."""
+    """Run hook_module.main() with mocked stdin and LOG_FILE.
+
+    CANOPY_CAPTURE_LEGACY_SHIM=1 bypasses the defer-to-legacy-registration
+    check so tests exercise capture regardless of this machine's
+    ~/.claude/settings.json (individual tests may override it).
+    """
+    merged_env = {"CANOPY_CAPTURE_LEGACY_SHIM": "1", **(env or {})}
     with (
         mock.patch.object(hook_module, "LOG_FILE", log_file),
         mock.patch("sys.stdin", io.StringIO(stdin_data)),
-        mock.patch.dict("os.environ", env or {}, clear=False),
+        mock.patch.dict("os.environ", merged_env, clear=False),
     ):
         hook_module.main()
 
@@ -160,7 +174,9 @@ class TestMainMcpToolCall:
             mock.patch.object(hook, "LOG_FILE", log),
             mock.patch.object(hook, "_PLUGINS_FILE", plugins_file),
             mock.patch("sys.stdin", io.StringIO(data)),
-            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.dict(
+                "os.environ", {"CANOPY_CAPTURE_LEGACY_SHIM": "1"}, clear=True
+            ),
         ):
             hook.main()
         mcp_entry = [e for e in _read_log(log) if "server" in e][0]
@@ -558,3 +574,71 @@ class TestSkillInvokedEvent:
         entries = _read_log(log)
         skill_event = [e for e in entries if e.get("event") == "skill_invoked"][0]
         assert skill_event["session_id"] == "sess-123"
+
+
+# ---------------------------------------------------------------------------
+# Defer-to-legacy-registration guard
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyDefer:
+    def _settings_with_legacy(self, tmp_path, hook_script: Path | None):
+        """Write a settings.json carrying a legacy PostToolUse registration."""
+        cmd_path = hook_script if hook_script else tmp_path / "gone" / "post_tool_use.py"
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({
+            "hooks": {
+                "PostToolUse": [
+                    {"hooks": [{"command": f"python3 {cmd_path}"}]}
+                ]
+            }
+        }))
+        return settings
+
+    def test_defers_when_legacy_entry_points_at_existing_file(self, tmp_path):
+        hook = _load_hook()
+        log = tmp_path / "session-log.jsonl"
+        legacy_script = tmp_path / "post_tool_use.py"
+        legacy_script.write_text("# legacy")
+        settings = self._settings_with_legacy(tmp_path, legacy_script)
+        data = json.dumps({
+            "tool_name": "mcp__srv__tool",
+            "session_id": "s1",
+            "tool_input": {},
+        })
+        fake_home = tmp_path
+        (fake_home / ".claude").mkdir()
+        (fake_home / ".claude" / "settings.json").write_text(settings.read_text())
+        with (
+            mock.patch.object(hook, "LOG_FILE", log),
+            mock.patch("sys.stdin", io.StringIO(data)),
+            mock.patch.dict("os.environ", {"CANOPY_CAPTURE_LEGACY_SHIM": ""}, clear=False),
+            mock.patch.object(hook.Path, "home", staticmethod(lambda: fake_home)),
+        ):
+            hook.main()
+        assert _read_log(log) == []
+
+    def test_captures_when_legacy_entry_is_stale(self, tmp_path):
+        """A legacy entry whose script file was deleted must NOT block capture."""
+        hook = _load_hook()
+        log = tmp_path / "session-log.jsonl"
+        settings_content = self._settings_with_legacy(tmp_path, None).read_text()
+        fake_home = tmp_path
+        (fake_home / ".claude").mkdir()
+        (fake_home / ".claude" / "settings.json").write_text(settings_content)
+        plugins = tmp_path / "no-plugins.json"
+        data = json.dumps({
+            "tool_name": "mcp__srv__tool",
+            "session_id": "s1",
+            "tool_input": {},
+        })
+        with (
+            mock.patch.object(hook, "LOG_FILE", log),
+            mock.patch.object(hook, "_PLUGINS_FILE", plugins),
+            mock.patch("sys.stdin", io.StringIO(data)),
+            mock.patch.dict("os.environ", {"CANOPY_CAPTURE_LEGACY_SHIM": ""}, clear=False),
+            mock.patch.object(hook.Path, "home", staticmethod(lambda: fake_home)),
+        ):
+            hook.main()
+        entries = _read_log(log)
+        assert any(e.get("tool") == "tool" for e in entries)

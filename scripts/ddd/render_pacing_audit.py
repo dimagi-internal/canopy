@@ -142,8 +142,11 @@ def audit(video: str, report_path: str | None = None, label: str = "") -> dict:
     silent_motion = _subtract(sil, frz)       # silent AND moving
     speech = round(dur - _total(sil), 1)
 
-    # Intro title-card and outro card are static + (often) silent BY DESIGN — a
-    # frozen+silent region touching the very start or end is an edge card, not dead-air.
+    # Outro card is static + silent BY DESIGN; the intro title card is static but
+    # NARRATED (a `role: overview` scene's VO is spoken over the held card — see
+    # snippets.build_explainer_spec), or speaks the tagline when there is none. A
+    # frozen region touching the very start or end is an edge card, not dead-air —
+    # a SILENT intro would show up as start-edge dead-air (a missing overview VO).
     is_edge = lambda s, e: s <= 1.0 or e >= dur - 0.6
     flags = []
     for s, e in dead_air:

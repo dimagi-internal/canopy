@@ -1,5 +1,7 @@
 # Test Audit Skill
 
+> **Status: shipped — `canopy test-audit` + `/canopy:test-audit` live. Historical record, not current-state.**
+
 A canopy skill that audits a project's test suite, scores each test on
 "is this pulling its weight," and (by default) opens a PR that prunes or
 skips the dumb ones.

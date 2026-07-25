@@ -3,11 +3,12 @@ name: ddd-ace-render
 description: >
   Use when you want a DDD narrative turned into a narrated
   connect-ddd-walkthrough video on demand — record a fresh master clip,
-  emit the explainer spec, hand off to the local ace renderer, and attach the
-  video to the narrative's current version on canopy-web. This is the
-  standalone "render this narrative as an ace video" command; it is NOT part
-  of the automatic DDD loop. The upload is on by default; pass --no-upload to
-  render locally without publishing.
+  emit the explainer spec, hand off to the local ace renderer, attach the
+  video to the narrative's current version on canopy-web, and refresh the run
+  package so the shareable link carries the artifacts and product links, not
+  just the video. This is the standalone "render this narrative as an ace
+  video" command; it is NOT part of the automatic DDD loop. The upload is on by
+  default; pass --no-upload to render locally without publishing.
 ---
 
 # DDD → ace render (connect-ddd-walkthrough)
@@ -39,10 +40,17 @@ SLUG="<narrative-slug>"                 # e.g. verified-monitoring
 SPEC="docs/walkthroughs/$SLUG.yaml"     # in the current project repo
 [ -f "$SPEC" ] || { echo "no spec at $SPEC — run from the project repo that owns the narrative"; exit 1; }
 
-# canopy checkout (dev first, then marketplace clone)
-for C in ~/emdash-projects/canopy ~/.claude/plugins/marketplaces/canopy; do
-  [ -f "$C/scripts/walkthrough/record_video.py" ] && CANOPY="$C" && break
+# canopy runtime — bundled with the installed plugin, resolved by the shared resolver
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+
+# video-engine — the ONE documented dev-checkout exception: Remotion's
+# node_modules is too heavy to bundle per plugin version, so local render
+# needs a checkout where `npm ci` ran (/canopy:setup step 6).
+for V in ~/emdash-projects/canopy ~/emdash/repositories/canopy; do
+  [ -d "$V/video-engine/node_modules" ] && VE="$V/video-engine" && break
 done
+[ -n "${VE:-}" ] || { echo "ERROR: no canopy checkout with video-engine/node_modules — run /canopy:setup on a dev checkout first"; exit 1; }
 WORK="$(mktemp -d)"
 ```
 
@@ -51,7 +59,7 @@ WORK="$(mktemp -d)"
 live cookies first for session-auth specs:
 ```bash
 $B cookies > "$WORK/cookies.json"          # $B = the browse binary (see /canopy:walkthrough)
-python3 "$CANOPY/scripts/walkthrough/record_video.py" \
+uv run --project "$CANOPY" python "$CANOPY/scripts/walkthrough/record_video.py" \
   --spec "$SPEC" \
   --output   "$WORK/master.mp4" \
   --report   "$WORK/report.json" \
@@ -63,7 +71,7 @@ python3 "$CANOPY/scripts/walkthrough/record_video.py" \
 **2. Emit the connect-ddd-walkthrough spec** from the fresh capture (no
 run-state needed — slug comes from the spec's `name`):
 ```bash
-( cd "$CANOPY" && python3 -m scripts.ddd.snippets explainer-from-capture \
+( cd "$CANOPY" && uv run python -m scripts.ddd.snippets explainer-from-capture \
     "$(cd "$OLDPWD" && pwd)/$SPEC" "$WORK/report.json" \
     --clip "$WORK/master.mp4" --out "$WORK/explainer_spec.yaml" )
 ```
@@ -75,7 +83,7 @@ This writes `explainer_spec.yaml`: per-beat clip ranges from the report,
 container) with `ELEVENLABS_API_KEY` in the environment:
 ```bash
 ELEVENLABS_API_KEY="$(…fetch the key…)" \
-python3 "$CANOPY/video-engine/render_locally.py" \
+python3 "$VE/render_locally.py" \
   --local-spec "$WORK/explainer_spec.yaml" \
   --master     "$WORK/master.mp4" \
   --final            # omit for a faster --draft preview
@@ -105,13 +113,49 @@ can't leave a stale video on a newer version. Refuses if canopy-web has no
 narrative version for the slug — post the narrative through the narrative-review
 gate first.
 
+**6. Refresh the run package — this is the link you hand a human (skipped by
+`--no-upload`).** Step 5 attaches the video to the *narrative version*; it does
+NOT touch `/ddd/<slug>/<run_id>`. Stop here and the newest cut is shareable only
+as a loose `/walkthrough/<uuid>?t=…` artifact while the run package still shows
+the previous cut — the mis-roled loose link `ddd-upload` explicitly warns
+against, reached by default rather than by mistake. So stage this render into a
+run dir and publish it as a package:
+```bash
+RUN_ID="$SLUG-$(date +%Y-%m-%d)-001"            # bump the counter if it exists
+OUT="<video-engine/programs/$SLUG/runs/<run>/output.mp4>"   # from step 3
+DDD_DIR="$(git rev-parse --show-toplevel)/.canopy/ddd"      # project repo, not canopy
+RUN_DIR="$DDD_DIR/runs/$RUN_ID"; mkdir -p "$RUN_DIR"
+
+cp "$SPEC"                "$RUN_DIR/unified_spec.yaml"   # the spec you just rendered
+cp "$WORK/manifest.json"  "$RUN_DIR/walkthrough-run-data.json"  # upload needs it → deck + product links
+cp "$WORK/report.json"    "$RUN_DIR/run-report.json"
+cp "$OUT"                 "$RUN_DIR/hero_narrated.mp4"
+# why_brief.yaml: copy the narrative's existing one (a prior run dir, or docs/walkthroughs/<slug>.why_brief.yaml)
+# run_state.yaml: schema_version/run_id/narrative_slug/phase: converged/scenes_run (from the manifest)/scene_filter: null
+
+export DDD_DIR
+( cd "$CANOPY" && python3 -m scripts.ddd.narrative sync "$(realpath "$RUN_DIR/unified_spec.yaml")" "$RUN_ID" )
+( cd "$CANOPY" && python3 -m scripts.ddd.upload "$RUN_ID" --video "$(realpath "$RUN_DIR/hero_narrated.mp4")" --release-approved )
+```
+`narrative sync` auto-versions and stamps the run, so the package's narrative
+slot matches the narration you just rendered. Pass `--release-approved` only
+when a human asked for the shareable link (that ask *is* the external_release
+sign-off); otherwise run it bare and resolve the gate in the UI.
+
+**Report the package URL**, not the loose artifact URL: the public form is
+`<base>/canopy/ddd-release/<slug>/<run_id>?t=<share_token>` — read `share_token`
+from `GET <base>/canopy/api/ddd/release/<run_id>/` (the package assembles the
+hero video, docs, narrative, and every scene's product links; the loose
+`/walkthrough/` link has none of that).
+
 ## Common mistakes
 - **Wrong cwd** — run from the project repo that owns `docs/walkthroughs/<slug>.yaml`; the recorder's `setup:` reseeds there. The canopy emit is invoked from the canopy checkout with absolute paths (the snippet above handles the `cd`).
 - **Stale narration** — the VO is `scene.narrative` in the live spec; edit it there (or via canopy-web → `narrative pull`) before rendering.
 - **Skipping the fresh capture** — this command records new footage on purpose; don't point it at an old clip if the dashboard/data changed.
+- **Handing over the loose `/walkthrough/` link** — that's the video alone. Do step 6 and share the `/ddd/<slug>/<run_id>` package (video + docs + narrative + product links). Skipping it is what makes a stakeholder ask "where are the artifacts?" after a re-render.
 
 ## Relationship to other commands
 - `/canopy:ddd-run` — the auto loop (render + judge); this is the on-demand narrated-video render, separate from it.
 - `video-engine/render_locally.py` — canopy's own general Remotion renderer this calls (Mode A: local spec + master).
 - `/ace:video-render-local` — ace-web's server/Drive-publish render path (Mode B); use it when publishing to Drive/labs, not for the local DDD render.
-- `/canopy:ddd-upload` — publishes a converged run; unaffected (keeps using its own hero video).
+- `/canopy:ddd-upload` — publishes a run package; step 6 calls it directly so an on-demand re-render ends in a shareable package, not a loose artifact.

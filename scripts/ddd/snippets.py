@@ -451,6 +451,10 @@ def build_snippets(
                 # (concept_claim) is kept as the design claim / caption fallback.
                 "narration": narration,
                 "sentence": sentence,
+                # `role: overview` marks the goal-setting opener — the explainer
+                # builder absorbs it into the narrated intro title card rather
+                # than replaying it as a body scene.
+                "role": (spec_scene.get("role") or "").strip() or None,
                 "tags": tags,
                 "provenance": spec_scene.get("provenance"),
                 "source_clip": source_clip_local,
@@ -536,12 +540,34 @@ def build_explainer_spec(
 
     beats: list[dict[str, Any]] = [{"id": "title", "kind": "intro_title", "seconds": 4}]
     walkthrough: dict[str, Any] = {}
-    # The spoken intro is the tagline (a real headline) — NOT "<slug>: …",
-    # which read the raw narrative slug aloud. The title CARD still shows the
-    # program name (humanized) above the tagline subtitle (see TitleCard).
-    by_beat: dict[str, str] = {"title": tagline or _humanize_slug(name)}
+    # The opening title card's VOICEOVER. When the narrative declares a
+    # `role: overview` scene (the goal-setting opener), THAT scene's narrative is
+    # the intro voiceover — spoken over the held title card — and the scene is
+    # absorbed into the title beat rather than replayed as a body scene (its
+    # visual is the same product screen the first demo scene already shows). The
+    # title CARD text stays the `tagline` (a tight headline; see TitleCard).
+    # Without an overview scene, the tagline itself is spoken (a real headline —
+    # NOT "<slug>: …", which read the raw narrative slug aloud).
+    #
+    # This is the fix for the opening-slide mismatch: the card used to narrate
+    # the raw `tagline` while the overview replayed as a separate body scene, so
+    # the video opened on a stale headline instead of the narrated overview.
+    overview_id: str | None = None
+    if any((s.get("role") or "") != "overview" for s in snippets):
+        # never absorb the ONLY scene — that would leave a body-less title card
+        ov = next((s for s in snippets if (s.get("role") or "") == "overview"), None)
+        if ov and (ov.get("narration") or "").strip():
+            overview_id = ov.get("id")
+    intro_vo = ""
+    if overview_id is not None:
+        intro_vo = (
+            next(s for s in snippets if s.get("id") == overview_id).get("narration") or ""
+        ).strip()
+    by_beat: dict[str, str] = {"title": intro_vo or tagline or _humanize_slug(name)}
 
     for sn in snippets:
+        if sn.get("id") == overview_id:
+            continue  # absorbed into the narrated intro title beat above
         bid = f"s{sn['scene_index']}"
         beats.append(
             {"id": bid, "kind": "body_walkthrough", "seconds": round(sn["duration_seconds"], 1)}

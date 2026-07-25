@@ -6,7 +6,8 @@ description: Audit a pytest or vitest test suite. Build a corpus, judge each tes
 ## Preamble (run first)
 
 ```bash
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])" 2>/dev/null)"
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -37,8 +38,13 @@ don't rely on it without checking the corpus.)
 ### 2. Build the corpus
 
 ```bash
-uv run --project ~/emdash-projects/canopy canopy test-audit collect .
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy test-audit collect .
 ```
+
+(`uv run --project` does not change the working directory — `collect .` still
+operates on the repo you're standing in.)
 
 Add `--reruns 2` if the user mentions flaky tests. Add `--no-run` to skip
 the test runner (faster, but misses flakiness and env-fragile tests — only
@@ -56,7 +62,9 @@ layout. If the project has top-level dirs containing source code that aren't
 in the defaults, pass them explicitly:
 
 ```bash
-uv run --project ~/emdash-projects/canopy canopy test-audit collect . \
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy test-audit collect . \
   --source-roots=lib,mcp,scripts
 ```
 
@@ -394,7 +402,9 @@ Keep this terse. The user has indicated they won't read carefully.
 By default, open a PR:
 
 ```bash
-uv run --project ~/emdash-projects/canopy canopy test-audit apply <stamp_dir>
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy test-audit apply <stamp_dir>
 ```
 
 Add `--aggressive` only if the user explicitly asks (this also applies

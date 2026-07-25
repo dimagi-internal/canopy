@@ -1,5 +1,7 @@
 # DDD ↔ Walkthrough: one render engine, one manifest
 
+> **Status: shipped — historical record, not current-state.**
+
 **Date:** 2026-06-14
 **Status:** Design approved (scope: "everything" + unify both renderers); ready for implementation plan.
 **Repo:** `canopy` (`~/emdash-projects/canopy`). No labs changes.

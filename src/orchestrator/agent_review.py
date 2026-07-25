@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -28,6 +29,27 @@ from orchestrator.transcripts import (
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 
+# Wall-clock budgets for the two claude -p passes. Named constants, not magic numbers
+# buried at the call site, so the CLI can expose them and tests can assert the default.
+SYNTHESIS_TIMEOUT = 180   # `run_review`'s synthesis pass
+VERIFY_TIMEOUT = 300      # `_call_verify_llm`'s source-verification pass
+
+
+def _error_text(value: object, fallback: str) -> str:
+    """Every `error` this module returns is a NON-EMPTY, human-readable STRING.
+
+    A live cron run hit a synthesis-pass failure whose `error` came back a bare,
+    non-string value; the consumer did `len(error)` and died with
+    `TypeError: object of type 'int' has no len()` — a ~$2 pass yielded nothing and
+    the failure was never flagged. Consumers must be able to treat `error` as text
+    unconditionally, so every assignment funnels through here.
+    """
+    if isinstance(value, str) and value.strip():
+        return value
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return fallback
+    return f"{fallback} ({value!r})"
+
 # Operating-model friction taxonomy. Findings get tagged with one of these.
 FRICTION_TYPES = (
     "human_correction",  # the human had to correct/override the agent (HIGHEST signal — read these first)
@@ -38,6 +60,8 @@ FRICTION_TYPES = (
     "skill_capture",   # a multi-step manual pattern that should be a skill
     "auth_friction",   # auth/credential/setup blockers
     "skill_collision", # loaded ANOTHER plugin's same-named skill (e.g. ace:turn) over its own
+    "over_claim",      # the agent asserted a completion verb with no tool_use to back it in-turn
+    "verify_late",     # a completion claim whose only substantiating tool_use lands in a LATER turn
 )
 
 # Human-correction mining — the lens agent-review was BLIND to (echo's last turn taught us: it
@@ -77,6 +101,72 @@ def human_corrections(entries: list[dict]) -> list[dict]:
         if kinds:
             out.append({"kinds": sorted(set(kinds)), "quote": s.replace("\n", " ")[:240]})
     return out
+
+
+# Over-claim mining — a completion verb in the agent's OWN text ("verified", "shipped", "done", …)
+# asserted with no tool_use in the SAME assistant message to back it. Mirrors human_corrections:
+# walk the RAW transcript entries (not the flattened extract_assistant_text/extract_tool_calls
+# corpus friction_signals otherwise uses), because "same turn" is only visible at the per-entry
+# granularity — an assistant entry's message.content list interleaves its text and tool_use blocks.
+_CLAIM_RX = re.compile(r"\b(shipped|merged|verified|done|fixed|applied|confirmed)\b", re.IGNORECASE)
+
+
+def _is_genuine_human_message(entry: dict) -> bool:
+    """True iff `entry` is a human-authored user message, not a tool_result. Mirrors
+    extract_user_messages: a genuine human message has message.content as a plain str;
+    a tool_result comes back as a `user`-role entry whose content is a list of blocks."""
+    if entry.get("type") != "user":
+        return False
+    msg = entry.get("message", {})
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content", "")
+    return isinstance(content, str) and bool(content)
+
+
+def overclaim_signals(entries: list[dict]) -> list[dict]:
+    """Flag assistant completion-claims not substantiated by a tool_use block ANYWHERE in the
+    current TURN. Returns [{type: 'over_claim', evidence, turn}].
+
+    A "turn" = the run of entries since the last GENUINE human message. Claude Code routinely
+    splits work across entries — an assistant tool_use entry, then a user tool_result entry,
+    then a SEPARATE assistant entry with the wrap-up text ("Done and verified...") — so the
+    substantiation window must span entries, not stop at the one carrying the claim text.
+    Tool RESULTS come back as `user`-role entries (content = tool_result blocks); those are NOT
+    genuine human messages and must NOT reset the turn — only a real human text message does
+    (see _is_genuine_human_message, which mirrors extract_user_messages/human_corrections).
+
+    `verify_late` (a completion claim whose substantiating tool_use appears only in a LATER
+    turn) stays registered in FRICTION_TYPES but is NOT detected here yet: reliably linking a
+    specific claim to a specific later tool call needs more than this deterministic regex pass
+    can promise without false positives, so it's a follow-up enrichment rather than something to
+    ship half-right. `over_claim` — current-turn, unambiguous — ships solidly now.
+    """
+    out: list[dict] = []
+    tool_use_seen_this_turn = False
+    for i, entry in enumerate(entries):
+        if _is_genuine_human_message(entry):
+            tool_use_seen_this_turn = False
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        msg = entry.get("message", {})
+        content = msg.get("content", [])
+        if not isinstance(content, list):
+            continue
+        has_tool_use = any(
+            isinstance(block, dict) and block.get("type") == "tool_use" for block in content
+        )
+        text = " ".join(
+            block.get("text", "") for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ).strip()
+        if text and _CLAIM_RX.search(text) and not (tool_use_seen_this_turn or has_tool_use):
+            out.append({"type": "over_claim", "evidence": text[:200], "turn": i})
+        if has_tool_use:
+            tool_use_seen_this_turn = True
+    return out
+
 
 # Expected turn steps for an operating-model agent, with markers that evidence each ran.
 # A step with no marker present in a turn is a candidate `checklist_gap`.
@@ -291,6 +381,7 @@ def friction_signals(
         "path": str(transcript_path),
         "n_tool_calls": len(calls),
         "human_corrections": human_corrections(entries),   # HIGHEST-signal — read first
+        "overclaims": overclaim_signals(entries),
         "failures": failures,
         "gating_blocks": gating_blocks,
         "auth_friction": auth_hits,
@@ -321,8 +412,14 @@ def build_review_prompt(repo: Path, corpus: list[dict]) -> str:
         "Produce a YAML list of findings. Each item:\n"
         "  - title: short imperative\n"
         f"  - friction_type: one of {list(FRICTION_TYPES)}\n"
-        "  - evidence: what in the corpus supports it\n"
-        "  - fix_kind: one of [skill_edit, hook_rule, claude_update, channel_fix, new_skill]\n"
+        "  - evidence: a RECORD (not free text) proving the finding is grounded:\n"
+        "      source_ref: the file:line / PR / session you actually consulted\n"
+        "      was_read: true    # you OPENED it — not grepped a proxy for it\n"
+        "      already_fixed_check: {ran: true, result: '<not-fixed on origin/main @sha | fixed by ...>'}\n"
+        "      confidence: high|medium|low\n"
+        "      confidence_basis: one sentence justifying the level from the evidence above\n"
+        "  - A finding whose evidence is not a complete record WILL BE DROPPED. Do not emit it.\n"
+        "  - fix_kind: one of [skill_edit, hook_rule, schema_validator, claude_update, channel_fix, new_skill]\n"
         "  - target: the file/path in the agent repo the fix touches\n"
         "  - recommendation: the concrete change to make\n"
         "  - confidence: high|medium|low\n"
@@ -339,6 +436,8 @@ def build_review_prompt(repo: Path, corpus: list[dict]) -> str:
         "so the agent never silently runs a sibling's procedure.\n"
         "- prefer hook_rule for any 'never do X' invariant; prefer new_skill/skill_edit when a manual "
         "multi-step pattern repeats; only include findings with real evidence in the corpus.\n"
+        "- an invariant ('never/always do X') finding MUST use hook_rule or schema_validator — a "
+        "skill_edit/claude_update for an invariant WILL BE DROPPED.\n"
         "Output ONLY the YAML list.\n"
     )
 
@@ -353,6 +452,93 @@ def parse_findings(output: str) -> list[dict]:
     except yaml.YAMLError:
         return []
     return result if isinstance(result, list) else []
+
+
+_CONF_LEVELS = {"high", "medium", "low"}
+
+# Structural-fix-only rail: an "invariant" finding (a hard never/always rule, or one
+# born from a human safety_override correction) must ship as a structural fix
+# (hook_rule / schema_validator) — a skill_edit/claude_update is prose, and prose
+# relies on the model choosing to comply, which is exactly what an invariant can't
+# rely on (see CLAUDE.md's "Invariants are hooks, not memory"). qualify_findings
+# drops any invariant finding that isn't structural, right after the evidence check.
+_STRUCTURAL_FIX_KINDS = {"hook_rule", "schema_validator"}
+_INVARIANT_RX = re.compile(r"\b(never|always|must not|do not)\b", re.IGNORECASE)
+
+
+def _is_invariant(finding: dict) -> bool:
+    """True if a finding describes a hard invariant rather than an ordinary
+    improvement — either it was mined from a human safety_override correction, or
+    its title/recommendation uses never/always/must-not/do-not phrasing."""
+    if finding.get("friction_type") == "safety_override":
+        return True
+    blob = f"{finding.get('title') or ''} {finding.get('recommendation') or ''}"
+    return bool(_INVARIANT_RX.search(blob))
+
+
+def _valid_evidence(ev: object) -> tuple[bool, str]:
+    """A finding's evidence must be a machine-checkable record, not free text.
+    Returns (ok, reason). Reason is '' when ok."""
+    if not isinstance(ev, dict):
+        return False, "evidence must be a record (dict), not free text"
+    if not str(ev.get("source_ref") or "").strip():
+        return False, "evidence.source_ref missing/empty (what source was consulted)"
+    if ev.get("was_read") is not True:
+        return False, "evidence.was_read must be true (the source was opened, not proxied)"
+    afc = ev.get("already_fixed_check")
+    if (
+        not isinstance(afc, dict)
+        or not isinstance(afc.get("ran"), bool)
+        or not str(afc.get("result") or "").strip()
+    ):
+        return False, "evidence.already_fixed_check must be {ran: bool, result: <non-empty>}"
+    conf = ev.get("confidence")
+    if not isinstance(conf, str) or conf not in _CONF_LEVELS:
+        return False, f"evidence.confidence must be one of {sorted(_CONF_LEVELS)}"
+    if not str(ev.get("confidence_basis") or "").strip():
+        return False, "evidence.confidence_basis missing/empty (justify the confidence)"
+    return True, ""
+
+
+def qualify_findings(findings: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split findings into (qualified, dropped). A finding with no valid evidence
+    record is DROPPED, annotated with `_drop_reason`. Fail-loud: the caller logs
+    each drop. This is the enforcement — a finding without verified evidence cannot
+    survive to be published or dispatched."""
+    qualified: list[dict] = []
+    dropped: list[dict] = []
+    for f in findings:
+        if not isinstance(f, dict):
+            dropped.append({"_drop_reason": "finding is not a record (dict)", "_raw": f})
+            continue
+        ok, reason = _valid_evidence(f.get("evidence"))
+        if not ok:
+            f["_drop_reason"] = reason
+            dropped.append(f)
+            continue
+        # Structural-fix-only rail: an evidence-valid invariant finding still gets
+        # dropped if its fix isn't structural (hook_rule/schema_validator) — a
+        # skill_edit/claude_update can't enforce a "never/always" rule reliably.
+        fk = f.get("fix_kind")
+        if _is_invariant(f) and (not isinstance(fk, str) or fk not in _STRUCTURAL_FIX_KINDS):
+            f["_drop_reason"] = (
+                "invariant finding must ship as a structural fix "
+                f"(hook_rule/schema_validator), not {f.get('fix_kind')}"
+            )
+            dropped.append(f)
+            continue
+        qualified.append(f)
+    return qualified, dropped
+
+
+def _qualify_and_log(findings: list[dict], label: str) -> list[dict]:
+    """Run findings through qualify_findings and log every drop to stderr (fail-loud,
+    not fail-silent) before returning only the qualified ones."""
+    qualified, dropped = qualify_findings(findings)
+    for d in dropped:
+        print(f"[agent-review:{label}] dropped finding "
+              f"{d.get('title')!r}: {d.get('_drop_reason')}", file=sys.stderr)
+    return qualified
 
 
 # --- Source-verification gate (enforced) -------------------------------------
@@ -446,7 +632,7 @@ def build_verify_prompt(repo: Path, findings: list[dict], corpus: dict) -> str:
 
 
 def _call_verify_llm(prompt: str, model: str, max_budget_usd: float,
-                     timeout: int = 300) -> tuple[list[dict] | None, str | None]:
+                     timeout: int = VERIFY_TIMEOUT) -> tuple[list[dict] | None, str | None]:
     """Run the verdict pass. Returns (verdicts, error). `error` is None on success and
     a human-readable reason on any failure — a silent None-on-fail gate is worse than
     no gate (it presents UNVERIFIED findings as if they'd been checked), so every
@@ -534,13 +720,29 @@ def run_review(
     model: str = "sonnet",
     max_budget_usd: float = 2.0,
     projects_dir: Path = CLAUDE_PROJECTS,
+    timeout: int = SYNTHESIS_TIMEOUT,
 ) -> dict:
     """Review an agent's recent turns. Returns {agent, repo, turns, signals, findings,
     dropped_findings, error?}. `verify` (default on) runs the source-verification gate
-    over the synthesized findings and drops the ones already shipped to origin/main."""
+    over the synthesized findings and drops the ones already shipped to origin/main.
+    `timeout` caps the claude -p synthesis pass (seconds).
+
+    CONTRACT — the result is ALWAYS well-formed, on every path including failure:
+    `findings` and `dropped_findings` are lists (empty on failure, never absent),
+    `turns` is an int, and `error`, when present, is a non-empty descriptive STRING.
+    Consumers may `len()` / substring-match `error` without type-checking it first."""
     repo = resolve_agent_repo(slug_or_path)
     if not repo or not repo.exists():
-        return {"error": f"could not resolve agent repo for {slug_or_path!r}"}
+        # Well-formed even here: a bare {"error": ...} makes consumers KeyError on findings.
+        return {
+            "agent": str(slug_or_path),
+            "repo": "",
+            "turns": 0,
+            "signals": [],
+            "findings": [],
+            "dropped_findings": [],
+            "error": f"could not resolve agent repo for {slug_or_path!r}",
+        }
 
     transcripts = find_turn_transcripts(repo, hours=hours, projects_dir=projects_dir)
     skills_dir = repo / "skills"
@@ -564,13 +766,32 @@ def run_review(
         proc = subprocess.run(
             ["claude", "-p", prompt, "--model", model,
              "--max-budget-usd", str(max_budget_usd), "--no-session-persistence"],
-            capture_output=True, text=True, timeout=180,
+            capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        result["error"] = "claude -p timed out"
+        result["error"] = _error_text(
+            f"agent-review synthesis pass timed out after {timeout}s",
+            "agent-review synthesis pass timed out",
+        )
+        result["findings"] = []
+        result["dropped_findings"] = []
+        return result
+    except (subprocess.SubprocessError, OSError) as exc:
+        # e.g. `claude` not on PATH under cron. Previously this propagated out of
+        # run_review and took the whole caller down instead of reporting a finding-less run.
+        result["error"] = _error_text(
+            f"agent-review synthesis pass subprocess error: {exc}",
+            "agent-review synthesis pass subprocess error",
+        )
+        result["findings"] = []
+        result["dropped_findings"] = []
         return result
     if proc.returncode == 0:
         findings = parse_findings(proc.stdout)
+        # ENFORCED evidence gate: drop findings whose evidence isn't a complete, valid
+        # record (source_ref/was_read/already_fixed_check/confidence/confidence_basis)
+        # BEFORE the source-verification gate below ever sees them.
+        findings = _qualify_and_log(findings, label=repo.name)
         # ENFORCED source gate: drop findings a later commit already shipped, BEFORE
         # they're returned. Fails open (keeps everything) if it can't verify.
         if verify and findings:
@@ -580,12 +801,21 @@ def run_review(
             result["findings"] = kept
             result["dropped_findings"] = dropped
             if verify_error:
-                result["verification_error"] = verify_error
+                result["verification_error"] = _error_text(
+                    verify_error, "source-verification gate failed for an unstated reason")
         else:
             result["findings"] = findings
     else:
         # claude -p prints some errors (e.g. "Exceeded USD budget") to STDOUT with an
-        # empty stderr — capture whichever stream has the message so failures stay diagnosable.
-        detail = proc.stderr.strip() or proc.stdout.strip()
-        result["error"] = f"claude -p failed: {detail[:200]}"
+        # empty stderr — capture whichever stream has the message so failures stay
+        # diagnosable. Both streams can be empty (e.g. SIGKILL), so the exit code is
+        # always named: a bare returncode is not an error MESSAGE.
+        detail = (proc.stderr or "").strip() or (proc.stdout or "").strip()
+        result["error"] = _error_text(
+            f"agent-review synthesis pass: claude -p exited {proc.returncode}"
+            + (f": {detail[:200]}" if detail else " with no output"),
+            f"agent-review synthesis pass: claude -p exited {proc.returncode}",
+        )
+        result["findings"] = []
+        result["dropped_findings"] = []
     return result

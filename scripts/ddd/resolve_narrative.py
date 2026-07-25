@@ -3,7 +3,7 @@
 When `/canopy:ddd` is invoked with no explicit narrative_slug/run_id, the orchestrator
 should pick up whatever narrative was most recently being worked on instead of
 erroring or asking. This module scans deterministic local signals — the target
-repo's `.canopy/ddd/runs/*/run_state.yaml`, its `docs/walkthroughs/*.yaml`
+the DDD runs root (external; plus the legacy in-repo `.canopy/ddd/runs/`), its `docs/walkthroughs/*.yaml`
 specs, and the current git branch + recent commit subjects — ranks the
 candidate narratives, and prints a JSON resolution the agent acts on:
 
@@ -62,10 +62,15 @@ def _slug_tokens(slug: str) -> list[str]:
 def _scan_runs(ddd_dir: Path) -> dict[str, dict[str, Any]]:
     """Map narrative_slug slug → newest run summary, from runs/*/run_state.yaml."""
     by_narrative_slug: dict[str, dict[str, Any]] = {}
-    runs_dir = ddd_dir / "runs"
-    if not runs_dir.is_dir():
+    # Runs live outside the repo now; older ones remain in the in-repo dir, so
+    # scan both or resuming a pre-split run silently finds nothing.
+    from scripts.ddd.runstate import _legacy_runs_dir, _resolve_runs_dir
+
+    roots = [_resolve_runs_dir(ddd_dir), _legacy_runs_dir(ddd_dir)]
+    state_files = [f for r in roots if r.is_dir() for f in r.glob("*/run_state.yaml")]
+    if not state_files:
         return by_narrative_slug
-    for state_file in runs_dir.glob("*/run_state.yaml"):
+    for state_file in state_files:
         try:
             raw = yaml.safe_load(state_file.read_text()) or {}
         except (yaml.YAMLError, OSError):

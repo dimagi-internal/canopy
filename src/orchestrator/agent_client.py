@@ -34,6 +34,22 @@ class BoardCommand(BaseModel):
     payload: Optional[dict] = None
 
 
+def _rows(raw) -> "list[dict]":
+    """Unwrap a list endpoint. Some return a bare list, the paginated ones return
+    canopy-web's Page envelope — which is {"items": [...], "total", "offset", "limit"},
+    NOT {"results": [...]}. Guessing "results" alone silently yielded [] on every
+    paginated endpoint: `agent syncs` reported "no syncs" for an agent with three,
+    so manager-sync recomputed its window from project start every run. Accept both.
+    """
+    if isinstance(raw, list):
+        return raw
+    raw = raw or {}
+    for key in ("items", "results"):
+        if isinstance(raw.get(key), list):
+            return raw[key]
+    return []
+
+
 class AgentClient:
     def __init__(self, identity, *, base_url: Optional[str] = None,
                  token: Optional[str] = None, transport: Optional[Transport] = None):
@@ -84,8 +100,7 @@ class AgentClient:
         return self._call("POST", f"/api/agents/{self.slug}/tasks/sync", {"tasks": tasks})
 
     def list_tasks(self) -> "list[dict]":
-        raw = self._call("GET", f"/api/agents/{self.slug}/tasks/")
-        return raw if isinstance(raw, list) else (raw or {}).get("results", [])
+        return _rows(self._call("GET", f"/api/agents/{self.slug}/tasks/"))
 
     def list_syncs(self, limit: int | None = None) -> "list[dict]":
         """Past manager syncs, newest period_end first. The manager-sync window is
@@ -93,8 +108,13 @@ class AgentClient:
         path = f"/api/agents/{self.slug}/syncs/"
         if limit:
             path += f"?limit={int(limit)}"
-        raw = self._call("GET", path)
-        return raw if isinstance(raw, list) else (raw or {}).get("results", [])
+        return _rows(self._call("GET", path))
+
+    def delete_sync(self, sync_id: int) -> dict:
+        """Remove ONE sync by id. post_sync upserts per (period, source), so
+        re-posting only corrects a sync for the SAME window — a sync filed under
+        the wrong period is otherwise unreachable. Returns {} on success (204)."""
+        return self._call("DELETE", f"/api/agents/{self.slug}/syncs/{int(sync_id)}/")
 
     def pending_commands(self) -> "list[BoardCommand]":
         raw = self._call("GET", f"/api/agents/{self.slug}/commands?status=pending")

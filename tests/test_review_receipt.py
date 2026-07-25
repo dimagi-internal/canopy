@@ -181,3 +181,59 @@ def test_cli_receipt_does_not_unblock_a_different_body(tmp_path):
     slug = json.loads(res.output)["slug"]
     assert rr.lookup(slug, "version one\n") is not None
     assert rr.lookup(slug, "version two\n") is None
+
+
+# --- commitment scan (§6 as a gate) -----------------------------------------------------
+# The rule ("name the executable mechanism or cut it") was already written; what failed was
+# applying it to EVERY instance. On 2026-07-23 a review caught three body defects, recorded
+# clean, and still shipped "Happy to walk anyone through it live" — a real-time human
+# session an agent cannot hold. These lock the gate that makes that impossible.
+
+THE_MISS = (
+    "Hi all,\n\nThe demo is live.\n\n"
+    "Happy to walk anyone through it live, adjust the narrative, or fold in the real app.\n\n"
+    "— ACE\n"
+)
+
+
+def test_scan_flags_the_offer_and_the_realtime_human_phrase():
+    kinds = {h["kind"] for h in rr.scan_commitments(THE_MISS)}
+    assert "real-time human" in kinds
+    assert "offer" in kinds
+
+
+def test_record_refuses_while_a_commitment_is_unruled():
+    with pytest.raises(AgentEmailError) as e:
+        rr.record("eva", THE_MISS)
+    msg = str(e.value)
+    assert "REFUSED" in msg
+    assert "walk anyone through" in msg
+    # and it tells you how to clear it
+    assert "grounded:" in msg and "cut" in msg
+
+
+def test_ruling_every_hit_lets_the_receipt_issue():
+    p = rr.record("eva", THE_MISS,
+                  commitments=["walk anyone through=cut", "happy to=cut"])
+    assert p.exists()
+    assert rr.lookup("eva", THE_MISS) is not None
+
+
+def test_a_body_with_no_commitments_is_unaffected():
+    body = "Hi all,\n\nThe run finished; the report is attached.\n\n— ACE\n"
+    assert rr.scan_commitments(body) == []
+    assert rr.record("eva", body).exists()
+
+
+def test_grounded_ruling_is_recorded_on_the_receipt():
+    rr.record("eva", THE_MISS,
+              commitments=["walk anyone through=cut",
+                           "happy to=grounded:reply on the thread"])
+    got = rr.lookup("eva", THE_MISS)
+    assert any("grounded:" in c for c in got["commitments"])
+
+
+def test_send_stays_blocked_when_the_receipt_was_refused():
+    # No receipt was ever issued (record refused), so the send rail still fires.
+    with pytest.raises(AgentEmailError):
+        rr.require("eva", THE_MISS)

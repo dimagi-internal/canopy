@@ -105,6 +105,25 @@ def test_list_syncs_reads_past_syncs_with_limit():
     assert syncs[0]["period_end"] == "2026-07-16"
 
 
+def test_list_syncs_unwraps_items_envelope():
+    """canopy-web's Page envelope is {"items": [...]}, NOT {"results": [...]}.
+
+    Regression: only "results" was unwrapped, so every paginated endpoint silently
+    returned [] — `agent syncs` reported no syncs for an agent with three, and
+    manager-sync recomputed its window from project start on every run.
+    """
+    raw = _json.dumps({"items": [{"id": 5, "period_end": "2026-07-23"}],
+                       "total": 1, "offset": 0, "limit": 100})
+    c, _ = _recorder_client([(200, raw)])
+    assert c.list_syncs() == [{"id": 5, "period_end": "2026-07-23"}]
+
+
+def test_delete_sync_calls_delete_endpoint():
+    c, calls = _recorder_client([(204, "")])
+    assert c.delete_sync(5) == {}          # 204, empty body
+    assert calls[0][:2] == ("DELETE", "https://x.test/api/agents/echo/syncs/5/")
+
+
 def test_patch_task_forwards_score_and_review():
     """Completion scoring: `set --status done --score --review` reaches the task PATCH."""
     c, calls = _recorder_client([(200, "{}")])

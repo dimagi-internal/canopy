@@ -329,7 +329,16 @@ def test_run_review_applies_source_gate(tmp_path, monkeypatch):
     def fake_run(cmd, **kwargs):   # the synthesis claude -p call
         return sp.CompletedProcess(
             cmd, returncode=0,
-            stdout="- title: already fixed thing\n  friction_type: tool_failure\n", stderr="")
+            stdout=(
+                "- title: already fixed thing\n"
+                "  friction_type: tool_failure\n"
+                "  evidence:\n"
+                "    source_ref: skills/x/SKILL.md:1\n"
+                "    was_read: true\n"
+                "    already_fixed_check: {ran: true, result: 'not-fixed on origin/main @abc'}\n"
+                "    confidence: high\n"
+                "    confidence_basis: opened the target and reproduced the friction\n"
+            ), stderr="")
 
     monkeypatch.setattr(ar.subprocess, "run", fake_run)
     # Stub the gate's verdict so no real git/LLM runs; mark the only finding shipped.
@@ -360,7 +369,17 @@ def test_run_review_surfaces_verification_error(tmp_path, monkeypatch):
 
     def fake_run(cmd, **kwargs):
         return sp.CompletedProcess(
-            cmd, returncode=0, stdout="- title: t\n  friction_type: tool_failure\n", stderr="")
+            cmd, returncode=0,
+            stdout=(
+                "- title: t\n"
+                "  friction_type: tool_failure\n"
+                "  evidence:\n"
+                "    source_ref: skills/x/SKILL.md:1\n"
+                "    was_read: true\n"
+                "    already_fixed_check: {ran: true, result: 'not-fixed on origin/main @abc'}\n"
+                "    confidence: high\n"
+                "    confidence_basis: opened the target and reproduced the friction\n"
+            ), stderr="")
 
     monkeypatch.setattr(ar.subprocess, "run", fake_run)
     monkeypatch.setattr(
@@ -387,7 +406,17 @@ def test_run_review_no_verify_skips_gate(tmp_path, monkeypatch):
 
     def fake_run(cmd, **kwargs):
         return sp.CompletedProcess(
-            cmd, returncode=0, stdout="- title: t\n  friction_type: tool_failure\n", stderr="")
+            cmd, returncode=0,
+            stdout=(
+                "- title: t\n"
+                "  friction_type: tool_failure\n"
+                "  evidence:\n"
+                "    source_ref: skills/x/SKILL.md:1\n"
+                "    was_read: true\n"
+                "    already_fixed_check: {ran: true, result: 'not-fixed on origin/main @abc'}\n"
+                "    confidence: high\n"
+                "    confidence_basis: opened the target and reproduced the friction\n"
+            ), stderr="")
 
     monkeypatch.setattr(ar.subprocess, "run", fake_run)
 
@@ -398,3 +427,408 @@ def test_run_review_no_verify_skips_gate(tmp_path, monkeypatch):
     result = ar.run_review(str(repo), projects_dir=projects, verify=False)
     assert len(result["findings"]) == 1
     assert result["dropped_findings"] == []
+
+
+# --- Evidence-record validator (qualify_findings / _valid_evidence) ----------
+from orchestrator.agent_review import qualify_findings, _valid_evidence
+
+_GOOD_EV = {
+    "source_ref": "skills/gsp-daily-briefing/SKILL.md:48",
+    "was_read": True,
+    "already_fixed_check": {"ran": True, "result": "not-fixed on origin/main @abc123"},
+    "confidence": "high",
+    "confidence_basis": "opened the target; friction reproduced at line 48",
+}
+
+
+def test_string_evidence_is_invalid():
+    ok, reason = _valid_evidence("the corpus shows a dropped step")
+    assert ok is False
+    assert "record" in reason.lower() or "dict" in reason.lower()
+
+
+def test_missing_already_fixed_check_is_invalid():
+    ev = dict(_GOOD_EV); del ev["already_fixed_check"]
+    ok, reason = _valid_evidence(ev)
+    assert ok is False
+    assert "already_fixed_check" in reason
+
+
+def test_was_read_false_is_invalid():
+    ev = dict(_GOOD_EV); ev["was_read"] = False
+    ok, _ = _valid_evidence(ev)
+    assert ok is False
+
+
+def test_bad_confidence_value_is_invalid():
+    ev = dict(_GOOD_EV); ev["confidence"] = "very-high"
+    ok, _ = _valid_evidence(ev)
+    assert ok is False
+
+
+def test_full_record_is_valid():
+    ok, reason = _valid_evidence(_GOOD_EV)
+    assert ok is True and reason == ""
+
+
+def test_qualify_splits_and_annotates():
+    good = {"title": "t", "evidence": _GOOD_EV}
+    bad = {"title": "u", "evidence": "just a string"}
+    qualified, dropped = qualify_findings([good, bad])
+    assert qualified == [good]
+    assert len(dropped) == 1 and dropped[0]["title"] == "u"
+    assert dropped[0]["_drop_reason"]  # non-empty
+
+
+def test_non_dict_finding_is_dropped_with_reason():
+    good = {"title": "t", "evidence": _GOOD_EV}
+    findings = [good, "not a dict"]
+    qualified, dropped = qualify_findings(findings)
+    assert qualified == [good]
+    assert len(dropped) == 1
+    assert dropped[0].get("_drop_reason")  # non-empty
+    assert len(qualified) + len(dropped) == len(findings)
+
+
+def test_non_bool_ran_is_invalid():
+    ev = dict(_GOOD_EV)
+    ev["already_fixed_check"] = {"ran": "yes", "result": "x"}
+    ok, reason = _valid_evidence(ev)
+    assert ok is False
+    assert "already_fixed_check" in reason
+
+
+# --- Wire the validator into run_review + teach the prompt to emit the record ----------
+from orchestrator.agent_review import build_review_prompt, _qualify_and_log
+from pathlib import Path
+
+
+def test_prompt_demands_structured_evidence(tmp_path: Path):
+    prompt = build_review_prompt(tmp_path, corpus=[])
+    assert "source_ref" in prompt
+    assert "already_fixed_check" in prompt
+    assert "was_read" in prompt
+    assert "confidence_basis" in prompt
+
+
+def test_qualify_and_log_drops_unqualified(capsys):
+    good = {"title": "t", "evidence": _GOOD_EV}
+    bad = {"title": "u", "evidence": "string"}
+    kept = _qualify_and_log([good, bad], label="test-agent")
+    assert kept == [good]
+    err = capsys.readouterr().err
+    assert "dropped" in err.lower() and "u" in err
+
+
+# --- Structural-fix-only rail for invariant findings --------------------------
+from orchestrator.agent_review import _is_invariant
+
+
+def test_safety_override_is_invariant():
+    assert _is_invariant({"friction_type": "safety_override", "title": "x"}) is True
+
+
+def test_never_phrasing_is_invariant():
+    assert _is_invariant({"title": "NEVER publish without approval", "recommendation": ""}) is True
+
+
+def test_ordinary_finding_not_invariant():
+    assert _is_invariant({"title": "tidy the digest", "recommendation": "reorder items"}) is False
+
+
+def test_invariant_with_skill_edit_is_dropped():
+    f = {"title": "NEVER post without a yes", "fix_kind": "skill_edit", "evidence": _GOOD_EV}
+    qualified, dropped = qualify_findings([f])
+    assert qualified == []
+    assert "structural" in dropped[0]["_drop_reason"].lower()
+
+
+def test_invariant_with_hook_rule_is_kept():
+    f = {"title": "NEVER post without a yes", "fix_kind": "hook_rule", "evidence": _GOOD_EV}
+    qualified, _ = qualify_findings([f])
+    assert qualified == [f]
+
+
+# --- M3: unhashable LLM output must fail-loud (drop), never crash ------------
+
+def test_non_str_confidence_is_invalid_not_crash():
+    ev = dict(_GOOD_EV)
+    ev["confidence"] = ["high"]
+    ok, reason = _valid_evidence(ev)
+    assert ok is False
+    assert reason
+
+
+def test_invariant_with_unhashable_fix_kind_is_dropped_not_crash():
+    f = {"title": "NEVER post without a yes", "fix_kind": ["hook_rule"], "evidence": _GOOD_EV}
+    qualified, dropped = qualify_findings([f])
+    assert qualified == []
+    assert len(dropped) == 1
+
+
+# --- over_claim / verify_late corpus detectors --------------------------------
+# Entries here use the REAL transcript shape (type/message.content blocks) that
+# read_transcript produces and human_corrections/extract_tool_calls consume —
+# NOT a simplified {"role","text","tools"} shape. See _write_transcript above and
+# test_human_corrections_catches_safety_override_and_confusion for the same convention.
+from orchestrator.agent_review import overclaim_signals
+
+
+def test_overclaim_types_registered():
+    assert "over_claim" in FRICTION_TYPES
+    assert "verify_late" in FRICTION_TYPES
+
+
+def test_bare_completion_claim_flagged():
+    # assistant asserts "Verified" with no tool_use block in the same message.
+    entries = [
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Verified live — the filter is applied."},
+        ]}},
+    ]
+    sigs = overclaim_signals(entries)
+    assert any(s["type"] == "over_claim" for s in sigs)
+    assert sigs[0]["turn"] == 0
+    assert "Verified" in sigs[0]["evidence"]
+
+
+def test_claim_backed_by_tool_not_flagged():
+    # same assistant message also carries a tool_use block -> not an over_claim.
+    entries = [
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Applied the filter."},
+            {"type": "tool_use", "id": "t0", "name": "Bash", "input": {"command": "echo ok"}},
+        ]}},
+    ]
+    sigs = overclaim_signals(entries)
+    assert all(s["type"] != "over_claim" for s in sigs)
+
+
+def test_claim_with_no_completion_verb_not_flagged():
+    entries = [
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Let me look into this next."},
+        ]}},
+    ]
+    assert overclaim_signals(entries) == []
+
+
+def test_user_turns_are_not_scanned_for_overclaims():
+    # human text containing a completion verb must never be mistaken for the agent's own claim.
+    entries = [{"type": "user", "message": {"content": "is this shipped yet?"}}]
+    assert overclaim_signals(entries) == []
+
+
+def test_claim_substantiated_by_tool_use_earlier_in_same_turn_not_flagged():
+    # Claude Code routinely splits work across entries: an assistant tool_use entry,
+    # then a user tool_result entry, then a SEPARATE assistant entry with the wrap-up
+    # text. The tool_use substantiates the claim across entries within the same turn
+    # (no genuine human message resets the turn in between) -> must NOT be flagged.
+    entries = [
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t0", "name": "Bash", "input": {"command": "pytest -q"}},
+        ]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t0", "content": "43 passed"},
+        ]}},
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Done and verified."},
+        ]}},
+    ]
+    sigs = overclaim_signals(entries)
+    assert all(s["type"] != "over_claim" for s in sigs)
+
+
+def test_claim_with_no_tool_use_anywhere_in_turn_still_flagged():
+    # A genuine human message resets the turn boundary. The tool_use in the FIRST
+    # turn must not substantiate a bare claim made in a later turn with no tool_use
+    # of its own.
+    entries = [
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t0", "name": "Bash", "input": {"command": "pytest -q"}},
+        ]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t0", "content": "43 passed"},
+        ]}},
+        {"type": "user", "message": {"content": "thanks, now do the next one"}},
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Done and verified."},
+        ]}},
+    ]
+    sigs = overclaim_signals(entries)
+    assert any(s["type"] == "over_claim" for s in sigs)
+    assert sigs[0]["turn"] == 3
+
+
+def test_friction_signals_wires_overclaims(tmp_path):
+    t = tmp_path / "turn.jsonl"
+    lines = [
+        {"type": "assistant", "cwd": str(tmp_path), "message": {"content": [
+            {"type": "text", "text": "Done — fixed the bug."},
+        ]}},
+    ]
+    t.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+    s = friction_signals(t)
+    assert "overclaims" in s
+    assert any(o["type"] == "over_claim" for o in s["overclaims"])
+
+
+# --- CLI: `agent-review --qualify-file` routes external findings through qualify_findings ----
+import json as _json
+import yaml
+from click.testing import CliRunner
+from orchestrator.cli import main
+
+
+def _write_qualify_fixture(tmp_path):
+    good = {"title": "good finding", "evidence": _GOOD_EV}
+    bad = {"title": "bad finding", "evidence": "just a string"}
+    p = tmp_path / "findings.yaml"
+    p.write_text(yaml.safe_dump([good, bad]))
+    return p
+
+
+def test_qualify_file_splits_good_and_bad(tmp_path):
+    p = _write_qualify_fixture(tmp_path)
+    r = CliRunner().invoke(main, ["agent-review", "--qualify-file", str(p)])
+    assert r.exit_code == 0, r.output
+    assert "Qualified (1)" in r.output
+    assert "Dropped (1)" in r.output
+    assert "record" in r.output.lower() or "dict" in r.output.lower()
+
+
+def test_qualify_file_json_output(tmp_path):
+    p = _write_qualify_fixture(tmp_path)
+    r = CliRunner().invoke(main, ["agent-review", "--qualify-file", str(p), "--json-output"])
+    assert r.exit_code == 0, r.output
+    data = _json.loads(r.output)
+    assert len(data["qualified"]) == 1
+    assert len(data["dropped"]) == 1
+
+
+def test_no_agent_no_qualify_errors():
+    r = CliRunner().invoke(main, ["agent-review"])
+    assert r.exit_code != 0
+    assert "--qualify-file" in r.output
+
+
+def test_qualify_file_malformed_yaml_is_clean_error(tmp_path):
+    p = tmp_path / "bad.yaml"
+    p.write_text(":\n  - [unclosed")
+    r = CliRunner().invoke(main, ["agent-review", "--qualify-file", str(p)])
+    assert r.exit_code != 0
+    assert isinstance(r.exception, SystemExit)
+    assert "could not read qualify-file" in r.output or "Error:" in r.output
+    assert "Traceback" not in r.output
+
+
+def test_agent_review_normal_path_still_reachable_without_qualify_file():
+    # Regression guard: making AGENT optional (for --qualify-file) must not break the
+    # normal `agent-review <slug>` path. A nonexistent slug should get PAST the
+    # "provide an AGENT slug" guard and fail later on repo resolution instead.
+    r = CliRunner().invoke(main, ["agent-review", "nonexistent-slug-xyz"])
+    assert r.exit_code != 0
+    assert "provide an AGENT slug" not in r.output
+    assert "could not resolve agent repo" in r.output.lower()
+
+
+# --- Timeout / error-shape contract (live cron: synthesis timed out, the error came back
+# --- a bare int, and the consumer died with `object of type 'int' has no len()`) ---------
+
+def test_run_review_timeout_returns_string_error_and_empty_findings(tmp_path, monkeypatch):
+    """A timed-out synthesis pass must return a WELL-FORMED result: a descriptive STRING
+    error naming the timeout, findings == [], and no exception out of run_review."""
+    import subprocess as sp
+    from orchestrator import agent_review as ar
+
+    repo = tmp_path / "repositories" / "echo"
+    (repo / "skills").mkdir(parents=True)
+    projects = tmp_path / "projects"
+    d = projects / "-Users-x-emdash-repositories-echo"
+    d.mkdir(parents=True)
+    _write_transcript(d / "a.jsonl", str(repo), [("Read", {"file_path": "/x"}, "ok")])
+
+    def fake_run(cmd, **kwargs):
+        raise sp.TimeoutExpired(cmd, kwargs.get("timeout", 180))
+
+    monkeypatch.setattr(ar.subprocess, "run", fake_run)
+    result = ar.run_review(str(repo), projects_dir=projects, timeout=45)
+
+    assert isinstance(result["error"], str)
+    assert "timed out" in result["error"].lower()
+    assert "45" in result["error"]                 # the actual budget, not a vague message
+    assert result["findings"] == []
+    assert result["dropped_findings"] == []
+
+
+def test_run_review_error_is_never_non_string(tmp_path, monkeypatch):
+    """Every failure path yields a STRING error — even when the underlying failure value
+    is a bare int (returncode) or a non-str exception payload."""
+    import subprocess as sp
+    from orchestrator import agent_review as ar
+
+    repo = tmp_path / "repositories" / "echo"
+    (repo / "skills").mkdir(parents=True)
+    projects = tmp_path / "projects"
+    d = projects / "-Users-x-emdash-repositories-echo"
+    d.mkdir(parents=True)
+    _write_transcript(d / "a.jsonl", str(repo), [("Read", {"file_path": "/x"}, "ok")])
+
+    # (a) non-zero exit with EMPTY stdout+stderr — the shape that used to leave only a
+    #     bare returncode to report.
+    monkeypatch.setattr(ar.subprocess, "run",
+                        lambda cmd, **kw: sp.CompletedProcess(cmd, 137, stdout="", stderr=""))
+    result = ar.run_review(str(repo), projects_dir=projects)
+    assert isinstance(result["error"], str)
+    assert "137" in result["error"]
+    assert len(result["error"]) > 0          # consumers do len() on this
+    assert result["findings"] == []
+
+    # (b) an OSError from the spawn itself (e.g. `claude` not on PATH under cron)
+    def boom(cmd, **kw):
+        raise OSError(2, "No such file or directory: 'claude'")
+
+    monkeypatch.setattr(ar.subprocess, "run", boom)
+    result = ar.run_review(str(repo), projects_dir=projects)
+    assert isinstance(result["error"], str)
+    assert result["findings"] == []
+
+    # (c) unresolvable agent still returns the full result shape, not a bare {"error": ...}
+    result = ar.run_review("no-such-agent-xyz", projects_dir=projects)
+    assert isinstance(result["error"], str)
+    assert result["findings"] == [] and result["dropped_findings"] == []
+    assert result["turns"] == 0
+
+
+def test_run_review_passes_timeout_to_subprocess(tmp_path, monkeypatch):
+    """--timeout is real: the value reaches subprocess.run's timeout kwarg."""
+    import subprocess as sp
+    from orchestrator import agent_review as ar
+
+    repo = tmp_path / "repositories" / "echo"
+    (repo / "skills").mkdir(parents=True)
+    projects = tmp_path / "projects"
+    d = projects / "-Users-x-emdash-repositories-echo"
+    d.mkdir(parents=True)
+    _write_transcript(d / "a.jsonl", str(repo), [("Read", {"file_path": "/x"}, "ok")])
+
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        return sp.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(ar.subprocess, "run", fake_run)
+    ar.run_review(str(repo), projects_dir=projects, timeout=17)
+    assert seen["timeout"] == 17
+    # default is the module constant, not a magic number re-typed at the call site
+    ar.run_review(str(repo), projects_dir=projects)
+    assert seen["timeout"] == ar.SYNTHESIS_TIMEOUT
+
+
+def test_agent_review_cli_accepts_timeout_option():
+    r = CliRunner().invoke(main, ["agent-review", "--help"])
+    assert r.exit_code == 0, r.output
+    assert "--timeout" in r.output
+    r2 = CliRunner().invoke(main, ["agent-review", "--timeout", "5", "--no-llm", "nope-not-an-agent"])
+    assert "no such option" not in r2.output.lower()

@@ -138,6 +138,19 @@ def test_corpus_map_cross_user(tmp_path):
     assert all("path" in d and "first_input" in d for d in m["digests"])
 
 
+def test_intent_prompt_has_rubric_material_and_schema():
+    from orchestrator.harvest import build_intent_prompt
+    p = build_intent_prompt("USER: do X\n\nASSISTANT: I did Y", ["always run the tests first"])
+    # embeds the human's own words (the close-read evidence)
+    assert "do X" in p and "always run the tests first" in p
+    # names the intent-miss classes it must flag
+    for term in ["approved", "shipped", "approval", "eroded"]:
+        assert term.lower() in p.lower()
+    # REQUIRES the SP1 evidence record with a verbatim source_ref quote
+    assert "source_ref" in p and "already_fixed_check" in p and "confidence_basis" in p
+    assert "verbatim" in p.lower()
+
+
 def test_session_digest_full_keeps_all_inputs_untruncated(tmp_path):
     import json as _j
     from orchestrator.harvest import session_digest
@@ -150,3 +163,114 @@ def test_session_digest_full_keeps_all_inputs_untruncated(tmp_path):
     assert full["inputs"][0] == long_in                  # untruncated
     tiny = session_digest(str(p), full=False)
     assert len(tiny["inputs"]) <= 6 and len(tiny["inputs"][0]) <= 160   # sampled + truncated
+
+
+def test_intent_audit_no_llm_returns_material_no_findings(tmp_path, monkeypatch):
+    from orchestrator import harvest
+    # a minimal real jsonl with one human msg + one assistant reply
+    j = tmp_path / "s.jsonl"
+    j.write_text(
+        '{"type":"user","message":{"content":"approve the broad option"}}\n'
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"shipped the narrow one"}]}}\n')
+    out = harvest.intent_audit(str(j), use_llm=False)
+    assert out["error"] is None and out["qualified"] == [] and out["dropped"] == []
+
+
+def test_intent_audit_validates_emitted_findings(tmp_path, monkeypatch):
+    from orchestrator import harvest
+    j = tmp_path / "s.jsonl"
+    j.write_text('{"type":"user","message":{"content":"approve the broad option"}}\n')
+    good = {"title": "approved broad, shipped narrow", "friction_type": "intent_miss", "fix_kind": "skill_edit",
+            "target": "skills/x", "recommendation": "honor the approved scope",
+            "evidence": {"source_ref": "you: 'approve the broad option'", "was_read": True,
+                         "already_fixed_check": {"ran": True, "result": "live on main"},
+                         "confidence": "high", "confidence_basis": "verbatim quote diverges from the shipped narrow filter"}}
+    bad = {"title": "vibes", "friction_type": "intent_miss", "evidence": "I feel you wanted more"}
+    monkeypatch.setattr(harvest, "_run_intent_llm", lambda *a, **k: ([good, bad], None))
+    out = harvest.intent_audit(str(j), use_llm=True)
+    assert [f["title"] for f in out["qualified"]] == ["approved broad, shipped narrow"]
+    assert len(out["dropped"]) == 1  # the vibes finding has no evidence record
+
+
+def _evidence(source_ref):
+    return {"source_ref": source_ref, "was_read": True,
+            "already_fixed_check": {"ran": True, "result": "live on main"},
+            "confidence": "high", "confidence_basis": "verbatim quote diverges from what shipped"}
+
+
+def test_intent_audit_drops_fabricated_quote(tmp_path, monkeypatch):
+    """SP3 gap: qualify_findings validates evidence SHAPE, not that source_ref is real —
+    an LLM can fabricate a Jonathan quote and it would pass. The grounding pass added in
+    intent_audit must catch it."""
+    from orchestrator import harvest
+    j = tmp_path / "s.jsonl"
+    j.write_text('{"type":"user","message":{"content":"approve the broad option"}}\n')
+    fabricated = {
+        "title": "approved broad, shipped narrow", "friction_type": "intent_miss",
+        "fix_kind": "skill_edit", "target": "skills/x", "recommendation": "honor the approved scope",
+        "evidence": _evidence("you: 'a thing never said in this session xyz'"),
+    }
+    monkeypatch.setattr(harvest, "_run_intent_llm", lambda *a, **k: ([fabricated], None))
+    out = harvest.intent_audit(str(j), use_llm=True)
+    assert out["qualified"] == []
+    assert len(out["dropped"]) == 1
+    assert "fabricated" in out["dropped"][0]["_drop_reason"].lower()
+
+
+def test_intent_audit_keeps_grounded_quote(tmp_path, monkeypatch):
+    from orchestrator import harvest
+    j = tmp_path / "s.jsonl"
+    j.write_text(
+        '{"type":"user","message":{"content":"only ship the broad approved version, not a narrower cut"}}\n')
+    grounded = {
+        "title": "approved broad, shipped narrow", "friction_type": "intent_miss",
+        "fix_kind": "skill_edit", "target": "skills/x", "recommendation": "honor the approved scope",
+        "evidence": _evidence("you: 'only ship the broad approved version, not a narrower cut'"),
+    }
+    monkeypatch.setattr(harvest, "_run_intent_llm", lambda *a, **k: ([grounded], None))
+    out = harvest.intent_audit(str(j), use_llm=True)
+    assert [f["title"] for f in out["qualified"]] == ["approved broad, shipped narrow"]
+    assert out["dropped"] == []
+
+
+def test_intent_audit_keeps_class1_with_positive_phrasing(tmp_path, monkeypatch):
+    """SP3 gap: the inherited invariant rail (never/always/must not/do not) false-drops
+    legit class-1..3 intent findings. A class-1 finding phrased POSITIVELY and NOT shipped
+    as hook_rule/schema_validator must survive."""
+    from orchestrator import harvest
+    j = tmp_path / "s.jsonl"
+    j.write_text(
+        '{"type":"user","message":{"content":"approve the broad rollout, not just the pilot"}}\n')
+    class1 = {
+        "title": "approved broad rollout, shipped pilot-only", "friction_type": "intent_miss",
+        "fix_kind": "skill_edit", "target": "skills/x",
+        "recommendation": "honor the approved broad scope",  # positively phrased, no invariant words
+        "evidence": _evidence("you: 'approve the broad rollout, not just the pilot'"),
+    }
+    monkeypatch.setattr(harvest, "_run_intent_llm", lambda *a, **k: ([class1], None))
+    out = harvest.intent_audit(str(j), use_llm=True)
+    assert [f["title"] for f in out["qualified"]] == ["approved broad rollout, shipped pilot-only"]
+    assert out["dropped"] == []
+
+
+def test_run_intent_llm_garbage_is_error(tmp_path, monkeypatch):
+    """SP3 gap: rc=0 with non-YAML prose stdout parses to [] and used to masquerade as a
+    clean (no-findings) audit. It must fail loud instead."""
+    from orchestrator import harvest
+
+    class _Proc:
+        def __init__(self, stdout):
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    monkeypatch.setattr(
+        harvest.subprocess, "run",
+        lambda *a, **k: _Proc("I could not find anything: prose not yaml"))
+    findings, err = harvest._run_intent_llm("prompt", "sonnet", 2.0)
+    assert findings is None
+    assert err is not None and "did not parse to a YAML list" in err
+
+    monkeypatch.setattr(harvest.subprocess, "run", lambda *a, **k: _Proc("[]"))
+    findings, err = harvest._run_intent_llm("prompt", "sonnet", 2.0)
+    assert findings == [] and err is None

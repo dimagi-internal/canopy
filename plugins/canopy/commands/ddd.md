@@ -13,7 +13,7 @@ concept verdict and stakeholder-ready walkthrough.
 
 - `<narrative-slug>` — feature slug (e.g. `rooftop-sampling`). **If omitted, the
   orchestrator infers the obvious narrative** from recent local context (the
-  newest `.canopy/ddd/runs/*` run, the newest `docs/walkthroughs/*.yaml` spec,
+  newest run under the DDD runs root (`resolve_ddd_dir.sh --runs`), the newest `docs/walkthroughs/*.yaml` spec,
   and the current git branch) and proceeds — resuming the in-flight run if there
   is one. It only asks when several narratives were touched at once, or when
   there's nothing to infer from. So "do DDD with the orchestrator" just works.

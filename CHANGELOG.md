@@ -9,6 +9,75 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.338] - 2026-07-23
+
+### Added
+
+- `canopy agent doctor --fix` — applies the safe, non-interactive repairs (materialize
+  secrets via `canopy provision`; register on canopy-web), then RE-RUNS the checks so the
+  verdict reflects reality rather than intent. The fixer table is deliberately short: a
+  repair earns its place only if it is non-interactive, idempotent, and cannot destroy
+  work. gog consent, plugin install, and PAT minting stay printed instructions — a doctor
+  that half-performs an interactive step leaves a worse mess than one that asks. Checkout
+  drift is likewise reported, never auto-pulled: a stale checkout can carry unpushed
+  commits, and blindly fast-forwarding is how that work gets stranded (this run found
+  exactly one such commit, unpushed on a main 66 behind origin).
+- `canopy agent doctor` — **Secrets materialized** check. `Secrets manifest` proves the repo
+  *declares* what it needs; it says nothing about whether `canopy provision` was ever run
+  HERE, which is the entire point of a per-machine doctor. A fresh macOS user has every
+  repo, every manifest, and none of the resolved files. First run found two agents with no
+  `.env` on a machine that had been running them all day.
+- `canopy agent doctor` — **Rails enforced** check: an ACTIVE probe, not a file read. Every
+  other rails check reads JSON, and none prove the guard blocks anything — a broken import,
+  a bad interpreter, or a subtly wrong pattern all leave a perfectly valid config that stops
+  nothing. The check predicts the guard's answer from its own effective rails, then executes
+  `hooks/gating_guard.py` with a synthetic PreToolUse payload and requires exit 2. The probe
+  command is passed as text and never run. Skips when no rail predicts a block, so it never
+  asserts a block the agent's own config does not call for.
+
+## [0.2.337] - 2026-07-23
+
+### Added
+
+- `canopy agent doctor` — **Plugin install** check. Every other check reads the agent's
+  *repo*, so all of them pass on a machine where the repo is cloned but the plugin was
+  never installed — a machine on which none of that agent's skills (`/ada:turn`,
+  `/echo:turn`) can be invoked at all. This is the dominant real-world gap when moving to
+  a new machine or macOS user; on one such account four of five agents had a full
+  checkout, valid config, and no plugin. Missing registry is a skip, not a failure.
+- `canopy agent doctor --all` — surfaces `fleet_align.checkout_warnings()` before the
+  per-agent verdicts. An agent whose checkout is parked off its default branch is
+  *invisible* to discovery and produces no row, so a fleet-wide "all ready" could be a
+  confident green over a fleet quietly missing members. First live run flagged all five
+  repos stale (7–67 commits behind) and one parked on a feature branch. The summary line
+  now never reads as a bare "all ready" while drift warnings are present, and
+  `--json-output` gains `discovered` and `checkout_warnings`.
+
+## [0.2.336] - 2026-07-23
+
+### Fixed
+
+- `canopy agent doctor` — three false positives that made the fleet readiness gate
+  untrustworthy. On a healthy machine it reported 3 of 5 agents FAIL; all three were
+  the doctor's error, not the agents'.
+  - **Gating rails** counted only `config/gating.json`'s local `deny` array, so agents
+    that mount the fleet baseline via `"channels": ["email"]` (echo, hal) read as
+    "0 deny rails but <slug>-email exists" while being fully railed at call time.
+    The check now resolves the baseline the same way `hooks/gating_guard.py` does and
+    reports *effective* rails (baseline + local). A mounted-but-unresolvable baseline —
+    the state where the guard fails CLOSED and blocks every guarded call — is now its
+    own explicit failure rather than a silent pass.
+  - **Hook wiring** recognized only `.claude/settings.json`. Agents shipped as a Claude
+    Code plugin (ace) register the guard in `hooks/hooks.json`; their live, firing rails
+    were reported as decorative. Both registration paths are now accepted.
+  - **Auth services** required the fleet-wide `LOGIN_SERVICES` of every agent — failing
+    hal and ace over `appscript`, which neither uses, while never checking `slides`,
+    which echo needs and the constant omits. Requirements are now per-agent via
+    `gog_services` in `config/agent.json`, defaulting to `CORE_SERVICES`. The
+    remediation command re-requests required *union* already-granted scopes, since
+    `gog login --services` replaces the grant set and would otherwise revoke working
+    scopes while fixing an unrelated gap.
+
 ## [0.2.309] - 2026-07-21
 
 ### Fixed

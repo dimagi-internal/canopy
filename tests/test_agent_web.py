@@ -9,6 +9,7 @@ from orchestrator.agent_web import (
     AgentWebError,
     catalog_from_repo,
     gh_blob_base,
+    push_items,
     resolve_identity,
 )
 
@@ -78,3 +79,25 @@ def test_gh_blob_base_handles_https_remote(tmp_path):
         cwd=repo, check=True,
     )
     assert gh_blob_base(repo).startswith("https://github.com/foo/bar/blob/main/")
+
+
+def test_push_items_posts_bare_list_to_items_endpoint(tmp_path, monkeypatch):
+    repo = _agent(tmp_path)
+    calls = []
+
+    def transport(method, url, headers, body):
+        calls.append((method, url, json.loads(body) if body else None))
+        return 200, "{}"
+
+    monkeypatch.setenv("CANOPY_WEB_PAT", "t")
+    monkeypatch.setenv("CANOPY_WEB_API_URL", "https://x.test")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+
+    items = [{"title": "x", "kind": "review"}]
+    push_items(repo, items)
+
+    assert len(calls) == 1
+    method, url, body = calls[0]
+    assert method == "POST"
+    assert url == "https://x.test/api/agents/echo/items/"
+    assert body == items  # BARE list, not wrapped in a key

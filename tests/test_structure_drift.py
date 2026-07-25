@@ -196,3 +196,93 @@ def test_cli_json_output(tmp_path):
     payload = json.loads(result.output)
     assert payload["ok"] is True
     assert payload["counts"]["total"] == 0
+
+
+# --------------------------------------------------------------------------
+# Repo-root resolution (the uv-tool-install shape)
+# --------------------------------------------------------------------------
+
+def test_non_checkout_root_fails_loudly_instead_of_reporting_clean(tmp_path):
+    """A root with no plugin tree must NOT come back clean.
+
+    This is the `uv tool install` shape: the module ships from site-packages, so
+    the shipped-from path is `.../lib/python3.x`. Every other check degrades to
+    "directory missing -> no findings" there, so a silent pass would assert that
+    invariants held when nothing was scanned.
+    """
+    bare = tmp_path / "lib" / "python3.14"
+    bare.mkdir(parents=True)
+
+    report = sd.run_structure_drift(repo_root=bare)
+
+    assert not report["ok"]
+    assert {f["invariant"] for f in report["findings"]} == {sd.INVARIANT_REPO_ROOT}
+    assert report["counts"]["error"] == 1
+    # It must not masquerade as a version-file problem — that framing is what
+    # made the real bug read as "one small finding" rather than "audited nothing".
+    detail = report["findings"][0]["detail"]
+    assert "not a canopy checkout" in detail
+    assert "--repo" in detail
+
+
+def test_is_canopy_checkout(tmp_path):
+    assert sd.is_canopy_checkout(_make_repo(tmp_path / "good"))
+
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    assert not sd.is_canopy_checkout(bare)
+
+    # VERSION alone isn't enough — the plugin tree is what the checks scan.
+    partial = tmp_path / "partial"
+    partial.mkdir()
+    (partial / "VERSION").write_text("1.2.3\n")
+    assert not sd.is_canopy_checkout(partial)
+
+
+def test_default_repo_root_prefers_a_real_checkout_over_shipped_from(tmp_path, monkeypatch):
+    """When the shipped-from path isn't a checkout, fall back to CWD's checkout."""
+    root = _make_repo(tmp_path / "repo")
+    nested = root / "src" / "orchestrator"
+    nested.mkdir(parents=True)
+
+    monkeypatch.setattr(sd, "MARKETPLACE_CLONE", tmp_path / "no-such-clone")
+    monkeypatch.chdir(nested)
+
+    # Simulate site-packages: shipped-from resolves to a non-checkout dir.
+    fake_module = tmp_path / "lib" / "python3.14" / "site-packages" / "orchestrator"
+    fake_module.mkdir(parents=True)
+    monkeypatch.setattr(sd, "__file__", str(fake_module / "structure_drift.py"))
+
+    assert sd.default_repo_root() == root.resolve()
+
+
+def test_default_repo_root_falls_back_to_marketplace_clone(tmp_path, monkeypatch):
+    clone = _make_repo(tmp_path / "clone")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    monkeypatch.setattr(sd, "MARKETPLACE_CLONE", clone)
+    monkeypatch.chdir(elsewhere)
+
+    fake_module = tmp_path / "lib" / "python3.14" / "site-packages" / "orchestrator"
+    fake_module.mkdir(parents=True)
+    monkeypatch.setattr(sd, "__file__", str(fake_module / "structure_drift.py"))
+
+    assert sd.default_repo_root() == clone
+
+
+def test_default_repo_root_returns_shipped_from_when_nothing_resolves(tmp_path, monkeypatch):
+    """Unresolvable -> return the shipped-from path so check_repo_root reports it."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setattr(sd, "MARKETPLACE_CLONE", tmp_path / "no-such-clone")
+    monkeypatch.chdir(elsewhere)
+
+    fake_module = tmp_path / "lib" / "python3.14" / "site-packages" / "orchestrator"
+    fake_module.mkdir(parents=True)
+    monkeypatch.setattr(sd, "__file__", str(fake_module / "structure_drift.py"))
+
+    resolved = sd.default_repo_root()
+    assert not sd.is_canopy_checkout(resolved)
+    report = sd.run_structure_drift(repo_root=resolved)
+    assert {f["invariant"] for f in report["findings"]} == {sd.INVARIANT_REPO_ROOT}

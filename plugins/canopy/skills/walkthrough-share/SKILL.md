@@ -11,7 +11,8 @@ description: |
 ## Preamble (run first)
 
 ```bash
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])" 2>/dev/null)"
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -40,38 +41,33 @@ the tokened share link, rotate it, or delete. Non-owners just see the player.
 
 ## Modes
 
-First resolve the uploader (dev checkout first, then the plugin marketplace
-clone a portable install pulls via `/canopy:update`). `upload.py` is pure
-stdlib, so bare `python3` runs it. Run this in the same shell as the command
+First resolve the uploader from the canopy runtime (resolved via
+`scripts/canopy-runtime.sh`). Run this in the same shell as the command
 you pick below (Claude Code starts a fresh shell per block — re-run it if you
 split blocks):
 
 ```bash
-UPLOAD=""
-for P in \
-  ~/emdash-projects/canopy/scripts/walkthrough-share/upload.py \
-  ~/.claude/plugins/marketplaces/canopy/scripts/walkthrough-share/upload.py; do
-  [ -f "$P" ] && UPLOAD="$P" && break
-done
-[ -z "$UPLOAD" ] && echo "NOT_FOUND — run /canopy:update to sync the canopy checkout" && exit 1
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+UPLOAD="$CANOPY_ROOT/scripts/walkthrough-share/upload.py"
 ```
 
 ```bash
 # Upload (private — only visible to logged-in dimagi users)
-python3 "$UPLOAD" \
+uv run --project "$CANOPY_ROOT" python "$UPLOAD" \
   screenshots/walkthroughs/my-demo.html \
   --title "My Demo" \
   --project canopy-web
 
 # Upload + mint a share link (anyone with the URL can view)
-python3 "$UPLOAD" \
+uv run --project "$CANOPY_ROOT" python "$UPLOAD" \
   screenshots/walkthroughs/my-demo.html \
   --title "My Demo" \
   --project canopy-web \
   --public
 
 # Upload a video (kind auto-detected from .mp4 extension)
-python3 "$UPLOAD" \
+uv run --project "$CANOPY_ROOT" python "$UPLOAD" \
   screenshots/walkthroughs/my-demo.mp4 \
   --public
 
@@ -79,7 +75,7 @@ python3 "$UPLOAD" \
 # - back to the narrative that generated it
 # - the still-frame (deck) version of the same demo
 # - the app pages the demo walked through (one per scene url in the spec)
-python3 "$UPLOAD" \
+uv run --project "$CANOPY_ROOT" python "$UPLOAD" \
   screenshots/walkthroughs/my-demo.mp4 \
   --public \
   --narrative-url "https://canopy-web.../review/42/?t=abc" \

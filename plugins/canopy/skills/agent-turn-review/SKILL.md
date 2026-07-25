@@ -64,6 +64,40 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
    again. The human should never have to say "show me the email" to approve.
 10. **Verify recipients** from the structured reader / `--reply-all`, never a raw text mail view
     (it hides `Cc:`). Confirm reply-all vs. direct on purpose.
+10a. **Strip session-internal framing — write the copy COLD, as the recipient reads it.** Your
+    outbound goes to people who have ONLY the thread's context, not the in-session exchange with the
+    operator who steered this turn. So any phrasing that only makes sense relative to that private
+    exchange is a leak: agreeing with a correction the recipient never saw ("you're right", "good
+    call", "as you noted"), announcing a "fix" to a draft they never received ("fixed on both
+    counts", "the corrected version"), or narrating your own process ("after I regressed to inline
+    here", "per your steer"). Reread every sentence asking *"would this parse for someone who only
+    read the thread?"* — if it references a state or a remark outside the thread, cut it or restate
+    it as a plain fact ("drafted to send from Neal", not "you're right, so it's Neal's note"). This
+    also applies to the "How I improved this turn" bullets: state what changed as a capability, not
+    relative to a mistake the recipient didn't witness. (Origin: 2026-07-23 — a reply carried "you're
+    right, Neal asked, so it's his note" and "fixed on both counts," both answering the operator's
+    in-session correction, into an email whose recipients had never seen that exchange; the operator
+    flagged it as a turn-review miss.)
+10b. **Politeness is fine; manufactured value is not — never attribute a benefit, feeling, or worth
+    you can't back up.** Thanking, welcoming, and acknowledging are allowed and good. What is banned
+    is dressing a courtesy up as a substantive claim the agent has no basis to assert. Two forms,
+    both banned: **(i) unbackable benefit** — *"it's genuinely useful to know you're a message
+    away"*, *"this will be a huge help"*, *"great to have you onboard"*, *"your input has been
+    invaluable"*; **(ii) effusive emotion / flattery** — *"that genuinely means a lot coming from
+    you"*, *"I'm so grateful for the careful reviews throughout"*, *"I'm honored"*, *"that's the best
+    example"*. An agent has no feelings to be moved and no standing to flatter, and it cannot vouch
+    for a value it hasn't observed — so these read as performed warmth, not substance. Keep the
+    courtesy **plain and objective** — *"thank you for offering it."* / *"thank you for the careful
+    review."* full stop — and let a value, benefit, or praise statement stand ONLY where it's
+    grounded in something specific you actually observed (*"your note caught a line that over-read the
+    data"* — you can point to the line; *"the field definitions let us wire the indicator directly"*
+    — you read them). Grounded-and-specific is fine; effusive-and-general is filler. This is the
+    presentation-twin of §B/§5a grounding: same rule — don't assert what you can't substantiate —
+    applied to warmth rather than to commitments and done-claims. (Origin: Jon, 2026-07-24 — TWO
+    same-day ACE replies: one padded a call-decline with "it's genuinely useful to know you're a
+    message away," another opened to a reviewer with "that genuinely means a lot coming from you …
+    Grateful for the careful reviews throughout." Both passed the rest of the review because no lens
+    tested for unbackable warmth; the fix in each was to cut to the plain thank-you.)
 
 ## D. Revision check — full re-review + repetition pass, EVERY revision
 
@@ -73,6 +107,19 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
 > `canopy email review-receipt --repo . --body-file <the body you'll send> --caught "<findings>"`.
 > Dry-runs are exempt. The `caught` list is the fleet's evidence about which reviews earn their
 > keep — an honest "none" is fine, but only per §13 (after you have actually read it back).
+>
+> **§B is enforced the same way — the receipt REFUSES to issue while any commitment-class
+> phrase is unruled.** `review-receipt` scans the body for offers and human-dependencies
+> ("happy to", "walk you through", "hop on a call", "sync with", "loop in", "in person"),
+> prints every hit with its context, and blocks until you rule each one:
+> `--commitment "<substring>=grounded:<mechanism>"` or `--commitment "<substring>=cut"`.
+> GROUNDED for an agent = re-render, reply on the thread, open a PR, produce a doc.
+> NOT grounded = anything needing you to be a person in real time. Why a gate and not a
+> line of prose: on 2026-07-23 a review ran, caught three real body defects, recorded
+> clean — and still shipped *"Happy to walk anyone through it live"*, a session the agent
+> cannot hold. The RULE (§6) was already written; what failed was applying it to every
+> instance, and completeness is exactly what prose cannot enforce. So the tool enumerates
+> and the send stays blocked until each is ruled — you cannot skip the sign-off line.
 11. **Re-run this whole review on every revision of a draft, not only the first.** A "delta check"
     of just your latest edits is how edit-introduced defects ship — the requester's corrections
     change the draft's context, so the whole thing gets re-reviewed.

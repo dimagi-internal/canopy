@@ -1,5 +1,7 @@
 # `canopy:issue-triage` — design
 
+> **Status: shipped — `canopy:issue-triage` live. Historical record, not current-state.**
+
 **Date:** 2026-06-01
 **Status:** approved (design) → implementing
 

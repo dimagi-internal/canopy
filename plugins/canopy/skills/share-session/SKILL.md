@@ -13,7 +13,8 @@ description: |
 ## Preamble (run first)
 
 ```bash
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])" 2>/dev/null)"
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 
@@ -52,22 +53,15 @@ the path to the uploader directly).
 
 ## Resolve the helpers (run in the same shell as the steps below)
 
-`upload.py` is pure stdlib; `find_session.py` (reused from `canopy:find-session`)
-lists candidate sessions across all projects.
+`upload.py` lives in the canopy runtime (resolved via `scripts/canopy-runtime.sh`);
+`find_session.py` (reused from `canopy:find-session`) ships in the installed
+plugin and lists candidate sessions across all projects.
 
 ```bash
-UPLOAD="" ; FIND=""
-for P in \
-  ~/emdash-projects/canopy/scripts/share-session/upload.py \
-  ~/.claude/plugins/marketplaces/canopy/scripts/share-session/upload.py; do
-  [ -f "$P" ] && UPLOAD="$P" && break
-done
-for P in \
-  ~/emdash-projects/canopy/plugins/canopy/skills/find-session/scripts/find_session.py \
-  ~/.claude/plugins/marketplaces/canopy/plugins/canopy/skills/find-session/scripts/find_session.py; do
-  [ -f "$P" ] && FIND="$P" && break
-done
-[ -z "$UPLOAD" ] && echo "NOT_FOUND — run /canopy:update to sync the canopy checkout" && exit 1
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+UPLOAD="$CANOPY_ROOT/scripts/share-session/upload.py"
+FIND="$_CANOPY_PLUGIN/skills/find-session/scripts/find_session.py"
 ```
 
 ## Step 2A — share THIS session
@@ -77,10 +71,10 @@ session you're in):
 
 ```bash
 # Link-by-default — anyone with the URL can view.
-python3 "$UPLOAD" --title "<short title>"
+uv run --project "$CANOPY_ROOT" python "$UPLOAD" --title "<short title>"
 
 # Or private (only logged-in dimagi users can view):
-python3 "$UPLOAD" --private --title "<short title>"
+uv run --project "$CANOPY_ROOT" python "$UPLOAD" --private --title "<short title>"
 ```
 
 ## Step 2B — find a DIFFERENT session
@@ -107,7 +101,7 @@ python3 "$UPLOAD" --private --title "<short title>"
    its branch or first human prompt, and `--project` from its cwd basename:
 
    ```bash
-   python3 "$UPLOAD" "<chosen transcript path>" \
+   uv run --project "$CANOPY_ROOT" python "$UPLOAD" "<chosen transcript path>" \
      --title "<branch or first-prompt summary>" \
      --project "<cwd basename>"
    ```
@@ -152,7 +146,7 @@ When a feature was built across several sessions (often across machine
 accounts), share the **arc** — all of them, in order, on one page:
 
 ```bash
-python3 "$UPLOAD" --arc \
+uv run --project "$CANOPY_ROOT" python "$UPLOAD" --arc \
   /path/to/session-1.jsonl /path/to/session-2.jsonl /path/to/session-3.jsonl \
   --title "Campaign tool build" --project connect-labs
 ```
@@ -164,8 +158,9 @@ headings default to each session's first human prompt. Order is the order you
 pass the paths — list them oldest-first to read as the build unfolded.
 
 To gather the member transcripts for an initiative across users first, use
-`canopy harvest map <initiative> --match <terms>` (it lists every matching
-session path, cross-user, oldest-first), then pass those paths to `--arc`.
+`uv run --project "$CANOPY_ROOT" canopy harvest map <initiative> --match <terms>`
+(same resolution lines as above; it lists every matching session path,
+cross-user, oldest-first), then pass those paths to `--arc`.
 
 ## Secret scrubbing (best-effort, not a guarantee)
 

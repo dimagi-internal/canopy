@@ -1,5 +1,7 @@
 # Session Review Agent Design
 
+> **Status: shipped — historical record, not current-state.**
+
 **Date:** 2026-03-27
 **Status:** Draft
 

@@ -202,6 +202,57 @@ def _read_version(plugin_dir: Path) -> str:
     return ""
 
 
+# ── runtime bundle (repo-root code shipped alongside the plugin) ────────────
+#
+# Some plugins (canopy) keep their executable runtime at the REPO root, outside
+# the plugin source subdir, so a plain plugin sync would strand it. Such a
+# plugin declares `.claude-plugin/runtime.json`:
+#   {"dest": "runtime", "paths": ["src", "scripts", "evals", "pyproject.toml"]}
+# and we rsync each listed clone-root path into <cache>/<dest>/ after the
+# plugin sync. Skills resolve the bundle via scripts/canopy-runtime.sh, so the
+# runtime a skill executes is version-locked to the installed plugin.
+
+
+def _runtime_manifest(plugin_dir: Path) -> dict | None:
+    data = load_json(plugin_dir / ".claude-plugin" / "runtime.json")
+    if not isinstance(data, dict) or not isinstance(data.get("paths"), list):
+        return None
+    return data
+
+
+def _runtime_present(cache_dir: Path, manifest: dict) -> bool:
+    dest = cache_dir / str(manifest.get("dest") or "runtime")
+    return all((dest / str(p).rstrip("/").split("/")[-1]).exists() for p in manifest["paths"])
+
+
+def sync_runtime(clone: str, manifest: dict, cache_dir: Path) -> str:
+    """Rsync manifest paths from the clone root into <cache>/<dest>/.
+
+    Returns "" on success, else an error string. The clone has already been
+    reset to origin/<branch> by the caller, so what we copy is exactly the
+    installed SHA. `.venv`/`uv.lock` in dest are preserved (uv materializes
+    them on first use; a same-version resync must not thrash them).
+    """
+    dest = cache_dir / str(manifest.get("dest") or "runtime")
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"mkdir runtime: {exc}"
+    for rel in manifest["paths"]:
+        src = Path(clone) / str(rel)
+        if not src.exists():
+            return f"runtime path missing in clone: {rel}"
+        rc, _, err = run(
+            ["rsync", "-a", "--exclude=.venv", "--exclude=__pycache__",
+             "--exclude=node_modules", "--exclude=.git",
+             str(src), f"{dest}/"],
+            RSYNC_TIMEOUT,
+        )
+        if rc != 0:
+            return f"rsync runtime {rel}: {err or rc}"
+    return ""
+
+
 def update_one(target: dict) -> dict:
     """Fetch → (if behind) pull + rsync into cache + npm + patch registry."""
     name = target["name"]
@@ -235,6 +286,20 @@ def update_one(target: dict) -> dict:
         return result
 
     if remote_sha == target["sha"]:
+        # Repair pass: a native Claude Code re-install syncs only the plugin
+        # subdir, so a declared runtime bundle can be missing even at the right
+        # SHA. Top it up in place.
+        source = _plugin_source_subdir(clone, name)
+        plugin_dir = (Path(clone) / source).resolve()
+        manifest = _runtime_manifest(plugin_dir)
+        install_path = Path(target["install_path"]) if target["install_path"] else None
+        if manifest and install_path and install_path.is_dir() and not _runtime_present(install_path, manifest):
+            err = sync_runtime(clone, manifest, install_path)
+            if err:
+                result.update(status="error", error=f"runtime repair: {err}")
+            else:
+                result.update(status="runtime-repaired")
+            return result
         result.update(status="up-to-date")
         return result
 
@@ -284,6 +349,16 @@ def update_one(target: dict) -> dict:
             cwd=str(cache_dir),
         )
 
+    # Runtime bundle (repo-root code declared in .claude-plugin/runtime.json).
+    # Fatal when declared: a cache without its runtime strands every skill that
+    # shells into it, which is exactly the drift class this hook exists to kill.
+    manifest = _runtime_manifest(plugin_dir)
+    if manifest:
+        err = sync_runtime(clone, manifest, cache_dir)
+        if err:
+            result.update(status="error", error=err)
+            return result
+
     if not patch_registry(name, target["marketplace"], version, str(cache_dir), remote_sha):
         result.update(status="error", error="registry patch failed")
         return result
@@ -328,6 +403,8 @@ def _fmt(result: dict) -> str:
         return f"{name} {result['old_ver']}→{result['new_ver']} (sha {result['old_sha']}→{result['new_sha']})"
     if status == "up-to-date":
         return f"{name} up-to-date"
+    if status == "runtime-repaired":
+        return f"{name} runtime bundle repaired into installed cache"
     return f"{name} error: {result['error']}"
 
 

@@ -19,16 +19,20 @@ snapshot excludes `auth-profiles.json`, `channels.json`, and `*token*`/key files
 ## Step 1 — Snapshot the OpenClaw
 Get the readable workspace onto local disk. `HOST` is anything `ssh` can reach — reef resolves DO
 droplet IPs + the 1Password SSH key, so point ssh at that (or use an ssh-config alias):
-```
-canopy openclaw-harvest snapshot <user@host> --into /tmp/oc-<slug>
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy openclaw-harvest snapshot <user@host> --into /tmp/oc-<slug>
 ```
 (Pure rsync of `~/.openclaw/workspace/`, minus secrets. If ssh isn't wired, copy the workspace
 dir over by hand — the rest of the flow only needs the local dir.)
 
 ## Step 2 — Inventory + compare to GitHub
-```
-canopy openclaw-harvest inventory /tmp/oc-<slug>
-canopy openclaw-harvest compare   /tmp/oc-<slug> <slug>     # slug or path to the canopy repo
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy openclaw-harvest inventory /tmp/oc-<slug>
+uv run --project "$CANOPY_ROOT" canopy openclaw-harvest compare   /tmp/oc-<slug> <slug>     # slug or path to the canopy repo
 ```
 `compare` resolves the agent's canopy repo and recommends **BOOTSTRAP** (no repo yet → create one)
 or **RECONCILE** (repo exists → port the skills that only live on the OpenClaw).
@@ -36,16 +40,20 @@ or **RECONCILE** (repo exists → port the skills that only live on the OpenClaw
 ## Step 3a — Bootstrap (no canopy repo yet)
 Create a NEW agent repo seeded from the OpenClaw — factory scaffold + the OpenClaw persona seeded
 into `persona.md` + every OpenClaw skill ported in:
-```
-canopy openclaw-harvest bootstrap /tmp/oc-<slug> <slug> --mandate "<one line>" --into ~/emdash/repositories/<slug>
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy openclaw-harvest bootstrap /tmp/oc-<slug> <slug> --mandate "<one line>" --into ~/emdash/repositories/<slug>
 ```
 Then **refine `persona.md`** (the raw SOUL/IDENTITY is appended for you to distill, then delete the
 note), sanity-check the ported skills, set `config/gating.json` rules, `gh repo create`, push.
 
 ## Step 3b — Reconcile (canopy repo already exists)
 Port the OpenClaw skills missing from the repo, for review:
-```
-canopy openclaw-harvest reconcile /tmp/oc-<slug> <slug>
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+uv run --project "$CANOPY_ROOT" canopy openclaw-harvest reconcile /tmp/oc-<slug> <slug>
 ```
 Then in the agent repo: review each ported skill body (the OpenClaw version may be cruftier or
 better than what you'd write today — keep the good ideas, rewrite to canopy conventions), and for

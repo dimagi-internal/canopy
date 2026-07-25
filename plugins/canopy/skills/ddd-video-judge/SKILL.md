@@ -42,7 +42,9 @@ verdict-video.json  (per-scene scores + routed findings)
 
 ```bash
 # run_dir holds output.mp4 + beat-timeline.json (render.ts writes both)
-python3 -m scripts.ddd.video_judge <run_dir> <explainer_spec.(json|yaml)> <audio_dir> <out_dir>
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+(cd "$CANOPY_ROOT" && uv run python -m scripts.ddd.video_judge <run_dir> <explainer_spec.(json|yaml)> <audio_dir> <out_dir>)
 ```
 Each scene gets `<beat>_montage.png` (frames labelled with the spoken word / pacing
 %) and a `manifest.json` row (narration, the word→time→field list, window).

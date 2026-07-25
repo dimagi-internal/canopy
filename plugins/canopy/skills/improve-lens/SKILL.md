@@ -6,13 +6,9 @@ description: Run a single lens of canopy's self-improvement loop against a targe
 ## Preamble (run first)
 
 ```bash
-_CANOPY_DIR="$(python3 -c "from orchestrator.repo_paths import resolve_repo_path as r; p=r('canopy'); print(p) if p else None" 2>/dev/null || true)"
-if [ -z "$_CANOPY_DIR" ]; then
-  for cand in ~/emdash/repositories/canopy ~/emdash-projects/canopy; do
-    [ -d "$cand/.git" ] && _CANOPY_DIR="$cand" && break
-  done
-fi
-_CANOPY_UPD=$(bash "$HOME/emdash-projects/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || bash "$HOME/.claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-update-check.sh" 2>/dev/null || true)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+_CANOPY_DIR="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+_CANOPY_UPD=$(bash "$_CANOPY_PLUGIN/scripts/canopy-update-check.sh" 2>/dev/null || true)
 case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 ```
 

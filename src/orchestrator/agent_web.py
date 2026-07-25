@@ -155,3 +155,9 @@ def post_sync(repo_dir: Path, *, doc_url: str, title: str, summary: str,
 def push_work(repo_dir: Path, items: list[dict]) -> dict:
     ident = resolve_identity(repo_dir)
     return _call(f"/api/agents/{ident['slug']}/work-products/", {"work_products": items})
+
+
+def push_items(repo_dir: Path, items: list[dict]) -> dict:
+    """Post a review-items batch. Unlike push_work, the body is a BARE list (not wrapped)."""
+    ident = resolve_identity(repo_dir)
+    return _call(f"/api/agents/{ident['slug']}/items/", items)

@@ -34,13 +34,99 @@ def _make_healthy_home(home: Path, canopy_dir: Path) -> None:
     (claude / "plugins" / "installed_plugins.json").write_text(json.dumps({
         "plugins": {"canopy@canopy": [{"version": "0.2.119"}]}
     }))
+    # CLI deployed from the marketplace clone, at the clone's version
+    _make_cli_install(home, version="0.2.119")
+
+
+def _make_cli_install(home: Path, version: str, source: Path | None = None) -> Path:
+    """Lay down a marketplace clone + a uv tool install of the canopy CLI."""
+    clone = home / ".claude" / "plugins" / "marketplaces" / "canopy"
+    clone.mkdir(parents=True, exist_ok=True)
+    (clone / "VERSION").write_text(version + "\n")
+
+    receipt = home / ".local/share/uv/tools/canopy/uv-receipt.toml"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    directory = source if source is not None else clone
+    receipt.write_text(
+        "[tool]\n"
+        f'requirements = [{{ name = "canopy", directory = "{directory}" }}]\n'
+    )
+
+    site = home / ".local/share/uv/tools/canopy/lib/python3.14/site-packages"
+    site.mkdir(parents=True, exist_ok=True)
+    (site / f"canopy-{version}.dist-info").mkdir(exist_ok=True)
+    return clone
+
+
+def _make_plugin_hook_registration(home: Path, *, register: bool = True) -> Path:
+    """Lay down an installed canopy plugin whose hooks.json registers PostToolUse.
+
+    This is the CURRENT registration path: the capture hook is plugin-managed
+    (``plugins/canopy/hooks/hooks.json``), and ``/canopy:setup`` deliberately
+    REMOVES the legacy ~/.claude/settings.json entry.
+    """
+    install = home / ".claude" / "plugins" / "cache" / "canopy" / "canopy" / "0.2.347"
+    (install / "hooks").mkdir(parents=True, exist_ok=True)
+    hooks: dict = {"hooks": {"SessionStart": [{"matcher": "*", "hooks": []}]}}
+    if register:
+        hooks["hooks"]["PostToolUse"] = [
+            {"matcher": "*", "hooks": [
+                {"type": "command",
+                 "command": 'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py"'},
+            ]}
+        ]
+    (install / "hooks" / "hooks.json").write_text(json.dumps(hooks))
+
+    registry = home / ".claude" / "plugins" / "installed_plugins.json"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text(json.dumps({
+        "plugins": {"canopy@canopy": [{"version": "0.2.347", "installPath": str(install)}]}
+    }))
+    return install
 
 
 class TestCheckHookRegistered:
-    def test_missing_settings_fails(self, tmp_path):
+    def test_plugin_managed_registration_passes_without_settings_json(self, tmp_path):
+        """The regression: a correctly-configured machine has NO settings.json entry.
+
+        /canopy:setup removes the legacy registration once the plugin manages the
+        hook, so requiring settings.json made this check fail forever — and its
+        remediation ("run /canopy:setup") could never clear it.
+        """
+        _make_plugin_hook_registration(tmp_path)
+        r = doctor.check_hook_registered(home=tmp_path)
+        assert r.ok is True
+        assert "plugin" in r.detail.lower()
+
+    def test_plugin_installed_but_hook_absent_fails(self, tmp_path):
+        _make_plugin_hook_registration(tmp_path, register=False)
         r = doctor.check_hook_registered(home=tmp_path)
         assert r.ok is False
-        assert "not found" in r.detail
+
+    def test_legacy_settings_registration_still_passes(self, tmp_path):
+        """Legacy registration remains valid — the plugin copy defers to it."""
+        claude = tmp_path / ".claude"
+        claude.mkdir(parents=True)
+        (claude / "settings.json").write_text(json.dumps({
+            "hooks": {"PostToolUse": [{"hooks": [{"command": "x post_tool_use.py"}]}]}
+        }))
+        r = doctor.check_hook_registered(home=tmp_path)
+        assert r.ok is True
+
+    def test_malformed_registry_falls_back_to_settings(self, tmp_path):
+        plugins = tmp_path / ".claude" / "plugins"
+        plugins.mkdir(parents=True)
+        (plugins / "installed_plugins.json").write_text("{not json")
+        (tmp_path / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {"PostToolUse": [{"hooks": [{"command": "x post_tool_use.py"}]}]}
+        }))
+        r = doctor.check_hook_registered(home=tmp_path)
+        assert r.ok is True
+
+    def test_neither_registration_fails(self, tmp_path):
+        r = doctor.check_hook_registered(home=tmp_path)
+        assert r.ok is False
+        assert "not registered" in r.detail
 
     def test_registered_passes(self, tmp_path):
         claude = tmp_path / ".claude"
@@ -171,7 +257,7 @@ class TestRunDoctor:
         results, overall_ok = doctor.run_doctor(home=home, canopy_dir=canopy_dir)
         assert overall_ok is True
         assert all(r.ok for r in results)
-        assert len(results) == 5
+        assert len(results) == len(doctor._CHECKS)
 
     def test_one_failure_flips_overall(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
@@ -227,5 +313,71 @@ class TestDoctorCLI:
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert payload["ok"] is True
-        assert len(payload["checks"]) == 5
+        assert len(payload["checks"]) == len(doctor._CHECKS)
         assert all("name" in c and "ok" in c and "detail" in c for c in payload["checks"])
+
+
+class TestCheckCliInstallSource:
+    def test_no_receipt_fails(self, tmp_path):
+        r = doctor.check_cli_install_source(home=tmp_path)
+        assert r.ok is False
+        assert "not installed via" in r.detail
+        assert doctor.CLI_REMEDY in r.detail
+
+    def test_marketplace_clone_passes(self, tmp_path):
+        _make_cli_install(tmp_path, version="0.2.342")
+        r = doctor.check_cli_install_source(home=tmp_path)
+        assert r.ok is True, r.detail
+
+    def test_dev_checkout_fails(self, tmp_path):
+        """The real 2026-07-24 failure: receipt pointing at a dev checkout."""
+        dev = tmp_path / "emdash-projects" / "canopy"
+        dev.mkdir(parents=True)
+        _make_cli_install(tmp_path, version="0.2.342", source=dev)
+
+        r = doctor.check_cli_install_source(home=tmp_path)
+        assert r.ok is False
+        assert str(dev) in r.detail
+        assert "drifts with whatever branch" in r.detail
+        assert doctor.CLI_REMEDY in r.detail
+
+    def test_malformed_receipt_fails_gracefully(self, tmp_path):
+        receipt = tmp_path / ".local/share/uv/tools/canopy/uv-receipt.toml"
+        receipt.parent.mkdir(parents=True)
+        receipt.write_text("this is not = valid toml [[[")
+        r = doctor.check_cli_install_source(home=tmp_path)
+        assert r.ok is False
+        assert doctor.CLI_REMEDY in r.detail
+
+
+class TestCheckCliVersionSync:
+    def test_in_sync_passes(self, tmp_path):
+        _make_cli_install(tmp_path, version="0.2.342")
+        r = doctor.check_cli_version_sync(home=tmp_path)
+        assert r.ok is True, r.detail
+        assert "0.2.342" in r.detail
+
+    def test_stale_cli_fails(self, tmp_path):
+        """Installed from the right place, but never reinstalled after a pull."""
+        _make_cli_install(tmp_path, version="0.2.340")
+        # Clone advances; the installed CLI does not.
+        (tmp_path / ".claude/plugins/marketplaces/canopy/VERSION").write_text("0.2.342\n")
+
+        r = doctor.check_cli_version_sync(home=tmp_path)
+        assert r.ok is False
+        assert "0.2.340" in r.detail and "0.2.342" in r.detail
+        assert doctor.CLI_REMEDY in r.detail
+
+    def test_missing_clone_fails(self, tmp_path):
+        r = doctor.check_cli_version_sync(home=tmp_path)
+        assert r.ok is False
+
+    def test_no_dist_info_fails(self, tmp_path):
+        _make_cli_install(tmp_path, version="0.2.342")
+        import shutil
+        shutil.rmtree(
+            tmp_path / ".local/share/uv/tools/canopy/lib/python3.14/site-packages/canopy-0.2.342.dist-info"
+        )
+        r = doctor.check_cli_version_sync(home=tmp_path)
+        assert r.ok is False
+        assert doctor.CLI_REMEDY in r.detail

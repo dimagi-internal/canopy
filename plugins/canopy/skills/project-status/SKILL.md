@@ -25,7 +25,9 @@ git repo."
 1. Run the script:
 
    ```bash
-   bash scripts/canopy-project-status.sh
+   _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+   CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+   bash "$CANOPY_ROOT/scripts/canopy-project-status.sh"
    ```
 
 2. Read the output to the user verbatim — it's already formatted as a
