@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""PreToolUse guard: the PRIMARY canopy checkout must stay on `main`.
+"""PreToolUse guard: a non-worktree canopy checkout must stay on `main`.
 
-canopy uses emdash worktrees — feature work happens in a worktree; the primary checkout
-(`~/emdash-projects/canopy`, a real `.git` dir) stays on `main`. Branching IN the primary
-checkout silently changes what the globally-installed `canopy` CLI runs (it's deployed from
-main), which is exactly how a fresh session got `No such command 'harvest'`.
+canopy uses emdash worktrees — feature work happens in a worktree; the clone itself stays
+on `main`. Branching IN the clone silently changes what the globally-installed `canopy` CLI
+runs (it's deployed from main), which is exactly how a fresh session got
+`No such command 'harvest'`.
+
+This keys off `/worktrees/` in the git-dir, NOT a hardcoded path, so it protects EVERY
+non-worktree clone (there is often more than one — e.g. `~/emdash-projects/canopy` and
+`~/emdash/repositories/canopy`). Note the limit: it only sees `git` run as a Bash tool
+call, so branch switches performed by emdash itself bypass it.
 
 This blocks `git checkout`/`git switch` to a non-`main` branch and branch creation
 (`-b`/`-c`/`git branch <name>`) — but ONLY when the project is the primary (non-worktree)

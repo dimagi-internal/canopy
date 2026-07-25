@@ -10,9 +10,28 @@ skill runner for review, QA, and implementation quality.
 
 ## Git Worktree Rules
 This repo uses emdash which manages git worktrees. If you are in a worktree
-(check: `git rev-parse --git-dir` contains `/worktrees/`), then `main` is
-checked out in the main repo at `~/emdash-projects/canopy/`.
-You CANNOT `git checkout main` from a worktree — it will fail.
+(check: `git rev-parse --git-dir` contains `/worktrees/`), you CANNOT
+`git checkout main` from it — it will fail.
+
+**There may be more than one non-worktree clone, and both parent worktrees.**
+On the primary machine there are two: `~/emdash-projects/canopy/` and
+`~/emdash/repositories/canopy/` (same origin). Run `git worktree list` to see
+which clone parents the worktree you're in — don't assume. Two consequences:
+
+- **`main` is often checked out in a *worktree*, not in the clone itself**, so
+  `git checkout main` in the clone fails with "already checked out at …". To
+  refresh `main` in that case, fast-forward it through the worktree holding it:
+  `git -C <worktree-on-main> merge --ff-only origin/main`.
+- **A clone's local `main` ref can sit far behind `origin/main`** (one was found
+  530 commits stale, which silently starts every new worktree from an ancient
+  base). Before branching new work: `git fetch origin` and confirm
+  `git rev-list --left-right --count origin/main...main` reads `0 0`.
+
+The `pre_tool_use_main_branch_guard.py` hook enforces "stay on main" in **any**
+non-worktree checkout (it keys off `/worktrees/` in the git-dir, not a hardcoded
+path) — but it only sees `git` run as a Bash tool call. Branch switches made by
+emdash itself bypass it, which is how a clone ends up parked on a dead feature
+branch. Check, don't assume.
 
 To merge to main:
 ```bash

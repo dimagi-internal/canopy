@@ -58,11 +58,75 @@ def _make_cli_install(home: Path, version: str, source: Path | None = None) -> P
     return clone
 
 
+def _make_plugin_hook_registration(home: Path, *, register: bool = True) -> Path:
+    """Lay down an installed canopy plugin whose hooks.json registers PostToolUse.
+
+    This is the CURRENT registration path: the capture hook is plugin-managed
+    (``plugins/canopy/hooks/hooks.json``), and ``/canopy:setup`` deliberately
+    REMOVES the legacy ~/.claude/settings.json entry.
+    """
+    install = home / ".claude" / "plugins" / "cache" / "canopy" / "canopy" / "0.2.347"
+    (install / "hooks").mkdir(parents=True, exist_ok=True)
+    hooks: dict = {"hooks": {"SessionStart": [{"matcher": "*", "hooks": []}]}}
+    if register:
+        hooks["hooks"]["PostToolUse"] = [
+            {"matcher": "*", "hooks": [
+                {"type": "command",
+                 "command": 'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py"'},
+            ]}
+        ]
+    (install / "hooks" / "hooks.json").write_text(json.dumps(hooks))
+
+    registry = home / ".claude" / "plugins" / "installed_plugins.json"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text(json.dumps({
+        "plugins": {"canopy@canopy": [{"version": "0.2.347", "installPath": str(install)}]}
+    }))
+    return install
+
+
 class TestCheckHookRegistered:
-    def test_missing_settings_fails(self, tmp_path):
+    def test_plugin_managed_registration_passes_without_settings_json(self, tmp_path):
+        """The regression: a correctly-configured machine has NO settings.json entry.
+
+        /canopy:setup removes the legacy registration once the plugin manages the
+        hook, so requiring settings.json made this check fail forever — and its
+        remediation ("run /canopy:setup") could never clear it.
+        """
+        _make_plugin_hook_registration(tmp_path)
+        r = doctor.check_hook_registered(home=tmp_path)
+        assert r.ok is True
+        assert "plugin" in r.detail.lower()
+
+    def test_plugin_installed_but_hook_absent_fails(self, tmp_path):
+        _make_plugin_hook_registration(tmp_path, register=False)
         r = doctor.check_hook_registered(home=tmp_path)
         assert r.ok is False
-        assert "not found" in r.detail
+
+    def test_legacy_settings_registration_still_passes(self, tmp_path):
+        """Legacy registration remains valid — the plugin copy defers to it."""
+        claude = tmp_path / ".claude"
+        claude.mkdir(parents=True)
+        (claude / "settings.json").write_text(json.dumps({
+            "hooks": {"PostToolUse": [{"hooks": [{"command": "x post_tool_use.py"}]}]}
+        }))
+        r = doctor.check_hook_registered(home=tmp_path)
+        assert r.ok is True
+
+    def test_malformed_registry_falls_back_to_settings(self, tmp_path):
+        plugins = tmp_path / ".claude" / "plugins"
+        plugins.mkdir(parents=True)
+        (plugins / "installed_plugins.json").write_text("{not json")
+        (tmp_path / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {"PostToolUse": [{"hooks": [{"command": "x post_tool_use.py"}]}]}
+        }))
+        r = doctor.check_hook_registered(home=tmp_path)
+        assert r.ok is True
+
+    def test_neither_registration_fails(self, tmp_path):
+        r = doctor.check_hook_registered(home=tmp_path)
+        assert r.ok is False
+        assert "not registered" in r.detail
 
     def test_registered_passes(self, tmp_path):
         claude = tmp_path / ".claude"
