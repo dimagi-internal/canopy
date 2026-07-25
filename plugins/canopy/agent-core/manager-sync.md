@@ -47,6 +47,13 @@ Grade each task **when you mark it done**, not weeks later at sync time:
 those completion scores instead of re-grading from memory. If a task closed unscored, grade it in
 the sync AND backfill it with the same `set` call so the board and the sync agree.
 
+**The score needs its evidence tier and citation recorded WITH it** (see *Evidence rule*), because
+at sync time you will no longer remember whether anyone actually used the thing — and the
+reconstruction always flatters. Most work closes at `unproven`; that is fine and expected. When a
+human later reviews or uses it, come back and re-score it upward with the citation — **the grade
+is allowed to move as the evidence arrives, and a rising grade backed by a citation is the most
+credible thing in the sync.**
+
 ## Write the sync — the structure
 Grades are **merged into the items**, never a separate table. Sections, in order:
 
@@ -54,7 +61,8 @@ Grades are **merged into the items**, never a separate table. Sections, in order
    that matters most this window. Blunt.
 2. **Completed this window** — one entry per completed board task: **title (linked to the task /
    its deliverable) — score.** one-line review. Pull the score/review from the task's completion
-   fields. Note any work that shipped untracked as an honest process gap.
+   fields. **Each score carries its evidence tier and citation** (*Evidence rule*) so the reader
+   can see what the grade rests on. Note any work that shipped untracked as an honest process gap.
 3. **Open / in-flight** — a quick bulleted list of in-progress + queued tasks, each linked, with the
    next action. Don't grade these.
 4. **Skills built / improved** — a bulleted list with **copyable source links** (the SKILL.md on
@@ -67,6 +75,59 @@ Grades are **merged into the items**, never a separate table. Sections, in order
 Be your own toughest critic. **If your advisor could grade it lower than you did, you graded it
 wrong.** Name failures specifically — the wrong recipient, the broken link, the doc no one could
 open, the thing a human had to redo — not vaguely. Self-congratulation wastes their time.
+
+**Being blocked on a human's review queue is not a work failure.** Many windows are gated on
+someone finding time. Don't grade the window down for it, apologize for it, or call it "an infra
+week." But don't grade it UP either — see the ceiling below. Blocked is neutral, not exculpatory.
+
+## Evidence rule — a grade is a claim about CONSUMPTION, not about effort
+**You cannot grade work a human has not yet used.** Producing an artifact earns no grade; a human
+getting value from it does. So every grade must **cite the evidence that justifies it**, and the
+strength of that evidence **caps** the grade:
+
+| Tier | What you must be able to cite | Grade ceiling |
+|---|---|---|
+| `unproven` | nothing — it was produced and/or delivered, and no human has demonstrably opened it | **B−** |
+| `acknowledged` | a human confirmed receipt or referenced that it exists | **B+** |
+| `reviewed` | a human engaged with the CONTENT and gave substantive feedback | **A−** |
+| `used` | a human used it for their goal (ran the interview from the guide, submitted the entry, published the piece, sent it onward) | **A** |
+| `worked` | evidence of the outcome it was for (published, accepted, the partner replied, the number moved) | **A+** |
+
+Rules that make this bite:
+
+- **Cite it or don't claim it.** A citation names the **thread, the date, and what the human
+  actually did or said** — not "positive feedback." If you cannot cite it, the tier is `unproven`.
+- **`unproven` is the honest default,** and it is where most fresh work sits. "I worked hard on
+  it," "it's high quality," "it's ready to run," and "I delivered it" are all `unproven`. So is
+  your own confidence in it.
+- **Grade the review's CONTENT, not the fact that a review happened.** If the feedback reset your
+  premises or demanded a rewrite, that is evidence of a **miss** — it belongs below the `reviewed`
+  ceiling, not at it.
+- **Your skills grade is capped by the highest tier any of its OUTPUTS reached.** A skill is not
+  good because it is well-written, well-factored, or newly built; it is good because what it
+  produced served someone. A skill whose every output is `unproven` is **`Unproven`** — write that
+  word, not a letter. **While you are still iterating and nothing has been consumed, you do not
+  have a skills grade yet.** Say so.
+- **Watch for the inversion.** Grades drift toward *your* effort and away from *their* use, which
+  makes them run backwards: the elaborate un-read deliverable scores high, the plain one someone
+  actually used scores low. When you list the window's grades, check that the highest ones sit on
+  the highest-tier evidence. If they don't, you graded effort.
+
+Evidence-based grading is symmetric — it raises grades too. When a human demonstrably *used*
+something, say so and score it accordingly; that is the only kind of high grade worth reporting.
+
+> Origin: Jonathan, 2026-07-23, on Echo's manager sync #3 — *"You can't possibly confidently rate
+> your skills at A− … because we haven't yet really used the outputs you are working on yet you
+> are in iteration mode. You should ALWAYS ALWAYS be skeptical of your skills until a human has
+> really been able to consume the output and use it for their goal."* The audit that followed
+> found the inversion above in that very window: the three deliverables with **zero** evidence of
+> use were graded A−, while the one output a human actually used (an advisor submitting a drafted
+> award entry herself) was graded B.
+
+**Enforce this in your board, not just in prose.** Your task tracker's completion path should
+refuse a score that has no evidence tier and refuse a grade above that tier's ceiling, so an
+unearned A− is impossible rather than merely discouraged (Echo's `bin/echo_tasks.py set` is the
+reference implementation). Prose you must remember loses to a rail that runs every time.
 
 ## Asks discipline (your advisor's scarce time)
 Your advisor is the **advisor, not the requester**. Two rules:
