@@ -199,7 +199,7 @@ def test_run_agent_doctor_all_green(tmp_path):
         client_factory=_client_factory(),
         registry_path=str(_plugin_registry(tmp_path)))
     assert ok
-    assert [r.ok for r in results] == [True] * 10
+    assert [r.ok for r in results] == [True] * 11
 
 
 def test_run_agent_doctor_identity_failure_degrades_dependents(tmp_path):
@@ -229,9 +229,10 @@ def test_cli_agent_doctor_json_and_exit_code(tmp_path, monkeypatch):
     payload = json.loads(result.output)
     assert payload["ok"] is False
     names = [c["name"] for c in payload["checks"]]
-    assert names == ["Identity", "Plugin install", "Gating rails", "Hook wiring",
-                     "Secrets manifest", "Secrets materialized", "Rails enforced",
-                     "Email auth (gog)", "Auth services", "canopy-web board"]
+    assert names == ["Identity", "Plugin install", "Required plugins", "Gating rails",
+                     "Hook wiring", "Secrets manifest", "Secrets materialized",
+                     "Rails enforced", "Email auth (gog)", "Auth services",
+                     "canopy-web board"]
 
 
 def test_cli_agent_doctor_all_sweeps_fleet_and_gates_on_any_failure(tmp_path, monkeypatch):
@@ -549,6 +550,69 @@ def test_plugin_install_na_without_plugin_manifest(tmp_path):
     (repo / ".claude-plugin" / "plugin.json").unlink()
     r = check_plugin_install(repo, registry_path=str(_plugin_registry(tmp_path)))
     assert r.ok and "n/a" in r.detail
+
+
+# --------------------------------------------------------------------------------------
+# check_required_plugins — sibling plugins the agent's own skills call
+# --------------------------------------------------------------------------------------
+
+def test_required_plugins_na_when_none_declared(tmp_path):
+    from orchestrator.agent_doctor import check_required_plugins
+    r = check_required_plugins(_agent_repo(tmp_path),
+                               registry_path=str(_plugin_registry(tmp_path)))
+    assert r.ok and "n/a" in r.detail
+
+
+def test_required_plugins_fails_when_dependency_absent(tmp_path):
+    """Eva's real 2026-07-26 state: her OWN plugin installed, chrome-sales — which every
+    Salesforce/Drive tool she calls comes from — not installed, and only prose said so."""
+    from orchestrator.agent_doctor import check_required_plugins
+    repo = _agent_repo(tmp_path, slug="eva", email="eva@dimagi-ai.com", agent_json_extra={
+        "required_plugins": [{"name": "chrome-sales",
+                              "marketplace": "dimagi-internal/chrome-sales",
+                              "note": "then run the chrome-sales:setup skill"}]})
+    r = check_required_plugins(repo, registry_path=str(_plugin_registry(tmp_path,
+                                                                       plugins=("eva",))))
+    assert not r.ok
+    assert "chrome-sales" in r.detail
+    assert "/plugin marketplace add dimagi-internal/chrome-sales" in r.detail
+    assert "/plugin install chrome-sales@chrome-sales" in r.detail
+    assert "chrome-sales:setup skill" in r.detail
+
+
+def test_required_plugins_accepts_bare_string_entries(tmp_path):
+    from orchestrator.agent_doctor import check_required_plugins
+    repo = _agent_repo(tmp_path, agent_json_extra={"required_plugins": ["chrome-sales"]})
+    r = check_required_plugins(repo, registry_path=str(_plugin_registry(tmp_path)))
+    assert not r.ok and "/plugin install chrome-sales@chrome-sales" in r.detail
+
+
+def test_required_plugins_passes_when_installed(tmp_path):
+    from orchestrator.agent_doctor import check_required_plugins
+    repo = _agent_repo(tmp_path, agent_json_extra={"required_plugins": ["chrome-sales"]})
+    reg = _plugin_registry(tmp_path, plugins=("hal", "chrome-sales"))
+    r = check_required_plugins(repo, registry_path=str(reg))
+    assert r.ok and "all 1 declared plugin(s) installed" in r.detail and "chrome-sales" in r.detail
+
+
+def test_required_plugins_ignores_marketplace_suffix_when_matching(tmp_path):
+    """Registry keys are `plugin@marketplace`; a dependency installed from a differently-named
+    marketplace still counts as present."""
+    from orchestrator.agent_doctor import check_required_plugins
+    repo = _agent_repo(tmp_path, agent_json_extra={"required_plugins": ["chrome-sales"]})
+    reg = tmp_path / "reg.json"
+    reg.write_text(json.dumps({"version": 2, "plugins": {
+        "chrome-sales@dimagi-internal": [{"scope": "user", "version": "2.0.0"}]}}))
+    r = check_required_plugins(repo, registry_path=str(reg))
+    assert r.ok
+
+
+def test_required_plugins_skipped_when_registry_absent(tmp_path):
+    """Absence of introspection is not evidence of breakage."""
+    from orchestrator.agent_doctor import check_required_plugins
+    repo = _agent_repo(tmp_path, agent_json_extra={"required_plugins": ["chrome-sales"]})
+    r = check_required_plugins(repo, registry_path=str(tmp_path / "nope.json"))
+    assert r.ok and "skipped" in r.detail
 
 
 # --------------------------------------------------------------------------------------

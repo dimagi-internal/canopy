@@ -528,6 +528,66 @@ def _plugin_source(repo: Path) -> str:
     return Path(repo).name
 
 
+def check_required_plugins(repo: Path, *, registry_path: str | None = None) -> CheckResult:
+    """OTHER plugins this agent's skills call must be installed here too.
+
+    `check_plugin_install` covers the agent's OWN plugin; an agent whose capabilities come
+    from a sibling plugin passes that check and still can't work. Eva's Salesforce + Drive
+    tools are `mcp__plugin_chrome-sales_*` from the chrome-sales plugin — a dependency stated
+    only in her CLAUDE.md and `.mcp.json` `_doc`, i.e. prose no check reads. Her 2026-07-25
+    readiness drill reported it missing; nothing enforced it, so the next turn would have
+    reached for a tool that wasn't there.
+
+    Declared per-agent in config/agent.json `required_plugins` — the AGENT's dependency, not a
+    fleet constant (same rule as `gog_services`: hal must not fail over a plugin only eva
+    calls). Entries are a bare name, or an object with `marketplace` (the `owner/repo` to add)
+    and optional `marketplace_name` (defaults to the plugin name, true across this fleet:
+    eva@eva, chrome-sales@chrome-sales) and `note` for a follow-up setup step.
+
+    A missing registry is a SKIP, not a failure — absence of introspection is not evidence of
+    breakage, same as auth services.
+    """
+    name = "Required plugins"
+    try:
+        declared = json.loads(
+            (Path(repo) / "config" / "agent.json").read_text()).get("required_plugins") or []
+    except (json.JSONDecodeError, OSError):
+        declared = []
+    if not declared:
+        return CheckResult(name, True, "n/a — none declared in config/agent.json")
+    reg_file = Path(registry_path or PLUGIN_REGISTRY).expanduser()
+    try:
+        installed = json.loads(reg_file.read_text()).get("plugins", {})
+    except (json.JSONDecodeError, OSError):
+        return CheckResult(name, True, f"skipped — no plugin registry at {reg_file}")
+    have = {k.split("@", 1)[0] for k in installed}
+    missing = []
+    for entry in declared:
+        spec = {"name": entry} if isinstance(entry, str) else dict(entry or {})
+        if not (plugin := (spec.get("name") or "").strip()):
+            return CheckResult(name, False,
+                               f"config/agent.json required_plugins has an entry with no name: "
+                               f"{entry!r}")
+        if plugin in have:
+            continue
+        mkt_name = (spec.get("marketplace_name") or plugin).strip()
+        source = (spec.get("marketplace") or plugin).strip()
+        fix = (f"`/plugin marketplace add {source}` then "
+               f"`/plugin install {plugin}@{mkt_name}`")
+        if note := (spec.get("note") or "").strip():
+            fix += f" — {note}"
+        missing.append(f"{plugin}: {fix}")
+    if missing:
+        return CheckResult(
+            name, False,
+            f"{len(missing)} declared dependency plugin(s) NOT installed — the skills that "
+            f"call them will fail mid-turn. " + " | ".join(missing),
+        )
+    names = ", ".join(sorted(
+        (e if isinstance(e, str) else (e or {}).get("name", "?")) for e in declared))
+    return CheckResult(name, True, f"all {len(declared)} declared plugin(s) installed ({names})")
+
+
 def check_registration(
     identity: EmailIdentity | None,
     *,
@@ -611,6 +671,7 @@ def run_agent_doctor(
     results = [
         ident_result,
         check_plugin_install(repo, registry_path=registry_path),
+        check_required_plugins(repo, registry_path=registry_path),
         check_gating(repo),
         check_hook_wiring(repo),
         check_secrets_manifest(repo),
