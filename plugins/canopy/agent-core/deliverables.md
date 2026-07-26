@@ -108,11 +108,12 @@ under its agent folder). So the "never My Drive root / never flat at root" invar
 ## What each agent's `gdoc-writer` stub declares
 
 - **Your Drive root** — the id of your own agent folder. It is **environment-specific, so it lives
-  in your agent's 1Password vault**, never in git: `op://Agent-<Slug>/gdrive-root-folder/credential`,
-  referenced from your `config/secrets.yaml` (or `.env.tpl`) and materialized into `~/.<agent>/.env`
-  as `$GDRIVE_ROOT_FOLDER` by `canopy provision`. Everything files beneath it via `Projects/` +
-  `Process State/`. You never declare, or reason about, what that root sits inside.
-  See `agent-core/agent-runtime.md`.
+  in your agent's 1Password vault**, never in git: `op://Agent-<Slug>/gdrive-root-folder/credential`
+  (use the angle-bracket placeholder in any doc/comment — a literal `op://…` gets resolved too),
+  referenced from your `.env.tpl` (the standard) — or the legacy `config/secrets.yaml` — and
+  resolved into `~/.<agent>/.env` as `$GDRIVE_ROOT_FOLDER` via `op inject` (or `canopy provision`
+  for the legacy path). Everything files beneath it via `Projects/` + `Process State/`. You never
+  declare, or reason about, what that root sits inside. See `agent-core/agent-runtime.md`.
 
 ## Related
 

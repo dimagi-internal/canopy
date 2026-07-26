@@ -1,0 +1,17 @@
+{
+  "command": "python scripts/walkthroughs/verified-monitoring/regenerate.py",
+  "cwd": "/private/tmp/ddd/dddsweep",
+  "rerun": "per_render",
+  "outputs": "scripts/walkthroughs/verified-monitoring/.run_ids.json",
+  "skipped": false,
+  "skip_reason": null,
+  "exit_code": 0,
+  "duration_seconds": 8.31,
+  "variables": {
+    "run_id": 4662,
+    "opp_id": 10008,
+    "workflow_def_id": 3699,
+    "runner_path": "/labs/workflow/3699/run/?opportunity_id=10008&run_id=4662",
+    "runner_url": "https://labs.connect.dimagi.com/labs/workflow/3699/run/?opportunity_id=10008&run_id=4662"
+  }
+}

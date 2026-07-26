@@ -368,8 +368,9 @@ infra you'd want every agent to get, it belongs in canopy; raise it there, don't
 ## Conventions
 - Capability logic belongs in CLIs / MCP tools; skills (`SKILL.md`) orchestrate. That keeps the
   agent portable to the Claude Agent SDK later (MCP is the portability boundary).
-- Config/secrets live in a WORKTREE-CLEAN global home `~/.{{AGENT_SLUG}}/.env`, provisioned by
-  `canopy provision` from `config/secrets.yaml` (1Password refs + non-secret literals). NOT a
+- Config/secrets live in a WORKTREE-CLEAN global home `~/.{{AGENT_SLUG}}/.env`, resolved by
+  `op inject -i .env.tpl -o ~/.{{AGENT_SLUG}}/.env` from `.env.tpl` (1Password `op://` refs +
+  non-secret literals — never a literal `op://…` in a comment, it gets resolved too). NOT a
   per-worktree repo `.env` (that gets recreated every turn). Scripts read it via `bin/_env.py`.
 - Outputs that are deliverables live where the team can see them (a shared drive / the canopy-web
   workspace), not as loose local files.
@@ -466,40 +467,41 @@ is fleet-wide and DRY — **invoke `canopy:agent-turn-review`** and apply it in 
 - **Gated in:** `turn` (before shipping/replying, and the close checklist).
 '''
 
-_SECRETS_YAML = '''# {{AGENT_NAME}}'s secrets + config, declarative. `canopy provision` materializes these from the
-# 1Password AI-Agents vault into the WORKTREE-CLEAN global home ~/.{{AGENT_SLUG}}/.env — NOT a
-# per-worktree repo .env. emdash runs each turn in a fresh worktree; a repo .env would be absent
-# there and get recreated every turn, so it lives ONCE in the global home and every worktree reads
-# it (via bin/_env.py). No values here — only 1Password refs (`op:`) and non-secret literals
-# (`value:`). Provision with `canopy provision` (or `--check` to dry-run) from this repo.
+_ENV_TPL = '''# {{AGENT_NAME}}'s env template — the fleet-standard `.env.tpl` + `op inject` provisioning
+# path (canopy agent-core/agent-runtime.md). `op inject` resolves this file's `op://` refs into
+# the WORKTREE-CLEAN global env home ~/.{{AGENT_SLUG}}/.env (mode 0600) — NOT a per-worktree repo
+# .env. emdash runs each turn in a fresh worktree, so a repo-local .env would vanish; every
+# worktree instead reads the global home via bin/_env.py.
 #
-# The gog OAuth client is the SHARED fleet app (`canopy`), not per-agent: a gog "client" is the APP
-# identity (client_id + client_secret), reused by every agent's mailbox. The per-agent, never-shared
-# identity is the mailbox ({{MAILBOX}}). `canopy provision` places credentials-canopy.json; then a
-# one-time `gog login {{MAILBOX}} --client canopy ...` consents this mailbox into it.
-secrets:
-  - name: canopy gog OAuth client JSON
-    op: "op://AI-Agents/Canopy - gog OAuth client/notesPlain"
-    target: "~/Library/Application Support/gogcli/credentials-canopy.json"
-env:
-  target: "~/.{{AGENT_SLUG}}/.env"
-  mode: "0600"
-  vars:
-    - key: {{AGENT_SLUG}}_PRIMARY_CHANNEL
-      value: "{{MAILBOX}}"                                   # not a secret — the agent's channel
-    # - key: {{AGENT_SLUG}}_SOME_SECRET
-    #   op: "op://AI-Agents/{{AGENT_NAME}} item/field"       # a real secret — resolved from 1Password
-    # - key: CANOPY_WEB_PAT
-    #   op: "op://AI-Agents/{{AGENT_NAME}} canopy-web PAT/credential"
-    #   optional: true
+# Resolve with:
+#   op inject -i .env.tpl -o ~/.{{AGENT_SLUG}}/.env --account dimagi.1password.com
+#
+# CRITICAL: `op inject` resolves `op://` refs ANYWHERE IN THIS FILE, INCLUDING COMMENTS — a real
+# `op://<vault>/<item>/<field>` left in a comment/example gets resolved too and can leak that
+# secret to stdout on the next `op inject ... | cat` (or similar). NEVER paste a real vault/item
+# name in a comment. Every example below uses an angle-bracket PLACEHOLDER
+# (`op://<vault>/<item>/<field>`) for exactly this reason — keep doing that when you add a var.
+#
+# One line per var, `KEY=value`. A literal (not environment-varying) value is fine as-is;
+# anything that differs per environment — a key, an id, a folder — must be an `op://` reference,
+# never the literal value. For a non-env credential FILE (e.g. an OAuth-client json), don't put
+# it here — resolve it directly with `op read "op://<vault>/<item>/<field>" > <file>` instead.
+#
+# The gog OAuth client is the SHARED fleet app (`canopy`), not per-agent: a gog "client" is the
+# APP identity (client_id + client_secret), reused by every agent's mailbox. The per-agent,
+# never-shared identity is the mailbox ({{MAILBOX}}).
+
+{{AGENT_SLUG}}_PRIMARY_CHANNEL={{MAILBOX}}
+# {{AGENT_SLUG}}_SOME_SECRET=op://<vault>/<item>/<field>
+# CANOPY_WEB_PAT=op://<vault>/<item>/credential
 '''
 
 _ENV_LOADER = '''"""Canonical .env resolver for {{AGENT_NAME}}'s scripts — reads the WORKTREE-CLEAN global home.
 
 {{AGENT_NAME}} runs each turn in a fresh emdash worktree; a per-repo `.env` would be absent there and
-get recreated every turn. So secrets live ONCE at ~/.{{AGENT_SLUG}}/.env (provisioned by
-`canopy provision` from config/secrets.yaml; override the home with ${{AGENT_SLUG}}_ENV, upper-cased).
-A repo-local `.env` still works as a per-KEY dev override (it wins).
+get recreated every turn. So secrets live ONCE at ~/.{{AGENT_SLUG}}/.env (resolved by
+`op inject -i .env.tpl -o ~/.{{AGENT_SLUG}}/.env` from .env.tpl; override the home with
+${{AGENT_SLUG}}_ENV, upper-cased). A repo-local `.env` still works as a per-KEY dev override (it wins).
 
     from _env import get, load
     val = get("{{AGENT_SLUG}}_PRIMARY_CHANNEL", "")   # os.environ wins, then global .env, then default
@@ -616,13 +618,14 @@ follows it: preflight → process inbound (one counterpart at a time) → skill 
 3. Add each outbound action as a `deny` rail in `config/gating.json` pointing at its one
    sanctioned path — not as prose, and not as an `approve` rule (approval is the turn
    checklist's job; hook modals stall autonomous work).
-4. Declare secrets in `config/secrets.yaml` (1Password refs) and run `canopy provision` — they land
-   in the worktree-clean global home `~/.{{AGENT_SLUG}}/.env`, read by `bin/_env.py`.
+4. Declare secrets in `.env.tpl` (1Password `op://` refs — never a literal `op://…` in a comment,
+   `op inject` resolves those too) and run `op inject -i .env.tpl -o ~/.{{AGENT_SLUG}}/.env` — they
+   land in the worktree-clean global home, read by `bin/_env.py`.
 5. The agent's own thing is its MAILBOX ({{MAILBOX}}); the gog OAuth client is the SHARED fleet
-   app (`canopy`), already declared in config/secrets.yaml — `canopy provision` places it. Then
-   consent this mailbox into it once: `gog login {{MAILBOX}} --client canopy --services
-   gmail,drive,docs,sheets,forms,appscript`. Verify with `canopy email preflight --repo .`; send via
-   `bin/{{AGENT_SLUG}}-email`.
+   app (`canopy`) — mint/place its credentials json with `op read` (see `.env.tpl`'s header) or the
+   legacy `canopy provision`. Then consent this mailbox into it once: `gog login {{MAILBOX}}
+   --client canopy --services gmail,drive,docs,sheets,forms,appscript`. Verify with
+   `canopy email preflight --repo .`; send via `bin/{{AGENT_SLUG}}-email`.
 '''
 
 _GITIGNORE = '''.env
@@ -821,7 +824,7 @@ _TEMPLATES: dict[str, str] = {
     "persona.md": _PERSONA_MD,
     "README.md": _README,
     ".gitignore": _GITIGNORE,
-    "config/secrets.yaml": _SECRETS_YAML,
+    ".env.tpl": _ENV_TPL,
     "bin/_env.py": _ENV_LOADER,
     "bin/{{AGENT_SLUG}}-email": _EMAIL_SHIM,
     "config/gating.json": _GATING_JSON,

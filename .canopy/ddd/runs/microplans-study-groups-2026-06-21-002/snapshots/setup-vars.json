@@ -1,0 +1,11 @@
+{
+  "command": "python scripts/walkthroughs/microplans-study-groups/ensure_demo.py",
+  "cwd": "/Users/acedimagi/emdash/worktrees/connect-labs/emdash/ddd-lvir3",
+  "rerun": "per_render",
+  "outputs": null,
+  "skipped": false,
+  "skip_reason": null,
+  "exit_code": 0,
+  "duration_seconds": 3.68,
+  "variables": {}
+}

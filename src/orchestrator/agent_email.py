@@ -583,8 +583,12 @@ def _oauth_remedy(identity: EmailIdentity, stderr: str) -> list[str] | None:
 
 
 def _provision_remedy(identity: EmailIdentity, creds: str) -> list[str] | None:
-    """Route the missing-client fix through the DECLARATIVE path when the agent's repo
-    declares this gog client in `config/secrets.yaml`.
+    """Route the missing-client fix through the DECLARATIVE (legacy) path when the agent's repo
+    declares this gog client in `config/secrets.yaml` via `canopy provision`. `.env.tpl`-primary
+    agents (the current standard — see agent-runtime.md) don't declare file-type secrets this way
+    at all: a non-env credential FILE like this one is resolved directly with
+    `op read "op://<vault>/<item>/<field>" > <file>`, so this helper falls through to the
+    generic `preflight` fallback message for them, same as any agent with no declared secrets.
 
     The manual "copy the JSON into place" instruction is the fallback of last resort — an
     agent that declares its client for provisioning (hal is the reference) should never be
@@ -871,8 +875,9 @@ def preflight(
         return False, [
             f"FIX: gog `{identity.client}` client credentials missing: {creds}",
             f"     This is the SHARED fleet OAuth client (client_id + client_secret), not per-agent.",
-            f"     Better: declare it in config/secrets.yaml so `canopy provision` places it.",
-            f"     Or copy the shared client JSON there from 1Password (AI-Agents).",
+            f"     Standard fix: `op read \"op://<vault>/<item>/<field>\" > {creds}` (a non-env "
+            "credential FILE — see agent-runtime.md).",
+            f"     Legacy: declare it in config/secrets.yaml so `canopy provision` places it.",
             f"     Then: {login_cmd}",
         ]
     cfg_path = os.path.join(gog_home, "config.json")

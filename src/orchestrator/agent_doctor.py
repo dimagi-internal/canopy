@@ -234,42 +234,63 @@ def check_hook_wiring(repo: Path) -> CheckResult:
 
 
 def check_secrets_manifest(repo: Path) -> CheckResult:
-    """config/secrets.yaml must exist and parse, so `canopy provision` can
-    rebuild this machine's agent state. Structural only — op-ref resolution
-    stays in `canopy provision --check` (needs a 1Password session)."""
+    """`.env.tpl` (PRIMARY — `op inject`) or `config/secrets.yaml` (LEGACY —
+    `canopy provision`) must exist and be structurally sound, so this machine's agent state
+    can be rebuilt. EITHER manifest satisfies the check — `.env.tpl` is preferred for new
+    agents (see agent-core/agent-runtime.md); `config/secrets.yaml` still works for agents
+    that haven't migrated. Structural only — op-ref resolution stays in a live `op inject` /
+    `canopy provision --check` (needs a 1Password session)."""
     name = "Secrets manifest"
-    path = Path(repo) / "config" / "secrets.yaml"
-    if not path.exists():
-        # Escape hatch for agents with their own provisioning (ACE: .env.tpl +
-        # `op inject`) — declared, not inferred, so absence stays a failure by default.
-        agent_json = Path(repo) / "config" / "agent.json"
-        try:
-            provisioning = json.loads(agent_json.read_text()).get("provisioning", "")
-        except (OSError, ValueError):
-            provisioning = ""
-        if provisioning:
-            return CheckResult(
-                name, True,
-                f"self-managed ({provisioning}) — declared in agent.json; "
-                "no canopy provision manifest expected",
-            )
+    repo = Path(repo)
+    env_tpl = repo / ".env.tpl"
+    secrets_yaml = repo / "config" / "secrets.yaml"
+
+    if env_tpl.exists():
+        var_lines = [
+            l for l in env_tpl.read_text().splitlines()
+            if l.strip() and not l.strip().startswith("#") and "=" in l
+        ]
+        op_refs = sum(1 for l in var_lines if "op://" in l)
         return CheckResult(
-            name, False,
-            f"{path} not found — agent state won't survive a new machine; "
-            "declare secrets there and run `canopy provision` "
-            "(see create-agent § Channel + setup), or declare \"provisioning\" "
-            "in config/agent.json if this agent provisions itself",
+            name, True,
+            f".env.tpl ({len(var_lines)} var(s), {op_refs} op:// ref(s)) — primary manifest; "
+            "resolve with `op inject -i .env.tpl -o ~/.<agent>/.env`",
         )
+
+    if secrets_yaml.exists():
+        try:
+            secrets = load_manifest(repo)
+            env = load_env_block(repo)
+        except ProvisionError as e:
+            return CheckResult(name, False, str(e))
+        n_env = len(env.vars) if env else 0
+        return CheckResult(
+            name, True,
+            f"config/secrets.yaml ({len(secrets)} file secret(s), {n_env} env var(s)) — LEGACY "
+            "manifest via `canopy provision`; new agents should scaffold .env.tpl + `op inject` "
+            "instead — validate refs via `canopy provision --check`",
+        )
+
+    # Escape hatch for agents with their own bespoke provisioning — declared, not inferred, so
+    # absence stays a failure by default.
+    agent_json = repo / "config" / "agent.json"
     try:
-        secrets = load_manifest(Path(repo))
-        env = load_env_block(Path(repo))
-    except ProvisionError as e:
-        return CheckResult(name, False, str(e))
-    n_env = len(env.vars) if env else 0
+        provisioning = json.loads(agent_json.read_text()).get("provisioning", "")
+    except (OSError, ValueError):
+        provisioning = ""
+    if provisioning:
+        return CheckResult(
+            name, True,
+            f"self-managed ({provisioning}) — declared in agent.json; "
+            "no canopy provision manifest expected",
+        )
     return CheckResult(
-        name, True,
-        f"{len(secrets)} file secret(s), {n_env} env var(s) — "
-        "validate refs via `canopy provision --check`",
+        name, False,
+        f"neither {env_tpl.name} nor {secrets_yaml} found — agent state won't survive a new "
+        "machine; add a .env.tpl and resolve it with `op inject -i .env.tpl -o "
+        "~/.<agent>/.env` (see create-agent § Channel + setup; config/secrets.yaml + "
+        "`canopy provision` is the legacy path), or declare \"provisioning\" in "
+        "config/agent.json if this agent provisions itself some other way",
     )
 
 
@@ -281,13 +302,24 @@ def check_secrets_materialized(repo: Path) -> CheckResult:
     per-machine doctor: a fresh macOS user has every repo, every manifest, and none of the
     resolved files (`~/.<slug>/.env`, `credentials-<client>.json`). Fixable non-interactively,
     so `--fix` heals it.
+
+    `.env.tpl` has no declared-target field (unlike `secrets.yaml`'s `env.target`), so there is
+    no structural way to know where `op inject` was told to write — this check SKIPS for
+    `.env.tpl`-primary agents rather than guessing a path.
     """
     name = "Secrets materialized"
-    if not (Path(repo) / "config" / "secrets.yaml").exists():
+    repo = Path(repo)
+    if (repo / ".env.tpl").exists():
+        return CheckResult(
+            name, True,
+            "skipped — .env.tpl declares no target field to check; verify manually with "
+            "`op inject -i .env.tpl -o ~/.<agent>/.env` (or `op inject --check`)",
+        )
+    if not (repo / "config" / "secrets.yaml").exists():
         return CheckResult(name, True, "skipped — no canopy provision manifest (see Secrets manifest)")
     try:
-        secrets = load_manifest(Path(repo))
-        env = load_env_block(Path(repo))
+        secrets = load_manifest(repo)
+        env = load_env_block(repo)
     except ProvisionError as e:
         return CheckResult(name, False, str(e))
     targets = [resolve_target(s.target, Path(repo)) for s in secrets]

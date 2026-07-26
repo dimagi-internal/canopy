@@ -1,0 +1,161 @@
+provenance:
+  generator: video-from-walkthrough
+  template: connect-ddd-walkthrough
+  generated_from: microplans-study-groups DDD run None
+  generated_at: '1970-01-01T00:00:00Z'
+slug: microplans-study-groups-explainer
+workspace: dimagi-team
+name: microplans-study-groups
+country_focus: Global
+status: DDD walkthrough
+tagline: Design a controlled two-arm study, right from the map
+program_url: https://labs.connect.dimagi.com
+manifest:
+  master: file:assets/programs/microplans-study-groups-explainer/walkthrough.mp4
+beats:
+- id: title
+  kind: intro_title
+  seconds: 4
+- id: s1
+  kind: body_walkthrough
+  seconds: 4.6
+- id: s2
+  kind: body_walkthrough
+  seconds: 5.4
+- id: s3
+  kind: body_walkthrough
+  seconds: 6.7
+- id: s4
+  kind: body_walkthrough
+  seconds: 48.5
+- id: s5
+  kind: body_walkthrough
+  seconds: 10.2
+- id: s6
+  kind: body_walkthrough
+  seconds: 8.8
+- id: s7
+  kind: body_walkthrough
+  seconds: 11.3
+- id: outro
+  kind: outro_card
+  seconds: 5
+walkthrough:
+  s1:
+    asset: '@master'
+    segments:
+    - start_seconds: 0.0
+      duration_seconds: 4.56
+    start_seconds: 0.0
+    duration_seconds: 4.56
+    lower_third: ''
+  s2:
+    asset: '@master'
+    segments:
+    - start_seconds: 14.427
+      duration_seconds: 0.8
+    - start_seconds: 21.08
+      duration_seconds: 4.6
+    start_seconds: 14.427
+    duration_seconds: 5.4
+    lower_third: ''
+  s3:
+    asset: '@master'
+    segments:
+    - start_seconds: 26.924
+      duration_seconds: 6.676
+    start_seconds: 26.924
+    duration_seconds: 6.676
+    lower_third: ''
+  s4:
+    asset: '@master'
+    segments:
+    - start_seconds: 34.968
+      duration_seconds: 48.539
+    start_seconds: 34.968
+    duration_seconds: 48.539
+    lower_third: ''
+  s5:
+    asset: '@master'
+    segments:
+    - start_seconds: 83.508
+      duration_seconds: 10.245
+    start_seconds: 83.508
+    duration_seconds: 10.245
+    lower_third: ''
+  s6:
+    asset: '@master'
+    segments:
+    - start_seconds: 93.752
+      duration_seconds: 8.848
+    start_seconds: 93.752
+    duration_seconds: 8.848
+    lower_third: ''
+  s7:
+    asset: '@master'
+    segments:
+    - start_seconds: 108.6
+      duration_seconds: 11.292
+    start_seconds: 108.6
+    duration_seconds: 11.292
+    lower_third: ''
+narration:
+  generator: manual
+  prompt_version: v1
+  start_seconds: 0
+  by_beat:
+    title: Design a controlled two-arm study, right from the map
+    s1: Maya starts a brand-new two-arm study on her Kaura programme.
+    s2: In the plan editor she turns on the campaign's service-delivery data.
+    s3: The visits blanket Attakar — everywhere Connect logged delivery. She'll sample
+      by ward.
+    s4: 'She tags Attakar as the intervention arm and runs Compare. Every neighbouring
+      ward is ranked against it — but look at what the table shows. Match is how similar
+      the two wards look overall. The column that matters is Matched balance: if Maya
+      picks this ward as her control and lets the engine match-sample it, how balanced
+      the two arms actually come out — the very number her study''s comparability
+      check will report. And Common support is how much of the settlement-density
+      range the two wards share, because matching only draws from that shared range.
+      So a ward that''s only a partial overall match can still deliver a perfectly
+      balanced study.'
+    s5: Sopp and Gura are the best-balanced controls, both at 0.02. Zankan was the
+      programme's own ward last cycle, so it's out. Of the two, Gura shares more common
+      support with Attakar — so Maya makes it the control arm.
+    s6: She sets the sampling methodology and clicks Generate — both arms' sample
+      drawn in one pass, balanced by design.
+    s7: She advances the plan to Approved. Each area keeps its arm labs-side, but
+      the Connect export carries no arm column — so surveyors stay blind. The study's
+      ready for a survey firm.
+    outro: ''
+  script: 'Design a controlled two-arm study, right from the map
+
+    Maya starts a brand-new two-arm study on her Kaura programme.
+
+    In the plan editor she turns on the campaign''s service-delivery data.
+
+    The visits blanket Attakar — everywhere Connect logged delivery. She''ll sample
+    by ward.
+
+    She tags Attakar as the intervention arm and runs Compare. Every neighbouring
+    ward is ranked against it — but look at what the table shows. Match is how similar
+    the two wards look overall. The column that matters is Matched balance: if Maya
+    picks this ward as her control and lets the engine match-sample it, how balanced
+    the two arms actually come out — the very number her study''s comparability check
+    will report. And Common support is how much of the settlement-density range the
+    two wards share, because matching only draws from that shared range. So a ward
+    that''s only a partial overall match can still deliver a perfectly balanced study.
+
+    Sopp and Gura are the best-balanced controls, both at 0.02. Zankan was the programme''s
+    own ward last cycle, so it''s out. Of the two, Gura shares more common support
+    with Attakar — so Maya makes it the control arm.
+
+    She sets the sampling methodology and clicks Generate — both arms'' sample drawn
+    in one pass, balanced by design.
+
+    She advances the plan to Approved. Each area keeps its arm labs-side, but the
+    Connect export carries no arm column — so surveyors stay blind. The study''s ready
+    for a survey firm.'
+voice:
+  provider: elevenlabs
+  voice_id: XB0fDUnXU5powFXDhCwa
+  model: eleven_turbo_v2

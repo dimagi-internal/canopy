@@ -43,8 +43,10 @@ This writes ~15 files: `persona.md`, `CLAUDE.md`, the `turn` + `self-review` ski
 deny-rails-only with an empty `approve` list), `.claude/settings.json` (wires the hook),
 `bin/<slug>-email` (thin shim over the shared `canopy email` engine; raw `gog gmail send` is
 deny-railed out of the box), `config/agent.json` (identity: mailbox + `gog_client`),
-`config/secrets.yaml`, `config/allowlist.txt`, and the plugin manifest. Report the path and
-file count back.
+`.env.tpl` (the fleet-standard secrets template — see agent-core/agent-runtime.md;
+**never write a real `op://<vault>/<item>/<field>` in a comment**, `op inject` resolves those
+too — only the angle-bracket placeholder), `config/allowlist.txt`, and the plugin manifest.
+Report the path and file count back.
 
 ## Step 3 — Make it real (the part the factory can't do)
 The scaffold is a skeleton. Walk the human through filling it in, in this order:
@@ -74,10 +76,15 @@ The scaffold is a skeleton. Walk the human through filling it in, in this order:
    client (named `<slug>`), `gog login <mailbox> --client <slug> --services gmail,drive,docs,sheets,forms,appscript`,
    verify with `uv run --project "$CANOPY_ROOT" canopy email preflight --repo .`, send via
    `bin/<slug>-email` (resolve `CANOPY_ROOT` with the same two-liner as Step 2 in each bash
-   block). Then declare secrets in `config/secrets.yaml` and run
-   `uv run --project "$CANOPY_ROOT" canopy provision`. Finish with
-   `uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .` — one command verifying
-   identity, rails, manifest, gog
+   block). Then declare env-var secrets in `.env.tpl` (1Password `op://` refs — angle-bracket
+   placeholders in any comment/example, never a real ref, or `op inject` will resolve and leak
+   it) and resolve with `op inject -i .env.tpl -o ~/.<slug>/.env --account
+   dimagi.1password.com`; a non-env credential FILE (e.g. the gog OAuth-client json) is resolved
+   directly with `op read "op://<vault>/<item>/<field>" > <file>`, not through `.env.tpl`. (An
+   agent still on the legacy path declares secrets in `config/secrets.yaml` and runs
+   `uv run --project "$CANOPY_ROOT" canopy provision` instead — supported, but not for new
+   agents.) Finish with `uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .` — one
+   command verifying identity, rails, manifest, gog
    auth, and canopy-web registration; it must be all-green before the agent's first turn
    (and re-run it on any NEW machine — it catches setup that only ever lived on the old one).
 

@@ -1,0 +1,147 @@
+[ensure_demo] OK — group 4492/plan 4494 present on program 10008; swept 1 prior R6 solicitation(s) [4658] + their responses. Scene 2 mints a fresh call on camera.
+Setup: running synthetic generator (cwd=/private/tmp/ddd/final, timeout=900s)
+  $ python scripts/walkthroughs/create-survey-solicitation/ensure_demo.py
+Setup: done in 1.8s (exit 0)
+Late binding: ${...} resolved on camera by capture: response_id, solicitation_id
+Recording 8 scenes at pace=fast (1280x720)
+
+=== Scene 1/8: The goal — recruit an independent firm to run the study
+  · goto https://labs.connect.dimagi.com/microplans/program/10008/
+  · deferring goto_settle_ms (first action is wait_for)
+  · using wait_until=commit (first action is wait_for; navigation gate deferred to it)
+  · deferring initial_hold_ms (first action is wait_for)
+    · wait_for(Studies & plan groups)
+    · hold()
+  · snapshot scene_1.png + scene_1_page_text.json
+
+=== Scene 2/8: Maya turns her finished study into a call for a firm
+  · staying on https://labs.connect.dimagi.com/microplans/program/10008/  — no nav for this scene
+  · deferring initial_hold_ms (first action is wait_for)
+    · wait_for(css:a.primary-dark:has-text("Create solicitation"))  — the finished R6 study-group card's primary "Create solicitation" CTA paints
+    · hold()  — let the ready-to-solicit study card settle as the page hero
+    · hover(css:a.primary-dark:has-text("Create solicitation"))  — glide the cursor to the R6 group's primary "Create solicitation" CTA — the next scene navigates to it; we hover (not click) here so this capture stays on the portfolio that scene 1 is about
+    · hold()  — VO-sized teach hold — this scene's narration runs ~14s; hold the finished study-group card on screen so the footage carries the full line instead of freezing on the last frame
+  · snapshot scene_2.png + scene_2_page_text.json
+
+=== Scene 3/8: Maya mints the call live and lands on its responses page
+  · goto https://labs.connect.dimagi.com/solicitations/create/?program_id=10008&source_program_id=10008&source_group_id=4492
+  · before-frame scene_3_before.png
+    · scroll_to(css:#id_title)  — title carried over from the R6 study
+    · hold()  — pre-filled title — no retyping
+    · scroll_to(css:#sol-coverage-map)  — coverage area pre-seeded from the R6 plan
+    · wait_for(css:#sol-coverage-map canvas.mapboxgl-canvas)  — coverage map paints
+    · hover(css:#sol-coverage-map)  — glide over the coverage
+    · scroll_to(css:#id_description)  — survey description
+    · fill(css:#id_description)  — Maya writes the survey description
+    · scroll_to(css:#id_scope_of_work)  — scope of work, also carried from the study
+    · hold()  — pre-filled scope
+    · select(css:#id_solicitation_type)  — pick the call type — a Request for Proposal
+    · select(css:#id_status)  — set Status to Active
+    · scroll_to(css:#id_is_public)  — the Publicly Listed toggle
+    · hold()  — ACTION-FRAME: show the Publicly Listed option — public to the Connect network + can target known orgs (do NOT check it; a public call hides the owner-as-firm response form downstream)
+    · scroll_to(css:#id_application_deadline)  — application deadline
+    · fill(css:#id_application_deadline)  — set the deadline
+    · fill(css:#id_expected_start_date)  — expected start
+    · fill(css:#id_expected_end_date)  — expected end
+    · scroll_to(css:#id_estimated_scale)  — estimated scale
+    · fill(css:#id_estimated_scale)  — the scale
+    · scroll_to(css:#id_contact_email)  — contact email
+    · fill(css:#id_contact_email)  — her contact
+    · scroll_to(text:Add Question)  — the Application Questions section
+    · click(text:Add Question)  — add an application question for the firms
+    · fill(css:input[x-model="question.text"])  — Maya writes a question the firms must answer
+  · snapshot scene_3.png + scene_3_page_text.json
+
+=== Scene 4/8: Maya generates the scoring criteria with AI
+  ! scene url still has an unresolved ${var}: 'https://labs.connect.dimagi.com/solicitations/${solicitation_id}/?program_id=10008' — not navigating
+  · staying on https://labs.connect.dimagi.com/solicitations/create/?program_id=10008&source_program_id=10008&source_group_id=4492  — no nav for this scene
+  · deferring initial_hold_ms (no nav for this scene)
+  · before-frame scene_4_before.png
+    · scroll_to(text:Generate with AI)  — the Evaluation Criteria section + Generate with AI
+    · hold()  — about to AI-generate the scoring rubric
+    · click(text:Generate with AI)  — instead of hand-writing the rubric, Generate with AI
+    · wait_for(css:input[x-model="criterion.name"])  — AI (Anthropic) drafts evaluation criteria from the scope + questions
+    · hold()  — ACTION-FRAME: the AI-generated scoring criteria appear — name/weight/scoring guide
+    · scroll_to(css:button[type=submit]:has-text("Create Solicitation"))  — bring the publish button into frame alongside the just-filled form — the ACTION frame for this scene is the completed-but-not-yet-published form (scope written, Status=Active, publish button in view), so the de-dweller has a teach frame ON the effecting act to land the narration on.
+    · hold()  — ACTION-FRAME teach hold ON the act the narration describes — "she sets the scope, marks it active, and publishes." The footage rests on the FILLED form (Description written, Status=Active, Create Solicitation in frame) so the VO ("sets the scope, marks it active") carries on the act being performed, NOT on the result page. Sized ~8s so the de-dweller keeps this teach frame as the load-bearing one instead of the trailing responses page. The publish click then resolves the act on camera.
+    · click(css:button[type=submit]:has-text("Create Solicitation"))  — Maya clicks Create Solicitation — the REAL publish. This mints a brand-new active solicitation on program 10008 (source_group_id=4492) live, on camera; the create view redirects to /solicitations/<new-id>/responses/, where the next action captures the fresh id. No fixed record is reused; ensure_demo.py sweeps every render's call before the next render.
+    · wait_for(text:Solicitation published)  — the post-create redirect lands on responses_list?created=1 with the success banner "Solicitation published — organizations can now apply" — the open call is now published and live, with a primary "View public page / Copy share link" action
+    · capture()  — read the brand-new solicitation's id off the responses-page URL the create redirect produced; scenes 3/4/5 thread this fresh id forward via ${solicitation_id}
+    · captured ${solicitation_id} = '4663'
+    · hold()  — brief settle on the "Solicitation published" confirmation banner so the publish lands on camera
+    · goto(/solicitations/4663/?program_id=10008)  — navigate to the just-minted call's PUBLIC detail page so the scene's END frame (the judge's after-snapshot) shows the ARTIFACT THE ACT PRODUCED — the live published call with its title, scope, and the Attakar × Gura coverage — rather than the empty "No responses yet" inbox. This makes the static hero frame depict "she published THIS call", aligned to the narration's act, not a blank list.
+    · wait_for(text:Accepting Responses)  — the public detail of the freshly published call has rendered (status badge "Accepting Responses" + the scope + coverage), confirming the call is live and open
+    · scroll_to(css:#sol-coverage-map)  — scroll the published call's Coverage-areas MAP into the viewport so the scene's END frame (the judge's hero) actually SHOWS the Attakar (green) × Gura (blue) ward polygons the narration sells — "the R6 plan already waiting as the coverage area." Without this the map sits below the fold and the hero is text-only; the differentiating visual of the published call belongs in frame.
+    · wait_for(css:#sol-coverage-map canvas.mapboxgl-canvas)  — best-effort (≤5s, non-blocking) wait for the public-detail coverage map to paint the Attakar/Gura polygons before the hero settle
+    · hold()  — VO-sized teach settle framed ON the published call's coverage map — the minted-live artifact with its Attakar × Gura coverage visible — carrying the "a brand-new call, minted live" tail of the narration on the call Maya just created. This is the frame the judge sees as scene 2's hero.
+  · snapshot scene_4.png + scene_4_page_text.json
+
+=== Scene 5/8: A survey firm reads the open call and ticks the area it can staff
+  · goto https://labs.connect.dimagi.com/solicitations/4663/respond/?program_id=10008
+  · before-frame scene_5_before.png
+    · scroll_to(css:#sol-plan-checklist)  — NON-effecting camera move scrolling the "Which areas can you cover?" checklist into frame. CRITICAL for the before-frame — because this leading action is NOT a wait_for, the recorder runs the full domcontentloaded + load + goto_settle_ms + initial_hold_ms flow, so the /respond/ form is fully painted and settled (checklist visible, Submit disabled — UNCHECKED state) before the before-frame fires. With a leading wait_for the navigation used wait_until=commit and the before-frame caught the crossfading-out owner manage view instead of this respond form.
+    · wait_for(css:#sol-plan-checklist input[type=checkbox])  — gate on the coverage CHECKLIST checkbox — the load-bearing, always-present DOM element that proves the respond page (for the just-minted call) has loaded. This is the navigation gate; we do NOT gate on the Mapbox canvas here because the WebGL canvas paints later/asynchronously and a slow canvas must not block the (reliable) checklist click.
+    · wait_for(css:#sol-respond-map canvas.mapboxgl-canvas)  — best-effort wait (≤5s) for the coverage map to paint the Attakar (green) + Gura (blue) ward polygons — NON-blocking; if the WebGL canvas is slow this logs a timeout and we proceed, since the checklist (already present) is what the click needs. Capped at 5s so a slow canvas adds at most 5s of dead air, not 12s.
+    · hold()  — let the map settle and fit to the two wards — the form is now framed in its UNCHECKED state (Submit disabled); the next action ticks the coverage area, so the before/after pair shows the checklist-commit mechanic end-to-end (disabled → submitted)
+    · scroll_to(css:#id_firm_name)  — bring the "Your organization" identity fields into frame — a real firm names itself when it answers a public call; the owner reviews and awards a NAMED survey firm, not the individual account that submitted the form
+    · fill(css:#id_firm_name)  — the applying firm names itself — Sahel Field Research, a plausible northern-Nigeria independent household-survey firm. This is what renders on the responses list and award screen (org_name), so scenes 4-5 show a believable firm, NOT the operator's own ace@dimagi-ai.com dev account.
+    · fill(css:#id_firm_email)  — the firm's contact email — stored as submitted_by_email and shown beside the firm name on the responses list, replacing the operator account's email
+    · scroll_to(css:#sol-plan-checklist)  — scroll back to the coverage checklist now that the firm has identified itself, to commit the area
+    · click(css:#sol-plan-checklist input[type=checkbox])  — tick the coverage area — synced two-way with the map; this enables Submit (≥1 required). The created call has exactly one plan (R6 — Attakar × Gura), so the first checkbox is that area.
+    · scroll_to(css:textarea[name^="question_"])  — the application question Maya set — with the AI-generated scoring criteria shown right beside it
+    · hold()  — the firm sees exactly how it will be scored (criteria visible to respondents)
+    · fill(css:textarea[name^="question_"])  — the firm drafts its answer
+  · snapshot scene_5.png + scene_5_page_text.json
+
+=== Scene 6/8: The AI coach sharpens the firm answer
+  · staying on https://labs.connect.dimagi.com/solicitations/4663/respond/?program_id=10008  — no nav for this scene
+  · deferring initial_hold_ms (no nav for this scene)
+  · before-frame scene_6_before.png
+    · scroll_to(css:#coach-btn)  — the AI Application Coach
+    · hold()  — about to get AI feedback on the draft
+    · click(css:#coach-btn)  — Get Feedback — the coach reviews the draft answer against the evaluation criteria
+    · wait_for(text:Get Feedback Again)  — AI coach (Anthropic) finishes reviewing the answer
+    · scroll_to(css:#coach-content)  — frame the coaching feedback
+    · hold()  — ACTION-FRAME: the AI coach suggestions for strengthening the answer
+    · scroll_to(css:button[type=submit]:has-text("Submit Response"))  — bring the Submit Response button into frame alongside the now-completed application — the ACTION frame for this scene is the firm-named, coverage-ticked, Submit-enabled form
+    · hold()  — ACTION-FRAME teach hold ON the act the narration describes — "ticks the Attakar-and-Gura coverage it can staff, and submits its application." The footage rests on the COMPLETED application (Sahel Field Research named, R6 — Attakar × Gura coverage ticked, Submit enabled) so the VO carries on the act being performed, NOT on the result receipt. Sized ~7s so the de-dweller keeps this teach frame as the load-bearing one. The submit click then resolves the act on camera.
+    · click(css:button[type=submit]:has-text("Submit Response"))  — submit the firm's application — the REAL submit; redirects to the call's public detail page
+    · wait_for(text:Response submitted)  — the post-submit redirect lands on public_detail?submitted=1 with the "Response submitted" confirmation receipt — the firm's application is recorded and the re-invite to respond/login is suppressed for the already-responded actor
+    · hold()  — short RESULT settle on the "Response submitted" receipt confirming the application landed — kept short so the ACTION frame above (the completed application) stays the load-bearing teach frame
+  · snapshot scene_6.png + scene_6_page_text.json
+
+=== Scene 7/8: Maya sees the firm tied to the coverage she designed
+  · goto https://labs.connect.dimagi.com/solicitations/4663/responses/?program_id=10008
+  · deferring goto_settle_ms (first action is wait_for)
+  · using wait_until=commit (first action is wait_for; navigation gate deferred to it)
+  · deferring initial_hold_ms (first action is wait_for)
+    · wait_for(css:span:has-text("R6 — Attakar"))  — the response row's "Selected coverage" chip resolves to R6 — Attakar × Gura
+    · capture(css:a:has-text("Award"))  — read the fresh response's id off the Award link's href (/solicitations/response/<id>/award/); scene 5 navigates to that award screen via ${response_id}. Done EARLY via a DOM href read (no scroll), so the camera need not scroll the wide table right to the Award column — keeping the firm's Organization column (leftmost) un-clipped in the hero frame below.
+    · captured ${response_id} = '4664'
+    · hover(css:a:has-text("Award"))  — glance at the Award action Maya is reaching for next — hover only, the award itself happens in scene 5; reading the row does not mutate state. (This may scroll the table right; the trailing hover below scrolls it back so the firm-name hero is un-clipped.)
+    · scroll_to(css:th:has-text("Organization"))  — scroll the wide responses table back to its LEFT edge so the Organization column header + the firm's Organization cell are fully in frame for the hero (the earlier Award hover scrolled the table right, clipping "Organization" to "…GANIZATION" and the firm name to "…hel Field Research"). This camera move un-clips the firm identity that finding 1 fixed.
+    · hover(css:span:has-text("R6 — Attakar"))  — settle the cursor on the firm's Selected-coverage chip (R6 — Attakar × Gura), now beside a fully visible Organization column reading Sahel Field Research. This is the scene HERO — the named firm tied to the exact coverage Maya designed, un-clipped. Dwell sized up to carry the VO.
+  · snapshot scene_7.png + scene_7_page_text.json
+
+=== Scene 8/8: Maya awards the firm and sees it was notified
+  · goto https://labs.connect.dimagi.com/solicitations/response/4664/award/?program_id=10008
+  · deferring goto_settle_ms (first action is wait_for)
+  · using wait_until=commit (first action is wait_for; navigation gate deferred to it)
+  · deferring initial_hold_ms (first action is wait_for)
+  · before-frame scene_8_before.png
+    · wait_for(css:input[name=reward_budget])  — the award form with the firm summary (org name + coverage) has loaded
+    · hold()  — let Maya read the "You're awarding" summary before she commits
+    · fill(css:input[name=reward_budget])  — optional budget for the awarded firm
+    · click(css:button[type=submit]:has-text("Award"))  — award the firm — records the decision and notifies the organization
+    · wait_for(text:has been notified)  — the in-place confirmation "Awarded to <org> — the organization has been notified" renders
+    · hold()  — VO-sized teach hold — settle on the confirmation + the dashed "Next step — not yet built" panel long enough to carry the award + deferred-next-step narration (~10.4s VO; this hold + the award form actions overshoots it slightly)
+  · snapshot scene_8.png + scene_8_page_text.json
+
+Run report: 80 actions: all ok
+Captures:
+  ✓ ${solicitation_id} = '4663'
+  ✓ ${response_id} = '4664'
+Wrote report: /Users/acedimagi/emdash-projects/canopy/.canopy/ddd/runs/create-survey-solicitation-2026-06-29-001/run-report.json
+Wrote manifest: /Users/acedimagi/emdash-projects/canopy/.canopy/ddd/runs/create-survey-solicitation-2026-06-29-001/walkthrough-run-data.json
+Converting page@a2105add08cb65dda32e5c1a02224915.webm → iter0_clip.mp4
+✓ /Users/acedimagi/emdash-projects/canopy/.canopy/ddd/runs/create-survey-solicitation-2026-06-29-001/iter0_clip.mp4 (4.0 MB, ~184s of footage)
