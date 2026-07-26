@@ -156,16 +156,34 @@ def _resolve_token_file(home: Path, canopy_dir: Path) -> Path | None:
 def check_workbench_token(
     home: Path | None = None, canopy_dir: Path | None = None
 ) -> CheckResult:
-    """The workbench token must exist, be non-empty, and be mode 600."""
+    """A canopy-web PAT must be resolvable — from the environment or the file.
+
+    This MUST mirror `canopy_web.resolve_pat()`, which reads CANOPY_WEB_PAT first
+    and only then falls back to the token file. Checking for the file alone made
+    the doctor stricter than the runtime it reports on: on a headless box (the EC2
+    cloud runner) the PAT arrives as an env var, every canopy-web call succeeds,
+    and yet the doctor reported the agent BROKEN and told it to run
+    `/canopy:setup` — a browser-loopback flow that cannot run there at all.
+
+    CANOPY_TOKEN is accepted too: it is the variable the cloud runner already
+    exports into each agent's turn environment.
+    """
     home = home or Path.home()
     canopy_dir = canopy_dir or CANOPY_DIR
     name = "Workbench token"
+
+    for var in ("CANOPY_WEB_PAT", "CANOPY_TOKEN"):
+        if os.environ.get(var, "").strip():
+            return CheckResult(name, True, f"PAT supplied via ${var}")
+
     token_file = _resolve_token_file(home, canopy_dir)
     if token_file is None:
         return CheckResult(
             name,
             False,
-            f"workbench-token not found at {canopy_dir / 'workbench-token'} — run /canopy:setup",
+            f"no canopy-web PAT: ${{CANOPY_WEB_PAT}} unset and no workbench-token at "
+            f"{canopy_dir / 'workbench-token'} — run /canopy:setup, or set CANOPY_WEB_PAT "
+            f"(headless hosts should provision it via .env.tpl rather than the browser flow)",
         )
     try:
         contents = token_file.read_text().strip()
