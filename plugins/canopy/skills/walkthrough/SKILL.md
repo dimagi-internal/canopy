@@ -167,7 +167,17 @@ the filtered subset instead of `spec.scenes` directly.
 
 ## YAML Spec Format
 
-Walkthrough specs live in `docs/walkthroughs/<name>.yaml`:
+Walkthrough specs live in `docs/walkthroughs/<name>.yaml`.
+
+> **DDD narratives are stored as a PAIR.** Once a narrative lives on canopy-web,
+> its spec is split in two: `<slug>.recipe.yaml` (git — how to film it: `show`,
+> `url`, `viewport`, `actions`, `pace`, `concept_claim`) and a generated
+> `<slug>.narrative.lock.json` (the story, fetched with
+> `python -m scripts.ddd.narrative pull <slug> <dir>`). The loader composes them,
+> so every command below accepts either a single unified `.yaml` or a
+> `.recipe.yaml`. Never hand-edit a lock — `scripts.ddd.check_locks` fails the
+> build if you do. Plain (non-DDD) walkthroughs stay single-file.
+
 
 ```yaml
 name: "Demo Name"
@@ -217,7 +227,17 @@ personas:
     intro: "Alice manages field programs and needs fast reporting."
 
 scenes:
-  - persona: alice
+  - id: dashboard-overview     # REQUIRED — stable, permanent scene identity.
+                               # Lowercase alphanumerics + single hyphens. Author
+                               # it ONCE and never change it: it is the key the
+                               # render recipe and the story are joined on, and
+                               # the key canopy-web's version diff pairs on.
+                               # Renaming an id is deleting a scene and adding
+                               # another, and reads that way everywhere. NEVER
+                               # derive it from the title — titles get reworded
+                               # by reviewers, and that used to silently delete
+                               # the scene's `show` selector.
+    persona: alice
     title: "Dashboard overview"
     show: "Main dashboard with KPIs loaded"
     impressive_because: "Data loads in real-time, charts are interactive"
