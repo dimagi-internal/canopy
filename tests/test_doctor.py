@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from orchestrator import doctor
@@ -187,6 +188,37 @@ class TestCheckRepoMap:
 
 
 class TestCheckWorkbenchToken:
+    @pytest.fixture(autouse=True)
+    def _no_ambient_pat(self, monkeypatch):
+        """The check now honors CANOPY_WEB_PAT / CANOPY_TOKEN, so a developer (or
+        CI runner) with either exported would otherwise turn every file-based
+        case below green and hide a real regression. Clear them by default; the
+        env cases set them explicitly."""
+        monkeypatch.delenv("CANOPY_WEB_PAT", raising=False)
+        monkeypatch.delenv("CANOPY_TOKEN", raising=False)
+
+    def test_env_pat_passes_without_file(self, tmp_path, monkeypatch):
+        """A headless host (the EC2 cloud runner) gets its PAT from the
+        environment and can never run the browser mint flow."""
+        monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
+        monkeypatch.setenv("CANOPY_WEB_PAT", "pat-from-env")
+        r = doctor.check_workbench_token(home=tmp_path, canopy_dir=tmp_path)
+        assert r.ok is True
+        assert "CANOPY_WEB_PAT" in r.detail
+
+    def test_canopy_token_env_also_accepted(self, tmp_path, monkeypatch):
+        """CANOPY_TOKEN is what cloud_runner.py already exports into agent turns."""
+        monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
+        monkeypatch.setenv("CANOPY_TOKEN", "pat-from-runner")
+        r = doctor.check_workbench_token(home=tmp_path, canopy_dir=tmp_path)
+        assert r.ok is True
+
+    def test_blank_env_pat_falls_through_to_file(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
+        monkeypatch.setenv("CANOPY_WEB_PAT", "   ")
+        r = doctor.check_workbench_token(home=tmp_path, canopy_dir=tmp_path)
+        assert r.ok is False
+
     def test_missing_fails(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
         r = doctor.check_workbench_token(home=tmp_path, canopy_dir=tmp_path)
