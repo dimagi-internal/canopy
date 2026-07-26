@@ -80,10 +80,12 @@ def _write_spec(tmp_path: Path, spec: UnifiedSpec) -> Path:
 
 
 from scripts.ddd.narrative import (
+    _scene_id,
     apply_narrative_edits,
     build_narrative_review_request,
     is_narrative_locked,
     set_narrative_lock,
+    web_narrative_to_spec_parts,
 )
 
 
@@ -1552,145 +1554,6 @@ class TestStampRunState:
 # Narrative sync (hydrate web → disk) — pull decision + merge
 # ---------------------------------------------------------------------------
 
-class TestNarrativeSync:
-    def test_content_hash_ignores_render_recipe(self):
-        """Editing the disk-only recipe (show/actions/url) must NOT change the
-        narrative hash — only narrative fields count."""
-        from scripts.ddd.narrative import narrative_content_hash
-
-        base = {
-            "name": "f", "narrative": "story", "personas": {"a": {"name": "A"}},
-            "build_order": ["s1"],
-            "scenes": [{"title": "S1", "persona": "a", "provenance": "S1",
-                        "concept_claim": "claim", "features": [], "show": "click x"}],
-        }
-        recipe_edit = {**base, "scenes": [{**base["scenes"][0], "show": "click DIFFERENT",
-                                           "actions": [{"goto": "/x"}], "url": "/y"}]}
-        assert narrative_content_hash(base) == narrative_content_hash(recipe_edit)
-        narrative_edit = {**base, "scenes": [{**base["scenes"][0], "concept_claim": "NEW claim"}]}
-        assert narrative_content_hash(base) != narrative_content_hash(narrative_edit)
-
-    def test_decide_no_web(self):
-        from scripts.ddd.narrative import decide_narrative_sync
-        a, _ = decide_narrative_sync(local_present=True, local_changed=False,
-                                     local_synced_version=1, web_version=None)
-        assert a == "no_web"
-
-    def test_decide_no_local_pulls(self):
-        from scripts.ddd.narrative import decide_narrative_sync
-        a, _ = decide_narrative_sync(local_present=False, local_changed=False,
-                                     local_synced_version=None, web_version=2)
-        assert a == "pull"
-
-    def test_decide_in_sync_noop(self):
-        from scripts.ddd.narrative import decide_narrative_sync
-        a, _ = decide_narrative_sync(local_present=True, local_changed=False,
-                                     local_synced_version=3, web_version=3)
-        assert a == "noop"
-
-    def test_decide_web_advanced_clean_pulls(self):
-        from scripts.ddd.narrative import decide_narrative_sync
-        a, _ = decide_narrative_sync(local_present=True, local_changed=False,
-                                     local_synced_version=2, web_version=4)
-        assert a == "pull"
-
-    def test_decide_local_newer_refuses_with_push_advice(self):
-        """The user's rule: local edited but web NOT advanced → refuse, push."""
-        from scripts.ddd.narrative import decide_narrative_sync
-        a, reason = decide_narrative_sync(local_present=True, local_changed=True,
-                                          local_synced_version=3, web_version=3)
-        assert a == "refuse_local_newer"
-        assert "push" in reason.lower()
-
-    def test_decide_both_diverged_conflict(self):
-        from scripts.ddd.narrative import decide_narrative_sync
-        a, _ = decide_narrative_sync(local_present=True, local_changed=True,
-                                     local_synced_version=2, web_version=5)
-        assert a == "refuse_conflict"
-
-    def test_decide_unsynced_local_with_content_refuses(self):
-        from scripts.ddd.narrative import decide_narrative_sync
-        a, _ = decide_narrative_sync(local_present=True, local_changed=True,
-                                     local_synced_version=None, web_version=1)
-        assert a == "refuse_local_newer"
-
-    def test_reconstruct_why_brief_maps_legacy_feature(self):
-        from scripts.ddd.narrative import reconstruct_why_brief
-        wb = reconstruct_why_brief({"why_brief": {"feature": "verified-monitoring",
-                                                  "problem": "p", "spine": [], "gaps": []}})
-        assert wb["narrative_slug"] == "verified-monitoring"
-        assert "feature" not in wb
-
-    def test_web_parts_maps_narration_text_to_concept_claim(self):
-        from scripts.ddd.narrative import web_narrative_to_spec_parts
-        rj = {
-            "narrative_slug": "vm", "narrative": "overview",
-            "personas": {"a": {"name": "A"}}, "build_order": ["s1"],
-            "narration": [{"title": "Scene One", "persona": "a", "provenance": "S1",
-                           "text": "the claim", "features": [{"id": "f1"}]}],
-        }
-        parts = web_narrative_to_spec_parts(rj)
-        assert parts["name"] == "vm"
-        assert parts["narrative"] == "overview"
-        assert parts["scenes"][0]["concept_claim"] == "the claim"
-        assert parts["scenes"][0]["features"] == [{"id": "f1"}]
-
-    def test_merge_preserves_local_recipe_on_matched_scene(self):
-        from scripts.ddd.narrative import merge_narrative_into_spec
-        local = {
-            "name": "vm", "narrative": "old overview", "base_url": "https://x",
-            "auth": {"k": "v"}, "personas": {"a": {"name": "A"}},
-            "build_order": ["s1"],
-            "scenes": [{"title": "Scene One", "persona": "a", "provenance": "S1",
-                        "concept_claim": "old", "features": [],
-                        "show": "click the thing", "actions": [{"goto": "/a"}], "url": "/a"}],
-        }
-        parts = {
-            "name": "vm", "narrative": "NEW overview", "personas": {"a": {"name": "A"}},
-            "build_order": ["s1"],
-            "scenes": [{"title": "Scene One", "persona": "a", "provenance": "S1",
-                        "concept_claim": "NEW claim", "features": []}],
-        }
-        merged = merge_narrative_into_spec(local, parts)
-        s = merged["scenes"][0]
-        # narrative fields updated from web
-        assert merged["narrative"] == "NEW overview"
-        assert s["concept_claim"] == "NEW claim"
-        # render recipe preserved from local
-        assert s["show"] == "click the thing"
-        assert s["actions"] == [{"goto": "/a"}]
-        assert s["url"] == "/a"
-        assert merged["base_url"] == "https://x"
-        assert merged["auth"] == {"k": "v"}
-
-    def test_merge_fresh_spec_when_no_local(self):
-        from scripts.ddd.narrative import merge_narrative_into_spec
-        parts = {
-            "name": "vm", "narrative": "overview", "personas": {"a": {"name": "A"}},
-            "build_order": [],
-            "scenes": [{"title": "S1", "persona": "a", "provenance": "S1",
-                        "concept_claim": "c", "features": []}],
-        }
-        spec = merge_narrative_into_spec(None, parts)
-        assert spec["name"] == "vm"
-        assert spec["scenes"][0]["show"] == ""  # recipe left for authoring
-
-
-class TestNarrativeSyncUnstampedClean:
-    def test_unsynced_local_matching_web_pulls_not_refuses(self):
-        """An unstamped local spec whose narrative MATCHES web is not 'newer' —
-        it should pull (record the link), never falsely refuse."""
-        from scripts.ddd.narrative import decide_narrative_sync
-        a, _ = decide_narrative_sync(local_present=True, local_changed=False,
-                                     local_synced_version=None, web_version=1)
-        assert a == "pull"
-
-
-# ---------------------------------------------------------------------------
-# Auto-versioning — any narrative change auto-posts a new version (no pause)
-# ---------------------------------------------------------------------------
-
-
 class _FakeReview:
     """A fake `scripts.ddd.review` module for auto-version tests.
 
@@ -1732,108 +1595,6 @@ def _seed_run_state(tmp_path, monkeypatch, run_id: str, narrative_slug: str):
     return rs
 
 
-class TestAutoVersionIfChanged:
-    RUN_ID = "rooftop-surveys-2026-06-04-001"
-    SLUG = "rooftop-surveys"
-
-    def test_noop_when_hash_unchanged(self, tmp_path, monkeypatch):
-        """A spec already in sync (hash == narrative_synced_hash) posts nothing."""
-        from scripts.ddd.narrative import auto_version_if_changed, narrative_content_hash
-
-        self._seed(tmp_path, monkeypatch)
-        spec_path = _write_spec(tmp_path, _make_spec())
-        raw = yaml.safe_load(spec_path.read_text())
-        raw["narrative_synced_version"] = 1
-        raw["narrative_synced_hash"] = narrative_content_hash(raw)
-        spec_path.write_text(yaml.dump(raw, default_flow_style=False, allow_unicode=True))
-
-        fake = _FakeReview(start_version=1)
-        result = auto_version_if_changed(str(spec_path), self.RUN_ID, rv=fake)
-        assert result["action"] == "noop"
-        assert fake.posts == []
-
-    def test_posts_and_stamps_when_changed(self, tmp_path, monkeypatch):
-        """A narrative edit (synced hash now stale) posts a new version, stamps the
-        run, and updates the spec's synced hash/version."""
-        from scripts.ddd.narrative import auto_version_if_changed, narrative_content_hash
-
-        rs = self._seed(tmp_path, monkeypatch)
-        spec_path = _write_spec(tmp_path, _make_spec())
-        raw = yaml.safe_load(spec_path.read_text())
-        raw["narrative_synced_version"] = 1
-        # Stamp a DELIBERATELY stale hash so the current content reads as changed.
-        raw["narrative_synced_hash"] = "stale-hash-does-not-match"
-        spec_path.write_text(yaml.dump(raw, default_flow_style=False, allow_unicode=True))
-
-        fake = _FakeReview(start_version=1)  # web at v1; post → v2
-        result = auto_version_if_changed(str(spec_path), self.RUN_ID, rv=fake)
-        assert result["action"] == "posted"
-        assert result["first_ever"] is False
-        assert len(fake.posts) == 1
-
-        # Run stamped to the new review.
-        reloaded_state = rs.load(self.RUN_ID)
-        assert reloaded_state.narrative_review_id == "rev-2"
-
-        # Spec re-stamped: synced version bumped + hash now matches current content.
-        reloaded_spec = yaml.safe_load(spec_path.read_text())
-        assert reloaded_spec["narrative_synced_version"] == 2
-        assert reloaded_spec["narrative_synced_hash"] == narrative_content_hash(reloaded_spec)
-        assert result["version"] == 2
-
-    def test_first_ever_narrative_posts_v1(self, tmp_path, monkeypatch):
-        """No narrative_synced_version yet → first-ever → post v1 (no conflict check)."""
-        from scripts.ddd.narrative import auto_version_if_changed
-
-        self._seed(tmp_path, monkeypatch)
-        spec_path = _write_spec(tmp_path, _make_spec())  # no synced fields
-
-        fake = _FakeReview(start_version=0)  # nothing on web yet; post → v1
-        result = auto_version_if_changed(str(spec_path), self.RUN_ID, rv=fake)
-        assert result["action"] == "posted"
-        assert result["first_ever"] is True
-        assert len(fake.posts) == 1
-        reloaded_spec = yaml.safe_load(spec_path.read_text())
-        assert reloaded_spec["narrative_synced_version"] == 1
-
-    def test_conflict_preserved_when_web_advanced(self, tmp_path, monkeypatch):
-        """Local changed AND web advanced past the synced version → raise
-        NarrativeConflictError; do NOT auto-clobber, do NOT post."""
-        from scripts.ddd.narrative import auto_version_if_changed, NarrativeConflictError
-
-        self._seed(tmp_path, monkeypatch)
-        spec_path = _write_spec(tmp_path, _make_spec())
-        raw = yaml.safe_load(spec_path.read_text())
-        raw["narrative_synced_version"] = 1
-        raw["narrative_synced_hash"] = "stale-hash"  # local changed
-        spec_path.write_text(yaml.dump(raw, default_flow_style=False, allow_unicode=True))
-
-        # Web is at v3 — advanced underneath a spec that last synced v1.
-        fake = _FakeReview(start_version=3, web_version_override=3)
-        with pytest.raises(NarrativeConflictError):
-            auto_version_if_changed(str(spec_path), self.RUN_ID, rv=fake)
-        assert fake.posts == []
-        # Spec untouched — no auto-clobber.
-        assert yaml.safe_load(spec_path.read_text())["narrative_synced_version"] == 1
-
-    def test_missing_spec_raises(self, tmp_path, monkeypatch):
-        from scripts.ddd.narrative import auto_version_if_changed
-
-        self._seed(tmp_path, monkeypatch)
-        fake = _FakeReview()
-        with pytest.raises(FileNotFoundError):
-            auto_version_if_changed(str(tmp_path / "nope.yaml"), self.RUN_ID, rv=fake)
-
-    def _seed(self, tmp_path, monkeypatch):
-        return _seed_run_state(tmp_path, monkeypatch, self.RUN_ID, self.SLUG)
-
-
-# ---------------------------------------------------------------------------
-# sync — the web-edit -> version bridge (apply resolved review edits, then
-# auto-version). Composes get_review + apply_narrative_edits + autoversion.
-# ---------------------------------------------------------------------------
-
-
 class _SyncFakeReview(_FakeReview):
     """`_FakeReview` plus a `get_review` that serves a RESOLVED review carrying
     inline edits, so `sync` can fold web edits and then auto-version them."""
@@ -1868,83 +1629,159 @@ def _seed_run_state_with_review(tmp_path, monkeypatch, run_id, slug, review_id):
     return rs
 
 
-class TestSync:
-    RUN_ID = "rooftop-surveys-2026-06-04-001"
-    SLUG = "rooftop-surveys"
+def test_scene_id_prefers_explicit_id_over_title():
+    scene = Scene(
+        id="the-goal",
+        persona="alice",
+        title="A title that will be reworded later",
+        show="Open the dashboard.",
+        concept_claim="The dashboard loads in under two seconds.",
+        provenance="S1",
+    )
+    assert _scene_id(scene) == "the-goal"
 
-    def _edits(self):
-        return {
-            "decisions": {"narrative-verdict": "approve"},
-            "edited_scenes": [
-                {
-                    "id": "area-selection",
-                    "title": "Area Selection",
-                    "narration": "Alice draws a brand-new custom boundary right on the map.",
-                    "deleted": False,
-                    "features": [],
-                },
-                {"id": "sample-generation", "title": "Sample Generation", "narration": "", "deleted": False, "features": []},
-                {"id": "field-assignment", "title": "Field Assignment", "narration": "", "deleted": False, "features": []},
-            ],
-            "build_order": ["area-selection", "sample-generation", "field-assignment"],
-        }
 
-    def _in_sync_spec(self, tmp_path):
-        from scripts.ddd.narrative import narrative_content_hash
+def test_scene_id_falls_back_to_title_slug_when_unset():
+    scene = Scene(
+        persona="alice",
+        title="Area Selection",
+        show="Draw a boundary.",
+        concept_claim="A boundary can be drawn in under 30 seconds.",
+        provenance="S1",
+    )
+    assert _scene_id(scene) == "area-selection"
 
-        spec_path = _write_spec(tmp_path, _make_spec())
-        raw = yaml.safe_load(spec_path.read_text())
-        raw["narrative_synced_version"] = 1
-        raw["narrative_synced_hash"] = narrative_content_hash(raw)
-        spec_path.write_text(yaml.dump(raw, default_flow_style=False, allow_unicode=True))
-        return spec_path
 
-    def test_web_edit_is_folded_and_versioned(self, tmp_path, monkeypatch):
-        """Resolved review with inline edits: sync folds them onto the spec AND
-        posts a new version — the web-edit -> version bridge end to end."""
-        from scripts.ddd.narrative import sync
+def test_scene_id_accepts_a_raw_dict():
+    assert _scene_id({"id": "the-goal", "title": "Anything"}) == "the-goal"
+    assert _scene_id({"title": "Area Selection"}) == "area-selection"
 
-        _seed_run_state_with_review(tmp_path, monkeypatch, self.RUN_ID, self.SLUG, "rev-1")
-        spec_path = self._in_sync_spec(tmp_path)
 
-        fake = _SyncFakeReview(response_json=self._edits(), start_version=1)
-        result = sync(str(spec_path), self.RUN_ID, rv=fake)
+def test_scene_id_treats_whitespace_only_id_as_absent():
+    assert _scene_id({"id": "   ", "title": "Area Selection"}) == "area-selection"
 
-        # web -> local: the edit landed on the spec
-        assert result["decision"] == "approve"
-        assert result["applied"]["updated"] == 1
-        reloaded = yaml.safe_load(spec_path.read_text())
-        assert "brand-new custom boundary" in reloaded["scenes"][0]["narrative"]
-        # local -> web: it became a real numbered version
-        assert result["version"]["action"] == "posted"
-        assert result["version"]["version"] == 2
 
-    def test_sync_is_idempotent(self, tmp_path, monkeypatch):
-        """A second sync re-folds the same edits as a net no-op and versions nothing."""
-        from scripts.ddd.narrative import sync
+def test_review_request_narration_id_is_stable_across_a_title_reword():
+    def spec_with_title(title: str) -> UnifiedSpec:
+        return _make_spec([
+            Scene(
+                id="the-goal",
+                persona="alice",
+                title=title,
+                show="Open the dashboard.",
+                concept_claim="The dashboard loads in under two seconds.",
+                provenance="S1",
+            )
+        ])
 
-        _seed_run_state_with_review(tmp_path, monkeypatch, self.RUN_ID, self.SLUG, "rev-1")
-        spec_path = self._in_sync_spec(tmp_path)
-        fake = _SyncFakeReview(response_json=self._edits(), start_version=1)
+    before = build_narrative_review_request(
+        spec_with_title("Original wording"), "demo-2026-07-26-001"
+    )
+    after = build_narrative_review_request(
+        spec_with_title("Completely different wording"), "demo-2026-07-26-002"
+    )
 
-        first = sync(str(spec_path), self.RUN_ID, rv=fake)
-        assert first["version"]["action"] == "posted"
-        second = sync(str(spec_path), self.RUN_ID, rv=fake)
-        assert second["version"]["action"] == "noop"
+    assert before.narration[0].id == "the-goal"
+    assert after.narration[0].id == "the-goal"
 
-    def test_no_review_stamped_just_autoversions_local(self, tmp_path, monkeypatch):
-        """No review id on the run: sync skips the fold and only auto-versions a
-        local narrative change."""
-        from scripts.ddd.narrative import sync
 
-        _seed_run_state(tmp_path, monkeypatch, self.RUN_ID, self.SLUG)  # no review id
-        spec_path = _write_spec(tmp_path, _make_spec())
-        raw = yaml.safe_load(spec_path.read_text())
-        raw["narrative_synced_version"] = 1
-        raw["narrative_synced_hash"] = "stale-hash-does-not-match"  # local changed
-        spec_path.write_text(yaml.dump(raw, default_flow_style=False, allow_unicode=True))
+def test_build_order_defaults_to_explicit_scene_ids():
+    spec = _make_spec([
+        Scene(id="the-goal", persona="alice", title="Some Title", show="x",
+              concept_claim="A claim with at least five words.", provenance="S1"),
+        Scene(id="the-proof", persona="alice", title="Another Title", show="y",
+              concept_claim="Another claim with at least five words.", provenance="S2"),
+    ])
+    req = build_narrative_review_request(spec, "demo-2026-07-26-001")
+    assert req.build_order == ["the-goal", "the-proof"]
 
-        fake = _SyncFakeReview(response_json={}, start_version=1)
-        result = sync(str(spec_path), self.RUN_ID, rv=fake)
-        assert result["applied"] is None  # nothing folded (no review to read)
-        assert result["version"]["action"] == "posted"
+
+def test_apply_edits_matches_on_scene_id_not_title(tmp_path):
+    spec_path = tmp_path / "demo.yaml"
+    spec_path.write_text(yaml.dump({
+        "name": "demo",
+        "narrative": "The old spoken line.",
+        "base_url": "http://localhost:8000",
+        "personas": {"alice": {"name": "Alice", "role": "PM"}},
+        "scenes": [{
+            "id": "the-goal",
+            "persona": "alice",
+            "title": "A title nobody edits",
+            "show": "css:text=/^Dashboard$/",
+            "concept_claim": "The dashboard loads in under two seconds.",
+            "provenance": "S1",
+            "narrative": "The old spoken line.",
+        }],
+    }))
+
+    result = apply_narrative_edits(spec_path, {
+        "decisions": {"narrative-verdict": "approve"},
+        "edited_scenes": [{"id": "the-goal", "narration": "The new spoken line."}],
+    })
+
+    assert result["applied"]["updated"] == 1
+    raw = yaml.safe_load(spec_path.read_text())
+    assert raw["scenes"][0]["narrative"] == "The new spoken line."
+    assert raw["scenes"][0]["show"] == "css:text=/^Dashboard$/"
+
+
+def test_apply_edits_writes_an_explicit_id_on_a_newly_added_scene(tmp_path):
+    spec_path = tmp_path / "demo.yaml"
+    spec_path.write_text(yaml.dump({
+        "name": "demo",
+        "narrative": "The only line.",
+        "base_url": "http://localhost:8000",
+        "personas": {"alice": {"name": "Alice", "role": "PM"}},
+        "scenes": [{
+            "id": "the-goal", "persona": "alice", "title": "The goal",
+            "show": "x", "concept_claim": "A claim with at least five words.",
+            "provenance": "S1", "narrative": "The only line.",
+        }],
+    }))
+
+    apply_narrative_edits(spec_path, {
+        "decisions": {"narrative-verdict": "approve"},
+        "edited_scenes": [{
+            "id": "new-1", "title": "The proof", "narration": "A brand new beat.",
+        }],
+    })
+
+    raw = yaml.safe_load(spec_path.read_text())
+    added = raw["scenes"][-1]
+    assert added["id"] == "the-proof"
+    assert added["title"] == "The proof"
+
+
+def test_pull_maps_web_narration_text_to_scene_narrative_not_concept_claim():
+    parts = web_narrative_to_spec_parts({
+        "narrative_slug": "demo",
+        "narrative": "The whole story.",
+        "personas": {},
+        "build_order": [],
+        "narration": [{
+            "id": "the-goal",
+            "title": "The goal",
+            "persona": "alice",
+            "provenance": "S1",
+            "text": "The line the reviewer approved.",
+            "features": [],
+        }],
+    })
+
+    scene = parts["scenes"][0]
+    assert scene["id"] == "the-goal"
+    assert scene["narrative"] == "The line the reviewer approved."
+    assert "concept_claim" not in scene
+
+
+def test_pull_falls_back_to_the_title_slug_for_a_legacy_id_less_narration():
+    parts = web_narrative_to_spec_parts({
+        "narrative_slug": "demo",
+        "narrative": "The whole story.",
+        "personas": {},
+        "build_order": [],
+        "narration": [{"title": "Area Selection", "text": "A line.", "features": []}],
+    })
+    assert parts["scenes"][0]["id"] == "area-selection"
+
+

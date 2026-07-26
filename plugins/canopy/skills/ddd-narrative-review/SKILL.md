@@ -32,21 +32,21 @@ judged until the story arc is approved.
 
 ## When to run this gate (it is now OPT-IN)
 
-Routine narrative edits no longer pause here. `ddd-run` Step 1b
-(`scripts.ddd.narrative sync`) folds any resolved **web** review edits onto the
-spec and auto-posts a new version on any narrative change — local OR web — and
-attaches the run to it with **no human pause**. A posted version is immediately
-the current/active narrative on canopy-web. Run THIS approve/redraft gate only
-when:
+Routine narrative edits no longer pause here. Since canopy-web owns the story,
+an edit made on the review surface **is** the new version the moment it is
+posted — there is nothing to reconcile and nothing to approve a second time.
+`ddd-run` Step 1b just calls `scripts.ddd.narrative pull` to fetch it into the
+generated lock before rendering, with **no human pause**. Run THIS
+approve/redraft gate only when:
 
 - **First-ever narrative for a slug** — you want the user to APPROVE the story
   arc before anything is built/rendered for the first time, or
 - **The user explicitly asks** to review the narrative (e.g. "let me approve the
   story before we render").
 
-For every other narrative change between runs, do NOT run this gate — let
-`ddd-run`'s auto-version step post the new version silently. The only durable
-human approval in the routine loop is the **`external_release`** gate at upload.
+For every other narrative change, do NOT run this gate — edit the story on
+canopy-web, where posting IS the new version. The only durable human approval in
+the routine loop is the **`external_release`** gate at upload.
 
 The posted review now carries:
 - **Per-scene `features[]`** — the concrete buildable units the author declared,
@@ -63,9 +63,31 @@ tell?"*  That is the defect this gate fixes.
 
 ## Inputs
 
-- **`spec_path`** — absolute path to the unified spec YAML
-  (`docs/walkthroughs/<narrative-slug>.yaml`).
+- **`spec_path`** — absolute path to the spec. Either a first-draft unified
+  `docs/walkthroughs/<narrative-slug>.yaml`, or a `<narrative-slug>.recipe.yaml`
+  for a narrative that already lives on canopy-web (the loader composes it with
+  its `.narrative.lock.json` automatically).
 - **`run_id`** — the DDD run identifier from `scripts.ddd.runstate`.
+
+## After the gate resolves (ownership, L1)
+
+canopy-web owns the story from the moment a version is posted. The local file
+owns only the render recipe. So once a decision comes back:
+
+- **First approval of a NEW narrative** — split the draft, then delete it:
+  ```bash
+  python -m scripts.ddd.split_spec docs/walkthroughs/<narrative-slug>.yaml
+  git rm docs/walkthroughs/<narrative-slug>.yaml
+  ```
+- **Any later approval** — refresh the generated lock from canopy-web:
+  ```bash
+  python -m scripts.ddd.narrative pull <narrative-slug> docs/walkthroughs
+  ```
+
+`pull` is a **one-way read**. There is no merge, no conflict, and no `--force`:
+the story has exactly one writer, so there is nothing to reconcile. Never
+hand-edit a `.narrative.lock.json` — `scripts.ddd.check_locks` fails the build
+if you do.
 
 ## Procedure
 

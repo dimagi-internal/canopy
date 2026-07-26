@@ -3,9 +3,14 @@
 # and docs-sync validate metadata; nothing validated the code until the gws
 # node workflow arrived, and that only covers plugins/canopy/test/gws.
 #
-# Browser-dependent walkthrough tests need playwright + a display; they're
-# excluded here (they run locally via `uv sync --extra browser`). Everything
-# else — orchestrator, ddd, skills structure gates, plugin boundary — runs.
+# tests/walkthrough USED to be excluded here on the premise that it needs
+# "playwright + a display". It doesn't: no test in that directory calls
+# sync_playwright() or .launch() — they only need the playwright package to be
+# IMPORTABLE, and the whole directory runs in under a second with no browser
+# binaries present. The exclusion meant 315 tests covering record_video.py and
+# the recorder orchestrator ran nowhere: not in CI, and not locally either
+# unless someone remembered `uv sync --extra browser`. A syntax error in
+# record_video.py survived a full local `pytest tests/` because of it.
 name: Python tests
 on: [push, pull_request]
 
@@ -15,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - name: Run pytest (offline suite; browser extras excluded)
+      - name: Run pytest (full suite; playwright package only, no browsers)
         run: |
-          uv sync
-          uv run pytest -q --ignore=tests/walkthrough -p no:cacheprovider
+          uv sync --extra browser
+          uv run pytest -q -p no:cacheprovider

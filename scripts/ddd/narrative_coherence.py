@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 from typing import Any, Union
 
+from scripts.ddd.spec_io import load_spec
 import yaml
 
 from scripts.ddd.schemas.models import UnifiedSpec, Verdict
@@ -158,8 +159,7 @@ def narrative_coherence(spec_obj_or_path: Union[str, Path, UnifiedSpec, dict, No
                 blocking_reason=f"narrative_coherence: spec path not found: {path}",
             )
         try:
-            data = yaml.safe_load(path.read_text())
-            spec = UnifiedSpec(**data)
+            spec = load_spec(path)
         except Exception as e:
             return Verdict(
                 dimensions={},

@@ -1,0 +1,318 @@
+{
+ "actionability": null,
+ "autonomous_audit": [],
+ "build_order": [
+  "the-goal-recruit-an-independent-firm-to-run-the-study",
+  "maya-turns-her-finished-study-into-a-call-for-a-firm",
+  "maya-builds-the-call-and-writes-the-questions-firms-must-answer",
+  "ai-drafts-the-scoring-rubric-and-maya-publishes-the-call",
+  "a-survey-firm-reads-the-open-call-and-ticks-the-area-it-can-staff",
+  "the-ai-coach-sharpens-the-firm-answer",
+  "the-deadline-passes-three-firms-have-answered",
+  "maya-scores-sahel-against-the-ai-drafted-rubric",
+  "maya-awards-the-top-scored-firm"
+ ],
+ "clusters": [],
+ "decisions": [
+  {
+   "class": "concept_change",
+   "id": "narrative-verdict",
+   "options": [
+    "approve",
+    "redraft"
+   ],
+   "prompt": "Approve this narrative as the build plan, or send it back to re-draft?",
+   "recommended": "approve"
+  }
+ ],
+ "deck_url": "",
+ "feature": "",
+ "gate": "concept_change",
+ "iteration": 0,
+ "narration": [
+  {
+   "features": [],
+   "id": "the-goal-recruit-an-independent-firm-to-run-the-study",
+   "persona": "maya",
+   "provenance": "S0",
+   "scene": 1,
+   "status": "built",
+   "text": "Maya has designed her matched study. But to measure her own program credibly, the survey has to be run by someone independent. So she needs to recruit a survey firm \u2014 to visit the households and collect the outcomes. Rather than start a separate process, she turns the finished study into a call for a firm on the Connect network, with the wards, coverage, and scope already attached.",
+   "title": "The goal \u2014 recruit an independent firm to run the study"
+  },
+  {
+   "features": [
+    {
+     "description": "The program workspace (portfolio) renders a \"Create solicitation\" link on every plan card and study-group card, to /solicitations/create/?source_program_id=<pid>&source_group_id=<gid>",
+     "id": "create-solicitation-from-portfolio",
+     "verify": "Playwright: on /microplans/program/10008/, assert the R6 \u2014 Attakar \u00d7 Gura study-group card reads as finished (the \"Attakar \u00d7 Gura\" arm-pair title, a Reviewed status badge, the \"Finished study \u2014 ready to recruit a survey firm\" marker, \"2 wards\") and renders a primary \"Create solicitation\" anchor whose href contains source_group_id=4492"
+    }
+   ],
+   "id": "maya-turns-her-finished-study-into-a-call-for-a-firm",
+   "persona": "maya",
+   "provenance": "S3",
+   "scene": 2,
+   "status": "built",
+   "text": "Maya's finished Round 6 study sits in her portfolio, flagged ready to solicit \u2014 and right on the card is the way to turn that plan into a call for a survey firm, no separate tool.",
+   "title": "Maya turns her finished study into a call for a firm"
+  },
+  {
+   "features": [
+    {
+     "description": "The create form renders a Coverage-areas panel populated from the snapshotted plans (source_plan_ids=[4494]), drawing the wards as a real map \u2014 Attakar (intervention, green) and Gura (comparison, blue) polygons fit to bounds",
+     "id": "coverage-panel-from-snapshot",
+     "verify": "Playwright: on the create form with source_group_id=4492, assert a \"#sol-coverage-map\" element renders a mapbox canvas and that the page text includes \"Attakar\" and \"Gura\""
+    },
+    {
+     "description": "The create form's question builder authors multiple Long Text questions, each with a Required toggle; questions serialize to questions_json with ids q_1..q_n and required=true, and the respond form blocks submission until required questions are answered",
+     "id": "three-required-application-questions",
+     "verify": "Playwright: on /solicitations/create/, click \"+ Add Question\" three times, fill each block's textarea, set Type=Long Text and tick Required in each Q1/Q2/Q3 block; assert three textarea[x-model=\"question.text\"] exist and each Required checkbox is checked"
+    }
+   ],
+   "id": "maya-builds-the-call-and-writes-the-questions-firms-must-answer",
+   "persona": "maya",
+   "provenance": "S4",
+   "scene": 3,
+   "status": "built",
+   "text": "Maya builds the call. The title, scope and coverage carry over from her study; she adds the description, type, timeline, scale and contact. Then she writes three required application questions \u2014 field methodology, staffing capacity, and data quality \u2014 the substance firms will be scored on.",
+   "title": "Maya builds the call \u2014 and writes the questions firms must answer"
+  },
+  {
+   "features": [
+    {
+     "description": "The Generate-with-AI button POSTs scope+questions to /solicitations/api/generate-criteria/ and renders AI-drafted criteria in the criteria builder",
+     "id": "generate-with-ai-drafts-evaluation-criteria",
+     "verify": "Playwright: click Generate with AI and assert an input[x-model=criterion.name] appears within 50s"
+    }
+   ],
+   "id": "ai-drafts-the-scoring-rubric-and-maya-publishes-the-call",
+   "persona": "maya",
+   "provenance": "S4",
+   "scene": 4,
+   "status": "built",
+   "text": "The platform's AI drafts the weighted scoring rubric from Maya's scope and the three questions. She reviews it and LOCKS it before publishing \u2014 so the criteria are fixed before any firm responds, and every applicant sees exactly how they'll be scored.",
+   "title": "AI drafts the scoring rubric \u2014 and Maya publishes the call"
+  },
+  {
+   "features": [
+    {
+     "description": "The public response form draws the coverage as an interactive map \u2014 clicking a ward boundary toggles its whole parent plan, synced two-way with the \"Which areas can you cover?\" checklist; submit is blocked until at least one area is selected",
+     "id": "respondent-coverage-selector",
+     "verify": "Playwright: on /solicitations/${solicitation_id}/respond/, assert a \"#sol-respond-map\" mapbox canvas renders the Attakar/Gura wards and a \"#sol-plan-checklist\" checkbox for the R6 plan; ticking the R6 area enables Submit (\u22651 required to submit)"
+    },
+    {
+     "description": "The response form carries a \"Your organization\" identity block (firm name + contact email) so a firm answering a public call names itself; the entered firm name is stored as the response's org_name / submitted_by_name and shown to the owner on the responses list and award screen, instead of the individual account that submitted the form",
+     "id": "respondent-names-its-firm",
+     "verify": "Playwright: on /solicitations/${solicitation_id}/respond/, assert \"#id_firm_name\" and \"#id_firm_email\" inputs render; after filling firm name \"Sahel Field Research\" and submitting, the responses list row reads \"Sahel Field Research\" (not the operator account email)"
+    },
+    {
+     "description": "The respond page renders a \"How your response will be scored\" panel listing every evaluation criterion with its weight and scoring guide, above the application questions (plus per-question chips when criteria are linked)",
+     "id": "respondent-sees-scoring-criteria",
+     "verify": "Playwright: on /solicitations/${solicitation_id}/respond/, assert the page text contains \"How your response will be scored\" and at least one criterion name with a % weight"
+    }
+   ],
+   "id": "a-survey-firm-reads-the-open-call-and-ticks-the-area-it-can-staff",
+   "persona": "firm",
+   "provenance": "S8",
+   "scene": 5,
+   "status": "built",
+   "text": "A survey firm opens the call. The respond form shows exactly how the response will be scored \u2014 the criteria and weights Maya generated \u2014 and the firm drafts substantive answers to all three required questions and ticks the coverage it can staff.",
+   "title": "A survey firm reads the open call and ticks the area it can staff"
+  },
+  {
+   "features": [
+    {
+     "description": "The coach POSTs the draft answers to ai:ai_stream (application_coach agent) and renders coaching suggestions in #coach-content",
+     "id": "ai-application-coach-reviews-draft-vs-criteria",
+     "verify": "Playwright: click #coach-btn and assert the button text flips to Get Feedback Again within 55s"
+    },
+    {
+     "description": "After a firm submits, the public detail page replaces both Respond CTAs with a 'Response submitted' state (responses stamp submitted_by_username and the page also gates on just_submitted), so the receipt and the calls-to-action agree",
+     "id": "post-submit-cta-suppression",
+     "verify": "Playwright: after Submit Response, on the ?submitted=1 detail page assert the page text contains \"Response submitted\" and does NOT contain \"Ready to respond?\""
+    }
+   ],
+   "id": "the-ai-coach-sharpens-the-firm-answer",
+   "persona": "firm",
+   "provenance": "S8",
+   "scene": 6,
+   "status": "built",
+   "text": "The firm drafts substantive answers and runs them through the AI Application Coach, which pushes for verifiable evidence \u2014 concrete methods, named staff, real data-quality controls \u2014 rather than unbacked claims, before the firm submits.",
+   "title": "The AI coach sharpens the firm answer"
+  },
+  {
+   "features": [
+    {
+     "description": "The responses list shows each firm's latest review score (/100) and recommendation beside its committed coverage, so the owner compares scored applicants at a glance",
+     "id": "responses-table-scored-competition",
+     "verify": "Playwright: on /solicitations/${review_solicitation_id}/responses/, assert rows for \"Sahel Field Research\", \"Nasarawa Data Collective\" (64) and \"Horizon Field Metrics\" (41)"
+    }
+   ],
+   "id": "the-deadline-passes-three-firms-have-answered",
+   "persona": "maya",
+   "provenance": "S6",
+   "scene": 7,
+   "status": "built",
+   "text": "The window closes and three firms have applied. They're shown by response ID, not name, so scoring stays blind and no applicant is advantaged by who they are.",
+   "title": "The deadline passes \u2014 three firms have answered"
+  },
+  {
+   "features": [
+    {
+     "description": "The review form renders a 1-10 field per evaluation criterion (criteria_score_<id>) plus overall score (1-100), recommendation and notes; submitting stores a solicitation_review whose score and recommendation appear on the responses list",
+     "id": "review-scores-response-against-criteria",
+     "verify": "Playwright: on /solicitations/response/${sahel_response_id}/review/, fill #id_criteria_score_c_method..c_timeline, #id_score=87, recommendation=approved, submit, and assert the redirect page shows \"87/100\""
+    }
+   ],
+   "id": "maya-scores-sahel-against-the-ai-drafted-rubric",
+   "persona": "maya",
+   "provenance": "S9",
+   "scene": 8,
+   "status": "built",
+   "text": "Every application is scored the same way against the locked rubric: the AI proposes scores, and Maya reviews each one criterion by criterion with her adjustments logged. The AI's suggestion stays hidden until she's recorded her own, so it can't anchor her. Sahel Field Research comes out on top.",
+   "title": "Maya scores Sahel against the AI-drafted rubric"
+  },
+  {
+   "features": [
+    {
+     "description": "The award screen summarizes the applying firm (Sahel Field Research, the name it entered on its application) with its selected coverage, and on award records the decision and confirms the organization was notified (\"Awarded to Sahel Field Research \u2014 the organization has been notified\"); it does NOT, on award, provision a Connect opportunity or push the plan's work areas into one \u2014 that downstream step is deferred (G1)",
+     "id": "award-records-and-notifies-provision-deferred",
+     "verify": "Playwright: on /solicitations/response/${sahel_response_id}/award/, after award assert a confirmation reading \"Awarded to Sahel Field Research\" and \"has been notified\", plus a \"Next step \u2014 not yet built\" panel; grep: no create_opportunity/WorkArea-provision call in commcare_connect/solicitations/"
+    }
+   ],
+   "id": "maya-awards-the-top-scored-firm",
+   "persona": "maya",
+   "provenance": "S7",
+   "scene": 9,
+   "status": "built",
+   "text": "With the three scored applications side by side, Maya awards the top firm, which is notified on the spot. Because Connect lets her start it on a small contract to confirm quality before scaling to the full survey, the award is a first, verifiable step \u2014 firms demonstrate full performance of the tasks, not just their written response. Standing up that first, small verification contract as a live Connect opportunity is the honest next step, not yet built.",
+   "title": "Maya awards the top-scored firm"
+  }
+ ],
+ "narrative": "Maya has just finished designing her Round 6 study \u2014 the two-arm Attakar-versus-Gura household survey her Vitamin-A programme will use to check whether its visits are changing coverage. She has the plan; what she does not have is the independent survey firm to run it. From the finished study she mints a call for a firm: the coverage carries over, she writes three required application questions \u2014 methodology, staffing, data quality \u2014 and the platform's AI drafts the weighted scoring rubric from her scope and questions, which she reviews and locks before publishing, so the criteria are fixed before any firm responds. A survey firm opens the call, sees exactly how it will be scored, drafts substantive answers to all three questions, and sharpens them with the AI Application Coach \u2014 which pushes for verifiable evidence rather than unbacked claims \u2014 before submitting. When the window closes, three firms have applied, shown by response ID, not name, so scoring stays blind. Every application is scored the same way: the AI proposes scores against the locked rubric, and Maya reviews each one criterion by criterion with her adjustments logged \u2014 the AI's suggestion stays hidden until she's recorded her own, so it can't anchor her. Sahel Field Research comes out on top. With the three scored applications side by side, Maya awards the top firm, which is notified on the spot. And because Connect lets her start it on a small contract to confirm quality before scaling to the full survey, the award is a first, verifiable step \u2014 enabling firms to demonstrate full performance of the tasks, not just their written response. Standing up the live Connect opportunity \u2014 that first, small verification contract \u2014 is the honest next step, not yet built.",
+ "narrative_slug": "create-survey-solicitation",
+ "personas": {
+  "firm": {
+   "color": "#059669",
+   "intro": "Sahel Field Research is an independent northern-Nigeria household-survey firm looking for survey work it can staff; it answers public solicitations with the coverage its enumerators can commit to. It names itself in the response form's \"Your organization\" block, so the owner reviews and awards a named firm rather than the individual account that submitted the application.",
+   "name": "Sahel Field Research",
+   "org": "",
+   "role": "Independent survey firm"
+  },
+  "maya": {
+   "color": "#7C3AED",
+   "intro": "Maya designed the Round 6 two-arm Attakar-versus-Gura study for her Vitamin-A programme and now needs to recruit the independent firm that will run the household survey on it.",
+   "name": "Maya",
+   "org": "",
+   "role": "Program study planner"
+  }
+ },
+ "run_id": "create-survey-solicitation-2026-07-23-001",
+ "schema_version": 1,
+ "summary": {},
+ "video": {},
+ "why_brief": {
+  "gaps": [],
+  "narrative_slug": "create-survey-solicitation",
+  "problem": "Maya has just finished designing her Round 6 study \u2014 the two-arm Attakar-versus-Gura household survey that her Vitamin-A programme will use to check whether its visits are actually changing coverage. She has the plan; what she does not yet have is the independent survey firm to run it. So from the p",
+  "schema_version": 1,
+  "spine": [
+   {
+    "claim": "Maya has a finished matched study but cannot credibly measure her own program \u2014 measurement must be independent; she recruits a survey firm to run the household survey by turning the finished study into a call for a firm on the Connect network.",
+    "evidence": [
+     {
+      "kind": "documented",
+      "ref": "trilogy arc: design matched study -> recruit independent surveyor -> monitor verified outcomes"
+     }
+    ],
+    "id": "S0",
+    "rationale": "People need the WHY before the how: the opening states the goal (recruit an independent surveyor for the matched study) so the solicitation steps make sense.",
+    "status": "grounded"
+   },
+   {
+    "claim": "A program owner can launch a call for a firm directly from a finished micro-plan, because the study-group card carries a button that opens the solicitation form with that plan already attached as the source.",
+    "evidence": [
+     {
+      "kind": "implemented",
+      "ref": "create-survey-solicitation walkthrough scene: Maya turns her finished study into a call for a firm"
+     }
+    ],
+    "id": "S3",
+    "rationale": "Bet: recruiting a firm is a continuation of designing the study, so the call starts from the plan the owner just built \u2014 not from a blank solicitation form.",
+    "status": "grounded"
+   },
+   {
+    "claim": "The create form pre-seeds the source plan into a Coverage areas panel snapshotted at creation, and on submit mints a brand-new active solicitation whose id is read off the resulting responses page.",
+    "evidence": [
+     {
+      "kind": "implemented",
+      "ref": "create-survey-solicitation walkthrough scene: Maya mints the call live and lands on its responses page"
+     }
+    ],
+    "id": "S4",
+    "rationale": "Bet: the owner should confirm the coverage the firm will see, frozen at creation, so later plan edits never silently change a published solicitation; and the call is minted live each render rather than reusing a fixed record.",
+    "status": "grounded"
+   },
+   {
+    "claim": "A survey firm reads the public solicitation and applies by selecting a specific coverage area from a checklist, and submission is blocked until one area is chosen.",
+    "evidence": [
+     {
+      "kind": "implemented",
+      "ref": "create-survey-solicitation walkthrough scene: A survey firm reads the open call and ticks the area it can staff"
+     }
+    ],
+    "id": "S5",
+    "rationale": "Bet: an application should commit to a concrete coverage area, not a free-text claim, so the owner compares applicants on the real area they will work.",
+    "status": "grounded"
+   },
+   {
+    "claim": "The owner reviewing responses sees each firm's committed coverage area resolved from the authoritative snapshot, tying every application to a concrete designed coverage.",
+    "evidence": [
+     {
+      "kind": "implemented",
+      "ref": "create-survey-solicitation walkthrough scene: Maya sees the firm tied to the coverage she designed"
+     }
+    ],
+    "id": "S6",
+    "rationale": "Bet: the reviewer should compare applicants against the designed coverage, so the area the firm committed to is shown directly on the response.",
+    "status": "grounded"
+   },
+   {
+    "claim": "Awarding the chosen firm records the decision and notifies the organization, while standing up the live Connect opportunity that firm would run is the next step, not yet built.",
+    "evidence": [
+     {
+      "kind": "implemented",
+      "ref": "create-survey-solicitation walkthrough scene: Maya awards the firm and sees it was notified"
+     }
+    ],
+    "id": "S7",
+    "rationale": "Bet: the demo must be honest about the planning-versus-execution boundary \u2014 awarding a firm is a real, shipped end-state, and field execution (provisioning the live opportunity) is the aspirational next step, not a shipped mechanism dressed up as done.",
+    "status": "grounded"
+   },
+   {
+    "claim": "Firms see \u2014 and are coached against \u2014 the same weighted rubric they will be scored on: the respond form shows every criterion with its weight, and the AI Application Coach reviews the firm's full multi-question draft against those criteria before submission.",
+    "evidence": [
+     {
+      "kind": "implemented",
+      "ref": "labs PR #819: respond page 'How your response will be scored' criteria panel; application_coach agent reviews draft answers against evaluation_criteria (connect_labs/solicitations/views.py RespondView + ai application_coach)"
+     }
+    ],
+    "id": "S8",
+    "rationale": "Bet: scoring transparency plus criteria-grounded coaching produce substantive, comparable applications \u2014 a firm that knows the rubric writes to the rubric, which is exactly what the owner needs to compare firms.",
+    "status": "grounded"
+   },
+   {
+    "claim": "The AI-drafted rubric is load-bearing: the owner scores each application criterion-by-criterion (1-10 per criterion, overall /100, recommendation), and the award is made among scored alternatives \u2014 not clicked on a sole applicant.",
+    "evidence": [
+     {
+      "kind": "implemented",
+      "ref": "connect_labs/solicitations/views.py ReviewView + forms.ReviewForm (criteria_score_<id> fields); responses list renders latest_review score/100 and recommendation per firm"
+     }
+    ],
+    "id": "S9",
+    "rationale": "Bet: solicitation machinery earns its keep only when the evaluation decides something \u2014 the demo must show the rubric scoring a real application and the award choosing the top-scored firm.",
+    "status": "grounded"
+   }
+  ]
+ }
+}

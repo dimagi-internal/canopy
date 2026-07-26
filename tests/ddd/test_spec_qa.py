@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from scripts.ddd.identity import slugify
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,6 +79,7 @@ def _spec_data(
         },
         "scenes": [
             {
+                "id": "submit-form",
                 "persona": persona_key,
                 "title": "Submit Form",
                 "show": "navigate to /form, fill fields, click Submit",
@@ -110,6 +113,9 @@ def _scene(
             }
         ]
     scene: dict = {
+        # Stable scene id (L0). Derived from the title HERE, in the fixture, so
+        # these tests exercise the same shape a backfilled spec has.
+        "id": slugify(title),
         "persona": persona_key,
         "title": title,
         "show": "navigate to /form, fill fields, click Submit",
@@ -928,6 +934,7 @@ def test_blocking_reason_names_scene_and_non_effecting_kinds():
 def _demo_spec_4_scenes(*, with_overview: bool = True, all_narratives: bool = True) -> dict:
     def _sc(title: str, *, overview: bool = False) -> dict:
         s: dict = {
+            "id": slugify(title),
             "persona": "alice",
             "title": title,
             "show": "navigate to /form, fill fields, click Submit",

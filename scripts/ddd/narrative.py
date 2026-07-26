@@ -11,6 +11,12 @@ Public API (pure functions — no network):
 CLI (touches network via review.post_review_request):
     python -m scripts.ddd.narrative post <spec_path> <run_id>
     python -m scripts.ddd.narrative apply <spec_path> <response_json_file>
+    python -m scripts.ddd.narrative pull <slug> <dir>
+
+Ownership (L1): canopy-web owns the story, git owns the render recipe, and
+``pull`` is a one-way read into a generated ``<slug>.narrative.lock.json``.
+There is no sync and no merge — see the Ownership block further down and
+docs/superpowers/specs/2026-07-26-narrative-storyboard-and-ownership-design.md
 """
 from __future__ import annotations
 
@@ -23,6 +29,7 @@ from pathlib import Path
 import yaml
 
 from scripts.ddd.schemas.models import Decision, Gate, NarrationItem, ReviewRequest, UnifiedSpec
+from scripts.ddd.spec_io import load_spec
 from scripts.ddd.review import _review_id_from_url
 
 
@@ -184,15 +191,12 @@ def _rebuild_spec_narrative(raw: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _title_slug(title: str) -> str:
-    """Convert a scene title to a URL-safe slug for use as a narration item id.
-
-    Examples:
-        "Area Selection"  -> "area-selection"
-        "Field Assignment" -> "field-assignment"
-        "Sample Gen (v2)"  -> "sample-gen-v2"
-    """
-    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+# Scene identity lives in scripts/ddd/identity.py so the validator can reach it
+# without importing this module (which pulls in the network layer via
+# scripts.ddd.review). Re-exported under the historical private names so every
+# existing call site and test keeps working.
+from scripts.ddd.identity import scene_id as _scene_id  # noqa: E402
+from scripts.ddd.identity import slugify as _title_slug  # noqa: E402
 
 
 def _beat_status_map(why_brief: dict | None) -> dict[str, str]:
@@ -275,7 +279,7 @@ def build_narrative_review_request(
     narration = [
         NarrationItem(
             scene=i,
-            id=_title_slug(scene.title),
+            id=_scene_id(scene),
             title=scene.title,
             persona=scene.persona,
             provenance=scene.provenance,
@@ -290,7 +294,7 @@ def build_narrative_review_request(
     build_order: list[str] = (
         spec.build_order
         if spec.build_order
-        else [_title_slug(scene.title) for scene in spec.scenes]
+        else [_scene_id(scene) for scene in spec.scenes]
     )
 
     decision = Decision(
@@ -544,11 +548,12 @@ def apply_narrative_edits(
         if overall_feedback:
             feedback.append({"scope": "overall", "ref": "", "text": overall_feedback})
 
-        # Build slug→index map for existing scenes
+        # Build id→index map for existing scenes. Keyed on the STABLE scene id
+        # (explicit `id`, else legacy title slug) so an edit that reworded the
+        # title still lands on the right scene.
         slug_to_index: dict[str, int] = {}
         for idx, scene in enumerate(scenes):
-            title = scene.get("title", "")
-            slug_to_index[_title_slug(title)] = idx
+            slug_to_index[_scene_id(scene)] = idx
 
         # Determine first persona key from the spec
         personas: dict = raw.get("personas", {})
@@ -601,6 +606,9 @@ def apply_narrative_edits(
                         })
 
                 new_scene: dict = {
+                    # Mint the stable id ONCE, here, from the title it was born
+                    # with. From this point the title is free to change.
+                    "id": _title_slug(scene_title),
                     "persona": first_persona,
                     "title": scene_title,
                     "show": narration,
@@ -745,9 +753,7 @@ def apply_narrative_edits(
         # build_order: read from response, validate against surviving scenes,
         # drop deleted slugs, append newly-added scene slugs.
         # ------------------------------------------------------------------
-        surviving_slugs: set[str] = {
-            _title_slug(s.get("title", "")) for s in scenes
-        }
+        surviving_slugs: set[str] = {_scene_id(s) for s in scenes}
         # Slugs of scenes that were newly added in this edit cycle
         newly_added_slugs: list[str] = [
             _title_slug(t) for t in needs_grounding
@@ -805,8 +811,7 @@ def apply_narrative_edits(
     # Build a slug→scene-index mapping from the on-disk spec
     slug_to_index_legacy: dict[str, int] = {}
     for idx, scene in enumerate(scenes):
-        title = scene.get("title", "")
-        slug_to_index_legacy[_title_slug(title)] = idx
+        slug_to_index_legacy[_scene_id(scene)] = idx
 
     edited = 0
     for slug, new_claim in narration_edits.items():
@@ -822,9 +827,7 @@ def apply_narrative_edits(
     # build_order (legacy path): read from response, validate against
     # surviving scenes, preserve existing spec value when not provided.
     # ------------------------------------------------------------------
-    surviving_slugs_legacy: set[str] = {
-        _title_slug(s.get("title", "")) for s in scenes
-    }
+    surviving_slugs_legacy: set[str] = {_scene_id(s) for s in scenes}
     response_build_order_legacy: list[str] | None = response_json.get("build_order")
     if response_build_order_legacy is not None:
         # Filter to only surviving slugs (ignore unknown/bogus ones)
@@ -835,7 +838,7 @@ def apply_narrative_edits(
         # Append any surviving scene slugs not already listed
         listed_legacy: set[str] = set(build_order_legacy)
         for scene in scenes:
-            slug = _title_slug(scene.get("title", ""))
+            slug = _scene_id(scene)
             if slug not in listed_legacy:
                 build_order_legacy.append(slug)
                 listed_legacy.add(slug)
@@ -892,92 +895,16 @@ def load_why_brief(spec_path: str | Path, spec: UnifiedSpec) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Narrative sync (hydrate web → disk) — `narrative pull`
+# Ownership (L1). There is no merge, because there is nothing to merge.
 #
-# canopy-web is the source of truth for the NARRATIVE: the overview paragraph,
-# the per-scene story beats (title/persona/provenance/concept_claim/features),
-# personas, and build_order. The render RECIPE (per-scene show/url/actions/
-# design_intent/viewport + base_url/auth) is disk-only and regenerated each run
-# — it is never "the narrative", so editing it must NOT count as a narrative
-# change. `pull` hydrates the narrative fields from web while preserving the
-# local recipe, and refuses to clobber local narrative edits that haven't been
-# pushed back (see decide_narrative_sync).
+#   <slug>.recipe.yaml          git-owned. How to film it.
+#   canopy-web                  cloud-owned. The story.
+#   <slug>.narrative.lock.json  generated by `pull`, committed, never edited.
+#
+# The two are joined on the stable scene `id` (L0) by scripts/ddd/spec_io.py.
+# `pull` is a one-way read; nothing writes across the boundary. See
+# docs/superpowers/specs/2026-07-26-narrative-storyboard-and-ownership-design.md
 # ---------------------------------------------------------------------------
-
-# Web-owned, per-scene narrative fields (everything else on a Scene is recipe).
-_NARRATIVE_SCENE_FIELDS = ("title", "persona", "provenance", "concept_claim", "features")
-
-
-def narrative_content_hash(spec: dict) -> str:
-    """Stable hash of a spec's web-owned narrative fields.
-
-    Covers name + overview + personas + build_order + per-scene story fields,
-    canonicalised (sorted JSON). Editing the disk-only render recipe leaves this
-    hash unchanged, so the recipe never trips the local-edited check.
-    """
-    payload = {
-        "name": spec.get("name", ""),
-        "narrative": (spec.get("narrative") or "").strip(),
-        "personas": spec.get("personas") or {},
-        "build_order": spec.get("build_order") or [],
-        "scenes": [
-            {k: s.get(k) for k in _NARRATIVE_SCENE_FIELDS}
-            for s in (spec.get("scenes") or [])
-            if isinstance(s, dict)
-        ],
-    }
-    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
-
-
-def decide_narrative_sync(
-    *,
-    local_present: bool,
-    local_changed: bool,
-    local_synced_version: int | None,
-    web_version: int | None,
-) -> tuple[str, str]:
-    """Decide what ``narrative pull`` should do. Pure — no IO.
-
-    Returns ``(action, reason)`` where action ∈:
-      - ``no_web``            — canopy-web has no narrative for this slug.
-      - ``pull``             — safe to hydrate (no local, or web advanced and
-                               local is clean).
-      - ``noop``             — already in sync.
-      - ``refuse_local_newer`` — local has narrative edits not on web; the user
-                               should PUSH (run the narrative-review gate) rather
-                               than overwrite. This is the guard the user asked
-                               for: never clobber a locally-newer narrative.
-      - ``refuse_conflict``  — local edited AND web advanced; both diverged.
-    """
-    if web_version is None:
-        return ("no_web", "canopy-web has no narrative for this slug")
-    if not local_present:
-        return ("pull", "no local narrative — hydrate fresh from canopy-web")
-    if local_synced_version is None:
-        # Local spec exists but was never synced — unknown provenance. If it
-        # carries narrative content that isn't on web, treat it as local work to
-        # be pushed, not overwritten.
-        if local_changed:
-            return (
-                "refuse_local_newer",
-                "local narrative has no sync record — push it first (or pull --force to overwrite)",
-            )
-        return ("pull", "local narrative unsynced but matches web — hydrate to record the link")
-    web_advanced = web_version > local_synced_version
-    if not local_changed and not web_advanced:
-        return ("noop", f"already in sync with canopy-web v{web_version}")
-    if not local_changed and web_advanced:
-        return ("pull", f"canopy-web advanced to v{web_version}; local is clean — fast-forward")
-    if local_changed and not web_advanced:
-        return (
-            "refuse_local_newer",
-            "local narrative has edits not on canopy-web — push an update instead of overwriting",
-        )
-    return (
-        "refuse_conflict",
-        f"both diverged — local was edited and canopy-web advanced to v{web_version}",
-    )
 
 
 def web_narrative_to_spec_parts(request_json: dict) -> dict:
@@ -988,10 +915,18 @@ def web_narrative_to_spec_parts(request_json: dict) -> dict:
             continue
         scenes.append(
             {
+                # The web's narration id IS the scene id — the join key the local
+                # recipe is matched on. Legacy narratives stored the title slug
+                # here, which is exactly what the backfill writes locally.
+                "id": (n.get("id") or "").strip() or _title_slug(n.get("title", "")),
                 "title": n.get("title", ""),
                 "persona": n.get("persona", ""),
                 "provenance": n.get("provenance", ""),
-                "concept_claim": (n.get("text") or "").strip(),
+                # The reviewer-approved line is the VOICEOVER. It is NOT the
+                # concept_claim, which is local-owned, never transmitted
+                # (NarrationItem carries no such field), and must not be
+                # clobbered — reconstructing it here was silent data loss.
+                "narrative": (n.get("text") or "").strip(),
                 "features": n.get("features") or [],
             }
         )
@@ -1016,45 +951,6 @@ def reconstruct_why_brief(request_json: dict) -> dict:
     if "feature" in wb and "narrative_slug" not in wb:
         wb["narrative_slug"] = wb.pop("feature")
     return wb
-
-
-def merge_narrative_into_spec(local: dict | None, parts: dict) -> dict:
-    """Apply web-owned narrative ``parts`` onto a local spec dict (or build a
-    fresh one when ``local`` is None), preserving the local render recipe.
-
-    Scenes are matched on their title-slug id (the same identity
-    ``apply_narrative_edits`` uses). A web scene with no local match is written
-    with an empty ``show`` recipe for the author to fill; local scenes absent
-    from web are dropped (web owns the scene list).
-    """
-    if local is None:
-        return {
-            "name": parts["name"] or "untitled",
-            "narrative": parts["narrative"],
-            "base_url": "",
-            "personas": parts["personas"],
-            "scenes": [{**s, "show": ""} for s in parts["scenes"]],
-            "build_order": parts["build_order"],
-        }
-
-    local_by_id = {
-        _title_slug(s.get("title", "")): s
-        for s in (local.get("scenes") or [])
-        if isinstance(s, dict)
-    }
-    merged_scenes: list[dict] = []
-    for ps in parts["scenes"]:
-        base = dict(local_by_id.get(_title_slug(ps["title"]), {}))  # preserve recipe
-        base.update({k: ps[k] for k in _NARRATIVE_SCENE_FIELDS})
-        base.setdefault("show", "")
-        merged_scenes.append(base)
-
-    merged = dict(local)
-    merged["narrative"] = parts["narrative"]
-    merged["personas"] = parts["personas"]
-    merged["build_order"] = parts["build_order"]
-    merged["scenes"] = merged_scenes
-    return merged
 
 
 def _tokenized_review_url(result: dict) -> str | None:
@@ -1143,8 +1039,8 @@ def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
          posted version is immediately the current/active narrative. No human
          approval is required for it to become current.
       3. Stamp ``run_state.narrative_review_id`` so the run attaches to this exact
-         version, and stamp the spec's ``narrative_synced_version`` +
-         ``narrative_synced_hash`` so a later pull/auto-version sees us in sync.
+         version. canopy-web owns the story from here; `pull` fetches it
+         back into the narrative lock.
 
     Returns the raw post result ``{id, url, share_token}`` from canopy-web.
     Raises if the spec file is missing. ``rv`` is injectable for tests.
@@ -1167,8 +1063,7 @@ def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
     except FileNotFoundError:
         narrative_slug = None
 
-    raw = yaml.safe_load(spec_path.read_text())
-    spec = UnifiedSpec.model_validate(raw)
+    spec = load_spec(spec_path)
     why_brief = load_why_brief(spec_path, spec)
     request = build_narrative_review_request(
         spec, run_id, why_brief=why_brief, narrative_slug=narrative_slug
@@ -1213,220 +1108,6 @@ def _cmd_post(spec_path_str: str, run_id: str) -> None:
     print(json.dumps(out))
 
 
-def _stamp_spec_sync(spec_path: Path, slug: str, rv) -> None:
-    """Record that ``spec_path`` is in sync with canopy-web's current version.
-
-    Called after ``narrative post`` publishes a new version: sets the spec's
-    ``narrative_synced_version`` to the just-posted web version and the hash to
-    the current local narrative content. A no-op (with a warning) if the version
-    can't be read — the post already succeeded.
-    """
-    try:
-        detail = rv.get_narrative(slug)
-        version = ((detail or {}).get("current_version") or {}).get("version")
-        if version is None:
-            return
-        raw = yaml.safe_load(spec_path.read_text()) or {}
-        raw["narrative_synced_version"] = version
-        raw["narrative_synced_hash"] = narrative_content_hash(raw)
-        raw["narrative_synced_at"] = _now_iso()
-        spec_path.write_text(
-            yaml.dump(raw, default_flow_style=False, allow_unicode=True, sort_keys=False)
-        )
-    except Exception as exc:  # noqa: BLE001 — never fail the post over a stamp
-        print(
-            f"WARNING: posted the narrative but could not stamp local sync "
-            f"({type(exc).__name__}: {exc}). A later `pull` may report a false "
-            f"conflict; re-run `narrative pull {slug} <spec> --force` if so.",
-            file=sys.stderr,
-        )
-
-
-class NarrativeConflictError(RuntimeError):
-    """Raised when auto-versioning can't safely post: the local narrative changed
-    AND canopy-web advanced underneath it (``refuse_conflict``).
-
-    Auto-posting here would clobber the version someone/something else published
-    while this run was editing. The fix is a manual reconcile — ``narrative pull
-    <slug> <spec> --force`` to take web as truth, or run the narrative-review gate
-    to push the local edits as the next version on top of the advanced web base.
-    """
-
-
-def auto_version_if_changed(spec_path_str: str, run_id: str, rv=None) -> dict:
-    """Auto-post a new narrative version iff the spec's narrative content changed.
-
-    This is the routine, no-pause auto-versioning entry point. It compares the
-    spec's current ``narrative_content_hash`` to the ``narrative_synced_hash``
-    recorded at the last sync:
-
-    - **unchanged** → no-op (``{"action": "noop", ...}``). Nothing posted.
-    - **changed, web NOT advanced** → post a new version (reuse
-      ``post_narrative_version``), which is immediately current on canopy-web and
-      to which the run is now stamped. Returns ``{"action": "posted", ...}``.
-    - **changed AND web advanced** (``narrative_synced_version`` < web's current
-      version) → raise :class:`NarrativeConflictError`. We do NOT auto-clobber a
-      version published underneath us.
-    - **first-ever narrative** (no ``narrative_synced_version`` yet) → post v1.
-
-    The crux this resolves: a freshly-POSTED ``concept_change`` review is the
-    current/active narrative version immediately — canopy-web's ``build_narrative``
-    picks ``versions[-1]`` by ``(version, created_at)``, independent of the
-    review's pending/resolved status. So routine auto-versioning never needs a
-    human approve step to make the new version usable; the human gate stays only
-    at ``external_release`` (upload). ``rv`` is injectable for tests.
-    """
-    if rv is None:
-        from scripts.ddd import review as rv  # local import — network-touching
-
-    spec_path = Path(spec_path_str)
-    if not spec_path.exists():
-        raise FileNotFoundError(f"spec file not found: {spec_path}")
-
-    raw = yaml.safe_load(spec_path.read_text()) or {}
-    current_hash = narrative_content_hash(raw)
-    synced_hash = raw.get("narrative_synced_hash")
-    synced_version = raw.get("narrative_synced_version")
-
-    # First-ever narrative for this spec (never synced) → always post (v1).
-    first_ever = synced_version is None or not synced_hash
-
-    if not first_ever and current_hash == synced_hash:
-        return {
-            "action": "noop",
-            "run_id": run_id,
-            "synced_version": synced_version,
-            "reason": "narrative content unchanged since last sync",
-        }
-
-    # Content changed (or first-ever). Before posting, guard the conflict case:
-    # if canopy-web's current version is ahead of what we synced, auto-posting
-    # would clobber a version published underneath us. Resolve manually.
-    if not first_ever:
-        slug = None
-        try:
-            from scripts.ddd import runstate as rs
-
-            slug = rs.load(run_id).narrative_slug
-        except FileNotFoundError:
-            slug = _narrative_slug_from_run_id(run_id)
-        web_version = None
-        try:
-            detail = rv.get_narrative(slug)
-            web_version = ((detail or {}).get("current_version") or {}).get("version")
-        except Exception:  # noqa: BLE001 — a read failure shouldn't masquerade as a conflict
-            web_version = None
-        if web_version is not None and synced_version is not None and web_version > synced_version:
-            raise NarrativeConflictError(
-                f"Refusing to auto-version narrative for run {run_id!r}: the local "
-                f"narrative changed AND canopy-web advanced to v{web_version} "
-                f"(local last synced v{synced_version}). Auto-posting would clobber "
-                f"the newer web version.\n"
-                f"  → Reconcile manually: `narrative pull {slug} {spec_path} --force` "
-                f"to take web as truth, or run the narrative-review gate to push your "
-                f"edits as the next version on top of v{web_version}."
-            )
-
-    result = post_narrative_version(spec_path_str, run_id, rv=rv)
-    # Re-read the freshly-stamped synced version for the return payload.
-    reloaded = yaml.safe_load(spec_path.read_text()) or {}
-    return {
-        "action": "posted",
-        "run_id": run_id,
-        "review_id": (result.get("id") or "").strip() or None,
-        "version": reloaded.get("narrative_synced_version"),
-        "first_ever": first_ever,
-        "reason": (
-            "first narrative version for this spec"
-            if first_ever
-            else "narrative content changed since last sync"
-        ),
-    }
-
-
-def sync(spec_path_str: str, run_id: str, *, rv=None) -> dict:
-    """Reconcile the local narrative spec with canopy-web in ONE step — the bridge
-    that lets WEB edits become versions the way local (canopy) edits already do.
-
-    Two directions, in order:
-
-    1. **Web → local.** If the run's narrative review has been RESOLVED on
-       canopy-web (the reviewer edited the story inline and approved/redrafted),
-       fold that ``response_json`` onto the local spec via
-       :func:`apply_narrative_edits`. This is the missing piece: ``pull`` only
-       hydrates a version's baseline (``request_json``) and never applied the
-       reviewer's inline edits, so a web edit sat dangling on the review until
-       someone hand-ran ``apply``.
-    2. **Local → web.** Then :func:`auto_version_if_changed` posts a new version
-       iff the (now possibly edited) narrative differs from the last-synced one —
-       so the folded-in web edit becomes a real numbered version, not a dangling
-       review response.
-
-    Idempotent: a second ``sync`` re-applies the same edits as a net no-op and
-    versions nothing (the content hash is unchanged). Raises
-    :class:`NarrativeConflictError` if the web advanced under a local edit (same
-    guard as :func:`auto_version_if_changed`). ``rv`` is injectable for tests.
-
-    Returns ``{"review_id", "applied", "decision", "version"}``: ``applied`` /
-    ``decision`` are ``None`` when there was no resolved review to fold in;
-    ``version`` is the :func:`auto_version_if_changed` result (``action``
-    ``noop`` | ``posted``).
-    """
-    if rv is None:
-        from scripts.ddd import review as rv  # local import — network-touching
-    from scripts.ddd import runstate as rs
-
-    spec_path = Path(spec_path_str)
-    if not spec_path.exists():
-        raise FileNotFoundError(f"spec file not found: {spec_path}")
-
-    # Resolve the run's review id (the web side of the bridge).
-    review_id = None
-    try:
-        state = rs.load(run_id)
-        review_id = (getattr(state, "narrative_review_id", None) or "").strip() or None
-        if not review_id:
-            review_id = _review_id_from_url(getattr(state, "narrative_review_url", None))
-    except FileNotFoundError:
-        pass
-
-    # 1. Web → local: fold a RESOLVED review's edits onto the spec. apply is
-    #    idempotent and also sets the narrative lock on an approve decision.
-    applied = None
-    decision = None
-    if review_id:
-        try:
-            data = rv.get_review(review_id)
-        except Exception:  # noqa: BLE001 — network/404: degrade to local-only versioning
-            data = None
-        if isinstance(data, dict) and data.get("status") == "resolved":
-            res = apply_narrative_edits(spec_path, data.get("response_json") or {})
-            applied = res.get("applied")
-            decision = res.get("decision")
-
-    # 2. Local → web: version any change (including the edits just folded in).
-    version = auto_version_if_changed(str(spec_path), run_id, rv=rv)
-
-    return {
-        "review_id": review_id,
-        "applied": applied,
-        "decision": decision,
-        "version": version,
-    }
-
-
-def _cmd_sync(spec_path_str: str, run_id: str) -> None:
-    """Reconcile local spec <-> canopy-web in one step: fold a resolved review's
-    edits onto the spec, then auto-version any change. Print the result JSON; exit
-    2 on a conflict (web advanced under a local edit)."""
-    try:
-        result = sync(spec_path_str, run_id)
-    except NarrativeConflictError as exc:
-        print(f"CONFLICT: {exc}", file=sys.stderr)
-        sys.exit(2)
-    print(json.dumps(result))
-
-
 def _cmd_apply(spec_path_str: str, response_json_file: str) -> None:
     """Apply narration edits from a response JSON file and print the result dict."""
     response_path = Path(response_json_file)
@@ -1439,139 +1120,110 @@ def _cmd_apply(spec_path_str: str, response_json_file: str) -> None:
     print(json.dumps(result))
 
 
-def _cmd_pull(slug: str, spec_path_str: str, force: bool = False) -> None:
-    """Hydrate the local narrative from canopy-web (web → disk).
+def _lock_scene(s: dict) -> dict:
+    """One scene's STORY fields for the lock, preserving absence.
 
-    Writes ``<spec_path>`` (narrative fields merged in, render recipe preserved)
-    and a sibling ``<slug>.why_brief.yaml``, stamping the synced web version.
-    Refuses (exit 1) when the local narrative has edits not on canopy-web —
-    telling the user to PUSH instead — unless ``force`` is set. canopy-web is the
-    source of truth for the narrative; the render recipe stays disk-only.
+    A key the source omits stays omitted rather than becoming `""`. That matters
+    because ``Scene.provenance`` is REQUIRED with no default: coercing absent to
+    empty would make a spec that is missing a required field load silently, which
+    is a worse failure than the null it replaced. `features` is the exception —
+    it defaults to `[]`, so absent and empty really are the same.
+    """
+    out: dict = {"id": s["id"]}
+    for k in ("title", "persona", "provenance", "narrative"):
+        if s.get(k) is not None:
+            out[k] = s[k]
+    if s.get("features") is not None:
+        out["features"] = s["features"]
+    return out
+
+
+def write_lock(base_dir, slug: str, version: int, parts: dict):
+    """Write ``<slug>.narrative.lock.json`` — the committed read-through cache of
+    the cloud-owned story at a pinned version.
+
+    Generated, never hand-edited. Carries STORY only: a recipe field appearing in
+    here is the signal that someone edited it by hand (see
+    ``scripts.ddd.check_locks``). Sorted keys + trailing newline so re-pulling an
+    unchanged version is a no-op in git rather than a diff.
+    """
+    from scripts.ddd.spec_io import lock_path
+
+    payload = {
+        "slug": slug,
+        "version": version,
+        "fetched_at": _now_iso(),
+        "name": parts.get("name") or slug,
+        "narrative": parts.get("narrative") or "",
+        "personas": parts.get("personas") or {},
+        "build_order": parts.get("build_order") or [],
+        "scenes": [_lock_scene(s) for s in (parts.get("scenes") or [])],
+    }
+    p = lock_path(base_dir, slug)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+    return p
+
+
+def _cmd_pull(slug: str, target: str) -> None:
+    """Fetch the narrative from canopy-web into ``<slug>.narrative.lock.json``.
+
+    A one-way READ. canopy-web owns the story; the lock is a generated,
+    committed cache of it at a pinned version. Nothing is merged, nothing is
+    stamped, and there is no ``--force`` — with one writer per field there is
+    nothing to reconcile and therefore nothing to force.
+
+    ``target`` is the directory the lock is written to (a file path is accepted
+    for backward compatibility and its parent is used), alongside the sibling
+    ``<slug>.why_brief.yaml`` the review payload carries.
     """
     from scripts.ddd import review as rv
 
-    spec_path = Path(spec_path_str)
+    t = Path(target)
+    base_dir = t.parent if t.suffix else t
 
-    # 1. Web side: current narrative version + its full payload (needed both to
-    #    pull and to hash for change detection on an unstamped local spec).
     detail = rv.get_narrative(slug)
     cur = (detail or {}).get("current_version") or {}
     web_version = cur.get("version")
     review_id = cur.get("review_id")
-    request_json: dict | None = None
-    parts: dict | None = None
-    web_hash: str | None = None
-    if web_version is not None and review_id:
-        full = rv.get_review(review_id)
-        request_json = full.get("request_json") if isinstance(full, dict) else None
-        if isinstance(request_json, dict):
-            parts = web_narrative_to_spec_parts(request_json)
-            web_hash = narrative_content_hash(parts)
-
-    # 2. Local side: spec + sync stamps + change detection.
-    local: dict | None = None
-    if spec_path.exists():
-        loaded = yaml.safe_load(spec_path.read_text())
-        local = loaded if isinstance(loaded, dict) else None
-    local_present = local is not None
-    local_synced_version = local.get("narrative_synced_version") if local else None
-    if not local_present:
-        local_changed = False
-    elif local_synced_version is not None:
-        # Stamped: compare against the hash recorded at the last sync.
-        stored_hash = local.get("narrative_synced_hash")
-        local_changed = (not stored_hash) or (narrative_content_hash(local) != stored_hash)
-    else:
-        # Unstamped local spec: "changed" only if its narrative content actually
-        # differs from web's current version. An existing spec that already
-        # matches web (e.g. the one that posted v1) is NOT a false "local newer".
-        local_changed = (web_hash is None) or (narrative_content_hash(local) != web_hash)
-
-    action, reason = decide_narrative_sync(
-        local_present=local_present,
-        local_changed=local_changed,
-        local_synced_version=local_synced_version,
-        web_version=web_version,
-    )
-
-    # 3. Refusals (honoured unless --force).
-    if action == "no_web":
-        print(f"ERROR: {reason} ({slug!r}).", file=sys.stderr)
-        sys.exit(1)
-    if action == "noop":
-        print(json.dumps({"action": "noop", "slug": slug, "web_version": web_version, "reason": reason}))
-        return
-    if action in ("refuse_local_newer", "refuse_conflict") and not force:
-        run_hint = local.get("name") if local else slug
+    if web_version is None or not review_id:
         print(
-            f"REFUSED: {reason}.\n"
-            f"  Your local narrative for {slug!r} is newer than canopy-web "
-            f"(v{web_version}). Pulling would overwrite your edits.\n"
-            f"  → To publish your local edits as the next version, push them "
-            f"through the narrative gate:\n"
-            f"      /canopy:ddd-narrative-review <run_id>   "
-            f"(run_id for narrative {run_hint!r})\n"
-            f"  → To discard your local edits and take canopy-web as truth, "
-            f"re-run with --force.",
+            f"ERROR: canopy-web has no narrative for {slug!r}. "
+            f"Post one first via the narrative-review gate.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    # 4. Pull (action == "pull", or a forced refuse). Payload was fetched above.
-    if not isinstance(request_json, dict) or parts is None:
-        print(f"ERROR: could not read narrative payload for {slug!r} (review {review_id}).", file=sys.stderr)
+    full = rv.get_review(review_id)
+    request_json = full.get("request_json") if isinstance(full, dict) else None
+    if not isinstance(request_json, dict):
+        print(
+            f"ERROR: could not read narrative payload for {slug!r} (review {review_id}).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    merged = merge_narrative_into_spec(local, parts)
+    parts = web_narrative_to_spec_parts(request_json)
+    lock = write_lock(base_dir, slug, web_version, parts)
 
-    # why_brief next to the spec; point the spec at it.
+    # The why-brief is cloud-derived too — recovered from the same payload.
     wb = reconstruct_why_brief(request_json)
     wb_name = f"{slug}.why_brief.yaml"
     if wb:
-        spec_path.parent.mkdir(parents=True, exist_ok=True)
-        (spec_path.parent / wb_name).write_text(
+        base_dir.mkdir(parents=True, exist_ok=True)
+        (base_dir / wb_name).write_text(
             yaml.dump(wb, default_flow_style=False, allow_unicode=True, sort_keys=False)
         )
-        merged["why_brief"] = wb_name
 
-    # Stamp the sync so the next pull can tell web-advanced from local-edited.
-    merged["narrative_synced_version"] = web_version
-    merged["narrative_synced_hash"] = narrative_content_hash(merged)
-    merged["narrative_synced_at"] = _now_iso()
-
-    # Validate before writing so we never leave a broken spec on disk.
-    try:
-        UnifiedSpec.model_validate(merged)
-    except Exception as exc:  # noqa: BLE001 — surface a clear message, don't crash
-        print(
-            f"ERROR: hydrated spec for {slug!r} failed validation: {exc}\n"
-            f"  (canopy-web narrative payload may be incomplete). Nothing written.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    spec_path.parent.mkdir(parents=True, exist_ok=True)
-    spec_path.write_text(
-        yaml.dump(merged, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    )
-
-    n_scenes = len(merged.get("scenes") or [])
-    fresh = local is None
     print(
         json.dumps(
             {
                 "action": "pulled",
                 "slug": slug,
-                "web_version": web_version,
-                "spec_path": str(spec_path),
+                "version": web_version,
+                "lock_path": str(lock),
                 "why_brief": wb_name if wb else None,
-                "scenes": n_scenes,
-                "fresh": fresh,
-                "note": (
-                    "render recipe (show/actions) left empty for authoring"
-                    if fresh
-                    else "render recipe preserved from local; narrative fields updated from canopy-web"
-                ),
+                "scenes": len(parts.get("scenes") or []),
             }
         )
     )
@@ -1631,7 +1283,7 @@ def main() -> None:
             "  python -m scripts.ddd.narrative sync <spec_path> <run_id>   # reconcile: fold any resolved web review edits onto the spec, THEN version any change (no pause); exit 2 on conflict. The 'I edited on the web, now continue' command.\n"
             "  python -m scripts.ddd.narrative apply <spec_path> <response_json_file>\n"
             "  python -m scripts.ddd.narrative status <run_id>     # prints narrative status JSON; exit 1 if upload would refuse\n"
-            "  python -m scripts.ddd.narrative pull <slug> <spec_path> [--force]   # hydrate narrative from canopy-web (web→disk); refuses if local is newer\n"
+            "  python -m scripts.ddd.narrative pull <slug> <dir>                   # fetch the narrative into <slug>.narrative.lock.json (one-way read)\n"
             "  python -m scripts.ddd.narrative locked <spec_path>   # prints locked|unlocked\n"
             "  python -m scripts.ddd.narrative lock <spec_path>\n"
             "  python -m scripts.ddd.narrative unlock <spec_path>",
@@ -1669,16 +1321,14 @@ def main() -> None:
         _cmd_status(sys.argv[2])
 
     elif subcmd == "pull":
-        args = sys.argv[2:]
-        force = "--force" in args
-        args = [a for a in args if a != "--force"]
+        args = [a for a in sys.argv[2:] if a != "--force"]
         if len(args) != 2:
             print(
-                "Usage: python -m scripts.ddd.narrative pull <slug> <spec_path> [--force]",
+                "Usage: python -m scripts.ddd.narrative pull <slug> <dir>",
                 file=sys.stderr,
             )
             sys.exit(2)
-        _cmd_pull(args[0], args[1], force=force)
+        _cmd_pull(args[0], args[1])
 
     elif subcmd == "apply":
         if len(sys.argv) != 4:

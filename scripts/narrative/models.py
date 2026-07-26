@@ -488,6 +488,18 @@ ACTION_CLASSES: tuple[type[_ActionBase], ...] = (
 
 
 class Scene(BaseModel):
+    id: str = ""
+    """Stable, permanent identity for this scene.
+
+    The join key between the web-owned narrative and the local render recipe,
+    and the key canopy-web's vN→vN+1 diff pairs on. Authored once and never
+    changed: renaming an id is deleting a scene and adding another, and reads
+    that way in every diff.
+
+    Defaults to "" only so pre-L0 specs still load; ``spec_qa`` rejects a spec
+    whose scenes have no ids, and ``scripts.ddd.identity.scene_id`` falls back
+    to the title slug for exactly as long as it takes the backfill to run.
+    """
     persona: str
     title: str
     show: str
@@ -684,14 +696,6 @@ class UnifiedSpec(BaseModel):
     # local narrative edits that haven't been pushed. The hash covers ONLY the
     # web-owned narrative fields — editing the disk-only render recipe
     # (show/actions/url) never counts as a narrative change.
-    narrative_synced_version: int | None = None
-    """The canopy-web narrative version this local spec was last in sync with."""
-    narrative_synced_hash: str | None = None
-    """Hash of the web-owned narrative fields at the last sync (see
-    ``narrative.narrative_content_hash``). Differs from the current hash ⟺ the
-    local narrative has been edited since the last pull/push."""
-    narrative_synced_at: str | None = None
-    """ISO-8601 timestamp of the last pull/push sync."""
     tagline: str = ""
     """One plain-language sentence: what this is + who it's for. The uploaded docs
     page leads with it so a newcomer understands the feature before pressing play.

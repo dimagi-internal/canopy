@@ -62,6 +62,8 @@ try:
 except ImportError:
     sys.exit("ERROR: pyyaml not installed. Run: pip install pyyaml")
 
+from scripts.ddd.spec_io import load_spec_raw
+
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:
@@ -740,7 +742,11 @@ def main() -> None:
         )
 
     ffmpeg = check_ffmpeg()
-    spec = yaml.safe_load(Path(args.spec).read_text())
+    # Composes <slug>.recipe.yaml + <slug>.narrative.lock.json when that is the
+    # on-disk shape; reads a legacy unified spec otherwise. Raw (unvalidated)
+    # on purpose: older specs predate required concept_claim and the recorder
+    # has always filmed them as plain dicts.
+    spec = load_spec_raw(Path(args.spec))
     run_data: dict | None = None
     if args.input:
         run_data = json.loads(Path(args.input).read_text())
