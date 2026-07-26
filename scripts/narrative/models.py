@@ -488,6 +488,18 @@ ACTION_CLASSES: tuple[type[_ActionBase], ...] = (
 
 
 class Scene(BaseModel):
+    id: str = ""
+    """Stable, permanent identity for this scene.
+
+    The join key between the web-owned narrative and the local render recipe,
+    and the key canopy-web's vN→vN+1 diff pairs on. Authored once and never
+    changed: renaming an id is deleting a scene and adding another, and reads
+    that way in every diff.
+
+    Defaults to "" only so pre-L0 specs still load; ``spec_qa`` rejects a spec
+    whose scenes have no ids, and ``scripts.ddd.identity.scene_id`` falls back
+    to the title slug for exactly as long as it takes the backfill to run.
+    """
     persona: str
     title: str
     show: str

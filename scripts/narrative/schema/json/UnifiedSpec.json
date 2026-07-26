@@ -737,6 +737,11 @@
     },
     "Scene": {
       "properties": {
+        "id": {
+          "default": "",
+          "title": "Id",
+          "type": "string"
+        },
         "persona": {
           "title": "Persona",
           "type": "string"

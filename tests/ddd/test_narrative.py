@@ -80,6 +80,7 @@ def _write_spec(tmp_path: Path, spec: UnifiedSpec) -> Path:
 
 
 from scripts.ddd.narrative import (
+    _scene_id,
     apply_narrative_edits,
     build_narrative_review_request,
     is_narrative_locked,
@@ -1948,3 +1949,40 @@ class TestSync:
         result = sync(str(spec_path), self.RUN_ID, rv=fake)
         assert result["applied"] is None  # nothing folded (no review to read)
         assert result["version"]["action"] == "posted"
+
+
+# ---------------------------------------------------------------------------
+# Stable scene identity (L0)
+# ---------------------------------------------------------------------------
+
+
+def test_scene_id_prefers_explicit_id_over_title():
+    scene = Scene(
+        id="the-goal",
+        persona="alice",
+        title="A title that will be reworded later",
+        show="Open the dashboard.",
+        concept_claim="The dashboard loads in under two seconds.",
+        provenance="S1",
+    )
+    assert _scene_id(scene) == "the-goal"
+
+
+def test_scene_id_falls_back_to_title_slug_when_unset():
+    scene = Scene(
+        persona="alice",
+        title="Area Selection",
+        show="Draw a boundary.",
+        concept_claim="A boundary can be drawn in under 30 seconds.",
+        provenance="S1",
+    )
+    assert _scene_id(scene) == "area-selection"
+
+
+def test_scene_id_accepts_a_raw_dict():
+    assert _scene_id({"id": "the-goal", "title": "Anything"}) == "the-goal"
+    assert _scene_id({"title": "Area Selection"}) == "area-selection"
+
+
+def test_scene_id_treats_whitespace_only_id_as_absent():
+    assert _scene_id({"id": "   ", "title": "Area Selection"}) == "area-selection"

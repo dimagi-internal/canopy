@@ -184,15 +184,12 @@ def _rebuild_spec_narrative(raw: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _title_slug(title: str) -> str:
-    """Convert a scene title to a URL-safe slug for use as a narration item id.
-
-    Examples:
-        "Area Selection"  -> "area-selection"
-        "Field Assignment" -> "field-assignment"
-        "Sample Gen (v2)"  -> "sample-gen-v2"
-    """
-    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+# Scene identity lives in scripts/ddd/identity.py so the validator can reach it
+# without importing this module (which pulls in the network layer via
+# scripts.ddd.review). Re-exported under the historical private names so every
+# existing call site and test keeps working.
+from scripts.ddd.identity import scene_id as _scene_id  # noqa: E402
+from scripts.ddd.identity import slugify as _title_slug  # noqa: E402
 
 
 def _beat_status_map(why_brief: dict | None) -> dict[str, str]:
