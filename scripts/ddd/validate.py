@@ -14,7 +14,6 @@ Supported kinds: why_brief, unified_spec, verdict, review_request, run_state
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,6 +23,7 @@ from pydantic import ValidationError
 
 # Generic narrative/eval/review models come from the neutral substrate; the
 # DDD-only RunState stays in scripts.ddd.schemas.models.
+from scripts.ddd.identity import scene_id
 from scripts.ddd.schemas.models import RunState
 from scripts.narrative.models import (
     Decision,
@@ -135,10 +135,11 @@ def _semantic_unified_spec(obj: UnifiedSpec, spec_path: Path | None) -> list[str
 
     # (build_order) if non-empty: each slug must map to an existing scene, no duplicates
     if obj.build_order:
-        scene_slugs: set[str] = set(
-            re.sub(r"[^a-z0-9]+", "-", scene.title.lower()).strip("-")
-            for scene in obj.scenes
-        )
+        # Scene identity comes from scripts.ddd.identity — the SAME function
+        # that GENERATES build_order in build_narrative_review_request. These
+        # were two separate slug expressions and they disagreed the moment a
+        # scene carried an explicit id.
+        scene_slugs: set[str] = {scene_id(scene) for scene in obj.scenes}
         seen_order_slugs: set[str] = set()
         for slug in obj.build_order:
             if slug in seen_order_slugs:
@@ -148,8 +149,8 @@ def _semantic_unified_spec(obj: UnifiedSpec, spec_path: Path | None) -> list[str
             seen_order_slugs.add(slug)
             if slug not in scene_slugs:
                 problems.append(
-                    f"build_order references unknown scene slug '{slug}' "
-                    "(no scene title produces this slug)"
+                    f"build_order references unknown scene id '{slug}' "
+                    "(no scene declares this id)"
                 )
 
     # (b) + (f) provenance cross-check when why_brief is declared
