@@ -2021,3 +2021,59 @@ def test_build_order_defaults_to_explicit_scene_ids():
     ])
     req = build_narrative_review_request(spec, "demo-2026-07-26-001")
     assert req.build_order == ["the-goal", "the-proof"]
+
+
+def test_apply_edits_matches_on_scene_id_not_title(tmp_path):
+    spec_path = tmp_path / "demo.yaml"
+    spec_path.write_text(yaml.dump({
+        "name": "demo",
+        "narrative": "The old spoken line.",
+        "base_url": "http://localhost:8000",
+        "personas": {"alice": {"name": "Alice", "role": "PM"}},
+        "scenes": [{
+            "id": "the-goal",
+            "persona": "alice",
+            "title": "A title nobody edits",
+            "show": "css:text=/^Dashboard$/",
+            "concept_claim": "The dashboard loads in under two seconds.",
+            "provenance": "S1",
+            "narrative": "The old spoken line.",
+        }],
+    }))
+
+    result = apply_narrative_edits(spec_path, {
+        "decisions": {"narrative-verdict": "approve"},
+        "edited_scenes": [{"id": "the-goal", "narration": "The new spoken line."}],
+    })
+
+    assert result["applied"]["updated"] == 1
+    raw = yaml.safe_load(spec_path.read_text())
+    assert raw["scenes"][0]["narrative"] == "The new spoken line."
+    assert raw["scenes"][0]["show"] == "css:text=/^Dashboard$/"
+
+
+def test_apply_edits_writes_an_explicit_id_on_a_newly_added_scene(tmp_path):
+    spec_path = tmp_path / "demo.yaml"
+    spec_path.write_text(yaml.dump({
+        "name": "demo",
+        "narrative": "The only line.",
+        "base_url": "http://localhost:8000",
+        "personas": {"alice": {"name": "Alice", "role": "PM"}},
+        "scenes": [{
+            "id": "the-goal", "persona": "alice", "title": "The goal",
+            "show": "x", "concept_claim": "A claim with at least five words.",
+            "provenance": "S1", "narrative": "The only line.",
+        }],
+    }))
+
+    apply_narrative_edits(spec_path, {
+        "decisions": {"narrative-verdict": "approve"},
+        "edited_scenes": [{
+            "id": "new-1", "title": "The proof", "narration": "A brand new beat.",
+        }],
+    })
+
+    raw = yaml.safe_load(spec_path.read_text())
+    added = raw["scenes"][-1]
+    assert added["id"] == "the-proof"
+    assert added["title"] == "The proof"

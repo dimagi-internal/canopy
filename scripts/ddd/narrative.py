@@ -541,11 +541,12 @@ def apply_narrative_edits(
         if overall_feedback:
             feedback.append({"scope": "overall", "ref": "", "text": overall_feedback})
 
-        # Build slug→index map for existing scenes
+        # Build id→index map for existing scenes. Keyed on the STABLE scene id
+        # (explicit `id`, else legacy title slug) so an edit that reworded the
+        # title still lands on the right scene.
         slug_to_index: dict[str, int] = {}
         for idx, scene in enumerate(scenes):
-            title = scene.get("title", "")
-            slug_to_index[_title_slug(title)] = idx
+            slug_to_index[_scene_id(scene)] = idx
 
         # Determine first persona key from the spec
         personas: dict = raw.get("personas", {})
@@ -598,6 +599,9 @@ def apply_narrative_edits(
                         })
 
                 new_scene: dict = {
+                    # Mint the stable id ONCE, here, from the title it was born
+                    # with. From this point the title is free to change.
+                    "id": _title_slug(scene_title),
                     "persona": first_persona,
                     "title": scene_title,
                     "show": narration,
@@ -742,9 +746,7 @@ def apply_narrative_edits(
         # build_order: read from response, validate against surviving scenes,
         # drop deleted slugs, append newly-added scene slugs.
         # ------------------------------------------------------------------
-        surviving_slugs: set[str] = {
-            _title_slug(s.get("title", "")) for s in scenes
-        }
+        surviving_slugs: set[str] = {_scene_id(s) for s in scenes}
         # Slugs of scenes that were newly added in this edit cycle
         newly_added_slugs: list[str] = [
             _title_slug(t) for t in needs_grounding
@@ -802,8 +804,7 @@ def apply_narrative_edits(
     # Build a slug→scene-index mapping from the on-disk spec
     slug_to_index_legacy: dict[str, int] = {}
     for idx, scene in enumerate(scenes):
-        title = scene.get("title", "")
-        slug_to_index_legacy[_title_slug(title)] = idx
+        slug_to_index_legacy[_scene_id(scene)] = idx
 
     edited = 0
     for slug, new_claim in narration_edits.items():
@@ -819,9 +820,7 @@ def apply_narrative_edits(
     # build_order (legacy path): read from response, validate against
     # surviving scenes, preserve existing spec value when not provided.
     # ------------------------------------------------------------------
-    surviving_slugs_legacy: set[str] = {
-        _title_slug(s.get("title", "")) for s in scenes
-    }
+    surviving_slugs_legacy: set[str] = {_scene_id(s) for s in scenes}
     response_build_order_legacy: list[str] | None = response_json.get("build_order")
     if response_build_order_legacy is not None:
         # Filter to only surviving slugs (ignore unknown/bogus ones)
@@ -832,7 +831,7 @@ def apply_narrative_edits(
         # Append any surviving scene slugs not already listed
         listed_legacy: set[str] = set(build_order_legacy)
         for scene in scenes:
-            slug = _title_slug(scene.get("title", ""))
+            slug = _scene_id(scene)
             if slug not in listed_legacy:
                 build_order_legacy.append(slug)
                 listed_legacy.add(slug)
