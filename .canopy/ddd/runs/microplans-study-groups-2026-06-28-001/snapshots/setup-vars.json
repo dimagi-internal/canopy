@@ -1,0 +1,11 @@
+{
+  "command": "python scripts/walkthroughs/microplans-study-groups/ensure_demo.py",
+  "cwd": "/private/tmp/ddd/dddsweep",
+  "rerun": "per_render",
+  "outputs": null,
+  "skipped": false,
+  "skip_reason": null,
+  "exit_code": 0,
+  "duration_seconds": 3.27,
+  "variables": {}
+}

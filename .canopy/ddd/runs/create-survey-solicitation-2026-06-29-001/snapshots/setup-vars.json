@@ -1,0 +1,11 @@
+{
+  "command": "python scripts/walkthroughs/create-survey-solicitation/ensure_demo.py",
+  "cwd": "/private/tmp/ddd/final",
+  "rerun": "per_render",
+  "outputs": null,
+  "skipped": false,
+  "skip_reason": null,
+  "exit_code": 0,
+  "duration_seconds": 1.8,
+  "variables": {}
+}

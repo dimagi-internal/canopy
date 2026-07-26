@@ -1,0 +1,132 @@
+[ensure_demo] OK — program 10008: swept 1 residue Untitled study group(s) [4635] + 1 residue plan(s) [4636]; R6 group 4492/plan 4494 intact; scene-7 lifecycle plan 4493 reset to draft. Scene 1 mints a fresh study on camera.
+Setup: running synthetic generator (cwd=/private/tmp/ddd/dddsweep, timeout=300s)
+  $ python scripts/walkthroughs/microplans-study-groups/ensure_demo.py
+Setup: done in 3.3s (exit 0)
+Recording 8 scenes at pace=fast (1280x720)
+
+=== Scene 1/8: The goal — measure the program's real effect
+  · goto https://labs.connect.dimagi.com/microplans/program/10008/
+  · deferring goto_settle_ms (first action is wait_for)
+  · using wait_until=commit (first action is wait_for; navigation gate deferred to it)
+  · deferring initial_hold_ms (first action is wait_for)
+    · wait_for(Studies & plan groups)
+    · hold()
+  · snapshot scene_1.png + scene_1_page_text.json
+
+=== Scene 2/8: Maya starts a study from scratch
+  · staying on https://labs.connect.dimagi.com/microplans/program/10008/  — no nav for this scene
+  · deferring initial_hold_ms (first action is wait_for)
+  · before-frame scene_2_before.png
+    · wait_for(Studies & plan groups)
+    · scroll_to(css:#new-study)
+    · click(css:#new-study)  — one click creates an "Untitled study" and routes to its empty manage page — no name dialog
+    · wait_for(No plans in this group yet)  — terminal state: the empty study page
+    · hold()
+  · snapshot scene_2.png + scene_2_page_text.json
+
+=== Scene 3/8: Maya opens the plan editor on the empty study
+  · staying on https://labs.connect.dimagi.com/microplans/program/10008/group/4660/manage/  — no nav for this scene
+  · deferring initial_hold_ms (first action is wait_for)
+  · before-frame scene_3_before.png
+    · wait_for(No plans in this group yet)
+    · click(+ Add a plan in the editor)  — opens the single-plan editor at /program/10008/new/?group=<id>
+    · wait_for(Define boundaries)  — the single-plan editor, area-definition section open by default
+    · scroll_to(css:[data-testid=layer-toggle-service-delivery])  — frame the editor's LAYERS panel so the Service-delivery toggle (top-right, tiny) is legibly in-frame before Maya flips it
+    · click(aria:toggle Service delivery)  — turn on the Service-delivery layer in the editor's LAYERS panel
+    · scroll_to(css:[data-testid=layer-toggle-service-delivery])  — keep the LAYERS panel framed after the toggle flips on (it now reads "on" blue + reveals the opportunity picker body)
+    · hold()  — the LAYERS panel with Service delivery toggled on — its toggle + picker body legibly framed, scoped to this study
+  · snapshot scene_3.png + scene_3_page_text.json
+
+=== Scene 4/8: Maya sees the programme covered all of Attakar
+  · staying on https://labs.connect.dimagi.com/microplans/program/10008/new/?group=4660  — no nav for this scene
+  · deferring initial_hold_ms (first action is wait_for)
+  · before-frame scene_4_before.png
+    · wait_for(Define boundaries)
+    · click(Pick opportunities)  — open the opportunity picker
+    · wait_for(css:[data-testid=sd-opp-10010]:visible)  — the opp row in the OPEN modal (the picker has a hidden template + the visible modal — :visible targets the real one, not the hidden duplicate)
+    · click(css:[data-testid=sd-opp-10010]:visible)  — select the Kaura CHC service-delivery opp (10010, same programme)
+    · click(Done)  — close the opportunity picker
+    · click(css:[data-testid=sd-show]:visible)  — Show service delivery points (the visible button, not the hidden template duplicate); fitTo zooms the map to the Attakar delivery cloud (padding 60, maxZoom 15)
+    · hold()  — let the fitTo camera animation to the Attakar cloud fully settle before framing
+    · scroll_to(css:#map-pane)  — center the 50vh map pane in-frame so the fitted ~435-point Attakar delivery cloud (the narrated saturation) is the legible subject, not a thumbnail
+    · hold()  — the delivery cloud saturates the whole Attakar ward — legibly framed
+  · snapshot scene_4.png + scene_4_page_text.json
+
+=== Scene 5/8: Maya compares the surrounding wards to find a match
+  · staying on https://labs.connect.dimagi.com/microplans/program/10008/new/?group=4660  — no nav for this scene
+  · deferring initial_hold_ms (no nav for this scene)
+  · before-frame scene_5_before.png
+    · click(css:#btn-area-admin)  — Boundaries tab — turns on the admin-boundary map layer so the ward polygons are clickable
+    · wait_for(css:.mp-ab-search)  — let the admin boundaries paint on the map (the FILL layer must be rendered before we click a ward)
+    · map_click(Attakar)  — Maya clicks the Attakar ward directly on the MAP - the app's click-to-add handler adds it to the left rail tagged intervention (no search box)
+  · map_click 'Attakar' → in-polygon pixel (802, 291)
+    · wait_for(css:.mp-ab-selected)  — confirm Attakar landed in the left-rail selected list before switching modes
+    · click(css:#btn-mode-sampling)  — sampling mode - arm pills and the Compare button appear
+    · wait_for(css:.mp-ab-compare)  — the Compare button only un-hides once an intervention ward is selected in sampling mode
+    · click(css:.mp-ab-compare)  — Compare surrounding boundaries - rank the neighbours by density overlap
+    · wait_for(best match first)  — wait for the ranking to finish — the header flips from "Processing N…" to "best match first" only when every neighbour has been scored
+    · scroll_to(css:#surrounding-compare)  — frame the ranked comparison table (#surrounding-compare) — the narrated subject — so each neighbour's overlap %, distribution chart and row colour are legible rather than a thumbnail under the map
+    · click(css:.mp-ab-col-i[data-col="match"])  — open Match info + highlight the Match column as the narration introduces "Match is how similar the two wards look overall"
+    · hold()  — Match column highlighted with its info popover — the overall-similarity metric
+    · click(css:.mp-ab-col-i[data-col="balance"])  — Matched balance — the column that matters; moves both popover and highlight to the balance column as the narration explains it's the number the comparability check reports
+    · hold()  — Matched balance column highlighted — the number that actually decides the match
+    · click(css:.mp-ab-col-i[data-col="common"])  — Common support — moves popover + highlight to the common column as the narration explains matching only draws from the shared density range
+    · hold()  — Common support column highlighted — the shared-range caveat
+  · snapshot scene_5.png + scene_5_page_text.json
+
+=== Scene 6/8: Maya rejects the closest match and adds the right match
+  · staying on https://labs.connect.dimagi.com/microplans/program/10008/new/?group=4660  — no nav for this scene
+  · deferring initial_hold_ms (no nav for this scene)
+  · before-frame scene_6_before.png
+    · click(css:.mp-ab-col-i[data-col="common"])  — dismiss the column-info popup (open from scene 4) so it doesn't occlude Gura's Add button
+    · hold()  — Sopp and Gura are the best-balanced matches (0.02); Zankan was last cycle's intervention so it's excluded — Maya picks Gura (most common support of the two)
+    · wait_for(css:.mp-ab-addbnd[data-name="Gura"])  — Gura's row carries an Add-boundary button once the ranking is scored
+    · scroll_to(css:.mp-ab-addbnd[data-name="Gura"])  — frame the ranked table on Gura's row so the rejected top row (Zankan) and Gura's Add-boundary button are both legibly in-frame for the narrated choice
+    · click(css:.mp-ab-addbnd[data-name="Gura"])  — Add boundary on Gura - the closest un-served neighbour - as the match arm
+    · hold()  — Attakar (intervention) and Gura (match) both in one plan, each with its arm pill — Gura's row flipped to its "added" state, legibly framed
+  · snapshot scene_6.png + scene_6_page_text.json
+
+=== Scene 7/8: Maya generates the two-arm plan in place
+  · staying on https://labs.connect.dimagi.com/microplans/program/10008/new/?group=4660  — no nav for this scene
+  · deferring initial_hold_ms (no nav for this scene)
+  · before-frame scene_7_before.png
+    · click(css:#btn-mode-sampling)  — a sampling study, not coverage
+    · scroll_to(css:#sampling-config)
+    · hold()  — PSUs + building-footprint-size filter — one methodology for both arms
+    · click(css:#btn-generate-sample)  — ‘Generate plan’ — samples both arms and creates the plan in place
+    · wait_for(Regenerate plan)  — create-in-place: sampling BOTH arms (two Overture fetches + PPS) creates the plan and flips the button Generate → Regenerate; that label is the visible terminal signal (the page <title> "Microplan review" is not body text)
+    · wait_for(Work areas)
+    · click(css:.mp-panel-tabs button[data-tab="layers"])  — open the Layers tab (panel auto-switches to Inspect after Generate) so the footprints toggle is visible
+    · click(css:[data-testid="layer-toggle-footprints"])  — turn ON the Building-footprints (rooftops) overlay in the map Layers panel so the sampled result reads in context — the PSU pins + cluster hulls the sample just drew, sitting over the ward's rooftops. The toggle is the footprints row in the right-hand Layers panel (map_panel.js).
+    · hold()  — HOLD ON THE MAP. The sample auto-paints + the map fits to it (renderSample → PlanLayers.pins/hulls + Microplans.fitTo): each pin is one sampled settlement (a PSU); the hull is the cluster of buildings around it. Over the building-footprints/rooftops layer, this shows the survey only visits the rooftops inside the sampled PSUs, not the whole ward — explain the sample BEFORE the table.
+    · map_zoom()  — push in to the building footprints — the individual rooftops/households drawn from Overture
+  · map_zoom → 16.0
+    · hold()  — hold on the rooftops: the households randomly sampled within the settlement
+    · map_zoom()  — pull back out to the whole ward
+  · map_zoom → 13.0
+    · hold()  — back at the ward view
+    · scroll_to(css:#study-readout)  — frame the create-in-place success state from the TOP of the study read-out — the ARM COMPARABILITY verdict/table leads, with the KPI strip following in the same viewport — not the PSU breakdown table far below it. Scrolling to #kpi-strip alone clipped the comparability panel's header above the fold; #study-readout sits directly above the KPIs and frames both panels whole.
+    · hold()  — both arms' sampled work areas + KPIs on one map, filed into the study
+  · snapshot scene_7.png + scene_7_page_text.json
+
+=== Scene 8/8: Maya completes the study
+  · goto https://labs.connect.dimagi.com/microplans/program/10008/
+  · deferring goto_settle_ms (first action is wait_for)
+  · using wait_until=commit (first action is wait_for; navigation gate deferred to it)
+  · deferring initial_hold_ms (first action is wait_for)
+  · before-frame scene_8_before.png
+    · wait_for(Candidate plans)  — the program workspace shell has loaded — the "Candidate plans" disclosure (the draft inventory, collapsed by default while finished studies lead the page under "Reviewed") is the static marker the board rendered
+    · click(Candidate plans)  — expand the collapsed draft inventory — the candidate plans (incl. the two-arm plan in draft) live inside this <details>, closed by default so the finished studies lead; opening it reveals their lifecycle controls
+    · wait_for(css:button[data-transition="4493"][data-to="in_review"])  — with the inventory open, plan 4493's row-scoped "Submit for review" button (data-transition keyed to the plan) is now visible — the precise marker that the board loaded its plans AND 4493 is in draft
+    · click(css:button[data-transition="4493"][data-to="in_review"])  — draft → in_review, scoped to plan 4493's card (data-transition); the board POSTs then re-renders in place
+    · wait_for(css:button[data-transition="4493"][data-to="approved"])  — after the in-place re-render, 4493's card now offers Approve (data-to=approved) — only present while the plan is in_review
+    · click(css:button[data-transition="4493"][data-to="approved"])  — in_review → approved, still scoped to plan 4493
+    · wait_for(css:button[data-transition="4493"][data-to="deployed"])  — terminal state: 4493 is approved — its card now shows the forward "Deploy →" button (data-to=deployed), which only renders once a plan is approved
+    · hold()  — the two-arm plan is approved — the study is complete; the green Approved badge sits on 4493's card in the Planning column
+  · snapshot scene_8.png + scene_8_page_text.json
+
+Run report: 67 actions: all ok
+Wrote report: /Users/acedimagi/emdash-projects/canopy/.canopy/ddd/runs/microplans-study-groups-2026-06-28-001/run-report.json
+Wrote manifest: /Users/acedimagi/emdash-projects/canopy/.canopy/ddd/runs/microplans-study-groups-2026-06-28-001/walkthrough-run-data.json
+Converting page@5c62e664d67bf0daa785880008239b18.webm → iter0_clip.mp4
+✓ /Users/acedimagi/emdash-projects/canopy/.canopy/ddd/runs/microplans-study-groups-2026-06-28-001/iter0_clip.mp4 (8.2 MB, ~159s of footage)

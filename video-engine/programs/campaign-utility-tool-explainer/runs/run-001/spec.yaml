@@ -1,0 +1,164 @@
+provenance:
+  generator: video-from-walkthrough
+  template: connect-ddd-walkthrough
+  generated_from: campaign-utility-tool DDD run None
+  generated_at: '1970-01-01T00:00:00Z'
+slug: campaign-utility-tool-explainer
+workspace: dimagi-team
+name: campaign-utility-tool
+country_focus: Global
+status: DDD walkthrough
+tagline: Run a national vaccination campaign from one command center
+program_url: https://labs.connect.dimagi.com
+manifest:
+  master: file:assets/programs/campaign-utility-tool-explainer/walkthrough.mp4
+beats:
+- id: title
+  kind: intro_title
+  seconds: 4
+- id: s1
+  kind: body_walkthrough
+  seconds: 5.9
+- id: s2
+  kind: body_walkthrough
+  seconds: 1.5
+- id: s3
+  kind: body_walkthrough
+  seconds: 2.7
+- id: s4
+  kind: body_walkthrough
+  seconds: 3.2
+- id: s5
+  kind: body_walkthrough
+  seconds: 3.1
+- id: s6
+  kind: body_walkthrough
+  seconds: 7.2
+- id: s7
+  kind: body_walkthrough
+  seconds: 5.1
+- id: s8
+  kind: body_walkthrough
+  seconds: 4.0
+- id: s9
+  kind: body_walkthrough
+  seconds: 7.8
+- id: outro
+  kind: outro_card
+  seconds: 5
+walkthrough:
+  s1:
+    asset: '@master'
+    segments:
+    - start_seconds: 0.0
+      duration_seconds: 5.919
+    start_seconds: 0.0
+    duration_seconds: 5.919
+    lower_third: ''
+  s2:
+    asset: '@master'
+    segments:
+    - start_seconds: 5.919
+      duration_seconds: 1.321
+    - start_seconds: 12.84
+      duration_seconds: 0.194
+    start_seconds: 5.919
+    duration_seconds: 1.515
+    lower_third: ''
+  s3:
+    asset: '@master'
+    segments:
+    - start_seconds: 13.034
+      duration_seconds: 2.726
+    start_seconds: 13.034
+    duration_seconds: 2.726
+    lower_third: ''
+  s4:
+    asset: '@master'
+    segments:
+    - start_seconds: 18.61
+      duration_seconds: 3.19
+    start_seconds: 18.61
+    duration_seconds: 3.19
+    lower_third: ''
+  s5:
+    asset: '@master'
+    segments:
+    - start_seconds: 25.92
+      duration_seconds: 3.08
+    start_seconds: 25.92
+    duration_seconds: 3.08
+    lower_third: ''
+  s6:
+    asset: '@master'
+    segments:
+    - start_seconds: 33.102
+      duration_seconds: 7.221
+    start_seconds: 33.102
+    duration_seconds: 7.221
+    lower_third: ''
+  s7:
+    asset: '@master'
+    segments:
+    - start_seconds: 40.324
+      duration_seconds: 5.116
+    start_seconds: 40.324
+    duration_seconds: 5.116
+    lower_third: ''
+  s8:
+    asset: '@master'
+    segments:
+    - start_seconds: 48.516
+      duration_seconds: 3.964
+    start_seconds: 48.516
+    duration_seconds: 3.964
+    lower_third: ''
+  s9:
+    asset: '@master'
+    segments:
+    - start_seconds: 55.571
+      duration_seconds: 7.789
+    start_seconds: 55.571
+    duration_seconds: 7.789
+    lower_third: ''
+narration:
+  generator: manual
+  prompt_version: v1
+  start_seconds: 0
+  by_beat:
+    title: Run a national vaccination campaign from one command center.
+    s1: Amara opens her campaign and the whole picture is already here — funding, enrolment, attendance, verification and payment status, in one read.
+    s2: She moves to release pay, and the tool blocks a worker whose ID check was rejected — the bad payment never leaves.
+    s3: 'And it''s the whole nation: five thousand workers across all 37 states, paged through without a stutter.'
+    s4: His KYC shows why — a duplicate national-ID flag — so she holds him instead of paying.
+    s5: 'Before releasing more funds she checks the microplans: planned budget and workforce against what''s actually been spent.'
+    s6: The worker she's been acting on is a real CommCare case on a real ward — name, role, NIN, location. Not a mock.
+    s7: In System Administration the audit log holds every payment hold and decision she just made, against her name.
+    s8: She ends on the reporting board — per-state coverage across all 37 states — and exports the week's numbers for the donor.
+    s9: 'And the coverage map: every state shaded by reach, every worker''s location on top — where the country still needs her.'
+    outro: One command center. The whole campaign, in one place.
+  script: 'Run a national vaccination campaign from one command center
+
+    Amara opens her campaign and the whole thing is already in front of her — funding drawn down, enrolment and attendance climbing, verification and payment status broken out — so she starts the morning
+    reading where the campaign actually stands instead of assembling it.
+
+    Amara moves to payments to release this week''s pay, and the tool stops her on a worker it won''t let her approve — his identity check came back rejected — so the bad payment never leaves.
+
+    And it isn''t a handful of workers - the same roster holds the whole nation, five thousand across every one of Nigeria''s 37 states, and Amara pages straight through it without a stutter.
+
+    Amara opens the worker''s KYC to see why, and there it is — a duplicate national-ID flag tying him to another record — so she holds him instead of paying.
+
+    Before she releases more funds Amara drops into the microplans and reads the planned workforce and budget against what''s actually been spent and deployed.
+
+    Amara opens the worker profiles and confirms what she''s been acting on all morning is a real CommCare case on a real ward — name, role, NIN, location — not a mock.
+
+    Amara opens System Administration and reads the audit log — every payment hold and verification decision she just made, written down against the actor''s name.
+
+    Amara ends the morning on the reporting board - per-state coverage shaded by reach across all 37 states - and exports the week''s numbers as a CSV she can hand straight to the donor.
+
+    Amara ends the morning on the coverage map - all 37 of Nigeria''s states shaded by how far the campaign has reached, every worker''s location dropped on top - reading at a glance where the country still
+    needs her.'
+voice:
+  provider: elevenlabs
+  voice_id: XB0fDUnXU5powFXDhCwa
+  model: eleven_turbo_v2

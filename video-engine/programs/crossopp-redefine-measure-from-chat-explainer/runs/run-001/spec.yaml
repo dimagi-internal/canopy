@@ -1,0 +1,144 @@
+provenance:
+  generator: video-from-walkthrough
+  template: connect-ddd-walkthrough
+  generated_from: crossopp-redefine-measure-from-chat DDD run None
+  generated_at: '1970-01-01T00:00:00Z'
+slug: crossopp-redefine-measure-from-chat-explainer
+workspace: dimagi-team
+name: crossopp-redefine-measure-from-chat
+country_focus: Global
+status: DDD walkthrough
+tagline: Crossopp Redefine Measure From Chat
+program_url: http://localhost:5173
+manifest:
+  master: file:assets/programs/crossopp-redefine-measure-from-chat-explainer/walkthrough.mp4
+beats:
+- id: title
+  kind: intro_title
+  seconds: 4
+- id: s1
+  kind: body_walkthrough
+  seconds: 14.5
+- id: s2
+  kind: body_walkthrough
+  seconds: 19.8
+- id: s3
+  kind: body_walkthrough
+  seconds: 24.9
+- id: s4
+  kind: body_walkthrough
+  seconds: 18.0
+- id: s5
+  kind: body_walkthrough
+  seconds: 25.4
+- id: s6
+  kind: body_walkthrough
+  seconds: 14.0
+- id: outro
+  kind: outro_card
+  seconds: 5
+walkthrough:
+  s1:
+    asset: '@master'
+    segments:
+    - start_seconds: 0.0
+      duration_seconds: 14.474
+    start_seconds: 0.0
+    duration_seconds: 14.474
+    lower_third: ''
+  s2:
+    asset: '@master'
+    segments:
+    - start_seconds: 14.474
+      duration_seconds: 19.773
+    start_seconds: 14.474
+    duration_seconds: 19.773
+    lower_third: ''
+  s3:
+    asset: '@master'
+    segments:
+    - start_seconds: 34.248
+      duration_seconds: 24.892
+    start_seconds: 34.248
+    duration_seconds: 24.892
+    lower_third: ''
+  s4:
+    asset: '@master'
+    segments:
+    - start_seconds: 59.14
+      duration_seconds: 18.031
+    start_seconds: 59.14
+    duration_seconds: 18.031
+    lower_third: ''
+  s5:
+    asset: '@master'
+    segments:
+    - start_seconds: 77.171
+      duration_seconds: 25.439
+    start_seconds: 77.171
+    duration_seconds: 25.439
+    lower_third: ''
+  s6:
+    asset: '@master'
+    segments:
+    - start_seconds: 102.609
+      duration_seconds: 14.014
+    start_seconds: 102.609
+    duration_seconds: 14.014
+    lower_third: ''
+narration:
+  generator: manual
+  prompt_version: v1
+  start_seconds: 0
+  by_beat:
+    title: Crossopp Redefine Measure From Chat
+    s1: Maya opens the infant growth curve for her KMC workspace and sees the lightest
+      babies' line sit flat across the weeks — not the catch-up climb she expects
+      — and she doesn't trust the chart.
+    s2: Maya opens the lineage for the age_days measure and reads, opportunity by
+      opportunity, that it is resolved to a raw child-age field with a plain CAST
+      — a field she recognizes does not track real age.
+    s3: From the lineage card Maya clicks Edit definition and tells Scout, in plain
+      language, that age_days should be the number of days between the visit date
+      and the child's date of birth — not the child_age field — and Scout starts re-deriving
+      the measure as a formula.
+    s4: Scout shows Maya the redefined age_days for each opportunity — the days between
+      visit date and date of birth — including the opportunity whose date-of-birth
+      column is named differently, and asks her to confirm before committing.
+    s5: The moment Maya approves, the cube reloads — a definition change, not a data
+      rebuild — and the same growth curve redraws itself, the lightest band now climbing
+      in proper catch-up growth toward the 2,500g milestone.
+    s6: Maya re-opens the age_days lineage and reads the corrected definition — days
+      between visit date and date of birth — confirming, in the same surface where
+      she found the bug, that she fixed the metric herself.
+    outro: ''
+  script: 'Crossopp Redefine Measure From Chat
+
+    Maya opens the infant growth curve for her KMC workspace and sees the lightest
+    babies'' line sit flat across the weeks — not the catch-up climb she expects —
+    and she doesn''t trust the chart.
+
+    Maya opens the lineage for the age_days measure and reads, opportunity by opportunity,
+    that it is resolved to a raw child-age field with a plain CAST — a field she recognizes
+    does not track real age.
+
+    From the lineage card Maya clicks Edit definition and tells Scout, in plain language,
+    that age_days should be the number of days between the visit date and the child''s
+    date of birth — not the child_age field — and Scout starts re-deriving the measure
+    as a formula.
+
+    Scout shows Maya the redefined age_days for each opportunity — the days between
+    visit date and date of birth — including the opportunity whose date-of-birth column
+    is named differently, and asks her to confirm before committing.
+
+    The moment Maya approves, the cube reloads — a definition change, not a data rebuild
+    — and the same growth curve redraws itself, the lightest band now climbing in
+    proper catch-up growth toward the 2,500g milestone.
+
+    Maya re-opens the age_days lineage and reads the corrected definition — days between
+    visit date and date of birth — confirming, in the same surface where she found
+    the bug, that she fixed the metric herself.'
+voice:
+  provider: elevenlabs
+  voice_id: XB0fDUnXU5powFXDhCwa
+  model: eleven_turbo_v2

@@ -1,0 +1,74 @@
+auto_iterate_next_action: stop_done
+auto_iterate_reason: Both judges passed full spec — ready for promotion.
+findings:
+- detail: concept_claim names 'the generated cube model' but only canonical defs +
+    per-opp CAST SQL render in chat; the cube model is referenced, not shown.
+  dimension: claim_reality_coherence
+  fix_kind: options
+  fix_recommendation: 'Advisory/non-blocking. Req #3 (canonical definition + per-opp
+    resolved SQL reachable from chat) is fully demonstrated. The /crossopp model-yaml
+    view exists but the recorder cannot reliably scope /crossopp to a non-default
+    workspace (it defaults activeDomainId to the first/demo workspace on a full-page
+    load).'
+  route: DEFER
+  scene: 7 — Maya audits a number down to its SQL
+  severity: medium
+- detail: The 'structurally different' heterogeneity the claim asserts is narrated,
+    not visually signalled on the data-sources list (the four rows look uniform).
+  dimension: concept_clarity
+  fix_kind: options
+  fix_recommendation: 'Optional product polish: surface a per-source signal of structural
+    difference (schema/table counts, source-type chips, or a ''not yet aligned'' status)
+    so the heterogeneity is visible, not implied. Non-blocking.'
+  route: DEFER
+  scene: 1 — Maya's new workspace pools four opportunities
+  severity: low
+- detail: 'Two demo-data-realism signals, both out of scope as product defects: (a)
+    the four source labels are ''Labs Opp 1001X'' (real Connect-Labs system labels
+    in this dev environment, not real program names) and the sign-in is a dev account;
+    (b) the growth curve is fairly flat for lighter birthweight bands because the
+    synthetic data is not age-anchored and week 5-6 is sparse.'
+  dimension: trust / data-realism
+  fix_kind: options
+  fix_recommendation: 'Track with connect-labs #713 (longitudinal / close-mirror synthetic
+    generation, plus realistic demo program/opportunity naming). The product faithfully
+    renders the real data; no product/modeling code change. When age-anchored synthetic
+    data + realistic opp names land, re-render and the curve slope + source labels
+    improve with zero product edits.'
+  route: RESEARCH
+  scene: cross-cutting (scenes 1, 8)
+  severity: low
+findings_review_id: null
+findings_review_url: null
+iteration: 1
+iteration_clips:
+  0: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/2c5f1e89-4f82-4154-ab62-a04b1e22ad4a
+  1: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/ca301767-403d-48bc-b1e8-2eaa1a08509e
+iteration_decks:
+  0: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/c8d0f921-8afa-4070-a0b8-31150aec0929
+  1: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/7d0beb54-1c15-44b3-95a4-add7c29ce687
+last_actor: null
+last_actor_at: null
+narrative_review_id: e30db15e-38db-44f7-b4de-09de2d1dc4c9
+narrative_review_url: /review/e30db15e-38db-44f7-b4de-09de2d1dc4c9/
+narrative_slug: kmc-cross-opp-growth-curve
+pending_review: null
+phase: uploaded
+run_id: kmc-cross-opp-growth-curve-2026-06-22-001
+scene_filter: null
+scenes_run:
+- 1
+- 2
+- 3
+- 4
+- 5
+- 6
+- 7
+- 8
+schema_version: 1
+score_history:
+- 4.0
+verdicts:
+  concept: /Users/acedimagi/emdash/worktrees/scout/emdash/cube-re7i4/.canopy/ddd/runs/kmc-cross-opp-growth-curve-2026-06-22-001/verdict-concept.yaml
+  user_artifact: /Users/acedimagi/emdash/worktrees/scout/emdash/cube-re7i4/.canopy/ddd/runs/kmc-cross-opp-growth-curve-2026-06-22-001/verdict-user.yaml
+why_brief: null

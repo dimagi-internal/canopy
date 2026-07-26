@@ -1,0 +1,100 @@
+  study ensure: {"program_id": 10008, "rounds": [{"key": "r1", "label": "R1 \u2014 Tse \u00d7 Danto", "plan_id": 4446, "created_plans": [], "live_demo": false, "sampled": {"created": 0, "total": 0, "results": []}}, {
+grounded rounds (on live plans of program 10008): [1, 2, 3, 4, 5, 6]
+generated 4360 records across 6 rounds
+R6 (Dec 2025) · Attakar vs Gura: verified 72.1% vs 8.2% (gap 63.9pp) · self-report 89.7% (+17.6)
+  QA: evidence 94.4% · GPS<=15m 100.0% · complete 100.0% · duration-ok 98.7% · dupes 0
+  Back-check: 54 checked (18.1%) · Type-1 err 9.3% · outcome agree 90.7% · prtest p=0.828 (orig 72.2 vs bc 74.1) · 10 mismatched rows
+
+run_id=4662
+https://labs.connect.dimagi.com/labs/workflow/3699/run/?opportunity_id=10008&run_id=4662
+Setup: running synthetic generator (cwd=/private/tmp/ddd/dddsweep, timeout=1200s)
+  $ python scripts/walkthroughs/verified-monitoring/regenerate.py
+Setup: done in 8.3s (exit 0)
+Setup: resolved ${...} variables: runner_path
+  · scene 1: dropping redundant first goto (target matches scene.url) — use scene.url instead
+  · scene 2: dropping redundant first goto (target matches scene.url) — use scene.url instead
+Recording 6 scenes at pace=fast (1280x1000)
+Prewarm: visiting 1 unique scene URL(s) off camera
+  · prewarm https://labs.connect.dimagi.com/labs/workflow/3699/run/?opportunity_id=10008&run_id=4662 (5.0s)
+Prewarm: done in 5.0s (1 page(s), 0 failure(s))
+
+=== Scene 1/6: The goal — independent, drillable proof the program works
+  · goto https://labs.connect.dimagi.com/labs/workflow/3699/run/?opportunity_id=10008&run_id=4662
+  · deferring goto_settle_ms (first action is wait_for)
+  · using wait_until=commit (first action is wait_for; navigation gate deferred to it)
+  · deferring initial_hold_ms (first action is wait_for)
+    · wait_for(service-delivery data)
+    · hold()
+  · snapshot scene_1.png + scene_1_page_text.json
+
+=== Scene 2/6: Six bi-monthly rounds over time — the gap holds
+  · staying on https://labs.connect.dimagi.com/labs/workflow/3699/run/?opportunity_id=10008&run_id=4662  — no nav for this scene
+  · deferring initial_hold_ms (first action is wait_for)
+  · before-frame scene_2_before.png
+    · wait_for(service-delivery data)
+    · hold()
+    · click(role:button:R3)
+    · hold()
+    · click(role:button:R6)
+    · hold()
+  · snapshot scene_2.png + scene_2_page_text.json
+
+=== Scene 3/6: Where delivery happened vs where the survey checked (the map moves)
+  · staying on https://labs.connect.dimagi.com/labs/workflow/3699/run/?opportunity_id=10008&run_id=4662  — no nav for this scene
+  · deferring initial_hold_ms (no nav for this scene)
+  · before-frame scene_3_before.png
+    · scroll(600)
+    · scroll_to(text:MAP · ATTAKAR)  — frame the two-ward map region (not the chart above) before the layer comparison
+    · hold()
+    · click(css:[aria-label="toggle Plan · sampled PSUs"])
+    · hold()
+    · click(css:[aria-label="toggle Plan · sampled PSUs"])
+    · hold()
+    · click(css:[aria-label="toggle Independent survey"])
+    · hold()
+    · click(css:[aria-label="toggle Plan · sampled PSUs"])
+    · hold()
+    · scroll_to(text:MAP · ATTAKAR)  — hold the framing on the two-ward map with service delivery isolated
+    · hold()
+  · snapshot scene_3.png + scene_3_page_text.json
+
+=== Scene 4/6: The per-surveyor quality scorecard catches a surveyor
+  · staying on https://labs.connect.dimagi.com/labs/workflow/3699/run/?opportunity_id=10008&run_id=4662  — no nav for this scene
+  · deferring initial_hold_ms (no nav for this scene)
+  · before-frame scene_4_before.png
+    · scroll_to(Survey-quality scorecard)
+    · hold()
+    · click(css:[data-cell="T6:evidence"])
+    · wait_for(Survey-quality detail)
+    · hold()
+    · scroll_to(Survey-quality detail)
+    · hold()
+  · snapshot scene_4.png + scene_4_page_text.json
+
+=== Scene 5/6: The independent back-check confirms it
+  · staying on https://labs.connect.dimagi.com/labs/workflow/3699/run/?opportunity_id=10008&run_id=4662  — no nav for this scene
+  · deferring initial_hold_ms (no nav for this scene)
+  · before-frame scene_5_before.png
+    · click(css:[data-cell="T6:backcheck"])
+    · wait_for(Identity match)
+    · hold()
+    · scroll_to(INDEPENDENT BACK-CHECK)
+    · hold()
+  · snapshot scene_5.png + scene_5_page_text.json
+
+=== Scene 6/6: GPS is clean — the Distributions screen catches the fabrication
+  · staying on https://labs.connect.dimagi.com/labs/workflow/3699/run/?opportunity_id=10008&run_id=4662  — no nav for this scene
+  · deferring initial_hold_ms (no nav for this scene)
+  · before-frame scene_6_before.png
+    · scroll_to(text:Distributions ·)
+    · hold()
+    · click(css:table:has-text("Dose yes-rate") td:has-text("Surveyor T6"))  — highlight the flagged surveyor's distributions row (last table scopes to the Distributions card, not the earlier scorecard/map "Surveyor T6")
+    · scroll_to(css:table:has-text("Dose yes-rate") td:has-text("Surveyor T6"))  — settle on the flagged T6 row so its RED composite + red speed/uniformity cells are in frame for the narration (not back up to the all-green peer rows under the header)
+    · hold()
+  · snapshot scene_6.png + scene_6_page_text.json
+
+Run report: 38 actions: all ok
+Wrote report: /Users/acedimagi/emdash-projects/canopy/.canopy/ddd/runs/verified-monitoring-2026-06-28-001/run-report.json
+Wrote manifest: /Users/acedimagi/emdash-projects/canopy/.canopy/ddd/runs/verified-monitoring-2026-06-28-001/walkthrough-run-data.json
+Converting page@73c8d86617a61f36c8f45dc1489c96a8.webm → iter0_clip.mp4
+✓ /Users/acedimagi/emdash-projects/canopy/.canopy/ddd/runs/verified-monitoring-2026-06-28-001/iter0_clip.mp4 (3.3 MB, ~92s of footage)

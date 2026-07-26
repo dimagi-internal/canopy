@@ -1,0 +1,34 @@
+auto_iterate_next_action: stop_done
+auto_iterate_reason: all 8 scenes >=4 (overall 4); converged from overall 1
+findings: []
+findings_review_id: null
+findings_review_url: null
+iteration: 17
+iteration_clips:
+  0: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/6d7a1437-342f-4288-b9fa-948c3976c88c
+  1: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/a35188bd-ca79-4627-8d62-04b6279acb5f
+  3: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/66bc05c4-decb-4218-8ec6-461bd6416670
+  7: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/259dcd66-daf3-447e-8ed2-09ad9acc86cb
+  17: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/d283c198-de37-4cca-8e02-a557b1116f3e
+iteration_decks:
+  0: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/6d7a1437-342f-4288-b9fa-948c3976c88c
+  1: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/4c88969c-3fdb-4da9-8cd6-99336a4c799f
+  7: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/a6f2752a-ec96-4762-9546-0cb50e2e082a
+  17: https://canopy-web-ujpz2cuyxq-uc.a.run.app/w/8e5f4abe-cf43-49c6-999d-e1fe08ee19be
+last_actor: null
+last_actor_at: null
+narrative_review_id: d0d3896c-b738-4b9b-b4e2-868ba432f8e2
+narrative_review_url: /review/d0d3896c-b738-4b9b-b4e2-868ba432f8e2/
+narrative_slug: campaign-utility-tool
+pending_review: null
+phase: converged
+run_id: campaign-utility-tool-2026-06-20-001
+scene_filter: null
+scenes_run: null
+schema_version: 1
+score_history:
+- 1.0
+- 3.0
+- 4.0
+verdicts: {}
+why_brief: null

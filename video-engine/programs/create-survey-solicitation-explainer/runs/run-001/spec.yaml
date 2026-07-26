@@ -1,0 +1,186 @@
+provenance:
+  generator: video-from-walkthrough
+  template: connect-ddd-walkthrough
+  generated_from: create-survey-solicitation DDD run None
+  generated_at: '1970-01-01T00:00:00Z'
+slug: create-survey-solicitation-explainer
+workspace: dimagi-team
+name: create-survey-solicitation
+country_focus: Global
+status: DDD walkthrough
+tagline: Create Survey Solicitation
+program_url: https://labs.connect.dimagi.com
+manifest:
+  master: file:assets/programs/create-survey-solicitation-explainer/walkthrough.mp4
+beats:
+- id: title
+  kind: intro_title
+  seconds: 4
+- id: s1
+  kind: body_walkthrough
+  seconds: 7.9
+- id: s2
+  kind: body_walkthrough
+  seconds: 14.4
+- id: s3
+  kind: body_walkthrough
+  seconds: 32.9
+- id: s4
+  kind: body_walkthrough
+  seconds: 26.3
+- id: s5
+  kind: body_walkthrough
+  seconds: 15.9
+- id: s6
+  kind: body_walkthrough
+  seconds: 21.5
+- id: s7
+  kind: body_walkthrough
+  seconds: 8.2
+- id: s8
+  kind: body_walkthrough
+  seconds: 11.2
+- id: outro
+  kind: outro_card
+  seconds: 5
+walkthrough:
+  s1:
+    asset: '@master'
+    segments:
+    - start_seconds: 0.0
+      duration_seconds: 7.91
+    start_seconds: 0.0
+    duration_seconds: 7.91
+    lower_third: ''
+  s2:
+    asset: '@master'
+    segments:
+    - start_seconds: 7.91
+      duration_seconds: 14.45
+    start_seconds: 7.91
+    duration_seconds: 14.45
+    lower_third: ''
+  s3:
+    asset: '@master'
+    segments:
+    - start_seconds: 22.36
+      duration_seconds: 32.882
+    start_seconds: 22.36
+    duration_seconds: 32.882
+    lower_third: ''
+  s4:
+    asset: '@master'
+    segments:
+    - start_seconds: 55.242
+      duration_seconds: 5.107
+    - start_seconds: 75.984
+      duration_seconds: 21.227
+    start_seconds: 55.242
+    duration_seconds: 26.334
+    lower_third: ''
+  s5:
+    asset: '@master'
+    segments:
+    - start_seconds: 97.211
+      duration_seconds: 15.943
+    start_seconds: 97.211
+    duration_seconds: 15.943
+    lower_third: ''
+  s6:
+    asset: '@master'
+    segments:
+    - start_seconds: 113.154
+      duration_seconds: 4.759
+    - start_seconds: 141.122
+      duration_seconds: 16.787
+    start_seconds: 113.154
+    duration_seconds: 21.546
+    lower_third: ''
+  s7:
+    asset: '@master'
+    segments:
+    - start_seconds: 157.909
+      duration_seconds: 8.219
+    start_seconds: 157.909
+    duration_seconds: 8.219
+    lower_third: ''
+  s8:
+    asset: '@master'
+    segments:
+    - start_seconds: 166.128
+      duration_seconds: 11.204
+    start_seconds: 166.128
+    duration_seconds: 11.204
+    lower_third: ''
+narration:
+  generator: manual
+  prompt_version: v1
+  start_seconds: 0
+  by_beat:
+    title: Create Survey Solicitation
+    s1: Maya has designed her matched study. But to measure her own program credibly,
+      the survey has to be run by someone independent. So she needs to recruit a survey
+      firm — to visit the households and collect the outcomes. Rather than start a
+      separate process, she turns the finished study into a call for a firm on the
+      Connect network, with the wards, coverage, and scope already attached.
+    s2: Maya's finished Round 6 study sits in her portfolio, flagged ready to solicit
+      — and right on the card is the way to turn that plan into a call for a survey
+      firm, no separate tool.
+    s3: Maya builds the call. The title, scope and coverage carry over from her study.
+      She adds a description, the type, timeline, scale and contact - the call can
+      go out publicly across the whole Connect network, or be pointed at organizations
+      she already knows work here - and she writes an application question for the
+      firms.
+    s4: Then, instead of hand-writing a scoring rubric, she clicks Generate with AI
+      - and the platform drafts the evaluation criteria, weighted, straight from her
+      scope and questions. She reviews them, and publishes the call.
+    s5: A survey firm opens the call. The scoring criteria Maya generated show right
+      beside each question, so the firm knows exactly how it will be judged - and
+      it drafts its answer.
+    s6: Before submitting, the firm runs the draft through the AI Application Coach
+      - which reviews it against those same criteria and suggests where to strengthen
+      it. The firm picks the coverage it can staff, and submits.
+    s7: Back in her workspace, Maya opens the responses and sees Sahel Field Research
+      tied to the exact coverage she designed.
+    s8: She awards Sahel Field Research — the screen records the decision and notifies
+      the organization. Standing up the live opportunity is the next step, not yet
+      built.
+    outro: ''
+  script: 'Create Survey Solicitation
+
+    Maya has designed her matched study. But to measure her own program credibly,
+    the survey has to be run by someone independent. So she needs to recruit a survey
+    firm — to visit the households and collect the outcomes. Rather than start a separate
+    process, she turns the finished study into a call for a firm on the Connect network,
+    with the wards, coverage, and scope already attached.
+
+    Maya''s finished Round 6 study sits in her portfolio, flagged ready to solicit
+    — and right on the card is the way to turn that plan into a call for a survey
+    firm, no separate tool.
+
+    Maya builds the call. The title, scope and coverage carry over from her study.
+    She adds a description, the type, timeline, scale and contact - the call can go
+    out publicly across the whole Connect network, or be pointed at organizations
+    she already knows work here - and she writes an application question for the firms.
+
+    Then, instead of hand-writing a scoring rubric, she clicks Generate with AI -
+    and the platform drafts the evaluation criteria, weighted, straight from her scope
+    and questions. She reviews them, and publishes the call.
+
+    A survey firm opens the call. The scoring criteria Maya generated show right beside
+    each question, so the firm knows exactly how it will be judged - and it drafts
+    its answer.
+
+    Before submitting, the firm runs the draft through the AI Application Coach -
+    which reviews it against those same criteria and suggests where to strengthen
+    it. The firm picks the coverage it can staff, and submits.
+
+    Back in her workspace, Maya opens the responses and sees Sahel Field Research
+    tied to the exact coverage she designed.
+
+    She awards Sahel Field Research — the screen records the decision and notifies
+    the organization. Standing up the live opportunity is the next step, not yet built.'
+voice:
+  provider: elevenlabs
+  voice_id: XB0fDUnXU5powFXDhCwa
+  model: eleven_turbo_v2

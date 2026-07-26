@@ -1,0 +1,142 @@
+provenance:
+  generator: video-from-walkthrough
+  template: connect-ddd-walkthrough
+  generated_from: verified-monitoring DDD run None
+  generated_at: '1970-01-01T00:00:00Z'
+slug: verified-monitoring-explainer
+workspace: dimagi-team
+name: verified-monitoring
+country_focus: Global
+status: DDD walkthrough
+tagline: A demo of continuous independent monitoring on Connect
+program_url: https://labs.connect.dimagi.com
+manifest:
+  master: file:assets/programs/verified-monitoring-explainer/walkthrough.mp4
+beats:
+- id: title
+  kind: intro_title
+  seconds: 4
+- id: s1
+  kind: body_walkthrough
+  seconds: 10.7
+- id: s2
+  kind: body_walkthrough
+  seconds: 11.9
+- id: s3
+  kind: body_walkthrough
+  seconds: 20.0
+- id: s4
+  kind: body_walkthrough
+  seconds: 13.8
+- id: s5
+  kind: body_walkthrough
+  seconds: 10.7
+- id: s6
+  kind: body_walkthrough
+  seconds: 9.1
+- id: outro
+  kind: outro_card
+  seconds: 5
+walkthrough:
+  s1:
+    asset: '@master'
+    segments:
+    - start_seconds: 0.0
+      duration_seconds: 2.513
+    - start_seconds: 7.343
+      duration_seconds: 8.205
+    start_seconds: 0.0
+    duration_seconds: 10.718
+    lower_third: ''
+  s2:
+    asset: '@master'
+    segments:
+    - start_seconds: 15.548
+      duration_seconds: 1.359
+    - start_seconds: 21.722
+      duration_seconds: 10.517
+    start_seconds: 15.548
+    duration_seconds: 11.876
+    lower_third: ''
+  s3:
+    asset: '@master'
+    segments:
+    - start_seconds: 32.24
+      duration_seconds: 20.009
+    start_seconds: 32.24
+    duration_seconds: 20.009
+    lower_third: ''
+  s4:
+    asset: '@master'
+    segments:
+    - start_seconds: 52.249
+      duration_seconds: 13.779
+    start_seconds: 52.249
+    duration_seconds: 13.779
+    lower_third: ''
+  s5:
+    asset: '@master'
+    segments:
+    - start_seconds: 66.028
+      duration_seconds: 10.678
+    start_seconds: 66.028
+    duration_seconds: 10.678
+    lower_third: ''
+  s6:
+    asset: '@master'
+    segments:
+    - start_seconds: 76.706
+      duration_seconds: 9.097
+    start_seconds: 76.706
+    duration_seconds: 9.097
+    lower_third: ''
+narration:
+  generator: manual
+  prompt_version: v1
+  start_seconds: 0
+  by_beat:
+    title: A demo of continuous independent monitoring on Connect
+    s1: 'David''s program looks good on paper — his workers log every vitamin-A visit,
+      and the coverage number is high. But a logged visit isn''t proof a household
+      was reached, or that outcomes changed. So he commissioned an independent survey
+      — and he wants to see the verification machinery itself: the trend round over
+      round, each surveyor''s quality, and a back-check he can read row by row. Not
+      ''trust us'' — proof he can drill into.'
+    s2: David opens the independent survey's six-round trend. It confirms a real rise
+      in vitamin-A coverage — but below what his programme reports.
+    s3: On the map, delivery points fill only the intervention ward; the survey checked
+      both. So the gap is real, not a coverage artifact.
+    s4: 'He checks the surveyors, one row each. One — T6 — is flagged: its quality
+      scores trip the review threshold.'
+    s5: 'He opens T6''s back-check: an independent enumerator re-visited the households,
+      and the answers don''t match.'
+    s6: 'And the Distributions screen — T6''s interviews ran impossibly fast and too
+      uniform: statistical fingerprints of fabrication.'
+    outro: ''
+  script: 'A demo of continuous independent monitoring on Connect
+
+    David''s program looks good on paper — his workers log every vitamin-A visit,
+    and the coverage number is high. But a logged visit isn''t proof a household was
+    reached, or that outcomes changed. So he commissioned an independent survey —
+    and he wants to see the verification machinery itself: the trend round over round,
+    each surveyor''s quality, and a back-check he can read row by row. Not ''trust
+    us'' — proof he can drill into.
+
+    David opens the independent survey''s six-round trend. It confirms a real rise
+    in vitamin-A coverage — but below what his programme reports.
+
+    On the map, delivery points fill only the intervention ward; the survey checked
+    both. So the gap is real, not a coverage artifact.
+
+    He checks the surveyors, one row each. One — T6 — is flagged: its quality scores
+    trip the review threshold.
+
+    He opens T6''s back-check: an independent enumerator re-visited the households,
+    and the answers don''t match.
+
+    And the Distributions screen — T6''s interviews ran impossibly fast and too uniform:
+    statistical fingerprints of fabrication.'
+voice:
+  provider: elevenlabs
+  voice_id: XB0fDUnXU5powFXDhCwa
+  model: eleven_turbo_v2
