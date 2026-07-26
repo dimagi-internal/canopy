@@ -80,11 +80,13 @@ def _write_spec(tmp_path: Path, spec: UnifiedSpec) -> Path:
 
 
 from scripts.ddd.narrative import (
+    _NARRATIVE_SCENE_FIELDS,
     _scene_id,
     apply_narrative_edits,
     build_narrative_review_request,
     is_narrative_locked,
     set_narrative_lock,
+    web_narrative_to_spec_parts,
 )
 
 
@@ -1562,13 +1564,22 @@ class TestNarrativeSync:
         base = {
             "name": "f", "narrative": "story", "personas": {"a": {"name": "A"}},
             "build_order": ["s1"],
-            "scenes": [{"title": "S1", "persona": "a", "provenance": "S1",
-                        "concept_claim": "claim", "features": [], "show": "click x"}],
+            "scenes": [{"id": "s1", "title": "S1", "persona": "a", "provenance": "S1",
+                        "narrative": "the spoken line.", "concept_claim": "claim",
+                        "features": [], "show": "click x"}],
         }
         recipe_edit = {**base, "scenes": [{**base["scenes"][0], "show": "click DIFFERENT",
                                            "actions": [{"goto": "/x"}], "url": "/y"}]}
         assert narrative_content_hash(base) == narrative_content_hash(recipe_edit)
-        narrative_edit = {**base, "scenes": [{**base["scenes"][0], "concept_claim": "NEW claim"}]}
+
+        # concept_claim is RECIPE-side as of L0 — it is never transmitted to
+        # canopy-web, so editing it is not a narrative change.
+        claim_edit = {**base, "scenes": [{**base["scenes"][0], "concept_claim": "NEW claim"}]}
+        assert narrative_content_hash(base) == narrative_content_hash(claim_edit)
+
+        # The spoken line IS the narrative.
+        narrative_edit = {**base,
+                          "scenes": [{**base["scenes"][0], "narrative": "a NEW spoken line."}]}
         assert narrative_content_hash(base) != narrative_content_hash(narrative_edit)
 
     def test_decide_no_web(self):
@@ -1622,18 +1633,27 @@ class TestNarrativeSync:
         assert wb["narrative_slug"] == "verified-monitoring"
         assert "feature" not in wb
 
-    def test_web_parts_maps_narration_text_to_concept_claim(self):
+    def test_web_parts_maps_narration_text_to_scene_narrative(self):
+        """The reviewer-approved line is the VOICEOVER (scene.narrative).
+
+        This used to land in concept_claim, which destroyed the local
+        falsifiable claim on every pull while leaving the field the push
+        actually reads (scene.narrative) stale.
+        """
         from scripts.ddd.narrative import web_narrative_to_spec_parts
         rj = {
             "narrative_slug": "vm", "narrative": "overview",
             "personas": {"a": {"name": "A"}}, "build_order": ["s1"],
-            "narration": [{"title": "Scene One", "persona": "a", "provenance": "S1",
-                           "text": "the claim", "features": [{"id": "f1"}]}],
+            "narration": [{"id": "scene-one", "title": "Scene One", "persona": "a",
+                           "provenance": "S1", "text": "the spoken line",
+                           "features": [{"id": "f1"}]}],
         }
         parts = web_narrative_to_spec_parts(rj)
         assert parts["name"] == "vm"
         assert parts["narrative"] == "overview"
-        assert parts["scenes"][0]["concept_claim"] == "the claim"
+        assert parts["scenes"][0]["id"] == "scene-one"
+        assert parts["scenes"][0]["narrative"] == "the spoken line"
+        assert "concept_claim" not in parts["scenes"][0]
         assert parts["scenes"][0]["features"] == [{"id": "f1"}]
 
     def test_merge_preserves_local_recipe_on_matched_scene(self):
@@ -1642,21 +1662,24 @@ class TestNarrativeSync:
             "name": "vm", "narrative": "old overview", "base_url": "https://x",
             "auth": {"k": "v"}, "personas": {"a": {"name": "A"}},
             "build_order": ["s1"],
-            "scenes": [{"title": "Scene One", "persona": "a", "provenance": "S1",
-                        "concept_claim": "old", "features": [],
+            "scenes": [{"id": "scene-one", "title": "Scene One", "persona": "a",
+                        "provenance": "S1", "narrative": "old line",
+                        "concept_claim": "a local claim", "features": [],
                         "show": "click the thing", "actions": [{"goto": "/a"}], "url": "/a"}],
         }
         parts = {
             "name": "vm", "narrative": "NEW overview", "personas": {"a": {"name": "A"}},
             "build_order": ["s1"],
-            "scenes": [{"title": "Scene One", "persona": "a", "provenance": "S1",
-                        "concept_claim": "NEW claim", "features": []}],
+            "scenes": [{"id": "scene-one", "title": "Scene One", "persona": "a",
+                        "provenance": "S1", "narrative": "NEW line", "features": []}],
         }
         merged = merge_narrative_into_spec(local, parts)
         s = merged["scenes"][0]
         # narrative fields updated from web
         assert merged["narrative"] == "NEW overview"
-        assert s["concept_claim"] == "NEW claim"
+        assert s["narrative"] == "NEW line"
+        # local-owned claim untouched by a pull
+        assert s["concept_claim"] == "a local claim"
         # render recipe preserved from local
         assert s["show"] == "click the thing"
         assert s["actions"] == [{"goto": "/a"}]
@@ -2077,3 +2100,42 @@ def test_apply_edits_writes_an_explicit_id_on_a_newly_added_scene(tmp_path):
     added = raw["scenes"][-1]
     assert added["id"] == "the-proof"
     assert added["title"] == "The proof"
+
+
+def test_pull_maps_web_narration_text_to_scene_narrative_not_concept_claim():
+    parts = web_narrative_to_spec_parts({
+        "narrative_slug": "demo",
+        "narrative": "The whole story.",
+        "personas": {},
+        "build_order": [],
+        "narration": [{
+            "id": "the-goal",
+            "title": "The goal",
+            "persona": "alice",
+            "provenance": "S1",
+            "text": "The line the reviewer approved.",
+            "features": [],
+        }],
+    })
+
+    scene = parts["scenes"][0]
+    assert scene["id"] == "the-goal"
+    assert scene["narrative"] == "The line the reviewer approved."
+    assert "concept_claim" not in scene
+
+
+def test_pull_falls_back_to_the_title_slug_for_a_legacy_id_less_narration():
+    parts = web_narrative_to_spec_parts({
+        "narrative_slug": "demo",
+        "narrative": "The whole story.",
+        "personas": {},
+        "build_order": [],
+        "narration": [{"title": "Area Selection", "text": "A line.", "features": []}],
+    })
+    assert parts["scenes"][0]["id"] == "area-selection"
+
+
+def test_narrative_scene_fields_excludes_concept_claim_and_includes_id():
+    assert "concept_claim" not in _NARRATIVE_SCENE_FIELDS
+    assert "id" in _NARRATIVE_SCENE_FIELDS
+    assert "narrative" in _NARRATIVE_SCENE_FIELDS

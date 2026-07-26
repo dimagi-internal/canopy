@@ -901,7 +901,9 @@ def load_why_brief(spec_path: str | Path, spec: UnifiedSpec) -> dict:
 # ---------------------------------------------------------------------------
 
 # Web-owned, per-scene narrative fields (everything else on a Scene is recipe).
-_NARRATIVE_SCENE_FIELDS = ("title", "persona", "provenance", "concept_claim", "features")
+# `concept_claim` is deliberately ABSENT: it is never sent to canopy-web
+# (NarrationItem carries no such field), so it has exactly one writer — local.
+_NARRATIVE_SCENE_FIELDS = ("id", "title", "persona", "provenance", "narrative", "features")
 
 
 def narrative_content_hash(spec: dict) -> str:
@@ -984,10 +986,18 @@ def web_narrative_to_spec_parts(request_json: dict) -> dict:
             continue
         scenes.append(
             {
+                # The web's narration id IS the scene id — the join key the local
+                # recipe is matched on. Legacy narratives stored the title slug
+                # here, which is exactly what the backfill writes locally.
+                "id": (n.get("id") or "").strip() or _title_slug(n.get("title", "")),
                 "title": n.get("title", ""),
                 "persona": n.get("persona", ""),
                 "provenance": n.get("provenance", ""),
-                "concept_claim": (n.get("text") or "").strip(),
+                # The reviewer-approved line is the VOICEOVER. It is NOT the
+                # concept_claim, which is local-owned, never transmitted
+                # (NarrationItem carries no such field), and must not be
+                # clobbered — reconstructing it here was silent data loss.
+                "narrative": (n.get("text") or "").strip(),
                 "features": n.get("features") or [],
             }
         )
