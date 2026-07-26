@@ -1120,6 +1120,24 @@ def _cmd_apply(spec_path_str: str, response_json_file: str) -> None:
     print(json.dumps(result))
 
 
+def _lock_scene(s: dict) -> dict:
+    """One scene's STORY fields for the lock, preserving absence.
+
+    A key the source omits stays omitted rather than becoming `""`. That matters
+    because ``Scene.provenance`` is REQUIRED with no default: coercing absent to
+    empty would make a spec that is missing a required field load silently, which
+    is a worse failure than the null it replaced. `features` is the exception —
+    it defaults to `[]`, so absent and empty really are the same.
+    """
+    out: dict = {"id": s["id"]}
+    for k in ("title", "persona", "provenance", "narrative"):
+        if s.get(k) is not None:
+            out[k] = s[k]
+    if s.get("features") is not None:
+        out["features"] = s["features"]
+    return out
+
+
 def write_lock(base_dir, slug: str, version: int, parts: dict):
     """Write ``<slug>.narrative.lock.json`` — the committed read-through cache of
     the cloud-owned story at a pinned version.
@@ -1139,17 +1157,7 @@ def write_lock(base_dir, slug: str, version: int, parts: dict):
         "narrative": parts.get("narrative") or "",
         "personas": parts.get("personas") or {},
         "build_order": parts.get("build_order") or [],
-        "scenes": [
-            {
-                "id": s["id"],
-                "title": s.get("title", ""),
-                "persona": s.get("persona", ""),
-                "provenance": s.get("provenance", ""),
-                "narrative": s.get("narrative", ""),
-                "features": s.get("features") or [],
-            }
-            for s in (parts.get("scenes") or [])
-        ],
+        "scenes": [_lock_scene(s) for s in (parts.get("scenes") or [])],
     }
     p = lock_path(base_dir, slug)
     p.parent.mkdir(parents=True, exist_ok=True)

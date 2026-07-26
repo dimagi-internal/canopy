@@ -45,8 +45,11 @@ def split(spec_path) -> dict:
     scenes = [s for s in (raw.get("scenes") or []) if isinstance(s, dict)]
 
     lock_parts = {k: raw.get(k) for k in _LOCK_TOP_FIELDS}
+    # Only carry keys the scene actually HAS — writing an explicit None for an
+    # omitted key turns "absent" into "null", which fails validation on compose.
     lock_parts["scenes"] = [
-        {"id": scene_id(s), **{k: s.get(k) for k in _LOCK_SCENE_FIELDS}} for s in scenes
+        {"id": scene_id(s), **{k: s[k] for k in _LOCK_SCENE_FIELDS if k in s}}
+        for s in scenes
     ]
     # Version 0 means "this story came off a local file, not from canopy-web".
     # Deliberately NOT seeded from the old narrative_synced_version stamp: that

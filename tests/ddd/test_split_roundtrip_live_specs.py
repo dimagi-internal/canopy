@@ -126,3 +126,36 @@ def test_the_lock_holds_story_only_and_the_recipe_holds_code_only(spec_file, tmp
     # The sync stamps the merge algorithm fed are gone for good.
     for dead in ("narrative_synced_version", "narrative_synced_hash", "narrative_synced_at"):
         assert dead not in recipe
+
+
+@pytest.mark.parametrize("spec_file", LIVE_SPECS, ids=lambda p: p.stem)
+def test_split_introduces_no_new_validation_error(spec_file, tmp_path):
+    """Comparing DATA is not enough — compare VALIDITY.
+
+    The field-by-field check above reads raw dicts with .get(), which cannot
+    tell "absent" from "explicitly null". The split once wrote `narrative: null`
+    for an omitted key; both sides read back as None, the data check passed, and
+    every legacy spec gained `Input should be a valid string` on compose.
+
+    Equally, the split must not make an INVALID spec look valid: `provenance` is
+    required with no default, so coercing absent to "" would silently paper over
+    a missing required field. Absent must stay absent in both directions.
+    """
+    from scripts.ddd.validate import validate
+
+    work = tmp_path / spec_file.name
+    shutil.copy(spec_file, work)
+
+    _, before = validate("unified_spec", work)
+    split(work)
+    _, after = validate("unified_spec", work.with_name(f"{spec_file.stem}.recipe.yaml"))
+
+    # The split MINTS scene ids, so id complaints may legitimately disappear.
+    def core(problems):
+        return sorted(p for p in problems if "scene id" not in p.lower())
+
+    new_errors = [p for p in core(after) if p not in core(before)]
+    assert new_errors == [], f"split introduced: {new_errors[:5]}"
+
+    vanished = [p for p in core(before) if p not in core(after)]
+    assert vanished == [], f"split silently hid pre-existing errors: {vanished[:5]}"
