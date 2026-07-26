@@ -2139,3 +2139,54 @@ def test_narrative_scene_fields_excludes_concept_claim_and_includes_id():
     assert "concept_claim" not in _NARRATIVE_SCENE_FIELDS
     assert "id" in _NARRATIVE_SCENE_FIELDS
     assert "narrative" in _NARRATIVE_SCENE_FIELDS
+
+
+def test_merge_preserves_local_recipe_when_web_rewords_the_title():
+    """The D1 regression guard: a reviewer rewording a scene title on
+    canopy-web must not delete that scene's render recipe."""
+    from scripts.ddd.narrative import merge_narrative_into_spec
+
+    local = {
+        "name": "demo",
+        "narrative": "Old story.",
+        "base_url": "http://localhost:8000",
+        "personas": {},
+        "scenes": [{
+            "id": "the-goal",
+            "title": "Original title",
+            "persona": "alice",
+            "provenance": "S1",
+            "concept_claim": "A local claim with at least five words.",
+            "narrative": "Old line.",
+            "show": "css:text=/^Hyperzoomed$/",
+            "url": "/plans/3536/review/",
+            "viewport": {"width": 1440, "height": 900},
+        }],
+    }
+    parts = {
+        "name": "demo",
+        "narrative": "New story.",
+        "personas": {},
+        "build_order": ["the-goal"],
+        "scenes": [{
+            "id": "the-goal",
+            "title": "Completely reworded title",
+            "persona": "alice",
+            "provenance": "S1",
+            "narrative": "New line.",
+            "features": [],
+        }],
+    }
+
+    merged = merge_narrative_into_spec(local, parts)
+    scene = merged["scenes"][0]
+
+    # Recipe survived the reword
+    assert scene["show"] == "css:text=/^Hyperzoomed$/"
+    assert scene["url"] == "/plans/3536/review/"
+    assert scene["viewport"] == {"width": 1440, "height": 900}
+    # Narrative fields updated from web
+    assert scene["title"] == "Completely reworded title"
+    assert scene["narrative"] == "New line."
+    # Local-owned claim untouched
+    assert scene["concept_claim"] == "A local claim with at least five words."

@@ -1028,10 +1028,12 @@ def merge_narrative_into_spec(local: dict | None, parts: dict) -> dict:
     """Apply web-owned narrative ``parts`` onto a local spec dict (or build a
     fresh one when ``local`` is None), preserving the local render recipe.
 
-    Scenes are matched on their title-slug id (the same identity
-    ``apply_narrative_edits`` uses). A web scene with no local match is written
-    with an empty ``show`` recipe for the author to fill; local scenes absent
-    from web are dropped (web owns the scene list).
+    Scenes are matched on their stable ``id`` (the same identity
+    ``apply_narrative_edits`` uses), so a web-side title reword preserves the
+    local render recipe rather than silently replacing it with an empty
+    ``show``. A web scene with no local match is written with an empty ``show``
+    recipe for the author to fill; local scenes absent from web are dropped
+    (web owns the scene list).
     """
     if local is None:
         return {
@@ -1044,13 +1046,13 @@ def merge_narrative_into_spec(local: dict | None, parts: dict) -> dict:
         }
 
     local_by_id = {
-        _title_slug(s.get("title", "")): s
+        _scene_id(s): s
         for s in (local.get("scenes") or [])
         if isinstance(s, dict)
     }
     merged_scenes: list[dict] = []
     for ps in parts["scenes"]:
-        base = dict(local_by_id.get(_title_slug(ps["title"]), {}))  # preserve recipe
+        base = dict(local_by_id.get(_scene_id(ps), {}))  # preserve recipe
         base.update({k: ps[k] for k in _NARRATIVE_SCENE_FIELDS})
         base.setdefault("show", "")
         merged_scenes.append(base)
