@@ -134,10 +134,10 @@ cp "$OUT"                 "$RUN_DIR/hero_narrated.mp4"
 # run_state.yaml: schema_version/run_id/narrative_slug/phase: converged/scenes_run (from the manifest)/scene_filter: null
 
 export DDD_DIR
-( cd "$CANOPY" && python3 -m scripts.ddd.narrative sync "$(realpath "$RUN_DIR/unified_spec.yaml")" "$RUN_ID" )
+( cd "$CANOPY" && python3 -m scripts.ddd.narrative pull "<narrative-slug>" "$(dirname "$(realpath "$RUN_DIR/unified_spec.yaml")")" )
 ( cd "$CANOPY" && python3 -m scripts.ddd.upload "$RUN_ID" --video "$(realpath "$RUN_DIR/hero_narrated.mp4")" --release-approved )
 ```
-`narrative sync` auto-versions and stamps the run, so the package's narrative
+`narrative pull` refreshes the generated lock from canopy-web, so the package's narrative
 slot matches the narration you just rendered. Pass `--release-approved` only
 when a human asked for the shareable link (that ask *is* the external_release
 sign-off); otherwise run it bare and resolve the gate in the UI.

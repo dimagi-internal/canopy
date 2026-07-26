@@ -45,6 +45,39 @@ test -f "docs/walkthroughs/<narrative-slug>.yaml" && \
 
 # DDD Unified Spec
 
+## Where the spec lives (ownership, L1)
+
+A narrative has **two owners**, so after it is agreed it lives in two files:
+
+| file | owner | what it holds |
+|---|---|---|
+| `<slug>.recipe.yaml` | **git** | how to film it — `show`, `url`, `viewport`, `actions`, `pace`, `concept_claim` |
+| canopy-web | **cloud** | the story — `narrative`, per-scene `title`/`persona`/`provenance`/`narrative`/`features` |
+| `<slug>.narrative.lock.json` | **generated** | a committed cache of the story at a pinned version |
+
+**While authoring a NEW narrative you still write ONE file**,
+`docs/walkthroughs/<narrative-slug>.yaml` — you are inventing the story and the
+recipe together and splitting them early would only get in the way. It becomes a
+**draft**: once the narrative-agreement gate approves it, run
+
+```bash
+python -m scripts.ddd.split_spec docs/walkthroughs/<narrative-slug>.yaml
+git rm docs/walkthroughs/<narrative-slug>.yaml    # the draft is spent
+```
+
+and from then on canopy-web owns the story; `narrative pull` refreshes the lock.
+
+**Never hand-write or hand-edit a `.narrative.lock.json`.** It is generated, and
+`python -m scripts.ddd.check_locks docs/walkthroughs` fails the build if a recipe
+field appears in one. To change the story, change it on canopy-web and re-pull.
+
+Every scene needs a stable explicit **`id:`** — a permanent slug, never derived
+from the title. It is the key the recipe and the story are joined on, and the key
+canopy-web's version diff pairs on. Renaming an id is deleting a scene and adding
+another, and reads that way everywhere.
+
+## What the spec is
+
 Author a `docs/walkthroughs/<narrative-slug>.yaml` that is simultaneously:
 1. The **design doc** — every scene asserts a testable concept_claim backed by a
    spine item (provenance).

@@ -132,25 +132,23 @@ the spec promises.
 **First, sync the narrative (backstop, no pause).** A hand-driven upload can run
 on a spec whose narrative was edited since the last version was posted —
 attaching the run to a stale story — including edits the user made on the **web**
-review surface that were never pulled down. `sync` folds any resolved web edits
-onto the spec, then auto-versions, so the published package always points at the
+review surface that were never pulled down. `pull` fetches canopy-web's current
+narrative into the generated lock, so the published package always points at the
 current narrative:
 
 ```bash
 _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
 DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 SPEC_ABS="$(realpath "<spec_path>")"   # the run's unified_spec.yaml
-(cd "$DDD_REPO" && uv run python -m scripts.ddd.narrative sync "$SPEC_ABS" "<run_id>")
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.narrative pull "<narrative-slug>" "$(dirname "$SPEC_ABS")")
 ```
 
-- `{"version": {"action": "noop"}}` — narrative unchanged; continue to the status check.
-- `{"version": {"action": "posted", "version": N}, "applied": ...}` — narrative
-  changed (a local edit, or a web edit just folded in via `applied`); a new
-  version was posted, is immediately current, and the run is now stamped to it.
-  Continue.
-- **exit code 2 (`CONFLICT`)** — local narrative changed AND canopy-web advanced
-  underneath. STOP, surface the conflict, and reconcile (pull --force, or run the
-  narrative-review gate) before re-uploading. Do not auto-clobber.
+- `{"action": "pulled", "version": N, "lock_path": ...}` — the lock now holds
+  canopy-web's current narrative. Continue.
+- There is **no conflict case**. canopy-web owns the story and the lock is a
+  generated cache of it, so a pull can only ever fast-forward. (Pre-L1 this step
+  could exit 2 on a divergence between two writers of one file; that failure mode
+  no longer exists.)
 
 Then check the run has a narrative — otherwise the package renders as **"no
 narrative"** in canopy-web. Check it deterministically:
