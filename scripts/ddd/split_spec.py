@@ -48,8 +48,11 @@ def split(spec_path) -> dict:
     lock_parts["scenes"] = [
         {"id": scene_id(s), **{k: s.get(k) for k in _LOCK_SCENE_FIELDS}} for s in scenes
     ]
-    version = raw.get("narrative_synced_version") or 1
-    lock = write_lock(p.parent, slug, version, lock_parts)
+    # Version 0 means "this story came off a local file, not from canopy-web".
+    # Deliberately NOT seeded from the old narrative_synced_version stamp: that
+    # stamp is dead, and the first `pull` replaces this lock wholesale anyway.
+    # Pretending a local split produced v3 would be a lie with no reader.
+    lock = write_lock(p.parent, slug, 0, lock_parts)
 
     recipe = {
         k: v

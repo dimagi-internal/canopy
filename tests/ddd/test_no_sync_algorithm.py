@@ -29,12 +29,34 @@ def test_merge_functions_no_longer_exist():
     assert present == [], f"still present: {present}"
 
 
+# split_spec names the dead stamps in order to STRIP them: legacy specs on disk
+# still carry them, and they must not survive into a recipe. That is the one
+# legitimate reason to mention them, and it disappears once the migration has
+# run everywhere.
+_MAY_NAME_DEAD_STAMPS = {"scripts/ddd/split_spec.py"}
+
+
 def test_no_module_references_narrative_synced_fields():
     offenders = []
     for path in (ROOT / "scripts").rglob("*.py"):
+        rel = str(path.relative_to(ROOT))
+        if rel in _MAY_NAME_DEAD_STAMPS:
+            continue
         if "narrative_synced" in path.read_text():
-            offenders.append(str(path.relative_to(ROOT)))
+            offenders.append(rel)
     assert offenders == [], f"sync stamps still referenced in: {offenders}"
+
+
+def test_the_carve_out_only_strips_and_never_writes():
+    """split_spec may NAME the dead stamps, but only to drop them."""
+    text = (ROOT / "scripts/ddd/split_spec.py").read_text()
+    for line in text.splitlines():
+        if "narrative_synced" not in line:
+            continue
+        stripped = line.strip()
+        assert stripped.startswith(('"', "#")) or stripped.startswith("narrative_synced"), (
+            f"split_spec does something other than list-to-strip: {stripped!r}"
+        )
 
 
 def test_unified_spec_no_longer_carries_sync_stamps():
