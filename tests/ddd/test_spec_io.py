@@ -146,3 +146,27 @@ def test_load_spec_raw_reads_a_spec_that_fails_schema_validation(tmp_path):
 
     raw = load_spec_raw(p)                 # lenient: reads it
     assert raw["scenes"][0]["show"] == "x"
+
+
+def test_compose_preserves_the_recipe_when_the_story_rewords_a_title():
+    """The D1 regression, carried forward to where the behaviour now lives.
+
+    Pre-L1 this was merge_narrative_into_spec matching scenes by title-slug, so
+    a reviewer rewording a title on canopy-web silently replaced that scene's
+    render recipe with an empty `show`. compose() joins on the stable id, and
+    the recipe is not in the lock at all, so there is nothing to lose.
+    """
+    lock = {**LOCK, "scenes": [
+        {**LOCK["scenes"][0], "title": "Completely reworded title",
+         "narrative": "A reworded line."},
+        LOCK["scenes"][1],
+    ]}
+    scene = compose(RECIPE, lock)["scenes"][0]
+
+    assert scene["show"] == "css:text=/^Hyperzoomed$/"
+    assert scene["url"] == "/plans/3536/review/"
+    assert scene["viewport"] == {"width": 1440, "height": 900}
+    assert scene["title"] == "Completely reworded title"
+    assert scene["narrative"] == "A reworded line."
+    # concept_claim is recipe-side and a pull can never touch it
+    assert scene["concept_claim"] == "The plan renders in under two seconds."

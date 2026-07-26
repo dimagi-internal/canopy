@@ -696,14 +696,6 @@ class UnifiedSpec(BaseModel):
     # local narrative edits that haven't been pushed. The hash covers ONLY the
     # web-owned narrative fields — editing the disk-only render recipe
     # (show/actions/url) never counts as a narrative change.
-    narrative_synced_version: int | None = None
-    """The canopy-web narrative version this local spec was last in sync with."""
-    narrative_synced_hash: str | None = None
-    """Hash of the web-owned narrative fields at the last sync (see
-    ``narrative.narrative_content_hash``). Differs from the current hash ⟺ the
-    local narrative has been edited since the last pull/push."""
-    narrative_synced_at: str | None = None
-    """ISO-8601 timestamp of the last pull/push sync."""
     tagline: str = ""
     """One plain-language sentence: what this is + who it's for. The uploaded docs
     page leads with it so a newcomer understands the feature before pressing play.

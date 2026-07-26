@@ -1403,42 +1403,6 @@
       "default": null,
       "title": "Narrative Locked At"
     },
-    "narrative_synced_version": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Narrative Synced Version"
-    },
-    "narrative_synced_hash": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Narrative Synced Hash"
-    },
-    "narrative_synced_at": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Narrative Synced At"
-    },
     "tagline": {
       "default": "",
       "title": "Tagline",

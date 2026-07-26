@@ -6,11 +6,6 @@ version. Running this before anyone rewords a title makes local specs and cloud
 history line up for free; running it after simply costs the before/after view
 of an old version, which is an acceptable loss (history is disposable).
 
-Also re-stamps ``narrative_synced_hash`` when the spec has one, because
-``_NARRATIVE_SCENE_FIELDS`` changed shape in L0 (gained ``id`` + ``narrative``,
-lost ``concept_claim``) and every stored hash is otherwise stale — which a later
-``pull`` would misread as an unpushed local edit.
-
     python -m scripts.ddd.backfill_scene_ids docs/walkthroughs/*.yaml
 """
 from __future__ import annotations
@@ -21,13 +16,12 @@ from pathlib import Path
 import yaml
 
 from scripts.ddd.identity import slugify
-from scripts.ddd.narrative import narrative_content_hash
 
 
 def backfill(spec_path) -> dict:
     """Add ``id:`` to every id-less scene. Idempotent.
 
-    Returns ``{"added": int, "rehashed": bool, "skipped": bool}``. ``skipped``
+    Returns ``{"added": int, "skipped": bool}``. ``skipped``
     marks a file that is not a scene-bearing spec (e.g. a ``.why_brief.yaml``),
     which is left completely untouched.
     """
@@ -35,7 +29,7 @@ def backfill(spec_path) -> dict:
     raw = yaml.safe_load(p.read_text()) or {}
     scenes = raw.get("scenes")
     if not isinstance(scenes, list) or not scenes:
-        return {"added": 0, "rehashed": False, "skipped": True}
+        return {"added": 0, "skipped": True}
 
     added = 0
     for scene in scenes:
@@ -46,17 +40,12 @@ def backfill(spec_path) -> dict:
         scene["id"] = slugify(scene.get("title", "") or "")
         added += 1
 
-    rehashed = False
-    if raw.get("narrative_synced_version") is not None:
-        raw["narrative_synced_hash"] = narrative_content_hash(raw)
-        rehashed = True
-
-    if added or rehashed:
+    if added:
         p.write_text(
             yaml.dump(raw, default_flow_style=False, allow_unicode=True, sort_keys=False)
         )
 
-    return {"added": added, "rehashed": rehashed, "skipped": False}
+    return {"added": added, "skipped": False}
 
 
 def main(argv: list[str]) -> int:
@@ -68,7 +57,7 @@ def main(argv: list[str]) -> int:
         if result["skipped"]:
             print(f"{arg}: skipped (no scenes)")
         else:
-            print(f"{arg}: +{result['added']} ids, rehashed={result['rehashed']}")
+            print(f"{arg}: +{result['added']} ids")
     return 0
 
 
