@@ -211,7 +211,16 @@ def validate(
     if isinstance(obj_or_path, (str, Path)):
         spec_path = Path(obj_or_path)
         try:
-            raw = _load(spec_path)
+            if kind == "unified_spec":
+                # A spec may be a legacy unified file OR a recipe + narrative
+                # lock pair; spec_io knows the difference and composes. Only
+                # this kind is two-file — why_briefs, verdicts and run state
+                # are single documents and load plainly.
+                from scripts.ddd.spec_io import load_spec_raw
+
+                raw = load_spec_raw(spec_path)
+            else:
+                raw = _load(spec_path)
         except Exception as exc:
             return False, [f"Failed to load file: {exc}"]
     else:

@@ -11,6 +11,12 @@ Public API (pure functions — no network):
 CLI (touches network via review.post_review_request):
     python -m scripts.ddd.narrative post <spec_path> <run_id>
     python -m scripts.ddd.narrative apply <spec_path> <response_json_file>
+    python -m scripts.ddd.narrative pull <slug> <dir>
+
+Ownership (L1): canopy-web owns the story, git owns the render recipe, and
+``pull`` is a one-way read into a generated ``<slug>.narrative.lock.json``.
+There is no sync and no merge — see the Ownership block further down and
+docs/superpowers/specs/2026-07-26-narrative-storyboard-and-ownership-design.md
 """
 from __future__ import annotations
 
@@ -886,6 +892,8 @@ def load_why_brief(spec_path: str | Path, spec: UnifiedSpec) -> dict:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
 # ---------------------------------------------------------------------------
 # Ownership (L1). There is no merge, because there is nothing to merge.
 #
