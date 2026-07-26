@@ -1986,3 +1986,38 @@ def test_scene_id_accepts_a_raw_dict():
 
 def test_scene_id_treats_whitespace_only_id_as_absent():
     assert _scene_id({"id": "   ", "title": "Area Selection"}) == "area-selection"
+
+
+def test_review_request_narration_id_is_stable_across_a_title_reword():
+    def spec_with_title(title: str) -> UnifiedSpec:
+        return _make_spec([
+            Scene(
+                id="the-goal",
+                persona="alice",
+                title=title,
+                show="Open the dashboard.",
+                concept_claim="The dashboard loads in under two seconds.",
+                provenance="S1",
+            )
+        ])
+
+    before = build_narrative_review_request(
+        spec_with_title("Original wording"), "demo-2026-07-26-001"
+    )
+    after = build_narrative_review_request(
+        spec_with_title("Completely different wording"), "demo-2026-07-26-002"
+    )
+
+    assert before.narration[0].id == "the-goal"
+    assert after.narration[0].id == "the-goal"
+
+
+def test_build_order_defaults_to_explicit_scene_ids():
+    spec = _make_spec([
+        Scene(id="the-goal", persona="alice", title="Some Title", show="x",
+              concept_claim="A claim with at least five words.", provenance="S1"),
+        Scene(id="the-proof", persona="alice", title="Another Title", show="y",
+              concept_claim="Another claim with at least five words.", provenance="S2"),
+    ])
+    req = build_narrative_review_request(spec, "demo-2026-07-26-001")
+    assert req.build_order == ["the-goal", "the-proof"]

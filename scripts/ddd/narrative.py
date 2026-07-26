@@ -272,7 +272,7 @@ def build_narrative_review_request(
     narration = [
         NarrationItem(
             scene=i,
-            id=_title_slug(scene.title),
+            id=_scene_id(scene),
             title=scene.title,
             persona=scene.persona,
             provenance=scene.provenance,
@@ -287,7 +287,7 @@ def build_narrative_review_request(
     build_order: list[str] = (
         spec.build_order
         if spec.build_order
-        else [_title_slug(scene.title) for scene in spec.scenes]
+        else [_scene_id(scene) for scene in spec.scenes]
     )
 
     decision = Decision(
