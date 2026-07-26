@@ -52,9 +52,11 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
 def _load_spec(path: str) -> dict:
     if path.endswith(".json"):
         return json.load(open(path))
-    import yaml  # lazy — only when a yaml spec is passed
+    # Composes recipe + narrative lock when that is the on-disk shape. Raw:
+    # the judge reads whatever the recorder filmed, schema or no schema.
+    from scripts.ddd.spec_io import load_spec_raw
 
-    return yaml.safe_load(open(path))
+    return load_spec_raw(path)
 
 
 def word_start(align: dict, stem: str) -> float | None:

@@ -54,6 +54,7 @@ import yaml
 
 from scripts.ddd.identity import slugify
 from scripts.ddd.schemas.models import UnifiedSpec, Verdict
+from scripts.ddd.spec_io import load_spec
 from scripts.ddd.validate import validate
 from scripts.narrative.substitution import (
     ordered_placeholder_violations,
@@ -259,26 +260,16 @@ def spec_qa(
     if isinstance(spec_obj_or_path, UnifiedSpec):
         spec = spec_obj_or_path
     elif isinstance(spec_obj_or_path, (str, Path)):
-        path = Path(spec_obj_or_path)
-        if path.exists():
-            try:
-                text = path.read_text()
-                if path.suffix.casefold() == ".json":
-                    raw = json.loads(text)
-                else:
-                    raw = yaml.safe_load(text)
-                from pydantic import ValidationError
-
-                try:
-                    spec = UnifiedSpec.model_validate(raw)
-                except ValidationError:
-                    spec = None  # structural errors already captured via validate()
-            except Exception:
-                spec = None  # loading errors already captured via validate()
-        # else: file not found — validate() already captured the error
+        try:
+            # spec_io composes recipe+lock when that is the on-disk shape, and
+            # reads a legacy unified spec otherwise. Structural/loading errors
+            # are already captured via validate().
+            spec = load_spec(spec_obj_or_path)
+        except Exception:
+            spec = None
     elif isinstance(spec_obj_or_path, dict):
         try:
-            spec = UnifiedSpec.model_validate(spec_obj_or_path)
+            spec = UnifiedSpec(**spec_obj_or_path)
         except Exception:
             spec = None
 

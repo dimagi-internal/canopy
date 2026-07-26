@@ -122,3 +122,27 @@ def test_load_spec_still_reads_a_legacy_unified_yaml(tmp_path):
     spec = load_spec(p)
     assert spec.name == "legacy"
     assert spec.scenes[0].show == "x"
+
+
+def test_load_spec_raw_reads_a_spec_that_fails_schema_validation(tmp_path):
+    """Composition and validation are separate concerns.
+
+    Six of the twelve live walkthrough specs predate `concept_claim` being
+    required. The recorder has always filmed them as plain dicts; gaining the
+    two-file layout must not newly impose a schema on them.
+    """
+    from scripts.ddd.spec_io import load_spec_raw
+
+    legacy = {
+        "name": "old", "narrative": "One line.", "base_url": "http://x",
+        "personas": {},
+        "scenes": [{"title": "Only", "show": "x"}],  # no concept_claim/persona/provenance
+    }
+    p = tmp_path / "old.yaml"
+    p.write_text(yaml.dump(legacy))
+
+    with pytest.raises(Exception):
+        load_spec(p)                       # strict: rejects it
+
+    raw = load_spec_raw(p)                 # lenient: reads it
+    assert raw["scenes"][0]["show"] == "x"

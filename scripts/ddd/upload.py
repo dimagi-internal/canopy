@@ -46,6 +46,7 @@ from typing import Callable
 import yaml
 
 from scripts.ddd.schemas.models import Decision, Gate, ReviewRequest, RunState, UnifiedSpec, WhyBrief
+from scripts.ddd.spec_io import load_spec
 from scripts.ddd.runstate import load as load_state
 from scripts.ddd.runstate import save as save_state
 from scripts.ddd.runstate import _resolve_ddd_dir
@@ -1114,8 +1115,7 @@ def upload_run(
     spec_path = run_dir / "unified_spec.yaml"
     why_brief_path = run_dir / "why_brief.yaml"
 
-    raw_spec = yaml.safe_load(spec_path.read_text())
-    spec = UnifiedSpec.model_validate(raw_spec)
+    spec = load_spec(spec_path)
 
     raw_why = yaml.safe_load(why_brief_path.read_text())
     why_brief = WhyBrief.model_validate(raw_why)

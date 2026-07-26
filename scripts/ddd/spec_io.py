@@ -96,11 +96,17 @@ def compose(recipe: dict, lock: dict) -> dict:
     return raw
 
 
-def load_spec(path_or_slug, *, base_dir=None) -> UnifiedSpec:
-    """Load a spec, composing recipe + lock when that's the shape on disk.
+def load_spec_raw(path_or_slug, *, base_dir=None) -> dict:
+    """Compose a spec to a raw dict, WITHOUT schema validation.
+
+    Composition and validation are separate concerns. Several older walkthrough
+    specs predate ``concept_claim`` being required and are not valid
+    ``UnifiedSpec``s — the recorder has always filmed them as plain dicts, and
+    gaining the two-file layout must not newly impose a schema on them. Callers
+    that want the model call :func:`load_spec`.
 
     Accepts a bare slug (with ``base_dir``), a ``<slug>.recipe.yaml`` path, or a
-    legacy unified ``<slug>.yaml`` path. Returns a validated ``UnifiedSpec``.
+    legacy unified ``<slug>.yaml`` path.
     """
     p = Path(path_or_slug)
     name = p.name
@@ -110,8 +116,7 @@ def load_spec(path_or_slug, *, base_dir=None) -> UnifiedSpec:
     elif name.endswith(_RECIPE_SUFFIX):
         slug, directory = name[: -len(_RECIPE_SUFFIX)], p.parent
     else:
-        raw = yaml.safe_load(p.read_text()) or {}
-        return UnifiedSpec.model_validate(raw)
+        return yaml.safe_load(p.read_text()) or {}
 
     rpath, lpath = recipe_path(directory, slug), lock_path(directory, slug)
     if not lpath.exists():
@@ -122,4 +127,13 @@ def load_spec(path_or_slug, *, base_dir=None) -> UnifiedSpec:
         )
     recipe = yaml.safe_load(rpath.read_text()) or {}
     lock = json.loads(lpath.read_text())
-    return UnifiedSpec.model_validate(compose(recipe, lock))
+    return compose(recipe, lock)
+
+
+def load_spec(path_or_slug, *, base_dir=None) -> UnifiedSpec:
+    """Load and VALIDATE a spec, composing recipe + lock when that's the shape.
+
+    The strict counterpart to :func:`load_spec_raw`. Use this wherever the old
+    code called ``UnifiedSpec.model_validate`` on a spec file.
+    """
+    return UnifiedSpec.model_validate(load_spec_raw(path_or_slug, base_dir=base_dir))

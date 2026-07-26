@@ -23,6 +23,7 @@ from pathlib import Path
 import yaml
 
 from scripts.ddd.schemas.models import Decision, Gate, NarrationItem, ReviewRequest, UnifiedSpec
+from scripts.ddd.spec_io import load_spec
 from scripts.ddd.review import _review_id_from_url
 
 
@@ -1175,8 +1176,7 @@ def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
     except FileNotFoundError:
         narrative_slug = None
 
-    raw = yaml.safe_load(spec_path.read_text())
-    spec = UnifiedSpec.model_validate(raw)
+    spec = load_spec(spec_path)
     why_brief = load_why_brief(spec_path, spec)
     request = build_narrative_review_request(
         spec, run_id, why_brief=why_brief, narrative_slug=narrative_slug
@@ -1549,7 +1549,9 @@ def _cmd_pull(slug: str, spec_path_str: str, force: bool = False) -> None:
 
     # Validate before writing so we never leave a broken spec on disk.
     try:
-        UnifiedSpec.model_validate(merged)
+        # An in-memory dict WE built — not external content being parsed, so
+        # the constructor rather than spec_io (see test_spec_io_adoption).
+        UnifiedSpec(**merged)
     except Exception as exc:  # noqa: BLE001 — surface a clear message, don't crash
         print(
             f"ERROR: hydrated spec for {slug!r} failed validation: {exc}\n"
