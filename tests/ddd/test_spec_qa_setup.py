@@ -8,6 +8,7 @@ never use is not an error (the generator may emit more than one demo needs).
 """
 from __future__ import annotations
 
+from scripts.ddd.identity import slugify
 from scripts.ddd.spec_qa import spec_qa
 
 
@@ -18,6 +19,7 @@ def _spec_data(
 ) -> dict:
     """Build a minimal valid UnifiedSpec dict with optional placeholders/setup."""
     scene: dict = {
+        "id": "submit-form",
         "persona": "alice",
         "title": "Submit Form",
         "show": "navigate to /form, fill fields, click Submit",
@@ -109,9 +111,11 @@ def test_static_spec_without_setup_still_passes():
 
 
 def _scene(persona="alice", **overrides) -> dict:
+    title = overrides.pop("title", "A Beat")
     base: dict = {
+        "id": slugify(title),
         "persona": persona,
-        "title": overrides.pop("title", "A Beat"),
+        "title": title,
         "show": "do a thing",
         "concept_claim": "Users can do a specific observable thing within 2 seconds",
         "provenance": "S1",

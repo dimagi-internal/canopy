@@ -45,12 +45,14 @@ CLI:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Union
 
 import yaml
 
+from scripts.ddd.identity import slugify
 from scripts.ddd.schemas.models import UnifiedSpec, Verdict
 from scripts.ddd.validate import validate
 from scripts.narrative.substitution import (
@@ -139,8 +141,6 @@ _EFFECTING_VERBS: list[str] = [
 
 def _narrated_effecting_verb(text: str) -> str | None:
     """Return the first effecting verb the text promises (whole-word), or None."""
-    import re
-
     lowered = (text or "").lower()
     for verb in _EFFECTING_VERBS:
         # whole-word / phrase boundary match so "create" doesn't hit "created"
@@ -200,6 +200,10 @@ def _is_falsifiable(claim: str) -> bool:
         return False
 
     return True
+
+
+_SCENE_ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+"""A scene id: lowercase alphanumerics, single hyphens, no leading/trailing."""
 
 
 def spec_qa(
@@ -280,6 +284,33 @@ def spec_qa(
 
     # --------------------------------------------------- QA-specific checks
     if spec is not None:
+        # (0) Stable scene identity (L0). The id is the join key between the
+        # web-owned narrative and the local render recipe, and the key
+        # canopy-web's vN→vN+1 diff pairs on. A missing id silently falls back
+        # to the title slug — which is precisely the mutable-identity bug this
+        # check exists to stop recurring.
+        seen_ids: set[str] = set()
+        for i, sc in enumerate(spec.scenes, start=1):
+            sid = (sc.id or "").strip()
+            if not sid:
+                violations.append(
+                    f"scene {i} ({sc.title!r}) has no scene id — add a stable `id:` "
+                    f"(suggested: {slugify(sc.title)!r}). Ids are permanent: renaming "
+                    f"one is deleting a scene and adding another."
+                )
+                continue
+            if not _SCENE_ID_RE.match(sid):
+                violations.append(
+                    f"scene {i} has a malformed scene id {sid!r} — use lowercase "
+                    f"alphanumerics separated by single hyphens."
+                )
+            if sid in seen_ids:
+                violations.append(
+                    f"scene {i} has a duplicate scene id {sid!r} — ids must be "
+                    f"unique within a narrative."
+                )
+            seen_ids.add(sid)
+
         # (i) data-setup contract + late binding: ${...} placeholders in scene
         # URLs / action targets are resolved either UP FRONT from setup.outputs
         # (ids minted before the render) or AT RUNTIME by an on-camera
