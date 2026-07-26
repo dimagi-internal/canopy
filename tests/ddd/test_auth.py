@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 import pytest
 
 from scripts.ddd.auth import (
@@ -43,8 +45,80 @@ def test_resolve_base_url_falls_back_to_default(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# resolve_token — precedence: explicit arg > env > TOKEN_FILE > raise
+# resolve_token — precedence: explicit arg > env > agent .env > TOKEN_FILE > raise
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _neutral_cwd(tmp_path, monkeypatch):
+    """resolve_token now walks UP from cwd looking for an agent repo, so these
+    cases must not depend on where pytest happens to be invoked from."""
+    monkeypatch.chdir(tmp_path)
+
+
+def _make_agent_repo(root, slug, home, pat=None):
+    """A minimal agent repo (plugin.json = identity) + its provisioned ~/.<slug>/.env."""
+    (root / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+    (root / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": slug}))
+    if pat is not None:
+        d = home / f".{slug}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ".env").write_text(f"SOME_OTHER=1\nCANOPY_WEB_PAT={pat}\n")
+    return root
+
+
+def test_agent_env_pat_beats_global_token_file(monkeypatch, tmp_path):
+    """The regression: an agent must act as ITSELF, not as whoever owns TOKEN_FILE.
+    That file exists on every operator laptop, which is what masked this."""
+    home, repo = tmp_path / "home", tmp_path / "repo"
+    home.mkdir()
+    _make_agent_repo(repo, "hal", home, pat="hal-own-pat")
+    tok = tmp_path / "token"
+    tok.write_text("operator-token")
+    monkeypatch.setattr("orchestrator.canopy_web.TOKEN_FILE", tok)
+    monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home))
+    monkeypatch.delenv("CANOPY_WEB_PAT", raising=False)
+    monkeypatch.chdir(repo)
+    assert resolve_token(None) == "hal-own-pat"
+
+
+def test_explicit_env_still_wins_over_agent_env(monkeypatch, tmp_path):
+    """A runner pinning the identity for a turn must not be overridden by the repo."""
+    home, repo = tmp_path / "home", tmp_path / "repo"
+    home.mkdir()
+    _make_agent_repo(repo, "hal", home, pat="hal-own-pat")
+    monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home))
+    monkeypatch.setenv("CANOPY_WEB_PAT", "runner-pinned")
+    monkeypatch.chdir(repo)
+    assert resolve_token(None) == "runner-pinned"
+
+
+def test_agent_repo_without_env_falls_back_to_token_file(monkeypatch, tmp_path):
+    """An unprovisioned agent keeps working exactly as before."""
+    home, repo = tmp_path / "home", tmp_path / "repo"
+    home.mkdir()
+    _make_agent_repo(repo, "hal", home, pat=None)
+    tok = tmp_path / "token"
+    tok.write_text("operator-token")
+    monkeypatch.setattr("orchestrator.canopy_web.TOKEN_FILE", tok)
+    monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home))
+    monkeypatch.delenv("CANOPY_WEB_PAT", raising=False)
+    monkeypatch.chdir(repo)
+    assert resolve_token(None) == "operator-token"
+
+
+def test_resolves_from_a_subdirectory_of_the_agent_repo(monkeypatch, tmp_path):
+    """Turns do not always run at the repo root."""
+    home, repo = tmp_path / "home", tmp_path / "repo"
+    home.mkdir()
+    _make_agent_repo(repo, "hal", home, pat="hal-own-pat")
+    deep = repo / "bin" / "nested"
+    deep.mkdir(parents=True)
+    monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home))
+    monkeypatch.delenv("CANOPY_WEB_PAT", raising=False)
+    monkeypatch.chdir(deep)
+    assert resolve_token(None) == "hal-own-pat"
+
 
 
 def test_resolve_token_explicit_wins(monkeypatch):

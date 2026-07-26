@@ -72,12 +72,56 @@ def scoped_app_path(path: str, workspace: Optional[str] = None) -> str:
     return f"/w/{ws}{path}"
 
 
+def _agent_env_pat(start: Optional[Path] = None) -> str:
+    """This agent's OWN PAT from `~/.<slug>/.env`, or "" if there isn't one.
+
+    An agent turn runs INSIDE the agent's repo, so the repo is the identity: walk
+    up from cwd for `.claude-plugin/plugin.json`, take its `name` as the slug, and
+    read CANOPY_WEB_PAT out of that agent's provisioned env file.
+
+    Without this, per-agent PATs only work where a runner happens to inject the
+    env. The cloud runner does; the laptop runner drives emdash's UI over CDP and
+    never builds an env at all — so on a laptop every agent silently fell through
+    to the operator's own workbench-token and acted as the HUMAN, with nothing
+    failing to reveal it. Resolving from the repo makes identity follow the agent
+    on every host instead of depending on how it happened to be launched.
+    """
+    here = (start or Path.cwd()).resolve()
+    for d in (here, *here.parents):
+        manifest = d / ".claude-plugin" / "plugin.json"
+        if not manifest.is_file():
+            continue
+        try:
+            slug = (json.loads(manifest.read_text()) or {}).get("name") or ""
+        except (OSError, ValueError):
+            return ""
+        if not slug:
+            return ""
+        env_file = Path.home() / f".{slug}" / ".env"
+        try:
+            for line in env_file.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("CANOPY_WEB_PAT="):
+                    return line.partition("=")[2].strip().strip('"').strip("'")
+        except OSError:
+            return ""
+        return ""
+    return ""
+
+
 def resolve_token(token: Optional[str]) -> str:
     if token:
         return token
+    # Explicit env wins: it is how a runner pins the identity for a turn.
     from_env = os.environ.get("CANOPY_WEB_PAT", "").strip()
     if from_env:
         return from_env
+    # Then the agent's own PAT, so an agent acts as ITSELF rather than as whoever
+    # owns TOKEN_FILE. This must come BEFORE the global file — that file exists on
+    # every operator laptop, so checking it first is exactly what masked the bug.
+    agent_pat = _agent_env_pat()
+    if agent_pat:
+        return agent_pat
     if TOKEN_FILE.exists():
         stored = TOKEN_FILE.read_text().strip()
         if stored:
