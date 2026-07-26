@@ -138,6 +138,31 @@ def test_secrets_manifest_counts_entries(tmp_path):
     result = check_secrets_manifest(_agent_repo(tmp_path))
     assert result.ok
     assert "1 file secret(s), 1 env var(s)" in result.detail
+    assert "LEGACY" in result.detail
+
+
+def test_secrets_manifest_env_tpl_is_primary_no_secrets_yaml_needed(tmp_path):
+    """`.env.tpl` + `op inject` is the standard now — it must pass PRIMARY, on its own,
+    with no `config/secrets.yaml` present."""
+    repo = _agent_repo(tmp_path, secrets=False)
+    (repo / ".env.tpl").write_text(
+        "HAL_GMAIL_ACCOUNT=hal@dimagi-ai.com\n"
+        "GDRIVE_ROOT_FOLDER=op://Agent-Hal/gdrive-root-folder/credential\n"
+    )
+    result = check_secrets_manifest(repo)
+    assert result.ok
+    assert ".env.tpl" in result.detail
+    assert "2 var(s), 1 op:// ref(s)" in result.detail
+
+
+def test_secrets_manifest_prefers_env_tpl_over_legacy_yaml(tmp_path):
+    """When BOTH exist (mid-migration), `.env.tpl` wins — it's the primary manifest now."""
+    repo = _agent_repo(tmp_path, secrets=True)
+    (repo / ".env.tpl").write_text("KEY=op://Agent-Hal/some-item/credential\n")
+    result = check_secrets_manifest(repo)
+    assert result.ok
+    assert ".env.tpl" in result.detail
+    assert "LEGACY" not in result.detail
 
 
 def test_email_auth_skipped_without_identity():
@@ -549,6 +574,16 @@ def test_secrets_materialized_skipped_without_manifest(tmp_path):
     from orchestrator.agent_doctor import check_secrets_materialized
     r = check_secrets_materialized(_agent_repo(tmp_path, secrets=False))
     assert r.ok and "skipped" in r.detail
+
+
+def test_secrets_materialized_skips_env_tpl_no_declared_target(tmp_path):
+    """`.env.tpl` declares no target field (unlike `secrets.yaml`'s `env.target`) — this check
+    can't guess where `op inject -o` was told to write, so it skips rather than false-failing."""
+    from orchestrator.agent_doctor import check_secrets_materialized
+    repo = _agent_repo(tmp_path, secrets=False)
+    (repo / ".env.tpl").write_text("KEY=op://Agent-Hal/some-item/credential\n")
+    r = check_secrets_materialized(repo)
+    assert r.ok and "skipped" in r.detail and "op inject" in r.detail
 
 
 # --------------------------------------------------------------------------------------

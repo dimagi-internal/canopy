@@ -90,10 +90,10 @@ class GdocIdentity:
 
 
 # The agent's <Agent> Drive folder id. Resolved from the per-agent 1Password vault
-# (`op://Agent-<Slug>/gdrive-root-folder/credential`) via the agent's config/secrets.yaml (or
-# .env.tpl) and materialized into ~/.<agent>/.env by `canopy provision`. A Drive folder id is
-# environment-specific — it differs per Workspace/tenant — so it is referenced, never
-# committed. See agent-core/agent-runtime.md.
+# (`op://Agent-<Slug>/gdrive-root-folder/credential`) via the agent's .env.tpl (the standard —
+# `op inject`) or the legacy config/secrets.yaml (`canopy provision`), and resolved into
+# ~/.<agent>/.env either way. A Drive folder id is environment-specific — it differs per
+# Workspace/tenant — so it is referenced, never committed. See agent-core/agent-runtime.md.
 GDRIVE_ROOT_ENV = "GDRIVE_ROOT_FOLDER"
 
 

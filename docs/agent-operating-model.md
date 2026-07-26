@@ -336,11 +336,18 @@ agent the factory produces:
   genuinely secret per-operator `.env` must be provisioned per-worktree (or read from a global
   location). Keep secrets out of the hot path where possible.
 
-## 4e. Portable secret provisioning (decided)
+## 4e. Portable secret provisioning (decided; superseded for agents — see below)
+
+> **Update (2026-07-25): for AGENT repos, `.env.tpl` + `op inject`/`op read` is now the fleet
+> standard** — see `agent-core/agent-runtime.md`. The fleet has migrated (ada/eva/hal/echo ship
+> `.env.tpl`; `config/secrets.yaml` deleted from those repos). `canopy create-agent` now scaffolds
+> `.env.tpl`. The recipe below (`config/secrets.yaml` + `canopy provision`) still works and is
+> kept functional — it remains the path for non-agent PROVIDER repos (e.g. chrome-sales) and any
+> agent that hasn't migrated yet — but it is no longer what new agents should be built on.
 
 Agents need credentials (service-account keys, OAuth creds, PATs) that must never be in git yet
 must be available wherever the agent runs — main checkout, any emdash worktree, every operator's
-machine. Hand-shuffling keys is the lazy, non-portable status quo. The standard:
+machine. Hand-shuffling keys is the lazy, non-portable status quo. The (legacy) standard:
 
 - **1Password is the source of truth** (the house pattern; `op` is already the auth path for
   echo/ace/chrome-sales).

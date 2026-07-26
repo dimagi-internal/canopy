@@ -31,11 +31,52 @@ legacy `AI-Agents` vault.
 
 ## How a value reaches a turn (use this today)
 
-Each agent already ships an **env template** that `op` resolves into a **worktree-clean global env
-home** (`~/.<agent>/.env`, mode 0600). emdash runs each turn in a fresh worktree, so a repo-local
-`.env` would vanish; the global home is read by every worktree via `bin/_env.py`.
+**`.env.tpl` + `op inject` is THE standard** — for every env var an agent needs, committed and
+resolved into a **worktree-clean global env home** (`~/.<agent>/.env`, mode 0600). emdash runs
+each turn in a fresh worktree, so a repo-local `.env` would vanish; the global home is read by
+every worktree via `bin/_env.py`. The fleet has already migrated onto this: ada, eva, hal, and
+echo all ship `.env.tpl`, with `config/secrets.yaml` deleted.
 
-**Most agents — `config/secrets.yaml` + `canopy provision`:**
+```bash
+GDRIVE_ROOT_FOLDER=op://Agent-<Slug>/gdrive-root-folder/credential
+# resolve:
+op inject -i .env.tpl -o ~/.<agent>/.env --account dimagi.1password.com
+```
+
+**Non-env credential FILES** (something an SDK/CLI wants as a JSON file on disk, e.g. a gog
+OAuth-client json, a service-account key) are NOT env vars — resolve them directly with native
+`op read`, never through `.env.tpl`:
+
+```bash
+op read "op://Agent-<Slug>/gog-oauth-client/credential" > ~/Library/Application\ Support/gogcli/credentials-<slug>.json
+chmod 0600 ~/Library/Application\ Support/gogcli/credentials-<slug>.json
+```
+
+Either way the rule is identical: **the template/command holds an `op://…` reference, never the
+value.**
+
+> ## ⚠️ CRITICAL SECURITY RULE — never write a literal `op://…` in a comment
+>
+> `op inject` resolves **every** `op://` reference it finds in the input file — **including
+> inside `#` comments and example lines.** It does not know the difference between "the config
+> line I should resolve" and "the example I put in a comment for a human to read." So:
+>
+> - **`.env.tpl` must NEVER contain a real, resolvable `op://<vault>/<item>/<field>` string in a
+>   comment or example** — only in an actual `KEY=op://…` assignment line you intend to resolve.
+>   A "just for illustration" `op://` in a comment resolves exactly like a real line does; the
+>   resolved secret then prints to stdout the next time someone does `op inject -i .env.tpl | cat`
+>   (or anything else that reads the output), leaking it.
+> - **Use an angle-bracket placeholder in every example, in `.env.tpl` and in any doc**:
+>   `op://<vault>/<item>/<field>` — never a real vault/item name, even a plausible-looking one,
+>   even one that doesn't currently resolve to anything live.
+> - This applies to **any file `op inject` might ever be pointed at**, not just `.env.tpl` — treat
+>   it as a rule about writing `op://` strings in text at all, not a quirk of one filename.
+
+## The legacy path — `config/secrets.yaml` + `canopy provision`
+
+Still supported (`canopy provision`, `--check` to dry-run, is fully functional), and some
+repos/agents that haven't migrated yet still use it — but **do not scaffold new agents onto it.**
+It is a declarative YAML manifest `canopy provision` materializes:
 
 ```yaml
 env:
@@ -48,17 +89,10 @@ env:
       op: "op://Agent-<Slug>/gdrive-root-folder/credential"  # resolved from the agent's vault
 ```
 
-Run `canopy provision` (`--check` to dry-run) from the agent's repo.
-
-**Echo — `.env.tpl` + `op inject`** (same idea, older format):
-
-```bash
-GDRIVE_ROOT_FOLDER=op://Agent-Echo/gdrive-root-folder/credential
-# resolve:
-op inject -i .env.tpl -o ~/.echo/.env --account dimagi.1password.com
-```
-
-Either way the rule is identical: **the template holds a `op://…` reference, never the value.**
+Migrating an agent off it: write the equivalent `.env.tpl` (one `KEY=value` / `KEY=op://…` line
+per `env.vars` entry — same placeholder-in-comments rule applies), point any file-type `secrets:`
+entries at a direct `op read ... > <file>` step instead, verify with a real `op inject` run, then
+delete `config/secrets.yaml`.
 
 ## Adding a new value — the recipe
 
@@ -69,8 +103,10 @@ Either way the rule is identical: **the template holds a `op://…` reference, n
    # exists already? edit instead:
    op item edit "<name>" --vault "Agent-<Slug>" "credential=<value>"
    ```
-2. **Reference it** in the agent's `config/secrets.yaml` `env.vars` (or `.env.tpl`), never the value.
-3. **Materialize** it: `canopy provision` (or `op inject`) → `~/.<agent>/.env`.
+2. **Reference it** in the agent's `.env.tpl` as `KEY=op://Agent-<Slug>/<name>/credential` (legacy
+   agents: `config/secrets.yaml`'s `env.vars`) — never the value, and never a real `op://…` in a
+   comment (see the security rule above).
+3. **Materialize** it: `op inject -i .env.tpl -o ~/.<agent>/.env` (legacy: `canopy provision`).
 4. **Read it** as the env var in code/skills — never re-hardcode the value.
 5. **Verify**: `op read "op://Agent-<Slug>/<name>/credential"` and confirm the key landed in
    `~/.<agent>/.env`.
@@ -84,25 +120,28 @@ the box, applies gaps, and injects env before the turn. Design + code:
 `canopy-web/docs/superpowers/specs/2026-07-20-agent-runtime-registry-design.md` and
 `canopy-web/packages/canopy_runtime/` (`python -m canopy_runtime.cli --agent <slug> --print-env`).
 
-**Status (2026-07-23): only Echo has a `runtime.yaml`, and the reconciler is not what drives
+**Status (2026-07-25): only Echo has a `runtime.yaml`, and the reconciler is not what drives
 laptop turns today.** Its own header says it supersedes `canopy provision` *for the runtime layer* —
 that migration is real but unfinished. So:
 
-- **Adding a value now → use `config/secrets.yaml` / `.env.tpl`** (above). It works on every box.
+- **Adding a value now → use `.env.tpl`** (above; legacy agents still on `config/secrets.yaml` can
+  keep declaring there until they migrate). It works on every box.
 - **Don't declare the same value in both places** — you get two sources of truth that drift.
 - When the reconciler does drive turns, the migration is mechanical: the vault items already exist
   and are correctly named; only the *declaration* moves.
 
-## Rollout status (2026-07-23)
+## Rollout status (2026-07-25)
 
+- **`.env.tpl` + `op inject` is standard fleet-wide:** ada, eva, hal, and echo all ship `.env.tpl`;
+  `config/secrets.yaml` has been deleted from those repos. `canopy create-agent` scaffolds
+  `.env.tpl` for new agents. Any agent still on `config/secrets.yaml` is on the legacy path and
+  should migrate when convenient (see "Migrating an agent off it" above).
 - **Vaults:** `Canopy-Shared` + `Agent-{Ace,Ada,Echo,Eva,Hal}` exist, each with `canopy-pat` /
   `claude-oauth-token` / `gog-token` + `gdrive-root-folder` (the agent's OWN root folder id — an
   agent never resolves anything about that root's parent).
-- **Legacy:** the flat `AI-Agents` vault is still populated and still referenced by most agents'
-  `secrets.yaml` / `.env.tpl`. Migrating those refs onto per-agent vaults is outstanding work —
-  copy the value into `Agent-<Slug>` first, then repoint the ref.
-- **`env:` blocks:** ada + hal have one; **eva does not** (needs `~/.eva/.env` added); echo uses
-  `.env.tpl`.
+- **Legacy:** the flat `AI-Agents` vault is still populated and still referenced by some agents'
+  `.env.tpl` (or a not-yet-migrated `secrets.yaml`). Migrating those refs onto per-agent vaults is
+  outstanding work — copy the value into `Agent-<Slug>` first, then repoint the ref.
 
 ## Related
 

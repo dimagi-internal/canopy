@@ -1,17 +1,23 @@
-"""Portable agent secret provisioning from 1Password.
+"""LEGACY agent secret provisioning from 1Password (`config/secrets.yaml` + `canopy provision`).
 
-The problem: agents need credentials (service-account keys, OAuth creds, PATs) that must never
-live in git, yet must be available wherever the agent runs — the main checkout, any emdash
-worktree, and on every operator's machine. Hand-shuffling keys around is the lazy, non-portable
-status quo.
+**Superseded as the fleet standard by `.env.tpl` + native `op inject` / `op read`** (see
+`agent-core/agent-runtime.md`) — the fleet has migrated (ada/eva/hal/echo ship `.env.tpl`,
+`secrets.yaml` deleted). This module stays fully functional for agents/repos that haven't
+migrated yet and is still called during that transition; don't build new agents on it.
 
-The fix: each agent/provider repo declares a tracked `config/secrets.yaml` that lists what it
-needs as **1Password references + local targets** (NO secret values). `canopy provision`
+The problem this solved: agents need credentials (service-account keys, OAuth creds, PATs) that
+must never live in git, yet must be available wherever the agent runs — the main checkout, any
+emdash worktree, and on every operator's machine. Hand-shuffling keys around is the lazy,
+non-portable status quo.
+
+The (legacy) fix: each agent/provider repo declares a tracked `config/secrets.yaml` that lists
+what it needs as **1Password references + local targets** (NO secret values). `canopy provision`
 materializes them via the `op` CLI into their targets — idempotent, validated, one command on any
-machine. 1Password is the source of truth (the house standard; `op` is already the auth path for
-echo/ace/chrome-sales).
+machine. 1Password is the source of truth either way (`op` is already the auth path for
+echo/ace/chrome-sales) — only the manifest format and the resolving command differ from the
+current `.env.tpl` + `op inject` standard.
 
-Manifest (`config/secrets.yaml`):
+Manifest (`config/secrets.yaml`, legacy):
 
     secrets:
       - name: chrome-sales-gws-sa          # human label

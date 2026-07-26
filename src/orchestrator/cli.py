@@ -2037,10 +2037,13 @@ def openclaw_reconcile(snapshot_dir, agent):
 @click.option("--check", is_flag=True, help="Validate 1Password refs + show targets, write nothing")
 @click.option("--json-output", "as_json", is_flag=True)
 def provision_cmd(repo, check, as_json):
-    """Materialize an agent's secrets from 1Password per its config/secrets.yaml.
+    """LEGACY: materialize an agent's secrets from 1Password per its config/secrets.yaml.
 
-    Portable: anyone with `op` access + the right grants runs this on any machine (incl. emdash
-    worktrees) to get the creds an agent needs — no hand-shuffling keys. See provision.py.
+    Superseded by `.env.tpl` + `op inject` (env vars) / `op read` (credential files) as the
+    fleet standard — see agent-core/agent-runtime.md. Kept fully working for agents/repos that
+    still declare `config/secrets.yaml`; don't build new agents on this path. Portable: anyone
+    with `op` access + the right grants runs this on any machine (incl. emdash worktrees) to get
+    the creds an agent needs — no hand-shuffling keys. See provision.py.
     """
     import json as json_mod
     from pathlib import Path

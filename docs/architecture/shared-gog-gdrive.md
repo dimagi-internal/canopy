@@ -63,12 +63,14 @@ identity, rules, secrets, and domain skills are the agent's"*):
   is in Production. Don't "fix" a non-problem by flipping user type.) So when fleet email breaks, it's
   a **provisioning** issue — a missing/misnamed 1Password item so `credentials-canopy.json` never
   lands — which `canopy email preflight` now diagnoses precisely; it is not the OAuth app config.
-- **Migration status (2026-07-08):** `hal` and every agent minted by the factory use the shared
-  `canopy` client (item `Canopy - gog OAuth client` in 1Password AI-Agents). `echo` is
-  **grandfathered** on its own hand-placed `credentials-echo.json`, which is NOT yet declared in
-  its `config/secrets.yaml` — so echo would strand on a fresh machine exactly like hal did. Migrate
-  echo (declare the shared client in its `secrets.yaml`) when convenient; until then it's a known
-  latent gap, not a surprise.
+- **Migration status (2026-07-08, superseded 2026-07-25):** `hal` and every agent minted by the
+  factory use the shared `canopy` client (item `Canopy - gog OAuth client` in 1Password
+  AI-Agents). `echo` was **grandfathered** on its own hand-placed `credentials-echo.json`, not
+  declared for provisioning — a known latent gap. The fleet has since moved to `.env.tpl` + `op
+  inject`/`op read` as the standard (`config/secrets.yaml` deleted from ada/eva/hal/echo — see
+  `agent-core/agent-runtime.md`); a client credentials file like this one now resolves directly
+  via `op read "op://<vault>/<item>/<field>" > credentials-<slug>.json` rather than through a
+  declarative manifest.
 - **Tiers (generalizing ACE's model):** `act` = static allowlist (`config/allowlist.txt`) — senders
   who may steer the agent's work; `correspond` = **derived from the agent's own state** (ACE: LLO
   contacts in the routed run's `run_state.yaml`; echo: contacts with an existing contact-memory
