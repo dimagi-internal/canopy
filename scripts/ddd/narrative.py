@@ -1026,9 +1026,9 @@ def _stamp_run_state(run_id: str, result: dict) -> None:
 
 
 def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
-    """Post a narrative version for ``spec_path`` + stamp the run and spec.
+    """Post a narrative version for ``spec_path`` + stamp the run.
 
-    The reusable post+stamp+sync core shared by the interactive ``narrative post``
+    The reusable post+stamp core shared by the interactive ``narrative post``
     command and the routine ``auto_version_if_changed`` path:
 
       1. Build the narrative ReviewRequest from the current spec (regenerating
@@ -1070,11 +1070,6 @@ def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
     )
     result = rv.post_review_request(request)
     _stamp_run_state(run_id, result)
-    # Close the round-trip: the local spec is now the version we just posted, so
-    # stamp its sync fields. Without this a later `pull` would see the local hash
-    # diverge from a stale stamp and refuse a clean fast-forward.
-    if narrative_slug:
-        _stamp_spec_sync(spec_path, narrative_slug, rv)
     return result
 
 
