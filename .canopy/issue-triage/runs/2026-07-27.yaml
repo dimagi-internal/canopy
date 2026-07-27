@@ -1,0 +1,76 @@
+run_date: 2026-07-27
+repo: jjackson/canopy
+scope_contract: triage-plus-quick-wins
+code_ref: c526e59                # worktree HEAD; content-equivalent to origin/main @ 96cd2ee
+open_total: 2
+triaged: 2
+carried_forward: 0               # prior run (2026-07-22) was prose-only — no sidecar to diff
+truncated: false
+clusters: []                     # two unrelated singletons; no duplicates, no shared root cause
+tier_counts: { blocks-e2e: 0, harness: 1, polish: 1 }
+verdicts:
+  - number: 389
+    disposition: implement
+    blocking: harness
+    confidence: high
+    effort: S
+    cluster: null
+    evidence_paths:
+      - .github/workflows/python-tests.yml
+      - .github/workflows/version-check.yml
+      - src/orchestrator/cli.py
+      - src/orchestrator/structure_drift.py
+      - plugins/canopy/agents/ddd.md
+    unblocked_by: null
+    duplicate_of: null
+    source: fresh
+    action: null
+    outcome: null
+    notes: >-
+      Audit is clean today (real exit 0), so a --strict gate goes green on day
+      one. Two caveats deliberately NOT absorbed into this run: (1) only
+      `check-version` is a required status context, so a step inside the pytest
+      job would be advisory — ship it as a separate job so the context can be
+      added to branch protection (repo-admin action, out of session); (2)
+      check_skill_description_budget globs skills/*/SKILL.md only, so
+      plugins/canopy/agents/ddd.md at 1134 chars is over the 1024 cap and
+      invisible — widening the check would red-fail the new gate until ddd.md is
+      trimmed. Resolved the issue's open option-1-vs-2 call as option 1.
+  - number: 393
+    disposition: close
+    blocking: polish
+    confidence: high
+    effort: n/a
+    cluster: null
+    evidence_paths:
+      - plugins/canopy/.claude-plugin/runtime.json
+      - plugins/canopy/skills/update/SKILL.md
+      - plugins/canopy/hooks/fleet_session_start_update.py
+      - plugins/canopy/scripts/canopy-runtime.sh
+      - src/orchestrator/doctor.py
+      - tests/test_doctor.py
+      - tests/test_plugin_runtime_resolution.py
+      - plugins/canopy/agent-core/task-tracker.md
+      - plugins/canopy/agent-core/turn.md
+      - plugins/canopy/agent-core/deliverables.md
+      - CLAUDE.md
+    unblocked_by: null
+    duplicate_of: null
+    source: fresh
+    action: null
+    outcome: null
+    notes: >-
+      Analysis-record issue whose own recommendation was "not yet". Both things
+      that recommendation rests on shipped: #390's doctor skew checks
+      (doctor.py:257,291, wired into _CHECKS, tested) and #395's runtime bundle
+      (runtime.json + update SKILL.md:40 + canopy-runtime.sh), which gives
+      canopy's own skills version-lock by construction, CI-enforced. The other
+      half of the proposal — PATH `canopy` as a thin shim — deliberately did NOT
+      ship and remains a narrowed design choice serving cross-plugin fleet
+      consumers. None of the three "revisit if" triggers has observably fired.
+      Architecture captured in CLAUDE.md:375, so closing loses nothing.
+      Caveat: the issue's literal claim that plugins/canopy/ has no
+      src/pyproject.toml is still true of the REPO LAYOUT — the runtime is
+      rsynced in at install time, so the INSTALLED ARTIFACT carries them.
+      Unverifiable from here: the "117 call sites across 6 codebases" figure —
+      the other 5 agent repos are not in this checkout.
