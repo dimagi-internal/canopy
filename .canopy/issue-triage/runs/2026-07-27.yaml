@@ -24,8 +24,12 @@ verdicts:
     unblocked_by: null
     duplicate_of: null
     source: fresh
-    action: null
-    outcome: null
+    action: "PR #406 merged — new .github/workflows/structure-drift.yml, standalone `structure-drift` job running `uv run canopy structure-drift --strict`"
+    outcome: shipped-partial
+    issue_state: open           # Refs, not Closes — the two follow-ups below finish it
+    follow_ups:
+      - "add the `structure-drift` context to main's required status checks (repo-admin settings; until then the check is advisory)"
+      - "widen check_skill_description_budget to agents/ + commands/, and trim plugins/canopy/agents/ddd.md (1134 chars, over the 1024 cap). Order matters: widening first would red-fail the gate just installed."
     notes: >-
       Audit is clean today (real exit 0), so a --strict gate goes green on day
       one. Two caveats deliberately NOT absorbed into this run: (1) only
@@ -57,8 +61,9 @@ verdicts:
     unblocked_by: null
     duplicate_of: null
     source: fresh
-    action: null
-    outcome: null
+    action: "commented with shipped evidence + repo-layout correction + preserved revisit-if triggers; closed --reason 'not planned'"
+    outcome: closed-not-planned
+    issue_state: closed
     notes: >-
       Analysis-record issue whose own recommendation was "not yet". Both things
       that recommendation rests on shipped: #390's doctor skew checks
