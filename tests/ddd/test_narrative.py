@@ -1569,7 +1569,7 @@ class _FakeReview:
         self._web_version_override = web_version_override
         self.posts: list = []
 
-    # Network-touching API used by post_narrative_version / _stamp_spec_sync.
+    # Network-touching API used by post_narrative_version.
     def post_review_request(self, request, **kwargs):
         self._version += 1
         self.posts.append(request)
@@ -1627,6 +1627,54 @@ def _seed_run_state_with_review(tmp_path, monkeypatch, run_id, slug, review_id):
         )
     )
     return rs
+
+
+class TestPostNarrativeVersion:
+    """Cover the path PAST `_stamp_run_state` — nothing did, which is how #402
+    left a call to the deleted `_stamp_spec_sync` in `post_narrative_version`
+    and every successful post exited 1 on a NameError (#404)."""
+
+    def test_returns_post_result_when_run_state_has_a_slug(self, tmp_path, monkeypatch):
+        from scripts.ddd.narrative import post_narrative_version
+
+        run_id = "rooftop-surveys-2026-07-27-001"
+        # A run_state WITH a narrative_slug is the normal path — the one that
+        # crashed. (The bug ironically missed the no-run_state path.)
+        rs = _seed_run_state(tmp_path, monkeypatch, run_id, "rooftop-surveys")
+        spec_path = _write_spec(tmp_path, _make_spec())
+        fake = _FakeReview()
+
+        result = post_narrative_version(str(spec_path), run_id, rv=fake)
+
+        assert result == {
+            "id": "rev-1",
+            "url": "https://c/review/rev-1/",
+            "share_token": "t",
+        }
+        assert len(fake.posts) == 1
+        # …and the run really was stamped on the way through.
+        assert rs.load(run_id).narrative_review_id == "rev-1"
+
+    def test_returns_post_result_without_run_state(self, tmp_path, monkeypatch):
+        import scripts.ddd.runstate as rs
+        from scripts.ddd.narrative import post_narrative_version
+
+        monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
+        spec_path = _write_spec(tmp_path, _make_spec())
+
+        result = post_narrative_version(
+            str(spec_path), "ghost-2026-07-27-001", rv=_FakeReview()
+        )
+
+        assert result["id"] == "rev-1"
+
+    def test_raises_when_spec_missing(self, tmp_path):
+        from scripts.ddd.narrative import post_narrative_version
+
+        with pytest.raises(FileNotFoundError):
+            post_narrative_version(
+                str(tmp_path / "nope.yaml"), "x-2026-07-27-001", rv=_FakeReview()
+            )
 
 
 def test_scene_id_prefers_explicit_id_over_title():
