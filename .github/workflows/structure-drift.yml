@@ -1,0 +1,39 @@
+# Structural self-audit — canopy's documented structure vs the actual tree.
+#
+# `canopy structure-drift` existed for a while without being wired to anything.
+# It wasn't worth gating before #388: run without `--repo` it audited the uv tool
+# dir, reported a fabricated `version_sync` error, and silently scanned nothing,
+# so a `--strict` gate would have failed every build for the wrong reason. #388
+# made the default invocation resolve a real checkout (and fail loudly when it
+# can't), which is what makes this gate meaningful. See #389.
+#
+# Why its OWN job rather than a step in `python-tests.yml` (which is what #389
+# originally proposed): branch protection on `main` requires status *contexts* by
+# name, and today requires exactly one — `check-version`. A step appended to the
+# `pytest` job rides under the `pytest` context, which is not required, so a
+# structural regression would redden the PR and still merge. #389's own thesis is
+# that "a warning nobody's build fails on" is how an over-cap description sat
+# unnoticed; a *check* nobody's merge fails on is the same hole one level up. A
+# standalone job gives this an addressable context name (`structure-drift`) that
+# can be added to the required set.
+#
+# `--strict` exits non-zero on ANY finding, warnings included (cli.py: `if strict
+# and not report["ok"]`). That's deliberate — option (1) of the two #389 laid
+# out. The one warning-severity invariant is `skill_description_budget`, and
+# Claude Code silently truncates over-cap descriptions, so treating it as
+# build-breaking matches CLAUDE.md's layered-prevention doctrine.
+#
+# No `--repo` flag needed: in CI the checkout is both the source tree and the
+# CWD, so `default_repo_root()` resolves on its first rung.
+name: Structure drift
+
+on: [push, pull_request]
+
+jobs:
+  structure-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Structural self-audit
+        run: uv run canopy structure-drift --strict
