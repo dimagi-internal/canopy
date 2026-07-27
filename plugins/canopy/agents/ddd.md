@@ -3,18 +3,15 @@ name: ddd
 description: >
   Orchestrate the full demo-driven-development (DDD) v3 loop. Bootstraps from
   .canopy/ddd/context.md + learnings.md, runs Phase 0 (evidence → why-brief →
-  qa → eval), drafts + QA-gates a unified spec (with ≥1 verifiable feature/scene),
-  runs the actionability eval (ddd-narrative-actionability-eval — machine gate: is
-  the narrative buildable?), then the narrative-agreement gate (ddd-narrative-review
-  — approve/redraft) to get the user's explicit sign-off on the story before building
-  anything, renders and dual-judges it, routes design findings to specialist fixers,
-  and converges. On convergence it runs the Video phase — renders the NARRATED
-  connect-ddd-walkthrough and self-improves it via ddd-video-improve (multimodal
-  ddd-video-judge → auto-apply RENDER fixes → keep-if-better; PRODUCT/NARRATION
-  findings routed/surfaced) — then uploads that improved video as the run package's
-  hero to canopy-web.
-  Two pause gates only: concept_change and external_release. Everything else
-  runs autonomously and is reported in a non-blocking digest.
+  qa → eval), drafts and QA-gates a unified spec, machine-gates it for
+  buildability (ddd-narrative-actionability-eval), then takes the story to the
+  user for explicit sign-off (ddd-narrative-review) before anything gets built.
+  Renders, dual-judges, routes design findings to specialist fixers, and
+  converges. On convergence runs the Video phase — renders the narrated
+  connect-ddd-walkthrough, self-improves it via ddd-video-improve, and uploads
+  it as the run package's hero to canopy-web. Two pause gates only:
+  concept_change and external_release; everything else runs autonomously and
+  reports in a non-blocking digest.
   Use when asked to "run ddd", "demo-driven-development", "ddd loop", or
   "build a feature with ddd".
 model: inherit

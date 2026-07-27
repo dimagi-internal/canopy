@@ -290,32 +290,54 @@ def check_version_sync(repo_root: Path) -> list[dict]:
     return findings
 
 
+def _described_entries(repo_root: Path) -> list[tuple[str, str, Path]]:
+    """Every plugin entry whose frontmatter `description` reaches the system prompt.
+
+    Yields ``(kind, name, path)``. Claude Code surfaces the description of skills
+    **and** agents **and** commands, so all three count against the per-entry cap
+    and the aggregate budget — scanning only `skills/` is how a 1133-char agent
+    description sat over the cap while the audit reported clean (#389).
+    """
+    plugin = _plugin_root(repo_root)
+    entries: list[tuple[str, str, Path]] = []
+
+    skills_dir = plugin / "skills"
+    if skills_dir.exists():
+        for skill_dir in sorted(skills_dir.iterdir()):
+            skill_md = skill_dir / "SKILL.md"
+            if skill_dir.is_dir() and skill_md.is_file():
+                entries.append(("Skill", skill_dir.name, skill_md))
+
+    # agents/ and commands/ are flat: one markdown file per entry.
+    for kind, subdir in (("Agent", "agents"), ("Command", "commands")):
+        d = plugin / subdir
+        if not d.exists():
+            continue
+        for md in sorted(d.glob("*.md")):
+            if md.is_file():
+                entries.append((kind, md.stem, md))
+
+    return entries
+
+
 def check_skill_description_budget(
     repo_root: Path,
     per_skill_limit: int = DEFAULT_PER_SKILL_LIMIT,
 ) -> list[dict]:
-    """Any skill whose frontmatter description exceeds the per-skill char cap."""
+    """Any skill/agent/command whose frontmatter description exceeds the cap."""
     findings: list[dict] = []
-    skills_dir = _plugin_root(repo_root) / "skills"
-    if not skills_dir.exists():
-        return findings
-    for skill_dir in sorted(skills_dir.iterdir()):
-        if not skill_dir.is_dir():
-            continue
-        skill_md = skill_dir / "SKILL.md"
-        if not skill_md.is_file():
-            continue
-        desc = _parse_frontmatter_description(skill_md).strip()
+    for kind, name, path in _described_entries(repo_root):
+        desc = _parse_frontmatter_description(path).strip()
         size = len(desc)
         if size > per_skill_limit:
+            rel = path.relative_to(repo_root).as_posix()
             findings.append({
                 "invariant": INVARIANT_SKILL_DESCRIPTION_BUDGET,
                 "severity": "warning",
                 "detail": (
-                    f"Skill `{skill_dir.name}` description is {size} chars, over the "
-                    f"{per_skill_limit}-char per-skill cap. Claude Code truncates "
-                    f"over-cap descriptions. Tighten plugins/canopy/skills/"
-                    f"{skill_dir.name}/SKILL.md frontmatter."
+                    f"{kind} `{name}` description is {size} chars, over the "
+                    f"{per_skill_limit}-char per-entry cap. Claude Code truncates "
+                    f"over-cap descriptions. Tighten {rel} frontmatter."
                 ),
             })
     return findings
