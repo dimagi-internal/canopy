@@ -25,14 +25,25 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # --------------------------------------------------------------------------
 
 def test_current_repo_has_no_error_drift():
-    """On the real checkout, no error-severity invariant should fire.
-
-    Warnings (e.g. an over-budget skill description) are allowed to surface
-    without being treated as a hard failure here — they are advisory.
-    """
+    """On the real checkout, no error-severity invariant should fire."""
     report = sd.run_structure_drift(repo_root=REPO_ROOT)
     errors = [f for f in report["findings"] if f["severity"] == "error"]
     assert errors == [], f"Unexpected error-severity drift: {errors}"
+
+
+def test_current_repo_is_strict_clean():
+    """The real checkout must be clean of WARNINGS too — CI gates on --strict.
+
+    Warnings used to be advisory here, which is how an over-cap description
+    survived (#389). Since the `structure-drift` workflow runs `--strict`, any
+    warning red-fails CI; asserting it in pytest surfaces that locally instead
+    of on the PR.
+    """
+    report = sd.run_structure_drift(repo_root=REPO_ROOT)
+    assert report["ok"], (
+        "structure-drift is not strict-clean, so the CI gate will fail: "
+        + "; ".join(f["detail"] for f in report["findings"])
+    )
 
 
 def test_report_shape():
@@ -155,6 +166,34 @@ def test_skill_description_budget_detected(tmp_path):
     ]
     assert budget, "expected an over-budget description finding"
     assert budget[0]["severity"] == "warning"
+
+
+@pytest.mark.parametrize(
+    "kind,subdir,label",
+    [("agent", "agents", "Agent"), ("command", "commands", "Command")],
+)
+def test_description_budget_covers_agents_and_commands(tmp_path, kind, subdir, label):
+    """agents/ and commands/ descriptions count against the cap too.
+
+    The check originally globbed `skills/*/SKILL.md` only, so a 1133-char
+    description on `plugins/canopy/agents/ddd.md` sat over the cap while the
+    audit reported clean (#389). Claude Code surfaces all three kinds in the
+    system prompt, so all three must be measured.
+    """
+    root = _make_repo(tmp_path)
+    plugin = root / "plugins" / "canopy"
+    (plugin / subdir / f"verbose-{kind}.md").write_text(
+        f"---\nname: verbose-{kind}\ndescription: {'x' * 2000}\n---\nBody\n"
+    )
+
+    report = sd.run_structure_drift(repo_root=root, per_skill_limit=1024)
+    budget = [
+        f for f in report["findings"]
+        if f["invariant"] == sd.INVARIANT_SKILL_DESCRIPTION_BUDGET
+    ]
+    assert budget, f"expected the over-cap {kind} description to be detected"
+    assert label in budget[0]["detail"], budget[0]["detail"]
+    assert f"plugins/canopy/{subdir}/verbose-{kind}.md" in budget[0]["detail"]
 
 
 # --------------------------------------------------------------------------

@@ -54,6 +54,10 @@ issues. Built to close the loop on issues agents file as they run.
   triage after triage.
 - **No silent truncation.** If the repo has more open issues than the cap, say
   so explicitly in the report ("triaged 30 of 47 open issues").
+- **Report outcomes, not machinery.** The chat report says what changed, what's
+  left, and whose it is. Phase names, the carry-forward split, sidecar mechanics
+  and other self-accounting go in the run log. See § Reporting discipline — a
+  correct triage with an unreadable report is a failed run.
 - **Never auto-merge an unvalidated change.** See Phase 5 for the confidence
   test. The merge decision on anything unverified stays with the human.
 - **One repo per run.** No org-wide or cross-repo sweeps in a single invocation.
@@ -273,13 +277,16 @@ appendix:
 12  close         polish      high  —       —                  "Crash on empty config"      config.py:88 already guards
 ```
 
-Above the table print, in this order:
-- the scope contract chosen in Phase 0.5
-- the triage split ("16 open · 3 re-triaged · 13 carried forward from <date>")
-- the truncation line, if any
+Above the table print only:
 - one line per cluster: name, members, the single fix that serves them
 - the **tier counts** — how many `blocks-e2e` vs `harness` vs `polish`. This
   one line is the closest thing the run produces to "is the backlog healthy?"
+- the truncation line, **if** the cap actually truncated something
+
+Everything else about how the run was performed — the scope contract, the
+re-triaged/carried-forward split, which prior run was compared against, why
+carry-forward did or didn't apply — goes in the run log (Phase 4b) and **not** in
+chat. See § Reporting discipline.
 
 ### Phase 4b — Write the run log in BOTH forms
 
@@ -430,6 +437,56 @@ After acting, update **both** run-log forms: the prose table's "action taken"
 column and the sidecar's `action` / `outcome` fields per verdict. The sidecar's
 `outcome` is what a later run reads to know whether a shipped fix actually
 landed.
+
+### Phase 6b — Close out in plain language
+
+The final message is the only part of this run most people read. It is a status
+update, not a trace. Write it as four short parts, in this order:
+
+1. **State change, one line.** "N open issues → M." Nothing else on that line.
+2. **One line per issue**, by number: what it asked for and what you did. Link
+   PRs and closed-issue comments.
+3. **What's left, and whose it is.** Anything you deliberately didn't do, one
+   line each, with who has to act (a setting only they can flip, a design call,
+   a follow-up PR). If nothing is left, say "nothing left."
+4. **Judgment calls you made that they might overrule** — only the ones that
+   would change their decision. Cap at three.
+
+Then stop. Do not append a process summary, a phase recap, or a note about how
+the run compared to a previous one.
+
+## Reporting discipline
+
+The measured failure: a 2-issue triage produced a correct result and an
+unreadable report. The operator's response was *"I don't understand what you're
+saying or why you keep referring to the prior triage so much, should this be this
+hard?"* Every phase had reported itself — the scope contract, the
+re-triaged/carried-forward split, which prior log lacked a sidecar — and that
+bookkeeping buried the three facts that mattered (one issue shipped, one closed,
+two follow-ups outstanding).
+
+So the rule: **the run log carries the machinery, chat carries the outcome.**
+
+| Belongs in the run log only | Belongs in chat |
+|---|---|
+| Phase names and numbers | What changed, by issue number |
+| The carry-forward split, and which prior run it diffed | What's left and whose it is |
+| That a prior log lacked a sidecar | Judgment calls the human might overrule |
+| `evidence_paths`, `source: fresh`, sidecar shape | Blocking-tier counts; cluster lines |
+| Cost/coverage self-accounting | Truncation — but only if it truncated |
+
+Three specifics, because each was a real defect:
+
+- **Never mention the prior run unless it changed this run's output.** If
+  carry-forward saved subagents, one clause is enough ("13 carried forward from
+  2026-07-24"). If it saved nothing, say nothing — its absence is not news.
+- **Never explain the skill's own plumbing.** Sidecars, phase gates, and
+  cost-saving steps are how the work got done, not results. A reader who has to
+  learn the skill's internals to read its output has been handed the wrong
+  artifact.
+- **If the ceremony is disproportionate to the task, say so once — in one
+  sentence — and stop.** A 2-issue backlog does not need the clustering
+  narrative. Naming the mismatch is useful signal; re-litigating it is not.
 
 ## The `blocked` disposition
 
