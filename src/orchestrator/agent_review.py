@@ -94,13 +94,50 @@ _CORRECTION_PATTERNS = (
 )
 
 
+# Blocks the HARNESS injects as `user` turns. They are string-content messages like a real
+# human turn, but nobody typed them — and their own boilerplate trips the patterns above
+# (the local-command caveat contains "DO NOT respond to these messages", which scores
+# `emphasis`; task notifications carry "instead of" and sentence-initial "no"). Measured on
+# ACE 2026-07-28: 4 of 6 reported "human corrections" were these. Stripped wherever they
+# appear, not just as a prefix, because the harness APPENDS system-reminders to genuine
+# messages — so a prefix test would keep the human's words and still score the boilerplate.
+_HARNESS_BLOCK_RX = re.compile(
+    r"<(local-command-caveat|local-command-stdout|local-command-stderr|task-notification|"
+    r"system-reminder|command-message|command-name|command-args|user-prompt-submit-hook)>"
+    r".*?</\1>|"
+    r"<(local-command-caveat|task-notification|system-reminder|command-message|command-name|"
+    r"command-args)>.*",
+    re.S | re.I,
+)
+# Whole user turns the harness AUTHORS, identified by their opening line: the skill loader
+# injects a skill body, and compaction injects a summary of the prior conversation. The
+# compaction summary is the nastiest of these — it restates the human's earlier asks verbatim,
+# so it scores every correction in the session a second time, in a turn nobody typed.
+_HARNESS_AUTHORED_PREFIXES = (
+    "Base directory for this skill:",
+    "This session is being continued from a previous conversation",
+)
+
+
+def _human_text(raw: str) -> str:
+    """What the human actually typed, with harness-injected blocks removed."""
+    s = _HARNESS_BLOCK_RX.sub(" ", raw or "").strip()
+    if s.startswith(_HARNESS_AUTHORED_PREFIXES):
+        return ""
+    return s
+
+
 def human_corrections(entries: list[dict]) -> list[dict]:
     """Mine the HUMAN side of a turn for corrections/overrides/confusion — the highest-signal
     friction. A forceful safety correction ("NEVER submit without review") matters more than ten
-    git errors, but the mechanical signals miss it entirely. Returns [{kinds, quote}]."""
+    git errors, but the mechanical signals miss it entirely. Returns [{kinds, quote}].
+
+    Only genuinely human-authored text is mined: harness-injected `user` turns are stripped
+    first (`_human_text`), so the caveat/notification boilerplate can't masquerade as Jonathan
+    overriding something."""
     out: list[dict] = []
     for m in extract_user_messages(entries):
-        s = (m or "").strip()
+        s = _human_text(m)
         if not s:
             continue
         kinds = [kind for kind, pat in _CORRECTION_PATTERNS if pat.search(s)]
