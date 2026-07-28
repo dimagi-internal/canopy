@@ -1,6 +1,6 @@
 [project]
 name = "canopy"
-version = "0.2.367"
+version = "0.2.368"
 description = "Self-improving MCP orchestration with autoresearch"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,6 +16,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    # duplicate_frames compares rendered PNGs pixel-wise. Pillow is already a
+    # hard dependency (above); numpy is only needed to assert in its tests, and
+    # the lens degrades to a pass without it rather than crashing.
+    "numpy>=1.26",
 ]
 browser = [
     "playwright>=1.40",

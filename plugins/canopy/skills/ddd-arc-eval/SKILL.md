@@ -34,12 +34,29 @@ If `ddd-spec-qa` returned `fail`, skip — do not judge a structurally broken
 spec. If the render's `run-report.json` shows any failed action, skip too: an
 arc judged over a broken take measures the take, not the arc.
 
+<<<<<<< HEAD
+Then run `python -m scripts.ddd.duplicate_frames <run_dir>`. It fails when two
+CONSECUTIVE scenes captured the same picture. The usual cause is a `scroll_to`
+whose target was already in the viewport: it scrolls zero pixels, does not fail,
+and the scene captures the previous scene's frame while its narration plays over
+a still picture.
+
+This is worth a gate rather than a finding because the rubric prices it at a hard
+cap — *"two adjacent scenes make the same point with different pixels: max 2"* —
+so a run that trips it cannot score above 2 however good everything else is. It
+has twice been caught only by hand-diffing screenshots inside an arc eval, a slow
+non-deterministic pass spent on four lines of arithmetic; the second time, the
+fix for the first was itself a no-op on the same element. If it fails, report
+that as the finding and stop. Re-pointing a camera is a one-line change, and a
+full eval over a stalled run measures the stall.
+=======
 Then run `python -m scripts.ddd.snapshot_consistency <run_dir>`. It fails when
 the snapshots came from more than one render, which happens when an iteration
 re-renders into the run dir a judge is still reading. The verdict that comes
 back from a mixed dir describes frames that no longer exist, and it looks
 exactly like a real one. Do not judge a run dir that fails this check — ask for
 a clean re-render of the whole run first.
+>>>>>>> origin/main
 
 ## Procedure
 
