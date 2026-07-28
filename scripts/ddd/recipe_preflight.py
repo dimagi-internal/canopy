@@ -47,6 +47,21 @@ _TARGETED = {
 }
 
 
+def _setup_command(setup) -> tuple[str | None, int]:
+    """The spec's reseed command and its timeout, from a model OR a dict.
+
+    SetupBlock is a pydantic model on a parsed spec and a plain dict on a raw
+    one. Reading it as a dict only returned None for the model case, so the
+    reseed silently never ran and preflight kept walking a world its own
+    previous run had mutated — the exact failure the reseed exists to prevent.
+    """
+    if setup is None:
+        return None, 600
+    if not isinstance(setup, dict):
+        setup = setup.model_dump() if hasattr(setup, "model_dump") else dict(setup)
+    return setup.get("command"), setup.get("timeout_seconds") or 600
+
+
 def _scene_targets(scene: dict) -> list[tuple[int, str, str]]:
     """(action_index, kind, target) for every action in a scene that has one."""
     out = []
@@ -69,6 +84,32 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
 
     auth = getattr(spec, "auth", None) or {}
     auth_url = auth.get("url") if isinstance(auth, dict) and auth.get("type") == "url" else None
+
+    # Preflight APPLIES state-changing actions, so that a scene which depends on
+    # an earlier click is checked against the screen it will really face. That
+    # makes it a mutator: walking a recipe that awards two lots leaves those
+    # lots awarded, and the next preflight — or the next render — finds the
+    # controls gone. Found by using it: a second run reported every Award
+    # target missing, because the first run had clicked them all.
+    #
+    # So it reseeds first, exactly as the recorder does. The spec's own setup
+    # command is the contract for "put the world back"; a recipe without one is
+    # assumed non-mutating and walked as-is.
+    command, setup_timeout = _setup_command(getattr(spec, "setup", None))
+    if command:
+        import subprocess
+
+        repo_root = Path(recipe_path).resolve().parents[2]
+        print(f"preflight: reseeding via {command}", flush=True)
+        result = subprocess.run(
+            command, shell=True, cwd=repo_root, capture_output=True, text=True,
+            timeout=setup_timeout,
+        )
+        if result.returncode != 0:
+            raise SystemExit(
+                f"preflight: setup failed ({command}) — the world is not in a "
+                f"checkable state.\n{result.stderr[-800:]}"
+            )
 
     from playwright.sync_api import sync_playwright
 
