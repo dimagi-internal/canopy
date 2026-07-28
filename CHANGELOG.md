@@ -9,6 +9,54 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.359] - 2026-07-28
+
+### Added
+
+Six lenses for the DDD loop, every one of them the direct residue of taking a
+narrative through render → judge → fix three times and watching where the time
+and the judge attention actually went.
+
+- `scripts/ddd/recipe_preflight.py` — resolve every selector in a recipe against
+  the live app BEFORE recording. A render is ~90s plus a reseed plus an encode,
+  and a scene whose target misses still produces a plausible screenshot the
+  judges then score. The first real render went 15/22 actions ok; five of the
+  seven failures were knowable without recording anything. Walks scenes in
+  order in one browser and applies state-changing actions, so it catches the
+  expensive class: a tab switch a later scene never undid, a modal left open
+  whose backdrop blocked everything after it.
+- `scripts/ddd/data_fidelity.py` — identical derived columns, duplicate rows,
+  round-robin identifiers, implausibly flat ratios. The single most-repeated
+  finding across every judge round, arriving from a different angle each time
+  (eleven rows of "214/214"; capture ratios all landing 4.0–4.7%; an exact
+  duplicate pair). Pure arithmetic, no LLM. Deliberately narrow — a column of
+  zeros for eleven empty sites is honest, not a tell.
+- `scripts/ddd/narrated_numbers.py` — every number the narration speaks must
+  appear on the screen it is spoken over. "Kukawa is eleven days out" survived
+  three iterations against a screen that said nine. Reads spelled-out numbers
+  ("eleven", "twelve thousand") because narration is written for the ear, and
+  tolerates honest rounding.
+- `scripts/ddd/regression_guard.py` — diff this iteration's run report and
+  scores against the last. A previously-passing action now failing is a hard
+  fail; a score that moved is reported, not gated. Exists because a correct fix
+  removed the control the next scene clicked and nothing noticed.
+- `ddd-arc-eval` skill — judge the narrative AS A SEQUENCE. Every other judge
+  scores one scene and is structurally blind to repetition, a sagging middle, a
+  payoff landing before its setup, or six frames of the same table. This is the
+  lens that separates "no scene is bad" from "worth watching", and it is
+  `gate: gating`.
+
+### Changed
+
+- `--ddd-orchestrated` renders now snapshot the VIEWPORT rather than the full
+  page. Every judge in the first four-way dispatch opened by discounting the
+  full-page strip by hand — "a user never sees this composite" — before
+  scoring, on every scene of every round. An explicit per-scene `full_page`
+  still wins, non-DDD callers are untouched, and `--full-page-snapshots`
+  restores the strip. The decision moved to `_lib/capture_mode.py` because
+  `record_video` imports playwright at module load, which made the rule
+  untestable where it lived.
+
 ## [0.2.357] - 2026-07-27
 
 ### Fixed
