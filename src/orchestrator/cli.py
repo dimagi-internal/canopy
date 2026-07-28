@@ -1399,12 +1399,16 @@ def create_agent_cmd(slug, name, mandate, mailbox, stakeholders, target, force, 
 @click.option("--timeout", "timeout", default=None, type=int,
               help="Seconds to allow the claude -p synthesis pass (default: 180). On timeout "
                    "the run returns no findings and a descriptive error — raise it for big corpora.")
+@click.option("--projects-dir", "projects_dir", type=click.Path(file_okay=False), default=None,
+              help="Scan ONLY this Claude projects dir. Default: every readable source from "
+                   "~/.claude/canopy/session-sources.json (auto-discovered when absent), so "
+                   "turns on a second macOS account are included rather than silently missed.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 @click.option("--qualify-file", type=click.Path(exists=True, dir_okay=False), default=None,
               help="Validate a YAML findings file against the SP1 evidence-record schema "
                    "(qualify_findings) and print qualified/dropped; skips the review.")
 def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, timeout,
-                     as_json, qualify_file):
+                     projects_dir, as_json, qualify_file):
     """Review an agent's recent TURNS for operating-model friction and recommend fixes.
 
     AGENT is a slug (e.g. `echo`) or a path to the agent repo. Build 2 of the agent operating
@@ -1452,6 +1456,7 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
 
     result = run_review(agent, hours=hours, use_llm=not no_llm, verify=not no_verify,
                         model=model, max_budget_usd=max_budget_usd,
+                        projects_dir=Path(projects_dir) if projects_dir else None,
                         timeout=SYNTHESIS_TIMEOUT if timeout is None else timeout)
 
     if as_json:
@@ -1462,6 +1467,14 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
 
     click.echo(f"Agent: {result['agent']}  ({result['repo']})")
     click.echo(f"Turns reviewed (last {hours}h): {result['turns']}")
+    # Corpus provenance before any finding: a review of half the sessions reads
+    # exactly like a review of all of them unless it says otherwise.
+    cm = result.get("corpus") or {}
+    if cm.get("sources"):
+        click.echo(f"  corpus: {cm.get('confidence','?')} — " + ", ".join(cm["sources"]))
+    if cm.get("unreadable"):
+        click.echo("  ⚠ UNREADABLE sources (findings may be incomplete): "
+                   + ", ".join(cm["unreadable"]))
     # Deterministic signal rollup
     sig = result.get("signals", [])
     fails = sum(len(s["failures"]) for s in sig)

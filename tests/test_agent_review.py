@@ -832,3 +832,116 @@ def test_agent_review_cli_accepts_timeout_option():
     assert "--timeout" in r.output
     r2 = CliRunner().invoke(main, ["agent-review", "--timeout", "5", "--no-llm", "nope-not-an-agent"])
     assert "no such option" not in r2.output.lower()
+
+
+# --- Task: agent-review scans EVERY readable session source, not one home ----
+#
+# `run_review` scanned `CLAUDE_PROJECTS = Path.home()/".claude"/"projects"` --
+# the CURRENT user's home, one place. JJ alternates two macOS accounts
+# (jjackson + acedimagi) on rate-limit, so an agent's real corpus is routinely
+# split across both. Measured 2026-07-28: `canopy agent-review ace --hours 48`
+# reported 2 turns from jjackson while acedimagi held the sessions the review
+# was actually about. Findings drawn from half a corpus are worse than no
+# findings -- they read as complete.
+#
+# `agent_coverage.coverage_report` already fixed exactly this via the
+# `session_sources` seam (see session_sources.py's docstring for the
+# hal/architect regression). These tests hold `run_review` to the same
+# contract, reusing that seam rather than growing a second discovery path.
+
+def test_run_review_merges_transcripts_across_sources(tmp_path, monkeypatch):
+    """A turn that happened only on the SECOND account must appear in the corpus."""
+    from orchestrator import agent_review as ar
+    from orchestrator.session_sources import SessionSource
+
+    repo = tmp_path / "repositories" / "ace"
+    (repo / "skills").mkdir(parents=True)
+
+    jj_root = tmp_path / "jjackson_home" / ".claude" / "projects"
+    ace_root = tmp_path / "acedimagi_home" / ".claude" / "projects"
+
+    d1 = jj_root / "-Users-jjackson-emdash-repositories-ace"
+    d1.mkdir(parents=True)
+    _write_transcript(d1 / "a.jsonl", str(repo), [("Read", {"file_path": "/x"}, "ok")])
+
+    # The other account, in a worktree checkout — the shape that actually occurs.
+    ace_cwd = f"{tmp_path}/acedimagi_home/emdash/worktrees/ace/emdash/run-spark-abc"
+    d2 = ace_root / "-Users-acedimagi-emdash-worktrees-ace-emdash-run-spark-abc"
+    d2.mkdir(parents=True)
+    _write_transcript(d2 / "b.jsonl", ace_cwd, [("Read", {"file_path": "/y"}, "ok")])
+
+    monkeypatch.setattr(
+        "orchestrator.agent_review.session_sources",
+        lambda *a, **k: [
+            SessionSource(name="local:jjackson", kind="local", location=str(jj_root), readable=True),
+            SessionSource(name="local:acedimagi", kind="local", location=str(ace_root), readable=True),
+        ],
+    )
+
+    res = ar.run_review(str(repo), use_llm=False)
+
+    assert res["turns"] == 2, "the second account's turn was dropped"
+    assert res["corpus"]["confidence"] == "whole-corpus"
+    assert sorted(res["corpus"]["sources"]) == ["local:acedimagi", "local:jjackson"]
+
+
+def test_run_review_flags_half_blind_when_a_source_is_unreadable(tmp_path, monkeypatch):
+    """Degrade LOUD. An unreadable account means findings may be incomplete, and the
+    caller has to be able to see that rather than infer it."""
+    from orchestrator import agent_review as ar
+    from orchestrator.session_sources import SessionSource
+
+    repo = tmp_path / "repositories" / "ace"
+    (repo / "skills").mkdir(parents=True)
+    jj_root = tmp_path / "jjackson_home" / ".claude" / "projects"
+    (jj_root / "-Users-jjackson-emdash-repositories-ace").mkdir(parents=True)
+
+    monkeypatch.setattr(
+        "orchestrator.agent_review.session_sources",
+        lambda *a, **k: [
+            SessionSource(name="local:jjackson", kind="local", location=str(jj_root), readable=True),
+            SessionSource(name="local:acedimagi", kind="local",
+                          location="/Users/acedimagi/.claude/projects",
+                          readable=False, reason="not readable"),
+        ],
+    )
+
+    res = ar.run_review(str(repo), use_llm=False)
+    assert res["corpus"]["confidence"] == "half-blind"
+    assert res["corpus"]["unreadable"] == ["local:acedimagi"]
+
+
+def test_run_review_explicit_projects_dir_still_scans_only_that_dir(tmp_path, monkeypatch):
+    """The injectable override stays injectable — tests and callers that name one
+    dir must not silently fan out across every account on the machine."""
+    from orchestrator import agent_review as ar
+    from orchestrator.session_sources import SessionSource
+
+    repo = tmp_path / "repositories" / "ace"
+    (repo / "skills").mkdir(parents=True)
+    only = tmp_path / "only" / "projects"
+    d = only / "-Users-x-emdash-repositories-ace"
+    d.mkdir(parents=True)
+    _write_transcript(d / "a.jsonl", str(repo), [("Read", {"file_path": "/x"}, "ok")])
+
+    other = tmp_path / "other" / "projects"
+    d2 = other / "-Users-y-emdash-repositories-ace"
+    d2.mkdir(parents=True)
+    _write_transcript(d2 / "b.jsonl", str(repo), [("Read", {"file_path": "/y"}, "ok")])
+
+    monkeypatch.setattr(
+        "orchestrator.agent_review.session_sources",
+        lambda *a, **k: [
+            SessionSource(name="local:other", kind="local", location=str(other), readable=True),
+        ],
+    )
+
+    res = ar.run_review(str(repo), use_llm=False, projects_dir=only)
+    assert res["turns"] == 1
+    assert res["corpus"]["sources"] == [str(only)]
+
+
+def test_agent_review_cli_exposes_projects_dir_option():
+    r = CliRunner().invoke(main, ["agent-review", "--help"])
+    assert r.exit_code == 0, r.output
+    assert "--projects-dir" in r.output

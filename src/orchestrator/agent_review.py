@@ -20,6 +20,11 @@ import time
 from pathlib import Path
 
 from orchestrator.repo_paths import resolve_repo_path
+from orchestrator.session_sources import (
+    corpus_confidence,
+    local_transcript_dirs,
+    session_sources,
+)
 from orchestrator.transcripts import (
     extract_assistant_text,
     extract_tool_calls,
@@ -28,6 +33,11 @@ from orchestrator.transcripts import (
 )
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
+
+# Kept as the module default for `find_turn_transcripts`, but `run_review` no longer
+# scans it directly — see the `session_sources` seam below. One home is one account,
+# and an agent's corpus is routinely split across the two this human alternates
+# between; a review drawn from half a corpus reads as complete and isn't.
 
 # Wall-clock budgets for the two claude -p passes. Named constants, not magic numbers
 # buried at the call site, so the CLI can expose them and tests can assert the default.
@@ -719,13 +729,20 @@ def run_review(
     verify: bool = True,
     model: str = "sonnet",
     max_budget_usd: float = 2.0,
-    projects_dir: Path = CLAUDE_PROJECTS,
+    projects_dir: Path | None = None,
     timeout: int = SYNTHESIS_TIMEOUT,
 ) -> dict:
-    """Review an agent's recent turns. Returns {agent, repo, turns, signals, findings,
-    dropped_findings, error?}. `verify` (default on) runs the source-verification gate
-    over the synthesized findings and drops the ones already shipped to origin/main.
-    `timeout` caps the claude -p synthesis pass (seconds).
+    """Review an agent's recent turns. Returns {agent, repo, turns, signals, corpus,
+    findings, dropped_findings, error?}. `verify` (default on) runs the
+    source-verification gate over the synthesized findings and drops the ones already
+    shipped to origin/main. `timeout` caps the claude -p synthesis pass (seconds).
+
+    Corpus: with no `projects_dir`, scans EVERY readable source `session_sources()`
+    returns and merges them — the cross-user fix `agent_coverage.coverage_report`
+    already made (see `session_sources`'s module docstring). Passing `projects_dir`
+    scans only that dir, keeping the seam injectable for tests and single-root
+    callers. `corpus.confidence` is `half-blind` whenever a source is unreadable, so
+    a partial review says so instead of passing for a complete one.
 
     CONTRACT — the result is ALWAYS well-formed, on every path including failure:
     `findings` and `dropped_findings` are lists (empty on failure, never absent),
@@ -739,12 +756,39 @@ def run_review(
             "repo": "",
             "turns": 0,
             "signals": [],
+            "corpus": {"confidence": "half-blind", "sources": [], "unreadable": []},
             "findings": [],
             "dropped_findings": [],
             "error": f"could not resolve agent repo for {slug_or_path!r}",
         }
 
-    transcripts = find_turn_transcripts(repo, hours=hours, projects_dir=projects_dir)
+    if projects_dir is not None:
+        # An explicitly named dir scans ONLY that dir — a caller who says where to
+        # look must not get a silent fan-out across every account on the machine.
+        transcripts = find_turn_transcripts(repo, hours=hours, projects_dir=projects_dir)
+        corpus_meta = {
+            "confidence": "whole-corpus",
+            "sources": [str(projects_dir)],
+            "unreadable": [],
+        }
+    else:
+        sources = session_sources()
+        seen: set[str] = set()
+        transcripts = []
+        for d in local_transcript_dirs(sources):
+            for t in find_turn_transcripts(repo, hours=hours, projects_dir=d):
+                # Sources can overlap (a symlinked or duplicated root); dedupe on the
+                # resolved path so one turn isn't counted — or reviewed — twice.
+                key = str(Path(t).resolve())
+                if key not in seen:
+                    seen.add(key)
+                    transcripts.append(t)
+        corpus_meta = {
+            "confidence": corpus_confidence(sources),
+            "sources": [s.name for s in sources if s.readable],
+            "unreadable": [s.name for s in sources if not s.readable],
+        }
+
     skills_dir = repo / "skills"
     own_skills = frozenset(
         p.name for p in skills_dir.iterdir() if p.is_dir()
@@ -755,6 +799,7 @@ def run_review(
         "repo": str(repo),
         "turns": len(corpus),
         "signals": corpus,
+        "corpus": corpus_meta,
         "findings": [],
         "dropped_findings": [],
     }
