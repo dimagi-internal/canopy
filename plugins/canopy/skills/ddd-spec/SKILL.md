@@ -731,6 +731,31 @@ that drops the persona as subject, or imports codebase jargon ("PSU", "the panel
 appears", "Overture conflates") into `show`/`concept_claim`, is a regression even if
 every gate still passes.
 
+**Close the gaps the work resolved — in the why-brief, not the scene.** A beat
+reads `new` for as long as any why-brief gap references it by `claim_ref`. So a
+refresh that follows a build has to say so *there*, by setting `resolved` on the
+gap to a short statement of what closed it:
+
+```yaml
+gaps:
+  - id: G2
+    type: CAPABILITY
+    claim_ref: S1
+    detail: There is no distribution calendar and no partner surface to render it on.
+    proposed_action: Add a DistributionPlan and a partner surface that renders it.
+    resolved: Shipped in models/demand.py + tab_partner.jsx (PR #1014).
+```
+
+The two obvious shortcuts both fail. **Deleting the gap** flips the badge but
+throws away the record of why the work happened — the gap is the only place
+that reasoning lives. **Editing the posted narration** on canopy-web does not
+survive: the next `narrative post` recomputes every scene's status from the
+why-brief and overwrites it.
+
+Closing a gap says *the capability landed*. It does not ground the spine item —
+that is a separate claim about evidence, and `spine[].status` carries it. Set
+both when both are true.
+
 ### Step 5 — Assemble and write the spec file
 
 Assemble the full spec: the cohesive `narrative` from Step 3 at the top, the
