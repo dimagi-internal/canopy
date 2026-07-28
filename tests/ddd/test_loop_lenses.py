@@ -256,3 +256,29 @@ def test_the_escape_hatch_restores_the_strip():
     from scripts.walkthrough._lib.capture_mode import snapshot_full_page
 
     assert snapshot_full_page({}, _Args(ddd=True, full_page=True)) is True
+
+
+# ---------------------------------------------------------------------------
+# preflight must not walk a world its own previous run mutated
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_reads_a_pydantic_setup_block(tmp_path):
+    """The reseed silently never ran.
+
+    preflight APPLIES state-changing actions so a scene that depends on an
+    earlier click is checked against the screen it will really face — which
+    makes it a mutator. Walking a recipe that awards two lots leaves them
+    awarded, so the next run finds the controls gone. It reseeds via the spec's
+    own setup command to undo that, and reading SetupBlock as a plain dict
+    returned None for the parsed-spec case, so it never did.
+    """
+    from scripts.ddd.recipe_preflight import _setup_command
+
+    class _Block:
+        def model_dump(self):
+            return {"command": "python seed.py", "timeout_seconds": 42}
+
+    assert _setup_command(_Block()) == ("python seed.py", 42)
+    assert _setup_command({"command": "x"}) == ("x", 600)
+    assert _setup_command(None) == (None, 600)
