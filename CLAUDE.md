@@ -452,7 +452,17 @@ release flow.** There are three copies of canopy on a machine; only the first is
 |----------|------------|----------------|
 | `plugins/canopy/` in **this repo** | Source of truth | ✅ **Yes — all changes start here** |
 | `~/.claude/plugins/cache/canopy/canopy/<version>/` | The **installed** plugin Claude Code actually runs | ❌ **Never hand-edit** |
-| `~/.claude/plugins/marketplaces/canopy/` | The update **channel** `/canopy:update` pulls from | ❌ Never edit/develop here |
+| `~/.claude/plugins/marketplaces/canopy/` | The update **channel** `/canopy:update` pulls from | ❌ Never edit/develop here — **and never leave it on a branch** |
+
+**The channel clone must stay on `main`.** Both updaters act on whatever ref is
+checked out: the skill's `git pull origin main` merges main INTO a parked branch,
+and the fleet hook's `git reset --hard origin/main` *rewrites that branch's ref*.
+On 2026-07-28 the clone was found on `ddd/preflight-applies-scroll`, and the hook
+had moved that branch to main's tip (the commits survived only because they were
+already pushed). Both paths are now guarded — the skill checks out `main` first,
+and the hook switches to `main` and refuses when doing so would strand uncommitted
+work — but if an update ever looks wrong, check first:
+`git -C ~/.claude/plugins/marketplaces/canopy rev-parse --abbrev-ref HEAD`.
 
 **CRITICAL: Never directly copy, rsync, or write files into `~/.claude/plugins/cache/`
 or edit `~/.claude/plugins/installed_plugins.json` by hand.** This is "local patching"
@@ -517,6 +527,16 @@ checked into `.claude/settings.json` and loads automatically — no
   bump`). This catches both failure modes that historically reddened CI: (A)
   forgot to bump, and (B) a parallel worktree already claimed your patch number.
   Override with `CANOPY_ALLOW_PUSH_NO_BUMP=1`.
+- `hooks/pre_tool_use_pr_merge_guard.py` — intercepts `gh pr merge` and re-runs the
+  bump check against a **freshly fetched** `origin/main`. Closes the window the push
+  guard can't see: CI checks your branch against main *as it was when CI ran*, and
+  GitHub does not re-run it when the base moves, so two PRs opened from the same base
+  can both bump to N and both merge (this happened 2026-07-28 — #423 and #429 both
+  landed v0.2.369 forty seconds apart). Two commits sharing a version makes the
+  version-keyed plugin cache ambiguous: the second merge's cache dir already exists
+  holding the first one's code, which is how a merged fix reaches nobody. Judges only
+  the checked-out branch's PR; fails open on anything it can't determine. Override
+  with `CANOPY_ALLOW_MERGE_NO_BUMP=1`.
 - `hooks/pre_tool_use_plugin_cache_guard.py` — blocks local-patching of the
   plugin cache (`CANOPY_ALLOW_CACHE_PATCH=1` to override).
 - `hooks/pre_tool_use_main_branch_guard.py` — keeps the **primary** canopy checkout

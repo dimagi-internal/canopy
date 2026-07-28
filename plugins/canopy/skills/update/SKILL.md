@@ -20,10 +20,18 @@ spuriously report `UP_TO_DATE` right after a push). Completes in ~1–3s
 bash "$(sed -n '/"canopy@canopy"/,/\]/{ s/.*"installPath": *"\([^"]*\)".*/\1/p; }' "$HOME/.claude/plugins/installed_plugins.json" | head -1)/scripts/canopy-update-check.sh"
 ```
 
+The comparison is on the **commit SHA**, not the version number — two commits on
+`main` can carry the same version (parallel PRs both bump to N, and GitHub does
+not re-run the loser's version check when the base moves). A SHA can't collide
+that way.
+
 **Read the single output line:**
 - `UP_TO_DATE <version>` → Tell the user "Already up to date at **vX.Y.Z**." and **STOP. Do nothing else.**
 - `UPGRADE_AVAILABLE <old> <new>` → Continue to Step 2.
 - `ERROR <reason>` → Show the error to the user and **STOP**.
+
+`<old>` and `<new>` are sometimes the SAME version — that is a real upgrade, not a
+bug: the code differs even though the label was reused. Use `<new>` for Step 2.
 
 ## Step 2: Pull, install, and register (ONE command)
 
@@ -33,10 +41,13 @@ from Step 1:
 ```bash
 NEW_VERSION=<version from step 1> && \
 cd ~/.claude/plugins/marketplaces/canopy && \
+echo "ON BRANCH: $(git rev-parse --abbrev-ref HEAD)" && \
+git checkout main 2>&1 && \
 echo "PULLING: git pull origin main" && \
-git pull origin main 2>&1 && \
+git pull --ff-only origin main 2>&1 && \
 mkdir -p ~/.claude/plugins/cache/canopy/canopy/$NEW_VERSION && \
-rsync -a ~/.claude/plugins/marketplaces/canopy/plugins/canopy/ ~/.claude/plugins/cache/canopy/canopy/$NEW_VERSION/ && \
+rsync -a --delete --exclude=node_modules --exclude=runtime \
+  ~/.claude/plugins/marketplaces/canopy/plugins/canopy/ ~/.claude/plugins/cache/canopy/canopy/$NEW_VERSION/ && \
 mkdir -p ~/.claude/plugins/cache/canopy/canopy/$NEW_VERSION/runtime && \
 rsync -a --exclude=.venv --exclude=__pycache__ --exclude=node_modules \
   ~/.claude/plugins/marketplaces/canopy/src \
@@ -83,6 +94,18 @@ else:
     print(f'MISMATCH: installed v{cv} but GitHub has v{mv}')
 "
 ```
+
+Three details in there are load-bearing, all learned the hard way on 2026-07-28:
+
+- **`git checkout main` first.** The clone gets parked on feature branches, and
+  `git pull origin main` from a parked branch merges main INTO that branch instead
+  of updating the channel. (It was found on `ddd/preflight-applies-scroll`.)
+- **`--ff-only`.** If local main has diverged, fail loudly rather than quietly
+  writing a merge commit into the update channel.
+- **`--delete` on the plugin rsync.** The cache dir is keyed by version, so when a
+  version number gets reused the dir already exists with the OTHER commit's files.
+  Without `--delete`, a plain overlay leaves that code in place. `node_modules` and
+  `runtime` are excluded because both are rebuilt by the steps right after this one.
 
 **Read the output:**
 - `VERIFIED` → continue to Step 3 (the plugin cache is updated; the CLI still needs deploying).

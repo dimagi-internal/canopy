@@ -185,6 +185,54 @@ def _default_branch(clone: str) -> str:
     return "main"
 
 
+def _current_branch(clone: str) -> str:
+    rc, out, _ = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], 10, cwd=clone)
+    return out if rc == 0 else ""
+
+
+def _dirty(clone: str) -> bool:
+    """Uncommitted changes to TRACKED files. Untracked junk (stray node_modules,
+    a scratch file) is ignored — it is not work anyone can lose."""
+    rc, out, _ = run(
+        ["git", "status", "--porcelain", "--untracked-files=no"], 15, cwd=clone
+    )
+    return rc == 0 and bool(out.strip())
+
+
+def ensure_on_branch(clone: str, branch: str) -> str:
+    """Put the clone on `branch` before anything resets it. "" ok, else an error.
+
+    `git reset --hard origin/<branch>` rewrites whatever ref HEAD points at, not
+    the ref named in the argument. So when the clone sits on a feature branch —
+    which happens, despite the clone being documented as never-a-workspace; the
+    canopy one was found on `ddd/preflight-applies-scroll` on 2026-07-28 — the
+    reset silently moved THAT branch to main's tip. Those commits survived only
+    because they had been pushed.
+
+    Two cases, deliberately different:
+      * parked and clean  → switch to `branch`, leaving the parked ref where it is.
+      * parked and dirty  → refuse. The clone has been repurposed as a workspace,
+        and switching would strand the work while the reset destroys it. A logged
+        error a human can act on beats a silent deletion.
+
+    A dirty clone already ON `branch` is left alone to reset as before: that is
+    the mirror contract this hook has always had, and blocking there would freeze
+    fleet updates over a stray edit to a file that is meant to be overwritten.
+    """
+    current = _current_branch(clone)
+    if current == branch:
+        return ""
+    where = current or "detached HEAD"
+    if _dirty(clone):
+        return (f"clone parked on '{where}' with uncommitted changes — refusing to "
+                f"switch to {branch} (that would strand the branch and destroy the edit)")
+    rc, _, err = run(["git", "checkout", branch], PULL_TIMEOUT, cwd=clone)
+    if rc != 0:
+        first = (err.splitlines() or [""])[0]
+        return f"clone parked on '{where}', cannot switch to {branch}: {first or rc}"
+    return ""
+
+
 def _plugin_source_subdir(clone: str, name: str) -> str:
     """Read the plugin's `source` from the clone's marketplace.json (default './')."""
     mp = load_json(Path(clone) / ".claude-plugin" / "marketplace.json")
@@ -304,6 +352,11 @@ def update_one(target: dict) -> dict:
         return result
 
     # Behind — hard-reset the (mirror) clone to origin, then sync into cache.
+    # On `branch` FIRST: reset --hard rewrites the checked-out ref, whatever it is.
+    err = ensure_on_branch(clone, branch)
+    if err:
+        result.update(status="error", error=err)
+        return result
     rc, _, err = run(["git", "reset", "--hard", f"origin/{branch}"], PULL_TIMEOUT, cwd=clone)
     if rc != 0:
         result.update(status="error", error=f"reset: {err or rc}")

@@ -15,6 +15,11 @@
           },
           {
             "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/hooks/pre_tool_use_pr_merge_guard.py",
+            "description": "Block `gh pr merge` when another PR took your VERSION after CI went green — two commits sharing a version make the version-keyed plugin cache serve stale code (set CANOPY_ALLOW_MERGE_NO_BUMP=1 to override)"
+          },
+          {
+            "type": "command",
             "command": "python3 ${CLAUDE_PROJECT_DIR}/hooks/pre_tool_use_main_branch_guard.py",
             "description": "Keep the PRIMARY canopy checkout on `main` — block branch switch/create there (feature work goes in worktrees; the global CLI deploys from main). Set CANOPY_ALLOW_PRIMARY_BRANCH=1 to override"
           }

@@ -47,6 +47,13 @@ def _rev(cwd, ref="HEAD"):
     ).stdout.strip()
 
 
+def _branch(cwd):
+    return subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=str(cwd), check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
 # ── discovery ───────────────────────────────────────────────────────────────
 
 
@@ -218,6 +225,98 @@ def test_update_one_noop_when_current(tmp_path, monkeypatch):
         "version": "0.1.0", "sha": sha, "clone": str(clone),
     }
     assert flu.update_one(target)["status"] == "up-to-date"
+
+
+def _parked_clone_fixture(tmp_path, monkeypatch):
+    """A marketplace clone sitting on a feature branch, with origin ahead.
+
+    Not hypothetical: on 2026-07-28 the canopy marketplace clone was found on
+    `ddd/preflight-applies-scroll`. `git reset --hard origin/main` rewrites
+    whichever branch is checked out, so the auto-updater silently moved that
+    branch ref to main's tip — the commits survived only because they had been
+    pushed."""
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    registry_path = plugins_dir / "installed_plugins.json"
+    monkeypatch.setattr(flu, "PLUGINS_DIR", plugins_dir)
+    monkeypatch.setattr(flu, "REGISTRY", registry_path)
+
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    _git(origin, "init", "--bare", "-b", "main")
+    work = tmp_path / "work"
+    work.mkdir()
+    _git(work, "init", "-b", "main")
+    _git(work, "remote", "add", "origin", str(origin))
+    (work / ".claude-plugin").mkdir()
+    (work / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "eva", "version": "0.1.0"}))
+    (work / ".claude-plugin" / "marketplace.json").write_text(
+        json.dumps({"name": "eva", "plugins": [{"name": "eva", "source": "./"}]})
+    )
+    (work / "skills").mkdir()
+    (work / "skills" / "s.md").write_text("v1")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "v0.1.0")
+    _git(work, "push", "origin", "main")
+    old_sha = _rev(work)
+
+    clone = plugins_dir / "marketplaces" / "eva"
+    clone.parent.mkdir(parents=True)
+    _git(plugins_dir / "marketplaces", "clone", str(origin), "eva")
+
+    old_cache = plugins_dir / "cache" / "eva" / "eva" / "0.1.0"
+    old_cache.mkdir(parents=True)
+    registry_path.write_text(json.dumps(
+        {"plugins": {"eva@eva": [{"installPath": str(old_cache), "version": "0.1.0",
+                                  "gitCommitSha": old_sha}]}}))
+
+    # Someone parks the clone on a feature branch and commits there.
+    _git(clone, "checkout", "-b", "parked")
+    (clone / "wip.txt").write_text("work in progress")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "parked work")
+    parked_sha = _rev(clone)
+
+    # origin/main moves on.
+    (work / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "eva", "version": "0.1.1"}))
+    (work / "skills" / "s.md").write_text("v2-updated")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "v0.1.1")
+    _git(work, "push", "origin", "main")
+
+    target = {"key": "eva@eva", "name": "eva", "marketplace": "eva",
+              "install_path": str(old_cache), "version": "0.1.0", "sha": old_sha,
+              "clone": str(clone)}
+    return plugins_dir, clone, parked_sha, target
+
+
+@pytest.mark.skipif(not shutil.which("git") or not shutil.which("rsync"), reason="needs git+rsync")
+def test_update_switches_to_main_instead_of_rewriting_a_parked_branch(tmp_path, monkeypatch):
+    plugins_dir, clone, parked_sha, target = _parked_clone_fixture(tmp_path, monkeypatch)
+
+    result = flu.update_one(target)
+
+    assert result["status"] == "updated", result
+    assert (plugins_dir / "cache" / "eva" / "eva" / "0.1.1" / "skills" / "s.md"
+            ).read_text() == "v2-updated"
+    assert _rev(clone, "parked") == parked_sha, \
+        "the parked branch must not be moved by an update"
+    assert _branch(clone) == "main", "the update must leave the clone on main"
+
+
+@pytest.mark.skipif(not shutil.which("git") or not shutil.which("rsync"), reason="needs git+rsync")
+def test_update_refuses_to_clobber_uncommitted_work_in_the_clone(tmp_path, monkeypatch):
+    """A dirty parked clone is someone's workspace, wrong as that is. Report it
+    and leave it alone rather than destroying the edit to install a plugin."""
+    plugins_dir, clone, parked_sha, target = _parked_clone_fixture(tmp_path, monkeypatch)
+    (clone / "skills" / "s.md").write_text("uncommitted local edit")
+
+    result = flu.update_one(target)
+
+    assert result["status"] == "error"
+    assert "parked" in result["error"], result
+    assert (clone / "skills" / "s.md").read_text() == "uncommitted local edit"
+    assert _rev(clone, "parked") == parked_sha
 
 
 def test_update_one_errors_without_clone(tmp_path):
