@@ -9,6 +9,46 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.365] - 2026-07-28
+
+### Added
+
+- `canopy project {dispatch|runners|declare|turns}` — one-shot dispatch aimed at a
+  REPO instead of at a fleet agent (`canopy project dispatch connect-labs --prompt
+  "…"`). The harness and the runner have accepted project turns all along
+  (`TurnIn.project`, the agent_slug-XOR-project 422, the runner's `agent_slug or
+  project` target resolution); only the CLI could not send one, so "put a coding
+  session on connect-labs" had to be aimed at the Hal *agent*, which is a different
+  target. Nothing server-side changed.
+
+  The command carries the three things that differ from an agent turn, each of which
+  fails silently if you get it wrong:
+
+  - **workspace is required and travels in the path.** A project turn has no agent to
+    derive tenancy from, so it POSTs to `/api/w/<ws>/harness/turns/`. The flat route
+    falls back to the caller's default workspace — a 422 for anyone in two or more —
+    and the server refuses a workspace-less project turn outright, because
+    `claim_next_turn` fails one closed.
+  - **a runner only claims projects it DECLARES.** Dispatch at an undeclared project
+    and the turn is accepted with a 201 and then never claimed by anything, which
+    reads exactly like nothing happening. `dispatch` preflights the fleet and refuses
+    with the runners it saw and the fix; `--declare` (or `canopy project declare`)
+    PATCHes the capability in place, read-modify-write so the runner's agents and
+    other repos survive. `--no-preflight` is the escape hatch for a runner paired by
+    someone else, which this caller cannot see.
+  - **no board write.** A repo has no agent board, and `Turn.project` is a free string
+    that need not match a registered Project. Hanging the record off some agent's
+    board would invent state nothing reads.
+
+  Idempotency keys are namespaced separately from the agent ones —
+  `Turn.idempotency_key` is globally unique and this fleet has repos and agents
+  sharing a name (`hal`, `ace`, `ada`, `echo`, `eva`), so a shared derivation would
+  make a repo dispatch silently return the agent's earlier turn that day.
+
+  `agent dispatch` is untouched — the new code lives in its own module and the
+  suite pins the agent payload, its flat path, and its board write against
+  regression. Closes #424.
+
 ## [0.2.359] - 2026-07-28
 
 ### Added
