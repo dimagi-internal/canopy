@@ -1833,3 +1833,121 @@ def test_pull_falls_back_to_the_title_slug_for_a_legacy_id_less_narration():
     assert parts["scenes"][0]["id"] == "area-selection"
 
 
+
+
+# ---------------------------------------------------------------------------
+# Gap resolution — closing a gap without deleting the record of why it existed
+# ---------------------------------------------------------------------------
+
+
+def _why_brief(*, gap_resolved: str = "") -> dict:
+    return {
+        "narrative_slug": "demo",
+        "problem": "p",
+        "spine": [
+            {"id": "S0", "claim": "c0", "rationale": "r", "status": "grounded", "evidence": []},
+            {"id": "S1", "claim": "c1", "rationale": "r", "status": "grounded", "evidence": []},
+        ],
+        "gaps": [
+            {
+                "id": "G1",
+                "type": "CAPABILITY",
+                "claim_ref": "S1",
+                "detail": "The thing does not exist yet.",
+                "proposed_action": "Build the thing.",
+                "resolved": gap_resolved,
+            }
+        ],
+    }
+
+
+def test_an_open_gap_pins_its_beat_to_new():
+    from scripts.ddd.narrative import _beat_status_map
+
+    status = _beat_status_map(_why_brief())
+    assert status["S0"] == "built"
+    assert status["S1"] == "new", "a grounded claim with an open capability gap is still frontier"
+
+
+def test_a_resolved_gap_releases_its_beat():
+    """The point of Gap.resolved.
+
+    Before this existed, a narrative refreshed after the work shipped had no way
+    to say so. Deleting the gap flips the badge but throws away the record of
+    why the work happened, and editing the posted narration does not survive the
+    next `narrative post`, which recomputes status from here.
+    """
+    from scripts.ddd.narrative import _beat_status_map
+
+    status = _beat_status_map(_why_brief(gap_resolved="Shipped in services/cover.py (PR #123)."))
+    assert status["S1"] == "built"
+
+
+def test_whitespace_is_not_a_resolution():
+    from scripts.ddd.narrative import _beat_status_map
+
+    assert _beat_status_map(_why_brief(gap_resolved="   "))["S1"] == "new"
+
+
+def test_a_resolved_gap_cannot_ground_a_spine_item_that_is_itself_a_gap():
+    """Closing a gap says the capability landed, not that the claim is evidenced.
+
+    Those are two different assertions and only the spine carries the second.
+    """
+    from scripts.ddd.narrative import _beat_status_map
+
+    wb = _why_brief(gap_resolved="done")
+    wb["spine"][1]["status"] = "gap"
+    assert _beat_status_map(wb)["S1"] == "new"
+
+
+def test_gap_resolved_defaults_to_open():
+    from scripts.ddd.schemas.models import Gap
+
+    gap = Gap(id="G1", type="CAPABILITY", claim_ref="S1", detail="d", proposed_action="a")
+    assert gap.resolved == ""
+
+
+# ---------------------------------------------------------------------------
+# pull reports whether what it fetched can actually be rendered
+# ---------------------------------------------------------------------------
+
+
+def test_pull_reports_a_narrative_it_cannot_render(tmp_path, monkeypatch, capsys):
+    """A narrative is a PAIR, and pull can only fetch one half.
+
+    Four narratives were authored on another machine and pulled here; all four
+    reported success and none could be rendered, because the git-owned recipe
+    does not exist on canopy-web and cannot be recovered from it.
+    """
+    import json as _json
+
+    from scripts.ddd import narrative as nar
+    from scripts.ddd import review as rv
+
+    payload = {
+        "narration": [
+            {"id": "s1", "title": "T", "persona": "alice", "provenance": "S0", "text": "x"}
+        ],
+        "personas": {},
+        "narrative": "x",
+        "why_brief": {},
+    }
+    monkeypatch.setattr(
+        rv, "get_narrative", lambda slug: {"current_version": {"version": 2, "review_id": "rid"}}
+    )
+    monkeypatch.setattr(rv, "get_review", lambda review_id: {"request_json": payload})
+
+    nar._cmd_pull("demo", str(tmp_path))
+    out = capsys.readouterr()
+    result = _json.loads(out.out)
+    assert result["renderable"] is False
+    assert result["recipe"] is None
+    assert "no render recipe" in out.err
+
+    # And once a recipe exists beside it, pull stops warning.
+    (tmp_path / "demo.recipe.yaml").write_text("base_url: https://example.test\n")
+    nar._cmd_pull("demo", str(tmp_path))
+    out = capsys.readouterr()
+    assert _json.loads(out.out)["renderable"] is True
+    assert "no render recipe" not in out.err

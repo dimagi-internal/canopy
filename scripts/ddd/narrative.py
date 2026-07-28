@@ -203,10 +203,18 @@ def _beat_status_map(why_brief: dict | None) -> dict[str, str]:
     """Map each why-brief spine id -> ``"built"`` or ``"new"``.
 
     A beat is ``new`` (still to build, the "frontier") when its spine item is a
-    gap (``status`` != ``grounded``) OR a why-brief gap (CAPABILITY / RESEARCH /
-    DECISION) references it by ``claim_ref`` — a grounded claim with an open
-    capability gap is still something we'd build, so it reads as ``new``, not
-    ``built``. Everything else (grounded, no open gap) is ``built``.
+    gap (``status`` != ``grounded``) OR an OPEN why-brief gap (CAPABILITY /
+    RESEARCH / DECISION) references it by ``claim_ref`` — a grounded claim with
+    an open capability gap is still something we'd build, so it reads as
+    ``new``, not ``built``. Everything else (grounded, no open gap) is
+    ``built``.
+
+    A gap carrying ``resolved`` is CLOSED and no longer forces its beat to
+    ``new``. Without that, a narrative refreshed after the work shipped has no
+    way to say so: the gap is the record of why the work happened, so deleting
+    it to flip the badge throws away the reasoning, and keeping it open pins
+    the beat to ``new`` forever. Editing the posted narration instead does not
+    survive — the next ``narrative post`` recomputes status from here.
 
     This mirrors canopy-web's client-side ``sceneIsFrontier`` exactly, so the
     BUILD SEQUENCE panel, the per-scene badges, and this API status all agree.
@@ -215,8 +223,11 @@ def _beat_status_map(why_brief: dict | None) -> dict[str, str]:
     """
     referenced_by_gap: set[str] = set()
     for gap in (why_brief or {}).get("gaps") or []:
-        if isinstance(gap, dict) and gap.get("claim_ref"):
-            referenced_by_gap.add(gap["claim_ref"])
+        if not isinstance(gap, dict) or not gap.get("claim_ref"):
+            continue
+        if str(gap.get("resolved") or "").strip():
+            continue  # closed: the work landed, so it no longer pins the beat
+        referenced_by_gap.add(gap["claim_ref"])
 
     status: dict[str, str] = {}
     for item in (why_brief or {}).get("spine") or []:
@@ -1201,6 +1212,22 @@ def _cmd_pull(slug: str, target: str) -> None:
     parts = web_narrative_to_spec_parts(request_json)
     lock = write_lock(base_dir, slug, web_version, parts)
 
+    # A narrative is a PAIR: canopy-web owns the story, git owns the render
+    # recipe. `pull` can only ever produce the first half, so a narrative
+    # authored on another machine — or by another agent — lands here with no
+    # recipe and nothing to render. Reporting "pulled" and exiting 0 makes that
+    # look like a complete fetch; the next person discovers it when the render
+    # has nothing to run.
+    recipe = base_dir / f"{slug}.recipe.yaml"
+    if not recipe.exists():
+        print(
+            f"WARNING: no render recipe at {recipe}. `pull` fetches the STORY only — "
+            f"the recipe (base_url, auth, per-scene steps) is git-owned and cannot be "
+            f"recovered from canopy-web. This narrative cannot be rendered until one "
+            f"is authored.",
+            file=sys.stderr,
+        )
+
     # The why-brief is cloud-derived too — recovered from the same payload.
     wb = reconstruct_why_brief(request_json)
     wb_name = f"{slug}.why_brief.yaml"
@@ -1219,6 +1246,8 @@ def _cmd_pull(slug: str, target: str) -> None:
                 "lock_path": str(lock),
                 "why_brief": wb_name if wb else None,
                 "scenes": len(parts.get("scenes") or []),
+                "recipe": str(recipe) if recipe.exists() else None,
+                "renderable": recipe.exists(),
             }
         )
     )
