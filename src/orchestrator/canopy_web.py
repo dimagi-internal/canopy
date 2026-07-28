@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -72,6 +73,58 @@ def scoped_app_path(path: str, workspace: Optional[str] = None) -> str:
     return f"/w/{ws}{path}"
 
 
+def _agent_slug_for_cwd(start: Optional[Path] = None) -> str:
+    """The agent slug of the repo we're standing in, or "" if this isn't one.
+
+    An agent turn runs INSIDE the agent's repo, so the repo is the identity: walk
+    up for `.claude-plugin/plugin.json` and take its `name`.
+    """
+    here = (start or Path.cwd()).resolve()
+    for d in (here, *here.parents):
+        manifest = d / ".claude-plugin" / "plugin.json"
+        if not manifest.is_file():
+            continue
+        try:
+            return (json.loads(manifest.read_text()) or {}).get("name") or ""
+        except (OSError, ValueError):
+            return ""
+    return ""
+
+
+# One warning per process: a single command makes many calls, and warning on each
+# would train people to scroll past it.
+_WARNED_BORROWED_IDENTITY = False
+
+
+def _reset_identity_warning() -> None:
+    """Test seam — clear the once-per-process latch."""
+    global _WARNED_BORROWED_IDENTITY
+    _WARNED_BORROWED_IDENTITY = False
+
+
+def _warn_borrowed_identity(slug: str) -> None:
+    """Say out loud that an agent is about to act as the operator.
+
+    This fallback is legitimate (a human working in an agent repo must not be
+    blocked), so this warns rather than refuses. What it must not be is SILENT:
+    ACE ran for a full day attributed to a human because `~/.ace/.env` was never
+    materialized, and nothing anywhere said so (dimagi-internal/ace#1005).
+    """
+    global _WARNED_BORROWED_IDENTITY
+    if _WARNED_BORROWED_IDENTITY:
+        return
+    _WARNED_BORROWED_IDENTITY = True
+    print(
+        f"[canopy] WARNING: in the '{slug}' agent repo, but ~/.{slug}/.env has no "
+        f"CANOPY_WEB_PAT — falling back to the operator's workbench-token.\n"
+        f"[canopy] Calls will be attributed to the OPERATOR, not to '{slug}', and "
+        f"will see the operator's workspaces.\n"
+        f"[canopy] If you are {slug}: materialize its env "
+        f"(`op inject -i .env.tpl -o ~/.{slug}/.env`) or set CANOPY_WEB_PAT.",
+        file=sys.stderr,
+    )
+
+
 def _agent_env_pat(start: Optional[Path] = None) -> str:
     """This agent's OWN PAT from `~/.<slug>/.env`, or "" if there isn't one.
 
@@ -125,6 +178,11 @@ def resolve_token(token: Optional[str]) -> str:
     if TOKEN_FILE.exists():
         stored = TOKEN_FILE.read_text().strip()
         if stored:
+            # About to act as the operator. If we're standing in an agent's repo
+            # that is an identity swap, and it must not happen quietly.
+            slug = _agent_slug_for_cwd()
+            if slug:
+                _warn_borrowed_identity(slug)
             return stored
     raise RuntimeError(
         f"no canopy-web PAT — run /canopy:canopy-web-pat-mint to mint one, "
