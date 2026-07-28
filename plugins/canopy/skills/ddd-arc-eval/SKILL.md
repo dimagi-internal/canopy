@@ -34,6 +34,13 @@ If `ddd-spec-qa` returned `fail`, skip — do not judge a structurally broken
 spec. If the render's `run-report.json` shows any failed action, skip too: an
 arc judged over a broken take measures the take, not the arc.
 
+Then run `python -m scripts.ddd.snapshot_consistency <run_dir>`. It fails when
+the snapshots came from more than one render, which happens when an iteration
+re-renders into the run dir a judge is still reading. The verdict that comes
+back from a mixed dir describes frames that no longer exist, and it looks
+exactly like a real one. Do not judge a run dir that fails this check — ask for
+a clean re-render of the whole run first.
+
 ## Procedure
 
 ### Step 1 — Assemble the sequence
