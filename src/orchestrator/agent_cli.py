@@ -551,3 +551,126 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
             if names:
                 click.echo(f"  {bucket:<22} {len(names):>3}  {', '.join(names[:6])}"
                            + (" …" if len(names) > 6 else ""))
+
+
+@agent.command("dispatch")
+@click.option("--slug", required=True, help="Agent to send (ace|ada|echo|eva|hal).")
+@click.option("--title", default="", help="Board-task title — what the work IS, one line.")
+@click.option("--prompt", default="", help="The brief the agent receives. Omit for a board drain.")
+@click.option("--prompt-file", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Read the brief from a file (for briefs too long to quote on a shell line).")
+@click.option("--task", "task_ext_id", default=None,
+              help="Attach to an EXISTING board task instead of creating one.")
+@click.option("--no-task", is_flag=True, help="Dispatch without touching the board.")
+@click.option("--links", default="", help='Evidence for the task: "label|url, label2|url2".')
+@click.option("--next-action", default="", help="The single concrete next step, verb-first.")
+@click.option("--idempotency-key", default=None,
+              help="Override the derived (agent, title, day) key — pass a fresh one to "
+                   "deliberately re-dispatch the same work.")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links,
+                   next_action, idempotency_key, as_json):
+    """Record work on an agent's board, then trigger a runner session to do it.
+
+    The one-shot counterpart to a schedule: schedules are for recurring work, this is
+    "go do this now". The runner claims the turn and spawns a visible emdash session
+    you can watch and interrupt.
+
+    Reports the result as LAUNCHED (unverified) — a harness turn flips to `done` within
+    seconds carrying "created session '<name>'", which is the runner finishing, not the
+    agent's work succeeding. Verify with `canopy agent turns --slug <agent>`.
+    """
+    import datetime as _dt
+
+    from orchestrator import canopy_web
+    from orchestrator.agent_dispatch import (
+        DispatchError,
+        TURNS_PATH,
+        build_turn_payload,
+        derive_idempotency_key,
+        summarize_turn,
+    )
+
+    if prompt_file:
+        prompt = Path(prompt_file).read_text()
+    make_task = not no_task and not task_ext_id
+    if make_task and not title.strip():
+        raise click.ClickException(
+            "--title is required to create the board task (or pass --no-task / --task <ext_id>)")
+
+    day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    key = idempotency_key or derive_idempotency_key(slug, title or prompt[:80], day)
+
+    try:
+        client = _client(slug)
+        # Board first: the agent must find the item already there when it arrives.
+        if make_task:
+            task_ext_id = next_task_ext_id(client.list_tasks())
+            client.sync_tasks([{
+                "ext_id": task_ext_id,
+                "title": title.strip()[:300],
+                "next_action": (next_action or "Work this dispatch").strip()[:300],
+                "status": "in_progress",
+                "assigned": slug,
+                "links": parse_task_links(links),
+                "notes": (prompt or "").strip()[:2000],
+                "source": "dispatch",
+            }])
+
+        payload = build_turn_payload(slug, prompt=prompt, idempotency_key=key,
+                                     task_ext_id=task_ext_id)
+        turn = canopy_web.call("POST", TURNS_PATH, payload)
+    except DispatchError as e:
+        raise click.ClickException(str(e))
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+    summary = summarize_turn(turn)
+    if as_json:
+        _emit({"task_ext_id": task_ext_id, "idempotency_key": key, "turn": summary})
+        return
+
+    click.echo(f"Agent:  {slug}")
+    if task_ext_id:
+        click.echo(f"Task:   {task_ext_id}  {title.strip()}")
+    click.echo(f"Turn:   {summary['id']}  →  {summary['headline']}")
+    click.echo("")
+    click.echo("This is a LAUNCH, not a result — the agent may not have read the brief yet.")
+    click.echo(f"  verify:  canopy agent turns --slug {slug}")
+
+
+@agent.command("turns")
+@click.option("--slug", required=True)
+@click.option("--limit", default=10, type=int)
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+def agent_turns(slug, limit, as_json):
+    """Recent harness turns for an agent — how you check what a dispatch actually did.
+
+    Statuses are reported through the same honest lens as `dispatch`: a `done` launch
+    turn is `launched`, never `complete`.
+    """
+    from orchestrator import canopy_web
+    from orchestrator.agent_dispatch import summarize_turn
+
+    try:
+        rows = canopy_web.call("GET", f"/api/harness/turns/?agent={slug}") or []
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+    if isinstance(rows, dict):
+        rows = rows.get("items") or rows.get("results") or []
+    rows = rows[:limit]
+
+    if as_json:
+        _emit([{**summarize_turn(t), "created_at": t.get("created_at"),
+                "prompt": t.get("prompt")} for t in rows])
+        return
+    if not rows:
+        click.echo(f"no harness turns for {slug}")
+        return
+    for t in rows:
+        s = summarize_turn(t)
+        click.echo(f"{str(t.get('created_at'))[:16]}  {s['state']:<9} {s['id']}")
+        click.echo(f"    {s['headline']}")
+        first = (str(t.get("prompt") or "").strip().splitlines() or [""])[0]
+        if first:
+            click.echo(f"    prompt: {first[:110]}")

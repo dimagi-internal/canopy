@@ -30,7 +30,8 @@ enforce it.
 `scheduler` · `paths` · `repo_map` · `repo_paths` · `repo_evidence` ·
 `skill_budget` · `skill_catalog` · `skill_runner` · `provision` · `run_log` ·
 `version_bump` · `doctor` · `agent_review` · `structure_drift` · `eval_cli` ·
-`eval_rubric` · `turn_synthesis` · `session_upload` · `fleet_align` · `session_sources`
+`eval_rubric` · `turn_synthesis` · `session_upload` · `fleet_align` · `session_sources` ·
+`work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli`
 
 **HUBS** (orchestration / composition roots — wire product into the CLI, the
 improvement pipeline, and the web server; allowed to import product, like
@@ -53,6 +54,14 @@ canopy-web's `api` app):
 > future `kind` per additional runtime). `agent_coverage` (framework) depends on
 > it directly; `harvest` (product) now delegates its `user_session_roots` to it
 > too, so the `/Users/*/.claude/projects` glob lives in exactly one place.
+
+> `work_cursor` is FRAMEWORK: the generic "what have I already processed?"
+> watermark for any skill that runs on a cadence. It replaces four ad-hoc
+> implementations (`ada/bin/ada-run-cursor`, `eva/bin/cos-state`,
+> `shareout.resolve_default_range`, and `ada/skills/self-review`'s deliberate
+> no-state stance). Pure logic is Drive-free and injectable; `DriveCursorStore`
+> reuses `agent_gdoc`'s per-agent identity so it works for any agent without
+> per-agent code.
 
 Top-level `scripts/` (ddd, narrative, walkthrough), `video-engine/`, and
 `plugins/canopy/{skills,commands,agents}/` are all **product** — correct for a

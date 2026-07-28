@@ -20,6 +20,11 @@ import time
 from pathlib import Path
 
 from orchestrator.repo_paths import resolve_repo_path
+from orchestrator.session_sources import (
+    corpus_confidence,
+    local_transcript_dirs,
+    session_sources,
+)
 from orchestrator.transcripts import (
     extract_assistant_text,
     extract_tool_calls,
@@ -28,6 +33,11 @@ from orchestrator.transcripts import (
 )
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
+
+# Kept as the module default for `find_turn_transcripts`, but `run_review` no longer
+# scans it directly — see the `session_sources` seam below. One home is one account,
+# and an agent's corpus is routinely split across the two this human alternates
+# between; a review drawn from half a corpus reads as complete and isn't.
 
 # Wall-clock budgets for the two claude -p passes. Named constants, not magic numbers
 # buried at the call site, so the CLI can expose them and tests can assert the default.
@@ -84,13 +94,50 @@ _CORRECTION_PATTERNS = (
 )
 
 
+# Blocks the HARNESS injects as `user` turns. They are string-content messages like a real
+# human turn, but nobody typed them — and their own boilerplate trips the patterns above
+# (the local-command caveat contains "DO NOT respond to these messages", which scores
+# `emphasis`; task notifications carry "instead of" and sentence-initial "no"). Measured on
+# ACE 2026-07-28: 4 of 6 reported "human corrections" were these. Stripped wherever they
+# appear, not just as a prefix, because the harness APPENDS system-reminders to genuine
+# messages — so a prefix test would keep the human's words and still score the boilerplate.
+_HARNESS_BLOCK_RX = re.compile(
+    r"<(local-command-caveat|local-command-stdout|local-command-stderr|task-notification|"
+    r"system-reminder|command-message|command-name|command-args|user-prompt-submit-hook)>"
+    r".*?</\1>|"
+    r"<(local-command-caveat|task-notification|system-reminder|command-message|command-name|"
+    r"command-args)>.*",
+    re.S | re.I,
+)
+# Whole user turns the harness AUTHORS, identified by their opening line: the skill loader
+# injects a skill body, and compaction injects a summary of the prior conversation. The
+# compaction summary is the nastiest of these — it restates the human's earlier asks verbatim,
+# so it scores every correction in the session a second time, in a turn nobody typed.
+_HARNESS_AUTHORED_PREFIXES = (
+    "Base directory for this skill:",
+    "This session is being continued from a previous conversation",
+)
+
+
+def _human_text(raw: str) -> str:
+    """What the human actually typed, with harness-injected blocks removed."""
+    s = _HARNESS_BLOCK_RX.sub(" ", raw or "").strip()
+    if s.startswith(_HARNESS_AUTHORED_PREFIXES):
+        return ""
+    return s
+
+
 def human_corrections(entries: list[dict]) -> list[dict]:
     """Mine the HUMAN side of a turn for corrections/overrides/confusion — the highest-signal
     friction. A forceful safety correction ("NEVER submit without review") matters more than ten
-    git errors, but the mechanical signals miss it entirely. Returns [{kinds, quote}]."""
+    git errors, but the mechanical signals miss it entirely. Returns [{kinds, quote}].
+
+    Only genuinely human-authored text is mined: harness-injected `user` turns are stripped
+    first (`_human_text`), so the caveat/notification boilerplate can't masquerade as Jonathan
+    overriding something."""
     out: list[dict] = []
     for m in extract_user_messages(entries):
-        s = (m or "").strip()
+        s = _human_text(m)
         if not s:
             continue
         kinds = [kind for kind, pat in _CORRECTION_PATTERNS if pat.search(s)]
@@ -719,13 +766,20 @@ def run_review(
     verify: bool = True,
     model: str = "sonnet",
     max_budget_usd: float = 2.0,
-    projects_dir: Path = CLAUDE_PROJECTS,
+    projects_dir: Path | None = None,
     timeout: int = SYNTHESIS_TIMEOUT,
 ) -> dict:
-    """Review an agent's recent turns. Returns {agent, repo, turns, signals, findings,
-    dropped_findings, error?}. `verify` (default on) runs the source-verification gate
-    over the synthesized findings and drops the ones already shipped to origin/main.
-    `timeout` caps the claude -p synthesis pass (seconds).
+    """Review an agent's recent turns. Returns {agent, repo, turns, signals, corpus,
+    findings, dropped_findings, error?}. `verify` (default on) runs the
+    source-verification gate over the synthesized findings and drops the ones already
+    shipped to origin/main. `timeout` caps the claude -p synthesis pass (seconds).
+
+    Corpus: with no `projects_dir`, scans EVERY readable source `session_sources()`
+    returns and merges them — the cross-user fix `agent_coverage.coverage_report`
+    already made (see `session_sources`'s module docstring). Passing `projects_dir`
+    scans only that dir, keeping the seam injectable for tests and single-root
+    callers. `corpus.confidence` is `half-blind` whenever a source is unreadable, so
+    a partial review says so instead of passing for a complete one.
 
     CONTRACT — the result is ALWAYS well-formed, on every path including failure:
     `findings` and `dropped_findings` are lists (empty on failure, never absent),
@@ -739,12 +793,39 @@ def run_review(
             "repo": "",
             "turns": 0,
             "signals": [],
+            "corpus": {"confidence": "half-blind", "sources": [], "unreadable": []},
             "findings": [],
             "dropped_findings": [],
             "error": f"could not resolve agent repo for {slug_or_path!r}",
         }
 
-    transcripts = find_turn_transcripts(repo, hours=hours, projects_dir=projects_dir)
+    if projects_dir is not None:
+        # An explicitly named dir scans ONLY that dir — a caller who says where to
+        # look must not get a silent fan-out across every account on the machine.
+        transcripts = find_turn_transcripts(repo, hours=hours, projects_dir=projects_dir)
+        corpus_meta = {
+            "confidence": "whole-corpus",
+            "sources": [str(projects_dir)],
+            "unreadable": [],
+        }
+    else:
+        sources = session_sources()
+        seen: set[str] = set()
+        transcripts = []
+        for d in local_transcript_dirs(sources):
+            for t in find_turn_transcripts(repo, hours=hours, projects_dir=d):
+                # Sources can overlap (a symlinked or duplicated root); dedupe on the
+                # resolved path so one turn isn't counted — or reviewed — twice.
+                key = str(Path(t).resolve())
+                if key not in seen:
+                    seen.add(key)
+                    transcripts.append(t)
+        corpus_meta = {
+            "confidence": corpus_confidence(sources),
+            "sources": [s.name for s in sources if s.readable],
+            "unreadable": [s.name for s in sources if not s.readable],
+        }
+
     skills_dir = repo / "skills"
     own_skills = frozenset(
         p.name for p in skills_dir.iterdir() if p.is_dir()
@@ -755,6 +836,7 @@ def run_review(
         "repo": str(repo),
         "turns": len(corpus),
         "signals": corpus,
+        "corpus": corpus_meta,
         "findings": [],
         "dropped_findings": [],
     }

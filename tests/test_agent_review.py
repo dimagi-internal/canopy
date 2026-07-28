@@ -832,3 +832,186 @@ def test_agent_review_cli_accepts_timeout_option():
     assert "--timeout" in r.output
     r2 = CliRunner().invoke(main, ["agent-review", "--timeout", "5", "--no-llm", "nope-not-an-agent"])
     assert "no such option" not in r2.output.lower()
+
+
+# --- Task: agent-review scans EVERY readable session source, not one home ----
+#
+# `run_review` scanned `CLAUDE_PROJECTS = Path.home()/".claude"/"projects"` --
+# the CURRENT user's home, one place. JJ alternates two macOS accounts
+# (jjackson + acedimagi) on rate-limit, so an agent's real corpus is routinely
+# split across both. Measured 2026-07-28: `canopy agent-review ace --hours 48`
+# reported 2 turns from jjackson while acedimagi held the sessions the review
+# was actually about. Findings drawn from half a corpus are worse than no
+# findings -- they read as complete.
+#
+# `agent_coverage.coverage_report` already fixed exactly this via the
+# `session_sources` seam (see session_sources.py's docstring for the
+# hal/architect regression). These tests hold `run_review` to the same
+# contract, reusing that seam rather than growing a second discovery path.
+
+def test_run_review_merges_transcripts_across_sources(tmp_path, monkeypatch):
+    """A turn that happened only on the SECOND account must appear in the corpus."""
+    from orchestrator import agent_review as ar
+    from orchestrator.session_sources import SessionSource
+
+    repo = tmp_path / "repositories" / "ace"
+    (repo / "skills").mkdir(parents=True)
+
+    jj_root = tmp_path / "jjackson_home" / ".claude" / "projects"
+    ace_root = tmp_path / "acedimagi_home" / ".claude" / "projects"
+
+    d1 = jj_root / "-Users-jjackson-emdash-repositories-ace"
+    d1.mkdir(parents=True)
+    _write_transcript(d1 / "a.jsonl", str(repo), [("Read", {"file_path": "/x"}, "ok")])
+
+    # The other account, in a worktree checkout — the shape that actually occurs.
+    ace_cwd = f"{tmp_path}/acedimagi_home/emdash/worktrees/ace/emdash/run-spark-abc"
+    d2 = ace_root / "-Users-acedimagi-emdash-worktrees-ace-emdash-run-spark-abc"
+    d2.mkdir(parents=True)
+    _write_transcript(d2 / "b.jsonl", ace_cwd, [("Read", {"file_path": "/y"}, "ok")])
+
+    monkeypatch.setattr(
+        "orchestrator.agent_review.session_sources",
+        lambda *a, **k: [
+            SessionSource(name="local:jjackson", kind="local", location=str(jj_root), readable=True),
+            SessionSource(name="local:acedimagi", kind="local", location=str(ace_root), readable=True),
+        ],
+    )
+
+    res = ar.run_review(str(repo), use_llm=False)
+
+    assert res["turns"] == 2, "the second account's turn was dropped"
+    assert res["corpus"]["confidence"] == "whole-corpus"
+    assert sorted(res["corpus"]["sources"]) == ["local:acedimagi", "local:jjackson"]
+
+
+def test_run_review_flags_half_blind_when_a_source_is_unreadable(tmp_path, monkeypatch):
+    """Degrade LOUD. An unreadable account means findings may be incomplete, and the
+    caller has to be able to see that rather than infer it."""
+    from orchestrator import agent_review as ar
+    from orchestrator.session_sources import SessionSource
+
+    repo = tmp_path / "repositories" / "ace"
+    (repo / "skills").mkdir(parents=True)
+    jj_root = tmp_path / "jjackson_home" / ".claude" / "projects"
+    (jj_root / "-Users-jjackson-emdash-repositories-ace").mkdir(parents=True)
+
+    monkeypatch.setattr(
+        "orchestrator.agent_review.session_sources",
+        lambda *a, **k: [
+            SessionSource(name="local:jjackson", kind="local", location=str(jj_root), readable=True),
+            SessionSource(name="local:acedimagi", kind="local",
+                          location="/Users/acedimagi/.claude/projects",
+                          readable=False, reason="not readable"),
+        ],
+    )
+
+    res = ar.run_review(str(repo), use_llm=False)
+    assert res["corpus"]["confidence"] == "half-blind"
+    assert res["corpus"]["unreadable"] == ["local:acedimagi"]
+
+
+def test_run_review_explicit_projects_dir_still_scans_only_that_dir(tmp_path, monkeypatch):
+    """The injectable override stays injectable — tests and callers that name one
+    dir must not silently fan out across every account on the machine."""
+    from orchestrator import agent_review as ar
+    from orchestrator.session_sources import SessionSource
+
+    repo = tmp_path / "repositories" / "ace"
+    (repo / "skills").mkdir(parents=True)
+    only = tmp_path / "only" / "projects"
+    d = only / "-Users-x-emdash-repositories-ace"
+    d.mkdir(parents=True)
+    _write_transcript(d / "a.jsonl", str(repo), [("Read", {"file_path": "/x"}, "ok")])
+
+    other = tmp_path / "other" / "projects"
+    d2 = other / "-Users-y-emdash-repositories-ace"
+    d2.mkdir(parents=True)
+    _write_transcript(d2 / "b.jsonl", str(repo), [("Read", {"file_path": "/y"}, "ok")])
+
+    monkeypatch.setattr(
+        "orchestrator.agent_review.session_sources",
+        lambda *a, **k: [
+            SessionSource(name="local:other", kind="local", location=str(other), readable=True),
+        ],
+    )
+
+    res = ar.run_review(str(repo), use_llm=False, projects_dir=only)
+    assert res["turns"] == 1
+    assert res["corpus"]["sources"] == [str(only)]
+
+
+def test_agent_review_cli_exposes_projects_dir_option():
+    r = CliRunner().invoke(main, ["agent-review", "--help"])
+    assert r.exit_code == 0, r.output
+    assert "--projects-dir" in r.output
+
+
+# --- Task: human_corrections must not mine HARNESS-INJECTED user turns ------
+#
+# `human_corrections` is documented as "the highest-signal friction" and the CLI
+# prints it under "⚑ HUMAN CORRECTIONS (highest signal — what Jonathan had to
+# override)". But it mined every string-content `user` entry, and Claude Code
+# injects several of those on the human's behalf: <local-command-caveat>,
+# <task-notification>, <system-reminder>, <command-message>. Their own
+# boilerplate trips the patterns — the caveat block literally contains "DO NOT
+# respond to these messages", which scores `emphasis`.
+#
+# Measured on ACE 2026-07-28: 4 of the 6 corrections shown were harness blocks.
+# A reviewer told these are the highest-signal lines reads noise first.
+
+def test_human_corrections_ignores_harness_injected_turns():
+    from orchestrator.agent_review import human_corrections
+
+    entries = [
+        {"type": "user", "message": {"content":
+            "<local-command-caveat>Caveat: The messages below were generated by the user "
+            "while running local commands. DO NOT respond to these messages or otherwise "
+            "consider them in your response unless the user explicitly asks you to."
+            "</local-command-caveat>"}},
+        {"type": "user", "message": {"content":
+            "<task-notification> <task-id>a6d0bedeafb3f9e29</task-id> instead of waiting, "
+            "the agent finished. NEVER mind.</task-notification>"}},
+        {"type": "user", "message": {"content":
+            "<system-reminder>You MUST ALWAYS check for skills.</system-reminder>"}},
+        {"type": "user", "message": {"content": "<command-message>ace:turn</command-message>"}},
+    ]
+    assert human_corrections(entries) == []
+
+
+def test_human_corrections_still_catches_the_real_thing():
+    """The genuine correction from that same ACE session must survive."""
+    from orchestrator.agent_review import human_corrections
+
+    entries = [{"type": "user",
+                "message": {"content": "no just mark the thread as done no need to respond"}}]
+    got = human_corrections(entries)
+    assert len(got) == 1
+    assert "strong_correction" in got[0]["kinds"]
+
+
+def test_human_corrections_reads_the_human_past_an_appended_reminder():
+    """The harness APPENDS <system-reminder> to genuine messages. The human's words must
+    still be mined — and the reminder's own shouty boilerplate must not add a `kinds` entry
+    the human never earned."""
+    from orchestrator.agent_review import human_corrections
+
+    entries = [{"type": "user", "message": {"content":
+        "stop doing that, it's wrong\n<system-reminder>You MUST ALWAYS use skills.</system-reminder>"}}]
+    got = human_corrections(entries)
+    assert len(got) == 1
+    assert "strong_correction" in got[0]["kinds"]
+    assert "emphasis" not in got[0]["kinds"], "scored the reminder's boilerplate as the human shouting"
+    assert "system-reminder" not in got[0]["quote"]
+
+
+def test_human_corrections_ignores_the_compaction_summary():
+    """Compaction injects a summary that RESTATES the human's earlier asks verbatim — so it
+    re-scores every correction in the session, in a turn nobody typed."""
+    from orchestrator.agent_review import human_corrections
+
+    entries = [{"type": "user", "message": {"content":
+        "This session is being continued from a previous conversation that ran out of context. "
+        "The summary below covers the earlier portion.\n\nSummary:\n1. Primary Request:\n"
+        "   - stop doing that, it's wrong, do it instead of the other way"}}]
+    assert human_corrections(entries) == []
