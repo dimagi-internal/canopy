@@ -3,16 +3,16 @@
   "description": "Self-improving AI orchestration \u2014 watches sessions, identifies gaps, builds improvements",
   "owner": {
     "name": "Jonathan Jackson",
-    "url": "https://github.com/jjackson"
+    "url": "https://github.com/dimagi-internal"
   },
   "metadata": {
-    "version": "0.2.357"
+    "version": "0.2.358"
   },
   "plugins": [
     {
       "name": "canopy",
       "source": "./plugins/canopy",
-      "version": "0.2.357",
+      "version": "0.2.358",
       "description": "Self-improving AI workflow skills \u2014 session analysis, PM supervision, autonomous development"
     }
   ]

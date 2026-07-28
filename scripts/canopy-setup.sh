@@ -25,7 +25,7 @@ CANOPY_STATE_DIR="$HOME/.claude/canopy"
 MAIN_CHECKOUT="$HOME/emdash-projects/canopy"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 TOKEN_FILE="$CANOPY_STATE_DIR/workbench-token"
-REPO_URL="https://github.com/jjackson/canopy.git"
+REPO_URL="https://github.com/dimagi-internal/canopy.git"
 
 FAILED=0
 NEXT_STEPS=()  # Lines appended here are printed as a remediation block at the end.

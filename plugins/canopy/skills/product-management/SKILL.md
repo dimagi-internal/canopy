@@ -383,9 +383,9 @@ Examples: "don't propose keyboard shortcuts for this project", "this repo uses p
 ### Is this learning universal?
 Examples: "Claude over-engineers when not told to check existing functionality", "always verify current state before proposing additions"
 
-→ Propose a PR to `jjackson/canopy` (NOT the current project repo):
+→ Propose a PR to `dimagi-internal/canopy` (NOT the current project repo):
 
-1. Clone `jjackson/canopy` to a temp directory (or use an existing clone)
+1. Clone `dimagi-internal/canopy` to a temp directory (or use an existing clone)
 2. Create branch: `learn/<short-description>`
 3. Edit: `plugins/canopy/skills/product-management/SKILL.md`
 3. Make the specific improvement (new lesson, tightened instruction, revised template)
