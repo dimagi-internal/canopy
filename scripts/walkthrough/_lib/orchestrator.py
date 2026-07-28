@@ -83,6 +83,7 @@ _CROSSFADE_JS = r"""
 from .config import RecorderConfig, apply_scene_pace
 from .recorder import execute_action
 from .results import ActionResult, RunReport
+from .urls import normalize_url as _normalize_url
 
 # Late-binding ``${var}`` resolution lives in the neutral narrative substrate
 # (single source of the placeholder syntax). Imported defensively — the
@@ -164,6 +165,16 @@ class Recorder:
         # is created lazily on the first snapshot.
         self.snapshot_dir: Path | None = Path(snapshot_dir) if snapshot_dir else None
         self.snapshot_empty_scenes = snapshot_empty_scenes
+        # Which render each snapshot came from.
+        #
+        # Iterations of a narrative reuse one run dir, so a re-render OVERWRITES
+        # the snapshots a judge may still be reading. That produced a verdict
+        # scored against a mixture of two iterations, whose findings described
+        # scenes that no longer existed — a whole judge cycle spent, and the
+        # only reason it was caught is that the prose did not match the frames.
+        # Stamping every page-text dump makes the mixture detectable instead of
+        # silent; see scripts/ddd/snapshot_consistency.py.
+        self.render_id = f"{int(time.time() * 1000):x}"
         # Records the indices snapshotted, in order. Useful in tests +
         # downstream tooling that wants to enumerate captured scenes without
         # rescanning the directory. Tracks the CANONICAL end-frame
@@ -371,6 +382,7 @@ class Recorder:
             "url": getattr(page, "url", "") or "",
             "title": scene.get("title", f"Scene {scene_index}"),
             "page_text": inner_text,
+            "render_id": self.render_id,
         }
         # Always write the text dump so downstream judges have at least one
         # input per scene — even when the screenshot path failed (WebGL/Mapbox
@@ -891,11 +903,6 @@ class SkipSameUrlRecorder(Recorder):
         if _normalize_url(current_url) == _normalize_url(url):
             return None
         return url
-
-
-def _normalize_url(u: str) -> str:
-    """Compare-friendly URL: strip trailing slash and fragment."""
-    return (u or "").split("#")[0].rstrip("/")
 
 
 # Re-export the action-driver entry point so callers can ``from
