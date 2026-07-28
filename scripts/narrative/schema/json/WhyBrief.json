@@ -24,6 +24,7 @@
       "type": "object"
     },
     "Gap": {
+      "description": "Something the narrative needs that does not exist yet.\n\n``resolved`` is how a gap gets CLOSED without being deleted. Once the work\nlands, the gap is still the record of why it happened \u2014 deleting it to make\na beat read ``built`` throws away the reasoning, and leaving it open makes\nthe beat read ``new`` forever no matter what shipped. Neither is acceptable\non a narrative that is refreshed across cycles.\n\nSet ``resolved`` to a short statement of what closed it (ideally naming the\ncommit, PR, or module). :func:`scripts.ddd.narrative._beat_status_map`\nignores resolved gaps when deciding whether a beat is still frontier.",
       "properties": {
         "id": {
           "title": "Id",
@@ -48,6 +49,11 @@
         },
         "proposed_action": {
           "title": "Proposed Action",
+          "type": "string"
+        },
+        "resolved": {
+          "default": "",
+          "title": "Resolved",
           "type": "string"
         }
       },

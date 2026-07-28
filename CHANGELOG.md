@@ -9,6 +9,25 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.356] - 2026-07-27
+
+### Added
+
+- `Gap.resolved` — how a why-brief gap gets CLOSED without being deleted, honoured by
+  `_beat_status_map`. A beat reads `new` while any gap references it by `claim_ref`, and
+  before this there was no way to say the work had landed. Deleting the gap flips the badge
+  but throws away the record of *why* the work happened; leaving it open pins the beat to
+  `new` forever; editing the posted narration does not survive, because the next
+  `narrative post` recomputes status from the why-brief. Found driving a four-narrative set
+  end to end: 30 scenes were built and all 30 would have reported `new` on the next cycle.
+- `narrative pull` now reports `renderable` and warns on stderr when no `<slug>.recipe.yaml`
+  sits beside the lock it just wrote. A narrative is a PAIR — canopy-web owns the story,
+  git owns the render recipe — and `pull` can only ever fetch the first half. Four
+  narratives authored on another machine pulled cleanly, reported success, and none could
+  be rendered; the recipe does not exist on canopy-web and cannot be recovered from it.
+  The fetch still succeeds and still exits 0; it just stops describing a half-narrative as
+  a whole one.
+
 ## [0.2.338] - 2026-07-23
 
 ### Added

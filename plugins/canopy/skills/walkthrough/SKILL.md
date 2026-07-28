@@ -177,6 +177,12 @@ Walkthrough specs live in `docs/walkthroughs/<name>.yaml`.
 > so every command below accepts either a single unified `.yaml` or a
 > `.recipe.yaml`. Never hand-edit a lock — `scripts.ddd.check_locks` fails the
 > build if you do. Plain (non-DDD) walkthroughs stay single-file.
+>
+> **`pull` fetches the story half only.** canopy-web has no copy of the recipe
+> and cannot produce one, so a narrative authored on another machine (or by
+> another agent) lands here with a lock, a why-brief, and nothing to render.
+> `pull` reports `"renderable": false` and warns on stderr when no
+> `<slug>.recipe.yaml` sits beside the lock — write one before trying to render.
 
 
 ```yaml

@@ -65,11 +65,25 @@ class SpineItem(BaseModel):
 
 
 class Gap(BaseModel):
+    """Something the narrative needs that does not exist yet.
+
+    ``resolved`` is how a gap gets CLOSED without being deleted. Once the work
+    lands, the gap is still the record of why it happened — deleting it to make
+    a beat read ``built`` throws away the reasoning, and leaving it open makes
+    the beat read ``new`` forever no matter what shipped. Neither is acceptable
+    on a narrative that is refreshed across cycles.
+
+    Set ``resolved`` to a short statement of what closed it (ideally naming the
+    commit, PR, or module). :func:`scripts.ddd.narrative._beat_status_map`
+    ignores resolved gaps when deciding whether a beat is still frontier.
+    """
+
     id: str
     type: Literal["RESEARCH", "CAPABILITY", "DECISION"]
     claim_ref: str
     detail: str
     proposed_action: str
+    resolved: str = ""
 
 
 class WhyBrief(BaseModel):
