@@ -2084,3 +2084,133 @@ def provision_cmd(repo, check, as_json):
         for e in result["errors"]:
             click.echo(f"  ! {e}")
         raise click.ClickException("provisioning had errors")
+
+
+@main.group("cursor")
+def cursor_group():
+    """Recurring-work cursors — what a cadence skill has already processed.
+
+    A skill that runs on a cadence has to know where it stopped, or every run re-reads
+    the whole history. `since` filters a candidate list down to the new items; `bump`
+    records what you actually processed. Items carry BOTH an id and a timestamp: the id
+    says which thing, the timestamp says which version of it, so an item that grew since
+    you read it comes back as new instead of being skipped forever.
+
+    State lives in the agent's own Drive `Process State` folder (agents run in throwaway
+    worktrees, so a local file would not survive). Use --local for a filesystem store.
+    """
+
+
+def _cursor_store(repo, local):
+    from pathlib import Path as _P
+
+    from orchestrator.work_cursor import DriveCursorStore, LocalCursorStore
+    if local:
+        return LocalCursorStore(_P(local))
+    return DriveCursorStore(_P(repo or "."))
+
+
+def _cursor_items(items_file):
+    """Read the candidate/processed list: a JSON array of {id, ts, ...}. '-' = stdin."""
+    import json as json_mod
+    import sys as _sys
+    raw = _sys.stdin.read() if items_file in (None, "-") else open(items_file).read()
+    try:
+        data = json_mod.loads(raw or "[]")
+    except json_mod.JSONDecodeError as e:
+        raise click.ClickException(f"items must be a JSON array of objects: {e}")
+    if not isinstance(data, list):
+        raise click.ClickException("items must be a JSON array")
+    return data
+
+
+_repo_opt = click.option("--repo", default=".", help="Agent repo (resolves the Drive identity)")
+_local_opt = click.option("--local", default=None,
+                          help="Use a filesystem store at this dir instead of Drive")
+
+
+@cursor_group.command("since")
+@click.argument("key")
+@click.option("--items", "items_file", default="-", help="JSON array of {id, ts, ...} ('-' = stdin)")
+@_repo_opt
+@_local_opt
+def cursor_since(key, items_file, repo, local):
+    """Filter a candidate list to only what this cursor has NOT already processed."""
+    import json as json_mod
+
+    from orchestrator.work_cursor import CursorError, filter_new
+    try:
+        cur = _cursor_store(repo, local).read(key)
+        click.echo(json_mod.dumps(filter_new(cur, _cursor_items(items_file)), indent=2))
+    except CursorError as e:
+        raise click.ClickException(str(e))
+
+
+@cursor_group.command("bump")
+@click.argument("key")
+@click.option("--items", "items_file", default="-", help="JSON array of {id, ts, ...} you processed")
+@_repo_opt
+@_local_opt
+def cursor_bump(key, items_file, repo, local):
+    """Record the items just processed and advance the cursor."""
+    import json as json_mod
+
+    from orchestrator.work_cursor import CursorError, advance
+    try:
+        store = _cursor_store(repo, local)
+        cur = advance(store.read(key), _cursor_items(items_file))
+        store.write(key, cur)
+    except CursorError as e:
+        raise click.ClickException(str(e))
+    click.echo(json_mod.dumps({"ok": True, "key": key, "cursor_ts": cur["cursor_ts"],
+                               "seen": len(cur["seen"]), "runs": cur["runs"]}, indent=2))
+
+
+@cursor_group.command("read")
+@click.argument("key")
+@_repo_opt
+@_local_opt
+def cursor_read(key, repo, local):
+    """Print a cursor as JSON ({} shape with runs=0 when it has never run)."""
+    import json as json_mod
+
+    from orchestrator.work_cursor import CursorError
+    try:
+        click.echo(json_mod.dumps(_cursor_store(repo, local).read(key), indent=2, sort_keys=True))
+    except CursorError as e:
+        raise click.ClickException(str(e))
+
+
+@cursor_group.command("list")
+@_repo_opt
+@_local_opt
+def cursor_list(repo, local):
+    """List the cursors this agent has stored."""
+    from orchestrator.work_cursor import CursorError
+    try:
+        keys = _cursor_store(repo, local).list_keys()
+    except CursorError as e:
+        raise click.ClickException(str(e))
+    if not keys:
+        click.echo("(no cursors yet)")
+        return
+    for k in keys:
+        click.echo(k)
+
+
+@cursor_group.command("reset")
+@click.argument("key")
+@click.option("--yes", is_flag=True, help="Confirm — a reset makes the next run re-process everything")
+@_repo_opt
+@_local_opt
+def cursor_reset(key, yes, repo, local):
+    """Clear a cursor. The next run re-processes its whole window, so this is gated."""
+    from orchestrator.work_cursor import CursorError, empty_cursor
+    if not yes:
+        raise click.ClickException(
+            f"reset would make the next run re-process everything for {key!r}; pass --yes")
+    try:
+        _cursor_store(repo, local).write(key, empty_cursor(key))
+    except CursorError as e:
+        raise click.ClickException(str(e))
+    click.echo(f"reset {key}")
