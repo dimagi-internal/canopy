@@ -92,7 +92,7 @@ Write an authoring doc to a temp file in this shape:
   consecutive shareouts chain exactly).
 - `project_slug` must be a **canopy-web project slug**. Check available slugs:
   `curl -s -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)" "https://labs.connect.dimagi.com/canopy/api/projects/slugs/" | python3 -c "import sys,json;[print(p['slug']) for p in json.load(sys.stdin)]"`
-  Map each corpus repo (e.g. `jjackson/canopy`) to the matching slug (e.g. `canopy`).
+  Map each corpus repo (e.g. `dimagi-internal/canopy`) to the matching slug (e.g. `canopy`).
   **Skip a project** (leave it out of the doc) if no slug matches — the server would
   skip it anyway.
 

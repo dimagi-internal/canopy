@@ -44,7 +44,7 @@ Present a numbered text menu:
 ```
 Select a project:
 
-  1  jjackson/canopy    (5 sessions)
+  1  dimagi-internal/canopy    (5 sessions)
   2  jjackson/connect-labs           (3 sessions)
   3  dimagi/commcare-connect         (2 sessions)
   4  jjackson/connect-search         (2 sessions)
@@ -67,7 +67,7 @@ Show sessions for the chosen project, sorted newest-first.
 **Format the list like this:**
 
 ```
-jjackson/canopy — recent sessions:
+dimagi-internal/canopy — recent sessions:
 
   1  [03-23 15:08]  (4 msgs)   I would like a way to quickly navigate between the worktrees in emdash and see which ones need…
   2  [03-23 14:25]  (88 msgs)  I think we are ready to test, is that your read? Can you walk me through the full pipeline…
