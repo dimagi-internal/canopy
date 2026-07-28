@@ -32,6 +32,16 @@ from typing import Any
 # that motivated this script.
 _STATE_CHANGING = {"click", "fill", "select", "press", "type"}
 
+# `goto` changes the page as completely as a click does, but its target is a URL
+# rather than a selector, so it is neither checkable nor state-changing in the
+# sense above — it needs its own handling. Skipping it entirely (the original
+# behaviour) walks every action AFTER a mid-scene goto against the pre-goto
+# page: a false failure when the recipe is right, and worse, a false PASS when a
+# selector happens to exist on both pages. Recipes switch persona mid-scene this
+# way (a dev-login goto between "what the buyer publishes" and "what the
+# supplier receives"), so this is a normal shape, not an exotic one.
+_NAVIGATING = {"goto"}
+
 # Actions carrying a target we should check. `hold` has none; `goto` is a URL.
 _TARGETED = {
     "click",
@@ -62,13 +72,20 @@ def _setup_command(setup) -> tuple[str | None, int]:
     return setup.get("command"), setup.get("timeout_seconds") or 600
 
 
-def _scene_targets(scene: dict) -> list[tuple[int, str, str]]:
-    """(action_index, kind, target) for every action in a scene that has one."""
+def _scene_steps(scene: dict) -> list[tuple[int, str, str]]:
+    """(action_index, kind, target) for every action preflight must walk.
+
+    Both the ones it CHECKS (a selector to resolve) and the ones it merely
+    REPLAYS to keep the page honest for the checks that follow — a mid-scene
+    ``goto``. Order is the recipe's own; the caller depends on it.
+    """
     out = []
     for index, action in enumerate(scene.get("actions") or []):
         kind = (action or {}).get("kind")
         target = (action or {}).get("target")
-        if kind in _TARGETED and target:
+        if not target:
+            continue
+        if kind in _TARGETED or kind in _NAVIGATING:
             out.append((index, kind, target))
     return out
 
@@ -115,6 +132,11 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
 
     from scripts.walkthrough._lib.targets import resolve_target
 
+    # The recorder's own comparison, imported rather than reimplemented — two
+    # normalisers would drift, and the whole value of preflight is that it
+    # navigates the way the recorder will.
+    from scripts.walkthrough._lib.urls import normalize_url
+
     findings: list[dict[str, Any]] = []
     checked = 0
 
@@ -125,15 +147,30 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
             if auth_url:
                 page.goto(f"{resolved_base}{auth_url}", wait_until="networkidle", timeout=30000)
 
-            last_url = None
             for scene_no, scene in enumerate(spec.scenes, start=1):
+                # Navigate on the browser's ACTUAL url, not on the previous
+                # scene's declared one. `SkipSameUrlRecorder` compares against
+                # `page.url`, so a scene reached through a redirect (a
+                # dev-login `?next=`, an SPA canonicalisation) counts as
+                # already-there and its predecessor's state survives. Comparing
+                # declared strings instead made preflight navigate where the
+                # recorder would not, wiping an open modal the next scene was
+                # written to act on — and reporting the recipe as broken.
                 scene_url = getattr(scene, "url", None)
-                if scene_url and scene_url != last_url:
-                    page.goto(f"{resolved_base}{scene_url}", wait_until="networkidle", timeout=30000)
-                    last_url = scene_url
+                if scene_url:
+                    want = f"{resolved_base}{scene_url}"
+                    if normalize_url(page.url) != normalize_url(want):
+                        page.goto(want, wait_until="networkidle", timeout=30000)
 
                 raw = scene.model_dump() if hasattr(scene, "model_dump") else dict(scene)
-                for action_index, kind, target in _scene_targets(raw):
+                for action_index, kind, target in _scene_steps(raw):
+                    if kind in _NAVIGATING:
+                        # Replay it, don't check it: the "target" is a URL. Every
+                        # later action in this scene has to be resolved against
+                        # the page this lands on, not the one before it.
+                        page.goto(f"{resolved_base}{target}", wait_until="networkidle", timeout=30000)
+                        continue
+
                     checked += 1
                     try:
                         hit = resolve_target(page, target, timeout_ms=timeout_ms)

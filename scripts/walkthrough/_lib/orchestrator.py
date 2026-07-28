@@ -83,6 +83,7 @@ _CROSSFADE_JS = r"""
 from .config import RecorderConfig, apply_scene_pace
 from .recorder import execute_action
 from .results import ActionResult, RunReport
+from .urls import normalize_url as _normalize_url
 
 # Late-binding ``${var}`` resolution lives in the neutral narrative substrate
 # (single source of the placeholder syntax). Imported defensively — the
@@ -891,11 +892,6 @@ class SkipSameUrlRecorder(Recorder):
         if _normalize_url(current_url) == _normalize_url(url):
             return None
         return url
-
-
-def _normalize_url(u: str) -> str:
-    """Compare-friendly URL: strip trailing slash and fragment."""
-    return (u or "").split("#")[0].rstrip("/")
 
 
 # Re-export the action-driver entry point so callers can ``from
