@@ -28,6 +28,14 @@ dispatch preflights the runner fleet and refuses, loudly, rather than enqueueing
 a hole — and, because `PATCH /api/harness/runners/{id}` exists precisely to make
 capabilities mutable in place, it can also just fix it (`--declare`).
 
+That refusal is only sound when there was a fleet to inspect. Runner listing is
+scoped to `paired_by == caller`, so a caller who paired no runner sees zero runners
+no matter how many are live — refusing on an empty list states a conclusion drawn
+from no evidence, and did so for every user except the pairer. So the preflight has
+three verdicts, not two: serving (go), blocked (a fleet was read and none of it can
+claim — refuse), and unknown (nothing visible — warn, enqueue, and point at
+`canopy project turns`, which is the only thing that can actually settle it).
+
 **3. There is no board.** `canopy agent dispatch` writes a task to the AGENT's board
 first, so the agent finds the item already there when it arrives. A repo has no agent
 board — canopy-web's `Project` model carries context/actions, not a task list — and
@@ -144,10 +152,16 @@ def classify_runners(runners: list[dict], project: str) -> dict:
     Everything else (stale/disconnected/retired) is reported as context but is not
     a route. `claim_next_turn` gates on the DERIVED `live_status`, which the API
     already serves in `status`, so a stale runner's declaration means nothing.
+
+    A fourth state sits outside the buckets: `unknown`, an empty visible fleet. It
+    is NOT the same as a fleet that was inspected and found wanting, and conflating
+    the two is what made this preflight wrong for most callers — see
+    `unknown_message`.
     """
     project = (project or "").strip()
+    runners = list(runners or [])
     serving, degraded, declarable, offline = [], [], [], []
-    for r in runners or []:
+    for r in runners:
         status = str(r.get("status") or "").strip().lower()
         declares = project in declared_projects(r)
         if status != ONLINE:
@@ -164,8 +178,12 @@ def classify_runners(runners: list[dict], project: str) -> dict:
         "degraded": degraded,
         "declarable": declarable,
         "offline": offline,
-        # Blocked means: no live runner will EVER claim this turn as things stand.
-        "blocked": not serving and not degraded,
+        # Nothing visible ≠ nothing suitable. An empty fleet is the absence of
+        # evidence, so no conclusion is available from it at all.
+        "unknown": not runners,
+        # Blocked means: we LOOKED at the live fleet and no member of it will ever
+        # claim this turn as things stand. Requires having seen a fleet to look at.
+        "blocked": bool(runners) and not serving and not degraded,
     }
 
 
@@ -197,12 +215,10 @@ def blocked_message(classified: dict) -> str:
         "",
         "Visible runners:",
     ]
+    # Non-empty by construction: `blocked` now requires a fleet to have been seen.
     seen = (classified["declarable"] + classified["degraded"]
             + classified["serving"] + classified["offline"])
-    if seen:
-        lines.extend(_runner_line(r) for r in seen)
-    else:
-        lines.append("  (none)")
+    lines.extend(_runner_line(r) for r in seen)
 
     if classified["declarable"]:
         names = [str(r.get("name") or "") for r in classified["declarable"]]
@@ -224,6 +240,29 @@ def blocked_message(classified: dict) -> str:
         "re-run with --no-preflight to enqueue anyway.",
     ]
     return "\n".join(lines)
+
+
+def unknown_message(project: str) -> str:
+    """Why an invisible fleet warns instead of refusing.
+
+    canopy-web scopes runner listing to the caller: `_runner_visibility_q`
+    (`apps/harness/api.py`) requires `paired_by` to be the caller or null. Whoever
+    paired the runner is the only identity that can list it, so every other user
+    sees an empty fleet — and an empty fleet said "no live runner can serve this,
+    refusing" even while a runner claimed the turn within seconds (observed
+    2026-07-28 from Hal's identity on connect-labs: the preflight refused, then
+    `--no-preflight` enqueued a turn that went `running` almost immediately).
+
+    Blocking on that asserts a fact not in evidence. The honest report is that the
+    preflight had nothing to inspect, so the dispatch proceeds and the caller is
+    pointed at the one thing that CAN settle it — the turn's own status.
+    """
+    return (
+        f"cannot see any runners, so whether one serves '{project}' is UNKNOWN — "
+        "runner listing shows only the runners YOU paired, and you likely paired "
+        "none. Enqueueing anyway: a runner paired by someone else may claim this "
+        "within seconds. If nothing does, the turn sits QUEUED (check below)."
+    )
 
 
 def with_project_declared(runner: dict, project: str) -> dict:

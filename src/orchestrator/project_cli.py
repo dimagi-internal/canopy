@@ -106,6 +106,7 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
         pick_declare_target,
         project_turns_path,
         resolve_workspace_choice,
+        unknown_message,
         with_project_declared,
     )
 
@@ -123,7 +124,10 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
         declared_on = None
         if not no_preflight:
             classified = classify_runners(_fetch_runners(), project_name)
-            if classified["blocked"] and declare:
+            # `--declare` runs on `unknown` too, and fails there: it PATCHes a
+            # specific runner, so it needs one the caller can act on. Warning and
+            # enqueueing instead would silently drop what the caller asked for.
+            if declare and (classified["blocked"] or classified["unknown"]):
                 target = pick_declare_target(classified, runner_name)
                 canopy_web.call(
                     "PATCH", f"{RUNNERS_PATH}{target['id']}",
@@ -133,6 +137,8 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
                 classified = classify_runners(_fetch_runners(), project_name)
             if classified["blocked"]:
                 raise click.ClickException(blocked_message(classified))
+            if classified["unknown"]:
+                warnings.append(unknown_message(project_name))
             if not classified["serving"] and classified["degraded"]:
                 names = ", ".join(str(r.get("name") or "") for r in classified["degraded"])
                 notes = "; ".join(
@@ -197,7 +203,8 @@ def project_runners_cmd(project_name, as_json):
                    for r in runners])
             return
         if not runners:
-            click.echo("no visible runners")
+            click.echo("no visible runners — this lists only the runners YOU paired, "
+                       "so others may be live and serving projects.")
             return
         for r in runners:
             flag = "" if r.get("ready", True) else "  (not ready)"
@@ -217,7 +224,14 @@ def project_runners_cmd(project_name, as_json):
                           ("offline", "not live")):
         names = ", ".join(str(r.get("name") or "") for r in c[bucket])
         click.echo(f"  {label:<28} {names or '—'}")
-    if c["blocked"]:
+    if c["unknown"]:
+        # Must match what the preflight concludes, or one command calls the dispatch
+        # impossible while the other one runs it.
+        click.echo("\nUNKNOWN: you can see no runners at all — listing shows only the "
+                   "runners YOU paired, so nothing here says whether one serves this "
+                   "project.\nA dispatch will enqueue with a warning; verify with: "
+                   f"canopy project turns {project_name}")
+    elif c["blocked"]:
         click.echo("\nBLOCKED: a dispatch would queue forever. "
                    f"Fix with: canopy project dispatch {project_name} --declare …")
 
