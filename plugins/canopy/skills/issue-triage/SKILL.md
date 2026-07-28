@@ -1,6 +1,6 @@
 ---
 name: issue-triage
-description: Use when asked to triage, review, or clean up a GitHub repo's open issues against the current code — scan all open issues, evaluate each against the latest code, and recommend implement / investigate / blocked / close, then act on the recommendations behind gates (close obsolete issues with a reasoned comment, comment + label the ambiguous ones, route the externally-blocked ones to a validation queue, open PRs for the ones worth building). Declares a scope contract up front so a triage stays a triage. Defaults to the current repo's origin; pass an explicit owner/repo to point it elsewhere. Built to close the loop on issues agents file as they run.
+description: Use when asked to triage, review, or clean up a GitHub repo's open issues AND open pull requests against the current code — scan every open issue, evaluate it against the latest code, and recommend implement / investigate / blocked / close; scan every open PR and recommend merge / unblock / needs-work / close. Then act behind gates (close obsolete issues with a reasoned comment, comment + label the ambiguous ones, route externally-blocked ones to a validation queue, unblock and merge finished PRs stranded on mechanical CI gates, open PRs for the ones worth building). Declares a scope contract up front so a triage stays a triage. Defaults to the current repo's origin; pass an explicit owner/repo to point it elsewhere. Built to close the loop on the issues and PRs agents leave behind as they run.
 ---
 
 ## Preamble (run first)
@@ -13,12 +13,14 @@ case "$_CANOPY_UPD" in UPGRADE_AVAILABLE*) echo "$_CANOPY_UPD" ;; esac
 
 If output shows `UPGRADE_AVAILABLE <old> <new>`: tell the user "canopy **v{new}** is available (you're on v{old}). Run `/canopy:update` to upgrade." Then continue — do not block on the upgrade.
 
-# Issue Triage — evaluate a repo's open issues against the current code
+# Issue Triage — evaluate a repo's open issues **and open PRs** against the current code
 
 ## Purpose
 
-Point canopy at a GitHub repo, pull **all open issues**, evaluate each one
-against the **latest code**, and recommend per-issue:
+Point canopy at a GitHub repo, pull **all open issues and all open PRs**,
+evaluate each against the **latest code**, and recommend a disposition.
+
+**Per issue:**
 
 - **implement** — still valid, actionable, not yet done, **and fixable from here**
 - **blocked** — the fix is known but cannot be validated from this session; it
@@ -27,13 +29,45 @@ against the **latest code**, and recommend per-issue:
 - **investigate** — can't decide without a repro / more info / scope clarification
 - **close** — already fixed/implemented in code, obsolete, or a duplicate
 
-Then, behind per-group gates, act on the recommendations: close the obsolete
-ones with a reasoned comment, comment + label the ambiguous ones, route the
-blocked ones to a validation queue, and ship the ones worth building.
+**Per open PR** (see § Phase 3b):
+
+- **merge** — finished, green, still wanted → land it
+- **unblock** — finished and correct, failing only a *mechanical* gate (a
+  missing VERSION bump, a docs-sync acknowledgement, a stale base). A small
+  deterministic fix makes it mergeable. **This is the highest-value
+  disposition in the whole skill.**
+- **needs-work** — a real test/review failure, or the change is wrong
+- **close** — superseded, obsolete, or its issue is gone
+- **blocked** — correct but unmergeable until a live surface validates it
+
+Then, behind per-group gates, act: close the obsolete issues with a reasoned
+comment, comment + label the ambiguous ones, route the blocked ones to a
+validation queue, **unblock and merge the finished PRs**, and ship the issues
+worth building.
 
 This is the **inverse** of `canopy:pm-scout` / the `product-management` skill,
-which explores the codebase for *new* work. Issue-triage triages *existing*
-issues. Built to close the loop on issues agents file as they run.
+which explores the codebase for *new* work. Issue-triage triages what already
+exists. Built to close the loop on the issues **and PRs** agents leave behind
+as they run.
+
+### Why open PRs are in scope
+
+Issue triage without PR triage measures the wrong end of the pipeline. An open
+PR is work that is *already paid for* — written, tested, reviewed by its
+author — and it is the cheapest thing in the repo to convert into shipped
+value. It is also the most likely thing to rot: branches go stale, CI
+requirements change under them, and a repo where nobody reviews (canopy's
+maintainer explicitly does not) has no other mechanism that notices.
+
+The measured case this exists for: a canopy triage found two open PRs, both
+carrying verified work with passing tests, both stranded — one on a missing
+VERSION bump, one on a `docs-sync` gate wanting a one-line acknowledgement in
+the PR body. Neither needed judgment. Both were invisible to a triage that only
+read issues, and would have aged indefinitely because the repo has no reviewer
+to notice them. Two minutes of mechanical work shipped both.
+
+So: **a triage that reports on issues and ignores a mergeable PR has left the
+most valuable item in the repo on the floor.**
 
 ## Critical rules
 
@@ -52,8 +86,19 @@ issues. Built to close the loop on issues agents file as they run.
   Mislabelling blocked work as `implement` is what makes a backlog look like
   churn: the item is filed under a verb nobody can execute, so it survives
   triage after triage.
-- **No silent truncation.** If the repo has more open issues than the cap, say
-  so explicitly in the report ("triaged 30 of 47 open issues").
+- **An open PR outranks its issue.** If an open PR already implements an open
+  issue, that issue is **never** dispositioned `implement` — the work exists.
+  Disposition the *PR*, and mark the issue as awaiting it. Re-implementing
+  something that is sitting in an open branch is the most expensive mistake
+  this skill can make.
+- **A mechanical CI gate is not a review outcome.** `check-version`,
+  `docs-sync`, a lint nit, a stale base — these are unblockable by a
+  deterministic edit and must be dispositioned `unblock`, not `needs-work`.
+  Reserve `needs-work` for a failure that requires judgment about the change
+  itself.
+- **No silent truncation.** If the repo has more open issues or PRs than the
+  cap, say so explicitly in the report ("triaged 30 of 47 open issues; 12 of 12
+  open PRs").
 - **Report outcomes, not machinery.** The chat report says what changed, what's
   left, and whose it is. Phase names, the carry-forward split, sidecar mechanics
   and other self-accounting go in the run log. See § Reporting discipline — a
@@ -115,30 +160,43 @@ the failure mode in § Scope discipline.
 
 | Option | What it means |
 |--------|---------------|
-| **Triage only** | Report + run log + posted dispositions. Zero PRs. Cheapest; best when a recent triage already exists. |
+| **Triage only** | Report + run log + posted dispositions. Opens no new PRs. Cheapest; best when a recent triage already exists. |
 | **Triage + quick wins** (recommended default) | Triage, then ship up to **N = 5** `implement` items whose effort is **S** and whose validation is fully local. Everything else is handed back. |
 | **Triage + one cluster** | Triage, then take **one** named cluster (see Phase 4) all the way, including the live validation it needs. Best when a blocking cluster is the real target. |
 | **Full sweep** | No cap. Explicitly acknowledge in the report that this run may be long and hard to hold. |
+
+**PR dispositions are outside the cap, in every contract including `Triage
+only`.** The cap exists to stop a triage from becoming an unbounded *build*
+session; unblocking and merging a PR that already exists is not building. It is
+bounded by the number of open PRs — which the repo, not the run, decides — and
+it is the cheapest value in the skill. Merging is still gated in Phase 6 like
+everything else, and an `unblock` that turns out to need real code changes
+stops and re-dispositions to `needs-work` rather than absorbing the work.
 
 Announce the chosen contract in one line before Phase 1, and repeat it in the
 run log header. If the user picked a capped option, the cap is a hard stop:
 when it's reached, go straight to the close-out report.
 
-## Phase 1 — Gather open issues
+## Phase 1 — Gather open issues **and open PRs**
 
 ```bash
 gh issue list --repo "$SLUG" --state open --limit 30 \
   --json number,title,body,labels,createdAt,updatedAt,comments
+
+gh pr list --repo "$SLUG" --state open --limit 30 \
+  --json number,title,body,isDraft,mergeable,mergeStateStatus,reviewDecision,\
+headRefName,baseRefName,author,createdAt,updatedAt,labels
 ```
 
-- Default cap is **30**. If the command arg carried a `--limit N`, use it.
+- Default cap is **30** each. If the command arg carried a `--limit N`, use it.
 - Get the total open count to detect truncation:
   ```bash
   gh api "repos/$SLUG" -q .open_issues_count   # includes open PRs; treat as an upper bound
   ```
   If the fetched count is less than the number of open issues, note the
   truncation in the report.
-- If there are **zero** open issues, report that and stop — nothing to triage.
+- **Zero of both** → report that and stop. **Zero issues but open PRs exist** →
+  do NOT stop; PR triage is the run. The reverse is also fine.
 
 ## Phase 2 — Resolve the code, and skip issues whose evidence hasn't moved
 
@@ -195,6 +253,12 @@ still good and the money goes to what changed.
 
 If no prior sidecar exists, everything is stale; triage all of it.
 
+**Carry-forward applies to issues only. Open PRs are always re-evaluated.** A
+PR's disposition turns on CI state, mergeability, and base drift — all of which
+move without a single tracked file changing. A carried-forward PR verdict is
+therefore stale by construction. PR triage is cheap enough (Phase 3b) that this
+costs nothing.
+
 ## Phase 3 — Evaluate each stale issue (fan-out, read-only)
 
 Dispatch **one subagent per stale issue** (use the Agent tool; for many issues,
@@ -231,6 +295,58 @@ batch so a handful run concurrently). Give each subagent:
 
 Collect all verdicts, then merge in the carried-forward ones from Phase 2b.
 
+## Phase 3b — Evaluate each open PR (read-only)
+
+Cheap and mostly deterministic — **do this inline, not as a fan-out.** A PR's
+disposition is decided by its CI state and its diff, both of which you can read
+directly. Spending a subagent per PR buys nothing.
+
+For each open PR, gather:
+
+```bash
+gh pr checks <n> --repo "$SLUG"                      # per-check pass/fail
+gh pr view <n> --repo "$SLUG" --json files,body,mergeStateStatus,isDraft
+gh run view <failed-run-id> --repo "$SLUG" --log-failed | tail -30   # WHY it failed
+```
+
+Reading the failing log is not optional. `mergeStateStatus: BLOCKED` says
+nothing about whether the blocker is a missing version bump or a broken test,
+and that distinction *is* the disposition.
+
+Then assign one:
+
+| Disposition | Test |
+|---|---|
+| **merge** | Every required check green (or red only on a check the repo's conventions treat as advisory and you can name), not a draft, diff still wanted. |
+| **unblock** | Checks red **only** on a mechanical gate — and you can state the exact deterministic fix in one line. See the catalog below. |
+| **needs-work** | A test genuinely fails, the diff is wrong, or deciding requires judgment about the change. Say what specifically. |
+| **close** | Superseded by a merged PR, obsolete, or its motivating issue is closed as not-planned. Cite the superseding commit/PR. |
+| **blocked** | The diff is right but merging it needs a live surface first (an unvalidated selector/recipe/migration). Same rules as the issue-side `blocked` — name the one observation. |
+
+**The mechanical-gate catalog** (canopy and the agent fleet; extend per repo):
+
+| Symptom in the log | The one-line fix |
+|---|---|
+| `N plugin file(s) changed but VERSION did not advance` | run the repo's documented version-bump command on the branch (canopy family: `canopy version bump`, per that repo's CLAUDE.md), commit, push — never hand-edit the version files |
+| `docs-sync gate failed: <src> missing <SKILL.md>` | Either teach the SKILL.md the new surface, **or** — only when the change is genuinely engine-internal — add `Docs-not-needed: <reason>` to the PR body |
+| Branch is behind base / merge conflict in a lockfile-ish file | rebase or merge base in, push |
+| A lint/format check only | run the formatter, commit |
+
+**Two rules keep `unblock` honest:**
+
+1. **Verify the escape hatch is true before using it.** `Docs-not-needed` is a
+   claim that the diff adds no author-facing surface — read the diff and
+   confirm it. Adding the line to silence a gate that is correctly firing
+   converts a real docs gap into a merged one, which is worse than the red
+   check.
+2. **If the "mechanical" fix turns out to need real changes, stop.**
+   Re-disposition to `needs-work` and report it. `unblock` is a promise that
+   the work is done; it must not become a side door for finishing someone
+   else's PR inside a triage.
+
+Also record, per PR, the **issues it references** (`Closes #n` / `Refs #n` in
+the body, or an obvious subject match). Phase 3.5 reconciles these.
+
 ## Phase 3.5 — Cluster and dedupe (ONE pass over all verdicts, before any action)
 
 **This phase is mandatory and it is not optional per-issue work.** The fan-out
@@ -256,7 +372,17 @@ Do one pass (inline, or one subagent given every verdict) and produce:
    signal). Name the cluster, list its members, and state the **one**
    implementation that serves all of them. Clusters are the unit the
    `Triage + one cluster` scope contract operates on.
-3. **A blocking-order ranking.** Sort clusters and singletons by `blocking`
+3. **PR ↔ issue reconciliation.** For every open PR, resolve which open issues
+   it addresses. Then:
+   - An issue with an open PR against it is **never** `implement`. Rewrite its
+     disposition to point at the PR ("awaiting #<pr>") and let the PR's
+     disposition carry the work.
+   - A `merge`/`unblock` PR whose body says `Closes #n` means issue `n` closes
+     itself on merge — do **not** also queue it in the close group, or Phase 6
+     posts a redundant close comment on an issue GitHub already closed.
+   - A PR referencing an issue you dispositioned `close` (already fixed) is a
+     contradiction: one of the two verdicts is wrong. Re-check before acting.
+4. **A blocking-order ranking.** Sort clusters and singletons by `blocking`
    (`blocks-e2e` > `harness` > `polish`), not by effort. Effort decides *how* to
    sequence within a tier; it must not decide which tier gets attention. A loop
    that always takes the cheapest item grazes the easy tier forever while the
@@ -277,10 +403,25 @@ appendix:
 12  close         polish      high  —       —                  "Crash on empty config"      config.py:88 already guards
 ```
 
-Above the table print only:
+Then, if any PRs are open, a **second table — print it first, above the issue
+table.** Open PRs are the nearest-to-shipped work in the repo and burying them
+under a backlog inverts the priority:
+
+```
+PR   Disp        Checks              Blocker                          Title
+---  ----------  ------------------  -------------------------------  -----------------------------
+417  unblock     pytest✓ docs-sync✗  needs `Docs-not-needed:` line    "ddd(preflight): walk the ..."
+420  unblock     pytest✓ version✗    needs `canopy version bump`      "ddd: make a run dir writt..."
+408  needs-work  pytest✗             test_foo fails on the diff       "..."
+```
+
+Above both tables print only:
 - one line per cluster: name, members, the single fix that serves them
 - the **tier counts** — how many `blocks-e2e` vs `harness` vs `polish`. This
   one line is the closest thing the run produces to "is the backlog healthy?"
+- **the mergeable count** — "2 open PRs, both one mechanical fix from
+  mergeable". If every open PR is `merge`/`unblock`, that is the headline of
+  the run, not a footnote.
 - the truncation line, **if** the cap actually truncated something
 
 Everything else about how the run was performed — the scope contract, the
@@ -312,6 +453,15 @@ clusters:
     members: [893, 863, 796]
     one_fix: "suite action-bar title selector replaces viewJobCard as the Learn/Deliver signal"
 tier_counts: { blocks-e2e: 10, harness: 5, polish: 1 }
+prs:                              # open PRs at run time; never carried forward
+  - number: 417
+    disposition: unblock          # merge | unblock | needs-work | close | blocked
+    checks: { pytest: pass, check-version: pass, docs-sync: fail }
+    blocker: "docs-sync wants a `Docs-not-needed:` line; orchestrator diff is a pure helper move"
+    mechanical: true              # false => needed judgment, i.e. needs-work
+    refs_issues: []
+    action: null                  # filled in by Phase 6
+    outcome: null                 # filled in by Phase 6
 verdicts:
   - number: 893
     disposition: blocked          # implement | blocked | investigate | close
@@ -354,6 +504,11 @@ suggestion, not something this run offers to do.
 - **investigate → the concrete next step.** Name the command / repro / dump;
   don't restate "needs more info."
 - **close → already handled in Phase 6.**
+- **PR `unblock` → state the exact fix, then do it.** Not "fix CI" — the
+  literal command or the literal line to add. Outside the cap (Phase 0.5).
+- **PR `merge` → merge it,** subject to the unvalidated-change exception below.
+- **PR `needs-work` → comment what fails and hand back.** Do not fix someone
+  else's PR inside a triage.
 
 Then present **one consolidated gate**: "Do all of the above?" (Approve all /
 Let me pick / Skip). *Do not* tell the user what they'll probably say — offer
@@ -416,6 +571,46 @@ gh issue edit <n> --repo "$SLUG" --add-label "needs-info"   # skip if label abse
 ```
 Leave the issue open.
 
+**PR group** (gate this one FIRST — it is the cheapest shipped value)
+
+For each `unblock`, apply the named mechanical fix on that PR's branch, push,
+wait for checks, then merge. For each `merge`, merge directly.
+
+```bash
+# Work on the PR's branch, not main.
+git fetch origin <headRefName> && git switch <headRefName>   # or a fresh worktree
+
+# --- the mechanical fix, e.g. ---
+#   version bump: use the TARGET repo's own documented command (see its
+#   CLAUDE.md); never hand-edit VERSION / plugin.json / marketplace.json.
+#   docs-sync acknowledgement:
+gh pr edit <n> --repo "$SLUG" --body "$(gh pr view <n> --repo "$SLUG" --json body -q .body)
+
+Docs-not-needed: <the honest one-sentence reason>"
+
+git push
+gh pr checks <n> --repo "$SLUG" --watch    # required checks must go green FIRST
+gh pr merge <n> --repo "$SLUG" --merge
+```
+
+Rules that are load-bearing here:
+
+- **Never `--admin` past a red required check.** A red `check-version` means
+  the bump is wrong; fix the bump. Forcing it re-creates the exact silent
+  failure the gate exists to prevent.
+- **Merge one at a time, re-checking between.** Two PRs touching the same file
+  can both be green and still conflict; the second one's checks must run
+  against the first one's merge.
+- **A `Docs-not-needed:` line must be true.** You read the diff in Phase 3b —
+  quote what makes it engine-internal. If you can't, update the doc instead.
+- **After merging anything under `plugins/canopy/` in a canopy-family repo,
+  run the repo's plugin-update step** (`/canopy:update`) — a merged bump that
+  nobody distributes is a bump that didn't ship.
+- **`needs-work` PRs get a comment, not a fix:**
+  ```bash
+  gh pr comment <n> --repo "$SLUG" --body "Triage: not mergeable as-is — <what fails, specifically>."
+  ```
+
 **implement group** (only up to the Phase 0.5 cap)
 For each approved issue, follow the `product-management` skill's Phase 4/5
 implement+ship conventions:
@@ -443,9 +638,11 @@ landed.
 The final message is the only part of this run most people read. It is a status
 update, not a trace. Write it as four short parts, in this order:
 
-1. **State change, one line.** "N open issues → M." Nothing else on that line.
-2. **One line per issue**, by number: what it asked for and what you did. Link
-   PRs and closed-issue comments.
+1. **State change, one line.** "N open issues → M, P open PRs → Q." Nothing
+   else on that line.
+2. **One line per PR, then one line per issue**, by number: what it asked for
+   and what you did. PRs first — merged work is the result people care about.
+   Link the merged PRs and the closed-issue comments.
 3. **What's left, and whose it is.** Anything you deliberately didn't do, one
    line each, with who has to act (a setting only they can flip, a design call,
    a follow-up PR). If nothing is left, say "nothing left."
@@ -516,10 +713,13 @@ Two rules make the disposition worth having:
 ## Cost discipline
 
 - Phase 0.5: one question. Saves the most.
-- Phase 1: one `gh issue list`.
+- Phase 1: one `gh issue list` + one `gh pr list`.
 - Phase 2b: cheap, and the single biggest saver on a repeat run — carrying 13
   of 16 issues forward turns a 16-subagent run into a 3-subagent run.
 - Phase 3: one subagent per **stale** issue — the bulk of the cost. Respect the
   cap; for very large backlogs, triage the cap and say how many remain.
+- Phase 3b: inline, ~3 `gh` calls per open PR. **The best value in the skill** —
+  it converts already-paid-for work into shipped work for the price of reading
+  a CI log. Never fan this out to subagents.
 - Phase 3.5: one pass. Cheaper than the per-issue rediscovery it prevents.
-- Phases 4/5/6: cheap, bounded by the scope contract.
+- Phases 4/5/6: cheap, bounded by the scope contract (PR actions excepted).
