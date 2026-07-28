@@ -159,6 +159,27 @@ def test_a_runner_that_does_not_declare_the_project_cannot_serve_it():
     assert [r["name"] for r in c["declarable"]] == ["jj-mbp"]
 
 
+def test_an_invisible_fleet_is_UNKNOWN_not_blocked():
+    """An empty list is no information, not bad information.
+
+    canopy-web scopes runner listing to `paired_by == caller`, so every caller who
+    did not pair a runner sees zero of them — including when a runner declares the
+    repo and claims the turn within seconds. Reading that as "no runner can serve
+    this" asserts a fact not in evidence and false-negatives for everyone but the
+    pairer."""
+    c = classify_runners([], "connect-labs")
+    assert c["unknown"] is True
+    assert c["blocked"] is False
+
+
+def test_a_visible_fleet_that_cannot_serve_is_still_BLOCKED():
+    """The other half of the split: a fleet that WAS inspected and found wanting is
+    real information, so the hard refusal stays."""
+    c = classify_runners([_runner("jj-mbp", projects=["canopy-web"])], "connect-labs")
+    assert c["unknown"] is False
+    assert c["blocked"] is True
+
+
 def test_a_declaring_online_runner_unblocks_the_dispatch():
     c = classify_runners([_runner("jj-mbp", projects=["connect-labs"])], "connect-labs")
     assert c["blocked"] is False
@@ -307,6 +328,51 @@ def test_cli_declare_flag_fixes_the_capability_then_dispatches(net):
     assert [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
 
 
+def test_cli_dispatch_WARNS_AND_ENQUEUES_when_it_can_see_no_runners_at_all(net):
+    """The false-negative this split exists for. Runner listing is scoped to the
+    runners YOU paired, so Hal (who paired none) saw an empty fleet, was told the
+    dispatch "would queue forever", and then watched `--no-preflight` enqueue a turn
+    that was claimed within seconds. Nothing visible means nothing concluded."""
+    calls = []
+    net(calls, [])
+
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--workspace", "dimagi", "--prompt", "x",
+                                  "--json-output"])
+    assert r.exit_code == 0, r.output
+    assert [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]], \
+        "an unknown fleet must not refuse the dispatch"
+    warnings = json.loads(r.output)["warnings"]
+    assert any("cannot see any runners" in w for w in warnings), warnings
+
+
+def test_cli_dispatch_still_REFUSES_when_a_visible_fleet_cannot_serve(net):
+    """The two cases must not collapse back into one: a fleet that was inspected and
+    found wanting still blocks, with the --declare remedy."""
+    calls = []
+    net(calls, [_runner("jj-mbp", projects=["canopy-web"])])
+
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--workspace", "dimagi", "--prompt", "x"])
+    assert r.exit_code != 0
+    assert not [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+    assert "--declare" in r.output
+
+
+def test_cli_declare_fails_cleanly_when_there_is_no_visible_runner_to_declare_on(net):
+    """`--declare` PATCHes a specific runner, so it needs one the caller can act on.
+    Warning-and-enqueueing would silently ignore what the caller explicitly asked for."""
+    calls = []
+    net(calls, [])
+
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs", "--declare",
+                                  "--workspace", "dimagi", "--prompt", "x"])
+    assert r.exit_code != 0
+    assert not [c for c in calls if c[0] == "PATCH"]
+    assert not [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+    assert "no online runner" in r.output.lower()
+
+
 def test_cli_no_preflight_enqueues_without_checking(net):
     """The honest escape hatch: a runner paired by someone else is invisible to this
     caller, so its declaration cannot be checked from here."""
@@ -346,6 +412,17 @@ def test_cli_runners_reports_the_blocked_case(net):
     r = CliRunner().invoke(main, ["project", "runners", "connect-labs"])
     assert r.exit_code == 0, r.output
     assert "BLOCKED" in r.output
+
+
+def test_cli_runners_says_UNKNOWN_not_blocked_when_the_fleet_is_invisible(net):
+    """The diagnostic command has to agree with the preflight, or the user is told
+    the dispatch is impossible by one command and watched it work by the other."""
+    calls = []
+    net(calls, [])
+    r = CliRunner().invoke(main, ["project", "runners", "connect-labs"])
+    assert r.exit_code == 0, r.output
+    assert "UNKNOWN" in r.output
+    assert "BLOCKED" not in r.output
 
 
 def test_cli_turns_filters_to_the_named_project(monkeypatch):
