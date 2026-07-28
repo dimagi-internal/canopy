@@ -100,6 +100,14 @@ guarantee that independence, the judge will (per visual-judge's
 Independence requirement) mark the verdict `self_assessed: true` and
 apply −1 to every dimension — so make the dispatch genuinely fresh.
 
+**Before anything else, confirm the run dir is one render's work.** Run
+`python -m scripts.ddd.snapshot_consistency <run_dir>`. It fails when the
+snapshots came from more than one render — which happens when an iteration
+re-renders into the run dir while a judge is still reading it. A verdict scored
+against a mixed dir describes frames that no longer exist and is
+indistinguishable from a real one; it has already cost a full judge cycle. Do
+not judge a run dir that fails this check; ask for a clean re-render first.
+
 **Build the per-scene action trace once, before the loop**, so the concept
 judge can apply action-fidelity deductions (a scene that only HOVERED where its
 narration claims a fill/submit, or whose `must_succeed` action timed out, must
