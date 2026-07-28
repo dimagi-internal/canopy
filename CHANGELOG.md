@@ -9,6 +9,24 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.357] - 2026-07-27
+
+### Fixed
+
+- `ddd-spec-qa` — two false positives that told correct specs to change, both found
+  authoring four render recipes against a real running app.
+  - **A concrete verify can be one token.** The check required ≥3 words, so a
+    fully-qualified pytest node id — which names an exact test a reader can go and run —
+    scored 2 and failed, while the vacuous "it should work fine" scored 4 and passed. A
+    verify carrying a pytest node id, a route, or an HTTP verb is now accepted on that
+    evidence; the word count stays as the fallback for prose.
+  - **A negated verb is an absence, not a promise.** The effecting-action check matched
+    verb stems without polarity, so "there is no field anybody types into" and "machine
+    to machine, no typing" were read as promising a typing action — and three scenes
+    whose entire point is that the act does NOT happen were told to add a click they must
+    not make. A verb preceded by a negation within the same clause is now skipped; a
+    negation in an earlier sentence does not excuse a later real act.
+
 ## [0.2.356] - 2026-07-27
 
 ### Added
