@@ -1,0 +1,177 @@
+"""Resolve every selector in a recipe against the live app, before recording.
+
+A render is expensive — ninety seconds of browser, a reseed, an mp4 encode — and
+a scene whose target does not resolve still produces a screenshot. The frame
+looks plausible, the judge scores it, and the finding that comes back is about
+the wrong thing entirely. The first real render of a four-scene narrative went
+15/22 actions ok; five of the seven failures were knowable without recording
+anything: a class that did not exist, two ``text:`` targets that resolved
+ambiguously once the same words appeared in a table row, and a tab switch the
+recipe never undid.
+
+This walks the recipe's scenes in order, in one browser, applying navigations
+and the state-changing actions that later scenes depend on, and reports every
+target that will not resolve. It is deliberately NOT a dry-run of the render:
+it does not screenshot, does not record, and does not encode. It answers one
+question — will these selectors find their elements — in a few seconds.
+
+Exit codes: 0 clean, 1 unresolved targets found, 2 usage/setup error.
+
+    python -m scripts.ddd.recipe_preflight <recipe.yaml> [--json]
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+# Actions that change what is on screen and therefore what LATER scenes can
+# resolve against. A preflight that skipped these would report false failures
+# for every scene after the first click — which is exactly the tab-switch bug
+# that motivated this script.
+_STATE_CHANGING = {"click", "fill", "select", "press", "type"}
+
+# Actions carrying a target we should check. `hold` has none; `goto` is a URL.
+_TARGETED = {
+    "click",
+    "fill",
+    "select",
+    "hover",
+    "scroll_to",
+    "wait_for",
+    "press",
+    "type",
+    "draw",
+    "capture",
+}
+
+
+def _scene_targets(scene: dict) -> list[tuple[int, str, str]]:
+    """(action_index, kind, target) for every action in a scene that has one."""
+    out = []
+    for index, action in enumerate(scene.get("actions") or []):
+        kind = (action or {}).get("kind")
+        target = (action or {}).get("target")
+        if kind in _TARGETED and target:
+            out.append((index, kind, target))
+    return out
+
+
+def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_ms: int = 4000) -> dict:
+    """Walk the recipe against a live browser and report unresolved targets."""
+    from scripts.ddd.spec_io import load_spec
+
+    spec = load_spec(str(recipe_path))
+    resolved_base = base_url or getattr(spec, "base_url", None)
+    if not resolved_base:
+        raise SystemExit("preflight: no base_url on the spec and none passed")
+
+    auth = getattr(spec, "auth", None) or {}
+    auth_url = auth.get("url") if isinstance(auth, dict) and auth.get("type") == "url" else None
+
+    from playwright.sync_api import sync_playwright
+
+    from scripts.walkthrough._lib.targets import resolve_target
+
+    findings: list[dict[str, Any]] = []
+    checked = 0
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        try:
+            if auth_url:
+                page.goto(f"{resolved_base}{auth_url}", wait_until="networkidle", timeout=30000)
+
+            last_url = None
+            for scene_no, scene in enumerate(spec.scenes, start=1):
+                scene_url = getattr(scene, "url", None)
+                if scene_url and scene_url != last_url:
+                    page.goto(f"{resolved_base}{scene_url}", wait_until="networkidle", timeout=30000)
+                    last_url = scene_url
+
+                raw = scene.model_dump() if hasattr(scene, "model_dump") else dict(scene)
+                for action_index, kind, target in _scene_targets(raw):
+                    checked += 1
+                    try:
+                        hit = resolve_target(page, target, timeout_ms=timeout_ms)
+                    except Exception as exc:  # a malformed selector is a finding, not a crash
+                        hit = None
+                        note = f"{type(exc).__name__}: {exc}"
+                    else:
+                        note = None
+
+                    if hit is None:
+                        findings.append(
+                            {
+                                "scene": scene_no,
+                                "scene_id": raw.get("id"),
+                                "action_index": action_index,
+                                "kind": kind,
+                                "target": target,
+                                "error": note or "target did not resolve",
+                            }
+                        )
+                        continue
+
+                    # Apply the action when it changes state, so later scenes are
+                    # checked against the screen they will really face.
+                    if kind in _STATE_CHANGING:
+                        try:
+                            if kind == "click":
+                                hit.locator.click(timeout=timeout_ms)
+                            elif kind == "fill":
+                                hit.locator.fill(str(raw["actions"][action_index].get("value") or ""), timeout=timeout_ms)
+                            elif kind == "select":
+                                hit.locator.select_option(str(raw["actions"][action_index].get("value") or ""))
+                            page.wait_for_timeout(350)
+                        except Exception:
+                            # The click resolving is what we are testing; a click
+                            # that resolves but is intercepted is a real finding
+                            # too, so record it and keep walking.
+                            findings.append(
+                                {
+                                    "scene": scene_no,
+                                    "scene_id": raw.get("id"),
+                                    "action_index": action_index,
+                                    "kind": kind,
+                                    "target": target,
+                                    "error": "resolved but could not be actioned (intercepted or detached)",
+                                }
+                            )
+        finally:
+            browser.close()
+
+    return {
+        "recipe": str(recipe_path),
+        "base_url": resolved_base,
+        "targets_checked": checked,
+        "unresolved": len(findings),
+        "findings": findings,
+        "verdict": "pass" if not findings else "fail",
+    }
+
+
+def _cli() -> int:
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not args:
+        print(__doc__, file=sys.stderr)
+        return 2
+    as_json = "--json" in sys.argv
+    result = preflight(args[0])
+    if as_json:
+        print(json.dumps(result, indent=1))
+    else:
+        print(f"preflight: {result['verdict']}  ({result['targets_checked']} targets checked)")
+        for finding in result["findings"]:
+            print(
+                f"  scene {finding['scene']} ({finding['scene_id']}) "
+                f"action {finding['action_index']} {finding['kind']}: {finding['target']}"
+            )
+            print(f"      {finding['error']}")
+    return 0 if result["verdict"] == "pass" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())

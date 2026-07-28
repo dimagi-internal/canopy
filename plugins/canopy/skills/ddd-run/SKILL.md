@@ -83,6 +83,27 @@ ddd-run: BLOCKED — ddd-spec-qa must pass before rendering.
 
 Do NOT render a spec that fails the QA gate.
 
+### Step 1a — Preflight: resolve every selector before recording
+
+A render is ninety seconds of browser plus a reseed plus an encode, and a scene
+whose target does not resolve still produces a screenshot — a plausible-looking
+frame the judges then score, reporting findings about the wrong thing. The first
+real render of a four-scene narrative went 15/22 actions ok, and five of the
+seven failures were knowable without recording anything.
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+SPEC_ABS="$(realpath <unified_spec>)"
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.recipe_preflight "$SPEC_ABS")
+```
+
+Exit 1 means one or more targets will not resolve against the live app. **Fix
+the recipe and re-run preflight — do not render.** It walks scenes in order in
+one browser and applies state-changing actions as it goes, so it catches the
+class the first loop lost most time to: a tab switch a later scene never undid,
+and a modal left open whose backdrop blocked everything after it.
+
 ### Step 1b — Refresh the narrative from canopy-web (one-way; no pause)
 
 canopy-web owns the story. Before rendering, refresh the generated narrative
@@ -344,6 +365,38 @@ silent-motion regions into the findings the orchestrator surfaces (same
 `#t=`/`#scene-<N>` deep-link contract). Two runs are directly comparable — the
 audit is how you tell a real regression from take-to-take noise.
 
+### Step 2d — Deterministic lenses (run BEFORE the judges)
+
+Three checks that cost milliseconds and repeatedly consumed whole judge rounds
+when they did not exist. Run them on the fresh capture; fold their findings in
+with the judges'.
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || exit 1
+RUN_DIR="<run_dir>"; SPEC_ABS="$(realpath <unified_spec>)"
+
+# 1. Did this iteration break something the last one had working?
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.regression_guard "$RUN_DIR")
+
+# 2. Does the world read as observed, or as generated?
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.data_fidelity "$RUN_DIR/snapshots")
+
+# 3. Is every number the narration speaks actually on the screen?
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.narrated_numbers "$RUN_DIR" "$SPEC_ABS")
+```
+
+- **regression_guard** — a previously-passing action now failing is a hard
+  fail; a score that moved is reported, not gated (a judge is not
+  deterministic). This exists because a correct fix in one iteration removed
+  the control the next scene clicked, and nothing noticed.
+- **data_fidelity** — identical derived columns, duplicate rows, round-robin
+  ids, implausibly flat ratios. This was the most-repeated judge finding of the
+  first narrative, arriving from a different angle every round.
+- **narrated_numbers** — "Kukawa is eleven days out" over a screen that says
+  nine. Survived three iterations because only a judge who happened to check
+  would catch it.
+
 ### Step 3 — Judge (parallel dispatch)
 
 Dispatch **both judges simultaneously** — they are independent and can run in
@@ -356,6 +409,13 @@ parallel:
 - `why_brief_path`: `<why_brief>`
 
 Outputs: `verdict-concept.yaml` + `design_findings.json` inside the run dir.
+
+**3c. Arc judge** — invoke `ddd-arc-eval` (via Skill tool). Unlike the other
+two this is ONE dispatch over ALL scenes in order, because it is the only lens
+that can see repetition, a sagging middle, or a payoff that lands before its
+setup. Every per-scene judge is structurally blind to those. Outputs
+`verdict-arc.yaml` + `arc_findings.json`, and it is `gate: gating` — a
+narrative that passes every per-scene judge and has no arc is not converged.
 
 **3b. User-artifact judge** — invoke `canopy:visual-judge` (via Skill tool)
 over the rendered screenshots + page text, with `audience="feature user"`.

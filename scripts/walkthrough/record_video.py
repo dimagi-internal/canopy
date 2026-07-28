@@ -62,6 +62,7 @@ try:
 except ImportError:
     sys.exit("ERROR: pyyaml not installed. Run: pip install pyyaml")
 
+from scripts.walkthrough._lib.capture_mode import snapshot_full_page
 from scripts.ddd.spec_io import load_spec_raw
 
 try:
@@ -415,7 +416,9 @@ def run_setup(setup: dict, spec_path: Path, *, skip_setup: bool = False) -> dict
     return provenance
 
 
-def build_scenes_from_spec(spec: dict, base_url: str, *, run_data: dict | None) -> list[dict]:
+def build_scenes_from_spec(
+    spec: dict, base_url: str, *, run_data: dict | None, args=None
+) -> list[dict]:
     """Resolve spec.scenes to the scene records the Recorder consumes.
 
     Each scene is ``{"url": str | None, "title": str, "actions": [...]}``.
@@ -521,7 +524,7 @@ def build_scenes_from_spec(spec: dict, base_url: str, *, run_data: dict | None) 
             # map is the hero instead of a sliver atop a 16,000px strip. Omit (default
             # full-page) for normal pages. Stripping this here was the bug that made
             # map+table scenes capture as unreadable strips.
-            "full_page": s.get("full_page"),
+            "full_page": snapshot_full_page(s, args),
             # Per-scene tempo (Scene.pace in the schema): "teach" (default — full
             # read-time pacing, unchanged behavior) or "flow" (this beat is just
             # continuity, so the recorder compresses holds/settles and speeds the
@@ -696,6 +699,16 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--full-page-snapshots",
+        action="store_true",
+        help=(
+            "Keep the historical full-page snapshot on a --ddd-orchestrated run. "
+            "DDD runs otherwise capture the VIEWPORT, because that is what the "
+            "person watching actually sees and therefore what the judges should "
+            "score."
+        ),
+    )
+    ap.add_argument(
         "--force-hand-render",
         action="store_true",
         help=(
@@ -820,7 +833,7 @@ def main() -> None:
     viewport_h = int(spec.get("video_viewport_height", 720))
     base_url = (spec.get("base_url") or "").rstrip("/")
 
-    scenes = build_scenes_from_spec(spec, base_url, run_data=run_data)
+    scenes = build_scenes_from_spec(spec, base_url, run_data=run_data, args=args)
     if args.skip_empty_scenes:
         # Drop scenes with no actions from the recording loop entirely. The
         # deck is built from spec.scenes separately (generate_presentation),

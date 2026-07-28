@@ -1,0 +1,84 @@
+# Rubric for the WHOLE narrative, judged as a sequence.
+#
+# Every other judge in the loop scores one scene at a time. That is necessary
+# and insufficient: a narrative whose every scene scores 5 can still be a bad
+# demo — repetitive, mis-ordered, front-loaded, or arc-less. Nothing in the
+# loop was looking at the thing the viewer actually experiences, which is the
+# sequence.
+#
+# Scored ONCE per narrative, over all scenes in order, from the per-scene
+# screenshots + page text + the narration.
+name: ddd-arc-eval
+default_score: 3
+overall_rule: lowest
+
+dimensions:
+  - id: arc_shape
+    label: Does it build?
+    weight: 0.30
+    anchor:
+      "5": "Each scene raises the stakes or deepens the claim of the one before. The last scene is the payoff the first scene set up, and you could not reorder any two scenes without loss."
+      "4": "A clear build with one flat stretch. Name the scenes that could swap."
+      "3": "Scenes are individually fine but the order is not load-bearing — several could be reordered with no loss. (DEFAULT)"
+      "2": "The sequence sags: an early scene outshines the finale, or the payoff lands before the setup."
+      "1": "No arc. A list of features in the order they were built."
+    deduction_rules:
+      - "The final scene is not the strongest moment: max 3"
+      - "Two adjacent scenes make the same point with different pixels: max 2"
+      - "The most impressive artifact in the whole run appears in scene 1 or 2 and is never topped: max 2"
+
+  - id: escalation
+    label: Does each scene earn its place?
+    weight: 0.25
+    anchor:
+      "5": "Every scene adds something no other scene shows. Cutting any one of them would visibly cost the story."
+      "4": "One scene is doing less work than the others. Name it."
+      "3": "Most scenes earn their place; one or two are filler or restatement. (DEFAULT)"
+      "2": "Several scenes are variations on one idea."
+      "1": "The narrative would be better at half the length."
+    deduction_rules:
+      - "Any scene whose removal would not be noticed: max 3 — name it explicitly"
+      - "Two scenes showing the same surface with only a scroll between them: max 2"
+
+  - id: visual_variety
+    label: Does it look like more than one screen?
+    weight: 0.20
+    anchor:
+      "5": "The run moves across genuinely different surfaces, densities and shapes — a map, a table, a form, a chart, a drill-in — so the eye never habituates."
+      "4": "Good variety, one repeated layout. Name it."
+      "3": "Some variety, but the run is dominated by one visual shape. (DEFAULT)"
+      "2": "Nearly every frame is the same table on the same page."
+      "1": "Indistinguishable frames; a viewer could not tell the scenes apart from thumbnails."
+    deduction_rules:
+      - "More than half the scenes are the same surface at different scroll offsets: max 2"
+      - "Judge on SHAPE, not decoration — a product legitimately built on tables is not penalised for having tables, only for showing the same one repeatedly"
+
+  - id: persona_coherence
+    label: Is it one person's story?
+    weight: 0.15
+    anchor:
+      "5": "Every scene is the same person pursuing one goal, or a hand-off that is explicitly motivated on screen."
+      "4": "Coherent, with one unmotivated switch. Name it."
+      "3": "The persona is consistent but their goal drifts between scenes. (DEFAULT)"
+      "2": "The viewer loses track of whose screen this is."
+      "1": "Persona changes with no narrative reason."
+    deduction_rules:
+      - "A persona switch that the narration does not motivate: max 3"
+      - "The narration's subject and the screen's evident user disagree: max 2"
+
+  - id: opening_and_close
+    label: Does it start and end well?
+    weight: 0.10
+    anchor:
+      "5": "The opening states the problem in terms a stranger feels, and the close delivers the specific thing the opening promised."
+      "4": "Strong at one end, adequate at the other."
+      "3": "Both ends functional but generic. (DEFAULT)"
+      "2": "The opening explains the product instead of the problem, or the close simply stops."
+      "1": "No framing at either end."
+    deduction_rules:
+      - "The close does not answer the opening's question: max 2"
+
+sanity_floors:
+  - "If you would not watch this twice, no dimension may exceed 4."
+  - "If you cannot state the story in one sentence after seeing all scenes, arc_shape is at most 2."
+  - "Judge the SEQUENCE. Per-scene defects belong to the concept judge and must not be re-scored here; a run of individually-flawed scenes can still have an excellent arc, and a run of perfect scenes can have none."
