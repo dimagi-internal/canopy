@@ -140,13 +140,31 @@ _EFFECTING_VERBS: list[str] = [
 ]
 
 
+# A narration can name an effecting verb in order to say it does NOT happen.
+# "there is no field anybody types into", "machine to machine, no typing", and
+# "no cell to change" are all describing the ABSENCE of the act — and reading
+# them as a promise to perform it is how a correct scene gets told to add a
+# click it must not make. The negation almost always sits immediately before
+# the verb, so a short left-context window is enough and avoids swallowing a
+# negation belonging to an earlier clause.
+_NEGATION_RE = re.compile(
+    r"\b(?:no|not|never|without|cannot|can't|nobody|nothing|neither|nor)\b[^.;:]{0,40}$"
+)
+
+
 def _narrated_effecting_verb(text: str) -> str | None:
-    """Return the first effecting verb the text promises (whole-word), or None."""
+    """Return the first effecting verb the text PROMISES (whole-word), or None.
+
+    A verb inside a negated clause is skipped: the narration is describing what
+    the product refuses to do, not an act the demo has to perform.
+    """
     lowered = (text or "").lower()
     for verb in _EFFECTING_VERBS:
         # whole-word / phrase boundary match so "create" doesn't hit "created"
         # twice and "type" doesn't hit "prototype".
-        if re.search(rf"(?<!\w){re.escape(verb)}(?!\w)", lowered):
+        for match in re.finditer(rf"(?<!\w){re.escape(verb)}(?!\w)", lowered):
+            if _NEGATION_RE.search(lowered[: match.start()]):
+                continue  # "no field anybody types into" — an absence, not an act
             return verb
     return None
 
@@ -205,6 +223,33 @@ def _is_falsifiable(claim: str) -> bool:
 
 _SCENE_ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 """A scene id: lowercase alphanumerics, single hyphens, no leading/trailing."""
+
+
+# A verify that names an exact test node, an HTTP call, or a file path is as
+# concrete as a verify can get — and several of them are ONE token. The word
+# count alone therefore rejects the best verifies in the corpus:
+# "pytest connect_labs/supply/tests/test_demand.py::test_the_queue_ranks_everything_in_one_unit"
+# scores 2 and fails, while the vacuous "it should work fine" scores 4 and passes.
+#
+# The word count stays as the fallback for prose. A string carrying a pytest
+# node id (`::`), a path, or an HTTP verb + route is accepted on that evidence
+# instead, because it points at something a reader can actually go and run.
+_CONCRETE_VERIFY_RE = re.compile(
+    r"::\w|"                                   # pytest node id
+    r"(?:^|[\s(])/[\w./<>-]+|"                  # a route or path
+    r"\b(?:GET|POST|PUT|PATCH|DELETE)\b|"      # an HTTP call
+    r"\.\w{2,4}\b.*\b\w+\(",                   # a file + a callable
+)
+
+
+def _verify_is_vacuous(verify: str) -> bool:
+    """True when a feature's verify is too vague to be a real validation step."""
+    stripped = (verify or "").strip()
+    if not stripped:
+        return True
+    if _CONCRETE_VERIFY_RE.search(stripped):
+        return False
+    return len(stripped.split()) < 3
 
 
 def spec_qa(
@@ -413,8 +458,7 @@ def spec_qa(
                 )
             else:
                 for feature in scene.features:
-                    verify_words = feature.verify.strip().split()
-                    if len(verify_words) < 3:
+                    if _verify_is_vacuous(feature.verify):
                         violations.append(
                             f"scene '{scene.title}' feature '{feature.id}': "
                             f"verify is non-vacuous (needs ≥3 words) — "

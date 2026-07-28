@@ -992,3 +992,76 @@ def test_small_walkthrough_under_4_scenes_exempt():
     # the single-scene minimal fixture has no overview/narrative and must still pass
     result = spec_qa(_spec_data())
     assert result.verdict == "pass", result.blocking_reason
+
+
+# ---------------------------------------------------------------------------
+# A concrete verify can be one token
+# ---------------------------------------------------------------------------
+
+
+def test_a_pytest_node_id_is_a_concrete_verify():
+    """The word count alone rejected the best verifies in the corpus.
+
+    "pytest connect_labs/supply/tests/test_demand.py::test_the_queue_ranks..."
+    points at an exact test a reader can go and run, and scores two words.
+    "it should work fine" points at nothing and scores four.
+    """
+    from scripts.ddd.spec_qa import _verify_is_vacuous
+
+    assert not _verify_is_vacuous(
+        "pytest connect_labs/supply/tests/test_demand.py::test_the_queue_ranks_everything_in_one_unit"
+    )
+
+
+def test_a_route_or_an_http_call_is_a_concrete_verify():
+    from scripts.ddd.spec_qa import _verify_is_vacuous
+
+    assert not _verify_is_vacuous("GET /supply/api/registry/ excludes expired qualifications")
+    assert not _verify_is_vacuous("POST /form returns 200")
+    assert not _verify_is_vacuous("/supply/api/bootstrap/")
+
+
+def test_short_prose_is_still_vacuous():
+    """The word count stays as the fallback for anything that names nothing."""
+    from scripts.ddd.spec_qa import _verify_is_vacuous
+
+    assert _verify_is_vacuous("")
+    assert _verify_is_vacuous("   ")
+    assert _verify_is_vacuous("works")
+    assert _verify_is_vacuous("looks good")
+
+
+# ---------------------------------------------------------------------------
+# A narrated verb inside a negation is an absence, not a promise
+# ---------------------------------------------------------------------------
+
+
+def test_a_negated_verb_is_not_a_narrated_act():
+    """"There is no cell to change" does not promise a change action.
+
+    Three scenes across one narrative set were told to add a click they must
+    not make, because the narration named the act in order to say it does NOT
+    happen — which is the whole point of those beats.
+    """
+    from scripts.ddd.spec_qa import _narrated_effecting_verb
+
+    assert _narrated_effecting_verb("There is no cell to change before a Monday meeting.") is None
+    assert _narrated_effecting_verb("machine to machine, no typing") is None
+    assert _narrated_effecting_verb("the status is not a field anybody types into") is None
+    assert _narrated_effecting_verb("nobody can clear a red row by editing a field") is None
+
+
+def test_a_real_narrated_act_is_still_caught():
+    """The check must keep doing its job — this is a narrowing, not a disabling."""
+    from scripts.ddd.spec_qa import _narrated_effecting_verb
+
+    assert _narrated_effecting_verb("Ada awards Maiduguri to one supplier.") is not None
+    assert _narrated_effecting_verb("Zara fills in the note and submits it.") is not None
+
+
+def test_the_negation_window_does_not_reach_across_a_sentence():
+    """A negation in an EARLIER sentence must not excuse a later real act."""
+    from scripts.ddd.spec_qa import _narrated_effecting_verb
+
+    text = "There is no cell to change. Ada then awards the lot to Savanna."
+    assert _narrated_effecting_verb(text) is not None
