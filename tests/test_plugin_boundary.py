@@ -29,7 +29,7 @@ FRAMEWORK = {
     "skill_budget", "skill_catalog", "skill_runner", "provision", "run_log",
     "version_bump", "doctor", "agent_review", "structure_drift",
     "eval_cli", "eval_rubric", "turn_synthesis", "session_upload", "fleet_align",
-    "session_sources", "work_cursor",
+    "session_sources", "work_cursor", "agent_dispatch",
 }
 # Orchestration hubs / composition roots — wire product features into the CLI, the
 # improvement pipeline, and the web server. Allowed to import product (like
