@@ -32,6 +32,15 @@ from typing import Any
 # that motivated this script.
 _STATE_CHANGING = {"click", "fill", "select", "press", "type"}
 
+# `scroll_to` changes nothing about the DOM, so it looks like it belongs with the
+# camera moves — but it changes what is REACHABLE. A control below the fold, or
+# under a sticky header, resolves and then reports "intercepted or detached" when
+# preflight tries to click it, while the render (which does apply the scroll)
+# clicks it without complaint. That is a false failure on a correct recipe, and
+# it is expensive: it reads exactly like a real one, and the natural response is
+# to rewrite a selector that was never wrong.
+_SCROLLING = {"scroll_to"}
+
 # `goto` changes the page as completely as a click does, but its target is a URL
 # rather than a selector, so it is neither checkable nor state-changing in the
 # sense above — it needs its own handling. Skipping it entirely (the original
@@ -195,6 +204,18 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
 
                     # Apply the action when it changes state, so later scenes are
                     # checked against the screen they will really face.
+                    if kind in _SCROLLING:
+                        try:
+                            hit.locator.scroll_into_view_if_needed(timeout=timeout_ms)
+                            page.wait_for_timeout(150)
+                        except Exception:  # noqa: BLE001
+                            # A scroll that cannot complete is not itself a
+                            # finding — the element resolved, which is what this
+                            # script checks. Later actions will report if the
+                            # page ended up somewhere unusable.
+                            pass
+                        continue
+
                     if kind in _STATE_CHANGING:
                         try:
                             if kind == "click":
