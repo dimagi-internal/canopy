@@ -38,6 +38,7 @@ from orchestrator.project_dispatch import (
     can_manage,
     classify_runners,
     derive_project_idempotency_key,
+    dormant_message,
     project_turns_path,
     resolve_workspace_choice,
 )
@@ -207,12 +208,66 @@ def test_a_declaring_online_runner_unblocks_the_dispatch():
     assert [r["name"] for r in c["serving"]] == ["jj-mbp"]
 
 
-def test_a_stale_runner_declaration_does_not_count():
-    """`claim_next_turn` gates on the DERIVED live_status, so a runner whose
-    heartbeat lapsed will not claim no matter what it declares."""
+def test_a_stale_runner_that_REPORTS_the_repo_is_DORMANT_not_a_refusal():
+    """The case retiring `--no-preflight` left with no path, so it is asserted rather
+    than assumed.
+
+    `claim_next_turn` gates on live_status, so a lapsed runner claims nothing NOW —
+    but it is asleep, not gone, and post-#513 the project list it left behind is an
+    observation of that box rather than a human's claim about it. A QUEUED turn is
+    never expired (canopy-web exempts them so "laptop offline over a weekend must not
+    retire Friday's slot"), so the turn is claimed on wake. Refusing would be a false
+    negative, and with the escape hatch gone there is nothing to override it with —
+    dispatching work for a laptop to pick up when it wakes would just fail."""
     c = classify_runners([_runner("old", status="stale", projects=["connect-labs"])],
-                         "connect-labs")
+                         "connect-labs", tenant_scoped=True)
+    assert c["blocked"] is False
+    assert [r["name"] for r in c["dormant"]] == ["old"]
+    assert c["serving"] == []
+
+
+def test_a_degraded_runner_that_reports_the_repo_is_a_warning_too():
+    """`live_status` serves `degraded` for a runner self-reporting trouble while still
+    heartbeating. It cannot claim (claim gates on ONLINE) and it recovers, which is
+    the `not ready` case wearing a status instead of a flag — so it warns rather than
+    blocks. It previously fell into `offline` and refused."""
+    c = classify_runners([_runner("j", status="degraded", projects=["connect-labs"])],
+                         "connect-labs", tenant_scoped=True)
+    assert c["blocked"] is False
+    assert [r["name"] for r in c["degraded"]] == ["j"]
+
+
+@pytest.mark.parametrize("status", ["disconnected", "retired"])
+def test_a_runner_that_will_NOT_come_back_still_blocks(status):
+    """The line between dormant and dead, and it has to hold or `dormant` becomes the
+    queue-forever bug wearing a warning.
+
+    `disconnected` means the runner has NEVER heartbeated, so any project list on it
+    is pre-#513 residue rather than an observation of a box; `retired` is terminal.
+    Neither returns, so neither is evidence the turn will ever be claimed."""
+    c = classify_runners([_runner("x", status=status, projects=["connect-labs"])],
+                         "connect-labs", tenant_scoped=True)
     assert c["blocked"] is True
+    assert c["dormant"] == []
+
+
+def test_a_sleeping_runner_that_does_not_have_the_repo_is_not_dormant():
+    """Dormant is "it reported THIS repo and went to sleep", not "it is asleep".
+    Without the repo there is no evidence it would ever claim."""
+    c = classify_runners([_runner("old", status="stale", projects=["canopy-web"])],
+                         "connect-labs", tenant_scoped=True)
+    assert c["blocked"] is True
+    assert c["dormant"] == []
+
+
+def test_the_dormant_warning_says_the_turn_waits_rather_than_fails():
+    """A queued turn against a sleeping box looks identical to a hang, so the warning
+    has to say which one it is."""
+    c = classify_runners([_runner("jj-mbp", status="stale", projects=["connect-labs"])],
+                         "connect-labs", tenant_scoped=True)
+    msg = dormant_message(c)
+    assert "jj-mbp" in msg
+    assert "QUEUED" in msg and "comes back" in msg
 
 
 def test_a_declaring_but_not_ready_runner_is_a_warning_not_a_refusal():
@@ -436,6 +491,36 @@ def test_cli_dispatch_PREFLIGHTS_THE_TENANT_IT_ENQUEUES_INTO(net):
     assert gets, "the preflight must read the fleet"
     assert all(g[1].endswith("/api/w/connect/harness/runners/") for g in gets), \
         f"preflight must read the TENANT it enqueues into, got {[g[1] for g in gets]}"
+
+
+def test_cli_ENQUEUES_with_a_warning_when_the_only_runner_is_ASLEEP(net):
+    """The end-to-end proof that retiring `--no-preflight` cost nothing real.
+
+    A runner that reported the repo and went to sleep gets the turn queued for its
+    return rather than a refusal — the one legitimate use the flag still had, now
+    answered by the preflight itself and, unlike the flag, explained. Without this
+    the work would be undispatchable until someone opened a laptop, with no override
+    left to reach it."""
+    calls = []
+    net(calls, [_runner("jj-mbp", status="stale", projects=["connect-labs"])])
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--workspace", "dimagi", "--prompt", "x"])
+    assert r.exit_code == 0, r.output
+    assert [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+    assert "WARNING" in r.output
+    assert "ASLEEP" in r.output and "QUEUED" in r.output
+
+
+def test_cli_still_REFUSES_when_the_sleeping_runner_lacks_the_repo(net):
+    """The other side of the same line: asleep is only a warning when the box
+    reported THIS repo. Otherwise nothing here is evidence a turn would ever land,
+    and the refusal must survive."""
+    calls = []
+    net(calls, [_runner("jj-mbp", status="stale", projects=["canopy-web"])])
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--workspace", "dimagi", "--prompt", "x"])
+    assert r.exit_code != 0
+    assert not [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
 
 
 def test_cli_warns_loudly_when_the_only_reporting_runner_is_not_ready(net):

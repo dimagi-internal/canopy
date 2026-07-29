@@ -39,6 +39,16 @@ and the list is true (#513) — so a refusal from this preflight is a fact, and 
 correct response to it is to make the repo real, never to route around the check.
 Routing around it is what queued a turn forever in #428.
 
+Removing that flag did leave one case with no path, though, and `dormant` is the
+answer to it. #513 changed what the project list IS: an online runner's list is now
+fresh by construction, so the only staleness left is TEMPORAL — a runner that
+reported the repo and is currently asleep. Blocking there is a false negative, since
+a QUEUED turn is never expired and the box claims it on wake; but it is also not a
+case for an override, because a flag that skips the whole preflight answers it by
+equally waving through the case that genuinely queues forever. So the preflight
+answers it itself: warn, enqueue, and say the turn is waiting on a machine. What
+stays refused is exactly what would never be claimed.
+
 That refusal is only sound when the fleet it inspected is the fleet that will be
 asked to claim. Two server-side facts decide that, and canopy-web #509 changed one
 of them (merged + deployed 2026-07-28):
@@ -91,6 +101,19 @@ from orchestrator.agent_dispatch import DispatchError
 # Only a runner reporting itself ONLINE can claim (claim_next_turn's first guard,
 # on the DERIVED live_status the API serves — a stale heartbeat reads as `stale`).
 ONLINE = "online"
+
+# The two statuses a runner comes BACK from, out of canopy-web's five
+# (online/stale/disconnected/degraded/retired). `stale` is a heartbeat that lapsed —
+# the box is asleep. `degraded` is self-reported trouble while it is still
+# heartbeating, so `live_status` keeps serving it. Neither claims right now, and both
+# return.
+#
+# The other two are excluded deliberately, and that exclusion is what keeps `dormant`
+# from becoming the queue-forever bug wearing a warning: `disconnected` means the
+# runner has NEVER heartbeated (so any project list on it is pre-#513 residue rather
+# than an observation of the box), and `retired` is terminal.
+STALE, DEGRADED = "stale", "degraded"
+RECOVERABLE = frozenset({STALE, DEGRADED})
 
 
 def project_turns_path(workspace: str) -> str:
@@ -198,10 +221,21 @@ def classify_runners(runners: list[dict], project: str, *,
                     because the remedy is a different person's action, so the message
                     must say "ask its owner" rather than describe a box the caller
                     cannot touch.
+    - `dormant`   — reports it, but its heartbeat has lapsed: the box is asleep.
+                    A warning rather than a refusal, for two reasons that only hold
+                    post-#513. The list is REPORTED by the box, so `stale` means "this
+                    repo was really there when the machine last spoke" rather than
+                    "someone once typed this"; and a QUEUED turn is never expired
+                    (canopy-web's release sweep exempts them so "laptop offline over a
+                    weekend must not retire Friday's slot"), so the runner claims it on
+                    return. Refusing would be a false negative — and since
+                    `--no-preflight` was retired there is no override to escape it
+                    with, so the work would simply be undispatchable until someone
+                    opened a laptop.
 
-    Everything else (stale/disconnected/retired) is reported as context but is not
-    a route. `claim_next_turn` gates on the DERIVED `live_status`, which the API
-    already serves in `status`, so a stale runner's reported list means nothing.
+    Everything else (disconnected/retired, and anything not live that does not report
+    the project) is context, not a route. `claim_next_turn` gates on the DERIVED
+    `live_status`, which the API already serves in `status`.
 
     `tenant_scoped` says whether `runners` came from `/api/w/<ws>/harness/runners/`
     (the dispatch preflight) or the flat union route (`canopy project runners` with
@@ -212,16 +246,18 @@ def classify_runners(runners: list[dict], project: str, *,
     """
     project = (project or "").strip()
     runners = list(runners or [])
-    serving, degraded, mine, theirs, offline = [], [], [], [], []
+    serving, degraded, dormant, mine, theirs, offline = [], [], [], [], [], []
     for r in runners:
         status = str(r.get("status") or "").strip().lower()
         reports = project in declared_projects(r)
-        if status != ONLINE:
-            offline.append(r)
-        elif reports and r.get("ready", True):
+        if reports and status == ONLINE and r.get("ready", True):
             serving.append(r)
-        elif reports:
+        elif reports and status in (ONLINE, DEGRADED):
             degraded.append(r)
+        elif reports and status == STALE:
+            dormant.append(r)
+        elif status != ONLINE:
+            offline.append(r)
         elif can_manage(r):
             mine.append(r)
         else:
@@ -230,6 +266,7 @@ def classify_runners(runners: list[dict], project: str, *,
         "project": project,
         "serving": serving,
         "degraded": degraded,
+        "dormant": dormant,
         "unreported_yours": mine,
         "unreported_theirs": theirs,
         "offline": offline,
@@ -240,7 +277,10 @@ def classify_runners(runners: list[dict], project: str, *,
         # Blocked means: we LOOKED at the fleet that will be asked to claim, and no
         # member of it will ever claim this turn as things stand. An empty
         # tenant-pinned read qualifies — that IS the look, and its answer is none.
-        "blocked": (bool(runners) or tenant_scoped) and not serving and not degraded,
+        # `dormant` is not blocked for the same reason `degraded` is not: the runner
+        # reports the repo, and the turn survives until it can take it.
+        "blocked": ((bool(runners) or tenant_scoped)
+                    and not serving and not degraded and not dormant),
     }
 
 
@@ -269,7 +309,8 @@ def blocked_message(classified: dict, workspace: str = "") -> str:
     project = classified["project"]
     where = f" in workspace '{workspace}'" if workspace else ""
     seen = (classified["unreported_yours"] + classified["unreported_theirs"]
-            + classified["degraded"] + classified["serving"] + classified["offline"])
+            + classified["degraded"] + classified["dormant"] + classified["serving"]
+            + classified["offline"])
 
     # The empty tenant-pinned case. Reachable only since the preflight started
     # reading the tenant it enqueues into: the workspace is real and you are a
@@ -329,6 +370,33 @@ def blocked_message(classified: dict, workspace: str = "") -> str:
             "No online runner at all. Start one (or pair one), then retry.",
         ]
     return "\n".join(lines)
+
+
+def dormant_message(classified: dict) -> str:
+    """Why a runner that reports the repo but is asleep warns instead of refusing.
+
+    The judgement this encodes, and the reason it is not simply optimism: `stale`
+    means the heartbeat lapsed, not that the runner is gone, and canopy-web #513 makes
+    the project list it left behind an OBSERVATION of that box rather than a human's
+    assertion about it. So "this repo was really there when the machine last spoke" is
+    evidence. And the turn it queues is not lost work — the release sweep deliberately
+    exempts QUEUED turns ("laptop offline over a weekend must not retire Friday's
+    slot"), so the runner claims it on return.
+
+    This is what #433 item 2 was actually asking about. Retiring `--no-preflight` is
+    right — an override that skips the whole check answers this case by also waving
+    through the case that genuinely queues forever — but the case itself is real, and
+    without this bucket it has no path at all: dispatching work for the laptop to pick
+    up when it wakes would simply fail until someone opened it.
+    """
+    names = ", ".join(sorted(str(r.get("name") or "") for r in classified["dormant"]))
+    project = classified["project"]
+    return (
+        f"the only runner(s) reporting '{project}' ({names}) are ASLEEP — their "
+        "heartbeat has lapsed. Enqueueing anyway: the turn stays QUEUED and is claimed "
+        "when the machine comes back (a queued turn is never expired). If you need it "
+        "run now, wake that machine or use one that is online."
+    )
 
 
 def unknown_message(project: str) -> str:

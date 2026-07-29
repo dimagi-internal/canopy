@@ -111,6 +111,7 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
         build_project_turn_payload,
         classify_runners,
         derive_project_idempotency_key,
+        dormant_message,
         project_turns_path,
         resolve_workspace_choice,
         unknown_message,
@@ -151,6 +152,9 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
                 f"NOT READY{' — ' + notes if notes else ''}. The turn will queue "
                 "until one recovers rather than starting now."
             )
+        if (not classified["serving"] and not classified["degraded"]
+                and classified["dormant"]):
+            warnings.append(dormant_message(classified))
 
         day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
         key = idempotency_key or derive_project_idempotency_key(
@@ -191,8 +195,8 @@ def project_runners_cmd(project_name, workspace, as_json):
     """Which runners can serve which repos — the answer to "why did nothing happen?".
 
     With a project name, splits the fleet the way a dispatch preflight does: who
-    would claim it now, who would once they recover, and which machines would need
-    the repo opened on them.
+    would claim it now, who would once they recover or wake, and which machines would
+    need the repo opened on them.
 
     Ownership is shown on rows you may not mutate. Since canopy-web #509 the list is
     scoped by tenant rather than by who paired what, so it now contains runners you
@@ -241,6 +245,7 @@ def project_runners_cmd(project_name, workspace, as_json):
     click.echo(f"project '{project_name}'{where}:")
     for bucket, label in (("serving", "would claim now"),
                           ("degraded", "reports it but NOT READY"),
+                          ("dormant", "reports it but ASLEEP (wakes)"),
                           ("unreported_yours", "yours, not reporting it"),
                           ("unreported_theirs", "someone else's, not reporting it"),
                           ("offline", "not live")):
