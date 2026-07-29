@@ -11,6 +11,7 @@ from orchestrator import review_receipt as _rr
 from orchestrator.agent_email import (
     AgentEmailError,
     EmailIdentity,
+    archive,
     build_send_command,
     derive_reply_all,
     fetch_attachment,
@@ -416,6 +417,49 @@ def test_mark_read_timeout_is_per_thread_and_keeps_going():
     results = mark_read(IDENT, ["slow", "t2"], runner=flaky_runner)
     assert results[0]["ok"] is False and "timed out" in results[0]["error"]
     assert results[1]["ok"] is True
+
+
+# --------------------------------------------------------------------------------------
+# archive (own-mailbox turn housekeeping — INBOX *and* UNREAD)
+# --------------------------------------------------------------------------------------
+
+def test_archive_removes_inbox_and_unread_in_one_call():
+    """A thread archived but left UNREAD still reads as unread mail and re-surfaces on
+    the next poll — which is the whole thing archiving is meant to stop."""
+    calls = []
+
+    def fake_runner(cmd, capture_output, text, timeout):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    results = archive(IDENT, ["t1"], runner=fake_runner)
+    assert results[0] == {"thread_id": "t1", "ok": True, "error": ""}
+    assert calls[0] == ["gog", "gmail", "thread", "modify", "t1", "--remove", "INBOX,UNREAD",
+                        "--account", "hal@dimagi-ai.com", "--client", "hal"]
+
+
+def test_archive_only_ever_touches_the_agents_own_mailbox():
+    """The rail: --account is the agent's own box, never a sibling's."""
+    def fake_runner(cmd, capture_output, text, timeout):
+        assert cmd[0] == "gog", f"non-gog subprocess in archive: {cmd}"
+        assert cmd[cmd.index("--account") + 1] == IDENT.account
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    archive(IDENT, ["t1", "t2"], runner=fake_runner)
+
+
+def test_archive_failure_is_per_thread_and_keeps_going():
+    def flaky_runner(cmd, capture_output, text, timeout):
+        if cmd[4] == "slow":
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        if cmd[4] == "bad":
+            return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    results = archive(IDENT, ["slow", "bad", "t3"], runner=flaky_runner)
+    assert results[0]["ok"] is False and "timed out" in results[0]["error"]
+    assert results[1]["ok"] is False and "not found" in results[1]["error"]
+    assert results[2]["ok"] is True
 
 
 # --------------------------------------------------------------------------------------
