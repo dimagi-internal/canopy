@@ -10,8 +10,10 @@ skill file:
 
   - it needs a WORKSPACE, carried in the request path, because it has no agent to
     derive tenancy from and the server fails a workspace-less project turn closed;
-  - the runner must DECLARE the project in its capabilities or nothing ever claims
-    the turn — it is accepted with a 201 and then sits queued forever;
+  - the runner must REPORT the project in its capabilities or nothing ever claims
+    the turn — it is accepted with a 201 and then sits queued forever. That list is
+    reported by the box on every heartbeat (canopy-web #513), so there is no
+    client-side way to declare it and no way to skip the check;
   - its idempotency key must not share a namespace with the agent key, because this
     fleet has repos and agents with the same name and the key column is globally
     unique.
@@ -35,13 +37,9 @@ from orchestrator.project_dispatch import (
     build_project_turn_payload,
     can_manage,
     classify_runners,
-    declare_rejected_message,
     derive_project_idempotency_key,
-    is_declare_rejection,
-    pick_declare_target,
     project_turns_path,
     resolve_workspace_choice,
-    with_project_declared,
 )
 
 
@@ -158,14 +156,14 @@ def test_key_is_url_safe_even_for_a_repo_name_with_punctuation():
 
 # --- the capability trap -----------------------------------------------------
 
-def test_a_runner_that_does_not_declare_the_project_cannot_serve_it():
+def test_a_runner_that_does_not_report_the_project_cannot_serve_it():
     """This is the trap the whole preflight exists for. `claim_next_turn` matches on
-    `Q(project__in=runner.project_names())`, so an undeclared project means the turn
-    is accepted and then never claimed by anything."""
+    `Q(project__in=runner.project_names())`, so a project the box does not report
+    means the turn is accepted and then never claimed by anything."""
     c = classify_runners([_runner("jj-mbp", projects=["canopy-web"])], "connect-labs")
     assert c["blocked"] is True
     assert c["serving"] == []
-    assert [r["name"] for r in c["declarable"]] == ["jj-mbp"]
+    assert [r["name"] for r in c["unreported_yours"]] == ["jj-mbp"]
 
 
 def test_an_UNTENANTED_empty_fleet_is_UNKNOWN_not_blocked():
@@ -228,100 +226,43 @@ def test_a_declaring_but_not_ready_runner_is_a_warning_not_a_refusal():
     assert c["serving"] == []
 
 
-def test_declaring_a_project_preserves_the_rest_of_capabilities():
-    """PATCH replaces capabilities wholesale — sending just the new project would
-    silently drop the runner's agents, its other repos, and sessions:true."""
-    r = _runner("jj-mbp", projects=["canopy-web"], agents=["hal", "ada"])
-    caps = with_project_declared(r, "connect-labs")
-    assert caps["projects"] == ["canopy-web", "connect-labs"]
-    assert caps["agents"] == ["hal", "ada"]
-    assert caps["sessions"] is True
-
-
-def test_declaring_is_idempotent():
-    r = _runner("jj-mbp", projects=["connect-labs"])
-    assert with_project_declared(r, "connect-labs")["projects"] == ["connect-labs"]
-
-
-def test_declare_refuses_to_pick_between_several_live_runners():
-    """Picking silently would decide, on the caller's behalf, which machine the
-    session opens on."""
-    c = classify_runners([_runner("a"), _runner("b")], "connect-labs")
-    with pytest.raises(DispatchError) as e:
-        pick_declare_target(c)
-    assert "--runner" in str(e.value)
-    assert pick_declare_target(c, "b")["name"] == "b"
-
-
 # --- can_manage: seeing a runner vs being allowed to act on it ---------------
 
-def test_a_runner_you_cannot_manage_is_not_a_declare_target():
-    """#509 widened the READ past ownership but not the write. A runner you can see
-    and cannot mutate is a dead end, not a remedy — bucketing it as `declarable`
-    would aim `--declare` at a PATCH that 404s."""
+def test_a_runner_you_cannot_manage_is_bucketed_separately():
+    """#509 widened the READ past ownership. A runner you can see and cannot touch
+    needs a different remedy — its owner has to open the repo — so it must not be
+    pooled with your own machines, whose fix is yours to make."""
     c = classify_runners([_runner("theirs", can_manage=False, owner="ace@dimagi.com")],
                          "connect-labs")
-    assert [r["name"] for r in c["foreign"]] == ["theirs"]
-    assert c["declarable"] == []
+    assert [r["name"] for r in c["unreported_theirs"]] == ["theirs"]
+    assert c["unreported_yours"] == []
     assert c["blocked"] is True
 
 
-def test_blocked_on_a_foreign_fleet_names_the_owner_instead_of_suggesting_declare():
-    """The whole point of surfacing can_manage: tell the caller who to ask, rather
-    than sending them at a command that cannot work."""
+def test_blocked_on_a_foreign_fleet_names_the_owner_to_ask():
+    """The whole point of surfacing can_manage: tell the caller who to go to, rather
+    than describing a machine they cannot touch."""
     c = classify_runners([_runner("theirs", can_manage=False, owner="ace@dimagi.com")],
                          "connect-labs")
     msg = blocked_message(c, "dimagi")
     assert "ace@dimagi.com" in msg
-    assert "--declare" not in msg, "must not recommend a PATCH this caller cannot make"
+    assert "emdash" not in msg, "do not tell them to fix a box that is not theirs"
 
 
-def test_picking_a_declare_target_refuses_a_runner_that_is_not_yours():
-    c = classify_runners([_runner("theirs", can_manage=False, owner="ace@dimagi.com")],
-                         "connect-labs")
-    with pytest.raises(DispatchError) as e:
-        pick_declare_target(c)
-    assert "ace@dimagi.com" in str(e.value)
-
-    with pytest.raises(DispatchError) as e:
-        pick_declare_target(c, "theirs")          # named explicitly, still not yours
-    assert "cannot declare on it" in str(e.value)
-
-
-def test_an_unmanageable_runner_does_not_make_the_choice_ambiguous():
-    """Only manageable runners are in the pool, so one of each is unambiguous — the
-    caller should not be asked to disambiguate against a runner they cannot use."""
-    c = classify_runners([_runner("mine"), _runner("theirs", can_manage=False)],
-                         "connect-labs")
-    assert pick_declare_target(c)["name"] == "mine"
+def test_blocked_on_your_own_fleet_names_the_machine_and_the_real_fix():
+    """Post-#513 the fix is always on a box. The message must name which one and
+    both ways to do it — that is the entire replacement for `--declare`."""
+    c = classify_runners([_runner("jj-mbp", projects=["canopy-web"])], "connect-labs")
+    msg = blocked_message(c, "dimagi")
+    assert "jj-mbp" in msg
+    assert "emdash" in msg and "RUNNER_PROJECTS" in msg
+    assert "--declare" not in msg and "project declare" not in msg
 
 
 def test_can_manage_defaults_true_for_a_server_that_does_not_send_it():
     """The field arrived with #509; an older canopy-web omits it, and every non-list
     route that returns a runner already proved the caller can act on it."""
     assert can_manage({"name": "old"}) is True
-
-
-# --- --declare, on borrowed time (canopy-web #513) ---------------------------
-
-def test_the_projects_422_is_recognised_as_the_reported_capability_rule():
-    assert is_declare_rejection(
-        "PATCH /api/harness/runners/x -> 422: {'detail': '`projects` is reported by "
-        "the runner, not set by hand'}") is True
-
-
-def test_other_failures_keep_their_own_message():
-    """Narrow on purpose — a 404 from PATCHing someone else's runner is a different
-    problem with a different fix, and must not be explained as the #513 rule."""
-    assert is_declare_rejection("PATCH /api/harness/runners/x -> 404: not found") is False
-    assert is_declare_rejection("PATCH /api/harness/runners/x -> 422: bad agents") is False
-
-
-def test_the_declare_rejection_says_how_to_actually_make_a_repo_routable():
-    """A raw 422 teaches the reader nothing. The fix is on the box, not in the API."""
-    msg = declare_rejected_message("422 detail here")
-    assert "emdash" in msg and "RUNNER_PROJECTS" in msg
-    assert "heartbeat" in msg
 
 
 # --- CLI ---------------------------------------------------------------------
@@ -391,9 +332,11 @@ def test_cli_dispatch_writes_no_board_task(net):
     assert not [c for c in calls if "/tasks" in c[1]]
 
 
-def test_cli_dispatch_REFUSES_when_no_runner_declares_the_project(net):
+def test_cli_dispatch_REFUSES_and_names_the_MACHINE_when_nothing_reports_the_repo(net):
     """The single worst outcome available here is a 201 followed by silence. Fail
-    loudly at dispatch time instead, and name the fix."""
+    loudly at dispatch time instead — and since canopy-web #513 the remedy is never
+    a flag on this command, it is an action on a box. The message has to say which
+    box and both ways to do it, because that is all the caller can now do."""
     calls = []
     net(calls, [_runner("jj-mbp", projects=["canopy-web"])])
 
@@ -402,24 +345,56 @@ def test_cli_dispatch_REFUSES_when_no_runner_declares_the_project(net):
     assert r.exit_code != 0
     assert not [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]], \
         "must not enqueue a turn nothing can claim"
-    assert "declare" in r.output.lower()
-    assert "--declare" in r.output, "the error must name the remedy"
+    assert "jj-mbp" in r.output, "must name the machine to fix"
+    assert "emdash" in r.output and "RUNNER_PROJECTS" in r.output
+    assert "--declare" not in r.output
 
 
-def test_cli_declare_flag_fixes_the_capability_then_dispatches(net):
+def test_cli_dispatch_NEVER_PATCHES_capabilities(net):
+    """The done-when of #433: no command PATCHes `projects`. canopy-web replaces the
+    list from the box on every heartbeat and 422s a body carrying it, so any PATCH
+    from here is both futile and a lie about where the truth lives."""
+    calls = []
+    net(calls, [_runner("jj-mbp", projects=["connect-labs"])])
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--workspace", "dimagi", "--prompt", "x"])
+    assert r.exit_code == 0, r.output
+    assert not [c for c in calls if c[0] == "PATCH"]
+
+
+def test_cli_declare_is_gone():
+    """`canopy project declare` PATCHed `capabilities.projects`, which canopy-web
+    now refuses outright. Leaving it registered would advertise a capability that
+    cannot work."""
+    r = CliRunner().invoke(main, ["project", "declare", "connect-labs"])
+    assert r.exit_code != 0
+    assert "No such command 'declare'" in r.output
+
+
+def test_cli_declare_FLAG_is_gone(net):
     calls = []
     net(calls, [_runner("jj-mbp", projects=["canopy-web"])])
-
     r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs", "--declare",
-                                  "--workspace", "dimagi", "--prompt", "x",
-                                  "--json-output"])
-    assert r.exit_code == 0, r.output
-    patches = [c for c in calls if c[0] == "PATCH"]
-    assert len(patches) == 1
-    assert "connect-labs" in patches[0][2]["capabilities"]["projects"]
-    assert "canopy-web" in patches[0][2]["capabilities"]["projects"]
-    assert json.loads(r.output)["declared_on"] == "jj-mbp"
-    assert [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+                                  "--workspace", "dimagi", "--prompt", "x"])
+    assert r.exit_code != 0
+    assert "no such option" in r.output.lower()
+    assert not [c for c in calls if c[0] == "PATCH"]
+
+
+def test_cli_no_preflight_is_gone_so_the_check_cannot_be_routed_around(net):
+    """The flag existed because the preflight's answer could not be trusted — the
+    fleet was invisible to non-pairers (#509) and the list was hand-typed (#513).
+    Both are fixed server-side, so the refusal is a fact, and the one recorded use
+    of routing around it (#428) queued a turn forever. No escape hatch."""
+    calls = []
+    net(calls, [_runner("jj-mbp", projects=["canopy-web"])])
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--no-preflight", "--workspace", "dimagi",
+                                  "--prompt", "x"])
+    assert r.exit_code != 0
+    assert "no such option" in r.output.lower()
+    assert not [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]], \
+        "an unrecognised flag must never fall through to an unchecked enqueue"
 
 
 def test_cli_dispatch_REFUSES_when_the_TARGET_WORKSPACE_has_no_runners(net):
@@ -463,51 +438,7 @@ def test_cli_dispatch_PREFLIGHTS_THE_TENANT_IT_ENQUEUES_INTO(net):
         f"preflight must read the TENANT it enqueues into, got {[g[1] for g in gets]}"
 
 
-def test_cli_dispatch_still_REFUSES_when_a_visible_fleet_cannot_serve(net):
-    """The two cases must not collapse back into one: a fleet that was inspected and
-    found wanting still blocks, with the --declare remedy."""
-    calls = []
-    net(calls, [_runner("jj-mbp", projects=["canopy-web"])])
-
-    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
-                                  "--workspace", "dimagi", "--prompt", "x"])
-    assert r.exit_code != 0
-    assert not [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
-    assert "--declare" in r.output
-
-
-def test_cli_declare_fails_cleanly_when_there_is_no_visible_runner_to_declare_on(net):
-    """`--declare` PATCHes a specific runner, so it needs one the caller can act on.
-    Warning-and-enqueueing would silently ignore what the caller explicitly asked for."""
-    calls = []
-    net(calls, [])
-
-    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs", "--declare",
-                                  "--workspace", "dimagi", "--prompt", "x"])
-    assert r.exit_code != 0
-    assert not [c for c in calls if c[0] == "PATCH"]
-    assert not [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
-    assert "no online runner" in r.output.lower()
-
-
-def test_cli_no_preflight_enqueues_without_checking(net):
-    """The escape hatch, now much narrower than the reason it was added.
-
-    It existed because the preflight could refuse off an empty list it had no right
-    to conclude from (#428) — #509 plus the tenant-scoped read removed that failure
-    mode, so what is left is working around a capability list that is merely stale.
-    Kept rather than deleted because that staleness is real until canopy-web #513
-    makes `projects` runner-reported; see canopy#433."""
-    calls = []
-    net(calls, [_runner("jj-mbp", projects=["canopy-web"])])
-    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs", "--no-preflight",
-                                  "--workspace", "dimagi", "--prompt", "x"])
-    assert r.exit_code == 0, r.output
-    assert [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
-    assert not [c for c in calls if "/harness/runners/" in c[1]]
-
-
-def test_cli_warns_loudly_when_the_only_declaring_runner_is_not_ready(net):
+def test_cli_warns_loudly_when_the_only_reporting_runner_is_not_ready(net):
     calls = []
     net(calls, [_runner("jj-mbp", ready=False, projects=["connect-labs"])])
     r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
@@ -579,33 +510,6 @@ def test_cli_runners_shows_which_rows_you_may_act_on(net):
     net(calls2, [_runner("theirs", can_manage=False, owner="ace@dimagi.com")])
     r2 = CliRunner().invoke(main, ["project", "runners", "--json-output"])
     assert json.loads(r2.output)[0]["can_manage"] is False
-
-
-def test_cli_declare_explains_itself_when_canopy_web_starts_refusing_projects(monkeypatch):
-    """Forward-compat with canopy-web #513, which has NOT shipped yet: the moment it
-    does, this PATCH 422s. The command is still correct today, so it stays — but it
-    must fail with the reason and the real fix, not a raw 422 (canopy#433)."""
-    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
-    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
-    monkeypatch.setattr("orchestrator.canopy_web.resolve_workspace", lambda w=None: None)
-
-    def transport(method, url, headers, data):
-        if "/harness/runners/" in url and method == "GET":
-            return 200, json.dumps([_runner("jj-mbp", projects=["canopy-web"])])
-        if "/harness/runners/" in url and method == "PATCH":
-            return 422, json.dumps({"detail": "`projects` is reported by the runner, "
-                                              "not set by hand"})
-        if "/workspaces/" in url:
-            return 200, json.dumps([{"slug": "dimagi"}])
-        return 200, json.dumps([])
-
-    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
-    r = CliRunner().invoke(main, ["project", "declare", "connect-labs"])
-
-    assert r.exit_code != 0
-    assert "emdash" in r.output and "RUNNER_PROJECTS" in r.output
-    assert "422" not in r.output.split("Server said")[0], \
-        "the explanation must lead, not the status code"
 
 
 def test_cli_turns_filters_to_the_named_project(monkeypatch):
