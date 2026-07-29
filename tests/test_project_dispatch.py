@@ -31,9 +31,13 @@ from orchestrator.agent_dispatch import (
 )
 from orchestrator.cli import main
 from orchestrator.project_dispatch import (
+    blocked_message,
     build_project_turn_payload,
+    can_manage,
     classify_runners,
+    declare_rejected_message,
     derive_project_idempotency_key,
+    is_declare_rejection,
     pick_declare_target,
     project_turns_path,
     resolve_workspace_choice,
@@ -41,9 +45,14 @@ from orchestrator.project_dispatch import (
 )
 
 
-def _runner(name, *, status="online", ready=True, projects=(), agents=(), rid=None):
+def _runner(name, *, status="online", ready=True, projects=(), agents=(), rid=None,
+            can_manage=True, owner=""):
     return {"id": rid or f"id-{name}", "name": name, "status": status, "ready": ready,
             "ready_note": "" if ready else "emdash CDP unreachable on :9223",
+            # canopy-web #509: the list is scoped by tenant, so it can contain runners
+            # this caller may see but not mutate. Defaults True, as the schema does.
+            "can_manage": can_manage,
+            "paired_by_email": owner,
             "capabilities": {"agents": list(agents), "projects": list(projects),
                              "sessions": True}}
 
@@ -159,17 +168,31 @@ def test_a_runner_that_does_not_declare_the_project_cannot_serve_it():
     assert [r["name"] for r in c["declarable"]] == ["jj-mbp"]
 
 
-def test_an_invisible_fleet_is_UNKNOWN_not_blocked():
-    """An empty list is no information, not bad information.
+def test_an_UNTENANTED_empty_fleet_is_UNKNOWN_not_blocked():
+    """An empty list with nowhere to have looked is no information, not bad
+    information.
 
-    canopy-web scopes runner listing to `paired_by == caller`, so every caller who
-    did not pair a runner sees zero of them — including when a runner declares the
-    repo and claims the turn within seconds. Reading that as "no runner can serve
-    this" asserts a fact not in evidence and false-negatives for everyone but the
-    pairer."""
+    canopy-web USED to scope runner listing to `paired_by == caller`, so every caller
+    who did not pair a runner saw zero of them — including when a runner declared the
+    repo and claimed the turn within seconds. #509 fixed that server-side, but the
+    verdict survives for the one read that still has no tenant behind it: an unpinned
+    listing by a caller with no workspace memberships."""
     c = classify_runners([], "connect-labs")
     assert c["unknown"] is True
     assert c["blocked"] is False
+
+
+def test_a_TENANT_SCOPED_empty_fleet_is_BLOCKED_not_unknown():
+    """The same empty list means the opposite thing when it came from one tenant.
+
+    `/api/w/<ws>/harness/runners/` answers only after the middleware has gated
+    membership of `<ws>`, and #509 scopes the read to the tenant rather than to who
+    paired what — so an empty answer is the fleet, not the caller's blind spot. A
+    dispatch there would 201 and queue forever, which is exactly what the preflight
+    exists to refuse."""
+    c = classify_runners([], "connect-labs", tenant_scoped=True)
+    assert c["blocked"] is True
+    assert c["unknown"] is False
 
 
 def test_a_visible_fleet_that_cannot_serve_is_still_BLOCKED():
@@ -228,6 +251,77 @@ def test_declare_refuses_to_pick_between_several_live_runners():
         pick_declare_target(c)
     assert "--runner" in str(e.value)
     assert pick_declare_target(c, "b")["name"] == "b"
+
+
+# --- can_manage: seeing a runner vs being allowed to act on it ---------------
+
+def test_a_runner_you_cannot_manage_is_not_a_declare_target():
+    """#509 widened the READ past ownership but not the write. A runner you can see
+    and cannot mutate is a dead end, not a remedy — bucketing it as `declarable`
+    would aim `--declare` at a PATCH that 404s."""
+    c = classify_runners([_runner("theirs", can_manage=False, owner="ace@dimagi.com")],
+                         "connect-labs")
+    assert [r["name"] for r in c["foreign"]] == ["theirs"]
+    assert c["declarable"] == []
+    assert c["blocked"] is True
+
+
+def test_blocked_on_a_foreign_fleet_names_the_owner_instead_of_suggesting_declare():
+    """The whole point of surfacing can_manage: tell the caller who to ask, rather
+    than sending them at a command that cannot work."""
+    c = classify_runners([_runner("theirs", can_manage=False, owner="ace@dimagi.com")],
+                         "connect-labs")
+    msg = blocked_message(c, "dimagi")
+    assert "ace@dimagi.com" in msg
+    assert "--declare" not in msg, "must not recommend a PATCH this caller cannot make"
+
+
+def test_picking_a_declare_target_refuses_a_runner_that_is_not_yours():
+    c = classify_runners([_runner("theirs", can_manage=False, owner="ace@dimagi.com")],
+                         "connect-labs")
+    with pytest.raises(DispatchError) as e:
+        pick_declare_target(c)
+    assert "ace@dimagi.com" in str(e.value)
+
+    with pytest.raises(DispatchError) as e:
+        pick_declare_target(c, "theirs")          # named explicitly, still not yours
+    assert "cannot declare on it" in str(e.value)
+
+
+def test_an_unmanageable_runner_does_not_make_the_choice_ambiguous():
+    """Only manageable runners are in the pool, so one of each is unambiguous — the
+    caller should not be asked to disambiguate against a runner they cannot use."""
+    c = classify_runners([_runner("mine"), _runner("theirs", can_manage=False)],
+                         "connect-labs")
+    assert pick_declare_target(c)["name"] == "mine"
+
+
+def test_can_manage_defaults_true_for_a_server_that_does_not_send_it():
+    """The field arrived with #509; an older canopy-web omits it, and every non-list
+    route that returns a runner already proved the caller can act on it."""
+    assert can_manage({"name": "old"}) is True
+
+
+# --- --declare, on borrowed time (canopy-web #513) ---------------------------
+
+def test_the_projects_422_is_recognised_as_the_reported_capability_rule():
+    assert is_declare_rejection(
+        "PATCH /api/harness/runners/x -> 422: {'detail': '`projects` is reported by "
+        "the runner, not set by hand'}") is True
+
+
+def test_other_failures_keep_their_own_message():
+    """Narrow on purpose — a 404 from PATCHing someone else's runner is a different
+    problem with a different fix, and must not be explained as the #513 rule."""
+    assert is_declare_rejection("PATCH /api/harness/runners/x -> 404: not found") is False
+    assert is_declare_rejection("PATCH /api/harness/runners/x -> 422: bad agents") is False
+
+
+def test_the_declare_rejection_says_how_to_actually_make_a_repo_routable():
+    """A raw 422 teaches the reader nothing. The fix is on the box, not in the API."""
+    msg = declare_rejected_message("422 detail here")
+    assert "emdash" in msg and "RUNNER_PROJECTS" in msg
+    assert "heartbeat" in msg
 
 
 # --- CLI ---------------------------------------------------------------------
@@ -328,22 +422,45 @@ def test_cli_declare_flag_fixes_the_capability_then_dispatches(net):
     assert [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
 
 
-def test_cli_dispatch_WARNS_AND_ENQUEUES_when_it_can_see_no_runners_at_all(net):
-    """The false-negative this split exists for. Runner listing is scoped to the
-    runners YOU paired, so Hal (who paired none) saw an empty fleet, was told the
-    dispatch "would queue forever", and then watched `--no-preflight` enqueue a turn
-    that was claimed within seconds. Nothing visible means nothing concluded."""
+def test_cli_dispatch_REFUSES_when_the_TARGET_WORKSPACE_has_no_runners(net):
+    """The empty fleet is now a real answer, because the preflight asks the right
+    tenant.
+
+    This case used to warn-and-enqueue: the list was scoped to what the caller had
+    paired, so empty carried no information (Hal, who paired none, was told a
+    dispatch "would queue forever" and then watched `--no-preflight` enqueue a turn
+    claimed within seconds). #509 scopes the read by tenant, and the preflight now
+    reads the tenant it enqueues into — so empty means this workspace has no runners,
+    and enqueueing would be the queue-forever bug rather than the fix for it."""
     calls = []
     net(calls, [])
 
     r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
-                                  "--workspace", "dimagi", "--prompt", "x",
-                                  "--json-output"])
+                                  "--workspace", "dimagi", "--prompt", "x"])
+    assert r.exit_code != 0
+    assert not [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+    assert "no runners" in r.output
+    assert "dimagi" in r.output, "must name the tenant it found empty"
+
+
+def test_cli_dispatch_PREFLIGHTS_THE_TENANT_IT_ENQUEUES_INTO(net):
+    """The bug #509 made newly reachable, and the reason this read moved.
+
+    The flat runners route returns the union of every workspace the caller belongs
+    to, while the turn goes to exactly ONE. A caller in {dimagi, connect} whose only
+    runners live in dimagi would preflight GREEN off those and enqueue into connect,
+    where nothing serves the repo — a 201 that queues forever, which is #428 again
+    through a different door. So the GET must carry the workspace."""
+    calls = []
+    net(calls, [_runner("jj-mbp", projects=["connect-labs"])])
+
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--workspace", "connect", "--prompt", "x"])
     assert r.exit_code == 0, r.output
-    assert [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]], \
-        "an unknown fleet must not refuse the dispatch"
-    warnings = json.loads(r.output)["warnings"]
-    assert any("cannot see any runners" in w for w in warnings), warnings
+    gets = [c for c in calls if c[0] == "GET" and "/harness/runners/" in c[1]]
+    assert gets, "the preflight must read the fleet"
+    assert all(g[1].endswith("/api/w/connect/harness/runners/") for g in gets), \
+        f"preflight must read the TENANT it enqueues into, got {[g[1] for g in gets]}"
 
 
 def test_cli_dispatch_still_REFUSES_when_a_visible_fleet_cannot_serve(net):
@@ -374,8 +491,13 @@ def test_cli_declare_fails_cleanly_when_there_is_no_visible_runner_to_declare_on
 
 
 def test_cli_no_preflight_enqueues_without_checking(net):
-    """The honest escape hatch: a runner paired by someone else is invisible to this
-    caller, so its declaration cannot be checked from here."""
+    """The escape hatch, now much narrower than the reason it was added.
+
+    It existed because the preflight could refuse off an empty list it had no right
+    to conclude from (#428) — #509 plus the tenant-scoped read removed that failure
+    mode, so what is left is working around a capability list that is merely stale.
+    Kept rather than deleted because that staleness is real until canopy-web #513
+    makes `projects` runner-reported; see canopy#433."""
     calls = []
     net(calls, [_runner("jj-mbp", projects=["canopy-web"])])
     r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs", "--no-preflight",
@@ -416,13 +538,74 @@ def test_cli_runners_reports_the_blocked_case(net):
 
 def test_cli_runners_says_UNKNOWN_not_blocked_when_the_fleet_is_invisible(net):
     """The diagnostic command has to agree with the preflight, or the user is told
-    the dispatch is impossible by one command and watched it work by the other."""
+    the dispatch is impossible by one command and watched it work by the other.
+
+    Unscoped, so still UNKNOWN: with no --workspace there is no tenant to attribute
+    the emptiness to. The scoped read is the one that concludes."""
     calls = []
     net(calls, [])
     r = CliRunner().invoke(main, ["project", "runners", "connect-labs"])
     assert r.exit_code == 0, r.output
     assert "UNKNOWN" in r.output
     assert "BLOCKED" not in r.output
+
+
+def test_cli_runners_scoped_to_a_workspace_reads_that_tenant_and_concludes(net):
+    """With a tenant named, an empty answer is the fleet — the same conclusion the
+    dispatch preflight draws, from the same read."""
+    calls = []
+    net(calls, [])
+    r = CliRunner().invoke(main, ["project", "runners", "connect-labs",
+                                  "--workspace", "connect"])
+    assert r.exit_code == 0, r.output
+    assert [c for c in calls if c[1].endswith("/api/w/connect/harness/runners/")], \
+        [c[1] for c in calls]
+    assert "BLOCKED" in r.output
+    assert "UNKNOWN" not in r.output
+
+
+def test_cli_runners_shows_which_rows_you_may_act_on(net):
+    """Since #509 the list contains runners the caller cannot mutate. Printing them
+    with no marker implies every row is actionable, which is how you discover
+    ownership from a bare 404 instead of from the listing."""
+    calls = []
+    net(calls, [_runner("theirs", projects=["canopy-web"],
+                        can_manage=False, owner="ace@dimagi.com")])
+    r = CliRunner().invoke(main, ["project", "runners"])
+    assert r.exit_code == 0, r.output
+    assert "ace@dimagi.com" in r.output
+
+    calls2 = []
+    net(calls2, [_runner("theirs", can_manage=False, owner="ace@dimagi.com")])
+    r2 = CliRunner().invoke(main, ["project", "runners", "--json-output"])
+    assert json.loads(r2.output)[0]["can_manage"] is False
+
+
+def test_cli_declare_explains_itself_when_canopy_web_starts_refusing_projects(monkeypatch):
+    """Forward-compat with canopy-web #513, which has NOT shipped yet: the moment it
+    does, this PATCH 422s. The command is still correct today, so it stays — but it
+    must fail with the reason and the real fix, not a raw 422 (canopy#433)."""
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_workspace", lambda w=None: None)
+
+    def transport(method, url, headers, data):
+        if "/harness/runners/" in url and method == "GET":
+            return 200, json.dumps([_runner("jj-mbp", projects=["canopy-web"])])
+        if "/harness/runners/" in url and method == "PATCH":
+            return 422, json.dumps({"detail": "`projects` is reported by the runner, "
+                                              "not set by hand"})
+        if "/workspaces/" in url:
+            return 200, json.dumps([{"slug": "dimagi"}])
+        return 200, json.dumps([])
+
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+    r = CliRunner().invoke(main, ["project", "declare", "connect-labs"])
+
+    assert r.exit_code != 0
+    assert "emdash" in r.output and "RUNNER_PROJECTS" in r.output
+    assert "422" not in r.output.split("Server said")[0], \
+        "the explanation must lead, not the status code"
 
 
 def test_cli_turns_filters_to_the_named_project(monkeypatch):
