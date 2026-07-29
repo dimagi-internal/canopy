@@ -156,6 +156,42 @@ def test_to_html_bare_url_sheds_trailing_comma_and_question_mark():
     assert '<a href="https://example.com/b">https://example.com/b</a>?' in out
 
 
+def test_to_html_renders_inline_bold_and_code():
+    # Agents write markdown bodies; before this the engine converted only links, so
+    # `**bold**` and backticks reached the recipient as literal punctuation.
+    out = to_html("the **one** ask: read `compiler.ts:786` first\n")
+    assert "<strong>one</strong>" in out
+    assert "<code>compiler.ts:786</code>" in out
+    assert "**" not in out and "`" not in out
+
+
+def test_to_html_inline_markdown_applies_in_bullets_and_link_text():
+    out = to_html("- **#375** is the [real `parity` ask](https://example.com/i/375)\n")
+    assert "<li><strong>#375</strong> is the " in out
+    assert '<a href="https://example.com/i/375">real <code>parity</code> ask</a>' in out
+
+
+def test_to_html_inline_markdown_never_rewrites_a_url():
+    # An href must survive verbatim — a stray asterisk pair in a query string would
+    # otherwise become a tag and break the link.
+    out = to_html("see https://example.com/s?q=**a**b\n")
+    assert '<a href="https://example.com/s?q=**a**b">' in out
+    assert "<strong>" not in out
+
+
+def test_to_html_code_span_wins_over_bold_inside_it():
+    out = to_html("write `**literal**` when you mean it\n")
+    assert "<code>**literal**</code>" in out
+    assert "<strong>" not in out
+
+
+def test_to_html_leaves_unpaired_markers_alone():
+    # A lone asterisk or backtick in prose must not swallow the rest of the paragraph.
+    out = to_html("2 * 3 is 6 and a lone ` stays put\n")
+    assert "2 * 3 is 6 and a lone ` stays put" in out
+    assert "<strong>" not in out and "<code>" not in out
+
+
 def test_to_html_bare_url_keeps_interior_punctuation():
     # Only TRAILING punctuation is shed — query strings and dotted paths survive.
     out = to_html("https://example.com/x?a=1&b=2\n")
