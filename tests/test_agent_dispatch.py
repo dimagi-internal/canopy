@@ -201,3 +201,22 @@ def test_cli_turns_lists_recent_turns(monkeypatch):
     r = CliRunner().invoke(main, ["agent", "turns", "--slug", "hal"])
     assert r.exit_code == 0, r.output
     assert "t1" in r.output and "launched" in r.output.lower()
+
+
+def test_a_claimed_or_running_turn_does_not_report_it_was_never_spawned():
+    """`queued`, `claimed` and `running` share the pending bucket — none has finished
+    spawning, so none may claim LAUNCHED. But they are not the same claim to a human:
+    rendering `running` as "the runner has not spawned it yet" states the exact
+    falsehood `canopy project turns` exists to disprove. dimagi-internal/canopy#433."""
+    from orchestrator.agent_dispatch import summarize_turn
+
+    unclaimed = summarize_turn({"id": "t", "status": "queued"})
+    assert unclaimed["state"] == "queued"
+    assert "no runner has claimed it yet" in unclaimed["headline"]
+
+    for status in ("claimed", "running"):
+        s = summarize_turn({"id": "t", "status": status})
+        assert s["state"] == "queued", "still pending — must not be promoted to launched"
+        assert "has not spawned" not in s["headline"], (
+            f"{status} reported as never-spawned: {s['headline']!r}")
+        assert "executing" in s["headline"]

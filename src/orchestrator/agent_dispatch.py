@@ -37,6 +37,13 @@ TURNS_PATH = "/api/harness/turns/"
 # Runner statuses → what a human may honestly say about them.
 _LAUNCHED = {"done"}                       # spawned; the agent's own outcome is unknown
 _PENDING = {"queued", "claimed", "running"}
+# All three are pending — none has finished spawning, so none may claim LAUNCHED.
+# But they are not the same claim to a human: `queued` means no runner has taken
+# it, while `claimed`/`running` mean one has and the work is under way. Rendering
+# the second as "the runner has not spawned it yet" states the exact falsehood
+# this command exists to disprove — someone checking whether their dispatch
+# landed reads it and concludes it didn't.
+_UNCLAIMED = {"queued"}
 _FAILED = {"lost", "failed", "error", "expired"}
 
 _SESSION_RX = re.compile(r"created session '([^']+)'")
@@ -99,8 +106,11 @@ def summarize_turn(turn: dict) -> dict:
         headline = (f"launched (unverified) — spawned session {session_name}"
                     if session_name else "launched (unverified) — session spawned")
     elif status in _PENDING:
+        # One bucket (nothing here is LAUNCHED), two honest headlines.
         state = "queued"
-        headline = f"queued ({status}) — the runner has not spawned it yet"
+        headline = (f"queued ({status}) — no runner has claimed it yet"
+                    if status in _UNCLAIMED
+                    else f"queued ({status}) — a runner claimed it and is executing it")
     elif status in _FAILED:
         state = "failed"
         headline = f"FAILED ({status}){' — ' + note if note else ''}"
