@@ -9,6 +9,39 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.379] - 2026-07-29
+
+### Changed
+
+- `canopy project dispatch` no longer refuses when the only runner reporting the repo
+  is **asleep**. `classify_runners` gained a `dormant` verdict — reports the project,
+  heartbeat lapsed — which warns and enqueues instead of blocking.
+
+  This closes the one gap 0.2.378 opened. Retiring `--no-preflight` was right, but its
+  stated rationale (nothing left to override) was not quite complete: #513 makes an
+  *online* runner's list fresh by construction, so the residual staleness is temporal —
+  a box that reported the repo and then slept. Blocking there is a false negative,
+  because a QUEUED turn is **never expired** (canopy-web's release sweep exempts them,
+  so "laptop offline over a weekend must not retire Friday's slot") and the runner
+  claims it on wake. With the flag gone that case had no path at all: dispatching work
+  for a laptop to pick up on return simply failed until someone opened it.
+
+  It is equally not a case for reinstating the flag — skipping the whole preflight
+  answers it by also waving through the case that genuinely queues forever (#428). So
+  the preflight answers it itself, and says so rather than leaving a queued turn
+  looking like a hang.
+
+  The line that keeps this from becoming #428 wearing a warning: `stale` and
+  `degraded` count as recoverable, `disconnected` (never heartbeated, so any list on
+  it is pre-#513 residue rather than an observation) and `retired` do not, and still
+  block. A sleeping runner that does *not* report the repo also still blocks.
+
+  `degraded` is fixed in passing: canopy-web serves it as a `live_status`, and it
+  previously fell into `offline` and refused despite being the same recoverable shape
+  as the `ready=False` case that already warned.
+
+Follow-on to #433 item 2.
+
 ## [0.2.378] - 2026-07-29
 
 ### Changed
