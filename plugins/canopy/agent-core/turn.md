@@ -68,6 +68,10 @@ explored the Calendar API before concluding "no action." Line one of the headers
 **When an item is fully handled, mark its thread read** (`canopy email mark-read --repo .
 <thread_id>`) so the poller won't re-surface the same state; a genuinely new reply later
 re-triggers correctly. If the item needs no action, mark it read anyway (it's handled).
+To take it out of the inbox entirely, `canopy email archive --repo . <thread_id>` — same
+own-mailbox rail, drops INBOX + UNREAD in one call. Use the CLI, not a hand-rolled `gog
+gmail thread modify`: the flag spelling is `--remove` (not `--remove-label`) and lives on
+`thread modify` (not `gmail modify`), which has cost agents several tool calls to rediscover.
 
 Before every outbound reply, run the `agent-turn-review` skill (it invokes the fleet-wide
 `canopy:agent-turn-review`): re-read the original request, extract EACH discrete ask, confirm the
@@ -129,11 +133,12 @@ reply threading; a deny rail blocks raw `gog gmail send`). Every send returns JS
 reply to the right scope. Auth flaky? `canopy email preflight --repo .` prints the exact fix.
 
 **Not actionable → archive it (don't leave it unread).** If a thread has nothing to Reply /
-File / Remember / Escalate, it *is* handled: mark it read and archive it on your OWN mailbox so
-it leaves the inbox instead of lingering. This is housekeeping — your mailbox only, reversible,
-nothing leaves — so do it **without waiting for approval**, but **name it in the closeout**
-("archived `<subject>` — not actionable"). Sanctioned path only: mark-read/archive naming your
-own `--account` (the rail permits your own box); NEVER a sibling mailbox, NEVER raw send. The
+File / Remember / Escalate, it *is* handled: `canopy email archive --repo . <thread_id>` takes it
+off your OWN inbox (INBOX + UNREAD together) instead of leaving it to linger. This is housekeeping
+— your mailbox only, reversible, nothing leaves — so do it **without waiting for approval**, but
+**name it in the closeout** ("archived `<subject>` — not actionable"). Sanctioned path only:
+`canopy email mark-read` / `archive` on your own box (the rail permits it); NEVER a sibling
+mailbox, NEVER raw send. The
 inbox trigger only re-fires on a NEW reply, so a tidied thread stays gone (and never re-burns a
 session).
 

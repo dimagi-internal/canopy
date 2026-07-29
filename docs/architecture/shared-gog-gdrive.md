@@ -39,13 +39,15 @@ identity, rules, secrets, and domain skills are the agent's"*):
 
 ## 3. Email: the idealized adapter
 
-**Engine** (canopy Python package, `canopy email <send|mark-read|preflight>`):
+**Engine** (canopy Python package, `canopy email <send|mark-read|archive|preflight>`):
 - `send` — the echo/ACE HTML wrapper, parameterized by agent config: `--agent <slug>` resolves
   mailbox + client from the agent repo's `config/agent.json`; body-file contract (single-line
   paragraphs, bullets); `--reply-to-message-id`; `--dry-run`; JSON result with `message_id` +
   `thread_id`. The wrapper is the ONLY send path (each agent keeps a thin `bin/<slug>-email` shim
   or calls the CLI; the deny rail points at it).
 - `mark-read` — Gmail API UNREAD-label removal via the agent's own gog credentials.
+- `archive` — the other half of turn housekeeping: removes INBOX + UNREAD so a handled thread
+  leaves the agent's own inbox. Own mailbox only and reversible, so it rides no approval gate.
 - `preflight` — gog auth liveness for the agent's client, with the exact `gog login …` remediation.
 
 **Per-agent carve-outs:**

@@ -20,6 +20,9 @@ Three subcommands:
 - `mark-read` — remove the UNREAD label via `gog gmail thread modify` (API reads don't
   clear the flag). Auth rides gog's own token bucket — never the macOS Keychain, which
   blocks forever on a GUI prompt in non-interactive shells (dimagi-internal/ace#827).
+- `archive` — the other half of turn housekeeping: drop INBOX + UNREAD so a handled or
+  non-actionable thread leaves the agent's own inbox instead of lingering. Own mailbox
+  only, reversible, no approval gate (agent-core/turn.md Step 2).
 - `preflight` — gog auth liveness for the agent's client, with the exact `gog login …`
   remediation (and the API-not-enabled self-heal echo's preflight learned the hard way).
 
@@ -549,28 +552,33 @@ def dropped_participants(
 
 
 # --------------------------------------------------------------------------------------
-# mark-read
+# mark-read / archive — the turn's own-mailbox housekeeping pair
 # --------------------------------------------------------------------------------------
 
-def mark_read(
+def _remove_labels(
     identity: EmailIdentity,
     thread_ids: list[str],
+    labels: str,
     *,
     runner=subprocess.run,
 ) -> list[dict]:
-    """Remove the UNREAD label from each thread as the agent. Per-thread results, keeps going.
+    """Remove LABELS from each thread as the agent. Per-thread results, keeps going.
 
     Shells out to `gog gmail thread modify` — gog's own token bucket handles auth, same
     as every other gog call in a turn. The previous implementation minted an access
     token itself via the macOS Keychain `security` call, which blocks FOREVER on a GUI
     prompt in non-interactive agent shells (dimagi-internal/ace#827) — never reintroduce
     a Keychain read here.
+
+    Own-mailbox only: `identity.account` is always the AGENT's box, so this can never
+    touch a sibling's mail. Label removal is reversible, which is why the turn procedure
+    lets an agent do it as housekeeping without a human approval gate.
     """
     results = []
     for th in thread_ids:
         try:
             r = runner(
-                ["gog", "gmail", "thread", "modify", th, "--remove", "UNREAD",
+                ["gog", "gmail", "thread", "modify", th, "--remove", labels,
                  "--account", identity.account, "--client", identity.client],
                 capture_output=True, text=True, timeout=30,
             )
@@ -585,6 +593,34 @@ def mark_read(
             err = (r.stderr or r.stdout or "").strip().replace("\n", " ")
             results.append({"thread_id": th, "ok": False, "error": err[:200]})
     return results
+
+
+def mark_read(
+    identity: EmailIdentity,
+    thread_ids: list[str],
+    *,
+    runner=subprocess.run,
+) -> list[dict]:
+    """Remove the UNREAD label from each thread as the agent (API reads don't clear it)."""
+    return _remove_labels(identity, thread_ids, "UNREAD", runner=runner)
+
+
+def archive(
+    identity: EmailIdentity,
+    thread_ids: list[str],
+    *,
+    runner=subprocess.run,
+) -> list[dict]:
+    """Archive each thread out of the agent's OWN inbox — removes INBOX *and* UNREAD.
+
+    Both labels in one call because that is exactly what the turn procedure asks for on a
+    handled-or-not-actionable thread ("mark it read and archive it"): a thread left UNREAD
+    in the archive still shows as unread mail, and re-surfaces on the next poll. Before
+    this existed, `canopy email` offered only `mark-read`, so every agent hand-rolled the
+    archive half as a raw `gog gmail thread modify … --remove INBOX` rediscovered from
+    scratch each turn (eva, 2026-07-29: four tool calls spent finding the flag spelling).
+    """
+    return _remove_labels(identity, thread_ids, "INBOX,UNREAD", runner=runner)
 
 
 # --------------------------------------------------------------------------------------
@@ -1131,6 +1167,31 @@ def email_mark_read(repo, agent, account, client, thread_ids):
     for res in results:
         if res["ok"]:
             click.echo(f"{res['thread_id']} -> read")
+        else:
+            failed += 1
+            click.echo(f"{res['thread_id']} -> ERROR {res['error']}")
+    if failed:
+        sys.exit(1)
+
+
+@email_group.command("archive")
+@_with_identity_options
+@click.argument("thread_ids", nargs=-1, required=True)
+def email_archive(repo, agent, account, client, thread_ids):
+    """Archive THREAD_IDS out of the agent's OWN inbox (removes INBOX + UNREAD).
+
+    Turn housekeeping for a handled or not-actionable thread — own mailbox only,
+    reversible, so it needs no approval gate. Name it in the turn closeout.
+    """
+    try:
+        ident = _identity_from_opts(repo, agent, account, client)
+        results = archive(ident, list(thread_ids))
+    except AgentEmailError as e:
+        raise click.ClickException(str(e))
+    failed = 0
+    for res in results:
+        if res["ok"]:
+            click.echo(f"{res['thread_id']} -> archived")
         else:
             failed += 1
             click.echo(f"{res['thread_id']} -> ERROR {res['error']}")
