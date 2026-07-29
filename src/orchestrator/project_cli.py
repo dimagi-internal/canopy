@@ -4,7 +4,7 @@ The sibling of `canopy agent dispatch`, deliberately a separate command rather t
 a `--project` flag on that one. `canopy agent dispatch --project connect-labs` reads
 as a contradiction at the shell, and the two targets differ in more than a flag: a
 project turn resolves its tenant differently (workspace, required), preflights
-differently (the runner must declare the repo), and writes no board record at all.
+differently (the runner must REPORT the repo), and writes no board record at all.
 Overloading one command would make most of its options conditional on which target
 you picked, which is exactly the shape that hides the sharp edges again.
 
@@ -50,32 +50,6 @@ def _fetch_runners(workspace: str = ""):
     return rows
 
 
-def _declare_on(target: dict, project_name: str) -> dict:
-    """PATCH `project_name` onto a runner's declared capabilities.
-
-    Shared by `dispatch --declare` and `declare` so the one interesting failure is
-    handled identically: once canopy-web #513 ships, this PATCH 422s because
-    `projects` becomes runner-reported. That is the correct new behaviour, so the
-    job here is to state it — a raw "PATCH … -> 422" tells the reader nothing about
-    opening the repo in emdash, which is the actual fix.
-    """
-    from orchestrator import canopy_web
-    from orchestrator.agent_client import CanopyError as _CanopyError
-    from orchestrator.project_dispatch import (
-        declare_rejected_message, is_declare_rejection, with_project_declared,
-    )
-
-    caps = with_project_declared(target, project_name)
-    try:
-        canopy_web.call("PATCH", f"{RUNNERS_PATH}{target['id']}",
-                        {"capabilities": caps})
-    except _CanopyError as e:
-        if is_declare_rejection(str(e)):
-            raise click.ClickException(declare_rejected_message(str(e)))
-        raise
-    return caps
-
-
 def _my_workspace_slugs():
     from orchestrator import canopy_web
     try:
@@ -107,29 +81,21 @@ def project():
 @click.option("--idempotency-key", default=None,
               help="Override the derived (project, title, day) key — pass a fresh one "
                    "to deliberately re-dispatch the same work.")
-@click.option("--declare", is_flag=True,
-              help="If no live runner declares this project, add it to a runner's "
-                   "capabilities first (PATCH) instead of failing. Being retired — "
-                   "canopy-web will soon report projects from the runner instead.")
-@click.option("--runner", "runner_name", default="",
-              help="Which runner --declare should write to, when several are live.")
-@click.option("--no-preflight", is_flag=True,
-              help="Skip the runner-capability check. The preflight now reads the "
-                   "same tenant the turn is enqueued into, so its refusals are "
-                   "trustworthy — reach for this only to work around a stale "
-                   "capability list, and expect the turn to queue if you are wrong.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
-                         idempotency_key, declare, runner_name, no_preflight, as_json):
+                         idempotency_key, as_json):
     """Trigger a runner session in a repo — `canopy project dispatch connect-labs`.
 
     The one-shot counterpart to a schedule, aimed at a codebase rather than at a
     fleet agent. The runner claims the turn and spawns a visible emdash session in
     that repo, which you can watch and interrupt.
 
-    Refuses up front if no live runner declares the project: such a turn is accepted
+    Refuses up front if no live runner reports the project: such a turn is accepted
     with a 201 and then never claimed by anything, which looks exactly like nothing
-    happening. `--declare` fixes the capability in place instead of failing.
+    happening. The preflight is not optional and there is no way to declare the repo
+    from here — canopy-web reports `capabilities.projects` from the box on every
+    heartbeat, so you make a repo routable by opening it in emdash on that runner
+    (or setting `RUNNER_PROJECTS`), and the refusal tells you which machine.
 
     Writes NO board task — a repo has no agent board, and inventing one would be a
     record nothing reads.
@@ -145,7 +111,6 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
         build_project_turn_payload,
         classify_runners,
         derive_project_idempotency_key,
-        pick_declare_target,
         project_turns_path,
         resolve_workspace_choice,
         unknown_message,
@@ -162,36 +127,30 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
             _my_workspace_slugs,      # lazy — not fetched when the answer is pinned
         )
 
-        declared_on = None
-        if not no_preflight:
-            # Read the fleet of the tenant this turn is going INTO, not the union of
-            # every workspace the caller belongs to — see `_runners_path`.
-            classified = classify_runners(_fetch_runners(ws), project_name,
-                                          tenant_scoped=True)
-            # `--declare` runs on `unknown` too, and fails there: it PATCHes a
-            # specific runner, so it needs one the caller can act on. Warning and
-            # enqueueing instead would silently drop what the caller asked for.
-            if declare and (classified["blocked"] or classified["unknown"]):
-                target = pick_declare_target(classified, runner_name)
-                _declare_on(target, project_name)
-                declared_on = target.get("name")
-                classified = classify_runners(_fetch_runners(ws), project_name,
-                                              tenant_scoped=True)
-            if classified["blocked"]:
-                raise click.ClickException(blocked_message(classified, ws))
-            if classified["unknown"]:
-                warnings.append(unknown_message(project_name))
-            if not classified["serving"] and classified["degraded"]:
-                names = ", ".join(str(r.get("name") or "") for r in classified["degraded"])
-                notes = "; ".join(
-                    n for n in (str(r.get("ready_note") or "").strip()
-                                for r in classified["degraded"]) if n
-                )
-                warnings.append(
-                    f"the only runner(s) declaring '{project_name}' ({names}) report "
-                    f"NOT READY{' — ' + notes if notes else ''}. The turn will queue "
-                    "until one recovers rather than starting now."
-                )
+        # Unconditional. The escape hatch (`--no-preflight`) existed because this
+        # answer could not be trusted: the fleet was invisible to non-pairers (#509)
+        # and the capability list was hand-typed (#513). Both are fixed server-side,
+        # so a refusal here is a fact about the tenant — and routing around it is
+        # precisely what left a turn queued forever in #428.
+        # Read the fleet of the tenant this turn is going INTO, not the union of
+        # every workspace the caller belongs to — see `_runners_path`.
+        classified = classify_runners(_fetch_runners(ws), project_name,
+                                      tenant_scoped=True)
+        if classified["blocked"]:
+            raise click.ClickException(blocked_message(classified, ws))
+        if classified["unknown"]:
+            warnings.append(unknown_message(project_name))
+        if not classified["serving"] and classified["degraded"]:
+            names = ", ".join(str(r.get("name") or "") for r in classified["degraded"])
+            notes = "; ".join(
+                n for n in (str(r.get("ready_note") or "").strip()
+                            for r in classified["degraded"]) if n
+            )
+            warnings.append(
+                f"the only runner(s) reporting '{project_name}' ({names}) report "
+                f"NOT READY{' — ' + notes if notes else ''}. The turn will queue "
+                "until one recovers rather than starting now."
+            )
 
         day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
         key = idempotency_key or derive_project_idempotency_key(
@@ -207,13 +166,11 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
     summary = summarize_turn(turn)
     if as_json:
         _emit({"project": project_name, "workspace": ws, "idempotency_key": key,
-               "declared_on": declared_on, "warnings": warnings, "turn": summary})
+               "warnings": warnings, "turn": summary})
         return
 
     click.echo(f"Project:   {project_name}")
     click.echo(f"Workspace: {ws}")
-    if declared_on:
-        click.echo(f"Declared:  added '{project_name}' to runner {declared_on}")
     click.echo(f"Turn:      {summary['id']}  →  {summary['headline']}")
     for w in warnings:
         click.echo(f"\nWARNING: {w}")
@@ -234,12 +191,13 @@ def project_runners_cmd(project_name, workspace, as_json):
     """Which runners can serve which repos — the answer to "why did nothing happen?".
 
     With a project name, splits the fleet the way a dispatch preflight does: who
-    would claim it now, who would once they recover, and who could declare it.
+    would claim it now, who would once they recover, and which machines would need
+    the repo opened on them.
 
-    `manage` on each row is whether YOU may mutate that runner. Since canopy-web
-    #509 the list is scoped by tenant rather than by who paired what, so it now
-    contains runners you can see and cannot touch — printing them without saying so
-    would imply you can act on every row.
+    Ownership is shown on rows you may not mutate. Since canopy-web #509 the list is
+    scoped by tenant rather than by who paired what, so it now contains runners you
+    can see and cannot touch — printing them unmarked would imply otherwise, and the
+    remedy for those is a different person's action.
     """
     from orchestrator.project_dispatch import (
         can_manage, classify_runners, declared_projects,
@@ -282,12 +240,12 @@ def project_runners_cmd(project_name, workspace, as_json):
         return
     click.echo(f"project '{project_name}'{where}:")
     for bucket, label in (("serving", "would claim now"),
-                          ("degraded", "declares it but NOT READY"),
-                          ("declarable", "online, could declare it"),
-                          ("foreign", "online, but not yours to declare on"),
+                          ("degraded", "reports it but NOT READY"),
+                          ("unreported_yours", "yours, not reporting it"),
+                          ("unreported_theirs", "someone else's, not reporting it"),
                           ("offline", "not live")):
         names = ", ".join(str(r.get("name") or "") for r in c[bucket])
-        click.echo(f"  {label:<32} {names or '—'}")
+        click.echo(f"  {label:<34} {names or '—'}")
     if c["unknown"]:
         # Must match what the preflight concludes, or one command calls the dispatch
         # impossible while the other one runs it.
@@ -297,60 +255,22 @@ def project_runners_cmd(project_name, workspace, as_json):
                    f"verify with: canopy project turns {project_name}")
     elif c["blocked"]:
         click.echo(f"\nBLOCKED: a dispatch{where} would queue forever.")
-        if c["declarable"]:
-            click.echo(f"Fix with: canopy project dispatch {project_name} --declare …")
-        elif c["foreign"]:
+        if c["unreported_yours"]:
+            names = ", ".join(str(r.get("name") or "") for r in c["unreported_yours"])
+            click.echo(f"Fix on the runner ({names}): open '{project_name}' as a "
+                       "project in emdash there, or add it to RUNNER_PROJECTS. "
+                       "The list refreshes on the next heartbeat.")
+        elif c["unreported_theirs"]:
             click.echo("The live runners here are not yours — ask their owner to open "
                        "the repo on one, or pair your own.")
+        elif not runners and scoped:
+            # Nothing to name a remedy on: the tenant itself is empty. Usually the
+            # workspace is wrong rather than the fleet missing, so say both.
+            click.echo(f"Workspace '{workspace}' has no runners at all — either you "
+                       "meant a different one, or none is paired here yet.")
         elif not scoped:
             click.echo("Re-check per workspace: "
                        f"canopy project runners {project_name} --workspace <ws>")
-
-
-@project.command("declare")
-@click.argument("project_name")
-@click.option("--workspace", default="",
-              help="Which tenant's fleet to declare within.")
-@click.option("--runner", "runner_name", default="",
-              help="Which runner to declare on, when several are live.")
-@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
-def project_declare_cmd(project_name, workspace, runner_name, as_json):
-    """Add a repo to a runner's declared capabilities so it will claim its turns.
-
-    Standalone because the capability is what makes a project dispatchable at all —
-    you want to be able to set it up once, ahead of the dispatch, not only as a
-    rescue flag on a failing one.
-
-    BEING RETIRED. canopy-web #513 makes `capabilities["projects"]` runner-reported
-    (replaced from the box on every heartbeat) and refuses a PATCH that carries it,
-    which removes the idea of declaring a repo from the client entirely: you make a
-    repo routable by opening it in emdash on that runner, not by asserting it here.
-    The command still works because #513 has not shipped; when it does, this fails
-    with that explanation rather than a raw 422. See canopy#433.
-    """
-    from orchestrator.agent_dispatch import DispatchError
-    from orchestrator.project_dispatch import (
-        classify_runners, declared_projects, pick_declare_target,
-    )
-
-    try:
-        classified = classify_runners(_fetch_runners(workspace), project_name,
-                                      tenant_scoped=bool(workspace.strip()))
-        target = pick_declare_target(classified, runner_name)
-        if project_name in declared_projects(target):
-            caps = target.get("capabilities") or {}
-        else:
-            caps = _declare_on(target, project_name)
-    except DispatchError as e:
-        raise click.ClickException(str(e))
-    except (CanopyError, RuntimeError) as e:
-        raise click.ClickException(str(e))
-
-    if as_json:
-        _emit({"runner": target.get("name"), "projects": caps.get("projects") or []})
-        return
-    click.echo(f"runner {target.get('name')} now declares: "
-               f"{', '.join(caps.get('projects') or [])}")
 
 
 @project.command("turns")

@@ -9,6 +9,41 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.378] - 2026-07-29
+
+### Changed
+
+- **`canopy project dispatch` preflights the tenant it enqueues into.** canopy-web
+  #509 rescoped `GET /api/harness/runners/` from `paired_by == caller` to TENANT, so
+  the flat route now returns the union of every workspace the caller belongs to —
+  while the turn is POSTed to exactly one. Measured live: an operator in
+  `{connect, dimagi}` reads 3 runners flat, but `connect` has none. So a dispatch
+  into `connect` preflighted GREEN off `dimagi`'s fleet, got a 201, and queued
+  forever — the #428 failure re-reached through a door #509 opened. The preflight
+  now reads `/api/w/<ws>/harness/runners/`.
+- **An empty tenant-scoped fleet REFUSES instead of warning.** Membership is gated by
+  the middleware before that route answers, so empty means "this workspace has no
+  runners" — a fact, not the absence of evidence it was under `paired_by` scoping.
+  The `UNKNOWN` verdict survives only for an untenanted read by a caller with no
+  workspace memberships (`canopy project runners` with no `--workspace`).
+- **`can_manage` is surfaced** (#509). A runner you can see but not mutate is
+  bucketed separately and reported as "ask its owner", never offered as a target for
+  an action that would 404. `canopy project runners` marks those rows and takes
+  `--workspace`.
+
+### Removed
+
+- **`canopy project declare` and `--declare`.** canopy-web #513 makes
+  `capabilities["projects"]` runner-REPORTED — replaced from the box on every
+  heartbeat (emdash's projects table on a laptop, `RUNNER_PROJECTS` on a cloud
+  runner) — and 422s any PATCH carrying `projects`. There is no client-side way to
+  make a repo routable, by design: you make it real on the machine. The blocked
+  message now names which machine and both ways to fix it.
+- **`--no-preflight`.** It existed because the preflight's answer could not be
+  trusted: the fleet was invisible to non-pairers (#509) and the capability list was
+  hand-typed (#513). Both are fixed server-side, so a refusal is now a fact — and
+  routing around it is precisely what left a turn queued forever in #428.
+
 ## [0.2.365] - 2026-07-28
 
 ### Added

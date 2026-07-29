@@ -19,25 +19,25 @@ workspace, which for anyone in two or more workspaces is a 422; `enqueue_turn`
 refuses a project turn with no workspace outright, because `claim_next_turn` fails a
 null-workspace project turn CLOSED and it would sit queued forever.
 
-**2. A runner only claims projects it DECLARES.** `claim_next_turn` matches on
-`Q(project__in=runner.project_names())` — the runner's self-declared
-`capabilities["projects"]`. Dispatch at a project no live runner declares and the
-turn is accepted (201), looks fine, and is never claimed by anything. That is the
-worst outcome available here: it reads exactly like "nothing happened". So the
-dispatch preflights the runner fleet and refuses, loudly, rather than enqueueing into
-a hole — and, because `PATCH /api/harness/runners/{id}` exists precisely to make
-capabilities mutable in place, it can also just fix it (`--declare`).
+**2. A runner only claims projects it REPORTS.** `claim_next_turn` matches on
+`Q(project__in=runner.project_names())` — `capabilities["projects"]`. Dispatch at a
+project no live runner has and the turn is accepted (201), looks fine, and is never
+claimed by anything. That is the worst outcome available here: it reads exactly like
+"nothing happened". So the dispatch preflights the runner fleet and refuses, loudly,
+rather than enqueueing into a hole.
 
-`--declare` is on borrowed time. canopy-web #513 makes `capabilities["projects"]`
-REPORTED by the runner on every heartbeat (a laptop reports emdash's own projects
-table, a cloud box reports `RUNNER_PROJECTS`) and 422s any PATCH body carrying
-`projects` — at which point declaring a repo from the client is not a thing that
-exists, by design: you make a repo routable by making it real on the box, not by
-asserting it. #513 has NOT shipped as of 2026-07-28 (the deployed `HeartbeatIn`
-carries no `projects` field and the PATCH still accepts one), so `--declare` still
-works and stays. What changes here is only that it stops failing obscurely —
-`declare_rejected_message` turns the eventual 422 into that sentence rather than a
-traceback, so the day #513 deploys the command explains itself. See #433.
+That list is now REPORTED by the runner, not typed by a human. canopy-web #513
+(merged + deployed 2026-07-29) replaces `capabilities["projects"]` on every heartbeat
+from what the box actually has — emdash's own projects table on a laptop,
+`RUNNER_PROJECTS` on a cloud runner — and 422s any PATCH body carrying `projects`.
+So there is no client-side way to make a repo routable, by design: you make it real
+on the machine, you do not assert it from here. `canopy project declare` and
+`--declare` PATCHed exactly that key and are therefore gone (#433), along with
+`--no-preflight`, which existed because the preflight's answer could not be trusted.
+Both halves of that distrust are now fixed server-side — the fleet is visible (#509)
+and the list is true (#513) — so a refusal from this preflight is a fact, and the
+correct response to it is to make the repo real, never to route around the check.
+Routing around it is what queued a turn forever in #428.
 
 That refusal is only sound when the fleet it inspected is the fleet that will be
 asked to claim. Two server-side facts decide that, and canopy-web #509 changed one
@@ -161,7 +161,7 @@ def build_project_turn_payload(project: str, *, prompt: str = "",
 
 
 def declared_projects(runner: dict) -> list[str]:
-    """The repos a runner says it can drive. Mirrors `Runner.project_names()`,
+    """The repos a runner REPORTS it can drive. Mirrors `Runner.project_names()`,
     including the empty-string strip (a session turn has project="", so a stray ""
     in capabilities would make the runner look like it serves every project)."""
     caps = (runner or {}).get("capabilities") or {}
@@ -169,7 +169,7 @@ def declared_projects(runner: dict) -> list[str]:
 
 
 def can_manage(runner: dict) -> bool:
-    """Whether THIS caller may mutate `runner` (declare on it, retire it).
+    """Whether THIS caller may mutate `runner` (retire it, set agents/sessions).
 
     `RunnerOut.can_manage` (canopy-web #509) is the ownership half that the widened,
     tenant-scoped read gave up: the list now shows runners the caller can see but may
@@ -186,21 +186,22 @@ def classify_runners(runners: list[dict], project: str, *,
 
     Buckets, because each needs a different answer:
 
-    - `serving`   — online, ready, declares it. One of these and the turn lands.
-    - `degraded`  — online and declares it, but self-reports not ready (e.g. emdash
+    - `serving`   — online, ready, reports it. One of these and the turn lands.
+    - `degraded`  — online and reports it, but self-reports not ready (e.g. emdash
                     CDP unreachable). It will claim once it recovers, so this is a
                     warning, not a refusal — the turn is not lost, only late.
-    - `declarable` — online, does NOT declare it, and the caller may mutate it.
-                    These are the `--declare` targets: the fix for the blocked case.
-    - `foreign`   — online and does not declare it, but belongs to someone else
-                    (`can_manage` false). Visible since #509 widened the read, and
-                    NOT a `--declare` target: PATCHing it 404s. It is the reason the
-                    blocked message can say "ask its owner" instead of telling the
-                    caller to try something that will fail.
+    - `unreported_yours`  — online, does not report the project, and is a machine the
+                    caller controls (`can_manage`). The fix is on that box: open the
+                    repo in emdash there, or add it to `RUNNER_PROJECTS`.
+    - `unreported_theirs` — online, does not report it, and belongs to someone else.
+                    Visible since #509 widened the read past ownership. Split out
+                    because the remedy is a different person's action, so the message
+                    must say "ask its owner" rather than describe a box the caller
+                    cannot touch.
 
     Everything else (stale/disconnected/retired) is reported as context but is not
     a route. `claim_next_turn` gates on the DERIVED `live_status`, which the API
-    already serves in `status`, so a stale runner's declaration means nothing.
+    already serves in `status`, so a stale runner's reported list means nothing.
 
     `tenant_scoped` says whether `runners` came from `/api/w/<ws>/harness/runners/`
     (the dispatch preflight) or the flat union route (`canopy project runners` with
@@ -211,26 +212,26 @@ def classify_runners(runners: list[dict], project: str, *,
     """
     project = (project or "").strip()
     runners = list(runners or [])
-    serving, degraded, declarable, foreign, offline = [], [], [], [], []
+    serving, degraded, mine, theirs, offline = [], [], [], [], []
     for r in runners:
         status = str(r.get("status") or "").strip().lower()
-        declares = project in declared_projects(r)
+        reports = project in declared_projects(r)
         if status != ONLINE:
             offline.append(r)
-        elif declares and r.get("ready", True):
+        elif reports and r.get("ready", True):
             serving.append(r)
-        elif declares:
+        elif reports:
             degraded.append(r)
         elif can_manage(r):
-            declarable.append(r)
+            mine.append(r)
         else:
-            foreign.append(r)
+            theirs.append(r)
     return {
         "project": project,
         "serving": serving,
         "degraded": degraded,
-        "declarable": declarable,
-        "foreign": foreign,
+        "unreported_yours": mine,
+        "unreported_theirs": theirs,
         "offline": offline,
         "tenant_scoped": tenant_scoped,
         # Nothing visible AND no tenant to attribute it to ≠ nothing suitable. Only
@@ -254,7 +255,7 @@ def _runner_line(r: dict) -> str:
     return (f"  - {r.get('name', '?')} [{r.get('status', '?')}"
             f"{'' if r.get('ready', True) else ', not ready'}]{own}"
             f"{' — ' + note if note else ''}\n"
-            f"      declares: {shown or '(none)'}")
+            f"      reports: {shown or '(none)'}")
 
 
 def blocked_message(classified: dict, workspace: str = "") -> str:
@@ -267,8 +268,8 @@ def blocked_message(classified: dict, workspace: str = "") -> str:
     """
     project = classified["project"]
     where = f" in workspace '{workspace}'" if workspace else ""
-    seen = (classified["declarable"] + classified["foreign"] + classified["degraded"]
-            + classified["serving"] + classified["offline"])
+    seen = (classified["unreported_yours"] + classified["unreported_theirs"]
+            + classified["degraded"] + classified["serving"] + classified["offline"])
 
     # The empty tenant-pinned case. Reachable only since the preflight started
     # reading the tenant it enqueues into: the workspace is real and you are a
@@ -289,39 +290,43 @@ def blocked_message(classified: dict, workspace: str = "") -> str:
     lines = [
         f"no live runner can serve project '{project}'{where} — refusing to enqueue.",
         "",
-        "A runner only claims turns for projects it DECLARES in its capabilities",
-        "(harness claim_next_turn matches on capabilities.projects). Enqueueing anyway",
-        "would return 201 and then sit QUEUED forever with nothing to claim it.",
+        "A runner only claims turns for projects it REPORTS in its capabilities",
+        "(harness claim_next_turn matches on capabilities.projects, and canopy-web",
+        "replaces that list from the box on every heartbeat). Enqueueing anyway would",
+        "return 201 and then sit QUEUED forever with nothing to claim it.",
         "",
         f"Runners{where}:",
     ]
     lines.extend(_runner_line(r) for r in seen)
 
-    if classified["declarable"]:
-        names = [str(r.get("name") or "") for r in classified["declarable"]]
-        target = f" --runner {names[0]}" if len(names) > 1 else ""
+    # The fix is always on a machine, never in this CLI — canopy-web #513 made
+    # `projects` runner-reported precisely so that a repo becomes routable by being
+    # real on the box. Which machine, and whose, is the only thing that varies.
+    if classified["unreported_yours"]:
+        names = [str(r.get("name") or "") for r in classified["unreported_yours"]]
         lines += [
             "",
-            "Fix: have a live runner declare it —",
-            f"  canopy project dispatch {project} --declare{target} …",
-            f"  (or: canopy project declare {project}{target})",
+            f"Fix on the runner ({', '.join(names)}):",
+            f"  - laptop: open '{project}' as a project in emdash there",
+            f"  - cloud:  add '{project}' to RUNNER_PROJECTS and restart the runner",
+            "",
+            "The list refreshes on the next heartbeat; then re-run this dispatch.",
         ]
-    elif classified["foreign"]:
+    elif classified["unreported_theirs"]:
         # Visible-but-not-yours is a distinct dead end from nothing-there, and #509
-        # is what made it distinguishable. Telling this caller to run --declare would
-        # be sending them at a 404.
+        # is what made it distinguishable.
         owners = sorted({str(r.get("paired_by_email") or "").strip()
-                         for r in classified["foreign"]} - {""})
+                         for r in classified["unreported_theirs"]} - {""})
         who = ", ".join(owners) if owners else "their owner"
         lines += [
             "",
-            f"The live runners here belong to someone else ({who}) — you cannot declare",
-            "on them. Ask that owner to open the repo on the runner, or pair your own.",
+            f"The live runners here belong to someone else ({who}). Ask them to open",
+            f"'{project}' on one of those machines, or pair your own runner.",
         ]
     else:
         lines += [
             "",
-            "No online runner to declare it on. Start the runner (or pair one), then retry.",
+            "No online runner at all. Start one (or pair one), then retry.",
         ]
     return "\n".join(lines)
 
@@ -350,112 +355,6 @@ def unknown_message(project: str) -> str:
         "of evidence rather than an empty fleet. Enqueueing anyway; if nothing claims "
         "it, the turn sits QUEUED (check below)."
     )
-
-
-DECLARE_RETIRED = (
-    "`projects` is reported by the runner, not set by hand — it is replaced on every "
-    "heartbeat from what the box actually has.\n\n"
-    "To make a repo routable, open it as a project in emdash on that runner (or set "
-    "RUNNER_PROJECTS on a cloud runner). Declaring it from here is no longer a thing "
-    "that exists.\n\n"
-    "`canopy project declare` / `--declare` are being removed; see canopy#433."
-)
-
-
-def declare_rejected_message(detail: str = "") -> str:
-    """The 422 that canopy-web #513 will start returning, said in full.
-
-    #513 makes `capabilities["projects"]` reported-by-the-runner and refuses any
-    PATCH body carrying it. Until this command is deleted (blocked on #513 actually
-    shipping — see the module docstring), the one thing worth guaranteeing is that
-    the failure arrives as the explanation above rather than as a traceback with a
-    422 in it, which teaches the reader nothing about what to do instead.
-    """
-    detail = (detail or "").strip()
-    server = f"\n\nServer said: {detail}" if detail else ""
-    return DECLARE_RETIRED + server
-
-
-def is_declare_rejection(error_text: str) -> bool:
-    """Whether a failed capability PATCH is #513 refusing `projects` specifically.
-
-    Matched against `CanopyError`'s text, which is the only thing the transport
-    preserves: ``"{method} {path} -> {status}: {body}"``. Narrow on purpose — a 422
-    mentioning `projects` is the reported-capability rule, while any other failure (a
-    404 from PATCHing someone else's runner, an auth error) is a different problem
-    and must keep its own message.
-    """
-    text = str(error_text or "").lower()
-    return "-> 422" in text and "projects" in text
-
-
-def with_project_declared(runner: dict, project: str) -> dict:
-    """The capabilities dict to PATCH so `runner` also serves `project`.
-
-    Read-modify-write, because `PATCH /api/harness/runners/{id}` REPLACES
-    capabilities wholesale — sending `{"projects": [project]}` would silently drop
-    the runner's agents, its other projects, and its `sessions: true`.
-
-    Retired by canopy-web #513 the moment it deploys; see `declare_rejected_message`.
-    """
-    project = (project or "").strip()
-    if not project:
-        raise DispatchError("nothing to declare — pass a project name")
-    caps = dict((runner or {}).get("capabilities") or {})
-    caps["projects"] = sorted(set(declared_projects(runner)) | {project})
-    return caps
-
-
-def pick_declare_target(classified: dict, runner_name: str = "") -> dict:
-    """Which runner `--declare` should write to.
-
-    Unambiguous or explicit only: silently picking one of several runners decides,
-    on the caller's behalf, which machine the session opens on.
-
-    Only runners the caller can MANAGE are eligible. Since #509 widened the read past
-    ownership, the fleet contains rows whose PATCH would 404 — auto-selecting one of
-    those would turn a clear "that runner isn't yours" into an error about a runner
-    the caller never chose.
-    """
-    pool = [r for r in classified["declarable"] + classified["degraded"]
-            + classified["serving"] if can_manage(r)]
-    if runner_name:
-        for r in (classified["declarable"] + classified["foreign"]
-                  + classified["degraded"] + classified["serving"]
-                  + classified["offline"]):
-            if str(r.get("name") or "") == runner_name:
-                if not can_manage(r):
-                    owner = str(r.get("paired_by_email") or "").strip()
-                    raise DispatchError(
-                        f"runner '{runner_name}' belongs to "
-                        f"{owner or 'someone else'} — you can see it but cannot "
-                        "declare on it. Ask them to open the repo on it, or pass a "
-                        "runner you paired."
-                    )
-                return r
-        raise DispatchError(f"no visible runner named '{runner_name}'")
-    if not pool:
-        foreign = classified["foreign"] + [
-            r for r in classified["declarable"] + classified["degraded"]
-            + classified["serving"] if not can_manage(r)
-        ]
-        if foreign:
-            owners = sorted({str(r.get("paired_by_email") or "").strip()
-                             for r in foreign} - {""})
-            raise DispatchError(
-                "the live runners here belong to "
-                + (", ".join(owners) if owners else "someone else")
-                + " — you can see them but cannot declare on them. Ask that owner to "
-                "open the repo on the runner, or pair your own."
-            )
-        raise DispatchError("no online runner to declare the project on")
-    if len(pool) > 1:
-        names = ", ".join(sorted(str(r.get("name") or "") for r in pool))
-        raise DispatchError(
-            f"several live runners could declare this ({names}) — pass --runner NAME "
-            "to say which machine should open the session"
-        )
-    return pool[0]
 
 
 def resolve_workspace_choice(explicit: str, env_value: str, memberships) -> str:
