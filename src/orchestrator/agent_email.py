@@ -126,6 +126,17 @@ TRAILING_PUNCT_RE = re.compile(r"[.,;:!?'\"]+$")
 # Markdown-style inline link: [display text](https://url) — lets agents write a
 # clean anchor label instead of pasting a raw URL into outbound mail.
 MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
+# Inline emphasis. Agents write markdown bodies (every SKILL.md teaches markdown), and
+# before this the engine converted ONLY links — so `**bold**` and `code` shipped to the
+# recipient as literal asterisks and backticks. Code runs FIRST so asterisks inside a
+# code span stay literal. Both are single-line by construction: a `*` or a backtick left
+# unpaired in prose stays untouched rather than swallowing the rest of the paragraph.
+MD_CODE_RE = re.compile(r"`([^`\n]+)`")
+MD_BOLD_RE = re.compile(r"\*\*([^*\n]+)\*\*")
+# Spans the bold pass must not enter: a code span (backticks mean "literal", so
+# `**x**` inside one stays literal) and a bare URL (an href survives verbatim — a
+# stray asterisk pair in a query string would otherwise be rewritten into a tag).
+MD_PROTECTED_RE = re.compile(r"`[^`\n]+`|https?://[^\s<>()]+")
 
 
 class AgentEmailError(Exception):
@@ -216,20 +227,44 @@ def _autolink(escaped: str) -> str:
     return URL_RE.sub(repl, escaped)
 
 
+def _inline_md(escaped: str) -> str:
+    """`code` -> <code>, **bold** -> <strong>, on already-HTML-escaped text.
+
+    One left-to-right pass. Code spans and bare URLs are consumed whole so the bold
+    pass can never reach inside them; bold applies only to the prose between them. The
+    URL text is emitted unchanged for `_autolink` to pick up afterwards."""
+    def bold(seg: str) -> str:
+        return MD_BOLD_RE.sub(lambda m: f"<strong>{m.group(1)}</strong>", seg)
+
+    out: list[str] = []
+    last = 0
+    for m in MD_PROTECTED_RE.finditer(escaped):
+        out.append(bold(escaped[last:m.start()]))
+        tok = m.group(0)
+        out.append(f"<code>{tok[1:-1]}</code>" if tok.startswith("`") else tok)
+        last = m.end()
+    out.append(bold(escaped[last:]))
+    return "".join(out)
+
+
 def _linkify(escaped: str) -> str:
     """Turn links clickable. Markdown `[text](url)` becomes an anchor with clean
     display text; bare URLs elsewhere are still auto-linked (shown as the URL).
     Runs on already-HTML-escaped text — the `[...](...)` literals survive escaping.
     Bare URLs inside a markdown link's target are not re-linked (we only autolink
-    the segments between markdown matches)."""
+    the segments between markdown matches).
+
+    Inline emphasis is applied to the PROSE and to a link's display text, never to a
+    URL — an href must survive verbatim, and a stray asterisk in a query string would
+    otherwise be rewritten into a tag."""
     out: list[str] = []
     last = 0
     for m in MD_LINK_RE.finditer(escaped):
-        out.append(_autolink(escaped[last:m.start()]))
+        out.append(_autolink(_inline_md(escaped[last:m.start()])))
         text, url = m.group(1), m.group(2)
-        out.append(f'<a href="{url}">{text}</a>')
+        out.append(f'<a href="{url}">{_inline_md(text)}</a>')
         last = m.end()
-    out.append(_autolink(escaped[last:]))
+    out.append(_autolink(_inline_md(escaped[last:])))
     return "".join(out)
 
 
