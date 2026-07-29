@@ -66,3 +66,22 @@ def test_scene_navigation_compares_normalised_urls():
     assert _normalize_url("http://localhost:8009/supply/") != _normalize_url(
         "http://localhost:8009/supply/dev-login/?persona=ada"
     )
+
+
+def test_scroll_to_is_applied_not_merely_resolved():
+    """A control below the fold resolves and then cannot be clicked.
+
+    `scroll_to` changes nothing about the DOM, so it looks like a camera move —
+    but it changes what is REACHABLE. Leaving it unapplied made preflight report
+    "resolved but could not be actioned" on a button the render clicks without
+    complaint, which reads exactly like a real failure and invites rewriting a
+    selector that was never wrong.
+    """
+    from scripts.ddd.recipe_preflight import _SCROLLING, _STATE_CHANGING, _TARGETED
+
+    # Still checked as a selector...
+    assert "scroll_to" in _TARGETED
+    # ...and now also replayed, but NOT as a state change: it must not be
+    # confused with a click, whose failure to action IS a finding.
+    assert "scroll_to" in _SCROLLING
+    assert "scroll_to" not in _STATE_CHANGING
