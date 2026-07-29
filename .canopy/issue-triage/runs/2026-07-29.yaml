@@ -1,0 +1,100 @@
+run_date: 2026-07-29
+repo: dimagi-internal/canopy
+scope_contract: triage-plus-quick-wins
+code_ref: 270adcf
+open_total: 4          # 3 at Phase 1 (#422 #416 #410) + #433, which landed mid-run
+triaged: 4
+carried_forward: 0     # prior sidecar (2026-07-27) covered #389/#393, both since closed
+truncated: false
+clusters: []           # no duplicates and no shared root cause across 4 issues
+tier_counts: { blocks-e2e: 1, harness: 3, polish: 0 }
+prs:
+  - number: 423
+    disposition: merge          # authored this run — the PR-triage capability itself
+    checks: { pytest: pass, check-version: pass, docs-sync: pass, structure-drift: pass }
+    blocker: "went DIRTY on version files after 3 PRs landed underneath; rebased + re-bumped"
+    mechanical: true
+    refs_issues: []
+    action: "rebased onto main, re-bumped 0.2.368 -> 0.2.369, merged"
+    outcome: merged
+  - number: 427
+    disposition: unblock
+    checks: { pytest: pass, check-version: pass, docs-sync: pass, structure-drift: pass }
+    blocker: "DIRTY on version files only; scripts/ddd diff itself was clean and green"
+    mechanical: true
+    refs_issues: []
+    action: "rebased onto main, bumped to 0.2.375, merged"
+    outcome: merged
+  - number: 436
+    disposition: merge          # authored this run
+    checks: { pytest: pass, check-version: pass, docs-sync: pass, structure-drift: pass }
+    blocker: null
+    mechanical: false
+    refs_issues: [416]
+    action: "opened, rebased, bumped to 0.2.376, merged"
+    outcome: merged
+  - number: 437
+    disposition: merge          # authored this run
+    checks: { pytest: pass, check-version: pass, docs-sync: pass, structure-drift: pass }
+    blocker: null
+    mechanical: false
+    refs_issues: [433]
+    action: "opened, bumped to 0.2.377, merged"
+    outcome: merged
+verdicts:
+  - number: 422
+    disposition: close
+    blocking: blocks-e2e
+    confidence: high
+    effort: n/a
+    cluster: null
+    evidence_paths:
+      - apps/harness/api.py            # canopy-web, not this repo
+    unblocked_by: null
+    duplicate_of: null
+    source: fresh
+    action: "closed as completed, citing canopy-web PR #508"
+    outcome: "closed — fix live at canopy-web apps/harness/api.py:826, covered by tests/test_harness_turns_agent_denial.py"
+  - number: 416
+    disposition: implement
+    blocking: harness
+    confidence: high
+    effort: M
+    cluster: null
+    evidence_paths:
+      - src/orchestrator/agent_review.py
+      - src/orchestrator/transcripts.py
+    unblocked_by: null
+    duplicate_of: null
+    source: fresh
+    action: "shipped the calibration half as PR #436; issue left open"
+    outcome: "merged v0.2.376 — failures 403->198 (-51%), auth_friction 161->33 (-80%) on the same 36-turn ACE corpus. Residual content-vs-outcome noise and the lifecycle-taxonomy half remain open."
+  - number: 410
+    disposition: implement
+    blocking: harness
+    confidence: high
+    effort: L
+    cluster: null
+    evidence_paths:
+      - scripts/ddd/spec_qa.py
+      - scripts/ddd/narrative_coherence.py
+    unblocked_by: null
+    duplicate_of: null
+    source: fresh
+    action: "commented; handed back as next-run work (over the quick-wins cap)"
+    outcome: open
+  - number: 433
+    disposition: implement
+    blocking: harness
+    confidence: high
+    effort: M
+    cluster: null
+    evidence_paths:
+      - src/orchestrator/agent_dispatch.py
+      - src/orchestrator/project_dispatch.py
+      - src/orchestrator/project_cli.py
+    unblocked_by: null      # maintainer re-validated canopy-web #513 as deployed
+    duplicate_of: null
+    source: fresh           # landed after Phase 1; triaged in-run
+    action: "shipped the summarize_turn display bug as PR #437; items 1+2 handed back"
+    outcome: "partially shipped — --declare removal and the --no-preflight judgment remain open"
