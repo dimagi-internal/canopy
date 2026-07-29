@@ -66,6 +66,13 @@ def extract_tool_calls(entries: list[dict]) -> list[dict]:
                 tool_id = block.get("tool_use_id")
                 if tool_id in calls:
                     calls[tool_id]["result"] = block.get("content", "")
+                    # The harness already recorded whether the call failed. Keep it:
+                    # every consumer that instead re-derives failure by grepping the
+                    # result text inherits the false positives that guessing implies
+                    # (a `PASS …` line, a `-> 200`, a URL containing `-404-`).
+                    # None when the block omits it — older transcripts predate the
+                    # flag, and "unknown" must stay distinguishable from "succeeded".
+                    calls[tool_id]["is_error"] = block.get("is_error")
 
     return list(calls.values())
 

@@ -260,6 +260,17 @@ _WRITE_OK = re.compile(
     r"file state is current",
     re.I,
 )
+# Markers strong enough to still mean friction on a call the harness recorded as
+# SUCCEEDING. A command wrapped in `|| true`, or one whose failure the agent
+# captured deliberately, exits 0 while its output holds a real stack trace — that
+# is worth surfacing. The weak markers above are not: on a succeeding call, a bare
+# "error"/"credentials"/"404" is almost always the *subject* of the output rather
+# than its outcome (a file being read, a URL slug, a doctor line saying PASS).
+_STRONG_ERROR_MARKERS = re.compile(
+    r"traceback \(most recent call last\)|\bexit code [1-9]|\bfatal:|\bsegmentation fault\b|"
+    r"unhandled exception|panic:",
+    re.I,
+)
 # The turn-step checklist only means something for a TURN. Applying it to an `architect ddd` /
 # harvest session flagged every one as a 4-gap "failure storm" (hal's 2026-07 review). A session
 # counts as a turn only if it actually engaged the turn loop.
@@ -397,7 +408,33 @@ def friction_signals(
         # success result so an "oauth"/"error" in the path/name can't masquerade as a failure.
         if tool in _EDITOR_TOOLS and _WRITE_OK.search(head):
             continue
-        if _ERROR_MARKERS.search(head):
+
+        # Trust the harness's own verdict over a grep of the result text.
+        #
+        # Every tool_result block carries `is_error`; this extractor used to drop it
+        # and re-derive failure from the prose, which made the SUBJECT of a result
+        # indistinguishable from its OUTCOME. Measured on 36 ACE turns: a doctor line
+        # reading `PASS cchq_connect_features: … OAuth connection … configured` was
+        # counted as BOTH a failure and auth friction; so were `--- tsc exit: 0 ---`
+        # (the "404" lived in a release URL), a 200 response, and reading the source
+        # of `apps/api/auth.py`. See dimagi-internal/canopy#416.
+        #
+        # `is_error is None` means the transcript predates the flag — fall through to
+        # the markers, so old sessions review exactly as they did before.
+        is_error = c.get("is_error")
+        if is_error is False:
+            # Succeeded. Only a marker that survives a zero exit still counts —
+            # a `|| true`-wrapped command can hold a real traceback.
+            if _STRONG_ERROR_MARKERS.search(head):
+                failed_idx.append(i)
+                failures.append({
+                    "tool": tool,
+                    "input": json.dumps(c.get("input", {}))[:160],
+                    "evidence": head[:200],
+                })
+            continue
+
+        if is_error or _ERROR_MARKERS.search(head):
             failed_idx.append(i)
             failures.append({
                 "tool": tool,

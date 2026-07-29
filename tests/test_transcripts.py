@@ -127,3 +127,24 @@ class TestGetSessionId:
 
     def test_returns_none_if_no_last_prompt(self):
         assert get_session_id([]) is None
+
+
+def test_extract_tool_calls_keeps_the_harness_error_flag():
+    """`is_error` is the recorded outcome; dropping it forces consumers to re-derive
+    failure from the result prose. None when absent, so "unknown" stays distinct
+    from "succeeded". See dimagi-internal/canopy#416."""
+    from orchestrator.transcripts import extract_tool_calls
+
+    def _pair(tid, name, result, **extra):
+        return [
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": tid, "name": name, "input": {}}]}},
+            {"type": "user", "message": {"content": [
+                dict({"type": "tool_result", "tool_use_id": tid, "content": result}, **extra)]}},
+        ]
+
+    entries = (_pair("a", "Bash", "boom", is_error=True)
+               + _pair("b", "Bash", "fine", is_error=False)
+               + _pair("c", "Bash", "legacy"))
+    flags = [c.get("is_error") for c in extract_tool_calls(entries)]
+    assert flags == [True, False, None]

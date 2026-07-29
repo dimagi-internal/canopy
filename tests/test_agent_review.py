@@ -1015,3 +1015,79 @@ def test_human_corrections_ignores_the_compaction_summary():
         "The summary below covers the earlier portion.\n\nSummary:\n1. Primary Request:\n"
         "   - stop doing that, it's wrong, do it instead of the other way"}}]
     assert human_corrections(entries) == []
+
+
+# --- #416: a call's OUTCOME is recorded, not inferred -------------------------
+#
+# Every tool_result block carries `is_error`. The extractor used to drop it and
+# re-derive failure by grepping the result prose, which made the SUBJECT of a
+# result indistinguishable from its OUTCOME. These lock in the real 2026-07-28
+# false positives, measured over 36 ACE turns.
+
+def _write_transcript_with_status(path, cwd, calls):
+    """calls: (tool, input_dict, result_str, is_error) — is_error None omits the flag,
+    reproducing a transcript written before the harness recorded it."""
+    lines = []
+    for i, (tool, inp, result, is_error) in enumerate(calls):
+        tid = f"t{i}"
+        lines.append({
+            "type": "assistant", "cwd": cwd,
+            "message": {"content": [
+                {"type": "tool_use", "id": tid, "name": tool, "input": inp},
+            ]},
+        })
+        block = {"type": "tool_result", "tool_use_id": tid, "content": result}
+        if is_error is not None:
+            block["is_error"] = is_error
+        lines.append({"type": "user", "message": {"content": [block]}})
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+
+
+def test_succeeding_calls_are_not_friction_however_their_output_reads(tmp_path):
+    """The four shapes actually miscounted on ACE: a PASS line naming OAuth, a zero-exit
+    build whose URL held `-404-`, a 200 response, and reading a file about auth."""
+    t = tmp_path / "turn.jsonl"
+    _write_transcript_with_status(t, str(tmp_path), [
+        ("Bash", {"command": "ace doctor"},
+         "PASS cchq_connect_features: COMMCARE_CONNECT flag enabled on 'connect-ace-prod', "
+         "OAuth connection to connect.dimagi.com configured", False),
+        ("Bash", {"command": "npm run build"},
+         "--- tsc exit: 0 --- commcare_test-both-404-1785178018219-qsyzi4/app.apk", False),
+        ("Bash", {"command": "curl -s $URL"}, '{"status": 200, "size_bytes": 7978}', False),
+        ("Read", {"file_path": "apps/api/auth.py"},
+         '"""Session-cookie + Bearer-token auth. Matches DRF credentials handling."""', False),
+    ])
+    s = friction_signals(t)
+    assert s["failures"] == [], f"a succeeding call was counted as a failure: {s['failures']}"
+    assert s["auth_friction"] == [], f"a succeeding call was counted as auth friction: {s['auth_friction']}"
+
+
+def test_harness_error_flag_is_believed_even_when_the_text_reads_clean(tmp_path):
+    """The complement: no marker fires, but the harness said it failed."""
+    t = tmp_path / "turn.jsonl"
+    _write_transcript_with_status(t, str(tmp_path), [
+        ("Bash", {"command": "some-tool"}, "nothing matched the given pattern", True),
+    ])
+    assert len(friction_signals(t)["failures"]) == 1
+
+
+def test_a_zero_exit_traceback_is_still_a_failure(tmp_path):
+    """`cmd || true` exits 0 while holding a real stack trace — trusting is_error
+    blindly would drop it, so strong markers survive a success verdict."""
+    t = tmp_path / "turn.jsonl"
+    _write_transcript_with_status(t, str(tmp_path), [
+        ("Bash", {"command": "pytest -q || true"},
+         'Traceback (most recent call last):\n  File "x.py", line 3\nValueError', False),
+    ])
+    assert len(friction_signals(t)["failures"]) == 1
+
+
+def test_transcripts_without_the_flag_review_exactly_as_before(tmp_path):
+    """Older sessions predate is_error; they must fall through to the markers unchanged."""
+    t = tmp_path / "turn.jsonl"
+    _write_transcript_with_status(t, str(tmp_path), [
+        ("Bash", {"command": "gog gmail search"}, "People API has not been used... 403", None),
+    ])
+    s = friction_signals(t)
+    assert len(s["failures"]) == 1
+    assert len(s["auth_friction"]) == 1
