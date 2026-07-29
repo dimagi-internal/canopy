@@ -28,13 +28,44 @@ dispatch preflights the runner fleet and refuses, loudly, rather than enqueueing
 a hole — and, because `PATCH /api/harness/runners/{id}` exists precisely to make
 capabilities mutable in place, it can also just fix it (`--declare`).
 
-That refusal is only sound when there was a fleet to inspect. Runner listing is
-scoped to `paired_by == caller`, so a caller who paired no runner sees zero runners
-no matter how many are live — refusing on an empty list states a conclusion drawn
-from no evidence, and did so for every user except the pairer. So the preflight has
-three verdicts, not two: serving (go), blocked (a fleet was read and none of it can
-claim — refuse), and unknown (nothing visible — warn, enqueue, and point at
-`canopy project turns`, which is the only thing that can actually settle it).
+`--declare` is on borrowed time. canopy-web #513 makes `capabilities["projects"]`
+REPORTED by the runner on every heartbeat (a laptop reports emdash's own projects
+table, a cloud box reports `RUNNER_PROJECTS`) and 422s any PATCH body carrying
+`projects` — at which point declaring a repo from the client is not a thing that
+exists, by design: you make a repo routable by making it real on the box, not by
+asserting it. #513 has NOT shipped as of 2026-07-28 (the deployed `HeartbeatIn`
+carries no `projects` field and the PATCH still accepts one), so `--declare` still
+works and stays. What changes here is only that it stops failing obscurely —
+`declare_rejected_message` turns the eventual 422 into that sentence rather than a
+traceback, so the day #513 deploys the command explains itself. See #433.
+
+That refusal is only sound when the fleet it inspected is the fleet that will be
+asked to claim. Two server-side facts decide that, and canopy-web #509 changed one
+of them (merged + deployed 2026-07-28):
+
+- **Runner listing is scoped by TENANT, not by `paired_by`.** It used to be the
+  latter, so a caller who paired nothing saw zero runners no matter how many were
+  live, and refusing on that empty list stated a conclusion drawn from no evidence.
+  That is fixed: `_runner_read_q` now serves a workspace's whole fleet to any
+  member, and each row carries `can_manage` for the ownership half (seeing a runner
+  and being allowed to mutate it are different questions).
+- **The read must be taken in the tenant the turn is enqueued into.** This is the
+  half #509 made sharper rather than solved. The flat `/api/harness/runners/` route
+  returns the union of every workspace the caller belongs to, while the turn goes to
+  exactly one (`/api/w/<ws>/harness/turns/`). Before #509 that union was narrowed to
+  what you paired and usually collapsed to one tenant; now it genuinely spans them,
+  so a two-workspace caller could preflight GREEN off workspace A's runners and
+  enqueue into workspace B, where nothing serves the repo — the #428 failure exactly,
+  re-reachable through a new door. So the preflight reads
+  `/api/w/<ws>/harness/runners/`: the same tenant, asked the same question.
+
+Because that read is tenant-pinned and membership is already gated by the middleware
+before it answers, an EMPTY list from it is now a real finding — "this workspace has
+no runners" — rather than the absence of evidence it used to be. So the verdicts
+split by how the fleet was read: a tenant-pinned read has two (serving → go,
+otherwise blocked → refuse), and only an untenanted read keeps the third, `unknown`
+(nothing visible and no tenant to attribute it to — warn, enqueue, and point at
+`canopy project turns`, the only thing that can settle it).
 
 **3. There is no board.** `canopy agent dispatch` writes a task to the AGENT's board
 first, so the agent finds the item already there when it arrives. A repo has no agent
@@ -137,30 +168,50 @@ def declared_projects(runner: dict) -> list[str]:
     return [p for p in (caps.get("projects") or []) if p]
 
 
-def classify_runners(runners: list[dict], project: str) -> dict:
+def can_manage(runner: dict) -> bool:
+    """Whether THIS caller may mutate `runner` (declare on it, retire it).
+
+    `RunnerOut.can_manage` (canopy-web #509) is the ownership half that the widened,
+    tenant-scoped read gave up: the list now shows runners the caller can see but may
+    not touch. Defaults True for the older servers that omit the field, and because
+    every non-list route returning a RunnerOut resolved it through the act-on gate
+    already — reaching such a response at all proves the caller can manage it.
+    """
+    return bool((runner or {}).get("can_manage", True))
+
+
+def classify_runners(runners: list[dict], project: str, *,
+                     tenant_scoped: bool = False) -> dict:
     """Split the visible fleet by whether it can actually serve `project`.
 
-    Three buckets, because they need three different answers:
+    Buckets, because each needs a different answer:
 
     - `serving`   — online, ready, declares it. One of these and the turn lands.
     - `degraded`  — online and declares it, but self-reports not ready (e.g. emdash
                     CDP unreachable). It will claim once it recovers, so this is a
                     warning, not a refusal — the turn is not lost, only late.
-    - `declarable` — online and ready but does NOT declare it. These are the
-                    `--declare` targets: the fix for the blocked case.
+    - `declarable` — online, does NOT declare it, and the caller may mutate it.
+                    These are the `--declare` targets: the fix for the blocked case.
+    - `foreign`   — online and does not declare it, but belongs to someone else
+                    (`can_manage` false). Visible since #509 widened the read, and
+                    NOT a `--declare` target: PATCHing it 404s. It is the reason the
+                    blocked message can say "ask its owner" instead of telling the
+                    caller to try something that will fail.
 
     Everything else (stale/disconnected/retired) is reported as context but is not
     a route. `claim_next_turn` gates on the DERIVED `live_status`, which the API
     already serves in `status`, so a stale runner's declaration means nothing.
 
-    A fourth state sits outside the buckets: `unknown`, an empty visible fleet. It
-    is NOT the same as a fleet that was inspected and found wanting, and conflating
-    the two is what made this preflight wrong for most callers — see
-    `unknown_message`.
+    `tenant_scoped` says whether `runners` came from `/api/w/<ws>/harness/runners/`
+    (the dispatch preflight) or the flat union route (`canopy project runners` with
+    no workspace). It decides only what an EMPTY list means, and that is the whole
+    difference between a warning and a refusal: pinned to a tenant whose membership
+    the middleware already gated, empty means "this workspace has no runners", which
+    is a fact you can act on; unpinned, empty is just the absence of evidence.
     """
     project = (project or "").strip()
     runners = list(runners or [])
-    serving, degraded, declarable, offline = [], [], [], []
+    serving, degraded, declarable, foreign, offline = [], [], [], [], []
     for r in runners:
         status = str(r.get("status") or "").strip().lower()
         declares = project in declared_projects(r)
@@ -170,20 +221,25 @@ def classify_runners(runners: list[dict], project: str) -> dict:
             serving.append(r)
         elif declares:
             degraded.append(r)
-        else:
+        elif can_manage(r):
             declarable.append(r)
+        else:
+            foreign.append(r)
     return {
         "project": project,
         "serving": serving,
         "degraded": degraded,
         "declarable": declarable,
+        "foreign": foreign,
         "offline": offline,
-        # Nothing visible ≠ nothing suitable. An empty fleet is the absence of
-        # evidence, so no conclusion is available from it at all.
-        "unknown": not runners,
-        # Blocked means: we LOOKED at the live fleet and no member of it will ever
-        # claim this turn as things stand. Requires having seen a fleet to look at.
-        "blocked": bool(runners) and not serving and not degraded,
+        "tenant_scoped": tenant_scoped,
+        # Nothing visible AND no tenant to attribute it to ≠ nothing suitable. Only
+        # an unpinned read is the absence of evidence; see `unknown_message`.
+        "unknown": not runners and not tenant_scoped,
+        # Blocked means: we LOOKED at the fleet that will be asked to claim, and no
+        # member of it will ever claim this turn as things stand. An empty
+        # tenant-pinned read qualifies — that IS the look, and its answer is none.
+        "blocked": (bool(runners) or tenant_scoped) and not serving and not degraded,
     }
 
 
@@ -191,13 +247,17 @@ def _runner_line(r: dict) -> str:
     projects = declared_projects(r)
     shown = ", ".join(projects[:8]) + ("…" if len(projects) > 8 else "")
     note = str(r.get("ready_note") or r.get("status_note") or "").strip()
+    owner = str(r.get("paired_by_email") or "").strip()
+    # Only worth printing when the caller cannot act on it — otherwise ownership is
+    # noise. When it matters it is the whole answer: who to go ask.
+    own = "" if can_manage(r) else f"  (owned by {owner or 'someone else'})"
     return (f"  - {r.get('name', '?')} [{r.get('status', '?')}"
-            f"{'' if r.get('ready', True) else ', not ready'}]"
+            f"{'' if r.get('ready', True) else ', not ready'}]{own}"
             f"{' — ' + note if note else ''}\n"
             f"      declares: {shown or '(none)'}")
 
 
-def blocked_message(classified: dict) -> str:
+def blocked_message(classified: dict, workspace: str = "") -> str:
     """Why this dispatch cannot land, and exactly how to make it land.
 
     Written to be read at the moment of failure by someone who does not know the
@@ -206,18 +266,35 @@ def blocked_message(classified: dict) -> str:
     up until you notice, hours later, that nothing happened.
     """
     project = classified["project"]
+    where = f" in workspace '{workspace}'" if workspace else ""
+    seen = (classified["declarable"] + classified["foreign"] + classified["degraded"]
+            + classified["serving"] + classified["offline"])
+
+    # The empty tenant-pinned case. Reachable only since the preflight started
+    # reading the tenant it enqueues into: the workspace is real and you are a
+    # member (the middleware gated that before answering), it simply has no runners.
+    # Naming the workspace is the load-bearing part — the usual cause is dispatching
+    # into the wrong one, not a fleet that needs building.
+    if not seen:
+        return "\n".join([
+            f"workspace '{workspace or '?'}' has no runners at all — refusing to enqueue.",
+            "",
+            "This is the tenant the turn would be created in, and its fleet is empty,",
+            "so nothing could ever claim it. Either you meant a different workspace",
+            "(--workspace / CANOPY_WEB_WORKSPACE), or this one has no runner paired yet.",
+            "",
+            f"See what each workspace has:  canopy project runners {project} --workspace <ws>",
+        ])
+
     lines = [
-        f"no live runner can serve project '{project}' — refusing to enqueue.",
+        f"no live runner can serve project '{project}'{where} — refusing to enqueue.",
         "",
         "A runner only claims turns for projects it DECLARES in its capabilities",
         "(harness claim_next_turn matches on capabilities.projects). Enqueueing anyway",
         "would return 201 and then sit QUEUED forever with nothing to claim it.",
         "",
-        "Visible runners:",
+        f"Runners{where}:",
     ]
-    # Non-empty by construction: `blocked` now requires a fleet to have been seen.
-    seen = (classified["declarable"] + classified["degraded"]
-            + classified["serving"] + classified["offline"])
     lines.extend(_runner_line(r) for r in seen)
 
     if classified["declarable"]:
@@ -225,44 +302,91 @@ def blocked_message(classified: dict) -> str:
         target = f" --runner {names[0]}" if len(names) > 1 else ""
         lines += [
             "",
-            f"Fix: have a live runner declare it —",
+            "Fix: have a live runner declare it —",
             f"  canopy project dispatch {project} --declare{target} …",
             f"  (or: canopy project declare {project}{target})",
+        ]
+    elif classified["foreign"]:
+        # Visible-but-not-yours is a distinct dead end from nothing-there, and #509
+        # is what made it distinguishable. Telling this caller to run --declare would
+        # be sending them at a 404.
+        owners = sorted({str(r.get("paired_by_email") or "").strip()
+                         for r in classified["foreign"]} - {""})
+        who = ", ".join(owners) if owners else "their owner"
+        lines += [
+            "",
+            f"The live runners here belong to someone else ({who}) — you cannot declare",
+            "on them. Ask that owner to open the repo on the runner, or pair your own.",
         ]
     else:
         lines += [
             "",
             "No online runner to declare it on. Start the runner (or pair one), then retry.",
         ]
-    lines += [
-        "",
-        "If a runner you cannot see (paired by someone else) serves this project,",
-        "re-run with --no-preflight to enqueue anyway.",
-    ]
     return "\n".join(lines)
 
 
 def unknown_message(project: str) -> str:
-    """Why an invisible fleet warns instead of refusing.
+    """Why an untenanted empty fleet warns instead of refusing.
 
-    canopy-web scopes runner listing to the caller: `_runner_visibility_q`
-    (`apps/harness/api.py`) requires `paired_by` to be the caller or null. Whoever
-    paired the runner is the only identity that can list it, so every other user
-    sees an empty fleet — and an empty fleet said "no live runner can serve this,
-    refusing" even while a runner claimed the turn within seconds (observed
-    2026-07-28 from Hal's identity on connect-labs: the preflight refused, then
-    `--no-preflight` enqueued a turn that went `running` almost immediately).
+    This used to be the common case and is now the rare one. canopy-web scoped
+    runner listing to `paired_by == caller`, so whoever paired the runner was the
+    only identity that could list it and every other user saw an empty fleet — which
+    the preflight read as "no live runner can serve this, refusing" even while a
+    runner claimed the turn within seconds (observed 2026-07-28 from Hal's identity
+    on connect-labs: the preflight refused, then `--no-preflight` enqueued a turn
+    that went `running` almost immediately). #509 fixed the cause server-side.
 
-    Blocking on that asserts a fact not in evidence. The honest report is that the
-    preflight had nothing to inspect, so the dispatch proceeds and the caller is
-    pointed at the one thing that CAN settle it — the turn's own status.
+    What survives is the case with no tenant to attribute the emptiness to: an
+    unpinned read (`canopy project runners` with no --workspace) by a caller with no
+    workspace memberships. There the list is empty because there was nowhere to look,
+    not because a fleet was found wanting — so blocking would again assert a fact not
+    in evidence. The dispatch path cannot reach this (it always has a workspace, and
+    reads through it); its empty answer is BLOCKED, not this.
     """
     return (
-        f"cannot see any runners, so whether one serves '{project}' is UNKNOWN — "
-        "runner listing shows only the runners YOU paired, and you likely paired "
-        "none. Enqueueing anyway: a runner paired by someone else may claim this "
-        "within seconds. If nothing does, the turn sits QUEUED (check below)."
+        f"cannot see any runners, so whether one serves '{project}' is UNKNOWN — you "
+        "have no workspace memberships to read a fleet from, so this is the absence "
+        "of evidence rather than an empty fleet. Enqueueing anyway; if nothing claims "
+        "it, the turn sits QUEUED (check below)."
     )
+
+
+DECLARE_RETIRED = (
+    "`projects` is reported by the runner, not set by hand — it is replaced on every "
+    "heartbeat from what the box actually has.\n\n"
+    "To make a repo routable, open it as a project in emdash on that runner (or set "
+    "RUNNER_PROJECTS on a cloud runner). Declaring it from here is no longer a thing "
+    "that exists.\n\n"
+    "`canopy project declare` / `--declare` are being removed; see canopy#433."
+)
+
+
+def declare_rejected_message(detail: str = "") -> str:
+    """The 422 that canopy-web #513 will start returning, said in full.
+
+    #513 makes `capabilities["projects"]` reported-by-the-runner and refuses any
+    PATCH body carrying it. Until this command is deleted (blocked on #513 actually
+    shipping — see the module docstring), the one thing worth guaranteeing is that
+    the failure arrives as the explanation above rather than as a traceback with a
+    422 in it, which teaches the reader nothing about what to do instead.
+    """
+    detail = (detail or "").strip()
+    server = f"\n\nServer said: {detail}" if detail else ""
+    return DECLARE_RETIRED + server
+
+
+def is_declare_rejection(error_text: str) -> bool:
+    """Whether a failed capability PATCH is #513 refusing `projects` specifically.
+
+    Matched against `CanopyError`'s text, which is the only thing the transport
+    preserves: ``"{method} {path} -> {status}: {body}"``. Narrow on purpose — a 422
+    mentioning `projects` is the reported-capability rule, while any other failure (a
+    404 from PATCHing someone else's runner, an auth error) is a different problem
+    and must keep its own message.
+    """
+    text = str(error_text or "").lower()
+    return "-> 422" in text and "projects" in text
 
 
 def with_project_declared(runner: dict, project: str) -> dict:
@@ -271,6 +395,8 @@ def with_project_declared(runner: dict, project: str) -> dict:
     Read-modify-write, because `PATCH /api/harness/runners/{id}` REPLACES
     capabilities wholesale — sending `{"projects": [project]}` would silently drop
     the runner's agents, its other projects, and its `sessions: true`.
+
+    Retired by canopy-web #513 the moment it deploys; see `declare_rejected_message`.
     """
     project = (project or "").strip()
     if not project:
@@ -285,14 +411,43 @@ def pick_declare_target(classified: dict, runner_name: str = "") -> dict:
 
     Unambiguous or explicit only: silently picking one of several runners decides,
     on the caller's behalf, which machine the session opens on.
+
+    Only runners the caller can MANAGE are eligible. Since #509 widened the read past
+    ownership, the fleet contains rows whose PATCH would 404 — auto-selecting one of
+    those would turn a clear "that runner isn't yours" into an error about a runner
+    the caller never chose.
     """
-    pool = classified["declarable"] + classified["degraded"] + classified["serving"]
+    pool = [r for r in classified["declarable"] + classified["degraded"]
+            + classified["serving"] if can_manage(r)]
     if runner_name:
-        for r in pool + classified["offline"]:
+        for r in (classified["declarable"] + classified["foreign"]
+                  + classified["degraded"] + classified["serving"]
+                  + classified["offline"]):
             if str(r.get("name") or "") == runner_name:
+                if not can_manage(r):
+                    owner = str(r.get("paired_by_email") or "").strip()
+                    raise DispatchError(
+                        f"runner '{runner_name}' belongs to "
+                        f"{owner or 'someone else'} — you can see it but cannot "
+                        "declare on it. Ask them to open the repo on it, or pass a "
+                        "runner you paired."
+                    )
                 return r
         raise DispatchError(f"no visible runner named '{runner_name}'")
     if not pool:
+        foreign = classified["foreign"] + [
+            r for r in classified["declarable"] + classified["degraded"]
+            + classified["serving"] if not can_manage(r)
+        ]
+        if foreign:
+            owners = sorted({str(r.get("paired_by_email") or "").strip()
+                             for r in foreign} - {""})
+            raise DispatchError(
+                "the live runners here belong to "
+                + (", ".join(owners) if owners else "someone else")
+                + " — you can see them but cannot declare on them. Ask that owner to "
+                "open the repo on the runner, or pair your own."
+            )
         raise DispatchError("no online runner to declare the project on")
     if len(pool) > 1:
         names = ", ".join(sorted(str(r.get("name") or "") for r in pool))
