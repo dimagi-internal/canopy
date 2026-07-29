@@ -668,3 +668,66 @@ def test_agent_dispatch_does_not_preflight_runners(net):
                                   "--prompt", "x", "--no-task"])
     assert r.exit_code == 0, r.output
     assert not [c for c in calls if "/harness/runners/" in c[1]]
+
+
+# --- operator pause (canopy-web #528) --------------------------------------------
+#
+# `live_status` serves the pause in `status`, so a parked runner stops reading
+# `online` and falls out of `serving` with no special case here. It still gets its
+# own bucket, because "not live" is the wrong thing to say about a box that is
+# heartbeating fine, and it sends you to the wrong remedy.
+
+def _r(name, status="online", ready=True, projects=("connect-labs",), **extra):
+    return {"name": name, "id": f"id-{name}", "status": status, "ready": ready,
+            "capabilities": {"projects": list(projects)}, "can_manage": True, **extra}
+
+
+def test_a_paused_runner_is_not_serving():
+    c = classify_runners([_r("jj", status="paused", paused=True)], "connect-labs",
+                         tenant_scoped=True)
+    assert c["serving"] == []
+    assert [r["name"] for r in c["paused"]] == ["jj"]
+
+
+def test_a_paused_runner_is_not_filed_as_offline():
+    """It is heartbeating — calling it 'not live' points at the wrong problem."""
+    c = classify_runners([_r("jj", status="paused", paused=True)], "connect-labs",
+                         tenant_scoped=True)
+    assert c["offline"] == []
+
+
+def test_a_paused_runner_does_not_rescue_a_dispatch_from_blocked():
+    """Unlike degraded (recovers itself) and dormant (wakes itself), a pause clears
+    only when a human clears it. Queueing on the hope someone unpauses would be a
+    guess about intent."""
+    c = classify_runners([_r("jj", status="paused", paused=True)], "connect-labs",
+                         tenant_scoped=True)
+    assert c["blocked"] is True
+
+
+def test_the_blocked_message_names_unpause_not_open_the_repo():
+    """The remedy has to match the cause: sending someone to open the repo in emdash
+    when they parked the box an hour ago is the wrong machine entirely."""
+    c = classify_runners([_r("jj", status="paused", paused=True,
+                             paused_note="rate limited")], "connect-labs",
+                         tenant_scoped=True)
+    msg = blocked_message(c, "dimagi")
+    assert "PAUSED" in msg
+    assert "canopy runner unpause jj" in msg
+    assert "rate limited" in msg
+
+
+def test_a_live_runner_still_serves_while_a_sibling_is_paused():
+    c = classify_runners([_r("jj", status="paused", paused=True), _r("ace")],
+                         "connect-labs", tenant_scoped=True)
+    assert [r["name"] for r in c["serving"]] == ["ace"]
+    assert c["blocked"] is False
+
+
+def test_the_paused_field_alone_is_enough():
+    """Belt and braces: an older server could serve `paused` without live_status
+    having been taught to fold it into `status`."""
+    c = classify_runners([_r("jj", status="online", paused=True)], "connect-labs",
+                         tenant_scoped=True)
+    assert c["serving"] == []
+    assert [r["name"] for r in c["paused"]] == ["jj"]

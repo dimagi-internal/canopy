@@ -115,6 +115,13 @@ ONLINE = "online"
 STALE, DEGRADED = "stale", "degraded"
 RECOVERABLE = frozenset({STALE, DEGRADED})
 
+# An OPERATOR pause (canopy-web #528). `live_status` serves it in `status`, so a
+# parked runner no longer reads `online` — which is what makes it fall out of
+# `serving` here without a special case. It gets its own bucket anyway, because
+# the remedy is specific ("unpause it") and lumping it into `offline` would say
+# "not live" about a box that is heartbeating perfectly well.
+PAUSED = "paused"
+
 
 def project_turns_path(workspace: str) -> str:
     """The tenant-scoped enqueue path for a project turn.
@@ -247,10 +254,16 @@ def classify_runners(runners: list[dict], project: str, *,
     project = (project or "").strip()
     runners = list(runners or [])
     serving, degraded, dormant, mine, theirs, offline = [], [], [], [], [], []
+    paused = []
     for r in runners:
         status = str(r.get("status") or "").strip().lower()
         reports = project in declared_projects(r)
-        if reports and status == ONLINE and r.get("ready", True):
+        # Paused first: a parked box will not claim no matter what else is true of
+        # it, and it must never be reported as "would claim now" — that reading is
+        # what a dispatch preflight acts on.
+        if status == PAUSED or r.get("paused"):
+            paused.append(r)
+        elif reports and status == ONLINE and r.get("ready", True):
             serving.append(r)
         elif reports and status in (ONLINE, DEGRADED):
             degraded.append(r)
@@ -270,6 +283,7 @@ def classify_runners(runners: list[dict], project: str, *,
         "unreported_yours": mine,
         "unreported_theirs": theirs,
         "offline": offline,
+        "paused": paused,
         "tenant_scoped": tenant_scoped,
         # Nothing visible AND no tenant to attribute it to ≠ nothing suitable. Only
         # an unpinned read is the absence of evidence; see `unknown_message`.
@@ -279,6 +293,10 @@ def classify_runners(runners: list[dict], project: str, *,
         # tenant-pinned read qualifies — that IS the look, and its answer is none.
         # `dormant` is not blocked for the same reason `degraded` is not: the runner
         # reports the repo, and the turn survives until it can take it.
+        # A paused runner does NOT rescue a dispatch from `blocked`: unlike
+        # `degraded` (recovers on its own) and `dormant` (wakes on its own), a pause
+        # is held by a human and clears only when one clears it. Promising the turn
+        # will land would be a guess about someone's intent.
         "blocked": ((bool(runners) or tenant_scoped)
                     and not serving and not degraded and not dormant),
     }
@@ -310,7 +328,7 @@ def blocked_message(classified: dict, workspace: str = "") -> str:
     where = f" in workspace '{workspace}'" if workspace else ""
     seen = (classified["unreported_yours"] + classified["unreported_theirs"]
             + classified["degraded"] + classified["dormant"] + classified["serving"]
-            + classified["offline"])
+            + classified["offline"] + classified.get("paused", []))
 
     # The empty tenant-pinned case. Reachable only since the preflight started
     # reading the tenant it enqueues into: the workspace is real and you are a
@@ -343,7 +361,27 @@ def blocked_message(classified: dict, workspace: str = "") -> str:
     # The fix is always on a machine, never in this CLI — canopy-web #513 made
     # `projects` runner-reported precisely so that a repo becomes routable by being
     # real on the box. Which machine, and whose, is the only thing that varies.
-    if classified["unreported_yours"]:
+    # Paused first among the remedies: a parked box that DOES report the project is
+    # one `unpause` away from serving, and telling someone to go open the repo in
+    # emdash when the real answer is "you parked this an hour ago" sends them to the
+    # wrong machine entirely.
+    parked_and_reports = [r for r in classified.get("paused", [])
+                          if project in declared_projects(r)]
+    if parked_and_reports:
+        names = [str(r.get("name") or "") for r in parked_and_reports]
+        notes = "; ".join(n for n in (str(r.get("paused_note") or "").strip()
+                                      for r in parked_and_reports) if n)
+        lines += [
+            "",
+            f"PAUSED: {', '.join(names)} reports '{project}' but is parked"
+            + (f" ({notes})" if notes else "") + ".",
+            "A pause is held by a human and clears only when one clears it, so unlike",
+            "an asleep or not-ready runner this will NOT resolve on its own — which is",
+            "why it refuses rather than queueing.",
+            "",
+            f"  canopy runner unpause {names[0]}",
+        ]
+    elif classified["unreported_yours"]:
         names = [str(r.get("name") or "") for r in classified["unreported_yours"]]
         lines += [
             "",

@@ -11,6 +11,7 @@ from orchestrator.agent_email import email_group
 from orchestrator.agent_gdoc import gdoc_group
 from orchestrator.eval_cli import eval_group
 from orchestrator.project_cli import project as project_group
+from orchestrator.runner_cli import runner as runner_group
 
 
 def _skill_hint(name: str) -> str | None:
@@ -59,6 +60,7 @@ main.add_command(email_group)
 main.add_command(gdoc_group)
 main.add_command(eval_group)
 main.add_command(project_group)
+main.add_command(runner_group)
 
 
 @main.group()
