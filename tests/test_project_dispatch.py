@@ -731,3 +731,37 @@ def test_the_paused_field_alone_is_enough():
                          tenant_scoped=True)
     assert c["serving"] == []
     assert [r["name"] for r in c["paused"]] == ["jj"]
+
+
+# --- runner pause: ownership refusal ---------------------------------------------
+#
+# `canopy runner list` gates on TENANCY, `pause` gates on OWNERSHIP, so a runner is
+# routinely visible but not actionable. canopy-web's _runner_visibility_q calls that
+# asymmetry deliberate and says the client must carry the invariant via can_manage
+# rather than let someone "discover ownership from a bare 404 on an action it was
+# told to try". Observed 2026-07-29: `canopy runner pause` from inside an agent repo
+# 404'd with no hint that the CLI was acting AS the agent (resolve_token prefers the
+# agent's own PAT), and the same command from /tmp worked.
+
+def test_pause_refuses_a_runner_we_do_not_own_before_calling():
+    from orchestrator.runner_cli import _refuse_if_not_ours
+    import click as _click
+    r = {"name": "jj-mbp-cdp", "can_manage": False, "paired_by_email": "jj@dimagi.com"}
+    with pytest.raises(_click.ClickException) as exc:
+        _refuse_if_not_ours(r, "pause")
+    msg = str(exc.value)
+    assert "owned by jj@dimagi.com" in msg
+    assert "CANOPY_WEB_PAT" in msg, "must name the identity fix, not just the denial"
+    assert "~/.canopy/PAUSED" in msg, "must name the fallback for someone else's box"
+
+
+def test_pause_proceeds_when_we_own_it():
+    from orchestrator.runner_cli import _refuse_if_not_ours
+    assert _refuse_if_not_ours({"name": "mine", "can_manage": True}, "pause") is None
+
+
+def test_an_older_server_omitting_can_manage_is_not_blocked():
+    """can_manage defaults True when absent (older servers) — refusing there would
+    break the command against a server that would have allowed it."""
+    from orchestrator.runner_cli import _refuse_if_not_ours
+    assert _refuse_if_not_ours({"name": "mine"}, "pause") is None

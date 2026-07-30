@@ -24,8 +24,42 @@ import json
 import click
 
 from orchestrator.agent_client import CanopyError
+from orchestrator.project_dispatch import can_manage
 
 RUNNERS_PATH = "/api/harness/runners/"
+
+
+def _refuse_if_not_ours(r: dict, verb: str) -> None:
+    """Say WHY, instead of letting the server's bare 404 be the answer.
+
+    Pausing a runner is an act-on operation, gated on OWNERSHIP (`paired_by`),
+    while listing one is only gated on tenancy — so `canopy runner list` shows a
+    box that `pause` then 404s on. canopy-web's `_runner_visibility_q` names that
+    asymmetry as deliberate and says the client is supposed to carry the
+    invariant explicitly, via `can_manage`, rather than let someone "discover
+    ownership from a bare 404 on an action it was told to try". This is that.
+
+    The common cause is IDENTITY, not permissions, and it is invisible without
+    this: `canopy_web.resolve_token` prefers an agent's own PAT over the
+    operator's workbench-token, so running from inside an agent repo acts AS that
+    agent — and an agent does not own the operator's laptop runner. Same command,
+    run from anywhere else, works.
+    """
+    if can_manage(r):
+        return
+    owner = str(r.get("paired_by_email") or "").strip() or "someone else"
+    raise click.ClickException(
+        f"cannot {verb} '{r.get('name')}' — it is owned by {owner}, and this "
+        f"identity is not that.\n"
+        f"  Pausing acts ON a runner, so it needs ownership; listing only needs "
+        f"tenancy, which is why the runner is visible but not actionable.\n"
+        f"  If you ARE {owner}: you are probably running inside an agent repo, so "
+        f"the CLI is acting as that agent (canopy_web.resolve_token prefers the "
+        f"agent's own PAT). Run this from outside the repo, or set CANOPY_WEB_PAT "
+        f"to your own token.\n"
+        f"  Otherwise this is {owner}'s box to park — ask them, or use the local "
+        f"sentinel there (`touch ~/.canopy/PAUSED`)."
+    )
 
 
 def _fetch(workspace: str = ""):
@@ -81,6 +115,7 @@ def pause_cmd(name_or_id, note, workspace, as_json):
     """
     from orchestrator import canopy_web
     r = _resolve(name_or_id, workspace)
+    _refuse_if_not_ours(r, "pause")
     try:
         out = canopy_web.call("POST", f"{RUNNERS_PATH}{r['id']}/pause",
                               {"note": note}) or {}
@@ -112,6 +147,7 @@ def unpause_cmd(name_or_id, workspace, as_json):
     """
     from orchestrator import canopy_web
     r = _resolve(name_or_id, workspace)
+    _refuse_if_not_ours(r, "unpause")
     try:
         out = canopy_web.call("POST", f"{RUNNERS_PATH}{r['id']}/unpause") or {}
     except (CanopyError, RuntimeError) as e:
@@ -137,6 +173,7 @@ def list_cmd(workspace, as_json):
             [{"name": r.get("name"), "id": r.get("id"), "status": r.get("status"),
               "ready": r.get("ready"), "paused": r.get("paused"),
               "paused_note": r.get("paused_note"), "host": r.get("host"),
+              "can_manage": can_manage(r), "owner": r.get("paired_by_email"),
               "projects": (r.get("capabilities") or {}).get("projects") or []}
              for r in rows], indent=2))
         return
