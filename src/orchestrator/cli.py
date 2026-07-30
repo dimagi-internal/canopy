@@ -1465,6 +1465,21 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
 
     if as_json:
         click.echo(json_mod.dumps(result, indent=2, default=str))
+        # The human path below shouts when the synthesis pass didn't complete, because a
+        # live cron once read the quiet version as "no findings" and moved on. THIS is the
+        # path that cron and the skills actually consume (`--json-output` is documented
+        # "for skill consumption"), and it was still quiet: `findings: []`, exit 0, and the
+        # `error` key buried in a large blob nobody destructures. Same wrong answer, same
+        # cost, machine-readable. Exit non-zero so a timed-out or errored run cannot be
+        # mistaken for a clean bill of health — the JSON is still emitted above, so callers
+        # keep the deterministic signals they paid for.
+        if result.get("error"):
+            click.echo(
+                f"agent-review: synthesis pass did not complete — findings are NOT a clean "
+                f"bill of health. reason: {result['error']}",
+                err=True,
+            )
+            raise SystemExit(1)
         return
     if result.get("error") and not result.get("turns"):
         raise click.ClickException(result["error"])

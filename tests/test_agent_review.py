@@ -1091,3 +1091,57 @@ def test_transcripts_without_the_flag_review_exactly_as_before(tmp_path):
     s = friction_signals(t)
     assert len(s["failures"]) == 1
     assert len(s["auth_friction"]) == 1
+
+
+# --- `--json-output` must not report a failed run as a clean bill of health ---
+
+def _invoke_agent_review_json(monkeypatch, result):
+    """Run `canopy agent-review --json-output` with run_review stubbed to `result`."""
+    from click.testing import CliRunner
+
+    from orchestrator import cli as cli_mod
+
+    monkeypatch.setattr(
+        "orchestrator.agent_review.run_review", lambda *a, **k: result, raising=False
+    )
+    return CliRunner().invoke(cli_mod.main, ["agent-review", "hal", "--json-output"])
+
+
+def _result(**over):
+    base = {
+        "agent": "hal", "repo": "/tmp/hal", "turns": 32, "signals": [],
+        "corpus": {}, "findings": [], "dropped_findings": [],
+    }
+    base.update(over)
+    return base
+
+
+def test_json_output_exits_nonzero_when_synthesis_did_not_complete(monkeypatch):
+    """The human path already shouts about this; the machine path stayed quiet.
+
+    `--json-output` is the path cron and the skills consume, so a timed-out synthesis
+    returning `findings: []` with exit 0 is the same wrong answer that caused the
+    original incident — just machine-readable.
+    """
+    res = _invoke_agent_review_json(
+        monkeypatch, _result(error="agent-review synthesis pass timed out after 180s")
+    )
+    assert res.exit_code != 0, "an errored run must not exit 0"
+    assert "did not complete" in res.output
+
+
+def test_json_output_still_emits_the_json_when_it_fails(monkeypatch):
+    """Callers paid for the deterministic signals — failing must not withhold them."""
+    res = _invoke_agent_review_json(
+        monkeypatch, _result(turns=32, error="synthesis pass timed out after 180s")
+    )
+    payload = json.loads(res.output[res.output.index("{"):res.output.rindex("}") + 1])
+    assert payload["turns"] == 32
+    assert payload["error"]
+
+
+def test_json_output_exits_zero_on_a_clean_run(monkeypatch):
+    """A genuinely finding-free review is still a success — don't cry wolf."""
+    res = _invoke_agent_review_json(monkeypatch, _result())
+    assert res.exit_code == 0
+    assert json.loads(res.output)["findings"] == []
