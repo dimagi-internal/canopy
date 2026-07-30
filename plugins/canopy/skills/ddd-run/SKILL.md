@@ -157,6 +157,12 @@ All output lands in the run directory (`<ddd_dir>/runs/<run_id>/`).
 > rooftop run — not here.  For dry runs and unit tests, the render step is
 > exercised separately.
 
+> **Multi-persona specs (`auth.type: form`):** the recorder signs each persona in
+> off camera before recording and swaps identity per scene from the scene's
+> `persona:` field — nothing to pass on the CLI. A switch forces that scene's
+> navigation even under `--skip-same-url`, so a scene that changes persona cannot
+> also be a continuation scene. See walkthrough SKILL § "Off-camera personas".
+
 #### Recording CLI flag matrix
 
 The `canopy:walkthrough` skill drives `scripts/walkthrough/record_video.py`

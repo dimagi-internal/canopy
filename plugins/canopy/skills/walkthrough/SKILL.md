@@ -382,6 +382,17 @@ Requirements:
 `recipe_preflight` applies the same switches, so a recipe whose later scenes are
 a different seat is validated as that seat rather than as whoever signed in first.
 
+**A persona switch always re-navigates**, even when the scene's `url` is unchanged
+and `--skip-same-url` is in force. It has to: swapping cookies does not repaint the
+page, so without the nav the session would be the new persona's while the DOM is
+still the previous one's. Two consequences for authoring:
+
+- A scene that changes `persona:` **cannot** be a continuation scene — it will not
+  inherit the previous scene's open modal or built-up JS state. Put the switch on a
+  beat that starts from a clean page.
+- Consecutive scenes in the SAME seat still skip the nav as before, so the
+  continuation pattern is unaffected.
+
 **If `auth.type` is `command`:**
 1. Run the check command to see if auth is already valid:
    ```bash
