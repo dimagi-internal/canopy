@@ -49,7 +49,7 @@ from scripts.ddd.schemas.models import Decision, Gate, ReviewRequest, RunState, 
 from scripts.ddd.spec_io import load_spec
 from scripts.ddd.runstate import load as load_state
 from scripts.ddd.runstate import save as save_state
-from scripts.ddd.runstate import _resolve_ddd_dir
+from scripts.ddd.runstate import run_dir_for
 from scripts.ddd.auth import (
     DEFAULT_API,
     TOKEN_FILE,
@@ -1108,8 +1108,7 @@ def upload_run(
                 f"Emergency override: set {_ALLOW_NO_NARRATIVE_ENV}=1."
             )
 
-    ddd_dir = _resolve_ddd_dir()
-    run_dir = ddd_dir / "runs" / run_id
+    run_dir = run_dir_for(run_id)
 
     # 2. Load spec + why_brief
     spec_path = run_dir / "unified_spec.yaml"

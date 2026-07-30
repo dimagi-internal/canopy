@@ -796,7 +796,7 @@ def _cmd_post(args: argparse.Namespace) -> None:
         print(f"ERROR: run_state for {run_id!r} not found — wrong run_id or wrong CWD?", file=sys.stderr)
         sys.exit(1)
 
-    run_dir = rs._resolve_ddd_dir() / "runs" / run_id
+    run_dir = rs.run_dir_for(run_id)
     findings = _load_json(run_dir / "design_findings.json") or []
     user_verdict = _load_yaml(run_dir / "verdict-user.yaml")
     concept_verdict = _load_yaml(run_dir / "verdict-concept.yaml") or {}

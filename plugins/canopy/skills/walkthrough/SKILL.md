@@ -216,6 +216,23 @@ auth:
 #   login: "python manage.py get_token"      # interactive command (user runs with !)
 #   inject_url: "/auth/set-token?token={token}"  # URL to inject the token
 
+# For a MULTI-PERSONA narrative on a real login form — the seats change on
+# camera but the logins do NOT. Each persona is signed in before recording
+# starts, in a throwaway context, and the recorder swaps cookies before a
+# scene's nav. See "Off-camera personas" under Record Video.
+# auth:
+#   type: form
+#   login_url: /supply/login/
+#   fields:
+#     email: 'input[name="email"]'
+#     password: 'input[name="password"]'
+#   submit: 'button[type="submit"]'
+#   success: .navitem              # optional: proves the login landed
+#   password_env: SUPPLY_DEMO_PASSWORD   # env var, never the password itself
+#   personas:                      # persona key -> the account it signs in as
+#     ada: oes-lead@oes.example
+#     tomas: oes-review@oes.example
+
 # Data setup (optional — the synthetic generator that puts the world in a
 # recordable state; see "Data setup + ${var} substitution" under Record Video)
 setup:
@@ -334,6 +351,36 @@ $B goto <base_url><auth.url>
 $B text
 ```
 Verify the response indicates success (check for error messages).
+
+**If `auth.type` is `form` — off-camera personas:**
+
+Nothing to do here. `record_video.py` signs every persona the spec's scenes
+reference in BEFORE the recorded context exists (`scripts/walkthrough/identities.py`),
+each in its own throwaway context, and the recorder swaps cookies before a
+scene's nav whenever its `persona:` changes. Authentication never reaches the
+film.
+
+Use it when a narrative moves between seats — a buyer publishes, a supplier
+bids, a reviewer scores. The recorder records ONE Playwright context whose video
+starts with the page and **cannot be paused**, so a login performed on that page
+is in the deliverable by construction: without this, four persona switches meant
+four login forms in a demo whose subject was procurement. A dev-only persona
+switch endpoint is not an alternative on a public host — it should be a hard 403
+outside DEBUG, and weakening that for a prettier video is the wrong trade.
+
+Requirements:
+- Each scene declares `persona:` (already a narrative field — the story says
+  whose seat the beat is in; this makes it so).
+- `auth.personas` maps that key to an account. An **unmapped** persona is a no-op,
+  so specs that set `persona` purely as a label are unaffected.
+- The password comes from `auth.password_env` (or per-persona `password_envs`)
+  — an environment variable, so the committed spec never carries a credential.
+- Set `auth.success` to a selector that only exists once signed in. Without it a
+  failed login yields a logged-out render that reads as a product bug and costs a
+  judge cycle to diagnose; with it, the render aborts loudly instead.
+
+`recipe_preflight` applies the same switches, so a recipe whose later scenes are
+a different seat is validated as that seat rather than as whoever signed in first.
 
 **If `auth.type` is `command`:**
 1. Run the check command to see if auth is already valid:

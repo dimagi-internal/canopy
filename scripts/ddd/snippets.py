@@ -39,13 +39,13 @@ from typing import Any
 
 import yaml
 
-from scripts.ddd.runstate import _resolve_ddd_dir, load
+from scripts.ddd.runstate import load, run_dir_for
 
 SCHEMA_VERSION = 1
 
 
 def _run_dir(run_id: str) -> Path:
-    return _resolve_ddd_dir() / "runs" / run_id
+    return run_dir_for(run_id)
 
 
 def _find_report(run_dir: Path, iteration: int) -> Path:

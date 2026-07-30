@@ -9,6 +9,74 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.381] - 2026-07-30
+
+### Added
+
+- **Off-camera personas** (`auth.type: form`). A narrative that moves between
+  seats — a buyer publishes a tender, a supplier bids, a reviewer scores it — no
+  longer films its logins. Each persona the spec's scenes reference is signed in
+  before the recorded context exists, in its own throwaway context
+  (`scripts/walkthrough/identities.py`), and the recorder swaps cookies before a
+  scene's nav whenever its `persona:` changes. The identity changes between two
+  frames of ordinary navigation.
+
+  This exists because the recorder records ONE Playwright context whose video
+  starts with the page and cannot be paused, so anything authenticated on that
+  page is in the deliverable by construction. The alternative for the app that
+  needed it was four login forms per narrative, in a demo whose subject was
+  procurement — or weakening a dev-only persona-switch endpoint that is
+  correctly a hard 403 on a public host with open registration.
+
+  `persona` was already a narrative field, so the story declares whose seat a
+  beat is in and this makes it so. An unmapped persona is a no-op, so every
+  existing spec that sets it purely as a label is unaffected. Credentials come
+  from `auth.password_env`, never the committed spec, and `auth.success` makes a
+  failed login abort loudly instead of yielding a logged-out render that reads as
+  a product bug. `recipe_preflight` applies the same switches, so a recipe whose
+  later scenes are a different seat is validated as that seat.
+
+## [0.2.380] - 2026-07-30
+
+### Fixed
+
+- **The arc verdict never gated anything.** `ddd-arc-eval` declares `gate: gating`
+  ("a demo with no arc is not converged") and writes `verdict-arc.yaml`, but `arc`
+  was absent from `KIND_DEFAULTS` and the file from `EXTRA_VERDICT_FILENAMES` — so
+  `discover_extra_verdicts` never loaded it and `compute_convergence` never saw it.
+  A narrative could pass both per-scene judges and converge *while repeating
+  itself*, which is the one thing the arc lens exists to catch, since it is the
+  only lens that sees the scenes as a sequence.
+
+- **`duplicate_frames` reported `pass` when it had not run.** Without numpy it
+  printed `pass (0 pairs compared)` and exited 0. numpy sat in the `dev` extra on
+  the reasoning — stated in the comment — that the lens "degrades to a pass without
+  it rather than crashing"; but the default invocation carries no dev extra, so for
+  most callers the gate silently did nothing. numpy is now a runtime dependency and
+  the can't-run path returns verdict `error` with exit 2, the code this module's own
+  docstring already reserved for a setup error.
+
+- **`ddd-upload` could not open a run `new_run` had just created.** `load`/`save`
+  resolve through `_run_dir_for` (legacy in-repo, then the external project-scoped
+  root), but `upload`, `findings_review` and `snippets` each built
+  `ddd_dir / "runs" / run_id` by hand — neither location — so all three raised
+  `FileNotFoundError` on any post-split run. Adds the public
+  `runstate.run_dir_for()` and routes all three through it.
+
+- **`narrative sync` raised `NameError`.** `cd436a2` deleted `_cmd_sync` when the
+  story gained a single writer but left the dispatch branch and left `sync` in the
+  usage string, so typing the verb the tool advertised crashed. It now explains
+  that `pull` and `post` replaced it.
+
+- **`narrative pull` destroyed local edits silently.** It stays a one-way read, but
+  the lock is a file in a git repo and does get hand-edited; the round-trip guard
+  compares version *numbers*, so a correction committed into a v2 lock was replaced
+  by a v2 pull with `{"action": "pulled"}` and exit 0. Pull now names the scenes
+  whose content it replaced and leaves the previous lock as `.replaced`.
+
+- `ddd-run`'s SKILL documented `upload.py --narrative-slug`; the script rejects it —
+  the flag is `--feature`.
+
 ## [0.2.379] - 2026-07-29
 
 ### Changed

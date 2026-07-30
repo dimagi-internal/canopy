@@ -151,12 +151,32 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
+        # Sign the spec's personas in first, in their own throwaway contexts —
+        # same helper the recorder uses, so preflight authenticates the way the
+        # render will.
+        from scripts.walkthrough.identities import mint_identities
+
+        raw_spec = spec.model_dump() if hasattr(spec, "model_dump") else dict(spec)
+        identities = mint_identities(browser, raw_spec, resolved_base)
+
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         try:
             if auth_url:
                 page.goto(f"{resolved_base}{auth_url}", wait_until="networkidle", timeout=30000)
 
+            current_identity: str | None = None
             for scene_no, scene in enumerate(spec.scenes, start=1):
+                # Become the scene's persona before its nav, exactly as the
+                # recorder does — otherwise preflight resolves every selector as
+                # whoever happened to be signed in first, and a recipe whose
+                # later scenes are a different seat passes here and fails on
+                # camera (or worse, silently checks the wrong screen).
+                persona = (getattr(scene, "persona", None) or "").strip()
+                if persona and persona in identities and persona != current_identity:
+                    page.context.clear_cookies()
+                    page.context.add_cookies(identities[persona])
+                    current_identity = persona
+
                 # Navigate on the browser's ACTUAL url, not on the previous
                 # scene's declared one. `SkipSameUrlRecorder` compares against
                 # `page.url`, so a scene reached through a redirect (a

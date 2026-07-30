@@ -34,6 +34,14 @@ from scripts.ddd.schemas.models import Dimension, Verdict
 KIND_DEFAULTS: dict[str, tuple[str, bool]] = {
     "concept": ("gating", True),  # scores live per-scene screenshots
     "user_artifact": ("gating", True),  # visual-judge on live screenshots
+    # Gating, per ddd-arc-eval's own declaration ("a demo with no arc is not
+    # converged"): it is the ONLY lens that sees the scenes as a sequence, so
+    # repetition, a sagging middle and a payoff landing before its setup are
+    # invisible to every other judge. Absent from this table, verdict-arc.yaml
+    # was written to the run dir and then never loaded — an arc FAIL could not
+    # reach compute_convergence, so a narrative with no arc converged on the
+    # per-scene pair alone, which is the exact blindness the lens exists to remove.
+    "arc": ("gating", True),  # judges the rendered scenes in sequence
     "why": ("advisory", False),  # AI text graded against AI text
     "actionability": ("advisory", False),  # narration graded against features[]
     "timing": ("advisory", True),  # deterministic, measured off the real mp4
@@ -44,6 +52,7 @@ KIND_DEFAULTS: dict[str, tuple[str, bool]] = {
 _FILENAME_KINDS = {
     "verdict-concept": "concept",
     "verdict-user": "user_artifact",
+    "verdict-arc": "arc",
     "verdict-why": "why",
     "verdict-actionability": "actionability",
     "verdict-timing": "timing",
@@ -54,6 +63,7 @@ _FILENAME_KINDS = {
 # (concept / user_artifact). /canopy:ddd-run Step 4 discovers whichever of these
 # are present and feeds them through the aggregator (canopy#273 item 1).
 EXTRA_VERDICT_FILENAMES: tuple[str, ...] = (
+    "verdict-arc.yaml",
     "verdict-timing.json",
     "verdict-video.json",
     "verdict-why.yaml",

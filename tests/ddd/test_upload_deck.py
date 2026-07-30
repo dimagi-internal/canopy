@@ -98,8 +98,9 @@ def tmp_run(tmp_path, monkeypatch):
     import scripts.ddd.runstate as rs
     import scripts.ddd.upload as pm
 
+    # Patching runstate is enough — upload goes through runstate.run_dir_for.
     monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
-    monkeypatch.setattr(pm, "_resolve_ddd_dir", lambda: tmp_path)
+    assert pm.run_dir_for is rs.run_dir_for
     monkeypatch.setenv("CANOPY_WEB_PAT", "test-pat")
 
     run_id = "smart-routing-2026-01-01-001"

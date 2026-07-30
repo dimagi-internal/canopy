@@ -149,8 +149,24 @@ class Recorder:
         capture_action_frames: bool = False,
         default_viewport: dict[str, int] | None = None,
         variables: dict[str, Any] | None = None,
+        identities: dict[str, list[dict]] | None = None,
+        identity: str | None = None,
     ) -> None:
         self.config = config or RecorderConfig()
+        # persona -> that persona's session cookies, minted OFF CAMERA before
+        # recording began (see scripts.walkthrough.identities). A scene declaring
+        # ``persona:`` is switched into that identity before its nav, so a
+        # multi-persona narrative never films a login form.
+        #
+        # This exists because the recorder records ONE Playwright context and a
+        # context's video cannot be paused: any auth performed on the page is on
+        # the film by construction. The apps that needed it had a dev-only
+        # persona switch endpoint that is (correctly) a hard 403 in production,
+        # so the only prod-capable alternative was four logins on camera per
+        # narrative. Cookies transfer instead — the identity changes between two
+        # frames of ordinary navigation.
+        self.identities: dict[str, list[dict]] = dict(identities) if identities else {}
+        self._identity: str | None = identity
         self.base_url = (base_url or "").rstrip("/")
         self.report = report or RunReport()
         # LIVE late-binding ``${var}`` map, seeded from setup outputs. A
@@ -240,6 +256,37 @@ class Recorder:
             print(f"  ! scene url still has an unresolved ${{var}}: {url!r} — not navigating")
             return None
         return url if url.startswith("http") else self.base_url + url
+
+    def apply_scene_identity(self, page: Page, scene: dict) -> str | None:
+        """Switch to this scene's ``persona`` off camera. Returns the persona applied.
+
+        A no-op unless the CLI supplied an ``identities`` map (spec ``auth.type:
+        form``) AND the scene names a persona that differs from the one already
+        loaded. Called before the scene's nav so the page renders already signed
+        in — the viewer sees a navigation, not an authentication.
+
+        Cookie swap rather than a scripted login, because a login is *visible*:
+        the recorded context's video starts with the page and cannot be paused,
+        so anything performed on that page is in the deliverable. The cookies
+        come from a throwaway context that was never recorded.
+
+        Unknown personas are ignored rather than fatal: ``persona`` is a
+        narrative field that predates this feature and most specs set it purely
+        as a label, so treating an unmapped value as an error would break every
+        one of them.
+        """
+        persona = (scene.get("persona") or "").strip()
+        if not persona or not self.identities or persona == self._identity:
+            return None
+        cookies = self.identities.get(persona)
+        if not cookies:
+            return None
+        context = page.context
+        context.clear_cookies()
+        context.add_cookies(cookies)
+        self._identity = persona
+        print(f"  · identity → {persona}  (off camera; cookie swap, no login filmed)")
+        return persona
 
     def before_scene(self, scene: dict) -> None:
         """Hook fired before a scene starts (after any nav settle)."""
@@ -663,6 +710,11 @@ class Recorder:
         # spec-level default).
         scene_viewport = scene.get("viewport")
         self._apply_viewport(page, scene_viewport)
+        # Become this scene's persona BEFORE the nav, so the page loads already
+        # signed in as them. Off camera: the cookies were minted in a throwaway
+        # context before recording began, so the film cuts from one persona's
+        # screen straight to the next one's — no login form, ever.
+        self.apply_scene_identity(page, scene)
         url = self.goto_for_scene(scene, page.url)
         # Inspect the first action ONCE: a leading ``wait_for`` is itself a
         # settle (it polls until a known page state appears), so the

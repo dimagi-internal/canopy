@@ -207,6 +207,19 @@ def legacy_runs_dir(ddd_dir: Path | None = None) -> Path:
     return _legacy_runs_dir(ddd_dir if ddd_dir is not None else _resolve_ddd_dir())
 
 
+def run_dir_for(run_id: str, ddd_dir: Path | None = None) -> Path:
+    """Public: THE way to resolve one run's directory. Use this, never a join.
+
+    ``load``/``save`` have always gone through ``_run_dir_for``, which checks the
+    legacy in-repo location before the external root. Three callers instead built
+    ``ddd_dir / "runs" / run_id`` by hand, which is neither: it misses the project
+    segment the external root carries, so every one of them raised
+    FileNotFoundError on any run created after the split. ``ddd-upload`` could not
+    open a run that ``new_run`` had just made.
+    """
+    return _run_dir_for(ddd_dir if ddd_dir is not None else _resolve_ddd_dir(), run_id)
+
+
 def new_run(narrative_slug: str, ddd_dir: Path | None = None) -> str:
     """Create a new run under the runs root (see _resolve_runs_dir) and return the run_id.
 

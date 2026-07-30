@@ -1171,6 +1171,71 @@ def write_lock(base_dir, slug: str, version: int, parts: dict):
     return p
 
 
+def _warn_if_replacing_local_story(base_dir, slug: str, parts: dict) -> list[str]:
+    """Say so — loudly, and recoverably — when a pull overwrites different content.
+
+    ``pull`` is a one-way read and stays one way: canopy-web owns the story, so
+    there is nothing here to merge and no ``--force`` to add. But the lock is a
+    FILE in a git repo, and in the field it does get hand-edited — a corrected
+    line of narration was committed straight into it twice on one narrative. The
+    next pull replaced both, reported ``{"action": "pulled"}``, exited 0, and
+    said nothing. The corrections were only recoverable because they happened to
+    be committed; the version guard could not help, because both sides were v2
+    and it compares version NUMBERS, not content.
+
+    So: compare the story before replacing it, name the scenes that differ, and
+    leave the previous lock beside the new one as ``.replaced`` so the content is
+    recoverable without git archaeology. Returns the differing scene ids.
+    """
+    from scripts.ddd.spec_io import lock_path
+
+    p = lock_path(base_dir, slug)
+    if not p.exists():
+        return []
+    try:
+        old = json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    old_scenes = {s.get("id"): s for s in (old.get("scenes") or []) if isinstance(s, dict)}
+    new_scenes = {s.get("id"): _lock_scene(s) for s in (parts.get("scenes") or []) if isinstance(s, dict)}
+
+    differing = [
+        sid
+        for sid, new in new_scenes.items()
+        if sid in old_scenes and old_scenes[sid] != new
+    ]
+    dropped = [sid for sid in old_scenes if sid not in new_scenes]
+    if not differing and not dropped:
+        return []
+
+    backup = p.with_suffix(p.suffix + ".replaced")
+    try:
+        backup.write_text(p.read_text())
+    except OSError:  # pragma: no cover - best effort
+        backup = None
+
+    print(
+        f"WARNING: pull replaced local story content in {p.name}. canopy-web is the "
+        f"owner, so this is expected on a fast-forward — but it is NOT a no-op, and "
+        f"if the local text was a correction that was never posted, it is now gone "
+        f"from this file.",
+        file=sys.stderr,
+    )
+    for sid in differing:
+        print(f"  changed: {sid}", file=sys.stderr)
+    for sid in dropped:
+        print(f"  no longer on canopy-web: {sid}", file=sys.stderr)
+    if backup is not None:
+        print(
+            f"  previous lock saved to {backup.name} — diff it, and if the local "
+            f"wording was right, post it as the next version "
+            f"(`narrative post <recipe> <run_id>`) rather than re-editing the lock.",
+            file=sys.stderr,
+        )
+    return differing + dropped
+
+
 def _cmd_pull(slug: str, target: str) -> None:
     """Fetch the narrative from canopy-web into ``<slug>.narrative.lock.json``.
 
@@ -1210,6 +1275,7 @@ def _cmd_pull(slug: str, target: str) -> None:
         sys.exit(1)
 
     parts = web_narrative_to_spec_parts(request_json)
+    replaced = _warn_if_replacing_local_story(base_dir, slug, parts)
     lock = write_lock(base_dir, slug, web_version, parts)
 
     # A narrative is a PAIR: canopy-web owns the story, git owns the render
@@ -1327,13 +1393,20 @@ def main() -> None:
         _cmd_post(sys.argv[2], sys.argv[3])
 
     elif subcmd == "sync":
-        if len(sys.argv) != 4:
-            print(
-                "Usage: python -m scripts.ddd.narrative sync <spec_path> <run_id>",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        _cmd_sync(sys.argv[2], sys.argv[3])
+        # Removed in cd436a2 along with auto_version_if_changed, when the story
+        # gained a single writer: there is no two-way reconcile any more, so
+        # `sync` split into `pull` (web -> lock) and `post` (spec -> web). The
+        # dispatch branch and the usage string outlived the function, so typing
+        # the verb the usage string ADVERTISED raised
+        # `NameError: _cmd_sync is not defined` — and skills still reach for it.
+        print(
+            "ERROR: `sync` no longer exists. The narrative has one writer now, so "
+            "there is nothing to reconcile:\n"
+            "  web -> lock:  python -m scripts.ddd.narrative pull <slug> <dir>\n"
+            "  spec -> web:  python -m scripts.ddd.narrative post <spec_path> <run_id>",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     elif subcmd == "status":
         if len(sys.argv) != 3:
@@ -1377,7 +1450,7 @@ def main() -> None:
 
     else:
         print(
-            f"ERROR: unknown subcommand {subcmd!r}. Use 'post', 'sync', 'status', 'pull', 'apply', 'locked', 'lock', or 'unlock'.",
+            f"ERROR: unknown subcommand {subcmd!r}. Use 'post', 'status', 'pull', 'apply', 'locked', 'lock', or 'unlock'.",
             file=sys.stderr,
         )
         sys.exit(2)

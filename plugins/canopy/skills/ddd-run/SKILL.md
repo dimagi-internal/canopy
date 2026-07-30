@@ -267,13 +267,13 @@ uv run --project "$DDD_REPO" python "$GEN" \
 # (the user reading the surfaced finding on their phone). If you need
 # dimagi-OAuth-gated only, drop --public.
 #
-# --run-id / --narrative-slug / --role group this artifact under its DDD run so it
+# --run-id / --feature / --role group this artifact under its DDD run so it
 # packages in canopy-web's /ddd views. Pass state.run_id and state.feature; the
 # per-iteration deck is role=deck, the clip is role=clip.
 UPLOAD="$DDD_REPO/scripts/walkthrough-share/upload.py"
 DECK_URL=$(uv run --project "$DDD_REPO" python "$UPLOAD" "$ITER_DECK" \
   --title "<unified_spec.name> iter${state.iteration}" \
-  --run-id "<state.run_id>" --narrative-slug "<state.feature>" --role deck \
+  --run-id "<state.run_id>" --feature "<state.feature>" --role deck \
   --public 2>&1 | grep -oE 'https://[^ ]*' | tail -1)
 ```
 
@@ -299,7 +299,7 @@ if [ -f "$ITER_CLIP" ]; then
   NARRATIVE_URL=$(PYTHONPATH="$DDD_REPO" uv run --project "$DDD_REPO" python -c "from scripts.ddd.runstate import load; print(load('$run_id').narrative_review_url or '')")
   CLIP_ARGS=( "$ITER_CLIP" --public
     --title "<unified_spec.name> iter${state.iteration} (video)"
-    --run-id "<state.run_id>" --narrative-slug "<state.feature>" --role clip
+    --run-id "<state.run_id>" --feature "<state.feature>" --role clip
     --spec "<unified_spec>" )
   [ -n "$DECK_URL" ] && CLIP_ARGS+=( --companion-url "$DECK_URL" )
   [ -n "$NARRATIVE_URL" ] && CLIP_ARGS+=( --narrative-url "$NARRATIVE_URL" )

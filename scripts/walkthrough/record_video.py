@@ -63,6 +63,7 @@ except ImportError:
     sys.exit("ERROR: pyyaml not installed. Run: pip install pyyaml")
 
 from scripts.walkthrough._lib.capture_mode import snapshot_full_page
+from scripts.walkthrough.identities import mint_identities
 from scripts.ddd.spec_io import load_spec_raw
 
 try:
@@ -928,6 +929,14 @@ def main() -> None:
                 else:
                     print("Prewarm: enabled but no scene URLs to warm — skipping")
 
+            # Sign every persona this spec visits in BEFORE the recorded context
+            # exists, so none of it is on the film. Each gets a throwaway context;
+            # the recorder swaps cookies per scene. No-op unless the spec declares
+            # `auth.type: form`, so every existing spec is unaffected.
+            identities = mint_identities(browser, spec, base_url)
+            if identities:
+                print(f"Identities: {len(identities)} persona(s) signed in off camera")
+
             context_kwargs = dict(
                 viewport={"width": viewport_w, "height": viewport_h},
                 record_video_dir=str(video_dir),
@@ -1000,6 +1009,9 @@ def main() -> None:
                 # orchestrator resolves scene urls + action target/value against
                 # it lazily, so an id minted in an earlier scene flows forward.
                 variables=setup_vars,
+                # persona -> cookies, minted above off camera. The recorder
+                # swaps them before a scene's nav when its persona changes.
+                identities=identities,
             )
             recorder.recording_epoch = recording_started
             # Provenance: the data this film is made on is part of the run's
