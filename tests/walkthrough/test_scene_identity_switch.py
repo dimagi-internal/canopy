@@ -155,3 +155,53 @@ def test_starting_identity_can_be_declared():
     rec.run_scene(page, _scene("ada", "/a"))
 
     assert page.context.added == []
+
+
+def test_a_switch_forces_the_nav_even_on_the_same_url():
+    """The bug preflight caught the first time this ran against a real app.
+
+    Once identity comes from `persona:` rather than a per-persona login URL,
+    consecutive scenes share one url — and every skip-the-nav path stays put when
+    the requested url matches the current one. A cookie swap does not repaint the
+    page, so the session became the new persona while the DOM stayed the old
+    one's, and each scene acted on the previous seat's app.
+    """
+    from scripts.walkthrough._lib.orchestrator import SkipSameUrlRecorder
+
+    class Tracing(SkipSameUrlRecorder):
+        def apply_scene_identity(self, page, scene):
+            applied = super().apply_scene_identity(page, scene)
+            if applied:
+                page.events.append(f"identity:{applied}")
+            return applied
+
+    page = FakePage(url="https://x.test/supply/")
+    rec = Tracing(config=CONFIG, base_url="https://x.test", identities={"ada": ADA, "tomas": TOMAS})
+
+    # Same declared url for both scenes — the real shape after the conversion.
+    rec.run_scene(page, _scene("ada", "/supply/"))
+    rec.run_scene(page, _scene("tomas", "/supply/"))
+
+    assert page.events == [
+        "identity:ada",
+        "goto:https://x.test/supply/",
+        "identity:tomas",
+        "goto:https://x.test/supply/",
+    ], "a persona switch must re-navigate, or the new session renders the old seat"
+
+
+def test_no_switch_still_skips_the_nav_on_the_same_url():
+    """The continuation pattern must be untouched: a scene that operates on the
+    previous scene's state still must not re-navigate and wipe it."""
+    from scripts.walkthrough._lib.orchestrator import SkipSameUrlRecorder
+
+    page = FakePage(url="https://x.test/supply/")
+    rec = SkipSameUrlRecorder(
+        config=CONFIG, base_url="https://x.test", identities={"ada": ADA}
+    )
+
+    rec.run_scene(page, _scene("ada", "/supply/"))   # switches + navigates
+    page.events.clear()
+    rec.run_scene(page, _scene("ada", "/supply/"))   # same seat, same url
+
+    assert page.events == [], "no identity change and the same url must stay put"

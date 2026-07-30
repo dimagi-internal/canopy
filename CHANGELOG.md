@@ -9,6 +9,33 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.382] - 2026-07-30
+
+### Fixed
+
+- **Off-camera personas were a silent no-op in the render.** Two bugs, both found
+  by running the feature against a real app rather than by reading it:
+
+  `build_scenes_from_spec` builds the recorder's scene dicts from an explicit
+  whitelist, and `persona` was not on it — so the recorder never saw the field.
+  The failure mode is the nasty kind: `recipe_preflight` reads the spec directly,
+  so it switched personas and reported **pass (45 targets)**, while the render
+  filmed all nine scenes as whoever signed in first and 45 of 66 actions failed
+  against the wrong seat's app.
+
+  And a cookie swap does not repaint the page. Every skip-the-nav path
+  (`SkipSameUrlRecorder`, and preflight's equivalent) stays put when the requested
+  url matches the current one — right for a continuation scene, wrong the moment
+  the identity changed underneath it, because the session becomes the new persona
+  while the DOM is still the old one's. Once identity comes from `persona:` rather
+  than a per-persona login URL, consecutive scenes share one url, so this was
+  every switch. A switch now forces the navigation; no switch still skips it, so
+  the continuation pattern is untouched.
+
+  Verified end to end against the OES supply site: 66/66 actions, four off-camera
+  switches, the right seat on screen in every scene, and no login page or login
+  URL anywhere in the capture.
+
 ## [0.2.381] - 2026-07-30
 
 ### Added

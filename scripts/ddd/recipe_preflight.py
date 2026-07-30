@@ -172,10 +172,12 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
                 # later scenes are a different seat passes here and fails on
                 # camera (or worse, silently checks the wrong screen).
                 persona = (getattr(scene, "persona", None) or "").strip()
+                switched_identity = False
                 if persona and persona in identities and persona != current_identity:
                     page.context.clear_cookies()
                     page.context.add_cookies(identities[persona])
                     current_identity = persona
+                    switched_identity = True
 
                 # Navigate on the browser's ACTUAL url, not on the previous
                 # scene's declared one. `SkipSameUrlRecorder` compares against
@@ -188,7 +190,12 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
                 scene_url = getattr(scene, "url", None)
                 if scene_url:
                     want = f"{resolved_base}{scene_url}"
-                    if normalize_url(page.url) != normalize_url(want):
+                    # A cookie swap does not repaint the page, so an identity
+                    # change must re-navigate even when the url is unchanged —
+                    # otherwise the session is the new persona and the DOM is
+                    # still the old one's, and every role-dependent selector
+                    # fails against the wrong seat's app.
+                    if switched_identity or normalize_url(page.url) != normalize_url(want):
                         page.goto(want, wait_until="networkidle", timeout=30000)
 
                 raw = scene.model_dump() if hasattr(scene, "model_dump") else dict(scene)
