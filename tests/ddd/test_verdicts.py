@@ -183,10 +183,11 @@ def test_video_json_empty_scenes_returns_none(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_kind_defaults_covers_all_six_families():
+def test_kind_defaults_covers_all_seven_families():
     assert set(KIND_DEFAULTS) == {
         "concept",
         "user_artifact",
+        "arc",
         "why",
         "actionability",
         "timing",
@@ -194,13 +195,24 @@ def test_kind_defaults_covers_all_six_families():
     }
 
 
+def test_arc_is_gating():
+    """A demo with no arc is not converged — ddd-arc-eval says so itself.
+
+    arc was missing from this registry, so verdict-arc.yaml was written by the
+    lens and then never loaded: an arc FAIL could not reach compute_convergence,
+    and a narrative could converge on the per-scene pair while repeating itself.
+    """
+    assert KIND_DEFAULTS["arc"] == ("gating", True)
+
+
 # ---------------------------------------------------------------------------
 # discover_extra_verdicts — the ddd-run Step 4 plug (canopy#273 item 1)
 # ---------------------------------------------------------------------------
 
 
-def test_extra_filenames_cover_the_four_out_of_chain_artifacts():
+def test_extra_filenames_cover_the_out_of_chain_artifacts():
     assert set(EXTRA_VERDICT_FILENAMES) == {
+        "verdict-arc.yaml",
         "verdict-timing.json",
         "verdict-video.json",
         "verdict-why.yaml",

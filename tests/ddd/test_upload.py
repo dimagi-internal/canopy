@@ -473,9 +473,11 @@ class TestUploadRun:
         import scripts.ddd.runstate as rs
         import scripts.ddd.upload as pm
 
-        # Point _resolve_ddd_dir to tmp_path
+        # Point _resolve_ddd_dir to tmp_path. Patching it on runstate is enough:
+        # upload resolves through runstate.run_dir_for, which looks the resolver
+        # up at call time — it no longer joins "runs"/run_id for itself.
         monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
-        monkeypatch.setattr(pm, "_resolve_ddd_dir", lambda: tmp_path)
+        assert pm.run_dir_for is rs.run_dir_for
 
         run_id = "smart-routing-2026-01-01-001"
         run_dir = _write_run_fixtures(tmp_path, run_id)

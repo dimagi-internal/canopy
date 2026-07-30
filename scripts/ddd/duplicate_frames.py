@@ -112,10 +112,20 @@ def check(run_dir: str | Path, threshold: float = DEFAULT_THRESHOLD) -> dict[str
         )
 
     if unavailable and not pairs:
+        # NOT a pass. A gate that could not run must never report the word every
+        # caller reads as "checked, and fine" — this printed
+        # "duplicate-frames: pass (0 pairs compared)" and exited 0, so the lens
+        # silently did not run for anyone invoking it without the dev extra,
+        # which is the default. That is a setup error, and this module's own
+        # contract already has a code for it: "2 usage/setup error".
         return {
             "run_dir": str(run),
-            "verdict": "pass",
-            "reason": "pillow/numpy unavailable — frames could not be compared",
+            "verdict": "error",
+            "reason": (
+                "pillow/numpy unavailable — frames could not be compared, so this "
+                "gate did NOT run. Install the comparison deps (numpy is a runtime "
+                "dependency; with an editable checkout use the dev extra) and re-run."
+            ),
             "pairs": [],
         }
 
@@ -167,7 +177,11 @@ def _cli(argv: list[str]) -> int:
             if pair["duplicate"]:
                 a, b = pair["scenes"]
                 print(f"  scenes {a} → {b}: {pair['difference']:.2%} of pixels differ")
-    return 0 if result["verdict"] == "pass" else 1
+    if result["verdict"] == "pass":
+        return 0
+    # "could not run" is a setup error (2), not a finding (1) — a caller that
+    # treats 1 as "duplicates found" must not be told that when nothing ran.
+    return 2 if result["verdict"] == "error" else 1
 
 
 if __name__ == "__main__":

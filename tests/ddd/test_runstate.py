@@ -356,3 +356,44 @@ def test_worktree_dot_git_file_still_counts_as_a_repo(tmp_path, monkeypatch):
 
     run_id = rs.new_run("demo", ddd_dir=ddd)
     assert not (ddd / "runs" / run_id).exists()
+
+
+# ---------------------------------------------------------------------------
+# run_dir_for — the ONE resolver (regression: ddd-upload could not open a run
+# that new_run had just created)
+# ---------------------------------------------------------------------------
+
+def test_run_dir_for_finds_a_run_new_run_just_created(tmp_path, monkeypatch):
+    """The bug this function exists to prevent.
+
+    `load`/`save` resolved through `_run_dir_for`, but upload / findings_review /
+    snippets each built `ddd_dir / "runs" / run_id` by hand. That path is neither
+    location: new runs live OUTSIDE the repo under a project-scoped root, so
+    every one of those callers raised FileNotFoundError on any run created after
+    the split. `ddd-upload` could not publish a run it had just judged.
+    """
+    import scripts.ddd.runstate as rs
+    repo, ddd = _fake_repo(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    run_id = rs.new_run("demo", ddd_dir=ddd)
+
+    resolved = rs.run_dir_for(run_id, ddd_dir=ddd)
+    assert (resolved / "run_state.yaml").exists(), (
+        f"run_dir_for did not find the run new_run created: {resolved}"
+    )
+    # And the naive join is genuinely wrong — proving the helper is load-bearing.
+    assert not (ddd / "runs" / run_id / "run_state.yaml").exists()
+
+
+def test_run_dir_for_prefers_a_legacy_in_repo_run(tmp_path, monkeypatch):
+    """A run already living in the pre-split location keeps living there, so
+    resuming one never splits its artifacts across two roots."""
+    import scripts.ddd.runstate as rs
+    repo, ddd = _fake_repo(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    legacy = ddd / "runs" / "demo-2026-01-01-001"
+    legacy.mkdir(parents=True)
+
+    assert rs.run_dir_for("demo-2026-01-01-001", ddd_dir=ddd) == legacy
