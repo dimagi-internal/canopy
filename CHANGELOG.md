@@ -9,6 +9,33 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.381] - 2026-07-30
+
+### Added
+
+- **Off-camera personas** (`auth.type: form`). A narrative that moves between
+  seats — a buyer publishes a tender, a supplier bids, a reviewer scores it — no
+  longer films its logins. Each persona the spec's scenes reference is signed in
+  before the recorded context exists, in its own throwaway context
+  (`scripts/walkthrough/identities.py`), and the recorder swaps cookies before a
+  scene's nav whenever its `persona:` changes. The identity changes between two
+  frames of ordinary navigation.
+
+  This exists because the recorder records ONE Playwright context whose video
+  starts with the page and cannot be paused, so anything authenticated on that
+  page is in the deliverable by construction. The alternative for the app that
+  needed it was four login forms per narrative, in a demo whose subject was
+  procurement — or weakening a dev-only persona-switch endpoint that is
+  correctly a hard 403 on a public host with open registration.
+
+  `persona` was already a narrative field, so the story declares whose seat a
+  beat is in and this makes it so. An unmapped persona is a no-op, so every
+  existing spec that sets it purely as a label is unaffected. Credentials come
+  from `auth.password_env`, never the committed spec, and `auth.success` makes a
+  failed login abort loudly instead of yielding a logged-out render that reads as
+  a product bug. `recipe_preflight` applies the same switches, so a recipe whose
+  later scenes are a different seat is validated as that seat.
+
 ## [0.2.380] - 2026-07-30
 
 ### Fixed
