@@ -132,6 +132,20 @@ reply threading; a deny rail blocks raw `gog gmail send`). Every send returns JS
 `thread_id` — **record it in your state layer** so inbound triage can route the
 reply to the right scope. Auth flaky? `canopy email preflight --repo .` prints the exact fix.
 
+**Don't email a reply whose ONLY recipient is the human already in the session — answer in chat.**
+When the drafted reply's recipient set is exactly *the person steering this turn*, the email is a
+round trip to someone who is standing right there: they have to approve the send, and the approval
+conversation already delivered every word of it. So skip the draft-and-ask entirely and just give
+them the content as your turn summary. **Check this BEFORE writing the body**, not after — the cost
+of missing it is a whole review-and-approval cycle spent on a message nobody needed.
+Still send when any of these hold: there is **another recipient** (a reply-all, a cc'd teammate, an
+external counterpart); the content must **live on the thread** as the durable record others or a
+later triage will read; or the human is **not present** (an async/cron-triggered turn, where email is
+the only channel back). The test is the recipient list and the channel, never the content.
+(Origin: 2026-07-30 — an agent completed a calendar task for its principal, then drafted, reviewed,
+receipted, and dry-ran a reply addressed solely back to him; he answered *"no need to send, you
+would just be sending back to me and clearly you need my approval for it."*)
+
 **Not actionable → archive it (don't leave it unread).** If a thread has nothing to Reply /
 File / Remember / Escalate, it *is* handled: `canopy email archive --repo . <thread_id>` takes it
 off your OWN inbox (INBOX + UNREAD together) instead of leaving it to linger. This is housekeeping
