@@ -714,8 +714,16 @@ class Recorder:
         # signed in as them. Off camera: the cookies were minted in a throwaway
         # context before recording began, so the film cuts from one persona's
         # screen straight to the next one's — no login form, ever.
-        self.apply_scene_identity(page, scene)
-        url = self.goto_for_scene(scene, page.url)
+        switched_identity = self.apply_scene_identity(page, scene)
+        # A cookie swap does not change what is on screen. Every skip-the-nav
+        # path (SkipSameUrlRecorder, and preflight's equivalent) compares the
+        # requested url to the current one and stays put when they match — which
+        # is right for a continuation scene and WRONG the moment the identity
+        # changed underneath it: the session is the new persona's and the DOM is
+        # still the old one's, so the scene acts on the previous seat's app and
+        # every selector that differs between roles fails. Passing no current url
+        # forces the reload, so the swap actually lands.
+        url = self.goto_for_scene(scene, None if switched_identity else page.url)
         # Inspect the first action ONCE: a leading ``wait_for`` is itself a
         # settle (it polls until a known page state appears), so the
         # ``goto_settle_ms`` blind hold AND the ``initial_hold_ms`` blind

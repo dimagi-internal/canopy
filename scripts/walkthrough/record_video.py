@@ -532,6 +532,15 @@ def build_scenes_from_spec(
             # cursor — see _lib.config.apply_scene_pace). Absent → teach. Threaded
             # through so the orchestrator can adjust THIS scene's config.
             "pace": s.get("pace"),
+            # Whose seat this beat is in. With `auth.type: form` the recorder
+            # signs each persona in off camera and swaps to this one before the
+            # scene's nav, so a multi-seat narrative never films a login.
+            # Stripping it here made the whole feature a silent no-op: preflight
+            # (which reads the spec directly) switched personas and passed, while
+            # the render never saw the field and filmed nine scenes as whoever
+            # happened to be signed in first — 45 of 66 actions failed against
+            # the wrong seat's app.
+            "persona": s.get("persona"),
             # 1-based ORIGINAL spec index — preserved even when ``--input`` /
             # ``--scene`` filters narrow the list (so ``scene_index=3`` on a
             # partial run still means "spec scene 3", not "third in the
