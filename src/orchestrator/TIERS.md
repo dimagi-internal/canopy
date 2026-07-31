@@ -31,7 +31,8 @@ enforce it.
 `skill_budget` · `skill_catalog` · `skill_runner` · `provision` · `run_log` ·
 `version_bump` · `doctor` · `agent_review` · `structure_drift` · `eval_cli` ·
 `eval_rubric` · `turn_synthesis` · `session_upload` · `fleet_align` · `session_sources` ·
-`work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `runner_cli`
+`work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `runner_cli` ·
+`session_stall` · `stall_judge` · `stall_backtest`
 
 **HUBS** (orchestration / composition roots — wire product into the CLI, the
 improvement pipeline, and the web server; allowed to import product, like
@@ -54,6 +55,22 @@ canopy-web's `api` app):
 > future `kind` per additional runtime). `agent_coverage` (framework) depends on
 > it directly; `harvest` (product) now delegates its `user_session_roots` to it
 > too, so the `/Users/*/.claude/projects` glob lives in exactly one place.
+
+> `session_stall` and `stall_judge` are FRAMEWORK: detecting which sessions have
+> stopped and are waiting on a human, and classifying why, sits directly
+> alongside `transcripts` / `scanner` / `capture` / `session_sources` —
+> session/transcript capture + discovery is explicitly framework substrate.
+> Neither module imports anything canopy-specific; `stall_judge` is stdlib-only
+> (`json`, `re`, `subprocess`) and `session_stall` imports only `stall_judge`.
+> Any agent could reuse this to know when a session needs a human.
+
+> `stall_backtest` is FRAMEWORK: it backtests the `session_stall` / `stall_judge`
+> classifier against transcript history, so it belongs directly alongside the
+> classifier it grades. It imports only `session_stall` (for
+> `hands_back_to_human`) and `stall_judge` (for `classify_tails`,
+> `judge_replies`, `AUTO_SEND_CLASSES`) — nothing canopy-specific. Any agent
+> that adopts the stall classifier can reuse this to measure it before
+> trusting it to auto-nudge.
 
 > `work_cursor` is FRAMEWORK: the generic "what have I already processed?"
 > watermark for any skill that runs on a cadence. It replaces four ad-hoc

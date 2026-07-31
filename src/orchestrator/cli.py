@@ -132,6 +132,303 @@ def sessions_list(hours, as_json, project, min_turns):
         click.echo(f"  {i:>3}  [{ts}]  {project:<30}  \"{msg}\"  ({s['user_msgs']} msgs)")
 
 
+@sessions.command("stalled")
+@click.option("--hours", default=24, type=int, help="Only show sessions with activity in the last N hours")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON (for skill consumption)")
+@click.option("--project", default=None,
+              help="Filter to sessions whose resolved GitHub repo ends with /<name>. "
+                   "Uses repo-map (incl. emdash worktree path inference). "
+                   "Example: --project ace matches jjackson/ace but NOT jjackson/ace-web.")
+@click.option("--model", default="haiku", help="Model to use for stall classification")
+@click.option("--batch-size", default=30, type=click.IntRange(min=1),
+              help="Sessions per chunked classification call. This is the PRODUCTION path — "
+                   "a --hours 168 run can carry ~100 stalled sessions in one otherwise-unchunked "
+                   "call; chunking here mirrors stall-backtest's own hardening.")
+def sessions_stalled(hours, as_json, project, model, batch_size):
+    """List sessions that have stopped and are waiting on a human, and why.
+
+    Read-only: sends nothing, writes nothing, and calls no network beyond the
+    LLM classification `classify_sessions` performs. Completion is read off
+    each session's structural `stop_reason`, never off elapsed time — a
+    session mid-tool-call is "working" no matter how long the tool takes.
+    """
+    import json as json_mod
+    from datetime import datetime, timezone, timedelta
+
+    from orchestrator.scanner import scan_all_transcripts
+    from orchestrator.repo_map import load_repo_map
+    from orchestrator.labels import load_labels
+    from orchestrator.transcripts import read_transcript
+    from orchestrator import session_stall
+    from orchestrator.stall_judge import AUTO_SEND_CLASSES
+
+    projects_dir = Path.home() / ".claude" / "projects"
+    state_dir = ensure_canopy_dir()
+    repo_map = load_repo_map(state_dir / "repo-map.json")
+    labels = load_labels(state_dir / "labels.yaml")
+
+    all_sessions = scan_all_transcripts(projects_dir, repo_map, labels)
+
+    # Filter by recency
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    cutoff_iso = cutoff.isoformat()
+    recent = [s for s in all_sessions if s.get("last_ts") and s["last_ts"] >= cutoff_iso]
+
+    # Filter by project (precise: repo must end with /<name>; never substring-matches).
+    if project:
+        suffix = f"/{project}"
+        recent = [s for s in recent if (s.get("repo") or "").endswith(suffix)]
+
+    records_by_id: list[tuple[str, list[dict]]] = [
+        (s["session_id"], read_transcript(Path(s["path"]))) for s in recent
+    ]
+    by_id = {s["session_id"]: s for s in recent}
+
+    stats: dict = {}
+    verdicts = session_stall.classify_sessions(
+        records_by_id, model=model, batch_size=batch_size, stats=stats)
+
+    rows = []
+    for session_id, verdict in verdicts.items():
+        if verdict.state != "stalled":
+            continue
+        s = by_id[session_id]
+        rows.append({
+            "session_id": session_id,
+            "project": s.get("project_key"),
+            "repo": s.get("repo"),
+            "transcript_path": s.get("path"),
+            "state": verdict.state,
+            "class": verdict.klass,
+            "confidence": verdict.confidence,
+            "reason": verdict.reason,
+            "stop_reason": verdict.stop_reason,
+            "auto_send": verdict.klass in AUTO_SEND_CLASSES,
+            "last_ts": s.get("last_ts"),
+        })
+
+    rows.sort(key=lambda r: r["last_ts"] or "", reverse=True)
+
+    if as_json:
+        click.echo(json_mod.dumps(rows, indent=2, default=str))
+        return
+
+    # Same disclosure standard as stall-backtest's chunk-skip WARNING: a
+    # session whose chunk failed after retries has no verdict at all (see
+    # `classify_sessions`) and would otherwise vanish from this listing
+    # with no trace. Loud, above the results, whenever it happens. (Not
+    # printed in the --json-output branch above, which returns a bare
+    # array for skill consumption — no envelope to carry this in without
+    # changing that established shape.)
+    if stats.get("chunks_failed"):
+        click.echo(
+            f"WARNING: {stats['chunks_failed']} of {stats['chunks']} chunks failed "
+            f"after retries — {stats.get('sessions_skipped', 0)} sessions excluded from "
+            "this listing (absent, not shown as working or stalled).\n"
+        )
+
+    if not rows:
+        click.echo(f"No stalled sessions with activity in the last {hours} hours.")
+        return
+
+    click.echo(f"Stalled sessions with activity in the last {hours} hours:\n")
+    auto_send_count = 0
+    for r in rows:
+        marker = "  "
+        if r["auto_send"]:
+            marker = "->"
+            auto_send_count += 1
+        ts = (r["last_ts"] or "")[:16].replace("T", " ")
+        project_name = r["repo"] or r["project"]
+        click.echo(
+            f"  {marker} [{ts}]  {project_name:<30}  {r['class']:<20}  "
+            f"({r['confidence']:.2f})  \"{r['reason']}\""
+        )
+
+    click.echo(
+        f"\n{auto_send_count} of {len(rows)} stalled sessions are inside the v1 "
+        "auto-send envelope."
+    )
+
+
+@sessions.command("stall-backtest")
+@click.option("--hours", default=168, type=int, help="Only score handbacks from transcripts with activity in the last N hours")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON (for skill consumption)")
+@click.option("--project", default=None,
+              help="Filter to sessions whose resolved GitHub repo ends with /<name>. "
+                   "Uses repo-map (incl. emdash worktree path inference). "
+                   "Example: --project ace matches jjackson/ace but NOT jjackson/ace-web.")
+@click.option("--model", default="haiku", help="Model to use for classification and judging")
+@click.option("--limit", default=None, type=click.IntRange(min=1),
+              help="Cap the number of handbacks graded (approximately newest first, "
+                   "session-granularity — see the sort comment below). This one spends real "
+                   "money — try a small --limit before committing to a full week.")
+@click.option("--batch-size", default=30, type=click.IntRange(min=1),
+              help="Handbacks per chunked classify/judge call pair.")
+@click.option("--show-errors", is_flag=True,
+              help="Print every false positive — cases where a nudge would have talked over "
+                   "the human. The most useful output this command produces.")
+def sessions_stall_backtest(hours, as_json, project, model, limit, batch_size, show_errors):
+    """Backtest the stall classifier against transcript history.
+
+    Read-only: sends nothing, writes nothing. For every point in history where
+    the agent handed back to a human, the human's actual next reply is the
+    answer key for whether an auto-nudge would have been safe. `grade` scores
+    the classifier's tail-only verdict against that reply-only ground truth
+    from disjoint inputs (see `orchestrator.stall_backtest`), so this measures
+    the classifier that could actually run in production, not one that gets
+    to see the reply it's grading against.
+    """
+    import json as json_mod
+    from datetime import datetime, timezone, timedelta
+
+    from orchestrator.scanner import scan_all_transcripts
+    from orchestrator.repo_map import load_repo_map
+    from orchestrator.labels import load_labels
+    from orchestrator.transcripts import read_transcript
+    from orchestrator import stall_backtest
+    from orchestrator.stall_backtest import collect_handbacks, score
+
+    projects_dir = Path.home() / ".claude" / "projects"
+    state_dir = ensure_canopy_dir()
+    repo_map = load_repo_map(state_dir / "repo-map.json")
+    labels = load_labels(state_dir / "labels.yaml")
+
+    all_sessions = scan_all_transcripts(projects_dir, repo_map, labels)
+
+    # Filter by recency
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    cutoff_iso = cutoff.isoformat()
+    recent = [s for s in all_sessions if s.get("last_ts") and s["last_ts"] >= cutoff_iso]
+
+    # Filter by project (precise: repo must end with /<name>; never substring-matches).
+    if project:
+        suffix = f"/{project}"
+        recent = [s for s in recent if (s.get("repo") or "").endswith(suffix)]
+
+    # Sort OLDEST-first by last activity, at SESSION granularity.
+    # `scan_all_transcripts` orders sessions alphabetically by project-dir
+    # name then session-file name (session files are named by UUID,
+    # unrelated to time) — without this sort, `--limit` below would keep an
+    # arbitrary alphabetical subset instead of an approximately-newest one.
+    # Handbacks are collected below in THIS session order, so
+    # `handbacks[-limit:]` retains approximately the newest N — a session's
+    # own handbacks stay together and in their own chronological order, but
+    # two overlapping sessions' individual handbacks are not interleaved by
+    # exact timestamp against each other. Exact per-handback sorting across
+    # sessions is a deliberate non-goal here (follow-up, not this fix).
+    recent.sort(key=lambda s: s.get("last_ts") or "")
+
+    # Filter-rejection counts (harness-injection / skill-command payload
+    # records `human_text` declined to treat as a reply) are the one form
+    # of data loss `collect_handbacks` causes that had NO disclosure
+    # anywhere — unlike a skipped model chunk, which was already loud. One
+    # shared dict accumulates the count over every record considered while
+    # a handback was awaiting its reply (records filtered while nothing
+    # was pending were never candidate answer keys and are not counted).
+    filter_stats: dict = {}
+    handbacks = []
+    for s in recent:
+        handbacks.extend(collect_handbacks(read_transcript(Path(s["path"])), stats=filter_stats))
+
+    # TRUE total before --limit truncates it. A capped run must still be
+    # able to report how much history existed, not just how much it graded
+    # — the same "quotable without its caveat" failure the chunk-skip
+    # WARNING below exists to prevent.
+    handbacks_found = len(handbacks)
+    limit_applied = limit is not None and limit < handbacks_found
+
+    # Keep the LAST N collected — see the sort comment above for why that
+    # is approximately "newest N", not an alphabetical accident.
+    if limit is not None:
+        handbacks = handbacks[-limit:]
+
+    # Called as a module attribute (`stall_backtest.grade`, not a bare
+    # `from ... import grade`) so tests can monkeypatch it — a bound `import
+    # grade` would make the monkeypatch a no-op and this sandbox has a LIVE
+    # `claude` binary behind it, so that regression would silently spend
+    # real API budget.
+    stats: dict = {}
+    cases = stall_backtest.grade(handbacks, model=model, batch_size=batch_size, stats=stats)
+    result = score(cases)
+    result["sessions_scanned"] = len(recent)
+    result["handbacks_found"] = handbacks_found
+    result["graded"] = len(cases)
+    result["hours"] = hours
+    result["limit"] = limit
+    result["limit_applied"] = limit_applied
+    result["chunks"] = stats.get("chunks", 0)
+    result["chunks_failed"] = stats.get("chunks_failed", 0)
+    result["handbacks_skipped"] = stats.get("handbacks_skipped", 0)
+    result["harness_prefix_rejected"] = filter_stats.get("harness_prefix_rejected", 0)
+    result["skill_payload_rejected"] = filter_stats.get("skill_payload_rejected", 0)
+
+    if as_json:
+        click.echo(json_mod.dumps(result, indent=2, default=str))
+        return
+
+    # A capped run must say so where the numbers are read, not just in a
+    # --json-output field a reader might not look at — mirroring the
+    # chunk-skip WARNING's prominence below.
+    if result["limit_applied"]:
+        excluded = result["handbacks_found"] - limit
+        click.echo(
+            f"NOTE: --limit {limit} kept the newest {limit} of "
+            f"{result['handbacks_found']} handbacks found this window — "
+            f"{excluded} older handbacks excluded from this measurement.\n"
+        )
+
+    # A run that silently dropped data is exactly the dishonesty this
+    # harness exists to prevent — this warning must be impossible to miss,
+    # printed above the results it qualifies, whenever any chunk was
+    # skipped after exhausting its retries (see `grade`'s `stats` param).
+    if result["chunks_failed"]:
+        click.echo(
+            f"WARNING: {result['chunks_failed']} of {result['chunks']} chunks failed "
+            f"after retries — {result['handbacks_skipped']} handbacks excluded from "
+            "this measurement.\n"
+        )
+
+    # Filter-rejection counts, always shown (not conditional on non-zero):
+    # this is the one form of data loss `collect_handbacks` causes that had
+    # NO disclosure anywhere before this — see `human_text`'s docstring.
+    click.echo(
+        f"Filtered before grading: {result['harness_prefix_rejected']} "
+        f"harness-injection record(s), {result['skill_payload_rejected']} "
+        "skill/command-payload record(s) — excluded as non-human replies, "
+        "not counted toward any handback.\n"
+    )
+
+    overall = result["overall"]
+    would_send = sum(1 for c in cases if c.would_send)
+    click.echo(
+        f"Graded {result['graded']} handbacks from {result['sessions_scanned']} sessions "
+        f"over the last {hours}h.\n"
+    )
+    click.echo(f"  Would auto-send: {would_send}")
+    click.echo(f"  True positives:  {overall['tp']}")
+    click.echo(f"  False positives: {overall['fp']}")
+    click.echo(f"  Precision:       {overall['precision']:.3f}")
+    click.echo(f"  Recall:          {overall['recall']:.3f}")
+
+    click.echo("\nPer-class:")
+    for klass, bucket in sorted(result["per_class"].items()):
+        # None means this class never contributed a would-send decision
+        # (tp + fp == 0) -- "n/a", not a measured 0% precision. See
+        # score()'s docstring.
+        precision_str = "n/a" if bucket["precision"] is None else f"{bucket['precision']:.3f}"
+        click.echo(
+            f"  {klass:<20} n={bucket['n']:<5} tp={bucket['tp']:<5} fp={bucket['fp']:<5} "
+            f"precision={precision_str}"
+        )
+
+    if show_errors:
+        false_positives = [c for c in cases if c.would_send and not c.human_was_mechanical]
+        click.echo(f"\nFalse positives ({len(false_positives)}) — a nudge would have talked over the human:")
+        for c in false_positives:
+            click.echo(f"  [{c.klass}] {c.reply}")
+
+
 @sessions.command("status")
 def sessions_status():
     """Show session log status."""
