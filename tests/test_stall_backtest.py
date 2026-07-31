@@ -1,4 +1,6 @@
 # tests/test_stall_backtest.py
+import pytest
+
 from orchestrator.stall_backtest import (
     REPLY_MAX_CHARS, TAIL_MAX_CHARS,
     BacktestCase, Handback, collect_handbacks, grade, human_text, score,
@@ -278,6 +280,94 @@ def test_grade_batch_size_larger_than_input_is_one_call():
     grade(hbs, classify=fake_classify, judge=fake_judge, batch_size=1000)
 
     assert call_count == {"classify": 1, "judge": 1}
+
+
+def test_grade_retries_a_chunk_that_fails_once_then_succeeds():
+    # Fail-loud must not mean fail-total: a single flaky response (the
+    # model dropping an item, raised as ValueError by classify_tails) must
+    # not discard the whole run if a retry recovers it.
+    hbs = [Handback(NEXT_STEP, "keep going")]
+    calls = {"classify": 0}
+
+    def flaky_classify(tails, model="haiku"):
+        calls["classify"] += 1
+        if calls["classify"] == 1:
+            raise ValueError("expected 1 items in model output, got 0")
+        from orchestrator.stall_judge import Judgment
+        return [Judgment(AWAITING_CONTINUE, 0.8, "next step") for _ in tails]
+
+    def fake_judge(replies, model="haiku"):
+        return [True for _ in replies]
+
+    stats: dict = {}
+    cases = grade(hbs, classify=flaky_classify, judge=fake_judge, stats=stats)
+
+    assert len(cases) == 1
+    assert cases[0].klass == AWAITING_CONTINUE
+    assert calls["classify"] == 2  # one failure, one retry that succeeded
+    assert stats["chunks_failed"] == 0
+    assert stats["handbacks_skipped"] == 0
+
+
+def test_grade_skips_a_chunk_that_never_recovers_others_still_land():
+    # Corpus-measured failure mode (2026-07-30): 21 chunks, one comes back
+    # short every time even after retries. That chunk's handbacks must be
+    # dropped -- not the whole run, and not fabricated verdicts.
+    hbs = [Handback(f"tail{i}", f"reply{i}") for i in range(3)]  # batch_size=2 -> 2 chunks
+
+    def always_fails_first_chunk(tails, model="haiku"):
+        if tails[0] == "tail0":
+            raise ValueError("expected 2 items in model output, got 1")
+        from orchestrator.stall_judge import Judgment
+        return [Judgment(AWAITING_CONTINUE, 0.5, "r") for _ in tails]
+
+    def fake_judge(replies, model="haiku"):
+        return [True for _ in replies]
+
+    stats: dict = {}
+    cases = grade(hbs, classify=always_fails_first_chunk, judge=fake_judge,
+                  batch_size=2, retries=1, stats=stats)
+
+    # Only the surviving chunk's case is present, and in order.
+    assert [c.tail for c in cases] == ["tail2"]
+    assert stats["chunks"] == 2
+    assert stats["chunks_failed"] == 1
+    assert stats["handbacks_skipped"] == 2
+
+
+def test_grade_does_not_retry_or_swallow_a_runtime_error():
+    # A RuntimeError (e.g. the claude subprocess itself failing) means the
+    # model path is broken, not that one response was malformed -- it must
+    # propagate immediately, unretried, and never be treated as a skip.
+    hbs = [Handback(NEXT_STEP, "keep going")]
+    calls = {"classify": 0}
+
+    def broken_classify(tails, model="haiku"):
+        calls["classify"] += 1
+        raise RuntimeError("claude binary not found")
+
+    def fake_judge(replies, model="haiku"):
+        raise AssertionError("judge must not be called after classify blows up")
+
+    with pytest.raises(RuntimeError):
+        grade(hbs, classify=broken_classify, judge=fake_judge)
+
+    assert calls["classify"] == 1  # not retried
+
+
+def test_grade_default_stats_is_none_and_still_works():
+    hbs = [Handback(NEXT_STEP, "keep going")]
+
+    def fake_classify(tails, model="haiku"):
+        from orchestrator.stall_judge import Judgment
+        return [Judgment(AWAITING_CONTINUE, 0.5, "r") for _ in tails]
+
+    def fake_judge(replies, model="haiku"):
+        return [True for _ in replies]
+
+    cases = grade(hbs, classify=fake_classify, judge=fake_judge)  # no stats=...
+
+    assert len(cases) == 1
 
 
 def test_score_computes_precision_per_class():

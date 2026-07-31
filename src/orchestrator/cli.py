@@ -298,16 +298,31 @@ def sessions_stall_backtest(hours, as_json, project, model, limit, batch_size, s
     # grade` would make the monkeypatch a no-op and this sandbox has a LIVE
     # `claude` binary behind it, so that regression would silently spend
     # real API budget.
-    cases = stall_backtest.grade(handbacks, model=model, batch_size=batch_size)
+    stats: dict = {}
+    cases = stall_backtest.grade(handbacks, model=model, batch_size=batch_size, stats=stats)
     result = score(cases)
     result["sessions_scanned"] = len(recent)
     result["handbacks_found"] = len(handbacks)
     result["graded"] = len(cases)
     result["hours"] = hours
+    result["chunks"] = stats.get("chunks", 0)
+    result["chunks_failed"] = stats.get("chunks_failed", 0)
+    result["handbacks_skipped"] = stats.get("handbacks_skipped", 0)
 
     if as_json:
         click.echo(json_mod.dumps(result, indent=2, default=str))
         return
+
+    # A run that silently dropped data is exactly the dishonesty this
+    # harness exists to prevent — this warning must be impossible to miss,
+    # printed above the results it qualifies, whenever any chunk was
+    # skipped after exhausting its retries (see `grade`'s `stats` param).
+    if result["chunks_failed"]:
+        click.echo(
+            f"WARNING: {result['chunks_failed']} of {result['chunks']} chunks failed "
+            f"after retries — {result['handbacks_skipped']} handbacks excluded from "
+            "this measurement.\n"
+        )
 
     overall = result["overall"]
     would_send = sum(1 for c in cases if c.would_send)

@@ -239,9 +239,36 @@ def collect_handbacks(records: list[dict]) -> list[Handback]:
     return out
 
 
+def _call_with_retries(fn, items: list[str], *, model: str, retries: int):
+    """Call `fn(items, model=model)`, retrying on `ValueError` only.
+
+    A `ValueError` out of `classify_tails`/`judge_replies` means the model
+    returned a malformed or miscounted batch response (see
+    `parse_batch_json`) — a transient flake worth one more try, not proof
+    the model path is broken. Up to `retries` additional attempts are made
+    (so `retries=2` means 3 attempts total); if every attempt still raises
+    `ValueError`, this returns `None` rather than fabricating a result —
+    the caller (`grade`) is what decides what "no result for this chunk"
+    means (skip it).
+
+    Any exception OTHER than `ValueError` (e.g. a `RuntimeError` from a
+    broken `claude` subprocess) propagates immediately, on the first
+    attempt, unretried — that signals the model path itself is unusable,
+    which a retry cannot fix and silently swallowing would hide.
+    """
+    attempts = retries + 1
+    for attempt in range(attempts):
+        try:
+            return fn(items, model=model)
+        except ValueError:
+            if attempt == attempts - 1:
+                return None
+
+
 def grade(handbacks: list[Handback], *, classify=classify_tails,
           judge=judge_replies, model: str = "haiku",
-          batch_size: int = 30) -> list[BacktestCase]:
+          batch_size: int = 30, retries: int = 2,
+          stats: dict | None = None) -> list[BacktestCase]:
     """Grade each handback with two independent model calls, chunked.
 
     `classify` sees only tails; `judge` sees only replies. Neither call may
@@ -256,16 +283,63 @@ def grade(handbacks: list[Handback], *, classify=classify_tails,
     `judge_replies` stay single-shot and unchanged — chunking is `grade`'s
     job because `grade` is what owns the calls.
 
-    Results accumulate in input order across chunk boundaries.
+    Fail-loud must not mean fail-total. `classify_tails`/`judge_replies`
+    correctly refuse to fabricate a verdict when the model drops an item
+    from a batch (`ValueError`) — that contract must not weaken. But at 21+
+    chunks in a real run, the odds of ONE chunk flaking approach certainty,
+    and discarding ~40 successful model calls because of one short response
+    is its own kind of dishonesty (silently wasting the money already
+    spent, or worse, tempting a caller to catch-and-ignore the whole run).
+    So each chunk's `classify` and `judge` calls are retried independently
+    up to `retries` times via `_call_with_retries` — retrying only the pass
+    that actually failed, never redoing one that already succeeded. If a
+    chunk still fails after retries, that chunk (and only that chunk) is
+    skipped: its handbacks contribute no `BacktestCase`, and the run
+    continues with the rest. This is NOT the same as fail-soft: a skip is
+    never silent (see `stats` below), and `RuntimeError`/other non-`ValueError`
+    exceptions still abort the whole run immediately, same as before.
+
+    `stats`, if a dict is passed, is populated with `chunks` (total chunks
+    attempted), `chunks_failed` (chunks skipped after exhausting retries),
+    and `handbacks_skipped` (handbacks belonging to a skipped chunk) — so a
+    caller can refuse to present a measurement that silently dropped data.
+    Left at the default `None`, nothing is written and every prior caller
+    (including every existing test) is unaffected.
+
+    Results accumulate in input order across chunk boundaries; a skipped
+    chunk simply contributes nothing, so surrounding chunks' order among
+    themselves is preserved.
     """
     if not handbacks:
+        if stats is not None:
+            stats["chunks"] = 0
+            stats["chunks_failed"] = 0
+            stats["handbacks_skipped"] = 0
         return []
 
     cases: list[BacktestCase] = []
+    chunks_total = 0
+    chunks_failed = 0
+    handbacks_skipped = 0
+
     for start in range(0, len(handbacks), batch_size):
         chunk = handbacks[start:start + batch_size]
-        judgments = classify([h.tail for h in chunk], model=model)
-        mechanicals = judge([h.reply for h in chunk], model=model)
+        chunks_total += 1
+
+        judgments = _call_with_retries(
+            classify, [h.tail for h in chunk], model=model, retries=retries)
+        if judgments is None:
+            chunks_failed += 1
+            handbacks_skipped += len(chunk)
+            continue
+
+        mechanicals = _call_with_retries(
+            judge, [h.reply for h in chunk], model=model, retries=retries)
+        if mechanicals is None:
+            chunks_failed += 1
+            handbacks_skipped += len(chunk)
+            continue
+
         cases.extend(
             BacktestCase(
                 klass=j.klass,
@@ -276,6 +350,12 @@ def grade(handbacks: list[Handback], *, classify=classify_tails,
             )
             for h, j, mech in zip(chunk, judgments, mechanicals)
         )
+
+    if stats is not None:
+        stats["chunks"] = chunks_total
+        stats["chunks_failed"] = chunks_failed
+        stats["handbacks_skipped"] = handbacks_skipped
+
     return cases
 
 
