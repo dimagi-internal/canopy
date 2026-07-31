@@ -6,6 +6,7 @@ from click.testing import CliRunner
 
 from orchestrator.cli import main
 from orchestrator.session_stall import StallVerdict
+from orchestrator.stall_backtest import BacktestCase
 from orchestrator.stall_judge import AWAITING_CONTINUE, GATE_OUTBOUND
 
 # Timestamps must be RELATIVE to now, not hardcoded calendar dates: `sessions
@@ -129,3 +130,48 @@ def test_multiple_stalled_sessions_are_batched_and_correctly_keyed(tmp_path, mon
     assert by_id["sess-e"]["class"] == GATE_OUTBOUND
     assert by_id["sess-e"]["reason"] == "wants send approval"
     assert by_id["sess-e"]["auto_send"] is False
+
+
+def test_backtest_scores_transcripts(tmp_path, monkeypatch):
+    # NOTE: fixtures live under `.claude/projects`, matching scan_all_transcripts'
+    # actual discovery root (Path.home() / ".claude" / "projects") and every
+    # other fixture in this file — the brief's version of this test omitted
+    # `.claude`, which would leave `n == 0` regardless of implementation.
+    projects = tmp_path / ".claude" / "projects" / "-tmp-proj"
+    projects.mkdir(parents=True)
+    rows = [
+        {"type": "assistant", "sessionId": "s1", "cwd": "/tmp/proj",
+         "timestamp": "2026-07-30T10:00:00Z",
+         "message": {"stop_reason": "end_turn",
+                     "content": [{"type": "text", "text": "Done. Next I'll re-render."}]}},
+        {"type": "user", "sessionId": "s1", "cwd": "/tmp/proj",
+         "timestamp": "2026-07-30T10:01:00Z", "message": {"content": "keep going"}},
+    ]
+    (projects / "s1.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(
+        "orchestrator.stall_backtest.grade",
+        lambda hbs, **kw: [BacktestCase(AWAITING_CONTINUE, True, True,
+                                        hbs[0].tail, hbs[0].reply)])
+
+    res = CliRunner().invoke(main, ["sessions", "stall-backtest", "--json-output"])
+    assert res.exit_code == 0, res.output
+    out = json.loads(res.output)
+    assert out["overall"]["n"] == 1
+    assert out["overall"]["tp"] == 1
+    assert out["overall"]["precision"] == 1.0
+
+
+def test_backtest_with_no_handbacks_exits_clean(tmp_path, monkeypatch):
+    projects = tmp_path / ".claude" / "projects" / "-tmp-proj"
+    projects.mkdir(parents=True)
+    (projects / "s2.jsonl").write_text(json.dumps(
+        {"type": "assistant", "sessionId": "s2", "cwd": "/tmp/proj",
+         "timestamp": "2026-07-30T10:00:00Z",
+         "message": {"stop_reason": "tool_use",
+                     "content": [{"type": "text", "text": "working"}]}}) + "\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    res = CliRunner().invoke(main, ["sessions", "stall-backtest", "--json-output"])
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output)["overall"]["n"] == 0

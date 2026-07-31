@@ -231,6 +231,110 @@ def sessions_stalled(hours, as_json, project, model):
     )
 
 
+@sessions.command("stall-backtest")
+@click.option("--hours", default=168, type=int, help="Only score handbacks from transcripts with activity in the last N hours")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON (for skill consumption)")
+@click.option("--project", default=None,
+              help="Filter to sessions whose resolved GitHub repo ends with /<name>. "
+                   "Uses repo-map (incl. emdash worktree path inference). "
+                   "Example: --project ace matches jjackson/ace but NOT jjackson/ace-web.")
+@click.option("--model", default="haiku", help="Model to use for classification and judging")
+@click.option("--limit", default=None, type=int,
+              help="Cap the number of handbacks graded (newest first). This one spends real "
+                   "money — try a small --limit before committing to a full week.")
+@click.option("--batch-size", default=30, type=int,
+              help="Handbacks per chunked classify/judge call pair.")
+@click.option("--show-errors", is_flag=True,
+              help="Print every false positive — cases where a nudge would have talked over "
+                   "the human. The most useful output this command produces.")
+def sessions_stall_backtest(hours, as_json, project, model, limit, batch_size, show_errors):
+    """Backtest the stall classifier against transcript history.
+
+    Read-only: sends nothing, writes nothing. For every point in history where
+    the agent handed back to a human, the human's actual next reply is the
+    answer key for whether an auto-nudge would have been safe. `grade` scores
+    the classifier's tail-only verdict against that reply-only ground truth
+    from disjoint inputs (see `orchestrator.stall_backtest`), so this measures
+    the classifier that could actually run in production, not one that gets
+    to see the reply it's grading against.
+    """
+    import json as json_mod
+    from datetime import datetime, timezone, timedelta
+
+    from orchestrator.scanner import scan_all_transcripts
+    from orchestrator.repo_map import load_repo_map
+    from orchestrator.labels import load_labels
+    from orchestrator.transcripts import read_transcript
+    from orchestrator import stall_backtest
+    from orchestrator.stall_backtest import collect_handbacks, score
+
+    projects_dir = Path.home() / ".claude" / "projects"
+    state_dir = ensure_canopy_dir()
+    repo_map = load_repo_map(state_dir / "repo-map.json")
+    labels = load_labels(state_dir / "labels.yaml")
+
+    all_sessions = scan_all_transcripts(projects_dir, repo_map, labels)
+
+    # Filter by recency
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    cutoff_iso = cutoff.isoformat()
+    recent = [s for s in all_sessions if s.get("last_ts") and s["last_ts"] >= cutoff_iso]
+
+    # Filter by project (precise: repo must end with /<name>; never substring-matches).
+    if project:
+        suffix = f"/{project}"
+        recent = [s for s in recent if (s.get("repo") or "").endswith(suffix)]
+
+    handbacks = []
+    for s in recent:
+        handbacks.extend(collect_handbacks(read_transcript(Path(s["path"]))))
+
+    # Apply --limit by keeping the LAST N collected (newest).
+    if limit is not None:
+        handbacks = handbacks[-limit:]
+
+    # Called as a module attribute (`stall_backtest.grade`, not a bare
+    # `from ... import grade`) so tests can monkeypatch it — a bound `import
+    # grade` would make the monkeypatch a no-op and this sandbox has a LIVE
+    # `claude` binary behind it, so that regression would silently spend
+    # real API budget.
+    cases = stall_backtest.grade(handbacks, model=model, batch_size=batch_size)
+    result = score(cases)
+    result["sessions_scanned"] = len(recent)
+    result["handbacks_found"] = len(handbacks)
+    result["graded"] = len(cases)
+    result["hours"] = hours
+
+    if as_json:
+        click.echo(json_mod.dumps(result, indent=2, default=str))
+        return
+
+    overall = result["overall"]
+    would_send = sum(1 for c in cases if c.would_send)
+    click.echo(
+        f"Graded {result['graded']} handbacks from {result['sessions_scanned']} sessions "
+        f"over the last {hours}h.\n"
+    )
+    click.echo(f"  Would auto-send: {would_send}")
+    click.echo(f"  True positives:  {overall['tp']}")
+    click.echo(f"  False positives: {overall['fp']}")
+    click.echo(f"  Precision:       {overall['precision']:.3f}")
+    click.echo(f"  Recall:          {overall['recall']:.3f}")
+
+    click.echo("\nPer-class:")
+    for klass, bucket in sorted(result["per_class"].items()):
+        click.echo(
+            f"  {klass:<20} n={bucket['n']:<5} tp={bucket['tp']:<5} fp={bucket['fp']:<5} "
+            f"precision={bucket['precision']:.3f}"
+        )
+
+    if show_errors:
+        false_positives = [c for c in cases if c.would_send and not c.human_was_mechanical]
+        click.echo(f"\nFalse positives ({len(false_positives)}) — a nudge would have talked over the human:")
+        for c in false_positives:
+            click.echo(f"  [{c.klass}] {c.reply}")
+
+
 @sessions.command("status")
 def sessions_status():
     """Show session log status."""

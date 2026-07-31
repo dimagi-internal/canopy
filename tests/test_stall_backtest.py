@@ -66,6 +66,43 @@ def test_harness_injections_are_not_human_replies():
     assert human_text(_user("keep going")) == "keep going"
 
 
+def test_skill_and_command_payloads_are_not_human_replies():
+    # Real corpus examples, verbatim, measured 2026-07-30 (~22 of 962
+    # handbacks, ~2%, were contaminated by exactly this pattern). Neither
+    # carries a `_HARNESS_PREFIXES` marker of its own -- the harness's
+    # preamble line lands in a separate record from the skill body.
+    ddd_upload_body = (
+        "# DDD Upload\n\n"
+        "Uploads a converged DDD run's artifacts to canopy-web so they package together\n"
+        "under the run — a single navigable view (video, deck, narrative, links) at\n"
+        "`/ddd/<narrative-slug>/<run_id>`.\n\n"
+        "## Arguments\n\n"
+        "- `<run_id>` — converged run identifier.\n"
+        "- `--video <video_path>` — path to the hero video `.mp4`.\n\n"
+        "## Process\n\n"
+        "Read the ddd-upload SKILL.md and follow it:\n\n"
+        "```bash\npython3 -c \"import ...\n```"
+    )
+    labs_login_body = (
+        "Run the labs walkthrough login script:\n\n"
+        "```bash\n"
+        "bash ~/.claude/plugins/cache/ace/ace/$(cat ~/.claude/plugins/marketplaces/ace/VERSION)"
+        "/bin/ace-labs-walkthrough-login\n"
+        "```\n\n"
+        "This reuses `mcp/connect/auth/hq-oauth-login.ts` (the same headless Connect OAuth "
+        "driver `ace-connect` uses) and adds a labs-side click-through."
+    )
+    # labs_login_body has NO markdown heading anywhere -- it's the case the
+    # original three-signal fix (heading+fence / ARGUMENTS: / "# /") does
+    # not catch; it needs the early-fence signal.
+    assert "#" not in labs_login_body
+    assert human_text(_user(ddd_upload_body)) is None
+    assert human_text(_user(labs_login_body)) is None
+    # A real human pasting a short command is NOT caught -- the fence has
+    # to appear within the early window to look like a stripped skill body.
+    assert human_text(_user("looks fine, ship it")) == "looks fine, ship it"
+
+
 def test_tool_results_are_not_human_replies():
     rec = {"type": "user", "message": {"content": [
         {"type": "tool_result", "content": "ok"}]}}
@@ -75,6 +112,22 @@ def test_tool_results_are_not_human_replies():
 def test_a_handback_followed_only_by_junk_is_skipped():
     assert collect_handbacks([_asst(NEXT_STEP),
                               _user("<task-notification>x</task-notification>")]) == []
+
+
+def test_consecutive_handbacks_share_the_reply_only_via_the_last_one():
+    # Regression guard for the reply-contamination bug: three end_turn
+    # records in a row with no reply between them, then one human message.
+    # Only the LAST handback is answerable -- the earlier two never got a
+    # reply of their own and must be dropped, not back-filled with the
+    # eventual reply. Real corpus impact measured 2026-07-30: 337 of 962
+    # handbacks (35%) shared a reply with another handback before this fix.
+    tail1 = "First: seeding is done."
+    tail2 = "Second: rendering now."
+    tail3 = "Third: about to upload."
+    hbs = collect_handbacks([
+        _asst(tail1), _asst(tail2), _asst(tail3), _user("go ahead"),
+    ])
+    assert hbs == [Handback(tail=tail3, reply="go ahead")]
 
 
 def test_a_handback_with_an_empty_tail_is_skipped():
