@@ -106,6 +106,30 @@ def test_only_stalled_sessions_are_sent_to_the_model():
     assert "log in" in runner.prompt
 
 
+def test_multiple_stalled_sessions_are_each_keyed_to_the_right_verdict():
+    # Two+ stalled sessions, judged in different classes by the (fake) model.
+    # The `zip(stalled_ids, stalled_stop_reasons, judgments)` pairing inside
+    # classify_sessions is the only thing keeping each verdict on its own
+    # session id — a mis-zip or an index-[0]-always bug would nudge the wrong
+    # session in production. Order the model's response differently from
+    # input order (index 1 before index 0) so a bug that just returned
+    # judgments in call order, rather than respecting `index`, would also be
+    # caught.
+    payload = json.dumps([
+        {"index": 1, "class": BLOCKED_HUMAN, "confidence": 0.9, "reason": "needs a login"},
+        {"index": 0, "class": AWAITING_CONTINUE, "confidence": 0.8, "reason": "stated next step"},
+    ])
+    out = classify_sessions([
+        ("sess-first", [_asst("Next I'll re-render.")]),
+        ("sess-second", [_asst("I need you to log in.")]),
+    ], runner=_runner_returning(payload))
+
+    assert out["sess-first"].klass == AWAITING_CONTINUE
+    assert out["sess-first"].reason == "stated next step"
+    assert out["sess-second"].klass == BLOCKED_HUMAN
+    assert out["sess-second"].reason == "needs a login"
+
+
 def test_an_empty_input_makes_no_call():
     def boom(prompt, model):
         raise AssertionError("no sessions, no call")
