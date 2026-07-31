@@ -166,8 +166,20 @@ def fill_field(page: Page, target: str, value: str, *, config: RecorderConfig | 
         return False
     try:
         rt.locator.click(timeout=cfg.interaction_timeout_ms)
-        rt.locator.fill("")
-        rt.locator.type(value, delay=cfg.typing_delay_ms)
+        input_type = (rt.locator.get_attribute("type") or "").strip().lower()
+        if input_type in ("date", "datetime-local", "time", "month", "week"):
+            # A native date/time input is a SEGMENTED control: per-character
+            # typing lands digit-by-digit in whatever segment has focus and
+            # the browser reinterprets the stream — a typed "2026-08-18"
+            # rendered as 02/02/60818 on camera, the server 400ed the year
+            # 60818, and the modal that should have closed swallowed the rest
+            # of the scene. Locator.fill sets the value atomically and still
+            # fires input/change. Nothing is lost visually: segmented typing
+            # never read as typing anyway.
+            rt.locator.fill(value)
+        else:
+            rt.locator.fill("")
+            rt.locator.type(value, delay=cfg.typing_delay_ms)
     except Exception as e:
         print(f"  ! fill failed: {target!r}: {e}")
         return False
