@@ -229,6 +229,26 @@ proposed action, what was approved & done, what is parked; then your recommendat
 else is worth doing; plus anything still blocked from preflight. Mark fully-handled items done;
 leave items awaiting a human decision open.
 
+**Write it in THEIR vocabulary, not your bookkeeping.** Board task ids (`T7`), run ids, session
+ids, internal slugs and ext_ids are *your* plumbing — the human has no index for them and should
+not need one. Name the actual thing: not "Board task T7", but "the connect-labs audit-scan
+cleanup you queued Monday." An internal id may appear only in parentheses **after** the plain-
+language name, and only when they'd plausibly use it to look something up. Same for jargon a
+reader outside your loop can't resolve — expand it once or cut it. **Test before you send: could
+someone who has never seen your board read this top to bottom without asking "what is that"?**
+(Origin 2026-07-31: a turn summary opened with "Board task T7 — re-validated before building" and
+the human replied *"I don't know what board task t7 means... should I?"* He shouldn't have to.)
+
+**Recommendations must be decidable — say what you'll DO, not what you're wondering.** A
+close-out is where the human spends their scarcest resource, so hand them a decision, not a
+puzzle. Every recommendation carries three things: **the call you're making**, **the default if
+they say nothing**, and **the cost** (rough effort / risk). Rank them — put the one that unblocks
+the most first. If several things need deciding, number them so a reply can say "1 yes, 2 no"
+instead of prose. And do not end on a question you could have answered yourself: an open question
+is only worth their attention when the two branches genuinely lead to different work and you
+cannot pick between them from evidence. **Blockers get the same treatment** — name the exact
+command or action that clears each one, not just that it's blocked.
+
 **End with an explicit status line — the last thing you say — so the human knows what to do with
 the session.** Never end ambiguously; the person watching the emdash session should never have to
 guess whether it's finished:
@@ -268,6 +288,8 @@ queues work and approves outbound actions — independent of whether you publish
 2. Skill-development self-check answered (Step 3).
 3. Published to canopy-web (skills / work / turn) ONLY if the human asked — otherwise skip; none of
    it is an automatic close step.
+4. **Summary is legible + decidable:** no bare internal ids (`T7`, run/session ids) as the name of
+   anything, and every recommendation states the call, the default, and the cost.
 
 **Shipping a skill change from a worktree** — emdash runs each turn in a worktree while `main` is
 checked out elsewhere, so `git checkout main` and `gh pr merge --delete-branch` FAIL ("main already
