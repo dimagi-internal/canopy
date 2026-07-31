@@ -239,6 +239,21 @@ someone who has never seen your board read this top to bottom without asking "wh
 (Origin 2026-07-31: a turn summary opened with "Board task T7 — re-validated before building" and
 the human replied *"I don't know what board task t7 means... should I?"* He shouldn't have to.)
 
+**Never invent a person's name — carry the identifier your source actually gave you.** A GitHub
+handle, an email local-part, or a Slack id is *data*; the human behind it is not derivable from
+it. Expanding `ctsims` to "Chris" reads fluent and is simply false — and it is worse than the id
+it replaced, because a reader can look up `@ctsims` and cannot look up your guess. So: cite
+people as the handle (`@ctsims`) unless you have their real name from an authoritative source —
+`gh api users/<login> --jq .name`, a directory, the repo's own CODEOWNERS, or their signature in
+a thread you read. One API call settles it. **The same rule covers pronouns**: a name — inferred
+or real — does not tell you someone's pronouns, so use they/them for anyone whose pronouns you
+have not been told. This sits next to the vocabulary rule because it is the same failure pointing
+the other way: there, an id was left where a name belonged; here, a name is fabricated where an
+id belonged. Legible does not mean chatty — it means the reader can resolve every reference.
+(Origin 2026-07-31: a close-out attributed a blocking PR to "Chris"; the human asked "what do you
+mean chris's PR?" The author was Clayton Sims, and `gh api users/ctsims` had the real name all
+along.)
+
 **Recommendations must be decidable — say what you'll DO, not what you're wondering.** A
 close-out is where the human spends their scarcest resource, so hand them a decision, not a
 puzzle. Every recommendation carries three things: **the call you're making**, **the default if
@@ -289,7 +304,8 @@ queues work and approves outbound actions — independent of whether you publish
 3. Published to canopy-web (skills / work / turn) ONLY if the human asked — otherwise skip; none of
    it is an automatic close step.
 4. **Summary is legible + decidable:** no bare internal ids (`T7`, run/session ids) as the name of
-   anything, and every recommendation states the call, the default, and the cost.
+   anything; no invented human names (cite `@handle` unless you looked the name up); and every
+   recommendation states the call, the default, and the cost.
 
 **Shipping a skill change from a worktree** — emdash runs each turn in a worktree while `main` is
 checked out elsewhere, so `git checkout main` and `gh pr merge --delete-branch` FAIL ("main already
