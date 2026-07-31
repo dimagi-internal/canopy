@@ -179,3 +179,15 @@ def test_record_verdict_posts_to_step_verdict_endpoint():
     assert body["kind"] == "judge" and body["score"] == 82.0
     assert body["criteria"] == {"design": 88}
     assert body["rationale"] == "solid"
+
+
+def test_turn_mode_reads_the_agent_detail():
+    c, calls = _recorder_client([(200, '{"slug": "echo", "turn_mode": "auto"}')])
+    assert c.turn_mode() == "auto"
+    assert calls[0][:2] == ("GET", "https://x.test/api/agents/echo/")
+
+
+def test_turn_mode_defaults_gated_when_server_omits_the_field():
+    # An older canopy-web without the column must read as gated, not KeyError.
+    c, _ = _recorder_client([(200, '{"slug": "echo"}')])
+    assert c.turn_mode() == "gated"
