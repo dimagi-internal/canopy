@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from orchestrator import stall_judge
 from orchestrator.stall_judge import (
     AUTO_SEND_CLASSES, AWAITING_CONTINUE, BLOCKED_HUMAN, DONE_CLAIMED, ERRORED,
     GATE_OUTBOUND, PLAN_PENDING, QUESTION_OPEN,
@@ -92,6 +93,43 @@ def test_classify_tails_rejects_an_unknown_class():
         classify_tails(["a"], runner=_runner_returning(payload))
 
 
+def test_classify_tails_rejects_a_duplicate_index():
+    # Two items claiming the same index — the model's response is malformed,
+    # and this must fail loud rather than silently picking one.
+    payload = json.dumps([
+        {"index": 0, "class": AWAITING_CONTINUE, "confidence": 0.5, "reason": "x"},
+        {"index": 0, "class": DONE_CLAIMED, "confidence": 0.5, "reason": "y"},
+    ])
+    with pytest.raises(ValueError, match="duplicate"):
+        classify_tails(["a", "b"], runner=_runner_returning(payload))
+
+
+def test_classify_tails_rejects_an_out_of_range_or_non_int_index():
+    out_of_range = json.dumps([
+        {"index": 0, "class": AWAITING_CONTINUE, "confidence": 0.5, "reason": "x"},
+        {"index": 5, "class": DONE_CLAIMED, "confidence": 0.5, "reason": "y"},
+    ])
+    with pytest.raises(ValueError, match="invalid or out-of-range"):
+        classify_tails(["a", "b"], runner=_runner_returning(out_of_range))
+
+    non_int = json.dumps([{"index": "0", "class": AWAITING_CONTINUE,
+                           "confidence": 0.5, "reason": "x"}])
+    with pytest.raises(ValueError, match="invalid or out-of-range"):
+        classify_tails(["a"], runner=_runner_returning(non_int))
+
+
+def test_index_items_rejects_a_missing_index():
+    # `classify_tails`/`judge_replies` always call `parse_batch_json` first,
+    # which already enforces len(items) == expected — so given that count is
+    # correct, a "missing" index can only arise together with a duplicate or
+    # an out-of-range index, both of which raise before the missing-index
+    # check runs. The missing-index check is therefore only independently
+    # observable at the shared helper itself; exercise it directly.
+    with pytest.raises(ValueError, match="missing"):
+        stall_judge._index_items(
+            [{"index": 0, "class": AWAITING_CONTINUE}], count=2)
+
+
 def test_classify_tails_propagates_a_runner_failure():
     # Fail loud: there is no deterministic fallback, so a swallowed error would
     # fabricate a measurement.
@@ -114,6 +152,18 @@ def test_judge_replies_returns_bools_in_input_order():
     ])
     assert judge_replies(["keep going", "no, use prod"],
                          runner=_runner_returning(payload)) == [True, False]
+
+
+def test_judge_replies_rejects_a_non_boolean_mechanical_value():
+    # "true" (string) — a common way a model stringifies a bool.
+    payload = json.dumps([{"index": 0, "mechanical": "true"}])
+    with pytest.raises(ValueError, match="non-boolean"):
+        judge_replies(["keep going"], runner=_runner_returning(payload))
+
+    # 1 (int) — Python's bool is technically an int subclass, but 1 is not.
+    payload = json.dumps([{"index": 0, "mechanical": 1}])
+    with pytest.raises(ValueError, match="non-boolean"):
+        judge_replies(["keep going"], runner=_runner_returning(payload))
 
 
 def test_judge_replies_on_an_empty_list_makes_no_call():

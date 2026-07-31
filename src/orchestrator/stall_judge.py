@@ -175,6 +175,29 @@ def parse_batch_json(raw: str, expected: int) -> list[dict]:
 
 # ── batched calls ────────────────────────────────────────────────────────────
 
+def _index_items(items: list[dict], count: int) -> dict[int, dict]:
+    """Validate and re-key a batch of `{"index": i, ...}` items by index.
+
+    Shared by `classify_tails` and `judge_replies`: both need the same three
+    checks (in-range integer index, no duplicates, no gaps) before they can
+    trust `by_index[i]` to mean item `i`. Raises `ValueError` on any
+    violation — there is no fallback verdict for a malformed response.
+    """
+    by_index: dict[int, dict] = {}
+    for item in items:
+        idx = item.get("index")
+        if not isinstance(idx, int) or not (0 <= idx < count):
+            raise ValueError(f"invalid or out-of-range index in model output: {idx!r}")
+        if idx in by_index:
+            raise ValueError(f"duplicate index {idx} in model output")
+        by_index[idx] = item
+
+    missing = set(range(count)) - by_index.keys()
+    if missing:
+        raise ValueError(f"missing index/indices in model output: {sorted(missing)}")
+    return by_index
+
+
 def classify_tails(tails: list[str], *, runner=run_claude, model: str = "haiku",
                     ) -> list[Judgment]:
     """Classify each agent tail. Fails loud — no default verdict on error."""
@@ -182,19 +205,7 @@ def classify_tails(tails: list[str], *, runner=run_claude, model: str = "haiku",
         return []
     raw = runner(build_classify_prompt(tails), model)
     items = parse_batch_json(raw, len(tails))
-
-    by_index: dict[int, dict] = {}
-    for item in items:
-        idx = item.get("index")
-        if not isinstance(idx, int) or not (0 <= idx < len(tails)):
-            raise ValueError(f"invalid or out-of-range index in model output: {idx!r}")
-        if idx in by_index:
-            raise ValueError(f"duplicate index {idx} in model output")
-        by_index[idx] = item
-
-    missing = set(range(len(tails))) - by_index.keys()
-    if missing:
-        raise ValueError(f"missing index/indices in model output: {sorted(missing)}")
+    by_index = _index_items(items, len(tails))
 
     out: list[Judgment] = []
     for i in range(len(tails)):
@@ -217,19 +228,7 @@ def judge_replies(replies: list[str], *, runner=run_claude, model: str = "haiku"
         return []
     raw = runner(build_reply_prompt(replies), model)
     items = parse_batch_json(raw, len(replies))
-
-    by_index: dict[int, dict] = {}
-    for item in items:
-        idx = item.get("index")
-        if not isinstance(idx, int) or not (0 <= idx < len(replies)):
-            raise ValueError(f"invalid or out-of-range index in model output: {idx!r}")
-        if idx in by_index:
-            raise ValueError(f"duplicate index {idx} in model output")
-        by_index[idx] = item
-
-    missing = set(range(len(replies))) - by_index.keys()
-    if missing:
-        raise ValueError(f"missing index/indices in model output: {sorted(missing)}")
+    by_index = _index_items(items, len(replies))
 
     out: list[bool] = []
     for i in range(len(replies)):
