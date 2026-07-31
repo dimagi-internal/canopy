@@ -1,8 +1,5 @@
-import pytest
-
 from orchestrator.session_stall import (
     hands_back_to_human, last_assistant_record, final_assistant_text, is_working,
-    is_mechanical,
 )
 
 
@@ -60,46 +57,3 @@ def test_is_working_follows_the_last_assistant_record():
 
 def test_is_working_is_false_for_an_empty_transcript():
     assert is_working([]) is False
-
-
-# Verbatim from the 24h census (spec §1) — typos included on purpose.
-MECHANICAL = [
-    "keep going", "Keep going.", "keep going, are we good to close out?",
-    "try again", "yes", "yeah go ahead", "yeah go for it", "do the plan",
-    "okay merge it", "are you still working?", "good to close out?",
-    "are we ready to close out this session?", "is this session good to close out?",
-    "are we deployed and ready to close out this session?",
-    "okay should I close this out now?", "are we good to closeo ut this session?",
-    "finish whatever you are woring on and then lets close out this session",
-]
-
-SUBSTANTIVE = [
-    "No I disagree - for ace-web, we can give someone membership to an opp if we need to",
-    "why do you think sophie has no connect account?",
-    "do all the ddd runs on prod not local",
-    "wait why didn't we run deliver? we aren't ready to send back an iteration",
-    "I feel like you are making this too complicated, why do you need something deployed to AWS",
-    "okay i'm lost, what is next?",
-    "no not supply, the arc for continuous monitoring",
-]
-
-
-@pytest.mark.parametrize("text", MECHANICAL)
-def test_mechanical_prompts_are_recognised(text):
-    assert is_mechanical(text) is True, text
-
-
-@pytest.mark.parametrize("text", SUBSTANTIVE)
-def test_substantive_prompts_are_not_mechanical(text):
-    assert is_mechanical(text) is False, text
-
-
-def test_long_text_is_never_mechanical_even_if_it_starts_with_a_cue():
-    # "yes, but ..." carries a redirection; length is the cheap guard.
-    assert is_mechanical("yes but first rewrite the whole seeding path to be programmatic "
-                         "and then check the arc for continuous monitoring instead") is False
-
-
-def test_empty_is_not_mechanical():
-    assert is_mechanical("") is False
-    assert is_mechanical("   ") is False

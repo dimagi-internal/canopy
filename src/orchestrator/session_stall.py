@@ -18,8 +18,6 @@ unit-test without fixtures.
 """
 from __future__ import annotations
 
-import re
-
 
 def hands_back_to_human(rec: dict) -> bool:
     """True when this assistant record ended the turn and left a person to act.
@@ -68,46 +66,3 @@ def is_working(records: list[dict]) -> bool:
     if rec is None:
         return False
     return not hands_back_to_human(rec)
-
-
-# A human prompt is MECHANICAL when it carries no information the agent did not
-# already have — the human is acting as a clock, not a decision-maker. Every
-# pattern here is a verbatim prompt from the 2026-07-30 census (spec §1).
-#
-# This is the backtest's ANSWER KEY, so it is deliberately conservative: a
-# false "mechanical" inflates the measured value of auto-nudging, which is the
-# one error that would talk us into shipping something harmful.
-_MECHANICAL_PATTERNS = [
-    r"^keep going\b",
-    r"^try again\b",
-    r"^(yes|yep|yeah|ok|okay|sure)\b[\s,.!]*$",
-    r"^(yeah|yes|ok|okay)?\s*go (ahead|for it)\b",
-    r"^do the plan\b",
-    r"^(okay |ok )?merge it\b",
-    r"^are you still working",
-    r"\bgood to close\s?o?\s?ut\b",
-    r"\bclose out this session\b",
-    r"\bready to close out\b",
-    r"\bclose this out\b",
-    r"^continue\b",
-    r"^proceed\b",
-]
-
-# Above this, a prompt is carrying real content even if it opens with a cue word
-# ("yes, but first rewrite..."). Tuned so every census mechanical prompt fits:
-# the longest is 71 chars.
-_MECHANICAL_MAX_CHARS = 90
-
-_MECHANICAL_RE = re.compile("|".join(_MECHANICAL_PATTERNS), re.IGNORECASE)
-
-
-def is_mechanical(text: str) -> bool:
-    """True when a human prompt carried no information — the clock-work class.
-
-    Ground truth for the backtest: if the human's next message was mechanical,
-    an auto-nudge at that point would have been RIGHT.
-    """
-    stripped = (text or "").strip()
-    if not stripped or len(stripped) > _MECHANICAL_MAX_CHARS:
-        return False
-    return bool(_MECHANICAL_RE.search(stripped))
