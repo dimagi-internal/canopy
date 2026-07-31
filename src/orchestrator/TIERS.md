@@ -32,7 +32,7 @@ enforce it.
 `version_bump` · `doctor` · `agent_review` · `structure_drift` · `eval_cli` ·
 `eval_rubric` · `turn_synthesis` · `session_upload` · `fleet_align` · `session_sources` ·
 `work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `runner_cli` ·
-`session_stall` · `stall_judge`
+`session_stall` · `stall_judge` · `stall_backtest`
 
 **HUBS** (orchestration / composition roots — wire product into the CLI, the
 improvement pipeline, and the web server; allowed to import product, like
@@ -63,6 +63,14 @@ canopy-web's `api` app):
 > Neither module imports anything canopy-specific; `stall_judge` is stdlib-only
 > (`json`, `re`, `subprocess`) and `session_stall` imports only `stall_judge`.
 > Any agent could reuse this to know when a session needs a human.
+
+> `stall_backtest` is FRAMEWORK: it backtests the `session_stall` / `stall_judge`
+> classifier against transcript history, so it belongs directly alongside the
+> classifier it grades. It imports only `session_stall` (for
+> `hands_back_to_human`) and `stall_judge` (for `classify_tails`,
+> `judge_replies`, `AUTO_SEND_CLASSES`) — nothing canopy-specific. Any agent
+> that adopts the stall classifier can reuse this to measure it before
+> trusting it to auto-nudge.
 
 > `work_cursor` is FRAMEWORK: the generic "what have I already processed?"
 > watermark for any skill that runs on a cadence. It replaces four ad-hoc
