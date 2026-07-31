@@ -323,7 +323,9 @@ def sessions_stall_backtest(hours, as_json, project, model, limit, batch_size, s
     # records `human_text` declined to treat as a reply) are the one form
     # of data loss `collect_handbacks` causes that had NO disclosure
     # anywhere — unlike a skipped model chunk, which was already loud. One
-    # shared dict accumulates the count across every session's transcript.
+    # shared dict accumulates the count over every record considered while
+    # a handback was awaiting its reply (records filtered while nothing
+    # was pending were never candidate answer keys and are not counted).
     filter_stats: dict = {}
     handbacks = []
     for s in recent:

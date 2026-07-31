@@ -286,9 +286,11 @@ def collect_handbacks(records: list[dict], *, stats: dict | None = None) -> list
     directions differ) — this keeps a single transcript's worth of history
     from blowing up the size of every downstream `classify`/`judge` call.
 
-    `stats`, if passed, is forwarded to every `human_text` call so filter
-    rejections (harness-prefix, skill-payload) accumulate across the whole
-    transcript — see `human_text`'s docstring.
+    `stats`, if passed, is forwarded to the `human_text` calls made while a
+    handback is awaiting its reply, so filter rejections (harness-prefix,
+    skill-payload) accumulate over exactly the records that could have been
+    an answer key — records filtered while nothing was pending are not
+    potential data loss and are not counted. See `human_text`'s docstring.
     """
     out: list[Handback] = []
     pending_tail: str | None = None
@@ -322,7 +324,14 @@ def collect_handbacks(records: list[dict], *, stats: dict | None = None) -> list
             continue
         if len(reply) > REPLY_MAX_CHARS:
             reply = reply[:REPLY_MAX_CHARS]
-        candidate_reply = reply  # overwrite -- keep the LAST valid reply seen
+        # Overwrite -- keep the LAST valid reply seen. Residual: a non-human
+        # record that EVADES the `human_text` filters and lands after the
+        # human's real reply overwrites it (under first-wins, an evader
+        # arriving BEFORE the reply won instead). Last-wins changed which
+        # evader wins, not the dependence on filter completeness -- new
+        # harness marker formats must be added to `_HARNESS_PREFIXES`
+        # promptly.
+        candidate_reply = reply
 
     if pending_tail is not None and candidate_reply is not None:
         out.append(Handback(tail=pending_tail, reply=candidate_reply))
