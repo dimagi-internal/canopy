@@ -333,9 +333,32 @@ def agent_apply(slug, cmd_id, note):
         raise click.ClickException(str(e))
 
 
+def resolve_task_id(client, task_id):
+    """Accept either the numeric DB id or the board's own `T<N>` ext_id.
+
+    The board only ever SHOWS you the ext_id — `agent add` reports it, the kanban card
+    is labelled with it, and `agent turn --task` / `agent dispatch --task` both take it.
+    The numeric id appears nowhere except a raw `agent tasks` dump, so requiring it here
+    cost one failed call plus a JSON grep every time an agent patched a task.
+    """
+    raw = str(task_id).strip()
+    if raw.isdigit():
+        return int(raw)
+
+    for task in client.list_tasks():
+        if str(task.get("ext_id") or "").strip().casefold() == raw.casefold():
+            return task["id"]
+
+    raise click.ClickException(
+        f"no task {raw!r} on this board — pass a T<N> ext_id or a numeric id "
+        f"(`canopy agent tasks --slug …` lists both)"
+    )
+
+
 @agent.command("set")
 @click.option("--slug", required=True)
-@click.option("--task-id", type=int, required=True)
+@click.option("--task-id", required=True, metavar="ID_OR_EXT_ID",
+              help="The board's T<N> ext_id (as shown on the card) or the numeric id.")
 @click.option("--rationale", default=None)
 @click.option("--source-url", default=None)
 @click.option("--plan", default=None)
@@ -352,7 +375,8 @@ def agent_set(slug, task_id, **fields):
     Score a task WHEN you mark it done (--status done --score --review) so a manager
     sync reads the completion grade instead of re-grading later."""
     try:
-        _emit(_client(slug).patch_task(task_id, **fields))
+        client = _client(slug)
+        _emit(client.patch_task(resolve_task_id(client, task_id), **fields))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 

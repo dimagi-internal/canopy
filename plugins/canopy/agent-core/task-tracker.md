@@ -30,7 +30,7 @@ working · Done.
 canopy agent add  --slug <slug> --title "…" --next-action "…" \
     --status in_progress --owner <human> --assigned <agent-name> \
     --links "Thread|https://…, Doc|https://…"          # create (auto T<N>)
-canopy agent set  --slug <slug> --task-id <id> \
+canopy agent set  --slug <slug> --task-id T<N> \    # the ext_id off the card (or the numeric id)
     --rationale "why" --plan "first steps" --source-url <url>   # store context — never re-derive
 canopy agent tasks --slug <slug>                # read the board (JSON)
 canopy agent commands --slug <slug>             # drain queued human actions each turn

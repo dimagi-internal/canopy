@@ -142,3 +142,49 @@ def test_agent_coverage_cli_human_output_leads_with_decayed(monkeypatch):
     assert res.exit_code == 0, res.output
     assert "decayed" in res.output and "lead-outreach" in res.output
     assert "no persona.md" in res.output
+
+
+# --- `agent set --task-id` accepts the board's own T<N>, not just the DB id (#454) ---
+# The ext_id is the ONLY identifier the board surfaces (card label, `agent add` output,
+# `agent turn --task`, `agent dispatch --task`). Requiring the numeric id here cost every
+# agent a failed call plus a JSON grep on each task patch.
+
+def test_agent_set_accepts_ext_id(fake_http):
+    calls, responses = fake_http
+    responses[("GET", "agents/hal/tasks/")] = (
+        200, json.dumps([{"id": 70, "ext_id": "T6"}, {"id": 71, "ext_id": "T7"}]))
+    r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
+                                  "--task-id", "T7", "--plan", "p"])
+    assert r.exit_code == 0, r.output
+    patch = [c for c in calls if c[0] == "PATCH"]
+    assert patch[0][1] == "https://x.test/api/agents/hal/tasks/71/"
+    assert patch[0][2] == {"plan": "p"}
+
+
+def test_agent_set_ext_id_is_case_insensitive(fake_http):
+    calls, responses = fake_http
+    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([{"id": 71, "ext_id": "T7"}]))
+    r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
+                                  "--task-id", "t7", "--plan", "p"])
+    assert r.exit_code == 0, r.output
+    assert [c for c in calls if c[0] == "PATCH"][0][1].endswith("/tasks/71/")
+
+
+def test_agent_set_numeric_id_still_works_without_listing(fake_http):
+    """The existing contract is unchanged — and a numeric id must NOT cost a board read."""
+    calls, _ = fake_http
+    r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
+                                  "--task-id", "71", "--plan", "p"])
+    assert r.exit_code == 0, r.output
+    assert calls[0][:2] == ("PATCH", "https://x.test/api/agents/hal/tasks/71/")
+    assert not [c for c in calls if c[0] == "GET"]
+
+
+def test_agent_set_unknown_ext_id_names_the_fix(fake_http):
+    calls, responses = fake_http
+    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([{"id": 71, "ext_id": "T7"}]))
+    r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
+                                  "--task-id", "T99", "--plan", "p"])
+    assert r.exit_code != 0
+    assert "T99" in r.output and "canopy agent tasks" in r.output
+    assert not [c for c in calls if c[0] == "PATCH"]
