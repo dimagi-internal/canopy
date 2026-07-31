@@ -48,6 +48,23 @@ _HARNESS_PREFIXES = (
     "[Image:",
 )
 
+# Per-item truncation applied at collection, before anything reaches a model.
+# A week of real history runs ~1,800 tail chars per handback on average with
+# a max over 19k — untruncated, a single batched call would carry hundreds of
+# thousands of tokens of items alone. The two directions are NOT symmetric:
+#   - Tail: keep the END. "Next I'll…" or the open question lives at the tail
+#     of the agent's own message; the head is scene-setting and disposable.
+#     Truncating the front, not the back, is what preserves the signal
+#     `classify_tails` actually needs.
+#   - Reply: keep the START. A human reply long enough to need truncating is
+#     substantive by construction — trimming it can only ever discard MORE
+#     evidence of substance, never manufacture the "mechanical" reading. That
+#     keeps truncation from being able to push a verdict toward the dangerous
+#     direction (see the module docstring on why false positives are the
+#     expensive error).
+TAIL_MAX_CHARS = 2000
+REPLY_MAX_CHARS = 1000
+
 
 @dataclass(frozen=True)
 class Handback:
@@ -127,7 +144,13 @@ def collect_handbacks(records: list[dict]) -> list[Handback]:
     so an `end_turn` record with no text blocks is not provably
     unreachable; grading it would silently hand `classify` a fabricated
     empty-string case. This mirrors how `human_text` already treats an
-    empty reply as "not a real message."
+    empty reply as "not a real message." The emptiness check runs on the
+    RAW tail, before truncation, so an all-whitespace tail is still caught.
+
+    Tail and reply are then truncated to `TAIL_MAX_CHARS` / `REPLY_MAX_CHARS`
+    (see the module-level comment above those constants for why the two
+    directions differ) — this keeps a single transcript's worth of history
+    from blowing up the size of every downstream `classify`/`judge` call.
     """
     out: list[Handback] = []
     for i, rec in enumerate(records):
@@ -136,39 +159,56 @@ def collect_handbacks(records: list[dict]) -> list[Handback]:
         tail = _tail_text(rec)
         if not tail.strip():
             continue
+        if len(tail) > TAIL_MAX_CHARS:
+            tail = tail[-TAIL_MAX_CHARS:]
         for later in records[i + 1:]:
             reply = human_text(later)
             if reply is not None:
+                if len(reply) > REPLY_MAX_CHARS:
+                    reply = reply[:REPLY_MAX_CHARS]
                 out.append(Handback(tail=tail, reply=reply))
                 break
     return out
 
 
 def grade(handbacks: list[Handback], *, classify=classify_tails,
-          judge=judge_replies, model: str = "haiku") -> list[BacktestCase]:
-    """Grade each handback with two independent model calls.
+          judge=judge_replies, model: str = "haiku",
+          batch_size: int = 30) -> list[BacktestCase]:
+    """Grade each handback with two independent model calls, chunked.
 
     `classify` sees only tails; `judge` sees only replies. Neither call may
     see the other's input — that separation is what makes the resulting
     score a measurement of the classifier that can actually run in
-    production. See the module docstring.
+    production. See the module docstring. This holds PER CHUNK, not just
+    overall: handbacks are sliced into consecutive runs of `batch_size`, and
+    each chunk still makes exactly two separate calls — one over that
+    chunk's tails, one over that chunk's replies. A single unchunked call
+    does not scale (a week of real history is ~1,262 handbacks and would
+    carry ~571k tokens of items in one prompt); `classify_tails` and
+    `judge_replies` stay single-shot and unchanged — chunking is `grade`'s
+    job because `grade` is what owns the calls.
+
+    Results accumulate in input order across chunk boundaries.
     """
     if not handbacks:
         return []
 
-    judgments = classify([h.tail for h in handbacks], model=model)
-    mechanicals = judge([h.reply for h in handbacks], model=model)
-
-    return [
-        BacktestCase(
-            klass=j.klass,
-            would_send=j.klass in AUTO_SEND_CLASSES,
-            human_was_mechanical=mech,
-            tail=h.tail,
-            reply=h.reply,
+    cases: list[BacktestCase] = []
+    for start in range(0, len(handbacks), batch_size):
+        chunk = handbacks[start:start + batch_size]
+        judgments = classify([h.tail for h in chunk], model=model)
+        mechanicals = judge([h.reply for h in chunk], model=model)
+        cases.extend(
+            BacktestCase(
+                klass=j.klass,
+                would_send=j.klass in AUTO_SEND_CLASSES,
+                human_was_mechanical=mech,
+                tail=h.tail,
+                reply=h.reply,
+            )
+            for h, j, mech in zip(chunk, judgments, mechanicals)
         )
-        for h, j, mech in zip(handbacks, judgments, mechanicals)
-    ]
+    return cases
 
 
 def score(cases: list[BacktestCase]) -> dict:
