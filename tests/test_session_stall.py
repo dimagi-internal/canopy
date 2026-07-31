@@ -1,6 +1,12 @@
+import json
+
+import pytest
+
 from orchestrator.session_stall import (
     hands_back_to_human, last_assistant_record, final_assistant_text, is_working,
+    StallVerdict, WORKING, classify_sessions,
 )
+from orchestrator.stall_judge import AWAITING_CONTINUE, BLOCKED_HUMAN
 
 
 def _asst(text: str, stop_reason: str | None = "end_turn") -> dict:
@@ -57,3 +63,57 @@ def test_is_working_follows_the_last_assistant_record():
 
 def test_is_working_is_false_for_an_empty_transcript():
     assert is_working([]) is False
+
+
+def _runner_returning(payload):
+    def runner(prompt, model):
+        runner.prompt = prompt
+        return payload
+    return runner
+
+
+def test_working_sessions_are_classified_without_any_model_call():
+    def boom(prompt, model):
+        raise AssertionError("a working session must not cost an LLM call")
+    out = classify_sessions([("s1", [_asst("checking", "tool_use")])], runner=boom)
+    assert out["s1"].state == "working"
+    assert out["s1"].klass == WORKING
+
+
+def test_a_stalled_session_is_judged_and_keyed_by_id():
+    payload = json.dumps([{"index": 0, "class": AWAITING_CONTINUE,
+                           "confidence": 0.8, "reason": "stated next step"}])
+    out = classify_sessions([("s1", [_asst("Next I'll re-render.")])],
+                            runner=_runner_returning(payload))
+    assert out["s1"].state == "stalled"
+    assert out["s1"].klass == AWAITING_CONTINUE
+    assert out["s1"].stop_reason == "end_turn"
+    assert out["s1"].reason == "stated next step"
+
+
+def test_only_stalled_sessions_are_sent_to_the_model():
+    payload = json.dumps([{"index": 0, "class": BLOCKED_HUMAN,
+                           "confidence": 0.9, "reason": "needs a login"}])
+    runner = _runner_returning(payload)
+    out = classify_sessions([
+        ("working1", [_asst("checking", "tool_use")]),
+        ("stalled1", [_asst("I need you to log in.")]),
+    ], runner=runner)
+    assert out["working1"].klass == WORKING
+    assert out["stalled1"].klass == BLOCKED_HUMAN
+    # The working session's text must never reach the prompt.
+    assert "checking" not in runner.prompt
+    assert "log in" in runner.prompt
+
+
+def test_an_empty_input_makes_no_call():
+    def boom(prompt, model):
+        raise AssertionError("no sessions, no call")
+    assert classify_sessions([], runner=boom) == {}
+
+
+def test_all_working_makes_no_call():
+    def boom(prompt, model):
+        raise AssertionError("nothing stalled, no call")
+    out = classify_sessions([("s1", [_asst("x", "tool_use")])], runner=boom)
+    assert out["s1"].klass == WORKING
