@@ -1,6 +1,6 @@
 # Stall-classifier backtest baseline
 
-## ⚠️ CONTAMINATED — superseded by a re-run after fixes X, Y, and Z
+## ⚠️ NO VALID BASELINE EXISTS YET — do not quote any number in this file
 
 The run recorded below was measured **before** two bugs in
 `collect_handbacks` / `human_text` (`src/orchestrator/stall_backtest.py`)
@@ -119,7 +119,7 @@ Per-class:
   question_open        n=69    tp=0     fp=0     precision=0.000
 ```
 
-(The three `0.000` rows — `blocked_human`, `errored`, `gate_outbound`,
+(The four `0.000` rows — `blocked_human`, `errored`, `gate_outbound`,
 `question_open` — are classes outside `AUTO_SEND_CLASSES`. They never fire a
 would-send decision, so `tp=fp=0` and precision is undefined-as-zero, not a
 failure of those classes.)

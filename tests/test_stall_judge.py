@@ -179,3 +179,58 @@ def test_judgment_carries_a_reason():
     assert isinstance(out[0], Judgment)
     assert out[0].reason == "claims the PR merged"
     assert 0.0 <= out[0].confidence <= 1.0
+
+
+# ── shared chunk-and-retry machinery ─────────────────────────────────────────
+# `stall_backtest.grade` and `session_stall.classify_sessions` both import
+# these rather than each rolling their own -- direct tests here lock down
+# the ONE implementation both depend on.
+
+def test_chunk_items_slices_into_consecutive_runs():
+    assert list(stall_judge.chunk_items([1, 2, 3, 4, 5], 2)) == [[1, 2], [3, 4], [5]]
+
+
+def test_chunk_items_of_empty_list_yields_nothing():
+    assert list(stall_judge.chunk_items([], 30)) == []
+
+
+def test_chunk_items_batch_size_larger_than_input_is_one_chunk():
+    assert list(stall_judge.chunk_items([1, 2, 3], 100)) == [[1, 2, 3]]
+
+
+def test_call_with_retries_retries_on_value_error_then_succeeds():
+    calls = {"n": 0}
+
+    def flaky(items, *, model):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ValueError("expected 2 items, got 1")
+        return [f"ok-{i}" for i in items]
+
+    result = stall_judge.call_with_retries(flaky, ["a", "b"], model="haiku", retries=2)
+    assert result == ["ok-a", "ok-b"]
+    assert calls["n"] == 2
+
+
+def test_call_with_retries_returns_none_after_exhausting_retries():
+    calls = {"n": 0}
+
+    def always_fails(items, *, model):
+        calls["n"] += 1
+        raise ValueError("expected 2 items, got 1")
+
+    result = stall_judge.call_with_retries(always_fails, ["a", "b"], model="haiku", retries=2)
+    assert result is None
+    assert calls["n"] == 3  # 1 initial attempt + 2 retries
+
+
+def test_call_with_retries_propagates_a_runtime_error_unretried():
+    calls = {"n": 0}
+
+    def broken(items, *, model):
+        calls["n"] += 1
+        raise RuntimeError("claude binary not found")
+
+    with pytest.raises(RuntimeError):
+        stall_judge.call_with_retries(broken, ["a"], model="haiku", retries=2)
+    assert calls["n"] == 1

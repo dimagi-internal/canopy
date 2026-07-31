@@ -141,3 +141,131 @@ def test_all_working_makes_no_call():
         raise AssertionError("nothing stalled, no call")
     out = classify_sessions([("s1", [_asst("x", "tool_use")])], runner=boom)
     assert out["s1"].klass == WORKING
+
+
+# ── chunking / retry hardening (Item 3: production inherits the backtest's
+# fail-loud-but-not-fail-total contract, via stall_judge's shared machinery)
+# ────────────────────────────────────────────────────────────────────────────
+# These monkeypatch `orchestrator.stall_judge.classify_tails` directly (a
+# module attribute, looked up at call time by `classify_sessions`' internal
+# `_classify` closure) rather than going through `runner=`, so the fakes can
+# return `Judgment`s / raise directly instead of round-tripping through a
+# JSON prompt.
+
+def test_classify_sessions_chunks_by_batch_size(monkeypatch):
+    from orchestrator.stall_judge import Judgment
+
+    calls: list[list[str]] = []
+
+    def fake_classify_tails(tails, *, runner=None, model="haiku"):
+        calls.append(list(tails))
+        return [Judgment(AWAITING_CONTINUE, 0.5, "r") for _ in tails]
+
+    monkeypatch.setattr("orchestrator.stall_judge.classify_tails", fake_classify_tails)
+
+    records_by_id = [(f"s{i}", [_asst(f"tail{i}")]) for i in range(5)]
+    out = classify_sessions(records_by_id, batch_size=2)
+
+    assert [len(c) for c in calls] == [2, 2, 1]
+    assert len(out) == 5
+    for i in range(5):
+        assert out[f"s{i}"].klass == AWAITING_CONTINUE
+
+
+def test_classify_sessions_retries_a_chunk_that_fails_once_then_succeeds(monkeypatch):
+    from orchestrator.stall_judge import Judgment
+
+    calls = {"n": 0}
+
+    def flaky_classify_tails(tails, *, runner=None, model="haiku"):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ValueError("expected 1 items in model output, got 0")
+        return [Judgment(AWAITING_CONTINUE, 0.5, "r") for _ in tails]
+
+    monkeypatch.setattr("orchestrator.stall_judge.classify_tails", flaky_classify_tails)
+
+    out = classify_sessions([("s1", [_asst("Next I'll re-render.")])])
+    assert out["s1"].klass == AWAITING_CONTINUE
+    assert calls["n"] == 2  # one failure, one retry that succeeded
+
+
+def test_classify_sessions_skips_a_chunk_that_never_recovers_others_still_land(monkeypatch):
+    # The clean --hours 168 run died on exactly this flake class before
+    # `classify_sessions` was hardened -- confirm a permanently-failing
+    # chunk drops ONLY its own sessions, absent (not fabricated) from the
+    # result, while a healthy chunk's sessions still land, correctly keyed.
+    from orchestrator.stall_judge import Judgment
+
+    def flaky_classify_tails(tails, *, runner=None, model="haiku"):
+        if tails[0] == "bad_tail":
+            raise ValueError("expected 1 items in model output, got 0")
+        return [Judgment(AWAITING_CONTINUE, 0.5, "r") for _ in tails]
+
+    monkeypatch.setattr("orchestrator.stall_judge.classify_tails", flaky_classify_tails)
+
+    records_by_id = [("bad", [_asst("bad_tail")]), ("good", [_asst("good_tail")])]
+    stats: dict = {}
+    out = classify_sessions(records_by_id, batch_size=1, retries=1, stats=stats)
+
+    assert "bad" not in out  # absent, never a fabricated verdict
+    assert out["good"].klass == AWAITING_CONTINUE
+    assert stats["chunks"] == 2
+    assert stats["chunks_failed"] == 1
+    assert stats["sessions_skipped"] == 1
+
+
+def test_classify_sessions_does_not_retry_or_swallow_a_runtime_error(monkeypatch):
+    calls = {"n": 0}
+
+    def broken_classify_tails(tails, *, runner=None, model="haiku"):
+        calls["n"] += 1
+        raise RuntimeError("claude binary not found")
+
+    monkeypatch.setattr("orchestrator.stall_judge.classify_tails", broken_classify_tails)
+
+    with pytest.raises(RuntimeError):
+        classify_sessions([("s1", [_asst("Next I'll re-render.")])])
+    assert calls["n"] == 1  # not retried
+
+
+def test_classify_sessions_skips_a_session_with_an_empty_tail():
+    # hands_back_to_human only inspects stop_reason, never content shape, so
+    # an end_turn record with no text blocks is not provably unreachable --
+    # sending it to the model would fabricate a case, same discipline as
+    # collect_handbacks' empty-tail guard. One such session existed in the
+    # live corpus and the old unchunked call sent it regardless.
+    def boom(prompt, model):
+        raise AssertionError("an empty tail must never reach the model")
+    out = classify_sessions([("s1", [_asst("")])], runner=boom)
+    assert "s1" not in out
+
+
+def test_classify_sessions_truncates_a_long_tail_keeping_the_end(monkeypatch):
+    from orchestrator.stall_judge import TAIL_MAX_CHARS, Judgment
+
+    captured: dict = {}
+
+    def fake_classify_tails(tails, *, runner=None, model="haiku"):
+        captured["tails"] = list(tails)
+        return [Judgment(AWAITING_CONTINUE, 0.5, "r") for _ in tails]
+
+    monkeypatch.setattr("orchestrator.stall_judge.classify_tails", fake_classify_tails)
+
+    long_tail = ("x" * (TAIL_MAX_CHARS + 500)) + "TAIL_MARKER_KEPT"
+    classify_sessions([("s1", [_asst(long_tail)])])
+
+    assert len(captured["tails"][0]) == TAIL_MAX_CHARS
+    assert captured["tails"][0].endswith("TAIL_MARKER_KEPT")
+
+
+def test_classify_sessions_default_stats_is_none_and_still_works():
+    from orchestrator.stall_judge import Judgment
+
+    def fake_runner(prompt, model):
+        return json.dumps([{"index": 0, "class": AWAITING_CONTINUE,
+                             "confidence": 0.5, "reason": "r"}])
+
+    out = classify_sessions([("s1", [_asst("Next I'll re-render.")])],
+                            runner=fake_runner)  # no stats=...
+    assert out["s1"].klass == AWAITING_CONTINUE

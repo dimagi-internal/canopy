@@ -68,6 +68,23 @@ def test_harness_injections_are_not_human_replies():
     assert human_text(_user("keep going")) == "keep going"
 
 
+def test_command_name_invocations_are_not_human_replies():
+    # Real shape measured 2026-07-30: a slash-command invocation lands as a
+    # `user` record whose content starts with `<command-name>`, which the
+    # pre-existing `<command-message` prefix alone does not catch (18 of
+    # 645 pairs, 2.8%, slipped through -- read as MECHANICAL by the
+    # reply-judge because there's no substantive text in it at all, and
+    # each phantom also consumed `pending`, discarding the real reply that
+    # followed).
+    assert human_text(_user(
+        "<command-name>/model</command-name>\n<command-message>model</command-message>"
+    )) is None
+    # Defensive sibling: an args-only variant with no `<command-message`.
+    assert human_text(_user(
+        "<command-name>/deploy</command-name>\n<command-args>--prod</command-args>"
+    )) is None
+
+
 def test_skill_and_command_payloads_are_not_human_replies():
     # Real corpus examples, verbatim, measured 2026-07-30 (~22 of 962
     # handbacks, ~2%, were contaminated by exactly this pattern). Neither
@@ -177,6 +194,35 @@ def test_consecutive_handbacks_share_the_reply_only_via_the_last_one():
     assert hbs == [Handback(tail=tail3, reply="go ahead")]
 
 
+def test_two_consecutive_human_replies_pair_on_the_second():
+    # Symmetric twin of the replace-don't-queue rule above, on the REPLY
+    # side: a handback followed by two consecutive user texts (no assistant
+    # record between them) must pair with the SECOND -- the human's actual,
+    # final answer -- not the first.
+    hbs = collect_handbacks([
+        _asst(NEXT_STEP), _user("yes send"), _user("actually wait, hold off"),
+    ])
+    assert hbs == [Handback(tail=NEXT_STEP, reply="actually wait, hold off")]
+
+
+def test_an_edited_reply_grades_on_the_reversal_not_the_stale_draft():
+    # Real corpus shape measured 2026-07-30 (18 of 645 pairs, 2.8%): a human
+    # edits/re-sends before the agent replies, leaving BOTH messages in the
+    # transcript. Pairing on the FIRST (as the old "first acceptable reply
+    # wins" scan did) grades a REVERSAL as approval -- a false true-positive
+    # in the dangerous direction. Only the LAST message before the agent
+    # moves on again is the human's real answer.
+    hbs = collect_handbacks([
+        _asst(NEXT_STEP),
+        _user("yes send"),
+        _user("no just mark the thread as done no need to respond"),
+        _asst(SECOND_STEP),
+    ])
+    assert len(hbs) == 1
+    assert hbs[0].tail == NEXT_STEP
+    assert hbs[0].reply == "no just mark the thread as done no need to respond"
+
+
 def test_a_handback_with_an_empty_tail_is_skipped():
     # An end_turn record with no text blocks (or only whitespace) is not
     # provably unreachable -- hands_back_to_human only looks at stop_reason.
@@ -222,6 +268,37 @@ def test_collect_handbacks_leaves_short_values_untouched():
     assert hbs == [Handback(tail=NEXT_STEP, reply="keep going")]
     assert "..." not in hbs[0].tail
     assert "..." not in hbs[0].reply
+
+
+def test_collect_handbacks_stats_counts_filtered_records():
+    # Item 5 disclosure: the harness-prefix and skill-payload filters were
+    # the one form of data loss with NO visibility anywhere. Measured in a
+    # live window: 462 harness-prefix + 14 skill-payload rejections.
+    skill_body = "# DDD Upload\n\nBody.\n\n```bash\necho hi\n```"
+    hbs_records = [
+        _asst(NEXT_STEP),
+        _user("<command-name>/model</command-name>"),  # harness-prefix reject
+        _user(skill_body),                              # skill-payload reject
+        _user("keep going"),                             # the real answer
+    ]
+    stats: dict = {}
+    hbs = collect_handbacks(hbs_records, stats=stats)
+    assert hbs == [Handback(tail=NEXT_STEP, reply="keep going")]
+    assert stats["harness_prefix_rejected"] == 1
+    assert stats["skill_payload_rejected"] == 1
+
+
+def test_collect_handbacks_stats_accumulates_across_multiple_calls():
+    # The CLI passes ONE shared dict across every session's transcript --
+    # confirm counts accumulate rather than reset per call.
+    stats: dict = {}
+    collect_handbacks(
+        [_asst(NEXT_STEP), _user("<command-name>/model</command-name>"), _user("keep going")],
+        stats=stats)
+    collect_handbacks(
+        [_asst(SECOND_STEP), _user("<command-args>--x</command-args>"), _user("ok")],
+        stats=stats)
+    assert stats["harness_prefix_rejected"] == 2
 
 
 def test_grade_pairs_each_classification_with_its_reply_judgment():
@@ -434,6 +511,18 @@ def test_score_counts_a_miss_as_recall_loss_not_a_false_positive():
     assert result["overall"]["fp"] == 0
     assert result["overall"]["tp"] == 0
     assert result["overall"]["recall"] == 0.0
+
+
+def test_score_per_class_precision_is_none_when_never_auto_sent():
+    # A class outside AUTO_SEND_CLASSES (would_send is always False) never
+    # contributes a would-send decision -- tp + fp == 0 -- so it has no
+    # precision to report, not a measured 0%. Printing 0.000 would read as
+    # "this class is 0% accurate," a claim about a measurement never taken.
+    cases = [BacktestCase(QUESTION_OPEN, False, True, "t", "keep going")]
+    result = score(cases)
+    per = result["per_class"][QUESTION_OPEN]
+    assert per["tp"] == 0 and per["fp"] == 0
+    assert per["precision"] is None
 
 
 def test_score_of_nothing_is_zero_not_a_crash():

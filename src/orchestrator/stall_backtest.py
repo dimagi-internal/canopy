@@ -32,16 +32,31 @@ import re
 from dataclasses import dataclass
 
 from orchestrator.session_stall import hands_back_to_human
-from orchestrator.stall_judge import AUTO_SEND_CLASSES, classify_tails, judge_replies
+from orchestrator.stall_judge import (
+    AUTO_SEND_CLASSES, TAIL_MAX_CHARS, call_with_retries, chunk_items,
+    classify_tails, judge_replies,
+)
 
 # Text prefixes that mark a `user` record as a harness-injected structural
 # marker rather than something a human typed. This is the one place this
 # module does prefix/string matching, and it is deliberately narrow: these
 # are NOT semantic judgments about meaning (that's `judge_replies`' job),
 # they are recognizing fixed structural markers the harness itself emits.
+#
+# `<command-name` and `<command-args` measured 2026-07-30: a slash-command
+# invocation lands as a `user` record whose content STARTS with
+# `<command-name>...</command-name>` (optionally followed by
+# `<command-args>...`), which is not covered by `<command-message` alone.
+# 18 of 645 pairs (2.8%) in a live window slipped through as a
+# content-free XML blob, which the reply-judge reads as MECHANICAL
+# (nothing in it looks substantive) -- manufacturing a phantom true
+# positive, and consuming `pending` so the REAL reply that followed it was
+# discarded rather than paired.
 _HARNESS_PREFIXES = (
     "<task-notification",
     "<command-message",
+    "<command-name",
+    "<command-args",
     "<local-command",
     "Base directory for this skill",
     "Caveat:",
@@ -70,7 +85,7 @@ _HEADING_RE = re.compile(r"^#{1,6}[ \t]")
 #
 # Position alone is too broad, though: a genuine human reply that opens
 # with a short pasted snippet or traceback ("try this:\n\n```\n...") would
-# also have an early fence. Reviewed against the real corpus 2026-07-31:
+# also have an early fence. Reviewed against the real corpus 2026-07-30:
 # every genuine skill/command body this signal is meant to catch was well
 # over 1,000 characters; nothing a real human replied was anywhere near
 # that. `_EARLY_FENCE_MIN_LEN` requires the early fence AND enough total
@@ -118,14 +133,18 @@ def _is_skill_or_command_payload(text: str) -> bool:
 #   - Tail: keep the END. "Next I'll…" or the open question lives at the tail
 #     of the agent's own message; the head is scene-setting and disposable.
 #     Truncating the front, not the back, is what preserves the signal
-#     `classify_tails` actually needs.
+#     `classify_tails` actually needs. `TAIL_MAX_CHARS` lives in
+#     `stall_judge` (imported above, not redefined here) because
+#     `session_stall.classify_sessions` truncates the same way for the same
+#     reason — one constant, not two that could silently drift apart.
 #   - Reply: keep the START. A human reply long enough to need truncating is
 #     substantive by construction — trimming it can only ever discard MORE
 #     evidence of substance, never manufacture the "mechanical" reading. That
 #     keeps truncation from being able to push a verdict toward the dangerous
 #     direction (see the module docstring on why false positives are the
-#     expensive error).
-TAIL_MAX_CHARS = 2000
+#     expensive error). Replies have no production-path counterpart (the
+#     live classifier never truncates a human reply), so `REPLY_MAX_CHARS`
+#     stays local to this module.
 REPLY_MAX_CHARS = 1000
 
 
@@ -144,7 +163,7 @@ class BacktestCase:
     reply: str
 
 
-def human_text(rec: dict) -> str | None:
+def human_text(rec: dict, *, stats: dict | None = None) -> str | None:
     """The text of a human-typed `user` record, or None.
 
     Rejects: non-`user` records; a non-dict `message`; list content with no
@@ -157,6 +176,18 @@ def human_text(rec: dict) -> str | None:
     were the human's answer, because it carried no `_HARNESS_PREFIXES`
     marker of its own (the harness's preamble line, e.g. "Base directory
     for this skill", lands in a separate record from the skill body).
+
+    When `stats` is a dict, the two content-based rejections (harness
+    prefix, skill/command payload) increment `stats["harness_prefix_rejected"]`
+    / `stats["skill_payload_rejected"]` — these are the one form of data loss
+    this module's filters cause that had NO disclosure anywhere (measured:
+    462 harness-prefix + 14 skill-payload rejections in a live window),
+    unlike a dropped/skipped model chunk, which was already loud. The
+    earlier structural rejections (non-`user`, non-dict `message`, no text
+    content, empty/whitespace) are NOT counted — those records were never
+    candidate human replies to begin with, so filtering them isn't loss of
+    anything. Left at the default `None`, no counting happens and every
+    pre-existing caller is unaffected.
     """
     if rec.get("type") != "user":
         return None
@@ -177,8 +208,12 @@ def human_text(rec: dict) -> str | None:
     if not text or not text.strip():
         return None
     if text.startswith(_HARNESS_PREFIXES):
+        if stats is not None:
+            stats["harness_prefix_rejected"] = stats.get("harness_prefix_rejected", 0) + 1
         return None
     if _is_skill_or_command_payload(text):
+        if stats is not None:
+            stats["skill_payload_rejected"] = stats.get("skill_payload_rejected", 0) + 1
         return None
     return text
 
@@ -201,29 +236,41 @@ def _tail_text(rec: dict) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def collect_handbacks(records: list[dict]) -> list[Handback]:
-    """Pair every handback with the human reply that followed it.
+def collect_handbacks(records: list[dict], *, stats: dict | None = None) -> list[Handback]:
+    """Pair every handback with the human's ANSWER — the LAST of a run of
+    consecutive replies, not the first.
 
     Single forward pass, tracking at most one *pending* (unpaired) handback
-    at a time. A record where the agent handed back to a human
-    (`hands_back_to_human`) becomes the new pending handback — REPLACING
-    whatever was pending before it, not queuing alongside it. The next
-    record yielding a non-None `human_text` is paired with whatever is
-    currently pending and clears it; if nothing is pending, that reply is
-    irrelevant and ignored. A handback still pending when the transcript
-    ends is dropped — there is no answer key for it yet.
+    and its current *candidate* reply. A record where the agent handed back
+    to a human (`hands_back_to_human`) becomes the new pending handback —
+    REPLACING whatever was pending before it, not queuing alongside it (see
+    the replace-don't-queue note below). Every subsequent record yielding a
+    non-`None` `human_text`, up until the agent speaks again, OVERWRITES the
+    candidate reply — so when the agent finally speaks again (any assistant
+    record, handback or not), whatever candidate is current is the human's
+    LAST word on the matter, and that is what gets paired with the pending
+    tail. A handback that ends the transcript with no candidate reply at all
+    is dropped — there is no answer key for it yet.
 
-    The replace-don't-queue rule is load-bearing. Bug measured 2026-07-30:
-    an earlier forward-scan-per-handback version paired EVERY unanswered
-    handback with the next reply it could find, so three consecutive
-    `end_turn` records followed by one human message produced three
+    This "last-of-a-run" rule is the symmetric twin of replace-don't-queue,
+    and just as load-bearing. Bug measured against a live window: a human who edits or
+    re-sends before the agent replies leaves BOTH messages in the
+    transcript, and pairing on the FIRST one grades a REVERSAL as approval
+    — e.g. graded `"yes send"` when the human's actual, final answer was
+    `"no just mark the thread as done no need to respond"`. Measured 18 of
+    645 pairs (2.8%) in a live window. Only the LAST message before the
+    agent moves on is the human's real answer; an earlier one they
+    themselves superseded is not.
+
+    The replace-don't-queue rule (unchanged from the original fix): a record
+    where the agent hands back again before any candidate reply was ever
+    captured for the current pending tail silently drops that earlier,
+    unanswered handback rather than back-filling it with a later reply
+    meant for a different tail. Bug measured 2026-07-30: three consecutive
+    `end_turn` records followed by one human message used to produce three
     `Handback`s all sharing that single reply — one human decision scored
     as up to six independent cases in the real corpus (337 of 962
-    handbacks, 35%, shared a reply with another handback). A human can only
-    have been responding to the LAST thing the agent said before they
-    spoke, so only the most recent pending handback is answerable; earlier
-    ones in the same unanswered run never got a reply of their own and must
-    be dropped, not back-filled.
+    handbacks, 35%).
 
     A handback whose own tail is empty or whitespace-only is skipped
     entirely (never becomes pending). `hands_back_to_human` only inspects
@@ -238,54 +285,49 @@ def collect_handbacks(records: list[dict]) -> list[Handback]:
     (see the module-level comment above those constants for why the two
     directions differ) — this keeps a single transcript's worth of history
     from blowing up the size of every downstream `classify`/`judge` call.
+
+    `stats`, if passed, is forwarded to every `human_text` call so filter
+    rejections (harness-prefix, skill-payload) accumulate across the whole
+    transcript — see `human_text`'s docstring.
     """
     out: list[Handback] = []
     pending_tail: str | None = None
+    candidate_reply: str | None = None
+
     for rec in records:
-        if hands_back_to_human(rec):
-            tail = _tail_text(rec)
-            if not tail.strip():
-                continue
-            if len(tail) > TAIL_MAX_CHARS:
-                tail = tail[-TAIL_MAX_CHARS:]
-            pending_tail = tail
+        if rec.get("type") == "assistant":
+            # The agent has spoken again -- whatever candidate reply is
+            # current is the human's LAST word since the pending handback,
+            # so finalize it now. No candidate at all means the pending
+            # handback was never answered; drop it silently (same as
+            # before). Reset unconditionally either way: replace, don't
+            # queue, whether or not this record itself is a new handback.
+            if pending_tail is not None and candidate_reply is not None:
+                out.append(Handback(tail=pending_tail, reply=candidate_reply))
+            pending_tail = None
+            candidate_reply = None
+
+            if hands_back_to_human(rec):
+                tail = _tail_text(rec)
+                if tail.strip():
+                    if len(tail) > TAIL_MAX_CHARS:
+                        tail = tail[-TAIL_MAX_CHARS:]
+                    pending_tail = tail
             continue
+
         if pending_tail is None:
             continue
-        reply = human_text(rec)
+        reply = human_text(rec, stats=stats)
         if reply is None:
             continue
         if len(reply) > REPLY_MAX_CHARS:
             reply = reply[:REPLY_MAX_CHARS]
-        out.append(Handback(tail=pending_tail, reply=reply))
-        pending_tail = None
+        candidate_reply = reply  # overwrite -- keep the LAST valid reply seen
+
+    if pending_tail is not None and candidate_reply is not None:
+        out.append(Handback(tail=pending_tail, reply=candidate_reply))
+
     return out
-
-
-def _call_with_retries(fn, items: list[str], *, model: str, retries: int):
-    """Call `fn(items, model=model)`, retrying on `ValueError` only.
-
-    A `ValueError` out of `classify_tails`/`judge_replies` means the model
-    returned a malformed or miscounted batch response (see
-    `parse_batch_json`) — a transient flake worth one more try, not proof
-    the model path is broken. Up to `retries` additional attempts are made
-    (so `retries=2` means 3 attempts total); if every attempt still raises
-    `ValueError`, this returns `None` rather than fabricating a result —
-    the caller (`grade`) is what decides what "no result for this chunk"
-    means (skip it).
-
-    Any exception OTHER than `ValueError` (e.g. a `RuntimeError` from a
-    broken `claude` subprocess) propagates immediately, on the first
-    attempt, unretried — that signals the model path itself is unusable,
-    which a retry cannot fix and silently swallowing would hide.
-    """
-    attempts = retries + 1
-    for attempt in range(attempts):
-        try:
-            return fn(items, model=model)
-        except ValueError:
-            if attempt == attempts - 1:
-                return None
 
 
 def grade(handbacks: list[Handback], *, classify=classify_tails,
@@ -314,13 +356,16 @@ def grade(handbacks: list[Handback], *, classify=classify_tails,
     is its own kind of dishonesty (silently wasting the money already
     spent, or worse, tempting a caller to catch-and-ignore the whole run).
     So each chunk's `classify` and `judge` calls are retried independently
-    up to `retries` times via `_call_with_retries` — retrying only the pass
-    that actually failed, never redoing one that already succeeded. If a
-    chunk still fails after retries, that chunk (and only that chunk) is
-    skipped: its handbacks contribute no `BacktestCase`, and the run
-    continues with the rest. This is NOT the same as fail-soft: a skip is
-    never silent (see `stats` below), and `RuntimeError`/other non-`ValueError`
-    exceptions still abort the whole run immediately, same as before.
+    up to `retries` times via `stall_judge.call_with_retries` (shared with
+    `session_stall.classify_sessions`, which inherited none of this
+    hardening until it was extracted here — see that module) — retrying
+    only the pass that actually failed, never redoing one that already
+    succeeded. If a chunk still fails after retries, that chunk (and only
+    that chunk) is skipped: its handbacks contribute no `BacktestCase`, and
+    the run continues with the rest. This is NOT the same as fail-soft: a
+    skip is never silent (see `stats` below), and `RuntimeError`/other
+    non-`ValueError` exceptions still abort the whole run immediately, same
+    as before.
 
     `stats`, if a dict is passed, is populated with `chunks` (total chunks
     attempted), `chunks_failed` (chunks skipped after exhausting retries),
@@ -345,18 +390,17 @@ def grade(handbacks: list[Handback], *, classify=classify_tails,
     chunks_failed = 0
     handbacks_skipped = 0
 
-    for start in range(0, len(handbacks), batch_size):
-        chunk = handbacks[start:start + batch_size]
+    for chunk in chunk_items(handbacks, batch_size):
         chunks_total += 1
 
-        judgments = _call_with_retries(
+        judgments = call_with_retries(
             classify, [h.tail for h in chunk], model=model, retries=retries)
         if judgments is None:
             chunks_failed += 1
             handbacks_skipped += len(chunk)
             continue
 
-        mechanicals = _call_with_retries(
+        mechanicals = call_with_retries(
             judge, [h.reply for h in chunk], model=model, retries=retries)
         if mechanicals is None:
             chunks_failed += 1
@@ -389,8 +433,16 @@ def score(cases: list[BacktestCase]) -> dict:
     (only auto-send decisions can be right or wrong about being sent).
     Overall `recall` is `tp / (number of cases whose human_was_mechanical is
     True)` — the fraction of genuinely safe moments the classifier actually
-    caught. Both divisions are guarded; empty input returns zeros rather than
-    raising.
+    caught. The overall division is guarded; empty input returns 0.0 rather
+    than raising.
+
+    A PER-CLASS bucket's `precision` is `None` (not `0.0`) when
+    `tp + fp == 0` — a class outside `AUTO_SEND_CLASSES` (e.g.
+    `question_open`, `errored`) never contributes a would-send decision, so
+    it has no precision to report at all, not a measured precision of zero.
+    Printing `0.000` for that row reads as "this class is 0% accurate,"
+    which is a claim about a measurement that was never taken. Callers
+    (the CLI) render `None` as `n/a` in text and `null` in JSON.
     """
     per_class: dict[str, dict] = {}
     overall_tp = 0
@@ -412,7 +464,7 @@ def score(cases: list[BacktestCase]) -> dict:
 
     for bucket in per_class.values():
         denom = bucket["tp"] + bucket["fp"]
-        bucket["precision"] = bucket["tp"] / denom if denom else 0.0
+        bucket["precision"] = bucket["tp"] / denom if denom else None
 
     overall_denom = overall_tp + overall_fp
     overall = {

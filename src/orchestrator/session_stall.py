@@ -100,12 +100,40 @@ def _stop_reason(rec: dict | None) -> str:
 
 def classify_sessions(records_by_id: list[tuple[str, list[dict]]], *,
                        runner=None, model: str = "haiku",
+                       batch_size: int = 30, retries: int = 2,
+                       stats: dict | None = None,
                        ) -> dict[str, StallVerdict]:
     """Classify many sessions at once. Working sessions never reach the model.
 
     `runner` is passed through to `stall_judge.classify_tails` only when it is
     not None, so that module's own default runner (`run_claude`) stays in
     force when the caller doesn't override it.
+
+    This is the PRODUCTION classification path (`canopy sessions stalled`),
+    and until this fix it made ONE unchunked, untruncated, unretried call
+    over every stalled session's tail — at `--hours 168` that's ~102 items
+    (~55k tokens), and any single dropped item (a `ValueError` from
+    `parse_batch_json`) killed the WHOLE call, same flake class that killed
+    the backtest's clean run before `stall_backtest.grade` was hardened.
+    `session_stall` had inherited none of that hardening. It now shares the
+    exact same `stall_judge.chunk_items` / `stall_judge.call_with_retries`
+    machinery `grade` uses (one implementation, not a parallel copy) —
+    `batch_size`-sized chunks, each retried up to `retries` times on
+    `ValueError`, a chunk that still fails after retries SKIPPED rather than
+    fabricating a verdict. A skipped chunk's sessions simply have no entry
+    in the returned dict — never a made-up one. `stats`, if a dict is
+    passed, is populated with `chunks`, `chunks_failed`, `sessions_skipped`,
+    mirroring `grade`'s contract exactly. Left at the default `None`, every
+    prior caller (including every existing test) is unaffected.
+
+    A session whose tail is empty/whitespace-only after `final_assistant_text`
+    is skipped before it ever reaches a chunk — one such session existed in
+    the live corpus, and the old unchunked call sent it to the model
+    regardless (`collect_handbacks` already had this discipline; production
+    did not). Tails longer than `stall_judge.TAIL_MAX_CHARS` are truncated
+    to the last `TAIL_MAX_CHARS` characters — the constant is IMPORTED from
+    `stall_judge`, not redefined here, so this path and the backtest can't
+    silently drift onto two different truncation lengths.
     """
     out: dict[str, StallVerdict] = {}
     stalled_ids: list[str] = []
@@ -117,21 +145,54 @@ def classify_sessions(records_by_id: list[tuple[str, list[dict]]], *,
         stop_reason = _stop_reason(rec)
         if is_working(records):
             out[session_id] = StallVerdict("working", WORKING, 1.0, "", stop_reason)
-        else:
-            stalled_ids.append(session_id)
-            stalled_stop_reasons.append(stop_reason)
-            tails.append(final_assistant_text(records))
+            continue
+        tail = final_assistant_text(records)
+        if not tail.strip():
+            # No provable text to classify -- skip rather than fabricate.
+            continue
+        if len(tail) > stall_judge.TAIL_MAX_CHARS:
+            tail = tail[-stall_judge.TAIL_MAX_CHARS:]
+        stalled_ids.append(session_id)
+        stalled_stop_reasons.append(stop_reason)
+        tails.append(tail)
 
     if not stalled_ids:
+        if stats is not None:
+            stats["chunks"] = 0
+            stats["chunks_failed"] = 0
+            stats["sessions_skipped"] = 0
         return out
 
-    kwargs = {"model": model}
-    if runner is not None:
-        kwargs["runner"] = runner
-    judgments = stall_judge.classify_tails(tails, **kwargs)
+    def _classify(chunk_tails, model):
+        if runner is not None:
+            return stall_judge.classify_tails(chunk_tails, runner=runner, model=model)
+        return stall_judge.classify_tails(chunk_tails, model=model)
 
-    for session_id, stop_reason, judgment in zip(stalled_ids, stalled_stop_reasons, judgments):
-        out[session_id] = StallVerdict(
-            "stalled", judgment.klass, judgment.confidence, judgment.reason, stop_reason)
+    chunks_total = 0
+    chunks_failed = 0
+    sessions_skipped = 0
+
+    combined = list(zip(stalled_ids, stalled_stop_reasons, tails))
+    for chunk in stall_judge.chunk_items(combined, batch_size):
+        chunks_total += 1
+        chunk_ids = [c[0] for c in chunk]
+        chunk_stops = [c[1] for c in chunk]
+        chunk_tails = [c[2] for c in chunk]
+
+        judgments = stall_judge.call_with_retries(
+            _classify, chunk_tails, model=model, retries=retries)
+        if judgments is None:
+            chunks_failed += 1
+            sessions_skipped += len(chunk_ids)
+            continue
+
+        for session_id, stop_reason, judgment in zip(chunk_ids, chunk_stops, judgments):
+            out[session_id] = StallVerdict(
+                "stalled", judgment.klass, judgment.confidence, judgment.reason, stop_reason)
+
+    if stats is not None:
+        stats["chunks"] = chunks_total
+        stats["chunks_failed"] = chunks_failed
+        stats["sessions_skipped"] = sessions_skipped
 
     return out

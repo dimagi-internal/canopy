@@ -54,12 +54,64 @@ _ALL_CLASSES = frozenset({
 AUTO_SEND_CLASSES: frozenset[str] = frozenset(
     {AWAITING_CONTINUE, PLAN_PENDING, DONE_CLAIMED})
 
+# Per-tail truncation applied before anything reaches a model. A week of real
+# history runs ~1,800 tail chars per handback on average with a max over 19k
+# -- untruncated, a single batched call would carry hundreds of thousands of
+# tokens of items alone. Keep the END: the "next I'll..." / open-question
+# signal `classify_tails` needs lives at the end of the agent's own message;
+# the head is scene-setting and disposable. Shared by every caller that
+# truncates a tail before classifying it (`stall_backtest.collect_handbacks`,
+# `session_stall.classify_sessions`) -- defined once here, imported, never
+# redefined, so the two production/backtest paths can't silently drift apart.
+TAIL_MAX_CHARS = 2000
+
 
 @dataclass(frozen=True)
 class Judgment:
     klass: str
     confidence: float
     reason: str
+
+
+# ── chunk-and-retry machinery ────────────────────────────────────────────────
+# Shared by every caller of `classify_tails`/`judge_replies` that has to
+# handle more than one batch's worth of items: `stall_backtest.grade` (two
+# calls per chunk, tails and replies) and `session_stall.classify_sessions`
+# (one call per chunk, tails only). Extracted here rather than duplicated so
+# both stay on the same fail-loud-but-not-fail-total contract -- a production
+# path (`classify_sessions`) inheriting none of a backtest path's hardening
+# is exactly the gap that let the same flake class kill a real run twice.
+
+def chunk_items(items: list, batch_size: int):
+    """Yield consecutive slices of `items`, each up to `batch_size` long."""
+    for start in range(0, len(items), batch_size):
+        yield items[start:start + batch_size]
+
+
+def call_with_retries(fn, items: list[str], *, model: str, retries: int):
+    """Call `fn(items, model=model)`, retrying on `ValueError` only.
+
+    A `ValueError` out of `classify_tails`/`judge_replies` means the model
+    returned a malformed or miscounted batch response (see
+    `parse_batch_json`) — a transient flake worth one more try, not proof
+    the model path is broken. Up to `retries` additional attempts are made
+    (so `retries=2` means 3 attempts total); if every attempt still raises
+    `ValueError`, this returns `None` rather than fabricating a result — the
+    caller decides what "no result for this chunk" means (skip it, never
+    substitute a default verdict).
+
+    Any exception OTHER than `ValueError` (e.g. a `RuntimeError` from a
+    broken `claude` subprocess) propagates immediately, on the first
+    attempt, unretried — that signals the model path itself is unusable,
+    which a retry cannot fix and silently swallowing would hide.
+    """
+    attempts = retries + 1
+    for attempt in range(attempts):
+        try:
+            return fn(items, model=model)
+        except ValueError:
+            if attempt == attempts - 1:
+                return None
 
 
 # ── the model call ──────────────────────────────────────────────────────────

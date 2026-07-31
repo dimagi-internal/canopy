@@ -33,7 +33,8 @@ def _write_transcript(path: Path, stop_reason: str, text: str) -> None:
 
 
 def _fake_classify(verdicts):
-    def fake(records_by_id, *, runner=None, model="haiku"):
+    def fake(records_by_id, *, runner=None, model="haiku", batch_size=30,
+              retries=2, stats=None):
         return {sid: verdicts[sid] for sid, _ in records_by_id}
     return fake
 
@@ -101,7 +102,8 @@ def test_multiple_stalled_sessions_are_batched_and_correctly_keyed(tmp_path, mon
 
     calls = []
 
-    def spy(records_by_id, *, runner=None, model="haiku"):
+    def spy(records_by_id, *, runner=None, model="haiku", batch_size=30,
+            retries=2, stats=None):
         calls.append(records_by_id)
         verdicts = {
             "sess-d": StallVerdict("stalled", AWAITING_CONTINUE, 0.8, "stated next step", "end_turn"),
