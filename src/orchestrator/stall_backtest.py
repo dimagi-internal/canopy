@@ -121,15 +121,25 @@ def collect_handbacks(records: list[dict]) -> list[Handback]:
     (`hands_back_to_human`), scan forward for the first record yielding a
     non-None `human_text`. If none is found before the transcript ends, this
     handback is skipped — there is no answer key for it yet.
+
+    A handback whose own tail is empty or whitespace-only is also skipped.
+    `hands_back_to_human` only inspects `stop_reason`, never content shape,
+    so an `end_turn` record with no text blocks is not provably
+    unreachable; grading it would silently hand `classify` a fabricated
+    empty-string case. This mirrors how `human_text` already treats an
+    empty reply as "not a real message."
     """
     out: list[Handback] = []
     for i, rec in enumerate(records):
         if not hands_back_to_human(rec):
             continue
+        tail = _tail_text(rec)
+        if not tail.strip():
+            continue
         for later in records[i + 1:]:
             reply = human_text(later)
             if reply is not None:
-                out.append(Handback(tail=_tail_text(rec), reply=reply))
+                out.append(Handback(tail=tail, reply=reply))
                 break
     return out
 

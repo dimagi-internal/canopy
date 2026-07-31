@@ -31,12 +31,25 @@ def test_a_trailing_handback_with_no_reply_is_skipped():
     assert collect_handbacks([_asst(NEXT_STEP)]) == []
 
 
+SECOND_STEP = "Rendered the walkthrough. Next I'll upload it to canopy-web."
+
+
 def test_multiple_handbacks_all_collected():
+    # Regression guard for the final_assistant_text trap: each handback's
+    # tail must come from ITS OWN assistant record, not the transcript's
+    # last one. Two DIFFERENT tails, each asserted independently, is what
+    # makes that distinguishable — if `_tail_text` were swapped back for
+    # `final_assistant_text(records)`, both tails would collapse to
+    # SECOND_STEP and this would fail.
     hbs = collect_handbacks([
         _asst(NEXT_STEP), _user("keep going"),
-        _asst(NEXT_STEP), _user("do the ddd runs on prod"),
+        _asst(SECOND_STEP), _user("do the ddd runs on prod"),
     ])
-    assert len(hbs) == 2 and hbs[1].reply == "do the ddd runs on prod"
+    assert len(hbs) == 2
+    assert hbs[0].tail == NEXT_STEP
+    assert hbs[0].reply == "keep going"
+    assert hbs[1].tail == SECOND_STEP
+    assert hbs[1].reply == "do the ddd runs on prod"
 
 
 def test_harness_injections_are_not_human_replies():
@@ -59,6 +72,14 @@ def test_tool_results_are_not_human_replies():
 def test_a_handback_followed_only_by_junk_is_skipped():
     assert collect_handbacks([_asst(NEXT_STEP),
                               _user("<task-notification>x</task-notification>")]) == []
+
+
+def test_a_handback_with_an_empty_tail_is_skipped():
+    # An end_turn record with no text blocks (or only whitespace) is not
+    # provably unreachable -- hands_back_to_human only looks at stop_reason.
+    # Grading an empty tail would silently hand the model a fabricated case.
+    assert collect_handbacks([_asst(""), _user("keep going")]) == []
+    assert collect_handbacks([_asst("   "), _user("keep going")]) == []
 
 
 def test_grade_pairs_each_classification_with_its_reply_judgment():
