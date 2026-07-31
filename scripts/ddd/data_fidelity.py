@@ -35,7 +35,28 @@ from typing import Any
 MIN_ROWS = 6
 
 # Ratios this tightly clustered across many rows do not occur naturally.
-RATIO_SPREAD_FLOOR = 0.02  # 2 percentage points
+#
+# RELATIVE, not absolute. This was an absolute floor of 0.02, compared against
+# `max(ratios) - min(ratios)` — so any column pair whose ratio is small in
+# magnitude passed the test for free, however much it actually varied. A
+# stock-on-hand column beside a weeks-of-cover column (38/0.6, 900/1.7,
+# 14760/5.3) yields ratios spanning 0.0019–0.0158: an EIGHTFOLD spread, flagged
+# as "near-constant" on every scene of every arc that renders such a table,
+# because 0.0139 < 0.02. A lens that cries wolf on ordinary data gets ignored,
+# which costs more than the check is worth.
+#
+# The scale-free question is "how much does the ratio vary relative to its own
+# size", so the test is spread / mean.
+#
+# Calibrated against the four cases in tests/ddd/test_loop_lenses.py, which are
+# 15x apart on this measure — there is no borderline to tune:
+#
+#   0.000  a column held at a fixed 0.4% of another        (tell)
+#   0.088  a 4.2% rate applied then rounded to whole units (tell — the rounding
+#          is the only reason it varies at all)
+#   1.343  real, lumpy per-site capture                    (pass)
+#   2.405  stock on hand beside weeks of cover             (pass)
+RATIO_SPREAD_RATIO = 0.25  # spread within a quarter of the ratio's own mean
 
 _NUMBER = re.compile(r"^-?[\d,]+(?:\.\d+)?%?$")
 _ID_TAIL = re.compile(r"^(?P<stem>.*?)(?P<num>\d+)(?P<suffix>[A-Za-z]?)$")
@@ -128,13 +149,17 @@ def _ratio_cluster(rows: list[list[str]], columns: dict[int, list[str]]) -> list
             if len(ratios) < MIN_ROWS:
                 continue
             spread = max(ratios) - min(ratios)
-            if spread < RATIO_SPREAD_FLOOR and max(ratios) > 0:
+            mean = sum(ratios) / len(ratios)
+            if mean <= 0:
+                continue
+            if spread / mean < RATIO_SPREAD_RATIO:
                 findings.append(
                     {
                         "kind": "ratio_cluster",
                         "detail": (
                             f"columns {a} and {b} hold a near-constant ratio across "
-                            f"{len(ratios)} rows ({min(ratios):.3f}–{max(ratios):.3f}). "
+                            f"{len(ratios)} rows ({min(ratios):.4g}–{max(ratios):.4g}, "
+                            f"varying {spread / mean:.1%} of its own mean). "
                             "Real capture rates are lumpy; a flat ratio reads as generated."
                         ),
                     }

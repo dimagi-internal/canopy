@@ -70,6 +70,33 @@ def test_lumpy_ratios_pass():
     assert not [f for f in result["findings"] if f["kind"] == "ratio_cluster"]
 
 
+def test_a_small_magnitude_ratio_is_judged_on_its_own_scale():
+    """Stock-on-hand beside weeks-of-cover, from the real OES command centre.
+
+    The ratio here spans 0.0019–0.0158 — an EIGHTFOLD variation — but its
+    absolute spread is 0.0139, so an absolute floor of 0.02 flagged it as
+    "near-constant" on every scene of every arc rendering this table. The
+    question is how much a ratio varies relative to its own size, not whether it
+    happens to be a small number.
+    """
+    pairs = [(38, 0.6), (375, 1.6), (900, 1.7), (282, 2.0), (274, 2.5), (469, 3.0), (14760, 5.3)]
+    rows = [[f"Node {i}", str(a), str(b)] for i, (a, b) in enumerate(pairs)]
+    result = data_fidelity(_table(rows))
+    assert not [f for f in result["findings"] if f["kind"] == "ratio_cluster"]
+
+
+def test_a_tight_small_magnitude_ratio_is_still_flagged():
+    """The fix must not blind the lens to a genuinely flat small ratio.
+
+    Same order of magnitude as the case above, but held to a fixed 0.4% of the
+    first column — which is exactly the generator tell the check exists for.
+    """
+    stock = [38, 375, 900, 282, 274, 469, 14760]
+    rows = [[f"Node {i}", str(s), f"{s * 0.004:.4f}"] for i, s in enumerate(stock)]
+    result = data_fidelity(_table(rows))
+    assert any(f["kind"] == "ratio_cluster" for f in result["findings"])
+
+
 def test_duplicate_rows_are_flagged():
     """Two different sites, both '310 served / 22 recorded'."""
     rows = [
