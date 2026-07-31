@@ -7,10 +7,44 @@
 > stub's local-notes section instead.
 
 **Re-read this doc at the start of every turn and follow it in order.** Running a turn from
-memory is how steps get dropped under load. All guardrails apply: **reads are free; every
-outbound action waits for explicit human approval.** Approval is PROCEDURAL — the gating hook
+memory is how steps get dropped under load. All guardrails apply: **reads are free; outbound
+actions follow the agent's turn mode** (see "Turn mode" below — gated agents wait for explicit
+human approval; auto agents self-review and send). Approval is PROCEDURAL — the gating hook
 carries deny rails only (it blocks wrong paths, it does not ask for you), so drafting-then-asking
 in Step 2 is the gate. There is no modal to catch you if you skip it.
+
+## Turn mode — gated (default) vs auto
+Read `"mode"` from the agent repo's `config/agent.json` at preflight and **state it in your turn
+opening** ("running in auto mode"). Absent or `"gated"` → gated. The switch is a one-line,
+versioned commit in the agent's repo — flipping it is an explicit human decision, never something
+an agent does to itself mid-turn.
+
+- **`gated`** (the default, and the factory default for new agents): every outbound action —
+  send, reply, public write, share — is drafted and **presented to the human for approval**
+  before it happens. This is the mode the rest of this doc assumes wherever it says "present for
+  approval."
+- **`auto`** (the OpenClaw pattern — built for unattended stretches, e.g. the human on PTO):
+  the turn **never blocks on a human**. Where a gated turn would present-and-wait, an auto turn
+  runs the full pre-send discipline and then acts:
+  1. **The rails do not move.** Deny rails (`config/gating.json` + the fleet baseline) apply
+     unchanged; sender triage applies unchanged (unknown/non-allowlisted sender → still
+     read-only + surface). Auto mode removes the *wait*, not the *rules*.
+  2. **`agent-turn-review` + the review-receipt rail become THE quality gate.** They were
+     mandatory before; in auto mode they are the only gate left, so run them with full care —
+     `canopy email send` still refuses a body with no receipt for that exact body.
+  3. **Always respond on the triggering channel.** The turn ends with a reply sent on the
+     thread/channel that triggered it — never silently, never "drafted and parked."
+  4. **Escalations are non-blocking.** Anything a gated turn would park as "⏸ waiting on you"
+     gets *recorded* instead — a board task, or a flagged line in the closeout — and the turn
+     completes. If a deny rail or missing auth genuinely blocks an action, say exactly what was
+     blocked in the reply and the closeout; don't half-do it another way.
+  5. **The audit trail is the approval, moved after the fact.** Every auto turn closes by
+     packaging itself to the board — `canopy agent turn --slug <slug> --session-id <id> --title
+     "<what this turn did>"` — so the human reviews what was sent *after* it went out. In auto
+     mode this turn-record step is an **automatic close step** (an explicit exception to Step 4's
+     "publishing is manual" rule, scoped to the turn record only).
+  6. **Status line:** an auto turn ends **"✅ Session complete"** with the sent-summary; it never
+     ends "⏸ waiting on you" (by design nothing waits — blocked items are named, not parked).
 
 **Narrate as you go.** Before any multi-step or multi-repo investigation, state the plan in one
 sentence first ("checking threads A and B for X — back shortly"), then work, then report what you
@@ -48,7 +82,8 @@ as actionable when the newest message is from someone else.
 
 For EACH inbound item in order: read it, check the sender against `config/allowlist.txt`
 (unknown sender → read-only, surface to the human), load only that counterpart's memory scope,
-decide ONE action (Reply / File / Remember / Escalate), and present it for approval.
+decide ONE action (Reply / File / Remember / Escalate), and present it for approval (gated mode)
+or self-review-and-act (auto mode — see "Turn mode").
 **Never reason about two counterparts in one step** — the cardinal rule.
 
 **Classify automated notifications FIRST — they are never actionable.** Before you decide an
@@ -197,9 +232,12 @@ guess whether it's finished:
 - **Done, nothing open →** end with **"✅ Session complete — safe to close."** (a trivial /
   non-actionable turn: "Nothing actionable — archived the thread. ✅ Session complete — safe to close.")
 - **Something parked awaiting a human decision →** end with **"⏸ Session paused — waiting on you
-  for: `<the one thing>`."** and leave it open.
+  for: `<the one thing>`."** and leave it open. (Auto-mode turns never use this line — they
+  record blocked/flagged items and complete; see "Turn mode".)
 
-**Publishing to canopy-web is MANUAL — none of it is an automatic close step.** The fleet has a
+**Publishing to canopy-web is MANUAL — none of it is an automatic close step** (one exception:
+an **auto-mode** turn always packages its turn record — `canopy agent turn` — as its audit
+trail; see "Turn mode"). The fleet has a
 single supervisor today, so `/agents/<slug>` is refreshed on request, not every turn. A turn is
 complete when the work is done and the status line is set — publishing is a separate, opt-in act.
 Do any of these ONLY when the human explicitly asks to publish/share:
