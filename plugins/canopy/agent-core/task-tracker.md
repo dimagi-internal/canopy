@@ -69,6 +69,17 @@ Keep your Drive parent-folder id in the worktree-clean global `.env`
 - **Taking on multi-turn work:** create the task (status `in_progress` if a human asked for it,
   `suggested` if you are proposing it), immediately `set` rationale + plan + links,
   and give it a **project folder** whose link goes in Links.
+- **Resuming an existing task: re-validate its brief against current reality BEFORE building.**
+  A task's `rationale` / `plan` / dispatch brief is a *snapshot of when it was written*, and the
+  board gives it no expiry — it reads equally authoritative on day 1 and day 30. Re-check the
+  specific claims it rests on (the code it cites still says that? the issue still open? nothing
+  merged in the meantime?) and write what changed into the task before you touch anything. If the
+  premise moved, **say so and re-scope — do not build the stale brief.** Cheap: minutes. The
+  failure it prevents is expensive and silent, because building the wrong thing competently looks
+  exactly like progress. (2026-07-31: a task dispatched three days earlier said "delete this
+  linear scan"; three PRs had merged against it in the interim, and re-reading the target file
+  first showed the flag already gone, the scan memoised, and the issue's own done-when no longer
+  achievable in that repo at all. The re-read took ten minutes and replaced a day of wrong work.)
 - **During work:** keep **Next action** current — it is the card headline a human scans.
 - **Close of turn:** package every turn that advanced a task —
   `canopy agent turn --slug <slug> --title "…" --task <ext_id> --work-product-url <url>`.
