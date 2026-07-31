@@ -1,22 +1,77 @@
 # Stall-classifier backtest baseline
 
-## ⚠️ NO VALID BASELINE EXISTS YET — do not quote any number in this file
+## ✅ THE BASELINE — clean, full-corpus, definitive
 
-The run recorded below was measured **before** two bugs in
-`collect_handbacks` / `human_text` (`src/orchestrator/stall_backtest.py`)
-were fixed. Do not treat the `0.330` overall precision figure, or any
-per-class number below, as the real baseline — the class taxonomy and the
-classify prompt cannot be judged against a corrupted answer key. A clean
-re-run (`--hours 168 --show-errors`, no `--limit`) is needed to produce the
-number this task is actually for; that re-run has NOT happened yet as of
-this file being written (the coordinator will run it, not this task — see
-"What happens next" below).
+- **Date:** 2026-07-30 (run started 22:59 PT, finished ~23:15 PT)
+- **Model:** haiku (classify + judge)
+- **Code:** branch head `9661b4d` behavior (a comment-only commit `961f020`
+  landed while the run executed; zero behavior difference). This run
+  includes every answer-key fix: X, Y, Z below, plus the final-review pair —
+  `<command-name>`/`<command-args>` harness records excluded, and a run of
+  consecutive human messages graded on the LAST one (an edited/re-sent
+  message no longer scores the stale draft).
+- **Corpus:** all 633 handbacks from 110 sessions, 168h window, on the
+  `acedimagi` account's `~/.claude/projects` — the corpus every prior number
+  in this file refers to. Run via `.superpowers/sdd/run-clean-baseline.py`,
+  which drives the exact `sessions stall-backtest` CLI callback with only
+  `Path.home()` patched to that corpus (state dir and `claude -p` auth stay
+  on the invoking account). No `--limit`, so no sampling caveats apply.
+- **Integrity:** 0 of 22 chunks failed (no retries exhausted, no handbacks
+  excluded). Disclosed filter drops: 487 harness-injection records, 10
+  skill/command payloads — excluded as non-human replies. Full output
+  archived at `.superpowers/sdd/stall-plan/clean-baseline-2026-07-30.txt`.
 
-A THIRD bug (Fix Z, below) was found on the first attempt at that clean
-re-run: it died partway through on a single flaky chunk, discarding ~20
-minutes and ~40 successful model calls. That is now fixed too (retry +
-skip-and-continue, never silent). The clean re-run still has not happened
-as of this file being written.
+```
+Graded 633 handbacks from 110 sessions over the last 168h.
+
+  Would auto-send: 305
+  True positives:  123
+  False positives: 182
+  Precision:       0.403
+  Recall:          0.484
+
+Per-class:
+  awaiting_continue    n=173   tp=71    fp=102   precision=0.410
+  blocked_human        n=70    tp=0     fp=0     precision=n/a
+  done_claimed         n=53    tp=18    fp=35    precision=0.340
+  errored              n=45    tp=0     fp=0     precision=n/a
+  gate_outbound        n=26    tp=0     fp=0     precision=n/a
+  plan_pending         n=79    tp=34    fp=45    precision=0.430
+  question_open        n=187   tp=0     fp=0     precision=n/a
+```
+
+**Decision-gate verdict: 0.403 is decisively below the 70% floor — the
+design is wrong, not the wording.** Per the pre-committed gate (>90%
+proceed to auto-nudge; 70–90% tune the prompt and re-run; <70% redesign),
+this number closes the tuning path. An auto-nudge shipped on this
+classifier would talk over the human on ~6 of every 10 nudges. Note the
+contaminated run's 0.330 and both smoke runs (0.500, 0.417) sit in the
+same failing band — every measurement, dirty or clean, has agreed on the
+conclusion; the clean run makes it safe to act on.
+
+**What the clean errors say (same property as before, now trustworthy):**
+the three auto-send classes are uniformly bad (0.34–0.43 — no "one bad
+sibling"), and the false positives are overwhelmingly tails whose
+surface reads "I did X / next I'll do Y" while the human's actual next
+message was a question, correction, or steer. Real examples from
+`--show-errors`: "Does umami have the ability to leverage oauth the way
+labs does?" scored `done_claimed`; "okay great, make sure you are
+folowing infra as code best practices" scored `awaiting_continue`. The
+question we posed — *will the human have something to add?* — is a
+property of the human, not of the tail, and roughly two-thirds of the
+time the answer is yes. The proposed redesign (coordinator decision
+pending): classify the **reversibility of the agent's next step** instead,
+which IS a property of the tail. This harness measures any such successor
+classifier unchanged.
+
+---
+
+## How this number was earned (contamination history)
+
+Everything below is the historical record of producing a trustworthy
+answer key: five answer-key bugs and one run-killing flake were found by
+measuring rather than assuming. Numbers in the sections below are
+superseded by the baseline above and kept only as methodology record.
 
 **Fix X — duplicate-reply contamination in `collect_handbacks` (35% of the corpus).**
 When several `end_turn` records handed back to a human in a row with no reply
@@ -243,20 +298,8 @@ well-separated category the model is confidently choosing.
 
 ## What happens next
 
-Per the task-6 brief's decision table: precision **0.330** overall is well
-under the 70% floor, which would ordinarily mean "the class taxonomy itself
-is probably wrong, revisit spec §3.2." But this number is **contaminated**
-and must not be used to make that call — the duplicate-reply bug alone
-inflated the false-positive count by counting some single human decisions
-up to six times over. A clean `--hours 168 --show-errors` run (uncapped by
-`--limit`) against the fixed `collect_handbacks`/`human_text` is the number
-this decision should actually be made on.
-
-The first attempt at that clean run (626 handbacks, 21 chunks) hit Fix Z's
-bug instead — one flaky chunk killed the whole run — before it could
-produce a number at all. With Fix Z in place the run should now either
-complete cleanly, or complete with a loud `WARNING: N of M chunks failed
-after retries — K handbacks excluded from this measurement.` line that
-makes any partial-data risk visible rather than silent. Both the fixed
-answer-key run and the fixed run-survives-a-flake behavior were explicitly
-reserved for the coordinator to run, not repeated here.
+Resolved — the clean run at the top of this file is that number. The
+first clean-run attempt (626 handbacks, 21 chunks) died on Fix Z's bug;
+the second (633 handbacks, 22 chunks, post-fix-wave code) completed with
+zero failed chunks. The <70% verdict and the reversibility-reframe
+decision it triggers are recorded at the top of this file.
