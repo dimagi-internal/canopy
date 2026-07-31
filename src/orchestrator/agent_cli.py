@@ -441,6 +441,22 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
         raise click.ClickException(str(e))
 
 
+@agent.command("mode")
+@click.option("--slug", required=True)
+def agent_mode(slug):
+    """Print the agent's turn mode — {"slug": ..., "turn_mode": "gated"|"auto"}.
+
+    Board-side state (flipped from /agents/<slug> on canopy-web, or PATCH
+    /api/agents/<slug>/turn-mode — never a repo file). The turn procedure reads
+    this at preflight; if the call fails, the turn runs GATED (fail safe) and
+    says so.
+    """
+    try:
+        _emit({"slug": slug, "turn_mode": _client(slug).turn_mode()})
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
 @agent.command("health")
 @click.option("--slug", default="", help="One agent; omit to sweep the whole registered fleet.")
 @click.option("--stale-needs-you-days", default=7.0, show_default=True, type=float,

@@ -69,6 +69,17 @@ class AgentClient:
     def register(self) -> dict:
         return self._call("POST", "/api/agents/", self.identity.model_dump())
 
+    def get_agent(self) -> dict:
+        return self._call("GET", f"/api/agents/{self.slug}/")
+
+    def turn_mode(self) -> str:
+        """The agent's runtime autonomy posture (gated | auto) — board-side
+        STATE on canopy-web, flipped by a human from /agents/<slug>, never by
+        the agent or its repo. Raises on transport failure; the turn procedure
+        treats a failed read as gated (fail safe), and that fallback belongs to
+        the caller so it stays a visible decision, not a swallowed error."""
+        return str(self.get_agent().get("turn_mode") or "gated")
+
     def post_sync(self, *, period_start, period_end, title, doc_url,
                   summary="", self_grades=None, source="manager-sync") -> dict:
         body = {"period_start": period_start, "period_end": period_end, "title": title,

@@ -14,10 +14,13 @@ carries deny rails only (it blocks wrong paths, it does not ask for you), so dra
 in Step 2 is the gate. There is no modal to catch you if you skip it.
 
 ## Turn mode — gated (default) vs auto
-Read `"mode"` from the agent repo's `config/agent.json` at preflight and **state it in your turn
-opening** ("running in auto mode"). Absent or `"gated"` → gated. The switch is a one-line,
-versioned commit in the agent's repo — flipping it is an explicit human decision, never something
-an agent does to itself mid-turn.
+Turn mode is **board-side STATE on canopy-web, not repo config**: read it at preflight with
+`canopy agent mode --slug <slug>` and **state it in your turn opening** ("running in auto mode").
+The human flips it from the agent's overview page (`/agents/<slug>` → Turn mode) or
+`PATCH /api/agents/<slug>/turn-mode` — never by editing a repo file, and never the agent itself
+mid-turn (the API enforces this: the agent-repo self-publish upsert cannot touch the field).
+**If the read fails** (canopy-web unreachable, no PAT), run **gated** — fail safe — and name the
+fallback in your opening and closeout.
 
 - **`gated`** (the default, and the factory default for new agents): every outbound action —
   send, reply, public write, share — is drafted and **presented to the human for approval**
