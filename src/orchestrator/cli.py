@@ -132,6 +132,105 @@ def sessions_list(hours, as_json, project, min_turns):
         click.echo(f"  {i:>3}  [{ts}]  {project:<30}  \"{msg}\"  ({s['user_msgs']} msgs)")
 
 
+@sessions.command("stalled")
+@click.option("--hours", default=24, type=int, help="Only show sessions with activity in the last N hours")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON (for skill consumption)")
+@click.option("--project", default=None,
+              help="Filter to sessions whose resolved GitHub repo ends with /<name>. "
+                   "Uses repo-map (incl. emdash worktree path inference). "
+                   "Example: --project ace matches jjackson/ace but NOT jjackson/ace-web.")
+@click.option("--model", default="haiku", help="Model to use for stall classification")
+def sessions_stalled(hours, as_json, project, model):
+    """List sessions that have stopped and are waiting on a human, and why.
+
+    Read-only: sends nothing, writes nothing, and calls no network beyond the
+    LLM classification `classify_sessions` performs. Completion is read off
+    each session's structural `stop_reason`, never off elapsed time — a
+    session mid-tool-call is "working" no matter how long the tool takes.
+    """
+    import json as json_mod
+    from datetime import datetime, timezone, timedelta
+
+    from orchestrator.scanner import scan_all_transcripts
+    from orchestrator.repo_map import load_repo_map
+    from orchestrator.labels import load_labels
+    from orchestrator.transcripts import read_transcript
+    from orchestrator import session_stall
+    from orchestrator.stall_judge import AUTO_SEND_CLASSES
+
+    projects_dir = Path.home() / ".claude" / "projects"
+    state_dir = ensure_canopy_dir()
+    repo_map = load_repo_map(state_dir / "repo-map.json")
+    labels = load_labels(state_dir / "labels.yaml")
+
+    all_sessions = scan_all_transcripts(projects_dir, repo_map, labels)
+
+    # Filter by recency
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    cutoff_iso = cutoff.isoformat()
+    recent = [s for s in all_sessions if s.get("last_ts") and s["last_ts"] >= cutoff_iso]
+
+    # Filter by project (precise: repo must end with /<name>; never substring-matches).
+    if project:
+        suffix = f"/{project}"
+        recent = [s for s in recent if (s.get("repo") or "").endswith(suffix)]
+
+    records_by_id: list[tuple[str, list[dict]]] = [
+        (s["session_id"], read_transcript(Path(s["path"]))) for s in recent
+    ]
+    by_id = {s["session_id"]: s for s in recent}
+
+    verdicts = session_stall.classify_sessions(records_by_id, model=model)
+
+    rows = []
+    for session_id, verdict in verdicts.items():
+        if verdict.state != "stalled":
+            continue
+        s = by_id[session_id]
+        rows.append({
+            "session_id": session_id,
+            "project": s.get("project_key"),
+            "repo": s.get("repo"),
+            "transcript_path": s.get("path"),
+            "state": verdict.state,
+            "class": verdict.klass,
+            "confidence": verdict.confidence,
+            "reason": verdict.reason,
+            "stop_reason": verdict.stop_reason,
+            "auto_send": verdict.klass in AUTO_SEND_CLASSES,
+            "last_ts": s.get("last_ts"),
+        })
+
+    rows.sort(key=lambda r: r["last_ts"] or "", reverse=True)
+
+    if as_json:
+        click.echo(json_mod.dumps(rows, indent=2, default=str))
+        return
+
+    if not rows:
+        click.echo(f"No stalled sessions with activity in the last {hours} hours.")
+        return
+
+    click.echo(f"Stalled sessions with activity in the last {hours} hours:\n")
+    auto_send_count = 0
+    for r in rows:
+        marker = "  "
+        if r["auto_send"]:
+            marker = "->"
+            auto_send_count += 1
+        ts = (r["last_ts"] or "")[:16].replace("T", " ")
+        project_name = r["repo"] or r["project"]
+        click.echo(
+            f"  {marker} [{ts}]  {project_name:<30}  {r['class']:<20}  "
+            f"({r['confidence']:.2f})  \"{r['reason']}\""
+        )
+
+    click.echo(
+        f"\n{auto_send_count} of {len(rows)} stalled sessions are inside the v1 "
+        "auto-send envelope."
+    )
+
+
 @sessions.command("status")
 def sessions_status():
     """Show session log status."""
