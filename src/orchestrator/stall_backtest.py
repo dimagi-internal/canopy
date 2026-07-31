@@ -28,6 +28,7 @@ decides whether it's safe to ship at all.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from orchestrator.session_stall import hands_back_to_human
@@ -48,6 +49,14 @@ _HARNESS_PREFIXES = (
     "[Image:",
 )
 
+# A real markdown heading line: 1-6 `#` followed by whitespace. Deliberately
+# NOT `text.startswith("#")` (the original, over-broad version of this
+# check) -- that matched ANY leading `#`, including things like "#1 issue:
+# ..." or "#urgent" that a human could plausibly type, which is not what
+# "starts with a markdown heading" is supposed to mean. This is still purely
+# structural (markdown heading syntax), not a match on content.
+_HEADING_RE = re.compile(r"^#{1,6}[ \t]")
+
 # A fenced code block found this early in the text is the residue of a
 # skill/command payload, not a human opening a reply with a snippet.
 # Measured 2026-07-30: a skill body's YAML frontmatter (and any leading
@@ -58,7 +67,18 @@ _HARNESS_PREFIXES = (
 # it. This is still a STRUCTURAL signal (the *position* of markdown syntax
 # in the string), not a match on what the code says -- same family as the
 # other checks in `_is_skill_or_command_payload`.
+#
+# Position alone is too broad, though: a genuine human reply that opens
+# with a short pasted snippet or traceback ("try this:\n\n```\n...") would
+# also have an early fence. Reviewed against the real corpus 2026-07-31:
+# every genuine skill/command body this signal is meant to catch was well
+# over 1,000 characters; nothing a real human replied was anywhere near
+# that. `_EARLY_FENCE_MIN_LEN` requires the early fence AND enough total
+# length before this signal fires, so a short human reply with a pasted
+# snippet survives -- both conditions are structural (position, length),
+# not content.
 _EARLY_FENCE_WINDOW = 300
+_EARLY_FENCE_MIN_LEN = 400
 
 
 def _is_skill_or_command_payload(text: str) -> bool:
@@ -68,23 +88,26 @@ def _is_skill_or_command_payload(text: str) -> bool:
     none of these read what the text SAYS, only how it is SHAPED:
       - starts with `# /` (a command's own heading names itself this way)
       - an `ARGUMENTS:` line (a skill's argument spec)
-      - starts with a markdown heading and contains a fenced code block
-        anywhere (e.g. the ddd-upload skill body: `# DDD Upload` ... ```bash)
-      - a fenced code block within the first `_EARLY_FENCE_WINDOW` chars
-        (catches skill bodies with no heading at all, per the module note
-        above -- this is the one that's NOT in the original three-signal
-        set filed for this bug, because the real corpus example it fixes
-        has no heading to key off of)
+      - starts with a real markdown heading (`_HEADING_RE`) and contains a
+        fenced code block anywhere (e.g. the ddd-upload skill body:
+        `# DDD Upload` ... ```bash)
+      - a fenced code block within the first `_EARLY_FENCE_WINDOW` chars,
+        AND the text is at least `_EARLY_FENCE_MIN_LEN` chars long (catches
+        skill bodies with no heading at all, per the module note above --
+        this is the one that's NOT in the original three-signal set filed
+        for this bug, because the real corpus example it fixes has no
+        heading to key off of; the length floor keeps it from also
+        catching a short human reply that opens with a pasted snippet)
     """
     stripped = text.lstrip()
     if stripped.startswith("# /"):
         return True
     if any(line.startswith("ARGUMENTS:") for line in text.splitlines()):
         return True
-    if stripped.startswith("#") and "```" in text:
+    if _HEADING_RE.match(stripped) and "```" in text:
         return True
     fence_pos = text.find("```")
-    if 0 <= fence_pos <= _EARLY_FENCE_WINDOW:
+    if 0 <= fence_pos <= _EARLY_FENCE_WINDOW and len(text) >= _EARLY_FENCE_MIN_LEN:
         return True
     return False
 

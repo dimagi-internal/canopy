@@ -285,11 +285,31 @@ def sessions_stall_backtest(hours, as_json, project, model, limit, batch_size, s
         suffix = f"/{project}"
         recent = [s for s in recent if (s.get("repo") or "").endswith(suffix)]
 
+    # Sort OLDEST-first by last activity. `scan_all_transcripts` orders
+    # sessions alphabetically by project-dir name then session-file name
+    # (session files are named by UUID, unrelated to time) — without this
+    # sort, `--limit` below would silently keep an arbitrary alphabetical
+    # subset instead of the newest N. Handbacks are collected below in
+    # THIS session order, and each session's own handbacks are already in
+    # that transcript's natural (oldest-to-newest) order, so the single
+    # newest handback overall ends up LAST in the combined list — which is
+    # what makes `handbacks[-limit:]` below genuinely "the newest N",
+    # matching its comment and the --limit help text.
+    recent.sort(key=lambda s: s.get("last_ts") or "")
+
     handbacks = []
     for s in recent:
         handbacks.extend(collect_handbacks(read_transcript(Path(s["path"]))))
 
-    # Apply --limit by keeping the LAST N collected (newest).
+    # TRUE total before --limit truncates it. A capped run must still be
+    # able to report how much history existed, not just how much it graded
+    # — the same "quotable without its caveat" failure the chunk-skip
+    # WARNING below exists to prevent.
+    handbacks_found = len(handbacks)
+    limit_applied = limit is not None and limit < handbacks_found
+
+    # Keep the LAST N collected — see the sort comment above for why that
+    # is genuinely "newest N", not an alphabetical accident.
     if limit is not None:
         handbacks = handbacks[-limit:]
 
@@ -302,9 +322,11 @@ def sessions_stall_backtest(hours, as_json, project, model, limit, batch_size, s
     cases = stall_backtest.grade(handbacks, model=model, batch_size=batch_size, stats=stats)
     result = score(cases)
     result["sessions_scanned"] = len(recent)
-    result["handbacks_found"] = len(handbacks)
+    result["handbacks_found"] = handbacks_found
     result["graded"] = len(cases)
     result["hours"] = hours
+    result["limit"] = limit
+    result["limit_applied"] = limit_applied
     result["chunks"] = stats.get("chunks", 0)
     result["chunks_failed"] = stats.get("chunks_failed", 0)
     result["handbacks_skipped"] = stats.get("handbacks_skipped", 0)
@@ -312,6 +334,17 @@ def sessions_stall_backtest(hours, as_json, project, model, limit, batch_size, s
     if as_json:
         click.echo(json_mod.dumps(result, indent=2, default=str))
         return
+
+    # A capped run must say so where the numbers are read, not just in a
+    # --json-output field a reader might not look at — mirroring the
+    # chunk-skip WARNING's prominence below.
+    if result["limit_applied"]:
+        excluded = result["handbacks_found"] - limit
+        click.echo(
+            f"NOTE: --limit {limit} kept the newest {limit} of "
+            f"{result['handbacks_found']} handbacks found this window — "
+            f"{excluded} older handbacks excluded from this measurement.\n"
+        )
 
     # A run that silently dropped data is exactly the dishonesty this
     # harness exists to prevent — this warning must be impossible to miss,

@@ -175,3 +175,117 @@ def test_backtest_with_no_handbacks_exits_clean(tmp_path, monkeypatch):
     res = CliRunner().invoke(main, ["sessions", "stall-backtest", "--json-output"])
     assert res.exit_code == 0, res.output
     assert json.loads(res.output)["overall"]["n"] == 0
+
+
+def test_backtest_limit_keeps_the_time_newest_handback_not_alphabetical(tmp_path, monkeypatch):
+    # Finding 1 regression guard: scan_all_transcripts orders sessions
+    # alphabetically by project-dir then session-file name (session files
+    # are named by UUID, unrelated to time). Filenames here are chosen so
+    # alphabetical order is the OPPOSITE of time order -- --limit must keep
+    # the time-newest handback, not whichever the alphabetical scan visited
+    # last.
+    projects = tmp_path / ".claude" / "projects" / "-tmp-proj"
+    projects.mkdir(parents=True)
+
+    older_ts = (_NOW - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    newer_ts = (_NOW - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _handback_rows(session_id, tail_text, ts):
+        return [
+            {"type": "assistant", "sessionId": session_id, "cwd": "/tmp/proj",
+             "timestamp": ts,
+             "message": {"stop_reason": "end_turn",
+                         "content": [{"type": "text", "text": tail_text}]}},
+            {"type": "user", "sessionId": session_id, "cwd": "/tmp/proj",
+             "timestamp": ts, "message": {"content": "keep going"}},
+        ]
+
+    # "sess-aaa" sorts FIRST alphabetically but is the time-NEWEST.
+    (projects / "sess-aaa.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in _handback_rows("sess-aaa", "AAA_TAIL", newer_ts)) + "\n")
+    # "sess-zzz" sorts LAST alphabetically but is the time-OLDEST.
+    (projects / "sess-zzz.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in _handback_rows("sess-zzz", "ZZZ_TAIL", older_ts)) + "\n")
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    captured = {}
+
+    def spy_grade(hbs, **kw):
+        captured["hbs"] = hbs
+        return [BacktestCase(AWAITING_CONTINUE, True, True, h.tail, h.reply) for h in hbs]
+
+    monkeypatch.setattr("orchestrator.stall_backtest.grade", spy_grade)
+
+    res = CliRunner().invoke(main, ["sessions", "stall-backtest", "--limit", "1", "--json-output"])
+    assert res.exit_code == 0, res.output
+
+    assert len(captured["hbs"]) == 1
+    assert captured["hbs"][0].tail == "AAA_TAIL"  # time-newest, despite sorting last alphabetically
+
+    out = json.loads(res.output)
+    assert out["handbacks_found"] == 2   # TRUE pre-limit total (Finding 2)
+    assert out["limit_applied"] is True
+    assert out["limit"] == 1
+    assert out["graded"] == 1
+
+
+def test_backtest_limit_prints_a_loud_note_when_it_truncates(tmp_path, monkeypatch):
+    # Finding 2 regression guard: a capped run must say, in the
+    # human-readable output itself (not just --json-output), how much
+    # history existed before the cap -- mirroring the chunk-skip WARNING.
+    projects = tmp_path / ".claude" / "projects" / "-tmp-proj"
+    projects.mkdir(parents=True)
+    rows = [
+        {"type": "assistant", "sessionId": "s1", "cwd": "/tmp/proj",
+         "timestamp": "2026-07-30T10:00:00Z",
+         "message": {"stop_reason": "end_turn",
+                     "content": [{"type": "text", "text": "Done. Next I'll re-render."}]}},
+        {"type": "user", "sessionId": "s1", "cwd": "/tmp/proj",
+         "timestamp": "2026-07-30T10:01:00Z", "message": {"content": "keep going"}},
+        {"type": "assistant", "sessionId": "s1", "cwd": "/tmp/proj",
+         "timestamp": "2026-07-30T10:02:00Z",
+         "message": {"stop_reason": "end_turn",
+                     "content": [{"type": "text", "text": "Second thing done."}]}},
+        {"type": "user", "sessionId": "s1", "cwd": "/tmp/proj",
+         "timestamp": "2026-07-30T10:03:00Z", "message": {"content": "yes go ahead"}},
+    ]
+    (projects / "s1.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(
+        "orchestrator.stall_backtest.grade",
+        lambda hbs, **kw: [BacktestCase(AWAITING_CONTINUE, True, True, h.tail, h.reply)
+                            for h in hbs])
+
+    res = CliRunner().invoke(main, ["sessions", "stall-backtest", "--limit", "1"])
+    assert res.exit_code == 0, res.output
+    assert "NOTE: --limit 1 kept the newest 1 of 2 handbacks found" in res.output
+
+
+def test_backtest_no_limit_note_when_limit_not_truncating(tmp_path, monkeypatch):
+    projects = tmp_path / ".claude" / "projects" / "-tmp-proj"
+    projects.mkdir(parents=True)
+    rows = [
+        {"type": "assistant", "sessionId": "s1", "cwd": "/tmp/proj",
+         "timestamp": "2026-07-30T10:00:00Z",
+         "message": {"stop_reason": "end_turn",
+                     "content": [{"type": "text", "text": "Done. Next I'll re-render."}]}},
+        {"type": "user", "sessionId": "s1", "cwd": "/tmp/proj",
+         "timestamp": "2026-07-30T10:01:00Z", "message": {"content": "keep going"}},
+    ]
+    (projects / "s1.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(
+        "orchestrator.stall_backtest.grade",
+        lambda hbs, **kw: [BacktestCase(AWAITING_CONTINUE, True, True, h.tail, h.reply)
+                            for h in hbs])
+
+    # --limit 5 with only 1 handback available never truncates.
+    res = CliRunner().invoke(main, ["sessions", "stall-backtest", "--limit", "5"])
+    assert res.exit_code == 0, res.output
+    assert "NOTE:" not in res.output
+
+    out_res = CliRunner().invoke(main, ["sessions", "stall-backtest", "--limit", "5", "--json-output"])
+    out = json.loads(out_res.output)
+    assert out["limit_applied"] is False
+    assert out["limit"] == 5

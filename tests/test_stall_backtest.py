@@ -85,6 +85,12 @@ def test_skill_and_command_payloads_are_not_human_replies():
         "Read the ddd-upload SKILL.md and follow it:\n\n"
         "```bash\npython3 -c \"import ...\n```"
     )
+    # Full verbatim body (not the truncated preview quoted in the original
+    # bug report) -- needed so this fixture genuinely exercises the
+    # early-fence signal's `_EARLY_FENCE_MIN_LEN` floor the way the real
+    # corpus record does (315 chars of the truncated preview alone would
+    # UNDER-shoot that floor and no longer be structurally distinguishable
+    # from a short human reply, which is the whole point of the floor).
     labs_login_body = (
         "Run the labs walkthrough login script:\n\n"
         "```bash\n"
@@ -92,17 +98,56 @@ def test_skill_and_command_payloads_are_not_human_replies():
         "/bin/ace-labs-walkthrough-login\n"
         "```\n\n"
         "This reuses `mcp/connect/auth/hq-oauth-login.ts` (the same headless Connect OAuth "
-        "driver `ace-connect` uses) and adds a labs-side click-through."
+        "driver `ace-connect` uses) and adds a labs-side click-through "
+        "(`mcp/connect-labs/auth/labs-oauth-login.ts`). No labs-side auth bypass is needed "
+        "— labs has no `/auth/e2e-login/` shared-secret endpoint (only the ace-web mount does).\n\n"
+        "After login, cookies are imported into the gstack `browse` profile so "
+        "`/canopy:walkthrough` runs against `https://labs.connect.dimagi.com/...` URLs "
+        "are authenticated.\n\n"
+        "Re-run when:\n"
+        "- `~/.ace/labs-session.json` is missing\n"
+        "- A walkthrough run hits a redirect to `/labs/login/` mid-scene (session expired)\n"
+        "- You changed the `ACE_HQ_USERNAME`/`PASSWORD` in `.env` and need to "
+        "re-authenticate as a different user\n\n"
+        "Auth surface:\n"
+        "- **Connect-Labs (this script):** `~/.ace/labs-session.json`, cookies for "
+        "`labs.connect.dimagi.com`\n"
+        "- **Connect (existing):** `~/.ace/connect-session.json`, cookies for "
+        "`connect.dimagi.com` + `www.commcarehq.org`\n"
+        "- **OCS (existing):** `~/.ace/ocs-session-<team>.json`\n\n"
+        "Both Connect and Labs OAuth flows share the same `hqOAuthLogin` infra, so a "
+        "fresh login establishes both sessions in one bounce."
     )
     # labs_login_body has NO markdown heading anywhere -- it's the case the
     # original three-signal fix (heading+fence / ARGUMENTS: / "# /") does
     # not catch; it needs the early-fence signal.
     assert "#" not in labs_login_body
+    assert len(labs_login_body) >= 400  # exercises the length floor, not just position
     assert human_text(_user(ddd_upload_body)) is None
     assert human_text(_user(labs_login_body)) is None
     # A real human pasting a short command is NOT caught -- the fence has
-    # to appear within the early window to look like a stripped skill body.
+    # to appear within the early window AND the whole reply has to be long
+    # enough to look like a stripped skill body, not a short human reply.
     assert human_text(_user("looks fine, ship it")) == "looks fine, ship it"
+
+
+def test_a_short_human_reply_with_an_early_code_fence_survives():
+    # Finding 3 hardening: a short, plausible human reply that happens to
+    # open with a pasted snippet must NOT be caught by the early-fence
+    # signal -- only skill/command bodies, which run long, should be.
+    reply = "try this instead:\n\n```\npytest -k stall_backtest -x\n```\nstill failing though"
+    assert reply.find("```") <= 300
+    assert len(reply) < 400
+    assert human_text(_user(reply)) == reply
+
+
+def test_a_leading_hash_without_a_space_is_not_a_heading():
+    # Finding 3 hardening: the original heading check was `startswith("#")`,
+    # which also matched things a human could plausibly type, like a
+    # hashtag or an issue-number shorthand. Real markdown headings require
+    # whitespace after the `#`.
+    reply = "#urgent this needs a decision today, not a `next I'll` nudge"
+    assert human_text(_user(reply)) == reply
 
 
 def test_tool_results_are_not_human_replies():
