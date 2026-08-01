@@ -187,7 +187,14 @@ def test_turn_mode_reads_the_agent_detail():
     assert calls[0][:2] == ("GET", "https://x.test/api/agents/echo/")
 
 
-def test_turn_mode_defaults_gated_when_server_omits_the_field():
-    # An older canopy-web without the column must read as gated, not KeyError.
+def test_turn_mode_defaults_manual_when_server_omits_the_field():
+    # An older canopy-web without the column must read as manual, not KeyError.
     c, _ = _recorder_client([(200, '{"slug": "echo"}')])
-    assert c.turn_mode() == "gated"
+    assert c.turn_mode() == "manual"
+
+
+def test_turn_mode_normalizes_the_pre_rename_gated_value():
+    """A canopy updated ahead of its canopy-web still gets a mode it knows.
+    Only the SAFE mode has an alias — nothing resolves to "auto" implicitly."""
+    c, _ = _recorder_client([(200, '{"slug": "echo", "turn_mode": "gated"}')])
+    assert c.turn_mode() == "manual"
