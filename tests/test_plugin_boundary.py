@@ -31,7 +31,6 @@ FRAMEWORK = {
     "eval_cli", "eval_rubric", "turn_synthesis", "session_upload", "fleet_align",
     "session_sources", "work_cursor", "agent_dispatch",
     "project_dispatch", "project_cli", "runner_cli",
-    "session_stall", "stall_judge", "stall_backtest",
 }
 # Orchestration hubs / composition roots — wire product features into the CLI, the
 # improvement pipeline, and the web server. Allowed to import product (like
