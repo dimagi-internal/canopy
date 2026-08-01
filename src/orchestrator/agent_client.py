@@ -73,12 +73,18 @@ class AgentClient:
         return self._call("GET", f"/api/agents/{self.slug}/")
 
     def turn_mode(self) -> str:
-        """The agent's runtime autonomy posture (gated | auto) — board-side
+        """The agent's runtime autonomy posture (manual | auto) — board-side
         STATE on canopy-web, flipped by a human from /agents/<slug>, never by
         the agent or its repo. Raises on transport failure; the turn procedure
-        treats a failed read as gated (fail safe), and that fallback belongs to
-        the caller so it stays a visible decision, not a swallowed error."""
-        return str(self.get_agent().get("turn_mode") or "gated")
+        treats a failed read as manual (fail safe), and that fallback belongs to
+        the caller so it stays a visible decision, not a swallowed error.
+
+        `gated` was this mode's name before 2026-08-01 and is normalized here, so
+        a canopy that has updated ahead of its canopy-web still reads a mode it
+        understands instead of an unknown string. Only the safe mode has an
+        alias — nothing silently resolves TO `auto`."""
+        mode = str(self.get_agent().get("turn_mode") or "manual")
+        return "manual" if mode == "gated" else mode
 
     def post_sync(self, *, period_start, period_end, title, doc_url,
                   summary="", self_grades=None, source="manager-sync") -> dict:

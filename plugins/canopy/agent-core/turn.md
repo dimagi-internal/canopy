@@ -8,26 +8,26 @@
 
 **Re-read this doc at the start of every turn and follow it in order.** Running a turn from
 memory is how steps get dropped under load. All guardrails apply: **reads are free; outbound
-actions follow the agent's turn mode** (see "Turn mode" below — gated agents wait for explicit
+actions follow the agent's turn mode** (see "Turn mode" below — manual agents wait for explicit
 human approval; auto agents self-review and send). Approval is PROCEDURAL — the gating hook
 carries deny rails only (it blocks wrong paths, it does not ask for you), so drafting-then-asking
 in Step 2 is the gate. There is no modal to catch you if you skip it.
 
-## Turn mode — gated (default) vs auto
+## Turn mode — manual (default) vs auto
 Turn mode is **board-side STATE on canopy-web, not repo config**: read it at preflight with
 `canopy agent mode --slug <slug>` and **state it in your turn opening** ("running in auto mode").
 The human flips it from the agent's overview page (`/agents/<slug>` → Turn mode) or
 `PATCH /api/agents/<slug>/turn-mode` — never by editing a repo file, and never the agent itself
 mid-turn (the API enforces this: the agent-repo self-publish upsert cannot touch the field).
-**If the read fails** (canopy-web unreachable, no PAT), run **gated** — fail safe — and name the
+**If the read fails** (canopy-web unreachable, no PAT), run **manual** — fail safe — and name the
 fallback in your opening and closeout.
 
-- **`gated`** (the default, and the factory default for new agents): every outbound action —
+- **`manual`** (the default, and the factory default for new agents): every outbound action —
   send, reply, public write, share — is drafted and **presented to the human for approval**
   before it happens. This is the mode the rest of this doc assumes wherever it says "present for
   approval."
 - **`auto`** (the OpenClaw pattern — built for unattended stretches, e.g. the human on PTO):
-  the turn **never blocks on a human**. Where a gated turn would present-and-wait, an auto turn
+  the turn **never blocks on a human**. Where a manual turn would present-and-wait, an auto turn
   runs the full pre-send discipline and then acts:
   1. **The rails do not move.** Deny rails (`config/gating.json` + the fleet baseline) apply
      unchanged; sender triage applies unchanged (unknown/non-allowlisted sender → still
@@ -37,7 +37,7 @@ fallback in your opening and closeout.
      `canopy email send` still refuses a body with no receipt for that exact body.
   3. **Always respond on the triggering channel.** The turn ends with a reply sent on the
      thread/channel that triggered it — never silently, never "drafted and parked."
-  4. **Escalations are non-blocking.** Anything a gated turn would park as "⏸ waiting on you"
+  4. **Escalations are non-blocking.** Anything a manual turn would park as "⏸ waiting on you"
      gets *recorded* instead — a board task, or a flagged line in the closeout — and the turn
      completes. If a deny rail or missing auth genuinely blocks an action, say exactly what was
      blocked in the reply and the closeout; don't half-do it another way.
@@ -85,7 +85,7 @@ as actionable when the newest message is from someone else.
 
 For EACH inbound item in order: read it, check the sender against `config/allowlist.txt`
 (unknown sender → read-only, surface to the human), load only that counterpart's memory scope,
-decide ONE action (Reply / File / Remember / Escalate), and present it for approval (gated mode)
+decide ONE action (Reply / File / Remember / Escalate), and present it for approval (manual mode)
 or self-review-and-act (auto mode — see "Turn mode").
 **Never reason about two counterparts in one step** — the cardinal rule.
 

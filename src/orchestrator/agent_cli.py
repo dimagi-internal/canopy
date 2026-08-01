@@ -468,11 +468,11 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
 @agent.command("mode")
 @click.option("--slug", required=True)
 def agent_mode(slug):
-    """Print the agent's turn mode — {"slug": ..., "turn_mode": "gated"|"auto"}.
+    """Print the agent's turn mode — {"slug": ..., "turn_mode": "manual"|"auto"}.
 
     Board-side state (flipped from /agents/<slug> on canopy-web, or PATCH
     /api/agents/<slug>/turn-mode — never a repo file). The turn procedure reads
-    this at preflight; if the call fails, the turn runs GATED (fail safe) and
+    this at preflight; if the call fails, the turn runs MANUAL (fail safe) and
     says so.
     """
     try:
