@@ -170,6 +170,17 @@ reply threading; a deny rail blocks raw `gog gmail send`). Every send returns JS
 `thread_id` — **record it in your state layer** so inbound triage can route the
 reply to the right scope. Auth flaky? `canopy email preflight --repo .` prints the exact fix.
 
+**Forwarding? Carry the attachments — `--attach-from-thread <source-thread-id>`.** A forward
+whose source had attachments and whose send had none *looks* successful: the send returns 200
+and the recipient gets strictly less than what you forwarded. Nothing errors, so the loss is
+yours to notice. `--attach-from-thread` re-attaches every file on a thread (de-duplicated) in
+one call; `--attach <path>` (repeatable) handles a file you produced yourself. Both show up in
+`--dry-run` alongside To/Cc — **check that list before you ask for approval**, the same way you
+check recipients. A substantial artifact you authored still belongs in a shared gdoc, linked;
+`--attach` is for documents that must ride ON the message. (Origin: 2026-08-01, an ACE turn
+forwarded a billing receipt and the two PDFs survived only because Stripe happened to put
+download links in the body — an attachment-only receipt would have lost them silently.)
+
 **Don't email a reply whose ONLY recipient is the human already in the session — answer in chat.**
 When the drafted reply's recipient set is exactly *the person steering this turn*, the email is a
 round trip to someone who is standing right there: they have to approve the send, and the approval
