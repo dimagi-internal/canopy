@@ -41,6 +41,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -345,6 +346,7 @@ def build_send_command(
     html_body: str,
     cc: str | None = None,
     reply_to_message_id: str | None = None,
+    attachments: Sequence[str] = (),
 ) -> list[str]:
     cmd = ["gog", "gmail", "send", "--account", identity.account, "--client", identity.client,
            "--to", to, "--subject", subject,
@@ -353,6 +355,11 @@ def build_send_command(
         cmd += ["--cc", cc]
     if reply_to_message_id:
         cmd += ["--reply-to-message-id", reply_to_message_id]
+    # gog has carried `--attach` (repeatable file path) all along; the engine simply never
+    # passed it, so "forward that to <person>" silently degraded to a body-text summary and
+    # whatever links happened to be in the original (canopy#462).
+    for path in attachments:
+        cmd += ["--attach", path]
     return cmd
 
 
@@ -383,6 +390,7 @@ def send(
     body_text: str,
     cc: str | None = None,
     reply_to_message_id: str | None = None,
+    attachments: Sequence[str] = (),
     dry_run: bool = False,
     runner=subprocess.run,
 ) -> dict:
@@ -393,13 +401,25 @@ def send(
     """
     plain = normalize(body_text)
     html_body = to_html(plain)
+    attachments = [str(p) for p in attachments]
+    # Fail before the review rail, not after gog: a missing file is the agent's mistake and
+    # the error should name it, rather than surfacing as an opaque gog exit code.
+    missing = [p for p in attachments if not os.path.isfile(p)]
+    if missing:
+        raise AgentEmailError(
+            "cannot attach — file(s) not found: " + ", ".join(missing)
+        )
     if dry_run:
         # cc must appear here even when empty — the dry-run is HOW an agent verifies
         # recipients before approval, and omitting it hides cc'd people (same failure
-        # class as the raw text mail view dropping the Cc: line).
+        # class as the raw text mail view dropping the Cc: line). `attachments` is here
+        # for exactly the same reason: a forward that silently lost its PDFs is the
+        # failure canopy#462 recorded, and the dry-run is where an agent must be able
+        # to SEE what will actually ride along.
         return {"dry_run": True, "message_id": "", "thread_id": "",
                 "account": identity.account, "client": identity.client,
                 "to": to, "cc": cc or "", "subject": subject,
+                "attachments": attachments,
                 "plain": plain, "html": html_body}
     # Pre-send review rail (review_receipt.py explains why it lives here and not in each
     # agent's PreToolUse hook). Keyed to THIS body: a review of an earlier revision does
@@ -413,6 +433,7 @@ def send(
         cmd = build_send_command(
             identity, to=to, subject=subject, plain_path=plain_path,
             html_body=html_body, cc=cc, reply_to_message_id=reply_to_message_id,
+            attachments=attachments,
         )
         try:
             r = runner(cmd, capture_output=True, text=True, timeout=SEND_TIMEOUT)
@@ -928,6 +949,43 @@ def fetch_attachment(
     }
 
 
+def collect_thread_attachments(
+    identity: EmailIdentity,
+    thread_id: str,
+    *,
+    out_dir: str | None = None,
+    runner=subprocess.run,
+) -> list[dict]:
+    """Download EVERY attachment on a thread → [{filename, path, message_id, ...}].
+
+    This is the forward path. Re-attaching an inbound document used to mean a manual
+    `email read` → eyeball the attachment ids → N× `fetch-attachment` → N× `--attach`
+    round trip, and the recorded outcome (canopy#462) is that agents skipped it and
+    degraded the forward into a body-text summary instead. One call, so the cheap thing
+    and the correct thing are the same thing.
+
+    De-duplicates by (filename, size): a thread whose attachment was quoted forward and
+    back carries the same file on several messages, and a forward should not ship it
+    three times.
+    """
+    thread = read_thread(identity, thread_id, runner=runner)
+    seen: set[tuple[str, object]] = set()
+    out: list[dict] = []
+    for msg in thread.get("messages", []):
+        for att in msg.get("attachments", []):
+            key = (att.get("filename", ""), att.get("size"))
+            if key in seen:
+                continue
+            seen.add(key)
+            got = fetch_attachment(
+                identity, msg["message_id"], att["attachment_id"],
+                out_dir=out_dir, runner=runner,
+            )
+            out.append({**got, "filename": att.get("filename", ""),
+                        "mime_type": att.get("mime_type", "")})
+    return out
+
+
 def preflight(
     identity: EmailIdentity,
     *,
@@ -1059,9 +1117,19 @@ def email_group():
                    "this flag, a reply (--reply-to-message-id) whose To/Cc drops known "
                    "thread participants is refused — reply-all is the default on "
                    "existing threads.")
+@click.option("--attach", "attach", multiple=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Attach a file. Repeatable. Use for a deliverable that must ride ON the "
+                   "message; a substantial artifact still belongs in a shared gdoc.")
+@click.option("--attach-from-thread", "attach_from_thread",
+              help="Re-attach EVERY attachment on this thread (de-duplicated) — the "
+                   "forward path. Without it a forward silently degrades to a body-text "
+                   "summary plus whatever links were in the original (canopy#462). "
+                   "Combines with --attach.")
 @click.option("--dry-run", is_flag=True, help="Render plain + HTML bodies without sending.")
 def email_send(repo, agent, account, client, to, cc, subject, body_file,
-               reply_to_message_id, thread_id, reply_all, narrow, dry_run):
+               reply_to_message_id, thread_id, reply_all, narrow,
+               attach, attach_from_thread, dry_run):
     """Send an HTML multipart email as the agent (the fleet's ONLY send path).
 
     Emits JSON with message_id + thread_id — record thread_id into the agent's state
@@ -1099,9 +1167,16 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
             reply_to_message_id = reply_to_message_id or derived_msg_id
             if thread_id:
                 reply_to_message_id = derived_msg_id
+        attachments = list(attach)
+        if attach_from_thread:
+            attachments += [
+                a["saved_to"] or a["path"]
+                for a in collect_thread_attachments(ident, attach_from_thread)
+            ]
         result = send(
             ident, to=to, subject=subject, body_text=Path(body_file).read_text(),
-            cc=cc, reply_to_message_id=reply_to_message_id, dry_run=dry_run,
+            cc=cc, reply_to_message_id=reply_to_message_id,
+            attachments=attachments, dry_run=dry_run,
         )
     except AgentEmailError as e:
         raise click.ClickException(str(e))

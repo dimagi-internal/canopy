@@ -13,6 +13,7 @@ from orchestrator.agent_email import (
     EmailIdentity,
     archive,
     build_send_command,
+    collect_thread_attachments,
     derive_reply_all,
     fetch_attachment,
     mark_read,
@@ -248,6 +249,116 @@ def test_send_dry_run_shows_cc():
     result = send(IDENT, to="a@x.com", cc="boss@x.com", subject="s",
                   body_text="hi\n", dry_run=True)
     assert result["cc"] == "boss@x.com"
+
+
+# --------------------------------------------------------------------------------------
+# attachments (canopy#462 — forwards used to silently degrade to links)
+# --------------------------------------------------------------------------------------
+
+def test_build_send_command_repeats_attach_per_file():
+    cmd = build_send_command(
+        IDENT, to="a@x.com", subject="s", plain_path="/tmp/p.txt", html_body="<html/>",
+        attachments=["/tmp/one.pdf", "/tmp/two.pdf"],
+    )
+    assert [cmd[i + 1] for i, tok in enumerate(cmd) if tok == "--attach"] == [
+        "/tmp/one.pdf", "/tmp/two.pdf"]
+
+
+def test_build_send_command_omits_attach_when_none():
+    cmd = build_send_command(
+        IDENT, to="a@x.com", subject="s", plain_path="/tmp/p.txt", html_body="<html/>",
+    )
+    assert "--attach" not in cmd
+
+
+def test_send_rejects_missing_attachment_before_invoking_gog(tmp_path):
+    def boom(*a, **k):
+        raise AssertionError("runner must not be called when an attachment is missing")
+
+    with pytest.raises(AgentEmailError, match="nope.pdf"):
+        send(IDENT, to="a@x.com", subject="s", body_text="x\n",
+             attachments=[str(tmp_path / "nope.pdf")], runner=boom)
+
+
+def test_send_dry_run_shows_attachments(tmp_path):
+    """The dry-run is where an agent verifies what will actually ride along — the same
+    reason cc is always present. A forward that lost its PDFs is exactly canopy#462."""
+    f = tmp_path / "invoice.pdf"
+    f.write_bytes(b"%PDF-")
+    result = send(IDENT, to="a@x.com", subject="s", body_text="hi\n",
+                  attachments=[str(f)], dry_run=True)
+    assert result["attachments"] == [str(f)]
+
+
+def test_send_dry_run_attachments_key_present_when_empty():
+    result = send(IDENT, to="a@x.com", subject="s", body_text="hi\n", dry_run=True)
+    assert result["attachments"] == []
+
+
+def test_send_passes_attachments_through_to_gog(reviewed, tmp_path):
+    f = tmp_path / "receipt.pdf"
+    f.write_bytes(b"%PDF-")
+    seen = {}
+
+    def fake_runner(cmd, capture_output, text, timeout):
+        seen["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout='{"id": "m1", "threadId": "t1"}', stderr="")
+
+    reviewed("x\n")
+    send(IDENT, to="a@x.com", subject="s", body_text="x\n",
+         attachments=[str(f)], runner=fake_runner)
+    assert seen["cmd"][seen["cmd"].index("--attach") + 1] == str(f)
+
+
+def _thread_runner(attachments_per_message, downloads):
+    """Fake gog: `gmail read` returns a thread, `gmail attachment` returns a cached path."""
+    def run(cmd, capture_output, text, timeout):
+        if cmd[1:3] == ["gmail", "read"]:
+            return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(
+                {"thread": {"messages": [
+                    {"id": mid, "payload": {"headers": [], "parts": [
+                        {"filename": a["filename"],
+                         "mimeType": a.get("mime_type", "application/pdf"),
+                         "body": {"attachmentId": a["attachment_id"], "size": a["size"]}}
+                        for a in atts]}}
+                    for mid, atts in attachments_per_message
+                ]}}))
+        if cmd[1:3] == ["gmail", "attachment"]:
+            att_id = cmd[4]
+            downloads.append(att_id)
+            return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(
+                {"path": f"/cache/{att_id}.pdf", "bytes": 10, "cached": True}))
+        raise AssertionError(f"unexpected gog call: {cmd[:3]}")
+    return run
+
+
+def test_collect_thread_attachments_downloads_every_file():
+    downloads = []
+    runner = _thread_runner([
+        ("m1", [{"filename": "Invoice.pdf", "attachment_id": "a1", "size": 10}]),
+        ("m2", [{"filename": "Receipt.pdf", "attachment_id": "a2", "size": 20}]),
+    ], downloads)
+    got = collect_thread_attachments(IDENT, "t1", runner=runner)
+    assert [a["filename"] for a in got] == ["Invoice.pdf", "Receipt.pdf"]
+    assert [a["path"] for a in got] == ["/cache/a1.pdf", "/cache/a2.pdf"]
+    assert downloads == ["a1", "a2"]
+
+
+def test_collect_thread_attachments_dedupes_quoted_forwards():
+    """The same file quoted forward and back must not ship three times."""
+    downloads = []
+    runner = _thread_runner([
+        ("m1", [{"filename": "Invoice.pdf", "attachment_id": "a1", "size": 10}]),
+        ("m2", [{"filename": "Invoice.pdf", "attachment_id": "a9", "size": 10}]),
+    ], downloads)
+    got = collect_thread_attachments(IDENT, "t1", runner=runner)
+    assert [a["filename"] for a in got] == ["Invoice.pdf"]
+    assert downloads == ["a1"]
+
+
+def test_collect_thread_attachments_empty_thread_is_empty_list():
+    runner = _thread_runner([("m1", [])], [])
+    assert collect_thread_attachments(IDENT, "t1", runner=runner) == []
 
 
 @pytest.fixture
