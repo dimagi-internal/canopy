@@ -180,6 +180,31 @@ def test_agent_set_numeric_id_still_works_without_listing(fake_http):
     assert not [c for c in calls if c[0] == "GET"]
 
 
+# --- `agent set --title` so a card whose HEADLINE is wrong can be corrected ---
+# The API accepted `title` on the task PATCH all along; the CLI just never passed it, so a
+# task whose title asserted something false could only be corrected in fields nobody reads
+# at a glance. (2026-08-07: hal's board carried "every repo's CI is dark since Aug 3" as a
+# headline after that diagnosis was disproven.)
+
+def test_agent_set_can_correct_a_wrong_title(fake_http):
+    calls, _ = fake_http
+    r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
+                                  "--task-id", "86", "--title", "what was actually true"])
+    assert r.exit_code == 0, r.output
+    patch = [c for c in calls if c[0] == "PATCH"]
+    assert patch[0][1] == "https://x.test/api/agents/hal/tasks/86/"
+    assert patch[0][2] == {"title": "what was actually true"}
+
+
+def test_agent_set_title_is_omitted_when_not_passed(fake_http):
+    """The patch stays sparse — an unset --title must not blank the card's headline."""
+    calls, _ = fake_http
+    r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
+                                  "--task-id", "71", "--plan", "p"])
+    assert r.exit_code == 0, r.output
+    assert "title" not in [c for c in calls if c[0] == "PATCH"][0][2]
+
+
 def test_agent_set_unknown_ext_id_names_the_fix(fake_http):
     calls, responses = fake_http
     responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([{"id": 71, "ext_id": "T7"}]))
