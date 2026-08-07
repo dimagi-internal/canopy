@@ -359,6 +359,10 @@ def resolve_task_id(client, task_id):
 @click.option("--slug", required=True)
 @click.option("--task-id", required=True, metavar="ID_OR_EXT_ID",
               help="The board's T<N> ext_id (as shown on the card) or the numeric id.")
+@click.option("--title", default=None,
+              help="Rewrite the card's headline. Use when the title states something that turned "
+                   "out to be WRONG — a corrected note under a false headline still reads as false "
+                   "at a glance, because the title is all the board shows.")
 @click.option("--rationale", default=None)
 @click.option("--source-url", default=None)
 @click.option("--plan", default=None)
