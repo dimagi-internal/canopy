@@ -37,6 +37,7 @@ import os
 import re
 import subprocess
 import sys
+from copy import copy
 from pathlib import Path
 
 from orchestrator.doctor import CheckResult
@@ -44,8 +45,10 @@ from orchestrator.agent_email import (
     GOG_CONFIG_DIR,
     AgentEmailError,
     EmailIdentity,
+    clients_for_account,
     granted_services,
     preflight,
+    reconcile_client,
     resolve_email_identity,
 )
 from orchestrator.agent_client import AgentClient, CanopyError
@@ -405,15 +408,95 @@ def check_email_auth(
     gog_dir: str | None = None,
     runner=subprocess.run,
 ) -> CheckResult:
-    """Live gog Gmail auth for the agent's own client (wraps email preflight)."""
+    """Live gog Gmail auth for the agent's mailbox (wraps email preflight).
+
+    Probes the EFFECTIVE identity — the client runtime will actually use, after
+    `reconcile_client` lets it follow the token this box holds for the mailbox. This check
+    answers "can the agent read its mail right now?", and on a box the client migration never
+    reached the honest answer is yes. Probing the declared pin instead would report a hard
+    auth failure for an agent that works, and turn one root cause into three red checks —
+    exactly the crying-wolf this module was rebuilt to stop. The config drift is real and
+    still reported, once, by `check_auth_client`.
+    """
     name = "Email auth (gog)"
     if identity is None:
         return CheckResult(name, False, "skipped — identity unresolved")
-    ok, lines = preflight(identity, gog_dir=gog_dir or GOG_CONFIG_DIR, runner=runner)
+    # copy, not dataclasses.replace: callers (and tests) legitimately pass any object
+    # exposing slug/account/client, and this check must not become the one that demands a
+    # concrete type.
+    effective = copy(identity)
+    rec = reconcile_client(effective, runner=runner, apply=True)
+    ok, lines = preflight(effective, gog_dir=gog_dir or GOG_CONFIG_DIR, runner=runner)
+    if ok and rec.changed:
+        return CheckResult(
+            name, True,
+            f"gog Gmail ready for {identity.account} via the `{rec.client}` client, which "
+            f"this machine actually holds a token for (the repo pins `{rec.declared}` — see "
+            f"Auth client)")
     # Keep the WHOLE remediation — preflight's multi-line FIX blocks carry the exact
     # command / console URL; truncating to the first line hides the actual fix.
     detail = " ".join(l.strip() for l in lines) if lines else ("ready" if ok else "failed")
     return CheckResult(name, ok, detail.removeprefix("OK: ").removeprefix("FIX: "))
+
+
+def check_auth_client(
+    identity: EmailIdentity | None,
+    *,
+    runner=subprocess.run,
+) -> CheckResult:
+    """The mailbox's gog token is stored under the OAuth client this repo actually pins.
+
+    `gog` keys credentials on the PAIR (mailbox, client). `gog_client` is one repo-global
+    value; the token store is per-machine. So a fleet migration onto the shared `canopy`
+    client, performed box by box, leaves every un-migrated box pinned to a pair with no
+    credentials — reads and sends die on `No auth for gmail <mailbox>` while a perfectly good
+    token sits beside them under the old client name.
+
+    Nothing here saw that state before. `granted_services` looks up the pair, so a mailbox
+    authed under a DIFFERENT client returned None — indistinguishable from "gog isn't
+    installed" — and `check_auth_services` treats None as a skip. The check that should have
+    named it reported green (echo, cloud box, 2026-08-10). Hence this check, and hence
+    `clients_for_account` separating "cannot look" from "looked, nothing there".
+
+    Runtime now self-heals this (`agent_email.reconcile_client` follows the token, because
+    identity is the mailbox and the client is plumbing), so the agent keeps working — which
+    is exactly why the drift still has to be REPORTED here rather than silently absorbed.
+    """
+    name = "Auth client"
+    if identity is None:
+        return CheckResult(name, False, "skipped — identity unresolved")
+    found = clients_for_account(identity.account, runner=runner)
+    if found is None:
+        return CheckResult(name, True, "skipped — gog auth not introspectable (see Email auth)")
+    holders = [e for e in found if e["client"]]
+    if any(e["client"] == identity.client for e in holders):
+        return CheckResult(
+            name, True,
+            f"{identity.account} is authed under the configured `{identity.client}` client")
+    if not holders:
+        return CheckResult(
+            name, False,
+            f"no gog token on this machine for {identity.account} under any client — "
+            f"run: gog login {identity.account} --client {identity.client} "
+            f"--services {','.join(sorted(required_services(identity)[0]))}")
+    names = sorted(e["client"] for e in holders)
+    # Re-login onto the configured client must re-request what the stray token already had:
+    # `gog login --services` REPLACES the grant set, so migrating the client with a narrower
+    # list would quietly revoke scopes the agent uses.
+    keep = set().union(*(e["services"] for e in holders)) | required_services(identity)[0]
+    # Name BOTH directions. Which side is stale is not knowable from here — the box may have
+    # missed the migration, or this checkout may simply predate a pin that already moved (on
+    # 2026-08-11 both ace and echo flagged here for exactly the latter reason). A one-way fix
+    # would be wrong half the time, and the wrong half costs a browser re-login and a
+    # scope-replacing grant.
+    return CheckResult(
+        name, False,
+        f"{identity.account} is authed under {'`' + '`, `'.join(names) + '`'} but the repo "
+        f"pins `{identity.client}` — this box and this checkout disagree. Runtime follows the "
+        f"token, so the agent still works. Fix whichever side is stale: if the pin is right, "
+        f"migrate the box — gog login {identity.account} --client {identity.client} "
+        f"--services {','.join(sorted(keep))} — or if the box is right, point gog_client at "
+        f"`{names[0]}` in config/agent.json (pull first; the pin may already have moved)")
 
 
 def check_auth_services(
@@ -432,16 +515,32 @@ def check_auth_services(
     default: requiring that constant of everyone failed hal and ace over `appscript`, which
     neither uses, while never noticing that echo needs `slides`, which the constant omits.
 
-    `granted_services` returning None means gog couldn't be introspected (not installed,
-    account not found) — that's a SKIP (check_email_auth already owns the hard auth
-    failure), not a second red herring."""
+    Score the client that ACTUALLY holds the mailbox's token, not the one the repo pins. The
+    two diverge on any box the fleet's client migration never reached, and scoring the pinned
+    pair there yields no grant set at all — which this check used to read as "can't tell" and
+    skip, going green on a genuinely broken box (echo, cloud, 2026-08-10). The mismatch
+    itself is `check_auth_client`'s finding; here it must not stop the scopes being scored.
+
+    "Cannot introspect gog" and "this mailbox has no token anywhere" remain skips —
+    `check_email_auth` and `check_auth_client` own those, and repeating them here would just
+    be a second red herring."""
     name = "Auth services"
     if identity is None:
         return CheckResult(name, False, "skipped — identity unresolved")
     required, source = required_services(identity)
-    granted = granted_services(identity, runner=runner)
-    if granted is None:
+    found = clients_for_account(identity.account, runner=runner)
+    if found is None:
         return CheckResult(name, True, "skipped — gog auth not introspectable (see Email auth)")
+    holders = [e for e in found if e["client"]]
+    if not holders:
+        return CheckResult(name, True, "skipped — mailbox has no gog token (see Auth client)")
+    granted = next((e["services"] for e in holders if e["client"] == identity.client),
+                   None)
+    if granted is None:
+        # Pinned client holds nothing; score the token the mailbox really has. With one
+        # holder that is unambiguous; with several, the union is the charitable reading —
+        # it cannot manufacture a false MISSING scope.
+        granted = set().union(*(e["services"] for e in holders))
     missing = sorted(required - granted)
     if missing:
         # Re-login with required UNION already-granted: `gog login --services` REPLACES the
@@ -678,6 +777,7 @@ def run_agent_doctor(
         check_secrets_materialized(repo),
         check_rails_fire(repo),
         check_email_auth(identity, gog_dir=gog_dir, runner=runner),
+        check_auth_client(identity, runner=runner),
         check_auth_services(identity, runner=runner),
         check_registration(identity, client_factory=client_factory),
     ]

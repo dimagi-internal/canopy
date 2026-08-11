@@ -72,6 +72,13 @@ def _gog_home(tmp_path, *, slug="hal", account="hal@dimagi-ai.com"):
 
 
 def _ok_runner(cmd, capture_output, text, timeout):
+    # `gog auth list` must answer with a real payload: a healthy box has hal@ authed under
+    # the client its repo pins, with the core scopes. Returning empty here would read as
+    # "this mailbox has no token anywhere" and fail the Auth client check on a green box.
+    if cmd[:3] == ["gog", "auth", "list"]:
+        return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"accounts": [
+            {"email": "hal@dimagi-ai.com", "client": "hal",
+             "services": ["gmail", "drive", "docs", "sheets", "forms"]}]}))
     return SimpleNamespace(returncode=0, stdout="", stderr="")
 
 
@@ -199,7 +206,7 @@ def test_run_agent_doctor_all_green(tmp_path):
         client_factory=_client_factory(),
         registry_path=str(_plugin_registry(tmp_path)))
     assert ok
-    assert [r.ok for r in results] == [True] * 11
+    assert [r.ok for r in results] == [True] * 12
 
 
 def test_run_agent_doctor_identity_failure_degrades_dependents(tmp_path):
@@ -231,7 +238,7 @@ def test_cli_agent_doctor_json_and_exit_code(tmp_path, monkeypatch):
     names = [c["name"] for c in payload["checks"]]
     assert names == ["Identity", "Plugin install", "Required plugins", "Gating rails",
                      "Hook wiring", "Secrets manifest", "Secrets materialized",
-                     "Rails enforced", "Email auth (gog)", "Auth services",
+                     "Rails enforced", "Email auth (gog)", "Auth client", "Auth services",
                      "canopy-web board"]
 
 
@@ -722,3 +729,120 @@ def test_heal_agent_noop_when_all_green(tmp_path):
     from orchestrator.agent_doctor import heal_agent
     from orchestrator.doctor import CheckResult
     assert heal_agent(tmp_path, [CheckResult("Secrets materialized", True, "fine")]) == []
+
+
+# --------------------------------------------------------------------------------------
+# check_auth_client — the mailbox is authed, but under which OAuth client?
+#
+# The state that took echo down on 2026-08-10 and that NOTHING in the shared doctor saw:
+# the cloud box had a live echo@ token under the legacy `echo` client while the repo pinned
+# `canopy`. `granted_services` looks up (account, client) as a pair, so the mismatch read as
+# "account not found" -> None -> check_auth_services returned OK/"skipped". The one check
+# that could have named the problem went green on it.
+# --------------------------------------------------------------------------------------
+
+def _accounts_runner(accounts, *, returncode=0):
+    payload = json.dumps({"accounts": accounts})
+
+    def run(cmd, capture_output, text, timeout):
+        return SimpleNamespace(returncode=returncode, stdout=payload, stderr="")
+    return run
+
+
+def test_auth_client_passes_when_the_pin_matches_the_token():
+    from orchestrator.agent_doctor import check_auth_client
+    r = check_auth_client(_hal_identity(), runner=_accounts_runner([
+        {"email": "hal@dimagi-ai.com", "client": "hal", "services": ["gmail"]}]))
+    assert r.ok and "hal" in r.detail
+
+
+def test_auth_client_fails_when_mailbox_is_authed_under_another_client():
+    """The exact cloud-box state. This must FAIL loudly and name the re-login, not skip."""
+    from orchestrator.agent_doctor import check_auth_client
+    from orchestrator.agent_email import EmailIdentity
+    ident = EmailIdentity(slug="echo", account="echo@dimagi-ai.com", client="canopy")
+    r = check_auth_client(ident, runner=_accounts_runner([
+        {"email": "echo@dimagi-ai.com", "client": "echo",
+         "services": ["gmail", "drive"]}]))
+    assert not r.ok
+    assert "`echo`" in r.detail and "canopy" in r.detail
+    assert "gog login echo@dimagi-ai.com --client canopy" in r.detail
+
+
+def test_auth_client_relogin_fix_preserves_granted_scopes():
+    """`gog login --services` REPLACES the grant set. A re-login onto the configured client
+    must re-request what the stray token already had, or fixing the client silently revokes
+    scopes the agent uses."""
+    from orchestrator.agent_doctor import check_auth_client
+    from orchestrator.agent_email import EmailIdentity
+    ident = EmailIdentity(slug="echo", account="echo@dimagi-ai.com", client="canopy")
+    r = check_auth_client(ident, runner=_accounts_runner([
+        {"email": "echo@dimagi-ai.com", "client": "echo",
+         "services": ["gmail", "drive", "appscript"]}]))
+    cmd = r.detail.split("--services ", 1)[1]
+    for svc in ("appscript", "drive", "gmail"):
+        assert svc in cmd
+
+
+def test_auth_client_reports_no_token_at_all_distinctly():
+    from orchestrator.agent_doctor import check_auth_client
+    r = check_auth_client(_hal_identity(), runner=_accounts_runner([
+        {"email": "someone-else@dimagi-ai.com", "client": "canopy", "services": ["gmail"]}]))
+    assert not r.ok and "no gog token" in r.detail.lower()
+
+
+def test_auth_client_skips_when_gog_cannot_be_introspected():
+    from orchestrator.agent_doctor import check_auth_client
+    r = check_auth_client(_hal_identity(), runner=_accounts_runner([], returncode=1))
+    assert r.ok and "skipped" in r.detail
+
+
+def test_auth_client_skipped_without_identity():
+    from orchestrator.agent_doctor import check_auth_client
+    r = check_auth_client(None)
+    assert not r.ok and "identity" in r.detail
+
+
+def test_auth_services_scores_the_client_that_actually_holds_the_token(tmp_path):
+    """The regression that hid the cloud-box failure: with the pin pointing at a client that
+    has no token, this used to report "not introspectable" and pass. It must instead score
+    the mailbox's real grant set — here, missing `slides`."""
+    from orchestrator.agent_doctor import check_auth_services
+    ident = _identity_with_repo(tmp_path, ["gmail", "drive", "slides"])
+    ident.client = "canopy"                      # repo pin
+    r = check_auth_services(ident, runner=_accounts_runner([
+        {"email": "echo@dimagi-ai.com", "client": "echo",   # token lives here
+         "services": ["gmail", "drive"]}]))
+    assert not r.ok and "slides" in r.detail
+
+
+def test_auth_services_still_skips_when_the_mailbox_has_no_token_anywhere():
+    """No token at all is check_auth_client's finding (and email-auth's) — not a second,
+    duplicate red herring from the services check."""
+    from orchestrator.agent_doctor import check_auth_services
+    r = check_auth_services(_hal_identity(), runner=_accounts_runner([]))
+    assert r.ok and "skipped" in r.detail
+
+
+def test_agent_doctor_runs_the_auth_client_check(tmp_path):
+    from orchestrator.agent_doctor import run_agent_doctor
+    repo = _agent_repo(tmp_path)
+    results, _ = run_agent_doctor(repo, runner=_accounts_runner([]),
+                                  client_factory=_FakeClient)
+    assert any(r.name == "Auth client" for r in results)
+
+
+def test_auth_client_offers_both_directions_not_just_a_relogin():
+    """Which side is stale is not knowable from here: the box may have missed the client
+    migration, or the checkout may predate a pin that already moved. A one-way "go re-login"
+    is wrong half the time, and wrong costs a browser round-trip and a scope-REPLACING grant.
+    Both ace and echo flagged here on 2026-08-11 for the checkout reason, not the box one."""
+    from orchestrator.agent_doctor import check_auth_client
+    from orchestrator.agent_email import EmailIdentity
+    ident = EmailIdentity(slug="echo", account="echo@dimagi-ai.com", client="echo")
+    r = check_auth_client(ident, runner=_accounts_runner([
+        {"email": "echo@dimagi-ai.com", "client": "canopy", "services": ["gmail"]}]))
+    assert not r.ok
+    assert "gog login echo@dimagi-ai.com --client echo" in r.detail   # migrate the box
+    assert "gog_client" in r.detail and "`canopy`" in r.detail        # or move the pin
+    assert "pull first" in r.detail

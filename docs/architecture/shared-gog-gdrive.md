@@ -33,6 +33,22 @@ identity, rules, secrets, and domain skills are the agent's"*):
 | Canopy provides (engine/adapter, fix-once-propagate) | Each agent supplies (mounts/carve-outs) |
 |---|---|
 | `canopy email` adapter: guarded HTML send, reply-threading, mark-read, login preflight | Mailbox + gog client name (`config/agent.json`: `email`, `gog_client`), the allowlist, the routing map (thread → agent-state scope) |
+
+> **The mailbox is the identity; the gog client is plumbing — and only one of them is
+> per-machine.** `gog` keys credentials on the PAIR (mailbox, client), but `gog_client` is a
+> single repo-global value while the token store lives on each box. A fleet migration onto the
+> shared `canopy` client therefore has to be performed box by box, and any box it misses is
+> pinned to a pair with no credentials: every read and send dies on `No auth for gmail
+> <mailbox>` with a working token sitting beside it under the old client name. Echo hit this
+> twice in opposite directions — the pin was wrong for the laptop until 2026-08-06 and wrong
+> for the cloud box from then on — which is the tell that **re-pinning does not fix it, it only
+> moves which box is broken**. So the engine resolves the client from evidence at call time
+> (`agent_email.reconcile_client`): the declared pin wins when it holds a token, otherwise the
+> single client that actually holds this mailbox is used and the substitution is announced.
+> The account is NEVER substituted — borrowing a sibling's token is identity bleed, the one
+> hard rule. Two or more candidates is a refusal, not a guess. `canopy agent doctor` reports
+> the drift separately (**Auth client**) so self-healing at runtime never hides a box whose
+> provisioning is out of step.
 | The gating **engine** (`gating_guard.py`, already factory-templated) | The gating **rules** (`config/gating.json`) — deny rails only, see §4 |
 | Google Workspace MCP (extracted from ACE, atoms unchanged) | Identity mode + scope: SA key path OR gog-OAuth client; root folder / allowed shared drives |
 | Factory templates that wire all of the above | Persona, domain skills, turn checklist text |
