@@ -1,5 +1,10 @@
 # tests/test_agent_client.py
 import json
+from pathlib import Path
+
+import pytest
+
+from orchestrator import agent_client
 from orchestrator.agent_client import AgentClient, AgentIdentity
 
 
@@ -166,6 +171,35 @@ def test_post_turn_transcript_optional_defaults_empty():
     body = calls[0][2]
     assert body["session_slug"] == "" and body["share_token"] == ""
     assert body["task_ext_ids"] == ["t1"] and body["work_product_urls"] == []
+
+
+@pytest.mark.parametrize("dirname,expected", [
+    # What the runner actually creates: subject + thread discriminator + MMDD-HHMM,
+    # plus emdash's own worktree suffix.
+    ("hal-api-df02-0810-0805-7ohfp", "hal-api-df02-0810-0805"),
+    ("hal-canopy-scheduler-c4e0-0810-0721-d643m", "hal-canopy-scheduler-c4e0-0810-0721"),
+    # No suffix — the task dir is the task name.
+    ("ace-api-68f6-0810-0805", "ace-api-68f6-0810-0805"),
+    # Hand-made sessions have no timestamp tail. "" is the RIGHT answer: there is no
+    # dispatch row to attach to, and a guess would land the report on someone else's.
+    ("audit-76bl3", ""),
+    ("labs-9i3mk", ""),
+    ("canopy-web-oneturn", ""),
+])
+def test_emdash_task_from_cwd(dirname, expected):
+    assert agent_client.emdash_task_from_cwd(Path("/x/emdash") / dirname) == expected
+
+
+def test_post_turn_sends_the_emdash_task_so_the_report_joins_its_dispatch_row():
+    c, calls = _recorder_client([(200, "{}")])
+    c.post_turn(cli_session_id="s1", title="t", emdash_task_id="hal-api-df02-0810-0805")
+    assert calls[0][2]["emdash_task_id"] == "hal-api-df02-0810-0805"
+
+
+def test_post_turn_can_opt_out_of_the_join():
+    c, calls = _recorder_client([(200, "{}")])
+    c.post_turn(cli_session_id="s1", title="t", emdash_task_id="")
+    assert calls[0][2]["emdash_task_id"] == ""
 
 
 def test_record_verdict_posts_to_step_verdict_endpoint():

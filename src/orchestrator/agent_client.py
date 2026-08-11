@@ -13,7 +13,30 @@ from orchestrator import canopy_web
 from orchestrator.canopy_web import CanopyError, Transport  # re-export
 
 __all__ = ["AgentIdentity", "BoardCommand", "AgentClient", "catalog_from_repo", "CanopyError",
-          "list_agent_slugs"]
+          "list_agent_slugs", "emdash_task_from_cwd"]
+
+
+# A harness-dispatched emdash session is named `<subject>-<disc>-<MMDD>-<HHMM>` by
+# the runner (execute._task_name), and emdash gives its worktree that name plus a
+# short suffix: `.../hal/emdash/hal-api-df02-0810-0805-7ohfp`.
+#
+# The `-\d{4}-\d{4}` tail is what makes this safe to infer. A hand-made session
+# ("audit-76bl3", "labs-9i3mk") has no timestamp and simply does not match, which
+# is the correct answer for it — there is no dispatch row to join to. Greedy `.*`
+# anchors on the RIGHTMOST timestamp pair, so a subject containing four digits of
+# its own does not truncate the name.
+_EMDASH_TASK = re.compile(r"^(?P<task>.*-\d{4}-\d{4})(?:-[a-z0-9]+)?$")
+
+
+def emdash_task_from_cwd(cwd: "Optional[Path]" = None) -> str:
+    """The emdash session this process is running in, or "" if it can't be told.
+
+    Returns "" rather than guessing: a WRONG task id would attach a close-out to
+    another turn's row, which is worse than leaving it unattached.
+    """
+    name = (cwd or Path.cwd()).name
+    match = _EMDASH_TASK.match(name)
+    return match.group("task") if match else ""
 
 
 class AgentIdentity(BaseModel):
@@ -95,16 +118,27 @@ class AgentClient:
 
     def post_turn(self, *, cli_session_id, title, summary="", task_ext_ids=None,
                   work_product_urls=None, session_slug="", share_token="",
-                  started_at=None, ended_at=None, source="turn") -> dict:
+                  started_at=None, ended_at=None, source="turn",
+                  emdash_task_id=None) -> dict:
         """Package one turn as a unit of work: the request(s) it advanced
         (`task_ext_ids`), what it did (`summary`), the deliverables produced
         (`work_product_urls`), and — optionally — a transcript link (`session_slug`
-        + `share_token`). Idempotent per (agent, cli_session_id) server-side."""
+        + `share_token`). Idempotent per (agent, cli_session_id) server-side.
+
+        `emdash_task_id` names the emdash session this turn ran in. The server uses
+        it to attach this report to the harness turn that DISPATCHED the session,
+        so a turn is one row rather than a dispatch record and an unrelated report.
+        Defaults to deriving it from the cwd; pass "" to skip, or an explicit value
+        when closing out on someone else's behalf. Unmatched is not an error — the
+        report is still recorded, just standalone."""
+        if emdash_task_id is None:
+            emdash_task_id = emdash_task_from_cwd()
         body = {"cli_session_id": cli_session_id, "title": title, "summary": summary,
                 "task_ext_ids": list(task_ext_ids or []),
                 "work_product_urls": list(work_product_urls or []),
                 "session_slug": session_slug, "share_token": share_token,
-                "started_at": started_at, "ended_at": ended_at, "source": source}
+                "started_at": started_at, "ended_at": ended_at, "source": source,
+                "emdash_task_id": emdash_task_id}
         return self._call("POST", f"/api/agents/{self.slug}/turns/", body)
 
     def put_work_products(self, items: list[dict]) -> dict:
