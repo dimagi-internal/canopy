@@ -66,6 +66,23 @@ Keep your Drive parent-folder id in the worktree-clean global `.env`
 ## When to use (turn-loop wiring)
 - **Start of every turn:** drain `commands` → act → `apply`. The board is a trigger surface
   alongside the inbox.
+- **Drain-time: re-check the BLOCKER on every task parked on a human.** A card whose **Next
+  action** names something it waits on — an open PR in someone else's lane, an unmerged
+  dependency, an expired credential, an upstream decision — asserts that blocker is *still true*,
+  and nothing on the board expires that claim. The card reads identically the day the blocker
+  clears and a month later. Worse, the re-validate rule below never fires to catch it, because
+  that rule triggers on *resuming* a task and this task is parked on someone else: it is not
+  waiting on you, so you never pick it up, so nobody ever re-reads it. A stale blocker is
+  therefore invisible by construction — it can only be found by checking it on purpose.
+  So check it: each named blocker is usually **one command** (`gh pr view <n> --json state`,
+  `gh issue view <n>`, an auth probe). If it cleared, update **Next action** to the real next
+  step and say so in the close-out — the human has been sitting on a decision that stopped being
+  blocked. Do this before the situational-awareness scan; a parked task that just became
+  actionable outranks anything the scan will turn up.
+  (2026-08-11: a connect-labs task had sat since 08-03 reading "blocked on ctsims's open PR
+  #1070 + expired AWS SSO." Both had cleared — #1070 merged 08-03, the SSO was valid — and the
+  in-repo half had been shippable the whole week. The two `gh`/`aws` calls that proved it took
+  under a minute; the card had been wrong for eight days, and its human read it as still blocked.)
 - **Taking on multi-turn work:** create the task (status `in_progress` if a human asked for it,
   `suggested` if you are proposing it), immediately `set` rationale + plan + links,
   and give it a **project folder** whose link goes in Links.
