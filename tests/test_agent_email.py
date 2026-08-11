@@ -920,3 +920,113 @@ def test_read_thread_computes_reply_all():
     assert ra["to"] == "e@spark.org"
     assert ra["cc"] == "sam@dimagi-associate.com"
     assert ra["reply_to_message_id"] == "msg-123"
+
+
+# --------------------------------------------------------------------------------------
+# reconcile_client — the OAuth client follows the token, because identity is the MAILBOX
+#
+# Echo went dark twice on the same defect pointing opposite ways (2026-07-31 and 2026-08-10).
+# The fleet migrated every agent onto the shared `canopy` client, but that migration is
+# per-MACHINE (re-login each mailbox on each box) while `gog_client` is one repo-global
+# value. The laptop got migrated; the cloud box did not. Before 2026-08-06 the config said
+# `echo` — right for cloud, wrong for the laptop. #117 flipped it to `canopy` and verified
+# green on the laptop. Echo prefers the cloud runner, so the very next turn to land there
+# failed the other way. Whichever value is pinned, one box is broken, and which one only
+# surfaces when a turn happens to land on it.
+# --------------------------------------------------------------------------------------
+
+def _auth_accounts_runner(accounts, *, returncode=0):
+    payload = json.dumps({"accounts": accounts})
+
+    def run(cmd, capture_output, text, timeout):
+        assert cmd[:3] == ["gog", "auth", "list"]
+        return SimpleNamespace(returncode=returncode, stdout=payload, stderr="")
+    return run
+
+
+def _echo(client="canopy"):
+    return EmailIdentity(slug="echo", account="echo@dimagi-ai.com", client=client)
+
+
+def test_reconcile_client_leaves_a_matching_pin_alone():
+    """The fast path must not touch a correctly-configured box."""
+    from orchestrator.agent_email import reconcile_client
+    runner = _auth_accounts_runner([
+        {"email": "echo@dimagi-ai.com", "client": "canopy", "services": ["gmail"]}])
+    ident = _echo()
+    out = reconcile_client(ident, runner=runner)
+    assert out.client == "canopy" and not out.changed and ident.client == "canopy"
+
+
+def test_reconcile_client_follows_the_only_token_the_mailbox_has():
+    """The cloud box: config pins `canopy`, the only echo@ token is under `echo`.
+
+    gog looks credentials up by (mailbox, client) as a PAIR, so the configured pair has no
+    token and every read and send dies with `No auth for gmail echo@dimagi-ai.com` — while a
+    working token sits right there under another client."""
+    from orchestrator.agent_email import reconcile_client
+    runner = _auth_accounts_runner([
+        {"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail", "drive"]}])
+    out = reconcile_client(_echo(), runner=runner)
+    assert out.client == "echo" and out.changed
+    assert out.declared == "canopy"
+    assert "echo@dimagi-ai.com" in out.note and "canopy" in out.note
+
+
+def test_reconcile_client_never_changes_the_mailbox():
+    """Identity is the MAILBOX; the client is plumbing. A sibling's token must never be
+    borrowed — identity bleed is the fleet's one hard rule."""
+    from orchestrator.agent_email import reconcile_client
+    runner = _auth_accounts_runner([
+        {"email": "eva@dimagi-ai.com", "client": "canopy", "services": ["gmail"]}])
+    out = reconcile_client(_echo(), runner=runner)
+    assert out.account == "echo@dimagi-ai.com"
+    assert out.client == "canopy" and not out.changed   # unchanged: no echo@ token at all
+
+
+def test_reconcile_client_refuses_to_guess_between_two_candidates():
+    """Two clients hold a token for this mailbox — picking one is a coin flip, so keep the
+    declared value and hand the caller the candidates to report."""
+    from orchestrator.agent_email import reconcile_client
+    runner = _auth_accounts_runner([
+        {"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail"]},
+        {"email": "echo@dimagi-ai.com", "client": "legacy", "services": ["gmail"]}])
+    out = reconcile_client(_echo(), runner=runner)
+    assert not out.changed and out.client == "canopy"
+    assert out.ambiguous == ["echo", "legacy"]
+
+
+def test_reconcile_client_is_a_noop_when_gog_cannot_be_read():
+    """No introspection means no evidence; behave exactly as before rather than guessing."""
+    from orchestrator.agent_email import reconcile_client
+    out = reconcile_client(_echo(), runner=_auth_accounts_runner([], returncode=1))
+    assert out.client == "canopy" and not out.changed and out.candidates is None
+
+
+def test_reconcile_client_mutates_in_place_when_asked():
+    """The runtime path wants the identity itself corrected before any gog command is built."""
+    from orchestrator.agent_email import reconcile_client
+    runner = _auth_accounts_runner([
+        {"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail"]}])
+    ident = _echo()
+    reconcile_client(ident, runner=runner, apply=True)
+    assert ident.client == "echo" and ident.account == "echo@dimagi-ai.com"
+
+
+def test_clients_for_account_lists_every_stored_client():
+    from orchestrator.agent_email import clients_for_account
+    runner = _auth_accounts_runner([
+        {"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail", "drive"]},
+        {"email": "eva@dimagi-ai.com", "client": "canopy", "services": ["gmail"]}])
+    got = clients_for_account("echo@dimagi-ai.com", runner=runner)
+    assert got == [{"client": "echo", "services": {"drive", "gmail"}}]
+
+
+def test_clients_for_account_distinguishes_unreadable_from_absent():
+    """None means 'could not look'; [] means 'looked, this mailbox has no token'. Collapsing
+    the two is what let the doctor skip the check in exactly the broken case."""
+    from orchestrator.agent_email import clients_for_account
+    assert clients_for_account("echo@dimagi-ai.com",
+                               runner=_auth_accounts_runner([], returncode=1)) is None
+    assert clients_for_account("echo@dimagi-ai.com",
+                               runner=_auth_accounts_runner([])) == []

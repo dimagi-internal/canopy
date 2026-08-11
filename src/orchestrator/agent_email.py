@@ -155,6 +155,110 @@ class EmailIdentity:
     repo: Path | None = None  # agent repo root — lets preflight read config/secrets.yaml
 
 
+@dataclass
+class ClientReconciliation:
+    """What client this mailbox should actually use on THIS machine, and why.
+
+    `declared` is what the repo pinned; `client` is what to use. `candidates` is None when
+    gog could not be introspected at all (no evidence — never guess), [] when the mailbox
+    holds no token under any client.
+    """
+    account: str
+    declared: str
+    client: str
+    changed: bool = False
+    candidates: list[str] | None = None
+    ambiguous: list[str] | None = None
+    note: str = ""
+
+
+def clients_for_account(account: str, *, runner=subprocess.run) -> list[dict] | None:
+    """Every stored (client, services) for a mailbox, from `gog auth list --json`.
+
+    Returns None when gog cannot be introspected and [] when it can and this mailbox simply
+    has no token. Collapsing those two into one falsy value is precisely what let the doctor
+    SKIP its services check in the one state it exists to catch (2026-08-10, echo on the
+    cloud box: the account was authed, just under a different client, so the (account,
+    client) lookup missed and the check reported "not introspectable").
+    """
+    try:
+        r = runner(["gog", "auth", "list", "--json"],
+                   capture_output=True, text=True, timeout=30)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        accounts = json.loads(r.stdout or "{}").get("accounts", [])
+    except (ValueError, TypeError):
+        return None
+    return [
+        {"client": a.get("client") or "", "services": set(a.get("services") or [])}
+        for a in accounts
+        if str(a.get("email", "")).lower() == (account or "").lower()
+    ]
+
+
+def reconcile_client(
+    identity: EmailIdentity,
+    *,
+    runner=subprocess.run,
+    apply: bool = False,
+) -> ClientReconciliation:
+    """Resolve the gog client this mailbox can actually authenticate with on this machine.
+
+    `gog` keys credentials on the PAIR (mailbox, client), while `gog_client` is a single
+    repo-global value and the token store is per-machine. So a fleet migration onto the
+    shared `canopy` client — which has to be performed box by box — leaves any un-migrated
+    box pinned to a pair that has no token, and every read and send dies with
+    `No auth for gmail <mailbox>`. Echo hit this twice, in opposite directions: the pin was
+    wrong for the laptop until 2026-08-06 and wrong for the cloud box from then on. Pinning
+    the other value does not fix it; it only moves which box is broken.
+
+    The agent operating model already says which half is the identity: the MAILBOX is the
+    per-agent, never-shared thing, and which OAuth app brokers the token is plumbing. So the
+    account is never touched here — borrowing a sibling's token would be identity bleed, the
+    fleet's one hard rule — and only the client follows the evidence:
+
+      * a token exists for the declared pair            -> unchanged (the fast path)
+      * exactly one OTHER client holds this mailbox     -> use it, and say so
+      * two or more do                                  -> unchanged; guessing is a coin flip
+      * gog unreadable, or no token for this mailbox    -> unchanged; fail exactly as before
+
+    `apply=True` writes the resolved client back onto `identity` — what the runtime path
+    wants, so the correction lands before any gog command is built.
+    """
+    declared = identity.client
+    found = clients_for_account(identity.account, runner=runner)
+    out = ClientReconciliation(account=identity.account, declared=declared,
+                               client=declared, candidates=None)
+    if found is None:
+        return out
+    out.candidates = [c["client"] for c in found]
+    if declared in out.candidates:
+        return out
+    others = [c for c in out.candidates if c]
+    if len(others) == 1:
+        out.client = others[0]
+        out.changed = True
+        out.note = (
+            f"{identity.account} has no token under the configured `{declared}` gog client, "
+            f"but is authed under `{others[0]}` — using that. Identity is the mailbox; the "
+            f"client is plumbing. Re-login under `{declared}` (or update the repo's "
+            f"gog_client) to make this box match its config."
+        )
+        if apply:
+            identity.client = out.client
+        return out
+    if len(others) > 1:
+        out.ambiguous = sorted(others)
+        out.note = (
+            f"{identity.account} is authed under {out.ambiguous} but not under the configured "
+            f"`{declared}` — refusing to guess which one is intended."
+        )
+    return out
+
+
 def resolve_email_identity(repo_dir: Path) -> EmailIdentity:
     """Resolve the agent's email identity from its repo (plugin.json + config/agent.json).
 
@@ -742,22 +846,18 @@ def granted_services(
     Reads `gog auth list --json` — gog's own record of what each stored account was
     authorized for — and returns the service-name set (e.g. {"gmail","drive","appscript"}).
     Returns None if gog is unavailable or the account isn't found, so the caller can
-    decide whether "can't tell" is a hard failure (the doctor treats it as skip, not fail)."""
-    try:
-        r = runner(["gog", "auth", "list", "--json"],
-                   capture_output=True, text=True, timeout=30)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    decide whether "can't tell" is a hard failure (the doctor treats it as skip, not fail).
+
+    NOTE the (account, client) pair: a mailbox authed under a DIFFERENT client reads as None
+    here, same as no gog at all. Callers that need to tell those apart — the doctor does,
+    because "authed under the wrong client" is a finding and "cannot look" is not — should
+    use `clients_for_account`, which distinguishes them."""
+    found = clients_for_account(identity.account, runner=runner)
+    if found is None:
         return None
-    if r.returncode != 0:
-        return None
-    try:
-        accounts = json.loads(r.stdout or "{}").get("accounts", [])
-    except (ValueError, TypeError):
-        return None
-    for a in accounts:
-        if (str(a.get("email", "")).lower() == identity.account.lower()
-                and a.get("client") == identity.client):
-            return set(a.get("services", []))
+    for entry in found:
+        if entry["client"] == identity.client:
+            return entry["services"]
     return None
 
 
@@ -1072,7 +1172,21 @@ def _identity_from_opts(repo: str | None, agent: str | None,
     repo_dir = Path(repo) if repo else (find_agent_repo(agent) if agent else Path.cwd())
     ident = resolve_email_identity(repo_dir)
     if client:
-        ident.client = client
+        return ident_with_client(ident, client)
+    # No explicit override: let the client follow the token this machine actually holds for
+    # the mailbox. The repo pins ONE gog_client for every box while the token store is
+    # per-machine, so an un-migrated box is pinned to a pair with no credentials and dies on
+    # `No auth for gmail <mailbox>` with a working token sitting beside it. Only the client
+    # moves — never the account.
+    rec = reconcile_client(ident, runner=subprocess.run, apply=True)
+    if rec.changed:
+        sys.stderr.write(f"NOTE: {rec.note}\n")
+    return ident
+
+
+def ident_with_client(ident: EmailIdentity, client: str) -> EmailIdentity:
+    """An explicit `--client` is a human decision — honour it verbatim, no reconciliation."""
+    ident.client = client
     return ident
 
 
