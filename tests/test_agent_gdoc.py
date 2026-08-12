@@ -1,6 +1,7 @@
 """Tests for the shared agent gdoc engine (canopy gdoc — shared-gog-gdrive.md §5)."""
 import json
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,7 +10,9 @@ from orchestrator.agent_gdoc import (
     REPLACE_SENTINEL,
     AgentGdocError,
     GdocIdentity,
+    build_export_command,
     build_replace_commands,
+    replace_degradations,
     build_share_command,
     build_upload_command,
     find_child_folder,
@@ -195,15 +198,24 @@ def test_parse_upload_result_liberal_keys():
 class _FakeGog:
     """Records commands; returns queued responses by (verb) — upload/share/permissions."""
 
-    def __init__(self, *, upload_ok=True, share_ok=True, perm_type="domain"):
+    def __init__(self, *, upload_ok=True, share_ok=True, perm_type="domain",
+                 export_md=None, export_ok=True):
         self.calls = []
         self.upload_ok = upload_ok
         self.share_ok = share_ok
         self.perm_type = perm_type
+        self.export_md = export_md
+        self.export_ok = export_ok
 
     def __call__(self, cmd, capture_output=True, text=True, timeout=None):
         self.calls.append(cmd)
         verb = cmd[2]
+        if verb == "export":
+            if not self.export_ok:
+                return SimpleNamespace(returncode=1, stdout="", stderr="export blew up")
+            out = cmd[cmd.index("--out") + 1]
+            Path(out).write_text(self.export_md or "", encoding="utf-8")
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"path": out}), stderr="")
         if verb == "upload":
             if not self.upload_ok:
                 return SimpleNamespace(returncode=1, stdout="", stderr="nope")
@@ -262,7 +274,8 @@ def test_publish_replace_edits_in_place_and_preserves_share(tmp_path):
     assert res["replaced"] is True
     assert res["shared"] == "preserved"
     verbs = [c[2] for c in gog.calls]
-    assert verbs == ["write", "find-replace"]  # in-place edit, no upload, no re-share
+    # in-place edit, no upload, no re-share — then read the body back (issue #451)
+    assert verbs == ["write", "find-replace", "export"]
 
 
 def test_publish_replace_with_name_renames(tmp_path):
@@ -272,7 +285,124 @@ def test_publish_replace_with_name_renames(tmp_path):
     publish(_ident(), name="Renamed", parent=None, md_path=str(md), share="domain",
             replace="DOCX", runner=gog)
     verbs = [c[2] for c in gog.calls]
-    assert verbs == ["write", "find-replace", "rename"]
+    assert verbs == ["write", "find-replace", "rename", "export"]
+
+
+# --------------------------------------------------------------------------------------
+# issue #451 — the replace path must not claim "verified" for a body it never read back.
+#
+# The exported-markdown fixtures below are VERBATIM `gog docs export --format md` output
+# captured from real Drive round trips on 2026-08-12, not hand-written approximations.
+# --------------------------------------------------------------------------------------
+
+# What a CORRECT render looks like (published through the create/HTML path).
+GOOD_EXPORT = """# **Version One Heading**
+
+An ordinary opening paragraph.
+
+> 1. First numbered item
+> 2. Second numbered item
+> 3. Third numbered item
+
+## **A Second Heading**
+
+> * a bullet
+> * another bullet
+
+Closing paragraph of version one.
+"""
+
+# What `docs find-replace --format markdown` actually produced from the SAME source: the
+# list markers survived as escaped literal text, so the Doc holds no list at all.
+MANGLED_ORDERED_EXPORT = """# **T**
+
+Prose with **bold** and code.
+1\\. alpha
+1\\. beta
+"""
+
+MANGLED_BULLET_EXPORT = """# **T**
+
+Plain prose.
+• alpha
+• beta
+"""
+
+SOURCE_WITH_LISTS = "# T\n\nProse.\n\n1. alpha\n2. beta\n"
+
+
+def test_replace_degradations_clean_render_reports_nothing():
+    src = "# V\n\npara\n\n1. First numbered item\n2. Second\n\n- a bullet\n"
+    assert replace_degradations(src, GOOD_EXPORT) == []
+
+
+def test_replace_degradations_catches_flattened_ordered_list():
+    findings = replace_degradations(SOURCE_WITH_LISTS, MANGLED_ORDERED_EXPORT)
+    assert len(findings) == 1
+    assert "numbered lists were flattened" in findings[0]
+
+
+def test_replace_degradations_catches_bullet_glyph():
+    findings = replace_degradations("# T\n\n- alpha\n- beta\n", MANGLED_BULLET_EXPORT)
+    assert any("bullet lists were flattened" in f for f in findings)
+
+
+def test_replace_degradations_census_catches_silent_list_loss():
+    # No escape artefacts at all — a future gog that just drops the list. The census
+    # signal is the only thing that can see this.
+    findings = replace_degradations(SOURCE_WITH_LISTS, "# T\n\nProse.\n\nalpha\nbeta\n")
+    assert len(findings) == 1
+    assert "the list structure was lost" in findings[0]
+
+
+def test_replace_degradations_ignores_lists_inside_code_fences():
+    # `1. x` inside a fence is content, not a list — it must not trip the census.
+    src = "# T\n\n```\n1. not a list\n- also not\n```\n"
+    assert replace_degradations(src, "# **T**\n\nnot a list\n") == []
+
+
+def test_replace_degradations_no_lists_anywhere_is_clean():
+    assert replace_degradations("# T\n\njust prose\n", "# **T**\n\njust prose\n") == []
+
+
+def test_publish_replace_reports_degraded_and_unverified(tmp_path):
+    """The regression that matters: a mangled body must NOT come back verified."""
+    md = tmp_path / "d.md"
+    md.write_text(SOURCE_WITH_LISTS)
+    gog = _FakeGog(export_md=MANGLED_ORDERED_EXPORT)
+    res = publish(_ident(), name=None, parent=None, md_path=str(md), share="domain",
+                  replace="DOCX", runner=gog)
+    assert res["verified"] is False
+    assert res["degraded"] and "numbered lists were flattened" in res["degraded"][0]
+
+
+def test_publish_replace_verified_when_render_is_faithful(tmp_path):
+    md = tmp_path / "d.md"
+    md.write_text("# V\n\npara\n\n1. First numbered item\n2. Second\n\n- a bullet\n")
+    gog = _FakeGog(export_md=GOOD_EXPORT)
+    res = publish(_ident(), name=None, parent=None, md_path=str(md), share="domain",
+                  replace="DOCX", runner=gog)
+    assert res["verified"] is True
+    assert res["degraded"] == []
+
+
+def test_publish_replace_stays_verified_when_export_fails(tmp_path):
+    """A flaky export must not turn a good deliverable into a failed publish."""
+    md = tmp_path / "d.md"
+    md.write_text(SOURCE_WITH_LISTS)
+    gog = _FakeGog(export_ok=False)
+    res = publish(_ident(), name=None, parent=None, md_path=str(md), share="domain",
+                  replace="DOCX", runner=gog)
+    assert res["verified"] is True
+    assert res["degraded"] == []
+
+
+def test_build_export_command_pins_the_output_path():
+    # gog otherwise writes into its own config dir under a name built from the doc TITLE.
+    cmd = build_export_command(_ident(), "DOC9", "/tmp/out.md")
+    assert cmd[:5] == ["gog", "docs", "export", "DOC9", "--format"]
+    assert cmd[cmd.index("--out") + 1] == "/tmp/out.md"
+    assert cmd[cmd.index("--account") + 1] == "hal@dimagi-ai.com"
 
 
 def test_publish_create_requires_name_and_parent(tmp_path):
