@@ -72,13 +72,63 @@ def test_resolve_identity_requires_agent_repo(tmp_path):
 # --------------------------------------------------------------------------------------
 
 def test_normalize_collapses_hard_wrapped_paragraphs():
-    text = "one line\nsplit over\nthree lines\n\nsecond para\n"
-    assert normalize(text) == "one line split over three lines\n\nsecond para\n"
+    # Realistic hard wrap: lines run to the wrap column and resume mid-sentence.
+    text = (
+        "The consortium call is for the Grand Challenges family planning RFP, which\n"
+        "closes on the twenty-fifth and disqualifies anything lacking an existing\n"
+        "user base.\n\nsecond para\n"
+    )
+    assert normalize(text) == (
+        "The consortium call is for the Grand Challenges family planning RFP, which "
+        "closes on the twenty-fifth and disqualifies anything lacking an existing "
+        "user base.\n\nsecond para\n"
+    )
+
+
+def test_normalize_keeps_deliberate_line_breaks():
+    # The regression this fixes: a timeline block is structure, not hard-wrapped prose.
+    # Joining these into one line is what flattened every briefing for weeks.
+    text = (
+        "BETH\n"
+        "07:00 MT / 09:00 ET  USG G2G MOU listening session\n"
+        "08:00 MT / 10:00 ET  Gates Foundation + HKI Senegal\n"
+    )
+    assert normalize(text) == text.strip() + "\n"
+
+
+def test_normalize_keeps_short_lines_apart():
+    # Neither line reaches the wrap column, so neither break was accidental.
+    assert normalize("Regards,\nEva\n") == "Regards,\nEva\n"
+
+
+def test_normalize_keeps_capitalized_continuation_apart():
+    # Long enough to be a wrap point, but the next line opens a new sentence.
+    text = (
+        "This is a sufficiently long line of prose to reach the wrap column here.\n"
+        "Another sentence begins on its own line and must stay there.\n"
+    )
+    assert normalize(text) == text
+
+
+def test_normalize_rejoins_wrapped_bullet():
+    text = (
+        "- a bullet long enough to reach the wrap column before it runs out of room\n"
+        "  and continues here\n"
+    )
+    assert normalize(text) == (
+        "- a bullet long enough to reach the wrap column before it runs out of room "
+        "and continues here\n"
+    )
 
 
 def test_normalize_keeps_bullets_as_lines():
     text = "intro\n\n- alpha\n- beta\n1. gamma\n"
     assert normalize(text) == "intro\n\n- alpha\n- beta\n1. gamma\n"
+
+
+def test_to_html_preserves_deliberate_breaks_as_br():
+    out = to_html("BETH\n09:00 ET  Gates FP discussion\n")
+    assert "<p>BETH<br>09:00 ET  Gates FP discussion</p>" in out
 
 
 def test_to_html_paragraphs_and_bullets():
@@ -236,8 +286,9 @@ def test_send_dry_run_never_invokes_gog():
                   body_text="hello\nworld\n", dry_run=True, runner=boom)
     assert result["dry_run"] is True
     assert result["account"] == "hal@dimagi-ai.com"
-    assert result["plain"] == "hello world\n"
-    assert "<p>hello world</p>" in result["html"]
+    # two short lines are deliberate structure, so both the plain and HTML keep the break
+    assert result["plain"] == "hello\nworld\n"
+    assert "<p>hello<br>world</p>" in result["html"]
     # shape parity with a real send: same routing keys, empty — callers never branch
     assert result["message_id"] == "" and result["thread_id"] == ""
     # cc always present (empty string when unset) — recipients are verified from
@@ -385,12 +436,16 @@ def test_send_invokes_gog_and_parses_result(reviewed):
         seen["plain"] = Path(cmd[cmd.index("--body-file") + 1]).read_text()
         return SimpleNamespace(returncode=0, stdout='{"id": "m9", "threadId": "t9"}', stderr="")
 
-    reviewed("para one\nwrapped\n")
-    result = send(IDENT, to="a@x.com", subject="s", body_text="para one\nwrapped\n",
+    # genuinely hard-wrapped, so the body written to gog is the REJOINED normalization
+    body = ("a paragraph long enough that it actually reaches the wrap column\n"
+            "and wrapped onto this line\n")
+    reviewed(body)
+    result = send(IDENT, to="a@x.com", subject="s", body_text=body,
                   runner=fake_runner)
     assert result == {"message_id": "m9", "thread_id": "t9",
                       "raw": {"id": "m9", "threadId": "t9"}}
-    assert seen["plain"] == "para one wrapped\n"
+    assert seen["plain"] == ("a paragraph long enough that it actually reaches the wrap "
+                             "column and wrapped onto this line\n")
     # the temp plain-text file is cleaned up after the send
     assert not os.path.exists(seen["cmd"][seen["cmd"].index("--body-file") + 1])
 
