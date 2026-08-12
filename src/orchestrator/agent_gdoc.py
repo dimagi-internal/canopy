@@ -1,4 +1,4 @@
-"""Shared Google-Doc authoring engine for the agent fleet — backs `canopy gdoc`.
+r"""Shared Google-Doc authoring engine for the agent fleet — backs `canopy gdoc`.
 
 The sibling of `canopy email` (agent_email.py). Implements the interim doc-authoring
 adapter of docs/architecture/shared-gog-gdrive.md: publish a markdown deliverable as a
@@ -30,8 +30,30 @@ which is exactly the type `--replace` targets. So it always errored, and agents 
 to publish-fresh + trash-old, churning the doc URL on every revision. The fix routes a
 native-Doc replace through the Docs API instead: blank the body to a sentinel (`docs
 write`, plain text), then swap that sentinel for the markdown-rendered content (`docs
-find-replace --format markdown`, which does the md→Doc conversion — headings, lists,
-tables, images). Same id, same link, same permissions.
+find-replace --format markdown`, which does the md→Doc conversion). Same id, same link,
+same permissions.
+
+**The replace path renders WORSE than the create path, and it is gog's converter, not
+ours** (measured 2026-08-12, issue #451). The create path runs our own `md_to_html` and
+imports HTML, which Drive renders correctly. `docs find-replace --format markdown` builds
+no Docs list structures at all:
+
+| markdown       | create (HTML import) | --replace (gog markdown)          |
+|----------------|----------------------|-----------------------------------|
+| ordered list   | real `<ol>`          | literal text, marker escaped `1\.`|
+| bullet list    | real `<ul>`          | a `•` glyph inside a paragraph    |
+| inline `code`  | `<code>`             | formatting dropped                |
+| two paragraphs | two paragraphs       | merged with a soft line break     |
+| headings/tables/bold | correct        | correct                           |
+
+gog exposes only `--format plain|markdown` (no HTML), so we cannot route the replace
+through our good renderer, and a Drive media overwrite is forbidden on native Docs — the
+degradation is currently unavoidable. What is NOT acceptable is doing it *silently*: this
+module used to return `"verified": true` for a replaced doc it had never read back. It now
+exports the doc after every replace and compares it to the source (`replace_degradations`),
+so a mangled deliverable fails loudly instead of being handed to a stakeholder. Origin:
+Echo's PRIDE drafts doc, which a reviewer called "unreadable… each line is numbered as
+bullet points."
 
 Why NOT the ace-gdrive MCP: it authenticates as a shared GWS **service account**, so it
 cannot author a Doc *as* the agent — the entire point of a fleet deliverable. gog-OAuth
@@ -209,7 +231,12 @@ def md_to_html(md: str) -> str:
             continue
         if re.match(r"^(-{3,}|\*{3,}|_{3,})\s*$", ln):
             flush_p(para)
-            out.append("<hr/>")
+            # NOT <hr/>: Drive's HTML→Doc import merges the rule into a FOLLOWING heading,
+            # producing a heading whose text is "---" and demoting the real heading text to
+            # a bold paragraph. A plain divider paragraph imports cleanly. Proven in echo's
+            # own engine first (dimagi-internal/echo#113, round-trip verified) and brought
+            # here so the whole fleet gets it — see issue #451.
+            out.append("<p>—&nbsp;&nbsp;—&nbsp;&nbsp;—</p>")
             i += 1
             continue
         if re.match(r"^>\s?", ln):
@@ -306,6 +333,74 @@ def build_replace_commands(identity: GdocIdentity, *, doc_id: str, md_path: str,
     if name:
         cmds.append(["gog", "drive", "rename", doc_id, name, *ident])
     return cmds
+
+
+def build_export_command(identity: GdocIdentity, doc_id: str, out_path: str) -> list[str]:
+    """`gog docs export --format md` — read a Doc back as markdown, for round-trip checking.
+
+    `--out` is passed explicitly: gog otherwise writes into its own config dir under a name
+    built from the doc TITLE, which is neither predictable nor cleanable."""
+    return ["gog", "docs", "export", doc_id, "--format", "md", "--out", out_path,
+            "--account", identity.account, "--client", identity.client, "--json"]
+
+
+# ---- Round-trip render verification (pure — unit-testable without a subprocess) ----------
+#
+# Detects the replace-path degradation documented in the module docstring. Two independent
+# signals, because each alone has a blind spot:
+#   1. Degradation signatures in the export. A Doc that really holds a list exports its
+#      items as `1.` / `*` markers; an ESCAPED marker (`1\.`, `\-`) or a literal `•` glyph
+#      means the "list" is plain paragraph text wearing a list's clothes. High precision.
+#   2. A census: source has list items, export has none. Catches a future gog that degrades
+#      lists without leaving an escape behind.
+
+# `1\. item` — the marker survived as literal text, so Docs never made it a list.
+_ESCAPED_ORDERED = re.compile(r"^\s*>?\s*\d+\\\.\s", re.M)
+# `\- item` / `\* item` — same, for bullets.
+_ESCAPED_BULLET = re.compile(r"^\s*>?\s*\\[-*+]\s", re.M)
+# `• item` — Drive exports a REAL bullet list as `*`/`-`; a literal `•` is a glyph in a
+# paragraph, which is what find-replace leaves behind.
+_GLYPH_BULLET = re.compile(r"^\s*>?\s*•\s", re.M)
+
+_SRC_ORDERED = re.compile(r"^\s*\d+\.\s+\S", re.M)
+_SRC_BULLET = re.compile(r"^\s*[-*+]\s+\S", re.M)
+# A real list item in a Drive markdown export (it prefixes list blocks with `> `).
+_EXP_LIST = re.compile(r"^\s*>?\s*(?:\d+\.|[-*+])\s+\S", re.M)
+
+
+def _strip_code_fences(md: str) -> str:
+    """Drop fenced code blocks — a `1. x` inside one is content, not a list."""
+    return re.sub(r"^```.*?^```", "", md, flags=re.M | re.S)
+
+
+def replace_degradations(source_md: str, exported_md: str) -> list[str]:
+    """Compare a doc's exported markdown to the source it was published from.
+
+    Returns one human-readable finding per construct that did not survive, empty when the
+    render is faithful. Pure: the caller does the export."""
+    src = _strip_code_fences(source_md)
+    exp = exported_md
+    findings: list[str] = []
+
+    if _ESCAPED_ORDERED.search(exp):
+        findings.append(
+            "numbered lists were flattened to plain text (export contains escaped `1\\.` "
+            "markers) — the Doc has no ordered list, just paragraphs that look like one"
+        )
+    if _ESCAPED_BULLET.search(exp) or _GLYPH_BULLET.search(exp):
+        findings.append(
+            "bullet lists were flattened to plain text (export contains escaped `\\-` "
+            "markers or literal `•` glyphs) — the Doc has no bullet list"
+        )
+
+    # Census fallback: the source had lists and the export has no list items at all.
+    src_items = len(_SRC_ORDERED.findall(src)) + len(_SRC_BULLET.findall(src))
+    if src_items and not _EXP_LIST.search(exp) and not findings:
+        findings.append(
+            f"source has {src_items} list item(s) but the published Doc has none — "
+            "the list structure was lost in conversion"
+        )
+    return findings
 
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
@@ -490,6 +585,36 @@ def verify_permissions(identity: GdocIdentity, file_id: str, *, share: str,
     return False
 
 
+def verify_replace_render(identity: GdocIdentity, doc_id: str, *, md_path: str,
+                          runner=subprocess.run) -> list[str]:
+    """Export a just-replaced Doc and report what the conversion destroyed.
+
+    Returns [] when the render is faithful. **A failed export returns [] (treated as
+    verified), deliberately**: this check exists to catch a mangled body, and turning a
+    transient export blip into a publish failure would make a working deliverable look
+    broken. A false clean beats a false alarm here — the loud signal is the mangled body,
+    which is deterministic, not the export, which is a network call."""
+    out_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as tf:
+            out_path = tf.name
+        r = _run_gog(build_export_command(identity, doc_id, out_path), runner)
+        if r.returncode != 0:
+            return []
+        exported = Path(out_path).read_text(encoding="utf-8", errors="replace")
+        if not exported.strip():
+            return []
+        return replace_degradations(Path(md_path).read_text(encoding="utf-8"), exported)
+    except (AgentGdocError, OSError):
+        return []
+    finally:
+        if out_path:
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass
+
+
 def publish(identity: GdocIdentity, *, name: str | None, parent: str | None, md_path: str,
             share: str, share_email: str | None = None, replace: str | None = None,
             dry_run: bool = False, runner=subprocess.run) -> dict:
@@ -519,9 +644,13 @@ def publish(identity: GdocIdentity, *, name: str | None, parent: str | None, md_
                     f"gog {c[1]} {c[2]} failed (exit {r.returncode}) as {identity.account}: "
                     f"{(r.stderr or r.stdout or '').strip()[:400]}"
                 )
+        # Read the doc back and confirm it actually renders what we published. gog's
+        # markdown find-replace silently flattens lists (see module docstring), so this
+        # path used to hand out "verified": true for a body it had never looked at.
+        degraded = verify_replace_render(identity, replace, md_path=md_path, runner=runner)
         # Replace preserves the doc's existing sharing — never re-share (posture would drift).
         return {"id": replace, "url": url, "raw": "", "replaced": True,
-                "shared": "preserved", "verified": True}
+                "shared": "preserved", "verified": not degraded, "degraded": degraded}
 
     # ---- Create: convert HTML→Doc into `parent`, share, verify ----
     body_html = md_to_html(Path(md_path).read_text())
@@ -614,7 +743,20 @@ def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, a
     except AgentGdocError as e:
         raise click.ClickException(str(e))
     click.echo(json.dumps(result, indent=2))
-    if not dry_run and not result.get("verified", True):
+    if dry_run:
+        return
+    degraded = result.get("degraded") or []
+    if degraded:
+        sys.stderr.write(
+            "WARNING: the doc updated, but the conversion mangled it — do NOT hand out "
+            "this link yet:\n"
+            + "".join(f"  - {d}\n" for d in degraded)
+            + "  gog's markdown find-replace builds no Doc lists (canopy issue #451). "
+              "Publish a NEW doc instead (drop --replace), which renders correctly, or "
+              "rewrite the affected sections without list syntax.\n"
+        )
+        sys.exit(1)
+    if not result.get("verified", True):
         sys.stderr.write("WARNING: could not verify the share landed — open the url and "
                          "check access before handing out the link.\n")
         sys.exit(1)
