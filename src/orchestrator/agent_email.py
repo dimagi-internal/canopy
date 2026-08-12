@@ -11,9 +11,11 @@ Three subcommands:
 - `send` — HTML multipart send via gog. Why HTML: Gmail display-wraps plain text at a
   fixed ~72 columns, which reads as ugly hard line breaks; an HTML body reflows to the
   reader's width. So we build flowing <p> paragraphs + <ul> bullets + linkified URLs,
-  with a plain-text alternative, and send both. Body-file contract: single-line
-  paragraphs separated by blank lines; bullet lines ("- ", "* ", "1. ") one per line —
-  normalize() also collapses accidental hard-wrapped paragraphs.
+  with a plain-text alternative, and send both. Body-file contract: paragraphs separated
+  by blank lines; bullet lines ("- ", "* ", "1. ") one per line. Line breaks WITHIN a
+  paragraph are preserved as <br> — write a timeline or heading block as separate lines
+  and it arrives that way; normalize() rejoins only lines that look hard-wrapped (a long
+  line continued by a lowercase one).
   Emits a JSON result with `message_id` + `thread_id`; the SEND-SIDE CONTRACT is that
   every caller records `thread_id` into the agent's state layer (ACE: run comms-log;
   echo: contact-memory) so inbound triage can route the reply.
@@ -294,27 +296,56 @@ def find_agent_repo(slug: str) -> Path:
 # Body shaping (ported verbatim from echo's proven wrapper)
 # --------------------------------------------------------------------------------------
 
+# A hard-wrapped line breaks near a fixed column, so it is LONG. A short line ended
+# because its author meant it to.
+WRAP_MIN_LEN = 64
+
+
+def _is_wrap_continuation(prev: str, cur: str) -> bool:
+    """True when `cur` is the wrapped remainder of `prev` rather than a line of its own.
+
+    Hard-wrapped prose breaks near the wrap column and resumes mid-sentence, so a real
+    continuation follows a LONG line and starts lowercase. Everything else — a short
+    line, or one opening with a capital, a digit or a clock time — is deliberate
+    structure (`BETH`, `09:00 MT · Gates Foundation`) and keeps its break.
+
+    The asymmetry is the whole point: guessing wrong here costs one stray line break,
+    while guessing wrong the other way silently flattens a structured block into a
+    run-on paragraph, which is exactly what shipped for weeks.
+    """
+    return len(prev) >= WRAP_MIN_LEN and cur[:1].islower()
+
+
 def normalize(text: str) -> str:
-    """Collapse hard-wrapped prose to one line per paragraph; keep bullets/blank lines."""
+    """Keep the author's line breaks; re-join only genuinely hard-wrapped prose.
+
+    Deliberate single-line structure — headings, timeline rows, address blocks — survives
+    verbatim. Previously EVERY run of adjacent non-bullet lines was joined with a space,
+    which flattened each agent's briefing timeline into one unreadable paragraph in BOTH
+    the plain part and the HTML built from it. Only markdown bullets escaped, so the
+    damage tracked whether an author happened to prefix rows with "- ".
+    """
     out: list[str] = []
-    para: list[str] = []
 
-    def flush():
-        if para:
-            out.append(" ".join(s.strip() for s in para))
-            para.clear()
+    def can_extend() -> bool:
+        """The last emitted line is real text a continuation could attach to."""
+        return bool(out) and out[-1] != ""
 
+    mergeable = False
     for ln in text.split("\n"):
-        s = ln.rstrip()
-        if not s.strip():
-            flush()
+        s = ln.strip()
+        if not s:
             out.append("")
+            mergeable = False
         elif LIST_RE.match(s):
-            flush()
-            out.append(s.strip())
+            out.append(s)
+            mergeable = True          # a wrapped bullet rejoins its own bullet
         else:
-            para.append(s)
-    flush()
+            if mergeable and can_extend() and _is_wrap_continuation(out[-1], s):
+                out[-1] = f"{out[-1]} {s}"
+            else:
+                out.append(s)
+            mergeable = True
     collapsed: list[str] = []
     for line in out:
         if line == "" and collapsed and collapsed[-1] == "":
@@ -395,8 +426,12 @@ def to_html(plain: str) -> str:
 
     def flush_para():
         if para:
-            text = " ".join(l.strip() for l in para)
-            parts.append(f"<p>{_linkify(html.escape(text, quote=False))}</p>")
+            # <br> between the lines, not a space: normalize() has already rejoined the
+            # genuinely hard-wrapped ones, so every break still standing is deliberate.
+            rendered = "<br>".join(
+                _linkify(html.escape(l.strip(), quote=False)) for l in para
+            )
+            parts.append(f"<p>{rendered}</p>")
             para.clear()
 
     i, n = 0, len(lines)

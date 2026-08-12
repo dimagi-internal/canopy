@@ -36,16 +36,29 @@ def test_fingerprint_is_stable_and_body_specific():
 def test_fingerprint_follows_send_path_normalization_not_layout():
     """The fingerprint must track what GOES OUT, not how the draft file is laid out.
 
-    send() renders through normalize(), which rejoins hard-wrapped lines into one line per
-    paragraph and collapses blank-line runs. So re-wrapping a body file must NOT invalidate
-    a review (the rendered mail is identical), while changing a word must.
+    send() renders through normalize(), which rejoins genuinely hard-wrapped lines and
+    collapses blank-line runs. So re-wrapping a paragraph must NOT invalidate a review
+    (the rendered mail is identical), while changing a word must.
     """
+    wrapped = ("a paragraph long enough that it actually reaches the wrap column\n"
+               "and wrapped onto this line")
+    joined = ("a paragraph long enough that it actually reaches the wrap column "
+              "and wrapped onto this line")
     # re-wrapping a paragraph: same rendered output, same receipt
-    assert rr.fingerprint("hello\nworld") == rr.fingerprint("hello world")
+    assert rr.fingerprint(wrapped) == rr.fingerprint(joined)
     # collapsing blank-line runs: same rendered output, same receipt
     assert rr.fingerprint("a\n\n\n\nb") == rr.fingerprint("a\n\nb")
     # changing content: different mail, receipt must not carry over
     assert rr.fingerprint("a\n\nb") != rr.fingerprint("a\n\nc")
+
+
+def test_fingerprint_treats_a_deliberate_line_break_as_content():
+    """Line breaks now SURVIVE to the reader, so re-laying-out a block is a real edit.
+
+    Splitting a timeline into rows changes the mail that arrives, so the receipt must
+    not carry over from the run-on version — the reviewer approved different output.
+    """
+    assert rr.fingerprint("BETH\n09:00 Gates FP") != rr.fingerprint("BETH 09:00 Gates FP")
 
 
 # --- record / lookup -------------------------------------------------------------------
