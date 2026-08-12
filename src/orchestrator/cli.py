@@ -50,7 +50,25 @@ class SkillHintGroup(click.Group):
             raise
 
 
+def _print_version(ctx, param, value):
+    """Resolve the version AT INVOCATION, not at import.
+
+    `click.version_option(version=...)` would freeze whatever the value was when this
+    module was imported. The point of the probe is to report what is actually installed
+    in THIS process, so it has to be resolved when asked.
+    """
+    if not value or ctx.resilient_parsing:
+        return
+    from orchestrator import version as _version
+
+    click.echo(f"canopy {_version.resolve()}")
+    ctx.exit()
+
+
 @click.group(cls=SkillHintGroup)
+@click.option("--version", is_flag=True, expose_value=False, is_eager=True,
+              callback=_print_version,
+              help="Show the installed canopy version and exit.")
 def main():
     """Canopy — self-improving MCP orchestration."""
 

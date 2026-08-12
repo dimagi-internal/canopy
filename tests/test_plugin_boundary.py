@@ -27,7 +27,7 @@ FRAMEWORK = {
     "capture", "transcripts", "scanner", "circuit_breaker", "rate_limiter",
     "scheduler", "paths", "repo_map", "repo_paths", "repo_evidence",
     "skill_budget", "skill_catalog", "skill_runner", "provision", "run_log",
-    "version_bump", "doctor", "agent_review", "structure_drift",
+    "version_bump", "version", "doctor", "agent_review", "structure_drift",
     "eval_cli", "eval_rubric", "turn_synthesis", "session_upload", "fleet_align",
     "session_sources", "work_cursor", "agent_dispatch",
     "project_dispatch", "project_cli", "runner_cli",

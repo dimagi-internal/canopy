@@ -1,0 +1,113 @@
+# Publish a versioned artifact for every merge that bumps VERSION.
+#
+# WHY THIS EXISTS. canopy has enforced a real semver for a long time — VERSION,
+# plugin.json and both marketplace.json fields must agree, and `check-version` fails the
+# PR when they don't. Then it published nothing: zero tags, zero releases, no wheel. The
+# number was rigorously maintained and structurally unusable, because no artifact anywhere
+# WAS canopy 0.2.395.
+#
+# So every consumer had to install from source, and each one invented its own idea of
+# "current": the cloud box `uv tool install git+<url>` (branch tip, install-once), then
+# re-pointed at a local marketplace clone; the laptop `uv tool install --reinstall
+# ~/.claude/plugins/marketplaces/canopy`. Nothing could ask "what version should I be on?"
+# because the question had no answerable form — which is why the CLI sat eight days stale
+# on the box running four of five agents while `canopy_runner`, which DOES ship as a built
+# wheel, auto-updated itself on a 30-minute timer beside it.
+#
+# This is the missing half. `canopy --version` (added alongside) answers what is
+# installed; a published release answers what should be. Steps 2 and 3 — boxes installing
+# `canopy==<wanted>` from here instead of from a git ref, and the control plane naming
+# <wanted> — land in canopy-web and depend on this existing first.
+#
+# IDEMPOTENT BY TAG. Most merges do not bump VERSION (a docs PR, a revert), and re-running
+# a workflow must not fail or double-publish. The tag is the record of what has shipped:
+# if v<VERSION> already exists, this is a merge that didn't bump, and the job exits green
+# having done nothing. That also makes the release safe to re-run by hand.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write        # create the tag and the release
+
+concurrency:
+  # Two merges landing together must not race to publish the same version.
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # tags, so the already-released check is real
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Resolve the version this commit declares
+        id: v
+        run: |
+          VERSION=$(tr -d '[:space:]' < VERSION)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "already=1" >> "$GITHUB_OUTPUT"
+            echo "v$VERSION is already tagged — this merge did not bump. Nothing to publish."
+          else
+            echo "already=0" >> "$GITHUB_OUTPUT"
+            echo "Publishing v$VERSION."
+          fi
+
+      - name: Build the wheel + sdist
+        if: steps.v.outputs.already == '0'
+        run: uv build
+
+      # The artifact must not be able to lie about which code it carries. `check-version`
+      # proves the repo's three metadata files agree; this proves the BUILT wheel agrees
+      # with them too, from a clean venv with no repo on the path — the same conditions a
+      # box installs under. Without it a mis-set pyproject version would publish a wheel
+      # that reports one number and contains another, and every downstream "am I current?"
+      # comparison would silently be against the wrong thing.
+      - name: Verify the built wheel reports the declared version
+        if: steps.v.outputs.already == '0'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.v.outputs.version }}"
+          WHEEL=$(ls dist/*.whl)
+          echo "verifying $WHEEL"
+          uv venv /tmp/verify
+          VIRTUAL_ENV=/tmp/verify uv pip install --quiet "$WHEEL"
+          # cd / so nothing resolves out of the checkout — the wheel must stand alone.
+          GOT=$(cd / && /tmp/verify/bin/canopy --version)
+          echo "wheel reports: $GOT"
+          test "$GOT" = "canopy $VERSION"
+
+      - name: Publish the release
+        if: steps.v.outputs.already == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.v.outputs.version }}"
+          WHEEL_NAME=$(basename "$(ls dist/*.whl)")
+          URL="https://github.com/$REPO/releases/download/v$VERSION/$WHEEL_NAME"
+          {
+            echo "Automated release of canopy $VERSION from $SHA."
+            echo
+            echo 'Install this exact version:'
+            echo
+            echo '```'
+            echo "uv tool install --force \"canopy @ $URL\""
+            echo '```'
+            echo
+            echo 'Private repo, so the download needs a token — `gh release download` or an'
+            echo 'Authorization header. `canopy --version` reports what is installed.'
+          } > /tmp/notes.md
+          gh release create "v$VERSION" dist/* \
+            --title "canopy $VERSION" \
+            --notes-file /tmp/notes.md
