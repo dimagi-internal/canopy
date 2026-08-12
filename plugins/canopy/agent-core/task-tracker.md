@@ -14,6 +14,16 @@ canopy CLI.
 - **Title** — the outcome. **Next action** — the single concrete next step, *verb-first*.
 - **Status** — `suggested` (you proposed it; a human validates) → `in_progress` →
   `done` / `declined`. There is no "blocked": *waiting on a person* is expressed by **Assigned**.
+- **`[MANUAL — …]`** — a **Next action** beginning with this literal marker means the human has
+  taken the task **off your queue entirely**: they are doing it themselves. It is NOT the same as
+  Assigned. Assigned says *"you're next after they move"*; `[MANUAL — …]` says *"stop bringing
+  this to me at all."* A marked task is invisible to your turn: do not work it, do not propose
+  next steps on it, do not list it in a close-out recommendation, and **do not run the drain-time
+  blocker re-check on it** (the rule below is explicitly exempted). It stays `in_progress`
+  because it is still live *for the human* — `declined` would be a lie that invites a later turn
+  to close the underlying issue. Only a direct request re-opens it; when one comes, drop the
+  marker. Set it with the human's words in the card's Notes so the reason survives:
+  `canopy agent set --slug <slug> --task-id <T> --next-action "[MANUAL — <who> handles this] …"`
 - **Owner** — the human stakeholder who owns the outcome — **never the agent**.
 - **Assigned** — who the next action waits on: you, or the person it's on (renders as
   an amber "Waiting on X" on the board).
@@ -66,7 +76,12 @@ Keep your Drive parent-folder id in the worktree-clean global `.env`
 ## When to use (turn-loop wiring)
 - **Start of every turn:** drain `commands` → act → `apply`. The board is a trigger surface
   alongside the inbox.
-- **Drain-time: re-check the BLOCKER on every task parked on a human.** A card whose **Next
+- **Drain-time: re-check the BLOCKER on every task parked on a human** — *except* one whose Next
+  action carries the `[MANUAL — …]` marker, which is off your queue entirely and must be skipped
+  here (see the vocabulary above). Without that exemption this rule is precisely what drags a
+  hand-back task into every subsequent turn: the human says "I'll handle it," and the next drain
+  dutifully re-checks its blockers and re-surfaces it as the top recommendation, because a card
+  parked on a human is exactly what this rule is built to hunt. A card whose **Next
   action** names something it waits on — an open PR in someone else's lane, an unmerged
   dependency, an expired credential, an upstream decision — asserts that blocker is *still true*,
   and nothing on the board expires that claim. The card reads identically the day the blocker
