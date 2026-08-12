@@ -62,6 +62,18 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
    after a revision or a tangent.** Before you post an approval/pause line, confirm the current full
    email body is right there in the message; if it's only linked or was shown earlier, paste it
    again. The human should never have to say "show me the email" to approve.
+9a. **Review the RENDERED artifact, not just the text you wrote.** Every other check in this
+    skill reads your draft; none of them look at what the recipient actually receives, so a
+    rendering defect is invisible to the entire review and ships silently. Before an email
+    send, dry-run it and read the output back:
+    `canopy email send --dry-run … --body-file <body>` → the result carries `plain` and
+    `html`. Confirm the structure you intended SURVIVED — headings on their own line,
+    timeline/table rows still separate rows, lists still lists, links clickable. A block that
+    arrives as one run-on paragraph is a defect even when every word is right.
+    (Origin: 2026-08-12 — `normalize()` joined adjacent non-bullet lines with a space, so every
+    briefing timeline shipped as a single mashed paragraph in BOTH MIME parts for about three
+    weeks. Every pre-send review in that window passed, because each one read the body file and
+    none rendered it. Docs have `gdoc-review` for exactly this; email had no equivalent.)
 10. **Verify recipients** from the structured reader / `--reply-all`, never a raw text mail view
     (it hides `Cc:`). Confirm reply-all vs. direct on purpose.
 10a. **Strip session-internal framing — write the copy COLD, as the recipient reads it.** Your
