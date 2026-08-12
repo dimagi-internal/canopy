@@ -105,8 +105,8 @@ jobs:
             echo "uv tool install --force \"canopy @ $URL\""
             echo '```'
             echo
-            echo 'Private repo, so the download needs a token — `gh release download` or an'
-            echo 'Authorization header. `canopy --version` reports what is installed.'
+            echo 'This repo is public, so that URL needs no token or auth header.'
+            echo '`canopy --version` reports what is installed.'
           } > /tmp/notes.md
           gh release create "v$VERSION" dist/* \
             --title "canopy $VERSION" \
