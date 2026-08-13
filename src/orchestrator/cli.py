@@ -1566,7 +1566,12 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
                    f"clean bill of health.\n   reason: {result['error']}")
     elif not findings and dropped:
         pass  # all findings were already-shipped; the drop list above says so
-    elif not no_llm:
+    elif not findings and not no_llm:
+        # Guarded on there ACTUALLY being nothing. This used to be a bare `elif not
+        # no_llm`, so every successful run — the one that had just printed
+        # `Findings (N):` — fell through and contradicted itself with "No findings
+        # synthesized." two lines later. A reader (or a cron) skimming the tail of the
+        # output reads the LAST line, which is the one that was wrong.
         click.echo("\nNo findings synthesized.")
 
 

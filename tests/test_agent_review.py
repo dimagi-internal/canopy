@@ -1145,3 +1145,80 @@ def test_json_output_exits_zero_on_a_clean_run(monkeypatch):
     res = _invoke_agent_review_json(monkeypatch, _result())
     assert res.exit_code == 0
     assert json.loads(res.output)["findings"] == []
+
+
+# --- The human path must not contradict itself: "No findings synthesized." on a run
+# --- that just printed `Findings (N):`. The terminal line was guarded on `not no_llm`
+# --- alone, so every ordinary SUCCESS fell through to it. ----------------------
+
+def _invoke_agent_review_human(monkeypatch, result, *extra):
+    """Run `canopy agent-review hal` (human output) with run_review stubbed to `result`."""
+    from click.testing import CliRunner
+
+    from orchestrator import cli as cli_mod
+
+    monkeypatch.setattr(
+        "orchestrator.agent_review.run_review", lambda *a, **k: result, raising=False
+    )
+    return CliRunner().invoke(cli_mod.main, ["agent-review", "hal", *extra])
+
+
+_A_FINDING = {
+    "title": "namespace the turn skill",
+    "friction_type": "skill_collisions",
+    "fix_kind": "skill_edit",
+    "target": "skills/turn/SKILL.md",
+    "recommendation": "force reading the agent's own turn skill from disk",
+    "confidence": "high",
+}
+
+
+def test_successful_run_does_not_claim_no_findings(monkeypatch):
+    """N>0 findings printed, nothing dropped, no error — the tail must not say
+    'No findings synthesized.' It did, on every ordinary successful run."""
+    res = _invoke_agent_review_human(monkeypatch, _result(findings=[_A_FINDING]))
+    assert res.exit_code == 0, res.output
+    assert "Findings (1):" in res.output
+    assert "No findings synthesized." not in res.output
+
+
+def test_findings_alongside_drops_also_does_not_claim_no_findings(monkeypatch):
+    """`elif not findings and dropped` only covered the all-already-shipped case;
+    findings AND drops together fell through to the same wrong line."""
+    res = _invoke_agent_review_human(
+        monkeypatch,
+        _result(findings=[_A_FINDING], dropped_findings=[{"title": "already shipped"}]),
+    )
+    assert "Findings (1):" in res.output
+    assert "No findings synthesized." not in res.output
+
+
+def test_genuinely_empty_run_still_says_no_findings(monkeypatch):
+    """The line is load-bearing for a real empty run — don't silence it."""
+    res = _invoke_agent_review_human(monkeypatch, _result())
+    assert res.exit_code == 0, res.output
+    assert "No findings synthesized." in res.output
+
+
+def test_all_already_shipped_stays_quiet(monkeypatch):
+    """Unchanged: the drop list above already explains the empty findings list."""
+    res = _invoke_agent_review_human(
+        monkeypatch, _result(dropped_findings=[{"title": "already shipped"}])
+    )
+    assert "No findings synthesized." not in res.output
+    assert "Dropped by source gate" in res.output
+
+
+def test_errored_run_still_shouts(monkeypatch):
+    """Unchanged: a costed pass that didn't complete stays LOUD, not a parenthetical."""
+    res = _invoke_agent_review_human(
+        monkeypatch, _result(error="synthesis pass timed out after 180s")
+    )
+    assert "SYNTHESIS PASS DID NOT COMPLETE" in res.output
+    assert "No findings synthesized." not in res.output
+
+
+def test_no_llm_run_prints_neither_line(monkeypatch):
+    """--no-llm never synthesizes, so it must not report on synthesis either way."""
+    res = _invoke_agent_review_human(monkeypatch, _result(), "--no-llm")
+    assert "No findings synthesized." not in res.output
