@@ -39,6 +39,30 @@ FILTERS: list[dict] = [
                   'OR "offline until")'),
         "archive": True, "mark_read": True,
     },
+    # …and the same rule's blind spot, found the hard way on 2026-08-13: the subject list above
+    # is an ENUMERATION of wordings, so it keeps getting outrun by the next one. Beth's responder
+    # said "Offline through July 26th" in July (caught) and "Offline August 13-14" in August
+    # (missed) — same person, same responder, one word different — and it spawned a full eva turn
+    # that read the thread and correctly did nothing. Widening the subject list alone is a trap:
+    # a bare subject:offline would also archive a real "let's take this offline" thread, and a
+    # silently-archived human message is the one failure this whole file is written to avoid.
+    # So this rule requires BOTH an unavailability marker in the SUBJECT and a first-person
+    # availability statement in the BODY — a conjunction a vacation responder satisfies and a
+    # human writing about something else essentially never does. Verified against eva@'s full
+    # mail history: 7/7 matches carry Auto-Submitted: auto-replied, zero false positives.
+    # Overlaps the rule above on purpose (both are archive+mark_read, so overlap is free); this
+    # one exists to catch the wordings that list hasn't learned yet.
+    {
+        "name": "auto-reply-ooo-body",
+        "query": ('subject:(offline OR ooo OR "out of office" OR "on leave" OR "annual leave" '
+                  'OR vacation OR holiday OR away) '
+                  '("i will be offline" OR "i am offline" OR "i will be out of the office" '
+                  'OR "i am out of the office" OR "i am currently out of the office" '
+                  'OR "i will be on leave" OR "i am on leave" OR "i am on vacation" '
+                  'OR "i will be on vacation" OR "limited access to email" '
+                  'OR "away from my email" OR "away from the office")'),
+        "archive": True, "mark_read": True,
+    },
     # Google Calendar "share my calendar" invitations. Ada's 2026-07-22 review caught one
     # (Beth sharing her calendar) spawn a full eva turn that spelunked the Calendar API before
     # concluding "no action." Same shape as the OOO rule: it's auto-generated
