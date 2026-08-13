@@ -120,193 +120,103 @@ def create_agent(spec: AgentSpec, target_dir: Path, *, force: bool = False) -> l
 # --------------------------------------------------------------------------------------
 
 _GATING_GUARD = r'''#!/usr/bin/env python3
-"""Generic reads-free / writes-gated PreToolUse guard for {{AGENT_NAME}}.
+"""PreToolUse gating hook — a LOADER. The engine lives in canopy, not here.
 
-This is the generalization of echo's block_raw_gog_send.py. It reads
-config/gating.json and enforces, at the tool-call boundary:
+Do not add rules or matching logic to this file. It resolves the installed canopy plugin and
+runs `agent-core/gating_guard.py`, so one implementation serves the whole fleet and an engine
+fix arrives via /canopy:update — exactly like the deny rails in agent-core/gating-baseline.json
+already do.
 
-  - "deny" rules  -> exit 2 (hard block; the agent CANNOT bypass it), with a message
-                     telling it the right way to do the action.
-  - "approve" rules -> escalate to a human via a PreToolUse permissionDecision of "ask".
-  - everything else -> allow (reads run free).
+WHY (2026-08-13): this file used to BE the engine, copied into every agent repo at scaffold
+time and never updated. Config was centralized; code was forked. Measured across four agents:
+three had drifted behind and were silently missing rail features, while one had invented a
+genuinely useful one (`per_statement`) that no other agent could use. A one-line fix cost N
+pull requests. Now it costs one.
 
-STDLIB ONLY by design: a PreToolUse hook runs under whatever python3 is on PATH, which
-may not have PyYAML. That is why the gating config is JSON, not YAML.
+What stays yours: `config/gating.json` — this agent's own deny/approve rails and its
+`channels` mounts. That is config, and config is per-agent by design.
 
-A rule is `{"tool": "<ToolName>", "pattern": "<regex>", "message": "..."}`. `tool` is
-matched exactly against the tool name; `pattern` (optional) is matched against the Bash
-command string, or the file_path for Edit/Write. Omit `pattern` to match every call of
-that tool.
+DEGRADED MODE. If the engine cannot be resolved this file still enforces the agent's LOCAL
+deny rails, using a deliberately minimal matcher (`tool` + `pattern` only). It never silently
+weakens anything: a rule using a feature this fallback does not implement is treated as
+MATCHING, and an agent that mounts `channels` fails closed outright, because it is depending
+on baseline rails it cannot read. Losing the engine must cost availability, never safety.
 """
 import json
 import os
 import re
+import runpy
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-CONFIG = os.path.join(os.path.dirname(HERE), "config", "gating.json")
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIG = os.path.join(REPO, "config", "gating.json")
+_RICH = ("tool_pattern", "per_statement")   # engine-only rule features
 
 
-def _baseline_rails(cfg):
-    """Fleet-baseline deny rails for this agent's mounted channels, from the INSTALLED canopy
-    plugin (agent-core/gating-baseline.json) — so a rail fix ships once and reaches every agent
-    via /canopy:update. Returns [] for legacy configs (no `channels` key: local rails only), or
-    None when channels are mounted but the baseline is unresolvable (caller fails CLOSED).
-    CANOPY_PLUGIN_DIR overrides the plugin dir (tests / unusual installs)."""
-    channels = cfg.get("channels")
-    if not channels:
-        return []
-    slug = cfg.get("slug") or os.path.basename(os.path.dirname(HERE))
+def _engine():
+    plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
+    if not plugin_dir:
+        reg = json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json")))
+        plugin_dir = reg["plugins"]["canopy@canopy"][0]["installPath"]
+    path = os.path.join(plugin_dir, "agent-core", "gating_guard.py")
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    return path
+
+
+def _degraded(exc):
+    """Engine unreachable: enforce local deny rails only, or fail closed if we cannot."""
     try:
-        plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
-        if not plugin_dir:
-            reg = json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json")))
-            plugin_dir = reg["plugins"]["canopy@canopy"][0]["installPath"]
-        base = json.load(open(os.path.join(plugin_dir, "agent-core", "gating-baseline.json")))
+        payload = json.load(sys.stdin)
     except Exception:
-        return None
-    rails = []
-    for ch in channels:
-        for rule in base.get("channels", {}).get(ch, []):
-            rails.append({k: (v.replace("{slug}", slug) if isinstance(v, str) else v)
-                          for k, v in rule.items()})
-    return rails
-
-
-def _subject(tool_name, tool_input):
-    """The string a rule's pattern is tested against, per tool.
-
-    Anything that is not a known built-in falls back to the JSON of its whole input — which
-    is how an MCP tool becomes railable at all. Before 2026-08-13 this returned "" for every
-    MCP tool, so a rail could not inspect an MCP call's ARGUMENTS: a rule with a pattern
-    could never match, and a rule without one matched unconditionally (blocking the tool
-    outright). That left every Drive-creating MCP tool — chrome-sales gdrive's
-    drive_create_file / drive_create_folder, ace-gdrive's creators — outside the filing
-    rails entirely, while the Bash path was railed."""
-    if not isinstance(tool_input, dict):
-        return ""
-    if tool_name == "Bash":
-        return tool_input.get("command", "") or ""
-    if tool_name in ("Edit", "Write", "NotebookEdit"):
-        return tool_input.get("file_path", "") or tool_input.get("notebook_path", "") or ""
-    try:
-        return json.dumps(tool_input, sort_keys=True, default=str)
-    except Exception:
-        return ""
-
-
-def _summarize_action(tool_name, subject):
-    """A crisp, human-readable summary of the GATED action — so the approval prompt says exactly
-    WHAT you're approving at a glance, not a generic 'needs approval' over a wall of bash."""
-    if tool_name != "Bash":
-        return tool_name + " -> " + subject[:80]
-    s = subject
-    m = re.search(r"\bgit\s+push\b([^\n;&|]*)", s)
-    if m:
-        args = [a for a in m.group(1).split() if not a.startswith("-")]
-        return "git PUSH -> " + (" ".join(args[:2]) if args else "default remote/branch")
-    m = re.search(r"\bgh\s+pr\s+create\b([^\n;&|]*)", s)
-    if m:
-        t = re.search(r"--title[= ]+[\"']?([^\"'\n]{0,60})", m.group(1))
-        r = re.search(r"-R[= ]+(\S+)", m.group(1))
-        return "OPEN a PR" + (' "' + t.group(1).strip() + '"' if t else "") + (" in " + r.group(1) if r else "")
-    m = re.search(r"\bgh\s+pr\s+merge\b([^\n;&|]*)", s)
-    if m:
-        n = re.search(r"\b(\d+)\b", m.group(1))
-        r = re.search(r"-R[= ]+(\S+)", m.group(1))
-        return "MERGE a PR" + (" #" + n.group(1) if n else "") + (" in " + r.group(1) if r else "")
-    m = re.search(r"\bgh\s+repo\s+(create|delete)\b([^\n;&|]*)", s)
-    if m:
-        nm = re.search(r"([\w.-]+/[\w.-]+|[\w.-]+)", m.group(2))
-        return m.group(1).upper() + " GitHub repo" + (" " + nm.group(1) if nm else "")
-    return s.strip().replace("\n", " ")[:100]
-
-
-def _approval_reason(rule, tool_name, subject, cwd):
-    """A scannable approval prompt: WHAT (parsed action) + WHERE (repo) + the exact command +
-    WHY (policy note). One glance should be enough to decide."""
-    action = _summarize_action(tool_name, subject)
-    repo = os.path.basename(cwd.rstrip("/")) if cwd else ""
-    cmd = subject.strip().replace("\n", " ")
-    if len(cmd) > 220:
-        cmd = cmd[:220] + " ..."
-    note = rule.get("message") or "outbound/write action - needs your approval."
-    head = "APPROVE {{AGENT_NAME}} -> " + action + ("   (repo: " + repo + ")" if repo else "")
-    return head + "\n  why: " + note + "\n  full command: " + cmd
-
-
-def _matches(rule, tool_name, subject):
-    """`tool` pins one exact tool; `tool_pattern` is a regex over the tool NAME.
-
-    `tool_pattern` exists because MCP tool names carry their plugin mount — the same Drive
-    creator is `mcp__plugin_chrome-sales_gdrive__drive_create_file` here and
-    `mcp__gdrive__drive_create_file` elsewhere. Enumerating exact names is the very
-    trailing-denylist failure these rails are meant to close, so match the shape instead."""
-    if rule.get("tool") and rule["tool"] != tool_name:
-        return False
-    tpat = rule.get("tool_pattern")
-    if tpat:
-        try:
-            if re.search(tpat, tool_name) is None:
-                return False
-        except re.error:
-            return False
-    pat = rule.get("pattern")
-    if not pat:
-        return True
-    try:
-        return re.search(pat, subject) is not None
-    except re.error:
-        return False
-
-
-def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
-        sys.exit(0)            # never block on a parse failure
+        sys.exit(0)
     try:
         cfg = json.load(open(CONFIG))
     except Exception:
-        sys.exit(0)            # no/*broken* config = no extra gating
+        sys.exit(0)                       # no/broken config = no extra gating (engine parity)
 
-    tool_name = data.get("tool_name", "")
-    subject = _subject(tool_name, data.get("tool_input"))
-    cwd = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR", "")
-
-    baseline = _baseline_rails(cfg)
-    if baseline is None:
-        # channels are mounted but the fleet baseline is unreadable — fail CLOSED, with the fix.
+    slug = cfg.get("slug") or os.path.basename(REPO) or "the agent"
+    if cfg.get("channels"):
+        # Depends on baseline rails it cannot read — same fail-closed contract as the engine.
         sys.stderr.write(
-            "BLOCKED (fail closed): {{AGENT_SLUG}}'s config/gating.json mounts channels but the "
-            "canopy fleet gating baseline (agent-core/gating-baseline.json) is unreadable. "
-            "Fix: run /canopy:update (or `uv tool install canopy` / check "
-            "~/.claude/plugins/installed_plugins.json), then retry.\n")
+            "BLOCKED (fail closed): " + slug + " mounts gating channels but the canopy gating "
+            "engine (agent-core/gating_guard.py) is unresolvable - "
+            + type(exc).__name__ + ": " + str(exc) + "\n"
+            "Fix: run /canopy:update, then retry.\n")
         sys.exit(2)
 
-    for rule in baseline + cfg.get("deny", []):
-        if _matches(rule, tool_name, subject):
-            msg = rule.get("message") or "BLOCKED by {{AGENT_SLUG}} gating policy (deny rule)."
-            sys.stderr.write(msg.rstrip() + "\n")
-            sys.exit(2)
-
-    for rule in cfg.get("approve", []):
-        if _matches(rule, tool_name, subject):
-            reason = _approval_reason(rule, tool_name, subject, cwd)
-            print(json.dumps({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "ask",
-                    "permissionDecisionReason": reason,
-                }
-            }))
-            sys.exit(0)
-
+    tool = payload.get("tool_name", "")
+    inp = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    if tool == "Bash":
+        subject = inp.get("command", "") or ""
+    elif tool in ("Edit", "Write", "NotebookEdit"):
+        subject = inp.get("file_path", "") or inp.get("notebook_path", "") or ""
+    else:
+        subject = ""
+    for rule in cfg.get("deny", []):
+        if rule.get("tool") and rule["tool"] != tool:
+            continue
+        if any(rule.get(k) for k in _RICH):
+            pass                          # cannot evaluate it here -> assume it fires
+        elif rule.get("pattern"):
+            try:
+                if re.search(rule["pattern"], subject) is None:
+                    continue
+            except re.error:
+                continue
+        sys.stderr.write((rule.get("message")
+                          or ("BLOCKED by " + slug + " gating policy (deny rule).")).rstrip() + "\n")
+        sys.exit(2)
     sys.exit(0)
 
 
-if __name__ == "__main__":
-    main()
+try:
+    ENGINE = _engine()
+except Exception as exc:
+    _degraded(exc)
+
+os.environ.setdefault("CANOPY_AGENT_REPO", REPO)
+runpy.run_path(ENGINE, run_name="__main__")
 '''
 
 _GATING_JSON = '''{
