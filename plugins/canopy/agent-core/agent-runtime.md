@@ -3,6 +3,30 @@
 > **Fleet-canonical process (canopy agent-core).** Where an agent's configuration values live and
 > how they reach a turn. Read this before adding ANY new id, key, folder, or account to an agent.
 
+## Sibling rule: CODE lives in canopy, CONFIG lives in the agent
+
+The rule above governs *values*. This one governs *files*, and it is the same idea one level up:
+
+| Belongs to the agent repo | Belongs to canopy |
+|---|---|
+| `config/agent.json`, `config/gating.json` (its own rails + `channels`) | the gating **engine** (`agent-core/gating_guard.py`) |
+| persona, domain skills, its own `bin/` capabilities | the publishing engines (`canopy gdoc` / `canopy gsheet`) |
+| anything genuinely specific to what this agent *is* | anything every agent would want identically |
+
+**If a file would be byte-identical in every agent repo, it does not belong in an agent repo.**
+Ship it with the plugin and have the agent load it, so a fix reaches the fleet via
+`/canopy:update` instead of N pull requests.
+
+Why this is written down (2026-08-13): the deny **rails** were centralized here from the start,
+but `hooks/gating_guard.py` — the engine that reads them — was *copied* into each agent at scaffold
+time and never updated. Config was shared; code was forked. Measured across four agents, every
+predicted symptom had arrived: three copies were behind and silently missing rail features, so
+rails that existed did nothing for them; a one-line fix needed one PR per agent; and worst,
+**improvements flowed the wrong way** — ada had built `per_statement` against a real false positive
+and it stayed in ada for three weeks, unusable by anyone else, while another agent was bitten by a
+sibling of the same bug. The engine now ships with the plugin and each `hooks/gating_guard.py` is a
+loader with no agent-specific text in it at all.
+
 ## The one rule
 
 **No environment-varying value is committed to git.** Not a password or API key — and *also not* a

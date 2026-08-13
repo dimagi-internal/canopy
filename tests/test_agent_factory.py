@@ -447,3 +447,110 @@ def test_gating_hook_rails_raw_gog_sheets_create(tmp_path):
     assert run("gog sheets create 'X' --parent FOLDER123").returncode == 0
     assert run("gog sheets create --help").returncode == 0      # usage must stay readable
     assert run("gog sheets read SID 'A1:B2'").returncode == 0   # reads free
+
+
+def _hook_env(**extra):
+    import os as _os
+    return {**_os.environ,
+            "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy"),
+            **extra}
+
+
+def test_gating_hook_is_a_loader_with_no_agent_specifics(tmp_path):
+    """The generated hook must carry NO agent-specific text and NO matching logic.
+
+    This is the property that makes it shared: if the file were templated per agent, or held
+    rules, we would be back to N forked copies — the state measured on 2026-08-13 (three of
+    four agents silently behind on rail features, a fourth holding one nobody else could use).
+    """
+    create_agent(_spec(), tmp_path / "echo")
+    body = (tmp_path / "echo" / "hooks" / "gating_guard.py").read_text()
+    assert "Echo" not in body and "echo" not in body.replace("echo's", "")
+    assert "runpy.run_path" in body
+    # the engine's real matching surface must NOT be duplicated here
+    assert "def matches(" not in body and "baseline_rails" not in body
+
+
+def test_gating_hook_delegates_to_the_shared_engine(tmp_path):
+    """End-to-end through the loader: deny / approve / allow all still work."""
+    create_agent(_spec(), tmp_path / "echo")
+    root = tmp_path / "echo"
+    hook = root / "hooks" / "gating_guard.py"
+    gating = root / "config" / "gating.json"
+    cfg = json.loads(gating.read_text())
+    cfg["approve"] = [{"tool": "Edit", "message": "Echo edits only with approval."}]
+    gating.write_text(json.dumps(cfg))
+
+    def run(payload):
+        return subprocess.run([sys.executable, str(hook)], input=json.dumps(payload),
+                              capture_output=True, text=True, env=_hook_env())
+
+    r = run({"tool_name": "Bash", "tool_input": {"command": "gog gmail send --to a@b.c"}})
+    assert r.returncode == 2 and "bin/echo-email" in r.stderr
+
+    r = run({"tool_name": "Edit", "tool_input": {"file_path": "/tmp/x"}})
+    assert json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
+    # the approval prompt still names the agent — read from config, not templated in
+    assert "APPROVE Echo" in json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+    assert run({"tool_name": "Bash", "tool_input": {"command": "git status"}}).returncode == 0
+
+
+def test_per_statement_reaches_every_agent(tmp_path):
+    """ada's `per_statement`, promoted to the shared engine on 2026-08-13.
+
+    It sat in ada's private copy for three weeks; eva, hal and echo could not use it. This
+    test is the guarantee that a feature invented at one leaf now reaches the fleet.
+    """
+    create_agent(_spec(), tmp_path / "echo")
+    root = tmp_path / "echo"
+    gating = root / "config" / "gating.json"
+    cfg = json.loads(gating.read_text())
+    # a multi-lookahead rail: a write verb AND the target host, in the SAME statement
+    cfg["deny"] = [{
+        "tool": "Bash",
+        "per_statement": True,
+        "pattern": r"(?=[\s\S]*\bcurl\b)(?=[\s\S]*example\.com)(?=[\s\S]*-X\s*POST)",
+        "message": "BLOCKED: no writes to example.com.",
+    }]
+    gating.write_text(json.dumps(cfg))
+
+    def run(cmd):
+        return subprocess.run([sys.executable, str(root / "hooks" / "gating_guard.py")],
+                              input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
+                              capture_output=True, text=True, env=_hook_env())
+
+    # the real violation still blocks
+    assert run("curl -X POST https://example.com/items").returncode == 2
+    # the false positive ada hit: a free GET plus an UNRELATED post in the next statement
+    assert run("curl https://example.com/items && curl -X POST https://other.test/x").returncode == 0
+
+
+def test_gating_loader_degrades_without_bricking_or_weakening(tmp_path):
+    """Engine unresolvable. Availability may suffer; safety may not."""
+    create_agent(_spec(), tmp_path / "echo")
+    root = tmp_path / "echo"
+    hook = root / "hooks" / "gating_guard.py"
+    gating = root / "config" / "gating.json"
+    broken = _hook_env(CANOPY_PLUGIN_DIR=str(tmp_path / "nonexistent"))
+
+    def run(cmd, env):
+        return subprocess.run([sys.executable, str(hook)],
+                              input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
+                              capture_output=True, text=True, env=env)
+
+    # (a) legacy config, no channels -> local rails still enforced, reads still free
+    gating.write_text(json.dumps({"deny": [
+        {"tool": "Bash", "pattern": "forbidden_local_thing", "message": "BLOCKED: local rail."}]}))
+    assert run("forbidden_local_thing now", broken).returncode == 2
+    assert run("git status", broken).returncode == 0
+
+    # (b) a rule using an engine-only feature must be assumed to FIRE, never skipped
+    gating.write_text(json.dumps({"deny": [
+        {"tool": "Bash", "per_statement": True, "pattern": "nope", "message": "BLOCKED: rich rule."}]}))
+    assert run("anything at all", broken).returncode == 2
+
+    # (c) channels mounted -> depends on rails it cannot read -> fail closed, naming the fix
+    gating.write_text(json.dumps({"channels": ["email"], "deny": []}))
+    r = run("git status", broken)
+    assert r.returncode == 2 and "/canopy:update" in r.stderr
