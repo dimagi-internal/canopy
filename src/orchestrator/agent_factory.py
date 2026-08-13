@@ -174,14 +174,25 @@ def _baseline_rails(cfg):
 
 
 def _subject(tool_name, tool_input):
-    """The string a rule's pattern is tested against, per tool."""
+    """The string a rule's pattern is tested against, per tool.
+
+    Anything that is not a known built-in falls back to the JSON of its whole input — which
+    is how an MCP tool becomes railable at all. Before 2026-08-13 this returned "" for every
+    MCP tool, so a rail could not inspect an MCP call's ARGUMENTS: a rule with a pattern
+    could never match, and a rule without one matched unconditionally (blocking the tool
+    outright). That left every Drive-creating MCP tool — chrome-sales gdrive's
+    drive_create_file / drive_create_folder, ace-gdrive's creators — outside the filing
+    rails entirely, while the Bash path was railed."""
     if not isinstance(tool_input, dict):
         return ""
     if tool_name == "Bash":
         return tool_input.get("command", "") or ""
     if tool_name in ("Edit", "Write", "NotebookEdit"):
         return tool_input.get("file_path", "") or tool_input.get("notebook_path", "") or ""
-    return ""
+    try:
+        return json.dumps(tool_input, sort_keys=True, default=str)
+    except Exception:
+        return ""
 
 
 def _summarize_action(tool_name, subject):
@@ -225,8 +236,21 @@ def _approval_reason(rule, tool_name, subject, cwd):
 
 
 def _matches(rule, tool_name, subject):
+    """`tool` pins one exact tool; `tool_pattern` is a regex over the tool NAME.
+
+    `tool_pattern` exists because MCP tool names carry their plugin mount — the same Drive
+    creator is `mcp__plugin_chrome-sales_gdrive__drive_create_file` here and
+    `mcp__gdrive__drive_create_file` elsewhere. Enumerating exact names is the very
+    trailing-denylist failure these rails are meant to close, so match the shape instead."""
     if rule.get("tool") and rule["tool"] != tool_name:
         return False
+    tpat = rule.get("tool_pattern")
+    if tpat:
+        try:
+            if re.search(tpat, tool_name) is None:
+                return False
+        except re.error:
+            return False
     pat = rule.get("pattern")
     if not pat:
         return True

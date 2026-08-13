@@ -20,7 +20,13 @@ from orchestrator.agent_gdoc import (
     parse_list_result,
     parse_mkdir_result,
     parse_upload_result,
+    parse_sheet_create_result,
+    parse_tab_spec,
     publish,
+    publish_sheet,
+    read_table,
+    folder_contents,
+    _a1_col,
     resolve_gdoc_identity,
     resolve_subfolder,
     verify_permissions,
@@ -513,3 +519,174 @@ def test_resolve_subfolder_process_state_area_no_project():
 def test_resolve_subfolder_requires_root():
     with pytest.raises(AgentGdocError, match="no Drive root resolved"):
         resolve_subfolder(_ident(root_folder=""), project="X", runner=_FakeDrive())
+
+
+# --------------------------------------------------------------------------------------
+# Sheets — `canopy gsheet publish` (added 2026-08-13)
+#
+# WHY: `publish` covered markdown→Doc and nothing covered a SPREADSHEET, so a skill needing
+# a roster/tracker fell through to raw `gog sheets create` — which lands in My Drive root,
+# unshared. That happened for real on 2026-08-12 (a 45-row target roster). These pin the
+# filing contract for the tabular path so it can't regress to "wherever gog defaults to".
+# --------------------------------------------------------------------------------------
+
+class _FakeSheets:
+    """Fakes `gog sheets create` + `gog sheets update` + `gog drive share|permissions`."""
+
+    def __init__(self, *, create_rc=0, update_rc=0, share_rc=0, perms=None):
+        self.create_rc, self.update_rc, self.share_rc = create_rc, update_rc, share_rc
+        self.perms = perms if perms is not None else [
+            {"type": "domain", "domain": "dimagi.com", "role": "reader"}]
+        self.cmds = []
+
+    def __call__(self, cmd, capture_output=True, text=True, timeout=None):
+        self.cmds.append(cmd)
+        svc, verb = cmd[1], cmd[2]
+        if (svc, verb) == ("sheets", "create"):
+            return SimpleNamespace(returncode=self.create_rc, stderr="boom",
+                                   stdout=json.dumps({"spreadsheetId": "SID1",
+                                                      "spreadsheetUrl": "https://s/SID1"}))
+        if (svc, verb) == ("sheets", "update"):
+            return SimpleNamespace(returncode=self.update_rc, stdout="{}", stderr="boom")
+        if (svc, verb) == ("drive", "share"):
+            return SimpleNamespace(returncode=self.share_rc, stdout="{}", stderr="boom")
+        if (svc, verb) == ("drive", "permissions"):
+            return SimpleNamespace(returncode=0, stderr="",
+                                   stdout=json.dumps({"permissions": self.perms}))
+        return SimpleNamespace(returncode=1, stdout="", stderr="unexpected")
+
+
+def _tsv(tmp_path, name="roster.tsv", rows=(("Tier", "Person"), ("1", "Elizabeth Kelly"))):
+    p = tmp_path / name
+    p.write_text("\n".join("\t".join(r) for r in rows))
+    return str(p)
+
+
+def test_read_table_infers_delimiter_from_extension(tmp_path):
+    tsv = tmp_path / "a.tsv"
+    tsv.write_text("a\tb\nc\td")
+    assert read_table(str(tsv)) == [["a", "b"], ["c", "d"]]
+    # A roster cell is far likelier to hold a comma than a tab, hence the default.
+    csv_f = tmp_path / "a.csv"
+    csv_f.write_text('x,y\n"Lesh, Neal",z')
+    assert read_table(str(csv_f)) == [["x", "y"], ["Lesh, Neal", "z"]]
+
+
+def test_parse_tab_spec_named_and_bare():
+    assert parse_tab_spec("Clean-up=/tmp/c.tsv") == ("Clean-up", "/tmp/c.tsv")
+    assert parse_tab_spec("/tmp/roster.tsv") == ("roster", "/tmp/roster.tsv")
+    # split on the FIRST '=' so a path containing '=' survives
+    assert parse_tab_spec("T=/tmp/a=b.tsv") == ("T", "/tmp/a=b.tsv")
+    with pytest.raises(AgentGdocError):
+        parse_tab_spec("=/tmp/x.tsv")
+
+
+def test_a1_col_is_bijective_base26():
+    assert (_a1_col(1), _a1_col(26), _a1_col(27), _a1_col(52)) == ("A", "Z", "AA", "AZ")
+
+
+def test_publish_sheet_refuses_without_parent(tmp_path):
+    """THE regression this whole change exists for: no destination = My Drive root."""
+    with pytest.raises(AgentGdocError) as e:
+        publish_sheet(_ident(), name="Roster", parent=None,
+                      tabs=[("Sheet1", _tsv(tmp_path))], share="domain")
+    assert "My Drive root" in str(e.value)
+
+
+def test_publish_sheet_creates_into_parent_writes_tabs_and_shares(tmp_path):
+    fake = _FakeSheets()
+    out = publish_sheet(_ident(), name="Roster", parent="PROJ",
+                        tabs=[("Sheet1", _tsv(tmp_path)),
+                              ("Clean-up", _tsv(tmp_path, "c.tsv"))],
+                        share="domain", runner=fake)
+    create = fake.cmds[0]
+    assert create[:3] == ["gog", "sheets", "create"]
+    # the destination is non-negotiable, and both tabs are named at creation
+    assert create[create.index("--parent") + 1] == "PROJ"
+    assert create[create.index("--sheets") + 1] == "Sheet1,Clean-up"
+    updates = [c for c in fake.cmds if c[1:3] == ["sheets", "update"]]
+    assert [u[4] for u in updates] == ["Sheet1!A1:B2", "Clean-up!A1:B2"]
+    assert out["id"] == "SID1" and out["shared"] == "domain" and out["verified"] is True
+    assert out["tabs"] == [{"tab": "Sheet1", "rows": 2}, {"tab": "Clean-up", "rows": 2}]
+
+
+def test_publish_sheet_range_sized_to_the_grid(tmp_path):
+    fake = _FakeSheets()
+    wide = _tsv(tmp_path, "w.tsv", rows=(tuple("abcdefghijklmnopqrstuvwxyzA"), ("1",)))
+    publish_sheet(_ident(), name="R", parent="P", tabs=[("T", wide)],
+                  share="none", runner=fake)
+    upd = [c for c in fake.cmds if c[1:3] == ["sheets", "update"]][0]
+    assert upd[4] == "T!A1:AA2"   # 27 columns → AA, not 'A1'
+
+
+def test_publish_sheet_reports_a_failed_tab_write_without_claiming_success(tmp_path):
+    fake = _FakeSheets(update_rc=1)
+    with pytest.raises(AgentGdocError) as e:
+        publish_sheet(_ident(), name="R", parent="P", tabs=[("T", _tsv(tmp_path))],
+                      share="domain", runner=fake)
+    # names the created sheet so the half-built artifact can be found and cleaned up
+    assert "SID1" in str(e.value) and "writing tab" in str(e.value)
+
+
+def test_publish_sheet_failed_share_is_loud(tmp_path):
+    fake = _FakeSheets(share_rc=1)
+    with pytest.raises(AgentGdocError) as e:
+        publish_sheet(_ident(), name="R", parent="P", tabs=[("T", _tsv(tmp_path))],
+                      share="domain", runner=fake)
+    assert "share failed" in str(e.value)
+
+
+def test_publish_sheet_unverified_share_does_not_report_verified(tmp_path):
+    # share landed but the permission never appeared — the exact "shared it, honest" trap
+    fake = _FakeSheets(perms=[])
+    out = publish_sheet(_ident(), name="R", parent="P", tabs=[("T", _tsv(tmp_path))],
+                        share="domain", runner=fake)
+    assert out["verified"] is False
+
+
+def test_publish_sheet_dry_run_touches_nothing(tmp_path):
+    fake = _FakeSheets()
+    out = publish_sheet(_ident(), name="R", parent="P", tabs=[("T", _tsv(tmp_path))],
+                        share="domain", dry_run=True, runner=fake)
+    assert out["dry_run"] is True and fake.cmds == []
+
+
+def test_parse_sheet_create_result_tolerates_envelopes():
+    assert parse_sheet_create_result(json.dumps(
+        {"spreadsheet": {"spreadsheetId": "S1"}}))["id"] == "S1"
+    # id but no url → synthesize the canonical link rather than hand back ""
+    assert parse_sheet_create_result(json.dumps({"spreadsheetId": "S2"}))["url"] \
+        == "https://docs.google.com/spreadsheets/d/S2/edit"
+    assert parse_sheet_create_result("not json")["id"] == ""
+
+
+# --------------------------------------------------------------------------------------
+# Reuse reporting — silence about landing on prior work is itself the defect
+# --------------------------------------------------------------------------------------
+
+def test_resolve_subfolder_trace_marks_reused_vs_created():
+    drive = _FakeDrive({
+        "ROOT": [{"id": "PROJ", "name": "Projects", "mimeType": FOLDER}],
+        "PROJ": [],
+    })
+    trace: list = []
+    resolve_subfolder(_ident(root_folder="ROOT"), project="Bay Area Trip",
+                      runner=drive, trace=trace)
+    assert trace == [
+        {"name": "Projects", "id": "PROJ", "created": False},
+        {"name": "Bay Area Trip", "id": "NEW1", "created": True},
+    ]
+
+
+def test_folder_contents_excludes_folders_and_never_raises():
+    drive = _FakeDrive({"P": [
+        {"id": "F", "name": "sub", "mimeType": FOLDER},
+        {"id": "D", "name": "outreach macros.gdoc", "mimeType": "application/vnd.google-apps.document"},
+    ]})
+    got = folder_contents(_ident(), "P", runner=drive)
+    assert [f["name"] for f in got] == ["outreach macros.gdoc"]
+
+    def boom(*a, **k):
+        raise OSError("gog exploded")
+    # advisory context must never take down a publish
+    assert folder_contents(_ident(), "P", runner=boom) == []

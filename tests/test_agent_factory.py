@@ -370,3 +370,80 @@ def test_internal_skills_are_not_user_launchable(tmp_path):
     assert "user-invocable: false" not in turn_fm, "turn must stay human-launchable"
     # the walk-back removed command wrappers entirely
     assert not (root / "commands").exists(), "factory no longer stamps commands/ wrappers"
+
+
+def test_gating_hook_rails_mcp_drive_creates_and_reads_their_arguments(tmp_path):
+    """The MCP half of the deliverable-filing rails (2026-08-13).
+
+    Two structural gaps made this impossible before, and both are in the hook, not the
+    rules: `_subject` returned "" for any non-built-in tool (so a pattern could never see an
+    MCP call's arguments), and rules could only pin ONE exact tool name (while the same
+    gdrive server is mounted under a different prefix per agent). Result: every rail was
+    `tool: "Bash"`, and an agent holding a Drive-creating MCP tool could file anywhere.
+    """
+    create_agent(_spec(), tmp_path / "echo")
+    hook = tmp_path / "echo" / "hooks" / "gating_guard.py"
+
+    cfg_path = tmp_path / "echo" / "config" / "gating.json"
+    cfg = json.loads(cfg_path.read_text())
+    cfg["channels"] = ["email", "gws"]          # mount the Drive rails
+    cfg_path.write_text(json.dumps(cfg))
+
+    import os as _os
+    env = {**_os.environ,
+           "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy")}
+
+    def run(tool, tool_input):
+        return subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps({"tool_name": tool, "tool_input": tool_input}),
+            capture_output=True, text=True, env=env,
+        )
+
+    # no destination -> blocked, and the message names the sanctioned path
+    r = run("mcp__plugin_chrome-sales_gdrive__drive_create_file", {"name": "roster.csv"})
+    assert r.returncode == 2
+    assert "canopy gsheet publish" in r.stderr or "canopy gdoc publish" in r.stderr
+
+    # a different plugin mount of the same server is matched by shape, not by an exact name
+    r = run("mcp__plugin_ace_ace-gdrive__drive_create_folder", {"name": "Trip"})
+    assert r.returncode == 2
+
+    # destination supplied -> allowed
+    r = run("mcp__plugin_chrome-sales_gdrive__drive_create_file",
+            {"name": "roster.csv", "parent_id": "FOLDER123"})
+    assert r.returncode == 0
+
+    # reads and non-Drive MCP tools are untouched
+    assert run("mcp__plugin_chrome-sales_gdrive__sheets_read", {"spreadsheet_id": "S"}).returncode == 0
+    assert run("mcp__plugin_chrome-sales_salesforce__sf_query", {"soql": "SELECT Id FROM Account"}).returncode == 0
+
+
+def test_gating_hook_rails_raw_gog_sheets_create(tmp_path):
+    """`gog sheets create` with no --parent — the exact command that put a 45-row roster in
+    Eva's My Drive root on 2026-08-12, unshared and dead-linked to the human who asked."""
+    create_agent(_spec(), tmp_path / "echo")
+    hook = tmp_path / "echo" / "hooks" / "gating_guard.py"
+    cfg_path = tmp_path / "echo" / "config" / "gating.json"
+    cfg = json.loads(cfg_path.read_text())
+    cfg["channels"] = ["email", "gws"]
+    cfg_path.write_text(json.dumps(cfg))
+
+    import os as _os
+    env = {**_os.environ,
+           "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy")}
+
+    def run(cmd):
+        return subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
+            capture_output=True, text=True, env=env,
+        )
+
+    r = run("gog sheets create 'SF Trip Targets' -a echo@dimagi-ai.com")
+    assert r.returncode == 2
+    assert "My Drive root" in r.stderr
+
+    assert run("gog sheets create 'X' --parent FOLDER123").returncode == 0
+    assert run("gog sheets create --help").returncode == 0      # usage must stay readable
+    assert run("gog sheets read SID 'A1:B2'").returncode == 0   # reads free
