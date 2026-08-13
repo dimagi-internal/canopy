@@ -322,6 +322,24 @@ queues work and approves outbound actions — independent of whether you publish
 checked out elsewhere, so `git checkout main` and `gh pr merge --delete-branch` FAIL ("main already
 checked out"). Instead: `gh pr merge <n> --squash`, then verify with `gh pr view <n> --json state`.
 
+**…and on a MERGE-QUEUE repo that verify step lies twice — don't undo a merge that worked.** Some
+repos (canopy-web today) protect `main` with a GitHub merge queue, and there `gh pr merge --squash`
+prints `! The merge strategy for main is set by the merge queue` — which reads as a refusal, **but
+the PR is enqueued anyway**. Re-reading the PR then shows `state=OPEN mergedAt=null`, which reads as
+a second confirmation that nothing happened. Both signals are wrong: the queue merges minutes later,
+after re-running the required checks against the queued merge result. So on any repo whose merge is
+refused for a strategy reason:
+```
+gh pr merge <n>                       # no strategy flag — the queue owns the strategy
+gh pr view <n> --json state,mergeStateStatus   # "already queued to merge" = it IS queued
+until [ "$(gh pr view <n> --json state --jq .state)" = MERGED ]; do sleep 25; done
+```
+The failure this prevents is *acting on the false negative* — re-pushing, force-merging, or opening
+a duplicate PR on top of a merge that was already in flight. Treat `OPEN` + `CLEAN` + "already
+queued" as **merging**, not as failed, and wait for `MERGED` before you report the work shipped.
+(2026-08-13, canopy-web#594: the strategy-flag error plus `state=OPEN` looked like two independent
+confirmations of failure; the PR was in the queue the whole time and landed as `fed3f2b`.)
+
 ## Related skills
 - `agent-turn-review` — gate every outbound reply against the original request AND against what you
   can actually execute (invokes the fleet-wide `canopy:agent-turn-review`) before sending.
