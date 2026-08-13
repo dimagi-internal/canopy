@@ -20,6 +20,24 @@ def test_auto_reply_ooo_rule_present_and_matches_observed_subjects():
         assert marker in q, f"OOO filter should cover {marker!r}"
 
 
+def test_auto_reply_ooo_body_rule_catches_the_wordings_the_subject_list_misses():
+    """The subject list above is an enumeration, so it keeps getting outrun: Beth's responder
+    said 'Offline through July 26th' (caught) then 'Offline August 13-14' (missed, 2026-08-13)
+    and spawned a wasted eva turn. This rule closes that by requiring a subject marker AND a
+    first-person body phrase — the conjunction is what makes a bare `offline` marker safe, so
+    it must never be flattened into a subject-only OR (that would archive a real 'let's take
+    this offline' thread, the one failure this file exists to prevent)."""
+    ooo = next((f for f in inbox_filters.FILTERS if f["name"] == "auto-reply-ooo-body"), None)
+    assert ooo is not None, "auto-reply-ooo-body filter rule missing"
+    q = ooo["query"].lower()
+    # the subject half carries the bare marker the enumeration lacked...
+    assert "subject:(offline" in q, "should cover bare 'offline <date>' subjects"
+    # ...and is guarded by a body half, outside the subject:() group.
+    body = q.split(")", 1)[1]
+    assert any(p in body for p in ("i will be offline", "i am out of the office")), \
+        "bare subject markers must be ANDed with first-person body phrases, never used alone"
+
+
 def _runner(list_json, create_rc=0):
     def run(cmd, capture_output, text, timeout):
         if "list" in cmd:
