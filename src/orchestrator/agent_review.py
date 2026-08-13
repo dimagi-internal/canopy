@@ -41,8 +41,21 @@ CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 
 # Wall-clock budgets for the two claude -p passes. Named constants, not magic numbers
 # buried at the call site, so the CLI can expose them and tests can assert the default.
-SYNTHESIS_TIMEOUT = 180   # `run_review`'s synthesis pass
-VERIFY_TIMEOUT = 300      # `_call_verify_llm`'s source-verification pass
+#
+# BOTH DEFAULT TO None — NO TIMEOUT. They used to be 180s and 300s, and the budget was
+# routinely shorter than the work: a 7-turn hal corpus timed out the synthesis pass on
+# the 180s default, repeatably. That is the worst possible failure for this tool,
+# because a timed-out pass returns ZERO findings — so the budget didn't bound a slow
+# review, it silently converted one into an empty one, which is exactly the "no
+# findings == clean bill of health" misread the surrounding code already shouts about.
+# A review that takes six minutes is fine; a review that invents a clean result is not.
+# (Jonathan, 2026-08-13: "just get rid of the timeout, there is no need to have one".)
+#
+# The timeout PLUMBING stays — `--timeout` still works, and TimeoutExpired is still
+# caught into a well-formed error — so an operator or a cron that wants a bound can
+# set one and still get the fail-loud error shape that a live incident paid for.
+SYNTHESIS_TIMEOUT = None   # `run_review`'s synthesis pass
+VERIFY_TIMEOUT = None      # `_call_verify_llm`'s source-verification pass
 
 
 def _error_text(value: object, fallback: str) -> str:
@@ -761,7 +774,7 @@ def build_verify_prompt(repo: Path, findings: list[dict], corpus: dict) -> str:
 
 
 def _call_verify_llm(prompt: str, model: str, max_budget_usd: float,
-                     timeout: int = VERIFY_TIMEOUT) -> tuple[list[dict] | None, str | None]:
+                     timeout: int | None = VERIFY_TIMEOUT) -> tuple[list[dict] | None, str | None]:
     """Run the verdict pass. Returns (verdicts, error). `error` is None on success and
     a human-readable reason on any failure — a silent None-on-fail gate is worse than
     no gate (it presents UNVERIFIED findings as if they'd been checked), so every
@@ -849,7 +862,7 @@ def run_review(
     model: str = "sonnet",
     max_budget_usd: float = 2.0,
     projects_dir: Path | None = None,
-    timeout: int = SYNTHESIS_TIMEOUT,
+    timeout: int | None = SYNTHESIS_TIMEOUT,
 ) -> dict:
     """Review an agent's recent turns. Returns {agent, repo, turns, signals, corpus,
     findings, dropped_findings, error?}. `verify` (default on) runs the
