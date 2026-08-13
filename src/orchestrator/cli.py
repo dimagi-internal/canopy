@@ -1542,6 +1542,14 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
             click.echo(f"  [{f.get('friction_type','?')}/{conf}] {f.get('title','')}")
             if f.get("target"):
                 click.echo(f"      fix: {f.get('fix_kind','?')} → {f['target']}")
+            # An invariant finding routed at a non-structural fix is coerced rather
+            # than dropped (see agent_review._STRUCTURAL_FIX_KINDS). Show the triager
+            # BOTH the correction and what the model originally proposed — a silent
+            # rewrite of the model's own recommendation would be its own quiet bug.
+            coerced = f.get("_fix_kind_coerced")
+            if isinstance(coerced, dict):
+                click.echo(f"      ↻ fix_kind coerced from {coerced.get('from')!r} — "
+                           "invariant must ship structurally; confirm the target fits")
             if f.get("recommendation"):
                 click.echo(f"      {str(f['recommendation'])[:160]}")
     dropped = result.get("dropped_findings", [])

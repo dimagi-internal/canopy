@@ -544,10 +544,41 @@ _CONF_LEVELS = {"high", "medium", "low"}
 # born from a human safety_override correction) must ship as a structural fix
 # (hook_rule / schema_validator) — a skill_edit/claude_update is prose, and prose
 # relies on the model choosing to comply, which is exactly what an invariant can't
-# rely on (see CLAUDE.md's "Invariants are hooks, not memory"). qualify_findings
-# drops any invariant finding that isn't structural, right after the evidence check.
+# rely on (see CLAUDE.md's "Invariants are hooks, not memory").
+#
+# This rail used to DROP such a finding. That threw away the expensive half (the
+# evidence) to punish the cheap half (a label). The synthesis prompt already tells
+# the model "an invariant finding MUST use hook_rule or schema_validator" — so when
+# it writes `skill_edit` anyway, the finding isn't wrong, its ROUTING is, and the
+# routing is the one part we can fix ourselves. Deterministically. Measured on the
+# 2026-08-11 cycle: eva twice, hal once, each losing exactly one evidence-valid
+# finding per run this way — including eva's recurring Goals-sheet permission
+# failure and hal's global-CLI resolution bug.
+#
+# So the fix-kind branch REPAIRS instead of discarding: coerce to the structural kind
+# and annotate it (`_fix_kind_coerced`) so the triager sees both the correction and
+# what the model originally proposed. `fix_kind` is a triage BIAS hint consumed by a
+# human/agent in the agent-review skill's Step 2 table — not a machine-executed
+# dispatch — so steering it is exactly the nudge the rail wanted, and the preserved
+# `recommendation` keeps the model's own intent readable next to it.
+#
+# The EVIDENCE gate above stays a hard drop: unevidenced is unfixable, wrongly-routed
+# is not.
 _STRUCTURAL_FIX_KINDS = {"hook_rule", "schema_validator"}
 _INVARIANT_RX = re.compile(r"\b(never|always|must not|do not)\b", re.IGNORECASE)
+# A schema-shaped target gets schema_validator; everything else gets hook_rule, which
+# is what the prompt itself prefers ("prefer hook_rule for any 'never do X' invariant").
+# Deliberately narrow — matching on file EXTENSION would misroute `config/gating.json`,
+# which is a hook-rule config, not a schema.
+_SCHEMA_TARGET_RX = re.compile(r"schema", re.IGNORECASE)
+
+
+def _structural_fix_kind_for(finding: dict) -> str:
+    """The structural fix_kind an invariant finding should ship as, given its target."""
+    target = finding.get("target")
+    if isinstance(target, str) and _SCHEMA_TARGET_RX.search(target):
+        return "schema_validator"
+    return "hook_rule"
 
 
 def _is_invariant(finding: dict) -> bool:
@@ -600,28 +631,42 @@ def qualify_findings(findings: list[dict]) -> tuple[list[dict], list[dict]]:
             f["_drop_reason"] = reason
             dropped.append(f)
             continue
-        # Structural-fix-only rail: an evidence-valid invariant finding still gets
-        # dropped if its fix isn't structural (hook_rule/schema_validator) — a
-        # skill_edit/claude_update can't enforce a "never/always" rule reliably.
+        # Structural-fix-only rail: an evidence-valid invariant finding whose fix isn't
+        # structural (hook_rule/schema_validator) is REPAIRED, not discarded — the
+        # evidence is sound, only the routing label is wrong, and the label is the part
+        # we can fix deterministically. See the _STRUCTURAL_FIX_KINDS note above.
         fk = f.get("fix_kind")
         if _is_invariant(f) and (not isinstance(fk, str) or fk not in _STRUCTURAL_FIX_KINDS):
-            f["_drop_reason"] = (
-                "invariant finding must ship as a structural fix "
-                f"(hook_rule/schema_validator), not {f.get('fix_kind')}"
-            )
-            dropped.append(f)
-            continue
+            coerced_to = _structural_fix_kind_for(f)
+            f["fix_kind"] = coerced_to
+            f["_fix_kind_coerced"] = {
+                "from": fk,
+                "to": coerced_to,
+                "reason": (
+                    "invariant finding must ship as a structural fix "
+                    f"(hook_rule/schema_validator), not {fk!r} — coerced rather than "
+                    "dropped so the evidence survives; confirm the target fits."
+                ),
+            }
         qualified.append(f)
     return qualified, dropped
 
 
 def _qualify_and_log(findings: list[dict], label: str) -> list[dict]:
     """Run findings through qualify_findings and log every drop to stderr (fail-loud,
-    not fail-silent) before returning only the qualified ones."""
+    not fail-silent) before returning only the qualified ones. A fix-kind coercion is
+    logged the same way — a silent repair is just a different kind of quiet."""
     qualified, dropped = qualify_findings(findings)
     for d in dropped:
         print(f"[agent-review:{label}] dropped finding "
               f"{d.get('title')!r}: {d.get('_drop_reason')}", file=sys.stderr)
+    for q in qualified:
+        c = q.get("_fix_kind_coerced")
+        if c:
+            print(f"[agent-review:{label}] coerced fix_kind on finding "
+                  f"{q.get('title')!r}: {c.get('from')!r} → {c.get('to')!r} "
+                  "(invariant must ship structurally; kept, not dropped)",
+                  file=sys.stderr)
     return qualified
 
 
