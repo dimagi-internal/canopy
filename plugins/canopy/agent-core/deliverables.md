@@ -66,10 +66,10 @@ that's the whole contract.
 pipeline into its own working Drive paths — that stays as it is. Its *agentic* storage (ad-hoc
 projects, process state) follows this standard under its own root like everyone else.
 
-## How you file (the `canopy gdoc` engine does the layout for you)
+## How you file (the publishing engines do the layout for you)
 
-The shared `canopy gdoc` engine resolves the layout from your Drive root — you name the
-project, it finds-or-creates the subfolder:
+The shared engines resolve the layout from your Drive root — you name the project, they
+find-or-create the subfolder, file, share, and verify the share landed:
 
 ```bash
 # a deliverable → <your root>/Projects/<project>/  (find-or-create, reused next turn)
@@ -82,11 +82,34 @@ canopy gdoc publish --md <file>.md --name "<Tracker>" --area "Process State"
 canopy gdoc publish --md <file>.md --replace <docId>
 ```
 
+**Tabular deliverable? Use `canopy gsheet`, never raw `gog sheets create`.** Same contract,
+same flags — one `--tab` per worksheet, as `"Name=path.tsv"` (`.csv` is comma-delimited,
+anything else tab-delimited):
+
+```bash
+# a roster / grid a human works in → <your root>/Projects/<project>/
+canopy gsheet publish --name "<Sheet title>" --project "<Project>" \
+  --tab "Targets=roster.tsv" --tab "Clean-up=cleanup.tsv" --share domain
+```
+
 - `--project` files into `Projects/<project>`; `--area "Process State"` (optionally with
   `--project`) files a tracker. `--parent <id>` bypasses resolution when you already have the id.
 - Emits JSON `{id, url, shared, verified}` — share the `url`; `verified: true` means the share
   landed. Agents that still publish with raw `gog drive upload` pass `--parent <subfolder-id>`
   explicitly (resolve/create the `Projects/<project>` folder under your root first).
+- **`gsheet` refuses to create with no destination** — unlike a Doc there is no sensible root
+  fallback for a tracker, and the fallback is what produced the incident below.
+
+### Landing on prior work is reported — read it
+
+When the engine REUSES a project folder that already holds files, it says so on stderr and
+names them. That note is not decoration: **the layout's whole value is that the next turn
+finds the last one's work.** On 2026-08-12 an agent built a trip target roster while a
+project folder for that same trip already existed, holding a doc that contradicted the
+trip window the roster was built on. Nothing surfaced it, and the deliverable was wrong.
+
+So when you see the note: open what is there before treating the task as new, and prefer
+updating the existing artifact in place (`--replace <id>`) over adding a parallel one.
 
 ## Why this is enforced, not just written
 
@@ -97,13 +120,35 @@ share were skipped; 2026-07-23, a fresh session dumped work beside the agent roo
 under its agent folder). So the "never My Drive root / never flat at root" invariant is a
 **fleet-baseline gating rail** for the tool where the mistake happens:
 
-- Agents that publish with **`gog drive upload`** mount the **`gws`** channel in their
-  `config/gating.json` `channels` list. The baseline rail then blocks a converting upload that has
-  no `--parent` (i.e. a doc headed for My Drive root) and names the right path.
-- Agents whose publishing **helper always parents** into a resolved `Projects/<project>`
-  subfolder (e.g. `canopy gdoc --project …`, or a `bin/*_gdoc.py` defaulting `--parent`) are
-  compliant **by construction** — the parentless path is unreachable — so they need the guidance
-  here but not the rail.
+**Every agent that touches Drive mounts the `gws` channel** in its `config/gating.json`
+`channels` list. The baseline rails then cover the whole creation surface:
+
+- **raw `gog`** — any `docs|sheets|slides|forms create`, `drive mkdir`, or `drive upload`
+  with no `--parent`.
+- **the engines** — `canopy gdoc|gsheet publish` with no `--project` / `--area` / `--parent` /
+  `--replace`, which would otherwise fall back to your Drive *root*, beside `Projects/`
+  rather than inside it.
+- **MCP** — any gdrive-server `drive_create_*` / `docs_create*` / `sheets_create` whose
+  arguments carry no parent/folder id, matched on tool-name *shape* so it holds under any
+  plugin mount.
+
+`--help` is exempt throughout, so a rail can never stop you reading the usage of the command
+it just told you to use.
+
+> **Do not mount `gws` selectively.** Until 2026-08-13 the rails were narrower than the tool
+> surface — the baseline carried exactly one (`gog drive upload --convert`), agents were told
+> they could skip the channel if their helper "always parents", and any extra verbs were
+> hand-added per agent. The result: `gog sheets create` was in nobody's list, hal/ada/echo
+> mounted no Drive rails at all, and on 2026-08-12 an agent built a 45-row target roster
+> straight into its own My Drive root, unshared — a dead link to the human who asked for it.
+> Nothing errored. **A denylist of verbs always trails the tool surface**, and "compliant by
+> construction" only holds until someone reaches past the helper for a file type the helper
+> never covered. Mount the channel; the rails are shaped so a compliant command passes.
+
+The other half of the lesson: **a rail can only say no.** Blocking `gog sheets create` would
+have been pure friction while there was no sanctioned way to publish a spreadsheet at all —
+which is why `canopy gsheet` shipped in the same change as the rail that forbids the
+alternative. If you add a rail, make sure the path it names actually exists.
 
 ## What each agent's `gdoc-writer` stub declares
 

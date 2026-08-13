@@ -68,6 +68,7 @@ Workspace identity that sends the agent's mail; here it authors the agent's docs
 """
 from __future__ import annotations
 
+import csv
 import html
 import json
 import os
@@ -459,9 +460,26 @@ def find_child_folder(identity: GdocIdentity, parent: str, name: str,
     return ""
 
 
-def _find_or_create_folder(identity: GdocIdentity, parent: str, name: str, runner) -> str:
+def folder_contents(identity: GdocIdentity, folder_id: str, runner=subprocess.run) -> list[dict]:
+    """Non-folder children of `folder_id` — what already lives in a project folder.
+
+    Used to REPORT reuse (see `resolve_subfolder`'s `trace`). Best-effort by design: this
+    is advisory context, so a listing failure must never fail a publish."""
+    try:
+        r = _run_gog(build_list_command(identity, folder_id), runner)
+    except Exception:
+        return []
+    if r.returncode != 0:
+        return []
+    return [f for f in parse_list_result(r.stdout) if f.get("mimeType") != FOLDER_MIME]
+
+
+def _find_or_create_folder(identity: GdocIdentity, parent: str, name: str, runner,
+                           trace: list | None = None) -> str:
     fid = find_child_folder(identity, parent, name, runner)
     if fid:
+        if trace is not None:
+            trace.append({"name": name, "id": fid, "created": False})
         return fid
     r = _run_gog(build_mkdir_command(identity, name, parent), runner)
     if r.returncode != 0:
@@ -472,27 +490,37 @@ def _find_or_create_folder(identity: GdocIdentity, parent: str, name: str, runne
     fid = parse_mkdir_result(r.stdout)
     if not fid:
         raise AgentGdocError(f"gog drive mkdir {name!r} returned no folder id: {r.stdout!r}")
+    if trace is not None:
+        trace.append({"name": name, "id": fid, "created": True})
     return fid
 
 
 def resolve_subfolder(identity: GdocIdentity, *, area: str = "Projects",
-                      project: str | None = None, runner=subprocess.run) -> str:
+                      project: str | None = None, runner=subprocess.run,
+                      trace: list | None = None) -> str:
     """Find-or-create `<agent root>/<area>[/<project>]` and return its folder id.
 
     Implements the fleet filing layout (agent-core/deliverables.md): every agent's
     Drive root (`GDRIVE_ROOT_FOLDER`) is its `<Agent>` folder under the shared root; deliverables land
     in `Projects/<project>` and durable trackers in `Process State`. Reuse-then-create by
     exact name keeps the same folder stable across turns, so the next turn re-files there
-    instead of spawning a duplicate. Requires a resolved Drive root; pass --parent to bypass."""
+    instead of spawning a duplicate. Requires a resolved Drive root; pass --parent to bypass.
+
+    Pass `trace` (a list) to learn which folders were REUSED vs CREATED. Reuse is silent
+    otherwise, and silence is the problem: on 2026-08-12 Eva built a trip roster while a
+    project folder for that same trip already existed holding a doc that contradicted her
+    assumptions — she never saw it, and the deliverable was wrong as a result. The layout is
+    only worth having if the agent notices when it is landing on top of prior work."""
     if not identity.root_folder:
         raise AgentGdocError(
             f"no Drive root resolved (${GDRIVE_ROOT_ENV}) — it comes from "
             "op://Agent-<Slug>/gdrive-root-folder; run `canopy provision` and re-source "
             "~/.<agent>/.env, or pass --parent explicitly")
-    area_id = _find_or_create_folder(identity, identity.root_folder, (area or "Projects").strip(), runner)
+    area_id = _find_or_create_folder(identity, identity.root_folder, (area or "Projects").strip(),
+                                     runner, trace)
     if not project or not project.strip():
         return area_id
-    return _find_or_create_folder(identity, area_id, project.strip(), runner)
+    return _find_or_create_folder(identity, area_id, project.strip(), runner, trace)
 
 
 def build_share_command(identity: GdocIdentity, file_id: str, *, share: str,
@@ -696,8 +724,190 @@ def publish(identity: GdocIdentity, *, name: str | None, parent: str | None, md_
 
 
 # --------------------------------------------------------------------------------------
+# Sheets — the same filing contract for tabular deliverables
+#
+# WHY THIS EXISTS (2026-08-13). `publish` above renders markdown into a Doc, files it under
+# the agent's root, shares it and verifies. There was no equivalent for a SPREADSHEET, so a
+# skill that legitimately needs one — a target roster, a tracker, any grid a human works in
+# — had nothing to call and fell through to raw `gog sheets create`, which lands in My Drive
+# root, unshared. That is exactly what happened on 2026-08-12.
+#
+# The filing rails can only ever say "no". Adding a rail without adding this would just have
+# blocked the work with nowhere to send it — the failure named in Eva's 2026-07-30 learning,
+# "a rail can be right about the risk and wrong about the remedy."
+# --------------------------------------------------------------------------------------
+
+def read_table(path: str) -> list[list[str]]:
+    """Read a TSV/CSV file into a grid. Delimiter is inferred from the extension (.csv →
+    comma, anything else → tab), because roster/tracker data is far likelier to contain a
+    comma than a tab."""
+    delim = "," if Path(path).suffix.lower() == ".csv" else "\t"
+    with open(path, newline="", encoding="utf-8") as fh:
+        return [row for row in csv.reader(fh, delimiter=delim)]
+
+
+def parse_tab_spec(spec: str) -> tuple[str, str]:
+    """`"Name=path.tsv"` → ("Name", "path.tsv"); a bare path → (stem, path).
+
+    Split on the FIRST `=` only, so a path containing `=` survives."""
+    if "=" in spec:
+        name, _, path = spec.partition("=")
+        name, path = name.strip(), path.strip()
+        if not name or not path:
+            raise AgentGdocError(f"bad --tab {spec!r} — expected \"Name=path.tsv\"")
+        return name, path
+    return Path(spec).stem, spec
+
+
+def build_sheet_create_command(identity: GdocIdentity, *, name: str, parent: str,
+                               tab_names: list[str]) -> list[str]:
+    """`gog sheets create` INTO `parent`, with every tab named up front.
+
+    `--parent` is the whole point: it is what keeps the new spreadsheet out of My Drive root."""
+    cmd = ["gog", "sheets", "create", name, "--parent", parent,
+           "--account", identity.account, "--client", identity.client, "--json"]
+    if tab_names:
+        cmd += ["--sheets", ",".join(tab_names)]
+    return cmd
+
+
+def build_sheet_update_command(identity: GdocIdentity, sheet_id: str, *, tab: str,
+                               rows: list[list[str]]) -> list[str]:
+    """`gog sheets update` a tab's values. The A1 range is sized to the grid so the write
+    covers exactly what we hold and never trails stale cells from a wider prior range."""
+    height = max(1, len(rows))
+    width = max(1, max((len(r) for r in rows), default=1))
+    end = _a1_col(width) + str(height)
+    return ["gog", "sheets", "update", sheet_id, f"{tab}!A1:{end}",
+            "--values-json", json.dumps(rows),
+            "--account", identity.account, "--client", identity.client, "--json"]
+
+
+def _a1_col(n: int) -> str:
+    """1 → A, 26 → Z, 27 → AA. Sheets columns are bijective base-26, not plain base-26."""
+    out = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        out = chr(65 + rem) + out
+    return out
+
+
+def parse_sheet_create_result(stdout: str) -> dict:
+    """Normalize `gog sheets create --json` to {id, url, raw}, tolerating gog's envelopes."""
+    raw = stdout or ""
+    try:
+        obj = json.loads(raw)
+    except (ValueError, TypeError):
+        return {"id": "", "url": "", "raw": raw}
+    if isinstance(obj, dict):
+        for key in ("spreadsheet", "file"):
+            if isinstance(obj.get(key), dict):
+                obj = obj[key]
+                break
+    if not isinstance(obj, dict):
+        return {"id": "", "url": "", "raw": raw}
+    sid = str(obj.get("spreadsheetId") or obj.get("id") or "")
+    url = str(obj.get("spreadsheetUrl") or obj.get("webViewLink") or obj.get("url") or "")
+    if sid and not url:
+        url = f"https://docs.google.com/spreadsheets/d/{sid}/edit"
+    return {"id": sid, "url": url, "raw": raw}
+
+
+def publish_sheet(identity: GdocIdentity, *, name: str, parent: str | None,
+                  tabs: list[tuple[str, str]], share: str, share_email: str | None = None,
+                  dry_run: bool = False, runner=subprocess.run) -> dict:
+    """Publish TSV/CSV files as a Google Sheet authored as the agent — filed, shared, verified.
+
+    One `--tab` per worksheet. Mirrors `publish`'s contract exactly, including refusing to
+    create without a destination: a Sheet in My Drive root is the defect this closes."""
+    if not name:
+        raise AgentGdocError("--name is required for a new sheet")
+    if not tabs:
+        raise AgentGdocError("at least one --tab/--tsv is required")
+    if not parent:
+        raise AgentGdocError(
+            f"--parent is required for a new sheet (set --project/--area, or provision "
+            f"${GDRIVE_ROOT_ENV}) — a Sheet with no destination lands in My Drive root, "
+            "which is the one thing agent-core/deliverables.md forbids")
+
+    grids = [(tab, read_table(path)) for tab, path in tabs]
+    create_cmd = build_sheet_create_command(identity, name=name, parent=parent,
+                                            tab_names=[t for t, _ in grids])
+    if dry_run:
+        return {"dry_run": True, "account": identity.account, "client": identity.client,
+                "name": name, "parent": parent, "share": share,
+                "share_email": share_email or "",
+                "tabs": [{"tab": t, "rows": len(g)} for t, g in grids],
+                "create_cmd": create_cmd}
+
+    r = _run_gog(create_cmd, runner)
+    if r.returncode != 0:
+        raise AgentGdocError(
+            f"gog sheets create failed (exit {r.returncode}) as {identity.account}: "
+            f"{(r.stderr or r.stdout or '').strip()[:400]}"
+        )
+    result = parse_sheet_create_result(r.stdout)
+    sheet_id = result["id"]
+    if not sheet_id:
+        raise AgentGdocError(f"gog sheets create returned no spreadsheet id: {result['raw']!r}")
+
+    for tab, rows in grids:
+        u = _run_gog(build_sheet_update_command(identity, sheet_id, tab=tab, rows=rows), runner)
+        if u.returncode != 0:
+            raise AgentGdocError(
+                f"sheet created ({result['url']}) but writing tab {tab!r} failed "
+                f"(exit {u.returncode}): {(u.stderr or u.stdout or '').strip()[:300]}"
+            )
+
+    result["tabs"] = [{"tab": t, "rows": len(g)} for t, g in grids]
+    result["shared"] = share if share != "none" else "none"
+    result["verified"] = True
+    if share != "none":
+        s = _run_gog(build_share_command(identity, sheet_id, share=share, email=share_email), runner)
+        if s.returncode != 0:
+            raise AgentGdocError(
+                f"sheet created ({result['url']}) but share failed (exit {s.returncode}): "
+                f"{(s.stderr or s.stdout or '').strip()[:300]}"
+            )
+        result["verified"] = verify_permissions(identity, sheet_id, share=share,
+                                                email=share_email, runner=runner)
+    return result
+
+
+# --------------------------------------------------------------------------------------
 # CLI  (`canopy gdoc …`)
 # --------------------------------------------------------------------------------------
+
+def _report_reuse(identity: GdocIdentity, trace: list, parent: str | None, *,
+                  dry_run: bool = False) -> None:
+    """Say out loud when we landed in a folder that ALREADY holds work.
+
+    Reuse used to be silent, and silence cost a real deliverable: on 2026-08-12 an agent
+    built a trip roster while a project folder for that same trip already existed, holding
+    a doc that contradicted the window the roster was built on. Nothing surfaced it. The
+    filing layout's whole value is that the next turn finds the last one's work — so when
+    it does, it has to be visible. Advisory only: never fails the publish."""
+    if dry_run or not trace:
+        return
+    reused = [t for t in trace if not t.get("created")]
+    created = [t for t in trace if t.get("created")]
+    for t in created:
+        sys.stderr.write(f"note: created folder {t['name']!r}\n")
+    if not reused or not parent:
+        return
+    existing = folder_contents(identity, parent)
+    leaf = reused[-1]["name"]
+    if not existing:
+        sys.stderr.write(f"note: reusing existing folder {leaf!r} (empty)\n")
+        return
+    sys.stderr.write(
+        f"note: reusing existing folder {leaf!r} — it ALREADY holds {len(existing)} file(s):\n"
+        + "".join(f"    - {f.get('name', '?')}\n" for f in existing[:10])
+        + ("    …\n" if len(existing) > 10 else "")
+        + "  Read what is there before treating this as new work, and prefer updating an\n"
+          "  existing artifact in place (--replace <id>) over adding a parallel one.\n"
+    )
+
 
 @click.group("gdoc")
 def gdoc_group():
@@ -732,14 +942,17 @@ def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, a
     """
     try:
         ident = _gdoc_identity_from_opts(repo, agent, account, client)
+        trace: list = []
         if not replace and not parent:
             if project or area:
-                parent = resolve_subfolder(ident, area=(area or "Projects"), project=project)
+                parent = resolve_subfolder(ident, area=(area or "Projects"), project=project,
+                                           trace=trace)
             else:
                 parent = ident.root_folder or None
         share = share or ident.share_default
         result = publish(ident, name=name, parent=parent, md_path=md_file, share=share,
                          share_email=share_email, replace=replace, dry_run=dry_run)
+        _report_reuse(ident, trace, parent, dry_run=dry_run)
     except AgentGdocError as e:
         raise click.ClickException(str(e))
     click.echo(json.dumps(result, indent=2))
@@ -756,6 +969,68 @@ def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, a
               "rewrite the affected sections without list syntax.\n"
         )
         sys.exit(1)
+    if not result.get("verified", True):
+        sys.stderr.write("WARNING: could not verify the share landed — open the url and "
+                         "check access before handing out the link.\n")
+        sys.exit(1)
+
+
+# --------------------------------------------------------------------------------------
+# CLI  (`canopy gsheet …`)
+# --------------------------------------------------------------------------------------
+
+@click.group("gsheet")
+def gsheet_group():
+    """Author Google Sheets as the agent — the tabular sibling of `canopy gdoc`, same
+    filing contract (agent-core/deliverables.md)."""
+
+
+@gsheet_group.command("publish")
+@_with_identity_options
+@click.option("--tab", "tabs", multiple=True, required=True,
+              help='A worksheet, as "Name=path.tsv" (repeatable). A bare path names the tab '
+                   'after the file stem. .csv is comma-delimited; anything else is tab-delimited.')
+@click.option("--name", required=True, help="Spreadsheet title.")
+@click.option("--parent", help="Destination Drive folder id (bypasses --project/--area resolution).")
+@click.option("--project", help="File into <agent root>/Projects/<project> (find-or-create) — "
+              "the fleet norm: one stable subfolder per project/task, re-used across turns.")
+@click.option("--area", help="Top-level area under the agent root when resolving a destination: "
+              "'Projects' (deliverables, default) or 'Process State' (durable trackers).")
+@click.option("--share", type=click.Choice(["domain", "anyone", "user", "none"]), default=None,
+              help="Share posture (default: agent.json `gdrive_share_default`, else domain).")
+@click.option("--share-email", help="Recipient for --share user.")
+@click.option("--dry-run", is_flag=True, help="Print the commands without touching Drive.")
+def gsheet_publish(repo, agent, account, client, tabs, name, parent, project, area,
+                   share, share_email, dry_run):
+    """Publish TSV/CSV as a Google Sheet authored as the agent, filed + shared + verified.
+
+    The tabular counterpart of `canopy gdoc publish`, and it exists for the same reason:
+    without it a skill that needs a spreadsheet has no compliant path and falls back to raw
+    `gog sheets create`, which lands the file in the agent's My Drive root — invisible to
+    the team and a dead link to @dimagi.com recipients.
+    """
+    try:
+        ident = _gdoc_identity_from_opts(repo, agent, account, client)
+        trace: list = []
+        if not parent:
+            if project or area:
+                parent = resolve_subfolder(ident, area=(area or "Projects"), project=project,
+                                           trace=trace)
+            else:
+                raise AgentGdocError(
+                    "no destination: pass --project \"<Project>\" (or --area / --parent). "
+                    "Unlike a Doc there is no sensible root fallback for a tracker — see "
+                    "agent-core/deliverables.md rule 1.")
+        share = share or ident.share_default
+        result = publish_sheet(ident, name=name, parent=parent,
+                               tabs=[parse_tab_spec(t) for t in tabs],
+                               share=share, share_email=share_email, dry_run=dry_run)
+        _report_reuse(ident, trace, parent, dry_run=dry_run)
+    except AgentGdocError as e:
+        raise click.ClickException(str(e))
+    click.echo(json.dumps(result, indent=2))
+    if dry_run:
+        return
     if not result.get("verified", True):
         sys.stderr.write("WARNING: could not verify the share landed — open the url and "
                          "check access before handing out the link.\n")
