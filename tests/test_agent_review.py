@@ -1311,3 +1311,60 @@ def test_cli_shows_the_fix_kind_coercion(monkeypatch):
     assert "coerced" in res.output.lower()
     assert "skill_edit" in res.output           # what the model proposed
     assert "hook_rule → config/gating.json" in res.output   # what it ships as
+
+
+# --- No wall-clock budget by default: a timed-out pass returns ZERO findings, so a
+# --- budget shorter than the work silently manufactures a clean bill of health.
+# --- (180s repeatably timed out on a 7-turn hal corpus.) -----------------------
+
+def test_synthesis_and_verify_default_to_no_timeout():
+    from orchestrator import agent_review as ar
+    assert ar.SYNTHESIS_TIMEOUT is None
+    assert ar.VERIFY_TIMEOUT is None
+
+
+def test_run_review_passes_no_timeout_to_subprocess_by_default(tmp_path, monkeypatch):
+    """The default must reach subprocess.run as timeout=None — not merely be absent
+    from the CLI — or the pass is still bounded somewhere down the stack."""
+    import subprocess as sp
+    from orchestrator import agent_review as ar
+
+    repo = tmp_path / "repositories" / "echo"
+    (repo / "skills").mkdir(parents=True)
+    projects = tmp_path / "projects"
+    d = projects / "-Users-x-emdash-repositories-echo"
+    d.mkdir(parents=True)
+    _write_transcript(d / "a.jsonl", str(repo), [("Read", {"file_path": "/x"}, "ok")])
+
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["timeout"] = kwargs.get("timeout", "ABSENT")
+        return sp.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(ar.subprocess, "run", fake_run)
+    ar.run_review(str(repo), projects_dir=projects)
+    assert seen["timeout"] is None
+
+
+def test_an_explicit_timeout_still_works_and_still_fails_loud(tmp_path, monkeypatch):
+    """The plumbing stays: a caller that WANTS a bound still gets one, and still gets
+    the well-formed string error a live cron incident paid for."""
+    import subprocess as sp
+    from orchestrator import agent_review as ar
+
+    repo = tmp_path / "repositories" / "echo"
+    (repo / "skills").mkdir(parents=True)
+    projects = tmp_path / "projects"
+    d = projects / "-Users-x-emdash-repositories-echo"
+    d.mkdir(parents=True)
+    _write_transcript(d / "a.jsonl", str(repo), [("Read", {"file_path": "/x"}, "ok")])
+
+    def fake_run(cmd, **kwargs):
+        raise sp.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+    monkeypatch.setattr(ar.subprocess, "run", fake_run)
+    result = ar.run_review(str(repo), projects_dir=projects, timeout=45)
+    assert isinstance(result["error"], str)
+    assert "timed out" in result["error"].lower() and "45" in result["error"]
+    assert result["findings"] == []

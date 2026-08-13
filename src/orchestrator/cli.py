@@ -1420,8 +1420,10 @@ def create_agent_cmd(slug, name, mandate, mailbox, stakeholders, target, force, 
 @click.option("--max-budget-usd", default=2.0, type=float,
               help="USD cap for the claude -p synthesis pass (default: 2.0)")
 @click.option("--timeout", "timeout", default=None, type=int,
-              help="Seconds to allow the claude -p synthesis pass (default: 180). On timeout "
-                   "the run returns no findings and a descriptive error — raise it for big corpora.")
+              help="Seconds to allow the claude -p synthesis pass. Default: NO timeout — a "
+                   "timed-out pass returns zero findings, which reads as a clean bill of health. "
+                   "Set one only if you need a hard bound; on timeout the run then returns no "
+                   "findings and a descriptive error.")
 @click.option("--projects-dir", "projects_dir", type=click.Path(file_okay=False), default=None,
               help="Scan ONLY this Claude projects dir. Default: every readable source from "
                    "~/.claude/canopy/session-sources.json (auto-discovered when absent), so "
