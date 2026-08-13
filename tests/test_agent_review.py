@@ -536,17 +536,80 @@ def test_ordinary_finding_not_invariant():
     assert _is_invariant({"title": "tidy the digest", "recommendation": "reorder items"}) is False
 
 
-def test_invariant_with_skill_edit_is_dropped():
+def test_invariant_with_skill_edit_is_coerced_not_dropped():
+    """The rail used to DISCARD an evidence-valid finding over a label the engine's
+    own prompt had already asked for. Repair the routing; keep the evidence."""
     f = {"title": "NEVER post without a yes", "fix_kind": "skill_edit", "evidence": _GOOD_EV}
     qualified, dropped = qualify_findings([f])
+    assert dropped == []
+    assert len(qualified) == 1
+    assert qualified[0]["fix_kind"] == "hook_rule"
+    assert qualified[0]["_fix_kind_coerced"]["from"] == "skill_edit"
+    assert qualified[0]["_fix_kind_coerced"]["to"] == "hook_rule"
+
+
+def test_coercion_preserves_the_models_own_recommendation():
+    """The triager needs the model's intent next to the correction — coercing the
+    label must not quietly rewrite what the finding actually says to do."""
+    f = {"title": "ALWAYS verify the link before sending", "fix_kind": "claude_update",
+         "target": "CLAUDE.md", "recommendation": "add a link-verification step",
+         "evidence": _GOOD_EV}
+    qualified, _ = qualify_findings([f])
+    assert qualified[0]["recommendation"] == "add a link-verification step"
+    assert qualified[0]["target"] == "CLAUDE.md"
+
+
+def test_schema_target_coerces_to_schema_validator():
+    f = {"title": "NEVER accept a finding without evidence", "fix_kind": "skill_edit",
+         "target": "config/findings.schema.json", "evidence": _GOOD_EV}
+    qualified, _ = qualify_findings([f])
+    assert qualified[0]["fix_kind"] == "schema_validator"
+
+
+def test_gating_json_target_coerces_to_hook_rule_not_schema_validator():
+    """`config/gating.json` is a hook-rule config, not a schema — matching on the
+    .json extension instead of the word 'schema' would misroute the fleet's most
+    common invariant target."""
+    f = {"title": "NEVER send raw email", "fix_kind": "skill_edit",
+         "target": "config/gating.json", "evidence": _GOOD_EV}
+    qualified, _ = qualify_findings([f])
+    assert qualified[0]["fix_kind"] == "hook_rule"
+
+
+def test_ordinary_finding_keeps_its_fix_kind_untouched():
+    """Only INVARIANT findings are steered. A normal improvement is left alone."""
+    f = {"title": "tidy the digest", "fix_kind": "skill_edit",
+         "recommendation": "reorder items", "evidence": _GOOD_EV}
+    qualified, _ = qualify_findings([f])
+    assert qualified[0]["fix_kind"] == "skill_edit"
+    assert "_fix_kind_coerced" not in qualified[0]
+
+
+def test_evidence_gate_is_still_a_hard_drop_even_for_an_invariant():
+    """Load-bearing: unevidenced is UNFIXABLE, wrongly-routed is not. An invariant
+    with bad evidence must not be rescued by the coercion path."""
+    f = {"title": "NEVER post without a yes", "fix_kind": "skill_edit",
+         "evidence": "just a string"}
+    qualified, dropped = qualify_findings([f])
     assert qualified == []
-    assert "structural" in dropped[0]["_drop_reason"].lower()
+    assert len(dropped) == 1
+    assert "_fix_kind_coerced" not in dropped[0]
+
+
+def test_qualify_and_log_reports_the_coercion(capsys):
+    """A silent repair is just a different kind of quiet."""
+    f = {"title": "NEVER post without a yes", "fix_kind": "skill_edit", "evidence": _GOOD_EV}
+    kept = _qualify_and_log([f], label="test-agent")
+    assert len(kept) == 1
+    err = capsys.readouterr().err
+    assert "coerced" in err.lower() and "skill_edit" in err and "hook_rule" in err
 
 
 def test_invariant_with_hook_rule_is_kept():
     f = {"title": "NEVER post without a yes", "fix_kind": "hook_rule", "evidence": _GOOD_EV}
     qualified, _ = qualify_findings([f])
     assert qualified == [f]
+    assert "_fix_kind_coerced" not in f  # already structural — nothing to correct
 
 
 # --- M3: unhashable LLM output must fail-loud (drop), never crash ------------
@@ -559,11 +622,16 @@ def test_non_str_confidence_is_invalid_not_crash():
     assert reason
 
 
-def test_invariant_with_unhashable_fix_kind_is_dropped_not_crash():
+def test_invariant_with_unhashable_fix_kind_is_coerced_not_crash():
+    """M3 still holds: unhashable LLM output must never crash the qualifier. It now
+    lands in the coercion path (a non-str fix_kind is by definition non-structural)
+    rather than the drop path, and the original is preserved in the annotation."""
     f = {"title": "NEVER post without a yes", "fix_kind": ["hook_rule"], "evidence": _GOOD_EV}
     qualified, dropped = qualify_findings([f])
-    assert qualified == []
-    assert len(dropped) == 1
+    assert dropped == []
+    assert len(qualified) == 1
+    assert qualified[0]["fix_kind"] == "hook_rule"
+    assert qualified[0]["_fix_kind_coerced"]["from"] == ["hook_rule"]
 
 
 # --- over_claim / verify_late corpus detectors --------------------------------
@@ -1222,3 +1290,24 @@ def test_no_llm_run_prints_neither_line(monkeypatch):
     """--no-llm never synthesizes, so it must not report on synthesis either way."""
     res = _invoke_agent_review_human(monkeypatch, _result(), "--no-llm")
     assert "No findings synthesized." not in res.output
+
+
+# --- The coercion must be VISIBLE, not a silent rewrite of the model's routing ----
+
+def test_cli_shows_the_fix_kind_coercion(monkeypatch):
+    """A triager reading the findings table has to see that canopy overrode the
+    model's fix_kind — and what it originally said — to sanity-check the target."""
+    finding = {
+        "title": "NEVER send raw email",
+        "friction_type": "safety_override",
+        "fix_kind": "hook_rule",
+        "target": "config/gating.json",
+        "recommendation": "route sends through bin/hal-email",
+        "confidence": "high",
+        "_fix_kind_coerced": {"from": "skill_edit", "to": "hook_rule", "reason": "…"},
+    }
+    res = _invoke_agent_review_human(monkeypatch, _result(findings=[finding]))
+    assert res.exit_code == 0, res.output
+    assert "coerced" in res.output.lower()
+    assert "skill_edit" in res.output           # what the model proposed
+    assert "hook_rule → config/gating.json" in res.output   # what it ships as

@@ -37,6 +37,16 @@ For each, decide implement / defer / skip. Bias:
 - **`channel_fix`** for auth/setup friction (e.g. echo's OAuth "API not enabled" loop, 1Password
   round-trip) — make setup self-heal / validate, don't just document it.
 
+**`↻ fix_kind coerced from '<x>'` on a finding.** An invariant finding (never/always phrasing, or
+one mined from a human `safety_override`) must ship structurally, so when the synthesis pass
+routes one at `skill_edit`/`claude_update` anyway, `qualify_findings` corrects the label to
+`hook_rule` (or `schema_validator` for a schema target) and marks it, rather than throwing the
+finding away — the evidence is sound, only the routing was wrong. **Read the `recommendation`,
+which is preserved verbatim, and confirm the `target` actually fits a hook rule** before you
+implement it; the model was proposing a prose edit, so the target may want redirecting at
+`config/gating.json`. The EVIDENCE gate is different — an unevidenced finding is still a hard
+drop, and is never rescued this way.
+
 ## Step 3 — Execute (PR into the AGENT's repo)
 For each accepted finding, make the change **in the agent's own repo** (not canopy — unless the
 fix is shared infra, in which case it belongs in canopy per the §4a boundary). Ship via that
