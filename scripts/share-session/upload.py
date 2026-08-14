@@ -233,6 +233,75 @@ def _title_for(src: Path) -> str:
     return src.stem
 
 
+def _owner_clause(owner_email: str) -> str:
+    """Who can actually open a private upload.
+
+    Falls back when the server predates ``owner_email`` on the upload response
+    (dimagi-internal/canopy-web) — vaguer, but still true, which the old
+    "dimagi login required" was not.
+    """
+    return f"Only {owner_email} can open it." if owner_email else (
+        "Only the account that uploaded it can open it."
+    )
+
+
+def format_session_result(
+    api: str, *, visibility: str, slug: str, token: str | None, owner_email: str = ""
+) -> list[str]:
+    """The stdout block for one uploaded session.
+
+    Two rules here, both paid for by dimagi-internal/canopy#484 — a share an
+    agent made for a human that was a black screen nobody could open:
+
+    1. **One URL per line, with nothing trailing it.** The private line used to
+       read ``View (dimagi login required): <api>/sessions  (slug: ABC123)`` —
+       a URL and a bare identifier on the same line, which reads as one thing
+       and gets concatenated into ``<api>/sessions/ABC123``. That is not a
+       route (``/sessions`` and ``/share/<token>`` are the only two), so it
+       serves the empty SPA shell: a blank page that looks like a broken share
+       rather than a URL that was never real.
+    2. **Never promise access the artifact doesn't grant.** "dimagi login
+       required" claimed any logged-in dimagi user could view it. Private
+       sessions are owner-only, and agents upload under their OWN accounts (the
+       uploader resolves its PAT from the repo it runs in) — so the reader is
+       usually not the person who asked for the share. Name the owner instead.
+    """
+    if visibility == "link" and token:
+        return [f"Share: {api}/share/{token}"]
+    return [
+        f"Uploaded PRIVATE — nothing is shared. {_owner_clause(owner_email)}",
+        "Open it from that account's session list:",
+        f"  {api}/sessions",
+        f"Session slug (an id, not a URL): {slug}",
+        "To give someone a link, re-run without --private.",
+    ]
+
+
+def format_arc_result(
+    api: str, *, visibility: str, slug: str, token: str | None, owner_email: str = ""
+) -> list[str]:
+    """The stdout block for a created arc.
+
+    Same two rules as ``format_session_result``, plus one fact that makes a
+    private arc worse than a private session: canopy-web has **no arcs UI at
+    all** (verified 2026-08-14 — ``arcs`` appears only in the generated API
+    types; ``SessionsPage`` lists sessions, and ``/share/<token>`` is the only
+    arc surface there is). So a private arc isn't merely unlisted, it has no
+    page whatsoever — and the member sessions it was stitched from are private
+    too. Saying so is the difference between "your link is somewhere" and
+    "re-run this".
+    """
+    if visibility == "link" and token:
+        return [f"Arc: {api}/share/{token}"]
+    return [
+        f"Arc created PRIVATE — nothing is shared. {_owner_clause(owner_email)}",
+        "A private arc has NO page: /share/<token> is the only arc surface, and a",
+        "private arc has no token. Its member sessions are private too.",
+        f"Arc slug (an id, not a URL): {slug}",
+        "To get a readable link, re-run without --private.",
+    ]
+
+
 def run_arc(args, api: str, pat: str) -> int:
     """Upload each transcript as a (private) member session, then stitch them
     into one shared arc and print the /share/<token> URL."""
@@ -270,12 +339,16 @@ def run_arc(args, api: str, pat: str) -> int:
     if status != 201:
         fail(f"arc creation failed (HTTP {status}): {_describe_error(body)}")
 
-    token = body.get("share_token")
-    if visibility == "link" and token:
-        print(f"Arc: {api}/share/{token}")
-    else:
-        print(f"Arc created (dimagi login required): slug {body.get('slug')}")
-    print(f"{body.get('item_count', len(items))} sessions stitched", file=sys.stderr)
+    item_count = body.get("item_count", len(items))
+    for line in format_arc_result(
+        api,
+        visibility=visibility,
+        slug=body.get("slug", ""),
+        token=body.get("share_token"),
+        owner_email=body.get("owner_email", ""),
+    ):
+        print(line)
+    print(f"{item_count} sessions stitched", file=sys.stderr)
     return 0
 
 
@@ -386,10 +459,14 @@ def main(argv: list[str] | None = None) -> int:
     if body.get("duplicate"):
         print("(already shared — returning the existing link)", file=sys.stderr)
 
-    if visibility == "link" and token:
-        print(f"Share: {api}/share/{token}")
-    else:
-        print(f"View (dimagi login required): {api}/sessions  (slug: {slug})")
+    for line in format_session_result(
+        api,
+        visibility=visibility,
+        slug=slug,
+        token=token,
+        owner_email=body.get("owner_email", ""),
+    ):
+        print(line)
     print(
         f"{msg_count} messages · {redactions} secret"
         f"{'' if redactions == 1 else 's'} redacted (best-effort)",

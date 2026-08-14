@@ -73,7 +73,8 @@ session you're in):
 # Link-by-default — anyone with the URL can view.
 uv run --project "$CANOPY_ROOT" python "$UPLOAD" --title "<short title>"
 
-# Or private (only logged-in dimagi users can view):
+# Or private — see the warning below. NOT "dimagi-only": private is OWNER-only,
+# and an agent owns its own uploads, so nobody else can open it.
 uv run --project "$CANOPY_ROOT" python "$UPLOAD" --private --title "<short title>"
 ```
 
@@ -135,7 +136,7 @@ Pass the `Share:` line back to the user verbatim.
 | `<path>` (positional) | no | A transcript `.jsonl`. Default (Step 2A): newest for the current dir's session. In Step 2B, pass the chosen candidate's `transcript`. |
 | `--title <str>` | no | Defaults to the transcript filename stem. Max 500 chars server-side. |
 | `--project <slug>` | no | Groups the session under a project in the `/sessions` feed. Defaults to the current directory name (set it explicitly in 2B to the shared session's project). |
-| `--private` | no | Upload as private (dimagi-only). Default is link-by-default. |
+| `--private` | no | Upload **owner-only** — no link, no page for anyone else. NOT "dimagi-only". Default is link-by-default; see the warning below before using this. |
 | `--full` | no | Upload the raw transcript (all tool calls). Default reduces to the conversation (prompts + final replies) client-side; tool output never leaves the machine. |
 | `--api-url <url>` | no | Override canopy-web base URL (also via `CANOPY_WEB_API_URL`). |
 | `--arc` | no | Stitch MULTIPLE transcripts into one shared **arc** page (see below). |
@@ -170,12 +171,32 @@ headers, and sensitive `KEY=value` assignments → `‹redacted:…›`. The pri
 count says how many fired.
 
 This catches the common foot-guns but is **not** a guarantee — unusual formats
-can slip through. For anything sensitive, prefer `--private`, and treat a `link`
-URL like any other secret-link share (unguessable but unlisted).
+can slip through. Treat a `link` URL like any other secret-link share
+(unguessable but unlisted). If a transcript is too sensitive for that, **don't
+upload it** — `--private` is not a safer way to share it, it is a way to not
+share it (below).
+
+## `--private` does not share anything — read this before using it
+
+**`--private` is owner-only, and when an agent runs this command the owner is the
+AGENT.** Its PAT resolves from the repo it is standing in, so an agent's upload is
+owned by e.g. `echo@dimagi-ai.com`, and a private session is readable by its owner
+and nobody else — not the human who asked for it, not any other dimagi login.
+A private **arc** is worse still: canopy-web has no arcs UI at all, so `/share/<token>`
+is the only arc surface there is and a private arc has no token.
+
+So: **if a human asked you to share a session, do not pass `--private`.** The
+link default is what makes the artifact readable. Reach for `--private` only when
+the intent is genuinely "upload it to my own account and show nobody" — and say
+so plainly, because the command will otherwise report a success that produced
+something the requester cannot open. (dimagi-internal/canopy#484: a private share
+was handed over as a link, rendered a black screen, and appeared on nobody's
+`/sessions` page.)
 
 ## Managing shared sessions
 
-Owners manage their sessions at `<api>/sessions` (dimagi login): copy the link,
+Owners manage their sessions at `<api>/sessions` (their own login — the list shows
+everyone's link-shared sessions plus **your own** private ones): copy the link,
 **Rotate** (invalidate the current link, mint a new one), **Make private**
 (revoke sharing), or **Delete**. Re-running the skill on the same session is
 idempotent — it returns the existing link instead of duplicating.
