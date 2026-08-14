@@ -83,6 +83,31 @@ THEIR court and there is nothing to answer; mark it read (your own `--account`, 
 it in the closeout ("thread `<subject>` — last message was mine, marked read"). Only treat a thread
 as actionable when the newest message is from someone else.
 
+**SHOW THE HUMAN THE INBOUND MESSAGE, VERBATIM, BEFORE YOU WORK ON IT.** The human watching the
+session did not see what triggered you — they see an agent making tool calls about an article, a
+tracker, a name they don't recognise, with no idea where any of it came from. So the first thing
+you output for an inbound item is the item itself: **From / To / Cc / Date / Subject, then the body
+quoted in full**, trimmed only of the quoted reply-chain below it. Then say what you're going to do
+about it. Not a summary, not "Fio asked for a review of two draft options" — the actual words, so
+they can judge your reading of the ask against the ask. This costs a few lines and it is the
+difference between a human who can supervise the turn and a human watching an opaque process.
+
+- **Full text, not a paraphrase.** Your paraphrase is *your interpretation*, which is precisely the
+  thing they need to check. A multi-part request especially: show the numbered asks as the sender
+  wrote them.
+- **Long body?** Still show it. Trim the quoted history, signatures and boilerplate — never the ask.
+- **Scoped turns (`--thread` / `--slack`) need this MOST**, because there was no inbox scan to hint
+  at context and the human may not know which thread the ref points at.
+- **Applies to every channel** — Slack, a board task's text, a forwarded doc. Whatever triggered the
+  turn gets displayed before it gets acted on.
+- **Automated notifications** (see below) are the one exception: name it in one line and move on —
+  nobody needs a calendar-invite notification pasted in full.
+
+(Origin: 2026-08-14 — an agent ran a full turn on an emailed request, and the human steering it said
+*"I need you to display the incoming e-mail when you do these sessions from now on. I'm lost as to
+why you are looking at it."* Every step of that turn was reported; the thing that made the steps
+legible never was.)
+
 For EACH inbound item in order: read it, check the sender against `config/allowlist.txt`
 (unknown sender → read-only, surface to the human), load only that counterpart's memory scope,
 decide ONE action (Reply / File / Remember / Escalate), and present it for approval (manual mode)
@@ -314,6 +339,9 @@ a flag). The board at `/agents/<slug>` stays the shared trigger + approval surfa
 queues work and approves outbound actions — independent of whether you publish above.
 
 **CLOSE CHECKLIST — confirm each in the summary (these get silently skipped under load):**
+0. **Every inbound item was DISPLAYED verbatim before it was worked on** (Step 2) — headers plus
+   full body, not a summary. If you cannot point to where in this session you pasted it, you skipped
+   it, and the human has been watching an opaque turn.
 1. `<slug>:agent-turn-review` — your own wrapper, by full name — ran on every outbound reply
    (Step 2).
 2. Skill-development self-check answered (Step 3).
