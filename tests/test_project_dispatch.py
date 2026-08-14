@@ -30,6 +30,7 @@ from orchestrator.agent_dispatch import (
     DispatchError,
     build_turn_payload,
     derive_idempotency_key,
+    stamp_dispatched,
 )
 from orchestrator.cli import main
 from orchestrator.project_dispatch import (
@@ -65,7 +66,7 @@ def test_payload_targets_a_project_and_never_an_agent():
                                    idempotency_key="k1")
     assert p["project"] == "connect-labs"
     assert "agent_slug" not in p
-    assert p["prompt"] == "fix the scope model"
+    assert p["prompt"].startswith("fix the scope model")
     assert p["origin"] == "api"
 
 
@@ -635,7 +636,7 @@ def test_agent_dispatch_payload_is_byte_for_byte_what_it_was(net):
         "origin": "api",
         "idempotency_key": "k1",
         "origin_ref": {"thread_key": "k1", "task_ext_id": "T7"},
-        "prompt": "do it",
+        "prompt": stamp_dispatched("do it"),
     }
 
 

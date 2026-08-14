@@ -9,6 +9,21 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.408] - 2026-08-14
+### Fixed
+- `agent-review`: `human_corrections` no longer mines machine-authored `user` turns.
+  Replayed hook feedback (`isMeta: true`) and canopy-dispatched agent briefs are plain
+  strings like a human turn, and their forceful scaffolding is exactly what the
+  `emphasis` / `strong_correction` / `safety_override` heuristics match. Measured on hal
+  2026-08-14: 5 of 6 reported "human corrections" were machine-authored, and one of them
+  was promoted to a fleet-scope finding because it appeared in two agents' transcripts in
+  the same window — the signature of one dispatch batch, not corroboration. (#488)
+### Changed
+- `canopy agent dispatch` / `canopy project dispatch` append a `canopy:dispatched-prompt`
+  marker to every prompt they send. Downstream the runner hands the prompt to Claude Code
+  as typed input, so the transcript cannot otherwise tell an agent's brief from something
+  a human typed; the dispatcher is the only layer that knows.
+
 ## [0.2.382] - 2026-07-30
 
 ### Fixed

@@ -96,7 +96,7 @@ from __future__ import annotations
 
 import hashlib
 
-from orchestrator.agent_dispatch import DispatchError
+from orchestrator.agent_dispatch import DispatchError, stamp_dispatched
 
 # Only a runner reporting itself ONLINE can claim (claim_next_turn's first guard,
 # on the DERIVED live_status the API serves — a stale heartbeat reads as `stale`).
@@ -185,8 +185,11 @@ def build_project_turn_payload(project: str, *, prompt: str = "",
     }
     # An absent prompt means "just open a session here" — meaningfully different
     # from an empty one, so send nothing rather than "".
+    # Stamped machine-dispatched for the same reason as the agent path: downstream the
+    # runner hands this to Claude Code as typed input, and `agent-review` read the result
+    # as the human speaking (canopy #488). See `agent_dispatch.stamp_dispatched`.
     if (prompt or "").strip():
-        payload["prompt"] = prompt
+        payload["prompt"] = stamp_dispatched(prompt)
     return payload
 
 

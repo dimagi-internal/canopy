@@ -31,7 +31,7 @@ from orchestrator.cli import main
 def test_payload_carries_slug_prompt_and_origin():
     p = build_turn_payload("hal", prompt="fix the thing", idempotency_key="k1")
     assert p["agent_slug"] == "hal"
-    assert p["prompt"] == "fix the thing"
+    assert p["prompt"].startswith("fix the thing")
     assert p["origin"] == "api"
     assert p["idempotency_key"] == "k1"
 
@@ -143,7 +143,7 @@ def test_cli_dispatch_creates_the_task_then_enqueues_the_turn(monkeypatch):
 
     posts = [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
     assert len(posts) == 1, "must enqueue exactly one turn"
-    assert posts[0][2]["prompt"] == "do it"
+    assert posts[0][2]["prompt"].startswith("do it")
     assert posts[0][2]["origin_ref"]["thread_key"]
 
     # The board record has to exist BEFORE the agent is sent at it, or the agent
@@ -220,3 +220,42 @@ def test_a_claimed_or_running_turn_does_not_report_it_was_never_spawned():
         assert "has not spawned" not in s["headline"], (
             f"{status} reported as never-spawned: {s['headline']!r}")
         assert "executing" in s["headline"]
+
+
+# --- #488: a dispatched prompt must SAY it was dispatched ---------------------
+#
+# The runner hands the prompt to Claude Code as input, so the transcript records it as
+# typed by a human — truthfully, from the harness's point of view. This layer is the only
+# one that knows better, so it is the only one that can say so.
+
+def test_build_turn_payload_stamps_the_dispatch_marker():
+    from orchestrator.agent_dispatch import DISPATCH_MARKER, build_turn_payload
+
+    payload = build_turn_payload("hal", prompt="do the thing", idempotency_key="k")
+    assert payload["prompt"].startswith("do the thing")
+    assert payload["prompt"].endswith(DISPATCH_MARKER)
+
+
+def test_build_turn_payload_still_omits_an_absent_prompt():
+    """An absent prompt means "drain your board" — stamping must not invent one."""
+    from orchestrator.agent_dispatch import build_turn_payload
+
+    assert "prompt" not in build_turn_payload("hal", prompt="", idempotency_key="k")
+    assert "prompt" not in build_turn_payload("hal", prompt="   ", idempotency_key="k")
+
+
+def test_stamp_dispatched_is_idempotent():
+    """A prompt built by one helper and passed through another must not collect two."""
+    from orchestrator.agent_dispatch import DISPATCH_MARKER, stamp_dispatched
+
+    once = stamp_dispatched("brief")
+    assert stamp_dispatched(once) == once
+    assert once.count(DISPATCH_MARKER) == 1
+
+
+def test_project_dispatch_payload_stamps_too():
+    from orchestrator.agent_dispatch import DISPATCH_MARKER
+    from orchestrator.project_dispatch import build_project_turn_payload
+
+    payload = build_project_turn_payload("canopy", prompt="fix it", idempotency_key="k")
+    assert payload["prompt"].endswith(DISPATCH_MARKER)
