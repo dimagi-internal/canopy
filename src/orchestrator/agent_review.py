@@ -131,13 +131,73 @@ _HARNESS_AUTHORED_PREFIXES = (
     "This session is being continued from a previous conversation",
 )
 
+# The same failure class, one layer out: `user` turns that are plain strings like a real
+# human turn, but that NO HUMAN AUTHORED. The blocks above are tag-delimited, so a regex
+# finds them; these are not, so they need a structural tell instead of a phrase match.
+# Two producers, two tells:
+#
+# 1. HOOK FEEDBACK. A Stop/PreToolUse hook's `reason` is replayed into the conversation as
+#    a `user` turn — "Stop hook feedback: This turn is ending without its close-out. Run it
+#    now: bin/hal-turn-close …". A close-out rail is written to be forceful, so it scores
+#    `strong_correction` every time it fires. Claude Code stamps these `isMeta: true`, which
+#    is the harness's own statement that nobody typed it — exact, and it needs no phrase list.
+#
+# 2. AGENT-AUTHORED DISPATCH BRIEFS. A dispatched turn opens with a brief another agent
+#    wrote, delivered to the runner as if typed. Nothing in the transcript distinguishes it
+#    (`origin: {kind: human}`, `promptSource: typed` — the harness genuinely was handed it as
+#    input), so the marker has to come from the dispatcher. `agent_dispatch.stamp_dispatched`
+#    puts DISPATCH_MARKER on every prompt canopy sends; this strips any turn carrying it.
+#
+# Measured on hal 2026-08-14 (canopy #488): of 6 reported "human corrections", 5 were these —
+# two hook replays, two agent dispatch briefs, one generated resume brief; ONE was Jonathan.
+# The cost was not cosmetic. A generated brief became a fleet-scope finding, promoted on the
+# grounds that it appeared in two agents' transcripts in the same window — which is what a
+# six-session dispatch batch looks like. Co-occurrence is this bug's SIGNATURE, and it reads
+# as exactly the evidence that justifies escalating.
+#
+# Self-amplifying, too: agent-review's own findings are delivered to agents AS dispatch
+# briefs, which the next cycle mines back as `strong_correction`.
+DISPATCH_MARKER = "<!-- canopy:dispatched-prompt -->"
+
+
+def _is_harness_authored_entry(entry: dict) -> bool:
+    """True when the HARNESS wrote this `user` entry rather than replaying what a human typed.
+
+    `isMeta` is Claude Code's own flag for it. Read defensively — an older transcript, or a
+    different harness version, simply won't carry the key, and this must degrade to "assume
+    human" rather than start dropping real corrections.
+    """
+    return bool(entry.get("isMeta"))
+
 
 def _human_text(raw: str) -> str:
     """What the human actually typed, with harness-injected blocks removed."""
     s = _HARNESS_BLOCK_RX.sub(" ", raw or "").strip()
     if s.startswith(_HARNESS_AUTHORED_PREFIXES):
         return ""
+    if DISPATCH_MARKER in s:
+        return ""
     return s
+
+
+def human_authored_messages(entries: list[dict]) -> list[str]:
+    """`extract_user_messages`, minus the `user` turns the HARNESS itself authored.
+
+    Deliberately NOT folded into `extract_user_messages`: its other callers (the
+    checklist-gap haystack, fleet-align, shareout) want every word that appeared in the
+    conversation, machine-written or not. Only the corrections lens cares who typed it.
+    """
+    out: list[str] = []
+    for entry in entries:
+        if entry.get("type") != "user" or _is_harness_authored_entry(entry):
+            continue
+        msg = entry.get("message", {})
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, str) and content:
+            out.append(content)
+    return out
 
 
 def human_corrections(entries: list[dict]) -> list[dict]:
@@ -147,9 +207,10 @@ def human_corrections(entries: list[dict]) -> list[dict]:
 
     Only genuinely human-authored text is mined: harness-injected `user` turns are stripped
     first (`_human_text`), so the caveat/notification boilerplate can't masquerade as Jonathan
-    overriding something."""
+    overriding something. `isMeta` turns (replayed hook feedback) and canopy-dispatched prompts
+    (another agent's brief) are dropped whole — see DISPATCH_MARKER above."""
     out: list[dict] = []
-    for m in extract_user_messages(entries):
+    for m in human_authored_messages(entries):
         s = _human_text(m)
         if not s:
             continue

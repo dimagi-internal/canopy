@@ -24,6 +24,14 @@ on 2026-07-23; this is that miss, encoded.)
 **3. Re-running a dispatch spawns a second session.** The idempotency key is derived
 from (agent, title, day) so the same work dispatched twice is one turn.
 
+**4. A dispatched prompt is indistinguishable from a typed one downstream.** The runner
+hands the prompt to Claude Code as input, so the transcript records `origin: {kind:
+human}` / `promptSource: typed` — truthfully, from the harness's point of view. Nothing
+downstream can tell an agent's brief from something Jonathan typed, and `agent-review`'s
+`human_corrections` lens mined the briefs as the human shouting at the agent (canopy #488;
+measured 5 of 6 reported corrections on hal 2026-08-14). This layer is the one place that
+KNOWS, so it says so: `stamp_dispatched` appends a marker the extractor strips.
+
 Deterministic: builds payloads and reads status. Judgment about what to dispatch, and
 verification that it worked, stay with the caller.
 """
@@ -85,8 +93,29 @@ def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
     # An absent prompt means "drain your board" — meaningfully different from an
     # empty one, so send nothing rather than "".
     if (prompt or "").strip():
-        payload["prompt"] = prompt
+        payload["prompt"] = stamp_dispatched(prompt)
     return payload
+
+
+# Marker stamped on every prompt canopy dispatches, so downstream readers of the
+# resulting transcript can tell an agent-authored brief from a human-typed one. Kept as
+# an HTML comment for two reasons: it renders as nothing wherever a prompt is displayed,
+# and it instructs the receiving agent to do exactly nothing — a marker that reads like a
+# directive would change the turn it is only supposed to label. Appended, not prepended,
+# so the first thing the agent reads is still the ask.
+#
+# The consumer is `agent_review.DISPATCH_MARKER`; the two must stay identical, which
+# `tests/test_agent_dispatch.py` asserts rather than trusting to memory.
+DISPATCH_MARKER = "<!-- canopy:dispatched-prompt -->"
+
+
+def stamp_dispatched(prompt: str) -> str:
+    """Label `prompt` as machine-dispatched. Idempotent — a prompt built by one dispatch
+    helper and passed through another must not collect two markers."""
+    text = (prompt or "").rstrip()
+    if not text or DISPATCH_MARKER in text:
+        return prompt
+    return f"{text}\n\n{DISPATCH_MARKER}"
 
 
 def summarize_turn(turn: dict) -> dict:

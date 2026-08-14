@@ -1368,3 +1368,101 @@ def test_an_explicit_timeout_still_works_and_still_fails_loud(tmp_path, monkeypa
     assert isinstance(result["error"], str)
     assert "timed out" in result["error"].lower() and "45" in result["error"]
     assert result["findings"] == []
+
+
+# --- #488: human_corrections must not mine MACHINE-authored user turns --------
+#
+# Sibling of the harness-injected-turns task above, one layer out. Those blocks are
+# tag-delimited, so a regex finds them. These are plain strings that read exactly like a
+# human turn, because the harness genuinely received them as typed input:
+#
+#   * a Stop hook's `reason`, replayed into the conversation ("Stop hook feedback: …")
+#   * a dispatch brief another agent wrote to open a dispatched session
+#
+# Measured on hal 2026-08-14 (`canopy agent-review hal`, last 24h): 6 reported "human
+# corrections", of which 5 were machine-authored — two hook replays of hal's own
+# turn_close_guard, two Ada dispatch briefs, one generated resume brief. One was Jonathan.
+# The same ratio the harness-block filter was built for, via a class it doesn't cover.
+#
+# Not cosmetic: the generated resume brief became a fleet-scope finding, escalated because
+# the same "correction" appeared in two agents' transcripts in one window. It appeared in
+# both because ONE dispatch batch opened six sessions in five minutes with the same
+# generated text — co-occurrence is the bug's signature, not corroboration.
+
+def test_human_corrections_ignores_replayed_hook_feedback():
+    """A Stop hook's `reason` comes back as a `user` turn. A close-out rail is written to
+    be forceful, so it scores `strong_correction` every time it fires — in every turn that
+    ended without its close-out. Claude Code marks these `isMeta: true`."""
+    from orchestrator.agent_review import human_corrections
+
+    entries = [{"type": "user", "isMeta": True, "message": {"content":
+        "Stop hook feedback:\nThis turn is ending without its close-out. Run it now:\n\n"
+        "    bin/hal-turn-close\n\nThat refreshes the canopy-web workspace and prints the "
+        "close checklist (hal:agent-turn-review, skill self-check, task packaging)."}}]
+    assert human_corrections(entries) == []
+
+
+def test_human_corrections_ignores_a_canopy_dispatched_brief():
+    """A dispatched turn opens with another agent's brief. Its scaffolding — ALL-CAPS
+    section headers, "RE-VALIDATE FIRST", "STOP and report" — is exactly what `emphasis` /
+    `strong_correction` / `safety_override` match. The dispatcher stamps it; we strip it."""
+    from orchestrator.agent_dispatch import stamp_dispatched
+    from orchestrator.agent_review import human_corrections
+
+    brief = ("Two fixes in canopy's own agent-review path. Target repo: canopy.\n\n"
+             "**RE-VALIDATE FIRST.** If either is already fixed, STOP on that one and "
+             "report back rather than shipping. Do not send anything outbound.")
+    entries = [{"type": "user", "message": {"content": stamp_dispatched(brief)}}]
+    assert human_corrections(entries) == []
+
+
+def test_dispatch_marker_is_the_same_string_on_both_sides():
+    """The stamper and the stripper live in different modules; a drift between them fails
+    open — every dispatched brief silently becomes a `human_correction` again."""
+    from orchestrator import agent_dispatch, agent_review
+
+    assert agent_dispatch.DISPATCH_MARKER == agent_review.DISPATCH_MARKER
+
+
+def test_human_corrections_survives_a_transcript_with_no_isMeta_key():
+    """Older transcripts and other harness versions don't carry `isMeta`. Absent must mean
+    "assume human" — a stricter default would start dropping Jonathan."""
+    from orchestrator.agent_review import human_corrections
+
+    entries = [{"type": "user", "message": {"content": "stop, that's wrong"}}]
+    got = human_corrections(entries)
+    assert len(got) == 1
+    assert "strong_correction" in got[0]["kinds"]
+
+
+def test_human_corrections_keeps_the_one_real_correction_beside_the_five_fakes():
+    """The hal 2026-08-14 corpus, reduced: five machine turns and Jonathan's one line.
+    Mining it must yield exactly his."""
+    from orchestrator.agent_dispatch import stamp_dispatched
+    from orchestrator.agent_review import human_corrections
+
+    entries = [
+        {"type": "user", "isMeta": True, "message": {"content":
+            "Stop hook feedback:\nThis turn is ending without its close-out. Run it now:\n"
+            "    bin/hal-turn-close"}},
+        {"type": "user", "message": {"content": stamp_dispatched(
+            "Three self-improvement fixes inside your own repo. Nothing outbound.\n\n"
+            "**RE-VALIDATE FIRST.** If already fixed, STOP and report.")}},
+        {"type": "user", "message": {"content": stamp_dispatched(
+            "Two fixes in canopy's own agent-review path. Target repo: canopy.\n\n"
+            "**RE-VALIDATE FIRST.** STOP rather than shipping a fix that already landed.")}},
+        {"type": "user", "message": {"content":
+            "Why are you asking me?  just do the right thing if its clear?"}},
+        {"type": "user", "isMeta": True, "message": {"content":
+            "Stop hook feedback:\nThis turn is ending without its close-out. Run it now:\n"
+            "    bin/hal-turn-close"}},
+        {"type": "user", "message": {"content": stamp_dispatched(
+            "We got rate limited on the acedimagi account and are moving this work to this "
+            "account to continue.\n\nREPO:   hal\nBRANCH: hal/self-improve-ship\n\n"
+            "RE-VALIDATE BEFORE CONTINUING. If the work looks already done, STOP AND "
+            "REPORT rather than redoing it.")}},
+    ]
+    got = human_corrections(entries)
+    assert len(got) == 1, [g["quote"][:60] for g in got]
+    assert got[0]["quote"].startswith("Why are you asking me?")
+    assert got[0]["kinds"] == ["confusion"]
