@@ -32,7 +32,7 @@ fallback in your opening and closeout.
   1. **The rails do not move.** Deny rails (`config/gating.json` + the fleet baseline) apply
      unchanged; sender triage applies unchanged (unknown/non-allowlisted sender → still
      read-only + surface). Auto mode removes the *wait*, not the *rules*.
-  2. **`agent-turn-review` + the review-receipt rail become THE quality gate.** They were
+  2. **`<slug>:agent-turn-review` + the review-receipt rail become THE quality gate.** They were
      mandatory before; in auto mode they are the only gate left, so run them with full care —
      `canopy email send` still refuses a body with no receipt for that exact body.
   3. **Always respond on the triggering channel.** The turn ends with a reply sent on the
@@ -111,8 +111,12 @@ own-mailbox rail, drops INBOX + UNREAD in one call. Use the CLI, not a hand-roll
 gmail thread modify`: the flag spelling is `--remove` (not `--remove-label`) and lives on
 `thread modify` (not `gmail modify`), which has cost agents several tool calls to rediscover.
 
-Before every outbound reply, run the `agent-turn-review` skill (it invokes the fleet-wide
-`canopy:agent-turn-review`): re-read the original request, extract EACH discrete ask, confirm the
+Before every outbound reply, run **your own `<slug>:agent-turn-review`** — the full name, e.g.
+`hal:agent-turn-review`. Not the bare name (it resolves ambiguously across the fleet's wrappers)
+and **not `canopy:agent-turn-review`**: that skill is the shared discipline your wrapper delegates
+to, i.e. a body, not an entry point. Calling it directly passes the checklist while skipping every
+agent-specific step your wrapper adds — its send path, its done-claim rules. A wrapper you can walk
+around is not a wrapper. The review: re-read the original request, extract EACH discrete ask, confirm the
 draft does exactly that (read any source they cited; don't reconstruct from memory), confirm every
 "I'll do X" is something you can actually execute (no vague "sync with <person>"), then lead with
 what you DID + a recommendation + options.
@@ -310,7 +314,8 @@ a flag). The board at `/agents/<slug>` stays the shared trigger + approval surfa
 queues work and approves outbound actions — independent of whether you publish above.
 
 **CLOSE CHECKLIST — confirm each in the summary (these get silently skipped under load):**
-1. `agent-turn-review` ran on every outbound reply (Step 2).
+1. `<slug>:agent-turn-review` — your own wrapper, by full name — ran on every outbound reply
+   (Step 2).
 2. Skill-development self-check answered (Step 3).
 3. Published to canopy-web (skills / work / turn) ONLY if the human asked — otherwise skip; none of
    it is an automatic close step.
@@ -322,6 +327,31 @@ queues work and approves outbound actions — independent of whether you publish
 checked out elsewhere, so `git checkout main` and `gh pr merge --delete-branch` FAIL ("main already
 checked out"). Instead: `gh pr merge <n> --squash`, then verify with `gh pr view <n> --json state`.
 
+**Waiting for a PR — ask whether there is anything to wait FOR, then never block on it.** Two rules,
+in this order, because the first one makes the second unnecessary most of the time:
+
+1. **Does this repo run checks on `pull_request` at all?** One call answers it, and the answer is
+   not guessable — measured 2026-08-13, `hal`, `echo`, `eva` and `ada` have a single workflow
+   triggered only by `push: main`, while `ace`, `canopy`, `canopy-web`, `connect-labs` and
+   `ace-web` all run PR checks. So "agent repos have no CI" is false, and a wait in a repo with no
+   PR checks is a wait for something that can never arrive:
+   ```
+   gh pr checks <n> 2>&1 | head -3    # "no checks reported" => nothing to wait for, merge now
+   ```
+2. **When there IS something to wait for, run a command that EXITS on the condition, in the
+   background** — never a foreground polling loop. `sleep 20; gh pr checks <n>` and
+   `for i in 1 2 3; do …; sleep 20; done` both block the turn doing nothing, and a foreground
+   `sleep` is refused by the harness outright. `gh` already blocks correctly; the job is to run it
+   where it doesn't block *you*:
+   ```
+   gh pr checks <n> --watch --fail-fast; gh pr checks <n> 2>&1 | tail -5
+   ```
+   via **`Bash` with `run_in_background: true`** — one background task, one notification when the
+   checks settle, and the turn keeps working meanwhile. (`Monitor` is for one notification *per
+   occurrence*; a merge-wait wants exactly one at the end, and Monitor's own guidance sends that
+   shape back here.) Don't schedule a wakeup to poll it either — the harness re-invokes you when it
+   exits.
+
 **…and on a MERGE-QUEUE repo that verify step lies twice — don't undo a merge that worked.** Some
 repos (canopy-web today) protect `main` with a GitHub merge queue, and there `gh pr merge --squash`
 prints `! The merge strategy for main is set by the merge queue` — which reads as a refusal, **but
@@ -332,8 +362,16 @@ refused for a strategy reason:
 ```
 gh pr merge <n>                       # no strategy flag — the queue owns the strategy
 gh pr view <n> --json state,mergeStateStatus   # "already queued to merge" = it IS queued
-until [ "$(gh pr view <n> --json state --jq .state)" = MERGED ]; do sleep 25; done
 ```
+Then wait for `MERGED` the way the rule above says — a bounded loop that exits on the condition,
+run with **`run_in_background: true`**. A backgrounded `sleep` is fine; a foreground one is refused
+by the harness, which is what made the earlier form of this snippet unrunnable:
+```
+for i in $(seq 1 80); do
+  s=$(gh pr view <n> --json state --jq .state); [ "$s" = MERGED ] && break; sleep 30
+done; echo "final: $s"
+```
+Bound it (80 × 30s ≈ 40min) so a stuck queue surfaces as a result instead of hanging.
 The failure this prevents is *acting on the false negative* — re-pushing, force-merging, or opening
 a duplicate PR on top of a merge that was already in flight. Treat `OPEN` + `CLEAN` + "already
 queued" as **merging**, not as failed, and wait for `MERGED` before you report the work shipped.
@@ -341,8 +379,9 @@ queued" as **merging**, not as failed, and wait for `MERGED` before you report t
 confirmations of failure; the PR was in the queue the whole time and landed as `fed3f2b`.)
 
 ## Related skills
-- `agent-turn-review` — gate every outbound reply against the original request AND against what you
-  can actually execute (invokes the fleet-wide `canopy:agent-turn-review`) before sending.
+- `<slug>:agent-turn-review` — YOUR wrapper, by full name — gate every outbound reply against the
+  original request AND against what you can actually execute, before sending. It delegates to the
+  fleet-wide `canopy:agent-turn-review`; invoke the wrapper, never the fleet skill directly.
 - `task-tracker` — durable multi-turn state (`agent-core/task-tracker.md` via your stub); drain
   board commands at turn start, package advanced tasks at close.
 - `deliverables` — the fleet filing standard for Drive work products (`agent-core/deliverables.md`):
