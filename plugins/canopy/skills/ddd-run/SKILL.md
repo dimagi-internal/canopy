@@ -639,17 +639,42 @@ proceed without user input.
 from scripts.ddd.run_pipeline import compute_auto_iterate
 
 # Single source of truth — do NOT re-implement the decision tree here.
-# compute_auto_iterate gates on the SCORE TRAJECTORY (not a raw iteration cap):
-# it appends this iteration's gating score to state.score_history, then returns
-# (action, reason) over: converged -> stop_done/stop_partial; a CONCEPT/redesign
-# finding -> stop_concept_change; any options/redesign -> stop_unclear; score
-# stalled/regressed over the last 2 iters or the hard-cap backstop -> stop_max_iter;
-# else (mechanical + still improving) -> continue. It reads user_verdict.dimensions
-# for per-dimension fix_kinds and honors state.scene_filter for the partial case.
+# Before deciding anything it NORMALIZES the findings through
+# scripts.ddd.finding_class: an ACCURACY finding (the narration asserts something
+# the artifact itself contradicts) is forced to fix_kind=mechanical, because the
+# artifact is the authority and the correct assertion is readable off it. Only
+# STRATEGY findings (the artifact is wrong, not the words) can open the concept
+# gate. The normalized findings are written back to state.findings.
+#
+# Then it gates on PROGRESS (not a raw iteration cap): it appends this iteration's
+# gating score to state.score_history and its finding fingerprints to
+# state.finding_fingerprints, and returns (action, reason) over:
+#   converged                                  -> stop_done / stop_partial
+#   a STRATEGY CONCEPT/redesign finding        -> stop_concept_change
+#   score stalled/regressed (noise-banded)     -> stop_max_iter
+#   identical findings + no real score move    -> stop_max_iter  (plateau)
+#   hard-cap backstop                          -> stop_max_iter
+#   any options/redesign left                  -> stop_unclear
+#   else (mechanical + still progressing)      -> continue
+# It reads user_verdict.dimensions for per-dimension fix_kinds and honors
+# state.scene_filter for the partial case, and stamps state.terminal_status.
 auto_iterate_next_action, reason = compute_auto_iterate(
     state, concept_verdict, user_verdict, findings, converged=converged,
+    # unattended defaults to gates.is_unattended() — with no human present a
+    # stuck stop is TERMINAL (report + --stuck package), never a wait.
 )
 ```
+
+**Two things the score alone cannot tell you, both now folded in:**
+
+- **The noise band.** Per-cell judge variance is ±1 on byte-identical frames, so a
+  move smaller than `denoise.NOISE_BAND` (0.5) is not evidence of improvement OR
+  of regression. Reading noise as either is how a round of real fixes got recorded
+  as a stall (ace#1393).
+- **The finding plateau.** Two iterations producing an identical
+  finding-fingerprint set with no real score move means the loop is re-deriving,
+  not progressing. Unlike the score, this signal does not wobble: the judge's
+  number for a cell moves; the defect it names does not.
 
 > **Why this is a function call, not inline logic.** The trajectory-gating decision
 > (progress-aware loop, not a raw `MAX_ITERATIONS=3` count) lives in ONE place —
@@ -659,7 +684,11 @@ auto_iterate_next_action, reason = compute_auto_iterate(
 > improves and stops the instant it stalls or regresses.
 
 Stamp `auto_iterate_next_action` and `auto_iterate_reason` onto run_state
-(both are optional fields on RunState) and `save(state)`. Then print the
+(both are optional fields on RunState) and `save(state)`. `compute_auto_iterate`
+also stamps **`state.terminal_status`** — `converged_clean` |
+`converged_with_open_questions` | `stopped_not_converged` | `diverging` |
+`running`. Report it: "converged, good", "converged, still failing" and
+"diverging" are genuinely different endings and must never print the same. Then print the
 summary. **Every verdict line MUST be rendered via
 `run_pipeline.format_verdict_line`** — a capped verdict (the out-of-chain cap
 fired because `live_state_verified: false`) renders as
@@ -690,6 +719,7 @@ DDD Run — <run_id>
   Convergence (filtered): YES | NO  (threshold: 4.0)                    # "filtered" tag if partial
 
   Auto-iterate: <action>  (<reason>)                                    # NEW
+  Termination:  <terminal_status>                                       # NEW
 
   Top findings (<N> total):
     [PRODUCT mechanical]  Scene N: <detail>     <DECK_URL>#scene-<N>    # deep-link per finding
@@ -715,10 +745,17 @@ can see at a glance which findings the orchestrator will auto-apply
 
 - `stop_done` — "Both judges passed. Run is converged — proceed to promotion."
 - `stop_partial` — "Filtered scope passed. Drop `--scene` and re-fire for promotion."
-- `stop_concept_change` — "Concept-change finding present — surface to user via canopy-web review surface."
+- `stop_concept_change` — "Strategy finding present (the artifact, not the wording, is wrong) — surface to user via canopy-web review surface."
 - `stop_unclear` — "Findings with `options`/`redesign` fix_kind block auto-iteration. List them and ask the user to pick or redesign."
-- `stop_max_iter` — "Max iterations reached. Stop and surface remaining findings."
+- `stop_max_iter` — "Loop stopped making progress (stall, plateau, or backstop). Stop and surface remaining findings."
 - `continue` — "Orchestrator can apply mechanical fixes per finding and re-fire `/canopy:ddd-run` on the same scope."
+
+**Unattended runs never wait on a stuck stop.** With no human in the loop
+(`gates.is_unattended()`), every stuck stop is terminal: upload the `--stuck`
+package, report `terminal_status` plus the open strategy findings, and finish.
+Resolve any gate through `scripts.ddd.gates.resolve(...)`, which returns the
+gate's declared no-human default (`concept_change` → `defer`,
+`external_release` → `hold`) instead of polling for a click nobody will make.
 
 ### Step 5b — review_mode gate (human mode posts a findings review instead of auto-applying)
 

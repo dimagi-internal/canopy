@@ -173,6 +173,29 @@
       "title": "Score History",
       "type": "array"
     },
+    "finding_fingerprints": {
+      "default": [],
+      "items": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Finding Fingerprints",
+      "type": "array"
+    },
+    "terminal_status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Terminal Status"
+    },
     "narrative_review_url": {
       "anyOf": [
         {
