@@ -229,77 +229,264 @@ def compute_auto_iterate(
     *,
     converged: bool | None = None,
     hard_cap: int = HARD_CAP,
+    unattended: bool | None = None,
 ) -> tuple[str, str]:
     """Decide the next loop action from the SCORE TRAJECTORY, not an iteration count.
 
-    DDD's point is to loop autonomously on mechanical findings until they're
+    DDD's point is to loop autonomously until the findings it can act on are
     exhausted. A raw count stopped good runs mid-progress and was blind to
-    regressions. This gates on whether the gating score is still improving:
+    regressions. This gates on whether the run is still making progress:
 
     - converged (both judges >= threshold)        -> ``stop_done`` / ``stop_partial``
-    - a CONCEPT/redesign finding                  -> ``stop_concept_change``
+    - a STRATEGY CONCEPT/redesign finding          -> ``stop_concept_change``
     - any options/redesign finding                -> ``stop_unclear``
     - score stalled/regressed over last 2 iters   -> ``stop_max_iter`` (needs a human)
+    - identical findings two iterations running   -> ``stop_max_iter`` (plateau)
     - hit ``hard_cap`` without converging         -> ``stop_max_iter`` (runaway backstop)
     - else (mechanical + still improving)         -> ``continue`` (keep looping)
 
-    Mutates ``state.score_history`` (appends this iteration's gating score) and
-    returns ``(action, reason)``. The gating score is the lower of the two
-    judges' overall_score (claim_reality_coherence is already excluded upstream).
+    Three things this does BEFORE deciding, each fixing a measured failure:
+
+    1. **Normalizes findings** through :mod:`scripts.ddd.finding_class`. An
+       ACCURACY finding — the narration asserts something the artifact itself
+       contradicts — is autonomously fixable by construction, so it is forced to
+       ``fix_kind: mechanical`` and never reaches a human gate. Only STRATEGY
+       findings (the artifact is wrong, not the words) can open
+       ``stop_concept_change``.
+    2. **Reads progress through a noise band** (:data:`scripts.ddd.denoise.NOISE_BAND`).
+       Per-cell judge variance is +/-1 on byte-identical frames, so a sub-half-point
+       move is not evidence of improvement OR of regression, and must not be read
+       as either.
+    3. **Detects a finding PLATEAU**, not just a score stall. The score for a cell
+       wobbles; the defect it names does not. Two iterations producing the same
+       finding fingerprints means the loop is re-deriving rather than progressing,
+       whatever the numbers did.
+
+    Mutates ``state.score_history`` (this iteration's gating score),
+    ``state.finding_fingerprints`` (this iteration's fingerprint set) and
+    ``state.terminal_status`` (see :func:`classify_termination`), and returns
+    ``(action, reason)``. The gating score is the lower of the two judges'
+    overall_score (claim_reality_coherence is already excluded upstream).
+
+    ``unattended`` (default: auto-detect via :func:`scripts.ddd.gates.is_unattended`)
+    does not change WHICH action is returned — it changes whether a stuck stop is
+    TERMINAL. With no human present, a stuck stop must end the run with an honest
+    report rather than wait on a click nobody will make.
     """
+    from scripts.ddd import denoise, finding_class, gates
+
     if converged is None:
         converged = compute_convergence(concept_verdict, user_verdict)
+    if unattended is None:
+        unattended = gates.is_unattended()
+
+    findings = finding_class.normalize_findings(findings or [])
+    state.findings = findings
 
     score = min(concept_verdict.overall_score, user_verdict.overall_score)
     state.score_history = (state.score_history or []) + [float(score)]
     hist = state.score_history
-    # "stalled" = the last two iterations produced no new best (no progress, or a
-    # fix regressed another scene). Needs >=3 data points to judge a trend.
-    stalled = (
-        len(hist) >= 3 and hist[-1] <= max(hist[:-2]) and hist[-2] <= max(hist[:-2])
+
+    fingerprints = denoise.fingerprint_findings(findings)
+    state.finding_fingerprints = (state.finding_fingerprints or []) + [fingerprints]
+    fp_hist = state.finding_fingerprints
+
+    # "stalled" = the last two iterations produced no new best, judged through the
+    # noise band so a wobble inside +/-NOISE_BAND is neither progress nor regression.
+    stalled = False
+    if len(hist) >= 3:
+        best_before = max(hist[:-2])
+        stalled = all(
+            denoise.improved(best_before, h) is not True for h in hist[-2:]
+        )
+    # "plateau" = the same defects came back unchanged AND the score did not
+    # genuinely improve. Identical findings alone is not enough — a stub-shaped
+    # findings list can repeat while real progress happens — but identical
+    # findings PLUS a score move inside the noise band means the move was noise
+    # and nothing actually got fixed. Not noisy the way the score alone is: an
+    # LLM's score for a cell wobbles +/-1 on identical frames; the defect it
+    # names does not.
+    plateau = (
+        len(fp_hist) >= 2
+        and bool(fp_hist[-1])
+        and fp_hist[-1] == fp_hist[-2]
+        and len(hist) >= 2
+        and denoise.improved(hist[-2], hist[-1]) is not True
     )
 
     all_findings = [
-        {"route": f.get("route", "PRODUCT"), "fix_kind": f.get("fix_kind", "options")}
+        {
+            "route": f.get("route", "PRODUCT"),
+            "fix_kind": f.get("fix_kind", "options"),
+            "finding_class": f.get("finding_class", finding_class.UNCLASSIFIED),
+        }
         for f in findings
     ]
     for d in (user_verdict.dimensions or {}).values():
         if isinstance(d, dict) and d.get("fix_kind"):
-            all_findings.append({"route": "PRODUCT", "fix_kind": d["fix_kind"]})
+            all_findings.append(
+                {
+                    "route": "PRODUCT",
+                    "fix_kind": d["fix_kind"],
+                    "finding_class": finding_class.UNCLASSIFIED,
+                }
+            )
     non_defer = [f for f in all_findings if f["route"] != "DEFER"]
     mechanical = [f for f in non_defer if f["fix_kind"] == "mechanical"]
     unclear = [f for f in non_defer if f["fix_kind"] in ("options", "redesign")]
+    # Only a STRATEGY finding can open the concept gate. An accuracy finding was
+    # already forced mechanical above, so this can no longer fire on "the wrong
+    # word is on screen" — which is what escalated two fixable defects to a human.
+    strategy_redesign = [
+        f
+        for f in non_defer
+        if f["route"] == "CONCEPT"
+        and f["fix_kind"] == "redesign"
+        and f["finding_class"] != finding_class.ACCURACY
+    ]
+
+    def _finish(action: str, reason: str) -> tuple[str, str]:
+        state.terminal_status = classify_termination(
+            action,
+            converged=bool(converged),
+            score_history=hist,
+            findings=findings,
+            unattended=bool(unattended),
+        )["status"]
+        return action, reason
 
     if converged and not getattr(state, "scene_filter", None):
-        return "stop_done", "Both judges passed full spec — ready for promotion."
+        return _finish("stop_done", "Both judges passed full spec — ready for promotion.")
     if converged and getattr(state, "scene_filter", None):
-        return "stop_partial", "Both judges passed the filtered scope — drop --scene and re-fire."
-    if any(f["route"] == "CONCEPT" and f["fix_kind"] == "redesign" for f in non_defer):
-        return "stop_concept_change", "Concept-change finding — needs user judgment on direction."
+        return _finish(
+            "stop_partial", "Both judges passed the filtered scope — drop --scene and re-fire."
+        )
+    if strategy_redesign:
+        return _finish(
+            "stop_concept_change",
+            "Strategy finding (the artifact, not the wording, is wrong) — needs user "
+            "judgment on direction."
+            + (" Unattended: reported, not waited on." if unattended else ""),
+        )
+    # Mechanical fixes come FIRST — a confident fix must never sit behind an
+    # uncertain one. But a plateau means re-applying them is not producing change.
+    if mechanical and not plateau:
+        return _finish(
+            "continue",
+            f"{len(mechanical)} mechanical (confident) fix(es) remain — apply + re-fire "
+            f"before surfacing any options (history={hist}).",
+        )
     if stalled:
-        return "stop_max_iter", (
-            f"Score stalled/regressed across the last 2 iterations (history={hist}) — "
-            "mechanical fixes aren't converging; needs a human look."
+        return _finish(
+            "stop_max_iter",
+            f"Score stalled/regressed across the last 2 iterations (history={hist}, "
+            f"noise band +/-{denoise.NOISE_BAND}) — fixes aren't converging; needs a human look.",
+        )
+    if plateau:
+        return _finish(
+            "stop_max_iter",
+            f"Finding plateau — iterations {len(fp_hist) - 1} and {len(fp_hist)} produced "
+            f"an identical set of {len(fingerprints)} finding(s) with no real score move; "
+            f"the loop is re-deriving, not progressing (history={hist}).",
         )
     if len(hist) >= hard_cap:
-        return "stop_max_iter", f"Hit the {hard_cap}-iteration backstop (history={hist})."
-    # Autonomous until it can't be: APPLY every confident (mechanical) fix and
-    # re-fire BEFORE surfacing anything uncertain. A `mechanical` finding is one
-    # the loop can act on by itself, so it must never land in a human review just
-    # because some *other* finding this iteration was uncertain. Keep looping
-    # while mechanical fixes remain; only when nothing is left to auto-apply do
-    # the options/redesign findings get surfaced. (The stall/cap checks above
-    # still bound a mechanical loop that isn't converging.)
-    if mechanical:
-        return "continue", (
-            f"{len(mechanical)} mechanical (confident) fix(es) remain — apply + re-fire "
-            f"before surfacing any options (history={hist})."
+        return _finish(
+            "stop_max_iter", f"Hit the {hard_cap}-iteration backstop (history={hist})."
         )
     if unclear:
-        return "stop_unclear", (
+        return _finish(
+            "stop_unclear",
             f"{len(unclear)} options/redesign finding(s) and no mechanical fixes left "
             "to auto-apply — surface ONLY these for a user pick."
+            + (" Unattended: reported, not waited on." if unattended else ""),
         )
-    return "continue", (
-        f"No options/redesign and score still moving (history={hist}) — re-fire."
+    return _finish(
+        "continue",
+        f"No options/redesign and score still moving (history={hist}) — re-fire.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Termination — the loop owns its own stopping story
+# ---------------------------------------------------------------------------
+
+#: Every action the loop can return, and whether it hands control back.
+TERMINAL_ACTIONS = frozenset(
+    {"stop_done", "stop_partial", "stop_concept_change", "stop_unclear", "stop_max_iter"}
+)
+
+
+def classify_termination(
+    action: str,
+    *,
+    converged: bool,
+    score_history: list[float] | None = None,
+    findings: list[dict] | None = None,
+    unattended: bool = False,
+) -> dict:
+    """Say WHICH kind of ending this is — the loop's own answer, not the caller's.
+
+    An orchestrator inventing "hard stop after this pass" is the symptom of a loop
+    that does not own its termination. The four endings are genuinely different
+    and must not print the same way:
+
+    ``converged_clean``
+        Both judges passed and nothing strategic is outstanding. Ship it.
+    ``converged_with_open_questions``
+        Passed, but strategy findings remain that only a human can answer. The
+        artifact is good; the story may not be the right one.
+    ``stopped_not_converged``
+        Out of moves without passing — plateau, stall, or the runaway backstop.
+        This is "converged, still failing": stable, and stably bad.
+    ``diverging``
+        The score is going backwards beyond the noise band. Fixes are fighting
+        each other; more iterations will make it worse, not better.
+    ``running``
+        Not terminal — keep looping.
+    """
+    from scripts.ddd import denoise, finding_class
+
+    open_strategy = [
+        f
+        for f in (findings or [])
+        if f.get("finding_class") == finding_class.STRATEGY and f.get("route") != "DEFER"
+    ]
+    direction = denoise.trend(score_history)
+
+    if action not in TERMINAL_ACTIONS:
+        status = "running"
+    elif action in ("stop_done", "stop_partial") or converged:
+        status = "converged_with_open_questions" if open_strategy else "converged_clean"
+    elif direction == "regressing":
+        status = "diverging"
+    else:
+        status = "stopped_not_converged"
+
+    return {
+        "status": status,
+        "terminal": status != "running",
+        "action": action,
+        "converged": bool(converged),
+        "trend": direction,
+        "open_strategy_findings": len(open_strategy),
+        "unattended": bool(unattended),
+        "summary": _TERMINATION_SUMMARY[status],
+    }
+
+
+_TERMINATION_SUMMARY = {
+    "converged_clean": "Converged and clean — every gating judge passed and nothing strategic is open.",
+    "converged_with_open_questions": (
+        "Converged, with open strategy questions — the artifact passes, but findings remain "
+        "that only a human can answer (is this the right story to tell?)."
+    ),
+    "stopped_not_converged": (
+        "Stopped without converging — out of autonomous moves (plateau, stall, or backstop). "
+        "Stable, and stably failing."
+    ),
+    "diverging": (
+        "Diverging — the gating score is moving backwards beyond the noise band. Fixes are "
+        "fighting each other; more iterations will not help."
+    ),
+    "running": "Still iterating.",
+}

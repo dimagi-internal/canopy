@@ -129,6 +129,19 @@ class RunState(BaseModel):
     # tell "still improving → keep going" from "stalled/regressed → get a human",
     # replacing the old raw MAX_ITERATIONS=3 count.
     score_history: list[float] = []
+    # Per-iteration finding FINGERPRINTS (scene::dimension::detail-hash), appended
+    # by run_pipeline.compute_auto_iterate. Two consecutive iterations with an
+    # identical set mean the loop is re-deriving the same defects rather than
+    # progressing — the plateau detector. Unlike score_history this signal is not
+    # noisy: an LLM's score for a cell wobbles +/-1 on identical frames, but the
+    # defect it names does not.
+    finding_fingerprints: list[list[str]] = []
+    # Which KIND of ending this is, set by run_pipeline.classify_termination:
+    #   converged_clean | converged_with_open_questions | stopped_not_converged |
+    #   diverging | running
+    # "converged, good", "converged, still failing" and "diverging" are genuinely
+    # different outcomes and must never print the same way.
+    terminal_status: str | None = None
     # Hosted narrative-review URL (0.2.150). Stamped by the ddd-narrative-review
     # gate after it posts the narrative to the canopy-web review surface — the
     # token-bearing /review/<id>/?t=<token> link the user approved. ddd-run's

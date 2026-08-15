@@ -105,6 +105,32 @@ you've been hand-driving and should re-enter via the orchestrator instead.
    created and submitted, attributed and audited; it is not bypassed). Only do this
    on an explicit in-session approval; otherwise post the gate and let it block.
 
+**Unattended is the primary mode, and no gate may hang one.** A gate that polls
+canopy-web for a human click cannot block a run with no human in it — blocking
+forever on a click nobody will make is not a safe default; finishing and reporting
+honestly is. The policy lives in ONE place, `scripts/ddd/gates.py`, and is
+enforced by `tests/ddd/test_gates.py`:
+
+| gate | unattended default | why |
+|------|--------------------|-----|
+| `concept_change` | **`defer`** | Never block. The review stays posted and resolvable; the run terminates and reports what it could not decide. Nothing is published, so deferring costs nothing. |
+| `external_release` | **`hold`** | Never publish to external humans without an approval. The asymmetry is deliberate: holding is the safe direction here, deferring is the safe direction there. |
+
+Resolve every gate through it rather than calling `review.await_resolution`
+directly — that raises `TimeoutError` after 30 minutes, which in an unattended run
+is a half-hour stall followed by a crash:
+
+```bash
+(cd "$DDD_REPO" && uv run python -c "
+from scripts.ddd import gates
+print(gates.resolve('concept_change', review_id='<id>', review_url='<url>').as_dict())
+")
+```
+
+`resolve()` never raises for an unresolved gate — an unresolved gate is a
+*result*, not an error. Report `GateOutcome.decision` + `resolved_by` in the
+digest so "a human said hold" and "nobody was there" never read the same.
+
 **Plus one soft stop:** `stop_unclear` (see "Converge or loop" below). This fires
 when a finding's `fix_kind` is `options` or `redesign` — i.e. the loop genuinely
 **cannot pick a single concrete fix on its own**. THIS is the one principle of
@@ -538,7 +564,33 @@ After `ddd-run` returns, load `<run_dir>/run_state.yaml` and
 
 Findings arrive from **two distinct sources** with different route vocabularies. Handle each source separately.
 
-**The single routing rule (no modes).** Route by `fix_kind`, not by any
+**The first question is accuracy vs strategy — `fix_kind` is downstream of it.**
+Every finding is a mismatch between an ASSERTION (narration, scene title,
+`concept_claim`) and an ARTIFACT (the rendered screen, its captured text, the
+underlying data). Which side has to move decides everything:
+
+- **accuracy** — the ASSERTION is wrong relative to the artifact. The artifact is
+  the authority and it is right there, so the fix is determinate: *restate the
+  assertion at the strength the artifact supports.* **Always autonomously
+  fixable. Never escalate one.** Narration saying "cost" over a panel titled
+  FACILITATOR EARNINGS is accuracy. An n=1 uncontrolled pre/post narrated as a
+  causal arc is accuracy — the words overreach the data.
+- **strategy** — the ARTIFACT is wrong relative to the goal: wrong data, wrong
+  scale, wrong story, wrong audience. Fixing it changes what is demonstrated, not
+  what is said about it. **Only strategy findings can open `concept_change`.**
+
+This is not a judgement you re-derive per run.
+`scripts/ddd/finding_class.py::normalize_findings` classifies every finding,
+forces `fix_kind: mechanical` on accuracy findings (recording `fix_kind_override`
+so it is auditable), and substitutes the canonical assertion-side fix when the
+judge offered a choice the artifact does not actually leave open.
+`compute_auto_iterate` calls it before deciding anything, so an accuracy finding
+structurally cannot reach `stop_concept_change`. Regression:
+`tests/ddd/test_loop_termination.py`. Why it exists: ACE
+`spark-facilitator/20260813-2126` burned four iterations and ~2M tokens and then
+escalated two ordinary accuracy defects to the operator as product decisions.
+
+**The second question is `fix_kind` (no modes).** Route by `fix_kind`, not by any
 `review_mode`: a finding with `fix_kind: mechanical` is something the loop can act
 on by itself → auto-apply it via table A below. A finding with `fix_kind:
 options` or `redesign` is something the loop CANNOT decide → it does not belong in
@@ -577,6 +629,33 @@ every run.
 After routing all findings and re-rendering changed scenes, **read
 `state.auto_iterate_next_action`** from `run_state.yaml` (computed by
 `ddd-run` Step 5; see the `ddd-run` SKILL for the contract). Branch on it:
+
+**The loop owns its own termination — never invent a stopping rule.** If you find
+yourself deciding "hard stop after this pass", that is the signal you are
+hand-driving. `compute_auto_iterate` stops on FOUR conditions, in order, and
+`state.terminal_status` says which kind of ending it was:
+
+| condition | detector | action |
+|-----------|----------|--------|
+| converged | both gating judges ≥ threshold | `stop_done` / `stop_partial` |
+| score stalled or regressed | no new best over the last 2 iterations, judged through the **noise band** (`denoise.NOISE_BAND`, ±0.5 — per-cell judge variance is ±1 on byte-identical frames, so a smaller move is not evidence either way) | `stop_max_iter` |
+| **finding plateau** | two consecutive iterations produced an **identical finding-fingerprint set** with no real score move — the loop is re-deriving, not progressing. Unlike the score this signal does not wobble: an LLM's score for a cell moves ±1 on the same frame; the defect it names does not. | `stop_max_iter` |
+| runaway | `HARD_CAP` (10) iterations | `stop_max_iter` |
+
+`state.terminal_status` distinguishes the endings that must never print the same:
+
+- **`converged_clean`** — passed, nothing strategic open. Ship it.
+- **`converged_with_open_questions`** — passed, but strategy findings remain that
+  only a human can answer. The artifact is good; the story may not be right.
+- **`stopped_not_converged`** — out of autonomous moves without passing. Stable,
+  and stably failing.
+- **`diverging`** — the gating score is moving backwards beyond the noise band.
+  Fixes are fighting each other; more iterations will make it worse.
+
+**In an unattended run every STUCK stop is TERMINAL.** Upload the `--stuck`
+package, report the terminal status and the open findings, and finish. Do not
+post a gate and wait. `compute_auto_iterate(..., unattended=True)` (auto-detected
+from `gates.is_unattended()`) stamps the reason so the digest can say it plainly.
 
 **Always leave the user with a navigable package — converged OR stuck.** Whenever
 the loop reaches a TERMINAL stop that hands control back to the user — `stop_done`
@@ -678,13 +757,25 @@ save(state)
 
 Same `run_id` — the iteration counter is the loop's only identity.
 
-### `stop_concept_change` (CONCEPT/redesign finding)
+### `stop_concept_change` (STRATEGY redesign finding)
 
-A finding with `route: CONCEPT` and `fix_kind: redesign` is present.
-These touch what the product fundamentally IS — irreplaceable-taste
-territory per project memory. Emit a `ReviewRequest` (gate:
-concept_change) with each redesign-level finding as a decision item. Do
-not loop until the user resolves.
+A **strategy** finding with `route: CONCEPT` and `fix_kind: redesign` is present —
+the artifact, not the wording, is wrong. These touch what the product
+fundamentally IS — irreplaceable-taste territory per project memory. Emit a
+`ReviewRequest` (gate: concept_change) with each redesign-level finding as a
+decision item.
+
+An **accuracy** finding can no longer land here: `normalize_findings` forces it to
+`mechanical` before this branch is evaluated, so "the narration says the wrong
+word" is fixed and re-fired rather than asked about. Whatever reaches this gate is
+legibly a strategy question — *is this the right thing to demonstrate?* — which is
+the only kind worth a human's taste.
+
+**Unattended:** resolve through `gates.resolve('concept_change', …)`, which returns
+`defer` immediately rather than waiting. Upload the `--stuck` package, report
+`terminal_status: converged_with_open_questions` (or `stopped_not_converged`) with
+the strategy questions listed, and finish. The review stays open and resolvable;
+the run does not sit on it.
 
 **Artifact links required (ace-web hosted, NOT `file://`).** Each
 decision item in the `ReviewRequest` MUST include: (1)
@@ -853,9 +944,14 @@ proceeding with autonomous work.
 - Bootstrap context.md if it does not exist — never prompt the user for this.
 - The 8 skills do the actual work — you chain and route.
 - Only two gates ever pause execution: `concept_change` and `external_release`.
-  All other work runs autonomously.
+  All other work runs autonomously — and neither gate PAUSES an unattended run:
+  `scripts/ddd/gates.py` gives each a declared no-human default (`defer` /
+  `hold`) so the run terminates and reports instead of blocking on a click.
+- Accuracy findings are fixed, never escalated. Only strategy findings — where
+  the ARTIFACT is wrong, not the words — may open `concept_change`. Enforced by
+  `scripts/ddd/finding_class.py`, not by remembering to do it.
 - Never auto-apply a self-tuning class demotion — always suggest-then-confirm.
 - Save learnings after every completed cycle via `runstate.append_learning`.
-- Loop is **progress-aware, not count-capped**: keep auto-iterating while findings are mechanical AND the gating score is still improving; stop for a human only on a real gate, an options/redesign finding, or a **stall/regression** (score no new-best across 2 iterations) — with a `HARD_CAP` of 10 as a runaway backstop, never the normal stop.
+- Loop is **progress-aware, not count-capped**: keep auto-iterating while findings are mechanical AND the run is still progressing; stop on a real gate, an options/redesign finding, a **stall/regression** (no new best across 2 iterations, judged through the ±0.5 noise band), a **finding plateau** (identical fingerprints, no real score move), or the `HARD_CAP` of 10 as a runaway backstop. Never invent your own stop — `compute_auto_iterate` owns it and `state.terminal_status` names the ending.
 - When dispatching PRODUCT fixers, route by dimension: `design_soundness`/`motion_friction` → `/design-review`; `concept_clarity` → `/review`; broken flows → `/qa`.
 - Prefer re-rendering only changed scenes over full re-runs.

@@ -1,10 +1,10 @@
 ---
 name: ddd-concept-eval
 description: |
-  LLM-as-judge eval for a rendered walkthrough. Scores six weighted dimensions
-  (concept_clarity .20, design_soundness .20, why_groundedness .20, visual_polish .15,
-  motion_friction .15, claim_reality_coherence .10 advisory) against the rubric bundled
-  with this skill. visual_polish is where pure-aesthetic failures land — misaligned
+  LLM-as-judge eval for a rendered walkthrough. Scores seven weighted dimensions
+  (concept_clarity .15, use_case_soundness .15, design_soundness .20, visual_polish .12,
+  why_groundedness .15, motion_friction .13, claim_reality_coherence .10 advisory) against
+  the rubric bundled with this skill. visual_polish is where pure-aesthetic failures land — misaligned
   elements, inconsistent button styles, bad type, garish colors. Gated by ddd-spec-qa:
   if QA fails, this eval is skipped. Per scene, dispatches canopy:visual-judge with the
   concept rubric and that scene's concept_claim / provenance / captured page text as
@@ -33,7 +33,8 @@ Provisional rubric; calibrate via a defect-creator analog after 3 real runs
 # DDD Concept Eval
 
 LLM-as-judge scoring of a rendered walkthrough (per-scene screenshots + captured
-page text) against a 5-dimension concept rubric. Measures whether the **product
+page text) against the bundled concept rubric (`rubric.yaml` is the authority for
+WHICH dimensions exist and what they weigh — never restate them from memory). Measures whether the **product
 concept** is sound — not whether the video is pretty. Emits structured
 `design_findings[]` that route to fixers.
 
@@ -85,6 +86,22 @@ python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugi
 
 Read the file at that path. Also read `unified_spec.yaml` and `why_brief.yaml`.
 Build a lookup: `why_brief.spine[].id` → `{claim, rationale, evidence, status}`.
+
+**The rubric file is the authority for the dimension set — derive it, never
+restate it.** Print the list you will score before scoring anything:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.concept_rubric "$_CANOPY_PLUGIN/skills/ddd-concept-eval/rubric.yaml")
+```
+
+That prints every dimension id, its weight, and whether it is advisory, plus the
+gating set the weakest-link rule runs over. Score exactly that set. If the count
+differs from what this SKILL's prose says anywhere, the RUBRIC wins and the prose
+is a bug — file it. (This step exists because it happened: three consecutive ACE
+runs judged six dimensions against a seven-dimension rubric and recorded a weight
+vector that matched neither. The omitted dimension, `use_case_soundness`, is the
+one whose findings are always `route=CONCEPT, fix_kind=redesign` — so the loop
+under-detected the exact class it most needed to catch. canopy#491.)
 
 ### Step 2 — Per-scene dispatch to canopy:visual-judge
 
@@ -209,10 +226,40 @@ scene: <scene index or title>
 dimension: <dim_id>
 severity: high | medium | low   # high if score ≤ 1, medium if score == 2, low if score == 3
 route: PRODUCT | CONCEPT | RESEARCH | DEFER
+finding_class: accuracy | strategy | unclassified
 fix_kind: mechanical | options | redesign
 detail: <copy the justification from the visual-judge dimension output>
 fix_recommendation: <copy the fix_recommendation from visual-judge, or synthesize>
 ```
+
+**`finding_class` — the one field that decides whether a human is needed.**
+Every finding is a mismatch between an ASSERTION (narration, scene title,
+`concept_claim`) and an ARTIFACT (the rendered screen, the captured page text,
+the underlying data). The only question is **which side has to move**:
+
+- **`accuracy`** — the ASSERTION is wrong relative to the artifact. The artifact
+  is the authority and it is right there, so the fix is determinate by
+  construction: *restate the assertion at the strength the artifact supports.*
+  Narration saying "cost" over a panel titled FACILITATOR EARNINGS is accuracy.
+  An n=1 uncontrolled pre/post narrated as a causal arc is accuracy — the words
+  overreach the data. **An accuracy finding is ALWAYS autonomously fixable and is
+  forced to `fix_kind: mechanical`.** Never escalate one.
+- **`strategy`** — the ARTIFACT is wrong relative to the goal: wrong data, wrong
+  scale, wrong story, wrong audience. Fixing it means changing what is
+  demonstrated, not what is said about it. These are the only findings a human
+  genuinely owns.
+- **`unclassified`** — no positive signal. `fix_kind` stands as you set it.
+
+Set it from the DEFECT you describe in `detail`, not from how you phrased
+`fix_recommendation`. Writing "the narration says cost but the panel says
+EARNINGS" in the detail and "rethink the framing" in the recommendation is
+finding an accuracy defect and then flinching; the loop reads the detail. The
+enforcement is not prose — `scripts/ddd/finding_class.py::normalize_findings`
+re-derives the class, overrides `fix_kind` on accuracy findings (recording
+`fix_kind_override` so it is auditable), and substitutes the canonical
+assertion-side fix when your recommendation offered a choice the artifact does
+not actually leave open. Only strategy findings can open the `concept_change`
+gate.
 
 Route assignment rules:
 - `concept_clarity` findings → CONCEPT
@@ -263,9 +310,43 @@ the loop and surfaces to the user.
 ### Step 4 — Aggregate overall score
 
 Compute `overall_score` across ALL scenes via `overall_rule: lowest` (the minimum
-dimension score across all scenes for the **five gating dimensions**:
-`concept_clarity`, `design_soundness`, `visual_polish`, `why_groundedness`, and
-`motion_friction`).
+dimension score across all scenes for the **six gating dimensions** — every
+non-advisory dimension in `rubric.yaml`: `concept_clarity`, `use_case_soundness`,
+`design_soundness`, `visual_polish`, `why_groundedness`, and `motion_friction`).
+
+**Refuse to assemble a verdict whose `dimensions:` keys are not exactly the
+rubric's set.** A missing dimension is not a lower score, it is a silent hole —
+the verdict reads as complete while a whole lens never ran. If a dimension is
+absent from your per-scene results, stop and re-dispatch that scene rather than
+writing the verdict without it.
+
+#### Step 4a — De-noise before the floor blocks anything
+
+`overall_rule: lowest` makes the headline the **minimum over every
+(scene x gating dimension) cell** — 72 cells for a 12-scene spec. The measured
+per-cell judge variance is +/-1 on byte-identical frames (ACE
+`spark-facilitator/20260813-2126`: scene 12 drew 3/2/3 and scene 10 drew 4/3 on
+the same PNG), so the minimum of ~72 noisy draws is biased low and barely
+responds to real improvement. In that run iteration 4 fixed its entire target
+scene and the headline did not move, because the floor migrated to untouched
+scenes that had drawn 3 the round before (ace#1393).
+
+So: **a cap must be confirmed before it blocks.**
+
+1. Identify the capping cells — every (scene, dimension) at or below 2. Only
+   these can set the floor.
+2. Re-judge **those cells only**, twice more (k=3 total draws), with fresh
+   independent dispatches. Cost is `2 x len(capping_cells)` extra dispatches —
+   eight in the measured run — not the ~144 a k=3 over every cell would cost.
+3. The cell's confirmed score is the **median** of its draws.
+4. `overall_score` = the minimum over confirmed cells. A cap that does not
+   reproduce is recorded under `noise:` and does NOT gate.
+
+Then record the distribution alongside the floor, so a consumer can tell a run at
+8/12 scenes >= 3 with rising means from one at 3/12 and falling — today both print
+`overall_score: 2`. The helpers are `scripts/ddd/denoise.py`
+(`summarize`, `capping_cells`, `confirm`, `confirmed_floor`, `unconfirmed_caps`);
+use them rather than re-deriving the arithmetic.
 
 `claim_reality_coherence` is EXCLUDED from the weakest-link overall_score, so it
 can never drive verdict to warn/fail/blocked. It is advisory: it informs the human
@@ -301,16 +382,31 @@ rubric_name: ddd-concept-eval
 ran_at: <ISO timestamp>
 run_dir: <input>
 
-dimensions:
-  concept_clarity:          { score: N, weight: 0.20, justification: "..." }
+dimensions:                 # EXACTLY the rubric's set — a missing key is a bug, not a low score
+  concept_clarity:          { score: N, weight: 0.15, justification: "..." }
+  use_case_soundness:       { score: N, weight: 0.15, justification: "..." }
   design_soundness:         { score: N, weight: 0.20, justification: "..." }
-  visual_polish:            { score: N, weight: 0.15, justification: "..." }
-  why_groundedness:         { score: N, weight: 0.20, justification: "..." }
+  visual_polish:            { score: N, weight: 0.12, justification: "..." }
+  why_groundedness:         { score: N, weight: 0.15, justification: "..." }
   claim_reality_coherence:  { score: N, weight: 0.10, justification: "...", blocking: false }
-  motion_friction:          { score: N, weight: 0.15, justification: "..." }
+  motion_friction:          { score: N, weight: 0.13, justification: "..." }
 
-overall_score: N
+overall_score: N            # minimum over CONFIRMED cells (Step 4a), not raw draws
 overall_rule: lowest
+
+# Step 4a — what the single number hides. Consumers that decide convergence
+# should read this, not just the floor.
+distribution:
+  n_cells: <scenes x gating dimensions>
+  floor: <min over confirmed cells>
+  mean: <mean over all cells>
+  cells_at_or_above_3: <count>
+  per_dimension_mean: { <dim_id>: <float>, ... }
+  capping_cells:
+    - { scene: "<n>", dimension: "<dim_id>", draws: [<k draws>], confirmed: <median> }
+noise:
+  confirm_k: 3
+  unconfirmed_caps: <count of caps that did NOT reproduce and therefore do not gate>
 
 verdict: pass | warn | fail | blocked
 blocking_reason: <null unless verdict==blocked>
@@ -330,6 +426,8 @@ fix_recommendation: |
     "dimension": "<dim_id>",
     "severity": "high | medium | low",
     "route": "PRODUCT | CONCEPT | RESEARCH | DEFER",
+    "finding_class": "accuracy | strategy | unclassified",
+    "fix_kind": "mechanical | options | redesign",
     "detail": "<verbatim from visual-judge dimension justification>",
     "fix_recommendation": "<actionable fix>"
   }
@@ -346,17 +444,20 @@ Concept Eval — <spec name>
   Scenes evaluated: <N>
 
   concept_clarity:          N/5  — <one-line justification>
+  use_case_soundness:       N/5  — <one-line justification>
   design_soundness:         N/5  — <one-line justification>
   visual_polish:            N/5  — <one-line justification>
   why_groundedness:         N/5  — <one-line justification>
   claim_reality_coherence:  N/5  — <one-line justification> [non-blocking]
   motion_friction:          N/5  — <one-line justification>
   ────────────────────────────────────
-  Overall (lowest):         N/5
+  Overall (confirmed floor): N/5     mean N.NN   scenes ≥3: N/N
+  caps: N confirmed, N did not reproduce (excluded)
 
   Verdict: PASS | WARN | FAIL
 
   design_findings: <count> findings  (PRODUCT: N, CONCEPT: N, RESEARCH: N, DEFER: N)
+                   (accuracy: N — auto-fixable; strategy: N — needs a human)
   Outputs: <run_dir>/verdict-concept.yaml
            <run_dir>/design_findings.json
 ```
@@ -377,12 +478,13 @@ schema_version: 1
 rubric_name: ddd-concept-eval
 ran_at: <ISO timestamp>
 dimensions:
-  concept_clarity:          { score: <float>, weight: 0.20 }
+  concept_clarity:          { score: <float>, weight: 0.15 }
+  use_case_soundness:       { score: <float>, weight: 0.15 }
   design_soundness:         { score: <float>, weight: 0.20 }
-  visual_polish:            { score: <float>, weight: 0.15 }
-  why_groundedness:         { score: <float>, weight: 0.20 }
+  visual_polish:            { score: <float>, weight: 0.12 }
+  why_groundedness:         { score: <float>, weight: 0.15 }
   claim_reality_coherence:  { score: <float>, weight: 0.10, blocking: false }
-  motion_friction:          { score: <float>, weight: 0.15 }
+  motion_friction:          { score: <float>, weight: 0.13 }
 overall_score: <float>
 overall_rule: lowest
 verdict: pass | warn | fail | blocked
