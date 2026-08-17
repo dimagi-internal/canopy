@@ -74,6 +74,28 @@ inbox scan (the harness runner passes the ref because it already resolved it —
 re-resolving). Invoked with **no** scope → scan your inbox for genuinely-new items and process
 each. Either way, the per-item rules below apply.
 
+**But a scoped turn still sweeps that ONE counterpart's other recent messages first — skipping the
+inbox scan is not the same as reading one thread in isolation.** People do not keep one topic on one
+thread. The decisive context for the thread you were handed is routinely on a *different* thread
+from the *same* person, sent minutes earlier — and a scoped turn is precisely the turn that never
+looks, because the runner resolved the ref and the procedure said go straight to it. So before you
+decide the action, spend one call on the sender:
+```bash
+gog gmail search "from:<their-address> newer_than:3d" -a <your-mailbox> -p
+```
+Read anything newer than the message you were handed, or on the same subject. This does **not**
+reopen the inbox scan and it does **not** break the one-counterpart rule — it is the same
+counterpart, which is exactly why it is safe and why it matters. Widen it beyond that one person and
+you are back to an unscoped turn.
+
+(Origin: 2026-08-17. An agent was handed a thread where a colleague asked the principal to review a
+draft. It audited the draft, found the collaborator's three style objections unsupported, and drafted
+a reply restoring a paragraph the collaborator had deleted — scoring their version down for lacking
+it. That paragraph had been removed **deliberately, three minutes before the triggering email, on a
+different thread**, with reasons the agent would have agreed with. The reply was reviewed, receipted,
+and one approval away from going out. It was caught only because the agent opened the sibling thread
+on an unrelated hunch. Nothing in the procedure had asked it to.)
+
 **If the NEWEST message on a thread is your OWN outbound reply, the thread is already handled —
 mark it read and move on. Never respond to your own message.** A thread can land back in `unread`
 for reasons that have nothing to do with a new inbound (label churn, a poller re-touch, a send that
@@ -339,6 +361,9 @@ a flag). The board at `/agents/<slug>` stays the shared trigger + approval surfa
 queues work and approves outbound actions — independent of whether you publish above.
 
 **CLOSE CHECKLIST — confirm each in the summary (these get silently skipped under load):**
+0a. **On a scoped turn, that counterpart's other recent mail was swept before the action was
+   decided** (Step 2 Scope) — one `from:<them> newer_than:3d` search. If you cannot point to it, you
+   read one thread in isolation and the context that changes the answer is exactly what you skipped.
 0. **Every inbound item was DISPLAYED verbatim before it was worked on** (Step 2) — headers plus
    full body, not a summary. If you cannot point to where in this session you pasted it, you skipped
    it, and the human has been watching an opaque turn.
