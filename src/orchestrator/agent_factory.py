@@ -608,6 +608,34 @@ description: >
 - (none yet)
 '''
 
+_SHIPPING_SKILL = '''---
+name: shipping
+user-invocable: false   # internal: Claude invokes it when a turn is about to ship
+description: >
+  How {{AGENT_NAME}} ships code — branch, PR, wait, merge, verify it landed — and specifically
+  how to WAIT for a PR without burning the turn on a hand-rolled sleep loop. The canonical
+  procedure is fleet-wide and lives in the installed canopy plugin (agent-core/shipping.md);
+  this stub binds it to {{AGENT_NAME}}. Use whenever a turn opens, merges, or waits on a PR.
+---
+
+# Shipping — {{AGENT_NAME}} (stub over the fleet-canonical core)
+
+1. **Resolve the installed canopy plugin and check freshness:**
+   ```bash
+   CANOPY=$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")
+   bash "$CANOPY/scripts/canopy-update-check.sh"
+   ```
+   `UPGRADE_AVAILABLE` -> tell the human and run `/canopy:update` BEFORE following a stale core.
+2. **Read `$CANOPY/agent-core/shipping.md`** and **follow it exactly**. Step 0 (does this repo
+   even have PR checks?) is the step that pays — run it before any wait.
+
+## Repos {{AGENT_NAME}} ships into
+- `{{AGENT_SLUG}}` (this repo) — re-derive its row with `gh pr checks <n>`; do not assume.
+
+## {{AGENT_NAME}}-local notes (the ONLY hand-edited section — fleet-process changes go to canopy)
+- (none yet)
+'''
+
 _MANAGER_SYNC_SKILL = '''---
 name: manager-sync
 description: >
@@ -769,5 +797,6 @@ _TEMPLATES: dict[str, str] = {
     "skills/turn/SKILL.md": _TURN_SKILL,
     "skills/agent-turn-review/SKILL.md": _AGENT_TURN_REVIEW_SKILL,
     "skills/task-tracker/SKILL.md": _TASK_TRACKER_SKILL,
+    "skills/shipping/SKILL.md": _SHIPPING_SKILL,
     "skills/manager-sync/SKILL.md": _MANAGER_SYNC_SKILL,
 }
