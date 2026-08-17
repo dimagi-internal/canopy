@@ -174,31 +174,101 @@ class ClientReconciliation:
     note: str = ""
 
 
-def clients_for_account(account: str, *, runner=subprocess.run) -> list[dict] | None:
-    """Every stored (client, services) for a mailbox, from `gog auth list --json`.
+def token_pairs(*, runner=subprocess.run) -> set[tuple[str, str]] | None:
+    """Every stored (client, mailbox) pair, from `gog auth tokens list --json`.
 
-    Returns None when gog cannot be introspected and [] when it can and this mailbox simply
-    has no token. Collapsing those two into one falsy value is precisely what let the doctor
-    SKIP its services check in the one state it exists to catch (2026-08-10, echo on the
-    cloud box: the account was authed, just under a different client, so the (account,
-    client) lookup missed and the check reported "not introspectable").
+    This is the ONLY authoritative per-pair source gog exposes: its keys are literally
+    `token:<client>:<mailbox>`, one per credential. `gog auth list` cannot answer this —
+    it collapses to one row per ACCOUNT (verified 2026-08-17: a box holding both
+    `token:canopy:echo@…` and `token:echo:echo@…` lists echo exactly once, as client
+    `echo`), and `--client` does not scope the listing either.
+
+    Returns None when the subcommand cannot be run or parsed, so callers can fall back to
+    the account listing rather than concluding a mailbox has no tokens.
     """
     try:
-        r = runner(["gog", "auth", "list", "--json"],
+        r = runner(["gog", "auth", "tokens", "list", "--json"],
                    capture_output=True, text=True, timeout=30)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if r.returncode != 0:
         return None
     try:
-        accounts = json.loads(r.stdout or "{}").get("accounts", [])
+        keys = json.loads(r.stdout or "{}").get("keys", [])
     except (ValueError, TypeError):
         return None
-    return [
-        {"client": a.get("client") or "", "services": set(a.get("services") or [])}
-        for a in accounts
-        if str(a.get("email", "")).lower() == (account or "").lower()
-    ]
+    pairs: set[tuple[str, str]] = set()
+    for key in keys:
+        # `token:<client>:<mailbox>` — split from the left, exactly twice: a mailbox never
+        # contains a colon, so anything after the second one belongs to the mailbox.
+        parts = str(key).split(":", 2)
+        if len(parts) == 3 and parts[0] == "token" and parts[1] and parts[2]:
+            pairs.add((parts[1], parts[2].lower()))
+    return pairs
+
+
+def clients_for_account(account: str, *, runner=subprocess.run) -> list[dict] | None:
+    """Every stored (client, services) for a mailbox.
+
+    WHICH clients hold the mailbox comes from `gog auth tokens list` (see `token_pairs`);
+    WHAT each was granted comes from `gog auth list`. They are separate calls because gog
+    answers only half the question in each: the token store knows every (client, mailbox)
+    pair and no scopes, the account listing knows scopes and collapses to ONE row per
+    account. Deriving the client set from the account listing alone — as this did until
+    2026-08-17 — hides every credential but one, which made `reconcile_client` "self-heal"
+    a correctly-pinned mailbox ONTO a stale client while the working token sat beside it
+    (canopy#489: observed on ACE 2026-08-14, and reproduced live on echo, whose repo pins
+    `canopy`, whose `token:canopy:echo@…` was valid, and which still resolved to `echo`).
+
+    `services` is therefore `set | None`, and **None means UNKNOWN, not empty** — gog
+    publishes no per-pair scope data, so a client visible only in the token store has no
+    readable grant set. Callers must not treat that as "granted nothing"; doing so would
+    manufacture false MISSING-scope findings, which is a worse failure than the silent skip
+    this whole area exists to remove.
+
+    Returns None when gog cannot be introspected at all and [] when it can and this mailbox
+    simply has no token. Collapsing those two into one falsy value is precisely what let the
+    doctor SKIP its services check in the one state it exists to catch (2026-08-10, echo on
+    the cloud box: the account was authed, just under a different client, so the (account,
+    client) lookup missed and the check reported "not introspectable").
+    """
+    want = (account or "").lower()
+    pairs = token_pairs(runner=runner)
+
+    rows: list[dict] | None
+    try:
+        r = runner(["gog", "auth", "list", "--json"],
+                   capture_output=True, text=True, timeout=30)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        rows = None
+    else:
+        if r.returncode != 0:
+            rows = None
+        else:
+            try:
+                accounts = json.loads(r.stdout or "{}").get("accounts", [])
+            except (ValueError, TypeError):
+                rows = None
+            else:
+                rows = [
+                    {"client": a.get("client") or "", "services": set(a.get("services") or [])}
+                    for a in accounts
+                    if str(a.get("email", "")).lower() == want
+                ]
+
+    if rows is None and pairs is None:
+        return None          # neither surface answered — genuinely cannot look
+    if pairs is None:
+        return rows          # older gog without `auth tokens list`: degrade to the old view
+    if rows is None:
+        # The account listing failed but the token store answered. That is still a LOOK:
+        # we know exactly which clients hold this mailbox, just not what they were granted.
+        return [{"client": c, "services": None}
+                for c in sorted(c for c, m in pairs if m == want)]
+
+    seen = {e["client"] for e in rows}
+    extra = sorted(c for c, m in pairs if m == want and c not in seen)
+    return rows + [{"client": c, "services": None} for c in extra]
 
 
 def reconcile_client(
@@ -878,10 +948,15 @@ def granted_services(
 ) -> set[str] | None:
     """Google services actually GRANTED for this identity's (account, client).
 
-    Reads `gog auth list --json` — gog's own record of what each stored account was
+    Reads `clients_for_account` — gog's own record of what each stored account was
     authorized for — and returns the service-name set (e.g. {"gmail","drive","appscript"}).
-    Returns None if gog is unavailable or the account isn't found, so the caller can
-    decide whether "can't tell" is a hard failure (the doctor treats it as skip, not fail).
+    Returns None if gog is unavailable, the account isn't found, **or gog holds a token for
+    this exact pair but publishes no scopes for it**, so the caller can decide whether
+    "can't tell" is a hard failure (the doctor treats it as skip, not fail).
+
+    That last case is why None must keep meaning "can't tell" and never "granted nothing":
+    a client known only from the token store carries `services: None`, and reading it as an
+    empty grant set would report a fully-authorized mailbox as missing every scope.
 
     NOTE the (account, client) pair: a mailbox authed under a DIFFERENT client reads as None
     here, same as no gog at all. Callers that need to tell those apart — the doctor does,

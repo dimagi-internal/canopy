@@ -846,3 +846,56 @@ def test_auth_client_offers_both_directions_not_just_a_relogin():
     assert "gog login echo@dimagi-ai.com --client echo" in r.detail   # migrate the box
     assert "gog_client" in r.detail and "`canopy`" in r.detail        # or move the pin
     assert "pull first" in r.detail
+
+
+# --------------------------------------------------------------------------------------
+# canopy#489 — the doctor's half of the same blind spot.
+#
+# `gog auth list` collapses to one row per ACCOUNT, so a mailbox holding tokens under two
+# clients showed only one. Both checks below then spoke confidently about a box they could
+# only half see: the client check demanded a browser re-login that was already done, and the
+# services check scored a grant set that wasn't the one in use.
+# --------------------------------------------------------------------------------------
+
+def _accounts_and_tokens_runner(accounts, token_keys, *, returncode=0):
+    accounts_payload = json.dumps({"accounts": accounts})
+    tokens_payload = json.dumps({"keys": list(token_keys)})
+
+    def run(cmd, capture_output, text, timeout):
+        if cmd[:4] == ["gog", "auth", "tokens", "list"]:
+            return SimpleNamespace(returncode=returncode, stdout=tokens_payload, stderr="")
+        return SimpleNamespace(returncode=returncode, stdout=accounts_payload, stderr="")
+    return run
+
+
+def test_auth_client_passes_when_only_the_token_store_proves_the_pin():
+    """echo, this machine, 2026-08-17: repo pins `canopy`, `token:canopy:echo@` exists, and
+    the account listing shows only `echo`. The check used to report "this box and this
+    checkout disagree" and prescribe a scope-replacing browser re-login that was not needed."""
+    from orchestrator.agent_doctor import check_auth_client
+    from orchestrator.agent_email import EmailIdentity
+    ident = EmailIdentity(slug="echo", account="echo@dimagi-ai.com", client="canopy")
+    r = check_auth_client(ident, runner=_accounts_and_tokens_runner(
+        [{"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail", "drive"]}],
+        ["token:echo:echo@dimagi-ai.com", "token:canopy:echo@dimagi-ai.com"]))
+    assert r.ok
+    assert "canopy" in r.detail
+    assert "gog login" not in r.detail
+
+
+def test_auth_services_skips_rather_than_failing_when_no_scopes_are_readable():
+    """gog publishes no per-pair scopes, so a mailbox known only from the token store has an
+    UNKNOWN grant set. Reading that as an empty one would report every required scope as
+    missing — a red on a box that may be perfectly authorized."""
+    from orchestrator.agent_doctor import check_auth_services
+    from orchestrator.agent_email import EmailIdentity
+    ident = EmailIdentity(slug="echo", account="echo@dimagi-ai.com", client="canopy")
+
+    def runner(cmd, capture_output, text, timeout):
+        if cmd[:4] == ["gog", "auth", "tokens", "list"]:
+            return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(
+                {"keys": ["token:canopy:echo@dimagi-ai.com"]}))
+        return SimpleNamespace(returncode=1, stdout="", stderr="boom")
+
+    r = check_auth_services(ident, runner=runner)
+    assert r.ok and "skipped" in r.detail

@@ -483,7 +483,11 @@ def check_auth_client(
     # Re-login onto the configured client must re-request what the stray token already had:
     # `gog login --services` REPLACES the grant set, so migrating the client with a narrower
     # list would quietly revoke scopes the agent uses.
-    keep = set().union(*(e["services"] for e in holders)) | required_services(identity)[0]
+    # `services` is None for a client gog lists only in its token store (no per-pair scope
+    # data exists) — that is UNKNOWN, not empty, so it contributes nothing to the union
+    # rather than narrowing it.
+    keep = (set().union(*(e["services"] or set() for e in holders))
+            | required_services(identity)[0])
     # Name BOTH directions. Which side is stale is not knowable from here — the box may have
     # missed the migration, or this checkout may simply predate a pin that already moved (on
     # 2026-08-11 both ace and echo flagged here for exactly the latter reason). A one-way fix
@@ -537,10 +541,21 @@ def check_auth_services(
     granted = next((e["services"] for e in holders if e["client"] == identity.client),
                    None)
     if granted is None:
-        # Pinned client holds nothing; score the token the mailbox really has. With one
-        # holder that is unambiguous; with several, the union is the charitable reading —
-        # it cannot manufacture a false MISSING scope.
-        granted = set().union(*(e["services"] for e in holders))
+        # Either the pinned client holds nothing, or it holds a token whose grant set gog
+        # will not reveal (`services` is None = UNKNOWN, not empty — gog publishes no
+        # per-pair scopes). Score the tokens the mailbox really has. With one holder that is
+        # unambiguous; with several, the union is the charitable reading — it cannot
+        # manufacture a false MISSING scope.
+        known = [e["services"] for e in holders if e["services"] is not None]
+        if not known:
+            # Every holder's grant set is unknown. An empty union here would report the
+            # mailbox as missing EVERY required scope — a false red on a box that may be
+            # perfectly authorized. "Cannot tell" is a skip, exactly as above.
+            return CheckResult(
+                name, True,
+                "skipped — gog exposes no scopes for this mailbox's stored client(s) "
+                "(see Auth client)")
+        granted = set().union(*known)
     missing = sorted(required - granted)
     if missing:
         # Re-login with required UNION already-granted: `gog login --services` REPLACES the
