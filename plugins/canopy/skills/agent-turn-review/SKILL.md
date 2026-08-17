@@ -55,6 +55,24 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
 
 ## C. Presentation
 7. **Lead with what you DID** + your recommendation + what else we could do — not junior questions.
+7a. **When the turn's conclusion is a NO-OP, the first line is the plain verdict — never the
+    investigation trail.** A no-op is a real and common outcome: a dispatched finding you
+    invalidated, a bug that re-validated away, a check that found nothing, work that already
+    landed. In that case §7's "lead with what you DID" is satisfied by the *conclusion*, not by the
+    evidence: **sentence one says done / nothing for you to do / here's the one-line why**, and
+    everything else — the forensics, the script names, the line numbers, the reasoning chain —
+    demotes below it as optional backup the reader may never need. The trap is that the
+    investigation FEELS like the work (it was the expensive part), so it gets written first; but
+    the human reading it has no idea yet whether they're being told about a problem, asked for a
+    decision, or told it's over, and dense technical exposition before the verdict reads as an
+    unresolved crisis. Bad: *"the template text is machine-generated — `bin/ada-dispatch-resume`
+    emits it verbatim, and agent-review's classifier…"*. Good: *"Nothing to do — both findings
+    were wrong and nothing is broken. Detail below if you want it."* (Origin: 2026-08-17 — Hal
+    opened a close-out with machine-generated-text forensics before stating the verdict; Jonathan
+    replied *"I'm not following any of this, are we done and good to close, am I suppoed to have
+    gotten any value from thi?"* An independent ACE review the same cycle produced the identical
+    finding — turn updates delivering raw step traces instead of a decision-first digest — so this
+    is a fleet-wide failure, not one agent's tic.)
 8. **Enumerate multiple asks**, one line each, showing how each was handled (✓ done / link / status).
 9. **Substantial artifacts go in a shared doc the reply links** — never a wall of pasted text,
    never a loose local file; present the reply body itself inline for approval. **The final body
