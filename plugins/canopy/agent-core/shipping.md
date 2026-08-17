@@ -117,6 +117,43 @@ A named incident plus a working control is evidence; "several calls failed" is n
 go red for the outage rather than for your diff — read the job log before you touch the code**, and
 never force-merge past a CI system that is genuinely down. Say so and leave the PR open.
 
+## Step 1c — never build a markdown PR/issue body inside an inline `python3 -c`
+
+A PR body is markdown: backticks, parentheses, `[text](url)` links, quotes, `$`. An inline
+`python3 -c "…body='''…'''…"` — or any heredoc whose delimiter is **unquoted** — puts all of that
+somewhere bash still expands, where backticks and `$(…)` are command substitution and the quoting
+collapses on the first link. That is not a "be careful with escaping" problem; it is unfixable in
+the general case, and every minute spent re-quoting it is wasted.
+
+**Write the body to a file first, with a SINGLE-QUOTED heredoc, then read it back:**
+
+```bash
+cat > /tmp/.../body.md <<'EOF'
+## What changed
+- see [the GitHub incident](https://www.githubstatus.com/incidents/abc)
+- `gh pr create` went through GraphQL and 503'd
+EOF
+
+gh pr create --title "…" --body-file /tmp/.../body.md
+# or, over REST when GraphQL is browning out (Step 1b):
+python3 -c "import json,subprocess; body=open('/tmp/.../body.md').read(); ..."
+```
+
+`<<'EOF'` — **quoted** delimiter — is the load-bearing part: it disables ALL expansion inside the
+heredoc, so the markdown arrives byte-for-byte. Prefer `--body-file` when `gh` is healthy; when
+falling back to `gh api`/python, still read the body from that file rather than inlining it.
+
+**The same trap bites PATCH SCRIPTS, not just PR bodies.** Any `python3 - <<PY` / `cat > f <<EOF`
+whose delimiter is unquoted will have its backticks and `$(…)` eaten before python or the file ever
+sees them — and when the payload is markdown you are *editing into a doc*, the corruption lands
+silently in the file rather than erroring. Quote the delimiter unless you specifically want
+expansion, and re-read the file after writing it.
+
+(Real misses, both 2026-08-17: two consecutive `python3 -c` PR-body attempts died on bash quoting
+before the session converged on `body=open(...).read()`; separately, a `python3 - <<PY` patch of
+`agent-core/turn.md` had its replacement text mangled by command substitution and had to be
+reverted with `git checkout --` and redone with a quoted delimiter.)
+
 ## Step 2 — merge, reconcile, verify it LANDED
 
 ```bash
