@@ -376,65 +376,22 @@ queues work and approves outbound actions — independent of whether you publish
    anything; no invented human names (cite `@handle` unless you looked the name up); and every
    recommendation states the call, the default, and the cost.
 
-**Shipping a skill change from a worktree** — emdash runs each turn in a worktree while `main` is
-checked out elsewhere, so `git checkout main` and `gh pr merge --delete-branch` FAIL ("main already
-checked out"). Instead: `gh pr merge <n> --squash`, then verify with `gh pr view <n> --json state`.
+**Shipping anything — the ship loop lives in `agent-core/shipping.md`.** Branch -> PR -> wait ->
+merge -> verify it landed -> state the merge state. Read that file (via your `shipping` stub)
+rather than improvising here; it carries the per-repo check table, the **backgrounded** wait (a
+foreground `sleep` used to wait is blocked by the harness Bash contract), the ambiguous-`gh`-error
+case, the merge-queue double false-negative, and the unconditional ship checkpoint.
 
-**Waiting for a PR — ask whether there is anything to wait FOR, then never block on it.** Two rules,
-in this order, because the first one makes the second unnecessary most of the time:
-
-1. **Does this repo run checks on `pull_request` at all?** One call answers it, and the answer is
-   not guessable — measured 2026-08-13, `hal`, `echo`, `eva` and `ada` have a single workflow
-   triggered only by `push: main`, while `ace`, `canopy`, `canopy-web`, `connect-labs` and
-   `ace-web` all run PR checks. So "agent repos have no CI" is false, and a wait in a repo with no
-   PR checks is a wait for something that can never arrive:
-   ```
-   gh pr checks <n> 2>&1 | head -3    # "no checks reported" => nothing to wait for, merge now
-   ```
-2. **When there IS something to wait for, run a command that EXITS on the condition, in the
-   background** — never a foreground polling loop. `sleep 20; gh pr checks <n>` and
-   `for i in 1 2 3; do …; sleep 20; done` both block the turn doing nothing, and a foreground
-   `sleep` is refused by the harness outright. `gh` already blocks correctly; the job is to run it
-   where it doesn't block *you*:
-   ```
-   gh pr checks <n> --watch --fail-fast; gh pr checks <n> 2>&1 | tail -5
-   ```
-   via **`Bash` with `run_in_background: true`** — one background task, one notification when the
-   checks settle, and the turn keeps working meanwhile. (`Monitor` is for one notification *per
-   occurrence*; a merge-wait wants exactly one at the end, and Monitor's own guidance sends that
-   shape back here.) Don't schedule a wakeup to poll it either — the harness re-invokes you when it
-   exits.
-
-**…and on a MERGE-QUEUE repo that verify step lies twice — don't undo a merge that worked.** Some
-repos (canopy-web today) protect `main` with a GitHub merge queue, and there `gh pr merge --squash`
-prints `! The merge strategy for main is set by the merge queue` — which reads as a refusal, **but
-the PR is enqueued anyway**. Re-reading the PR then shows `state=OPEN mergedAt=null`, which reads as
-a second confirmation that nothing happened. Both signals are wrong: the queue merges minutes later,
-after re-running the required checks against the queued merge result. So on any repo whose merge is
-refused for a strategy reason:
-```
-gh pr merge <n>                       # no strategy flag — the queue owns the strategy
-gh pr view <n> --json state,mergeStateStatus   # "already queued to merge" = it IS queued
-```
-Then wait for `MERGED` the way the rule above says — a bounded loop that exits on the condition,
-run with **`run_in_background: true`**. A backgrounded `sleep` is fine; a foreground one is refused
-by the harness, which is what made the earlier form of this snippet unrunnable:
-```
-for i in $(seq 1 80); do
-  s=$(gh pr view <n> --json state --jq .state); [ "$s" = MERGED ] && break; sleep 30
-done; echo "final: $s"
-```
-Bound it (80 × 30s ≈ 40min) so a stuck queue surfaces as a result instead of hanging.
-The failure this prevents is *acting on the false negative* — re-pushing, force-merging, or opening
-a duplicate PR on top of a merge that was already in flight. Treat `OPEN` + `CLEAN` + "already
-queued" as **merging**, not as failed, and wait for `MERGED` before you report the work shipped.
-(2026-08-13, canopy-web#594: the strategy-flag error plus `state=OPEN` looked like two independent
-confirmations of failure; the PR was in the queue the whole time and landed as `fed3f2b`.)
+The one turn-specific rule: **a turn that opened a PR does not close without a read merge state**
+(`MERGED` / `OPEN` / `CLOSED`, from `gh pr view <n> --json state`) and the next planned action.
+"Auto-merge armed" / "checks running" / "PR queued" is not a close.
 
 ## Related skills
 - `<slug>:agent-turn-review` — YOUR wrapper, by full name — gate every outbound reply against the
   original request AND against what you can actually execute, before sending. It delegates to the
   fleet-wide `canopy:agent-turn-review`; invoke the wrapper, never the fleet skill directly.
+- `shipping` — the ship loop (`agent-core/shipping.md` via your stub): per-repo check
+  table, the backgrounded wait, and the merge-state checkpoint a turn cannot close without.
 - `task-tracker` — durable multi-turn state (`agent-core/task-tracker.md` via your stub); drain
   board commands at turn start, package advanced tasks at close.
 - `deliverables` — the fleet filing standard for Drive work products (`agent-core/deliverables.md`):
