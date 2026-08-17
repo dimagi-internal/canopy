@@ -990,10 +990,23 @@ def test_read_thread_computes_reply_all():
 # surfaces when a turn happens to land on it.
 # --------------------------------------------------------------------------------------
 
-def _auth_accounts_runner(accounts, *, returncode=0):
+def _auth_accounts_runner(accounts, *, returncode=0, token_keys=(), tokens_rc=None):
+    """Stub both halves of gog's auth introspection.
+
+    `clients_for_account` reads the token store (`gog auth tokens list`) for the authoritative
+    (client, mailbox) pairs and the account listing (`gog auth list`) for scopes, so a stub
+    that answers only one of them no longer describes a real box. `token_keys` defaults to
+    empty, which keeps every pre-existing caller's meaning exactly: nothing extra in the
+    token store, so the account listing alone decides.
+    """
     payload = json.dumps({"accounts": accounts})
+    tokens_payload = json.dumps({"keys": list(token_keys)})
 
     def run(cmd, capture_output, text, timeout):
+        if cmd[:4] == ["gog", "auth", "tokens", "list"]:
+            return SimpleNamespace(
+                returncode=returncode if tokens_rc is None else tokens_rc,
+                stdout=tokens_payload, stderr="")
         assert cmd[:3] == ["gog", "auth", "list"]
         return SimpleNamespace(returncode=returncode, stdout=payload, stderr="")
     return run
@@ -1085,3 +1098,108 @@ def test_clients_for_account_distinguishes_unreadable_from_absent():
                                runner=_auth_accounts_runner([], returncode=1)) is None
     assert clients_for_account("echo@dimagi-ai.com",
                                runner=_auth_accounts_runner([])) == []
+
+
+# --------------------------------------------------------------------------------------
+# canopy#489 — the client set must come from the TOKEN STORE, not the account listing.
+# `gog auth list` collapses to one row per ACCOUNT, so a mailbox holding two credentials
+# shows only one. reconcile_client then judged the configured client absent and "self-healed"
+# onto the stale one — with the working token sitting right beside it.
+# --------------------------------------------------------------------------------------
+
+def test_token_pairs_parses_client_and_mailbox_from_keys():
+    from orchestrator.agent_email import token_pairs
+    runner = _auth_accounts_runner([], token_keys=[
+        "token:canopy:echo@dimagi-ai.com", "token:echo:echo@dimagi-ai.com",
+        "token:canopy:hal@dimagi-ai.com"])
+    assert token_pairs(runner=runner) == {
+        ("canopy", "echo@dimagi-ai.com"), ("echo", "echo@dimagi-ai.com"),
+        ("canopy", "hal@dimagi-ai.com")}
+
+
+def test_token_pairs_ignores_malformed_keys_and_reports_unreadable_as_none():
+    from orchestrator.agent_email import token_pairs
+    ok = _auth_accounts_runner([], token_keys=["nonsense", "token::x", "token:c:", "x:y:z",
+                                               "token:canopy:hal@dimagi-ai.com"])
+    assert token_pairs(runner=ok) == {("canopy", "hal@dimagi-ai.com")}
+    # An older gog with no `auth tokens list` must read as "cannot look", NOT as "no tokens" —
+    # the latter would delete every candidate and strand the caller with no evidence at all.
+    assert token_pairs(runner=_auth_accounts_runner([], tokens_rc=1)) is None
+
+
+def test_clients_for_account_surfaces_a_client_only_the_token_store_knows():
+    """THE canopy#489 regression. The account listing collapses echo onto `echo`; the token
+    store proves `canopy` holds it too. Scopes are unknowable per-pair, so `services` is
+    None — UNKNOWN, never an empty grant set."""
+    from orchestrator.agent_email import clients_for_account
+    runner = _auth_accounts_runner(
+        [{"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail", "drive"]}],
+        token_keys=["token:echo:echo@dimagi-ai.com", "token:canopy:echo@dimagi-ai.com"])
+    got = clients_for_account("echo@dimagi-ai.com", runner=runner)
+    assert got == [{"client": "echo", "services": {"gmail", "drive"}},
+                   {"client": "canopy", "services": None}]
+
+
+def test_reconcile_client_keeps_a_valid_pin_the_account_listing_hides():
+    """ACE, 2026-08-14: repo pinned `canopy`, `token:canopy:ace@` was valid, and the listing
+    showed only the REVOKED `ace` row — so the self-heal moved onto the revoked credential
+    and every read/send died with invalid_grant. The pin must now survive untouched."""
+    from orchestrator.agent_email import reconcile_client
+    runner = _auth_accounts_runner(
+        [{"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail"]}],
+        token_keys=["token:echo:echo@dimagi-ai.com", "token:canopy:echo@dimagi-ai.com"])
+    ident = _echo(client="canopy")
+    out = reconcile_client(ident, runner=runner, apply=True)
+    assert out.client == "canopy" and not out.changed and ident.client == "canopy"
+    assert out.note == ""
+
+
+def test_reconcile_client_ambiguity_guard_is_reachable_via_the_token_store():
+    """The `len(others) > 1` branch could never fire before: the listing can only ever
+    surface one client per account, so the guard written for the multi-token state was
+    unreachable in exactly that state."""
+    from orchestrator.agent_email import reconcile_client
+    runner = _auth_accounts_runner(
+        [{"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail"]}],
+        token_keys=["token:echo:echo@dimagi-ai.com", "token:canopy:echo@dimagi-ai.com"])
+    ident = _echo(client="unmigrated")
+    out = reconcile_client(ident, runner=runner, apply=True)
+    assert out.ambiguous == ["canopy", "echo"]
+    assert not out.changed and ident.client == "unmigrated"
+    assert "refusing to guess" in out.note
+
+
+def test_clients_for_account_falls_back_when_gog_has_no_tokens_subcommand():
+    """Older gog: `auth tokens list` fails, the account listing still answers. Degrade to the
+    old view rather than losing the mailbox entirely."""
+    from orchestrator.agent_email import clients_for_account
+    runner = _auth_accounts_runner(
+        [{"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail"]}],
+        tokens_rc=1)
+    assert clients_for_account("echo@dimagi-ai.com", runner=runner) == [
+        {"client": "echo", "services": {"gmail"}}]
+
+
+def test_clients_for_account_uses_the_token_store_when_the_listing_fails():
+    """The listing failing is no longer "cannot look" if the token store answered — we know
+    which clients hold the mailbox, just not what they were granted."""
+    from orchestrator.agent_email import clients_for_account
+
+    def runner(cmd, capture_output, text, timeout):
+        if cmd[:4] == ["gog", "auth", "tokens", "list"]:
+            return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(
+                {"keys": ["token:canopy:echo@dimagi-ai.com", "token:echo:echo@dimagi-ai.com"]}))
+        return SimpleNamespace(returncode=1, stdout="", stderr="boom")
+
+    assert clients_for_account("echo@dimagi-ai.com", runner=runner) == [
+        {"client": "canopy", "services": None}, {"client": "echo", "services": None}]
+
+
+def test_granted_services_reports_unknown_scopes_as_none_not_empty():
+    """A token-store-only client has no readable grant set. Returning set() would let the
+    doctor report a fully-authorized mailbox as missing every scope."""
+    from orchestrator.agent_email import granted_services
+    runner = _auth_accounts_runner(
+        [{"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail"]}],
+        token_keys=["token:echo:echo@dimagi-ai.com", "token:canopy:echo@dimagi-ai.com"])
+    assert granted_services(_echo(client="canopy"), runner=runner) is None
