@@ -171,7 +171,7 @@ _HARNESS_AUTHORED_PREFIXES = (
 # silently un-suppresses every brief. One definition, one regex, one import.
 from orchestrator.agent_dispatch import (  # noqa: E402
     DISPATCH_MARKER,
-    DISPATCH_MARKER_RX,
+    SENDER_MARKER_RX,
     dispatched_by,
 )
 
@@ -191,7 +191,7 @@ def _human_text(raw: str) -> str:
     s = _HARNESS_BLOCK_RX.sub(" ", raw or "").strip()
     if s.startswith(_HARNESS_AUTHORED_PREFIXES):
         return ""
-    if DISPATCH_MARKER_RX.search(s):
+    if DISPATCH_MARKER in s:
         return ""
     return s
 
@@ -303,7 +303,7 @@ def dispatch_outcomes(entries: list[dict]) -> dict | None:
     for i, entry in enumerate(entries):
         if not _is_genuine_human_message(entry) or _is_harness_authored_entry(entry):
             continue
-        if DISPATCH_MARKER_RX.search(entry.get("message", {}).get("content", "") or ""):
+        if DISPATCH_MARKER in (entry.get("message", {}).get("content", "") or ""):
             anchor = i
             break
     if anchor is None:
@@ -363,7 +363,8 @@ def _human_text_without_marker(raw: str) -> str:
     """The brief's own words. `_human_text` deliberately returns '' for anything marked (that is
     its whole job in the corrections lens), so quoting the brief needs the marker stripped
     instead of the turn dropped."""
-    return DISPATCH_MARKER_RX.sub("", _HARNESS_BLOCK_RX.sub(" ", raw or "")).strip()
+    stripped = _HARNESS_BLOCK_RX.sub(" ", raw or "").replace(DISPATCH_MARKER, "")
+    return SENDER_MARKER_RX.sub("", stripped).strip()
 
 
 # Over-claim mining — a completion verb in the agent's OWN text ("verified", "shipped", "done", …)

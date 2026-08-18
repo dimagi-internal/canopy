@@ -117,16 +117,24 @@ def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
 # `tests/test_agent_dispatch.py` asserts rather than trusting to memory.
 DISPATCH_MARKER = "<!-- canopy:dispatched-prompt -->"
 
-# The marker may carry the SENDER (`from=ada`), so both forms have to be recognised — including
-# by readers holding only the bare literal. Detection is therefore the regex, never `in`.
-DISPATCH_MARKER_RX = re.compile(
-    r"<!--\s*canopy:dispatched-prompt(?:\s+from=([A-Za-z0-9_.-]+))?\s*-->")
+# The sender rides in a SECOND comment beside the marker, never inside it. That is the whole
+# design: `DISPATCH_MARKER` stays a fixed literal that is always emitted verbatim, so a stripper
+# holding only that literal — an older canopy on another machine, a cloud runner that has not
+# updated, Ada's own vendored copy — still recognises a stamped prompt and still drops it.
+#
+# Folding the sender INTO the marker (`<!-- canopy:dispatched-prompt from=ada -->`) was the first
+# version and it was wrong. It breaks `DISPATCH_MARKER in text` everywhere that test still lives,
+# so on any host running an older canopy the brief silently stops being suppressed — which is
+# precisely the bug this marker exists to prevent, reintroduced by the fix for it, invisibly, and
+# only on the machines nobody remembered to update. A fleet has version skew by definition; a
+# marker whose meaning depends on both ends being current is not a marker.
+SENDER_MARKER_RX = re.compile(r"<!--\s*canopy:dispatched-by=([A-Za-z0-9_.-]+)\s*-->")
 
 
 def dispatched_by(text: str) -> str:
-    """The slug that dispatched `text`, '' if unmarked or marked without a sender."""
-    m = DISPATCH_MARKER_RX.search(text or "")
-    return (m.group(1) or "") if m else ""
+    """The slug that dispatched `text`, '' if unmarked or stamped without a sender."""
+    m = SENDER_MARKER_RX.search(text or "")
+    return m.group(1) if m else ""
 
 
 # What the RECEIVING agent is told, in words it can actually read. The marker above is an HTML
@@ -192,12 +200,12 @@ def stamp_dispatched(prompt: str, sender: str = "") -> str:
     collect two markers, in either the bare or the sender-carrying form.
     """
     text = (prompt or "").rstrip()
-    if not text or DISPATCH_MARKER_RX.search(text):
+    if not text or DISPATCH_MARKER in text:
         return prompt
     who = (sender or "").strip()
-    marker = f"<!-- canopy:dispatched-prompt from={who} -->" if who else DISPATCH_MARKER
     name = f"{who}, a canopy agent" if who else "another canopy agent"
-    return f"{text}\n\n{_PROVENANCE.format(who=name)}\n{marker}"
+    tail = DISPATCH_MARKER + (f"\n<!-- canopy:dispatched-by={who} -->" if who else "")
+    return f"{text}\n\n{_PROVENANCE.format(who=name)}\n{tail}"
 
 
 def summarize_turn(turn: dict) -> dict:

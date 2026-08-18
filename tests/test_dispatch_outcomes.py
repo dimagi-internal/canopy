@@ -334,7 +334,7 @@ def test_an_unknown_sender_degrades_to_the_bare_marker():
     assert "another canopy agent" in stamp_dispatched("x")
 
 
-def test_idempotent_across_both_marker_forms():
+def test_idempotent_across_sender_and_bare_forms():
     """A prompt stamped by one helper and passed through another must not collect two — and the
     sender-carrying marker must be recognised by a caller that only knows the bare one."""
     from orchestrator.agent_dispatch import stamp_dispatched
@@ -380,3 +380,33 @@ def test_local_agent_slug_reads_the_agents_own_declaration(tmp_path):
     nested.mkdir(parents=True)
     assert local_agent_slug(nested) == "ada", "must walk up — agents run from worktree subdirs"
     assert local_agent_slug(tmp_path.parent) == ""
+
+
+def test_the_bare_marker_is_always_emitted_verbatim():
+    """THE back-compatibility contract, and the reason the sender rides in a second comment.
+
+    A fleet has version skew by definition: other machines, cloud runners, and Ada's own vendored
+    copy all hold `DISPATCH_MARKER` as a literal and test it with `in`. Fold the sender INTO the
+    marker and every one of those stops recognising a stamped prompt — so the brief silently stops
+    being suppressed, which is the exact bug the marker exists to prevent, reintroduced by the fix
+    for it, only on the hosts nobody remembered to update.
+
+    Verified live 2026-08-18 against the then-installed canopy (0.2.413, which predates senders):
+    it suppressed a new-format brief correctly.
+    """
+    from orchestrator.agent_dispatch import stamp_dispatched
+
+    for sender in ("ada", "hal", ""):
+        out = stamp_dispatched("brief", sender=sender)
+        assert DISPATCH_MARKER in out, f"sender={sender!r} broke the literal an old reader needs"
+
+
+def test_an_old_style_bare_stamp_is_still_recognised():
+    """The other direction: a prompt stamped before senders existed must not be re-stamped, and
+    must still be read as dispatched."""
+    from orchestrator.agent_dispatch import dispatched_by, stamp_dispatched
+
+    old = f"brief\n\n{DISPATCH_MARKER}"
+    assert stamp_dispatched(old, sender="ada") == old
+    assert dispatched_by(old) == ""
+    assert dispatch_outcomes([human(old)])["dispatched_by"] == ""
