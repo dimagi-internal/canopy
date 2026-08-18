@@ -96,7 +96,7 @@ from __future__ import annotations
 
 import hashlib
 
-from orchestrator.agent_dispatch import DispatchError, stamp_dispatched
+from orchestrator.agent_dispatch import DispatchError, local_agent_slug, stamp_dispatched
 
 # Only a runner reporting itself ONLINE can claim (claim_next_turn's first guard,
 # on the DERIVED live_status the API serves — a stale heartbeat reads as `stale`).
@@ -189,7 +189,7 @@ def build_project_turn_payload(project: str, *, prompt: str = "",
     # runner hands this to Claude Code as typed input, and `agent-review` read the result
     # as the human speaking (canopy #488). See `agent_dispatch.stamp_dispatched`.
     if (prompt or "").strip():
-        payload["prompt"] = stamp_dispatched(prompt)
+        payload["prompt"] = stamp_dispatched(prompt, sender=local_agent_slug())
     return payload
 
 

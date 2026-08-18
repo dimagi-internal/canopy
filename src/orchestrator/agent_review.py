@@ -96,10 +96,18 @@ _CORRECTION_PATTERNS = (
         r"\bnever\b.{0,40}\b(submit|send|post|publish|delete|push|merge|pay|buy|email|reply)\b|"
         r"without (?:human |explicit )?(?:review|approval|sign-?off|permission)|"
         r"\bmust not\b|\bshould never\b|\bdo ?n['’o]?t ever\b|\bnever ever\b", re.I)),
-    # confusion — the agent's output didn't make sense to the human
+    # confusion — the agent's output didn't make sense to the human.
+    # The CAN'T variants were missing until 2026-08-18, when this lens was run live against a
+    # session whose human turn was "I can't follow what the fuck you're doing" and scored it as a
+    # neutral steer. `i don['’]t follow` was there; `i can't follow` was not, and inability is the
+    # more common phrasing when someone is actually lost. Same for the intensified form of "what
+    # are you doing" — a human who swears mid-sentence is not less confused for it.
     ("confusion", re.compile(
-        r"\bi['’ ]?m lost\b|\bi am lost\b|\bconfus|why are you|why did you|what are you doing|"
-        r"that['’]s not what i|does ?n['’]t make sense|makes no sense|i don['’]t (?:get|follow|understand)", re.I)),
+        r"\bi['’ ]?m lost\b|\bi am lost\b|\bconfus|why are you|why did you|"
+        r"what (?:the \S+ )?are you doing|"
+        r"that['’]s not what i|does ?n['’]t make sense|makes no sense|not making (?:any )?sense|"
+        r"i don['’]t (?:get|follow|understand)|"
+        r"i (?:can['’]?t|cannot) (?:follow|tell|understand)", re.I)),
     # strong correction — a forceful "no, do it differently"
     ("strong_correction", re.compile(
         r"\bstop\b|\byou['’]re wrong\b|that['’]s wrong|that is wrong|^\s*no[,.! ]|"
@@ -157,7 +165,15 @@ _HARNESS_AUTHORED_PREFIXES = (
 #
 # Self-amplifying, too: agent-review's own findings are delivered to agents AS dispatch
 # briefs, which the next cycle mines back as `strong_correction`.
-DISPATCH_MARKER = "<!-- canopy:dispatched-prompt -->"
+# Imported, not re-declared: this used to be a hand-kept copy of the stamper's literal, which
+# was safe only while the marker was a fixed string. It now carries an optional `from=<slug>`, so
+# a copy would drift the moment a sender was attached — and a stripper that misses the marker
+# silently un-suppresses every brief. One definition, one regex, one import.
+from orchestrator.agent_dispatch import (  # noqa: E402
+    DISPATCH_MARKER,
+    SENDER_MARKER_RX,
+    dispatched_by,
+)
 
 
 def _is_harness_authored_entry(entry: dict) -> bool:
@@ -222,6 +238,133 @@ def human_corrections(entries: list[dict]) -> list[dict]:
         if kinds:
             out.append({"kinds": sorted(set(kinds)), "quote": s.replace("\n", " ")[:240]})
     return out
+
+
+# Dispatch-outcome mining — the OTHER half of DISPATCH_MARKER, and the reason it is worth more
+# than the suppression it was built for.
+#
+# The marker was added to stop a dispatched brief being mined as the human shouting. That is
+# subtraction. But it also, for the first time, makes a fact machine-readable that nothing else in
+# a transcript records: THIS SESSION WAS STARTED BY A MACHINE. Everything after the brief is the
+# outcome of whatever judgment call the dispatcher made — so the marker is an anchor, not just a
+# mute button, and the span after it is the only place a dispatching agent can learn whether its
+# own findings were any good.
+#
+# That loop has never existed. Ada dispatches fix briefs to the fleet every cycle and gets back
+# exactly nothing about which ones were worth sending: a brief built on a stale review window and
+# a brief that shipped clean are indistinguishable to her the next morning. She keeps grading the
+# agents and never gets graded.
+#
+# THE SIGNAL THIS RESTS ON is deliberately the crispest one available: a genuine human message in
+# a session a machine started. Nobody typed into that session by accident — the dispatcher aimed
+# it at an agent and walked away. So a human turn there means a person had to come back and steer
+# something that was supposed to run unattended, and a human turn carrying a CORRECTION means they
+# had to argue with it. No phrase list decides this and no LLM judges it; it is a structural fact
+# about who authored which entry, which is why it is trustworthy enough to grade a dispatcher on.
+#
+# WHAT IS DELIBERATELY NOT HERE: `rejected_on_revalidation` — the case where the receiving agent
+# re-validates the brief, finds the finding already fixed or a misread, and stops. Every fix brief
+# mandates that step, so it is the outcome most worth counting, and it is exactly the one that
+# needs judgment rather than a regex: the agent's report quotes the brief's own "already fixed"
+# language back, so a lexical test scores the brief instead of the verdict. Registered in
+# DISPATCH_VERDICTS, detected by nothing, and left for an LLM pass rather than shipped half-right
+# — the same call `overclaim_signals` made for `verify_late`. A dispatcher scorecard that quietly
+# guessed at its own worst category would be worse than one that admits the gap.
+
+DISPATCH_VERDICTS = (
+    "contested",        # a human had to argue with it — the strongest evidence it was a bad send
+    "human_touched",    # a human stepped in, but to steer/answer rather than to correct
+    "shipped_clean",    # ran unattended and landed a merge
+    "ran_unattended",   # ran unattended, no merge to point at
+    "rejected_on_revalidation",   # REGISTERED, NOT DETECTED — see the note above
+)
+
+# `gh pr merge` is the crispest "it landed" tell available, and it is read off TOOL CALLS rather
+# than prose: an agent that merely SAYS it merged is what `overclaim_signals` is for.
+_MERGE_RX = re.compile(r"\bgh\s+pr\s+merge\b", re.I)
+
+
+def dispatch_outcomes(entries: list[dict]) -> dict | None:
+    """Grade a DISPATCHED session on what happened after the brief. None if not dispatched.
+
+    Returns {verdict, n_human_turns_after, interventions: [{kinds, quote}], shipped,
+    brief_excerpt}. The caller attributes it to whoever SENT the brief, not to the agent that
+    received it — this is the dispatcher's report card, and it is the one lens in this module
+    whose findings belong to a different agent than the one being reviewed.
+
+    Anchored on the FIRST marked human turn, not the first turn overall: a dispatch can land
+    mid-session when the runner resolves onto a live session instead of spawning a fresh one
+    (the missing-thread_key failure), and that session's earlier human turns are a real
+    conversation that has nothing to do with the brief. A later second brief in the same session
+    folds into the first one's span rather than opening a new one — rare, and splitting it would
+    invent a boundary the transcript does not actually carry.
+    """
+    anchor = None
+    for i, entry in enumerate(entries):
+        if not _is_genuine_human_message(entry) or _is_harness_authored_entry(entry):
+            continue
+        if DISPATCH_MARKER in (entry.get("message", {}).get("content", "") or ""):
+            anchor = i
+            break
+    if anchor is None:
+        return None
+
+    brief = entries[anchor].get("message", {}).get("content", "") or ""
+    after = entries[anchor + 1:]
+
+    # A human turn AFTER the brief. `_human_text` still strips harness blocks and drops any
+    # FURTHER marked turn, so a second dispatch into the same session never counts as a person
+    # intervening — that would grade the dispatcher for its own second message.
+    human_after: list[str] = []
+    for entry in after:
+        if not _is_genuine_human_message(entry) or _is_harness_authored_entry(entry):
+            continue
+        text = _human_text(entry.get("message", {}).get("content", "") or "")
+        if text:
+            human_after.append(text)
+
+    interventions: list[dict] = []
+    for text in human_after:
+        kinds = [kind for kind, pat in _CORRECTION_PATTERNS if pat.search(text)]
+        if re.search(r"\b[A-Z]{3,}\b[^a-z]{0,30}\b[A-Z]{3,}\b", text) or re.search(
+                r"\b(NEVER|ALWAYS|STOP|DO NOT|MUST)\b", text):
+            kinds.append("emphasis")
+        if kinds:
+            interventions.append({"kinds": sorted(set(kinds)), "quote": text.replace("\n", " ")[:240]})
+
+    shipped = any(
+        _MERGE_RX.search(json.dumps(c.get("input", {})))
+        for c in extract_tool_calls(after)
+    )
+
+    if interventions:
+        verdict = "contested"
+    elif human_after:
+        verdict = "human_touched"
+    elif shipped:
+        verdict = "shipped_clean"
+    else:
+        verdict = "ran_unattended"
+
+    return {
+        "verdict": verdict,
+        # WHO to hand this verdict to. '' for a brief stamped before senders were carried, or by
+        # a dispatcher that does not know its own slug — reported as unattributed rather than
+        # guessed, since the whole point is to grade a specific sender.
+        "dispatched_by": dispatched_by(brief),
+        "n_human_turns_after": len(human_after),
+        "interventions": interventions,
+        "shipped": shipped,
+        "brief_excerpt": _human_text_without_marker(brief)[:240].replace("\n", " "),
+    }
+
+
+def _human_text_without_marker(raw: str) -> str:
+    """The brief's own words. `_human_text` deliberately returns '' for anything marked (that is
+    its whole job in the corrections lens), so quoting the brief needs the marker stripped
+    instead of the turn dropped."""
+    stripped = _HARNESS_BLOCK_RX.sub(" ", raw or "").replace(DISPATCH_MARKER, "")
+    return SENDER_MARKER_RX.sub("", stripped).strip()
 
 
 # Over-claim mining — a completion verb in the agent's OWN text ("verified", "shipped", "done", …)
@@ -539,6 +682,7 @@ def friction_signals(
         "path": str(transcript_path),
         "n_tool_calls": len(calls),
         "human_corrections": human_corrections(entries),   # HIGHEST-signal — read first
+        "dispatch_outcome": dispatch_outcomes(entries),    # None unless a machine started it
         "overclaims": overclaim_signals(entries),
         "failures": failures,
         "gating_blocks": gating_blocks,
@@ -588,6 +732,15 @@ def build_review_prompt(repo: Path, corpus: list[dict]) -> str:
         "and turn a `safety_override` into a hard invariant (hook_rule), never just prose guidance.\n"
         "- A `confusion` correction means the agent's turn structure/communication failed — recommend "
         "a skill_edit that fixes how it presents (e.g. decide-then-show, not ask-then-show-something-else).\n"
+        "- `dispatch_outcome` is present only when a MACHINE started the session, and it grades the "
+        "agent that SENT the brief, not the one being reviewed here. A `contested` verdict is the "
+        "strongest signal in the corpus: work dispatched to run unattended that a human had to come "
+        "back and argue with. Report it against the DISPATCHER — name it in the finding — and treat "
+        "the intervention quotes as evidence about the BRIEF (wrong, stale, over-scoped, or sent "
+        "without the receiving agent having what it needed), not about this agent's turn loop. "
+        "`shipped_clean` is the opposite and is worth saying out loud: a dispatch that ran "
+        "unattended and landed is evidence the sender's judgment was good, and a fleet that only "
+        "ever surfaces failures teaches its conductor nothing about what to keep doing.\n"
         "- a `skill_collisions` entry means a generic skill NAME (turn/architect/…) resolved to "
         "ANOTHER plugin's skill (e.g. `ace:turn`) instead of the agent's own — recommend a "
         "skill_edit/claude_update that namespaces the agent's skill or forces reading it from disk, "
