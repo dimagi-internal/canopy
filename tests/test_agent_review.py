@@ -460,10 +460,19 @@ def test_was_read_false_is_invalid():
     assert ok is False
 
 
-def test_bad_confidence_value_is_invalid():
+def test_bad_confidence_value_no_longer_fails_the_evidence_gate():
+    """`confidence` is a LABEL, not evidence — _valid_evidence stops gating it so
+    qualify_findings can repair it. The basis (the justification) is still gated."""
     ev = dict(_GOOD_EV); ev["confidence"] = "very-high"
     ok, _ = _valid_evidence(ev)
+    assert ok is True
+
+
+def test_missing_confidence_basis_is_still_invalid():
+    ev = dict(_GOOD_EV); del ev["confidence_basis"]
+    ok, reason = _valid_evidence(ev)
     assert ok is False
+    assert "confidence_basis" in reason
 
 
 def test_full_record_is_valid():
@@ -614,12 +623,13 @@ def test_invariant_with_hook_rule_is_kept():
 
 # --- M3: unhashable LLM output must fail-loud (drop), never crash ------------
 
-def test_non_str_confidence_is_invalid_not_crash():
-    ev = dict(_GOOD_EV)
-    ev["confidence"] = ["high"]
-    ok, reason = _valid_evidence(ev)
-    assert ok is False
-    assert reason
+def test_unhashable_confidence_does_not_crash_and_is_dropped():
+    """M3 invariant preserved: a list where a level belongs must fail-loud, never
+    raise. It is unmappable, so with no finding-level sibling it drops."""
+    f = {"title": "t", "evidence": dict(_GOOD_EV, confidence=["high"])}
+    qualified, dropped = qualify_findings([f])
+    assert qualified == []
+    assert len(dropped) == 1 and dropped[0]["_drop_reason"]
 
 
 def test_invariant_with_unhashable_fix_kind_is_coerced_not_crash():
@@ -1466,3 +1476,125 @@ def test_human_corrections_keeps_the_one_real_correction_beside_the_five_fakes()
     assert len(got) == 1, [g["quote"][:60] for g in got]
     assert got[0]["quote"].startswith("Why are you asking me?")
     assert got[0]["kinds"] == ["confusion"]
+
+
+# --- Confidence rail: repair the label, keep the evidence ---------------------
+# Regression guard for the 2026-08-18 cycle, where `agent-review ace --hours 24`
+# synthesized 5 findings and dropped all 5 on a malformed `evidence.confidence`,
+# reporting "No findings synthesized" for the noisiest agent in the fleet.
+from orchestrator.agent_review import normalize_confidence
+import pytest
+
+
+@pytest.mark.parametrize("level", ["high", "medium", "low"])
+def test_valid_confidence_passes_through_uncoerced(level):
+    f = {"title": "t", "evidence": dict(_GOOD_EV, confidence=level)}
+    qualified, dropped = qualify_findings([f])
+    assert dropped == []
+    assert qualified[0]["evidence"]["confidence"] == level
+    assert "_confidence_coerced" not in qualified[0]
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("HIGH", "high"), ("  Medium  ", "medium"), ("Low.", "low"),
+    ("very high", "high"), ("very-high", "high"), ("Very_High", "high"),
+    ("certain", "high"), ("strong", "high"),
+    ("med", "medium"), ("moderate", "medium"), ("mid", "medium"),
+    ("weak", "low"), ("tentative", "low"), ("speculative", "low"),
+])
+def test_alias_and_case_are_coerced_not_dropped(raw, expected):
+    f = {"title": "t", "evidence": dict(_GOOD_EV, confidence=raw)}
+    qualified, dropped = qualify_findings([f])
+    assert dropped == []
+    assert qualified[0]["evidence"]["confidence"] == expected
+    c = qualified[0]["_confidence_coerced"]
+    assert c["from"] == raw and c["to"] == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (0.95, "high"), (0.8, "high"), (0.6, "medium"), (0.5, "medium"), (0.2, "low"),
+    (95, "high"), (85, "high"), (60, "medium"), (10, "low"),
+    ("0.9", "high"), ("85%", "high"), ("40%", "low"),
+])
+def test_numeric_confidence_is_banded(raw, expected):
+    f = {"title": "t", "evidence": dict(_GOOD_EV, confidence=raw)}
+    qualified, dropped = qualify_findings([f])
+    assert dropped == [], f"{raw!r} was dropped"
+    assert qualified[0]["evidence"]["confidence"] == expected
+
+
+def test_unmappable_string_bands_down_to_low_never_up():
+    """A repair must never INFLATE trust: an unrecognized-but-present label is
+    conservative-defaulted to 'low', not to 'high'."""
+    f = {"title": "t", "evidence": dict(_GOOD_EV, confidence="banana")}
+    qualified, dropped = qualify_findings([f])
+    assert dropped == []
+    assert qualified[0]["evidence"]["confidence"] == "low"
+    assert "banana" in qualified[0]["_confidence_coerced"]["reason"]
+
+
+def test_missing_nested_confidence_falls_back_to_finding_level():
+    """The synthesis prompt asks for `confidence` at BOTH levels; the model routinely
+    fills exactly one. Reading the sibling is a repair, not an invention."""
+    ev = dict(_GOOD_EV); del ev["confidence"]
+    f = {"title": "t", "confidence": "high", "evidence": ev}
+    qualified, dropped = qualify_findings([f])
+    assert dropped == []
+    assert qualified[0]["evidence"]["confidence"] == "high"
+    assert qualified[0]["_confidence_coerced"]["source"] == "finding.confidence"
+
+
+def test_confidence_absent_at_both_levels_is_still_dropped():
+    """Genuinely absent is absent — the hard drop survives, and the drop reason now
+    names BOTH observed values so a mislabel is distinguishable from an omission."""
+    ev = dict(_GOOD_EV); del ev["confidence"]
+    f = {"title": "t", "evidence": ev}
+    qualified, dropped = qualify_findings([f])
+    assert qualified == []
+    reason = dropped[0]["_drop_reason"]
+    assert "evidence.confidence" in reason and "finding.confidence" in reason
+
+
+def test_empty_confidence_at_both_levels_is_dropped():
+    f = {"title": "t", "confidence": "   ", "evidence": dict(_GOOD_EV, confidence="")}
+    qualified, dropped = qualify_findings([f])
+    assert qualified == [] and len(dropped) == 1
+
+
+def test_bool_confidence_is_not_treated_as_a_score():
+    """bool is an int in Python — True must not band to 'low' via the numeric path."""
+    level, _ = normalize_confidence(True)
+    assert level is None
+
+
+def test_out_of_range_number_is_not_banded():
+    level, _ = normalize_confidence(400)
+    assert level is None
+
+
+def test_confidence_coercion_is_logged_to_stderr(capsys):
+    """A silent repair is just a different kind of quiet — the fix_kind rail logs, so
+    this one must too."""
+    f = {"title": "noisy finding", "evidence": dict(_GOOD_EV, confidence="very high")}
+    kept = _qualify_and_log([f], label="ace")
+    assert len(kept) == 1
+    err = capsys.readouterr().err
+    assert "coerced confidence" in err and "noisy finding" in err and "'very high'" in err
+
+
+def test_five_findings_with_bad_confidence_all_survive():
+    """The exact 2026-08-18 shape: five evidence-valid findings whose only defect was
+    the confidence word. The run reported 'No findings synthesized'; it must not again."""
+    raws = ["very high", "VeryHigh", 0.9, "moderate", "Certain"]
+    findings = [
+        {"title": f"finding {i}", "fix_kind": "skill_edit",
+         "evidence": dict(_GOOD_EV, confidence=r)}
+        for i, r in enumerate(raws)
+    ]
+    qualified, dropped = qualify_findings(findings)
+    assert dropped == [], [d["_drop_reason"] for d in dropped]
+    assert len(qualified) == 5
+    assert all(q["evidence"]["confidence"] in _CONF_LEVELS_T for q in qualified)
+
+
+_CONF_LEVELS_T = {"high", "medium", "low"}

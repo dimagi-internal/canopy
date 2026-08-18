@@ -614,6 +614,89 @@ def parse_findings(output: str) -> list[dict]:
 
 _CONF_LEVELS = {"high", "medium", "low"}
 
+# Same class of defect as the fix_kind rail below, same remedy: `confidence` is a
+# ROUTING/METADATA label, and when the model writes it wrong the evidence underneath
+# is still sound. Dropping the finding throws away the expensive half (a read source,
+# a ran already_fixed_check, a written basis) to punish the cheap half (one enum word).
+#
+# Measured on the 2026-08-18 cycle: `canopy agent-review ace --hours 24` over 13 turns
+# synthesized FIVE findings and dropped ALL FIVE on this gate, so the run reported
+# "No findings synthesized" — a clean bill of health on the agent with the loudest
+# human-correction signal in the fleet that day. The titles matched Jonathan's own
+# verbatim corrections in the same window. A validator that turns 5 findings into 0
+# is not enforcing rigor, it is manufacturing silence.
+#
+# Two failure modes hide behind the ONE message the old gate emitted:
+#   (a) the value is a near-miss of the enum ("very high", "Medium", 0.8, 85)
+#   (b) the key is ABSENT from `evidence` because the model satisfied the OTHER
+#       `confidence` the synthesis prompt asks for — the finding-level one. The prompt
+#       requests `confidence: high|medium|low` in BOTH places, so filling exactly one
+#       is the predictable half-compliance, not missing evidence.
+# (a) is repaired by mapping; (b) is repaired by reading the sibling the model DID
+# fill. Only when NEITHER level carries a usable value is the finding dropped —
+# that is genuinely absent evidence, and `confidence_basis` stays hard-gated
+# regardless, so an unjustified level can never be laundered into a level.
+#
+# The drop reasons are also split apart, because the single old message made (a) and
+# (b) indistinguishable in the log: the 2026-08-18 stderr printed the reason but never
+# the offending VALUE, so nobody could tell a mislabel from an omission without
+# re-running. `_confidence_coerced` records `from` verbatim to close that for good.
+_CONF_ALIASES = {
+    # near-misses of "high"
+    "very high": "high", "veryhigh": "high", "vhigh": "high", "highest": "high",
+    "certain": "high", "strong": "high", "confident": "high", "h": "high",
+    # near-misses of "medium"
+    "med": "medium", "moderate": "medium", "mid": "medium", "middle": "medium",
+    "average": "medium", "m": "medium", "medium-high": "medium", "medium-low": "medium",
+    # near-misses of "low"
+    "weak": "low", "tentative": "low", "speculative": "low", "uncertain": "low",
+    "lowest": "low", "l": "low", "very low": "low", "unsure": "low",
+}
+
+
+def normalize_confidence(raw: object) -> tuple[str | None, str]:
+    """Map a model-written confidence label onto _CONF_LEVELS.
+
+    Returns (level, reason). `level` is None when nothing usable was written —
+    the caller then falls back to the sibling field, and finally drops.
+    `reason` describes the mapping for the coercion record / drop log.
+
+    Deliberately conservative: an unrecognized-but-present label bands to "low"
+    rather than "high", so a repair can never INFLATE how much a finding is
+    trusted. The fix_kind rail makes the same trade — repair the label, keep the
+    evidence, and annotate loudly enough that a human can audit the repair.
+    """
+    if isinstance(raw, bool):  # bool is an int; catch it before the numeric branch
+        return None, "confidence was a boolean, not a level or a score"
+    if isinstance(raw, (int, float)):
+        # Two scales appear in practice: 0-1 probabilities and 0-100 percentages.
+        v = float(raw)
+        pct = v * 100 if 0.0 <= v <= 1.0 else v
+        if not 0.0 <= pct <= 100.0:
+            return None, f"numeric confidence {raw!r} outside 0-1 and 0-100 scales"
+        band = "high" if pct >= 80 else "medium" if pct >= 50 else "low"
+        return band, f"numeric confidence {raw!r} banded to {band!r}"
+    if not isinstance(raw, str):
+        return None, f"confidence must be a string level or a score, got {type(raw).__name__}"
+    # Normalize case, surrounding whitespace/punctuation, and inner separators, so
+    # "Very_High", " HIGH. ", and "very-high" all land on the same key.
+    k = re.sub(r"[\s_-]+", " ", raw.strip().strip(".,;:!\"'").lower()).strip()
+    if not k:
+        return None, "confidence is empty"
+    if k in _CONF_LEVELS:
+        return k, ""  # already valid — no coercion
+    if k in _CONF_ALIASES:
+        return _CONF_ALIASES[k], f"{raw!r} is a near-miss of the enum"
+    # A bare number that arrived as a string ("0.9", "85%").
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*%?", k)
+    if m:
+        return normalize_confidence(float(m.group(1)) / (100 if "%" in k else 1))[0], (
+            f"numeric-string confidence {raw!r} banded"
+        )
+    # Present but unrecognized: band DOWN, never up.
+    return "low", f"unrecognized confidence {raw!r} banded down to 'low' (conservative default)"
+
+
 # Structural-fix-only rail: an "invariant" finding (a hard never/always rule, or one
 # born from a human safety_override correction) must ship as a structural fix
 # (hook_rule / schema_validator) — a skill_edit/claude_update is prose, and prose
@@ -681,9 +764,9 @@ def _valid_evidence(ev: object) -> tuple[bool, str]:
         or not str(afc.get("result") or "").strip()
     ):
         return False, "evidence.already_fixed_check must be {ran: bool, result: <non-empty>}"
-    conf = ev.get("confidence")
-    if not isinstance(conf, str) or conf not in _CONF_LEVELS:
-        return False, f"evidence.confidence must be one of {sorted(_CONF_LEVELS)}"
+    # NOTE: `evidence.confidence` is deliberately NOT gated here. It is a label, not
+    # evidence, and qualify_findings repairs it (see normalize_confidence). The basis
+    # below IS gated — that is the justification, and it cannot be synthesized.
     if not str(ev.get("confidence_basis") or "").strip():
         return False, "evidence.confidence_basis missing/empty (justify the confidence)"
     return True, ""
@@ -693,7 +776,13 @@ def qualify_findings(findings: list[dict]) -> tuple[list[dict], list[dict]]:
     """Split findings into (qualified, dropped). A finding with no valid evidence
     record is DROPPED, annotated with `_drop_reason`. Fail-loud: the caller logs
     each drop. This is the enforcement — a finding without verified evidence cannot
-    survive to be published or dispatched."""
+    survive to be published or dispatched.
+
+    Two labels are REPAIRED rather than dropped, because each is a routing/metadata
+    word sitting on top of otherwise-sound evidence: `evidence.confidence`
+    (`_confidence_coerced`) and `fix_kind` (`_fix_kind_coerced`). Both repairs are
+    annotated on the finding and logged by `_qualify_and_log`, so a silent fix stays
+    visible and auditable."""
     qualified: list[dict] = []
     dropped: list[dict] = []
     for f in findings:
@@ -705,6 +794,43 @@ def qualify_findings(findings: list[dict]) -> tuple[list[dict], list[dict]]:
             f["_drop_reason"] = reason
             dropped.append(f)
             continue
+        # Confidence rail: repair the label, keep the evidence. Try the nested value
+        # first, then the finding-level sibling the synthesis prompt also asks for —
+        # the model routinely fills exactly one of the two. See normalize_confidence.
+        ev = f["evidence"]
+        raw = ev.get("confidence")
+        level, why = normalize_confidence(raw)
+        source = "evidence.confidence"
+        if level is None:
+            level, why = normalize_confidence(f.get("confidence"))
+            source = "finding.confidence"
+            if level is None:
+                f["_drop_reason"] = (
+                    "no usable confidence at evidence.confidence or finding.confidence "
+                    f"(evidence.confidence={raw!r}, finding.confidence="
+                    f"{f.get('confidence')!r}) — expected one of "
+                    f"{sorted(_CONF_LEVELS)}, an alias, or a 0-1/0-100 score"
+                )
+                dropped.append(f)
+                continue
+        # Record a coercion whenever the stored value is not literally what the model
+        # wrote in `evidence.confidence` — that covers a mapped alias, a banded score,
+        # a bare case/whitespace normalization ("HIGH" -> "high"), and a value lifted
+        # from the finding-level sibling. Keying off `why` alone would let those last
+        # two through silently, which is the failure this rail exists to stop.
+        changed = level != raw or source != "evidence.confidence"
+        ev["confidence"] = level
+        if changed:
+            f["_confidence_coerced"] = {
+                "from": raw,
+                "to": level,
+                "source": source,
+                "reason": (
+                    (why or f"normalized to the {level!r} enum member")
+                    + "; coerced rather than dropped so the evidence survives — "
+                    "confidence_basis was still required and passed."
+                ),
+            }
         # Structural-fix-only rail: an evidence-valid invariant finding whose fix isn't
         # structural (hook_rule/schema_validator) is REPAIRED, not discarded — the
         # evidence is sound, only the routing label is wrong, and the label is the part
@@ -735,6 +861,11 @@ def _qualify_and_log(findings: list[dict], label: str) -> list[dict]:
         print(f"[agent-review:{label}] dropped finding "
               f"{d.get('title')!r}: {d.get('_drop_reason')}", file=sys.stderr)
     for q in qualified:
+        cc = q.get("_confidence_coerced")
+        if cc:
+            print(f"[agent-review:{label}] coerced confidence on finding "
+                  f"{q.get('title')!r}: {cc.get('from')!r} \u2192 {cc.get('to')!r} "
+                  f"(via {cc.get('source')}; kept, not dropped)", file=sys.stderr)
         c = q.get("_fix_kind_coerced")
         if c:
             print(f"[agent-review:{label}] coerced fix_kind on finding "
