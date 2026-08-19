@@ -101,6 +101,33 @@ mid-rewrite of it. By the time a THIRD turn started twenty-four minutes later �
 gate. That gate is *why* the thread was still unread and the runner kept firing: in manual mode,
 waiting for a human looks exactly like unhandled.)
 
+**Same ref is the NARROW case. Now widen it: a sibling turn on a DIFFERENT ref is still your
+problem.** The check above counts turns on your exact ref, so it answers "am I redundant?" — and it
+returns 1, all-clear, for the collision that is actually more common: two turns on *different* refs
+that converge on the same artifact. One person emailing twice about one workstream produces exactly
+that, and so does a board task and an email about the same project. You are not a duplicate, so
+there is no reason to stop — and you will still overwrite each other. So run the wider count too:
+
+```bash
+ps aux | grep '[c]laude --session-id' | grep -c '/<slug>:'   # >1 → a sibling turn of YOURS is live
+```
+
+More than one and you share every artifact this agent owns with a session you cannot see. Two things
+follow, and only these two — a live sibling is not a reason to abandon your own ref:
+
+1. **Before any WRITE to a shared external artifact** — a Sheet, a Doc, a tracker, the board — find
+   out whether the sibling is touching it (its transcript, as above; grep it for the file id). Google
+   Sheets and Docs have **no lock and no merge**: `update` is last-write-wins and a
+   clear-then-rewrite lands on top of the other session's work with no error and no diff to notice it
+   by. One writer per artifact per window; the later turn takes a different lane and says so.
+2. **Before any SEND, check who the sibling is replying to**, not just what ref it holds. Two agent
+   emails reaching one person about one task is the same failure whether or not the refs matched.
+
+(Origin: 2026-08-19, the same incident, read from the other side. The two-different-refs turns were
+the FIRST collision; the same-ref third turn came later. Run on the earlier pair, the narrow check
+returns 1 and the wider one returns 2. That pair was caught only because one turn read the Sheet's
+`modifiedTime` on an unrelated hunch and found the other mid-rewrite, 40 seconds earlier.)
+
 **But a scoped turn still sweeps that ONE counterpart's other recent messages first — skipping the
 inbox scan is not the same as reading one thread in isolation.** People do not keep one topic on one
 thread. The decisive context for the thread you were handed is routinely on a *different* thread
@@ -390,6 +417,8 @@ queues work and approves outbound actions — independent of whether you publish
 **CLOSE CHECKLIST — confirm each in the summary (these get silently skipped under load):**
 0aa. **On a scoped turn, you checked you are not a DUPLICATE turn on that same ref** (Step 2 Scope)
    — one `ps` count. If another session was already live on it, say so and say what you stood down on.
+0ab. **You checked for a live SIBLING turn of yours on a different ref too** (Step 2 Scope) — the
+   wider `ps` count. If one was live, name it and say how you kept off its artifacts and its send.
 0a. **On a scoped turn, that counterpart's other recent mail was swept before the action was
    decided** (Step 2 Scope) — one `from:<them> newer_than:3d` search. If you cannot point to it, you
    read one thread in isolation and the context that changes the answer is exactly what you skipped.
