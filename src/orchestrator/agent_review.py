@@ -724,7 +724,8 @@ def build_review_prompt(repo: Path, corpus: list[dict]) -> str:
         "  - fix_kind: one of [skill_edit, hook_rule, schema_validator, claude_update, channel_fix, new_skill]\n"
         "  - target: the file/path in the agent repo the fix touches\n"
         "  - recommendation: the concrete change to make\n"
-        "  - confidence: high|medium|low\n"
+        "  - confidence: high|medium|low  # SAME value as evidence.confidence above; "
+        "fill BOTH, they are one judgment (this one is what the findings table prints)\n"
         "Rules:\n"
         "- `human_corrections` are the HIGHEST-signal items in the corpus — a human overriding a "
         "safety behavior (e.g. 'NEVER submit without review') or expressing confusion ('I'm lost') "
@@ -973,6 +974,13 @@ def qualify_findings(findings: list[dict]) -> tuple[list[dict], list[dict]]:
         # two through silently, which is the failure this rail exists to stop.
         changed = level != raw or source != "evidence.confidence"
         ev["confidence"] = level
+        # The finding-level `confidence` is a SECOND consumer of the same judgment: the
+        # gate reads `evidence.confidence`, but the agent-review display reads
+        # `finding.confidence` (cli.py's findings table). Nothing normalized that one, so
+        # a repaired finding could still PRINT the raw label it was repaired away from —
+        # or print `banana`. One resolved level, written to both, keeps the table honest
+        # and removes the divergence the duplicated prompt field invites.
+        f["confidence"] = level
         if changed:
             f["_confidence_coerced"] = {
                 "from": raw,
