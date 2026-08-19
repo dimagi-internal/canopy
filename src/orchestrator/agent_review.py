@@ -1099,6 +1099,13 @@ from orchestrator.repo_evidence import (  # noqa: E402
 )
 
 
+# Extensions that make a bare token a FILE worth grepping/showing. Deliberately a closed
+# list rather than a generic `\.\w+$`: prose targets are full of tokens like "e.g." and
+# "vs." that a permissive rule would turn into phantom files.
+_TARGET_FILE_EXTS = (".md", ".py", ".json", ".yaml", ".yml", ".sh", ".ts", ".tsx",
+                     ".js", ".toml", ".cfg", ".ini", ".txt")
+
+
 def _finding_symbols(findings: list[dict]) -> list[str]:
     """Concrete tokens to grep the current tree for: backtick-quoted identifiers in
     a finding's text PLUS bare file paths named in `target` (which are usually not
@@ -1114,7 +1121,16 @@ def _finding_symbols(findings: list[dict]) -> list[str]:
                     out.add(sym)
         for tok in re.split(r"[,\s]+", str(f.get("target") or "")):
             tok = tok.strip().strip("`()")
-            if tok and "/" in tok and len(tok) <= 80:
+            if not tok or len(tok) > 80:
+                continue
+            # A path, OR a bare filename with a known extension. The slash-only rule
+            # silently dropped `persona.md` and `CLAUDE.md` — two of the eight findings
+            # in the real 2026-08-18 ace run named a bare file as their target and
+            # therefore reached the verification gate with NO evidence at all, which
+            # resolves to `unverifiable` and is KEPT. Same shape as the miss #504 fixed:
+            # the gate cannot see the target, so it cannot tell shipped from live, and an
+            # already-fixed finding survives to waste a turn.
+            if "/" in tok or tok.lower().endswith(_TARGET_FILE_EXTS):
                 out.add(tok)
     return sorted(out)[:30]
 

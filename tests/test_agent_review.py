@@ -1678,3 +1678,40 @@ def test_markers_do_not_fire_on_an_unrelated_turn():
     noise = "read the readme, ran the tests, opened a pr, merged it"
     for step in _STEPS:
         assert not _detects(step, noise), f"{step} false-positived on unrelated text"
+
+
+# --- A bare-filename target must reach the verification gate as evidence ----------
+# 2 of the 8 findings in the real 2026-08-18 `agent-review ace` run named a bare file
+# (`persona.md`, `CLAUDE.md`) as their target. `_finding_symbols` only accepted tokens
+# containing "/", so those findings reached the source-verification gate with NO symbols
+# — no grep, no file content — which resolves to `unverifiable` and is KEPT. Same shape
+# as the miss #504 fixed: the gate cannot see the target, so an already-shipped finding
+# survives to waste a turn.
+from orchestrator.agent_review import _finding_symbols
+
+
+@pytest.mark.parametrize("target", ["persona.md", "CLAUDE.md", "run-state-validator.ts",
+                                    "config.json", "setup.sh", "pyproject.toml"])
+def test_bare_filename_target_is_extracted(target):
+    assert target in _finding_symbols([{"target": target}])
+
+
+def test_path_target_still_extracted():
+    assert "skills/turn/SKILL.md" in _finding_symbols([{"target": "skills/turn/SKILL.md"}])
+
+
+@pytest.mark.parametrize("prose", ["e.g.", "vs.", "etc.", "i.e.", "the"])
+def test_prose_tokens_are_not_mistaken_for_files(prose):
+    """A permissive `\\.\\w+$` rule would turn ordinary prose into phantom file targets,
+    and a phantom target produces confidently-empty evidence."""
+    assert prose not in _finding_symbols([{"target": f"somewhere {prose} something"}])
+
+
+def test_multi_target_string_yields_each_file():
+    syms = _finding_symbols([{"target": "persona.md or CLAUDE.md"}])
+    assert "persona.md" in syms and "CLAUDE.md" in syms
+
+
+def test_backticked_symbols_still_win():
+    syms = _finding_symbols([{"title": "fix `normalize_confidence` in `agent_review.py`"}])
+    assert "normalize_confidence" in syms and "agent_review.py" in syms
