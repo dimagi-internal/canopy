@@ -74,6 +74,33 @@ inbox scan (the harness runner passes the ref because it already resolved it —
 re-resolving). Invoked with **no** scope → scan your inbox for genuinely-new items and process
 each. Either way, the per-item rules below apply.
 
+**But a scoped turn is not necessarily the ONLY turn on that ref — check before you work it.** The
+poller fires on **unread**, and a manual-mode turn leaves its thread unread for exactly as long as
+its reply sits at the approval gate. So a thread whose draft is waiting on a human is a thread the
+runner will hand to a *second* turn, and then a third — each starting cold, each re-resolving the
+same ref, each converging on the same artifact. Nothing errors. You simply do the work twice, and
+risk two replies to one person about one task. So the first thing a scoped turn does, before the
+sender sweep and before reading the thread:
+
+```bash
+ps aux | grep '[c]laude --session-id' | grep -c -- '--thread <the-ref>'   # >1 → you are a duplicate
+```
+
+More than one means you are the later turn. Find where the earlier one got to — its transcript is
+at `~/.claude/projects/<worktree-path>/<session-id>.jsonl`; read its last few assistant messages —
+and then **stand down on everything it is already doing, the send above all**: two agent emails to
+one person about one task is worse than no email, and it is the failure a collaborator actually
+notices. Say in your closeout that you stood down, and name which session is holding the draft, so
+the human knows where to go and approve. Read-only verification the earlier turn could not do on
+itself is fair game; repeating its writes is not.
+
+(Origin: 2026-08-19. One collaborator sent two emails eight minutes apart; the runner spawned a turn
+per thread, both routed to the same task and the same Google Sheet, and one caught the other
+mid-rewrite of it. By the time a THIRD turn started twenty-four minutes later — on the identical
+`--thread` ref as the second — the first was holding a reviewed, receipted reply at the approval
+gate. That gate is *why* the thread was still unread and the runner kept firing: in manual mode,
+waiting for a human looks exactly like unhandled.)
+
 **But a scoped turn still sweeps that ONE counterpart's other recent messages first — skipping the
 inbox scan is not the same as reading one thread in isolation.** People do not keep one topic on one
 thread. The decisive context for the thread you were handed is routinely on a *different* thread
@@ -361,6 +388,8 @@ a flag). The board at `/agents/<slug>` stays the shared trigger + approval surfa
 queues work and approves outbound actions — independent of whether you publish above.
 
 **CLOSE CHECKLIST — confirm each in the summary (these get silently skipped under load):**
+0aa. **On a scoped turn, you checked you are not a DUPLICATE turn on that same ref** (Step 2 Scope)
+   — one `ps` count. If another session was already live on it, say so and say what you stood down on.
 0a. **On a scoped turn, that counterpart's other recent mail was swept before the action was
    decided** (Step 2 Scope) — one `from:<them> newer_than:3d` search. If you cannot point to it, you
    read one thread in isolation and the context that changes the answer is exactly what you skipped.
