@@ -130,6 +130,32 @@ DISPATCH_MARKER = "<!-- canopy:dispatched-prompt -->"
 # marker whose meaning depends on both ends being current is not a marker.
 SENDER_MARKER_RX = re.compile(r"<!--\s*canopy:dispatched-by=([A-Za-z0-9_.-]+)\s*-->")
 
+# Delimits a HUMAN'S OWN WORDS inside an otherwise machine-authored prompt. Written by
+# canopy-web's `_with_reply` (`apps/harness/dispatch_marker.py` holds its copy of these bytes);
+# read here, because the marker is all-or-nothing per turn and the reply must survive it.
+#
+# The case: a board card carries an agent's brief, the human answers it, and canopy-web glues
+# the answer onto the end of the brief so the agent doing the work sees the steer. Stamping the
+# brief then threw the answer away too — and that answer is the single highest-value human
+# signal on the board. It is a person overruling, narrowing, or redirecting an agent's proposal,
+# which is exactly what a corrections lens exists to find.
+#
+# Neither cheap alternative works. Not stamping mines the whole multi-page brief as the human's
+# words. "Keep everything after the marker" mines canopy-web's own trailing boilerplate, which
+# says OVERRIDES and "instead of" and scores as a forceful correction by itself. The human's
+# words have to be delimited, not inferred from position.
+HUMAN_REPLY_RX = re.compile(
+    r"<!--\s*canopy:human-reply\s*-->(.*?)<!--\s*/canopy:human-reply\s*-->", re.S)
+
+
+def human_reply_in(text: str) -> str:
+    """The human's own words carved out of a machine-authored prompt, '' if none are delimited.
+
+    Multiple regions are joined rather than first-wins: a prompt could carry more than one
+    delimited human turn, and silently keeping only the first would drop a correction.
+    """
+    return "\n".join(m.strip() for m in HUMAN_REPLY_RX.findall(text or "") if m.strip())
+
 
 def dispatched_by(text: str) -> str:
     """The slug that dispatched `text`, '' if unmarked or stamped without a sender."""
