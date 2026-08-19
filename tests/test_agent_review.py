@@ -1625,3 +1625,56 @@ def test_prompt_says_the_two_confidence_fields_are_one_judgment(tmp_path):
     no hint they were the same value, so the model filled exactly one."""
     prompt = build_review_prompt(tmp_path, corpus=[])
     assert "SAME value as evidence.confidence" in prompt
+
+
+# --- Turn-step markers must track how the step is performed TODAY ---------------
+# Regression guard for 2026-08-19. The haystack is assistant text + user text + tool
+# NAMES/INPUTS — never tool RESULTS. So when a step's mechanics move inside a script,
+# only the script's name reaches the haystack and the old marker goes blind. Measured on
+# hal over 12 turn-sessions: the close-out ran in 10, `workspace-refresh` detected 1.
+import re
+
+from orchestrator.agent_review import DEFAULT_TURN_STEPS
+
+_STEPS = dict(DEFAULT_TURN_STEPS)
+
+
+def _detects(step: str, text: str) -> bool:
+    return any(re.search(m, text) for m in _STEPS[step])
+
+
+@pytest.mark.parametrize("invocation", [
+    "bash bin/hal-turn-close",
+    "bin/ace-turn-close --dry-run",
+    "python3 bin/eva-turn-close",
+    "canopy agent turn --slug hal --title x",
+])
+def test_workspace_refresh_detects_the_close_out_script(invocation):
+    """The close-out script IS the workspace refresh — it shells `canopy agent-publish`.
+    Detecting only the inner command penalized agents for adopting the rail."""
+    assert _detects("workspace-refresh", invocation.lower())
+
+
+def test_workspace_refresh_still_detects_the_bare_command():
+    assert _detects("workspace-refresh", "canopy agent-publish skills --repo .")
+    assert _detects("workspace-refresh", "posted to /agents/hal")
+
+
+def test_self_review_detects_the_renamed_step():
+    """hal and ace renamed `self-review` to `agent-turn-review`; eva and echo did not.
+    Both names are the same step and both must count."""
+    assert _detects("self-review", "running hal:agent-turn-review before sending")
+    assert _detects("self-review", "ran eva:self-review")
+
+
+def test_preflight_detects_the_canonical_check_command():
+    assert _detects("preflight", 'bash "$canopy/scripts/canopy-update-check.sh"')
+    assert _detects("preflight", "[preflight] canopy 0.2.413 is current")
+    assert _detects("preflight", "up_to_date 0.2.413".lower())
+
+
+def test_markers_do_not_fire_on_an_unrelated_turn():
+    """Widening must not turn every session into a pass — that would hide real gaps."""
+    noise = "read the readme, ran the tests, opened a pr, merged it"
+    for step in _STEPS:
+        assert not _detects(step, noise), f"{step} false-positived on unrelated text"
