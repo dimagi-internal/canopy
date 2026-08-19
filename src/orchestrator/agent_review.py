@@ -434,12 +434,40 @@ def overclaim_signals(entries: list[dict]) -> list[dict]:
 
 # Expected turn steps for an operating-model agent, with markers that evidence each ran.
 # A step with no marker present in a turn is a candidate `checklist_gap`.
+# A marker set must cover how the step is performed TODAY, not only how it was performed
+# when the marker was written. The haystack is assistant text + user text + tool NAMES and
+# INPUTS — it does NOT include tool RESULTS. So a step whose mechanics moved inside a
+# script becomes invisible: the command string lives in the file, and only the script's
+# own name reaches the haystack.
+#
+# That is not hypothetical. `workspace-refresh` matched only `agent-publish` / `/agents/`,
+# but every agent now performs it via its close-out script (`bin/<slug>-turn-close`, which
+# shells `canopy agent-publish`). Measured on hal over 12 turn-sessions, 2026-08-19:
+# the close-out ran in 10, and the OLD markers detected 1. The metric was reporting an
+# 11/12 failure rate for a step that was running 10/12 — so it penalized the agent for
+# adopting the rail, and the better hal behaved the worse it scored. A finding was already
+# being raised off that false signal, which is the expensive part: a wrong metric doesn't
+# just mislead, it dispatches work.
+#
+# `self-review` had the same shape from vocabulary drift — hal and ace renamed the step to
+# `agent-turn-review` (eva/echo still use the old name), so the marker missed the renamed
+# one entirely: 6 detected -> 8 with the alias.
+#
+# `preflight` was checked the same way and needed NO widening (4/12 both before and after
+# adding `canopy-update-check`/`UP_TO_DATE`/`UPGRADE_AVAILABLE`), which is the control that
+# says this is a marker-staleness bug and not a blanket "loosen everything".
+#
+# Rule of thumb when adding a step: include the CANONICAL command, the SCRIPT that wraps it,
+# and any renamed alias still in fleet use.
 DEFAULT_TURN_STEPS = (
-    ("preflight", (r"preflight", r"readiness")),
-    ("self-review", (r"self-review", r"self review")),
+    ("preflight", (r"preflight", r"readiness", r"canopy-update-check",
+                   r"up_to_date", r"upgrade_available")),
+    # `agent-turn-review`: hal/ace's name for the step eva/echo call `self-review`.
+    ("self-review", (r"self-review", r"self review", r"agent-turn-review")),
     ("skill-self-check", (r"skill.?self.?check", r"did i (create|improve) a skill",
                           r"should be a skill")),
-    ("workspace-refresh", (r"agent-publish", r"/agents/")),
+    # `turn-close`: the close-out script that PERFORMS the publish; `agent turn` packages it.
+    ("workspace-refresh", (r"agent-publish", r"/agents/", r"turn-close", r"agent turn\b")),
 )
 
 # NOTE: no bare "blocked" here — PR status output ("mergeable: MERGEABLE/BLOCKED") and prose
