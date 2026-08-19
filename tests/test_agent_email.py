@@ -1203,3 +1203,116 @@ def test_granted_services_reports_unknown_scopes_as_none_not_empty():
         [{"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail"]}],
         token_keys=["token:echo:echo@dimagi-ai.com", "token:canopy:echo@dimagi-ai.com"])
     assert granted_services(_echo(client="canopy"), runner=runner) is None
+
+
+# --- HTML-only inbound mail + automation headers (2026-08-19) -------------------------
+# Origin: an echo turn was handed a Gmail thread whose ONLY body part was `text/html`
+# (an out-of-office auto-reply: top-level mimeType text/html, no `parts`). The fleet's
+# sanctioned reader decoded it to "" and every agent rendered it as "(no plain-text
+# body)" — so the turn could not satisfy the core rule "display the inbound message
+# verbatim before working on it" without hand-rolling a raw gog + base64 decode.
+
+def _inbound_thread_json_payload(payload):
+    """Thread JSON whose single message carries an arbitrary payload (headers included)."""
+    return json.dumps({"thread": {"messages": [{
+        "id": "msg-html", "snippet": "hi", "payload": payload,
+    }]}})
+
+
+_OOO_HTML = (
+    '<div dir="ltr"><div>Hello,</div><div><br></div><div>I am on personal leave till '
+    'Thursday, August 20.</div><div><p></p>\r\n<p>Thank you for your understanding.</p>\r\n'
+    '<p>Best regards,<br>Sarvesh Tewari</p></div></div>'
+)
+
+
+def _b64(s):
+    import base64
+    return base64.urlsafe_b64encode(s.encode()).decode()
+
+
+def test_read_thread_decodes_html_only_body():
+    """An HTML-only message (no text/plain part anywhere) must still yield readable text."""
+    payload = {
+        "mimeType": "text/html",
+        "headers": [{"name": "From", "value": "Sarvesh <s@dimagi.com>"},
+                    {"name": "Subject", "value": "OOO"}],
+        "body": {"size": 378, "data": _b64(_OOO_HTML)},
+    }
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json_payload(payload)))
+    body = res["messages"][0]["body_text"]
+    assert body, "HTML-only body decoded to empty — the fleet reader goes blind"
+    assert "I am on personal leave till Thursday, August 20." in body
+    assert "Thank you for your understanding." in body
+    assert "Best regards," in body and "Sarvesh Tewari" in body
+    # tags and entities must not leak through
+    assert "<div" not in body and "<p>" not in body and "<br" not in body
+    # <br> is a line break, not a word-joiner
+    assert "Best regards,\nSarvesh Tewari" in body
+
+
+def test_read_thread_html_entities_unescaped():
+    payload = {"mimeType": "text/html", "headers": [],
+               "body": {"data": _b64("<p>Tom &amp; Jerry &lt;3 &quot;quotes&quot;&nbsp;here</p>")}}
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json_payload(payload)))
+    body = res["messages"][0]["body_text"]
+    assert 'Tom & Jerry <3 "quotes" here' in body
+
+
+def test_read_thread_prefers_plain_when_both_parts_present():
+    """multipart/alternative: use text/plain and do NOT also append the html twin."""
+    payload = {"mimeType": "multipart/alternative", "headers": [], "parts": [
+        {"mimeType": "text/plain", "body": {"data": _b64("the plain one")}},
+        {"mimeType": "text/html", "body": {"data": _b64("<p>the html twin</p>")}},
+    ]}
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json_payload(payload)))
+    body = res["messages"][0]["body_text"]
+    assert body == "the plain one"
+    assert "html twin" not in body
+
+
+def test_read_thread_nested_html_only_body():
+    """HTML buried under multipart/mixed with no plain sibling still decodes."""
+    payload = {"mimeType": "multipart/mixed", "headers": [], "parts": [
+        {"mimeType": "multipart/alternative", "parts": [
+            {"mimeType": "text/html", "body": {"data": _b64("<div>nested html</div>")}},
+        ]},
+    ]}
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json_payload(payload)))
+    assert "nested html" in res["messages"][0]["body_text"]
+
+
+def test_read_thread_surfaces_automation_headers():
+    """turn.md mandates classifying auto-generated mail FIRST — from headers the reader
+    already parses. Carry them so agents need no raw-gog side trip."""
+    payload = {"mimeType": "text/html",
+               "headers": [{"name": "From", "value": "Sarvesh <s@dimagi.com>"},
+                           {"name": "Auto-Submitted", "value": "auto-replied"},
+                           {"name": "Precedence", "value": "bulk"},
+                           {"name": "X-Autoreply", "value": "yes"}],
+               "body": {"data": _b64("<p>ooo</p>")}}
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json_payload(payload)))
+    m = res["messages"][0]
+    assert m["auto_submitted"] == "auto-replied"
+    assert m["precedence"] == "bulk"
+    assert m["is_automated"] is True
+
+
+def test_read_thread_human_mail_not_flagged_automated():
+    payload = {"mimeType": "text/plain",
+               "headers": [{"name": "From", "value": "Amie <a@dimagi.com>"}],
+               "body": {"data": _b64("a real human wrote this")}}
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json_payload(payload)))
+    m = res["messages"][0]
+    assert m["is_automated"] is False
+    assert m["auto_submitted"] == "" and m["sender"] == ""
+
+
+def test_read_thread_flags_machine_sender_despite_human_from():
+    """The spoof turn.md warns about: From is a real person, Sender is a machine."""
+    payload = {"mimeType": "text/plain",
+               "headers": [{"name": "From", "value": "Beth <beth@dimagi.com>"},
+                           {"name": "Sender", "value": "calendar-notification@google.com"}],
+               "body": {"data": _b64("invite")}}
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json_payload(payload)))
+    assert res["messages"][0]["is_automated"] is True

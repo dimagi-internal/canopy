@@ -998,18 +998,80 @@ def _attachments_of(msg: dict) -> list[dict]:
     return found
 
 
-def _decode_plain(payload: dict) -> str:
-    """Recursively concatenate the base64url-decoded text/plain parts of a message payload.
-    gog's --json hands back base64 MIME parts (not decoded text) — this is the decode every
-    read wrapper reimplemented (echo's bin/echo_read.py._plain)."""
+def _decode_mime(payload: dict, want: str) -> str:
+    """Recursively concatenate the base64url-decoded parts of `payload` whose mimeType
+    starts with `want`. gog's --json hands back base64 MIME parts (not decoded text) —
+    this is the decode every read wrapper reimplemented (echo's bin/echo_read.py._plain)."""
     import base64
     out = ""
     body = payload.get("body", {}) or {}
-    if payload.get("mimeType", "").startswith("text/plain") and body.get("data"):
+    if payload.get("mimeType", "").startswith(want) and body.get("data"):
         out += base64.urlsafe_b64decode(body["data"] + "===").decode("utf-8", "replace")
     for part in payload.get("parts", []) or []:
-        out += _decode_plain(part)
+        out += _decode_mime(part, want)
     return out
+
+
+# Tags whose boundaries are line breaks once the markup is gone.
+_HTML_BLOCK = r"p|div|br|tr|li|h[1-6]|table|blockquote|section|article|ul|ol|pre"
+
+
+def _html_to_text(html: str) -> str:
+    """Flatten an HTML mail body to readable plain text.
+
+    Not a general-purpose renderer — just enough that an agent (and the human reading
+    its turn) sees the words: script/style dropped, block boundaries become newlines,
+    tags stripped, entities unescaped, runaway blank lines collapsed."""
+    import html as _html
+    t = re.sub(r"(?is)<(script|style)\b.*?</\1>", "", html)
+    t = re.sub(r"(?is)<br\s*/?>", "\n", t)
+    t = re.sub(rf"(?is)</(?:{_HTML_BLOCK})\s*>", "\n", t)
+    t = re.sub(rf"(?is)<(?:{_HTML_BLOCK})\b[^>]*>", "\n", t)
+    t = re.sub(r"(?s)<[^>]+>", "", t)          # every remaining tag
+    t = _html.unescape(t)
+    t = t.replace("\xa0", " ").replace("\r\n", "\n").replace("\r", "\n")
+    t = "\n".join(ln.rstrip() for ln in t.split("\n"))
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
+def _decode_body(payload: dict) -> str:
+    """The message's readable text: text/plain when the sender provided it, else the
+    text/html twin flattened.
+
+    The fallback is load-bearing. A message whose ONLY body part is `text/html` — an
+    out-of-office auto-reply is the canonical case — used to decode to the empty string,
+    so the fleet's sanctioned reader rendered it as "(no plain-text body)" and an agent
+    could not show the human what it had been handed without hand-rolling a raw gog +
+    base64 read. (Origin: 2026-08-19, an echo turn scoped to exactly such a thread.)"""
+    plain = _decode_mime(payload, "text/plain")
+    if plain.strip():
+        return plain
+    return _html_to_text(_decode_mime(payload, "text/html"))
+
+
+# Header evidence that a machine, not a person, generated a message. turn.md requires
+# classifying on these BEFORE deciding an action — and warns about the spoof where a
+# notification sets From: to a real human while Sender:/Auto-Submitted say machine.
+_MACHINE_SENDER = re.compile(
+    r"(noreply|no-reply|donotreply|do-not-reply|bounces?|mailer-daemon|"
+    r"notification|notifications|automated)[@.-]", re.I)
+
+
+def _automation_of(h: dict) -> dict:
+    """Classify a message as machine- or human-generated from its headers alone."""
+    auto_submitted = h.get("auto-submitted", "")
+    precedence = h.get("precedence", "")
+    sender = h.get("sender", "")
+    x_autoreply = h.get("x-autoreply", "")
+    automated = bool(
+        (auto_submitted and auto_submitted.strip().lower() != "no")
+        or precedence.strip().lower() in {"bulk", "list", "junk", "auto_reply"}
+        or (x_autoreply and x_autoreply.strip().lower() not in {"", "no"})
+        or (sender and _MACHINE_SENDER.search(sender))
+    )
+    return {"auto_submitted": auto_submitted, "precedence": precedence,
+            "sender": sender, "is_automated": automated}
 
 
 def _trim_quoted_tail(text: str) -> str:
@@ -1057,12 +1119,17 @@ def read_thread(
     """Read a Gmail THREAD as the agent → a normalized dict the fleet can rely on:
       {thread_id,
        messages: [{message_id, from, to, cc, subject, date, snippet, body_text,
-                   attachments: [{attachment_id, filename, mime_type, size}]}],
+                   attachments: [{attachment_id, filename, mime_type, size}],
+                   auto_submitted, precedence, sender, is_automated}],
        reply_all: {to, cc, reply_to_message_id}}
 
-    `body_text` is the decoded plain-text (base64 MIME parts decoded, quoted reply tail
-    trimmed); `reply_all` is the ready recipient set (latest non-self sender = To, the rest
-    = Cc, minus self). Together those are the whole reason agents hand-rolled read wrappers
+    `body_text` is the message's readable text (base64 MIME parts decoded, quoted reply
+    tail trimmed) — text/plain when present, otherwise the text/html twin flattened, so an
+    HTML-only message (a classic out-of-office auto-reply) is never returned blank.
+    `is_automated` answers turn.md's classify-the-machine-mail-FIRST step from the
+    `Auto-Submitted` / `Precedence` / `Sender` headers, which are carried alongside it so
+    an agent needn't drop to raw gog to triage. `reply_all` is the ready recipient set
+    (latest non-self sender = To, the rest = Cc, minus self). Together those are the whole reason agents hand-rolled read wrappers
     (echo's bin/echo_read.py) — folded into the engine so they don't. `gog gmail read` is a
     THREAD reader and 404s on a bare message id (the bug that bit echo live — see
     derive_reply_all). Uses --json because the default text view omits Cc and attachment ids.
@@ -1094,8 +1161,9 @@ def read_thread(
             "subject": h.get("subject", ""),
             "date": h.get("date", ""),
             "snippet": m.get("snippet", ""),
-            "body_text": _trim_quoted_tail(_decode_plain(m.get("payload", {}) or {})),
+            "body_text": _trim_quoted_tail(_decode_body(m.get("payload", {}) or {})),
             "attachments": _attachments_of(m),
+            **_automation_of(h),
         })
     return {
         "thread_id": thread_id,
@@ -1503,8 +1571,10 @@ def email_archive(repo, agent, account, client, thread_ids):
 @click.argument("thread_id")
 def email_read(repo, agent, account, client, thread_id):
     """Read a Gmail THREAD as the agent → normalized JSON: per message the headers, the
-    decoded plain-text `body_text` (quoted tail trimmed), and each attachment's id; plus a
-    thread-level `reply_all` recipient set (To/Cc/reply_to_message_id). Pass a THREAD id
+    decoded `body_text` (quoted tail trimmed; text/plain, falling back to the flattened
+    text/html twin so an HTML-only message is never blank), an `is_automated` flag with the
+    `Auto-Submitted`/`Precedence`/`Sender` headers behind it, and each attachment's id; plus
+    a thread-level `reply_all` recipient set (To/Cc/reply_to_message_id). Pass a THREAD id
     (gog 404s on a bare message id). Attachment ids feed `fetch-attachment`. The fleet's
     sanctioned inbound read path — replaces per-agent gog read + base64-decode wrappers."""
     try:
