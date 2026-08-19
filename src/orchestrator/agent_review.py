@@ -445,6 +445,53 @@ def overclaim_signals(entries: list[dict]) -> list[dict]:
     return out
 
 
+# Is a canopy-web publish OWED on this turn? (the conditional gate on `workspace-refresh`)
+#
+# SCOPE MATTERS, and getting it wrong recreates the bug. Read each half from the party whose
+# words actually settle it:
+#   * "the human asked"  -> the HUMAN's messages only. The agent's own narration is not
+#     evidence of what was asked, and it is actively misleading: eva's 2026-08-19 closeout
+#     said "nothing published to canopy-web (not asked)" — a correct report of correctly
+#     skipping the step — and a first cut of this check read that as the step being owed.
+#     A negation-blind grep over the agent's prose is how the false gap comes back.
+#   * "auto mode" -> either party. turn.md requires the agent to state the mode in its turn
+#     opening, so its own text is the canonical carrier; a human may also set it in-prompt.
+# Tool inputs are excluded from both: they are mechanics, not intent, and they are where a
+# session that merely INVESTIGATES the step picks up its whole vocabulary (the eva session
+# that re-validated this bug scored a HIT purely off its own greps for "agent-publish").
+#
+# Deliberately conservative: a missed trigger costs one unflagged skipped publish, while a
+# false trigger regenerates the false-gap storm this whole mechanism exists to kill.
+_ASKED_TO_PUBLISH = re.compile(
+    r"\bpublish\w*\b[^.\n]{0,40}\b(?:board|canopy-web|/agents/)\b"
+    r"|\b(?:board|canopy-web)\b[^.\n]{0,40}\bpublish\w*\b"
+    r"|\bshare\b[^.\n]{0,30}\b(?:this turn|the turn|this session|the session|transcript)\b",
+    re.I,
+)
+_AUTO_MODE = re.compile(
+    r"\bauto[- ]mode\b|\brunning in auto\b|\bturn mode:?\s*auto\b", re.I
+)
+# A manual turn frequently NAMES auto mode in order to say it is not in it ("not running in
+# auto mode", "manual mode, not auto"). The negation sits a couple of words ahead of the
+# match, so a lookbehind cannot reach it — check a short preceding window instead.
+_NEGATION_NEAR = re.compile(r"\b(?:not|never|isn't|wasn't|non|no)\b[^.\n]{0,12}$", re.I)
+
+
+def _auto_mode(text: str) -> bool:
+    """True iff `text` asserts THIS turn is running in auto mode (negations excluded)."""
+    return any(
+        not _NEGATION_NEAR.search(text[max(0, m.start() - 24):m.start()])
+        for m in _AUTO_MODE.finditer(text)
+    )
+
+
+def _owes_publish(user_text: str, asst_text: str) -> bool:
+    """True iff turn.md makes a canopy-web publish an expected step on this turn."""
+    if _ASKED_TO_PUBLISH.search(user_text):
+        return True
+    return _auto_mode(user_text) or _auto_mode(asst_text)
+
+
 # Expected turn steps for an operating-model agent, with markers that evidence each ran.
 # A step with no marker present in a turn is a candidate `checklist_gap`.
 # A marker set must cover how the step is performed TODAY, not only how it was performed
@@ -472,6 +519,32 @@ def overclaim_signals(entries: list[dict]) -> list[dict]:
 #
 # Rule of thumb when adding a step: include the CANONICAL command, the SCRIPT that wraps it,
 # and any renamed alias still in fleet use.
+#
+# ## Widening the markers was only half the `workspace-refresh` bug
+#
+# The other half is that the step is NOT UNCONDITIONAL, and grading it as if it were made
+# every compliant agent look like it was failing. `agent-core/turn.md` § Step 4 is explicit:
+#
+#     Publishing to canopy-web is MANUAL — none of it is an automatic close step. […]
+#     Do any of these ONLY when the human explicitly asks to publish/share.
+#
+# So on an ordinary manual turn, NOT publishing is the documented correct behavior, and the
+# scan was counting it as a gap every time. Measured on eva over the 26h to 2026-08-19: 8 of
+# the 10 graded turn-sessions "missing" it — i.e. the metric's headline number was mostly
+# just eva following the procedure. That false signal was then dispatched at eva as a fix
+# order (add `git fetch origin main` to `bin/eva-preflight`) — which could not have moved the
+# number, because the label reads like a git refresh and the markers are all canopy-web
+# publish. Same lesson as the paragraph above, one rung further along: a wrong metric doesn't
+# just mislead, it dispatches work — and here it dispatched an agent to build the wrong fix.
+#
+# The step is therefore CONDITIONAL: expected only on a turn that actually owed a publish.
+# Two ways to owe one, both from turn.md:
+#   1. `auto` mode — there the turn record IS an automatic close step (Turn mode §5), and the
+#      agent is required to state the mode in its opening, so its own text carries the signal.
+#   2. the human asked to publish/share this turn.
+#
+# A trigger must describe INTENT, never execution — a trigger that overlapped the markers
+# would fire only when the step already ran, making the gap unreachable and the check a no-op.
 DEFAULT_TURN_STEPS = (
     ("preflight", (r"preflight", r"readiness", r"canopy-update-check",
                    r"up_to_date", r"upgrade_available")),
@@ -479,8 +552,11 @@ DEFAULT_TURN_STEPS = (
     ("self-review", (r"self-review", r"self review", r"agent-turn-review")),
     ("skill-self-check", (r"skill.?self.?check", r"did i (create|improve) a skill",
                           r"should be a skill")),
-    # `turn-close`: the close-out script that PERFORMS the publish; `agent turn` packages it.
-    ("workspace-refresh", (r"agent-publish", r"/agents/", r"turn-close", r"agent turn\b")),
+    # CONDITIONAL (3rd element) — see above. `turn-close`: the close-out script that PERFORMS
+    # the publish; `agent turn` packages it.
+    ("workspace-refresh",
+     (r"agent-publish", r"/agents/", r"turn-close", r"agent turn\b"),
+     _owes_publish),
 )
 
 # NOTE: no bare "blocked" here — PR status output ("mergeable: MERGEABLE/BLOCKED") and prose
@@ -713,10 +789,19 @@ def friction_signals(
         f"{c.get('name','')} {json.dumps(c.get('input',{}))}" for c in calls
     ).lower()
     is_turn = bool(_TURN_MARKERS.search(haystack))
-    missing_steps = [
-        label for label, markers in steps
-        if not any(re.search(m, haystack) for m in markers)
-    ] if is_turn else []
+    missing_steps = []
+    if is_turn:
+        for step in steps:
+            label, markers = step[0], step[1]
+            # Optional 3rd element: a CONDITIONAL step's predicate over (user, assistant)
+            # text. Absent, the step is unconditional. It reads INTENT, never execution —
+            # a predicate that overlapped the markers would fire only once the step had
+            # already run, making the gap unreachable and the whole check a no-op.
+            owed = step[2] if len(step) > 2 else None
+            if owed is not None and not owed(user_text.lower(), asst_text):
+                continue        # step wasn't owed on this turn — silence, not a gap
+            if not any(re.search(m, haystack) for m in markers):
+                missing_steps.append(label)
 
     return {
         "session_id": transcript_path.stem,

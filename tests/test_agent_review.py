@@ -49,13 +49,102 @@ def test_friction_signals_detects_failures_blocks_retries_auth(tmp_path):
 
 def test_friction_signals_flags_checklist_gaps(tmp_path):
     t = tmp_path / "turn.jsonl"
-    # A turn (it loaded skills/turn) that does none of the expected steps -> all gaps.
+    # A turn (it loaded skills/turn) that does none of the expected UNCONDITIONAL steps.
     _write_transcript(t, str(tmp_path), [
         ("Read", {"file_path": "/repo/skills/turn/SKILL.md"}, "Hal's turn loop..."),
         ("Read", {"file_path": "/x"}, "ok"),
     ])
     gaps = set(friction_signals(t)["checklist_gaps"])
-    assert {"preflight", "self-review", "skill-self-check", "workspace-refresh"} <= gaps
+    assert {"preflight", "self-review", "skill-self-check"} <= gaps
+    # `workspace-refresh` is CONDITIONAL: nothing here asked for a publish and the turn is
+    # not in auto mode, so turn.md's "publishing is MANUAL" makes not-publishing correct.
+    assert "workspace-refresh" not in gaps
+
+
+def test_manual_turn_not_penalized_for_skipping_publish(tmp_path):
+    """The regression that dispatched work: a compliant manual turn scored as failing.
+
+    turn.md Step 4 — "Publishing to canopy-web is MANUAL ... ONLY when the human explicitly
+    asks". 8 of eva's 10 graded turns tripped this in the 26h to 2026-08-19, and the false
+    signal was dispatched at eva as a fix order.
+    """
+    t = tmp_path / "turn.jsonl"
+    _write_transcript(t, str(tmp_path), [
+        ("Read", {"file_path": "/repo/skills/turn/SKILL.md"}, "eva's turn loop"),
+        ("Bash", {"command": "bin/eva-preflight"}, "ready"),
+        ("Bash", {"command": "echo self-review + skill-self-check done"}, "ok"),
+    ])
+    assert "workspace-refresh" not in friction_signals(t)["checklist_gaps"]
+
+
+def test_auto_mode_turn_owes_a_turn_record(tmp_path):
+    """Auto mode is the real signal the conditional preserves.
+
+    turn.md Turn mode §5 makes `canopy agent turn` an AUTOMATIC close step in auto mode —
+    it is the after-the-fact audit trail for sends that went out unattended. Skipping it
+    there is a genuine gap.
+    """
+    t = tmp_path / "turn.jsonl"
+    lines = []
+    t.write_text("")
+    _write_transcript(t, str(tmp_path), [
+        ("Read", {"file_path": "/repo/skills/turn/SKILL.md"}, "turn loop"),
+    ])
+    # The agent states the mode in its opening, as turn.md requires.
+    with open(t, "a") as fh:
+        fh.write(json.dumps({
+            "type": "assistant", "cwd": str(tmp_path),
+            "message": {"content": [
+                {"type": "text", "text": "Running in auto mode for this turn."},
+            ]},
+        }) + "\n")
+    assert "workspace-refresh" in friction_signals(t)["checklist_gaps"]
+
+
+def test_human_asking_to_publish_makes_it_expected(tmp_path):
+    t = tmp_path / "turn.jsonl"
+    _write_transcript(t, str(tmp_path), [
+        ("Read", {"file_path": "/repo/skills/turn/SKILL.md"}, "turn loop"),
+    ])
+    with open(t, "a") as fh:
+        # a genuine human message: message.content is a plain str, not a block list
+        fh.write(json.dumps({
+            "type": "user", "cwd": str(tmp_path),
+            "message": {"content": "do a turn, then publish it to the board please"},
+        }) + "\n")
+    assert "workspace-refresh" in friction_signals(t)["checklist_gaps"]
+
+
+def test_agent_saying_it_did_not_publish_is_not_a_trigger(tmp_path):
+    """The false positive the first cut of this check shipped with.
+
+    eva's 2026-08-19 closeout said "nothing published to canopy-web (not asked)" — a correct
+    report of correctly SKIPPING the step — and a negation-blind grep over the agent's own
+    prose read it as the step being owed. "The human asked" is settled by the human's words.
+    """
+    t = tmp_path / "turn.jsonl"
+    _write_transcript(t, str(tmp_path), [
+        ("Read", {"file_path": "/repo/skills/turn/SKILL.md"}, "turn loop"),
+    ])
+    with open(t, "a") as fh:
+        fh.write(json.dumps({
+            "type": "assistant", "cwd": str(tmp_path),
+            "message": {"content": [{"type": "text", "text": (
+                "Fix shipped and surfaced to Beth with links. Nothing published to "
+                "canopy-web (not asked). Not running in auto mode.")}]},
+        }) + "\n")
+    assert "workspace-refresh" not in friction_signals(t)["checklist_gaps"]
+
+
+def test_investigating_the_publish_step_does_not_trigger_it(tmp_path):
+    """Triggers read intent, not tool inputs — otherwise a session that merely greps for
+    `agent-publish` triggers the step and then satisfies it with the same string."""
+    t = tmp_path / "turn.jsonl"
+    _write_transcript(t, str(tmp_path), [
+        ("Read", {"file_path": "/repo/skills/turn/SKILL.md"}, "turn loop"),
+        ("Bash", {"command": "grep -rn 'agent-publish|turn-close' src/"}, "3 hits"),
+    ])
+    assert "workspace-refresh" not in friction_signals(t)["checklist_gaps"]
 
 
 def test_non_turn_session_not_graded_against_turn_steps(tmp_path):
@@ -76,9 +165,16 @@ def test_friction_signals_credits_steps_that_ran(tmp_path):
         ("Bash", {"command": "python3 bin/echo_preflight.py"}, "ready"),
         ("Bash", {"command": "canopy agent-publish skills"}, "ok"),
     ])
+    with open(t, "a") as fh:
+        # a genuine human message: message.content is a plain str, not a block list
+        fh.write(json.dumps({
+            "type": "user", "cwd": str(tmp_path),
+            "message": {"content": "do a turn and publish to the board"},
+        }) + "\n")
     gaps = set(friction_signals(t)["checklist_gaps"])
     assert "preflight" not in gaps          # preflight marker present
-    assert "workspace-refresh" not in gaps  # agent-publish marker present
+    # asked for -> graded; `canopy agent-publish` ran -> credited, not a gap
+    assert "workspace-refresh" not in gaps
 
 
 def test_clean_turn_has_no_friction(tmp_path):
@@ -1636,7 +1732,9 @@ import re
 
 from orchestrator.agent_review import DEFAULT_TURN_STEPS
 
-_STEPS = dict(DEFAULT_TURN_STEPS)
+# label -> markers. A step may carry a 3rd element (conditional triggers); these
+# marker tests are about detection only, so drop everything past the marker tuple.
+_STEPS = {step[0]: step[1] for step in DEFAULT_TURN_STEPS}
 
 
 def _detects(step: str, text: str) -> bool:
