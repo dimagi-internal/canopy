@@ -373,16 +373,51 @@ def resolve_task_id(client, task_id):
 @click.option("--notes", default=None)
 @click.option("--score", default=None, help="Self-grade captured at completion — e.g. A-, B+, 4/5.")
 @click.option("--review", default=None, help="One-line self-review captured when the task was done.")
-def agent_set(slug, task_id, **fields):
-    """Patch a task (store rationale/source/plan/status/score/review/…).
+@click.option("--links", default=None,
+              help='REPLACE the card\'s links: "label|url, label2|url2" (bare urls OK). '
+                   "Pass \"\" to clear them. To add one without restating the set, use "
+                   "--append-link.")
+@click.option("--append-link", default=None,
+              help='ADD one link, keeping the existing ones: "label|url". The common case — '
+                   "a turn attaches the artifact it just produced. A url already on the card "
+                   "is not duplicated.")
+def agent_set(slug, task_id, links, append_link, **fields):
+    """Patch a task (store rationale/source/plan/status/score/review/links/…).
 
     Score a task WHEN you mark it done (--status done --score --review) so a manager
     sync reads the completion grade instead of re-grading later."""
+    if links is not None and append_link is not None:
+        raise click.ClickException("pass --links (replace) or --append-link (add), not both")
     try:
         client = _client(slug)
-        _emit(client.patch_task(resolve_task_id(client, task_id), **fields))
+        task_id = resolve_task_id(client, task_id)
+        if links is not None:
+            fields["links"] = parse_task_links(links)
+        elif append_link is not None:
+            fields["links"] = _appended_links(client, task_id, append_link)
+        _emit(client.patch_task(task_id, **fields))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
+
+
+def _appended_links(client, task_id, spec):
+    """Existing links + the parsed `spec`, de-duplicated on url (first label wins).
+
+    Read-modify-write: the board's PATCH replaces `links` wholesale, so appending has
+    to start from what is already on the card. Without this, the only way to add one
+    link is to restate every link the card already had.
+    """
+    current = []
+    for task in client.list_tasks():
+        if task.get("id") == task_id:
+            current = list(task.get("links") or [])
+            break
+    seen = {str(l.get("url") or "").strip() for l in current}
+    for link in parse_task_links(spec):
+        if link["url"] not in seen:
+            current.append(link)
+            seen.add(link["url"])
+    return current
 
 
 def normalize_task_status(s):
