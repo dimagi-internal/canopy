@@ -410,3 +410,93 @@ def test_an_old_style_bare_stamp_is_still_recognised():
     assert stamp_dispatched(old, sender="ada") == old
     assert dispatched_by(old) == ""
     assert dispatch_outcomes([human(old)])["dispatched_by"] == ""
+
+
+# ── the human's reply survives the stamp ─────────────────────────────────────────────────────
+# A board card's brief travels to the working agent with the decider's reply appended
+# (canopy-web `_with_reply`). The marker is all-or-nothing per turn, so stamping the brief threw
+# the reply away with it — and the reply is the highest-value human signal on the board: a person
+# overruling, narrowing, or redirecting an agent's proposal, which is what this lens is FOR.
+
+BOILERPLATE = (
+    "That reply is the authority on this card and OVERRIDES the brief above wherever the two "
+    "disagree. If it redirects the work, narrows it, declines it, or asks a question back, do "
+    "THAT — and report on the item instead of executing the original proposal."
+)
+
+
+def carded(brief_text, reply):
+    """The exact shape canopy-web's `_with_reply` emits over a stamped brief."""
+    from orchestrator.agent_dispatch import stamp_dispatched
+
+    body = stamp_dispatched(brief_text, sender="ada")
+    return (f"{body}\n\n---\nANSWERED BY jonathan: "
+            f"<!-- canopy:human-reply -->{reply}<!-- /canopy:human-reply -->\n\n{BOILERPLATE}")
+
+
+def test_the_deciders_reply_is_still_mined():
+    from orchestrator.agent_review import human_corrections
+
+    said = "No, stop. Send it to eva instead, and never merge without my sign-off."
+    got = human_corrections([human(carded("FINDING: hal drops a step.", said))])
+    assert len(got) == 1
+    assert got[0]["quote"] == said, "the mined quote must be the human's words and nothing else"
+    assert "safety_override" in got[0]["kinds"]
+
+
+def test_the_brief_around_it_is_still_discarded():
+    """The reply survives; everything machine-authored around it must not come back with it."""
+    from orchestrator.agent_review import _human_text
+
+    text = _human_text(carded("STOP. NEVER ship without review — that's wrong.", "sounds right"))
+    assert text == "sounds right"
+    assert "NEVER ship" not in text
+
+
+def test_canopy_webs_own_boilerplate_is_not_mined_as_the_human():
+    """The sentence appended AFTER the reply says OVERRIDES and 'instead of' — it scores as a
+    forceful correction entirely on its own. This is why the reply is delimited rather than
+    taken as 'everything after the marker'."""
+    from orchestrator.agent_review import human_corrections
+
+    got = human_corrections([human(carded("FINDING: x", "ok go ahead"))])
+    assert got == [], f"boilerplate leaked into the corrections lens: {got}"
+
+
+def test_a_stamped_brief_with_no_reply_is_still_dropped_whole():
+    """The original guarantee. Adding reply-preservation must not re-open the hole it sits in."""
+    from orchestrator.agent_dispatch import stamp_dispatched
+    from orchestrator.agent_review import human_corrections
+
+    shouty = stamp_dispatched("STOP. Never send that without approval.", sender="ada")
+    assert human_corrections([human(shouty)]) == []
+
+
+def test_an_empty_reply_region_does_not_resurrect_the_brief():
+    from orchestrator.agent_review import _human_text
+
+    assert _human_text(carded("STOP. That's wrong.", "   ")) == ""
+
+
+def test_several_delimited_replies_are_all_kept():
+    """Keeping only the first would silently drop a correction."""
+    from orchestrator.agent_dispatch import human_reply_in
+
+    text = ("brief <!-- canopy:human-reply -->first<!-- /canopy:human-reply --> mid "
+            "<!-- canopy:human-reply -->second<!-- /canopy:human-reply -->")
+    assert human_reply_in(text) == "first\nsecond"
+
+
+def test_a_carded_session_is_still_graded_as_dispatched():
+    """A human replying on the card does not make the session human-started — a machine still
+    began it, and the dispatcher still owns the outcome."""
+    out = dispatch_outcomes([human(carded("FINDING: x", "go ahead")), assistant("working")])
+    assert out is not None
+    assert out["dispatched_by"] == "ada"
+    assert out["verdict"] == "ran_unattended"
+
+
+def test_the_brief_excerpt_reads_cleanly_with_a_reply_attached():
+    out = dispatch_outcomes([human(carded("FINDING: the thing is broken.", "go ahead"))])
+    assert out["brief_excerpt"].startswith("FINDING: the thing is broken.")
+    assert "canopy:human-reply" not in out["brief_excerpt"]

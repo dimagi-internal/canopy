@@ -171,8 +171,10 @@ _HARNESS_AUTHORED_PREFIXES = (
 # silently un-suppresses every brief. One definition, one regex, one import.
 from orchestrator.agent_dispatch import (  # noqa: E402
     DISPATCH_MARKER,
+    HUMAN_REPLY_RX,
     SENDER_MARKER_RX,
     dispatched_by,
+    human_reply_in,
 )
 
 
@@ -187,12 +189,22 @@ def _is_harness_authored_entry(entry: dict) -> bool:
 
 
 def _human_text(raw: str) -> str:
-    """What the human actually typed, with harness-injected blocks removed."""
+    """What the human actually typed, with harness-injected blocks removed.
+
+    A dispatched turn is dropped whole — EXCEPT for any region canopy-web delimited as the
+    human's own words. A board card's brief travels to the working agent with the decider's
+    reply appended to it, so before this the stamp that stopped the brief being mined threw the
+    reply away with it. That reply is the highest-value human signal on the board: it is a person
+    overruling, narrowing, or redirecting an agent's proposal, which is what this lens is for.
+    Everything around it still goes — the brief, the provenance line, and canopy-web's own
+    trailing boilerplate, which says OVERRIDES and "instead of" and would score as a forceful
+    correction entirely on its own.
+    """
     s = _HARNESS_BLOCK_RX.sub(" ", raw or "").strip()
     if s.startswith(_HARNESS_AUTHORED_PREFIXES):
         return ""
     if DISPATCH_MARKER in s:
-        return ""
+        return human_reply_in(s)
     return s
 
 
@@ -364,7 +376,8 @@ def _human_text_without_marker(raw: str) -> str:
     its whole job in the corrections lens), so quoting the brief needs the marker stripped
     instead of the turn dropped."""
     stripped = _HARNESS_BLOCK_RX.sub(" ", raw or "").replace(DISPATCH_MARKER, "")
-    return SENDER_MARKER_RX.sub("", stripped).strip()
+    stripped = SENDER_MARKER_RX.sub("", stripped)
+    return HUMAN_REPLY_RX.sub(lambda m: m.group(1), stripped).strip()
 
 
 # Over-claim mining — a completion verb in the agent's OWN text ("verified", "shipped", "done", …)
