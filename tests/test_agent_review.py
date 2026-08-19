@@ -1598,3 +1598,30 @@ def test_five_findings_with_bad_confidence_all_survive():
 
 
 _CONF_LEVELS_T = {"high", "medium", "low"}
+
+
+def test_both_confidence_fields_are_synced_to_the_resolved_level():
+    """The gate reads evidence.confidence; the findings TABLE reads finding.confidence.
+    Nothing normalized the latter, so a repaired finding could still print the raw label
+    (or 'banana'). One resolved level, written to both."""
+    f = {"title": "t", "confidence": "banana",
+         "evidence": dict(_GOOD_EV, confidence="very high")}
+    qualified, dropped = qualify_findings([f])
+    assert dropped == []
+    assert qualified[0]["evidence"]["confidence"] == "high"
+    assert qualified[0]["confidence"] == "high", "the displayed label must match the gate's"
+
+
+def test_sibling_fallback_also_normalizes_the_displayed_label():
+    ev = dict(_GOOD_EV); del ev["confidence"]
+    f = {"title": "t", "confidence": "VERY HIGH", "evidence": ev}
+    qualified, _ = qualify_findings([f])
+    assert qualified[0]["confidence"] == "high"
+    assert qualified[0]["evidence"]["confidence"] == "high"
+
+
+def test_prompt_says_the_two_confidence_fields_are_one_judgment(tmp_path):
+    """Root cause of the 2026-08-18 drops: the prompt asked for `confidence` twice with
+    no hint they were the same value, so the model filled exactly one."""
+    prompt = build_review_prompt(tmp_path, corpus=[])
+    assert "SAME value as evidence.confidence" in prompt
