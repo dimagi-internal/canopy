@@ -360,16 +360,19 @@ def resolve_task_id(client, task_id):
 @click.option("--task-id", required=True, metavar="ID_OR_EXT_ID",
               help="The board's T<N> ext_id (as shown on the card) or the numeric id.")
 @click.option("--title", default=None,
-              help="Rewrite the card's headline. Use when the title states something that turned "
-                   "out to be WRONG — a corrected note under a false headline still reads as false "
-                   "at a glance, because the title is all the board shows.")
+              help="Rewrite the card's headline (max 300 chars). Use when the title states "
+                   "something that turned out to be WRONG — a corrected note under a false "
+                   "headline still reads as false at a glance, because the title is all the "
+                   "board shows.")
 @click.option("--rationale", default=None)
 @click.option("--source-url", default=None)
 @click.option("--plan", default=None)
 @click.option("--status", default=None)
-@click.option("--assigned", default=None)
-@click.option("--next-action", default=None)
-@click.option("--owner", default=None)
+@click.option("--assigned", default=None, help="Who the next action waits on. Max 120 chars.")
+@click.option("--next-action", default=None,
+              help="The single concrete next step, verb-first. Max 300 chars — over-length "
+                   "is REJECTED, never truncated.")
+@click.option("--owner", default=None, help="The human who owns the outcome. Max 120 chars.")
 @click.option("--notes", default=None)
 @click.option("--score", default=None, help="Self-grade captured at completion — e.g. A-, B+, 4/5.")
 @click.option("--review", default=None, help="One-line self-review captured when the task was done.")
@@ -388,6 +391,11 @@ def agent_set(slug, task_id, links, append_link, **fields):
     sync reads the completion grade instead of re-grading later."""
     if links is not None and append_link is not None:
         raise click.ClickException("pass --links (replace) or --append-link (add), not both")
+    # Same caps, same rejection, as `agent add` — checked before the network call so the
+    # caller gets the field name and the overage instead of the server's 422.
+    for name, value in list(fields.items()):
+        if value is not None and name in TASK_FIELD_LIMITS:
+            fields[name] = check_task_field(name, value)
     try:
         client = _client(slug)
         task_id = resolve_task_id(client, task_id)
@@ -437,8 +445,86 @@ def normalize_task_status(s):
     return "suggested"
 
 
+# The board's per-field caps, MIRRORING canopy-web `apps/agents/schemas.py`
+# (AgentTaskIn / AgentTaskPatch). The server is authoritative; this table exists so the
+# CLI can reject an over-length field with a message naming the knob, instead of either
+# discarding the tail locally or relaying a `string_too_long` 422 the caller must decode.
+# Keep it in sync when the schema moves.
+TASK_FIELD_LIMITS = {
+    "ext_id": 64,
+    "title": 300,
+    "next_action": 300,
+    "owner": 120,
+    "assigned": 120,
+    "confidence": 10,
+    "score": 8,
+    "source_url": 500,
+    "source": 100,
+    "link label": 200,
+    "link url": 500,
+}
+
+# Which CLI knob writes each field, so the error names what to shorten.
+_TASK_FIELD_OPTION = {
+    "ext_id": "--ext-id",
+    "title": "--title",
+    "next_action": "--next-action",
+    "owner": "--owner",
+    "assigned": "--assigned",
+    "confidence": "--confidence",
+    "score": "--score",
+    "source_url": "--source-url",
+    "link label": "--links / --append-link (the label before the `|`)",
+    "link url": "--links / --append-link (the url after the `|`)",
+}
+
+
+def check_task_field(name, value):
+    """Return `value` stripped, or raise `ClickException` if it exceeds the board's cap.
+
+    Reject rather than truncate. A silently-shortened `next_action` still reads as
+    complete on the kanban card — no ellipsis, nothing errored — so the agent that wrote
+    it believes the whole instruction is recorded and the next turn acts on one whose
+    final clause (often the actual constraint) is gone. Being told to shorten costs one
+    retry; losing the tail of an instruction is undetectable and permanent.
+
+    This is also what makes the writers agree: `agent add` used to truncate here while
+    `agent set` passed the text through to a 422 — same cap, opposite failure modes
+    (dimagi-internal/canopy#510).
+    """
+    limit = TASK_FIELD_LIMITS.get(name)
+    text = (value or "").strip()
+    if limit is None or len(text) <= limit:
+        return text
+    option = _TASK_FIELD_OPTION.get(name, f"--{name.replace('_', '-')}")
+    raise click.ClickException(
+        f"{option} is {len(text)} characters; the board caps {name} at {limit}. "
+        f"Cut {len(text) - limit}. Nothing was written — the field was rejected, "
+        f"not truncated."
+    )
+
+
+def preview_for_card(text, limit):
+    """First `limit` chars of `text`, explicitly marked when it was cut.
+
+    Unlike the capped fields above, shortening is CORRECT here: the card's notes are a
+    preview of a dispatch brief the agent receives in full through the turn payload.
+    What was wrong was cutting it invisibly — an unmarked truncation reads as the whole
+    brief. The marker is the difference between "a short brief" and "a brief whose tail
+    is missing".
+    """
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n\n[… truncated — the agent received the full brief]"
+
+
 def parse_task_links(cell):
-    """`"label|url, label2|url2"` → [{label, url}, …]; bare http urls get label "link"."""
+    """`"label|url, label2|url2"` → [{label, url}, …]; bare http urls get label "link".
+
+    Over-length parts raise (see `check_task_field`): a URL cut to fit is a dead link,
+    which is a worse outcome than being asked to shorten it.
+    """
     out = []
     for part in (cell or "").split(","):
         part = part.strip()
@@ -446,9 +532,10 @@ def parse_task_links(cell):
             continue
         if "|" in part:
             label, url = part.split("|", 1)
-            out.append({"label": label.strip()[:200], "url": url.strip()[:500]})
+            out.append({"label": check_task_field("link label", label),
+                        "url": check_task_field("link url", url)})
         elif part.startswith("http"):
-            out.append({"label": "link", "url": part[:500]})
+            out.append({"label": "link", "url": check_task_field("link url", part)})
     return out
 
 
@@ -466,13 +553,18 @@ def next_task_ext_id(tasks):
 
 @agent.command("add")
 @click.option("--slug", required=True)
-@click.option("--title", required=True)
-@click.option("--ext-id", default=None, help="Stable id (default: next free T<N> from the board).")
-@click.option("--next-action", default="", help="The single concrete next step, verb-first.")
+@click.option("--title", required=True, help="The card's one-line headline (max 300 chars).")
+@click.option("--ext-id", default=None,
+              help="Stable id (default: next free T<N> from the board). Max 64 chars.")
+@click.option("--next-action", default="",
+              help="The single concrete next step, verb-first. Max 300 chars — over-length "
+                   "is REJECTED, never truncated, so a card never shows a half instruction.")
 @click.option("--status", default="suggested",
               help="suggested (default) / in_progress / done / declined — human synonyms accepted.")
-@click.option("--owner", default="", help="The human stakeholder who owns the outcome — never the agent.")
-@click.option("--assigned", default="", help="Who the next action waits on (the agent, or a person).")
+@click.option("--owner", default="",
+              help="The human stakeholder who owns the outcome — never the agent. Max 120 chars.")
+@click.option("--assigned", default="",
+              help="Who the next action waits on (the agent, or a person). Max 120 chars.")
 @click.option("--confidence", default="", help="high / low, for suggested items.")
 @click.option("--due", default=None, help="YYYY-MM-DD.")
 @click.option("--links", default="", help='"label|url, label2|url2" (bare urls OK).')
@@ -483,18 +575,25 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
 
     conf = confidence.strip().lower()
     due = (due or "").strip()
+    # Validate before opening a client: an over-length field should cost no round-trip.
+    title = check_task_field("title", title)
+    next_action = check_task_field("next_action", next_action)
+    owner = check_task_field("owner", owner)
+    assigned = check_task_field("assigned", assigned)
+    ext_id = check_task_field("ext_id", ext_id) if ext_id else ext_id
+    task_links = parse_task_links(links)
     try:
         client = _client(slug)
         task = {
-            "ext_id": (ext_id or next_task_ext_id(client.list_tasks()))[:64],
-            "title": title.strip()[:300],
-            "next_action": next_action.strip()[:300],
+            "ext_id": ext_id or next_task_ext_id(client.list_tasks()),
+            "title": title,
+            "next_action": next_action,
             "status": normalize_task_status(status),
-            "owner": owner.strip()[:120],
-            "assigned": assigned.strip()[:120],
+            "owner": owner,
+            "assigned": assigned,
             "confidence": conf if conf in ("high", "low") else "",
             "due": due if re.match(r"^\d{4}-\d{2}-\d{2}$", due) else None,
-            "links": parse_task_links(links),
+            "links": task_links,
             "notes": notes.strip(),
             "source": "task-tracker",
         }
@@ -634,7 +733,8 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
 
 @agent.command("dispatch")
 @click.option("--slug", required=True, help="Agent to send (ace|ada|echo|eva|hal).")
-@click.option("--title", default="", help="Board-task title — what the work IS, one line.")
+@click.option("--title", default="",
+              help="Board-task title — what the work IS, one line. Max 300 chars.")
 @click.option("--prompt", default="", help="The brief the agent receives. Omit for a board drain.")
 @click.option("--prompt-file", type=click.Path(exists=True, dir_okay=False), default=None,
               help="Read the brief from a file (for briefs too long to quote on a shell line).")
@@ -642,7 +742,9 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
               help="Attach to an EXISTING board task instead of creating one.")
 @click.option("--no-task", is_flag=True, help="Dispatch without touching the board.")
 @click.option("--links", default="", help='Evidence for the task: "label|url, label2|url2".')
-@click.option("--next-action", default="", help="The single concrete next step, verb-first.")
+@click.option("--next-action", default="",
+              help="The single concrete next step, verb-first. Max 300 chars — over-length "
+                   "is REJECTED, never truncated.")
 @click.option("--idempotency-key", default=None,
               help="Override the derived (agent, title, day) key — pass a fresh one to "
                    "deliberately re-dispatch the same work.")
@@ -676,6 +778,11 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     if make_task and not title.strip():
         raise click.ClickException(
             "--title is required to create the board task (or pass --no-task / --task <ext_id>)")
+    # Validate the card's fields before dispatching: a rejected board write after the
+    # runner was triggered would leave a live turn with no task to find.
+    title = check_task_field("title", title)
+    next_action = check_task_field("next_action", next_action or "Work this dispatch")
+    task_links = parse_task_links(links)
 
     day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
     key = idempotency_key or derive_idempotency_key(slug, title or prompt[:80], day)
@@ -687,12 +794,12 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
             task_ext_id = next_task_ext_id(client.list_tasks())
             client.sync_tasks([{
                 "ext_id": task_ext_id,
-                "title": title.strip()[:300],
-                "next_action": (next_action or "Work this dispatch").strip()[:300],
+                "title": title,
+                "next_action": next_action,
                 "status": "in_progress",
                 "assigned": slug,
-                "links": parse_task_links(links),
-                "notes": (prompt or "").strip()[:2000],
+                "links": task_links,
+                "notes": preview_for_card(prompt, 2000),
                 "source": "dispatch",
             }])
 
