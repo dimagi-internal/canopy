@@ -169,6 +169,33 @@ already checked out."
 and reachable only from the branch — open another PR. Nothing errors when work strands, which is
 what makes this check load-bearing.
 
+**`not mergeable` right after the base branch moved is usually TRANSIENT — re-read before you
+"fix" anything.** When a sibling's PR lands while your turn is open, the sequence is:
+
+```
+$ gh pr merge 202 --squash
+GraphQL: Base branch was modified. Review and try the merge again.   # real: main moved
+$ git fetch origin main && git merge origin/main && git push
+$ gh pr merge 202 --squash
+GraphQL: Pull Request is not mergeable (mergePullRequest)            # usually NOT real
+```
+
+The second error reads like a conflict and is not one. GitHub recomputes mergeability
+asynchronously after a push, and `gh pr merge` refuses while that is still `UNKNOWN`. **Read the
+state instead of believing the error:**
+
+```bash
+gh pr view <n> --json mergeable,mergeStateStatus -q '{m:.mergeable,s:.mergeStateStatus}'
+# MERGEABLE / CLEAN  -> transient; just call gh pr merge again
+# CONFLICTING / DIRTY -> real; resolve it
+```
+
+Doing this backwards is the expensive part: a turn that trusts the message starts resolving a
+conflict that does not exist — re-merging, or force-pushing over a clean branch. One read
+distinguishes them. (Origin: 2026-08-20, an eva turn whose branch was clean the whole time; a
+sibling turn merged into the same file mid-turn, and the retry reported `not mergeable` once
+before reporting `MERGEABLE / CLEAN` moments later.)
+
 **After a squash-merge, merge `origin/main` back before the next commit** — a long-lived turn
 branch plus squash merges otherwise conflicts with your own squashed history on every subsequent
 PR. When resolving, `grep -c '<<<<<<<' <file>` (expect 0) BEFORE committing.
