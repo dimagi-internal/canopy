@@ -128,6 +128,32 @@ the FIRST collision; the same-ref third turn came later. Run on the earlier pair
 returns 1 and the wider one returns 2. That pair was caught only because one turn read the Sheet's
 `modifiedTime` on an unrelated hunch and found the other mid-rewrite, 40 seconds earlier.)
 
+**Both counts are SNAPSHOTS. Re-run them immediately before your first write or send — an all-clear
+from the top of the turn expires.** The two checks above answer "is anyone else on this *right
+now*," and a turn then spends minutes or hours reading, drafting and reviewing before it acts. Every
+one of those minutes is a window for the runner, or a fleet conductor's recovery sweep, to dispatch
+a turn on your exact ref — and it will find the thread still unread, because in manual mode your
+draft is sitting at the approval gate and unhandled and awaiting-approval look identical from
+outside. So the count you are carrying when you finally write is not the count you took. Re-run
+both, cheaply, at the moment of action:
+
+```bash
+ps aux | grep '[c]laude --session-id' | grep -c -- '--thread <the-ref>'   # again, right before you act
+```
+
+Non-1 now → go read that session's transcript and apply the stand-down rules above **before** the
+write, not after. And the corollary for the slow case: **a turn resumed after a long stall must
+treat its whole start-of-turn state as stale** — re-read the thread and re-run both counts, because
+a turn that idled overnight is exactly the turn a recovery dispatch was sent to replace.
+
+(Origin: 2026-08-21. An eva turn ran both checks at its top and got 1 and 1 — true when taken. It
+stalled on an API error, resumed ~21h later still holding that all-clear, and a fleet-conduct
+recovery dispatch on the *identical* `--thread` ref was spawned minutes into the resumed run. The
+recovery turn created the calendar event, sent the reply, and marked the thread read while the
+first turn was still working toward all three. Nothing in this procedure caught it: the resumed turn
+avoided a duplicate event and a second email to the same person only because a *domain* skill told
+it to check the shared calendar for an existing event before creating one.)
+
 **But a scoped turn still sweeps that ONE counterpart's other recent messages first — skipping the
 inbox scan is not the same as reading one thread in isolation.** People do not keep one topic on one
 thread. The decisive context for the thread you were handed is routinely on a *different* thread
@@ -419,6 +445,9 @@ queues work and approves outbound actions — independent of whether you publish
    — one `ps` count. If another session was already live on it, say so and say what you stood down on.
 0ab. **You checked for a live SIBLING turn of yours on a different ref too** (Step 2 Scope) — the
    wider `ps` count. If one was live, name it and say how you kept off its artifacts and its send.
+0ac. **Both counts were RE-RUN immediately before the first write/send** (Step 2 Scope), not only at
+   the top of the turn. A start-of-turn all-clear expires; if the turn stalled or ran long, say that
+   you re-checked and what the re-check found.
 0a. **On a scoped turn, that counterpart's other recent mail was swept before the action was
    decided** (Step 2 Scope) — one `from:<them> newer_than:3d` search. If you cannot point to it, you
    read one thread in isolation and the context that changes the answer is exactly what you skipped.
