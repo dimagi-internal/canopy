@@ -42,7 +42,9 @@ canopy agent add  --slug <slug> --title "…" --next-action "…" \
     --links "Thread|https://…, Doc|https://…"          # create (auto T<N>)
 canopy agent set  --slug <slug> --task-id T<N> \    # the ext_id off the card (or the numeric id)
     --rationale "why" --plan "first steps" --source-url <url>   # store context — never re-derive
-canopy agent tasks --slug <slug>                # read the board (JSON)
+canopy agent tasks --slug <slug> --open       # DRAIN the board: unresolved tasks only
+canopy agent tasks --slug <slug>                # every task ever (needed to compute the next ext_id)
+canopy agent tasks --slug <slug> --status done  # one status (repeatable; human spellings ok)
 canopy agent commands --slug <slug>             # drain queued human actions each turn
 canopy agent apply --slug <slug> --id <N> --note "what I did"
 ```

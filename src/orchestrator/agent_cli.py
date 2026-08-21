@@ -283,12 +283,36 @@ def agent_doctor(repo, slug, all_agents, do_fix, as_json):
         raise SystemExit(1)
 
 
+# The statuses a board drain actually wants: everything not yet resolved. `normalize_task_status`
+# maps the whole vocabulary onto four tokens, and the two below are the un-resolved pair.
+OPEN_TASK_STATUSES = ("suggested", "in_progress")
+
+
 @agent.command("tasks")
 @click.option("--slug", required=True)
-def agent_tasks(slug):
-    """List the agent's board tasks (JSON) — e.g. to compute the next ext_id."""
+@click.option("--open", "open_only", is_flag=True,
+              help=f"Only unresolved tasks ({', '.join(OPEN_TASK_STATUSES)}) — the turn-start drain.")
+@click.option("--status", "statuses", multiple=True,
+              help="Only tasks with this status (repeatable). Accepts human spellings "
+                   '("in progress") as well as canonical tokens ("in_progress").')
+def agent_tasks(slug, open_only, statuses):
+    """List the agent's board tasks (JSON) — e.g. to compute the next ext_id.
+
+    Unfiltered by default, because computing the next ext_id needs the FULL set including
+    resolved tasks. Pass `--open` for the turn-start board drain, which wants the opposite:
+    a board's signal is its handful of unresolved tasks, while its payload grows without
+    bound as tasks close (canopy#516).
+    """
+    if open_only and statuses:
+        raise click.ClickException("--open and --status are alternatives; pass one or the other.")
+    wanted = set(OPEN_TASK_STATUSES) if open_only else {
+        normalize_task_status(s) for s in statuses
+    }
     try:
-        _emit(_client(slug).list_tasks())
+        tasks = _client(slug).list_tasks()
+        if wanted:
+            tasks = [t for t in tasks if normalize_task_status(t.get("status")) in wanted]
+        _emit(tasks)
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 

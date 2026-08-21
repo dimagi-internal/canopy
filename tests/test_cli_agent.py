@@ -213,3 +213,58 @@ def test_agent_set_unknown_ext_id_names_the_fix(fake_http):
     assert r.exit_code != 0
     assert "T99" in r.output and "canopy agent tasks" in r.output
     assert not [c for c in calls if c[0] == "PATCH"]
+
+
+# ── `agent tasks` filtering (canopy#516) ──────────────────────────────────────
+# The board drain runs at the start of EVERY turn for every agent, and used to return
+# the agent's entire task history — 30KB on hal for two open tasks, which overflowed the
+# tool-output limit and got recovered with a hand-written filter each time.
+
+_BOARD = [
+    {"ext_id": "T1", "title": "shipped thing", "status": "done"},
+    {"ext_id": "T2", "title": "not relevant", "status": "declined"},
+    {"ext_id": "T3", "title": "live work", "status": "in_progress"},
+    {"ext_id": "T4", "title": "an idea", "status": "suggested"},
+]
+
+
+def _tasks(fake_http, *args):
+    _, responses = fake_http
+    responses[("GET", "agents/echo/tasks/")] = (200, json.dumps(_BOARD))
+    r = CliRunner().invoke(main, ["agent", "tasks", "--slug", "echo", *args])
+    assert r.exit_code == 0, r.output
+    return [t["ext_id"] for t in json.loads(r.output)]
+
+
+def test_agent_tasks_unfiltered_by_default(fake_http):
+    """The ext_id path needs the FULL set including resolved tasks — the default must
+    not change, or `agent add` starts reusing ids."""
+    assert _tasks(fake_http) == ["T1", "T2", "T3", "T4"]
+
+
+def test_agent_tasks_open_excludes_resolved(fake_http):
+    assert _tasks(fake_http, "--open") == ["T3", "T4"]
+
+
+def test_agent_tasks_status_filters_to_one(fake_http):
+    assert _tasks(fake_http, "--status", "in_progress") == ["T3"]
+
+
+def test_agent_tasks_status_is_repeatable(fake_http):
+    assert _tasks(fake_http, "--status", "done", "--status", "declined") == ["T1", "T2"]
+
+
+def test_agent_tasks_status_accepts_human_spelling(fake_http):
+    """`normalize_task_status` already understands "In progress"; a filter that only
+    matched the canonical token would silently return nothing instead of erroring."""
+    assert _tasks(fake_http, "--status", "In progress") == ["T3"]
+    assert _tasks(fake_http, "--status", "wip") == ["T3"]
+
+
+def test_agent_tasks_open_and_status_together_is_an_error(fake_http):
+    _, responses = fake_http
+    responses[("GET", "agents/echo/tasks/")] = (200, json.dumps(_BOARD))
+    r = CliRunner().invoke(
+        main, ["agent", "tasks", "--slug", "echo", "--open", "--status", "done"])
+    assert r.exit_code != 0
+    assert "alternatives" in r.output
