@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+from orchestrator.llm_output import parse_yaml_list
 
 from orchestrator.paths import CANOPY_DIR
 from orchestrator.prompts import load_prompt
@@ -129,14 +130,8 @@ def _build_verdict_prompt(corpus: dict, proposals: list[dict]) -> str:
 
 
 def _parse_verdict_output(output: str) -> list[dict]:
-    text = output.strip()
-    if text.startswith("```"):
-        text = "\n".join(l for l in text.splitlines() if not l.strip().startswith("```"))
-    try:
-        result = yaml.safe_load(text)
-    except yaml.YAMLError:
-        return []
-    return result if isinstance(result, list) else []
+    """Verdict list out of the grader's answer (preamble-tolerant)."""
+    return parse_yaml_list(output)
 
 
 def call_llm_for_verdicts(

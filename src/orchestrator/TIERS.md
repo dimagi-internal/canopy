@@ -31,7 +31,8 @@ enforce it.
 `skill_budget` · `skill_catalog` · `skill_runner` · `provision` · `run_log` ·
 `version_bump` · `version` · `doctor` · `agent_review` · `structure_drift` · `eval_cli` ·
 `eval_rubric` · `turn_synthesis` · `session_upload` · `fleet_align` · `session_sources` ·
-`work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `runner_cli`
+`work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `runner_cli` ·
+`llm_output`
 
 **HUBS** (orchestration / composition roots — wire product into the CLI, the
 improvement pipeline, and the web server; allowed to import product, like
@@ -54,6 +55,13 @@ canopy-web's `api` app):
 > future `kind` per additional runtime). `agent_coverage` (framework) depends on
 > it directly; `harvest` (product) now delegates its `user_session_roots` to it
 > too, so the `/Users/*/.claude/projects` glob lives in exactly one place.
+
+> `llm_output` is FRAMEWORK: the one parser that turns a `claude -p` answer into
+> the YAML list the prompt asked for. It replaces five copy-pasted implementations
+> (`agent_review`, `analyzer`, `proposer`, `verify_findings`, `harvest`) that each
+> stripped a code fence only when the response *started* with one — so a model that
+> wrote a sentence before its block had its verdict discarded (canopy#487). Both
+> tiers parse LLM output, so the helper has to sit below the boundary.
 
 > `work_cursor` is FRAMEWORK: the generic "what have I already processed?"
 > watermark for any skill that runs on a cadence. It replaces four ad-hoc

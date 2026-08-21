@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 import yaml
+from orchestrator.llm_output import parse_yaml_list
 
 from orchestrator.prompts import load_prompt
 
@@ -26,22 +27,8 @@ def build_proposal_prompt(
 
 
 def parse_proposal_output(output: str) -> list[dict]:
-    """Parse YAML proposal list from Claude's output."""
-    text = output.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        text = "\n".join(lines)
-
-    try:
-        result = yaml.safe_load(text)
-    except yaml.YAMLError:
-        return []
-
-    if not isinstance(result, list):
-        return []
-
-    return result
+    """Parse YAML proposal list from Claude's output (preamble-tolerant)."""
+    return parse_yaml_list(output)
 
 
 def generate_proposals(
