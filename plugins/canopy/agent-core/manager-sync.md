@@ -32,7 +32,7 @@ window state lives there — **not in a repo file.**
   (get the id from `canopy agent syncs`). Use it only for a wrong-period or stray row.
 
 ## Gather everything in the window
-- **Completed work — from your board, the first-class source:** `canopy agent tasks --slug <slug>`.
+- **Completed work — from your board, the first-class source:** `canopy agent tasks --slug <slug> --status done`.
   Every task `done` in the window is a completed item; its `score` + `review` were captured when it
   was marked done (see *Scoring at completion*). Tasks still open are your in-flight list.
 - **Skills/code:** `git log --since=<period_end> --oneline` in your repo (skills built/changed, PRs).
