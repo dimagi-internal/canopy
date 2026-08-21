@@ -28,6 +28,7 @@ from pathlib import Path
 
 from orchestrator import turn_synthesis
 from orchestrator.session_sources import discover_local_sources
+from orchestrator.llm_output import strip_code_fences
 
 
 @dataclass
@@ -355,14 +356,14 @@ def _run_intent_llm(prompt: str, model: str, max_budget_usd: float,
 
 def _looks_like_empty_yaml_list(stdout: str) -> bool:
     """True iff stdout is a genuine empty-list result: literally `[]`/`[ ]`, or —
-    after stripping a code fence the way `parse_findings` does — ends with `[]`."""
+    after stripping code fences the way `parse_findings` does — ends with `[]`.
+
+    Shares `llm_output.strip_code_fences` with `parse_findings` so the two cannot
+    drift: this decides "clean audit" and that decides "verdict", off the same text."""
     raw = stdout.strip()
     if raw in ("[]", "[ ]"):
         return True
-    text = raw
-    if text.startswith("```"):
-        text = "\n".join(l for l in text.split("\n") if not l.strip().startswith("```"))
-    return text.strip().endswith("[]")
+    return strip_code_fences(raw).endswith("[]")
 
 
 def _norm(s: str) -> str:

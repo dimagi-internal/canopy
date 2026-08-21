@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from orchestrator.repo_paths import resolve_repo_path
+from orchestrator.llm_output import parse_yaml_list
 from orchestrator.session_sources import (
     corpus_confidence,
     local_transcript_dirs,
@@ -881,15 +882,10 @@ def build_review_prompt(repo: Path, corpus: list[dict]) -> str:
 
 
 def parse_findings(output: str) -> list[dict]:
-    import yaml
-    text = output.strip()
-    if text.startswith("```"):
-        text = "\n".join(l for l in text.split("\n") if not l.strip().startswith("```"))
-    try:
-        result = yaml.safe_load(text)
-    except yaml.YAMLError:
-        return []
-    return result if isinstance(result, list) else []
+    """Findings/verdicts out of a `claude -p` answer. Tolerant of a preamble before
+    the fenced block — see `llm_output.parse_yaml_list` for why that matters here
+    (a gate that cannot read its own verdict silently declines to run)."""
+    return parse_yaml_list(output)
 
 
 _CONF_LEVELS = {"high", "medium", "low"}
