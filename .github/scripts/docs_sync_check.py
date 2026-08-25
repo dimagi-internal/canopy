@@ -17,10 +17,14 @@ Usage (as a CLI from GitHub Actions):
         --pr-number "$PR_NUMBER" \\
         --repo "$GITHUB_REPOSITORY"
 
-The script shells out to `gh pr view` for changed files + PR body. It exits
-0 on pass (including the opt-out path) and 1 on a real miss. It prints a
-markdown-friendly failure block to stdout that GitHub Actions surfaces in
-the job log.
+The script reads changed files + PR body from the GitHub REST API via `gh
+api`. It exits 0 on pass (including the opt-out path) and 1 on a real miss.
+It prints a markdown-friendly failure block to stdout that GitHub Actions
+surfaces in the job log.
+
+It also exits 0 — with a loud SKIPPED message — when the GitHub API cannot be
+read at all, because a gate that could not look has made no finding, and a red
+check on an unread diff is read as "my PR is wrong" (canopy #496).
 
 For testing, the pure logic lives in `check_docs_sync(changed, pr_body)`
 which takes plain inputs and returns a structured result — no subprocess
@@ -34,6 +38,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -197,74 +202,98 @@ def format_failure_message(result: CheckResult) -> str:
 
 
 # ---------------------------------------------------------------------------
-# CLI / subprocess plumbing — only exercised on GitHub Actions, not in tests.
+# CLI / subprocess plumbing. The `gh` calls themselves only run on GitHub
+# Actions, but the retry/skip behaviour around them is unit-tested with a
+# stubbed subprocess runner — it is the part that decides a PR's fate when the
+# API is down, so it does not get to be the untested part.
 # ---------------------------------------------------------------------------
 
 
-def _gh_pr_view(pr_number: str, repo: str, jq_path: str) -> str:
-    """Call `gh pr view` and return raw JSON-decoded value at jq_path.
+class PRContextUnavailable(RuntimeError):
+    """The GitHub API could not be read, so the gate has nothing to evaluate.
 
-    Uses `--json` + `--jq` so we get the deserialized value out directly.
+    Distinct from a docs-sync MISS. A miss is a finding about the PR; this is
+    the absence of the input the finding would be computed from, and the two
+    must not look alike to a reader of the Checks tab.
     """
-    cmd = [
-        "gh",
-        "pr",
-        "view",
-        pr_number,
-        "--repo",
-        repo,
-        "--json",
-        jq_path.split(".")[0] if jq_path else "",
-    ]
-    # `--jq` lets us project sub-fields; default to identity.
-    cmd.extend(["--jq", "." + jq_path if not jq_path.startswith(".") else jq_path])
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    return proc.stdout
 
 
-def fetch_pr_context(pr_number: str, repo: str) -> tuple[list[str], str]:
-    """Pull changed file paths + PR body from gh.
+# The GitHub API is not always up. Retries absorb a blip; the skip path below
+# absorbs an outage. Kept small — this runs inline in a PR check.
+_GH_ATTEMPTS = 3
+_GH_BACKOFF_SECONDS = 2.0
 
-    Returns (changed_paths, pr_body). Both are best-effort — on gh failure,
-    raises CalledProcessError up; the workflow step surfaces it.
+
+def _run_gh(cmd: list[str], *, attempts: int = _GH_ATTEMPTS, sleep=time.sleep) -> str:
+    """Run a `gh` command, retrying transient failures, and return stdout.
+
+    Raises PRContextUnavailable (never CalledProcessError) once the attempts
+    are spent, carrying gh's own stderr so the log says what actually broke.
     """
-    files_proc = subprocess.run(
+    last_err = ""
+    for attempt in range(1, attempts + 1):
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode == 0:
+            return proc.stdout
+        last_err = (proc.stderr or proc.stdout or "").strip()
+        if attempt < attempts:
+            print(
+                f"docs-sync: GitHub API call failed (attempt {attempt}/{attempts}),"
+                f" retrying: {last_err.splitlines()[0] if last_err else 'no detail'}"
+            )
+            sleep(_GH_BACKOFF_SECONDS * attempt)
+
+    raise PRContextUnavailable(
+        f"`{' '.join(cmd)}` failed {attempts}x: {last_err or 'no detail'}"
+    )
+
+
+def fetch_pr_context(
+    pr_number: str, repo: str, *, attempts: int = _GH_ATTEMPTS, sleep=time.sleep
+) -> tuple[list[str], str]:
+    """Pull changed file paths + PR body from the GitHub REST API.
+
+    REST rather than `gh pr view --json` (GraphQL): during the 2026-08-17
+    incident that produced #496, GraphQL returned 503 while REST stayed up.
+    Both are retried; on persistent failure this raises PRContextUnavailable
+    and the caller SKIPS the gate rather than failing a PR it never read.
+    """
+    files_out = _run_gh(
         [
             "gh",
-            "pr",
-            "view",
-            pr_number,
-            "--repo",
-            repo,
-            "--json",
-            "files",
+            "api",
+            "--paginate",
+            f"repos/{repo}/pulls/{pr_number}/files",
+            # REST calls this field `filename`; the GraphQL `files` connection
+            # this replaced called it `path`. Carrying `.path` over returns a
+            # column of nulls -- a 200 that yields no filenames, which without
+            # the empty-list guard below would read as "no trigger paths
+            # touched" and pass every PR silently.
             "--jq",
-            ".files[].path",
+            ".[].filename",
         ],
-        capture_output=True,
-        text=True,
-        check=True,
+        attempts=attempts,
+        sleep=sleep,
     )
-    changed = [line for line in files_proc.stdout.splitlines() if line.strip()]
+    changed = [line for line in files_out.splitlines() if line.strip()]
 
-    body_proc = subprocess.run(
-        [
-            "gh",
-            "pr",
-            "view",
-            pr_number,
-            "--repo",
-            repo,
-            "--json",
-            "body",
-            "--jq",
-            ".body",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
+    # A pull request always changes at least one file, so an empty list is not
+    # "nothing was touched" — it is a read that did not work (a truncated page,
+    # a jq path that stopped matching, an API returning 200 with no content).
+    # Treating it as a clean pass would make the gate silently approve exactly
+    # the PRs it exists to catch, so it is reported as unavailable instead.
+    if not changed:
+        raise PRContextUnavailable(
+            f"the API returned no changed files for PR #{pr_number};"
+            " a PR always changes at least one file, so this is a failed read,"
+            " not an empty diff"
+        )
+
+    pr_body = _run_gh(
+        ["gh", "api", f"repos/{repo}/pulls/{pr_number}", "--jq", ".body"],
+        attempts=attempts,
+        sleep=sleep,
     )
-    pr_body = body_proc.stdout
 
     return changed, pr_body
 
@@ -307,7 +336,20 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        changed, pr_body = fetch_pr_context(args.pr_number, args.repo)
+        try:
+            changed, pr_body = fetch_pr_context(args.pr_number, args.repo)
+        except PRContextUnavailable as exc:
+            # A gate that cannot look must skip LOUDLY, not fail. A red check
+            # on a PR whose diff was never read is worse than no check: the
+            # safe reading of red is "my PR is wrong", so it costs someone an
+            # edit to a correct diff to satisfy a gate that never evaluated it.
+            print(f"docs-sync SKIPPED: could not read PR context — {exc}")
+            print(
+                "::warning::docs-sync could not reach the GitHub API;"
+                " the gate was skipped, NOT passed. Re-run this job once the"
+                " API recovers if you want the docs check to actually run."
+            )
+            return 0
 
     result = check_docs_sync(changed, pr_body)
 

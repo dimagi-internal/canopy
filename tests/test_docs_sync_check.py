@@ -267,3 +267,131 @@ class TestTriggerPathsAreReal:
             " gate would fail every PR that touches the trigger because the"
             " required doc can't be updated. Update the mapping."
         )
+
+
+# -----------------------------------------------------------------------------
+# fetch_pr_context / main — behaviour when the GitHub API cannot be read.
+#
+# canopy #496: during the 2026-08-17 GitHub incident the gate crashed with a
+# CalledProcessError traceback and went red on a PR whose diff was fine. A red
+# gate reads as "my PR is wrong", so the expensive direction of this error is
+# someone editing a correct diff to satisfy a check that never evaluated it.
+# A gate that cannot look must SKIP loudly, not fail.
+# -----------------------------------------------------------------------------
+
+fetch_pr_context = docs_sync_check.fetch_pr_context
+PRContextUnavailable = docs_sync_check.PRContextUnavailable
+
+
+class _FakeProc:
+    def __init__(self, returncode: int, stdout: str = "", stderr: str = ""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _runner(responses):
+    """Build a subprocess.run stand-in that replays `responses` in order."""
+    calls = []
+
+    def run(cmd, *args, **kwargs):
+        calls.append(cmd)
+        resp = responses[min(len(calls) - 1, len(responses) - 1)]
+        return resp
+
+    run.calls = calls
+    return run
+
+
+class TestFetchPrContextResilience:
+    def test_transient_failure_is_retried_then_succeeds(self, monkeypatch):
+        # Fail once (a 503 blip), then serve files, then the body.
+        responses = [
+            _FakeProc(1, stderr="HTTP 503: Service Unavailable"),
+            _FakeProc(0, stdout="scripts/ddd/schemas/models.py\n"),
+            _FakeProc(0, stdout="a body"),
+        ]
+        run = _runner(responses)
+        monkeypatch.setattr(docs_sync_check.subprocess, "run", run)
+
+        changed, body = fetch_pr_context("495", "o/r", sleep=lambda _s: None)
+
+        assert changed == ["scripts/ddd/schemas/models.py"]
+        assert body == "a body"
+        assert len(run.calls) == 3  # one retry + files + body
+
+    def test_persistent_failure_raises_pr_context_unavailable_not_called_process_error(
+        self, monkeypatch
+    ):
+        run = _runner([_FakeProc(1, stderr="HTTP 503: Service Unavailable")])
+        monkeypatch.setattr(docs_sync_check.subprocess, "run", run)
+
+        with pytest.raises(PRContextUnavailable) as exc:
+            fetch_pr_context("495", "o/r", attempts=2, sleep=lambda _s: None)
+
+        # The message must name the API failure, not just the exit status —
+        # the whole point is that the log says what actually went wrong.
+        assert "503" in str(exc.value)
+        assert len(run.calls) == 2
+
+    def test_empty_file_list_is_a_failed_read_not_a_clean_pass(self, monkeypatch):
+        # A PR always changes at least one file. If the gate treated an empty
+        # list as "no trigger paths touched" it would silently APPROVE exactly
+        # the PRs it exists to catch.
+        run = _runner([_FakeProc(0, stdout="\n  \n")])
+        monkeypatch.setattr(docs_sync_check.subprocess, "run", run)
+
+        with pytest.raises(PRContextUnavailable) as exc:
+            fetch_pr_context("495", "o/r", sleep=lambda _s: None)
+
+        assert "no changed files" in str(exc.value)
+
+    def test_reads_via_rest_not_graphql(self, monkeypatch):
+        # REST stayed up through the incident that GraphQL did not survive.
+        run = _runner([_FakeProc(0, stdout="README.md\n"), _FakeProc(0, stdout="b")])
+        monkeypatch.setattr(docs_sync_check.subprocess, "run", run)
+
+        fetch_pr_context("495", "o/r", sleep=lambda _s: None)
+
+        files_cmd = run.calls[0]
+        assert files_cmd[:2] == ["gh", "api"]
+        assert "repos/o/r/pulls/495/files" in files_cmd
+        assert "view" not in files_cmd
+        # REST names this field `filename`; the GraphQL call this replaced
+        # named it `path`. Asking for `.path` against REST yields a column of
+        # nulls, i.e. a successful call that returns no filenames — caught
+        # live while landing #496, and pinned here so it cannot come back.
+        assert ".[].filename" in files_cmd
+        assert ".[].path" not in files_cmd
+
+
+class TestMainSkipsWhenApiUnreadable:
+    def test_main_exits_zero_and_says_skipped(self, monkeypatch, capsys):
+        def boom(*_a, **_k):
+            raise PRContextUnavailable("HTTP 503: Service Unavailable")
+
+        monkeypatch.setattr(docs_sync_check, "fetch_pr_context", boom)
+
+        rc = docs_sync_check.main(["--pr-number", "495", "--repo", "o/r"])
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "SKIPPED" in out
+        assert "503" in out
+        # It must not read as a pass — a skipped gate that looks green is how
+        # a real docs miss would sail through unnoticed.
+        assert "docs-sync: ok" not in out
+        assert "::warning::" in out
+
+    def test_real_miss_still_fails(self, monkeypatch, capsys):
+        # The skip path must not soften a genuine finding.
+        monkeypatch.setattr(
+            docs_sync_check,
+            "fetch_pr_context",
+            lambda *_a, **_k: (["scripts/ddd/schemas/models.py"], ""),
+        )
+
+        rc = docs_sync_check.main(["--pr-number", "495", "--repo", "o/r"])
+
+        assert rc == 1
+        assert "::error::" in capsys.readouterr().out
