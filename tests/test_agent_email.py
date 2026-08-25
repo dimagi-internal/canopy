@@ -159,6 +159,43 @@ def test_to_html_ace836_repro_ol_then_ul():
     assert out.count("<ol>") == 1 and out.count("<ul>") == 1
 
 
+def test_to_html_numbered_headings_keep_their_numbers():
+    """canopy #520: numbered section HEADINGS must not all render as "1.".
+
+    A numbered line whose body is prose closes its list after one item, so each later
+    heading opens a fresh <ol> — and a bare <ol> restarts at 1. The reported symptom was a
+    five-section agent reply arriving numbered 1, 1, 1, 1, 1.
+    """
+    out = to_html(
+        "1. First heading\n\nProse under the first.\n\n"
+        "2. Second heading\n\nProse under the second.\n\n"
+        "3. Third heading\n\nProse under the third.\n"
+    )
+    assert '<ol><li>First heading</li></ol>' in out
+    assert '<ol start="2"><li>Second heading</li></ol>' in out
+    assert '<ol start="3"><li>Third heading</li></ol>' in out
+    # The prose bodies are what break the run — they must stay paragraphs.
+    assert "<p>Prose under the second.</p>" in out
+
+
+def test_to_html_ordered_list_not_starting_at_one_keeps_its_numbering():
+    # Same root cause, plainer shape: an author-numbered run beginning at 3.
+    out = to_html("3. gamma\n4. delta\n")
+    assert '<ol start="3"><li>gamma</li><li>delta</li></ol>' in out
+
+
+def test_to_html_ordered_list_starting_at_one_stays_a_bare_ol():
+    # start="1" is redundant — don't emit it, and don't churn existing output.
+    out = to_html("1. alpha\n2. beta\n")
+    assert "<ol><li>alpha</li><li>beta</li></ol>" in out
+    assert "start=" not in out
+
+
+def test_to_html_bullets_never_get_a_start_attribute():
+    out = to_html("- one\n\nprose\n\n- two\n")
+    assert "start=" not in out
+
+
 def test_to_html_linkifies_and_escapes():
     out = to_html("see https://example.com/x?a=1 & <tags>\n")
     assert '<a href="https://example.com/x?a=1">' in out
