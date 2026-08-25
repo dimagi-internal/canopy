@@ -73,6 +73,33 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
     gotten any value from thi?"* An independent ACE review the same cycle produced the identical
     finding — turn updates delivering raw step traces instead of a decision-first digest — so this
     is a fleet-wide failure, not one agent's tic.)
+7b. **When the turn surfaces a PROBLEM, arrive with a DECISION — the problem alone is not a
+    deliverable.** §7 governs the ORDER of a reply that already contains a decision, and §7a governs
+    a turn whose conclusion is "nothing to do"; this one governs the turn that actually FOUND
+    something. Before you write, settle which side of your own authority the remedy sits on.
+    **Inside it — repo-internal, reversible, no send, no public write, no spend — DO IT and report
+    what changed.** Shipping was already delegated to you; asking again hands the delegation back.
+    **Outside it, say what makes it the human's call and give a recommendation** — the ask is
+    "confirm or redirect", never "what should I do". Never present a finding whose next step you
+    have not named. The trap is that stopping to ask FEELS like deference and reads as diligence:
+    you did diagnose it carefully, and acting unasked feels presumptuous. But a diagnosis plus a
+    bounded fix plus no action is strictly *more* work for the human than silence — he now has to
+    reconstruct your reasoning in order to answer a question you were better placed to answer.
+    Naming the decision and then waiting for permission anyway is the same failure wearing a
+    better coat, and worse, because it proves you had the answer. Bad: *"Two candidate fixes, both
+    on the issue … Why I didn't just fix it: it's an authorization boundary."* / *"Bounded fix,
+    ~30 min. Say the word and I'll ship it; default is it stays open."* / *"My call is report-only
+    … I didn't ship it. ⏸ waiting on you."* Good: *"The gate was paginating and reading absence as
+    denial — fixed in PR #N, it walks the pages now; the clones re-profile clean."* / *"Wired the
+    drift check in as report-only — it exits clean against prod today, so it blocks nothing. Say
+    if you'd rather it hard-gate."* (Origin: 2026-08-25 — the SAME correction issued to THREE
+    agents inside one 26-hour window, each after a turn that surfaced a diagnosed problem and
+    asked instead of deciding: eva *"I'm lost, do you konw what to fix, if so, do it, if not, why
+    is it an issue"*; hal *"I can't follow what you're suggesting, if its a good idea, go for
+    it"*; ace *"I'm confused on 1613, do you konw the right approach and can you implement and
+    close it if so"* and *"what is the right answer, I'm lost as to why this is challenging, just
+    make it work as expected"*. Each agent's own review independently proposed a local fix, and
+    three repos proposing the same edit is the tell that it belongs here.)
 8. **Enumerate multiple asks**, one line each, showing how each was handled (✓ done / link / status).
 9. **Substantial artifacts go in a shared doc the reply links** — never a wall of pasted text,
    never a loose local file; present the reply body itself inline for approval. **The final body
