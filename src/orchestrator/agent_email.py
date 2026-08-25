@@ -124,6 +124,7 @@ GOG_CONFIG_DIR = _default_gog_config_dir()
 LOGIN_SERVICES = "gmail,drive,docs,sheets,forms,appscript"
 
 LIST_RE = re.compile(r"^\s*([-*+]|\d+\.)\s+")
+ORDERED_START_RE = re.compile(r"^\s*(\d+)\.\s+")
 URL_RE = re.compile(r"(https?://[^\s<>()]+)")
 # Sentence punctuation that hugs a URL belongs to the prose, not the link.
 # "…/edit." linkified whole once sent two broken doc links (Google 404s the
@@ -485,11 +486,26 @@ def _list_kind(line: str) -> str | None:
     return "ol" if m.group(1).rstrip().endswith(".") else "ul"
 
 
+def _ordered_start(line: str) -> int | None:
+    """The literal number an ordered item carries — `3. foo` -> 3, `- foo` -> None.
+
+    A bare <ol> always renders from 1, so a list whose first item is not 1 needs an
+    explicit start= or the author's numbering is silently rewritten.
+    """
+    m = ORDERED_START_RE.match(line)
+    return int(m.group(1)) if m else None
+
+
 def to_html(plain: str) -> str:
     """Markdown-ish plain text -> minimal HTML. Numbered lines become <ol> (numbers preserved),
     bullets become <ul>; a run of same-kind items coalesces into ONE list even across blank lines
     (canopy #291 — numbered lists were losing their numbers and runs were fragmenting into many
-    single-item lists)."""
+    single-item lists).
+
+    "Numbers preserved" holds for a list that does NOT start at 1 as well (canopy #520): a bare
+    <ol> always renders from 1, so the first item's literal number is emitted as start=. Without
+    it, numbered section HEADINGS — a numbered line whose body is prose, so each heading closes
+    its list after one item — all rendered as "1.", and a five-part reply arrived 1, 1, 1, 1, 1."""
     lines = plain.strip().split("\n")
     parts: list[str] = []
     para: list[str] = []
@@ -509,6 +525,7 @@ def to_html(plain: str) -> str:
         kind = _list_kind(lines[i])
         if kind:
             flush_para()
+            start = _ordered_start(lines[i]) if kind == "ol" else None
             items: list[str] = []
             while i < n:
                 if _list_kind(lines[i]) == kind:
@@ -528,7 +545,10 @@ def to_html(plain: str) -> str:
             lis = "".join(
                 f"<li>{_linkify(html.escape(it, quote=False))}</li>" for it in items
             )
-            parts.append(f"<{kind}>{lis}</{kind}>")
+            open_tag = (
+                f'ol start="{start}"' if kind == "ol" and start not in (None, 1) else kind
+            )
+            parts.append(f"<{open_tag}>{lis}</{kind}>")
         elif not lines[i].strip():
             flush_para()
             i += 1
