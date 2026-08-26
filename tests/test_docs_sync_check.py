@@ -395,3 +395,68 @@ class TestMainSkipsWhenApiUnreadable:
 
         assert rc == 1
         assert "::error::" in capsys.readouterr().out
+
+
+class TestChangedFilesSeparators:
+    """`--changed-files` must not silently swallow a mis-separated list.
+
+    The gate's help said "newline- or comma-separated", and it split on exactly
+    those. The natural local invocation is to paste `git diff --name-only`
+    output, which arrives SPACE-separated through `$(...)` or `tr` — so all the
+    paths became one string containing spaces, matched no trigger path, and the
+    gate printed its own success line having evaluated nothing.
+
+    That is the worst failure shape a gate has: a confident false PASS. It
+    happened on canopy#529 (2026-08-26), whose PR body then claimed a docs-sync
+    pass the gate had never given; CI failed on the same commit minutes later.
+    """
+
+    def _run(self, capsys, changed, body=""):
+        rc = docs_sync_check.main(
+            ["--changed-files", changed, "--pr-body", body]
+        )
+        return rc, capsys.readouterr().out
+
+    def test_space_separated_paths_are_split(self, capsys):
+        rc, out = self._run(
+            capsys,
+            "scripts/ddd/recipe_preflight.py scripts/walkthrough/record_video.py",
+        )
+        assert rc == 1, out
+        assert "record_video.py" in out
+
+    def test_comma_separated_still_works(self, capsys):
+        rc, out = self._run(
+            capsys,
+            "scripts/ddd/recipe_preflight.py,scripts/walkthrough/record_video.py",
+        )
+        assert rc == 1, out
+
+    def test_newline_separated_still_works(self, capsys):
+        rc, out = self._run(
+            capsys,
+            "scripts/ddd/recipe_preflight.py\nscripts/walkthrough/record_video.py",
+        )
+        assert rc == 1, out
+
+    def test_mixed_separators_and_padding(self, capsys):
+        rc, out = self._run(
+            capsys,
+            "  a.py,\n  scripts/walkthrough/record_video.py \t b.py ",
+        )
+        assert rc == 1, out
+
+    def test_a_clean_diff_still_passes_in_every_form(self, capsys):
+        for changed in ("tests/foo.py README.md",
+                        "tests/foo.py,README.md",
+                        "tests/foo.py\nREADME.md"):
+            rc, out = self._run(capsys, changed)
+            assert rc == 0, (changed, out)
+
+    def test_the_docs_not_needed_optout_still_applies(self, capsys):
+        rc, out = self._run(
+            capsys,
+            "scripts/walkthrough/record_video.py other.py",
+            body="Docs-not-needed: pure refactor, no authoring surface changed.",
+        )
+        assert rc == 0, out
