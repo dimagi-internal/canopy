@@ -37,6 +37,7 @@ import argparse
 import json
 import os
 import subprocess
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -314,7 +315,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--changed-files",
-        help="Newline- or comma-separated list of changed files (test helper).",
+        help="Whitespace-, newline- or comma-separated list of changed files "
+             "(test helper).",
     )
     parser.add_argument(
         "--pr-body",
@@ -324,8 +326,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.changed_files is not None:
         # Test / local invocation — skip gh entirely.
-        sep = "\n" if "\n" in args.changed_files else ","
-        changed = [p.strip() for p in args.changed_files.split(sep) if p.strip()]
+        #
+        # Split on ANY whitespace as well as commas. This used to be
+        # comma-or-newline only, which made the natural local invocation —
+        # pasting `git diff --name-only` output, which is space-separated once
+        # it goes through `tr` or `$(...)` — silently produce ONE path
+        # containing spaces. That matched no trigger path, so the gate printed
+        # its own success line ("no trigger paths touched") having evaluated
+        # nothing, and the PR body then claimed a pass the gate never gave.
+        # A gate whose failure mode is a confident false PASS is worse than no
+        # gate: CI caught it on the very next run, after the merge.
+        changed = [
+            p.strip()
+            for p in re.split(r"[,\s]+", args.changed_files)
+            if p.strip()
+        ]
         pr_body = args.pr_body or ""
     else:
         if not args.pr_number or not args.repo:
