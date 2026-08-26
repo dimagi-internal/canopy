@@ -63,6 +63,7 @@ except ImportError:
     sys.exit("ERROR: pyyaml not installed. Run: pip install pyyaml")
 
 from scripts.walkthrough._lib.capture_mode import snapshot_full_page
+from scripts.walkthrough._lib.urls import absolutize_url
 from scripts.walkthrough.identities import mint_identities
 from scripts.ddd.spec_io import load_spec_raw
 
@@ -461,10 +462,9 @@ def build_scenes_from_spec(
                 captured_urls[int(idx)] = slide["url"]
 
     def _absolutize(u: str) -> str:
-        u = (u or "").strip()
-        if not u:
-            return ""
-        return u if u.startswith("http") else base + u
+        # Shared with preflight — see scripts/walkthrough/_lib/urls. Kept as a
+        # local name because this function uses it a dozen times below.
+        return absolutize_url(base, u)
 
     scenes: list[dict] = []
     for i, s in enumerate(spec_scenes, 1):
