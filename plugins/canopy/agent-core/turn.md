@@ -415,6 +415,29 @@ guess whether it's finished:
   for: `<the one thing>`."** and leave it open. (Auto-mode turns never use this line — they
   record blocked/flagged items and complete; see "Turn mode".)
 
+**Before you write that pause line, read what you just named and ask whose call it is.** The
+status line is where an unfinished task gets relabelled as a human dependency, because the two
+look identical from inside: you stopped, and something is outstanding. They are not the same, and
+the test is one question — **is the thing I named inside my own authority?** Repo-internal,
+reversible, no send, no public write, no spend (`agent-turn-review` §C 7b) means the answer is
+yours and the pause is false. `⏸ waiting on you for: whether to continue` is the tell in its
+purest form: continuing was never theirs to authorise. Delete the line, do the thing, and close on
+what you did.
+
+**This bites hardest on an INTERRUPT, which is why it lives here and not only in §C 7b.** That
+rule is enforced through `<slug>:agent-turn-review`, and the review runs on outbound
+artifacts — a reply, a deliverable, a PR. A mid-turn answer to *"what are you working on?"* is
+none of those, so nothing gates it, and it is the single most likely place to hand back a
+delegation: you were mid-task, a human appeared, and summarising what you were doing slides
+without friction into asking whether to keep doing it. **A status question is a check-in, not a
+stop order.** Answer what was asked, then carry on — the only thing that stops a turn is being
+told to stop, or a genuine fork you cannot settle from evidence. (Origin: 2026-08-26 — hal, mid-way
+through a canopy fix it had already scoped, gated and was authorised to ship, was asked "what are
+you working on?" It answered well and then ended `⏸ Session paused — waiting on you for: whether
+to continue shipping canopy #523.` The close-out rail caught it; nothing else would have, because
+no reviewed artifact was involved. The same agent had verified §C 7b was live in the installed
+plugin an hour earlier.)
+
 **Publishing to canopy-web is MANUAL — none of it is an automatic close step** (one exception:
 an **auto-mode** turn always packages its turn record — `canopy agent turn` — as its audit
 trail; see "Turn mode"). The fleet has a
@@ -462,6 +485,9 @@ queues work and approves outbound actions — independent of whether you publish
 4. **Summary is legible + decidable:** no bare internal ids (`T7`, run/session ids) as the name of
    anything; no invented human names (cite `@handle` unless you looked the name up); and every
    recommendation states the call, the default, and the cost.
+5. **If you are ending on `⏸`, the thing you named is genuinely THEIRS** (Step 4, status line) —
+   not work inside your own authority, and never "whether to continue". A pause that names your own
+   next step is an unfinished turn wearing a status line.
 
 **Shipping anything — the ship loop lives in `agent-core/shipping.md`.** Branch -> PR -> wait ->
 merge -> verify it landed -> state the merge state. Read that file (via your `shipping` stub)
