@@ -26,6 +26,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from scripts.narrative.substitution import (
+    UnresolvedPlaceholderError,
+    scene_capture_vars,
+    scenes_placeholders,
+    substitute_scenes,
+)
+from scripts.walkthrough._lib.urls import absolutize_url
+
 # Actions that change what is on screen and therefore what LATER scenes can
 # resolve against. A preflight that skipped these would report false failures
 # for every scene after the first click — which is exactly the tab-switch bug
@@ -66,8 +74,8 @@ _TARGETED = {
 }
 
 
-def _setup_command(setup) -> tuple[str | None, int]:
-    """The spec's reseed command and its timeout, from a model OR a dict.
+def _setup_block(setup) -> dict:
+    """The spec's ``setup:`` block as a plain dict, from a model OR a dict.
 
     SetupBlock is a pydantic model on a parsed spec and a plain dict on a raw
     one. Reading it as a dict only returned None for the model case, so the
@@ -75,10 +83,18 @@ def _setup_command(setup) -> tuple[str | None, int]:
     previous run had mutated — the exact failure the reseed exists to prevent.
     """
     if setup is None:
-        return None, 600
+        return {}
     if not isinstance(setup, dict):
         setup = setup.model_dump() if hasattr(setup, "model_dump") else dict(setup)
-    return setup.get("command"), setup.get("timeout_seconds") or 600
+    return dict(setup)
+
+
+def _setup_command(setup) -> tuple[str | None, int]:
+    """The reseed command and its timeout. Thin reader over :func:`_setup_block`."""
+    block = _setup_block(setup)
+    if not block:
+        return None, 600
+    return block.get("command"), block.get("timeout_seconds") or 600
 
 
 def _scene_steps(scene: dict) -> list[tuple[int, str, str]]:
@@ -121,14 +137,32 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
     # So it reseeds first, exactly as the recorder does. The spec's own setup
     # command is the contract for "put the world back"; a recipe without one is
     # assumed non-mutating and walked as-is.
+    # Everything the recorder derives from the setup block is imported from it,
+    # never re-derived here. Three separate re-derivations of this contract had
+    # already drifted (the cwd, the outputs load, the url join) and each one
+    # turns preflight into a check of a world the render will not see.
+    from scripts.walkthrough.record_video import (
+        SetupError,
+        load_setup_outputs,
+        resolve_setup_cwd,
+    )
+
+    setup_block = _setup_block(getattr(spec, "setup", None))
     command, setup_timeout = _setup_command(getattr(spec, "setup", None))
+    # The recorder runs setup from the git toplevel holding the spec, because
+    # setup commands are written repo-root-relative. Preflight used to guess
+    # `parents[2]` — right only for a spec that happens to sit exactly two
+    # directories below the root, and silently the wrong tree otherwise.
+    setup_cwd = resolve_setup_cwd(Path(recipe_path))
+    outputs_rel = setup_block.get("outputs")
+    outputs_path = (setup_cwd / outputs_rel) if outputs_rel else None
+
     if command:
         import subprocess
 
-        repo_root = Path(recipe_path).resolve().parents[2]
         print(f"preflight: reseeding via {command}", flush=True)
         result = subprocess.run(
-            command, shell=True, cwd=repo_root, capture_output=True, text=True,
+            command, shell=True, cwd=str(setup_cwd), capture_output=True, text=True,
             timeout=setup_timeout,
         )
         if result.returncode != 0:
@@ -136,6 +170,37 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
                 f"preflight: setup failed ({command}) — the world is not in a "
                 f"checkable state.\n{result.stderr[-800:]}"
             )
+
+    # The setup command MINTS the ids the scenes address (run ids, entity ids,
+    # dates) and writes them to its outputs file; the spec refers to them as
+    # ${var}. Running the command and then walking the RAW spec — which is what
+    # this did — navigates to a literal "https://host${primary_par_url}/" and
+    # dies at the first goto, so every spec using the late-binding contract was
+    # un-preflightable. Load and substitute exactly as record_video does.
+    raw_scenes = [
+        scene.model_dump() if hasattr(scene, "model_dump") else dict(scene)
+        for scene in spec.scenes
+    ]
+    setup_vars: dict = {}
+    if outputs_path is not None:
+        try:
+            setup_vars = load_setup_outputs(outputs_path)
+        except SetupError as exc:
+            raise SystemExit(f"preflight: {exc}")
+    if setup_vars or scenes_placeholders(raw_scenes):
+        # Vars minted ON CAMERA by a `capture` action cannot be known here —
+        # preflight does not capture. The recorder permits them to survive
+        # substitution for lazy resolution at runtime, and so must preflight,
+        # or a legitimate spec turns a wrong-URL walk into a hard crash.
+        capture_bound: set[str] = set()
+        for scene in raw_scenes:
+            capture_bound.update(scene_capture_vars(scene))
+        try:
+            raw_scenes = substitute_scenes(
+                raw_scenes, setup_vars, allow_unresolved=capture_bound
+            )
+        except UnresolvedPlaceholderError as exc:
+            raise SystemExit(f"preflight: {exc}")
 
     from playwright.sync_api import sync_playwright
 
@@ -157,21 +222,24 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
         from scripts.walkthrough.identities import mint_identities
 
         raw_spec = spec.model_dump() if hasattr(spec, "model_dump") else dict(spec)
+        # Mint against the SUBSTITUTED scenes — personas are read out of them,
+        # and the rest of this function walks the substituted copy.
+        raw_spec["scenes"] = raw_scenes
         identities = mint_identities(browser, raw_spec, resolved_base)
 
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         try:
             if auth_url:
-                page.goto(f"{resolved_base}{auth_url}", wait_until="networkidle", timeout=30000)
+                page.goto(absolutize_url(resolved_base, auth_url), wait_until="networkidle", timeout=30000)
 
             current_identity: str | None = None
-            for scene_no, scene in enumerate(spec.scenes, start=1):
+            for scene_no, raw in enumerate(raw_scenes, start=1):
                 # Become the scene's persona before its nav, exactly as the
                 # recorder does — otherwise preflight resolves every selector as
                 # whoever happened to be signed in first, and a recipe whose
                 # later scenes are a different seat passes here and fails on
                 # camera (or worse, silently checks the wrong screen).
-                persona = (getattr(scene, "persona", None) or "").strip()
+                persona = (raw.get("persona") or "").strip()
                 switched_identity = False
                 if persona and persona in identities and persona != current_identity:
                     page.context.clear_cookies()
@@ -187,9 +255,11 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
                 # declared strings instead made preflight navigate where the
                 # recorder would not, wiping an open modal the next scene was
                 # written to act on — and reporting the recipe as broken.
-                scene_url = getattr(scene, "url", None)
+                scene_url = raw.get("url")
                 if scene_url:
-                    want = f"{resolved_base}{scene_url}"
+                    # Absolute once ${var} resolved to a generator-minted url —
+                    # the guard the recorder has always had.
+                    want = absolutize_url(resolved_base, scene_url)
                     # A cookie swap does not repaint the page, so an identity
                     # change must re-navigate even when the url is unchanged —
                     # otherwise the session is the new persona and the DOM is
@@ -198,13 +268,12 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
                     if switched_identity or normalize_url(page.url) != normalize_url(want):
                         page.goto(want, wait_until="networkidle", timeout=30000)
 
-                raw = scene.model_dump() if hasattr(scene, "model_dump") else dict(scene)
                 for action_index, kind, target in _scene_steps(raw):
                     if kind in _NAVIGATING:
                         # Replay it, don't check it: the "target" is a URL. Every
                         # later action in this scene has to be resolved against
                         # the page this lands on, not the one before it.
-                        page.goto(f"{resolved_base}{target}", wait_until="networkidle", timeout=30000)
+                        page.goto(absolutize_url(resolved_base, target), wait_until="networkidle", timeout=30000)
                         continue
 
                     checked += 1
