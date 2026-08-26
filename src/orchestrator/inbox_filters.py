@@ -10,6 +10,12 @@ Two operations:
 - ``apply_filters``   — create the Gmail filters (affect FUTURE mail). Idempotent.
 - ``sweep_existing``  — retroactively archive+mark-read mail already in the inbox that
   the filters would have caught (clears the backlog so it doesn't spawn turns).
+
+**Editing a rule's query? Add the OLD query to that rule's ``supersedes`` list.** Filters are
+matched by exact query string, so without it ``apply_filters`` installs the new rule and leaves
+the old one live beside it — and Gmail applies both. The narrower rule you just wrote is then
+decorative: the stale one keeps acting, on every mailbox, forever. ``supersedes`` makes the
+update path an actual update (delete the old, create the new).
 """
 from __future__ import annotations
 
@@ -18,10 +24,26 @@ import subprocess
 
 # Each rule: a Gmail match `query` + actions. Keep this list conservative and legible.
 FILTERS: list[dict] = [
+    # The broadest rule in the file, and the one with the sharpest edge: "no-reply" is also
+    # how OPERATIONAL ALERTING addresses you. CloudWatch alarms arrive as
+    # `Labs Alerts <no-reply@sns.amazonaws.com>`, so the bare from: list below archives +
+    # marks-read a production alarm on arrival — and because the runner polls
+    # `in:inbox is:unread`, the alarm then never spawns a turn. The agent isn't slow to a
+    # page; it never learns of it. Hal is the subscriber on `labs-jj-alerts` and email is his
+    # only alarm channel. Alerting is the opposite of junk: it is the mail with the shortest
+    # useful life in the whole inbox. So SNS is carved out, and any future alerting sender
+    # (PagerDuty, Grafana, statuspage) belongs in the same exclusion rather than in a new rule.
+    # (2026-08-26: found from the other end — a delivery-test alarm and a
+    # `labs-jj-web-worker-crash-loop` OK were both sitting archived and read on hal@ with no
+    # turn having touched either. `supersedes` below exists because of this same rule, too.)
     {
         "name": "automated-noreply",
-        "query": 'from:(noreply OR no-reply OR donotreply OR "do-not-reply" OR mailer-daemon OR postmaster)',
+        "query": ('from:(noreply OR no-reply OR donotreply OR "do-not-reply" OR mailer-daemon '
+                  'OR postmaster) -from:sns.amazonaws.com'),
         "archive": True, "mark_read": True,
+        "supersedes": [
+            'from:(noreply OR no-reply OR donotreply OR "do-not-reply" OR mailer-daemon OR postmaster)',
+        ],
     },
     {"name": "promotions", "query": "category:promotions", "archive": True, "mark_read": True},
     {"name": "social", "query": "category:social", "archive": True, "mark_read": True},
@@ -119,28 +141,65 @@ class FilterError(Exception):
     pass
 
 
-def _existing_queries(mailbox: str, client: str, *, runner=subprocess.run) -> set[str]:
+def _existing_filters(mailbox: str, client: str, *, runner=subprocess.run) -> list[tuple[str, str]]:
+    """Live filters on the mailbox as ``(filter_id, query)`` pairs; ``filter_id`` may be ``""``.
+
+    A query with no id still counts as PRESENT (so the rule is skipped, not re-created) but can
+    never be deleted — the id is the only handle Gmail offers. Keeping the two concerns separate
+    here is deliberate: a stricter read that dropped id-less entries would silently turn the
+    idempotence check into "create everything, every run".
+
+    Returns ``[]`` on any read failure, which makes ``apply_filters`` treat the mailbox as
+    empty: it will try to create every rule, and a create that already exists is the harmless
+    half of the failure. The dangerous half — deleting a superseded filter — is skipped
+    entirely in that case, since we cannot tell a missing filter from an unreadable one.
+    """
     try:
         r = runner(["gog", "gmail", "settings", "filters", "list",
                     "--account", mailbox, "--client", client, "--json"],
                    capture_output=True, text=True, timeout=30)
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return set()
+        return []
     if r.returncode != 0:
-        return set()
+        return []
     try:
         items = json.loads(r.stdout or "{}").get("filters") or []
     except ValueError:
-        return set()
-    return {(f.get("criteria") or {}).get("query") for f in items if (f.get("criteria") or {}).get("query")}
+        return []
+    out = []
+    for f in items:
+        q = (f.get("criteria") or {}).get("query")
+        if q:
+            out.append((f.get("id") or "", q))
+    return out
 
 
 def apply_filters(mailbox: str, client: str, *, runner=subprocess.run, dry_run: bool = False) -> dict:
     """Create the FILTERS on one mailbox, idempotently (skip ones already present).
     Gmail filters affect FUTURE mail only — pair with sweep_existing for the backlog."""
-    existing = _existing_queries(mailbox, client, runner=runner)
-    applied, skipped = [], []
+    live = _existing_filters(mailbox, client, runner=runner)
+    existing = {q for _fid, q in live}
+    applied, skipped, superseded = [], [], []
     for flt in FILTERS:
+        # Retire prior versions of THIS rule first, whether or not the current version needs
+        # creating: a mailbox can already carry both (a hand-patched filter plus the stale one
+        # it was meant to replace), and leaving the stale one live is the whole bug.
+        for stale_q in flt.get("supersedes") or ():
+            for fid, q in live:
+                if q != stale_q or not fid:
+                    continue
+                if dry_run:
+                    superseded.append(f"{flt['name']}:{fid}")
+                    continue
+                d = runner(["gog", "gmail", "settings", "filters", "delete", fid,
+                            "--account", mailbox, "--client", client, "--force", "--no-input"],
+                           capture_output=True, text=True, timeout=30)
+                if d.returncode != 0:
+                    raise FilterError(
+                        f"superseded filter '{flt['name']}' ({fid}) on {mailbox}: "
+                        f"{d.stderr.strip() or 'gog delete failed'}")
+                superseded.append(f"{flt['name']}:{fid}")
+                existing.discard(stale_q)
         if flt["query"] in existing:
             skipped.append(flt["name"])
             continue
@@ -158,7 +217,7 @@ def apply_filters(mailbox: str, client: str, *, runner=subprocess.run, dry_run: 
         if r.returncode != 0:
             raise FilterError(f"filter '{flt['name']}' on {mailbox}: {r.stderr.strip() or 'gog failed'}")
         applied.append(flt["name"])
-    return {"applied": applied, "skipped": skipped}
+    return {"applied": applied, "skipped": skipped, "superseded": superseded}
 
 
 def sweep_existing(mailbox: str, client: str, *, runner=subprocess.run, dry_run: bool = False) -> dict:
