@@ -20,6 +20,32 @@ call, and the answer is **not guessable**:
 gh pr checks <n> 2>&1 | head -3     # "no checks reported" => nothing to wait for, merge now
 ```
 
+⚠️ **"no checks reported" has TWO meanings and this command cannot tell them apart.** It is also
+what you get when a provider outage DROPPED the `pull_request` event on a repo that very much does
+have gates — and merging on the Step-0 reading then ships genuinely unverified code. Disambiguate before acting on it:
+
+```bash
+# Best, WHEN IT WORKS: the repo's own list of required checks.
+gh api repos/<owner>/<repo>/branches/main/protection --jq .required_status_checks.contexts
+```
+
+**Required contexts non-empty + `gh pr checks` reporting none = the event was dropped**, not "no
+CI here."
+
+⚠️ **That call 403s on a private repo without branch protection** — which is every agent repo
+(`hal`, `eva`, `echo`, `ada`): `Upgrade to GitHub Pro or make this repository public…`. A 403 is
+NOT "no required checks"; it means you cannot ask. Fall back to the workflow files plus the run
+list, which work everywhere:
+
+```bash
+grep -l 'pull_request' .github/workflows/*.yml   # does this repo gate PRs at all?
+gh run list --branch <branch> --limit 5          # did anything actually fire?
+```
+
+**Workflows trigger on `pull_request` + zero runs for the branch = dropped.**
+**No workflow triggers on `pull_request` = genuinely no gates; merge.**
+See § Dropped events below.
+
 Measured 2026-08-13, re-verified 2026-08-17 — "agent repos have no CI" is **false**, which is
 exactly why you check instead of assuming:
 
@@ -116,6 +142,75 @@ curl -s https://www.githubstatus.com/api/v2/summary.json | python3 -c "import js
 A named incident plus a working control is evidence; "several calls failed" is not. **A CI gate can
 go red for the outage rather than for your diff — read the job log before you touch the code**, and
 never force-merge past a CI system that is genuinely down. Say so and leave the PR open.
+
+## Dropped events — an Actions outage silently un-CIs your PR
+
+Measured 2026-08-26 on `ace#1671` during a GitHub Actions **major outage**: the branch pushed and
+the PR opened normally, and **zero workflow runs were ever created**. Not queued, not failed, not
+`startup_failure` — absent. `gh pr checks` reported "no checks reported", which is exactly the
+Step 0 string meaning "merge now."
+
+Four facts, each of which cost a turn to establish:
+
+1. **The dropped event is never replayed.** GitHub builds check runs from the webhook; one lost to
+   an outage is gone. The PR sits at `mergeStateStatus: BLOCKED` with no runs, silently,
+   indefinitely — nothing times out and nothing complains. **Something has to push again** to
+   re-fire it:
+   ```bash
+   git commit --allow-empty -m "chore: re-fire CI after <date> Actions outage dropped the PR event"
+   git push
+   ```
+
+2. **`--admin` does not rescue it.** Admin merge bypasses a check that FAILED; it refuses one that
+   never reported — `Required status check "<name>" is expected. (mergePullRequest)`. There is no
+   force path, which is the correct outcome. Know it before spending a turn hunting the flag.
+
+3. **Arm auto-merge and let it finish.** It survives the outage, survives later pushes, and merges
+   the instant the gates go green — no second turn:
+   ```bash
+   gh pr merge <n> --squash --auto
+   gh pr view <n> --json autoMergeRequest --jq '.autoMergeRequest != null'   # confirm ARMED
+   ```
+
+4. **A partial recovery re-drops it.** Actions came back long enough to run one set of checks, then
+   went down again — so a subsequent force-push was dropped a second time. Re-check the provider
+   feed after every push during an incident; do not assume one successful run means recovery.
+
+**Reproducing the gates locally while you wait is worth something — but only if `main` has not
+moved.** Run each gate's own `run:` commands, then:
+
+```bash
+git rev-list --count HEAD..origin/main    # 0 => your branch head IS the merge result CI builds
+```
+
+Non-zero and your green says nothing about the merge commit CI would evaluate; the honest report
+is "unverified", not "passes locally".
+
+## Version collision — the failure that ONLY happens because you waited
+
+A long wait is itself a hazard on any repo whose CI asserts the VERSION advances past `main`
+(`ace`, `canopy`). While your PR sits unmerged, a sibling PR merges *your* version number, and the
+gate that then fails is not about your change at all:
+
+```
+##[error]VERSION 0.13.999 is ALREADY on origin/main. Merging would put two different
+trees behind one version, and the plugin cache is keyed by version.
+```
+
+This is the same-day sequel to the outage above: ace#1671 waited out the incident, another PR
+merged 0.13.999 meanwhile, and the re-fired run failed on the collision rather than on anything in
+the diff. Recover **without losing the race** — disable auto-merge FIRST, or it races your rebase:
+
+```bash
+gh pr merge <n> --disable-auto
+bash scripts/version-bump.sh --rebase-first     # ace/canopy ship this; rebases then bumps
+git push --force-with-lease
+gh pr merge <n> --squash --auto                 # re-arm only after the new VERSION is pushed
+```
+
+Then **re-run the suite before trusting it**: the rebase pulled in main's new commits, so the
+pre-rebase green is void by the rule above (ace#1671: 5056 tests before the rebase, 5100 after —
+main's two new commits brought their own).
 
 ## Step 1c — never build a markdown PR/issue body inside an inline `python3 -c`
 
