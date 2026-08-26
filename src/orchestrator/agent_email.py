@@ -1662,6 +1662,10 @@ def email_apply_filters(all_agents, repo, agent, account, client, sweep, dry_run
         try:
             res = inbox_filters.apply_filters(acct, cli, dry_run=dry_run)
             line = f"{label} ({acct}): applied={res['applied']} skipped={res['skipped']}"
+            # Deleting a live filter is the one destructive thing this command does — say so
+            # rather than folding it into a silent "applied".
+            if res.get("superseded"):
+                line += f" superseded={res['superseded']}"
             if sweep:
                 line += f" | swept-existing={inbox_filters.sweep_existing(acct, cli, dry_run=dry_run)}"
         except inbox_filters.FilterError as e:
