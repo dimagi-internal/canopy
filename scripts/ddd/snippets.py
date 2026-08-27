@@ -299,6 +299,107 @@ def _mark_words(action: dict[str, Any]) -> list[str]:
     return out
 
 
+def lint_capture_health(report: dict[str, Any]) -> list[str]:
+    """Warn when the CAPTURE is unhealthy, before anything is built from it.
+
+    A recording whose interactive actions failed is footage of a broken app —
+    forms that never filled, a button that never published. That is not a
+    rendering problem and no amount of narration work fixes it, but nothing
+    downstream looks: the emitter reads timings, the renderer reads the clip,
+    and the timing eval scores word binding. All three are perfectly happy to
+    process a scene where nothing happened.
+
+    Observed: create-survey-solicitation shipped a hero video for three weeks
+    from a run with 5 failed actions where the solicitation never published. The
+    date fills had drifted to a format Playwright rejects and the question field
+    had become a textarea; both are visible in the report as
+    ``target_not_found`` / ``Malformed value``, and nobody was reading it.
+
+    Returns display lines (empty when the capture is clean). PURE.
+    """
+    actions = report.get("actions") or []
+    failed = [a for a in actions if a.get("ok") is False]
+    if not failed:
+        return []
+
+    # An interactive verb that failed means the demo did not do the thing. A
+    # failed scroll_to/hover is a camera miss — worth saying, not worth shouting.
+    acting = {"fill", "click", "select", "type", "press", "capture"}
+    hard = [a for a in failed if a.get("kind") in acting]
+    out = [
+        f"  ⚠ capture health: {len(failed)} of {len(actions)} actions failed "
+        f"({len(hard)} of them interactive)."
+    ]
+    for a in hard[:8]:
+        tgt = str(a.get("target") or "")[:52]
+        why = a.get("error_kind") or a.get("error_message") or "failed"
+        out.append(f"      {a.get('kind')}({why}) {tgt}")
+    if hard:
+        out.append(
+            "      The footage shows the app NOT doing these things. Fix the "
+            "recipe or the app and re-record — narration cannot cover for it."
+        )
+    return out
+
+
+def lint_narration_binding(
+    scene_index: int, narration: str, marks: list[dict[str, Any]]
+) -> list[str]:
+    """Warn, at EMIT time, about the binding problems that otherwise cost a render.
+
+    Every one of these is decidable from the marks and the narration string —
+    but today an author only learns about them from ``verdict-timing.json``,
+    which means a record + render cycle (minutes) per attempt. Checked here they
+    cost nothing.
+
+    Three failures, in the order they bite:
+
+    * A ``say:`` word that never appears in the narration binds NOTHING. This is
+      silent today: the hint looks applied and the mark quietly falls back to
+      field-id and note tokens.
+    * ``say:`` words that appear in a DIFFERENT order than their actions. The
+      warp cannot reorder speech, so every out-of-order anchor is discarded and
+      the verdict reports it as narration-order drift.
+    * The same word naming two different marks — one spoken word cannot anchor
+      two moments, so one of them is dropped.
+
+    Returns display lines (empty when clean). PURE apart from the returned text.
+    """
+    out: list[str] = []
+    said = [m["say"] for m in marks if m.get("say")]
+    if not said or not narration:
+        return out
+
+    low = narration.lower()
+    missing = [w for w in said if w not in low]
+    if missing:
+        out.append(
+            f"  ⚠ scene {scene_index}: say: hint(s) {missing} never appear in this "
+            f"scene's narration — they bind nothing. Name them, or drop the hint."
+        )
+
+    dupes = sorted({w for w in said if said.count(w) > 1})
+    if dupes:
+        out.append(
+            f"  ⚠ scene {scene_index}: say: hint(s) {dupes} name more than one "
+            f"field — one spoken word cannot anchor two moments, so all but one "
+            f"are dropped. Use a distinct word per field."
+        )
+
+    present = [(low.index(w), w) for w in said if w in low and said.count(w) == 1]
+    ordered = [w for _, w in sorted(present)]
+    spoken_order = [w for w in said if w in dict((w, 1) for _, w in present)]
+    if ordered and spoken_order and ordered != spoken_order:
+        out.append(
+            f"  ⚠ scene {scene_index}: narration names fields in a different order "
+            f"than the footage performs them.\n"
+            f"      footage: {spoken_order}\n"
+            f"      spoken:  {ordered}\n"
+            f"      Reorder the narration to match the actions."
+        )
+    return out
+
+
 def build_action_marks(
     scene_actions: list[dict[str, Any]], segs: list[tuple[float, float]]
 ) -> list[dict[str, Any]]:
@@ -329,14 +430,18 @@ def build_action_marks(
         eff = float(ts)
         if a.get("kind") in _REVEAL_KINDS:
             eff += (a.get("elapsed_ms") or 0) / 1000.0
-        marks.append(
-            {
-                "on_seconds": onscreen_for_abs(segs, eff),
-                "words": words,
-                "target": a.get("target"),
-                "kind": a.get("kind"),
-            }
-        )
+        mark = {
+            "on_seconds": onscreen_for_abs(segs, eff),
+            "words": words,
+            "target": a.get("target"),
+            "kind": a.get("kind"),
+        }
+        # Keep the EXPLICIT hint (not the derived first word) so the emit-time
+        # lint can tell an authored binding from a lucky field-id token.
+        say = a.get("say") or a.get("word")
+        if say:
+            mark["say"] = str(say).strip().lower()
+        marks.append(mark)
     marks.sort(key=lambda m: m["on_seconds"])
     return _collapse_colocated(marks)
 
@@ -425,6 +530,9 @@ def build_snippets(
     report_scenes = report.get("scenes") or []
     snippets: list[dict[str, Any]] = []
 
+    for line in lint_capture_health(report):
+        print(line)
+
     for rs in report_scenes:
         # run-report scene_index is 1-based; spec scenes are 0-based.
         idx = rs.get("scene_index")
@@ -483,6 +591,9 @@ def build_snippets(
                 f"{len(action_marks)} fields over {kept_dur:.0f}s — warp will hit its "
                 f"{kept_dur / vo_est:.1f}× cap; split the scene or pace the narration."
             )
+        for line in lint_narration_binding(idx, narration, action_marks):
+            print(line)
+
         features = spec_scene.get("features") or []
         tags = [narrative_slug] + [
             f.get("id") for f in features if isinstance(f, dict) and f.get("id")

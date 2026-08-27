@@ -62,6 +62,18 @@ export interface TimingVerdict {
   totalFieldMarks: number;
   /** anchored / wordMatchable (0–1). 1 ⇒ every NAMED field lands on its word. */
   coverage: number | null;
+  /** anchored / totalFieldMarks (0–1) — the CROSS-RUN comparable rate.
+   *
+   * `coverage` (and therefore `overallScore`) divides by the fields the
+   * narration NAMES, which is not constant between runs: rewrite a scene's
+   * narration to name more of what it demonstrates and the denominator grows,
+   * so the score can FALL while strictly more fields land on their word.
+   * Observed: a rewrite took 10/27 → 11/41, i.e. one more field synced and the
+   * score down 1.85 → 1.34. A keep-if-better loop comparing `overallScore`
+   * across runs will revert the better video. Compare THIS instead — its
+   * denominator is the footage's own field count, which only a re-record
+   * changes. */
+  syncRate: number | null;
   meanLagRemovedS: number;
   worstLagRemovedS: number;
   scenes: SceneTiming[];
@@ -119,6 +131,7 @@ export function evaluateTiming(beats: TimingBeatInput[]): TimingVerdict {
       wordMatchableFields: 0,
       totalFieldMarks,
       coverage: null,
+      syncRate: null,
       meanLagRemovedS: 0,
       worstLagRemovedS: 0,
       scenes,
@@ -127,10 +140,16 @@ export function evaluateTiming(beats: TimingBeatInput[]): TimingVerdict {
   }
 
   const coverage = syncedFields / wordMatchableFields;
+  const syncRate = totalFieldMarks > 0 ? syncedFields / totalFieldMarks : null;
   const overallScore = r2(5 * coverage);
   const verdict: Verdict = coverage < COVERAGE_WARN ? "fail" : coverage < COVERAGE_PASS ? "warn" : "pass";
 
   const findings: string[] = [];
+  if (syncRate !== null) {
+    findings.push(
+      `sync rate ${syncedFields}/${totalFieldMarks} marks (${r2(100 * syncRate)}%) — compare THIS across runs, not the score: the score divides by the fields the narration NAMES, which changes whenever you rewrite narration.`,
+    );
+  }
   for (const s of scenes) {
     if (s.worstLagRemovedS >= 3) {
       findings.push(
@@ -139,7 +158,13 @@ export function evaluateTiming(beats: TimingBeatInput[]): TimingVerdict {
     }
     if (s.droppedInversions > 0) {
       findings.push(
-        `${s.beatId}: ${s.droppedInversions} named field(s) NOT synced — narration names them in a different ORDER than the form lays them out. Reorder the narration or add a \`say:\` hint to those actions.`,
+        `${s.beatId}: ${s.droppedInversions} named field(s) NOT synced. Either the narration names them in a different ORDER than the footage performs them, or two marks compete for one spoken word (a field whose id/note shares a token with a neighbour). Give each field a \`say:\` hint — ONE word, appearing ONCE in this beat's narration, in action order.`,
+      );
+    }
+    const unnamed = s.fieldMarks - s.wordMatchable;
+    if (unnamed > 0) {
+      findings.push(
+        `${s.beatId}: ${unnamed} field(s) on camera are never named in the narration, so nothing anchors them (${s.wordMatchable}/${s.fieldMarks} marks word-matchable).`,
       );
     }
   }
@@ -152,6 +177,7 @@ export function evaluateTiming(beats: TimingBeatInput[]): TimingVerdict {
     wordMatchableFields,
     totalFieldMarks,
     coverage: r2(coverage),
+    syncRate: syncRate === null ? null : r2(syncRate),
     meanLagRemovedS: r2(mean(allLags)),
     worstLagRemovedS: r2(scenes.length ? Math.max(0, ...scenes.map((s) => s.worstLagRemovedS)) : 0),
     scenes,
