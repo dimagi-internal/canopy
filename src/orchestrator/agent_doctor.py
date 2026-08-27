@@ -639,7 +639,16 @@ def _plugin_source(repo: Path) -> str:
                 return slug
     except Exception:
         pass
-    return Path(repo).name
+    # RESOLVE before taking `.name`: the documented invocation is
+    # `canopy agent doctor --repo .`, and `Path(".").name` is the EMPTY STRING.
+    # Unresolved, the last-resort fallback rendered the remediation as
+    # "`/plugin marketplace add ` then `/plugin install scout@scout`" — a command
+    # a new operator cannot run and cannot guess the missing argument for. This
+    # fallback fires exactly when the other two legs are empty, which is the
+    # freshly-scaffolded repo (`create-agent` writes no `repo` key and `git init`s
+    # with no remote) — i.e. the one case where the reader is newest and least able
+    # to recover. Found 2026-08-27 walking the onboarding path end to end.
+    return Path(repo).resolve().name
 
 
 def check_required_plugins(repo: Path, *, registry_path: str | None = None) -> CheckResult:
