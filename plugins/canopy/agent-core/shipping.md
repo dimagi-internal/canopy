@@ -143,6 +143,132 @@ A named incident plus a working control is evidence; "several calls failed" is n
 go red for the outage rather than for your diff — read the job log before you touch the code**, and
 never force-merge past a CI system that is genuinely down. Say so and leave the PR open.
 
+## Local gates — a suite you contaminate reports a FALSE failure
+
+Running the repo's suite in the background and then poking at a database in the foreground is the
+natural shape of a turn — the suite is slow, so you use the time. It is also how you manufacture a
+red result that has nothing to do with your change.
+
+Django's pytest plugin reuses **one** database per repo (`--reuse-db` is in connect-labs'
+`addopts`), named `test_<db>`. A backgrounded `pytest` owns it for the whole run. Any other process
+that writes there — a scratch `manage.py` command, an inline script that inserts rows, a psql
+session — is mutating state the suite is asserting against, and the failures surface somewhere
+unrelated to what you touched.
+
+**So: while a suite is running, do not touch its test DB.** If you need a database to experiment in,
+use the dev database (`postgres`, not `test_postgres`), or wait. If you have already done it, the
+run is void — kill it, drop the database, re-run. Use psycopg2 rather than `psql`, which is
+frequently not installed on this Mac:
+
+    pkill -f 'pytest <pkg>'
+    # then, in python: terminate backends on test_postgres, DROP DATABASE, and re-run pytest
+
+`--create-db` is NOT the escape hatch: it fails with *"database is being accessed by other users"*
+while the suite still holds a connection, which reads like a permissions problem and isn't.
+
+**Why this is a section rather than a shrug:** the contaminated run reported a real `F`, at 42%, in
+a file I had not touched. The two tempting readings are "flaky suite" and "my change broke something
+subtle" — both wrong, and both expensive. The correct reading was "I wrote to the test DB ninety
+seconds ago." The clean re-run was **4543 passed, 3 skipped, exit 0**. Same shape as the
+gate-output rule elsewhere in this skill: a result you trust has to come from a gate nothing else
+was interfering with. (2026-08-24, connect-labs #1268.)
+
+### The OTHER flavour: a reused DB that has gone stale reports failures nobody caused
+
+Step 0b above is about a CONCURRENT writer. This one needs no second writer at all — it is
+`--reuse-db` accumulating drift across many runs, and it looks completely different: a stable,
+reproducible set of failures in files you never touched, which survives re-running and therefore
+reads as a real upstream breakage rather than as noise.
+
+The tells, all of which showed up together on 2026-08-27:
+
+- `cannot truncate a table referenced in a foreign key constraint` from any
+  `django_db(transaction=True)` test — the flush is missing a table Django no longer knows about,
+  because the reused DB still has it.
+- `check_migration_drift` reporting `N file(s) on disk, 1 recorded` — the DB predates migrations
+  that have since landed.
+- a data-migration test failing because its seeded row isn't there (it was seeded into a DB built
+  before that migration existed).
+- a count assertion off by leaked rows (`assert 9 == 3`).
+
+**Baselining on a clean checkout does NOT distinguish this from a real breakage, and that is the
+trap.** Checking out `origin/main` into a fresh worktree and re-running proves only "my branch did
+not cause it" — the clean checkout uses the SAME stale database, so it fails identically. That is a
+correct answer to *attribution* and it is silently the wrong answer to *"is main broken?"*.
+
+**The discriminator is CI, and it costs one call:**
+
+```bash
+gh run list --repo <owner>/<repo> --workflow ci.yml --branch main --limit 5 \
+  --json conclusion,headSha --jq '.[] | "\(.conclusion) \(.headSha[0:8])"'
+```
+
+CI always builds a fresh database. Green there plus red locally means the local DB is stale — full
+stop. Then drop it and re-run; do not go looking for the bug.
+
+```python
+# Drop the stale test DB, then re-run. psycopg2 rather than psql, which is
+# frequently not installed on this Mac. Confirm no suite is running first:
+#   pgrep -fl pytest
+import re, urllib.parse as up, psycopg2
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+url = re.search(r"^DATABASE_URL=(.+)$", open(".env").read(), re.M).group(1).strip().strip('"')
+p = up.urlparse(url)
+target = "test_" + (p.path or "").lstrip("/")
+
+conn = psycopg2.connect(dbname="postgres", user=p.username, password=p.password,
+                        host=p.hostname, port=p.port or 5432)
+conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+cur = conn.cursor()
+cur.execute("""SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+               WHERE datname=%s AND pid <> pg_backend_pid()""", (target,))
+cur.execute(f'DROP DATABASE IF EXISTS "{target}"')
+```
+
+*Why this is here:* on 2026-08-26 I reported to Jonathan, twice, that "the connect_labs/mcp tests
+are broken on main" — 8 failures plus 8 errors, and I had done the clean-checkout baseline and
+believed it settled the question. CI was green on every one of those SHAs. Dropping
+`test_commcare_connect` and re-running turned all 16 into **40 passed**. Nothing was broken. That is
+a false finding about someone else's code, delivered with evidence that looked rigorous, and the
+step that would have caught it was one `gh run list`.
+
+Generalises to the rule this skill already states elsewhere: when a checker and the thing it checks
+disagree, **the checker is a suspect too** — and "I baselined it" is a claim about the baseline's
+environment as much as about the code.
+
+## A `git commit` that FAILED looks exactly like one that worked, if you piped it away
+
+`pre-commit` runs on commit and **fails the commit when a hook rewrites a file**
+(black, isort). That is by design — you re-stage and commit again. But chain it
+as `git add -A && git commit -q -m ... >/dev/null 2>&1 && echo DONE` and the
+failure is invisible: DONE never prints, or prints from the next clause, and the
+work simply is not committed.
+
+This shipped a real defect on 2026-08-25. connect-labs#1283 merged **four source
+files and none of its nine tests**, and the PR body listed those tests as
+shipped. The squash commit had failed on a hook rewrite; the output was
+suppressed; nothing else in the chain noticed. It went to `main` and deployed.
+
+Two rules, and the second is the one that actually catches it:
+
+- **Never redirect or `-q` a `git commit`.** The hook output is the signal.
+- **Verify HEAD moved.** `git log --oneline -1` after committing, and
+  `git diff --cached --stat` before. Cheap, and it fails loudly when the commit
+  did not happen.
+
+After a squash-merge, confirm what actually landed rather than trusting the PR:
+
+```bash
+git ls-tree HEAD <path> --name-only     # the file is really on main
+gh pr view <n> --json files --jq '.files[].path'
+```
+
+Same class as the `--all-files` trap in hal's `labs-perf` §0 and the `pip install`
+that exited 0 through a pipe while installing nothing: **a local check that
+reports success without having done the thing.** Those are worse than no check,
+because they are trusted.
+
 ## Dropped events — an Actions outage silently un-CIs your PR
 
 Measured 2026-08-26 on `ace#1671` during a GitHub Actions **major outage**: the branch pushed and
