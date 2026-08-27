@@ -25,6 +25,11 @@ browser UI for inspecting transcripts.
 
 ## Install / setup
 
+> **New here, and your goal is to stand up an agent rather than to develop canopy
+> itself?** Start with **[docs/onboarding-a-new-operator.md](docs/onboarding-a-new-operator.md)** —
+> the end-to-end path from nothing to a running agent, written for a first-timer.
+> The rest of this README is oriented to canopy's own development.
+
 Canopy installs as a Claude Code plugin from its marketplace. The fastest path on
 a new machine is the bundled setup skill, which is idempotent:
 
