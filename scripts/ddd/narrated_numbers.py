@@ -12,8 +12,11 @@ the moment both artifacts exist. No LLM, no judgment, no variance.
 The rule is deliberately forgiving in the two places where being strict would
 produce noise:
 
-  * **Spelled-out numbers count.** "eleven" and "11" are the same claim, and a
-    narration written for the ear spells small numbers out.
+  * **Spelled-out numbers count, on BOTH sides.** "eleven" and "11" are the
+    same claim, and a narration written for the ear spells small numbers out —
+    as does prose UI copy ("the three Layer C rules"). The same extractor runs
+    over the narration and over the captured page text, so neither side can
+    read a number the other cannot.
   * **Approximations count.** A narration saying "about twelve thousand" over a
     screen reading "12,058" is honest rounding, not a mismatch. Anything within
     a small tolerance of a figure on screen passes.
@@ -79,8 +82,13 @@ def _word_value(phrase: str) -> float | None:
     return (total + running) if saw else None
 
 
-def narrated_values(text: str) -> list[tuple[str, float]]:
-    """(surface form, value) for every number the narration states."""
+def _all_values(text: str) -> list[tuple[str, float]]:
+    """(surface form, value) for every number in *text*, digits or words.
+
+    One extractor, used for BOTH sides of the comparison. The two sides used to
+    disagree — narration parsed words, the page did not — so a screen reading
+    "the three Layer C rules" was invisible to a narration saying "Three".
+    """
     out: list[tuple[str, float]] = []
     for match in _DIGITS.finditer(text or ""):
         raw = match.group(0)
@@ -91,19 +99,23 @@ def narrated_values(text: str) -> list[tuple[str, float]]:
     for match in _WORD_RUN.finditer(text or ""):
         phrase = match.group(0).strip()
         value = _word_value(phrase)
-        if value is not None and value > 0:
+        if value is not None:
             out.append((phrase, value))
-    return [(s, v) for s, v in out if v >= _IGNORE_BELOW]
+    return out
+
+
+def narrated_values(text: str) -> list[tuple[str, float]]:
+    """(surface form, value) for every number the narration states."""
+    return [(s, v) for s, v in _all_values(text) if v > 0 and v >= _IGNORE_BELOW]
 
 
 def page_values(page_text: str) -> list[float]:
-    values = []
-    for match in _DIGITS.finditer(page_text or ""):
-        try:
-            values.append(float(match.group(0).replace(",", "")))
-        except ValueError:
-            continue
-    return values
+    """Every number READABLE off the screen — spelled out or in digits.
+
+    Unfiltered on purpose: this is the candidate set a narrated claim is
+    matched against, so a screen honestly printing 0 or 1 is a real neighbour.
+    """
+    return [v for _s, v in _all_values(page_text)]
 
 
 def _supported(value: float, on_screen: list[float]) -> bool:

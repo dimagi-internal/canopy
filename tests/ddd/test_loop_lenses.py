@@ -184,6 +184,110 @@ def test_page_values_reads_thousands_separators():
     assert 12058.0 in page_values("Borno 12,058 children")
 
 
+# --- canopy#533: both sides of the comparison read the same numbers ---------
+#
+# The docstring has always promised "spelled-out numbers count"; the code
+# applied it to the narration only. So a dashboard printing prose UI copy —
+# "against the three Layer C rules below" — was invisible to a narration saying
+# "Three rules", and the lens failed a scene that was exactly correct.
+#
+# Prose UI copy spelling small numbers out is normal, so the class is not rare,
+# and this lens is deterministic — it gets trusted MORE than a judge's finding.
+# Under the #539 termination change, accuracy findings are forced to
+# fix_kind: mechanical and auto-applied, so a false positive here does not add
+# noise: it auto-rewrites correct narration to satisfy a broken check.
+#
+# The pair below is the whole point. Agreement must PASS and disagreement must
+# still FAIL — a fix that only delivers the first has made the lens vacuous.
+
+_LAYER_C_PAGE = (
+    "FLAGGED FOR REVIEW\t5\tagainst the three Layer C rules below\n"
+    "A facilitator is flagged when any of: meetings held below 85% of meetings "
+    "recorded; participation ratio above 2x the cohort median; or the consent "
+    "photograph on under 90% of held meetings."
+)
+_LAYER_C_NARRATION = (
+    "Three rules, printed above the table: is the community meeting on cadence, "
+    "is the participation ratio out of line with the cohort, and is the consent "
+    "photograph there."
+)
+
+
+def _one_scene_run(tmp_path, page_text: str, narration: str):
+    """A one-scene run dir + spec, ready for narrated_check."""
+    run = tmp_path / "run"
+    (run / "snapshots").mkdir(parents=True)
+    (run / "snapshots" / "scene_1_page_text.json").write_text(
+        json.dumps({"page_text": page_text})
+    )
+    spec = tmp_path / "demo.yaml"
+    spec.write_text(
+        "name: demo\nnarrative: x\nbase_url: http://x\npersonas: {}\n"
+        "scenes:\n"
+        "- id: the-monthly-review-opens\n  persona: p\n  provenance: S0\n"
+        "  title: A scene\n"
+        "  concept_claim: A claim that is specific and observable here.\n"
+        "  show: something\n"
+        f"  narrative: {json.dumps(narration)}\n"
+    )
+    return narrated_check(run, spec)
+
+
+def test_page_values_reads_spelled_out_numbers():
+    """The screen says it in words; the lens has to be able to read it."""
+    assert 3.0 in page_values("against the three Layer C rules below")
+    assert 12000.0 in page_values("about twelve thousand children")
+
+
+def test_a_spelled_out_number_that_agrees_with_the_page_passes(tmp_path):
+    """canopy#533 verbatim — the run that failed a correct scene."""
+    result = _one_scene_run(tmp_path, _LAYER_C_PAGE, _LAYER_C_NARRATION)
+    assert result["numbers_checked"] == 1, "the claim must still be CHECKED, not skipped"
+    assert result["verdict"] == "pass", result["findings"]
+
+
+def test_a_spelled_out_number_that_disagrees_with_the_page_is_still_caught(tmp_path):
+    """The non-vacuity control: same shape, wrong count, must still fail.
+
+    Only the count changes — 'three' -> 'seven' on the page. If this passes, the
+    #533 fix disabled the lens rather than repairing it.
+    """
+    result = _one_scene_run(
+        tmp_path,
+        _LAYER_C_PAGE.replace("the three Layer C rules", "the seven Layer C rules"),
+        _LAYER_C_NARRATION,
+    )
+    assert result["verdict"] == "fail"
+    assert result["findings"][0]["narrated"] == "Three"
+    assert result["findings"][0]["value"] == 3
+
+
+def test_a_narrated_word_with_no_neighbour_at_all_is_still_caught(tmp_path):
+    """The digit path, unregressed: a page with no 3-ish figure anywhere."""
+    result = _one_scene_run(
+        tmp_path, "FLAGGED FOR REVIEW\t5\tno rule count printed here", _LAYER_C_NARRATION
+    )
+    assert result["verdict"] == "fail"
+    assert result["findings"][0]["value"] == 3
+
+
+def test_a_digit_on_screen_still_satisfies_a_spelled_out_narration(tmp_path):
+    """'eleven' over a screen reading 11 — the case the lens was built for."""
+    result = _one_scene_run(
+        tmp_path, "Kukawa Nutrition Centre\t11\tdays", "Kukawa is eleven days out."
+    )
+    assert result["verdict"] == "pass", result["findings"]
+
+
+def test_a_word_on_screen_still_fails_a_digit_narration_that_disagrees(tmp_path):
+    """Symmetry cuts both ways: page 'eleven', narration '9', still a finding."""
+    result = _one_scene_run(
+        tmp_path, "Kukawa Nutrition Centre\televen days out", "Kukawa is 9 days out."
+    )
+    assert result["verdict"] == "fail"
+    assert result["findings"][0]["value"] == 9
+
+
 # ---------------------------------------------------------------------------
 # regression_guard
 # ---------------------------------------------------------------------------
