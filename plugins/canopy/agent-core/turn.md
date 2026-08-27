@@ -438,6 +438,21 @@ to continue shipping canopy #523.` The close-out rail caught it; nothing else wo
 no reviewed artifact was involved. The same agent had verified §C 7b was live in the installed
 plugin an hour earlier.)
 
+**The sibling case is a REFUSED TOOL CALL, and it stops even less than an interrupt does.** A
+declined permission prompt or a fired deny rail refuses exactly ONE action — that call, on that
+path. It says nothing about the rest of the turn, and the other independent, already-scoped work is
+untouched and still yours to finish. Rails exist to make a wrong path impossible while naming the
+right one, so a rail firing is the system working, not a signal to stand down; in a gated agent it
+is a routine event in a healthy turn. On a denial: **name what was refused, check whether a
+sanctioned path reaches the same goal — the rail's own message usually names it — and carry on.**
+Stop only if the refused call was genuinely load-bearing for everything else, and then say so
+explicitly instead of trailing off. Never re-issue the identical call hoping for a different
+answer, never escalate the whole turn over one refusal, and never end on `⏸ Session paused` naming
+the denial — that is the same false pause as above, since "whether to keep going" was never the
+human's call to make. (Origin: 2026-08-26 — an eva turn ended after a single rejected tool call
+with independent, already-scoped work left undone. The human: *"keep going I didn't mean to
+stop."* Declining one action is not withdrawing the task.)
+
 **Publishing to canopy-web is MANUAL — none of it is an automatic close step** (one exception:
 an **auto-mode** turn always packages its turn record — `canopy agent turn` — as its audit
 trail; see "Turn mode"). The fleet has a
