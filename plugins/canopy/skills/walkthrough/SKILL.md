@@ -797,6 +797,38 @@ The rest of this section is the authoring contract for what the capture
 does — scene `actions`, the timing model, and the `setup:` / prewarm
 flags — followed by the **Run** invocation.
 
+### `say:` — binding a field to its spoken word
+
+For a narrated render, each action that puts a field on camera becomes an
+action↔word MARK, and the renderer time-warps the footage so the field lands on
+the moment the voiceover names it. The mark's candidate words are derived, in
+order, from `say:` → tokens in the field id → tokens in `note:`.
+
+**Set `say:` on every field the narration names.** Without it the mark falls back
+to id and note tokens, and those collide: two actions whose notes both contain
+"application" compete for the same spoken word, and the loser is discarded as an
+order inversion. The timing eval then reports "narration names them in a
+different ORDER than the form lays them out" for narration that is in fact
+correctly ordered.
+
+```yaml
+actions:
+  - { kind: fill, target: 'css:#id_application_deadline', value: '2026-09-30', say: deadline }
+  - { kind: fill, target: 'css:#id_estimated_scale', value: '~12,000 households', say: scale }
+  - { kind: fill, target: 'css:#id_contact_email', value: 'maya@…', say: email }
+```
+
+Rules that make it work:
+
+- **One word, used once.** The word must appear exactly once in that scene's
+  narration, and the words across a scene must appear in the SAME ORDER as their
+  actions. Verify before rendering — a word that never appears binds nothing.
+- **Name the field, not the sentence.** `say: deadline`, not `say: application deadline`.
+- `word:` is accepted as an older spelling of the same key.
+
+A `scroll_to` immediately followed by a `fill` on the same target is collapsed to
+one mark (the `fill`), so only the acting action needs the hint.
+
 ### Interactive recording — scene `actions` (cursor + clicks)
 
 The recorder injects a **synthetic cursor** (`_lib/cursor_overlay.js`) on every
@@ -811,8 +843,9 @@ Declare `actions` per scene in the spec (see `ddd-spec` for authoring + the
 `Action` schema in `scripts/narrative/models.py`). Verbs: `goto`, `click`,
 `click_menu`, `fill`, `select`, `type`, `press`, `hover`, `scroll_to`,
 `scroll`, `wait_for`, `hold`, `draw`, `map_click`, `capture`. Each action is
-`{kind, target?, value?, seconds?, note?}`; `target` is visible text OR a CSS
-selector. For `kind: capture` (mint a `${var}` on camera — see the **Capture +
+`{kind, target?, value?, seconds?, note?, say?}`; `target` is visible text OR a CSS
+selector. `say` is the ONE narration word this action's field is named by — see
+**`say:` — binding a field to its spoken word** below. For `kind: capture` (mint a `${var}` on camera — see the **Capture +
 late binding** section below), read an id off the page (`source: url` or
 `source: element`) into a variable that LATER scenes/actions resolve. For
 `kind: select` (native `<select>` controls — which `click`
