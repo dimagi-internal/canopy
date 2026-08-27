@@ -9,6 +9,18 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.439] - 2026-08-27
+### Fixed
+- `narrated_numbers` read spelled-out numbers on ONE side of its comparison
+  (canopy#533). `page_values()` scanned digits only while the narration side
+  also parsed word-runs, so a page printing "against the three Layer C rules"
+  was invisible to a narration saying "Three rules" — a false fail on a
+  correct scene, contradicting the module's own documented contract
+  ("Spelled-out numbers count"). Both sides now run the same extractor. This
+  is a deterministic lens, so it is trusted more than a judge's finding, and
+  since #539 accuracy findings are auto-applied as `mechanical` — a false
+  positive here rewrites correct narration rather than merely adding noise.
+
 ## [0.2.438] - 2026-08-27
 ### Fixed
 - `agent-core/decide_guard.py` — the decide-don't-poll rail's carve-out was
