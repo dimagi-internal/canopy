@@ -8,6 +8,14 @@ Two regressions locked in here:
    decisions. Both are fixable from the artifact; neither needed a human.
 2. **The loop must say WHICH kind of ending this is.** An orchestrator inventing
    "hard stop after this pass" is the symptom of a loop with no stopping rule.
+3. **A strategy finding must not preempt pending mechanical work.** ACE
+   ``spark-facilitator/20260820-0817`` produced one strategy redesign alongside
+   five accuracy findings on iteration 0. The accuracy findings were correctly
+   normalized to mechanical — and ``stop_concept_change`` fired anyway, so none
+   of them were ever applied. The run ended ``stopped_not_converged`` with a
+   ``score_history`` of length 1, and its hero video filmed an artifact carrying
+   five defects nobody disputed. The concept gate buys a human's taste judgment
+   on DIRECTION; spending it over a knowingly-wrong artifact wastes it.
 """
 from __future__ import annotations
 
@@ -186,3 +194,71 @@ class TestTerminationStatus:
                 "diverging",
                 "running",
             }
+
+
+class TestConceptGateWaitsForMechanicalWork:
+    """A confident fix must never sit behind an uncertain one — redesign included.
+
+    The gate is deferred EXACTLY ONCE. It buys a human's judgment on direction,
+    and it must not be starved by a mechanical backlog that keeps regenerating.
+    """
+
+    MECHANICAL = {
+        "scene": "5",
+        "dimension": "claim_reality_coherence",
+        "route": "PRODUCT",
+        "fix_kind": "mechanical",
+        "detail": "The drill prints the capped [1,2,3,3] field, not the true ordinal.",
+        "fix_recommendation": "Bind the column to the uncapped ordinal.",
+    }
+
+    def test_a_strategy_finding_does_not_preempt_pending_mechanical_fixes(self) -> None:
+        """The live failure: five fixable defects were skipped for one taste question."""
+        state = _state()
+        action, reason = compute_auto_iterate(
+            state, _v(2.0, "fail"), _v(2.0, "fail"), [self.MECHANICAL, STRATEGY_BLOCKER],
+            unattended=True,
+        )
+        assert action == "continue", reason
+        assert state.concept_gate_deferred == 1
+
+    def test_the_gate_is_deferred_once_not_indefinitely(self) -> None:
+        """Second pass with the strategy finding still standing: the gate opens."""
+        state = _state()
+        findings = [self.MECHANICAL, STRATEGY_BLOCKER]
+        a1, _ = compute_auto_iterate(
+            state, _v(2.0, "fail"), _v(2.0, "fail"), findings, unattended=True
+        )
+        assert a1 == "continue"
+        moved = [{**self.MECHANICAL, "detail": "A different mechanical defect."}]
+        a2, reason = compute_auto_iterate(
+            state, _v(3.0, "warn"), _v(3.0, "warn"), moved + [STRATEGY_BLOCKER],
+            unattended=True,
+        )
+        assert a2 == "stop_concept_change", reason
+        assert state.concept_gate_deferred == 1
+
+    def test_a_strategy_finding_alone_still_stops_immediately(self) -> None:
+        """Regression guard: nothing mechanical pending means nothing to wait for."""
+        state = _state()
+        action, _ = compute_auto_iterate(
+            state, _v(2.0, "fail"), _v(4.0), [STRATEGY_BLOCKER], unattended=True
+        )
+        assert action == "stop_concept_change"
+        assert state.concept_gate_deferred == 0
+
+    def test_a_plateau_still_suppresses_the_deferral(self) -> None:
+        """Re-applying the same mechanical fix is not progress worth the gate's wait."""
+        state = _state()
+        findings = [self.MECHANICAL, STRATEGY_BLOCKER]
+        state.finding_fingerprints = []
+        a1, _ = compute_auto_iterate(
+            state, _v(3.0, "warn"), _v(3.0, "warn"), findings, unattended=True
+        )
+        assert a1 == "continue"
+        state.concept_gate_deferred = 0  # isolate the plateau from the deferral bound
+        a2, _ = compute_auto_iterate(
+            state, _v(3.0, "warn"), _v(3.0, "warn"), findings, unattended=True
+        )
+        assert a2 == "stop_concept_change"
+        assert state.concept_gate_deferred == 0

@@ -142,6 +142,16 @@ class RunState(BaseModel):
     # "converged, good", "converged, still failing" and "diverging" are genuinely
     # different outcomes and must never print the same way.
     terminal_status: str | None = None
+    # How many times the concept gate has been HELD OPEN for pending mechanical
+    # work, incremented by run_pipeline.compute_auto_iterate. A strategy redesign
+    # finding used to preempt confidently-fixable defects sitting alongside it, so
+    # the gate asked a human "is this the right direction?" over an artifact known
+    # to be wrong, and the fixes were never applied (ACE
+    # spark-facilitator/20260820-0817: five accuracy findings dropped, zero
+    # iterations completed). The gate now waits for that work — but EXACTLY ONCE,
+    # so a mechanical backlog that keeps regenerating cannot starve it. Bounded by
+    # CONCEPT_GATE_MAX_DEFERRALS; never reset within a run.
+    concept_gate_deferred: int = 0
     # Hosted narrative-review URL (0.2.150). Stamped by the ddd-narrative-review
     # gate after it posts the narrative to the canopy-web review surface — the
     # token-bearing /review/<id>/?t=<token> link the user approved. ddd-run's
