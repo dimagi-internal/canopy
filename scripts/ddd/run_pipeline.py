@@ -33,6 +33,14 @@ HARD_CAP: int = 10
 # Back-compat alias for older callers; no longer a hard 3-iteration cap.
 MAX_ITERATIONS: int = HARD_CAP
 
+# How many times pending MECHANICAL work may hold the concept gate open. The gate
+# buys a human's taste judgment on DIRECTION; opening it over an artifact that
+# still carries confidently-fixable defects spends that judgment on a
+# misrepresentation. One deferral = at most one extra render, then the gate opens
+# regardless — the bound is what stops a self-regenerating mechanical backlog from
+# starving it.
+CONCEPT_GATE_MAX_DEFERRALS: int = 1
+
 
 # ---------------------------------------------------------------------------
 # SP4.1 — assemble_run_state
@@ -238,6 +246,8 @@ def compute_auto_iterate(
     regressions. This gates on whether the run is still making progress:
 
     - converged (both judges >= threshold)        -> ``stop_done`` / ``stop_partial``
+    - a STRATEGY CONCEPT/redesign finding, with
+      mechanical fixes still pending (once only)  -> ``continue`` (gate deferred)
     - a STRATEGY CONCEPT/redesign finding          -> ``stop_concept_change``
     - any options/redesign finding                -> ``stop_unclear``
     - score stalled/regressed over last 2 iters   -> ``stop_max_iter`` (needs a human)
@@ -261,6 +271,14 @@ def compute_auto_iterate(
        wobbles; the defect it names does not. Two iterations producing the same
        finding fingerprints means the loop is re-deriving rather than progressing,
        whatever the numbers did.
+    4. **Lets pending mechanical work run BEFORE the concept gate opens**, exactly
+       once (:data:`CONCEPT_GATE_MAX_DEFERRALS`, counted in
+       ``state.concept_gate_deferred``). A strategy redesign is maximally uncertain
+       — it is precisely "we may have built the wrong thing" — so letting it jump
+       ahead of confident fixes inverted this function's own invariant. It also
+       spends the gate badly: the human is asked "is this the right direction?"
+       over an artifact wrong in ways nobody disputes, and the score and video
+       they judge measure a product that is about to stop existing.
 
     Mutates ``state.score_history`` (this iteration's gating score),
     ``state.finding_fingerprints`` (this iteration's fingerprint set) and
@@ -361,6 +379,28 @@ def compute_auto_iterate(
         return _finish(
             "stop_partial", "Both judges passed the filtered scope — drop --scene and re-fire."
         )
+    # Mechanical fixes come FIRST — a confident fix must never sit behind an
+    # uncertain one, and a strategy REDESIGN is the most uncertain finding there
+    # is. So pending mechanical work holds the concept gate open, ONCE, and the
+    # human gets the direction question over a clean artifact instead of one
+    # carrying defects nobody disputes. A plateau still suppresses it: re-applying
+    # fixes that already failed to move anything is not worth the gate's wait.
+    defer_concept_gate = (
+        bool(strategy_redesign)
+        and bool(mechanical)
+        and not plateau
+        and state.concept_gate_deferred < CONCEPT_GATE_MAX_DEFERRALS
+    )
+    if defer_concept_gate:
+        state.concept_gate_deferred += 1
+        return _finish(
+            "continue",
+            f"{len(mechanical)} mechanical (confident) fix(es) remain alongside a strategy "
+            "finding — apply + re-fire so the concept question is asked over a clean "
+            f"artifact. The gate opens next pass if the strategy finding persists "
+            f"(deferral {state.concept_gate_deferred}/{CONCEPT_GATE_MAX_DEFERRALS}, "
+            f"history={hist}).",
+        )
     if strategy_redesign:
         return _finish(
             "stop_concept_change",
@@ -368,8 +408,7 @@ def compute_auto_iterate(
             "judgment on direction."
             + (" Unattended: reported, not waited on." if unattended else ""),
         )
-    # Mechanical fixes come FIRST — a confident fix must never sit behind an
-    # uncertain one. But a plateau means re-applying them is not producing change.
+    # A plateau means re-applying the mechanical fixes is not producing change.
     if mechanical and not plateau:
         return _finish(
             "continue",

@@ -665,6 +665,7 @@ from scripts.ddd.run_pipeline import compute_auto_iterate
 # gating score to state.score_history and its finding fingerprints to
 # state.finding_fingerprints, and returns (action, reason) over:
 #   converged                                  -> stop_done / stop_partial
+#   STRATEGY redesign + mechanical pending     -> continue  (gate deferred, 1x)
 #   a STRATEGY CONCEPT/redesign finding        -> stop_concept_change
 #   score stalled/regressed (noise-banded)     -> stop_max_iter
 #   identical findings + no real score move    -> stop_max_iter  (plateau)
@@ -760,7 +761,7 @@ can see at a glance which findings the orchestrator will auto-apply
 
 - `stop_done` — "Both judges passed. Run is converged — proceed to promotion."
 - `stop_partial` — "Filtered scope passed. Drop `--scene` and re-fire for promotion."
-- `stop_concept_change` — "Strategy finding present (the artifact, not the wording, is wrong) — surface to user via canopy-web review surface."
+- `stop_concept_change` — "Strategy finding present (the artifact, not the wording, is wrong) — surface to user via canopy-web review surface." Deferred once if `mechanical` findings are still pending, so the user judges direction over a clean artifact rather than one with known defects.
 - `stop_unclear` — "Findings with `options`/`redesign` fix_kind block auto-iteration. List them and ask the user to pick or redesign."
 - `stop_max_iter` — "Loop stopped making progress (stall, plateau, or backstop). Stop and surface remaining findings."
 - `continue` — "Orchestrator can apply mechanical fixes per finding and re-fire `/canopy:ddd-run` on the same scope."

@@ -9,6 +9,42 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.433] - 2026-08-26
+
+### Fixed
+- **DDD: a strategy redesign finding no longer preempts pending mechanical fixes.**
+  `compute_auto_iterate` evaluated `stop_concept_change` BEFORE the
+  `mechanical and not plateau` branch, inverting the invariant stated in that
+  function's own comment one line below it — *"Mechanical fixes come FIRST — a
+  confident fix must never sit behind an uncertain one."* It held against
+  `options`/`unclear` only, while a redesign finding — the most uncertain thing the
+  judge emits, precisely "we may have built the wrong thing" — jumped the queue.
+  - Measured cost: ACE `spark-facilitator/20260820-0817`
+    (`spark-fcap-community-progression`, canopy 0.2.428). Iteration 0 rendered,
+    judged 2.0/2.0/2.0, and produced one scene-5 `use_case_soundness` redesign
+    alongside five accuracy findings correctly normalized to `mechanical`.
+    `stop_concept_change` fired anyway: `terminal_status: stopped_not_converged`,
+    `score_history: [2.0]`, **zero iterations completed end to end**, and a 1.09 MB
+    hero video filming an artifact with five defects that were subsequently fixed.
+    The score and the video both measured a product that no longer existed.
+  - Second-order cost: the concept gate exists to buy a *human's taste judgment on
+    direction*. Firing it over an artifact carrying five known accuracy defects
+    spends that judgment on a misrepresentation.
+  - Pending mechanical work now holds the gate open, bounded to **exactly one**
+    deferral (`CONCEPT_GATE_MAX_DEFERRALS = 1`, counted in the new
+    `RunState.concept_gate_deferred`) so a self-regenerating backlog cannot starve
+    it. Net effect: at most one extra render, and the human is asked the direction
+    question over a clean artifact with a `score_history` of length 2.
+  - Preserved: a strategy redesign with nothing mechanical pending still stops
+    immediately; accuracy findings still never open the gate; mechanical still
+    beats `options`/`unclear`; `plateau` still suppresses the mechanical
+    `continue` (and therefore the deferral).
+  - Regression: `tests/ddd/test_loop_termination.py::TestConceptGateWaitsForMechanicalWork`
+    — the strategy-redesign + mechanical combination was entirely untested. The
+    nearest existing case paired mechanical with a strategy finding whose
+    `fix_kind` was `options` (which exercises `stop_unclear`, not the gate), and
+    the gate's own test passed a redesign with no mechanical finding alongside.
+
 ## [0.2.429] - 2026-08-26
 
 ### Added

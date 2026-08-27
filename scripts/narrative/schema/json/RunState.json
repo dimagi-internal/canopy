@@ -196,6 +196,11 @@
       "default": null,
       "title": "Terminal Status"
     },
+    "concept_gate_deferred": {
+      "default": 0,
+      "title": "Concept Gate Deferred",
+      "type": "integer"
+    },
     "narrative_review_url": {
       "anyOf": [
         {

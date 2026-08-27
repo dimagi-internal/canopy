@@ -771,6 +771,21 @@ word" is fixed and re-fired rather than asked about. Whatever reaches this gate 
 legibly a strategy question — *is this the right thing to demonstrate?* — which is
 the only kind worth a human's taste.
 
+**The gate waits for pending mechanical work — once.** If `mechanical` findings are
+still outstanding when a strategy redesign appears, `compute_auto_iterate` returns
+`continue` instead, stamps `state.concept_gate_deferred`, and the gate opens on the
+next pass if the strategy finding persists (`CONCEPT_GATE_MAX_DEFERRALS = 1`, so at
+most one extra render). Two reasons, and the second is the important one: a
+redesign finding is the MOST uncertain thing the judge emits, so letting it preempt
+confident fixes inverts "mechanical comes first"; and the gate exists to buy a
+human's judgment on *direction*, which is wasted if it is spent over an artifact
+carrying defects nobody disputes. Regression:
+`tests/ddd/test_loop_termination.py::TestConceptGateWaitsForMechanicalWork`. Why it
+exists: ACE `spark-facilitator/20260820-0817` fired this gate on iteration 0
+alongside five accuracy findings; none were applied, the run ended
+`stopped_not_converged` with `score_history: [2.0]`, and its hero video filmed the
+defective artifact.
+
 **Unattended:** resolve through `gates.resolve('concept_change', …)`, which returns
 `defer` immediately rather than waiting. Upload the `--stuck` package, report
 `terminal_status: converged_with_open_questions` (or `stopped_not_converged`) with
