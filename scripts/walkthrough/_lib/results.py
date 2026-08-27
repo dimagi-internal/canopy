@@ -64,6 +64,19 @@ class ActionResult:
     error_message: str | None = None
     """Free-form message for logs; not parsed by anything machine-readable."""
 
+    say: str | None = None
+    """The narration word this action's field is named by, from the spec's
+    ``say:`` (or ``word:``) key.
+
+    Carried onto the result so it survives into the run report, which is the ONLY
+    thing ``scripts.ddd.snippets`` sees when it builds action↔word marks. Without
+    it the explicit-override branch of ``_mark_words`` was unreachable from the
+    record → emit path: a spec could declare ``say: deadline`` and the mark would
+    still be tagged with tokens scraped from the field id and the note, which
+    collide across marks and read to the timing eval as narration naming things
+    out of order. The eval's own remediation text tells an author to add a
+    ``say:`` hint, so it has to actually do something."""
+
     must_succeed: bool = False
     """Whether the spec marked this action ``must_succeed: true``.
 

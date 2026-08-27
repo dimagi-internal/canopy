@@ -470,6 +470,33 @@ narrative first (Step 3) so the two stay in lockstep.
   menu — that's a regular `click`. The verb is for the click that
   closes/dismisses the menu, not the one that summons it.
 
+  **`say:` names the field for the voiceover.** In a narrated render, every
+  action that puts a field on camera becomes an action↔word mark, and the
+  renderer time-warps the footage so the field lands on the word that names it.
+  Candidate words come from `say:` first, then tokens in the field id, then
+  tokens in `note:`.
+
+  Set `say:` on every field the scene's `narrative:` actually names, and keep the
+  narration's word order identical to the action order:
+
+  ```yaml
+  narrative: >-
+    She sets the application deadline, the expected start and end dates, the
+    estimated scale, and her contact email.
+  actions:
+    - { kind: fill, target: 'css:#id_application_deadline', value: '2026-09-30', say: deadline }
+    - { kind: fill, target: 'css:#id_expected_start_date',  value: '2026-10-15', say: start }
+    - { kind: fill, target: 'css:#id_expected_end_date',    value: '2026-12-31', say: end }
+    - { kind: fill, target: 'css:#id_estimated_scale',      value: '~12,000 households', say: scale }
+    - { kind: fill, target: 'css:#id_contact_email',        value: 'maya@…', say: email }
+  ```
+
+  Without `say:`, marks fall back to id and note tokens — and those collide. Two
+  actions whose notes both contain "application" compete for one spoken word and
+  the loser is dropped, which the timing eval reports as "narration names them in
+  a different ORDER than the form lays them out" even when the order is right.
+  One word per field, appearing exactly once in the narration, in action order.
+
   **`note:` is a persistent annotation, not a YAML comment.** `note:` is a
   human-readable annotation for one action. Unlike a YAML comment (`#`),
   it persists into the artifact: shown in the recorder's per-action log,

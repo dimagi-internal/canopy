@@ -79,3 +79,105 @@ if __name__ == "__main__":
             print(f"FAIL  {fn.__name__}: {e}")
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
     sys.exit(1 if failed else 0)
+
+
+def _act(kind, target, ts, note="", ms=0):
+    return {"kind": kind, "target": target, "start_seconds": ts, "note": note, "elapsed_ms": ms}
+
+
+def test_scroll_then_fill_on_one_field_is_one_mark():
+    """The bug this collapse exists for: a spec that scrolls a field into view
+    and then fills it emitted TWO marks with the same field-id words at the same
+    instant, so the warp bound one and discarded its twin as an inversion."""
+    segs = [(0.0, 60.0)]
+    marks = build_action_marks(
+        [
+            _act("scroll_to", "css:#id_application_deadline", 21.0, "application deadline", ms=520),
+            _act("fill", "css:#id_application_deadline", 21.52, "set the deadline"),
+        ],
+        segs,
+    )
+    assert len(marks) == 1
+    assert marks[0]["kind"] == "fill", "the acting mark is when the value appears"
+    assert "deadline" in marks[0]["words"]
+
+
+def test_camera_move_yields_to_hover_on_the_same_target():
+    segs = [(0.0, 60.0)]
+    marks = build_action_marks(
+        [
+            _act("scroll_to", "css:#sol-coverage-map", 5.4, "the coverage map", ms=490),
+            _act("hover", "css:#sol-coverage-map", 5.90, "glide over coverage"),
+        ],
+        segs,
+    )
+    assert [m["kind"] for m in marks] == ["hover"]
+
+
+def test_two_acting_marks_on_one_target_are_both_kept():
+    """Two fills on the same field are genuinely two moments — a correction, or a
+    field revisited. Only a camera move is redundant."""
+    segs = [(0.0, 60.0)]
+    marks = build_action_marks(
+        [
+            _act("fill", "css:#id_scope_of_work", 12.0, "scope"),
+            _act("fill", "css:#id_scope_of_work", 12.3, "scope, corrected"),
+        ],
+        segs,
+    )
+    assert len(marks) == 2
+
+
+def test_same_target_far_apart_is_not_collapsed():
+    """Add Question is scrolled to, then clicked over a second later — two real
+    beats, not one."""
+    segs = [(0.0, 60.0)]
+    marks = build_action_marks(
+        [
+            _act("scroll_to", "text:Add Question", 28.4, "the application questions section", ms=280),
+            _act("click", "text:Add Question", 29.92, "add an application question"),
+        ],
+        segs,
+    )
+    assert len(marks) == 2
+
+
+def test_collapse_preserves_onscreen_order():
+    segs = [(0.0, 60.0)]
+    marks = build_action_marks(
+        [
+            _act("scroll_to", "css:#id_estimated_scale", 24.0, "estimated scale", ms=130),
+            _act("fill", "css:#id_estimated_scale", 24.13, "the scale"),
+            _act("fill", "css:#id_contact_email", 26.41, "her contact email"),
+        ],
+        segs,
+    )
+    assert [m["target"] for m in marks] == ["css:#id_estimated_scale", "css:#id_contact_email"]
+    assert marks[0]["on_seconds"] <= marks[1]["on_seconds"]
+
+
+def test_say_hint_wins_over_field_id_and_note_tokens():
+    """The eval's remediation text tells authors to add a `say:` hint, so the
+    hint has to beat the tokens scraped from the field id and the note — those
+    are what collide across marks in the first place."""
+    words = _mark_words(
+        {
+            "kind": "fill",
+            "say": "deadline",
+            "target": "css:#id_application_deadline",
+            "note": "set the application deadline for the call",
+        }
+    )
+    assert words[0] == "deadline"
+
+
+def test_say_survives_the_recorder_into_the_report():
+    """The report is the ONLY thing snippets sees. A `say:` that stops at the
+    spec is a hint that silently does nothing."""
+    from scripts.walkthrough._lib.results import ActionResult
+
+    r = ActionResult(kind="fill", ok=True, target="css:#id_estimated_scale", say="scale")
+    assert r.say == "scale"
+    from dataclasses import asdict
+
+    assert asdict(r)["say"] == "scale", "must serialize into the run report"
