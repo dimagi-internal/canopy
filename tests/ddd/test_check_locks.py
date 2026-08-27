@@ -108,7 +108,7 @@ def test_a_recipe_scene_carrying_narrative_is_reported(tmp_path):
 
 def test_the_report_names_the_scene_and_the_way_out(tmp_path):
     _pair(tmp_path, [{"id": "a", "show": "x", "narrative": "n"}], [_lock_scene("a")])
-    p = next(p for p in check(tmp_path) if "story field" in p)
+    p = next(p for p in check(tmp_path) if "carries story" in p)
     assert "'a'" in p and "narrative pull" in p
 
 
@@ -119,7 +119,7 @@ def test_every_lock_owned_scene_field_is_caught_not_just_narrative(tmp_path):
     for field in _LOCK_SCENE_FIELDS:
         scene = {"id": "a", "show": "x", field: "value"}
         _pair(tmp_path, [scene], [_lock_scene("a")])
-        assert any(field in p and "story field" in p for p in check(tmp_path)), field
+        assert any(field in p and "carries story" in p for p in check(tmp_path)), field
 
 
 def test_a_recipe_carrying_story_at_the_top_level_is_reported(tmp_path):
@@ -132,7 +132,7 @@ def test_a_recipe_carrying_story_at_the_top_level_is_reported(tmp_path):
         "name": "demo", "narrative": "A story.", "personas": {},
         "build_order": ["a"], "scenes": [_lock_scene("a")],
     }, indent=2, sort_keys=True) + "\n")
-    assert any("top level" in p for p in check(tmp_path))
+    assert any("top-level" in p and "narrative" in p for p in check(tmp_path))
 
 
 def test_a_clean_recipe_stays_clean(tmp_path):

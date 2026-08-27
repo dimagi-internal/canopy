@@ -21,21 +21,12 @@ from pathlib import Path
 
 import yaml
 
-from scripts.ddd.spec_io import _LOCK_SCENE_FIELDS, _LOCK_TOP_FIELDS, lock_path
+from scripts.ddd.spec_io import discarded_recipe_fields, lock_path
 
 _RECIPE_ONLY_FIELDS = (
     "show", "url", "viewport", "full_page", "pace", "actions",
     "design_intent", "impressive_because", "concept_claim", "role",
 )
-
-# The other direction, and the one that cost a whole PR. ``compose`` merges the
-# lock OVER the recipe for every lock-owned field, so a ``narrative:`` written
-# into a recipe scene is overwritten and never reaches the renderer — silently,
-# with an exit code of 0. An author edits the text, re-renders, measures no
-# change, and has nothing to tell them why. Sourced from ``spec_io`` so the two
-# can never drift.
-_LOCK_OWNED_SCENE_FIELDS = _LOCK_SCENE_FIELDS
-_LOCK_OWNED_TOP_FIELDS = _LOCK_TOP_FIELDS
 _REQUIRED_LOCK_KEYS = ("slug", "version", "fetched_at", "name", "narrative", "scenes")
 
 
@@ -91,25 +82,17 @@ def check(base_dir) -> list[str]:
                     f"— the lock has been hand-edited; re-pull it"
                 )
 
-        top_owned = [f for f in _LOCK_OWNED_TOP_FIELDS if f in recipe]
-        if top_owned:
+        # The other direction, and the one that cost a whole PR: compose merges
+        # the lock OVER the recipe, so story written into a recipe is discarded
+        # before anything renders. Same detector the loader warns from, so the
+        # gate and the warning can never disagree.
+        for item in discarded_recipe_fields(recipe, lock):
             problems.append(
-                f"{slug}: recipe carries story field(s) {top_owned} at the top level "
-                f"— compose overwrites them from the lock, so they never render. "
-                f"Delete them; the story lives on canopy-web."
+                f"{slug}: recipe carries story — {item} — which compose overwrites "
+                f"from the lock, so editing it there changes nothing that renders. "
+                f"Edit the story on canopy-web, `python -m scripts.ddd.narrative "
+                f"pull {slug} <dir>`, then delete the local copy."
             )
-
-        for sid in sorted(recipe_ids & lock_ids):
-            rs = recipe_scenes_by_id.get(sid) or {}
-            owned = [f for f in _LOCK_OWNED_SCENE_FIELDS if f in rs]
-            if owned:
-                problems.append(
-                    f"{slug}: recipe scene {sid!r} carries story field(s) {owned} "
-                    f"— compose overwrites them from the lock, so editing them here "
-                    f"changes nothing that renders. Edit the story on canopy-web and "
-                    f"`python -m scripts.ddd.narrative pull {slug} <dir>`, then delete "
-                    f"the local copy."
-                )
 
     return problems
 
