@@ -15,12 +15,21 @@ target that will not resolve. It is deliberately NOT a dry-run of the render:
 it does not screenshot, does not record, and does not encode. It answers one
 question — will these selectors find their elements — in a few seconds.
 
+Auth is the recorder's, not a second one. A spec whose surfaces sit behind a
+login is preflighted with the SAME session the render will use — pass
+``--storage-state`` (or ``--cookies``) exactly as ``record_video.py`` takes it.
+Without that, preflight walked such a spec logged out and reported every target
+as ``target did not resolve``, which is indistinguishable from a genuinely
+broken recipe: a full-red report on a correct recipe (canopy#532).
+
 Exit codes: 0 clean, 1 unresolved targets found, 2 usage/setup error.
 
     python -m scripts.ddd.recipe_preflight <recipe.yaml> [--json]
+        [--storage-state /tmp/state.json | --cookies /tmp/cookies.json]
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -115,8 +124,44 @@ def _scene_steps(scene: dict) -> list[tuple[int, str, str]]:
     return out
 
 
-def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_ms: int = 4000) -> dict:
-    """Walk the recipe against a live browser and report unresolved targets."""
+def logged_out_hint(
+    *, checked: int, unresolved: int, session_supplied: bool, authenticated: bool
+) -> str | None:
+    """Name the likely cause when EVERY target missed and nobody was signed in.
+
+    A 100%-unresolved result is far more likely "you are logged out" than "every
+    selector is wrong", and saying so is the difference between re-running with
+    a session and rewriting selectors that were never broken (canopy#532). It is
+    deliberately narrow: one surviving target proves the browser could see the
+    app, so the hint stays silent.
+    """
+    if checked and unresolved == checked and not session_supplied and not authenticated:
+        return (
+            "every target missed and this run had no session: no --storage-state, "
+            "no --cookies, no auth: block on the spec, and no form identities to "
+            "mint. A logged-out preflight misses every selector on a correct "
+            "recipe — re-run with the session file the recorder uses before "
+            "changing anything."
+        )
+    return None
+
+
+def preflight(
+    recipe_path: str | Path,
+    *,
+    base_url: str | None = None,
+    timeout_ms: int = 4000,
+    storage_state: str | Path | None = None,
+    cookies: str | Path | None = None,
+) -> dict:
+    """Walk the recipe against a live browser and report unresolved targets.
+
+    ``storage_state`` / ``cookies`` are the recorder's own auth inputs, with the
+    recorder's precedence (storage_state wins) and the recorder's consequence
+    (a supplied session skips the spec's URL-auth nav). Preflight exists to
+    navigate the way the recorder will; before canopy#532 it could not, because
+    it had no way to be handed a session at all.
+    """
     from scripts.ddd.spec_io import load_spec
 
     spec = load_spec(str(recipe_path))
@@ -126,6 +171,17 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
 
     auth = getattr(spec, "auth", None) or {}
     auth_url = auth.get("url") if isinstance(auth, dict) and auth.get("type") == "url" else None
+
+    # The recorder's precedence, imported as behaviour rather than re-invented:
+    # storage_state wins over cookies, and either one means the spec's URL-auth
+    # nav is skipped (record_video.py: `if not args.cookies and not
+    # args.storage_state`). storage_state must be handed to new_context —
+    # Playwright cannot load it onto a context that already exists — which is
+    # why preflight opens a context explicitly instead of browser.new_page().
+    cookies_data: list | None = None
+    if cookies and not storage_state:
+        cookies_data = json.loads(Path(cookies).read_text()) or None
+    session_supplied = bool(storage_state or cookies_data)
 
     # Preflight APPLIES state-changing actions, so that a scene which depends on
     # an earlier click is checked against the screen it will really face. That
@@ -227,9 +283,15 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
         raw_spec["scenes"] = raw_scenes
         identities = mint_identities(browser, raw_spec, resolved_base)
 
-        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        context_kwargs: dict[str, Any] = {"viewport": {"width": 1440, "height": 900}}
+        if storage_state:
+            context_kwargs["storage_state"] = str(storage_state)
+        context = browser.new_context(**context_kwargs)
+        if cookies_data:
+            context.add_cookies(cookies_data)
+        page = context.new_page()
         try:
-            if auth_url:
+            if auth_url and not session_supplied:
                 page.goto(absolutize_url(resolved_base, auth_url), wait_until="networkidle", timeout=30000)
 
             current_identity: str | None = None
@@ -345,16 +407,45 @@ def preflight(recipe_path: str | Path, *, base_url: str | None = None, timeout_m
         "unresolved": len(findings),
         "findings": findings,
         "verdict": "pass" if not findings else "fail",
+        "hint": logged_out_hint(
+            checked=checked,
+            unresolved=len(findings),
+            session_supplied=session_supplied,
+            authenticated=bool(auth_url or identities),
+        ),
     }
 
 
 def _cli() -> int:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if not args:
+    # Real parsing, not a `startswith("--")` filter: that filter drops the flag
+    # and KEEPS its value as a positional, so any value-bearing option silently
+    # became the recipe path's neighbour (canopy#532).
+    parser = argparse.ArgumentParser(
+        prog="python -m scripts.ddd.recipe_preflight",
+        description="Resolve every selector in a recipe against the live app.",
+    )
+    parser.add_argument("recipe", nargs="?", help="path to the unified spec / recipe YAML")
+    parser.add_argument("--json", action="store_true", help="emit the full result as JSON")
+    parser.add_argument(
+        "--storage-state",
+        help=(
+            "Playwright storage_state JSON (path), applied at context creation — "
+            "the recorder's own flag. Use for any spec whose surfaces need a "
+            "pre-existing session. Wins over --cookies."
+        ),
+    )
+    parser.add_argument(
+        "--cookies",
+        help="cookies JSON exported by `browse cookies`; ignored when --storage-state is given",
+    )
+    ns = parser.parse_args()
+    if not ns.recipe:
         print(__doc__, file=sys.stderr)
         return 2
-    as_json = "--json" in sys.argv
-    result = preflight(args[0])
+    as_json = ns.json
+    result = preflight(
+        ns.recipe, storage_state=ns.storage_state, cookies=ns.cookies
+    )
     if as_json:
         print(json.dumps(result, indent=1))
     else:
@@ -365,6 +456,8 @@ def _cli() -> int:
                 f"action {finding['action_index']} {finding['kind']}: {finding['target']}"
             )
             print(f"      {finding['error']}")
+        if result.get("hint"):
+            print(f"  hint: {result['hint']}")
     return 0 if result["verdict"] == "pass" else 1
 
 

@@ -9,6 +9,26 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.440] - 2026-08-27
+### Fixed
+- `recipe_preflight` had no session-auth path (canopy#532). Its CLI accepted no
+  auth flag at all, so a spec whose surfaces need a pre-existing session was
+  preflighted LOGGED OUT: every selector missed and the report read
+  `target did not resolve` on all of them — indistinguishable from a genuinely
+  broken recipe. One measured run reported 11/11 unresolved and then rendered
+  18/18 actions ok. Preflight now takes the recorder's own `--storage-state` /
+  `--cookies`, with the recorder's precedence (storage_state wins) and its
+  consequence (a supplied session skips the spec's URL-auth nav); the storage
+  state is applied at `new_context(...)` because Playwright cannot load it onto
+  an existing context.
+### Added
+- `recipe_preflight` emits a `hint` when EVERY target missed and the run had no
+  session of any kind. A 100%-unresolved result is far likelier to mean "you are
+  logged out" than "every selector is wrong"; the hint stays silent if anything
+  resolved, or if a session or an `auth:` block was in play.
+- The CLI parses arguments properly. The old `startswith("--")` filter dropped a
+  flag and KEPT its value as a positional, so no option could ever carry one.
+
 ## [0.2.439] - 2026-08-27
 ### Fixed
 - `narrated_numbers` read spelled-out numbers on ONE side of its comparison
