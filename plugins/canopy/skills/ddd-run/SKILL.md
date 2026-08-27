@@ -373,7 +373,7 @@ audit is how you tell a real regression from take-to-take noise.
 
 ### Step 2d — Deterministic lenses (run BEFORE the judges)
 
-Three checks that cost milliseconds and repeatedly consumed whole judge rounds
+Four checks that cost milliseconds and repeatedly consumed whole judge rounds
 when they did not exist. Run them on the fresh capture; fold their findings in
 with the judges'.
 
@@ -390,6 +390,9 @@ RUN_DIR="<run_dir>"; SPEC_ABS="$(realpath <unified_spec>)"
 
 # 3. Is every number the narration speaks actually on the screen?
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.narrated_numbers "$RUN_DIR" "$SPEC_ABS")
+
+# 4. Is the element carrying the claim actually VISIBLE? (exits 1 on a hard fail)
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.visual_geometry "$RUN_DIR" "$SPEC_ABS")
 ```
 
 - **regression_guard** — a previously-passing action now failing is a hard
@@ -402,6 +405,18 @@ RUN_DIR="<run_dir>"; SPEC_ABS="$(realpath <unified_spec>)"
 - **narrated_numbers** — "Kukawa is eleven days out" over a screen that says
   nine. Survived three iterations because only a judge who happened to check
   would catch it.
+- **visual_geometry** — the first lens in this pipeline that is not reading
+  text. Three invisible-element defects on one run scored `data_fidelity` 9/9
+  and `narrated_numbers` 9/9 across FOUR iterations and were only found by a
+  hand-written probe after the loop had already stopped (canopy#525): twelve
+  chart bars at 0px, labels at contrast 2.47, and a pay-affecting red rendering
+  near-black. Text presence and text legibility are different properties, and
+  until now the pipeline only had an instrument for the first. Reads
+  `scene_<N>_visual.json`, written by the recorder from the same frame as the
+  PNG. A zero-height element the narration NAMES exits 1 (the frame does not
+  show what is being said about it); everything else is a warn you fold in with
+  the judges' findings. A run recorded before this capture existed reports
+  `skip` with the reason, never a green that means nothing.
 
 ### Step 3 — Judge (parallel dispatch)
 
@@ -821,6 +836,7 @@ When the auto-gate does not post, build the links by hand:
 
 | File | Producer | Notes |
 |------|----------|-------|
+| `<run_dir>/snapshots/scene_<N>_visual.json` | walkthrough recorder | Geometry + colour of the judged frame; input to the visual_geometry lens |
 | `<run_dir>/verdict-concept.yaml` | ddd-concept-eval | Concept judge verdict |
 | `<run_dir>/design_findings.json` | ddd-concept-eval | Tagged design findings |
 | `<run_dir>/verdict-user.yaml` | canopy:visual-judge (user-artifact) | User-artifact judge verdict |

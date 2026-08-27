@@ -80,6 +80,175 @@ _CROSSFADE_JS = r"""
 }
 """
 
+_VISUAL_CAPTURE_JS = r"""
+() => {
+  // Geometry + colour capture for the DDD visual lens (canopy#525).
+  //
+  // Two things a text capture cannot express: whether the element carrying a
+  // claim is actually on screen with a non-zero box, and whether its text is
+  // legible against what is actually behind it. Both are read from the page
+  // the recorder already has open, at the same steady state as the PNG.
+  const MAX_ELEMENTS = 4000;
+
+  // --- colours resolved to sRGB triples -----------------------------------
+  // Chromium returns whatever colour space the author wrote (oklch, color(),
+  // rgb()). Painting one pixel is the only conversion that is guaranteed to
+  // agree with what the screen shows, and it keeps the Python lens pure
+  // arithmetic over integers.
+  const cvs = document.createElement('canvas');
+  cvs.width = cvs.height = 1;
+  const ctx = cvs.getContext('2d', { willReadFrequently: true });
+  const colourCache = new Map();
+  function toRGBA(css) {
+    if (!css) return null;
+    if (colourCache.has(css)) return colourCache.get(css);
+    let out = null;
+    try {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = '#000000';
+      ctx.fillStyle = css;              // ignored silently if unparseable
+      ctx.fillRect(0, 0, 1, 1);
+      const d = ctx.getImageData(0, 0, 1, 1).data;
+      out = [d[0], d[1], d[2], d[3] / 255];
+    } catch (e) { out = null; }
+    colourCache.set(css, out);
+    return out;
+  }
+
+  // --- which utilities actually EXIST -------------------------------------
+  // Method note 1 of canopy#525: ask the stylesheet, not the computed style.
+  // `text-*` / `border-*` fall back to currentColor, so a computed-style probe
+  // returns a plausible colour for a utility that was never emitted.
+  const defined = new Set();
+  let readable = 0, unreadable = 0;
+  const walkRules = (list) => {
+    for (const rule of Array.from(list || [])) {
+      if (rule.selectorText) {
+        // Tailwind escapes `:` `/` `.` in selectors (`.md\:flex`, `.w-1\/2`).
+        const re = /\.((?:\\.|[-\w -￿])+)/g;
+        let m;
+        while ((m = re.exec(rule.selectorText)) !== null) {
+          defined.add(m[1].replace(/\\(.)/g, '$1'));
+        }
+      }
+      if (rule.cssRules) walkRules(rule.cssRules);   // @media, @supports, @layer
+    }
+  };
+  for (const sheet of Array.from(document.styleSheets || [])) {
+    let rules = null;
+    try { rules = sheet.cssRules; } catch (e) { rules = null; }
+    if (!rules) { unreadable++; continue; }
+    readable++;
+    walkRules(rules);
+  }
+
+  // --- per-element measurement --------------------------------------------
+  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT', 'META', 'LINK', 'TITLE', 'HEAD', 'BR']);
+
+  function cssPath(el) {
+    const parts = [];
+    let node = el;
+    while (node && node.nodeType === 1 && parts.length < 5) {
+      let part = node.tagName.toLowerCase();
+      if (node.id) { parts.unshift(part + '#' + node.id); break; }
+      const cls = (node.getAttribute('class') || '').trim().split(/\s+/).filter(Boolean).slice(0, 2);
+      if (cls.length) part += '.' + cls.join('.');
+      parts.unshift(part);
+      node = node.parentElement;
+    }
+    return parts.join('>');
+  }
+
+  // Own text only — the direct text children. Scoring every wrapper by its
+  // subtree text would report the same string once per ancestor.
+  function ownText(el) {
+    let out = '';
+    for (const node of Array.from(el.childNodes)) {
+      if (node.nodeType === 3) out += node.nodeValue;
+    }
+    return out.replace(/\s+/g, ' ').trim();
+  }
+
+  // The background a reader actually sees behind this text: the nearest
+  // ancestor with a non-transparent background-color. `bg_from: "default"`
+  // means nothing in the chain painted one.
+  function effectiveBackground(el) {
+    let node = el;
+    let hasImage = false;
+    while (node && node.nodeType === 1) {
+      const cs = getComputedStyle(node);
+      if (cs.backgroundImage && cs.backgroundImage !== 'none') hasImage = true;
+      const rgba = toRGBA(cs.backgroundColor);
+      if (rgba && rgba[3] > 0.05) {
+        return { rgb: rgba.slice(0, 3), from: node === el ? 'self' : 'ancestor', hasImage };
+      }
+      node = node.parentElement;
+    }
+    return { rgb: [255, 255, 255], from: 'default', hasImage };
+  }
+
+  const elements = [];
+  let truncated = false;
+  const all = document.body ? document.body.querySelectorAll('*') : [];
+  for (const el of Array.from(all)) {
+    if (elements.length >= MAX_ELEMENTS) { truncated = true; break; }
+    if (SKIP_TAGS.has(el.tagName)) continue;
+    if (el.namespaceURI && el.namespaceURI.indexOf('svg') !== -1) continue;
+
+    const classes = (el.getAttribute('class') || '').trim().split(/\s+/).filter(Boolean);
+    const text = ownText(el);
+    if (!classes.length && !text) continue;   // nothing to say about it
+
+    const cs = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    const fg = toRGBA(cs.color);
+
+    // Method note 1 again, applied to the SYMPTOM: is this element's colour
+    // exactly what it would have inherited? That is what a purged `text-*`
+    // looks like, and it is not visible from the class list alone.
+    let colourIsInherited = false;
+    if (el.parentElement) {
+      colourIsInherited = getComputedStyle(el.parentElement).color === cs.color;
+    }
+
+    const entry = {
+      path: cssPath(el),
+      tag: el.tagName.toLowerCase(),
+      classes: classes,
+      w: Math.round(rect.width * 10) / 10,
+      h: Math.round(rect.height * 10) / 10,
+      display: cs.display,
+      visibility: cs.visibility,
+      opacity: cs.opacity,
+      aria_hidden: el.getAttribute('aria-hidden') === 'true',
+      color_is_inherited: colourIsInherited,
+    };
+    if (text) {
+      const bg = effectiveBackground(el);
+      entry.text = text.slice(0, 160);
+      entry.color_raw = cs.color;
+      entry.color_rgb = fg ? fg.slice(0, 3) : null;
+      entry.bg_rgb = bg.rgb;
+      entry.bg_from = bg.from;
+      entry.bg_has_image = bg.hasImage;
+      entry.font_px = parseFloat(cs.fontSize) || 0;
+      entry.font_weight = parseFloat(cs.fontWeight) || 400;
+    }
+    elements.push(entry);
+  }
+
+  return {
+    defined_class_selectors: Array.from(defined),
+    stylesheets_readable: readable > 0,
+    readable_stylesheets: readable,
+    unreadable_stylesheets: unreadable,
+    elements_truncated: truncated,
+    elements: elements,
+  };
+}
+"""
+
+
 from .config import RecorderConfig, apply_scene_pace
 from .recorder import execute_action
 from .results import ActionResult, RunReport
@@ -438,11 +607,46 @@ class Recorder:
         # losing the PNG degrades the eval but losing the text removes the
         # scene from the input entirely.
         text_path.write_text(json.dumps(payload, indent=2))
+        # Geometry + colour for the visual lens (canopy#525). Same frame, same
+        # steady state, same scene index as the PNG and the text dump.
+        self.take_visual_capture(page, scene_index)
         if png_ok:
             self.snapshots_taken.append(scene_index)
             print(f"  · snapshot scene_{scene_index}.png + scene_{scene_index}_page_text.json")
         else:
             print(f"  · snapshot scene_{scene_index}_page_text.json (PNG failed after retry)")
+
+    def take_visual_capture(self, page: Page, scene_index: int) -> bool:
+        """Write ``scene_<N>_visual.json`` — geometry + colour for the DDD visual lens.
+
+        Every other per-iteration lens reads TEXT, so none of them can see that
+        the element carrying a claim rendered at 0px or that its label is white
+        on white. Three such defects scored 9/9 on every text lens across four
+        iterations of one run and were only caught by a hand-written probe after
+        the loop had given up (canopy#525).
+
+        Read from the page already open, at the same steady state as the PNG, in
+        one ``page.evaluate``. Best-effort: a failure here degrades the lens to
+        ``skip``, never the recording — the mp4 is the expensive artifact.
+        """
+        if self.snapshot_dir is None:
+            return False
+        try:
+            capture = page.evaluate(_VISUAL_CAPTURE_JS)
+        except Exception as e:  # noqa: BLE001 — never fail a recording over a lens input
+            print(f"  ! visual capture failed for scene {scene_index}: {e}")
+            return False
+        if not isinstance(capture, dict):
+            # A page that returned nothing useful (or a test double whose
+            # ``evaluate`` is a stub). The lens degrades to ``skip``; the
+            # recording is never at risk over a lens input.
+            return False
+        capture["scene_index"] = scene_index
+        capture["url"] = getattr(page, "url", "") or ""
+        capture["render_id"] = self.render_id
+        path = self.snapshot_dir / f"scene_{scene_index}_visual.json"
+        path.write_text(json.dumps(capture, indent=2))
+        return True
 
     def take_explicit_snapshot(self, page: Page, scene: dict, scene_index: int) -> None:
         """Write the canonical ``scene_<N>.png`` + page-text NOW, mid-scene.

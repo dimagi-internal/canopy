@@ -240,3 +240,55 @@ def test_snapshot_skipped_when_no_scene_index_available(tmp_path):
     rec = Recorder(snapshot_dir=tmp_path)
     rec.run_scene(page, {"title": "x", "actions": [{"kind": "press", "value": "Enter"}]})
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# Visual capture (canopy#525) — the recording is never at risk over a lens input
+# ---------------------------------------------------------------------------
+
+
+def _recorder_with(tmp_path, evaluate):
+    """A Recorder pointed at tmp_path whose page.evaluate does `evaluate`."""
+
+    class _Page:
+        url = "https://example.com/"
+
+        def evaluate(self, script, *args):
+            return evaluate(script)
+
+    recorder = Recorder.__new__(Recorder)
+    recorder.snapshot_dir = tmp_path
+    recorder.render_id = "render-1"
+    return recorder, _Page()
+
+
+def test_visual_capture_writes_the_lens_input(tmp_path):
+    payload = {"elements": [], "defined_class_selectors": ["h-28"], "stylesheets_readable": True}
+    recorder, page = _recorder_with(tmp_path, lambda script: dict(payload))
+
+    assert recorder.take_visual_capture(page, 3) is True
+    written = json.loads((tmp_path / "scene_3_visual.json").read_text())
+    assert written["scene_index"] == 3
+    assert written["url"] == "https://example.com/"
+    assert written["render_id"] == "render-1"
+    assert written["defined_class_selectors"] == ["h-28"]
+
+
+def test_visual_capture_of_a_page_that_returns_nothing_is_not_a_recording_failure(tmp_path):
+    """A page (or a test double) whose evaluate returns None must not take the
+    recording down with it — the mp4 is the expensive artifact and the lens
+    degrades to `skip`. This is a regression test: adding the capture broke
+    eleven existing snapshot tests exactly this way before the guard existed."""
+    recorder, page = _recorder_with(tmp_path, lambda script: None)
+
+    assert recorder.take_visual_capture(page, 3) is False
+    assert not (tmp_path / "scene_3_visual.json").exists()
+
+
+def test_visual_capture_swallows_an_evaluate_that_raises(tmp_path):
+    def _boom(script):
+        raise RuntimeError("execution context destroyed")
+
+    recorder, page = _recorder_with(tmp_path, _boom)
+    assert recorder.take_visual_capture(page, 3) is False
+    assert not (tmp_path / "scene_3_visual.json").exists()

@@ -9,6 +9,24 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.429] - 2026-08-26
+
+### Added
+- **DDD: a computed-geometry and colour lens over the rendered frames** (canopy#525).
+  Every judge in the pipeline read TEXT, so none could see that the element
+  carrying a claim rendered at zero height or that its label was white on white.
+  On ACE run `bednet-check-2-visit/20260825-1310` three such defects scored
+  `data_fidelity` 9/9 and `narrated_numbers` 9/9 across four iterations.
+  - `scripts/ddd/visual_geometry.py` — pure, no browser. Three checks:
+    `zero-height` (an element in the layout, carrying text or a height utility,
+    rendering at 0px), `low-contrast` (text below its WCAG AA floor against its
+    own computed background, reported as the measured ratio), and
+    `inert-utility` (a styling utility no enumerated CSS rule defines AND whose
+    symptom is visible). Runs as the fourth lens in `ddd-run` Step 2d.
+  - `orchestrator.take_visual_capture` writes `scene_<N>_visual.json` from the
+    page already open, at the same steady state as the PNG. Best-effort — a
+    failure degrades the lens to `skip`, never the recording.
+
 ## [0.2.408] - 2026-08-14
 ### Fixed
 - `agent-review`: `human_corrections` no longer mines machine-authored `user` turns.
