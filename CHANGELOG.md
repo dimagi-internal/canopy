@@ -9,7 +9,7 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
-## [0.2.437] - 2026-08-27
+## [0.2.438] - 2026-08-27
 ### Fixed
 - `agent-core/decide_guard.py` — the decide-don't-poll rail's carve-out was
   EMAIL-only, so every non-mail outbound gate blocked and was told to act:
