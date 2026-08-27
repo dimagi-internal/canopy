@@ -1,5 +1,6 @@
 """Tests for the per-agent doctor (`canopy agent doctor`)."""
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from click.testing import CliRunner
@@ -541,6 +542,24 @@ def test_plugin_install_fails_when_repo_present_but_plugin_absent(tmp_path):
     assert "NOT installed" in r.detail
     assert "/plugin marketplace add dimagi-internal/hal" in r.detail
     assert "/plugin install hal@hal" in r.detail
+
+
+def test_plugin_install_remediation_names_a_source_from_a_relative_repo(tmp_path, monkeypatch):
+    """`--repo .` is the DOCUMENTED invocation, and it used to render the fix as
+    "`/plugin marketplace add ` then ..." — an empty argument.
+
+    All three legs of `_plugin_source` are empty on a freshly-scaffolded agent:
+    `create-agent` writes no `repo` key and `git init`s with no remote, so the
+    last resort (`Path(repo).name`) decides — and unresolved, `Path(".").name`
+    is `""`. That is precisely the reader least able to guess what was omitted.
+    """
+    from orchestrator.agent_doctor import check_plugin_install
+    repo = _agent_repo(tmp_path, slug="scout")
+    monkeypatch.chdir(repo)
+    r = check_plugin_install(Path("."), registry_path=str(_plugin_registry(tmp_path)))
+    assert not r.ok
+    assert "/plugin marketplace add scout" in r.detail
+    assert "/plugin marketplace add `" not in r.detail  # the empty-argument regression
 
 
 def test_plugin_install_skipped_when_registry_absent(tmp_path):
