@@ -14,8 +14,10 @@ three shapes that must NEVER block:
    the agent to state a recommendation and end with a plain question when a real fork
    exists ("I'd close it rather than merge — ok?"). Matching that would make the
    rail fire on the agent doing exactly the right thing.
-2. **The outbound-email gate.** Sending mail to a person is the ONE action that
-   always waits for a human. "Want me to send this?" is the agent working correctly.
+2. **The outbound gate.** Putting something in front of a person — sending,
+   replying, publishing, posting, sharing — is the ONE class of action that always
+   waits for a human. "Want me to send this?" is the agent working correctly, and
+   so is "want me to publish this to the board?".
 3. **A passing mention.** The rule is about how a message CLOSES. An offer
    quoted or considered mid-report is not handing the call back.
 """
@@ -133,10 +135,56 @@ def test_the_sanctioned_prose_ask_does_not_block(guard, closing):
     "I've drafted the reply to the funder thread. Want me to send it?",
     "Draft is ready via bin/hal-email --reply-all. Should I send?",
     "Want me to send this to sophie@example.org?",
+    # No "draft", no shim, no address — the shipped email-only carve-out missed
+    # this one, and it is the plainest outbound ask there is.
+    "Want me to send the reply to the funder now?",
 ])
 def test_the_outbound_email_gate_does_not_block(guard, closing):
     """The ONE thing that always waits for a human. the agent asking here is correct."""
     assert not guard.hands_back_a_call(f"Summary above.\n\n{closing}")
+
+
+@pytest.mark.parametrize("closing", [
+    # ada — her outbound is the board, not mail (memory: publishing needs an
+    # explicit yes; an answer to a question is not approval to post).
+    "Want me to publish this digest to the board?",
+    # echo — the site.
+    "Draft is done. Want me to publish it to the site?",
+    # eva — a document, shared with named people.
+    "The doc is written. Should I share it with Shayoni and Natalia?",
+    "Want me to post it in the channel?",
+    "Should I notify the team?",
+])
+def test_a_NON_MAIL_outbound_gate_does_not_block_either(guard, closing):
+    """The regression this rail's first version shipped with, and the reason it could
+    not spread past hal.
+
+    Every agent's CLAUDE.md § hard guardrail is "every outbound action (sending on a
+    channel, public writes) requires explicit human approval" — mail is one channel,
+    not the definition. Measured against the engine as first shipped, all five of
+    these blocked, and the reason text then told the agent that § Shipping means it
+    can act without approval. § Shipping relaxes CODE REVIEW and nothing else, so
+    that was a rail arguing against a hard guardrail."""
+    assert not guard.hands_back_a_call(f"Summary above.\n\n{closing}")
+
+
+def test_a_delivery_verb_OUTSIDE_the_offer_still_blocks(guard):
+    """The carve-out reads the offer's OBJECT, not the paragraph around it.
+
+    Scoped to the whole tail, a bare "sent" three sentences earlier would carve out
+    a plain merge offer — and the rail would go quiet on exactly the shape it exists
+    to catch."""
+    assert guard.hands_back_a_call(
+        "I sent the PR through CI and it passed clean. Want me to merge it?"
+    )
+
+
+def test_dispatching_a_sibling_agent_is_not_outbound(guard):
+    """Triggering another agent's turn is ada's JOB (skills/conduct), not a send to a
+    person. It must stay a true positive — this is the call she is equipped to make."""
+    assert guard.hands_back_a_call(
+        "ace and hal are both idle. Should I dispatch a session at eva?"
+    )
 
 
 def test_an_offer_mentioned_mid_report_does_not_block(guard):
