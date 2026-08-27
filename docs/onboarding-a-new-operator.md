@@ -1,0 +1,299 @@
+# Onboarding a new operator — from nothing to a running agent
+
+**Who this is for:** someone joining the canopy fleet who is comfortable with a
+terminal and with AI coding tools, but is **not** a career software engineer, and
+who has never set up canopy before.
+
+Every other document here is written either for canopy's own developers
+(`README.md`), for Claude (`plugins/canopy/skills/create-agent/SKILL.md`), or for
+the person who already runs the fleet (`runner/canopy_runner/README.md` in
+canopy-web). This one is written for the human doing it the first time, in the
+order they will actually hit things.
+
+> **Read `docs/agent-operating-model.md` for the *why*.** This doc is the *how*.
+
+---
+
+## 0. The mental model — five pieces, and which ones you need
+
+The single most confusing thing about canopy is that "canopy" names a framework,
+a CLI, a plugin, and a website. Here is the whole map:
+
+| Piece | What it is | Where it runs | Do you need it on day 1? |
+|---|---|---|---|
+| **Claude Code** | The agent runtime. Everything else is scaffolding around it. | Your machine | **Yes** |
+| **canopy** (this repo) | The framework: a Claude Code plugin + a `canopy` CLI. Holds the agent factory and the fleet-wide operating model. | Your machine | **Yes** |
+| **Your agent's repo** | One git repo per agent — its persona, skills, gating rails, secrets. Generated for you by the factory. | Your machine + GitHub | **Yes** |
+| **canopy-web** | The shared website: each agent's board, tasks, turns, work products. Lives at `labs.connect.dimagi.com/canopy`. | Already deployed — you just log in | **Yes** (read/write via CLI) |
+| **The runner** | A daemon that fires an agent's turns *unattended* (on a schedule, or when email arrives). | Your machine, or a cloud box | **No — skip it at first** |
+
+**The runner is the piece to skip on day 1.** An agent is fully usable without it:
+you invoke `/<slug>:turn` in Claude Code yourself. The runner only removes *you*
+from the loop. It is also the only piece with a hard platform dependency — see
+§6.
+
+---
+
+## 1. Prerequisites
+
+Install these first. Everything below assumes they exist.
+
+| Tool | Why | Check it works |
+|---|---|---|
+| [Claude Code](https://code.claude.com/docs) | The runtime | `claude --version` |
+| [git](https://git-scm.com/downloads) | Your agent is a repo | `git --version` |
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) | Runs the `canopy` CLI | `uv --version` |
+| [GitHub CLI](https://cli.github.com/) | Creating the agent's repo | `gh auth status` |
+| [1Password CLI](https://developer.1password.com/docs/cli/get-started/) | Resolving the agent's secrets | `op whoami` |
+
+You also need **membership in the `dimagi-internal` GitHub org** and a
+**canopy-web login**. Ask Jonathan for both if `gh repo list dimagi-internal`
+comes back empty.
+
+> **Python note:** canopy targets Python 3.11+. You do not need to install Python
+> separately — `uv` provides it.
+
+---
+
+## 2. Install canopy
+
+```
+/canopy:setup
+```
+
+Run that inside Claude Code. It is idempotent — safe to re-run — and provisions
+the state directory, the capture hook, your canopy-web token, and the `canopy`
+CLI in one pass.
+
+To update later: `/canopy:update`.
+
+---
+
+## 3. Get your canopy-web access sorted BEFORE you build anything
+
+Two things live here, and mixing them up is the most common early confusion.
+
+### 3a. Your workspace ("team")
+
+A **workspace** is canopy-web's tenant — the "team" whose agents, tasks and work
+products you can see. Agents belong to exactly one workspace.
+
+**You very likely already have one.** The `dimagi` workspace auto-admits every
+`@dimagi.com` address as an Editor on first login. So:
+
+1. Open <https://labs.connect.dimagi.com/canopy>, log in with your Dimagi account.
+2. Look at the workspace switcher in the left sidebar.
+
+If you see `Dimagi` there, **you are done — do not create a workspace.** You have
+the standing you need to register an agent.
+
+<details>
+<summary>Only if you genuinely need a separate workspace</summary>
+
+There is **no UI for creating a workspace** — it is API-only:
+
+```bash
+curl -X POST https://labs.connect.dimagi.com/canopy/api/workspaces/ \
+  -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)" \
+  -H 'Content-Type: application/json' \
+  -d '{"slug":"my-team","display_name":"My Team"}'
+```
+
+⚠️ **There is no delete endpoint.** A workspace you create is permanent. Pick the
+slug deliberately: lowercase letters, digits and hyphens only, and it will appear
+in every URL your team uses.
+
+You must be either on the email allowlist (any `@dimagi.com` address is) or
+already a member of some workspace. A purely invite-admitted user cannot bootstrap
+one — that is a deliberate security boundary, not a bug.
+</details>
+
+### 3b. Your personal access token
+
+The CLI talks to canopy-web as **you**, using a token minted once per machine:
+
+```
+/canopy:canopy-web-pat-mint
+```
+
+This opens a browser, and writes the token to `~/.claude/canopy/workbench-token`.
+
+> **The identity rule that will bite you later.** That file is *your human token*.
+> An **agent** gets its own token in `~/.<slug>/.env` as `CANOPY_WEB_PAT`. When you
+> run canopy tooling from inside an agent's repo, canopy prefers the agent's token
+> and falls back to yours **with a loud warning**. If you see
+> *"falling back to the operator's workbench-token"*, that is canopy telling you
+> the agent has no identity of its own yet — expected before §5, a problem after.
+
+---
+
+## 4. Create the agent
+
+Two decisions first, and only two:
+
+- **slug** — lowercase, 2–31 chars, starts with a letter (e.g. `scout`). It becomes
+  the repo name, the plugin name, and the `/scout:...` command prefix. Hard to
+  change later.
+- **mandate** — one line: what this agent is *for*.
+
+Then, from Claude Code, just ask: **"create a canopy agent called `<slug>` whose
+mandate is `<one line>`"**. That invokes the `create-agent` skill, which runs the
+factory for you.
+
+To run it by hand instead:
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")"
+uv run --project "$CANOPY_ROOT" canopy create-agent <slug> \
+  --name "<Display Name>" \
+  --mandate "<one-line mission>" \
+  --mailbox "<slug>@dimagi-ai.com" \
+  --stakeholders "<who it serves>" \
+  --into ./<slug>
+```
+
+You get ~20 files and an initialised git repo with one commit. **This is a
+skeleton, not a working agent** — §5 is the part that makes it real.
+
+Push it to GitHub now, so the plugin has a source to install from:
+
+```bash
+cd <slug>
+gh repo create dimagi-internal/<slug> --private --source=. --push
+```
+
+---
+
+## 5. Make it real — let `agent doctor` drive
+
+This is the step that replaces guesswork. From inside the agent's repo:
+
+```bash
+uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .
+```
+
+It prints one line per check and, for anything failing, **the exact command that
+fixes it**. On a fresh scaffold you should expect roughly this:
+
+```
+[OK  ] Identity              slug=scout mailbox=scout@dimagi-ai.com gog_client=canopy
+[FAIL] Plugin install        plugin 'scout' is NOT installed — ...
+[OK  ] Gating rails          2 effective deny rail(s)
+[OK  ] Hook wiring           gating_guard.py registered as a PreToolUse hook
+[OK  ] Secrets manifest      .env.tpl (1 var(s), 0 op:// ref(s))
+[OK  ] Rails enforced        guard blocked the raw-send probe (exit 2)
+[FAIL] Email auth (gog)      ... does not map scout@dimagi-ai.com -> canopy
+[FAIL] Auth client           no gog token on this machine for scout@dimagi-ai.com
+[FAIL] canopy-web board      agent 'scout' not registered
+```
+
+**Four failures on a brand-new agent is correct.** They are the four things the
+factory cannot do for you. Work them in this order:
+
+1. **Plugin install** — makes `/scout:turn` invocable at all:
+   `/plugin marketplace add dimagi-internal/scout` then `/plugin install scout@scout`.
+2. **canopy-web board** — registers the agent so it has a board:
+   `canopy agent-publish register --repo .`
+   The agent lands in the workspace your token defaults to; override with
+   `CANOPY_WEB_WORKSPACE=<slug>` if that is not what you want.
+3. **Email auth** — only if the agent has a mailbox. Needs a real Google account
+   provisioned first; ask Jonathan. Then
+   `gog login <slug>@dimagi-ai.com --client canopy --services gmail,drive,docs,sheets,forms`.
+4. **Secrets** — `op inject -i .env.tpl -o ~/.<slug>/.env --account dimagi.1password.com`.
+
+Re-run `agent doctor` after each. **Do not move on until it is all green** — and
+re-run it on any new machine, since it catches setup that only ever existed on
+the old one.
+
+Then fill in the two files that carry the actual judgment:
+
+- **`persona.md`** — voice, mandate detail, what is worth remembering.
+- **`skills/<name>/SKILL.md`** — the agent's first real job. A skill is already a
+  slash command (`/<slug>:<name>`); you do **not** write a separate command file.
+
+---
+
+## 6. The runner — and the honest state of Windows
+
+Everything above works on macOS, Windows and Linux. The runner is where that stops
+being true.
+
+**You do not need the runner to use your agent.** Skip this section entirely until
+turns-you-invoke-yourself feel like the bottleneck.
+
+There are two runners:
+
+| | **Laptop runner** | **Cloud runner** |
+|---|---|---|
+| What it drives | The emdash desktop app, over Chrome DevTools Protocol | Headless `claude -p` on a server |
+| Where it runs | Your machine | An EC2 box |
+| Platform | **macOS only** | Linux (portable) |
+
+### Windows, precisely
+
+The parts that already work on Windows:
+
+- **Claude Code** — yes.
+- **emdash** — yes. Stable releases ship `emdash-x64.exe` and `emdash-x64.msi`
+  ([releases](https://github.com/generalaction/emdash/releases)); the project
+  states support for macOS, Windows and Linux.
+- **canopy CLI, the factory, `agent doctor`, canopy-web** — all portable Python
+  and a website.
+
+The part that does not:
+
+- **The laptop runner's daemon layer is macOS-only.** Its installer
+  (`install-runner.sh`) renders and loads two **launchd** jobs, and self-update
+  shells out to `launchctl kickstart`. There is no Windows equivalent today.
+
+The good news is that the coupling is *narrow*: the runner's own logic carries no
+platform branches, and the cloud runner is stdlib-only with every filesystem path
+overridable by environment variable. So a Windows runner is a supervision-layer
+problem (a Scheduled Task or service in place of launchd), not a rewrite.
+
+**Recommended path for a Windows operator today:** do §1–§5 natively on Windows,
+and invoke turns yourself. If unattended turns become necessary, pair a **cloud
+runner** rather than waiting for a Windows port — it makes the operator's OS
+irrelevant.
+
+---
+
+## 7. Your first turn
+
+```
+/<slug>:turn
+```
+
+That is it. The turn procedure is fleet-canonical: the agent reads its inbound
+channels, decides one action per counterpart, and closes with an explicit status
+line. Outbound actions (email, public writes) pause for your approval by default —
+that is the agent's **turn mode**, and it is board-side state you can read with
+`canopy agent mode --slug <slug>`.
+
+---
+
+## 8. When something is wrong
+
+Reach for these in order:
+
+| Symptom | Command |
+|---|---|
+| Anything at all, on any machine | `canopy agent doctor --repo .` |
+| canopy itself misbehaving | `/canopy:canopy-doctor` |
+| Email auth failing | `canopy email preflight --repo .` |
+| `/<slug>:...` commands missing | The plugin is not installed — see §5 step 1 |
+| "falling back to the operator's workbench-token" | The agent has no `CANOPY_WEB_PAT` — see §3b |
+
+---
+
+## Appendix — where the rest of the documentation lives
+
+| Doc | Read it when |
+|---|---|
+| `docs/agent-operating-model.md` | You want the *why* — primitives, topology, gating |
+| `plugins/canopy/skills/create-agent/SKILL.md` | You want the factory's own reference |
+| `plugins/canopy/agent-core/turn.md` | You want the exact turn procedure agents follow |
+| `plugins/canopy/agent-core/task-tracker.md` | Multi-turn work and the board |
+| canopy-web `runner/README.md` | You are actually pairing a runner |
+| `README.md` (this repo) | You are developing canopy itself |
