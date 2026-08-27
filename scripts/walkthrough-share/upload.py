@@ -319,6 +319,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--run-id", dest="run_id", help="DDD run_id this artifact belongs to")
     p.add_argument("--feature", help="Narrative slug (defaults from run_id server-side)")
     p.add_argument(
+        "--workspace",
+        help="Workspace slug to upload INTO. Required when you belong to more "
+        "than one: reads are workspace-scoped, so a video uploaded to the wrong "
+        "workspace silently never binds to its narrative.",
+    )
+    p.add_argument(
         "--role",
         choices=["hero_video", "deck", "docs", "clip"],
         help="Artifact role within the DDD run",
@@ -398,12 +404,20 @@ def main(argv: list[str] | None = None) -> int:
     }
     if args.project_slug:
         fields["project_slug"] = args.project_slug
-    # DDD-run grouping (optional). The server fills `feature` from `run_id`
-    # when omitted, and derives `role` from `kind` when blank.
+    # DDD-run grouping (optional). The server fills the narrative slug from
+    # `run_id` when omitted, and derives `role` from `kind` when blank.
     if args.run_id:
         fields["run_id"] = args.run_id
     if args.feature:
-        fields["feature"] = args.feature
+        # The FORM FIELD is `narrative_slug` (see apps/walkthroughs/api.py
+        # upload_walkthrough). We sent `feature` — which Django Ninja drops
+        # silently, because an unknown form field is not an error. So a video
+        # uploaded with `--feature <slug>` landed with narrative_slug=None and
+        # never bound to its narrative: the storyboard and the DDD narrative
+        # page both kept resolving to the PREVIOUS video, with no failure
+        # anywhere to notice. `--feature` stays the CLI spelling; only the wire
+        # name changes.
+        fields["narrative_slug"] = args.feature
     if args.role:
         fields["role"] = args.role
     if args.narrative_review_id:
@@ -414,8 +428,20 @@ def main(argv: list[str] | None = None) -> int:
         fields["links"] = json.dumps(links)
         print(f"attaching {len(links)} companion link(s)", file=sys.stderr)
 
+    # Workspace-scoped path when asked for. The server reads the workspace from
+    # the URL (`request.workspace_slug`) and otherwise falls back to the
+    # caller's default — which, for a user in more than one workspace, is NOT
+    # the workspace the narrative lives in. Every read path scopes by workspace
+    # (`apps/runs/aggregate._scope`), so a video that lands in the wrong one is
+    # invisible to the narrative and the storyboard, with no error at upload
+    # time and no way to tell from the artifact itself.
+    endpoint = (
+        f"{api}/api/w/{args.workspace}/walkthroughs/"
+        if args.workspace
+        else f"{api}/api/walkthroughs/"
+    )
     status, body = upload_multipart(
-        f"{api}/api/walkthroughs/",
+        endpoint,
         pat=pat,
         fields=fields,
         file_field="file",
