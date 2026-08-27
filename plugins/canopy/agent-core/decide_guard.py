@@ -41,11 +41,13 @@ actually?
 
 Three properties, the same three its sibling has and for the same reasons:
 
-1. **One shape only.** A closing offer-to-act. A genuine fork stated in prose
-   ("I'd close it rather than merge — ok?") is the SANCTIONED form and does not
-   match; neither does an outbound gate — sending, replying, publishing,
-   posting, sharing — carved out explicitly because putting something in front
-   of a person is the one thing that must always wait.
+1. **One shape only.** A closing offer-to-act, and only one the agent has NOT
+   already answered. A genuine fork stated in prose ("I'd close it rather than
+   merge — ok?") is the SANCTIONED form and does not match. Neither does an
+   outbound gate — sending, replying, publishing, posting, sharing — carved out
+   because putting something in front of a person always waits. Nor does an
+   offer that carries its own answer: a stated rationale ("yours to authorize")
+   or a stated default ("default is next turn"). Those ARE the call, made.
 2. **Block at most once per session.** Worst case is one extra beat on a
    legitimate ask, never a wedged session.
 3. **Fail open, always.** Every unexpected condition exits 0.
@@ -146,6 +148,68 @@ _OUTBOUND_CONTEXT_RE = re.compile(
 )
 
 
+# The second carve-out: an offer the agent has ALREADY SETTLED.
+#
+# The rail's premise is that an offer-to-act means the call was never made. That
+# premise fails in two shapes, and both are the fleet's SANCTIONED behaviour:
+#
+#   1. The agent states WHY it is the human's — "a production deploy is
+#      outward-facing and yours to authorize", "one-line change, product call".
+#      The call WAS made: the answer is "not mine". Blocking that argues with a
+#      conclusion the agent reached deliberately, and the reason text then tells
+#      it § Shipping clears deploys — which is exactly the claim the agent just
+#      examined and rejected for this deploy.
+#   2. The agent states a DEFAULT — "say the word and I'll pick it up now;
+#      default is next turn". Nothing is being handed back at all: it has
+#      decided, and is offering an override. That is "recommend and act".
+#
+# Measured 2026-08-27 over the last 40 sessions per agent, against the engine as
+# shipped: ace 8/40 blocked, hal 4/40, ada 3/19, eva 4/40. Of ~22 blocks, ~7 were
+# these two shapes — on FOUR different agents. Not one agent's quirk; the rail's.
+#
+# DIRECTION IS LOAD-BEARING, and asymmetric on purpose.
+#
+# A rationale is stated BEFORE the offer it justifies, so it is read BACKWARD
+# only. Read forward too, a later sentence about a DIFFERENT item silences a real
+# one — the live case: "Say the word and I'll take it. Still owed, and only you
+# can do it: full Claude Code restart." That "only you can do it" belongs to the
+# restart, not to the offer, and the offer is a true positive.
+#
+# A default is stated AFTER the offer it overrides, so it is read FORWARD only.
+# Each alternative must assert "this one is the human's". A bare mention of the
+# human is NOT enough: `needs you` was in this list for one measured pass and it
+# matched "whether anything here needs you. My read is nothing does" — a sentence
+# saying the exact OPPOSITE, which then silenced a true positive on two agents.
+# An over-loose alternative here costs a missed nudge silently, so every pattern
+# below carries its own verb or noun of decision.
+_SETTLED_RATIONALE_RE = re.compile(
+    r"(?:\byour\s+call\b|\byours\s+to\s+\w+"
+    r"|\bonly\s+you\s+can\b|\bnot\s+mine\b|\byou\s+alone\b"
+    r"|\b(?:product|judgment|business|policy)\s+call\b"
+    r"|\bturns?\s+on\s+your\b"
+    r"|\bfor\s+you\s+to\s+(?:decide|call|weigh|authorize|approve))",
+    re.IGNORECASE | re.DOTALL,
+)
+_STATED_DEFAULT_RE = re.compile(
+    r"(?:default\s+is\b|by\s+default\b|otherwise\s+I(?:'ll|\s+will)\b"
+    r"|if\s+(?:I\s+hear\s+nothing|you\s+say\s+nothing|not)\b"
+    r"|unless\s+you\s+(?:say|tell|object)\b|either\s+way\s+I(?:'ll|\s+will)\b)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# How far to look on each side for the settling evidence. One sentence or so.
+SETTLED_CHARS = 220
+
+
+def _already_settled(tail: str, offer: "re.Match") -> bool:
+    """True if this offer carries its own answer — a rationale, or a default."""
+    before = tail[max(0, offer.start() - SETTLED_CHARS) : offer.start()]
+    if _SETTLED_RATIONALE_RE.search(before):
+        return True
+    after = tail[offer.end() : offer.end() + SETTLED_CHARS]
+    return bool(_STATED_DEFAULT_RE.search(after))
+
+
 def _offers_something_outbound(tail: str, offer: "re.Match") -> bool:
     """True if this offer's object is a delivery — the one ask that always waits."""
     if _OUTBOUND_CONTEXT_RE.search(tail):
@@ -233,6 +297,8 @@ def hands_back_a_call(text: str) -> bool:
     if not offer:
         return False
     if _offers_something_outbound(tail, offer):
+        return False
+    if _already_settled(tail, offer):
         return False
     return True
 
