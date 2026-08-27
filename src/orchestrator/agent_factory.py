@@ -232,7 +232,7 @@ _SETTINGS_JSON = '''{
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "matcher": "Bash|Edit|Write|NotebookEdit|Skill",
         "hooks": [
           {
             "type": "command",
@@ -385,8 +385,17 @@ description: >
 
 # Agent turn review ({{AGENT_NAME}})
 
+**Invoke this skill by its full name — `{{AGENT_SLUG}}:agent-turn-review`.** Never
+`agent-turn-review` bare and never `canopy:agent-turn-review`: the fleet skill is the *body this
+one delegates to*, so calling it directly satisfies the letter of "run the review" while silently
+skipping every {{AGENT_NAME}}-specific step below. A wrapper you can walk around is not a wrapper.
+Anywhere else in this repo that tells {{AGENT_NAME}} to run the review names
+`{{AGENT_SLUG}}:agent-turn-review` too. (Railed: canopy's fleet gating baseline denies a bare /
+`canopy:`-prefixed `Skill` call for any agent that ships this wrapper.)
+
 Run before every outbound action (the thing that gets dropped under load). The general discipline
-is fleet-wide and DRY — **invoke `canopy:agent-turn-review`** and apply it in full:
+is fleet-wide and DRY, so this skill **delegates to** `canopy:agent-turn-review` — read that
+skill's body for the full text and apply it in full. In summary:
 - **A. Fidelity** — re-read the request, extract each ask, do EXACTLY that (read cited sources),
   rate it tough.
 - **B. Grounded commitments** — every "I'll do X" needs a concrete, executable mechanism; a vague

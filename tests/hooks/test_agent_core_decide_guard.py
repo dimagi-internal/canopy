@@ -106,6 +106,41 @@ def test_a_closing_offer_to_act_blocks(guard, closing):
     assert guard.hands_back_a_call(f"I diagnosed it to the line.\n\n{closing}")
 
 
+@pytest.mark.parametrize("closing", [
+    # VERBATIM from hal session acb83e1b, 2026-08-27 12:17 — ~14h after the rail shipped.
+    "In production the second is a cache hit, so it isn't costing you much"
+    " — but it's redundant work I'd collapse if you want the next increment.",
+    "I'd pull the diagnostic logging out if you'd like.",
+    "I can collapse those two reads into one if that's useful.",
+    "I could drop the stale branch if that would help.",
+])
+def test_a_postposed_condition_offer_blocks(guard, closing):
+    """The elided-"me to" shape. Every alternative in the original matcher needed the
+    offer's object to TRAIL it ("want me to <do X>"), so all of them required an explicit
+    "me to". Natural English fronts the object and leaves the deference at the end,
+    dropping the "me to" entirely — same handback, and it walked straight past the rail
+    the day after the rail shipped."""
+    assert guard.hands_back_a_call(f"That's the fix merged and verified.\n\n{closing}")
+
+
+@pytest.mark.parametrize("closing", [
+    # An OPINION verb after the modal: advice, not an offer to act.
+    "I'd recommend the second option if you want the simpler path.",
+    "I'd suggest closing it if you'd like fewer open PRs.",
+    # A counterfactual, not a deferred offer.
+    "I'd have caught it if the test had existed.",
+    # A conditional pointer to information the reader may not need.
+    "The full trace is in the PR if you want the detail.",
+])
+def test_a_postposed_condition_that_is_NOT_an_offer_does_not_block(guard, closing):
+    """The widening's two guards. Over-firing is this rail's dominant risk — a block on
+    the agent doing the right thing teaches it to dismiss the rail, which is worse than
+    the gap. Measured before shipping: over 96 real fleet sessions (7 days, all agents),
+    the widened matcher changed exactly ONE verdict, and that one was the true positive
+    above."""
+    assert not guard.hands_back_a_call(f"Here's where it landed.\n\n{closing}")
+
+
 def test_it_blocks_once_and_then_never_again(guard, tmp_path, monkeypatch, capsys):
     """Worst case must be one extra beat, never a session that cannot end."""
     t = _transcript(tmp_path, _assistant("Found it. Want me to fix it?"))

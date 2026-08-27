@@ -42,6 +42,12 @@ A rule is `{"tool": ..., "tool_pattern": ..., "pattern": ..., "per_statement": .
                  one agent and `mcp__plugin_ace_ace-gdrive__…` for another.
   pattern        regex over the SUBJECT (see `_subject`). Omit to match every call of the tool.
   per_statement  test each shell statement separately instead of the whole command (see below).
+  requires_path  repo-relative path that must EXIST for the rule to apply. Lets a fleet-baseline
+                 rail be conditional on what the agent actually ships, so one rail can serve
+                 every agent without blocking the ones the rail makes no sense for — e.g. the
+                 review-wrapper rail applies only where `skills/agent-turn-review/SKILL.md` is
+                 present. The alternative is a per-agent copy of the rail, which is the drift
+                 this file's whole history is about.
 
 STDLIB ONLY by design: a PreToolUse hook runs under whatever python3 is on PATH, which may not
 have PyYAML. That is why the gating config is JSON, not YAML.
@@ -82,15 +88,50 @@ def agent_labels(repo_dir, cfg):
     return slug, name
 
 
+# Tools exempt from the fail-CLOSED branch below. The exemption is narrow and the test is
+# whether the tool can ITSELF perform an outbound or destructive act.
+#
+# `Skill` cannot. Invoking a skill sends nothing, writes nothing and spends nothing — it selects a
+# procedure, and every act that procedure then takes arrives back at THIS hook as its own Bash /
+# Edit / Write / MCP call and is railed there. So a lost baseline cannot cost safety on a `Skill`
+# call, while blocking one costs the recovery path itself: the fail-closed message says to run
+# `/canopy:update`, and with `Skill` in an agent's PreToolUse matcher and no exemption here, that
+# is a `Skill` call — blocked by the very message telling you to make it. The guard would wedge
+# the agent shut and name its own remedy in the same breath.
+#
+# This was the documented reason the review-wrapper collision went UNRAILED (hal's
+# skills/agent-turn-review § "Why this isn't a gating rail", 2026-08): widening the matcher to
+# reach a `Skill` call meant accepting exactly that deadlock, and "a guard that can wedge the
+# agent is worse than the gap it closes" is the fleet's own standard. The objection was correct
+# about the code as it stood; it is fixed here rather than routed around, which is what lets the
+# `always` rail below exist at all.
+#
+# Anything not listed stays fail-closed, so a new tool defaults to the safe side.
+FAIL_OPEN_TOOLS = frozenset({"Skill"})
+
+
+def _substituted(rule, slug):
+    return {k: (v.replace("{slug}", slug) if isinstance(v, str) else v) for k, v in rule.items()}
+
+
 def baseline_rails(cfg, slug):
-    """Fleet-baseline deny rails for this agent's mounted channels, from the INSTALLED canopy
-    plugin (agent-core/gating-baseline.json) — so a rail fix ships once and reaches every agent
-    via /canopy:update. Returns [] for legacy configs (no `channels` key: local rails only), or
-    None when channels are mounted but the baseline is unresolvable (caller fails CLOSED).
+    """Fleet-baseline deny rails from the INSTALLED canopy plugin (agent-core/gating-baseline.json)
+    — so a rail fix ships once and reaches every agent via /canopy:update.
+
+    Two sources, and the difference is what happens when the baseline is unreadable:
+
+      `channels`  rails for the channels this agent MOUNTS (email, gws). Safety-bearing: losing
+                  one means a raw send or a My-Drive-root file lands unblocked. Unresolvable
+                  baseline + mounted channels -> None, and the caller fails CLOSED.
+      `always`    rails that apply to EVERY agent regardless of what it mounts, because what
+                  they govern is not a channel (added 2026-08-27 for the review-wrapper rail).
+                  A per-channel home would have meant every agent editing its own gating.json to
+                  opt in — i.e. the rail is absent for exactly the agent that forgot, which is
+                  the failure mode being fixed. These are nudges, not safety, so an agent with
+                  nothing mounted still runs when the baseline cannot be read.
+
     CANOPY_PLUGIN_DIR overrides the plugin dir (tests / unusual installs)."""
-    channels = cfg.get("channels")
-    if not channels:
-        return []
+    channels = cfg.get("channels") or []
     try:
         plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
         if not plugin_dir:
@@ -98,12 +139,11 @@ def baseline_rails(cfg, slug):
             plugin_dir = reg["plugins"]["canopy@canopy"][0]["installPath"]
         base = json.load(open(os.path.join(plugin_dir, "agent-core", "gating-baseline.json")))
     except Exception:
-        return None
-    rails = []
+        return None if channels else []
+    rails = [_substituted(rule, slug) for rule in base.get("always", [])]
     for ch in channels:
         for rule in base.get("channels", {}).get(ch, []):
-            rails.append({k: (v.replace("{slug}", slug) if isinstance(v, str) else v)
-                          for k, v in rule.items()})
+            rails.append(_substituted(rule, slug))
     return rails
 
 
@@ -212,7 +252,7 @@ def run(repo_dir, payload):
     cwd = payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR", "")
 
     rails = baseline_rails(cfg, slug)
-    if rails is None:
+    if rails is None and tool_name not in FAIL_OPEN_TOOLS:
         # channels are mounted but the fleet baseline is unreadable — fail CLOSED, with the fix.
         return 2, "", (
             "BLOCKED (fail closed): " + slug + "'s config/gating.json mounts channels but the "
@@ -220,7 +260,11 @@ def run(repo_dir, payload):
             "Fix: run /canopy:update (or `uv tool install canopy` / check "
             "~/.claude/plugins/installed_plugins.json), then retry.\n")
 
-    for rule in rails + cfg.get("deny", []):
+    for rule in (rails or []) + cfg.get("deny", []):
+        if rule.get("requires_path") and not os.path.exists(
+            os.path.join(repo_dir, rule["requires_path"])
+        ):
+            continue
         if matches(rule, tool_name, subject):
             msg = rule.get("message") or ("BLOCKED by " + slug + " gating policy (deny rule).")
             return 2, "", msg.rstrip() + "\n"

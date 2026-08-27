@@ -94,6 +94,28 @@ _OFFER_RE = re.compile(
     r"|say\s+the\s+word"
     r"|if\s+you(?:'d|\s+would)?\s+(?:like|want)\s+me\s+to"
     r"|happy\s+to\s+.{0,40}\bif\s+you"
+    # POSTPOSED CONDITION, added 2026-08-27. Every alternative above needs the offer's object
+    # to trail it ("want me to <do X>"), so all of them require an explicit "me to". Natural
+    # English routinely FRONTS the object and leaves the deference to the end, dropping the
+    # "me to" entirely: "it's redundant work I'd collapse if you want the next increment."
+    # That is the same handback — a call the agent could make, parked on the human's say-so —
+    # and it escaped the rail cleanly. Measured on hal's own session acb83e1b, 2026-08-27
+    # 12:17, ~14h after the rail shipped, i.e. the class the rail exists for walking straight
+    # past it.
+    #
+    # Two guards keep this from over-firing, because a false block teaches the agent to
+    # dismiss the rail and that is worse than the gap (this file's own standard):
+    #   1. An OPINION verb after the modal is excluded. "I'd recommend the second option if
+    #      you want the simpler path" is advice, not an offer to act, and reads identically
+    #      to the matcher without this.
+    #   2. The condition must be DEFERENCE ("if you want / if you'd like / if that's useful"),
+    #      not any `if`. "I'd have caught it if the test existed" is a counterfactual.
+    r"|\bi(?:'d|'ll|\s+would|\s+can|\s+could)\s+"
+    r"(?!recommend|suggest|argue|say|expect|guess|think|lean|prefer|call\b|have\b)"
+    r"[a-z']+[^.!?\n]{0,70}?"
+    r"\bif\s+(?:you(?:'d|\s+would)?\s+(?:like|want|prefer)\b"
+    r"|that(?:'s|\s+is|\s+would\s+be)?\s+(?:useful|helpful|worth)\b"
+    r"|(?:it|that)\s+(?:helps|would\s+help)\b)"
     r")",
     re.IGNORECASE | re.DOTALL,
 )
