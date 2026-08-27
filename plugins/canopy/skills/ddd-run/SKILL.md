@@ -95,8 +95,17 @@ seven failures were knowable without recording anything.
 _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
 DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 SPEC_ABS="$(realpath <unified_spec>)"
-(cd "$DDD_REPO" && uv run python -m scripts.ddd.recipe_preflight "$SPEC_ABS")
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.recipe_preflight "$SPEC_ABS" \
+  --cookies "<session-cookies>")
 ```
+
+**Pass preflight the SAME session you pass the recorder** — the `--cookies`
+value from the render invocation below, or `--storage-state <state.json>` where
+the recorder uses that (storage_state wins if both are given). Preflight's whole
+value is that it navigates the way the recorder will, and a logged-out preflight
+of a session-authenticated spec misses EVERY selector: an all-red report on a
+correct recipe, indistinguishable from a genuinely broken one (canopy#532). If
+you ever see 100% unresolved, read the `hint:` line before touching a selector.
 
 Exit 1 means one or more targets will not resolve against the live app. **Fix
 the recipe and re-run preflight — do not render.** It walks scenes in order in
