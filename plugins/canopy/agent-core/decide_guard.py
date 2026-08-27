@@ -175,9 +175,11 @@ that is not the same as asking permission to start.
 
 It genuinely IS the human's call only when it turns on their taste, their
 priorities, or cost/risk they alone can weigh — or when it puts something in front
-of a person: sending, replying, publishing, posting, sharing. That is your
-CLAUDE.md § hard guardrail and this rail never overrides it. If that's this, say so in one line and stop again; this rail blocks only
-once per session and will not interrupt you twice.
+of a person: sending, replying, publishing, posting, sharing — that is your
+CLAUDE.md § hard guardrail, and this rail never overrides it.
+
+If that's this, say so in one line and stop again; this rail blocks only once per
+session and will not interrupt you twice.
 
 Measured cost of getting this wrong: 2026-08-27, two full round-trips on a bug the
 agent had already diagnosed to the line and could ship to without approval.\
