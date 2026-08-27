@@ -4,19 +4,27 @@ name: Hook Python compatibility
 # python3.9 on macOS, not the project venv. A 3.10+-only annotation in hook
 # code (e.g. `str | None` PEP 604 union) compiles fine in CI under our
 # pyproject-pinned python3.11 but silently no-ops on real user machines.
-# Catch that class of regression here by py_compile-ing every hooks/*.py
-# under each supported user python.
+# Catch that class of regression here by py_compile-ing every hook under each
+# supported user python.
+#
+# `plugins/canopy/agent-core/*.py` is in scope because that is where the FLEET
+# engines live — `gating_guard.py` and `decide_guard.py` are exec'd by every
+# agent's thin loader, so they run under the same unknown user python3 as anything
+# in hooks/, and reach five repos instead of one. They were outside this gate
+# until 2026-08-27.
 
 on:
   push:
     paths:
       - 'hooks/**.py'
       - 'plugins/canopy/hooks/**.py'
+      - 'plugins/canopy/agent-core/**.py'
       - '.github/workflows/hook-compat.yml'
   pull_request:
     paths:
       - 'hooks/**.py'
       - 'plugins/canopy/hooks/**.py'
+      - 'plugins/canopy/agent-core/**.py'
       - '.github/workflows/hook-compat.yml'
 
 jobs:
@@ -35,7 +43,7 @@ jobs:
           set -e
           shopt -s nullglob
           fail=0
-          for f in hooks/*.py plugins/canopy/hooks/*.py; do
+          for f in hooks/*.py plugins/canopy/hooks/*.py plugins/canopy/agent-core/*.py; do
             echo "==> $f under python ${{ matrix.python-version }}"
             python -m py_compile "$f" || fail=1
           done

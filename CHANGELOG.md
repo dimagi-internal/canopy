@@ -9,6 +9,23 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.438] - 2026-08-27
+### Fixed
+- `agent-core/decide_guard.py` — the decide-don't-poll rail's carve-out was
+  EMAIL-only, so every non-mail outbound gate blocked and was told to act:
+  "publish this digest to the board?" (ada), "share it with Shayoni and Natalia?"
+  (eva), "publish it to the site?" (echo). Mail is one channel, not the guardrail —
+  which is "every outbound action (sending on a channel, public writes) requires
+  explicit human approval". The carve-out is now any DELIVERY VERB standing as the
+  offer's object, read only inside the window the offer opens so a stray "sent"
+  earlier in the paragraph cannot silence a true positive. Blocker for the fleet
+  spread past hal.
+### Changed
+- `hook-compat.yml` now covers `plugins/canopy/agent-core/**.py`. The fleet
+  engines every agent's loader exec's run under the same unknown user python3 as
+  anything in `hooks/`, and reach five repos instead of one; they were outside the
+  3.9/3.11/3.12 compile gate until now.
+
 ## [0.2.433] - 2026-08-26
 
 ### Fixed

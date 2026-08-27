@@ -43,8 +43,9 @@ Three properties, the same three its sibling has and for the same reasons:
 
 1. **One shape only.** A closing offer-to-act. A genuine fork stated in prose
    ("I'd close it rather than merge — ok?") is the SANCTIONED form and does not
-   match; neither does an outbound-comms gate, which is carved out explicitly
-   because sending something to a person is the one thing that must always wait.
+   match; neither does an outbound gate — sending, replying, publishing,
+   posting, sharing — carved out explicitly because putting something in front
+   of a person is the one thing that must always wait.
 2. **Block at most once per session.** Worst case is one extra beat on a
    legitimate ask, never a wedged session.
 3. **Fail open, always.** Every unexpected condition exits 0.
@@ -95,16 +96,66 @@ _OFFER_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-# The one carve-out. Sending mail to a person is the single action that ALWAYS
-# waits for a human (every agent's CLAUDE.md § hard guardrail), so "want me to
-# send this?" is the agent working CORRECTLY. Detected by the machinery of that
-# gate — the `bin/<slug>-email` shim, a named draft, an address — rather than by
-# the word "send", which appears in plenty of unrelated sentences.
-_EMAIL_GATE_RE = re.compile(
+# The carve-out: OUTBOUND. Putting something in front of a person — or on a
+# surface other people read — is the one class of action that ALWAYS waits for a
+# human. It is every agent's CLAUDE.md § hard guardrail, verbatim: "every outbound
+# action (sending on a channel, public writes) requires explicit human approval."
+# An agent asking here is working CORRECTLY, and a rail that pushes it to act
+# anyway is worse than no rail at all — it argues against a hard guardrail, citing
+# § Shipping, which relaxes code review and nothing else.
+#
+# WIDENED 2026-08-27, before the fleet spread. This shipped as an EMAIL-only
+# carve-out keyed to the mail gate's machinery (a `bin/<slug>-email` shim, a named
+# draft, an address) — right for a code agent, wrong for the rest of the fleet.
+# Measured against the engine as shipped, every non-mail outbound gate blocked:
+# "want me to publish this digest to the board?" (ada), "should I share it with
+# Shayoni and Natalia?" (eva), "want me to publish it to the site?" (echo). Hal's
+# mail was carved out because hal's outbound IS mail; ada's is the board.
+#
+# Matched by SHAPE, not by a list of surfaces — a surface list trails the tool
+# surface the same way `gating-baseline.json` documents its verb list doing. The
+# shape is a DELIVERY VERB standing as the offer's OBJECT: "want me to <deliver>".
+#
+# Scope is the load-bearing half. Tested against the whole 600-char tail, a bare
+# "sent" turns "I sent the PR through CI and it passed. Want me to merge it?" into
+# a carve-out and the rail goes quiet on a true positive. So this is read ONLY in
+# the window the offer opens — from the end of "want me to" to the end of that
+# sentence — which is exactly where the offer's object lives.
+_OUTBOUND_OBJECT_RE = re.compile(
+    r"\b(?:send|sends|sending|sent"
+    r"|repl(?:y|ies|ying)|respond(?:s|ing)?"
+    r"|forward(?:s|ing)?|email(?:s|ing)?"
+    r"|publish(?:es|ing)?|post(?:s|ing)?|shar(?:e|es|ing)"
+    r"|announc(?:e|es|ing)|notif(?:y|ies|ying)|submit(?:s|ting)?)\b",
+    re.IGNORECASE,
+)
+
+# How far past the offer to look for its object. Bounded so a tail with no "?" —
+# "Say the word and I'll send it." — still terminates somewhere sensible.
+OBJECT_CHARS = 200
+
+# The mail gate's own machinery, unchanged from the shipped version. Specific
+# enough to read over the whole tail without over-carving: a `bin/<slug>-email`
+# shim, a named draft, an address, a reply-all. These usually sit in the sentence
+# BEFORE the offer ("Draft is ready via bin/hal-email. Should I?"), which is why
+# they keep the wider scope while the verbs above do not.
+_OUTBOUND_CONTEXT_RE = re.compile(
     r"(?:bin/[a-z0-9_-]+-email|\bdraft(?:ed|s)?\b.{0,60}\b(?:email|reply|message)"
     r"|\b(?:email|reply)\b.{0,60}\bdraft(?:ed|s)?\b|reply-all|@[\w.-]+\.\w+)",
     re.IGNORECASE | re.DOTALL,
 )
+
+
+def _offers_something_outbound(tail: str, offer: "re.Match") -> bool:
+    """True if this offer's object is a delivery — the one ask that always waits."""
+    if _OUTBOUND_CONTEXT_RE.search(tail):
+        return True
+    window = tail[offer.end() : offer.end() + OBJECT_CHARS]
+    sentence_end = window.find("?")
+    if sentence_end != -1:
+        window = window[:sentence_end]
+    return bool(_OUTBOUND_OBJECT_RE.search(window))
+
 
 REASON = """\
 You ended by OFFERING to do something rather than doing it.
@@ -123,9 +174,12 @@ rationale for what you did. Say what you scoped OUT and why, so it can be widene
 that is not the same as asking permission to start.
 
 It genuinely IS the human's call only when it turns on their taste, their
-priorities, or cost/risk they alone can weigh — or when it sends something to a
-person. If that's this, say so in one line and stop again; this rail blocks only
-once per session and will not interrupt you twice.
+priorities, or cost/risk they alone can weigh — or when it puts something in front
+of a person: sending, replying, publishing, posting, sharing — that is your
+CLAUDE.md § hard guardrail, and this rail never overrides it.
+
+If that's this, say so in one line and stop again; this rail blocks only once per
+session and will not interrupt you twice.
 
 Measured cost of getting this wrong: 2026-08-27, two full round-trips on a bug the
 agent had already diagnosed to the line and could ship to without approval.\
@@ -170,14 +224,15 @@ def hands_back_a_call(text: str) -> bool:
     """True if this message CLOSES by offering to act.
 
     Scoped to the tail for the reason given at TAIL_CHARS, and exempted for the
-    outbound-email gate, which is the one ask that is always correct.
+    outbound gate, which is the one ask that is always correct.
     """
     if not text:
         return False
     tail = text[-TAIL_CHARS:]
-    if not _OFFER_RE.search(tail):
+    offer = _OFFER_RE.search(tail)
+    if not offer:
         return False
-    if _EMAIL_GATE_RE.search(tail):
+    if _offers_something_outbound(tail, offer):
         return False
     return True
 
