@@ -266,3 +266,89 @@ def test_a_failed_camera_move_is_counted_but_not_shouted_about():
     ]})
     assert any("1 of 2 actions failed" in line for line in out)
     assert not any("re-record" in line for line in out)
+
+
+# ---------------------------------------------------------------- scene split
+
+
+def test_split_prefers_existing_segment_boundaries():
+    from scripts.ddd.snippets import split_segments
+
+    assert split_segments([(0.0, 10.0), (20.0, 10.0)], 2) == [[(0.0, 10.0)], [(20.0, 10.0)]]
+
+
+def test_split_divides_a_single_span_evenly():
+    from scripts.ddd.snippets import split_segments
+
+    assert split_segments([(0.0, 30.0)], 3) == [[(0.0, 10.0)], [(10.0, 10.0)], [(20.0, 10.0)]]
+
+
+def test_split_never_emits_a_zero_length_piece():
+    """A zero-length span carries no frames; a beat built from one renders black."""
+    from scripts.ddd.snippets import split_segments
+
+    for segs in ([(0.0, 10.0), (20.0, 10.0)], [(0.0, 5.0), (10.0, 5.0), (20.0, 5.0)]):
+        for n in (1, 2, 3, 4):
+            groups = split_segments(segs, n)
+            assert len(groups) == n
+            assert all(d > 0 for g in groups for _, d in g), (segs, n, groups)
+
+
+def test_split_of_one_is_the_input():
+    from scripts.ddd.snippets import split_segments
+
+    segs = [(1.0, 2.0), (5.0, 3.0)]
+    assert split_segments(segs, 1) == [segs]
+
+
+def test_split_conserves_total_on_screen_time():
+    from scripts.ddd.snippets import split_segments
+
+    segs = [(0.0, 7.0), (10.0, 13.0)]
+    for n in (1, 2, 3):
+        total = sum(d for g in split_segments(segs, n) for _, d in g)
+        assert abs(total - 20.0) < 0.05
+
+
+# --------------------------------------------- teach tail bounded by the VO
+
+
+def test_a_teach_scene_without_a_vo_length_is_untouched():
+    """Back-compat: callers that pass no vo_sec keep the old full-range hold."""
+    from scripts.ddd.snippets import dedwell_segments
+
+    out = dedwell_segments("/nonexistent.mp4", 0.0, 30.0, keep_dwell=True)
+    assert out == [(0.0, 30.0)]
+
+
+def test_the_pacing_lint_covers_footage_outrunning_the_narration():
+    """The dead-air direction. The existing lint only caught narration too DENSE
+    for its footage; a beat whose footage outlasts its VO plays a silent tail."""
+    import io, contextlib, yaml, json, tempfile, pathlib
+    from scripts.ddd import snippets
+
+    spec = {"scenes": [{"id": "s", "title": "S", "narrative": "Three words here.", "pace": "flow"}]}
+    report = {
+        "scenes": [{"scene_index": 1, "start_seconds": 0.0, "duration_seconds": 40.0}],
+        "actions": [], "load_waits": [],
+    }
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        snippets.build_snippets(
+            narrative_slug="x", spec=spec, report=report,
+            source_clip_local=None, source_clip_hosted=None,
+        )
+    assert "footage runs" in buf.getvalue()
+
+
+def test_a_split_scene_does_not_double_count_its_marks():
+    """Each part must only carry the actions that happen inside it. Without the
+    filter, onscreen_for_abs CLAMPS an out-of-range action into the part instead
+    of dropping it, so every mark appears in every part."""
+    from scripts.ddd.snippets import _within
+
+    first, second = [(0.0, 10.0)], [(10.0, 10.0)]
+    early, late = 2.0, 15.0
+    assert _within(first, early) and not _within(first, late)
+    assert _within(second, late) and not _within(second, early)
+    assert not _within(first, None)
