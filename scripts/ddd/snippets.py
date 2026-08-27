@@ -113,6 +113,7 @@ def dedwell_segments(
     tail: float = 1.4,
     floor: float = 2.0,
     keep_dwell: bool = False,
+    vo_sec: float | None = None,
 ) -> list[tuple[float, float]]:
     """De-dwell a scene's master range into motion sub-ranges (absolute
     ``in_seconds``, ``duration``), collapsing dead-air gaps wherever they sit.
@@ -138,16 +139,36 @@ def dedwell_segments(
     the VO running over a frozen frame. ``flow`` and default/None scenes pass
     ``keep_dwell=False`` (the default) and de-dwell as before.
 
+    A teach scene keeps its holds only for as long as someone is TALKING over
+    them. Pass ``vo_sec`` (the beat's narration length) and the trailing static
+    past the end of the voiceover is trimmed — footage still running after the
+    narration has finished, on a page that has stopped moving, is dead air by
+    definition: nothing is being explained. Only the TAIL is touched, and only
+    past both the last motion and the VO, so a mid-scene hold that the narration
+    is still covering is untouched. Observed: microplans-study-groups s7 held
+    23.0s of footage against 18.8s of VO and left a 4.6s frozen, silent tail.
+
     Best-effort: returns a single full range on any ffmpeg/parse failure. Floors
     the total kept duration at ``floor``; a range with no detected motion keeps
     a short ``floor`` of its opening frame.
     """
     full = [(round(start, 3), round(dur, 3))]
-    # teach scenes keep their holds — the held footage carries the narration.
-    if keep_dwell or not clip_path or dur <= floor:
+    if not clip_path or dur <= floor:
         return full
     times = _scene_change_times(clip_path, start, dur, scene_threshold)
     if times is None:
+        return full
+    # teach scenes keep their holds — the held footage carries the narration —
+    # but only while the narration is still running. Past the VO, a static tail
+    # is dead air, so trim to whichever ends later: the last motion (plus a beat
+    # to settle) or the voiceover.
+    if keep_dwell:
+        if vo_sec is None:
+            return full
+        last_motion = max(times) if times else 0.0
+        keep_end = max(last_motion + tail, vo_sec + dwell)
+        if keep_end < dur - 0.5:
+            return [(round(start, 3), round(min(keep_end, dur), 3))]
         return full
     if not times:
         return [(round(start, 3), round(min(floor, dur), 3))]
@@ -297,6 +318,76 @@ def _mark_words(action: dict[str, Any]) -> list[str]:
             seen.add(w)
             out.append(w)
     return out
+
+
+def _within(segs: list[tuple[float, float]], t: float | None) -> bool:
+    """True when absolute time ``t`` falls inside one of ``segs``. PURE."""
+    if t is None:
+        return False
+    return any(s <= float(t) <= s + d for s, d in segs)
+
+
+def split_segments(
+    segs: list[tuple[float, float]], parts: int
+) -> list[list[tuple[float, float]]]:
+    """Divide kept segments into ``parts`` consecutive groups of ~equal on-screen
+    time, cutting only at segment boundaries where possible.
+
+    Why a scene needs this: one recorded scene can demonstrate more work than one
+    spoken sentence can cover. The pacing lint already detects that case (footage
+    more than 2.5× the narration, where the warp's rate cap gives up) and its only
+    advice is "split the scene" — which, until now, meant re-recording with the
+    spec cut in two. Declaring ``narrative:`` as a LIST splits it here instead:
+    the same footage, N beats, one sentence each.
+
+    Cuts land on segment boundaries when the split point falls near one,
+    otherwise a segment is divided. Never returns an empty group — a scene with
+    fewer segments than parts still yields ``parts`` groups by splitting spans.
+    PURE.
+    """
+    if parts <= 1 or not segs:
+        return [list(segs)]
+    total = sum(d for _, d in segs)
+    if total <= 0:
+        return [list(segs)] + [[segs[-1]] for _ in range(parts - 1)]
+
+    target = total / parts
+    groups: list[list[tuple[float, float]]] = []
+    cur: list[tuple[float, float]] = []
+    acc = 0.0
+    for start, dur in segs:
+        remaining = dur
+        s0 = start
+        if remaining <= 1e-6:  # a zero-length span carries no frames
+            continue
+        while remaining > 1e-6:
+            if len(groups) == parts - 1:  # last group takes the rest
+                cur.append((round(s0, 3), round(remaining, 3)))
+                acc += remaining
+                remaining = 0.0
+                break
+            need = target - acc
+            if need <= 1e-6:  # this group is already full — start the next one
+                groups.append(cur)
+                cur = []
+                acc = 0.0
+                continue
+            if remaining <= need + 1e-6:
+                cur.append((round(s0, 3), round(remaining, 3)))
+                acc += remaining
+                remaining = 0.0
+            else:
+                cur.append((round(s0, 3), round(need, 3)))
+                s0 += need
+                remaining -= need
+                groups.append(cur)
+                cur = []
+                acc = 0.0
+    if cur:
+        groups.append(cur)
+    while len(groups) < parts:  # degenerate input — never hand back fewer beats
+        groups.append([groups[-1][-1]])
+    return groups[:parts]
 
 
 def lint_capture_health(report: dict[str, Any]) -> list[str]:
@@ -548,8 +639,18 @@ def build_snippets(
         # "generating…" wait, an end-of-scene hold) is trimmed, not shown in full.
         pace = spec_scene.get("pace")
         keep_dwell = pace == "teach"
+        # The narration length bounds a teach scene's trailing hold (see
+        # dedwell_segments), so resolve it before de-dwelling rather than after.
+        _sentence = (spec_scene.get("concept_claim") or "").strip()
+        _narration = (spec_scene.get("narrative") or _sentence)
+        if isinstance(_narration, list):
+            _narration = " ".join(str(x) for x in _narration)
+        _vo_est = len(re.findall(r"[A-Za-z0-9']+", str(_narration))) / 2.6
         if clip_for_trim and dur > 0:
-            segs = dedwell_segments(clip_for_trim, start, dur, keep_dwell=keep_dwell)
+            segs = dedwell_segments(
+                clip_for_trim, start, dur, keep_dwell=keep_dwell,
+                vo_sec=_vo_est if _vo_est > 0.1 else None,
+            )
         else:
             segs = [(round(start, 3), round(dur, 3))]
         # Excise ground-truth loading waits (the recorder's `wait_for` spans) in
@@ -577,7 +678,17 @@ def build_snippets(
         # The per-scene narrative is the spoken line — it's what the author edits
         # in the narrative review (canopy-web round-trips edits into scene.narrative).
         # concept_claim is the falsifiable design claim, used only as a fallback.
-        narration = (spec_scene.get("narrative") or sentence).strip()
+        raw_narrative = spec_scene.get("narrative") or sentence
+        # A LIST splits this scene into that many beats — see split_segments.
+        # One scene can legitimately demonstrate more than one spoken sentence's
+        # worth of work (a long AI wait, a form filled then submitted); a single
+        # beat then hits the warp cap no matter how the sentence is paced.
+        narration_parts = (
+            [str(x).strip() for x in raw_narrative if str(x).strip()]
+            if isinstance(raw_narrative, list)
+            else [str(raw_narrative).strip()]
+        )
+        narration = " ".join(narration_parts)
         # Pacing lint: if a field-heavy scene's narration is far denser than its
         # footage, even the action↔word warp's rate cap (RATE_MAX≈2.5× in
         # actionsync.ts) can't compress the footage enough to land each field on
@@ -591,6 +702,22 @@ def build_snippets(
                 f"{len(action_marks)} fields over {kept_dur:.0f}s — warp will hit its "
                 f"{kept_dur / vo_est:.1f}× cap; split the scene or pace the narration."
             )
+        # The OTHER direction, and the one nothing warned about: footage that
+        # outruns its narration. The renderer plays the beat for as long as the
+        # footage lasts, so once the voice stops the tail plays silent — and if
+        # the page has settled it is silent AND frozen, which is exactly what the
+        # dead-air detector flags after the render. Catch it here, where fixing
+        # it costs a sentence instead of a re-render. Observed:
+        # microplans-study-groups s7, 23.0s of footage against 18.8s of VO → a
+        # 4.6s frozen tail.
+        _slack = kept_dur - vo_est
+        if vo_est > 0.1 and _slack > 3.0:
+            print(
+                f"  ⚠ scene {idx}: footage runs {_slack:.0f}s past the narration "
+                f"({kept_dur:.0f}s vs ~{vo_est:.0f}s) — the tail will play silent, and "
+                f"dead air if the page has settled. Add ~{int(_slack * 2.6)} words, or "
+                f"split the scene with a narrative: list."
+            )
         for line in lint_narration_binding(idx, narration, action_marks):
             print(line)
 
@@ -599,35 +726,51 @@ def build_snippets(
             f.get("id") for f in features if isinstance(f, dict) and f.get("id")
         ]
 
-        snippets.append(
-            {
-                "id": f"{narrative_slug}-scene-{idx}",
-                "scene_index": idx,
-                "title": title,
-                # Logical ranges into the master clip — NOT re-cut files.
-                # `segments` are the de-dwelled motion sub-ranges (played
-                # back-to-back); in/out/duration bound them (in=first start,
-                # out=last end, duration=summed on-screen length).
-                "segments": segments,
-                "action_marks": action_marks,
-                "in_seconds": in_seconds,
-                "out_seconds": out_seconds,
-                "duration_seconds": kept_dur,
-                # `narration` (scene.narrative) IS the spoken line — the narrative
-                # the author writes/edits while picturing the demo. `sentence`
-                # (concept_claim) is kept as the design claim / caption fallback.
-                "narration": narration,
-                "sentence": sentence,
-                # `role: overview` marks the goal-setting opener — the explainer
-                # builder absorbs it into the narrated intro title card rather
-                # than replaying it as a body scene.
-                "role": (spec_scene.get("role") or "").strip() or None,
-                "tags": tags,
-                "provenance": spec_scene.get("provenance"),
-                "source_clip": source_clip_local,
-                "source_clip_url": source_clip_hosted,
-            }
-        )
+        part_segs = split_segments(segs, len(narration_parts))
+        for part_i, (part_text, p_segs) in enumerate(zip(narration_parts, part_segs)):
+            # Only the actions that actually happen inside THIS part. Without the
+            # filter every part builds marks from the whole scene, and
+            # `onscreen_for_abs` clamps an out-of-range timestamp to the segment
+            # bounds instead of dropping it — so a split scene emits each mark
+            # once per part, piles them all on the part's first/last frame, and
+            # the warp anchors words to moments that are not in that beat.
+            p_actions = scene_actions if len(narration_parts) == 1 else [
+                a for a in scene_actions if _within(p_segs, a.get("start_seconds"))
+            ]
+            p_marks = build_action_marks(p_actions, p_segs)
+            p_kept = round(sum(d for _, d in p_segs), 3)
+            suffix = "" if len(narration_parts) == 1 else f"-{part_i + 1}"
+            snippets.append(
+                {
+                    "id": f"{narrative_slug}-scene-{idx}{suffix}",
+                    "scene_index": idx,
+                    "title": title if part_i == 0 else f"{title} ({part_i + 1})",
+                    # Logical ranges into the master clip — NOT re-cut files.
+                    # `segments` are the de-dwelled motion sub-ranges (played
+                    # back-to-back); in/out/duration bound them (in=first start,
+                    # out=last end, duration=summed on-screen length).
+                    "segments": [
+                        {"start_seconds": a, "duration_seconds": b} for a, b in p_segs
+                    ],
+                    "action_marks": p_marks,
+                    "in_seconds": p_segs[0][0],
+                    "out_seconds": round(p_segs[-1][0] + p_segs[-1][1], 3),
+                    "duration_seconds": p_kept,
+                    # `narration` (scene.narrative) IS the spoken line — the narrative
+                    # the author writes/edits while picturing the demo. `sentence`
+                    # (concept_claim) is kept as the design claim / caption fallback.
+                    "narration": part_text,
+                    "sentence": sentence,
+                    # `role: overview` marks the goal-setting opener — the explainer
+                    # builder absorbs it into the narrated intro title card rather
+                    # than replaying it as a body scene.
+                    "role": (spec_scene.get("role") or "").strip() or None,
+                    "tags": tags,
+                    "provenance": spec_scene.get("provenance"),
+                    "source_clip": source_clip_local,
+                    "source_clip_url": source_clip_hosted,
+                }
+            )
     return snippets
 
 
@@ -735,7 +878,16 @@ def build_explainer_spec(
     for sn in snippets:
         if sn.get("id") == overview_id:
             continue  # absorbed into the narrated intro title beat above
+        # A scene split into several beats (narrative: as a list) yields several
+        # snippets with the SAME scene_index — the beat id has to stay unique or
+        # they collide in `walkthrough` / `narration.by_beat` and one silently
+        # overwrites the other. The snippet id already carries the `-N` suffix.
         bid = f"s{sn['scene_index']}"
+        _sid = str(sn.get("id") or "")
+        if "-scene-" in _sid:
+            _tail = _sid.rsplit("-scene-", 1)[1]
+            if "-" in _tail:
+                bid = f"s{sn['scene_index']}-{_tail.split('-', 1)[1]}"
         beats.append(
             {"id": bid, "kind": "body_walkthrough", "seconds": round(sn["duration_seconds"], 1)}
         )
