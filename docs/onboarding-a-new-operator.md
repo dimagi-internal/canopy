@@ -25,12 +25,12 @@ a CLI, a plugin, and a website. Here is the whole map:
 | **canopy** (this repo) | The framework: a Claude Code plugin + a `canopy` CLI. Holds the agent factory and the fleet-wide operating model. | Your machine | **Yes** |
 | **Your agent's repo** | One git repo per agent — its persona, skills, gating rails, secrets. Generated for you by the factory. | Your machine + GitHub | **Yes** |
 | **canopy-web** | The shared website: each agent's board, tasks, turns, work products. Lives at `labs.connect.dimagi.com/canopy`. | Already deployed — you just log in | **Yes** (read/write via CLI) |
-| **The runner** | A daemon that fires an agent's turns *unattended* (on a schedule, or when email arrives). | Your machine, or a cloud box | **No — skip it at first** |
+| **The runner** | A daemon that fires an agent's turns *unattended* (on a schedule, or when email arrives). Works on macOS and Windows. | Your machine, or a cloud box | **No — skip it at first**, unless you need email-triggered turns |
 
-**The runner is the piece to skip on day 1.** An agent is fully usable without it:
-you invoke `/<slug>:turn` in Claude Code yourself. The runner only removes *you*
-from the loop. It is also the only piece with a hard platform dependency — see
-§6.
+**The runner is the piece to skip on day 1.** An agent is fully usable without
+it: you invoke `/<slug>:turn` in Claude Code yourself. The runner only removes
+*you* from the loop — which matters as soon as you want turns triggered by
+incoming email or by a schedule. See §6.
 
 ---
 
@@ -99,9 +99,17 @@ curl -X POST https://labs.connect.dimagi.com/canopy/api/workspaces/ \
   -d '{"slug":"my-team","display_name":"My Team"}'
 ```
 
-⚠️ **There is no delete endpoint.** A workspace you create is permanent. Pick the
-slug deliberately: lowercase letters, digits and hyphens only, and it will appear
-in every URL your team uses.
+Still pick the slug deliberately — lowercase letters, digits and hyphens only,
+and it appears in every URL your team uses. But it is **no longer a one-way
+door**: an owner can delete a workspace once it is empty.
+
+```bash
+curl -X DELETE https://labs.connect.dimagi.com/canopy/api/workspaces/my-team/ \
+  -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)"
+```
+
+Owner-only, and it returns **409 while the workspace still owns agents**, naming
+them — delete those first (below) and retry.
 
 You must be either on the email allowlist (any `@dimagi.com` address is) or
 already a member of some workspace. A purely invite-admitted user cannot bootstrap
@@ -197,6 +205,10 @@ factory cannot do for you. Work them in this order:
    `canopy agent-publish register --repo .`
    The agent lands in the workspace your token defaults to; override with
    `CANOPY_WEB_WORKSPACE=<slug>` if that is not what you want.
+   Made a typo in the slug, or just trying one out? Registration is reversible:
+   `curl -X DELETE .../api/agents/<slug>/ -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)"`
+   (editor or owner; takes the agent's tasks, turns, skills and work products
+   with it). Deleting the GitHub repo is `gh repo delete dimagi-internal/<slug>`.
 3. **Email auth** — only if the agent has a mailbox. Needs a real Google account
    provisioned first; ask Jonathan. Then
    `gog login <slug>@dimagi-ai.com --client canopy --services gmail,drive,docs,sheets,forms`.
@@ -214,50 +226,64 @@ Then fill in the two files that carry the actual judgment:
 
 ---
 
-## 6. The runner — and the honest state of Windows
+## 6. The runner — including on Windows
 
-Everything above works on macOS, Windows and Linux. The runner is where that stops
-being true.
+The runner is what fires an agent's turns **without you**: it polls the agent's
+mailbox and enqueues a turn per new email thread, and it fires scheduled turns.
+Everything above works without it — you invoke `/<slug>:turn` yourself — so skip
+this section until turns-you-run-by-hand become the bottleneck.
 
-**You do not need the runner to use your agent.** Skip this section entirely until
-turns-you-invoke-yourself feel like the bottleneck.
+But if **email-triggered or scheduled turns matter to you, you need a runner**,
+and specifically the *laptop* runner: the cloud runner claims turns that
+something else queued, and has no inbox polling or schedule firing of its own.
 
-There are two runners:
+Two runners, and what each is for:
 
 | | **Laptop runner** | **Cloud runner** |
 |---|---|---|
-| What it drives | The emdash desktop app, over Chrome DevTools Protocol | Headless `claude -p` on a server |
-| Where it runs | Your machine | An EC2 box |
-| Platform | **macOS only** | Linux (portable) |
+| Triggers turns from email / schedules | **yes** | no |
+| Executes turns | drives the emdash app over CDP | headless `claude -p` |
+| Runs on | macOS **and Windows** | a Linux server |
 
-### Windows, precisely
+### Windows
 
-The parts that already work on Windows:
+Supported. Install it with the PowerShell installer rather than the bash one:
 
-- **Claude Code** — yes.
-- **emdash** — yes. Stable releases ship `emdash-x64.exe` and `emdash-x64.msi`
-  ([releases](https://github.com/generalaction/emdash/releases)); the project
-  states support for macOS, Windows and Linux.
-- **canopy CLI, the factory, `agent doctor`, canopy-web** — all portable Python
-  and a website.
+```powershell
+.\runner\canopy_runner\scripts\install-runner.ps1
+```
 
-The part that does not:
+It mirrors the macOS install exactly — snapshot the ref, build the wheels,
+`uv tool install`, provision the CDP sidecar — and registers two **Scheduled
+Tasks** where macOS uses launchd jobs:
 
-- **The laptop runner's daemon layer is macOS-only.** Its installer
-  (`install-runner.sh`) renders and loads two **launchd** jobs, and self-update
-  shells out to `launchctl kickstart`. There is no Windows equivalent today.
+| | macOS | Windows |
+|---|---|---|
+| supervisor | launchd | Task Scheduler |
+| runner job | `com.canopy.runner` | `\Canopy\canopy-runner` |
+| updater job | `com.canopy.runner.updater` | `\Canopy\canopy-runner-updater` |
 
-The good news is that the coupling is *narrow*: the runner's own logic carries no
-platform branches, and the cloud runner is stdlib-only with every filesystem path
-overridable by environment variable. So a Windows runner is a supervision-layer
-problem (a Scheduled Task or service in place of launchd), not a rewrite.
+Two Windows-specific setup notes:
 
-**Recommended path for a Windows operator today:** do §1–§5 natively on Windows,
-and invoke turns yourself. If unattended turns become necessary, pair a **cloud
-runner** rather than waiting for a Windows port — it makes the operator's OS
-irrelevant.
+- **emdash needs its debug port.** On macOS that is the "Emdash CDP" app; on
+  Windows, make a shortcut to `emdash.exe` whose Target ends with
+  `--remote-debugging-port=9222`.
+- **The emdash DB path differs.** In `%USERPROFILE%\.canopy\runner.json`:
+  `"emdash_db": "C:\\Users\\<you>\\AppData\\Roaming\\Emdash\\emdash4.db"`
 
----
+Everything else — Claude Code, emdash (stable ships `emdash-x64.exe` and
+`.msi`), the canopy CLI, canopy-web — is cross-platform already.
+
+**One honest caveat.** The Windows runner's logic is shared with the macOS one
+and unit-tested on both platforms' branches, and the installer is lint-clean —
+but it has not yet been run on a real Windows machine, because there wasn't one
+in the fleet when it was written. Treat your first install as a bring-up: run it
+with `-NoTasks` first, check `canopy-runner update-check --config <your config>`
+answers, then re-run without the flag to register the tasks. If something breaks,
+that is a bug worth reporting, not something you did wrong.
+
+For the full detail — the two-job design, the log-redirection wrapper, the
+session boundary — see `runner/canopy_runner/README.md` in canopy-web.
 
 ## 7. Your first turn
 
