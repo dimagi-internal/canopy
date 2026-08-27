@@ -111,3 +111,47 @@ describe("evaluateTiming", () => {
     expect(v.totalFieldMarks).toBe(0);
   });
 });
+
+describe("cross-run comparability", () => {
+  // The trap this exists to prevent: `coverage` divides by the fields the
+  // narration NAMES, which grows when you rewrite narration to describe more of
+  // what the footage does — so the score can fall while strictly more fields
+  // land on their word. `syncRate` divides by the footage's own field count,
+  // which only a re-record changes.
+  const beat = (id: string, marks: number, named: number): TimingBeatInput => ({
+    beatId: id,
+    voSec: 60,
+    marks: Array.from({ length: marks }, (_, i) => ({ onSeconds: i, words: [`w${i}`] })),
+    resolveWord: (w: string) => {
+      const i = Number(w.slice(1));
+      return Number.isNaN(i) || i >= named ? null : i;
+    },
+  });
+
+  it("divides by the footage's field count, not the narration's", () => {
+    const v = evaluateTiming([beat("s1", 20, 8)]);
+    expect(v.totalFieldMarks).toBe(20);
+    expect(v.wordMatchableFields).toBe(8);
+    expect(v.coverage).toBeCloseTo(v.syncedFields / v.wordMatchableFields, 2);
+    expect(v.syncRate).toBeCloseTo(v.syncedFields / v.totalFieldMarks, 2);
+  });
+
+  it("naming more fields cannot lower the comparable rate", () => {
+    const lean = evaluateTiming([beat("s1", 20, 4)]);
+    const rich = evaluateTiming([beat("s1", 20, 16)]);
+    expect(rich.syncedFields).toBeGreaterThan(lean.syncedFields);
+    // the denominator is identical, so the rate can only move with the numerator
+    expect(rich.totalFieldMarks).toBe(lean.totalFieldMarks);
+    expect(rich.syncRate!).toBeGreaterThan(lean.syncRate!);
+  });
+
+  it("says which number to compare across runs", () => {
+    const v = evaluateTiming([beat("s1", 20, 8)]);
+    expect(v.findings.some((f) => /compare THIS across runs/.test(f))).toBe(true);
+  });
+
+  it("reports fields that are on camera but never named", () => {
+    const v = evaluateTiming([beat("s1", 20, 4)]);
+    expect(v.findings.some((f) => /never named in the narration/.test(f))).toBe(true);
+  });
+});

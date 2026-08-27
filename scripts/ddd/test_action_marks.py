@@ -181,3 +181,88 @@ def test_say_survives_the_recorder_into_the_report():
     from dataclasses import asdict
 
     assert asdict(r)["say"] == "scale", "must serialize into the run report"
+
+
+def _mk(say, word, at):
+    return {"on_seconds": at, "words": [word], "target": f"#{word}", "kind": "fill", "say": say}
+
+
+def test_lint_flags_a_say_hint_that_never_appears_in_the_narration():
+    """The silent failure: the hint looks applied, the mark quietly falls back
+    to field-id tokens, and you only find out after a full render."""
+    from scripts.ddd.snippets import lint_narration_binding
+
+    out = lint_narration_binding(3, "She sets the deadline and the scale.", [
+        _mk("deadline", "deadline", 1.0), _mk("email", "email", 2.0),
+    ])
+    assert any("never appear" in line and "email" in line for line in out)
+
+
+def test_lint_flags_narration_ordered_differently_than_the_footage():
+    from scripts.ddd.snippets import lint_narration_binding
+
+    out = lint_narration_binding(3, "She sets the scale, then the deadline.", [
+        _mk("deadline", "deadline", 1.0), _mk("scale", "scale", 2.0),
+    ])
+    assert any("different order" in line for line in out)
+
+
+def test_lint_flags_one_word_naming_two_fields():
+    from scripts.ddd.snippets import lint_narration_binding
+
+    out = lint_narration_binding(3, "She writes the date and the date.", [
+        _mk("date", "date", 1.0), _mk("date", "date", 2.0),
+    ])
+    assert any("more than one" in line for line in out)
+
+
+def test_lint_is_silent_when_the_binding_is_clean():
+    from scripts.ddd.snippets import lint_narration_binding
+
+    out = lint_narration_binding(3, "She sets the deadline, then the scale.", [
+        _mk("deadline", "deadline", 1.0), _mk("scale", "scale", 2.0),
+    ])
+    assert out == []
+
+
+def test_lint_says_nothing_without_hints():
+    """Specs that predate `say:` must not start emitting noise."""
+    from scripts.ddd.snippets import lint_narration_binding
+
+    marks = [{"on_seconds": 1.0, "words": ["deadline"], "target": "#x", "kind": "fill"}]
+    assert lint_narration_binding(3, "Anything at all.", marks) == []
+
+
+def test_capture_health_names_the_failed_interactive_actions():
+    """The three-week bug: a hero video built from a run where the form never
+    filled and the call never published."""
+    from scripts.ddd.snippets import lint_capture_health
+
+    report = {"actions": [
+        {"kind": "fill", "ok": False, "target": "css:#id_application_deadline",
+         "error_message": "Malformed value"},
+        {"kind": "fill", "ok": False, "target": 'css:input[x-model="question.text"]',
+         "error_kind": "target_not_found"},
+        {"kind": "hold", "ok": True},
+    ]}
+    out = lint_capture_health(report)
+    assert any("2 of 3 actions failed" in line for line in out)
+    assert any("id_application_deadline" in line for line in out)
+    assert any("re-record" in line for line in out)
+
+
+def test_capture_health_is_silent_on_a_clean_run():
+    from scripts.ddd.snippets import lint_capture_health
+
+    assert lint_capture_health({"actions": [{"kind": "click", "ok": True}]}) == []
+
+
+def test_a_failed_camera_move_is_counted_but_not_shouted_about():
+    """A missed scroll_to is a camera miss, not the app failing."""
+    from scripts.ddd.snippets import lint_capture_health
+
+    out = lint_capture_health({"actions": [
+        {"kind": "scroll_to", "ok": False, "target": "css:th"}, {"kind": "click", "ok": True},
+    ]})
+    assert any("1 of 2 actions failed" in line for line in out)
+    assert not any("re-record" in line for line in out)
