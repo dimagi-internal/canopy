@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from scripts.ddd.spec_io import lock_path
+from scripts.ddd.spec_io import discarded_recipe_fields, lock_path
 
 _RECIPE_ONLY_FIELDS = (
     "show", "url", "viewport", "full_page", "pace", "actions",
@@ -60,7 +60,12 @@ def check(base_dir) -> list[str]:
                 f"{slug}: lock is missing generated key(s) {missing} — hand-edited or stale"
             )
 
-        recipe_ids = {(s.get("id") or "").strip() for s in (recipe.get("scenes") or [])}
+        recipe_scenes_by_id = {
+            (s.get("id") or "").strip(): s
+            for s in (recipe.get("scenes") or [])
+            if isinstance(s, dict)
+        }
+        recipe_ids = set(recipe_scenes_by_id)
         lock_scenes = lock.get("scenes") or []
         lock_ids = {(s.get("id") or "").strip() for s in lock_scenes}
 
@@ -77,6 +82,18 @@ def check(base_dir) -> list[str]:
                     f"— the lock has been hand-edited; re-pull it"
                 )
 
+        # The other direction, and the one that cost a whole PR: compose merges
+        # the lock OVER the recipe, so story written into a recipe is discarded
+        # before anything renders. Same detector the loader warns from, so the
+        # gate and the warning can never disagree.
+        for item in discarded_recipe_fields(recipe, lock):
+            problems.append(
+                f"{slug}: recipe carries story — {item} — which compose overwrites "
+                f"from the lock, so editing it there changes nothing that renders. "
+                f"Edit the story on canopy-web, `python -m scripts.ddd.narrative "
+                f"pull {slug} <dir>`, then delete the local copy."
+            )
+
     return problems
 
 
@@ -86,7 +103,11 @@ def main(argv: list[str]) -> int:
     for p in problems:
         print(p)
     if problems:
-        print(f"\n{len(problems)} problem(s). Locks are generated — re-pull, don't edit.")
+        print(
+            f"\n{len(problems)} problem(s). The story lives on canopy-web and the lock "
+            f"is generated: edit the story there and re-pull — never hand-edit the lock, "
+            f"and never keep a local copy of the story in the recipe."
+        )
         return 1
     print(f"{base}: locks clean")
     return 0

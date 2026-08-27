@@ -24,6 +24,7 @@ is impossible until exactly one thing reads it.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import yaml
@@ -96,6 +97,39 @@ def compose(recipe: dict, lock: dict) -> dict:
     return raw
 
 
+def discarded_recipe_fields(recipe: dict, lock: dict) -> list[str]:
+    """Recipe fields ``compose`` throws away, as human-readable lines. Pure.
+
+    The merge is silent by design — the lock wins and nothing says so. That is
+    fine when the recipe never carries story, and invisible when it does: 20
+    ``narrative:`` blocks shipped into connect-labs recipes, every one
+    discarded, and the render that was supposed to prove them measured no
+    change and could not say why. Naming them costs nothing and is the only
+    signal on the paths that skip ``check_locks`` — which, today, is all of
+    them.
+    """
+    out: list[str] = []
+    for f in _LOCK_TOP_FIELDS:
+        if f in recipe and f in lock:
+            out.append(f"top-level {f!r}")
+    lock_scenes = {
+        (s.get("id") or "").strip(): s
+        for s in (lock.get("scenes") or [])
+        if isinstance(s, dict)
+    }
+    for rs in recipe.get("scenes") or []:
+        if not isinstance(rs, dict):
+            continue
+        sid = (rs.get("id") or "").strip()
+        ls = lock_scenes.get(sid)
+        if not ls:
+            continue
+        for f in _LOCK_SCENE_FIELDS:
+            if f in rs and f in ls:
+                out.append(f"scene {sid!r} {f!r}")
+    return out
+
+
 def load_spec_raw(path_or_slug, *, base_dir=None) -> dict:
     """Compose a spec to a raw dict, WITHOUT schema validation.
 
@@ -127,6 +161,17 @@ def load_spec_raw(path_or_slug, *, base_dir=None) -> dict:
         )
     recipe = yaml.safe_load(rpath.read_text()) or {}
     lock = json.loads(lpath.read_text())
+    discarded = discarded_recipe_fields(recipe, lock)
+    if discarded:
+        shown = ", ".join(discarded[:6])
+        more = f" (+{len(discarded) - 6} more)" if len(discarded) > 6 else ""
+        print(
+            f"WARNING: {rpath.name} carries story the lock overwrites — {shown}{more}. "
+            f"Editing it there changes nothing that renders. The story lives on "
+            f"canopy-web: edit it, `python -m scripts.ddd.narrative pull {slug}`, "
+            f"and delete the local copy.",
+            file=sys.stderr,
+        )
     return compose(recipe, lock)
 
 

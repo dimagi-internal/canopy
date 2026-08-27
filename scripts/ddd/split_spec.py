@@ -19,12 +19,12 @@ import yaml
 
 from scripts.ddd.identity import scene_id
 from scripts.ddd.narrative import write_lock
-from scripts.ddd.spec_io import recipe_path
+from scripts.ddd.spec_io import _LOCK_SCENE_FIELDS, _LOCK_TOP_FIELDS, recipe_path
 
-# Mirrors scripts.ddd.spec_io._LOCK_SCENE_FIELDS / _LOCK_TOP_FIELDS — the split
-# and the compose have to agree on the seam or a round-trip loses fields.
-_LOCK_SCENE_FIELDS = ("title", "persona", "provenance", "narrative", "features")
-_LOCK_TOP_FIELDS = ("name", "narrative", "personas", "build_order")
+# The split and the compose have to agree on the seam or a round-trip loses
+# fields, so they read the SAME tuples rather than mirroring them. They were
+# mirrored by hand until the copies had no test holding them together — the
+# kind of drift that only shows up as a field quietly vanishing.
 
 # Dead as of L1 — the merge algorithm these fed no longer exists.
 _DEAD_TOP_FIELDS = (

@@ -6,7 +6,13 @@ import json
 import pytest
 import yaml
 
-from scripts.ddd.spec_io import SpecCompositionError, compose, load_spec
+from scripts.ddd.spec_io import (
+    SpecCompositionError,
+    compose,
+    discarded_recipe_fields,
+    load_spec,
+    load_spec_raw,
+)
 
 
 RECIPE = {
@@ -170,3 +176,60 @@ def test_compose_preserves_the_recipe_when_the_story_rewords_a_title():
     assert scene["narrative"] == "A reworded line."
     # concept_claim is recipe-side and a pull can never touch it
     assert scene["concept_claim"] == "The plan renders in under two seconds."
+
+
+# --- story written into a recipe is discarded, and must not be silent --------
+# 20 `narrative:` blocks shipped into connect-labs recipes and every one was
+# thrown away here. The render that was meant to prove them measured no change
+# and had nothing to say why. check_locks is the gate, but no CI runs it — the
+# loader is the one place every render path goes through.
+
+
+def test_a_clean_recipe_discards_nothing():
+    assert discarded_recipe_fields(RECIPE, LOCK) == []
+
+
+def test_a_recipe_scene_carrying_narrative_is_named_as_discarded():
+    recipe = {**RECIPE, "scenes": [
+        {**RECIPE["scenes"][0], "narrative": "written here, never rendered"},
+        RECIPE["scenes"][1],
+    ]}
+    assert discarded_recipe_fields(recipe, LOCK) == ["scene 'the-goal' 'narrative'"]
+
+
+def test_top_level_story_in_a_recipe_is_named_as_discarded():
+    assert discarded_recipe_fields({**RECIPE, "narrative": "x"}, LOCK) == ["top-level 'narrative'"]
+
+
+def test_a_recipe_field_the_lock_does_not_have_is_not_discarded():
+    """compose only overwrites what the lock actually carries."""
+    lean = {**LOCK, "scenes": [{"id": "the-goal"}, {"id": "the-proof"}]}
+    recipe = {**RECIPE, "scenes": [
+        {**RECIPE["scenes"][0], "narrative": "this one really does survive"},
+        RECIPE["scenes"][1],
+    ]}
+    assert discarded_recipe_fields(recipe, lean) == []
+    assert compose(recipe, lean)["scenes"][0]["narrative"] == "this one really does survive"
+
+
+def test_the_loader_warns_on_stderr_when_it_discards_story(tmp_path, capsys):
+    recipe = {**RECIPE, "scenes": [
+        {**RECIPE["scenes"][0], "narrative": "written here, never rendered"},
+        RECIPE["scenes"][1],
+    ]}
+    (tmp_path / "demo.recipe.yaml").write_text(yaml.dump(recipe))
+    (tmp_path / "demo.narrative.lock.json").write_text(json.dumps(LOCK))
+
+    raw = load_spec_raw("demo", base_dir=tmp_path)
+
+    err = capsys.readouterr().err
+    assert "WARNING" in err and "the-goal" in err and "narrative pull demo" in err
+    # and the composed result is still the lock's story, unchanged
+    assert raw["scenes"][0]["narrative"] == "The goal."
+
+
+def test_the_loader_is_quiet_when_the_recipe_carries_no_story(tmp_path, capsys):
+    (tmp_path / "demo.recipe.yaml").write_text(yaml.dump(RECIPE))
+    (tmp_path / "demo.narrative.lock.json").write_text(json.dumps(LOCK))
+    load_spec("demo", base_dir=tmp_path)
+    assert capsys.readouterr().err == ""
