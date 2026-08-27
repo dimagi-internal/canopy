@@ -338,7 +338,63 @@ def build_action_marks(
             }
         )
     marks.sort(key=lambda m: m["on_seconds"])
-    return marks
+    return _collapse_colocated(marks)
+
+
+# How close two marks on the SAME target must land to count as one moment. A
+# scroll_to is biased by its own duration (above), so it resolves to the instant
+# the field finishes arriving — which is when the fill on that field begins.
+_COLOCATED_EPS_S = 0.75
+
+# Kinds that only move the CAMERA. They put a field on screen but never change
+# it, so when an acting mark on the same target lands at the same moment, the
+# camera move is not a second thing the narration could be naming.
+_CAMERA_KINDS: frozenset[str] = frozenset({"scroll_to", "scroll"})
+
+
+def _collapse_colocated(marks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop a camera-only mark that coincides with an acting mark on the same target.
+
+    A spec that scrolls a field into view and then fills it emits TWO marks with
+    the same target, and ``_mark_words`` derives both word lists from the same
+    field id — so they are the same word, twice, at the same instant. The warp can
+    bind a spoken word to only one of them; the twin is discarded as an order
+    inversion, which is indistinguishable in the verdict from narration that
+    genuinely names things out of order.
+
+    Observed on create-survey-solicitation scene 3: 20 marks carrying 4 exact
+    duplicate pairs (description, application deadline, estimated scale, contact
+    email), 15 of 18 word-matchable anchors dropped as inversions. Collapsing the
+    pairs leaves one anchor per named field.
+
+    Keeps the ACTING mark (fill/type/select/click/press/hover) because that is
+    when the field's value appears — the thing the narration is describing. Two
+    camera moves, or two acting marks, on the same target are left alone: those
+    are genuinely two moments. PURE.
+    """
+    out: list[dict[str, Any]] = []
+    for m in marks:
+        prior = next(
+            (
+                p
+                for p in reversed(out)
+                if p.get("target") == m.get("target")
+                and abs(p["on_seconds"] - m["on_seconds"]) <= _COLOCATED_EPS_S
+            ),
+            None,
+        )
+        if prior is None:
+            out.append(m)
+            continue
+        m_camera = m.get("kind") in _CAMERA_KINDS
+        p_camera = prior.get("kind") in _CAMERA_KINDS
+        if m_camera and not p_camera:
+            continue  # the acting mark already stands
+        if p_camera and not m_camera:
+            out[out.index(prior)] = m  # the acting mark supersedes the camera move
+            continue
+        out.append(m)  # both act, or both are camera moves — two real moments
+    return out
 
 
 def build_snippets(

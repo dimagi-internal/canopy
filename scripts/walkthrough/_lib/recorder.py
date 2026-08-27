@@ -918,6 +918,10 @@ def execute_action(
     # capture defaults must_succeed True (a later ${var} that never bound films
     # a literal placeholder URL); every other kind defaults False.
     must_succeed = bool(action.get("must_succeed", kind == "capture"))
+    # `word` is the older spelling; both mean "the narration word that names this
+    # field". Kept on the result so the run report carries it (see ActionResult.say).
+    say = action.get("say") or action.get("word")
+    say = str(say).strip() or None if say else None
     captured_var: str | None = None
     captured_value: str | None = None
 
@@ -1044,7 +1048,7 @@ def execute_action(
     result = ActionResult(
         kind=kind, ok=ok, target=target, value=value, note=note,
         elapsed_ms=elapsed_ms, error_kind=error_kind, error_message=error_message,
-        must_succeed=must_succeed,
+        must_succeed=must_succeed, say=say,
         capture_var=captured_var, capture_value=captured_value,
     )
     if not ok and must_succeed:
