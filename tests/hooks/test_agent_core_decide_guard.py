@@ -20,6 +20,9 @@ three shapes that must NEVER block:
    so is "want me to publish this to the board?".
 3. **A passing mention.** The rule is about how a message CLOSES. An offer
    quoted or considered mid-report is not handing the call back.
+4. **An offer the agent ALREADY ANSWERED.** A stated rationale ("yours to
+   authorize") or a stated default ("default is next turn") means the call WAS
+   made. Blocking those argues with a conclusion the agent reached on purpose.
 """
 from __future__ import annotations
 
@@ -258,3 +261,65 @@ def test_a_superseded_offer_does_not_block(guard, tmp_path):
         _assistant("Shipped as #624, merged, deployed, verified live."),
     )
     assert not guard.hands_back_a_call(guard.final_assistant_text(t))
+
+
+# --- shape 4: the offer that already carries its own answer -------------------
+
+@pytest.mark.parametrize("closing", [
+    # ace, 2026-08-27, verbatim. The agent REASONED that this deploy is the
+    # human's, then asked. The rail used to block it and reply "§ Shipping
+    # clears deploys" — the exact claim the agent had just examined and rejected.
+    "I haven't triggered it. A production deploy is outward-facing and yours to"
+    " authorize, even when the diff is clean. **Want me to run it?**",
+    # ace, verbatim — the whole section is labelled as the human's.
+    "**Your call, nothing blocking:** #1495 — my close condition is met."
+    " Want me to close it, or leave it until a full run confirms?",
+    # ada, verbatim.
+    "Its one live thread is waiting on you: should the pulse display open in live"
+    " mode instead of replay? One-line change, product call. Say the word and"
+    " I'll route it into the pulse session.",
+])
+def test_a_stated_rationale_does_not_block(guard, closing):
+    """The agent said WHY it is the human's. That IS the call, made."""
+    assert not guard.hands_back_a_call(f"Report above.\n\n{closing}")
+
+
+@pytest.mark.parametrize("closing", [
+    # eva, verbatim — nothing is handed back; an override is offered.
+    "It's recorded on the board so it can't age. Say the word and I'll pick it"
+    " up now; default is next turn.",
+    "Want me to fold it into this PR? Otherwise I'll ship it separately.",
+    "Should I widen the sweep? Unless you say otherwise I'll keep it to the"
+    " three repos already named.",
+])
+def test_a_stated_default_does_not_block(guard, closing):
+    """"Recommend and act" — the agent decided and offered an override."""
+    assert not guard.hands_back_a_call(f"Report above.\n\n{closing}")
+
+
+def test_a_rationale_about_a_DIFFERENT_item_still_blocks(guard):
+    """Direction is load-bearing. A rationale justifies the offer BEFORE it, so it
+    is read backward only.
+
+    ace, 2026-08-27, verbatim: "only you can do it" belongs to the RESTART, not to
+    the offer to take #1609 — and taking #1609 is a true positive. Read forward
+    too, this one goes silent."""
+    assert guard.hands_back_a_call(
+        "**#1609** arrived minutes ago (work-order QA checks failing on healthy"
+        " documents). Untouched. Say the word and I'll take it.\n\n"
+        "Still owed, and only you can do it: **full Claude Code restart.**"
+    )
+
+
+def test_a_mere_mention_of_the_human_is_not_a_rationale(guard):
+    """Every rationale pattern must carry its own noun or verb of decision.
+
+    `needs you` was in the list for one measured pass and matched "whether
+    anything here needs you. My read is nothing does" — a sentence saying the
+    OPPOSITE — which silenced this true positive on two agents at once."""
+    assert guard.hands_back_a_call(
+        "I checked whether anything here needs you. My read is nothing does —"
+        " every finding was repo-internal work already delegated to me, so the"
+        " right move was to route it, not to ask. Want me to finish the close,"
+        " or stop here?"
+    )

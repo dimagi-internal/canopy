@@ -9,6 +9,18 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.441] - 2026-08-27
+### Fixed
+- `agent-core/decide_guard.py` — the decide-don't-poll rail blocked offers the
+  agent had ALREADY ANSWERED. Two shapes, both sanctioned behaviour: a stated
+  rationale ("a production deploy is outward-facing and yours to authorize"),
+  and a stated default ("say the word and I'll pick it up now; default is next
+  turn"). Measured over the last 40 sessions per agent, ~7 of ~22 blocks were
+  these, on FOUR different agents — the rail's defect, not one agent's quirk.
+  Direction is asymmetric on purpose: a rationale is read BACKWARD from the
+  offer (read forward, a later sentence about a different item silences a real
+  one), a default FORWARD.
+
 ## [0.2.440] - 2026-08-27
 ### Fixed
 - `recipe_preflight` had no session-auth path (canopy#532). Its CLI accepted no
