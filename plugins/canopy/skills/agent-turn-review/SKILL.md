@@ -41,6 +41,18 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
    turn-back when it had made no such edit — true only as an intention, and it would have shipped
    unnoticed had the human not asked. (This is §13's "evidence before assertion" applied to the
    deliverable's own claims, not just the review's.)
+5b. **A "nothing outstanding" claim requires ZERO running background tasks — checked, not
+   assumed.** "Done", "nothing left running", "all finished", "no work outstanding" is a
+   done-claim about the SESSION rather than about a file, and §5a's evidence rule applies to it
+   unchanged: look at the task list before you write it. A backgrounded command (`gh pr checks
+   --watch`, a deploy poll, a test run) is work you started and have not seen the result of — its
+   output can still turn a green summary red, which is the whole reason it was started. So the
+   evidence is the live state of your background tasks, and "I don't think anything is running"
+   is not that. If something IS still draining, say what it is and what its result would change;
+   that is a complete answer, and it is not the same as "done". Origin: 2026-08-27, an agent
+   asserted "done, nothing outstanding" three separate times in one session while background
+   tasks were still draining — each claim true of the foreground work and false of the session.
+
 6. **Vague coordination verbs about a PERSON are the red flag** — "sync with / coordinate with /
    loop in / check with / align with / run it by <someone>". They almost always hide a human
    dependency you have NO channel to execute, dressed up as a plan. Either **(a) convert it to
@@ -73,6 +85,21 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
     gotten any value from thi?"* An independent ACE review the same cycle produced the identical
     finding — turn updates delivering raw step traces instead of a decision-first digest — so this
     is a fleet-wide failure, not one agent's tic.)
+7aa. **Every artifact you link or show must be the REAL, deployed thing — never a rendering of
+    it.** Before sending, walk the deliverable's links and visuals and confirm each one *is* what
+    was asked for: a working URL to the live dashboard / doc / page / PR, not a mockup, a
+    generated illustration, a sample, or a locally-built stand-in for it. The failure is not
+    laziness — a generated artifact is quick, looks polished, and *depicts* the right thing, so it
+    passes every check except the one that matters: whether the recipient can click it and reach
+    the asset. Two tests, both cheap: (1) **could they act on this?** A picture of a dashboard is
+    not a dashboard. (2) **did you open it?** An unopened link is unverified — "it was created" is
+    not "it loads" (see your agent's own link-verification rule; hal's is `bin/hal-verify-link`).
+    If the real asset does not exist yet, say so plainly and give the link to what *does* exist —
+    substituting a depiction for the thing silently answers a different question than the one you
+    were asked. Origin: 2026-08-27, Jonathan: *"stop using claude design, give me links to the real
+    thing I asked for (which looks nothing like claude design now just FYI)"* — the mockup was also
+    stale, which is the second cost: a depiction drifts from the asset and nobody can tell.
+
 7b. **When the turn surfaces a PROBLEM, arrive with a DECISION — the problem alone is not a
     deliverable.** §7 governs the ORDER of a reply that already contains a decision, and §7a governs
     a turn whose conclusion is "nothing to do"; this one governs the turn that actually FOUND

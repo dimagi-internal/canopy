@@ -1,5 +1,15 @@
 {
   "_doc": "Fleet-baseline deny rails, keyed by channel mount — the centralized half of the gating engine (agent-core design, 2026-07-13, chunk B). Shipped with the canopy plugin so a rail fix propagates to every agent via /canopy:update. Each agent's hooks/gating_guard.py reads its config/gating.json `channels` list, pulls these rails for the mounted channels, substitutes {slug}, and merges them IN FRONT of the repo's own `deny` list at call time. ADD-ONLY: an agent's local config can add rails; it can never remove a baseline rail. Rails here must stay channel-generic — agent-specific rails belong in that agent's config/gating.json.",
+  "_always_doc": "Rails that apply to EVERY agent regardless of which channels it mounts, because what they govern is not a channel. Gated per-agent by `requires_path` instead — the rail applies only where the file it protects actually exists. A channel home would mean each agent opting in via its own gating.json, i.e. the rail is missing for precisely the agent that forgot, which is the failure being fixed.",
+  "always": [
+    {
+      "tool": "Skill",
+      "requires_path": "skills/agent-turn-review/SKILL.md",
+      "_pattern_doc": "The pre-send review wrapper collision. An agent that ships skills/agent-turn-review/ owns a NAMESPACED wrapper ({slug}:agent-turn-review) carrying its own send path, its done-claim rules and its gates; the fleet skill (canopy:agent-turn-review) is the BODY that wrapper delegates to. Calling the body directly, or the bare name, satisfies the letter of 'run the review' while silently skipping every agent-specific step — the wrapper's own words: 'a wrapper you can walk around is not a wrapper.' Measured 2026-08-27 by `canopy agent-review` on two of the three agents reviewed that day; hal's wrapper predicted the bypass in prose in its opening paragraph and was bypassed anyway, and ace's wrapper INSTRUCTED it ('invoke canopy:agent-turn-review'). Prose asking the model to comply is what failed, twice, which is this repo's standing argument for a rail. Matches the `skill` argument exactly, so a wrapper's own {slug}: name is never touched. deny, never ask: an 'ask' is a blocking modal that stalls autonomous work.",
+      "pattern": "\"skill\"\\s*:\\s*\"(?:canopy:)?agent-turn-review\"",
+      "message": "BLOCKED: `agent-turn-review` bare / `canopy:agent-turn-review` is the fleet BODY, not the entry point. Invoke `{slug}:agent-turn-review` — the wrapper this repo ships — which runs the same fleet discipline AND {slug}'s own send path, done-claim rules and gates. Calling the body directly passes the checklist while skipping all of those. A wrapper you can walk around is not a wrapper."
+    }
+  ],
   "channels": {
     "email": [
       {
