@@ -336,8 +336,9 @@ mkdir -p screenshots/walkthroughs/<name>
 ```
 
 The render engine writes each scene's `scene_{scene_index}.png` +
-`scene_{scene_index}_page_text.json` into this dir via its `--snapshots`
-flag (**Render once via the engine**); the scoring step reads them back.
+`scene_{scene_index}_page_text.json` + `scene_{scene_index}_visual.json` into
+this dir via its `--snapshots` flag (**Render once via the engine**); the
+scoring step reads them back.
 Never point `--snapshots` at a bare `/tmp/walkthrough-screenshots/` — that's
 shared across all sessions and projects.
 
@@ -508,6 +509,18 @@ subset — see **Scene filter**):
    `screenshot_path` / `page_text_path` point at them. You do NOT
    re-navigate or re-screenshot — the engine drove the product and froze
    the frame already. (The same frame is the one the mp4 holds on.)
+
+   A third file, `scene_{scene_index}_visual.json`, holds the same frame's
+   **geometry and colour** — per-element bounding boxes, computed colours
+   resolved to sRGB, the effective background behind each text node, and the
+   class names the page's readable stylesheets actually define. It exists
+   because everything else here is TEXT, and text cannot tell you that the
+   element carrying a claim rendered at zero height or that its label is white
+   on white — three such defects scored 9/9 on every text lens across four
+   iterations of one run (canopy#525). `scripts/ddd/visual_geometry` is the
+   lens that reads it; you do not normally read it by hand. Capture is
+   best-effort: if the page's `evaluate` fails the file is simply absent and
+   the lens reports `skip`, so its absence never means "clean".
 
    **If a captured screenshot is absurdly tall (10,000+ pixels):** This is a
    BUG in the app, not a capture problem. An infinitely growing element
