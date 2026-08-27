@@ -239,7 +239,21 @@ still lands wrong on the person — this is the lens that catches that.
     fidelity/grounding/presentation/repetition lenses test for.)
 
 ## Adopting it in an agent (the thin extension)
-Keep a repo-local `skills/agent-turn-review/SKILL.md` that (a) says "invoke `canopy:agent-turn-review`
-and apply it", and (b) lists only agent-specifics: the sanctioned send path (§B's draft-then-ask
-target), where the turn gates it, and any paired reviewer (e.g. a `story-review`). The factory
-(`canopy create-agent`) scaffolds this thin extension by default.
+Keep a repo-local `skills/agent-turn-review/SKILL.md` that (a) names **`<slug>:agent-turn-review`
+as THE entry point** and says this skill is the body it delegates to, and (b) lists only
+agent-specifics: the sanctioned send path (§B's draft-then-ask target), where the turn gates it,
+and any paired reviewer (e.g. a `story-review`). The factory (`canopy create-agent`) scaffolds
+this thin extension by default.
+
+**Never write "invoke `canopy:agent-turn-review`" as the wrapper's instruction.** This section
+said exactly that until 2026-08-27, and the factory stamped it, so echo, eva and ada were all
+born with byte-identical wording telling the agent to call the body and skip its own wrapper —
+the fleet-wide bypass `canopy agent-review` then found, traced back to its source. ACE caught it
+first and refused to follow this section ("that instruction is the origin of this whole failure
+mode"), which is what surfaced it. The wrapper is the entry point; this file is the body. An
+adoption instruction that inverts the two makes every agent it stamps walk around its own gates.
+
+The naming is now RAILED as well as documented: `agent-core/gating-baseline.json` `always` denies
+a bare or `canopy:`-prefixed `agent-turn-review` `Skill` call from any agent that ships a wrapper
+(`requires_path`), naming that agent's own `<slug>:` form in the block message. Agents need
+`Skill` in their `.claude/settings.json` PreToolUse matcher for it to reach them.
