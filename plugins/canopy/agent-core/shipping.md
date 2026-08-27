@@ -426,6 +426,70 @@ after a canopy merge (the next `canopy` call otherwise refuses mid-flight), your
 update command after your repo merges. If the change touched MCP server code, a plugin reload is
 NOT enough — MCP subprocesses bind their tool list and schemas at spawn, so quit and reopen.
 
+## Green tests + a verified API is NOT a verified page
+
+Measured 2026-08-27, and it took a screenshot from the user to catch.
+
+A cross-run view shipped **blank** — an empty bar on every row, a
+"PHASE 1 -> 1" axis, "queued" in every label. Throughout: component tests
+green, backend suite green, and the endpoint hand-verified as returning the
+new fields. All three were true. The page was still broken.
+
+The UI read a DIFFERENT serializer. Three code paths built that payload;
+the new fields went into two of them, and the one the screen actually used
+hand-wrote a six-field subset. The component tests passed because they hand
+the component a fixture — **nothing asserted the endpoint produces that
+fixture's shape.**
+
+So, before claiming a UI works:
+
+- **Fetch what the PAGE fetches**, not the endpoint you happened to touch.
+  Open devtools or read the route's loader; a sibling endpoint returning
+  the right thing proves nothing.
+- **Assert the field list a component reads** in a test against the
+  SERIALIZER, not just against the component. Parametrise over the fields
+  so adding a column means adding it there first.
+- **`grep` for every place that shape is built.** "I added the field" is a
+  claim about one function; the payload may have three authors.
+
+The general form: **a fixture-fed component test and a hand-checked
+endpoint can both be green while the two never meet.** The seam between
+them is exactly where this hides, and only loading the real page closes it.
+
+## Optimise what you MEASURED, not what you assumed
+
+Same day, three wrong diagnoses on one slow page — worth the section
+because each was confident and each was cheap to have disproved.
+
+A run-listing endpoint took ~50s. The obvious culprit was a 1+2N
+sequential Drive loop, so it got batched: ~25 calls to 2. **No
+improvement.** Then a second copy of the same loop turned up one layer up,
+and that got batched too. **Still no improvement.** Somewhere in there the
+deploy pipeline got blamed for shipping a stale image; it hadn't, and
+reading the workflow would have shown it builds its own.
+
+Profiling the real path against real data took one command and settled it:
+
+```
+list_opp_runs: 12 runs in 19.52s
+  get_content      12 calls   8.73s   <-- the actual bill
+  list_folder      17 calls   5.66s
+  get_contents      2 calls   3.77s   (the new fast path, working)
+  find_in_folders   2 calls   0.90s   (the new fast path, working)
+```
+
+Twelve content reads for twelve runs: a per-run helper re-read the same
+`opp.yaml` every iteration. Memoising it took four lines — 19.5s -> 8.9s,
+and 43-100s -> 8-10s in production.
+
+The batching was real work that made its own path 12x faster and moved the
+page not at all. The tell was available before any of it: an isolated
+timing showed the batched query at 0.5s and a read at 1s, so that whole
+path's FLOOR was ~2s against a 50s endpoint. **When the part you are
+optimising cannot account for the time, stop and profile.** A wrapper that
+counts calls and seconds per method is usually a few lines and it ends the
+argument.
+
 ## Step 3 — the ship checkpoint (unconditional)
 
 **A PR-related turn never closes on an implicit "done."** Before returning, state — explicitly,
