@@ -37,8 +37,12 @@ its VO overruns, so the timing report at the end tells you whether to trim.
 Resolve the spec and the canopy scripts:
 ```bash
 SLUG="<narrative-slug>"                 # e.g. verified-monitoring
-SPEC="docs/walkthroughs/$SLUG.yaml"     # in the current project repo
-[ -f "$SPEC" ] || { echo "no spec at $SPEC — run from the project repo that owns the narrative"; exit 1; }
+# Two-file layout (recipe + generated narrative lock) is the current shape; a
+# legacy single-file <slug>.yaml still works. Every consumer composes the pair
+# through spec_io, so pass the RECIPE path — never the lock, never a hand-merge.
+SPEC="docs/walkthroughs/$SLUG.recipe.yaml"          # in the current project repo
+[ -f "$SPEC" ] || SPEC="docs/walkthroughs/$SLUG.yaml"   # legacy single-file spec
+[ -f "$SPEC" ] || { echo "no spec at docs/walkthroughs/$SLUG.recipe.yaml (or .yaml) — run from the project repo that owns the narrative"; exit 1; }
 
 # canopy runtime — bundled with the installed plugin, resolved by the shared resolver
 _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
@@ -126,7 +130,13 @@ OUT="<video-engine/programs/$SLUG/runs/<run>/output.mp4>"   # from step 3
 DDD_DIR="$(git rev-parse --show-toplevel)/.canopy/ddd"      # project repo, not canopy
 RUN_DIR="$DDD_DIR/runs/$RUN_ID"; mkdir -p "$RUN_DIR"
 
-cp "$SPEC"                "$RUN_DIR/unified_spec.yaml"   # the spec you just rendered
+# COMPOSE into the run dir — never `cp` the recipe. The judges read this file,
+# and a raw recipe copy would hand them a story that is not the published one.
+( cd "$CANOPY" && uv run python -c "
+import sys, yaml
+from scripts.ddd.spec_io import load_spec_raw
+yaml.safe_dump(load_spec_raw(sys.argv[1]), open(sys.argv[2], 'w'), sort_keys=False, allow_unicode=True)
+" "$(cd "$OLDPWD" && pwd)/$SPEC" "$RUN_DIR/unified_spec.yaml" )
 cp "$WORK/manifest.json"  "$RUN_DIR/walkthrough-run-data.json"  # upload needs it → deck + product links
 cp "$WORK/report.json"    "$RUN_DIR/run-report.json"
 cp "$OUT"                 "$RUN_DIR/hero_narrated.mp4"
