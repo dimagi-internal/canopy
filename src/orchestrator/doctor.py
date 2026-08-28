@@ -10,12 +10,14 @@ Ported from the documented checks in
 log, repo map, workbench token (presence + permissions), and plugin version.
 Network-dependent checks (live workbench API connectivity, auth-preflight)
 are intentionally left to the skill launcher so ``canopy doctor`` stays fast,
-offline, and CI-gateable.
+offline, and CI-gateable. The one external-tool check reads Homebrew's cached
+data under a timeout and can only ever warn, so that contract holds.
 """
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -24,11 +26,19 @@ from orchestrator.paths import CANOPY_DIR
 
 @dataclass
 class CheckResult:
-    """Result of a single health check."""
+    """Result of a single health check.
+
+    ``warn`` is a third, non-gating state: the check ran, found something
+    worth saying, but must not fail CI. It exists for conditions we do not
+    control and cannot fix on demand — chiefly an upstream tool shipping a
+    new release. ``overall_ok`` ignores it by design, so a warn never turns
+    somebody else's release into our red build.
+    """
 
     name: str
     ok: bool
     detail: str
+    warn: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -325,6 +335,78 @@ def check_cli_version_sync(home: Path | None = None) -> CheckResult:
     return CheckResult(name, True, f"CLI {installed} matches marketplace clone")
 
 
+# Third-party CLIs canopy shells out to, by Homebrew formula name. Drift here
+# is invisible until something silently lacks a verb: the fleet ran gogcli
+# 0.12.0 against an upstream 0.38.1 for months, and the missing Docs
+# batch-update verb read as a permissions problem instead of a stale install.
+_EXTERNAL_TOOLS = {
+    "gogcli": "gog — Google Workspace access (Gmail/Calendar/Drive/Docs/Sheets)",
+    "gh": "gh — GitHub CLI (PRs, CI, issues)",
+}
+
+
+def check_external_tools(runner=None) -> CheckResult:
+    """Warn when a third-party CLI canopy depends on has a newer release.
+
+    Warn-only, never fail: a new upstream release is not a broken install, and
+    ``canopy doctor`` gates CI. Deliberately reads Homebrew's *cached* API data
+    (``HOMEBREW_NO_AUTO_UPDATE``) and times out, to honour this module's
+    fast-and-offline contract.
+
+    Degrades loudly rather than quietly. ``brew outdated`` exits non-zero with
+    an EMPTY stdout and the reason only on stderr, so parsing stdout alone
+    would either raise on the empty string or -- worse -- report "everything
+    current" having checked nothing. Any failure to look is reported as such.
+    """
+    name = "External tool versions"
+    runner = runner or _brew_outdated
+
+    try:
+        code, out, err = runner()
+    except FileNotFoundError:
+        return CheckResult(name, True, "brew not installed — skipping version check", warn=True)
+    except Exception as e:  # subprocess timeout, OSError, ...
+        return CheckResult(name, True, f"could not run brew outdated: {e}", warn=True)
+
+    if not out.strip():
+        reason = err.strip().splitlines()[0] if err.strip() else f"exit {code}, no output"
+        return CheckResult(name, True, f"could not check tool versions: {reason}", warn=True)
+
+    try:
+        formulae = json.loads(out).get("formulae", [])
+    except (ValueError, AttributeError) as e:
+        return CheckResult(name, True, f"could not parse brew outdated: {e}", warn=True)
+
+    stale = []
+    for f in formulae:
+        formula = f.get("name", "")
+        if formula not in _EXTERNAL_TOOLS:
+            continue
+        installed = ", ".join(f.get("installed_versions") or ["?"])
+        current = f.get("current_version", "?")
+        stale.append(f"{formula} {installed} -> {current}")
+
+    if not stale:
+        return CheckResult(name, True, f"{len(_EXTERNAL_TOOLS)} tracked tools up to date")
+
+    return CheckResult(
+        name,
+        True,
+        f"update available: {'; '.join(sorted(stale))} — run: brew upgrade {' '.join(sorted(f.split()[0] for f in stale))}",
+        warn=True,
+    )
+
+
+def _brew_outdated() -> tuple[int, str, str]:
+    """Run ``brew outdated`` against cached data, returning (code, stdout, stderr)."""
+    env = {**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"}
+    p = subprocess.run(
+        ["brew", "outdated", "--json=v2"],
+        capture_output=True, text=True, timeout=20, env=env,
+    )
+    return p.returncode, p.stdout, p.stderr
+
+
 # Order matters for display: registration → state → auth → CLI deploy.
 _CHECKS = (
     check_hook_registered,
@@ -334,6 +416,7 @@ _CHECKS = (
     check_plugin_version,
     check_cli_install_source,
     check_cli_version_sync,
+    check_external_tools,
 )
 
 
@@ -356,6 +439,7 @@ def run_doctor(
         check_plugin_version(home=home),
         check_cli_install_source(home=home),
         check_cli_version_sync(home=home),
+        check_external_tools(),
     ]
     overall_ok = all(r.ok for r in results)
     return results, overall_ok

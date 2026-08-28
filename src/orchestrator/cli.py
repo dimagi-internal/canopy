@@ -601,11 +601,13 @@ def doctor_cmd(as_json):
     else:
         width = max(len(r.name) for r in results)
         for r in results:
-            status = "OK  " if r.ok else "FAIL"
+            status = "WARN" if (r.ok and r.warn) else ("OK  " if r.ok else "FAIL")
             click.echo(f"  [{status}] {r.name.ljust(width)}  {r.detail}")
         click.echo()
         if overall_ok:
-            click.echo("All checks passed — canopy is healthy.")
+            warns = sum(1 for r in results if r.warn)
+            suffix = f" ({warns} warning{'s' if warns != 1 else ''})" if warns else ""
+            click.echo(f"All checks passed — canopy is healthy.{suffix}")
         else:
             click.echo("Some checks failed — see details above.")
 

@@ -1,5 +1,6 @@
 """Tests for the doctor health-check module and the `canopy doctor` CLI."""
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -413,3 +414,76 @@ class TestCheckCliVersionSync:
         r = doctor.check_cli_version_sync(home=tmp_path)
         assert r.ok is False
         assert doctor.CLI_REMEDY in r.detail
+
+
+class TestExternalTools:
+    """Warn-only version drift check for third-party CLIs canopy shells out to."""
+
+    def _runner(self, code=0, out="", err=""):
+        return lambda: (code, out, err)
+
+    def _payload(self, *formulae):
+        return json.dumps({"formulae": list(formulae), "casks": []})
+
+    def test_up_to_date_passes_without_warning(self):
+        r = doctor.check_external_tools(runner=self._runner(0, self._payload()))
+        assert r.ok and not r.warn
+        assert "up to date" in r.detail
+
+    def test_stale_tracked_tool_warns_but_does_not_fail(self):
+        r = doctor.check_external_tools(runner=self._runner(0, self._payload(
+            {"name": "gogcli", "installed_versions": ["0.12.0"], "current_version": "0.38.1"},
+        )))
+        assert r.ok, "a new upstream release must never fail CI"
+        assert r.warn
+        assert "gogcli 0.12.0 -> 0.38.1" in r.detail
+        assert "brew upgrade gogcli" in r.detail
+
+    def test_untracked_outdated_formula_is_ignored(self):
+        r = doctor.check_external_tools(runner=self._runner(0, self._payload(
+            {"name": "ffmpeg", "installed_versions": ["1.0"], "current_version": "2.0"},
+        )))
+        assert r.ok and not r.warn
+
+    def test_empty_stdout_reports_could_not_check_not_all_clear(self):
+        """brew exits 1 with EMPTY stdout and the reason only on stderr.
+
+        Parsing stdout alone would raise, or report 'everything current'
+        having looked at nothing. This is the real failure seen on a machine
+        whose Homebrew Cellar held one root-only directory.
+        """
+        r = doctor.check_external_tools(runner=self._runner(
+            1, "", "Error: Permission denied @ dir_initialize - /opt/homebrew/Cellar/coreutils"))
+        assert r.ok and r.warn
+        assert "could not check" in r.detail
+        assert "Permission denied" in r.detail
+        assert "up to date" not in r.detail
+
+    def test_malformed_json_warns(self):
+        r = doctor.check_external_tools(runner=self._runner(0, "not json"))
+        assert r.ok and r.warn
+        assert "could not parse" in r.detail
+
+    def test_brew_absent_warns(self):
+        def boom():
+            raise FileNotFoundError("brew")
+        r = doctor.check_external_tools(runner=boom)
+        assert r.ok and r.warn
+        assert "brew not installed" in r.detail
+
+    def test_timeout_warns(self):
+        def boom():
+            raise subprocess.TimeoutExpired(cmd="brew", timeout=20)
+        r = doctor.check_external_tools(runner=boom)
+        assert r.ok and r.warn
+        assert "could not run" in r.detail
+
+    def test_warn_does_not_gate_overall_ok(self):
+        results = [
+            doctor.CheckResult("a", True, "fine"),
+            doctor.CheckResult("b", True, "stale", warn=True),
+        ]
+        assert all(r.ok for r in results)
+
+    def test_checkresult_defaults_to_no_warn(self):
+        assert doctor.CheckResult("x", True, "d").warn is False
