@@ -590,15 +590,30 @@ async function main() {
         { stdio: "inherit" },
       );
     } else {
+      // `normalize=0` is load-bearing. amix defaults to normalize=1, which
+      // divides EVERY input by the number of inputs — and because each beat is
+      // apad-ded to the full length, all N are "active" for the whole runtime.
+      // So an N-beat narration came out 20·log10(N) dB down across the entire
+      // video: 8 beats = -18 dB, 20 beats = -26 dB, 30 beats = -29.5 dB
+      // (measured). The three videos on the impact-evaluation storyboard
+      // shipped at -43 to -47 LUFS against a -16 target — inaudible at normal
+      // volume — and the level silently got worse the more the narration was
+      // split into beats. The beats are atrim-ed to their own duration and
+      // delayed to their own start, so they never overlap and cannot sum into
+      // clipping; the loudnorm below caps true peak regardless.
+      const mixed = `amix=inputs=${mixLabels.length}:duration=first:dropout_transition=0:normalize=0`;
+      // Deliver at a fixed loudness instead of whatever the TTS happened to
+      // return. -16 LUFS / -1.5 dBTP is the web-delivery target these videos
+      // are supposed to hit; without it the output level is an accident of the
+      // voice vendor's gain staging.
+      const loudness = "loudnorm=I=-16:TP=-1.5:LRA=11";
+
       const filterComplex =
         mixLabels.length > 1
-          ? [
-              ...filterParts,
-              `${mixLabels.join("")}amix=inputs=${mixLabels.length}:duration=first:dropout_transition=0[mix]`,
-            ].join("; ")
-          : filterParts.join("; ");
+          ? [...filterParts, `${mixLabels.join("")}${mixed},${loudness}[mix]`].join("; ")
+          : [...filterParts, `${mixLabels[0]}${loudness}[mix]`].join("; ");
 
-      const mapLabel = mixLabels.length > 1 ? "[mix]" : mixLabels[0];
+      const mapLabel = "[mix]";
 
       const ffmpegCmd = [
         "ffmpeg -y",
