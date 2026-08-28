@@ -48,7 +48,23 @@ def _duration(video: str) -> float:
     return float(out.strip())
 
 
+def has_audio(video: str) -> bool:
+    """True when the file carries at least one audio stream. PURE-ish (ffprobe)."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
+         "stream=index", "-of", "csv=p=0", video],
+        capture_output=True, text=True).stdout
+    return bool(out.strip())
+
+
 def silence_intervals(video: str, dur: float) -> list[tuple[float, float]]:
+    # No audio stream at all: silencedetect emits nothing, which the caller
+    # would read as "no silence" — i.e. 100% speech, zero dead air, a perfect
+    # score for a video with no narration whatsoever. That is not theoretical:
+    # `create-survey-solicitation v12` shipped silent and this audit rated it
+    # the cleanest of the set. A file with no audio is ENTIRELY silent.
+    if not has_audio(video):
+        return [(0.0, dur)]
     log = _ffmpeg_stderr(["-i", video, "-af", f"silencedetect=noise={SILENCE_NOISE_DB}dB:d={SILENCE_MIN_S}"])
     starts = [float(m) for m in re.findall(r"silence_start:\s*([0-9.]+)", log)]
     ends = [float(m) for m in re.findall(r"silence_end:\s*([0-9.]+)", log)]
