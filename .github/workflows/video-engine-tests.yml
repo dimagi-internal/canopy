@@ -1,0 +1,50 @@
+name: video-engine tests
+
+# Unit tests + type-check for the Remotion video engine under video-engine/.
+#
+# This workflow exists because the package had 129 tests and a `typecheck`
+# script that NOTHING ran. Two things rotted in that blind spot: a critical
+# vitest advisory (GHSA-5xrq-8626-4rwp) whose fix crossed a major version and
+# so had to be validated by hand, and a type error in timingeval.test.ts that
+# left `on_seconds` undefined on every fixture mark — the suite passed green
+# while not testing what it claimed. Both found on 2026-08-28.
+#
+# Offline: vitest runs under jsdom against pure functions. No Remotion render,
+# no browser download, no network.
+#
+# Note: canopy gitignores package-lock.json repo-wide, so this job uses
+# `npm install` (not `npm ci`), matching gws-tests.yml.
+
+on:
+  push:
+    paths:
+      - 'video-engine/src/**'
+      - 'video-engine/package.json'
+      - 'video-engine/tsconfig.json'
+      - 'video-engine/vitest.config.ts'
+      - '.github/workflows/video-engine-tests.yml'
+  pull_request:
+    paths:
+      - 'video-engine/src/**'
+      - 'video-engine/package.json'
+      - 'video-engine/tsconfig.json'
+      - 'video-engine/vitest.config.ts'
+      - '.github/workflows/video-engine-tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: video-engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Type-check (tsc --noEmit)
+        run: npm run typecheck
+      - name: Run vitest suite
+        run: npm test

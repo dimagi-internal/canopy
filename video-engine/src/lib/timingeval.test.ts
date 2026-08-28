@@ -121,7 +121,7 @@ describe("cross-run comparability", () => {
   const beat = (id: string, marks: number, named: number): TimingBeatInput => ({
     beatId: id,
     voSec: 60,
-    marks: Array.from({ length: marks }, (_, i) => ({ onSeconds: i, words: [`w${i}`] })),
+    marks: Array.from({ length: marks }, (_, i) => ({ on_seconds: i, words: [`w${i}`] })),
     resolveWord: (w: string) => {
       const i = Number(w.slice(1));
       return Number.isNaN(i) || i >= named ? null : i;
