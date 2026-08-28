@@ -40,6 +40,7 @@ from typing import Any
 import yaml
 
 from scripts.ddd.runstate import load, run_dir_for
+from scripts.ddd.spec_io import load_spec_raw
 
 SCHEMA_VERSION = 1
 
@@ -1008,6 +1009,19 @@ def _humanize_slug(slug: str | None) -> str:
     return " ".join(w[:1].upper() + w[1:] for w in words if w)
 
 
+def _slug_from_spec_path(spec_path: str) -> str:
+    """The narrative slug for a spec path, with the two-file suffix stripped.
+
+    ``Path("x.recipe.yaml").stem`` is ``"x.recipe"`` — a slug that matches no
+    narrative on canopy-web. PURE.
+    """
+    stem = Path(spec_path).name
+    for suffix in (".recipe.yaml", ".recipe.yml", ".yaml", ".yml"):
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return Path(spec_path).stem
+
+
 def emit_explainer_from_capture(
     spec_path: str,
     report_path: str,
@@ -1033,9 +1047,17 @@ def emit_explainer_from_capture(
     Used by ``/canopy:ddd-ace-render``, which records a fresh master clip and
     hands the emitted spec + clip to ``/ace:video-render-local``.
     """
-    spec = yaml.safe_load(Path(spec_path).read_text()) or {}
+    # Compose, never raw-load. Every sibling consumer of a spec path goes
+    # through spec_io (record_video, recipe_preflight, narrated_numbers), so a
+    # bare yaml.safe_load here meant one thing: handed a `<slug>.recipe.yaml`,
+    # the RECORDER filmed the lock's story while this emitter put the recipe's
+    # discarded copy in the voiceover — the two halves of one render disagreeing
+    # about what the demo says. It also derived the slug from the filename,
+    # yielding "<slug>.recipe". load_spec_raw still passes a legacy single-file
+    # `<slug>.yaml` straight through, so nothing that worked stops working.
+    spec = load_spec_raw(Path(spec_path)) or {}
     report = json.loads(Path(report_path).read_text())
-    slug = spec.get("name") or Path(spec_path).stem
+    slug = spec.get("name") or _slug_from_spec_path(spec_path)
 
     snippets = build_snippets(
         narrative_slug=slug,
