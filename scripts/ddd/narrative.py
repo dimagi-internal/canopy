@@ -1370,7 +1370,6 @@ def main() -> None:
         print(
             "Usage:\n"
             "  python -m scripts.ddd.narrative post <spec_path> <run_id>\n"
-            "  python -m scripts.ddd.narrative sync <spec_path> <run_id>   # reconcile: fold any resolved web review edits onto the spec, THEN version any change (no pause); exit 2 on conflict. The 'I edited on the web, now continue' command.\n"
             "  python -m scripts.ddd.narrative apply <spec_path> <response_json_file>\n"
             "  python -m scripts.ddd.narrative status <run_id>     # prints narrative status JSON; exit 1 if upload would refuse\n"
             "  python -m scripts.ddd.narrative pull <slug> <dir>                   # fetch the narrative into <slug>.narrative.lock.json (one-way read)\n"
