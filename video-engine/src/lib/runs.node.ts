@@ -111,6 +111,6 @@ export function listPrograms(root: string): string[] {
     .sort();
 }
 
-// cpSync is re-exported so tests can `import { cpSync } from "./runs.node"`
+// cpSync is re-exported so tests can `import { cpSync } from "./runs.node.ts"`
 // without pulling in the rest of node:fs.
 export { cpSync };

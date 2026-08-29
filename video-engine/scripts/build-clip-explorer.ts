@@ -29,10 +29,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { execSync } from "node:child_process";
-import { loadProgramSpec } from "../src/lib/spec.node";
-import { loadDefaults, resolveBeats, effectiveBeatsForSpec, type ResolvedBeat } from "../src/lib/beats.node";
-import { defaultCacheDir } from "../src/lib/asset-resolver.node";
-import { resolveRun, specPath, outputPath, explorerDir as runExplorerDir } from "../src/lib/runs.node";
+import { loadProgramSpec } from "../src/lib/spec.node.ts";
+import { loadDefaults, resolveBeats, effectiveBeatsForSpec, type ResolvedBeat } from "../src/lib/beats.node.ts";
+import { defaultCacheDir } from "../src/lib/asset-resolver.node.ts";
+import { resolveRun, specPath, outputPath, explorerDir as runExplorerDir } from "../src/lib/runs.node.ts";
 
 interface CliArgs {
   program: string;

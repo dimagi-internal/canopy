@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadProgramSpec } from "./spec.node";
+import { loadProgramSpec } from "./spec.node.ts";
 import { parseDefaults, resolveBeats, filterDefaultsForSpec } from "./beats";
 import { readFileSync } from "node:fs";
 
