@@ -16,6 +16,30 @@
           "default": null,
           "title": "Note"
         },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
+        },
         "must_succeed": {
           "default": true,
           "title": "Must Succeed",
@@ -111,6 +135,30 @@
           "default": null,
           "title": "Note"
         },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
+        },
         "must_succeed": {
           "default": false,
           "title": "Must Succeed",
@@ -161,6 +209,30 @@
           "default": null,
           "title": "Note"
         },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
+        },
         "must_succeed": {
           "default": false,
           "title": "Must Succeed",
@@ -210,6 +282,30 @@
           ],
           "default": null,
           "title": "Note"
+        },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
         },
         "must_succeed": {
           "default": false,
@@ -315,6 +411,30 @@
           "default": null,
           "title": "Note"
         },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
+        },
         "must_succeed": {
           "default": false,
           "title": "Must Succeed",
@@ -370,6 +490,30 @@
           "default": null,
           "title": "Note"
         },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
+        },
         "must_succeed": {
           "default": false,
           "title": "Must Succeed",
@@ -420,6 +564,30 @@
           "default": null,
           "title": "Note"
         },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
+        },
         "must_succeed": {
           "default": false,
           "title": "Must Succeed",
@@ -469,6 +637,30 @@
           ],
           "default": null,
           "title": "Note"
+        },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
         },
         "must_succeed": {
           "default": false,
@@ -531,6 +723,30 @@
           ],
           "default": null,
           "title": "Note"
+        },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
         },
         "must_succeed": {
           "default": false,
@@ -605,6 +821,30 @@
           ],
           "default": null,
           "title": "Note"
+        },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
         },
         "must_succeed": {
           "default": false,
@@ -700,6 +940,30 @@
           ],
           "default": null,
           "title": "Note"
+        },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
         },
         "must_succeed": {
           "default": false,
@@ -972,6 +1236,30 @@
           "default": null,
           "title": "Note"
         },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
+        },
         "must_succeed": {
           "default": false,
           "title": "Must Succeed",
@@ -1022,6 +1310,30 @@
           "default": null,
           "title": "Note"
         },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
+        },
         "must_succeed": {
           "default": false,
           "title": "Must Succeed",
@@ -1071,6 +1383,30 @@
           ],
           "default": null,
           "title": "Note"
+        },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
         },
         "must_succeed": {
           "default": false,
@@ -1167,6 +1503,30 @@
           "default": null,
           "title": "Note"
         },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
+        },
         "must_succeed": {
           "default": false,
           "title": "Must Succeed",
@@ -1211,6 +1571,30 @@
           ],
           "default": null,
           "title": "Note"
+        },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
         },
         "must_succeed": {
           "default": false,
@@ -1261,6 +1645,30 @@
           ],
           "default": null,
           "title": "Note"
+        },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
         },
         "must_succeed": {
           "default": false,

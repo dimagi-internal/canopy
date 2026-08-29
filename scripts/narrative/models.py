@@ -179,6 +179,27 @@ class _ActionBase(BaseModel):
     note: str | None = None
     """Human note: what this step demonstrates (shown in render logs)."""
 
+    say: str | None = None
+    """The narration word this action's moment should land on.
+
+    The authored half of action↔word sync: ``build_action_marks`` anchors the
+    mark on this word so the warp lands the field on the instant it is spoken,
+    and ``lint_narration_binding`` checks the hint actually appears in the
+    scene's narration. Without it a mark falls back to guessing from field-id
+    and note tokens.
+
+    It was READ in four places in ``scripts.ddd.snippets`` and declared in
+    none, so ``extra="forbid"`` rejected every spec that used it — 47 uses
+    across the live recipes. The non-validating loader took them fine, so the
+    recorder and the renderer worked while every VALIDATING path
+    (``load_spec``, ``narrative post``, ``recipe_preflight``, ``spec_qa``)
+    failed on a field the system's own docs tell authors to write.
+    """
+
+    word: str | None = None
+    """Older spelling of :attr:`say`. ``_mark_words`` still prefers it, so it
+    is declared rather than silently rejected; new specs should use ``say``."""
+
     must_succeed: bool = False
     """When True, the recorder raises (not just logs) if this action fails.
 
