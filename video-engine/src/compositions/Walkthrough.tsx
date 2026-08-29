@@ -61,6 +61,37 @@ export function beatSegments(
   return [{ start_seconds: wt.start_seconds ?? 0, duration_seconds: wt.duration_seconds }];
 }
 
+/**
+ * The Sequence window for each warp piece: where it starts and how long it
+ * stays on screen. PURE, so the covering property is testable without a
+ * renderer.
+ *
+ * Every frame of the beat must belong to exactly one piece. Each piece used to
+ * occupy only [outStartSec, +outDurSec) with just the LAST one stretched, so a
+ * gap between pieces — or a first piece starting after 0 — was covered by
+ * nothing and fell through to the AbsoluteFill behind them, which is painted
+ * theme.colors.foreground (#0A0620). 3.5s of exactly that solid colour shipped
+ * mid-scene in microplans-study-groups; to a viewer the player just breaks
+ * while the narration keeps talking.
+ *
+ * `own` is the piece's real footage length — beyond it the caller freezes the
+ * last frame. With contiguous pieces the windows are unchanged.
+ */
+export function warpSequenceWindows(
+  warp: { outStartSec: number; outDurSec: number }[],
+  fps: number,
+  durationInFrames: number
+): { from: number; seqLen: number; own: number }[] {
+  return warp.map((p, i) => {
+    const isLast = i === warp.length - 1;
+    const rawFrom = Math.round(p.outStartSec * fps);
+    const from = i === 0 ? 0 : rawFrom;
+    const own = Math.max(1, Math.round(p.outDurSec * fps) + (rawFrom - from));
+    const nextFrom = isLast ? durationInFrames : Math.round(warp[i + 1].outStartSec * fps);
+    return { from, own, seqLen: Math.max(own, nextFrom - from) };
+  });
+}
+
 export const Walkthrough: React.FC<{ wt: WalkthroughBeat; warp?: RenderPiece[] }> = ({
   wt,
   warp,
@@ -88,14 +119,13 @@ export const Walkthrough: React.FC<{ wt: WalkthroughBeat; warp?: RenderPiece[] }
   // contract as the de-dwell path below. No plan ⇒ fall through to that path.
   if (warp && warp.length > 0) {
     let summed = 0;
+    const windows = warpSequenceWindows(warp, fps, durationInFrames);
     const nodes = warp.map((p, i) => {
-      const from = Math.round(p.outStartSec * fps);
-      const isLast = i === warp.length - 1;
-      const own = Math.max(1, Math.round(p.outDurSec * fps));
-      const seqLen = isLast ? Math.max(own, durationInFrames - from) : own;
+      const { from, own, seqLen } = windows[i];
       const vid = videoFrom(p.assetStartSec, p.rate);
+      // Any extended piece holds its last frame, not just the final one.
       const child =
-        isLast && seqLen > own ? (
+        seqLen > own ? (
           <Freeze frame={own - 1} active={(f) => f >= own}>
             {vid}
           </Freeze>
