@@ -3,14 +3,14 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { execSync } from "node:child_process";
-import { loadProgramSpec, resolveActiveByBeat } from "../src/lib/spec.node";
-import { loadDefaults, resolveBeats, effectiveBeatsForSpec, type ResolvedTimeline, type ResolvedBeat } from "../src/lib/beats.node";
-import { resolveRun, specPath, outputPath } from "../src/lib/runs.node";
+import { loadProgramSpec, resolveActiveByBeat } from "../src/lib/spec.node.ts";
+import { loadDefaults, resolveBeats, effectiveBeatsForSpec, type ResolvedTimeline, type ResolvedBeat } from "../src/lib/beats.node.ts";
+import { resolveRun, specPath, outputPath } from "../src/lib/runs.node.ts";
 import { synthesize, synthesizePerBeat, readAlignment, wordStartSeconds, type PerBeatNarration } from "../src/lib/voiceover";
 import { estimateCaptionTimeline, captionsFromBeats } from "../src/lib/captions";
 import { planActionWarp, type RenderPiece } from "../src/lib/actionsync";
 import { evaluateTiming, type TimingBeatInput } from "../src/lib/timingeval";
-import { resolveAssetRefs, formatMissingError } from "../src/lib/asset-resolver.node";
+import { resolveAssetRefs, formatMissingError } from "../src/lib/asset-resolver.node.ts";
 import {
   capBeatDuration,
   footageMotionEndForBeat,

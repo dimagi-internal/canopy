@@ -3,8 +3,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parse, stringify } from "yaml";
 import path from "node:path";
 import { generateNarration } from "../src/lib/narration";
-import { loadProgramSpec } from "../src/lib/spec.node";
-import { resolveRun, specPath } from "../src/lib/runs.node";
+import { loadProgramSpec } from "../src/lib/spec.node.ts";
+import { resolveRun, specPath } from "../src/lib/runs.node.ts";
 
 function parseArgs(): { program: string; run: string; durationSeconds: number; dryRun: boolean } {
   const args = process.argv.slice(2);

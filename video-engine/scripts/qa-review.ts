@@ -20,8 +20,8 @@
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { loadProgramSpec } from "../src/lib/spec.node";
-import { loadDefaults, resolveBeats, type ResolvedBeat } from "../src/lib/beats.node";
+import { loadProgramSpec } from "../src/lib/spec.node.ts";
+import { loadDefaults, resolveBeats, type ResolvedBeat } from "../src/lib/beats.node.ts";
 import { estimateCaptionTimeline, captionsFromBeats, type CaptionCue } from "../src/lib/captions";
 
 interface CliArgs {

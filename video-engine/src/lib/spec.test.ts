@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { loadProgramSpec, resolveActiveByBeat } from "./spec.node";
+import { loadProgramSpec, resolveActiveByBeat } from "./spec.node.ts";
 import { applyManifestRefs } from "./spec";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

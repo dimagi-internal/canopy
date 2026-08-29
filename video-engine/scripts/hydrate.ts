@@ -36,13 +36,13 @@ import {
   readdirSync,
   writeFileSync,
 } from "node:fs";
-import { loadProgramSpec } from "../src/lib/spec.node";
-import { resolveRun, specPath } from "../src/lib/runs.node";
+import { loadProgramSpec } from "../src/lib/spec.node.ts";
+import { resolveRun, specPath } from "../src/lib/runs.node.ts";
 import {
   resolveAssetRefs,
   defaultCacheDir,
   type MissingAsset,
-} from "../src/lib/asset-resolver.node";
+} from "../src/lib/asset-resolver.node.ts";
 
 interface CliArgs {
   program: string;
