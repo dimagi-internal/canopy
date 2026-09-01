@@ -143,6 +143,53 @@ A named incident plus a working control is evidence; "several calls failed" is n
 go red for the outage rather than for your diff — read the job log before you touch the code**, and
 never force-merge past a CI system that is genuinely down. Say so and leave the PR open.
 
+## A regression test you never saw FAIL is not evidence of anything
+
+A green suite proves your tests pass. It does not prove they would have caught the bug — and for a
+test written *to* catch a specific bug, that is the only property that matters. So before you ship a
+fix, **run the new tests against the unfixed code and watch them fail.** Revert the source (not the
+tests), run, confirm red, restore, confirm green. It costs two commands and it is the only thing
+that distinguishes a regression test from a decoration:
+
+```bash
+git show origin/main:<the/file/you/fixed> > <the/file/you/fixed>   # tests stay
+<run the new tests>            # MUST fail, and for the RIGHT reason — read the assertion
+git checkout <the/file/you/fixed>
+<run again>                    # green
+```
+
+**Read *why* it failed, not just that it did.** A test that errors because a helper you added does
+not exist yet has told you nothing about the bug; that is the import failing, not the defect being
+detected. Only a failure on the assertion that encodes the defect counts.
+
+The trap this catches is not carelessness — it is a test that exercises a **different code path than
+production does**, which looks completely correct on the page. The harness you reach for by default
+is often not the one the bug lives in:
+
+| you wrote the test against | the bug actually lives in | result |
+|---|---|---|
+| Django's default (WSGI) test client | an ASGI-only request path | passes on the broken code |
+| the host platform | the `win32` branch | never executes |
+| a mocked boundary | the real serialisation | passes on the broken code |
+
+When the two differ, **make the platform- or protocol-specific logic a pure, parameterised function
+and test both branches** — `f(x, plat)` rather than reading `platform()` inside. Otherwise the branch
+you cannot run locally is exactly the branch that stays broken, permanently, while the suite reports
+green.
+
+And when a branch genuinely *cannot* be reproduced on this machine, say so **in the test**, and pin
+the defect's underlying class with something that does run — then state the limit in the PR rather
+than implying coverage you do not have.
+
+(2026-09-01, canopy-web#655: a fix for a URL that lost its `/canopy` prefix under the ASGI
+prefix-stripping wrapper. Three view tests were written with the ordinary Django test client and all
+three passed — correctly, because `WSGIRequest` rebuilds `path` as `SCRIPT_NAME + PATH_INFO`, so the
+prefix was already there and the bug could not appear. `ASGIRequest` instead assigns
+`self.path = scope["path"]` verbatim, which is where the defect lives. Rewritten against
+`AsyncRequestFactory`, the tests failed on `origin/main` and passed on the fix. Had they shipped as
+first written, the PR would have carried three tests, a green suite, and no coverage of the thing it
+claimed to fix.)
+
 ## Local gates — a suite you contaminate reports a FALSE failure
 
 Running the repo's suite in the background and then poking at a database in the foreground is the
