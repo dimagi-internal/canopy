@@ -554,6 +554,15 @@ def parse_task_links(cell):
 
     Over-length parts raise (see `check_task_field`): a URL cut to fit is a dead link,
     which is a worse outcome than being asked to shorten it.
+
+    An unparseable part RAISES rather than being skipped. It used to fall off the end of
+    the if/elif and vanish, so `--append-link "label=url"` — the wrong separator, and the
+    one people reach for first — wrote nothing, returned the patched task as JSON, and
+    exited 0. A write that reports success and stores nothing is the worst shape a CLI
+    has: the caller has no reason to re-read the card, so the link is simply missing
+    later, with no error anywhere to explain it. (2026-09-01, hal: two links onto a board
+    task, both silently dropped; caught only because the card was re-read for an unrelated
+    reason.)
     """
     out = []
     for part in (cell or "").split(","):
@@ -566,6 +575,11 @@ def parse_task_links(cell):
                         "url": check_task_field("link url", url)})
         elif part.startswith("http"):
             out.append({"label": "link", "url": check_task_field("link url", part)})
+        else:
+            raise click.ClickException(
+                f"cannot parse link {part!r}: expected \"label|url\" (a pipe, not '=' or ':') "
+                "or a bare http(s) url. Nothing was written."
+            )
     return out
 
 
