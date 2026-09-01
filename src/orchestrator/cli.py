@@ -1517,6 +1517,13 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
     if cm.get("unreadable"):
         click.echo("  ⚠ UNREADABLE sources (findings may be incomplete): "
                    + ", ".join(cm["unreadable"]))
+    if cm.get("confidence") == "blind":
+        # Same class of quiet-failure as the synthesis-pass warning below: `Turns
+        # reviewed: 0` under a readable corpus reads as "the agent was quiet", and a
+        # cron moves on. It isn't — nothing was collected. Say which one it was.
+        click.echo(f"\n⚠  BLIND SCAN — examined {cm.get('considered', 0)} in-window "
+                   f"transcript(s) and attributed NONE to this agent. This run found "
+                   f"nothing because it collected nothing; it is NOT a clean bill of health.")
     # Deterministic signal rollup
     sig = result.get("signals", [])
     fails = sum(len(s["failures"]) for s in sig)

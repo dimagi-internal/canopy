@@ -202,6 +202,94 @@ def test_find_turn_transcripts_matches_by_cwd(tmp_path):
     assert found[0].name == "a.jsonl"
 
 
+def _worktree_case(tmp_path, slug, siblings, worktree_root, session_dir="emdash-x-0901-abc"):
+    """Lay out repositories/<siblings> + worktrees/<worktree_root>/<session_dir>, write one
+    transcript whose cwd is that session dir, and return (repo, projects)."""
+    root = tmp_path / "emdash"
+    for name in siblings:
+        (root / "repositories" / name).mkdir(parents=True, exist_ok=True)
+    cwd = root / "worktrees" / worktree_root / session_dir
+    cwd.mkdir(parents=True)
+    projects = tmp_path / "projects"
+    d = projects / ("-" + str(cwd).strip("/").replace("/", "-"))
+    d.mkdir(parents=True)
+    _write_transcript(d / "a.jsonl", str(cwd), [("Read", {"file_path": "/x"}, "ok")])
+    return root / "repositories" / slug, projects
+
+
+def test_find_turn_transcripts_matches_hash_suffixed_worktree_root(tmp_path):
+    """emdash creates `<slug>-<hash>/` worktree containers, so requiring a bare
+    `/worktrees/<slug>/` dropped ~93% of the fleet's turns while still reporting
+    full coverage. See the `ace-web` sibling test for the other half of this."""
+    repo, projects = _worktree_case(tmp_path, "ace", ["ace", "ace-web"], "ace-c89535f9")
+    found = find_turn_transcripts(repo, hours=99999, projects_dir=projects)
+    assert [f.name for f in found] == ["a.jsonl"]
+
+
+def test_find_turn_transcripts_matches_named_worktree_root(tmp_path):
+    """Humans create named containers too (`ace-1813`, `canopy-ddd-identity`). Those are
+    the agent's worktrees, not another repo's."""
+    repo, projects = _worktree_case(tmp_path, "ace", ["ace", "ace-web"], "ace-1813")
+    found = find_turn_transcripts(repo, hours=99999, projects_dir=projects)
+    assert [f.name for f in found] == ["a.jsonl"]
+
+
+def test_find_turn_transcripts_does_not_swallow_sibling_repo_worktrees(tmp_path):
+    """GUARDRAIL: `ace-web` is a real sibling repo. Widening the matcher to "any dir
+    containing the slug" pulls its sessions into `ace`'s corpus — trading a silent
+    under-count for a silent over-count that corrupts a different agent's review."""
+    repo, projects = _worktree_case(tmp_path, "ace", ["ace", "ace-web"], "ace-web")
+    assert find_turn_transcripts(repo, hours=99999, projects_dir=projects) == []
+
+    repo2, projects2 = _worktree_case(
+        tmp_path / "b", "ace", ["ace", "ace-web"], "ace-web-canopy-cutover")
+    assert find_turn_transcripts(repo2, hours=99999, projects_dir=projects2) == []
+
+
+def test_worktree_root_falls_back_to_hash_shape_without_sibling_list(tmp_path):
+    """With no readable repositories/ dir to disambiguate against, accept only the shape
+    emdash actually emits — never any suffix, which would swallow sibling repos."""
+    from orchestrator.agent_review import _worktree_root_is_agents
+    none = frozenset()
+    assert _worktree_root_is_agents("ace-c89535f9", "ace", none)
+    assert not _worktree_root_is_agents("ace-web", "ace", none)
+    assert not _worktree_root_is_agents("ace-1813", "ace", none)  # 4 hex chars: too short
+    assert _worktree_root_is_agents("ace", "ace", none)
+
+
+def test_scan_reports_considered_so_a_blind_run_cannot_read_as_clean(tmp_path):
+    """A run that examines transcripts and attributes none must be able to SAY so —
+    `whole-corpus` with `unreadable: []` over an empty collection is a false all-clear."""
+    from orchestrator.agent_review import scan_turn_transcripts
+    repo, projects = _worktree_case(tmp_path, "ace", ["ace", "ace-web"], "ace-web")
+    found, considered = scan_turn_transcripts(repo, hours=99999, projects_dir=projects)
+    assert found == [] and considered == 1
+
+
+def test_run_review_marks_an_empty_scan_blind(tmp_path):
+    """turns == 0 with candidates examined is `blind`, not `whole-corpus`."""
+    from orchestrator import agent_review as ar
+    repo, projects = _worktree_case(tmp_path, "ace", ["ace", "ace-web"], "ace-web")
+    result = ar.run_review(str(repo), projects_dir=projects, use_llm=False)
+    assert result["turns"] == 0
+    assert result["corpus"]["confidence"] == "blind"
+    assert result["corpus"]["considered"] == 1
+    assert result["corpus"]["matched"] == 0
+
+
+def test_run_review_keeps_whole_corpus_when_there_was_nothing_to_find(tmp_path):
+    """The other side of the same coin: a genuinely quiet window is NOT blind."""
+    from orchestrator import agent_review as ar
+    (tmp_path / "emdash" / "repositories" / "ace").mkdir(parents=True)
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    result = ar.run_review(str(tmp_path / "emdash" / "repositories" / "ace"),
+                           projects_dir=projects, use_llm=False)
+    assert result["turns"] == 0
+    assert result["corpus"]["confidence"] == "whole-corpus"
+    assert result["corpus"]["considered"] == 0
+
+
 def test_resolve_agent_repo_by_path(tmp_path):
     repo = tmp_path / "echo"
     create_agent(AgentSpec(slug="echo", display_name="Echo", mandate="x."), repo)
