@@ -274,6 +274,34 @@ def test_to_html_code_span_wins_over_bold_inside_it():
     assert "<strong>" not in out
 
 
+def test_to_html_never_autolinks_a_url_inside_a_code_span():
+    # A code span is a thing you COPY AND RUN. Linkifying a URL inside one emits
+    # a nested anchor mid-command, which is exactly wrong for it.
+    out = to_html('run `curl -X POST https://example.com/api/workspaces/ -H auth`\n')
+    assert "<code>curl -X POST https://example.com/api/workspaces/ -H auth</code>" in out
+    assert "<a href" not in out
+
+
+def test_to_html_still_autolinks_around_a_code_span():
+    # Skipping code regions must not cost linkification of the prose either side.
+    out = to_html("see https://example.com/a then run `git push` then https://example.com/b\n")
+    assert '<a href="https://example.com/a">https://example.com/a</a>' in out
+    assert '<a href="https://example.com/b">https://example.com/b</a>' in out
+    assert "<code>git push</code>" in out
+
+
+def test_to_html_autolinks_between_two_code_spans_carrying_urls():
+    # The regression shape: several commands in one message, each with a URL.
+    out = to_html(
+        "`curl https://example.com/one` and `curl https://example.com/two`, "
+        "docs at https://example.com/docs\n"
+    )
+    assert "<code>curl https://example.com/one</code>" in out
+    assert "<code>curl https://example.com/two</code>" in out
+    assert out.count("<a href") == 1
+    assert '<a href="https://example.com/docs">' in out
+
+
 def test_to_html_leaves_unpaired_markers_alone():
     # A lone asterisk or backtick in prose must not swallow the rest of the paragraph.
     out = to_html("2 * 3 is 6 and a lone ` stays put\n")

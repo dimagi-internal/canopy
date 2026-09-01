@@ -145,6 +145,11 @@ MD_BOLD_RE = re.compile(r"\*\*([^*\n]+)\*\*")
 # stray asterisk pair in a query string would otherwise be rewritten into a tag).
 MD_PROTECTED_RE = re.compile(r"`[^`\n]+`|https?://[^\s<>()]+")
 
+# A rendered code span, used by `_autolink` to leave its contents alone. By the
+# time autolinking runs, `_inline_md` has already emitted these tags, so this
+# matches the OUTPUT form (`<code>…</code>`), not the backtick source.
+CODE_SPAN_RE = re.compile(r"<code>.*?</code>", re.DOTALL)
+
 
 class AgentEmailError(Exception):
     """Raised for identity/config problems or a failed send."""
@@ -426,6 +431,18 @@ def normalize(text: str) -> str:
 
 
 def _autolink(escaped: str) -> str:
+    """Make bare URLs clickable — but NEVER inside a `<code>` span.
+
+    `_inline_md` runs first and has already turned code spans into
+    `<code>…</code>`, deliberately leaving their URL text intact. Linkifying the
+    whole string afterwards therefore reaches straight into them and emits
+    `<code>… "<a href="…">…</a>" …</code>` — a nested anchor inside code, which is
+    exactly wrong for the thing code spans are for: a command you copy and run.
+
+    So skip the code regions. Everything between them still gets linkified.
+    (2026-09-01: an onboarding reply carried three PowerShell commands whose
+    `-Uri "https://…"` argument was rewritten into an anchor mid-command.)
+    """
     def repl(m: re.Match) -> str:
         url = m.group(1)
         tail = ""
@@ -434,7 +451,14 @@ def _autolink(escaped: str) -> str:
             url, tail = url[: punct.start()], punct.group(0)
         return f'<a href="{url}">{url}</a>{tail}'
 
-    return URL_RE.sub(repl, escaped)
+    out: list[str] = []
+    last = 0
+    for m in CODE_SPAN_RE.finditer(escaped):
+        out.append(URL_RE.sub(repl, escaped[last:m.start()]))
+        out.append(m.group(0))          # verbatim — a command must survive intact
+        last = m.end()
+    out.append(URL_RE.sub(repl, escaped[last:]))
+    return "".join(out)
 
 
 def _inline_md(escaped: str) -> str:
