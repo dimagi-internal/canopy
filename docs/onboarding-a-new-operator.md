@@ -115,16 +115,16 @@ that is not a one-way door: setting an explicit `workspace` on an
 already-homed agent **moves** it (`apps/agents/schemas.py`), so this is a
 reversible decision, not a commitment.
 
-**You almost certainly do not need to create one. But do NOT just take the
-default either** — this is the one choice in this doc worth thirty seconds of
-thought, because the default is the *less* private option.
+**Do NOT just take the default** — this is the one choice in this doc worth
+thirty seconds of thought, because the default is the least private option.
 
-Two workspaces exist today, and they differ in exactly the way that matters:
+You have three, and they differ in exactly the way that matters:
 
-| Workspace | Who gets in | Who lives there |
+| Workspace | Who gets in | Notes |
 |---|---|---|
-| `dimagi` | **auto-admits every `@dimagi.com` address as an EDITOR** on first login | the default for a new agent |
-| `connect` | no auto-join — membership is explicit | `hal`, `ace`, `ada`, `echo` |
+| `dimagi` | **auto-admits every `@dimagi.com` address as an EDITOR** on first login | the default a new agent lands in |
+| `connect` | no auto-join — membership is explicit | where `hal`, `ace`, `ada`, `echo` live |
+| **your own** | nobody until you invite them; you are the owner | one API call, below |
 
 Editor is not a read-only role: `DELETE /api/agents/{slug}` accepts editor or
 owner. So an agent left in `dimagi` can have its board, tasks, turns and work
@@ -132,27 +132,25 @@ products read — **and can be deleted outright** — by any Dimagi employee who
 ever logged into canopy-web. Nobody has done this, but it is not a boundary you
 want to be relying on politeness for.
 
-**Recommendation: put your agent in `connect`**, where the rest of the fleet
-already is. It costs one field at registration:
+**Creating your own workspace is a first-class option, not a last resort** — it
+is the only one that starts empty and stays that way until you invite someone.
+Prefer it when your agent's board is yours rather than the fleet's; prefer
+`connect` when the agent is part of the shared fleet and you want it visible
+alongside the others. Either way it is reversible: setting `--workspace` on an
+already-registered agent moves it.
+
+Whichever you pick, say so explicitly when you register:
 
 ```bash
-canopy agent register --slug <your-agent> --workspace connect
+canopy agent register --slug <your-agent> --workspace <workspace-slug>
 ```
 
-That gets you explicit membership rather than domain auto-join, and it keeps
-your agent alongside the others for anything that reasons across the fleet.
-
-A **third, separate workspace** is available if you genuinely want isolation
-(below) — but prefer it only when you have a real reason, since every person who
-should see your agent then has to be invited individually.
-
-> If you have already registered into `dimagi`, re-running `register` with
-> `--workspace connect` moves it. Nothing is lost.
-
 <details>
-<summary>Only if you genuinely need a separate workspace</summary>
+<summary>Creating your own workspace, and inviting people to it</summary>
 
-There is **no UI for creating a workspace** — it is API-only:
+There is **no UI for creating a workspace** — it is API-only. Pick the slug
+deliberately: lowercase letters, digits and hyphens only, and it appears in
+every URL your team uses.
 
 ```bash
 curl -X POST https://labs.connect.dimagi.com/canopy/api/workspaces/ \
@@ -161,9 +159,36 @@ curl -X POST https://labs.connect.dimagi.com/canopy/api/workspaces/ \
   -d '{"slug":"my-team","display_name":"My Team"}'
 ```
 
-Still pick the slug deliberately — lowercase letters, digits and hyphens only,
-and it appears in every URL your team uses. But it is **no longer a one-way
-door**: an owner can delete a workspace once it is empty.
+**On Windows**, `$(cat …)` is not a thing — use PowerShell:
+
+```powershell
+$tok = Get-Content "$env:USERPROFILE\.claude\canopy\workbench-token"
+Invoke-RestMethod -Method Post `
+  -Uri "https://labs.connect.dimagi.com/canopy/api/workspaces/" `
+  -Headers @{ Authorization = "Bearer $tok" } -ContentType "application/json" `
+  -Body '{"slug":"my-team","display_name":"My Team"}'
+```
+
+Creating it makes you its **owner**. To add someone (owner-only):
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "https://labs.connect.dimagi.com/canopy/api/workspaces/my-team/invites/" `
+  -Headers @{ Authorization = "Bearer $tok" } -ContentType "application/json" `
+  -Body '{"email":"someone@dimagi.com","role":"editor"}'
+```
+
+> **Nothing is emailed.** The response carries a `token`, and that is the only
+> copy — you must send the person their link yourself:
+> `https://labs.connect.dimagi.com/canopy/invite/<token>`. Invites last 14 days;
+> `role` may be `viewer`, `editor` or `owner` and defaults to `editor`.
+
+Only a domain-allowlisted account (any `@dimagi.com` address) or an existing
+workspace member may create a workspace — a purely invite-admitted user cannot,
+which is a deliberate security boundary rather than a bug.
+
+Creating one is **not a one-way door**: an owner can delete a workspace once it
+is empty.
 
 ```bash
 curl -X DELETE https://labs.connect.dimagi.com/canopy/api/workspaces/my-team/ \
@@ -171,11 +196,7 @@ curl -X DELETE https://labs.connect.dimagi.com/canopy/api/workspaces/my-team/ \
 ```
 
 Owner-only, and it returns **409 while the workspace still owns agents**, naming
-them — delete those first (below) and retry.
-
-You must be either on the email allowlist (any `@dimagi.com` address is) or
-already a member of some workspace. A purely invite-admitted user cannot bootstrap
-one — that is a deliberate security boundary, not a bug.
+them — move or delete those first (below) and retry.
 </details>
 
 ### 3b. Your personal access token
