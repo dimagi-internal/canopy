@@ -257,6 +257,33 @@ difference between a human who can supervise the turn and a human watching an op
 why you are looking at it."* Every step of that turn was reported; the thing that made the steps
 legible never was.)
 
+**BEING CC'd IS NOT BEING ADDRESSED — if the message is not TO you, the default action is not to
+reply.** An inbound item landing in your mailbox means you were kept informed; it does not mean a
+turn of yours is owed. Read the `To:` line. When it names someone else and you are on `Cc:`, the
+ball is *theirs*, and a reply from you lands in a conversation between two people who were talking
+to each other — it crowds out the response actually being waited for, and answers on behalf of
+someone who has not spoken yet. This is a distinct failure from the "newest message is my own
+outbound" check above: there the thread was already handled, here the thread is live and simply
+**not yours**. Mark it read, note it in the closeout ("cc'd only — <name> is answering"), move on.
+
+The trap is that a cc'd message is often *substantively about your work* — it may name you, judge
+your output, or discuss a deliverable you own — and having something useful to say reads as
+sufficient reason to say it. It is not. Relevance is not an invitation. The test is the `To:`
+line, not how much you have to contribute.
+
+**The one exception is an OFFER, and it is deliberately narrow.** If, before the addressee replies,
+you can see something genuinely productive you could do for them, you may say so — briefly, as an
+offer, not as the answer to a question you were not asked. Use it only when you are **confident**
+it is worth their attention; the default remains silence. And prefer the channel you are already
+on: if the person steering your turn is present in the session, tell THEM rather than emailing.
+
+(Origin: 2026-09-01 — an agent was cc'd on a mail addressed to a colleague, drafted a full reply to
+both, and took it to the approval gate. The principal: *"I addressed fio, not you, update your
+skills to not respond when you're not addressed (though if you determine you think you can do
+something productive for me before the person responds, you could offer. However, only do that if
+you are confident you should)."* Everything in the draft was accurate; none of it had been asked
+for, and the agent had already delivered the useful part in the session itself.)
+
 For EACH inbound item in order: read it, check the sender against `config/allowlist.txt`
 (unknown sender → read-only, surface to the human), load only that counterpart's memory scope,
 decide ONE action (Reply / File / Remember / Escalate), and present it for approval (manual mode)
@@ -536,6 +563,9 @@ queues work and approves outbound actions — independent of whether you publish
 0a. **On a scoped turn, that counterpart's other recent mail was swept before the action was
    decided** (Step 2 Scope) — one `from:<them> newer_than:3d` search. If you cannot point to it, you
    read one thread in isolation and the context that changes the answer is exactly what you skipped.
+0b. **You checked the `To:` line before drafting any reply** (Step 2) — if the message addressed
+   someone else and you were only cc'd, the default was silence, and a reply needed a confident,
+   stated reason. "I had something useful to add" is not one.
 0. **Every inbound item was DISPLAYED verbatim before it was worked on** (Step 2) — headers plus
    full body, not a summary. If you cannot point to where in this session you pasted it, you skipped
    it, and the human has been watching an opaque turn.
