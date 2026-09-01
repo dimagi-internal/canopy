@@ -39,19 +39,19 @@ plugin source on `/canopy:update`).
 
 ```bash
 SCRIPT="$(sed -n '/"canopy@canopy"/,/\]/{ s/.*"installPath": *"\([^"]*\)".*/\1/p; }' "$HOME/.claude/plugins/installed_plugins.json" | head -1)/scripts/canopy-web-pat-mint.ts"
-npx tsx "$SCRIPT"
+npx --yes tsx "$SCRIPT"
 ```
 
 Custom label:
 
 ```bash
-npx tsx "$SCRIPT" "jjackson-laptop-prod"
+npx --yes tsx "$SCRIPT" "jjackson-laptop-prod"
 ```
 
 Pointed at a different canopy-web (e.g. local dev):
 
 ```bash
-CANOPY_WEB_API_URL=http://localhost:8000 npx tsx "$SCRIPT"
+CANOPY_WEB_API_URL=http://localhost:8000 npx --yes tsx "$SCRIPT"
 ```
 
 ## What it does

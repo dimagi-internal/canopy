@@ -232,3 +232,41 @@ def test_turn_mode_normalizes_the_pre_rename_gated_value():
     Only the SAFE mode has an alias — nothing resolves to "auto" implicitly."""
     c, _ = _recorder_client([(200, '{"slug": "echo", "turn_mode": "gated"}')])
     assert c.turn_mode() == "manual"
+
+
+# ---------------------------------------------------------------------------
+# Workspace placement (@smazumdar, 2026-09-01)
+#
+# The API has always accepted `workspace` on AgentIn, but no CLI verb exposed
+# it, so placing or moving an agent meant a raw curl. That matters because the
+# DEFAULT workspace (`dimagi`) auto-admits every @dimagi.com address as an
+# EDITOR, and DELETE /api/agents/{slug} accepts editor — so taking the default
+# means any employee who has logged in once can delete the agent.
+# ---------------------------------------------------------------------------
+
+
+def test_identity_defaults_to_no_workspace_so_the_payload_is_inert():
+    """Omitting --workspace must not change placement for existing callers."""
+    body = AgentIdentity(slug="fizzy").model_dump()
+    assert body["workspace"] == ""
+
+
+def test_register_sends_the_requested_workspace():
+    calls = []
+
+    def _T(method, url, headers, data):
+        calls.append((method, url, json.loads(data)))
+        return 200, json.dumps({"slug": "fizzy", "workspace": "connect"})
+
+    c = AgentClient(
+        {"slug": "fizzy", "workspace": "connect"},
+        base_url="https://example.test",
+        token="t",
+        transport=_T,
+    )
+    c.register()
+
+    method, url, body = calls[0]
+    assert method == "POST"
+    assert url.endswith("/api/agents/")
+    assert body["workspace"] == "connect"

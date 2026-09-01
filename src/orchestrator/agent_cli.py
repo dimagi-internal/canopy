@@ -27,11 +27,17 @@ def agent():
 @click.option("--description", default="")
 @click.option("--persona", default="")
 @click.option("--avatar-url", default="")
-def agent_register(slug, name, email, description, persona, avatar_url):
+@click.option("--workspace", default="",
+              help="canopy-web workspace slug to home the agent in (e.g. 'connect'). "
+                   "Setting it on an already-registered agent MOVES it. Omit to leave "
+                   "placement alone — which means a NEW agent lands in the default "
+                   "workspace, where every @dimagi.com address is auto-admitted as an "
+                   "editor and can therefore delete it.")
+def agent_register(slug, name, email, description, persona, avatar_url, workspace):
     """Upsert agent identity."""
     try:
         c = _client(slug, name=name, email=email, description=description,
-                    persona=persona, avatar_url=avatar_url)
+                    persona=persona, avatar_url=avatar_url, workspace=workspace)
         _emit(c.register())
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))

@@ -45,6 +45,16 @@ Install these first. Everything below assumes they exist.
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | Runs the `canopy` CLI | `uv --version` |
 | [GitHub CLI](https://cli.github.com/) | Creating the agent's repo | `gh auth status` |
 | [1Password CLI](https://developer.1password.com/docs/cli/get-started/) | Resolving the agent's secrets | `op whoami` |
+| [Node.js 20+](https://nodejs.org/en/download) | `npx` runs the token-mint script | `node --version` |
+| [gog](https://github.com/dimagi-internal/gogcli) | Your agent's Gmail/Drive access — §5 uses it | `gog --version` |
+
+**`gog` on Windows.** There is no Homebrew, so install from the release
+archive: download the latest `gog_windows_amd64.zip` from
+[the releases page](https://github.com/dimagi-internal/gogcli/releases),
+unzip it somewhere permanent (e.g. `%LOCALAPPDATA%\gog\`), and add that folder
+to your `PATH` (Settings → *Edit environment variables for your account* →
+`Path` → New). Open a NEW terminal afterwards — `PATH` changes do not reach
+already-running shells. On macOS/Linux: `brew install dimagi-internal/tap/gog`.
 
 You also need **membership in the `dimagi-internal` GitHub org** and a
 **canopy-web login**. Ask Jonathan for both if `gh repo list dimagi-internal`
@@ -57,13 +67,37 @@ comes back empty.
 
 ## 2. Install canopy
 
+### 2a. Install the plugin FIRST — `/canopy:setup` does not exist until you do
+
+This step is easy to miss and nothing below works without it: `/canopy:setup` is
+a command *provided by the canopy plugin*, so until the plugin is installed the
+command simply is not there. Run these in Claude Code:
+
+```
+/plugin marketplace add dimagi-internal/canopy
+/plugin install canopy@canopy
+```
+
+> **Make sure it is THIS canopy.** There is another repo called
+> `jjackson/canopy-skills` which carries only the PM skills. Installing that one
+> leaves you with no `/canopy:setup`, no `canopy` CLI and no agent commands — and
+> the symptom is just "the command doesn't exist", which looks like a typo rather
+> than the wrong marketplace. The source you want is **`dimagi-internal/canopy`**.
+
+> **If `marketplace add` fails with `EPERM ... rename` on Windows, just run it
+> again.** Defender scans the freshly-cloned files and briefly locks them; a
+> plain retry succeeds. It is not a corrupted install.
+
+Restart Claude Code (or `/reload-plugins`) so the new commands register.
+
+### 2b. Run the setup script
+
 ```
 /canopy:setup
 ```
 
-Run that inside Claude Code. It is idempotent — safe to re-run — and provisions
-the state directory, the capture hook, your canopy-web token, and the `canopy`
-CLI in one pass.
+It is idempotent — safe to re-run — and provisions the state directory, the
+capture hook, your canopy-web token, and the `canopy` CLI in one pass.
 
 To update later: `/canopy:update`.
 
@@ -76,16 +110,44 @@ Two things live here, and mixing them up is the most common early confusion.
 ### 3a. Your workspace ("team")
 
 A **workspace** is canopy-web's tenant — the "team" whose agents, tasks and work
-products you can see. Agents belong to exactly one workspace.
+products you can see. An agent lives in exactly one workspace **at a time**, but
+that is not a one-way door: setting an explicit `workspace` on an
+already-homed agent **moves** it (`apps/agents/schemas.py`), so this is a
+reversible decision, not a commitment.
 
-**You very likely already have one.** The `dimagi` workspace auto-admits every
-`@dimagi.com` address as an Editor on first login. So:
+**You almost certainly do not need to create one. But do NOT just take the
+default either** — this is the one choice in this doc worth thirty seconds of
+thought, because the default is the *less* private option.
 
-1. Open <https://labs.connect.dimagi.com/canopy>, log in with your Dimagi account.
-2. Look at the workspace switcher in the left sidebar.
+Two workspaces exist today, and they differ in exactly the way that matters:
 
-If you see `Dimagi` there, **you are done — do not create a workspace.** You have
-the standing you need to register an agent.
+| Workspace | Who gets in | Who lives there |
+|---|---|---|
+| `dimagi` | **auto-admits every `@dimagi.com` address as an EDITOR** on first login | the default for a new agent |
+| `connect` | no auto-join — membership is explicit | `hal`, `ace`, `ada`, `echo` |
+
+Editor is not a read-only role: `DELETE /api/agents/{slug}` accepts editor or
+owner. So an agent left in `dimagi` can have its board, tasks, turns and work
+products read — **and can be deleted outright** — by any Dimagi employee who has
+ever logged into canopy-web. Nobody has done this, but it is not a boundary you
+want to be relying on politeness for.
+
+**Recommendation: put your agent in `connect`**, where the rest of the fleet
+already is. It costs one field at registration:
+
+```bash
+canopy agent register --slug <your-agent> --workspace connect
+```
+
+That gets you explicit membership rather than domain auto-join, and it keeps
+your agent alongside the others for anything that reasons across the fleet.
+
+A **third, separate workspace** is available if you genuinely want isolation
+(below) — but prefer it only when you have a real reason, since every person who
+should see your agent then has to be invited individually.
+
+> If you have already registered into `dimagi`, re-running `register` with
+> `--workspace connect` moves it. Nothing is lost.
 
 <details>
 <summary>Only if you genuinely need a separate workspace</summary>
