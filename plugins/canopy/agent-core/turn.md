@@ -95,8 +95,19 @@ risk two replies to one person about one task. So the first thing a scoped turn 
 sender sweep and before reading the thread:
 
 ```bash
-ps aux | grep '[c]laude --session-id' | grep -c -- '--thread <the-ref>'   # >1 → you are a duplicate
+"$CANOPY/scripts/live-turns.sh" --ref <the-ref>    # COUNT>1 → you are a duplicate
 ```
+
+**Use the script, not a `ps | grep` of your own.** This check used to be printed here as
+`ps aux | grep '[c]laude --session-id' | grep -c -- '--thread <the-ref>'`, which reads the scope out
+of argv — and **argv does not survive a resume**. A session resumed after an interrupt, a stall or a
+context handoff runs as `claude --resume <uuid>`, carrying neither `--thread` nor `/<slug>:`, so the
+count came back **0** for every live turn including the one asking. Zero is the all-clear, produced
+by the check failing silently, in precisely the situation it exists for: a long or resumed turn is
+the turn a recovery dispatch was sent to replace. (Measured 2026-09-01 — a hal turn re-ran the
+documented check mid-turn and got 0 while four hal turns were live, two of them holding the very ref
+it was asking about.) The script reads scope from the transcript, which a resume replays. Its
+header records the three wrong versions written before the right one, which is why this is code.
 
 More than one means you are the later turn. Find where the earlier one got to — its transcript is
 at `~/.claude/projects/<worktree-path>/<session-id>.jsonl`; read its last few assistant messages —
@@ -121,7 +132,7 @@ that, and so does a board task and an email about the same project. You are not 
 there is no reason to stop — and you will still overwrite each other. So run the wider count too:
 
 ```bash
-ps aux | grep '[c]laude --session-id' | grep -c '/<slug>:'   # >1 → a sibling turn of YOURS is live
+"$CANOPY/scripts/live-turns.sh" --slug <slug>    # COUNT>1 → a sibling turn of YOURS is live
 ```
 
 More than one and you share every artifact this agent owns with a session you cannot see. Two things
@@ -150,7 +161,7 @@ outside. So the count you are carrying when you finally write is not the count y
 both, cheaply, at the moment of action:
 
 ```bash
-ps aux | grep '[c]laude --session-id' | grep -c -- '--thread <the-ref>'   # again, right before you act
+"$CANOPY/scripts/live-turns.sh" --ref <the-ref> --slug <slug>   # again, right before you act
 ```
 
 Non-1 now → go read that session's transcript and apply the stand-down rules above **before** the
