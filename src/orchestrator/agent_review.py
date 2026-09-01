@@ -669,29 +669,84 @@ def _transcript_cwd(path: Path) -> str:
     return ""
 
 
-def _belongs_to_agent(cwd: str, repo: Path, slug: str) -> bool:
-    if not cwd:
+_WORKTREE_ROOT = re.compile(r"/worktrees/(?P<root>[^/]+)/")
+# emdash names its per-agent worktree container `<slug>-<hash>`; the hash is hex.
+_HASH_SUFFIX = re.compile(r"-[0-9a-f]{6,}$")
+
+
+def _sibling_repo_names(repo: Path) -> frozenset[str]:
+    """Every repo checked out alongside `repo`. This is what tells `ace-web` (a real
+    sibling repo) apart from `ace-1813` / `ace-c89535f9` (worktrees of `ace`) — the
+    two are indistinguishable by string shape alone."""
+    try:
+        return frozenset(p.name for p in repo.parent.iterdir() if p.is_dir())
+    except OSError:
+        return frozenset()
+
+
+def _worktree_root_is_agents(root: str, slug: str, siblings: frozenset[str]) -> bool:
+    """Does a `/worktrees/<root>/` directory hold THIS agent's worktrees?
+
+    Matching on `root == slug` alone under-counts by ~93%: emdash creates
+    hash-suffixed containers (`hal-8ac55e86/`), and humans create named ones
+    (`ace-1813/`, `canopy-ddd-identity/`), so almost no real cwd has a bare
+    `/worktrees/<slug>/` in it. But accepting ANY `<slug>-*` suffix over-counts —
+    it swallows `ace-web/` and `ace-web-canopy-cutover/`, quietly corrupting a
+    DIFFERENT agent's corpus, which is worse than the under-count it fixes.
+
+    So: accept a suffix unless a LONGER sibling repo claims that prefix. With no
+    readable sibling list to disambiguate with, fall back to the shape emdash
+    actually emits (a hex hash) rather than guessing.
+    """
+    if root == slug:
+        return True
+    if not root.startswith(slug + "-"):
         return False
-    cwd = str(cwd)
-    return (
-        cwd == str(repo)
-        or cwd.startswith(str(repo) + "/")
-        or f"/worktrees/{slug}/" in cwd
-        or cwd.rstrip("/").endswith(f"/repositories/{slug}")
+    if not siblings:
+        return bool(_HASH_SUFFIX.search(root))
+    return not any(
+        other != slug
+        and len(other) > len(slug)
+        and (root == other or root.startswith(other + "-"))
+        for other in siblings
     )
 
 
-def find_turn_transcripts(
+def _belongs_to_agent(cwd: str, repo: Path, slug: str,
+                      siblings: frozenset[str] | None = None) -> bool:
+    if not cwd:
+        return False
+    cwd = str(cwd)
+    if cwd == str(repo) or cwd.startswith(str(repo) + "/"):
+        return True
+    if cwd.rstrip("/").endswith(f"/repositories/{slug}"):
+        return True
+    m = _WORKTREE_ROOT.search(cwd)
+    if not m:
+        return False
+    if siblings is None:
+        siblings = _sibling_repo_names(repo)
+    return _worktree_root_is_agents(m.group("root"), slug, siblings)
+
+
+def scan_turn_transcripts(
     repo: Path, hours: int = 168, projects_dir: Path = CLAUDE_PROJECTS
-) -> list[Path]:
-    """Recent transcripts whose cwd is within the agent's repo (or one of its worktrees)."""
+) -> tuple[list[Path], int]:
+    """`(transcripts, considered)` — the agent's recent turns, and how many in-window
+    transcripts were examined to find them.
+
+    `considered` is what separates "this agent was quiet" from "the matcher dropped
+    everything": a run that examined 37 transcripts and attributed 0 is blind, not clean.
+    """
     slug = repo.name
     if not projects_dir.exists():
-        return []
+        return [], 0
     cutoff = time.time() - hours * 3600
+    siblings = _sibling_repo_names(repo)
     # Pre-filter project dirs by name (the encoded cwd contains the slug) to bound the scan.
     name_re = re.compile(rf"-{re.escape(slug)}(?:-|$)")
     out: list[tuple[float, Path]] = []
+    considered = 0
     for d in projects_dir.iterdir():
         if not d.is_dir() or not name_re.search(d.name):
             continue
@@ -702,9 +757,17 @@ def find_turn_transcripts(
                 continue
             if mtime < cutoff:
                 continue
-            if _belongs_to_agent(_transcript_cwd(f), repo, slug):
+            considered += 1
+            if _belongs_to_agent(_transcript_cwd(f), repo, slug, siblings):
                 out.append((mtime, f))
-    return [f for _, f in sorted(out, reverse=True)]
+    return [f for _, f in sorted(out, reverse=True)], considered
+
+
+def find_turn_transcripts(
+    repo: Path, hours: int = 168, projects_dir: Path = CLAUDE_PROJECTS
+) -> list[Path]:
+    """Recent transcripts whose cwd is within the agent's repo (or one of its worktrees)."""
+    return scan_turn_transcripts(repo, hours=hours, projects_dir=projects_dir)[0]
 
 
 def friction_signals(
@@ -1379,7 +1442,8 @@ def run_review(
             "repo": "",
             "turns": 0,
             "signals": [],
-            "corpus": {"confidence": "half-blind", "sources": [], "unreadable": []},
+            "corpus": {"confidence": "half-blind", "sources": [], "unreadable": [],
+                       "considered": 0, "matched": 0},
             "findings": [],
             "dropped_findings": [],
             "error": f"could not resolve agent repo for {slug_or_path!r}",
@@ -1388,7 +1452,8 @@ def run_review(
     if projects_dir is not None:
         # An explicitly named dir scans ONLY that dir — a caller who says where to
         # look must not get a silent fan-out across every account on the machine.
-        transcripts = find_turn_transcripts(repo, hours=hours, projects_dir=projects_dir)
+        transcripts, considered = scan_turn_transcripts(
+            repo, hours=hours, projects_dir=projects_dir)
         corpus_meta = {
             "confidence": "whole-corpus",
             "sources": [str(projects_dir)],
@@ -1398,8 +1463,11 @@ def run_review(
         sources = session_sources()
         seen: set[str] = set()
         transcripts = []
+        considered = 0
         for d in local_transcript_dirs(sources):
-            for t in find_turn_transcripts(repo, hours=hours, projects_dir=d):
+            found, n = scan_turn_transcripts(repo, hours=hours, projects_dir=d)
+            considered += n
+            for t in found:
                 # Sources can overlap (a symlinked or duplicated root); dedupe on the
                 # resolved path so one turn isn't counted — or reviewed — twice.
                 key = str(Path(t).resolve())
@@ -1411,6 +1479,15 @@ def run_review(
             "sources": [s.name for s in sources if s.readable],
             "unreadable": [s.name for s in sources if not s.readable],
         }
+    # `corpus_confidence` only knows whether the SOURCES were readable — it is blind to
+    # whether anything was actually collected from them, so a run that read every source
+    # and attributed zero transcripts still reported "whole-corpus" with no unreadable
+    # sources. Zero findings then read as a clean bill of health when it was an empty
+    # scan. Record what was examined, and say so when everything examined was dropped.
+    corpus_meta["considered"] = considered
+    corpus_meta["matched"] = len(transcripts)
+    if considered and not transcripts:
+        corpus_meta["confidence"] = "blind"
 
     skills_dir = repo / "skills"
     own_skills = frozenset(
