@@ -113,30 +113,6 @@ mid-rewrite of it. By the time a THIRD turn started twenty-four minutes later �
 gate. That gate is *why* the thread was still unread and the runner kept firing: in manual mode,
 waiting for a human looks exactly like unhandled.)
 
-**And a STALLED owner is not a vacancy — the exception you will want to make is the one that
-costs most.** Standing down is easy while the other turn is visibly working; the moment you read
-its transcript and find it idle — an API error, a sleep-interrupt, an expired credential, just
-quiet — "it's stuck, so it isn't really the owner" arrives fully formed and feels like initiative
-rather than the override it is. It is wrong on the arithmetic: **you inherit its blockers, not its
-progress.** Whatever stopped it is environmental far more often than not, it is still there, and
-it will stop you at the same line — only now with two sessions spent instead of one, and the
-second starting cold. A stall is also not a state you can read reliably from outside: idle looks
-identical to waiting on a slow call, and to a turn parked at an approval gate. So on finding the
-owner stalled: **do not take over.** Say in your closeout that it stalled, where it got to, and
-what appears to have stopped it — that report is the deliverable, and it is what lets a human or a
-recovery dispatch re-own the item with the blocker already named. Take over only if a human tells
-you to, or if you can name the blocker AND clear it for both of you — in which case clear it and
-say so, rather than restarting the work from scratch.
-
-(Origin: 2026-09-01, hal. A CloudWatch alarm's `ALARM:` and its `OK:` are two threads, so the
-poller dispatched a turn each and the narrow check below returned a truthful 1. The day before,
-the same alarm's `OK:` turn had reasoned all of this correctly — found the `ALARM:` turn, read its
-transcript, confirmed it owned the incident — and then took over anyway *because* it had stalled.
-It inherited the stall's cause, an expired AWS SSO token, ran 218 events against it, and died on a
-usage limit. Both threads were left unread and the incident was no better understood: four
-sessions across two alarm transitions, zero findings. The turn that stood down instead spent its
-session on this paragraph.)
-
 **Same ref is the NARROW case. Now widen it: a sibling turn on a DIFFERENT ref is still your
 problem.** The check above counts turns on your exact ref, so it answers "am I redundant?" — and it
 returns 1, all-clear, for the collision that is actually more common: two turns on *different* refs

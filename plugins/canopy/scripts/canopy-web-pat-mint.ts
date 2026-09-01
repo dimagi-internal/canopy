@@ -28,7 +28,7 @@
  *      "OK you can close this tab" page, shuts down.
  *
  * Usage:
- *   npx tsx scripts/canopy-web-pat-mint.ts [label]
+ *   npx --yes tsx scripts/canopy-web-pat-mint.ts [label]
  *     label  defaults to `<hostname>-YYYY-MM-DD`
  *
  * Env:
@@ -38,7 +38,7 @@
  *
  * Exit codes:
  *   0 success — token written
- *   1 timeout (5 min) — operator never approved
+ *   1 timeout (15 min) — operator never approved
  *   2 state mismatch — possible race with another mint invocation
  *   3 listener error or browser-open failure
  *   4 token-file write error
@@ -50,12 +50,16 @@ import { spawn } from 'node:child_process';
 import { hostname, platform, homedir } from 'node:os';
 import { promises as fs } from 'node:fs';
 import { dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const CANOPY_WEB_BASE = (
   process.env.CANOPY_WEB_API_URL || process.env.CANOPY_WEB_BASE ||
   'https://labs.connect.dimagi.com/canopy'
 ).replace(/\/$/, '');
-const TIMEOUT_MS = 5 * 60 * 1000;
+// 15 minutes, not 5. A first-time operator spends this window signing in to
+// Google, possibly picking an account and clearing MFA. Five minutes expired
+// twice on the first Windows bring-up (@smazumdar, 2026-09-01).
+const TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_TOKEN_FILE = `${homedir()}/.claude/canopy/workbench-token`;
 const TOKEN_FILE = process.env.TOKEN_FILE_OVERRIDE || DEFAULT_TOKEN_FILE;
 
@@ -64,14 +68,59 @@ function defaultLabel(): string {
   return `${hostname().split('.')[0]}-${date}`;
 }
 
+/**
+ * Open the authorize URL in the operator's default browser, best-effort.
+ *
+ * Failing to open a browser must NEVER be fatal: the URL is already printed
+ * above, so the operator can paste it. That makes the error handling here the
+ * load-bearing part, and on Windows all three obvious spellings are wrong:
+ *
+ *   - `spawn('start', [url])` — `start` is a cmd.exe BUILTIN, not an
+ *     executable, so it fails ENOENT.
+ *   - `spawn('cmd', ['/c', 'start', url])` — works, but cmd treats `&` as a
+ *     command separator and silently TRUNCATES the URL at the first one. Our
+ *     URL carries `?cb=...&state=...&label=...`, so the server receives no
+ *     state and renders "missing state", which reads like a server bug.
+ *   - a bare try/catch around either — spawn reports ENOENT ASYNCHRONOUSLY as
+ *     an 'error' event, so the catch structurally cannot see it, and an
+ *     unhandled 'error' event on a ChildProcess is thrown: it takes down the
+ *     loopback listener we are in the middle of waiting on.
+ *
+ * `rundll32 url.dll,FileProtocolHandler` takes the URL as a single argv entry
+ * with no shell parsing, so `&` survives. The 'error' listener is what makes
+ * the failure non-fatal, on every platform.
+ * (Reported by @smazumdar, first Windows bring-up, 2026-09-01.)
+ */
+export function browserOpenCommand(url: string, plat: string = platform()): [string, string[]] {
+  if (plat === 'darwin') return ['open', [url]];
+  if (plat === 'win32') return ['rundll32.exe', ['url.dll,FileProtocolHandler', url]];
+  return ['xdg-open', [url]];
+}
+
+/**
+ * True when this module is being run as a script rather than imported.
+ *
+ * Pure and platform-parameterised so the win32 branch is testable from a Mac —
+ * there is no Windows machine in the fleet, and this is precisely the code that
+ * failed SILENTLY there.
+ */
+export function isDirectInvocation(metaUrl: string, argv1: string | undefined): boolean {
+  if (!argv1) return false;
+  return metaUrl === pathToFileURL(argv1).href;
+}
+
 function openInBrowser(url: string): void {
-  const cmd = platform() === 'darwin' ? 'open'
-    : platform() === 'win32' ? 'start'
-    : 'xdg-open';
+  const [cmd, args] = browserOpenCommand(url);
+  const warn = (msg: string) =>
+    console.error(`warn: failed to auto-open browser (${msg}); open the URL above manually`);
   try {
-    spawn(cmd, [url], { stdio: 'ignore', detached: true }).unref();
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    // MUST be attached: spawn surfaces ENOENT as an async event, and an
+    // unhandled one is thrown and kills the pending loopback listener.
+    child.on('error', (e: Error) => warn(e.message));
+    child.unref();
   } catch (e) {
-    console.error(`warn: failed to auto-open browser (${(e as Error).message}); open the URL above manually`);
+    warn((e as Error).message);
   }
 }
 
@@ -139,7 +188,11 @@ p{color:#555;line-height:1.5}</style>
 
       timer = setTimeout(() => {
         server.close();
-        reject(new Error(`timeout — no callback received in ${TIMEOUT_MS / 60000} minutes`));
+        reject(new Error(
+          `timeout — no callback received in ${TIMEOUT_MS / 60000} minutes. ` +
+          'Nothing is stuck and nothing was consumed: re-run the same command ' +
+          'to generate a fresh link.'
+        ));
       }, TIMEOUT_MS);
     });
   });
@@ -182,7 +235,11 @@ async function main(): Promise<number> {
 }
 
 // Only run main when invoked as a script (not when imported by tests).
-const isDirectInvocation = import.meta.url === `file://${process.argv[1]}`;
-if (isDirectInvocation) {
+//
+// pathToFileURL, NOT `file://${argv[1]}`. On Windows import.meta.url is
+// `file:///C:/...` while the template produces `file://C:...` — they can never
+// match, so main() never ran, the script exited 0 and printed NOTHING, which
+// looks exactly like success. (Reported by @smazumdar, 2026-09-01.)
+if (isDirectInvocation(import.meta.url, process.argv[1])) {
   main().then((code) => process.exit(code));
 }

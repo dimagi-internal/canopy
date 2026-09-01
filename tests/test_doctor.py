@@ -487,3 +487,105 @@ class TestExternalTools:
 
     def test_checkresult_defaults_to_no_warn(self):
         assert doctor.CheckResult("x", True, "d").warn is False
+
+
+# ---------------------------------------------------------------------------
+# Windows bring-up: two checks that reported FALSE failures, with a remediation
+# that looped (@smazumdar, 2026-09-01).
+#
+# There is no Windows machine in the fleet, so these drive the platform branch
+# through monkeypatched sys.platform / env rather than the real host —
+# otherwise the win32 paths are untestable and stay broken.
+# ---------------------------------------------------------------------------
+
+
+class TestUvToolDirIsPlatformAware:
+    def test_posix_default(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(doctor.sys, "platform", "darwin")
+        monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        assert doctor._uv_tool_dir(tmp_path) == tmp_path / ".local" / "share" / "uv" / "tools"
+
+    def test_windows_uses_appdata_roaming(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(doctor.sys, "platform", "win32")
+        monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+        monkeypatch.delenv("APPDATA", raising=False)
+        # NOT ~/.local/share — uv installs to %APPDATA%\uv\tools on Windows,
+        # so doctor looked in a directory that never exists there.
+        assert doctor._uv_tool_dir(tmp_path) == tmp_path / "AppData" / "Roaming" / "uv" / "tools"
+
+    def test_windows_honours_appdata_env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(doctor.sys, "platform", "win32")
+        monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+        monkeypatch.setenv("APPDATA", str(tmp_path / "Roam"))
+        assert doctor._uv_tool_dir(tmp_path) == tmp_path / "Roam" / "uv" / "tools"
+
+    def test_uv_tool_dir_override_wins_everywhere(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("UV_TOOL_DIR", str(tmp_path / "custom"))
+        for plat in ("win32", "darwin", "linux"):
+            monkeypatch.setattr(doctor.sys, "platform", plat)
+            assert doctor._uv_tool_dir(tmp_path) == tmp_path / "custom"
+
+
+class TestDistInfoFoundInBothLayouts:
+    def test_finds_windows_lib_site_packages_layout(self, tmp_path, monkeypatch):
+        """Windows has Lib/site-packages with no interpreter-version segment.
+
+        The old glob was `lib/python*/site-packages/...`, which matched nothing
+        on Windows even though the dist-info was present and correct — and the
+        suggested fix (reinstall) put it back in that same place, so the check
+        failed forever.
+        """
+        monkeypatch.setattr(doctor.sys, "platform", "win32")
+        monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+        monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
+        site = tmp_path / "AppData/Roaming/uv/tools/canopy/Lib/site-packages"
+        site.mkdir(parents=True)
+        (site / "canopy-0.2.450.dist-info").mkdir()
+
+        found = doctor._canopy_dist_infos(tmp_path)
+        assert [p.name for p in found] == ["canopy-0.2.450.dist-info"]
+
+    def test_still_finds_the_posix_layout(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(doctor.sys, "platform", "linux")
+        monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        site = tmp_path / ".local/share/uv/tools/canopy/lib/python3.14/site-packages"
+        site.mkdir(parents=True)
+        (site / "canopy-0.2.450.dist-info").mkdir()
+
+        found = doctor._canopy_dist_infos(tmp_path)
+        assert [p.name for p in found] == ["canopy-0.2.450.dist-info"]
+
+
+class TestTokenPermissionCheckOnWindows:
+    def _token(self, tmp_path, monkeypatch):
+        # the env-var branch short-circuits the file check entirely
+        for var in ("CANOPY_WEB_PAT", "CANOPY_TOKEN", "CLAUDE_PLUGIN_DATA"):
+            monkeypatch.delenv(var, raising=False)
+        token = tmp_path / "workbench-token"
+        token.write_text("a-secret-token-value")
+        return token
+
+    def test_windows_does_not_fail_on_unrepresentable_mode_bits(self, tmp_path, monkeypatch):
+        """os.stat on Windows can only ever return 666 or 444.
+
+        So `perms != "600"` can never pass there however tightly the file is
+        locked down with icacls, and the remediation (chmod 600) does nothing.
+        """
+        token = self._token(tmp_path, monkeypatch)
+        token.chmod(0o666)
+        monkeypatch.setattr(doctor.sys, "platform", "win32")
+
+        result = doctor.check_workbench_token(home=tmp_path, canopy_dir=tmp_path)
+        assert result.ok is True
+        assert "not meaningful on Windows" in result.detail
+
+    def test_posix_still_rejects_a_world_readable_token(self, tmp_path, monkeypatch):
+        token = self._token(tmp_path, monkeypatch)
+        token.chmod(0o644)
+        monkeypatch.setattr(doctor.sys, "platform", "linux")
+
+        result = doctor.check_workbench_token(home=tmp_path, canopy_dir=tmp_path)
+        assert result.ok is False
+        assert "600" in result.detail

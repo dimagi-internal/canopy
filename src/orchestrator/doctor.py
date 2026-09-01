@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -202,6 +203,21 @@ def check_workbench_token(
     if not contents:
         return CheckResult(name, False, f"workbench-token at {token_file} is empty — run /canopy:setup")
 
+    # POSIX mode bits are not a thing on Windows: os.stat there synthesises
+    # 0o666 (or 0o444 when read-only) from the archive bit, so `!= "600"` can
+    # NEVER pass no matter how tightly the file is actually locked down with
+    # icacls. Checking it there reports a false failure and, worse, sends the
+    # operator to chmod — which does nothing. Access control on NTFS is an ACL
+    # question; this check only has meaning where the mode bits are real.
+    # (@smazumdar, first Windows bring-up, 2026-09-01.)
+    if sys.platform == "win32":
+        return CheckResult(
+            name,
+            True,
+            f"workbench-token exists ({len(contents)} bytes; POSIX permission bits are not "
+            f"meaningful on Windows — restrict it with icacls if it is on a shared machine)",
+        )
+
     perms = oct(token_file.stat().st_mode & 0o777)[2:]
     if perms != "600":
         return CheckResult(
@@ -234,8 +250,49 @@ def check_plugin_version(home: Path | None = None) -> CheckResult:
     return CheckResult(name, False, "no canopy entry in installed_plugins.json")
 
 
+def _uv_tool_dir(home: Path) -> Path:
+    """Where `uv tool install` put canopy, on THIS platform.
+
+    uv does not use one layout everywhere, and hardcoding the POSIX one made
+    doctor report two false failures on Windows whose remediation LOOPED: the
+    suggested fix is to reinstall, which puts the files back at the same
+    (correct) place doctor was not looking, so the check fails again forever.
+    Reported by @smazumdar on the first Windows bring-up, 2026-09-01.
+
+      UV_TOOL_DIR   explicit override, honoured on every platform
+      Windows       %APPDATA%\\uv\\tools      (~/AppData/Roaming/uv/tools)
+      otherwise     $XDG_DATA_HOME/uv/tools  (~/.local/share/uv/tools)
+    """
+    if override := os.environ.get("UV_TOOL_DIR"):
+        return Path(override)
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else home / "AppData" / "Roaming"
+        return base / "uv" / "tools"
+    if xdg := os.environ.get("XDG_DATA_HOME"):
+        return Path(xdg) / "uv" / "tools"
+    return home / ".local" / "share" / "uv" / "tools"
+
+
 def _uv_receipt(home: Path) -> Path:
-    return home / ".local/share/uv/tools/canopy/uv-receipt.toml"
+    return _uv_tool_dir(home) / "canopy" / "uv-receipt.toml"
+
+
+def _canopy_dist_infos(home: Path) -> list[Path]:
+    """Installed canopy dist-info dirs, across uv's two site-packages layouts.
+
+    POSIX installs to `lib/python3.x/site-packages`; Windows to `Lib/site-packages`
+    with no interpreter-version segment. Globbing only the first found nothing on
+    Windows even though the dist-info was present and correct.
+    """
+    tool_root = _uv_tool_dir(home) / "canopy"
+    found = [
+        *tool_root.glob("lib/python*/site-packages/canopy-*.dist-info"),
+        *tool_root.glob("Lib/site-packages/canopy-*.dist-info"),
+    ]
+    # de-duplicate: a case-insensitive filesystem answers both globs with the
+    # same real directory, which would otherwise show up twice.
+    return sorted({p.resolve(): p for p in found}.values())
 
 
 def _marketplace_clone(home: Path) -> Path:
@@ -316,8 +373,8 @@ def check_cli_version_sync(home: Path | None = None) -> CheckResult:
     except OSError as e:
         return CheckResult(name, False, f"could not read {clone_version_file}: {e}")
 
-    tool_lib = home / ".local/share/uv/tools/canopy/lib"
-    dist_infos = sorted(tool_lib.glob("python*/site-packages/canopy-*.dist-info"))
+    tool_lib = _uv_tool_dir(home) / "canopy"
+    dist_infos = _canopy_dist_infos(home)
     if not dist_infos:
         return CheckResult(
             name, False, f"no installed canopy dist-info under {tool_lib} — run: {CLI_REMEDY}"
