@@ -771,6 +771,13 @@ def scan_turn_transcripts(
     for d in projects_dir.iterdir():
         if not d.is_dir() or not name_re.search(d.name):
             continue
+        # `glob`, deliberately NOT `rglob`: a session's SUBAGENT transcripts live at
+        # `<session-id>/subagents/agent-*.jsonl` underneath this dir, and they are not
+        # turns — they are one turn's fan-out. Recursing swamps the corpus with them
+        # (one ace session contributed 291 sidecars against 7 real sessions on
+        # 2026-09-02) and every per-turn metric downstream silently changes meaning.
+        # The failure mode is a wrong number, not an error, so it is pinned by
+        # `test_scan_ignores_subagent_sidecar_transcripts` rather than left to a reader.
         for f in d.glob("*.jsonl"):
             try:
                 mtime = f.stat().st_mtime

@@ -321,6 +321,27 @@ def test_run_review_reports_dropped_roots_on_a_partially_blind_scan(tmp_path):
     assert result["corpus"]["dropped_roots"] == {"wt-ace-8ac55e86": 1}
 
 
+def test_scan_ignores_subagent_sidecar_transcripts(tmp_path):
+    """A session's fan-out lives at `<session-id>/subagents/agent-*.jsonl` under the same
+    project dir. Those are one turn's subagents, not turns: counting them inflates the
+    corpus without erroring (291 sidecars against 7 real sessions for ace, 2026-09-02),
+    so every per-turn metric downstream quietly changes meaning. Pins `glob` vs `rglob`."""
+    from orchestrator.agent_review import scan_turn_transcripts, _transcript_cwd
+    repo, projects = _worktree_case(tmp_path, "ace", ["ace", "ace-web"], "ace-c89535f9")
+    d = next(p for p in projects.iterdir() if p.is_dir())
+    cwd = _transcript_cwd(d / "a.jsonl")
+    sidecars = d / "0271f987-c672-42b2-bcc7-d41c648158b3" / "subagents"
+    sidecars.mkdir(parents=True)
+    for n in range(3):
+        _write_transcript(sidecars / f"agent-{n}.jsonl", cwd,
+                          [("Read", {"file_path": "/x"}, "ok")])
+
+    scan = scan_turn_transcripts(repo, hours=99999, projects_dir=projects)
+    assert [f.name for f in scan.transcripts] == ["a.jsonl"]
+    assert scan.considered == 1, "sidecars must not even be considered"
+    assert scan.dropped_roots == {}
+
+
 def test_run_review_keeps_whole_corpus_when_there_was_nothing_to_find(tmp_path):
     """The other side of the same coin: a genuinely quiet window is NOT blind."""
     from orchestrator import agent_review as ar
