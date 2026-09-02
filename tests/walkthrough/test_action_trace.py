@@ -82,6 +82,12 @@ def test_keeps_only_judge_relevant_fields():
         "ok": False,
         "must_succeed": True,
         "note": "award the response",
+        # `warning` is judge-relevant by construction: it is the ONLY channel
+        # that reports an action which succeeded while doing less than the spec
+        # asked (a scroll_to the browser clamped to a standstill). `ok` is true
+        # in that case, so dropping it here would hide the one fact that
+        # explains a duplicate frame. None when the action has nothing to add.
+        "warning": None,
     }
     # noise dropped
     assert "value" not in entry

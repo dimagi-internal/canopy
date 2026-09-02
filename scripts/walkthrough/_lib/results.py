@@ -58,6 +58,21 @@ class ActionResult:
     ``None`` for actions executed outside a recording (direct ``execute_action``
     test calls), so old reports/call sites are unchanged."""
 
+    warning: str | None = None
+    """A non-fatal note about how the action behaved, or ``None``.
+
+    Distinct from :attr:`error_message`, which only ever accompanies
+    ``ok: False``. A warning means the action ran and reported success while
+    doing less than the spec asked for. The case it was added for: a
+    ``scroll_to`` whose requested position falls outside the scroll range, so
+    the browser clamps it, the page does not move, and the scene captures the
+    screen the PREVIOUS scene left behind — a frame that looks entirely
+    legitimate and is of the wrong thing. Marking that ``ok: False`` would make
+    the arc judge skip the run (it refuses to judge a take with a failed
+    action) and would also fail the common, supported case of a defensive
+    ``scroll_to`` onto an already-framed element. So it rides here instead, and
+    reaches the judges through :func:`action_trace_by_scene`."""
+
     error_kind: str | None = None
     """One of: ``target_not_found``, ``timeout``, ``unknown_kind``, ``playwright``, ``other``. ``None`` on success."""
 
@@ -333,13 +348,13 @@ def action_trace_by_scene(report: dict) -> dict[int, list[dict]]:
 
     ``report`` is the parsed JSON written by ``record_video.py --report``
     (i.e. :meth:`RunReport.as_dict` output). Returns
-    ``{scene_index: [{kind, target, ok, must_succeed, note}, ...]}`` — the
+    ``{scene_index: [{kind, target, ok, must_succeed, note, warning}, ...]}`` — the
     per-scene action trace the DDD dual-judge needs to tell a scene that
     actually filled+submitted a form from one that only HOVERED (same
     end-frame, same screenshot, but a different *act*).
 
     Only the fields a judge reasons over are kept (kind/target/ok/
-    must_succeed/note) — the cursor timing, error_message, and value are
+    must_succeed/note/warning) — the cursor timing, error_message, and value are
     dropped so the trace handed to an LLM judge stays compact and free of
     noise. Actions with no ``scene_index`` (a direct ``execute_action`` test
     call, never a real scene) are skipped.
@@ -367,6 +382,10 @@ def action_trace_by_scene(report: dict) -> dict[int, list[dict]]:
                 "ok": bool(entry.get("ok", True)),
                 "must_succeed": bool(entry.get("must_succeed", False)),
                 "note": entry.get("note"),
+                # A no-op scroll is invisible in `ok` by design (see
+                # ActionResult.warning), so without this the one lens that could
+                # explain a duplicate frame would never be shown the reason.
+                "warning": entry.get("warning"),
             }
         )
     return out
