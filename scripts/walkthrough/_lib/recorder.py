@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -327,7 +328,105 @@ def hover(page: Page, target: str, *, seconds: float | None = None, config: Reco
     return True
 
 
+@dataclass(frozen=True)
+class ScrollResult:
+    """What a ``scroll_to`` actually managed to do.
+
+    ``ok`` keeps the old meaning — did the target resolve — and is what the
+    bool-returning :func:`scroll_to` still hands back. ``warning`` is the new
+    half: a human sentence when the requested scroll could not move the page,
+    ``None`` when the camera went where it was told.
+
+    The warning is deliberately NOT a failure. A ``scroll_to`` onto an element
+    that is already correctly framed is a supported, common, defensive spec
+    idiom — the pre-scroll cursor glide above exists precisely to make that case
+    look intentional on camera. Flipping ``ok`` would mark those runs as having
+    a failed action, which makes the arc judge skip the run entirely
+    (``ddd-arc-eval`` refuses to judge a take with a failed action). So the
+    signal rides alongside the result instead: loud enough to read in the action
+    trace, quiet enough not to fail a healthy render.
+    """
+
+    ok: bool
+    warning: str | None = None
+
+
+def _classify_scroll(
+    target: str, measured: dict | None, after: float | None
+) -> ScrollResult:
+    """Turn the before/requested/applied/after numbers into a sentence, or None.
+
+    Silence is the real defect this repairs. The clamp alone stops the negative
+    ``scrollTo`` — but a camera that was ASKED to centre something it cannot
+    centre, and silently filmed the previous scene's screen instead, is a spec
+    problem the author has to be able to see. It is the author who re-anchors
+    the shot; nothing downstream can.
+
+    Returns ``ok=True`` always — see :class:`ScrollResult` on why a motionless
+    scroll is not a failed action.
+    """
+    if not isinstance(measured, dict) or after is None:
+        # A stubbed page (unit tests) or a page that went away mid-settle.
+        # Nothing observed means nothing to claim.
+        return ScrollResult(ok=True, warning=None)
+
+    def _num(key: str) -> float | None:
+        value = measured.get(key)
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    before, requested, applied, max_scroll = (
+        _num("before"), _num("requested"), _num("applied"), _num("max")
+    )
+    if None in (before, requested, applied, max_scroll):
+        return ScrollResult(ok=True, warning=None)
+
+    # A 1px tolerance: fractional device pixels and sub-pixel layout make exact
+    # comparison of scroll offsets meaningless.
+    if abs(after - before) > 1.0:
+        return ScrollResult(ok=True, warning=None)
+
+    if max_scroll <= 1.0:
+        why = "the page is no taller than the viewport, so there is nothing to scroll"
+    elif requested < -1.0:
+        why = (
+            f"centring it needs scrollTop {requested:.0f}, which is above the top of "
+            f"the page — clamped to 0 and already there"
+        )
+    elif requested > max_scroll + 1.0:
+        why = (
+            f"centring it needs scrollTop {requested:.0f}, past the bottom of the "
+            f"scroll range ({max_scroll:.0f}) — clamped and already there"
+        )
+    else:
+        why = f"it was already framed at scrollTop {before:.0f}"
+
+    return ScrollResult(
+        ok=True,
+        warning=(
+            f"scroll_to({target!r}) did not move the page: {why}. This scene will "
+            f"film whatever the previous one left on screen — re-anchor the shot "
+            f"at something that is actually off-centre, or drop the scroll_to."
+        ),
+    )
+
+
 def scroll_to(page: Page, target: str, *, config: RecorderConfig | None = None) -> bool:
+    """Back-compat bool form of :func:`scroll_to_reporting`.
+
+    ``True`` when the target resolved. Callers that want to know whether the
+    page actually MOVED want ``scroll_to_reporting`` — that is the whole point
+    of the split, and why this wrapper drops the warning on the floor rather
+    than folding it into the bool.
+    """
+    return scroll_to_reporting(page, target, config=config).ok
+
+
+def scroll_to_reporting(
+    page: Page, target: str, *, config: RecorderConfig | None = None
+) -> ScrollResult:
     """Smooth-scroll the element matching ``target`` into view, with the cursor.
 
     Resolves via the unified locator engine (same syntax as every other
@@ -352,7 +451,7 @@ def scroll_to(page: Page, target: str, *, config: RecorderConfig | None = None) 
     cfg = config or RecorderConfig()
     rt = resolve_target(page, target, timeout_ms=cfg.glide_timeout_ms)
     if rt is None:
-        return False
+        return ScrollResult(ok=False, warning=None)
     # Pre-scroll glide — cursor lands on the target at its current viewport
     # position. Same shape every other primitive uses; keeps "boring" frames
     # from accumulating when ``scroll_to`` is a no-op.
@@ -370,8 +469,27 @@ def scroll_to(page: Page, target: str, *, config: RecorderConfig | None = None) 
     # post-scroll window.scrollY computed a wrong target and left the element
     # off-screen on tall pages (e.g. a back-check far below the fold).
     scrolled_box = measure_box(rt.locator) or rt.box
-    page.evaluate(
-        """([x, y]) => window.scrollTo({top: y + window.scrollY - window.innerHeight / 2, behavior: 'smooth'})""",
+    # Clamp, and report. Centring the target wants
+    # ``y + scrollY - innerHeight/2``, which is NEGATIVE whenever the target
+    # sits in the top half of the page. The browser clamps that to 0 on our
+    # behalf, so the call "succeeds" and the page does not move — and the scene
+    # then films whatever the previous scene left on screen. The clamp below
+    # does not change where the page ends up (the browser was already clamping);
+    # it exists so the arithmetic can TELL US the request was out of range
+    # instead of that fact being swallowed. Same at the far end, where the
+    # request runs past ``scrollHeight - innerHeight``.
+    measured = page.evaluate(
+        """([x, y]) => {
+            const before = window.scrollY;
+            const max = Math.max(
+                0,
+                document.documentElement.scrollHeight - window.innerHeight
+            );
+            const requested = y + before - window.innerHeight / 2;
+            const applied = Math.min(Math.max(0, requested), max);
+            window.scrollTo({top: applied, behavior: 'smooth'});
+            return {before: before, requested: requested, applied: applied, max: max};
+        }""",
         [scrolled_box["x"], scrolled_box["y"]],
     )
     # The smooth-scroll moved the element under our cursor. Re-measure +
@@ -382,7 +500,18 @@ def scroll_to(page: Page, target: str, *, config: RecorderConfig | None = None) 
     if new_box is not None:
         slow_move(page, new_box["x"], new_box["y"], steps=cfg.cursor_steps_short)
     page.wait_for_timeout(cfg.scroll_settle_ms)
-    return True
+    # Read the SETTLED position — a smooth scroll is asynchronous, so anything
+    # sampled before the settle measures the animation, not the outcome.
+    after = None
+    if measured is not None:
+        try:
+            after = float(page.evaluate("() => window.scrollY"))
+        except Exception:  # pragma: no cover - a page that vanished mid-settle
+            after = None
+    outcome = _classify_scroll(target, measured, after)
+    if outcome.warning:
+        print(f"    ! {outcome.warning}")
+    return ScrollResult(ok=True, warning=outcome.warning)
 
 
 def draw_polygon(
@@ -934,6 +1063,10 @@ def execute_action(
     ok = True
     error_kind: str | None = None
     error_message: str | None = None
+    # Non-fatal note about HOW the action behaved (currently only scroll_to's
+    # "asked to move the camera, could not"). Rides to the run report so the
+    # judges and the author see it; never flips `ok`.
+    warning: str | None = None
 
     try:
         if kind == "goto":
@@ -967,7 +1100,9 @@ def execute_action(
             if not ok:
                 error_kind = "target_not_found"
         elif kind == "scroll_to":
-            ok = scroll_to(page, target or value or "", config=cfg)
+            scrolled = scroll_to_reporting(page, target or value or "", config=cfg)
+            ok = scrolled.ok
+            warning = scrolled.warning
             if not ok:
                 error_kind = "target_not_found"
         elif kind == "scroll":
@@ -1046,7 +1181,7 @@ def execute_action(
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
     result = ActionResult(
-        kind=kind, ok=ok, target=target, value=value, note=note,
+        kind=kind, ok=ok, target=target, value=value, note=note, warning=warning,
         elapsed_ms=elapsed_ms, error_kind=error_kind, error_message=error_message,
         must_succeed=must_succeed, say=say,
         capture_var=captured_var, capture_value=captured_value,

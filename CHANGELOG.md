@@ -9,6 +9,37 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.462] - 2026-09-02
+### Fixed
+- **A `scroll_to` near the top of a page silently filmed the previous scene's
+  screen, and the gate that should have caught it could not see it.** Two
+  defects that compound (#587). The recorder centred a target with
+  `y + scrollY - innerHeight/2` and no clamp; for anything in the top half of
+  the page that is negative, the browser clamps it to 0, the page does not move,
+  and the scene captures whatever the camera was last left on. It fails in the
+  worst way — the scroll "succeeds", the cursor glide re-measures and lands
+  correctly, and the frame looks like a legitimate screenshot of the wrong
+  thing. `scroll_to` now clamps to `[0, scrollHeight - innerHeight]` **and
+  reports**: a scroll that could not move the page emits an `ActionResult.warning`
+  naming which of the four causes it was, carried into the run report's action
+  trace. It deliberately does NOT flip `ok` — a defensive `scroll_to` onto an
+  already-framed element is a supported idiom, and failing those runs would make
+  `ddd-arc-eval` skip them entirely.
+- **`scripts.ddd.duplicate_frames` compared consecutive scenes only**, so a
+  scene that re-filmed an EARLIER, non-adjacent scene was invisible and the gate
+  reported green on a run with two byte-identical frames. It now compares every
+  pair (`itertools.combinations`, O(n²) over single digits). Measured against
+  the runs that exposed it: `hh-poverty-targeting-answer-quality-2026-08-29-001`
+  has scenes 3 and 5 byte-identical while every adjacent pair differs by more
+  than 27% — `pass` before, `fail` after; the converged five-picture set of
+  `hh-poverty-targeting-census-sweep-2026-09-01-001` has a minimum all-pairs
+  distance of 23.4% and stays clean. Both had been caught only by the arc judge,
+  the one lens that sees all the scenes at once. `ddd-arc-eval`'s rubric loses
+  the matching "adjacent" qualifier so the code and the rubric agree.
+- **`ddd-arc-eval/SKILL.md` shipped unresolved merge-conflict markers** in its
+  Gate section (since #426), which dropped one of two real gates from the
+  instructions the judge executes. Both are restored.
+
 ## [0.2.441] - 2026-08-27
 ### Fixed
 - `agent-core/decide_guard.py` — the decide-don't-poll rail blocked offers the

@@ -24,7 +24,7 @@ dimensions:
       "1": "No arc. A list of features in the order they were built."
     deduction_rules:
       - "The final scene is not the strongest moment: max 3"
-      - "Two adjacent scenes make the same point with different pixels: max 2"
+      - "Two scenes make the same point with different pixels: max 2 — name them; adjacency is not required, a scene that re-films a screen from several scenes back is the same failure"
       - "The most impressive artifact in the whole run appears in scene 1 or 2 and is never topped: max 2"
 
   - id: escalation
