@@ -829,6 +829,32 @@ Rules that make it work:
 A `scroll_to` immediately followed by a `fill` on the same target is collapsed to
 one mark (the `fill`), so only the acting action needs the hint.
 
+**A `scroll_to` that cannot move the page is a spec problem, and it now says
+so.** Centring a target needs `scrollTop = y + scrollY - innerHeight/2`. For a
+target in the top half of the page that is negative; the browser clamps it and
+the page does not move. The action still reports `ok: true` — it is a
+legitimate framing verb, and a defensive `scroll_to` onto an already-framed
+element is a fine thing to write — but the scene then captures whatever screen
+the camera was last left on, several scenes back if that is where it stopped.
+A frame like that looks completely legitimate and is of the wrong thing.
+
+The recorder now clamps the scroll and records a `warning` on the action,
+visible in `run-report.json` and in the per-scene action trace the judges read:
+
+```
+! scroll_to('Mean PPI score') did not move the page: centring it needs
+  scrollTop -212, which is above the top of the page — clamped to 0 and
+  already there. This scene will film whatever the previous one left on
+  screen — re-anchor the shot at something that is actually off-centre, or
+  drop the scroll_to.
+```
+
+Do what it says: re-anchor at something genuinely below the fold, or delete
+the `scroll_to` and let the scene inherit the frame deliberately. Do NOT
+ignore it — `scripts.ddd.duplicate_frames` compares EVERY pair of scenes (not
+just neighbours) and will fail the run when two scenes end up with the same
+picture, however far apart they are.
+
 ### Interactive recording — scene `actions` (cursor + clicks)
 
 The recorder injects a **synthetic cursor** (`_lib/cursor_overlay.js`) on every
