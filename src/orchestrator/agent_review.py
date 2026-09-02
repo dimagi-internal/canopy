@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 from orchestrator.repo_paths import resolve_repo_path
 from orchestrator.llm_output import parse_yaml_list
@@ -729,24 +730,44 @@ def _belongs_to_agent(cwd: str, repo: Path, slug: str,
     return _worktree_root_is_agents(m.group("root"), slug, siblings)
 
 
+class TranscriptScan(NamedTuple):
+    """What a corpus scan collected, and what it threw away.
+
+    `dropped_roots` maps each `/worktrees/<root>/` the scan REJECTED to how many
+    in-window transcripts it cost. It is the only field that survives a PARTIAL
+    blindness: `considered`/`matched` catch a scan that attributed nothing, but the
+    matcher bug of 2026-09-01 left eva at 2-of-15 and ace at 1-of-9 — non-zero, so
+    `confidence: blind` stayed silent while 87% of the corpus was dropped. A named
+    root with a count next to it makes that visible without a threshold to tune:
+    `dropped_roots: {"hal-8ac55e86": 14}` reads as the bug it is.
+    """
+
+    transcripts: list[Path]
+    considered: int
+    dropped_roots: dict[str, int]
+
+
 def scan_turn_transcripts(
     repo: Path, hours: int = 168, projects_dir: Path = CLAUDE_PROJECTS
-) -> tuple[list[Path], int]:
-    """`(transcripts, considered)` — the agent's recent turns, and how many in-window
-    transcripts were examined to find them.
+) -> TranscriptScan:
+    """The agent's recent turns, how many in-window transcripts were examined to find
+    them, and which worktree roots the matcher rejected on the way.
 
     `considered` is what separates "this agent was quiet" from "the matcher dropped
     everything": a run that examined 37 transcripts and attributed 0 is blind, not clean.
+    `dropped_roots` is what separates "the matcher dropped everything" from "the matcher
+    dropped MOST things" — see `TranscriptScan`.
     """
     slug = repo.name
     if not projects_dir.exists():
-        return [], 0
+        return TranscriptScan([], 0, {})
     cutoff = time.time() - hours * 3600
     siblings = _sibling_repo_names(repo)
     # Pre-filter project dirs by name (the encoded cwd contains the slug) to bound the scan.
     name_re = re.compile(rf"-{re.escape(slug)}(?:-|$)")
     out: list[tuple[float, Path]] = []
     considered = 0
+    dropped: dict[str, int] = {}
     for d in projects_dir.iterdir():
         if not d.is_dir() or not name_re.search(d.name):
             continue
@@ -758,9 +779,14 @@ def scan_turn_transcripts(
             if mtime < cutoff:
                 continue
             considered += 1
-            if _belongs_to_agent(_transcript_cwd(f), repo, slug, siblings):
+            cwd = _transcript_cwd(f)
+            if _belongs_to_agent(cwd, repo, slug, siblings):
                 out.append((mtime, f))
-    return [f for _, f in sorted(out, reverse=True)], considered
+            else:
+                m = _WORKTREE_ROOT.search(str(cwd))
+                key = m.group("root") if m else (str(cwd) or "<no cwd>")
+                dropped[key] = dropped.get(key, 0) + 1
+    return TranscriptScan([f for _, f in sorted(out, reverse=True)], considered, dropped)
 
 
 def find_turn_transcripts(
@@ -1443,7 +1469,7 @@ def run_review(
             "turns": 0,
             "signals": [],
             "corpus": {"confidence": "half-blind", "sources": [], "unreadable": [],
-                       "considered": 0, "matched": 0},
+                       "considered": 0, "matched": 0, "dropped_roots": {}},
             "findings": [],
             "dropped_findings": [],
             "error": f"could not resolve agent repo for {slug_or_path!r}",
@@ -1452,8 +1478,9 @@ def run_review(
     if projects_dir is not None:
         # An explicitly named dir scans ONLY that dir — a caller who says where to
         # look must not get a silent fan-out across every account on the machine.
-        transcripts, considered = scan_turn_transcripts(
-            repo, hours=hours, projects_dir=projects_dir)
+        scan = scan_turn_transcripts(repo, hours=hours, projects_dir=projects_dir)
+        transcripts, considered = scan.transcripts, scan.considered
+        dropped_roots = dict(scan.dropped_roots)
         corpus_meta = {
             "confidence": "whole-corpus",
             "sources": [str(projects_dir)],
@@ -1464,9 +1491,13 @@ def run_review(
         seen: set[str] = set()
         transcripts = []
         considered = 0
+        dropped_roots = {}
         for d in local_transcript_dirs(sources):
-            found, n = scan_turn_transcripts(repo, hours=hours, projects_dir=d)
+            scan = scan_turn_transcripts(repo, hours=hours, projects_dir=d)
+            found, n = scan.transcripts, scan.considered
             considered += n
+            for root, count in scan.dropped_roots.items():
+                dropped_roots[root] = dropped_roots.get(root, 0) + count
             for t in found:
                 # Sources can overlap (a symlinked or duplicated root); dedupe on the
                 # resolved path so one turn isn't counted — or reviewed — twice.
@@ -1484,8 +1515,18 @@ def run_review(
     # and attributed zero transcripts still reported "whole-corpus" with no unreadable
     # sources. Zero findings then read as a clean bill of health when it was an empty
     # scan. Record what was examined, and say so when everything examined was dropped.
+    #
+    # `matched == 0` is only the WORST case, though, and the matcher bug this guard was
+    # written for did not hit it everywhere: eva came back 2-of-15 and ace 1-of-9, both
+    # non-zero, so `blind` stayed silent on the two agents whose corpus was 87% gone.
+    # `dropped_roots` names what was thrown away, so a partial blindness is legible
+    # without a ratio threshold that would fire on the legitimate near-misses the
+    # name-prefilter always pulls in (`ace-web/` while scanning `ace`).
     corpus_meta["considered"] = considered
     corpus_meta["matched"] = len(transcripts)
+    corpus_meta["dropped_roots"] = dict(
+        sorted(dropped_roots.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
     if considered and not transcripts:
         corpus_meta["confidence"] = "blind"
 
