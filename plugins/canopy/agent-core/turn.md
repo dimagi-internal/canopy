@@ -304,6 +304,23 @@ Calendar share-invite — `From:` spoofed to the human sharer, `Sender: calendar
 `Auto-Submitted: auto-generated` — passed the allowlist as "Beth" and spawned a full eva turn that
 explored the Calendar API before concluding "no action." Line one of the headers said notification.)
 
+**Read the thread with `canopy email read --repo . <thread_id>` — the sanctioned inbound read
+path, which this Step kept implying and never named.** It returns normalized JSON: per message the
+headers and the decoded `body_text` (quoted tail trimmed; an HTML-only message flattened rather
+than blank), an `is_automated` flag with the `Auto-Submitted`/`Precedence`/`Sender` headers behind
+it, each attachment's id, and a thread-level `reply_all` recipient set. That is three of this
+Step's own rules answered by one call — the notification classifier above, the verbatim display
+below, and the recipient check in the reply-quality rules, which warns that a raw text mail view
+"hides the `Cc:` line and silently drops cc'd people" **without saying what to use instead**. So
+don't reach for raw `gog`: `gog gmail thread`'s aliases are `(threads, read)`, so the natural guess
+`gog gmail thread read <id>` parses as the command *group* plus a stray argument and dies on
+`unexpected argument` — the real subcommands are `get` and `modify`, and `get` then hands you
+exactly the raw text view the `Cc:` rule warns about. Pass a THREAD id; gog 404s on a bare message
+id. (2026-09-02: a scoped hal turn spent two calls rediscovering this and landed on `thread get` —
+the warned-against view. Its item was alarm mail with no `Cc:`, so nothing was lost; on a human
+thread that is the documented recipient-dropping failure, reached by following the only path the
+doc left open.)
+
 **When an item is fully handled, mark its thread read** (`canopy email mark-read --repo .
 <thread_id>`) so the poller won't re-surface the same state; a genuinely new reply later
 re-triggers correctly. If the item needs no action, mark it read anyway (it's handled).
