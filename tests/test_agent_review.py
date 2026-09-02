@@ -262,8 +262,8 @@ def test_scan_reports_considered_so_a_blind_run_cannot_read_as_clean(tmp_path):
     `whole-corpus` with `unreadable: []` over an empty collection is a false all-clear."""
     from orchestrator.agent_review import scan_turn_transcripts
     repo, projects = _worktree_case(tmp_path, "ace", ["ace", "ace-web"], "ace-web")
-    found, considered = scan_turn_transcripts(repo, hours=99999, projects_dir=projects)
-    assert found == [] and considered == 1
+    scan = scan_turn_transcripts(repo, hours=99999, projects_dir=projects)
+    assert scan.transcripts == [] and scan.considered == 1
 
 
 def test_run_review_marks_an_empty_scan_blind(tmp_path):
@@ -275,6 +275,50 @@ def test_run_review_marks_an_empty_scan_blind(tmp_path):
     assert result["corpus"]["confidence"] == "blind"
     assert result["corpus"]["considered"] == 1
     assert result["corpus"]["matched"] == 0
+
+
+def _partial_blind_case(tmp_path):
+    """One agent, two worktree containers: `ace-c89535f9` (matches) and `wt-ace-8ac55e86`
+    (a container shape the matcher does not recognise). Two transcripts in, one
+    attributed — the shape of the 2026-09-01 bug, where emdash's naming drifted."""
+    root = tmp_path / "emdash"
+    for name in ("ace", "ace-web"):
+        (root / "repositories" / name).mkdir(parents=True, exist_ok=True)
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    for wt, fname in (("ace-c89535f9", "seen.jsonl"),
+                      ("wt-ace-8ac55e86", "dropped.jsonl")):
+        cwd = root / "worktrees" / wt / "emdash-ace-turn-0901"
+        cwd.mkdir(parents=True)
+        d = projects / ("-" + str(cwd).strip("/").replace("/", "-"))
+        d.mkdir(parents=True)
+        _write_transcript(d / fname, str(cwd), [("Read", {"file_path": "/x"}, "ok")])
+    return root / "repositories" / "ace", projects
+
+
+def test_scan_names_the_worktree_roots_it_dropped(tmp_path):
+    """`considered`/`matched` cannot see a PARTIAL blindness — the 2026-09-01 matcher bug
+    left eva at 2-of-15 and ace at 1-of-9, both non-zero, so `blind` never fired. Naming
+    the rejected roots makes the dropped corpus legible without a ratio threshold."""
+    from orchestrator.agent_review import scan_turn_transcripts
+    repo, projects = _partial_blind_case(tmp_path)
+    scan = scan_turn_transcripts(repo, hours=99999, projects_dir=projects)
+    assert [f.name for f in scan.transcripts] == ["seen.jsonl"]
+    assert scan.considered == 2
+    assert scan.dropped_roots == {"wt-ace-8ac55e86": 1}
+
+
+def test_run_review_reports_dropped_roots_on_a_partially_blind_scan(tmp_path):
+    """A half-blind scan still reports `whole-corpus` (correctly — the sources WERE all
+    readable), so the dropped roots are the only thing that says the corpus is short."""
+    from orchestrator import agent_review as ar
+    repo, projects = _partial_blind_case(tmp_path)
+    result = ar.run_review(str(repo), projects_dir=projects, use_llm=False)
+    assert result["turns"] == 1
+    assert result["corpus"]["confidence"] == "whole-corpus"
+    assert result["corpus"]["considered"] == 2
+    assert result["corpus"]["matched"] == 1
+    assert result["corpus"]["dropped_roots"] == {"wt-ace-8ac55e86": 1}
 
 
 def test_run_review_keeps_whole_corpus_when_there_was_nothing_to_find(tmp_path):
