@@ -34,15 +34,46 @@
 #      it over-reports and the stand-down rules fire against innocent turns.
 # Each returned a confident wrong number rather than an error.
 #
+# FOURTH FAILURE, measured live 2026-09-02 — SCOPE IS NOT ONLY SET BY `:turn`.
+# Version 4 read scope from the transcript, which fixed the resume case, but it
+# recognised exactly two shapes: `command-args>--thread <ref><` and
+# `command-name>/<slug>:turn<`. A turn dispatched as **/eva:chief-of-staff**
+# matches NEITHER — a chief-of-staff cycle drains the inbox as one of its
+# pillars, so it discovers a thread by scanning and never records it as an arg,
+# and its command name is not `:turn`. Both counts therefore came back all-clear
+# (`--ref` 1, `--slug` 2) while that session was, at that moment, creating a
+# calendar event on the asking turn's ref and starting to write the same Google
+# Doc tab. The asking turn was one call from a last-write-wins clobber of a
+# shared team doc, mid-write. This matters more than it sounds: the unattended
+# dispatches a fleet actually runs on a schedule — chief-of-staff, morning
+# briefings, weekly goals — are all non-`:turn` entry points, so `--slug`, whose
+# whole job is the wider "a sibling of mine is live somewhere" count, was blind
+# to the most common shape of sibling there is.
+#
+# Fixed here by (a) matching ANY `/<slug>:` entry point for --slug, (b) listing,
+# separately from COUNT, live sessions that mention the ref without being scoped
+# to it, and (c) warning when live sessions carry no scope line at all. (b) and
+# (c) are deliberately NOT folded into COUNT: over-reporting fires the stand-down
+# rules against innocent turns, which is wrong version 3 above. They are pointers
+# to go READ, and the reading is what decides.
+#
+# THE INVARIANT ALL FOUR VIOLATE, AND THE ONE TO TEST ANY VERSION 6 AGAINST:
+# a check that cannot see something must SAY SO. Every count this prints is a
+# lower bound, and it now says that out loud rather than rendering "I could not
+# look" as "nobody is there."
+#
 # USAGE
 #   live-turns.sh --ref <gmail-thread-id|slack-ts>   # turns scoped to THAT ref
 #   live-turns.sh --slug <agent-slug>                # any live turn of that agent
 #   live-turns.sh --ref <ref> --slug <slug>          # both counts, labelled
 #
 # Prints one session id per line under each heading, plus a COUNT= line that
-# INCLUDES YOU. So COUNT=1 on --ref is the all-clear; COUNT>1 means go read the
-# other session's transcript and apply turn.md's stand-down rules before you
-# write or send.
+# INCLUDES YOU. COUNT>1 means go read the other session's transcript and apply
+# turn.md's stand-down rules before you write or send.
+#
+# COUNT=1 is NOT by itself an all-clear. Read the two blocks below it as well —
+# sessions that mention the ref without being scoped to it, and live sessions
+# with no scope line at all. Either can be a sibling working your item.
 #
 # Exit 0 always when it could look; exit 2 if it could not enumerate sessions at
 # all, because "I could not check" must never render as "nothing found".
@@ -55,7 +86,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --ref)  REF="${2:-}"; shift 2 ;;
     --slug) SLUG="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '1,50p' "$0"; exit 0 ;;
+    -h|--help) sed -n '1,79p' "$0"; exit 0 ;;   # whole header block
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -92,13 +123,24 @@ if [ -z "$IDS" ]; then
   exit 2
 fi
 
+# Fixed-string match against a session's OWN scope line. Two variants: -F for a
+# literal (the ref), -E for a pattern (any of an agent's entry points).
+matches_scope() {
+  local file="$1" mode="$2" pattern="$3"
+  if [ "$mode" = "E" ]; then
+    grep -qE -- "$pattern" "$file" 2>/dev/null
+  else
+    grep -qF -- "$pattern" "$file" 2>/dev/null
+  fi
+}
+
 report() {
-  local heading="$1" pattern="$2" count=0
+  local heading="$1" mode="$2" pattern="$3" count=0
   echo "$heading"
   for sid in $IDS; do
     f="$(transcript_for "$sid")"
     [ -n "$f" ] || continue
-    if grep -qlF -- "$pattern" "$f" 2>/dev/null; then
+    if matches_scope "$f" "$mode" "$pattern"; then
       echo "  $sid"
       count=$((count + 1))
     fi
@@ -107,9 +149,59 @@ report() {
   echo
 }
 
+# Every live session that carries NO recognizable slash-command scope line at all.
+# COUNT cannot see these, so it must not be read as a complete answer.
+unscoped_sessions() {
+  for sid in $IDS; do
+    f="$(transcript_for "$sid")"
+    [ -n "$f" ] || continue
+    grep -qE -- '<command-name>/[a-z0-9_-]+:' "$f" 2>/dev/null || echo "$sid"
+  done
+}
+
 # Match the session's OWN scope line, not any mention of the ref. The slash
 # command's args are recorded verbatim in the first user message.
-[ -n "$REF" ]  && report "turns scoped to ref $REF:" "command-args>--thread $REF<"
-[ -n "$SLUG" ] && report "live $SLUG turns:"          "command-name>/$SLUG:turn<"
+if [ -n "$REF" ]; then
+  report "turns scoped to ref $REF:" F "command-args>--thread $REF<"
+
+  # A turn that was NOT dispatched with --thread can still be working this ref:
+  # an inbox-draining entry point (chief-of-staff, a morning briefing, a plain
+  # unscoped turn) discovers the ref by scanning and never records it as an arg.
+  # Those sessions are invisible to the COUNT above. Surface them SEPARATELY —
+  # a mention is not proof of ownership (a sibling's own duplicate check mentions
+  # the ref too), so this list is a read-these pointer, never a stand-down count.
+  hits=""
+  for sid in $IDS; do
+    f="$(transcript_for "$sid")"
+    [ -n "$f" ] || continue
+    grep -qF -- "command-args>--thread $REF<" "$f" 2>/dev/null && continue
+    grep -qF -- "$REF" "$f" 2>/dev/null && hits="$hits $sid"
+  done
+  if [ -n "$hits" ]; then
+    echo "sessions NOT scoped to this ref that nonetheless mention it —"
+    echo "the COUNT above cannot see these; go read them before you write or send:"
+    for sid in $hits; do echo "  $sid"; done
+    echo "(a mention may only be that session's own duplicate check — read, then decide)"
+    echo
+  fi
+fi
+
+if [ -n "$SLUG" ]; then
+  # ANY of the agent's entry points, not just `turn`. A scheduled or cron
+  # dispatch routinely arrives as /<slug>:chief-of-staff, /<slug>:morning-briefings,
+  # /<slug>:goals-weekly … and every one of them drains an inbox and writes to the
+  # same Sheets, Docs and calendars a `turn` does. Matching only `:turn<` returned
+  # a false all-clear for exactly that case.
+  report "live $SLUG sessions (any entry point):" E "<command-name>/$SLUG:"
+fi
+
+UNSCOPED="$(unscoped_sessions)"
+if [ -n "$UNSCOPED" ]; then
+  echo "WARNING — every COUNT above is a LOWER BOUND."
+  echo "These live sessions carry no slash-command scope line, so this check cannot"
+  echo "tell what they are working on (resumed sessions, SDK/API runs, plain prompts):"
+  for sid in $UNSCOPED; do echo "  $sid"; done
+  echo
+fi
 
 exit 0
