@@ -98,6 +98,22 @@ sender sweep and before reading the thread:
 "$CANOPY/scripts/live-turns.sh" --ref <the-ref>    # COUNT>1 → you are a duplicate
 ```
 
+**`COUNT=1` is not the whole answer — read what prints UNDER it.** The count only sees turns
+dispatched *with* your ref as an argument, and the busiest class of sibling never is: an
+inbox-draining entry point (`/<slug>:chief-of-staff`, a morning briefing, a plain unscoped turn)
+finds the thread by scanning and records it nowhere as an arg. The script now prints those
+separately — **"sessions NOT scoped to this ref that nonetheless mention it"** — plus a
+**lower-bound warning** naming live sessions it cannot classify at all. Treat both as
+read-these-transcripts pointers and apply the same stand-down rules; a mention can be innocent
+(a sibling's own duplicate check mentions the ref too), which is exactly why they are printed
+outside the count instead of inflating it. The reading is what decides, not the number.
+
+(Origin: 2026-09-02, eva. A `--thread`-scoped turn ran this check, got `COUNT=1` and `COUNT=2`,
+and read both as all-clear. A `/eva:chief-of-staff`-dispatched sibling was at that moment creating
+a calendar event on that exact ref and starting to write the same Google Doc tab; the scoped turn
+was one call from a last-write-wins clobber of a shared team doc, mid-write. It caught it only by
+checking the artifact's own `created` timestamp on an unrelated hunch.)
+
 **Use the script, not a `ps | grep` of your own.** This check used to be printed here as
 `ps aux | grep '[c]laude --session-id' | grep -c -- '--thread <the-ref>'`, which reads the scope out
 of argv — and **argv does not survive a resume**. A session resumed after an interrupt, a stall or a
@@ -158,6 +174,11 @@ there is no reason to stop — and you will still overwrite each other. So run t
 ```bash
 "$CANOPY/scripts/live-turns.sh" --slug <slug>    # COUNT>1 → a sibling turn of YOURS is live
 ```
+
+**"A turn of yours" means ANY of your entry points, not just `:turn`.** The scheduled dispatches a
+fleet actually runs — chief-of-staff cycles, morning briefings, weekly goals — are separate slash
+commands, and every one of them drains an inbox and writes to the same Sheets, Docs and calendars a
+`turn` does. The check counts all of them.
 
 More than one and you share every artifact this agent owns with a session you cannot see. Two things
 follow, and only these two — a live sibling is not a reason to abandon your own ref:
