@@ -238,3 +238,92 @@ def test_turn_md_puts_the_sweep_before_any_early_return():
         for phrase in ("before any early return", "even when the inbox is clear",
                        "inbox clear")
     ), "turn.md must say the sweep runs on a quiet inbox, not only when mail arrives"
+
+
+# --------------------------------------------------------------------------------------
+# DETECTION IS NOT A VERDICT — the half that shipped wrong the first time
+# --------------------------------------------------------------------------------------
+#
+# The sweep's first live run surfaced a 79-day thread and confidently proposed a late
+# apology. Jonathan, 2026-09-04: "Old events like this weren't not handled. They were not
+# good enough in terms of what you had written in response. And I killed the thread. So
+# evidence of a dangling thread this old does not mean we should then go respond to it. It
+# means we should make sure it's pruned."
+#
+# That is the opposite verdict from the one the sweep gave, on the same true finding. So
+# the disposition is pinned harder than the detection was: a sweep that manufactures
+# apologies is one an agent learns to stop running, and then the detection is worth zero.
+
+def _one(thread_id: str, date: str, **kw):
+    runner = _searcher([{"id": thread_id, "date": "2026-01-01 00:00", "messageCount": 1,
+                         "from": "x", "subject": "s"}])
+    reader = _reader({thread_id: [_msg("them@partner.org", date)]})
+    return owed_replies(_identity(), now=NOW, runner=runner, reader=reader, **kw)[0]
+
+
+def test_a_fresh_dangling_thread_is_for_responding():
+    assert _one("t", "Mon, 31 Aug 2026 12:00:00 +0000")["disposition"] == "respond"
+
+
+def test_an_old_dangling_thread_is_for_PRUNING_not_answering():
+    """The 79-day case. It is not an unanswered request — it is a conversation that
+    ENDED, usually because the last answer wasn't good enough. A late reply reopens what
+    a human deliberately closed."""
+    old = _one("t", "Wed, 17 Jun 2026 12:00:00 +0000")
+    assert old["age_days"] == 79
+    assert old["disposition"] == "prune"
+
+
+def test_the_boundary_is_inclusive_and_configurable():
+    assert _one("t", "Fri, 21 Aug 2026 12:00:00 +0000")["age_days"] == 14
+    assert _one("t", "Fri, 21 Aug 2026 12:00:00 +0000")["disposition"] == "respond"
+    assert _one("t", "Thu, 20 Aug 2026 12:00:00 +0000")["disposition"] == "prune"
+    assert _one("t", "Wed, 17 Jun 2026 12:00:00 +0000",
+                respond_within=200)["disposition"] == "respond"
+
+
+def test_an_unparseable_date_prunes_rather_than_replies():
+    """Unknown age must fail toward silence. Firing a late reply on a guess is the
+    expensive direction of this error — it reaches a person."""
+    row = _one("t", "not a date at all")
+    assert row["age_days"] is None
+    assert row["disposition"] == "prune"
+
+
+def test_never_having_replied_does_not_upgrade_an_old_thread():
+    """`ever_replied: False` feels like a stronger debt and is not one. On an old thread
+    it means the conversation was never ours to carry — age still rules."""
+    runner = _searcher([{"id": "t", "date": "2026-01-01 00:00", "messageCount": 1,
+                         "from": "x", "subject": "s"}])
+    reader = _reader({"t": [_msg("them@partner.org", "Wed, 17 Jun 2026 12:00:00 +0000")]})
+    row = owed_replies(_identity(), now=NOW, runner=runner, reader=reader)[0]
+    assert row["ever_replied"] is False
+    assert row["disposition"] == "prune"
+
+
+def test_the_sweep_itself_never_archives_anything():
+    """Detection stays read-only. Pruning is a deliberate, separately-invoked act — the
+    sweep prints the archive line, it does not run it."""
+    calls = []
+
+    def runner(cmd, **kw):
+        calls.append(cmd)
+        return type("R", (), {"returncode": 0, "stdout": json.dumps(
+            {"nextPageToken": "", "threads": [
+                {"id": "t", "date": "2026-01-01 00:00", "messageCount": 1,
+                 "from": "x", "subject": "s"}]}), "stderr": ""})()
+
+    reader = _reader({"t": [_msg("them@partner.org", "Wed, 17 Jun 2026 12:00:00 +0000")]})
+    owed_replies(_identity(), now=NOW, runner=runner, reader=reader)
+    flat = " ".join(" ".join(c) for c in calls)
+    assert "modify" not in flat and "archive" not in flat
+
+
+def test_turn_md_says_prune_the_old_ones_rather_than_answer_them():
+    """The procedure must carry the verdict, not just the query. An agent reading only
+    turn.md must not conclude that a 79-day thread wants an apology."""
+    text = TURN.read_text().lower()
+    sweep = text.index("canopy email owed")
+    window = text[sweep:sweep + 4000]
+    assert "prune" in window
+    assert "do not answer it late" in window or "not answer" in window
