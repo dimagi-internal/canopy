@@ -11,4 +11,8 @@ uv.lock
 .claude/settings.local.json
 .claude/worktrees/
 node_modules/
-package-lock.json
+# package-lock.json is COMMITTED on purpose. CI ran a bare `npm install`, which
+# re-resolves from the live registry on every run — so the gws-mcp gate reddened on
+# every open branch at once when npm's resolver choked (`Cannot read properties of
+# null (reading 'edgesOut')`, canopy#594), and could equally have gone GREEN on a
+# tree nobody had tested. A gate whose inputs move under it is not a gate.

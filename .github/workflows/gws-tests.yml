@@ -5,9 +5,12 @@ name: gws-mcp tests
 # suite exercises exported handlers with mocked Google clients and parses
 # the server source statically — no Google auth, no network.
 #
-# Note: canopy gitignores package-lock.json repo-wide, so this job uses
-# `npm install` (not `npm ci`). Committing a lockfile scoped to
-# plugins/canopy/ is a tracked follow-up for deterministic CI installs.
+# Installs are DETERMINISTIC: plugins/canopy/package-lock.json is committed and
+# this job uses `npm ci`, which installs exactly that tree and fails loudly if it
+# has drifted from package.json. It used to run a bare `npm install` with nothing
+# pinned — re-resolving from the live registry on every run — which reddened every
+# open branch at once when npm's resolver choked (canopy#594) and could equally
+# have gone green on a tree nobody had tested.
 
 on:
   push:
@@ -43,7 +46,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Type-check (tsc --noEmit)
         run: npx tsc --noEmit
       - name: Run vitest suite
