@@ -61,6 +61,46 @@ def test_friction_signals_flags_checklist_gaps(tmp_path):
     assert "workspace-refresh" not in gaps
 
 
+def test_in_progress_turn_checklist_is_not_graded(tmp_path):
+    """canopy#593: a STILL-RUNNING turn was scored as having skipped every step it had
+    simply not reached yet.
+
+    Measured 2026-09-04: `agent-review hal --hours 44` reported two of five PR-creating
+    sessions ran `gh pr create` with no `agent-turn-review` anywhere. Both were still
+    running when measured; one invoked the review at 13:20:02, after the window scored
+    it a miss. The finding survived a human grounding pass before reaching the agent it
+    was dispatched at — which is the argument for fixing it at the source.
+    """
+    t = tmp_path / "turn.jsonl"
+    _write_transcript(t, str(tmp_path), [
+        ("Read", {"file_path": "/repo/skills/turn/SKILL.md"}, "Hal's turn loop..."),
+        ("Read", {"file_path": "/x"}, "ok"),
+    ])
+    ended = friction_signals(t)
+    assert {"preflight", "self-review", "skill-self-check"} <= set(ended["checklist_gaps"])
+
+    live = friction_signals(t, in_progress=True)
+    assert live["checklist_gaps"] == [], "a live turn has not skipped what it has not reached"
+    assert {"preflight", "self-review", "skill-self-check"} <= set(live["checklist_gaps_unreached"])
+    assert live["in_progress"] is True
+
+
+def test_in_progress_turn_keeps_every_other_signal(tmp_path):
+    """FLAGGED, not EXCLUDED. Dropping live sessions would silently shrink the review
+    window, worst on the longest turns — the ones most likely to still be running."""
+    t = tmp_path / "turn.jsonl"
+    _write_transcript(t, str(tmp_path), [
+        ("Read", {"file_path": "/repo/skills/turn/SKILL.md"}, "turn loop"),
+        ("Bash", {"command": "gog gmail send --to a@b.c"}, "BLOCKED: use the wrapper. exit code 2"),
+        ("Bash", {"command": "gog gmail search"}, "People API has not been used... 403"),
+    ])
+    s = friction_signals(t, in_progress=True)
+    assert s["checklist_gaps"] == []
+    assert len(s["gating_blocks"]) == 1, "a gating block mid-turn is still real friction"
+    assert s["auth_friction"], "auth friction mid-turn is still real friction"
+    assert s["failures"], "a failed call mid-turn is still a failed call"
+
+
 def test_manual_turn_not_penalized_for_skipping_publish(tmp_path):
     """The regression that dispatched work: a compliant manual turn scored as failing.
 
@@ -515,7 +555,13 @@ def test_run_review_surfaces_stdout_error_and_sane_budget(tmp_path, monkeypatch)
     result = ar.run_review(str(repo), projects_dir=projects)
 
     assert "Exceeded USD budget" in result["error"]          # (a) stdout not swallowed
-    budget = float(seen_cmds[0][seen_cmds[0].index("--max-budget-usd") + 1])
+    # Find the synthesis call by SHAPE, not by position: `run_review` also enumerates the
+    # process table for session liveness (canopy#593), and patching `ar.subprocess.run`
+    # patches the shared module object, so that `ps` lands in `seen_cmds` too. Indexing
+    # [0] pinned an ordering the test never meant to assert.
+    claude_cmds = [c for c in seen_cmds if "--max-budget-usd" in c]
+    assert claude_cmds, f"no claude -p synthesis call seen; got {seen_cmds}"
+    budget = float(claude_cmds[0][claude_cmds[0].index("--max-budget-usd") + 1])
     assert budget > 0.5                                       # (b) default clears the observed cost
 
 

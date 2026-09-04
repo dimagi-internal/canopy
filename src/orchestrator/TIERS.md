@@ -31,6 +31,7 @@ enforce it.
 `skill_budget` · `skill_catalog` · `skill_runner` · `provision` · `run_log` ·
 `version_bump` · `version` · `doctor` · `agent_review` · `structure_drift` · `eval_cli` ·
 `eval_rubric` · `turn_synthesis` · `session_upload` · `fleet_align` · `session_sources` ·
+`session_liveness` ·
 `work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `runner_cli` ·
 `llm_output`
 
@@ -56,6 +57,12 @@ canopy-web's `api` app):
 > it directly; `harvest` (product) now delegates its `user_session_roots` to it
 > too, so the `/Users/*/.claude/projects` glob lives in exactly one place.
 
+> `session_liveness` is FRAMEWORK: the generic "is this session still being
+> written to?" probe. Agent-agnostic and stdlib-only; it exists so a checklist
+> verdict is never passed over a turn that has not finished (canopy#593), and it
+> mirrors `plugins/canopy/scripts/live-turns.sh` so the fleet's duplicate check and
+> its self-review cannot drift apart about what "live" means.
+>
 > `llm_output` is FRAMEWORK: the one parser that turns a `claude -p` answer into
 > the YAML list the prompt asked for. It replaces five copy-pasted implementations
 > (`agent_review`, `analyzer`, `proposer`, `verify_findings`, `harvest`) that each
