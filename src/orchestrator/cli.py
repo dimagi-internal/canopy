@@ -126,7 +126,7 @@ def sessions_list(hours, as_json, project, min_turns):
     import json as json_mod
     from datetime import datetime, timezone, timedelta
 
-    from orchestrator.scanner import scan_all_transcripts
+    from orchestrator.scanner import scan_all_transcripts, summarize_prompt
     from orchestrator.repo_map import load_repo_map
     from orchestrator.labels import load_labels
 
@@ -170,8 +170,15 @@ def sessions_list(hours, as_json, project, min_turns):
     for i, s in enumerate(recent, 1):
         project = s.get("repo") or s["project_key"]
         ts = s["last_ts"][:16].replace("T", " ")
-        msg = s["first_msg"][:50] + ("..." if len(s["first_msg"]) > 50 else "")
-        click.echo(f"  {i:>3}  [{ts}]  {project:<30}  \"{msg}\"  ({s['user_msgs']} msgs)")
+        # The SCOPE, not the raw prompt head: a slash-command prompt opens with a
+        # fixed preamble, so a width-truncated first_msg cuts inside it and every
+        # turn of one agent renders identically (see scanner.summarize_prompt).
+        msg = summarize_prompt(s.get("first_msg") or "")
+        # The session id is what joins this roster to `live-turns.sh`, whose output
+        # is ids and nothing else. Without it the two tools answer one question with
+        # no shared key.
+        sid = (s.get("session_id") or "")[:8] or "-" * 8
+        click.echo(f"  {i:>3}  [{ts}]  {sid}  {project:<30}  \"{msg}\"  ({s['user_msgs']} msgs)")
 
 
 @sessions.command("status")

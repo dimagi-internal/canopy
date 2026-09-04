@@ -1,9 +1,48 @@
 """Scan ~/.claude/projects/ for transcripts and extract metadata."""
 import json
+import re
 from pathlib import Path
 
 from orchestrator.repo_map import resolve_repo
 from orchestrator.transcripts import read_transcript, get_session_id
+
+
+SLASH_NAME_RE = re.compile(r"<command-name>\s*(?P<name>[^<\s]+)\s*</command-name>")
+SLASH_ARGS_RE = re.compile(r"<command-args>(?P<args>.*?)</command-args>", re.S)
+
+
+def summarize_prompt(first_msg: str, width: int = 72) -> str:
+    """One legible line describing what a session was ASKED to do.
+
+    A slash-command prompt opens with a fixed preamble
+    (`<command-message>`/`<command-name>`/`<command-args>`), so truncating the raw
+    text to a display width cuts inside the preamble and every turn of one agent
+    renders identically — the scope in `<command-args>` is always the part
+    discarded. Measured 2026-09-04: six live hal turns on six different items all
+    rendered as `"<command-message>hal:turn</command-message>\n<comma..."`.
+
+    That matters because `agent-core/turn.md` sends a turn here to answer "is a
+    sibling already on this?", and several turns of the SAME agent is the only case
+    where the roster is needed — precisely the case it could not distinguish.
+
+    So pull the command name and its args out and render `/name args`, falling back
+    to the plain prompt when there is no command preamble. Bounded to the passed
+    string (the caller's first user message) — never a whole-file scan, which would
+    match sibling scopes quoted into a transcript by the duplicate check itself
+    (`live-turns.sh`'s fifth failure).
+    """
+    text = (first_msg or "").strip()
+    name = SLASH_NAME_RE.search(text)
+    if not name:
+        return _clip(" ".join(text.split()), width)
+    args_m = SLASH_ARGS_RE.search(text)
+    args = " ".join((args_m.group("args") if args_m else "").split())
+    label = name.group("name")
+    return _clip(f"{label} {args}".strip(), width)
+
+
+def _clip(text: str, width: int) -> str:
+    return text[:width] + "..." if len(text) > width else text
 
 
 def scan_transcript(path: Path) -> dict:

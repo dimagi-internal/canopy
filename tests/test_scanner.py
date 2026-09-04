@@ -84,3 +84,59 @@ class TestScanAllTranscripts:
         repo_map = {"-test-project": "owner/my-repo"}
         result = scan_all_transcripts(projects_dir, repo_map=repo_map)
         assert result[0]["repo"] == "owner/my-repo"
+
+
+# --- summarize_prompt: the roster must distinguish turns of the SAME agent (canopy#599) ---
+
+def test_summarize_prompt_surfaces_the_slash_command_scope():
+    """The bug: truncating the raw prompt cuts INSIDE the command preamble, so the
+    `<command-args>` — the only part saying what the session works on — is always the
+    part discarded. Six live hal turns on six different items all rendered as
+    `"<command-message>hal:turn</command-message>\\n<comma..."` on 2026-09-04.
+    """
+    from orchestrator.scanner import summarize_prompt
+
+    prompt = (
+        "<command-message>hal:turn</command-message>\n"
+        "<command-name>/hal:turn</command-name>\n"
+        "<command-args>--thread 1a043f92a7ff114d</command-args>"
+    )
+    assert summarize_prompt(prompt) == "/hal:turn --thread 1a043f92a7ff114d"
+
+
+def test_summarize_prompt_distinguishes_two_turns_of_one_agent():
+    """The only case where the roster is NEEDED is several turns of one agent — which
+    is exactly the case the old rendering could not tell apart."""
+    from orchestrator.scanner import summarize_prompt
+
+    def p(args):
+        return ("<command-message>hal:turn</command-message>\n"
+                "<command-name>/hal:turn</command-name>\n"
+                f"<command-args>{args}</command-args>")
+
+    a = summarize_prompt(p("--thread 1a066d5b0f2cf45a"))
+    b = summarize_prompt(p("--thread 1a066d69ac56e74f"))
+    assert a != b, "two turns on different threads must not render identically"
+
+
+def test_summarize_prompt_falls_back_to_a_plain_prompt():
+    from orchestrator.scanner import summarize_prompt
+
+    assert summarize_prompt("look into the labs worker crash loop") == \
+        "look into the labs worker crash loop"
+
+
+def test_summarize_prompt_collapses_whitespace_and_clips():
+    from orchestrator.scanner import summarize_prompt
+
+    out = summarize_prompt("a\n\n   b\tc")
+    assert out == "a b c"
+    long = summarize_prompt("x" * 200, width=20)
+    assert long == "x" * 20 + "..." and len(long) == 23
+
+
+def test_summarize_prompt_handles_empty_and_missing():
+    from orchestrator.scanner import summarize_prompt
+
+    assert summarize_prompt("") == ""
+    assert summarize_prompt(None) == ""
