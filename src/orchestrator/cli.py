@@ -1561,6 +1561,16 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
                f"  •  human corrections: {len(corrections)}")
     if gaps:
         click.echo("  checklist gaps: " + ", ".join(f"{k}×{v}" for k, v in sorted(gaps.items())))
+    # A checklist verdict only means something over a turn that ENDED. Say which turns
+    # were still running, so an empty gap list is never read as "everything ran".
+    running = cm.get("in_progress") or []
+    if running:
+        click.echo(f"  ⏳ {len(running)} turn(s) STILL RUNNING — checklist not graded "
+                   f"(steps not yet reached are not skipped steps): "
+                   + ", ".join(r[:8] for r in running))
+    if cm.get("liveness_degraded"):
+        click.echo("  ⚠ could not read the process table — liveness fell back to file mtime "
+                   "alone, so a turn parked at an approval gate may be graded as finished.")
     if corrections:
         click.echo("  ⚑ HUMAN CORRECTIONS (highest signal — what Jonathan had to override):")
         for c in corrections:

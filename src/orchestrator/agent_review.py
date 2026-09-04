@@ -22,6 +22,7 @@ from typing import NamedTuple
 
 from orchestrator.repo_paths import resolve_repo_path
 from orchestrator.llm_output import parse_yaml_list
+from orchestrator.session_liveness import live_session_ids, mark_live
 from orchestrator.session_sources import (
     corpus_confidence,
     local_transcript_dirs,
@@ -807,11 +808,25 @@ def friction_signals(
     transcript_path: Path,
     steps=DEFAULT_TURN_STEPS,
     own_skills: frozenset[str] = frozenset(),
+    in_progress: bool = False,
 ) -> dict:
     """Deterministic per-turn friction signals. No LLM — pure structural extraction.
 
     `own_skills` is the set of skill dir-names the agent owns (repo/skills/*); it powers
     `skill_collisions` — loading another plugin's same-named skill (e.g. `ace:turn`) over its own.
+
+    `in_progress` marks a session that is STILL BEING WRITTEN TO (see
+    `session_liveness`). A checklist verdict is only meaningful over a turn that has
+    ENDED — a live turn has not skipped the steps it has not reached yet — so for one
+    of these the unmatched steps move to `checklist_gaps_unreached` and
+    `checklist_gaps` is left empty.
+
+    FLAGGED, NOT EXCLUDED, and the distinction is the whole design: every other signal
+    here (failures, gating blocks, auth friction, retry loops, human corrections,
+    overclaims) is valid mid-turn and is still reported. Dropping live sessions from
+    the corpus outright would silently shrink the review window — worst on the longest,
+    most interesting turns, which are the ones most likely to still be running when the
+    review fires.
     """
     entries = read_transcript(transcript_path)
     calls = extract_tool_calls(entries)
@@ -900,10 +915,19 @@ def friction_signals(
             if not any(re.search(m, haystack) for m in markers):
                 missing_steps.append(label)
 
+    # A live turn has not skipped what it has not reached. Keep the steps — they are
+    # real information about where the turn currently IS — but never under the name
+    # every consumer aggregates as a failure (the CLI rollup, the review prompt, and
+    # every downstream dispatcher all read `checklist_gaps`).
+    unreached = missing_steps if in_progress else []
+    if in_progress:
+        missing_steps = []
+
     return {
         "session_id": transcript_path.stem,
         "path": str(transcript_path),
         "n_tool_calls": len(calls),
+        "in_progress": in_progress,
         "human_corrections": human_corrections(entries),   # HIGHEST-signal — read first
         "dispatch_outcome": dispatch_outcomes(entries),    # None unless a machine started it
         "overclaims": overclaim_signals(entries),
@@ -912,6 +936,7 @@ def friction_signals(
         "auth_friction": auth_hits,
         "retry_loops": retries,
         "checklist_gaps": missing_steps,
+        "checklist_gaps_unreached": unreached,
         "skill_collisions": skill_collisions,
     }
 
@@ -969,6 +994,11 @@ def build_review_prompt(repo: Path, corpus: list[dict]) -> str:
         "ANOTHER plugin's skill (e.g. `ace:turn`) instead of the agent's own — recommend a "
         "skill_edit/claude_update that namespaces the agent's skill or forces reading it from disk, "
         "so the agent never silently runs a sibling's procedure.\n"
+        "- a turn with `in_progress: true` was STILL RUNNING when this corpus was built. Its "
+        "`checklist_gaps` is empty BY CONSTRUCTION and its `checklist_gaps_unreached` lists steps "
+        "it had not reached YET — those are NOT skipped steps and NEVER evidence for a "
+        "`checklist_gap` finding. Its other signals (failures, gating blocks, auth friction, human "
+        "corrections) are valid mid-turn and may be used normally.\n"
         "- prefer hook_rule for any 'never do X' invariant; prefer new_skill/skill_edit when a manual "
         "multi-step pattern repeats; only include findings with real evidence in the corpus.\n"
         "- an invariant ('never/always do X') finding MUST use hook_rule or schema_validator — a "
@@ -1541,7 +1571,21 @@ def run_review(
     own_skills = frozenset(
         p.name for p in skills_dir.iterdir() if p.is_dir()
     ) if skills_dir.is_dir() else frozenset()
-    corpus = [friction_signals(t, own_skills=own_skills) for t in transcripts]
+    # Liveness is enumerated ONCE for the whole batch: a per-transcript `ps` would be
+    # slow and, worse, internally inconsistent (a session could end mid-run and be
+    # graded under two different definitions in one report).
+    liveness = live_session_ids()
+    live_map = mark_live(transcripts, liveness=liveness)
+    corpus = [
+        friction_signals(t, own_skills=own_skills,
+                         in_progress=live_map.get(str(t), False))
+        for t in transcripts
+    ]
+    running = [s["session_id"] for s in corpus if s.get("in_progress")]
+    # Surfaced, never silent: a run whose checklists were all suppressed must not read
+    # like a run that found no gaps.
+    corpus_meta["in_progress"] = running
+    corpus_meta["liveness_degraded"] = liveness.degraded
     result = {
         "agent": repo.name,
         "repo": str(repo),
