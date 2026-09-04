@@ -98,6 +98,30 @@ sender sweep and before reading the thread:
 "$CANOPY/scripts/live-turns.sh" --ref <the-ref>    # COUNT>1 → you are a duplicate
 ```
 
+**An UNSCOPED turn owes the same check the moment it PICKS an item — and the wording above is
+why it doesn't run it.** Everything in this block says "a scoped turn," so a turn dispatched with
+no ref reads the whole passage as somebody else's problem, runs the `--slug` count at the top, and
+goes to work. But the duplicate risk is not a property of *how you were dispatched* — it is a
+property of *the item you decided to work*. An unscoped turn that scans its inbox and lands on a
+thread is, from that instant, a turn on that ref, and it is the LEAST protected kind: the `--slug`
+count it took minutes earlier was taken before it knew which item it would choose, so it cannot
+have covered the ref. So the moment you select an inbound item, before you do anything with it:
+
+```bash
+"$CANOPY/scripts/live-turns.sh" --ref <the-ref-you-just-picked> --slug <slug>
+```
+
+The counts are cheap and this one is the highest-yield of the three, because the scoped sibling you
+collide with was dispatched BY the runner ON that ref — it is far likelier to exist than a random
+overlap.
+
+(Origin: 2026-09-04, hal. An unscoped `/hal:turn` ran `--slug hal` at 07:07, got a truthful
+`COUNT=1`, scanned the inbox, picked a thread, and never ran `--ref` on it — the procedure only
+asks scoped turns to. A `/hal:turn --thread <that exact ref>` sibling was 300+ events into fixing
+the same bug in the same file. The unscoped turn spent ~40 minutes reproducing that work and found
+the owner only by tripping over its scratch worktree by accident. One `--ref` call, at the moment
+the thread was chosen, would have cost one second.)
+
 **`COUNT=1` is not the whole answer — read what prints UNDER it.** The count only sees turns
 dispatched *with* your ref as an argument, and the busiest class of sibling never is: an
 inbox-draining entry point (`/<slug>:chief-of-staff`, a morning briefing, a plain unscoped turn)
@@ -591,8 +615,11 @@ a flag). The board at `/agents/<slug>` stays the shared trigger + approval surfa
 queues work and approves outbound actions — independent of whether you publish above.
 
 **CLOSE CHECKLIST — confirm each in the summary (these get silently skipped under load):**
-0aa. **On a scoped turn, you checked you are not a DUPLICATE turn on that same ref** (Step 2 Scope)
-   — one `ps` count. If another session was already live on it, say so and say what you stood down on.
+0aa. **You checked you are not a DUPLICATE turn on your item's ref** (Step 2 Scope) — one
+   `live-turns.sh --ref` call. On a scoped turn that is the ref you were handed; **on an UNSCOPED
+   turn it is the ref you picked out of the inbox**, checked at the moment you picked it. "I was
+   not dispatched with a ref" does not excuse this — an unscoped turn working a thread is a turn on
+   that thread. If another session was already live on it, say so and say what you stood down on.
 0ab. **You checked for a live SIBLING turn of yours on a different ref too** (Step 2 Scope) — the
    wider `ps` count. If one was live, name it and say how you kept off its artifacts and its send.
 0ac. **Both counts were RE-RUN immediately before the first write/send** (Step 2 Scope), not only at
