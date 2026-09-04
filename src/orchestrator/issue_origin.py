@@ -101,7 +101,7 @@ def clean_issue_body(rec: dict) -> str:
 def save_local(rec: dict) -> Path:
     p = record_path(rec["repo"], rec["number"])
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(yaml.safe_dump(rec, sort_keys=False, width=100))
+    p.write_text(yaml.safe_dump(rec, sort_keys=False, width=100), encoding="utf-8")
     return p
 
 
@@ -109,7 +109,7 @@ def load_local(repo: str, number: int) -> dict | None:
     p = record_path(repo, number)
     if not p.is_file():
         return None
-    return yaml.safe_load(p.read_text())
+    return yaml.safe_load(p.read_text(encoding="utf-8"))
 
 
 def find_existing_issue_number(repo: str, title: str) -> int | None:
@@ -120,7 +120,7 @@ def find_existing_issue_number(repo: str, title: str) -> int | None:
     want = title.strip().lower()
     for f in d.glob("*.yaml"):
         try:
-            rec = yaml.safe_load(f.read_text())
+            rec = yaml.safe_load(f.read_text(encoding="utf-8"))
         except Exception:
             continue
         if (rec or {}).get("title", "").strip().lower() == want:

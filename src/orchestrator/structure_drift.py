@@ -153,7 +153,7 @@ def command_follows_pattern_b(repo_root: Path, name: str) -> bool:
     so the Read tool pulls in the real skill body (Pattern B)."""
     command_path = _plugin_root(repo_root) / "commands" / f"{name}.md"
     try:
-        body = command_path.read_text()
+        body = command_path.read_text(encoding="utf-8")
     except OSError:
         return False
     return "SKILL.md" in body and f"skills/{name}/SKILL.md" in body

@@ -1,5 +1,6 @@
 """CLI entry point for the orchestrator."""
 
+import sys
 from pathlib import Path
 import click
 from orchestrator.paths import CANOPY_DIR, ensure_canopy_dir
@@ -65,12 +66,34 @@ def _print_version(ctx, param, value):
     ctx.exit()
 
 
+def _make_stdio_unbreakable() -> None:
+    """Never let console encoding turn output into a crash.
+
+    `sys.stdout` encodes with strict errors, and on a Windows console that encoding is
+    cp1252 or cp437 — so a single em-dash, arrow or smart quote in anything we print
+    raises UnicodeEncodeError and takes the command down. That is not hypothetical for
+    canopy: it prints personas, skill descriptions, email subjects and commit messages,
+    i.e. arbitrary human text it does not control.
+
+    `click.echo` already handles this, but not every path goes through it, and the ones
+    that don't are exactly the ones printing interpolated data. Relaxing the error handler
+    (rather than forcing UTF-8) keeps whatever the terminal actually understands and
+    degrades an unrepresentable character to a replacement mark instead of a traceback.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")    # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass                                    # redirected/wrapped stream — leave it alone
+
+
 @click.group(cls=SkillHintGroup)
 @click.option("--version", is_flag=True, expose_value=False, is_eager=True,
               callback=_print_version,
               help="Show the installed canopy version and exit.")
 def main():
     """Canopy — self-improving MCP orchestration."""
+    _make_stdio_unbreakable()
 
 
 main.add_command(agent_group)
@@ -434,7 +457,7 @@ def shareout_gather(from_date, to_date, days, project, author, api_url, json_out
     )
     out = json_mod.dumps(corpus, indent=2, default=str)
     if json_out:
-        Path(json_out).write_text(out)
+        Path(json_out).write_text(out, encoding="utf-8")
         click.echo(f"Wrote corpus for {start}..{end} "
                    f"({len(corpus['projects'])} projects) to {json_out}")
     else:
@@ -474,9 +497,9 @@ def shareout_post(authoring_json, corpus_json, source_override, api_url, produce
     # Explicit flag wins; otherwise best-effort detect the producing agent.
     agent = produced_by_agent if produced_by_agent is not None else shareout_mod.detect_agent_slug()
 
-    authoring = json_mod.loads(Path(authoring_json).read_text())
+    authoring = json_mod.loads(Path(authoring_json).read_text(encoding="utf-8"))
     if corpus_json:
-        corpus = json_mod.loads(Path(corpus_json).read_text())
+        corpus = json_mod.loads(Path(corpus_json).read_text(encoding="utf-8"))
         shareout_mod.fill_all_prs_from_corpus(authoring, corpus)
     source = source_override or f"canopy:shareout@{dt.datetime.now(dt.timezone.utc).isoformat()}"
     payload = shareout_mod.build_post_payload(authoring, source=source, produced_by_agent=agent)
@@ -748,8 +771,8 @@ def portfolio_discover_cmd(max_age_days, as_json, api_url):
     token_file = Path.home() / ".claude" / "canopy" / "workbench-token"
     curated: set = set()
     curated_reachable = False
-    if token_file.exists() and token_file.read_text().strip():
-        curated = fetch_curated_slugs(base_url, token_file.read_text().strip())
+    if token_file.exists() and token_file.read_text(encoding="utf-8").strip():
+        curated = fetch_curated_slugs(base_url, token_file.read_text(encoding="utf-8").strip())
         curated_reachable = bool(curated) or True  # we tried; empty means none curated, not unreachable
         # but treat URLError → empty set as "unreachable"; the fetch helper
         # returns set() for both "no projects" and "couldn't reach" — accept the
@@ -1237,7 +1260,7 @@ def observations_show(obs_id):
         for m in matches:
             click.echo(f"  {m.stem}", err=True)
         raise click.ClickException("Specify a more unique id prefix.")
-    click.echo(matches[0].read_text())
+    click.echo(matches[0].read_text(encoding="utf-8"))
 
 
 @main.group()
@@ -1301,7 +1324,7 @@ def proposals_show(proposal_id):
         for m in matches:
             click.echo(f"  {m.stem}", err=True)
         raise click.ClickException("Specify a more unique id prefix.")
-    click.echo(matches[0].read_text())
+    click.echo(matches[0].read_text(encoding="utf-8"))
 
 
 def _validate_proposals(
@@ -1449,7 +1472,7 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
         from orchestrator.agent_review import qualify_findings
 
         try:
-            with open(qualify_file) as fh:
+            with open(qualify_file, encoding="utf-8") as fh:
                 findings = yaml.safe_load(fh)
         except (yaml.YAMLError, OSError) as e:
             raise click.ClickException(f"could not read qualify-file: {e}")
@@ -1969,7 +1992,7 @@ def agent_publish_work(repo, items_json):
     from orchestrator.agent_web import push_work, register, AgentWebError
     try:
         register(_agent_repo(repo))
-        items = json_mod.load(open(items_json))
+        items = json_mod.load(open(items_json, encoding="utf-8"))
         click.echo(json_mod.dumps(push_work(_agent_repo(repo), items)))
     except AgentWebError as e:
         raise click.ClickException(str(e))
@@ -1984,7 +2007,7 @@ def agent_publish_items(repo, items_json):
     from orchestrator.agent_web import push_items, register, AgentWebError
     try:
         register(_agent_repo(repo))
-        items = json_mod.load(open(items_json))
+        items = json_mod.load(open(items_json, encoding="utf-8"))
         if not isinstance(items, list):
             raise click.ClickException("items file must be a JSON list")
         click.echo(json_mod.dumps(push_items(_agent_repo(repo), items)))
@@ -2176,7 +2199,7 @@ def _cursor_items(items_file):
     """Read the candidate/processed list: a JSON array of {id, ts, ...}. '-' = stdin."""
     import json as json_mod
     import sys as _sys
-    raw = _sys.stdin.read() if items_file in (None, "-") else open(items_file).read()
+    raw = _sys.stdin.read() if items_file in (None, "-") else open(items_file, encoding="utf-8").read()
     try:
         data = json_mod.loads(raw or "[]")
     except json_mod.JSONDecodeError as e:

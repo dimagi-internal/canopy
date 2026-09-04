@@ -30,7 +30,7 @@ def record_outcome(
         "proposal_type": proposal_type,
         "verification_confidence": verification_confidence,
     }
-    with open(tracker_path, "a") as f:
+    with open(tracker_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
 
 
@@ -39,7 +39,7 @@ def load_outcomes(tracker_path: Path) -> list[dict]:
     if not tracker_path.exists():
         return []
     outcomes = []
-    with open(tracker_path) as f:
+    with open(tracker_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:

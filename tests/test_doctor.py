@@ -172,9 +172,12 @@ class TestCheckSessionLog:
 
 
 class TestCheckRepoMap:
-    def test_missing_fails(self, tmp_path):
+    def test_missing_warns_but_does_not_fail(self, tmp_path):
+        """A fresh install has no repo-map.json yet — the hook writes it lazily on first use."""
         r = doctor.check_repo_map(canopy_dir=tmp_path)
-        assert r.ok is False
+        assert r.ok is True
+        assert r.warn is True
+        assert "nothing to fix" in r.detail
 
     def test_valid_passes(self, tmp_path):
         (tmp_path / "repo-map.json").write_text(json.dumps({"a": "b", "c": "d"}))
@@ -298,8 +301,9 @@ class TestRunDoctor:
         canopy_dir = home / ".claude" / "canopy"
         home.mkdir()
         _make_healthy_home(home, canopy_dir)
-        # Break one check.
-        (canopy_dir / "repo-map.json").unlink()
+        # Break one check. (Removing repo-map.json no longer breaks anything — a missing map
+        # is the normal fresh-install state and only warns; a malformed one is a real fault.)
+        (canopy_dir / "repo-map.json").write_text("[not, valid")
         results, overall_ok = doctor.run_doctor(home=home, canopy_dir=canopy_dir)
         assert overall_ok is False
         assert any(not r.ok for r in results)

@@ -6,7 +6,7 @@ from typing import Any
 
 def append_log_entry(log_file: Path, entry: dict[str, Any]) -> None:
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_file, "a") as f:
+    with open(log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, default=str) + "\n")
 
 
@@ -14,7 +14,7 @@ def read_session_log(log_file: Path) -> list[dict]:
     if not log_file.exists():
         return []
     entries = []
-    with open(log_file) as f:
+    with open(log_file, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:

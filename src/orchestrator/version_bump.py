@@ -34,7 +34,7 @@ def _format(parts: tuple[int, int, int]) -> str:
 
 
 def _read_version_file(path: Path) -> str:
-    return path.read_text().strip()
+    return path.read_text(encoding="utf-8").strip()
 
 
 _PLUGIN_VERSION_LINE_RE = re.compile(r'("version"\s*:\s*")[\d.]+(")')
@@ -46,17 +46,17 @@ _PYPROJECT_VERSION_RE = re.compile(r'(?m)^(version\s*=\s*")[\d.]+(")')
 def _write_pyproject_version(path: Path, new_version: str) -> int:
     """Surgically replace the first `version = "x.y.z"` (the [project] version) in pyproject.toml.
     Returns the replacement count (0 if the file has no version line)."""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     new_text, n = _PYPROJECT_VERSION_RE.subn(rf"\g<1>{new_version}\g<2>", text, count=1)
     if n:
-        path.write_text(new_text)
+        path.write_text(new_text, encoding="utf-8")
     return n
 
 
 def _read_plugin_json_version(path: Path) -> str:
     """Extract the version field via regex — avoids round-tripping JSON which
     would normalize formatting (unicode escapes, array layout, etc.)."""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     match = _PLUGIN_VERSION_LINE_RE.search(text)
     if not match:
         raise ValueError(f"Could not find a version line in {path}")
@@ -67,11 +67,11 @@ def _read_plugin_json_version(path: Path) -> str:
 
 def _write_plugin_json_version(path: Path, new_version: str) -> None:
     """Surgical replace of the version line — preserves all other formatting."""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     new_text, n = _PLUGIN_VERSION_LINE_RE.subn(rf'\g<1>{new_version}\g<2>', text, count=1)
     if n != 1:
         raise ValueError(f"Could not find a version line to replace in {path}")
-    path.write_text(new_text)
+    path.write_text(new_text, encoding="utf-8")
 
 
 def find_version_files(repo_root: Path) -> tuple[Path, Path]:
@@ -103,7 +103,7 @@ def _read_marketplace_json_versions(path: Path) -> list[str]:
     agrees with the plugin's version. Returns an empty list if no version
     fields are found.
     """
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     return re.findall(r'"version"\s*:\s*"([\d.]+)"', text)
 
 
@@ -113,14 +113,14 @@ def _write_marketplace_json_version(path: Path, new_version: str) -> int:
     Mirrors the pattern in `_write_plugin_json_version` (regex-based replace
     to preserve formatting). Returns the number of substitutions made.
     """
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     new_text, n = re.subn(
         r'("version"\s*:\s*")[\d.]+(")',
         rf'\g<1>{new_version}\g<2>',
         text,
     )
     if n > 0:
-        path.write_text(new_text)
+        path.write_text(new_text, encoding="utf-8")
     return n
 
 
@@ -325,7 +325,7 @@ def bump(repo_root: Path) -> dict:
         )
     origin_v = fetch_origin_main_version(repo_root)
     next_v = compute_next_version(local_v, origin_v)
-    v_path.write_text(next_v + "\n")
+    v_path.write_text(next_v + "\n", encoding="utf-8")
     _write_plugin_json_version(p_path, next_v)
 
     mp_path = find_marketplace_json(repo_root)

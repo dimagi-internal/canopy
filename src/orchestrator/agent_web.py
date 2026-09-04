@@ -96,7 +96,7 @@ def resolve_identity(repo_dir: Path) -> dict:
         raise AgentWebError(
             f"no .claude-plugin/plugin.json in {repo} — run this from an agent repo root"
         )
-    p = json.loads(pj.read_text())
+    p = json.loads(pj.read_text(encoding="utf-8"))
     slug = p.get("name")
     if not slug:
         raise AgentWebError(f"{pj} has no `name`")
@@ -110,7 +110,7 @@ def resolve_identity(repo_dir: Path) -> dict:
     }
     aj = repo / "config" / "agent.json"
     if aj.exists():
-        ident.update({k: v for k, v in json.loads(aj.read_text()).items() if v})
+        ident.update({k: v for k, v in json.loads(aj.read_text(encoding="utf-8")).items() if v})
     return ident
 
 

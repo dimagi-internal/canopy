@@ -419,7 +419,7 @@ def detect_agent_slug(cwd: Path | None = None, env: dict | None = None) -> str:
     cwd = cwd or Path.cwd()
     marker = cwd / "config" / "agent.json"
     try:
-        data = json.loads(marker.read_text())
+        data = json.loads(marker.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return ""
     return str(data.get("slug") or data.get("name") or "").strip().lower()

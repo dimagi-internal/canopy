@@ -68,7 +68,7 @@ def _installed_plugin_dir(home: Path) -> Path | None:
     """Install path of the canopy plugin, per installed_plugins.json."""
     f = _claude_dir(home) / "plugins" / "installed_plugins.json"
     try:
-        data = json.loads(f.read_text())
+        data = json.loads(f.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
     for key, val in data.get("plugins", {}).items():
@@ -99,14 +99,14 @@ def check_hook_registered(home: Path | None = None) -> CheckResult:
     if plugin_dir is not None:
         hooks_json = plugin_dir / "hooks" / "hooks.json"
         try:
-            if _registers_post_tool_use(json.loads(hooks_json.read_text())):
+            if _registers_post_tool_use(json.loads(hooks_json.read_text(encoding="utf-8"))):
                 return CheckResult(name, True, f"registered by the canopy plugin ({hooks_json})")
         except (json.JSONDecodeError, OSError):
             pass  # fall through to the legacy registration
 
     settings = _claude_dir(home) / "settings.json"
     try:
-        if _registers_post_tool_use(json.loads(settings.read_text())):
+        if _registers_post_tool_use(json.loads(settings.read_text(encoding="utf-8"))):
             return CheckResult(name, True, f"registered via legacy {settings}")
     except (json.JSONDecodeError, OSError):
         pass
@@ -127,7 +127,7 @@ def check_session_log(canopy_dir: Path | None = None) -> CheckResult:
     if not log.exists():
         return CheckResult(name, False, "session-log.jsonl not found — hook may not be firing")
     try:
-        lines = sum(1 for line in log.read_text().splitlines() if line.strip())
+        lines = sum(1 for line in log.read_text(encoding="utf-8").splitlines() if line.strip())
     except OSError as e:
         return CheckResult(name, False, f"could not read session-log.jsonl: {e}")
     if lines == 0:
@@ -141,9 +141,19 @@ def check_repo_map(canopy_dir: Path | None = None) -> CheckResult:
     repo_map = canopy_dir / "repo-map.json"
     name = "Repo map"
     if not repo_map.exists():
-        return CheckResult(name, False, "repo-map.json not found — project identification won't work")
+        # NOT a failure. The PostToolUse hook writes this lazily, the first time a tool runs
+        # inside a git repo that has a GitHub remote — so on a correct fresh install the file
+        # legitimately does not exist yet, and it appears on its own. Reporting FAIL sent new
+        # operators hunting for a broken install and a fix that does not exist.
+        return CheckResult(
+            name,
+            True,
+            "repo-map.json not created yet — the PostToolUse hook writes it the first time "
+            "you use a tool inside a git repo with a GitHub remote; nothing to fix",
+            warn=True,
+        )
     try:
-        data = json.loads(repo_map.read_text())
+        data = json.loads(repo_map.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         return CheckResult(name, False, f"repo-map.json unreadable: {e}")
     if not isinstance(data, dict):
@@ -197,7 +207,7 @@ def check_workbench_token(
             f"(headless hosts should provision it via .env.tpl rather than the browser flow)",
         )
     try:
-        contents = token_file.read_text().strip()
+        contents = token_file.read_text(encoding="utf-8").strip()
     except OSError as e:
         return CheckResult(name, False, f"could not read {token_file}: {e}")
     if not contents:
@@ -237,7 +247,7 @@ def check_plugin_version(home: Path | None = None) -> CheckResult:
     if not f.exists():
         return CheckResult(name, False, "installed_plugins.json not found")
     try:
-        data = json.loads(f.read_text())
+        data = json.loads(f.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         return CheckResult(name, False, f"installed_plugins.json unreadable: {e}")
 
@@ -312,7 +322,7 @@ def _receipt_source_dir(home: Path) -> tuple[Path | None, str | None]:
     try:
         import tomllib
 
-        data = tomllib.loads(receipt.read_text())
+        data = tomllib.loads(receipt.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         return None, f"could not read {receipt}: {e}"
     for req in data.get("tool", {}).get("requirements", []):
@@ -369,7 +379,7 @@ def check_cli_version_sync(home: Path | None = None) -> CheckResult:
     if not clone_version_file.is_file():
         return CheckResult(name, False, f"{clone_version_file} not found — run /canopy:setup")
     try:
-        clone_version = clone_version_file.read_text().strip()
+        clone_version = clone_version_file.read_text(encoding="utf-8").strip()
     except OSError as e:
         return CheckResult(name, False, f"could not read {clone_version_file}: {e}")
 

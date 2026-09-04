@@ -62,7 +62,7 @@ def snapshot_via_ssh(host: str, into: Path, openclaw_root: str = "~/.openclaw") 
 
 def _parse_skill(path: Path) -> dict:
     """name/description/size from a SKILL.md — handles canopy frontmatter AND freeform OpenClaw."""
-    text = path.read_text(errors="replace")
+    text = path.read_text(errors="replace", encoding="utf-8")
     name = path.parent.name
     desc = ""
     m = re.match(r"^---\n(.*?)\n---", text, re.S)
@@ -90,7 +90,7 @@ def inventory_snapshot(snapshot_dir: Path) -> dict:
     for fn in ("SOUL.md", "IDENTITY.md"):
         p = d / fn
         if p.exists():
-            persona[fn] = p.read_text(errors="replace")
+            persona[fn] = p.read_text(errors="replace", encoding="utf-8")
     skills = [_parse_skill(p) for p in sorted(d.glob("skills/*/SKILL.md"))]
     memory = [
         {"name": p.name, "size": p.stat().st_size, "path": str(p)}
@@ -149,7 +149,7 @@ def _seed_persona(repo: Path, inv: dict) -> None:
     extra = ["\n\n## Ported from the OpenClaw (raw — refine, then delete this note)\n"]
     for fn, body in persona.items():
         extra.append(f"\n### {fn}\n\n{body.strip()}\n")
-    pp.write_text(pp.read_text() + "".join(extra))
+    pp.write_text(pp.read_text(encoding="utf-8") + "".join(extra), encoding="utf-8")
 
 
 def bootstrap_from_snapshot(

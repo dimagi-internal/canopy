@@ -334,7 +334,7 @@ def final_assistant_text(path: str) -> str:
     """
     latest = ""
     try:
-        with open(path, "r", errors="replace") as fh:
+        with open(path, "r", errors="replace", encoding="utf-8") as fh:
             for line in fh:
                 if '"assistant"' not in line:
                     continue

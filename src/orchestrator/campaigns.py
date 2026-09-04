@@ -43,7 +43,7 @@ def save_campaign(campaign: dict, campaigns_dir: Path) -> Path:
     """Save a campaign to a YAML file."""
     campaigns_dir.mkdir(parents=True, exist_ok=True)
     path = campaigns_dir / f"{campaign['id']}.yaml"
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         yaml.dump(campaign, f, default_flow_style=False, sort_keys=False)
     return path
 
@@ -51,7 +51,7 @@ def save_campaign(campaign: dict, campaigns_dir: Path) -> Path:
 def load_campaign(path: Path) -> dict | None:
     """Load a campaign from a YAML file."""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f)
     except (yaml.YAMLError, OSError):
         return None

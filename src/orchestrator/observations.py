@@ -34,7 +34,7 @@ def save_observation(obs: dict, obs_dir: Path) -> Path:
     """Save an observation to a YAML file."""
     obs_dir.mkdir(parents=True, exist_ok=True)
     path = obs_dir / f"{obs['id']}.yaml"
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         yaml.dump(obs, f, default_flow_style=False, sort_keys=False)
     return path
 
@@ -42,7 +42,7 @@ def save_observation(obs: dict, obs_dir: Path) -> Path:
 def load_observation(path: Path) -> dict | None:
     """Load an observation from a YAML file. Returns None on parse error."""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f)
     except (yaml.YAMLError, OSError):
         return None

@@ -42,7 +42,7 @@ def _dist_version() -> str | None:
 
 def _file_version(repo_root: Path) -> str | None:
     try:
-        raw = (Path(repo_root) / "VERSION").read_text().strip()
+        raw = (Path(repo_root) / "VERSION").read_text(encoding="utf-8").strip()
     except OSError:
         return None
     return raw or None

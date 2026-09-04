@@ -203,7 +203,7 @@ class AgentClient:
 
 
 def _frontmatter(path: str) -> "tuple[str, str] | None":
-    text = Path(path).read_text()
+    text = Path(path).read_text(encoding="utf-8")
     m = re.match(r"^---\n(.*?)\n---", text, re.S)
     if not m:
         return None

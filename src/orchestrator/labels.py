@@ -21,7 +21,7 @@ def load_labels(path: Path) -> dict:
     if not path.exists():
         return {}
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except yaml.YAMLError:
         return {}
@@ -50,7 +50,7 @@ def save_label(
 
     labels[session_id] = existing
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         yaml.dump(labels, f, default_flow_style=False, sort_keys=False)
 
 

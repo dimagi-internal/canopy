@@ -110,7 +110,7 @@ def run(cmd: list[str], timeout: int, cwd: str | None = None):
 
 def load_json(path: Path):
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
     except (OSError, ValueError):
         return None
@@ -438,7 +438,7 @@ def patch_registry(name: str, mkt: str, version: str, cache_dir: str, sha: str) 
     entries[0]["lastUpdated"] = _now_iso()
     try:
         tmp = REGISTRY.with_suffix(".json.tmp")
-        with open(tmp, "w") as fh:
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
             fh.write("\n")
         os.replace(tmp, REGISTRY)
@@ -465,7 +465,7 @@ def log_run(results: list[dict]) -> None:
     try:
         CANOPY_DIR.mkdir(parents=True, exist_ok=True)
         line = f"{_now_iso()} fleet-update: " + "; ".join(_fmt(r) for r in results)
-        with open(LOG_FILE, "a") as fh:
+        with open(LOG_FILE, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except OSError:
         pass
@@ -505,7 +505,7 @@ def main() -> int:
     try:
         import fcntl
 
-        lock_fh = open(LOCK_FILE, "w")
+        lock_fh = open(LOCK_FILE, "w", encoding="utf-8")
         try:
             fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -542,7 +542,7 @@ def main() -> int:
         if any(r["status"] != "up-to-date" for r in results):
             log_run(results)
         try:
-            STAMP_FILE.write_text(_now_iso())
+            STAMP_FILE.write_text(_now_iso(), encoding="utf-8")
         except OSError:
             pass
     finally:

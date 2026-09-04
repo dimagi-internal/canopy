@@ -59,7 +59,7 @@ def load_manifest(repo: Path) -> list[Secret]:
     path = Path(repo) / "config" / "secrets.yaml"
     if not path.exists():
         raise ProvisionError(f"no secrets manifest at {path}")
-    data = yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     items = data.get("secrets") or []
     if not isinstance(items, list):
         raise ProvisionError(f"{path}: `secrets` must be a list")
@@ -97,7 +97,7 @@ def load_env_block(repo: Path):
     path = Path(repo) / "config" / "secrets.yaml"
     if not path.exists():
         return None
-    blk = (yaml.safe_load(path.read_text()) or {}).get("env")
+    blk = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("env")
     if not blk:
         return None
     if not isinstance(blk, dict) or not blk.get("target") or not isinstance(blk.get("vars"), list):
@@ -171,7 +171,7 @@ def provision(repo: Path, *, op_read=_op_read, check: bool = False) -> dict:
             provisioned += 1
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(value)
+        dest.write_text(value, encoding="utf-8")
         try:
             dest.chmod(int(s.mode, 8))
         except ValueError:
@@ -221,7 +221,7 @@ def provision(repo: Path, *, op_read=_op_read, check: bool = False) -> dict:
             body = ("# Provisioned by `canopy provision` from config/secrets.yaml — do not edit by hand.\n"
                     + "\n".join(env_lines) + "\n")
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(body)
+            dest.write_text(body, encoding="utf-8")
             try:
                 dest.chmod(int(env.mode, 8))
             except ValueError:

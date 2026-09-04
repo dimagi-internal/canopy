@@ -89,10 +89,10 @@ def _baseline_rails(cfg: dict) -> list | None:
         plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
         if not plugin_dir:
             reg = json.loads(
-                (Path("~/.claude/plugins/installed_plugins.json").expanduser()).read_text())
+                (Path("~/.claude/plugins/installed_plugins.json").expanduser()).read_text(encoding="utf-8"))
             plugin_dir = reg["plugins"]["canopy@canopy"][0]["installPath"]
         base = json.loads(
-            (Path(plugin_dir) / "agent-core" / "gating-baseline.json").read_text())
+            (Path(plugin_dir) / "agent-core" / "gating-baseline.json").read_text(encoding="utf-8"))
     except Exception:
         return None
     rails: list = []
@@ -111,7 +111,7 @@ def required_services(identity: EmailIdentity | None) -> tuple[set[str], str]:
     repo = getattr(identity, "repo", None)
     if repo:
         try:
-            data = json.loads((Path(repo) / "config" / "agent.json").read_text())
+            data = json.loads((Path(repo) / "config" / "agent.json").read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             data = {}
         declared = data.get("gog_services")
@@ -162,7 +162,7 @@ def check_gating(repo: Path) -> CheckResult:
     if not path.exists():
         return CheckResult(name, False, f"{path} not found — the agent has no rails")
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         return CheckResult(name, False, f"{path} unreadable: {e}")
     deny, approve = data.get("deny", []), data.get("approve", [])
@@ -217,7 +217,7 @@ def check_hook_wiring(repo: Path) -> CheckResult:
         if not path.exists():
             continue
         try:
-            settings = json.loads(path.read_text())
+            settings = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
             unreadable.append(f"{label} unreadable: {e}")
             continue
@@ -250,7 +250,7 @@ def check_secrets_manifest(repo: Path) -> CheckResult:
 
     if env_tpl.exists():
         var_lines = [
-            l for l in env_tpl.read_text().splitlines()
+            l for l in env_tpl.read_text(encoding="utf-8").splitlines()
             if l.strip() and not l.strip().startswith("#") and "=" in l
         ]
         op_refs = sum(1 for l in var_lines if "op://" in l)
@@ -278,7 +278,7 @@ def check_secrets_manifest(repo: Path) -> CheckResult:
     # absence stays a failure by default.
     agent_json = repo / "config" / "agent.json"
     try:
-        provisioning = json.loads(agent_json.read_text()).get("provisioning", "")
+        provisioning = json.loads(agent_json.read_text(encoding="utf-8")).get("provisioning", "")
     except (OSError, ValueError):
         provisioning = ""
     if provisioning:
@@ -372,7 +372,7 @@ def check_rails_fire(repo: Path, *, runner=subprocess.run) -> CheckResult:
     if not guard.exists():
         return CheckResult(name, True, "skipped — no hooks/gating_guard.py (see Hook wiring)")
     try:
-        cfg = json.loads((Path(repo) / "config" / "gating.json").read_text())
+        cfg = json.loads((Path(repo) / "config" / "gating.json").read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return CheckResult(name, True, "skipped — gating.json unreadable (see Gating rails)")
     baseline = _baseline_rails(cfg)
@@ -595,14 +595,14 @@ def check_plugin_install(repo: Path, *, registry_path: str | None = None) -> Che
     if not manifest.exists():
         return CheckResult(name, True, "n/a — repo ships no .claude-plugin/plugin.json")
     try:
-        plugin_name = (json.loads(manifest.read_text()).get("name") or "").strip()
+        plugin_name = (json.loads(manifest.read_text(encoding="utf-8")).get("name") or "").strip()
     except (json.JSONDecodeError, OSError) as e:
         return CheckResult(name, False, f"{manifest} unreadable: {e}")
     if not plugin_name:
         return CheckResult(name, False, f'{manifest} has no "name"')
     reg_file = Path(registry_path or PLUGIN_REGISTRY).expanduser()
     try:
-        installed = json.loads(reg_file.read_text()).get("plugins", {})
+        installed = json.loads(reg_file.read_text(encoding="utf-8")).get("plugins", {})
     except (json.JSONDecodeError, OSError):
         return CheckResult(name, True, f"skipped — no plugin registry at {reg_file}")
     matches = {k: v for k, v in installed.items() if k.split("@", 1)[0] == plugin_name}
@@ -624,7 +624,7 @@ def _plugin_source(repo: Path) -> str:
     """`owner/repo` for the marketplace-add remediation — from config/agent.json's `repo`,
     else the git origin remote, else the directory name as a last resort."""
     try:
-        data = json.loads((Path(repo) / "config" / "agent.json").read_text())
+        data = json.loads((Path(repo) / "config" / "agent.json").read_text(encoding="utf-8"))
         if (declared := (data.get("repo") or "").strip()):
             return declared
     except (json.JSONDecodeError, OSError):
@@ -673,14 +673,14 @@ def check_required_plugins(repo: Path, *, registry_path: str | None = None) -> C
     name = "Required plugins"
     try:
         declared = json.loads(
-            (Path(repo) / "config" / "agent.json").read_text()).get("required_plugins") or []
+            (Path(repo) / "config" / "agent.json").read_text(encoding="utf-8")).get("required_plugins") or []
     except (json.JSONDecodeError, OSError):
         declared = []
     if not declared:
         return CheckResult(name, True, "n/a — none declared in config/agent.json")
     reg_file = Path(registry_path or PLUGIN_REGISTRY).expanduser()
     try:
-        installed = json.loads(reg_file.read_text()).get("plugins", {})
+        installed = json.loads(reg_file.read_text(encoding="utf-8")).get("plugins", {})
     except (json.JSONDecodeError, OSError):
         return CheckResult(name, True, f"skipped — no plugin registry at {reg_file}")
     have = {k.split("@", 1)[0] for k in installed}

@@ -20,7 +20,7 @@ def load_repo_map(path: Path) -> dict:
     json_path = path.with_suffix(".json") if path.suffix != ".json" else path
     if json_path.exists():
         try:
-            with open(json_path) as f:
+            with open(json_path, encoding="utf-8") as f:
                 return json.load(f) or {}
         except (json.JSONDecodeError, OSError):
             pass
@@ -29,7 +29,7 @@ def load_repo_map(path: Path) -> dict:
     yaml_path = path.with_suffix(".yaml") if path.suffix != ".yaml" else path
     if yaml_path.exists() and HAS_YAML:
         try:
-            with open(yaml_path) as f:
+            with open(yaml_path, encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         except Exception:
             pass
@@ -37,12 +37,12 @@ def load_repo_map(path: Path) -> dict:
     # Try the exact path as-is
     if path.exists():
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 return json.load(f) or {}
         except Exception:
             if HAS_YAML:
                 try:
-                    with open(path) as f:
+                    with open(path, encoding="utf-8") as f:
                         return yaml.safe_load(f) or {}
                 except Exception:
                     pass
@@ -56,7 +56,7 @@ def save_repo_mapping(path: Path, project_key: str, repo: str) -> None:
     repo_map[project_key] = repo
     json_path = path.with_suffix(".json") if path.suffix != ".json" else path
     json_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(json_path, "w") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(repo_map, f, indent=2)
 
 

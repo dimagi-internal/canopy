@@ -129,7 +129,7 @@ def main() -> int:
         print(f"validate-config: file not found: {args.path}", file=sys.stderr)
         return 1
     try:
-        cfg = yaml.safe_load(args.path.read_text())
+        cfg = yaml.safe_load(args.path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         print(f"validate-config: yaml parse error: {exc}", file=sys.stderr)
         return 1

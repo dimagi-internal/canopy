@@ -137,7 +137,7 @@ def resolve_gdoc_identity(repo_dir: Path) -> GdocIdentity:
     extra = {}
     aj = Path(repo_dir) / "config" / "agent.json"
     if aj.is_file():
-        extra = json.loads(aj.read_text())
+        extra = json.loads(aj.read_text(encoding="utf-8"))
     share_default = (extra.get("gdrive_share_default") or "domain").strip()
     root = (os.environ.get(GDRIVE_ROOT_ENV) or extra.get("gdrive_root_folder") or "").strip()
     return GdocIdentity(
@@ -681,7 +681,7 @@ def publish(identity: GdocIdentity, *, name: str | None, parent: str | None, md_
                 "shared": "preserved", "verified": not degraded, "degraded": degraded}
 
     # ---- Create: convert HTML→Doc into `parent`, share, verify ----
-    body_html = md_to_html(Path(md_path).read_text())
+    body_html = md_to_html(Path(md_path).read_text(encoding="utf-8"))
     with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as tf:
         tf.write(body_html)
         html_path = tf.name

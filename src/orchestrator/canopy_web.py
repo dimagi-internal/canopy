@@ -85,7 +85,7 @@ def _agent_slug_for_cwd(start: Optional[Path] = None) -> str:
         if not manifest.is_file():
             continue
         try:
-            return (json.loads(manifest.read_text()) or {}).get("name") or ""
+            return (json.loads(manifest.read_text(encoding="utf-8")) or {}).get("name") or ""
         except (OSError, ValueError):
             return ""
     return ""
@@ -145,14 +145,14 @@ def _agent_env_pat(start: Optional[Path] = None) -> str:
         if not manifest.is_file():
             continue
         try:
-            slug = (json.loads(manifest.read_text()) or {}).get("name") or ""
+            slug = (json.loads(manifest.read_text(encoding="utf-8")) or {}).get("name") or ""
         except (OSError, ValueError):
             return ""
         if not slug:
             return ""
         env_file = Path.home() / f".{slug}" / ".env"
         try:
-            for line in env_file.read_text().splitlines():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line.startswith("CANOPY_WEB_PAT="):
                     return line.partition("=")[2].strip().strip('"').strip("'")
@@ -176,7 +176,7 @@ def resolve_token(token: Optional[str]) -> str:
     if agent_pat:
         return agent_pat
     if TOKEN_FILE.exists():
-        stored = TOKEN_FILE.read_text().strip()
+        stored = TOKEN_FILE.read_text(encoding="utf-8").strip()
         if stored:
             # About to act as the operator. If we're standing in an agent's repo
             # that is an identity swap, and it must not happen quietly.

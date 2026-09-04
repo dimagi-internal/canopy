@@ -13,7 +13,7 @@ def install():
     if not SETTINGS_FILE.exists():
         settings = {}
     else:
-        with open(SETTINGS_FILE) as f:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
             settings = json.load(f)
 
     hooks = settings.setdefault("hooks", {})
@@ -35,7 +35,7 @@ def install():
         ],
     })
 
-    with open(SETTINGS_FILE, "w") as f:
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
 
     print(f"Hook installed. Logging to {Path.home() / '.claude' / 'canopy' / 'session-log.jsonl'}")
@@ -46,7 +46,7 @@ def uninstall():
         print("No settings file found.")
         return
 
-    with open(SETTINGS_FILE) as f:
+    with open(SETTINGS_FILE, encoding="utf-8") as f:
         settings = json.load(f)
 
     hooks = settings.get("hooks", {})
@@ -56,7 +56,7 @@ def uninstall():
         if not any("orchestrator" in h.get("command", "") for h in entry.get("hooks", []))
     ]
 
-    with open(SETTINGS_FILE, "w") as f:
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
 
     print("Hook uninstalled.")

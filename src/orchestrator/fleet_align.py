@@ -194,7 +194,7 @@ def _identity_tokens(agent: Agent) -> list[str]:
     aj = agent.path / "config" / "agent.json"
     if aj.is_file():
         try:
-            data = json.loads(aj.read_text())
+            data = json.loads(aj.read_text(encoding="utf-8"))
             for key in ("name", "email"):
                 v = str(data.get(key, "")).strip().lower()
                 if v:
@@ -383,12 +383,12 @@ def analyze(agents: list[Agent], baseline: Optional[dict] = None) -> list[Findin
             continue
         if kind == "skill":
             per_agent = {
-                a.slug: extract_skill_markers((a.path / relpath).read_text(), _identity_tokens(a))
+                a.slug: extract_skill_markers((a.path / relpath).read_text(encoding="utf-8"), _identity_tokens(a))
                 for a in present
             }
             findings.extend(_compare_skill(name, present, baseline.get(name, set()), per_agent))
         elif kind == "gating":
-            per_agent = {a.slug: extract_gating((a.path / relpath).read_text()) for a in present}
+            per_agent = {a.slug: extract_gating((a.path / relpath).read_text(encoding="utf-8")) for a in present}
             findings.extend(_compare_gating(name, present, baseline.get(name, {}), per_agent))
     # rank: promote (convergence is the strongest signal) first, then by breadth of impact
     order = {"promote": 0, "distribute": 1, "reconcile": 2}

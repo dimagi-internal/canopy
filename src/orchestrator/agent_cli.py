@@ -69,7 +69,7 @@ def agent_sync(slug, doc_url, title, summary, grades, period_start, period_end, 
 def agent_work(slug, json_file):
     """Upsert work products from a JSON file."""
     try:
-        items = json.load(open(json_file))
+        items = json.load(open(json_file, encoding="utf-8"))
         _emit(_client(slug).put_work_products(items))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
@@ -131,7 +131,7 @@ def agent_skills(slug, skills_root, url_template, json_file):
         if skills_root:
             items = catalog_from_repo(skills_root, url_template or "{name}")
         elif json_file:
-            items = json.load(open(json_file))
+            items = json.load(open(json_file, encoding="utf-8"))
         else:
             raise click.ClickException("pass --from-repo or --json")
         _emit(_client(slug).put_skills(items))
@@ -146,7 +146,7 @@ def agent_skills(slug, skills_root, url_template, json_file):
 def agent_tasks_sync(slug, json_file):
     """Non-destructive task upsert from a JSON file."""
     try:
-        tasks = json.load(open(json_file))
+        tasks = json.load(open(json_file, encoding="utf-8"))
         _emit(_client(slug).sync_tasks(tasks))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
@@ -817,7 +817,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     )
 
     if prompt_file:
-        prompt = Path(prompt_file).read_text()
+        prompt = Path(prompt_file).read_text(encoding="utf-8")
     make_task = not no_task and not task_ext_id
     if make_task and not title.strip():
         raise click.ClickException(
