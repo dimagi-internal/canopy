@@ -100,9 +100,27 @@ any "inbox clear" and never gates on unread mail.
 Report what it finds in your closeout even when it finds nothing — an absence someone can see
 you measured is worth something; an absence nobody instrumented is worth nothing.
 
-**Finding a long silence is not authorization to break it.** Draft the reply and take it
-through your normal Step 2 approval gate like any other outbound. In manual mode it parks for
-a human; there is no "it's been 42 days, just send it" exception.
+**Finding one is NOT a verdict, and the default verdict is not "reply".** The command bands its
+hits by age, and the old band is the common one:
+
+| Band | Age | What it means | What you do |
+|---|---|---|---|
+| `respond` | ≤ 14d | The ball plausibly IS with you | Triage it as a normal Step 2 item |
+| `prune` | older | **Debris**, not a debt | **Archive it. Do not answer it late.** |
+
+An old dangling thread is almost never an unhandled request. Far more often it was handled
+*badly* — the answer went out, it wasn't good enough, and a human ended the conversation — or
+it resolved somewhere else entirely. **Answering it now is an active harm, not a neutral
+courtesy:** it reopens something someone deliberately closed, spends their attention re-reading
+a thread they filed weeks ago, and advertises that you were asleep. Archive it (`canopy email
+archive` — reversible, own mailbox only) and name the count in your closeout.
+
+Override only when you *know* the underlying work is still live — and then it is the **work**
+you restart, on its own terms and its own channel, not this thread you resurrect.
+
+**In the `respond` band, a silence is still not authorization to send.** Take the draft through
+your normal Step 2 approval gate. There is no "it's been sitting a while, just send it"
+exception; urgency is exactly what talks an agent past a gate.
 
 *(Origin, 2026-09-04: ACE went **42 days** without replying to a partner who had answered all
 three of its scoping questions and attached the file it asked for; the design he was waiting on
@@ -111,6 +129,14 @@ had been finished a week earlier and simply sat there. ACE's §1 said "if no unr
 written could never run. Fixing the stop was not enough for anyone else: echo, eva and hal had
 no sweep at all to be short-circuited past, and neither did this document. dimagi-internal/ace#1931,
 ace PR #1932.)*
+
+*(And the banding above, same day, from this sweep's very first live run: it surfaced a 79-day
+thread on echo and confidently proposed a late apology. Jonathan: "Old events like this weren't
+not handled. They were not good enough in terms of what you had written in response. And I
+killed the thread. So evidence of a dangling thread this old does not mean we should then go
+respond to it. It means we should make sure it's pruned." The sweep had the detection right and
+the verdict exactly wrong — worth fixing harder than the detection was, because a sweep that
+manufactures apologies is one an agent learns to stop running.)*
 
 **Scope.** If this turn was invoked with a specific item — `--thread <gmail-thread-id>` or
 `--slack <channel>/<ts>` — that ref IS your single inbound item: go **straight to it**, skip the

@@ -1326,10 +1326,32 @@ def collect_thread_attachments(
 # its own aging section; every other agent had no such section to reach, and neither did
 # agent-core/turn.md. So the sweep lives here, as a fleet capability, and turn.md Step 2
 # mandates it before any early return.
+#
+# DETECTION IS NOT A VERDICT — and getting that backwards is its own failure mode. "Their
+# last message, no reply from us" finds a DANGLING thread. It does not establish that a
+# reply is owed. Age inverts the disposition, and the old band is the common one:
+#
+#   fresh  -> the ball plausibly IS with us. Triage it; a reply may be right.
+#   old    -> almost certainly debris. Either it was answered badly and abandoned, or it
+#             resolved out of band, or a human deliberately ENDED it. Answering now
+#             reopens something someone closed, spends their attention on a conversation
+#             they already filed, and advertises that we were asleep. PRUNE, don't answer.
+#
+# (Jonathan, 2026-09-04, on the first live run of this sweep — which surfaced a 79-day
+# thread and confidently proposed a late apology: "Old events like this weren't not
+# handled. They were not good enough in terms of what you had written in response. And I
+# killed the thread. So evidence of a dangling thread this old does not mean we should
+# then go respond to it. It means we should make sure it's pruned." The sweep had the
+# detection right and the verdict exactly wrong.)
 
 SEARCH_TIMEOUT = 90  # seconds — a hung gog search must not hang the whole turn
 OWED_DEFAULT_DAYS = 90
 OWED_DEFAULT_LIMIT = 200
+# Past this age a dangling thread's default disposition flips from "respond" to "prune".
+# Two weeks is where a late reply stops reading as responsive and starts reading as a
+# resurrection — the same threshold ACE reached independently (its inbox-triage §4b:
+# "a STALE inbound is closed, not answered late").
+RESPOND_WITHIN_DAYS = 14
 
 
 def search_threads(
@@ -1394,23 +1416,34 @@ def owed_replies(
     *,
     days: int = OWED_DEFAULT_DAYS,
     limit: int = OWED_DEFAULT_LIMIT,
+    respond_within: int = RESPOND_WITHIN_DAYS,
     include_automated: bool = False,
     now: "dt.datetime | None" = None,
     runner=subprocess.run,
     reader=None,
 ) -> list[dict]:
-    """Threads in the agent's inbox whose LAST message is not ours — the ball is with us.
+    """DANGLING threads in the agent's inbox — their last message, no reply from us.
 
     Deliberately does NOT filter on `is:unread`. That filter finds exactly the threads
-    this sweep is not for and none of the ones it is: an owed reply is usually already
+    this sweep is not for and none of the ones it is: a dangling thread is usually already
     read — it went unanswered *after* we read it — and it generates no new mail while it
-    waits. Filtering on unread is how the 42-day silence stayed invisible.
+    sits. Filtering on unread is how the 42-day silence stayed invisible.
 
-    Returns oldest-silence-first:
-      [{thread_id, subject, last_from, last_date, age_days, message_count, ever_replied}]
+    Returns oldest-first:
+      [{thread_id, subject, last_from, last_date, age_days, message_count, ever_replied,
+        disposition}]
 
-    `ever_replied` False means we have never once written back to this counterpart, which
-    is worse than a late reply and reads differently to whoever triages the result.
+    `disposition` is the part that matters, and it is NOT "you owe a reply":
+
+      "respond" (age <= respond_within) — the ball plausibly is with us; triage it.
+      "prune"   (older)                 — debris. Archive it. Do NOT answer it late.
+
+    The old band is the common one and answering it is an active harm, not a neutral
+    courtesy: it reopens a thread someone already closed. See this module's section
+    header for the measured case.
+
+    `ever_replied` False means we never once wrote back. In the "respond" band that is a
+    sharper signal; in the "prune" band it means the thread was never ours to carry.
 
     One unreadable thread is skipped, not fatal: a sweep that dies on thread 3 of 40
     silently hides threads 4-40 — the same blindness it exists to remove.
@@ -1444,6 +1477,12 @@ def owed_replies(
             "age_days": _age_days(last.get("date", ""), now),
             "message_count": len(msgs),
             "ever_replied": any(_is_self(m.get("from", ""), identity.account) for m in msgs),
+            # Unknown age is treated as OLD: a thread whose date we cannot parse is not a
+            # thread to fire a late reply at on a guess.
+            "disposition": ("respond"
+                            if (age := _age_days(last.get("date", ""), now)) is not None
+                            and age <= respond_within
+                            else "prune"),
         })
     owed.sort(key=lambda o: (o["age_days"] is None, -(o["age_days"] or 0)))
     return owed
@@ -1757,47 +1796,83 @@ def email_archive(repo, agent, account, client, thread_ids):
               help="How far back to sweep.")
 @click.option("--limit", default=OWED_DEFAULT_LIMIT, show_default=True,
               help="Cap on threads inspected.")
+@click.option("--respond-within", default=RESPOND_WITHIN_DAYS, show_default=True,
+              help="Age (days) at or under which a dangling thread is still worth a "
+                   "reply. Older ones are debris: prune, don't answer.")
 @click.option("--older-than", default=0, show_default=True,
-              help="Only report silences at least this many days old.")
+              help="Only report threads at least this many days old.")
 @click.option("--include-automated", is_flag=True,
               help="Also report threads whose last message is machine-generated.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a table.")
-def email_owed(repo, agent, account, client, days, limit, older_than,
+def email_owed(repo, agent, account, client, days, limit, respond_within, older_than,
                include_automated, as_json):
-    """Threads where the BALL IS WITH US — their last message, no reply from us.
+    """DANGLING threads — their last message, no reply from us.
 
-    Run this EVERY turn, BEFORE any "inbox clear" early return. A thread we owe a reply
-    to generates no new inbound by definition, so a turn driven by unread mail can never
+    Run this EVERY turn, BEFORE any "inbox clear" early return. A dangling thread
+    generates no new inbound by definition, so a turn driven by unread mail can never
     surface it, and a quiet inbox is exactly when it matters most (ace#1931: 42 days).
 
-    Read-only. Finding a long silence is not authorization to break it — draft the reply
-    and take it through your normal approval gate.
+    FINDING ONE IS NOT A VERDICT. Age decides what to do, and most hits are old:
+
+    \b
+      respond  (<= --respond-within)  the ball plausibly is with you. Triage it.
+      prune    (older)                debris. Archive it. Do NOT answer it late.
+
+    Answering an old one is an active harm, not a neutral courtesy: it reopens a thread
+    someone already closed, on a conversation that most likely ended because the last
+    answer wasn't good enough. Prune it instead.
+
+    Read-only — this command never archives anything. It prints the `canopy email
+    archive` line for the prune band so you can run it deliberately.
     """
     try:
         ident = _identity_from_opts(repo, agent, account, client)
-        owed = owed_replies(ident, days=days, limit=limit,
+        rows = owed_replies(ident, days=days, limit=limit,
+                            respond_within=respond_within,
                             include_automated=include_automated)
     except AgentEmailError as e:
         raise click.ClickException(str(e))
     if older_than:
-        owed = [o for o in owed if (o["age_days"] or 0) >= older_than]
+        rows = [o for o in rows if (o["age_days"] or 0) >= older_than]
     if as_json:
-        click.echo(json.dumps({"account": ident.account, "days": days, "owed": owed},
-                              indent=2))
+        click.echo(json.dumps({"account": ident.account, "days": days,
+                               "respond_within": respond_within, "owed": rows}, indent=2))
         return
-    if not owed:
-        click.echo(f"No owed replies in the last {days}d for {ident.account} "
+    if not rows:
+        click.echo(f"No dangling threads in the last {days}d for {ident.account} "
                    "— every thread's last word is ours.")
         return
-    click.echo(f"{len(owed)} thread(s) waiting on {ident.account}:\n")
-    for o in owed:
+
+    def line(o):
         age = "?" if o["age_days"] is None else f"{o['age_days']}d"
         never = "  NEVER REPLIED" if not o["ever_replied"] else ""
-        click.echo(f"  {age:>5}  {o['thread_id']}  {o['last_from'][:40]:<40} "
-                   f"{o['subject'][:50]}{never}")
-    click.echo("\nRead one: canopy email read <threadId> --repo <agent repo>")
-    click.echo("Draft the reply and take it through your approval gate — a long "
-               "silence is not a licence to send unreviewed.")
+        return (f"  {age:>5}  {o['thread_id']}  {o['last_from'][:38]:<38} "
+                f"{o['subject'][:46]}{never}")
+
+    respond = [o for o in rows if o["disposition"] == "respond"]
+    prune = [o for o in rows if o["disposition"] == "prune"]
+
+    if respond:
+        click.echo(f"RESPOND — {len(respond)} thread(s) under {respond_within}d, the ball "
+                   f"may genuinely be with {ident.account}:\n")
+        for o in respond:
+            click.echo(line(o))
+        click.echo("\n  Read one: canopy email read <threadId> --repo <agent repo>")
+        click.echo("  Any reply still goes through your approval gate.\n")
+
+    if prune:
+        click.echo(f"PRUNE — {len(prune)} thread(s) over {respond_within}d. Do NOT answer "
+                   "these late:\n")
+        for o in prune:
+            click.echo(line(o))
+        click.echo("\n  An old dangling thread is debris, not a debt. It ended — usually "
+                   "because\n  the last answer wasn't good enough — and a late reply "
+                   "reopens what someone\n  already closed. Archive it out of the inbox "
+                   "(reversible, own mailbox only):\n")
+        click.echo("    canopy email archive " + " ".join(o["thread_id"] for o in prune)
+                   + " --repo <agent repo>\n")
+        click.echo("  Override only if you know the work is still live — and then it is "
+                   "the WORK\n  you restart, on its own terms, not this thread you answer.")
 
 
 @email_group.command("read")
