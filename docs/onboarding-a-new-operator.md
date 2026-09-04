@@ -152,6 +152,14 @@ There is **no UI for creating a workspace** — it is API-only. Pick the slug
 deliberately: lowercase letters, digits and hyphens only, and it appears in
 every URL your team uses.
 
+> **Both names are permanent — there is no rename.** `OPTIONS` on
+> `/api/workspaces/<slug>/` returns `allow: GET, DELETE`: no `PATCH`, no `PUT`.
+> That covers `display_name` as well as the slug, so the only route to a
+> different name is delete-and-recreate, and delete returns 409 while the
+> workspace still owns agents. Spend the thirty seconds here rather than
+> discovering this later — "pick any slug you like" reads much lower-stakes than
+> it is.
+
 ```bash
 curl -X POST https://labs.connect.dimagi.com/canopy/api/workspaces/ \
   -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)" \
@@ -219,6 +227,35 @@ This opens a browser, and writes the token to `~/.claude/canopy/workbench-token`
 ---
 
 ## 4. Create the agent
+
+> **Does this agent already exist as an OpenClaw? Then you want a different
+> command, and this section will quietly lose its history.**
+>
+> `create-agent` scaffolds from scratch. Pointed at an agent that already lives on
+> an OpenClaw droplet, it produces a skeleton and leaves the persona, memory and
+> skills behind on a box you are about to decommission. Use the harvest route
+> instead — it is a shipped command, and this doc used to not mention it anywhere:
+>
+> ```bash
+> canopy openclaw-harvest snapshot   root@<droplet> --into ./snap
+> canopy openclaw-harvest inventory  ./snap
+> canopy openclaw-harvest compare    ./snap <agent>        # BOOTSTRAP or RECONCILE
+> canopy openclaw-harvest bootstrap  ./snap <slug> --mandate "<one line>" \
+>     --mailbox "<slug>@dimagi-ai.com" --stakeholders "<who it works for>"
+> ```
+>
+> `compare` tells you which branch you are on: **bootstrap** when no repo exists
+> yet (it carries persona, `memory/` and skills into a fresh repo, then git-inits
+> and commits), **reconcile** when the repo exists and only the OpenClaw's newer
+> skills need porting in.
+>
+> Two things follow from taking this route, both of which surprised the first
+> person to walk it. **Section 5 arrives out of order** — you can register on
+> canopy-web before the repo exists, and `canopy agent doctor --repo .` correctly
+> refuses until it does, so that gate lands later than section 5 implies. And
+> `snapshot` needs `ssh` (it uses `rsync` when present and falls back to
+> `ssh … tar` otherwise), so Windows is fine, but the key has to actually load —
+> see the 1Password SSH-agent note in section 6.
 
 Two decisions first, and only two:
 
@@ -354,6 +391,36 @@ Two Windows-specific setup notes:
 - **The emdash DB path differs.** In `%USERPROFILE%\.canopy\runner.json`:
   `"emdash_db": "C:\\Users\\<you>\\AppData\\Roaming\\Emdash\\emdash4.db"`
 
+**If you need to SSH anywhere (harvesting an OpenClaw, reaching a droplet), read
+this first — 1Password's SSH agent inverts its own default the moment you touch
+it.** Two traps, both of which present as "the key is wrong" when the key is fine:
+
+- **`agent.toml` lives somewhere else on Windows:**
+  `%LOCALAPPDATA%\1Password\config\ssh\agent.toml`, *not* `~/.config/1Password/`.
+- **With no entries, the Private vault is offered automatically. The instant a
+  single `[[ssh-keys]]` entry exists, that file becomes the entire allowlist.**
+  1Password's own *"Enable key for SSH agent"* button writes exactly one entry —
+  so clicking the button that sounds like it enables your key silently stops every
+  other vault being offered. Fleet keys live in a shared **AI-Agents** vault, so
+  the button actively makes things worse, and `ssh-add -l` then returns nothing
+  with no explanation. The fix is one entry naming the vault or the item:
+
+  ```toml
+  [[ssh-keys]]
+  vault = "AI-Agents"
+  ```
+
+- **Even with the right key loaded, you can get `Too many authentication
+  failures`.** With all the fleet keys offered, most servers cut you off after six
+  attempts — so a key sitting eighth in the offer order is never reached, and the
+  error names authentication rather than ordering. Narrowing `agent.toml` to the
+  one item fixes it properly; `IdentitiesOnly=yes` only masks it.
+
+An exported `.pem` is the other failure mode here, and it is worth ruling out
+early: `ssh-keygen -l -f <file>` says `is not a key file` for a corrupt export,
+and if the host offers `publickey` only there is no way past it. Using the agent
+means the key never lands on disk at all.
+
 Everything else — Claude Code, emdash (stable ships `emdash-x64.exe` and
 `.msi`), the canopy CLI, canopy-web — is cross-platform already.
 
@@ -393,6 +460,30 @@ Reach for these in order:
 | Email auth failing | `canopy email preflight --repo .` |
 | `/<slug>:...` commands missing | The plugin is not installed — see §5 step 1 |
 | "falling back to the operator's workbench-token" | The agent has no `CANOPY_WEB_PAT` — see §3b |
+| An MCP server shows `Connection closed` | Read the MCP log — the real error is in the server's **stderr**, which `/mcp` does not show you (below) |
+
+**`Connection closed` is never the actual error.** Claude Code reports the symptom;
+the cause is one line of stderr in the MCP log, and reading it turns a debugging
+session into a one-line fix. The logs live under
+`~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-<server>/` on macOS and
+`%LOCALAPPDATA%\claude-cli-nodejs\<project>\mcp-logs-<server>\` on Windows;
+the newest `.jsonl` there, last few lines.
+
+The one you are most likely to hit is **`canopy-gws`, and it is working as
+designed**:
+
+```
+[canopy-gws] FATAL: GWS_IDENTITY_MODE is not set. canopy-gws resolves its Google
+identity from per-agent session env. Set GWS_IDENTITY_MODE=sa and
+GWS_SA_KEY_PATH=/path/to/sa-key.json in the agent's environment (settings env
+block or `canopy provision`). There is no default identity fallback by design.
+```
+
+It refuses to start rather than silently borrowing someone else's Google identity.
+So a brand-new agent shows `canopy-gws` failing until you provision its service
+account — expected, not a broken install, and **not platform-specific** (it
+reproduces the same way on macOS). If your agent does not touch Google Workspace,
+you can leave it failing.
 
 ---
 
