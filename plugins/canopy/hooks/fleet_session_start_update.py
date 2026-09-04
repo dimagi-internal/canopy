@@ -18,7 +18,7 @@ Design — SHA-driven, and it does the update itself:
     this is immune to the "skill changed but version wasn't bumped" failure mode
     that makes a version-keyed `claude plugin update` a silent no-op.
   * It PERFORMS the update the way the `canopy:update` / `chrome-sales:update`
-    skills do by hand — git-pull the marketplace clone, rsync the plugin source
+    skills do by hand — git-pull the marketplace clone, mirror the plugin source
     into a version-keyed cache dir, `npm install` if needed, then patch
     `installed_plugins.json`. Because the sync + registry-patch is done here
     (not delegated to the version-keyed CLI), self-heal does NOT depend on the
@@ -74,7 +74,6 @@ DISABLE_FILE = CANOPY_DIR / "fleet-autoupdate-disabled"
 
 FETCH_TIMEOUT = 60
 PULL_TIMEOUT = 60
-RSYNC_TIMEOUT = 120
 NPM_TIMEOUT = 180
 
 
@@ -256,9 +255,60 @@ def _read_version(plugin_dir: Path) -> str:
 # the plugin source subdir, so a plain plugin sync would strand it. Such a
 # plugin declares `.claude-plugin/runtime.json`:
 #   {"dest": "runtime", "paths": ["src", "scripts", "evals", "pyproject.toml"]}
-# and we rsync each listed clone-root path into <cache>/<dest>/ after the
+# and we mirror each listed clone-root path into <cache>/<dest>/ after the
 # plugin sync. Skills resolve the bundle via scripts/canopy-runtime.sh, so the
 # runtime a skill executes is version-locked to the installed plugin.
+
+
+def mirror_tree(src: Path, dest: Path, *, exclude: set[str], delete: bool = False) -> str:
+    """Copy `src` into `dest` — the rsync this hook used to shell out to, in pure Python.
+
+    WHY NOT rsync: it does not exist on Windows, and this hook runs on EVERY Claude Code
+    session, so on a Windows machine the fleet self-updater failed every single time —
+    `fleet-update: canopy error: rsync not found`, eight consecutive failures and no
+    successes, written to a log nobody opens. The agent stayed frozen on whatever plugin
+    version it was installed with, and the only visible symptom was the *other* half of the
+    same cause: `canopy doctor` reporting the CLI and the marketplace clone drifting apart.
+
+    Semantics kept from the two call sites: `exclude` matches a path COMPONENT (as
+    `--exclude=node_modules` did), and `delete=True` reproduces `--delete` by removing
+    entries in dest that are no longer in src — except the ones we deliberately preserve
+    (`.venv`/`uv.lock`, which uv materializes and a same-version resync must not thrash).
+
+    Returns "" on success, else an error string — matching the callers' contract.
+    """
+    PRESERVE = {".venv", "uv.lock"}
+
+    def _skip(name: str) -> bool:
+        return name in exclude
+
+    try:
+        if delete and dest.is_dir():
+            keep = {p.name for p in src.iterdir()} | PRESERVE | exclude
+            for existing in dest.iterdir():
+                if existing.name in keep:
+                    continue
+                if existing.is_dir() and not existing.is_symlink():
+                    shutil.rmtree(existing, ignore_errors=True)
+                else:
+                    existing.unlink(missing_ok=True)
+
+        for item in src.iterdir():
+            if _skip(item.name):
+                continue
+            target = dest / item.name
+            if item.is_dir() and not item.is_symlink():
+                shutil.copytree(
+                    item, target,
+                    ignore=shutil.ignore_patterns(*exclude),
+                    dirs_exist_ok=True,
+                )
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, target)
+    except (OSError, shutil.Error) as exc:
+        return f"copy {src} -> {dest}: {exc}"
+    return ""
 
 
 def _runtime_manifest(plugin_dir: Path) -> dict | None:
@@ -274,7 +324,7 @@ def _runtime_present(cache_dir: Path, manifest: dict) -> bool:
 
 
 def sync_runtime(clone: str, manifest: dict, cache_dir: Path) -> str:
-    """Rsync manifest paths from the clone root into <cache>/<dest>/.
+    """Mirror manifest paths from the clone root into <cache>/<dest>/.
 
     Returns "" on success, else an error string. The clone has already been
     reset to origin/<branch> by the caller, so what we copy is exactly the
@@ -286,23 +336,28 @@ def sync_runtime(clone: str, manifest: dict, cache_dir: Path) -> str:
         dest.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         return f"mkdir runtime: {exc}"
+    excl = {".venv", "__pycache__", "node_modules", ".git"}
     for rel in manifest["paths"]:
         src = Path(clone) / str(rel)
         if not src.exists():
             return f"runtime path missing in clone: {rel}"
-        rc, _, err = run(
-            ["rsync", "-a", "--exclude=.venv", "--exclude=__pycache__",
-             "--exclude=node_modules", "--exclude=.git",
-             str(src), f"{dest}/"],
-            RSYNC_TIMEOUT,
-        )
-        if rc != 0:
-            return f"rsync runtime {rel}: {err or rc}"
+        # `rsync -a <src> <dest>/` (no trailing slash on src) copies the DIRECTORY into dest,
+        # which is what _runtime_present() checks for; a file copies as itself.
+        if src.is_dir():
+            err = mirror_tree(src, dest / src.name, exclude=excl)
+        else:
+            try:
+                shutil.copy2(src, dest / src.name)
+                err = ""
+            except OSError as exc:
+                err = str(exc)
+        if err:
+            return f"sync runtime {rel}: {err}"
     return ""
 
 
 def update_one(target: dict) -> dict:
-    """Fetch → (if behind) pull + rsync into cache + npm + patch registry."""
+    """Fetch → (if behind) pull + mirror into cache + npm + patch registry."""
     name = target["name"]
     result = {
         "name": name,
@@ -376,22 +431,11 @@ def update_one(target: dict) -> dict:
         result.update(status="error", error=f"mkdir cache: {exc}")
         return result
 
-    if not shutil.which("rsync"):
-        result.update(status="error", error="rsync not found")
-        return result
-    rc, _, err = run(
-        [
-            "rsync",
-            "-a",
-            "--delete",
-            "--exclude=.git",
-            f"{plugin_dir}/",
-            f"{cache_dir}/",
-        ],
-        RSYNC_TIMEOUT,
-    )
-    if rc != 0:
-        result.update(status="error", error=f"rsync: {err or rc}")
+    # Pure-Python mirror, not rsync: rsync does not exist on Windows, and this hook runs on
+    # every session — so it failed every time there, silently, into a log nobody reads.
+    err = mirror_tree(Path(plugin_dir), cache_dir, exclude={".git"}, delete=True)
+    if err:
+        result.update(status="error", error=f"sync: {err}")
         return result
 
     # Best-effort JS deps (canopy-gws MCP etc.). Never fatal.

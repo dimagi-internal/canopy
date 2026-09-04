@@ -1,7 +1,7 @@
 """Tests for the fleet session-start auto-updater hook (GitHub #357).
 
 Covers fleet discovery (who gets updated) and the git/SHA-driven update itself
-(fetch → reset clone → rsync into the version-keyed cache → patch the registry),
+(fetch → reset clone → mirror into the version-keyed cache → patch the registry),
 end-to-end against real temp git repos.
 """
 import importlib.util
@@ -116,7 +116,7 @@ def test_discover_resolves_clone_from_marketplaces(tmp_path):
 # ── end-to-end update ───────────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(not shutil.which("git") or not shutil.which("rsync"), reason="needs git+rsync")
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
 def test_update_one_pulls_and_syncs_when_behind(tmp_path, monkeypatch):
     # Point the module's cache + registry at the sandbox.
     plugins_dir = tmp_path / "plugins"
@@ -290,7 +290,7 @@ def _parked_clone_fixture(tmp_path, monkeypatch):
     return plugins_dir, clone, parked_sha, target
 
 
-@pytest.mark.skipif(not shutil.which("git") or not shutil.which("rsync"), reason="needs git+rsync")
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
 def test_update_switches_to_main_instead_of_rewriting_a_parked_branch(tmp_path, monkeypatch):
     plugins_dir, clone, parked_sha, target = _parked_clone_fixture(tmp_path, monkeypatch)
 
@@ -304,7 +304,7 @@ def test_update_switches_to_main_instead_of_rewriting_a_parked_branch(tmp_path, 
     assert _branch(clone) == "main", "the update must leave the clone on main"
 
 
-@pytest.mark.skipif(not shutil.which("git") or not shutil.which("rsync"), reason="needs git+rsync")
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
 def test_update_refuses_to_clobber_uncommitted_work_in_the_clone(tmp_path, monkeypatch):
     """A dirty parked clone is someone's workspace, wrong as that is. Report it
     and leave it alone rather than destroying the edit to install a plugin."""
@@ -346,3 +346,65 @@ def test_disabled_by_sentinel_file(tmp_path, monkeypatch):
     sentinel.write_text("")
     monkeypatch.setattr(flu, "DISABLE_FILE", sentinel)
     assert flu._disabled() is True
+
+
+# ── mirror_tree: the rsync replacement (rsync does not exist on Windows) ─────────────────
+
+class TestMirrorTree:
+    """The fleet self-updater shelled out to rsync, so on Windows it failed on EVERY session —
+    'rsync not found', eight consecutive failures, no successes, into a log nobody opens. The
+    agent stayed frozen on whatever plugin version it was installed with."""
+
+    def test_copies_files_and_directories(self, tmp_path):
+        mod = flu
+        src, dest = tmp_path / "src", tmp_path / "dest"
+        (src / "sub").mkdir(parents=True)
+        (src / "a.txt").write_text("a", encoding="utf-8")
+        (src / "sub" / "b.txt").write_text("b", encoding="utf-8")
+        assert mod.mirror_tree(src, dest, exclude=set()) == ""
+        assert (dest / "a.txt").read_text(encoding="utf-8") == "a"
+        assert (dest / "sub" / "b.txt").read_text(encoding="utf-8") == "b"
+
+    def test_excludes_match_path_components(self, tmp_path):
+        mod = flu
+        src, dest = tmp_path / "src", tmp_path / "dest"
+        (src / "node_modules" / "pkg").mkdir(parents=True)
+        (src / "node_modules" / "pkg" / "x.js").write_text("x", encoding="utf-8")
+        (src / "keep.txt").write_text("k", encoding="utf-8")
+        assert mod.mirror_tree(src, dest, exclude={"node_modules"}) == ""
+        assert (dest / "keep.txt").is_file()
+        assert not (dest / "node_modules").exists()
+
+    def test_delete_removes_stale_entries(self, tmp_path):
+        """--delete semantics: the cache dir is version-keyed, so a file dropped upstream
+        must not survive in the installed copy."""
+        mod = flu
+        src, dest = tmp_path / "src", tmp_path / "dest"
+        src.mkdir()
+        dest.mkdir()
+        (src / "current.txt").write_text("new", encoding="utf-8")
+        (dest / "current.txt").write_text("old", encoding="utf-8")
+        (dest / "removed-upstream.txt").write_text("stale", encoding="utf-8")
+        (dest / "stale-dir").mkdir()
+        assert mod.mirror_tree(src, dest, exclude=set(), delete=True) == ""
+        assert (dest / "current.txt").read_text(encoding="utf-8") == "new"
+        assert not (dest / "removed-upstream.txt").exists()
+        assert not (dest / "stale-dir").exists()
+
+    def test_delete_preserves_venv_and_uv_lock(self, tmp_path):
+        """uv materializes .venv/uv.lock in the cache; a same-version resync must not thrash
+        them (the behaviour the original rsync call was careful to keep)."""
+        mod = flu
+        src, dest = tmp_path / "src", tmp_path / "dest"
+        src.mkdir()
+        (dest / ".venv").mkdir(parents=True)
+        (dest / ".venv" / "marker").write_text("keep", encoding="utf-8")
+        (dest / "uv.lock").write_text("lock", encoding="utf-8")
+        assert mod.mirror_tree(src, dest, exclude=set(), delete=True) == ""
+        assert (dest / ".venv" / "marker").read_text(encoding="utf-8") == "keep"
+        assert (dest / "uv.lock").is_file()
+
+    def test_returns_error_string_never_raises(self, tmp_path):
+        mod = flu
+        err = mod.mirror_tree(tmp_path / "does-not-exist", tmp_path / "dest", exclude=set())
+        assert err and "copy" in err

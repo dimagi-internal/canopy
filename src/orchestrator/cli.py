@@ -2089,8 +2089,17 @@ def openclaw_compare(snapshot_dir, agent, as_json):
 @click.option("--mailbox", default="")
 @click.option("--into", default=None, type=click.Path(), help="Target dir (default: ./<slug>)")
 @click.option("--force", is_flag=True)
-def openclaw_bootstrap(snapshot_dir, slug, name, mandate, mailbox, into, force):
-    """Scaffold a NEW canopy agent repo seeded from an OpenClaw snapshot (persona + ported skills)."""
+@click.option("--stakeholders", default="",
+              help="Who this agent works for (persona.md + CLAUDE.md); default 'the team'.")
+@click.option("--git-init/--no-git-init", default=True,
+              help="git init + one commit, as create-agent does. On by default.")
+def openclaw_bootstrap(snapshot_dir, slug, name, mandate, mailbox, into, force,
+                       stakeholders, git_init):
+    """Scaffold a NEW canopy agent repo seeded from an OpenClaw snapshot.
+
+    Carries across: SOUL/IDENTITY/USER into persona.md, the whole memory/ directory, the
+    remaining workspace text under openclaw/, and every skill.
+    """
     import json as json_mod
     from pathlib import Path
     from orchestrator.openclaw_harvest import inventory_snapshot, bootstrap_from_snapshot, HarvestError
@@ -2102,12 +2111,59 @@ def openclaw_bootstrap(snapshot_dir, slug, name, mandate, mailbox, into, force):
         out = bootstrap_from_snapshot(
             inv, slug=slug, display_name=(name or slug.replace("-", " ").title()),
             mandate=mandate.strip(), into=dest, mailbox=mailbox, force=force,
+            stakeholders=stakeholders, git_init=git_init,
         )
     except (HarvestError, AgentFactoryError) as e:
         raise click.ClickException(str(e))
     click.echo(json_mod.dumps(out, indent=2))
-    click.echo(f"\nSeeded {out['repo']} — ported {len(out['ported_skills'])} OpenClaw skill(s). "
-               "Refine persona.md, then ship.")
+    carried = out["carried"]
+    click.echo(f"\nSeeded {out['repo']}:")
+    click.echo(f"  persona.md  <- {', '.join(out['persona_files']) or '(none)'}")
+    click.echo(f"  memory/     <- {len(carried['memory'])} file(s)")
+    click.echo(f"  openclaw/   <- {', '.join(carried['workspace_text']) or '(none)'}")
+    click.echo(f"  skills/     <- {len(out['ported_skills'])} ported")
+    click.echo(f"  git         <- {'initialized + committed' if out['git_initialized'] else 'not initialized'}")
+    if out["secret_findings"]:
+        click.echo(
+            f"\nHELD BACK THE COMMIT — {len(out['secret_findings'])} possible credential(s) in the "
+            "snapshot.\nThe filename exclusions cannot see a token INSIDE a file, so these were "
+            "found by content:")
+        for f in out["secret_findings"][:15]:
+            click.echo(f"  {f['file']}:{f['line']}  {f['kind']}")
+        if len(out["secret_findings"]) > 15:
+            click.echo(f"  … and {len(out['secret_findings']) - 15} more")
+        click.echo("Remove or redact them, then commit by hand (or re-run --force).")
+    # Say what did NOT come across. A harvest that stays quiet about its gaps is how an
+    # operator discovers, later and by hand, that the agent lost its own history.
+    left = _uncarried(Path(inv["snapshot_dir"]), carried)
+    if left:
+        click.echo(f"\nNOT carried ({len(left)} file(s)) — review before decommissioning the droplet:")
+        for rel in left[:20]:
+            click.echo(f"  {rel}")
+        if len(left) > 20:
+            click.echo(f"  … and {len(left) - 20} more")
+    click.echo("\nRefine persona.md, then ship.")
+
+
+def _uncarried(snapshot_dir, carried) -> list[str]:
+    """Snapshot files that bootstrap did NOT bring into the repo, so the operator can see them."""
+    from pathlib import Path as _P
+    from orchestrator.openclaw_harvest import WORKSPACE_TEXT, PERSONA_TEXT
+
+    d = _P(snapshot_dir)
+    taken = {f"memory/{m}" for m in carried["memory"]}
+    taken |= set(carried["workspace_text"]) | set(PERSONA_TEXT) | set(WORKSPACE_TEXT)
+    out = []
+    for p in sorted(d.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = str(p.relative_to(d))
+        # skills/ is reported separately (ported_skills). memory/ is NOT blanket-skipped:
+        # a memory file that failed to carry is exactly what this list exists to surface.
+        if rel in taken or rel.startswith("skills/"):
+            continue
+        out.append(rel)
+    return out
 
 
 @openclaw_harvest.command("reconcile")
