@@ -928,7 +928,7 @@ def build_review_prompt(repo: Path, corpus: list[dict]) -> str:
     persona = ""
     pp = repo / "persona.md"
     if pp.exists():
-        persona = pp.read_text()[:1500]
+        persona = pp.read_text(encoding="utf-8")[:1500]
     return (
         "You are canopy's agent self-improvement reviewer. Below is structural friction extracted "
         f"from recent TURNS of the agent at {repo} (its own git repo).\n\n"

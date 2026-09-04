@@ -80,7 +80,7 @@ def engine_staleness_error(clone_dir: Path | None = None) -> str | None:
         return None
     clone = clone_dir or MARKETPLACE_CLONE
     try:
-        clone_text = (clone / "pyproject.toml").read_text()
+        clone_text = (clone / "pyproject.toml").read_text(encoding="utf-8")
     except OSError:
         return None
     m = re.search(r'^version\s*=\s*"([^"]+)"', clone_text, re.M)
@@ -1335,7 +1335,7 @@ def preflight(
     mapped = False
     if os.path.exists(cfg_path):
         try:
-            mapped = (json.load(open(cfg_path)).get("account_clients", {})
+            mapped = (json.load(open(cfg_path, encoding="utf-8")).get("account_clients", {})
                       .get(identity.account) == identity.client)
         except (ValueError, OSError):
             mapped = False
@@ -1510,7 +1510,7 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
                 for a in collect_thread_attachments(ident, attach_from_thread)
             ]
         result = send(
-            ident, to=to, subject=subject, body_text=Path(body_file).read_text(),
+            ident, to=to, subject=subject, body_text=Path(body_file).read_text(encoding="utf-8"),
             cc=cc, reply_to_message_id=reply_to_message_id,
             attachments=attachments, dry_run=dry_run,
         )
@@ -1670,7 +1670,7 @@ def email_apply_filters(all_agents, repo, agent, account, client, sweep, dry_run
             aj = a.path / "config" / "agent.json"
             if not aj.is_file():
                 continue
-            d = _json.loads(aj.read_text())
+            d = _json.loads(aj.read_text(encoding="utf-8"))
             acct = d.get("email") or d.get("mailbox")
             if acct:
                 targets.append((a.slug, acct, d.get("gog_client") or "canopy"))

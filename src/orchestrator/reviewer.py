@@ -74,7 +74,7 @@ def save_review(reviews_dir: Path, session_id: str, content: str) -> Path:
     """Save an AI review to disk."""
     reviews_dir.mkdir(parents=True, exist_ok=True)
     path = reviews_dir / f"{session_id}.yaml"
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         yaml.dump({"session_id": session_id, "content": content}, f,
                   default_flow_style=False, sort_keys=False)
     return path
@@ -86,7 +86,7 @@ def load_review(reviews_dir: Path, session_id: str) -> str | None:
     if not path.exists():
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return data.get("content") if data else None
     except yaml.YAMLError:

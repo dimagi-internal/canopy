@@ -57,7 +57,7 @@ def _get_plugin_version() -> str:
     if _cached_version is not None:
         return _cached_version
     try:
-        with open(_PLUGINS_FILE) as f:
+        with open(_PLUGINS_FILE, encoding="utf-8") as f:
             data = json.load(f)
         plugins = data.get("plugins", {})
         for key, value in plugins.items():
@@ -88,7 +88,7 @@ def maybe_capture_repo(project_dir: str):
     repo_map = {}
     if REPO_MAP_FILE.exists():
         try:
-            with open(REPO_MAP_FILE) as f:
+            with open(REPO_MAP_FILE, encoding="utf-8") as f:
                 repo_map = json.load(f)
         except Exception:
             repo_map = {}
@@ -115,7 +115,7 @@ def maybe_capture_repo(project_dir: str):
 
     repo_map[project_key] = match.group(1)
     REPO_MAP_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(REPO_MAP_FILE, "w") as f:
+    with open(REPO_MAP_FILE, "w", encoding="utf-8") as f:
         json.dump(repo_map, f, indent=2)
 
 try:
@@ -124,7 +124,7 @@ except ImportError:
     # Fallback: package not installed; write inline so the hook never breaks.
     def append_log_entry(log_file: Path, entry: dict) -> None:
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_file, "a") as f:
+        with open(log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, default=str) + "\n")
 
 
@@ -142,7 +142,7 @@ def _record_hook_error(reason: str, context: dict) -> None:
             "reason": reason,
             **context,
         }
-        with open(HOOK_ERROR_LOG, "a") as f:
+        with open(HOOK_ERROR_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, default=str) + "\n")
     except Exception:
         pass
@@ -160,7 +160,7 @@ def _post_action_to_workbench(skill_name: str, session_id: str, project_dir: str
         _record_hook_error("token_file_missing", {"skill": skill_name})
         return
     try:
-        token = WORKBENCH_TOKEN_FILE.read_text().strip()
+        token = WORKBENCH_TOKEN_FILE.read_text(encoding="utf-8").strip()
     except Exception as exc:
         _record_hook_error("token_read_failed", {"skill": skill_name, "error": str(exc)})
         return
@@ -171,7 +171,7 @@ def _post_action_to_workbench(skill_name: str, session_id: str, project_dir: str
     repo_map = {}
     if REPO_MAP_FILE.exists():
         try:
-            with open(REPO_MAP_FILE) as f:
+            with open(REPO_MAP_FILE, encoding="utf-8") as f:
                 repo_map = json.load(f)
         except Exception as exc:
             _record_hook_error("repo_map_read_failed", {"skill": skill_name, "error": str(exc)})
@@ -232,7 +232,7 @@ def _legacy_capture_registered() -> bool:
     `/canopy:setup` removes the legacy entry, which flips capture to this copy.
     """
     try:
-        with open(Path.home() / ".claude" / "settings.json") as f:
+        with open(Path.home() / ".claude" / "settings.json", encoding="utf-8") as f:
             settings = json.load(f)
         for matcher in settings.get("hooks", {}).get("PostToolUse", []):
             for hook in matcher.get("hooks", []):

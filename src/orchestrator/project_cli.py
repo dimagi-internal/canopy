@@ -118,7 +118,7 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
     )
 
     if prompt_file:
-        prompt = Path(prompt_file).read_text()
+        prompt = Path(prompt_file).read_text(encoding="utf-8")
 
     warnings: list[str] = []
     try:

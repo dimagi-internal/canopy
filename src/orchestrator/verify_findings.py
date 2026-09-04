@@ -58,7 +58,7 @@ def load_proposals(
     if all_pending:
         for path in sorted(PROPOSALS_DIR.glob("*.yaml")):
             try:
-                d = yaml.safe_load(path.read_text())
+                d = yaml.safe_load(path.read_text(encoding="utf-8"))
             except (yaml.YAMLError, OSError):
                 continue
             if d and d.get("status") == "pending":
@@ -71,7 +71,7 @@ def load_proposals(
             continue
         for path in sorted(PROPOSALS_DIR.glob(f"{prefix}*.yaml")):
             try:
-                d = yaml.safe_load(path.read_text())
+                d = yaml.safe_load(path.read_text(encoding="utf-8"))
             except (yaml.YAMLError, OSError):
                 continue
             if d:
@@ -180,7 +180,7 @@ def update_proposal_yaml(proposal: dict, verdict: dict) -> bool:
     if not path.exists():
         return False
     try:
-        d = yaml.safe_load(path.read_text())
+        d = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (yaml.YAMLError, OSError):
         return False
     d["status"] = "obsolete"
@@ -191,7 +191,7 @@ def update_proposal_yaml(proposal: dict, verdict: dict) -> bool:
         "shipped_in_version": verdict.get("shipped_in_version"),
         "evidence": verdict.get("evidence"),
     }
-    path.write_text(yaml.dump(d, default_flow_style=False, sort_keys=False))
+    path.write_text(yaml.dump(d, default_flow_style=False, sort_keys=False), encoding="utf-8")
     return True
 
 

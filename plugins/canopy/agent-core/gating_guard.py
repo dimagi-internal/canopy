@@ -81,7 +81,7 @@ def agent_labels(repo_dir, cfg):
     slug = cfg.get("slug") or os.path.basename(repo_dir.rstrip("/")) or "the agent"
     name = slug.title()
     try:
-        with open(os.path.join(repo_dir, "config", "agent.json")) as fh:
+        with open(os.path.join(repo_dir, "config", "agent.json"), encoding="utf-8") as fh:
             name = json.load(fh).get("name") or name
     except Exception:
         pass
@@ -135,9 +135,9 @@ def baseline_rails(cfg, slug):
     try:
         plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
         if not plugin_dir:
-            reg = json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json")))
+            reg = json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json"), encoding="utf-8"))
             plugin_dir = reg["plugins"]["canopy@canopy"][0]["installPath"]
-        base = json.load(open(os.path.join(plugin_dir, "agent-core", "gating-baseline.json")))
+        base = json.load(open(os.path.join(plugin_dir, "agent-core", "gating-baseline.json"), encoding="utf-8"))
     except Exception:
         return None if channels else []
     rails = [_substituted(rule, slug) for rule in base.get("always", [])]
@@ -242,7 +242,7 @@ def matches(rule, tool_name, subject):
 def run(repo_dir, payload):
     """Evaluate one PreToolUse payload. Returns (exit_code, stdout, stderr)."""
     try:
-        cfg = json.load(open(config_path(repo_dir)))
+        cfg = json.load(open(config_path(repo_dir), encoding="utf-8"))
     except Exception:
         return 0, "", ""          # no/broken config = no extra gating
 

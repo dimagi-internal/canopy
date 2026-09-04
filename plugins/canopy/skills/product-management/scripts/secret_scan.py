@@ -113,7 +113,7 @@ def _read_env_values(env_path: Path) -> list[str]:
     if not env_path.exists():
         return []
     values: list[str] = []
-    for raw in env_path.read_text().splitlines():
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue

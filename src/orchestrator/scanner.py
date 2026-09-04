@@ -12,7 +12,7 @@ def scan_transcript(path: Path) -> dict:
     project_key = path.parent.name
 
     # Count lines (raw, not filtered)
-    line_count = sum(1 for _ in open(path))
+    line_count = sum(1 for _ in open(path, encoding="utf-8"))
 
     # Extract metadata
     user_msgs = 0

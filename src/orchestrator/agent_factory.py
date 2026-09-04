@@ -20,6 +20,7 @@ canopy's own hooks: a PreToolUse hook runs under system python3 which may lack P
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -101,16 +102,50 @@ def create_agent(spec: AgentSpec, target_dir: Path, *, force: bool = False) -> l
             f"send/login; set the real mailbox in config/agent.json before the first turn.",
             file=sys.stderr,
         )
+    # Scaffold ALL-OR-NOTHING. A crash partway through used to leave a half-written repo —
+    # a 0-byte CLAUDE.md and empty dirs, no git init, no rollback — so the retry then hit
+    # "target is not empty" and the operator had to clean up by hand to get back to square
+    # one. We only ever roll back what THIS call created, so `force` into an existing repo
+    # can never delete a file that was already there.
+    pre_existing = target.exists()
     written: list[Path] = []
-    for rel_path, template in _TEMPLATES.items():
-        rel = _render(rel_path, tokens)        # path itself may carry {{AGENT_SLUG}}
-        dest = target / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(_render(template, tokens))
-        if dest.name.endswith(".py") or dest.parent.name == "bin":
-            dest.chmod(0o755)
-        written.append(dest)
+    try:
+        for rel_path, template in _TEMPLATES.items():
+            rel = _render(rel_path, tokens)    # path itself may carry {{AGENT_SLUG}}
+            dest = target / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(_render(template, tokens), encoding="utf-8")
+            if dest.name.endswith(".py") or dest.parent.name == "bin":
+                dest.chmod(0o755)
+            written.append(dest)
+    except Exception:
+        _rollback(target, written, remove_target=not pre_existing)
+        raise
     return written
+
+
+def _rollback(target: Path, written: list[Path], *, remove_target: bool) -> None:
+    """Undo a partial scaffold: drop the files we wrote, then prune the dirs they left behind.
+
+    Best-effort by design — a rollback that raises would mask the original failure, which is
+    the thing the operator actually needs to read.
+    """
+    for p in written:
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
+    if remove_target:
+        shutil.rmtree(target, ignore_errors=True)
+        return
+    # Target pre-existed (force=True): only prune directories we emptied, never the target.
+    for d in sorted({p.parent for p in written}, key=lambda p: len(p.parts), reverse=True):
+        while d != target and d.is_relative_to(target):
+            try:
+                d.rmdir()               # raises if not empty — exactly the guard we want
+            except OSError:
+                break
+            d = d.parent
 
 
 # --------------------------------------------------------------------------------------
@@ -156,7 +191,7 @@ _RICH = ("tool_pattern", "per_statement")   # engine-only rule features
 def _engine():
     plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
     if not plugin_dir:
-        reg = json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json")))
+        reg = json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json"), encoding="utf-8"))
         plugin_dir = reg["plugins"]["canopy@canopy"][0]["installPath"]
     path = os.path.join(plugin_dir, "agent-core", "gating_guard.py")
     if not os.path.isfile(path):
@@ -171,7 +206,7 @@ def _degraded(exc):
     except Exception:
         sys.exit(0)
     try:
-        cfg = json.load(open(CONFIG))
+        cfg = json.load(open(CONFIG, encoding="utf-8"))
     except Exception:
         sys.exit(0)                       # no/broken config = no extra gating (engine parity)
 
@@ -467,7 +502,7 @@ def load(path=None):
     for p in ([path] if path else [GLOBAL_ENV, REPO_ENV]):
         if not p or not os.path.exists(p):
             continue
-        for raw in open(p):
+        for raw in open(p, encoding="utf-8"):
             line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -509,6 +544,16 @@ import os
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# The help text below carries non-ASCII, and a Windows console encodes with cp1252/cp437
+# under strict errors — so printing it would raise UnicodeEncodeError and `--help` would
+# die instead of helping. Degrade unrepresentable characters rather than crashing.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
     # This is a WRAPPER, not a subcommand. Do NOT forward --help to
     # `canopy email send` — its click usage line reads `Usage: canopy email send`,
@@ -706,12 +751,12 @@ def bump_patch(version: str) -> str:
 
 
 def _load(path: Path) -> dict:
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 
 
 def _save(path: Path, data: dict) -> None:
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
         fh.write("\n")
 

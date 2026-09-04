@@ -83,7 +83,7 @@ def install_schedule(
         interval_hours=interval_hours,
         log_dir=log_dir,
     )
-    plist_path.write_text(content)
+    plist_path.write_text(content, encoding="utf-8")
     return plist_path
 
 

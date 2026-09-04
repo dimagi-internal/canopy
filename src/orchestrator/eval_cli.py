@@ -22,7 +22,7 @@ def eval_group():
 def eval_score(rubric_json, pass_at, warn_at):
     """Weighted-score a rubric JSON (no network)."""
     try:
-        dims = json.load(open(rubric_json))
+        dims = json.load(open(rubric_json, encoding="utf-8"))
         click.echo(json.dumps(score_rubric(dims, pass_at=pass_at, warn_at=warn_at)))
     except ValueError as e:
         raise click.ClickException(str(e))
@@ -43,7 +43,7 @@ def eval_record(slug, run_id, step, kind, rubric_json, score, passed, rationale)
     criteria: dict = {}
     try:
         if rubric_json:
-            scored = score_rubric(json.load(open(rubric_json)))
+            scored = score_rubric(json.load(open(rubric_json, encoding="utf-8")))
             kind, score = "judge", scored["overall_score"]
             criteria = {"dimensions": scored["dimensions"], "verdict": scored["verdict"]}
         out = AgentClient({"slug": slug}).record_verdict(

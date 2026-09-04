@@ -1,5 +1,6 @@
 """Tests for the agent factory (canopy create-agent)."""
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -554,3 +555,93 @@ def test_gating_loader_degrades_without_bricking_or_weakening(tmp_path):
     gating.write_text(json.dumps({"channels": ["email"], "deny": []}))
     r = run("git status", broken)
     assert r.returncode == 2 and "/canopy:update" in r.stderr
+
+
+def test_templates_carry_non_ascii_and_round_trip(tmp_path):
+    """The shipped templates contain non-ASCII, and it must survive the write.
+
+    This is the regression that broke `canopy create-agent` on Windows: write_text with no
+    encoding uses cp1252 there, and the CLAUDE.md template's arrow is not representable, so
+    the very first command in section 4 of the onboarding doc died with UnicodeEncodeError
+    and left a 0-byte file behind. Asserting the arrow is still IN the template matters as
+    much as the round trip — if someone "fixes" this by making the templates ASCII, the
+    encoding bug goes quiet without being fixed, and comes back with the next em-dash.
+    """
+    written = create_agent(_spec(), tmp_path / "agent")
+    claude_md = next(p for p in written if p.name == "CLAUDE.md")
+    body = claude_md.read_text(encoding="utf-8")
+    assert "→" in body, "template lost its non-ASCII — the encoding bug is now untested"
+    assert claude_md.stat().st_size > 0
+
+    non_ascii = [p for p in written if any(ord(c) > 127 for c in p.read_text(encoding="utf-8"))]
+    assert len(non_ascii) > 1, "expected several templates to carry non-ASCII"
+
+
+def test_partial_scaffold_is_rolled_back(tmp_path, monkeypatch):
+    """A crash mid-scaffold must leave NOTHING behind, so the retry isn't blocked.
+
+    Before this, a failed run left a half-written repo — some files, a 0-byte one, empty
+    dirs, no git init — and the obvious retry then failed on "target is not empty", which
+    reads as a second, unrelated bug.
+    """
+    from orchestrator import agent_factory
+
+    target = tmp_path / "agent"
+    real_write = Path.write_text
+    calls = {"n": 0}
+
+    def exploding_write(self, data, *a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise UnicodeEncodeError("charmap", "x", 0, 1, "simulated cp1252 failure")
+        return real_write(self, data, *a, **kw)
+
+    monkeypatch.setattr(Path, "write_text", exploding_write)
+    with pytest.raises(UnicodeEncodeError):
+        agent_factory.create_agent(_spec(), target)
+    assert not target.exists(), f"partial scaffold left behind: {list(target.rglob('*'))}"
+
+
+def test_rollback_into_existing_dir_keeps_pre_existing_files(tmp_path, monkeypatch):
+    """Rollback removes only what THIS call wrote — never a file that was already there."""
+    from orchestrator import agent_factory
+
+    target = tmp_path / "agent"
+    target.mkdir()
+    keeper = target / "PRE-EXISTING.md"
+    keeper.write_text("do not delete me", encoding="utf-8")
+
+    real_write = Path.write_text
+    calls = {"n": 0}
+
+    def exploding_write(self, data, *a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise OSError("simulated failure")
+        return real_write(self, data, *a, **kw)
+
+    monkeypatch.setattr(Path, "write_text", exploding_write)
+    with pytest.raises(OSError):
+        agent_factory.create_agent(_spec(), target, force=True)
+    assert target.exists()
+    assert keeper.read_text(encoding="utf-8") == "do not delete me"
+
+
+def test_email_shim_help_survives_a_non_utf8_console(tmp_path):
+    """`<slug>-email --help` must not die on a Windows console codepage.
+
+    The shim prints its own docstring (which carries em-dashes) straight to stdout, and
+    stdout encodes with STRICT errors — so on cp1252/cp437 the help text raised
+    UnicodeEncodeError and the flag that exists to explain the tool killed it instead.
+    (stderr is unaffected: it defaults to backslashreplace. Only stdout is strict, which
+    is why this bites --help and not the warnings.)
+
+    PYTHONIOENCODING=ascii is a stricter stand-in for a Windows console codepage, so this
+    reproduces the failure on any platform.
+    """
+    written = create_agent(_spec(), tmp_path / "agent")
+    shim = next(p for p in written if p.parent.name == "bin" and p.name.endswith("-email"))
+    env = {**os.environ, "PYTHONIOENCODING": "ascii"}
+    r = subprocess.run([sys.executable, str(shim), "--help"], capture_output=True, env=env)
+    assert r.returncode == 0, f"shim --help crashed on an ascii console: {r.stderr.decode()[-400:]}"
+    assert b"canopy email send" in r.stdout

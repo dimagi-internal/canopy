@@ -28,7 +28,7 @@ def save_run(run: dict, runs_dir: Path) -> Path:
     runs_dir.mkdir(parents=True, exist_ok=True)
     ts = run["started"].replace(":", "-").replace("+", "p")
     path = runs_dir / f"run-{ts}.yaml"
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         yaml.dump(run, f, default_flow_style=False, sort_keys=False)
     return path
 
@@ -42,7 +42,7 @@ def load_run(path: Path) -> dict | None:
     with `if run:`.
     """
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             loaded = yaml.safe_load(f)
     except (OSError, yaml.YAMLError) as e:
         print(f"warning: skipping unreadable run log {path}: {e}", file=sys.stderr)

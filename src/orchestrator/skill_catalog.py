@@ -40,7 +40,7 @@ def _read_installed_plugin_versions(
     Returns an empty dict if the file is missing or malformed.
     """
     try:
-        data = json.loads(installed_json.read_text())
+        data = json.loads(installed_json.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     out: dict[str, str] = {}
@@ -60,7 +60,7 @@ def _parse_frontmatter_description(skill_md: Path) -> str:
     Returns "" if the file is missing or has no description.
     """
     try:
-        text = skill_md.read_text()
+        text = skill_md.read_text(encoding="utf-8")
     except OSError:
         return ""
     if not text.startswith("---"):

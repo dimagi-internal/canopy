@@ -48,14 +48,14 @@ def save_corpus_entry(entry: dict, corpus_dir: Path) -> Path:
     domain_dir = corpus_dir / entry["domain"]
     domain_dir.mkdir(parents=True, exist_ok=True)
     path = domain_dir / f"{entry['id']}.yaml"
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         yaml.dump(entry, f, default_flow_style=False, sort_keys=False)
     return path
 
 
 def load_corpus_entry(path: Path) -> dict:
     """Load a corpus entry from a YAML file."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

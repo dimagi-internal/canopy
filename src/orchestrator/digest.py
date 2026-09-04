@@ -65,6 +65,6 @@ def generate_digest(state_dir: Path, write: bool = False) -> str:
 
     if write:
         digest_path = state_dir / "digest.md"
-        digest_path.write_text(content)
+        digest_path.write_text(content, encoding="utf-8")
 
     return content

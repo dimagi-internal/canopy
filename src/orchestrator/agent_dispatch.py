@@ -201,7 +201,7 @@ def local_agent_slug(start: str | Path | None = None) -> str:
         cfg = d / "config" / "gating.json"
         if cfg.is_file():
             try:
-                slug = (json.loads(cfg.read_text()).get("slug") or "").strip()
+                slug = (json.loads(cfg.read_text(encoding="utf-8")).get("slug") or "").strip()
             except (OSError, ValueError):
                 slug = ""
             if slug:
@@ -209,7 +209,7 @@ def local_agent_slug(start: str | Path | None = None) -> str:
         plugin = d / ".claude-plugin" / "plugin.json"
         if plugin.is_file():
             try:
-                return (json.loads(plugin.read_text()).get("name") or "").strip()
+                return (json.loads(plugin.read_text(encoding="utf-8")).get("name") or "").strip()
             except (OSError, ValueError):
                 return ""
     return ""

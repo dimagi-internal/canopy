@@ -125,7 +125,7 @@ def session_sources(config_path: Optional[Path] = None,
     path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if path.is_file():
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             data = {}
         return [_from_config_entry(e) for e in data.get("sources", [])]

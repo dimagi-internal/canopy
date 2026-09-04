@@ -183,13 +183,13 @@ class LocalCursorStore:
         if not p.is_file():
             return empty_cursor(key)
         try:
-            return json.loads(p.read_text()) or empty_cursor(key)
+            return json.loads(p.read_text(encoding="utf-8")) or empty_cursor(key)
         except (OSError, json.JSONDecodeError) as e:
             raise CursorError(f"cursor at {p} is unreadable: {e}") from e
 
     def write(self, key: str, cursor: dict) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / slug_for_key(key)).write_text(json.dumps(cursor, indent=2, sort_keys=True))
+        (self.root / slug_for_key(key)).write_text(json.dumps(cursor, indent=2, sort_keys=True), encoding="utf-8")
 
     def list_keys(self) -> list[str]:
         if not self.root.is_dir():
@@ -244,7 +244,7 @@ class DriveCursorStore:
             out = os.path.join(d, "cursor.json")
             self._gog("drive", "download", fid, "--out", out)
             try:
-                with open(out) as fh:
+                with open(out, encoding="utf-8") as fh:
                     return json.load(fh) or empty_cursor(key)
             except (OSError, json.JSONDecodeError) as e:
                 raise CursorError(f"cursor {key!r} in Drive is unreadable: {e}") from e
@@ -254,7 +254,7 @@ class DriveCursorStore:
         fid = self._find(name)
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, name)
-            with open(out, "w") as fh:
+            with open(out, "w", encoding="utf-8") as fh:
                 json.dump(cursor, fh, indent=2, sort_keys=True)
             if fid:
                 self._gog("drive", "upload", out, "--replace", fid)

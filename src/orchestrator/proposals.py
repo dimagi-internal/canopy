@@ -42,7 +42,7 @@ def save_proposal(proposal: dict, proposals_dir: Path) -> Path:
     """Save a proposal to a YAML file."""
     proposals_dir.mkdir(parents=True, exist_ok=True)
     path = proposals_dir / f"{proposal['id']}.yaml"
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         yaml.dump(proposal, f, default_flow_style=False, sort_keys=False)
     return path
 
@@ -50,7 +50,7 @@ def save_proposal(proposal: dict, proposals_dir: Path) -> Path:
 def load_proposal(path: Path) -> dict | None:
     """Load a proposal from a YAML file. Returns None on parse error."""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f)
     except (yaml.YAMLError, OSError):
         return None
@@ -84,5 +84,5 @@ def update_proposal_status(
     proposal["status"] = status
     if reason:
         proposal["failure_reason"] = reason
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         yaml.dump(proposal, f, default_flow_style=False, sort_keys=False)

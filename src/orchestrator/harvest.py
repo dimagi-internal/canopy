@@ -60,7 +60,7 @@ def user_session_roots(users_root: str = "/Users") -> list[dict]:
 
 def _first_prompt(path: str) -> str:
     try:
-        with open(path, errors="replace") as fh:
+        with open(path, errors="replace", encoding="utf-8") as fh:
             for line in fh:
                 try:
                     e = json.loads(line)
@@ -79,7 +79,7 @@ def human_messages(path: str, limit: int = 14) -> list[str]:
     """The human's typed turns (intent + steering) — the close-read evidence, not tool noise."""
     out = []
     try:
-        with open(path, errors="replace") as fh:
+        with open(path, errors="replace", encoding="utf-8") as fh:
             for line in fh:
                 try:
                     e = json.loads(line)
@@ -107,7 +107,7 @@ def _matches(initiative: str, terms: list[str], project_name: str, path: str) ->
     # else sample the head for any term (cheap; islice tolerates short files)
     import itertools
     try:
-        with open(path, errors="replace") as fh:
+        with open(path, errors="replace", encoding="utf-8") as fh:
             head = "".join(itertools.islice(fh, 60)).lower()
     except OSError:
         return False
