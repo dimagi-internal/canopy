@@ -80,6 +80,38 @@ surface is blocked, run the turn for the surfaces that passed and tell the human
 blocked and how to fix it. Do not abort the whole turn for one blocker.
 
 ## Step 2 — Process inbound, one counterpart at a time
+
+### Step 2.0 — The owed-reply sweep (EVERY turn, BEFORE any early return)
+**Run this before you decide the turn has nothing in it.** New inbound is only half of what a
+turn is responsible for; the other half is **inbox STATE** — threads where someone asked you
+something and you never answered.
+
+```bash
+canopy email owed --repo <your agent repo>      # add --older-than 5 to see only real silences
+```
+
+A thread you owe a reply to **generates no new inbound by definition** — the counterpart is
+waiting on *you*. So it is invisible to an unread scan, invisible to the poller that triggers
+your turns, and invisible to your board (the asymmetry is total: *you asked them and they went
+quiet* leaves a parked task; *they asked you and you went quiet* leaves no trace anywhere).
+**A quiet inbox is exactly when this matters most**, which is why it runs before, not after,
+any "inbox clear" and never gates on unread mail.
+
+Report what it finds in your closeout even when it finds nothing — an absence someone can see
+you measured is worth something; an absence nobody instrumented is worth nothing.
+
+**Finding a long silence is not authorization to break it.** Draft the reply and take it
+through your normal Step 2 approval gate like any other outbound. In manual mode it parks for
+a human; there is no "it's been 42 days, just send it" exception.
+
+*(Origin, 2026-09-04: ACE went **42 days** without replying to a partner who had answered all
+three of its scoping questions and attached the file it asked for; the design he was waiting on
+had been finished a week earlier and simply sat there. ACE's §1 said "if no unread, report
+'inbox clear' and stop" — 95 lines above the §4 that would have caught it — so the sweep it had
+written could never run. Fixing the stop was not enough for anyone else: echo, eva and hal had
+no sweep at all to be short-circuited past, and neither did this document. dimagi-internal/ace#1931,
+ace PR #1932.)*
+
 **Scope.** If this turn was invoked with a specific item — `--thread <gmail-thread-id>` or
 `--slack <channel>/<ts>` — that ref IS your single inbound item: go **straight to it**, skip the
 inbox scan (the harness runner passes the ref because it already resolved it — don't waste a turn

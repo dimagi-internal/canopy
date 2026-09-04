@@ -36,6 +36,7 @@ acting as another agent's MAILBOX, which is governed by --account, not the clien
 """
 from __future__ import annotations
 
+import datetime as dt
 import html
 import json
 import os
@@ -1308,6 +1309,146 @@ def collect_thread_attachments(
     return out
 
 
+# --------------------------------------------------------------------------------------
+# the owed-reply sweep — threads where the ball is with US
+# --------------------------------------------------------------------------------------
+#
+# A turn driven by NEW INBOUND cannot see the failure that actually costs a relationship:
+# a thread where someone asked us something and we never answered. Such a thread produces
+# no new mail by definition — the counterpart is waiting on us — so the quieter the inbox,
+# the more certain the miss. It is inbox STATE, not an inbox EVENT, and it needs its own
+# query.
+#
+# Measured cost: ACE went 42 days without replying to a partner who had answered all three
+# of its scoping questions and attached the file it asked for. The deliverable he was
+# waiting on had been finished for a week and simply sat there. Nobody noticed, because
+# nothing in a turn ever looked (dimagi-internal/ace#1931). ACE fixed the reachability of
+# its own aging section; every other agent had no such section to reach, and neither did
+# agent-core/turn.md. So the sweep lives here, as a fleet capability, and turn.md Step 2
+# mandates it before any early return.
+
+SEARCH_TIMEOUT = 90  # seconds — a hung gog search must not hang the whole turn
+OWED_DEFAULT_DAYS = 90
+OWED_DEFAULT_LIMIT = 200
+
+
+def search_threads(
+    identity: EmailIdentity,
+    query: str,
+    *,
+    limit: int = OWED_DEFAULT_LIMIT,
+    runner=subprocess.run,
+) -> list[dict]:
+    """Run a Gmail search as the agent → the thread rows gog returns, capped at `limit`.
+
+    `--all` because Gmail paginates at 50 and a first-page-only sweep is a sweep with a
+    silent horizon — old human threads hide behind newer noise exactly the way the
+    counterpart we owe hides behind everything.
+
+    NOTE on the row shape: gog's `from` is the thread's FIRST sender and `date` is its
+    LAST message's date. Neither answers "who spoke last", which is the only question
+    this sweep asks — hence the per-thread read in `owed_replies`.
+    """
+    cmd = ["gog", "gmail", "search", query, "--account", identity.account,
+           "--client", identity.client, "--json", "--all", "--max", "100"]
+    try:
+        r = runner(cmd, capture_output=True, text=True, timeout=SEARCH_TIMEOUT)
+    except FileNotFoundError:
+        raise AgentEmailError("gog CLI not found on PATH (brew install steipete/tap/gogcli)")
+    except subprocess.TimeoutExpired:
+        raise AgentEmailError(f"search: gog timed out after {SEARCH_TIMEOUT}s on {query!r}")
+    if r.returncode != 0:
+        raise AgentEmailError(
+            f"search: gog failed for {identity.account}: {(r.stderr or '').strip()[:200]}"
+        )
+    try:
+        data = json.loads(r.stdout)
+    except ValueError:
+        raise AgentEmailError(f"search: unparseable gog search output for {query!r}")
+    return (data.get("threads") or [])[:limit]
+
+
+def _is_self(addr: str, account: str) -> bool:
+    """Is this From: header us? Matched on the ADDRESS inside the display name —
+    `Echo <echo@dimagi-ai.com>` is us and a raw string compare says otherwise."""
+    from email.utils import getaddresses
+    me = account.lower()
+    return any(e.lower() == me for _, e in getaddresses([addr or ""]))
+
+
+def _age_days(date_header: str, now: "dt.datetime") -> int | None:
+    from email.utils import parsedate_to_datetime
+    try:
+        when = parsedate_to_datetime(date_header)
+    except (TypeError, ValueError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    return max(0, (now - when).days)
+
+
+def owed_replies(
+    identity: EmailIdentity,
+    *,
+    days: int = OWED_DEFAULT_DAYS,
+    limit: int = OWED_DEFAULT_LIMIT,
+    include_automated: bool = False,
+    now: "dt.datetime | None" = None,
+    runner=subprocess.run,
+    reader=None,
+) -> list[dict]:
+    """Threads in the agent's inbox whose LAST message is not ours — the ball is with us.
+
+    Deliberately does NOT filter on `is:unread`. That filter finds exactly the threads
+    this sweep is not for and none of the ones it is: an owed reply is usually already
+    read — it went unanswered *after* we read it — and it generates no new mail while it
+    waits. Filtering on unread is how the 42-day silence stayed invisible.
+
+    Returns oldest-silence-first:
+      [{thread_id, subject, last_from, last_date, age_days, message_count, ever_replied}]
+
+    `ever_replied` False means we have never once written back to this counterpart, which
+    is worse than a late reply and reads differently to whoever triages the result.
+
+    One unreadable thread is skipped, not fatal: a sweep that dies on thread 3 of 40
+    silently hides threads 4-40 — the same blindness it exists to remove.
+    """
+    now = now or dt.datetime.now(dt.timezone.utc)
+    read = reader or read_thread
+    query = f"in:inbox newer_than:{days}d"
+    owed = []
+    for row in search_threads(identity, query, limit=limit, runner=runner):
+        tid = row.get("id")
+        if not tid:
+            continue
+        try:
+            msgs = read(identity, tid, runner=runner).get("messages") or []
+        except Exception:
+            continue  # one bad thread must not end the sweep
+        if not msgs:
+            continue
+        last = msgs[-1]
+        if _is_self(last.get("from", ""), identity.account):
+            continue  # the ball is with them
+        if last.get("is_automated") and not include_automated:
+            continue  # nobody waits on a reply to a share notification
+        owed.append({
+            "thread_id": tid,
+            # the thread subject (gog's row) over the last message's, which carries
+            # a "Re:" chain and reads worse in a report
+            "subject": row.get("subject") or last.get("subject", ""),
+            "last_from": last.get("from", ""),
+            "last_date": last.get("date", ""),
+            "age_days": _age_days(last.get("date", ""), now),
+            "message_count": len(msgs),
+            "ever_replied": any(_is_self(m.get("from", ""), identity.account) for m in msgs),
+        })
+    owed.sort(key=lambda o: (o["age_days"] is None, -(o["age_days"] or 0)))
+    return owed
+
+
 def preflight(
     identity: EmailIdentity,
     *,
@@ -1608,6 +1749,55 @@ def email_archive(repo, agent, account, client, thread_ids):
             click.echo(f"{res['thread_id']} -> ERROR {res['error']}")
     if failed:
         sys.exit(1)
+
+
+@email_group.command("owed")
+@_with_identity_options
+@click.option("--days", default=OWED_DEFAULT_DAYS, show_default=True,
+              help="How far back to sweep.")
+@click.option("--limit", default=OWED_DEFAULT_LIMIT, show_default=True,
+              help="Cap on threads inspected.")
+@click.option("--older-than", default=0, show_default=True,
+              help="Only report silences at least this many days old.")
+@click.option("--include-automated", is_flag=True,
+              help="Also report threads whose last message is machine-generated.")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a table.")
+def email_owed(repo, agent, account, client, days, limit, older_than,
+               include_automated, as_json):
+    """Threads where the BALL IS WITH US — their last message, no reply from us.
+
+    Run this EVERY turn, BEFORE any "inbox clear" early return. A thread we owe a reply
+    to generates no new inbound by definition, so a turn driven by unread mail can never
+    surface it, and a quiet inbox is exactly when it matters most (ace#1931: 42 days).
+
+    Read-only. Finding a long silence is not authorization to break it — draft the reply
+    and take it through your normal approval gate.
+    """
+    try:
+        ident = _identity_from_opts(repo, agent, account, client)
+        owed = owed_replies(ident, days=days, limit=limit,
+                            include_automated=include_automated)
+    except AgentEmailError as e:
+        raise click.ClickException(str(e))
+    if older_than:
+        owed = [o for o in owed if (o["age_days"] or 0) >= older_than]
+    if as_json:
+        click.echo(json.dumps({"account": ident.account, "days": days, "owed": owed},
+                              indent=2))
+        return
+    if not owed:
+        click.echo(f"No owed replies in the last {days}d for {ident.account} "
+                   "— every thread's last word is ours.")
+        return
+    click.echo(f"{len(owed)} thread(s) waiting on {ident.account}:\n")
+    for o in owed:
+        age = "?" if o["age_days"] is None else f"{o['age_days']}d"
+        never = "  NEVER REPLIED" if not o["ever_replied"] else ""
+        click.echo(f"  {age:>5}  {o['thread_id']}  {o['last_from'][:40]:<40} "
+                   f"{o['subject'][:50]}{never}")
+    click.echo("\nRead one: canopy email read <threadId> --repo <agent repo>")
+    click.echo("Draft the reply and take it through your approval gate — a long "
+               "silence is not a licence to send unreviewed.")
 
 
 @email_group.command("read")
