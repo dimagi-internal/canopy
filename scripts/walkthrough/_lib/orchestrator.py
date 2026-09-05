@@ -249,9 +249,11 @@ _VISUAL_CAPTURE_JS = r"""
 """
 
 
+from urllib.parse import urlparse
+
 from .config import RecorderConfig, apply_scene_pace
 from .recorder import execute_action
-from .results import ActionResult, RunReport
+from .results import ActionResult, RunReport, SessionExpiredError
 from .urls import normalize_url as _normalize_url
 
 # Late-binding ``${var}`` resolution lives in the neutral narrative substrate
@@ -296,6 +298,26 @@ def _scene_has_effecting_action(scene: dict) -> bool:
         if kind in _EFFECTING_ACTION_KINDS:
             return True
     return False
+
+
+# Path segments that mean "you are being asked to sign in". Matched per-segment
+# (not substring) so a legitimate page like /docs/login-guide or /blog/signing
+# is never mistaken for an auth bounce.
+_AUTH_PATH_SEGMENTS = frozenset(
+    {"login", "log-in", "signin", "sign-in", "sso", "authorize", "authenticate"}
+)
+
+
+def _looks_like_auth_url(url: str) -> bool:
+    """True when ``url``'s PATH names a sign-in / consent page."""
+    if not url:
+        return False
+    try:
+        segments = [seg for seg in urlparse(url).path.lower().split("/") if seg]
+    except Exception:
+        return False
+    return any(seg in _AUTH_PATH_SEGMENTS for seg in segments)
+
 
 
 class Recorder:
@@ -739,15 +761,41 @@ class Recorder:
             # appears — that's the real settle.
             print("  · using wait_until=commit (first action is wait_for; navigation gate deferred to it)")
             page.goto(url, wait_until="commit", timeout=self.config.goto_timeout_ms)
+            self._assert_not_bounced_to_auth(page, url)
             self._crossfade(page, prev_frame)
             return
         page.goto(url, wait_until="domcontentloaded", timeout=self.config.goto_timeout_ms)
+        self._assert_not_bounced_to_auth(page, url)
         self._crossfade(page, prev_frame)
         try:
             page.wait_for_load_state("load", timeout=self.config.load_settle_timeout_ms)
         except Exception:
             pass
         page.wait_for_timeout(self.config.goto_settle_ms)
+
+    def _assert_not_bounced_to_auth(self, page: Page, requested_url: str) -> None:
+        """Fail immediately when a navigation lands on a sign-in page.
+
+        An expired session does not announce itself: the app 302s to its
+        login page, the recorder films that instead, and the run dies several
+        scenes later on a selector that "isn't there" — after the whole
+        capture has been spent. The redirect is the honest signal, and it is
+        available here, at the one place every scene navigates through.
+
+        Only fires when the spec did NOT ask for an auth page, so a
+        walkthrough that deliberately records a login flow is unaffected.
+        """
+        try:
+            landed = page.url
+        except Exception:  # torn-down page — never block the nav on this
+            return
+        if _looks_like_auth_url(requested_url) or not _looks_like_auth_url(landed):
+            return
+        raise SessionExpiredError(
+            f"navigation was redirected to a sign-in page — the recorder's session "
+            f"has expired.\n  requested: {requested_url}\n  landed on: {landed}\n"
+            f"Re-establish the session and re-run (for labs: /ace:labs-login)."
+        )
 
     def _capture_frame(self, page: Page) -> str | None:
         """Grab the current viewport as a base64 PNG data URI for the crossfade.
