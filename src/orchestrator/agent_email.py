@@ -1470,8 +1470,29 @@ def dangling_threads(
     now = now or dt.datetime.now(dt.timezone.utc)
     read = reader or read_thread
     query = f"in:inbox newer_than:{days}d"
+    rows = search_threads(identity, query, limit=limit, runner=runner)
+
+    # Thread-level unread, asked as its OWN query rather than read off a search row.
+    # A row's `labels` is a PER-MESSAGE projection — gog returns one row per thread
+    # carrying the originating message's labels — so a thread whose NEWEST message is
+    # unread comes back WITHOUT UNREAD. (Observed on the same row: no INBOX either,
+    # though `in:inbox` is what matched it. The list is not the thread's state.)
+    # Trusting it banded a live ask as "handled" and told the agent to archive an
+    # unanswered request sent three hours earlier — precisely the miss this sweep
+    # exists to catch, delivered under a "do NOT answer these late" banner.
+    # The enumeration query above deliberately stays unfiltered; this second query
+    # only asks which of those threads nobody has looked at.
+    # dimagi-internal/canopy#608.
+    unread_ids = {
+        r.get("id")
+        for r in search_threads(
+            identity, f"in:inbox is:unread newer_than:{days}d", limit=limit, runner=runner
+        )
+        if r.get("id")
+    }
+
     owed = []
-    for row in search_threads(identity, query, limit=limit, runner=runner):
+    for row in rows:
         tid = row.get("id")
         if not tid:
             continue
@@ -1486,7 +1507,7 @@ def dangling_threads(
             continue  # the ball is with them
         if last.get("is_automated") and not include_automated:
             continue  # nobody waits on a reply to a share notification
-        unread = "UNREAD" in (row.get("labels") or [])
+        unread = tid in unread_ids
         age = _age_days(last.get("date", ""), now)
         owed.append({
             "thread_id": tid,
@@ -1498,8 +1519,9 @@ def dangling_threads(
             "age_days": age,
             "message_count": len(msgs),
             "ever_replied": any(_is_self(m.get("from", ""), identity.account) for m in msgs),
-            # Free from the search row — no extra call. UNREAD is the proxy for "no turn
-            # has disposed of this yet"; anything else means a turn looked and closed out.
+            # From the thread-level `is:unread` query above, not the row's labels.
+            # UNREAD is the proxy for "no turn has disposed of this yet"; anything else
+            # means a turn looked and closed out.
             "unread": unread,
             "disposition": "respond" if unread else "handled",
             # Only meaningful on the unread band: old AND unlooked-at.
