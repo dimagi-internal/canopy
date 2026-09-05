@@ -56,6 +56,7 @@ from scripts.ddd.identity import slugify
 from scripts.ddd.schemas.models import UnifiedSpec, Verdict
 from scripts.ddd.spec_io import load_spec
 from scripts.ddd.validate import validate
+from scripts.narrative.models import scene_narration_text
 from scripts.narrative.substitution import (
     ordered_placeholder_violations,
     scene_capture_vars,
@@ -430,7 +431,8 @@ def spec_qa(
                 has_effecting = bool(action_kinds & _EFFECTING_ACTION_KINDS)
                 if not has_effecting:
                     narrated = _narrated_effecting_verb(
-                        f"{scene.narrative or ''} {scene.concept_claim or ''}"
+                        f"{scene_narration_text(scene.narrative)} "
+                        f"{scene.concept_claim or ''}"
                     )
                     if narrated:
                         non_effecting = ", ".join(sorted(k for k in action_kinds if k))

@@ -522,6 +522,21 @@ ACTION_CLASSES: tuple[type[_ActionBase], ...] = (
 )
 
 
+
+def scene_narration_text(narrative: str | list[str] | None) -> str:
+    """One prose string for a scene's narration, whichever shape it is in.
+
+    ``Scene.narrative`` may be a single string or a list of beats. Everything
+    that wants to READ the narration as prose (QA regexes, word counts, review
+    surfaces) wants them joined; only the emitter cares about the split.
+    """
+    if not narrative:
+        return ""
+    if isinstance(narrative, list):
+        return " ".join(str(part).strip() for part in narrative if str(part).strip())
+    return str(narrative).strip()
+
+
 class Scene(BaseModel):
     id: str = ""
     """Stable, permanent identity for this scene.
@@ -620,13 +635,29 @@ class Scene(BaseModel):
     ``scripts.walkthrough._lib.config.apply_scene_pace``; teach scenes record
     byte-for-byte as before this field existed."""
 
-    narrative: str = ""
+    narrative: str | list[str] = ""
     """Canonical per-scene narrative text — the story beat the reviewer reads.
     May be one OR MORE sentences (per gap-flexible-scene-length). When set, it
     takes precedence over sentence-split-of-spec.narrative-by-position for both
     the review UI and the apply-edits writeback. When empty (legacy / first
     edit not yet made), the renderer falls back to splitting ``UnifiedSpec.narrative``
-    by sentence and taking the i-th sentence."""
+    by sentence and taking the i-th sentence.
+
+    A LIST splits this scene into that many BEATS — one scene can legitimately
+    demonstrate more than one spoken sentence's worth of work (a long AI wait, a
+    form filled then submitted), and a single beat then hits the action↔word
+    warp's rate cap no matter how the sentence is paced.
+    ``scripts.ddd.snippets.emit_explainer_from_capture`` has consumed a list
+    since beats existed, and its own pacing lint recommends one — but this field
+    was typed ``str``, so any spec carrying a list failed validation with
+    ``string_type`` before it ever reached the emitter. The advice was
+    unreachable.
+
+    Note the ownership boundary: ``narrative`` is a LOCK-owned field
+    (``spec_io._LOCK_SCENE_FIELDS``), so for a narrative whose story lives on
+    canopy-web the list has to come from there. A list is usable today for
+    locally-owned narration; use :func:`scene_narration_text` wherever prose is
+    wanted, so both shapes read the same."""
 
 
 class SetupBlock(BaseModel):
