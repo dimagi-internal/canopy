@@ -87,7 +87,7 @@ turn is responsible for; the other half is **inbox STATE** — threads where som
 something and you never answered.
 
 ```bash
-canopy email owed --repo <your agent repo>      # add --older-than 5 to see only real silences
+canopy email dangling --repo <your agent repo>
 ```
 
 A thread you owe a reply to **generates no new inbound by definition** — the counterpart is
@@ -100,27 +100,39 @@ any "inbox clear" and never gates on unread mail.
 Report what it finds in your closeout even when it finds nothing — an absence someone can see
 you measured is worth something; an absence nobody instrumented is worth nothing.
 
-**Finding one is NOT a verdict, and the default verdict is not "reply".** The command bands its
-hits by age, and the old band is the common one:
+**Finding one is NOT a verdict.** What decides is whether a turn ever **disposed of** the
+thread — not how old it is:
 
-| Band | Age | What it means | What you do |
+| Band | Signal | What it means | What you do |
 |---|---|---|---|
-| `respond` | ≤ 14d | The ball plausibly IS with you | Triage it as a normal Step 2 item |
-| `prune` | older | **Debris**, not a debt | **Archive it. Do not answer it late.** |
+| **NEEDS ATTENTION** | unread | Nothing concluded on it | Triage as a normal Step 2 item |
+| **HANDLED** | read | A turn looked and closed out | **Archive it. Do not answer it late.** |
 
-An old dangling thread is almost never an unhandled request. Far more often it was handled
-*badly* — the answer went out, it wasn't good enough, and a human ended the conversation — or
-it resolved somewhere else entirely. **Answering it now is an active harm, not a neutral
-courtesy:** it reopens something someone deliberately closed, spends their attention re-reading
-a thread they filed weeks ago, and advertises that you were asleep. Archive it (`canopy email
-archive` — reversible, own mailbox only) and name the count in your closeout.
+**A turn is synchronous: mail arrives, you fire, the session concludes.** So a thread you *read*
+and closed out without replying is a thread you **decided** about — the exchange finished, it
+moved to Slack or a call, or the answer wasn't good enough and a human ended it. That is the
+common case, and answering it now is an **active harm, not a neutral courtesy**: it reopens what
+someone deliberately closed and spends their attention re-reading a thread they filed weeks ago.
+Archive it (`canopy email archive` — reversible, own mailbox only) and name the count in your
+closeout.
 
-Override only when you *know* the underlying work is still live — and then it is the **work**
-you restart, on its own terms and its own channel, not this thread you resurrect.
+The failure this sweep exists to catch is the **opposite** one: a thread **nothing ever looked
+at**. That is the implicit failure, it leaves no trace anywhere else, and it is why the sweep
+runs on a quiet inbox.
 
-**In the `respond` band, a silence is still not authorization to send.** Take the draft through
-your normal Step 2 approval gate. There is no "it's been sitting a while, just send it"
-exception; urgency is exactly what talks an agent past a gate.
+**Read-state is a proxy, and you should know its limits.** A human reading the mailbox, or a bulk
+mark-all-read, mutes a genuine miss. It is still the best signal available — agents keep no
+per-thread turn record — and it beats age outright, which was tried here first and got the right
+answer for the wrong reason.
+
+An unread thread past `--stale-after` is flagged **STALE**: nobody looked for a long time *and*
+the answer is probably moot. Usually close it rather than answer it cold.
+
+Override HANDLED only when you *know* the underlying work is still live — and then it is the
+**work** you restart, on its own channel, not this thread you resurrect.
+
+**In the NEEDS ATTENTION band, a silence is still not authorization to send.** Take the draft
+through your normal Step 2 approval gate; urgency is exactly what talks an agent past a gate.
 
 *(Origin, 2026-09-04: ACE went **42 days** without replying to a partner who had answered all
 three of its scoping questions and attached the file it asked for; the design he was waiting on
@@ -130,13 +142,17 @@ written could never run. Fixing the stop was not enough for anyone else: echo, e
 no sweep at all to be short-circuited past, and neither did this document. dimagi-internal/ace#1931,
 ace PR #1932.)*
 
-*(And the banding above, same day, from this sweep's very first live run: it surfaced a 79-day
-thread on echo and confidently proposed a late apology. Jonathan: "Old events like this weren't
-not handled. They were not good enough in terms of what you had written in response. And I
-killed the thread. So evidence of a dangling thread this old does not mean we should then go
-respond to it. It means we should make sure it's pruned." The sweep had the detection right and
-the verdict exactly wrong — worth fixing harder than the detection was, because a sweep that
-manufactures apologies is one an agent learns to stop running.)*
+*(And the banding above, from this sweep's very first live run: it surfaced a 79-day thread on
+echo and confidently proposed a late apology. Jonathan, 2026-09-04: "Old events like this
+weren't not handled. They were not good enough in terms of what you had written in response.
+And I killed the thread. So evidence of a dangling thread this old does not mean we should then
+go respond to it. It means we should make sure it's pruned." The first fix banded on AGE, which
+he then corrected again, 2026-09-05: "The issue is less the response window and more whether the
+thread was handled... The primary mode of operating is something comes in, you fire right away,
+and if we don't conclude that session with a response, we didn't intend to come back to it
+(sometimes I forget but this is less common than implicit failure)." All three threads that first
+run surfaced were already READ — handled-ness clears them with no threshold at all, while age
+needed one tuned to get the same answer for the wrong reason.)*
 
 **Scope.** If this turn was invoked with a specific item — `--thread <gmail-thread-id>` or
 `--slack <channel>/<ts>` — that ref IS your single inbound item: go **straight to it**, skip the
