@@ -60,15 +60,28 @@ def _msg(sender: str, date: str, *, automated: bool = False, subject: str = "A q
     }
 
 
-def _searcher(threads: list[dict]):
-    """A fake `gog gmail search` that records the query it was handed."""
+def _searcher(threads: list[dict], unread_ids: "set[str] | None" = None):
+    """A fake `gog gmail search` that records the query it was handed.
+
+    It answers the sweep's TWO queries differently, the way Gmail does: the
+    enumeration query returns everything, and an `is:unread` query returns only
+    the threads in `unread_ids` (default: none — a thread is read unless a test
+    says otherwise).
+
+    A fake that returned one canned list for every query is what let canopy#608
+    through: it made the row `labels` look like a usable proxy for thread state,
+    and the real `gog` never populates them that way.
+    """
     calls: list[list[str]] = []
+    unread = unread_ids or set()
 
     def runner(cmd, **kw):
         calls.append(cmd)
+        rows = ([r for r in threads if r.get("id") in unread]
+                if "is:unread" in " ".join(cmd) else threads)
         return type("R", (), {
             "returncode": 0,
-            "stdout": json.dumps({"nextPageToken": "", "threads": threads}),
+            "stdout": json.dumps({"nextPageToken": "", "threads": rows}),
             "stderr": "",
         })()
 
@@ -123,15 +136,86 @@ def test_our_address_is_matched_inside_a_display_name():
 # the invariant that makes it work at all
 # --------------------------------------------------------------------------------------
 
-def test_the_sweep_never_filters_on_unread():
+def test_the_ENUMERATION_query_never_filters_on_unread():
     """THE point. An owed-reply thread produces no new inbound and is usually already
-    read — it went unanswered *after* we read it. A query carrying `is:unread` finds
-    exactly the threads this sweep is not for, and none of the ones it is."""
+    read — it went unanswered *after* we read it. An enumeration query carrying
+    `is:unread` finds exactly the threads this sweep is not for, and none of the ones
+    it is.
+
+    Scoped to the FIRST call deliberately: the sweep does ask `is:unread` separately,
+    to learn which of the enumerated threads nobody has looked at (canopy#608). That
+    is banding, not enumeration, and the distinction is the whole design — so the
+    assertion pins the enumeration call rather than the absence of the string."""
     runner = _searcher([])
     dangling_threads(_identity(), now=NOW, runner=runner, reader=_reader({}))
     query = " ".join(runner.calls[0])
     assert "is:unread" not in query
     assert "in:inbox" in query
+
+
+def test_unread_comes_from_the_thread_level_query_not_the_row_labels():
+    """canopy#608 — the bug that told an agent to archive a live ask.
+
+    gog's search row is a PER-MESSAGE projection: one row per thread carrying the
+    ORIGINATING message's labels. A long thread whose newest message is unread comes
+    back with no UNREAD label at all (measured on a real mailbox: the row also lacked
+    INBOX, on the very query `in:inbox` that returned it).
+
+    Reading `unread` off those labels banded a message sent three hours earlier — a
+    direct, unanswered request — as `handled`, under a banner reading "Do NOT answer
+    these late. Archive them." That is the implicit-miss failure this whole sweep was
+    built to catch, produced by the sweep itself.
+
+    So the row below carries NO labels, as the real one does, while the thread IS
+    unread. Old code: disposition == "handled". Fixed: "respond".
+    """
+    row = {"id": "t1", "date": "2026-09-04 09:00", "messageCount": 11,
+           "from": "Jonathan <jjackson@dimagi.com>", "subject": "KMC metrics",
+           "labels": ["CATEGORY_PERSONAL"]}
+    runner = _searcher([row], unread_ids={"t1"})
+    reader = _reader({"t1": [
+        _msg(ME, "Wed, 26 Aug 2026 09:00:00 +0000"),
+        _msg("Jonathan <jjackson@dimagi.com>", "Fri, 04 Sep 2026 09:00:00 +0000"),
+    ]})
+
+    owed = dangling_threads(_identity(), now=NOW, runner=runner, reader=reader)
+
+    assert [o["thread_id"] for o in owed] == ["t1"]
+    assert owed[0]["unread"] is True
+    assert owed[0]["disposition"] == "respond", (
+        "a thread the unread query returns must band as respond even though its "
+        "search row carries no UNREAD label — that label list is per-message"
+    )
+
+
+def test_a_read_thread_still_bands_handled():
+    """The other side of the same discriminator, so the fix cannot pass by calling
+    everything unread. Same row shape; this thread is simply not in the unread set."""
+    row = {"id": "t1", "date": "2026-07-24 09:00", "messageCount": 2,
+           "from": "Enock <enock@partner.org>", "subject": "Design questions",
+           "labels": ["CATEGORY_PERSONAL"]}
+    runner = _searcher([row], unread_ids=set())
+    reader = _reader({"t1": [
+        _msg(ME, "Mon, 20 Jul 2026 09:00:00 +0000"),
+        _msg("Enock <enock@partner.org>", "Fri, 24 Jul 2026 09:00:00 +0000"),
+    ]})
+
+    owed = dangling_threads(_identity(), now=NOW, runner=runner, reader=reader)
+
+    assert [o["thread_id"] for o in owed] == ["t1"]
+    assert owed[0]["unread"] is False
+    assert owed[0]["disposition"] == "handled"
+
+
+def test_the_unread_probe_is_scoped_to_the_same_window_and_mailbox():
+    """A probe over a different window would misband the edges of the enumeration."""
+    runner = _searcher([], unread_ids=set())
+    dangling_threads(_identity(), days=30, now=NOW, runner=runner, reader=_reader({}))
+    probes = [c for c in runner.calls if "is:unread" in " ".join(c)]
+    assert len(probes) == 1, "exactly one unread probe per sweep, not one per thread"
+    probe = probes[0]
+    assert "newer_than:30d" in " ".join(probe)
+    assert probe[probe.index("--account") + 1] == ME
 
 
 def test_it_reads_as_the_agents_own_mailbox():
@@ -312,9 +396,18 @@ def test_turn_md_says_handled_threads_are_not_answered_late():
 # age needed one tuned to 14d to reach the same answer for the wrong reason.
 
 def _row(*, unread: bool, date: str = "Wed, 17 Jun 2026 12:00:00 +0000", **kw):
-    labels = ["INBOX"] + (["UNREAD"] if unread else [])
-    runner = _searcher([{"id": "t", "date": "2026-06-17 12:00", "messageCount": 1,
-                         "from": "x", "subject": "s", "labels": labels}])
+    """One thread, banded. `unread` drives the thread-level `is:unread` query.
+
+    The row's own `labels` are pinned to the shape a REAL gog row has — a category
+    and nothing else, no UNREAD and no INBOX even on an inbox thread — so every
+    banding assertion below doubles as a guard on canopy#608: read the labels
+    instead of the query and all of these flip.
+    """
+    runner = _searcher(
+        [{"id": "t", "date": "2026-06-17 12:00", "messageCount": 1,
+          "from": "x", "subject": "s", "labels": ["CATEGORY_PERSONAL"]}],
+        unread_ids={"t"} if unread else set(),
+    )
     reader = _reader({"t": [_msg("them@partner.org", date)]})
     return dangling_threads(_identity(), now=NOW, runner=runner, reader=reader, **kw)[0]
 
@@ -358,21 +451,38 @@ def test_stale_never_applies_to_a_handled_thread():
     assert _row(unread=False)["stale"] is False
 
 
-def test_the_unread_flag_is_read_from_the_search_row_not_a_second_call():
-    """Handled-ness must be free. A per-thread extra fetch would make the sweep expensive
-    enough to skip, and a sweep that gets skipped catches nothing."""
-    runner = _searcher([{"id": "t", "date": "2026-06-17 12:00", "messageCount": 1,
-                         "from": "x", "subject": "s", "labels": ["INBOX", "UNREAD"]}])
-    reader = _reader({"t": [_msg("them@partner.org", "Wed, 17 Jun 2026 12:00:00 +0000")]})
-    assert dangling_threads(_identity(), now=NOW, runner=runner, reader=reader)[0]["unread"]
-    assert len(runner.calls) == 1
+def test_banding_costs_one_query_for_the_whole_sweep_not_one_per_thread():
+    """Handled-ness must stay cheap. A per-thread fetch would make the sweep expensive
+    enough to skip, and a sweep that gets skipped catches nothing.
+
+    This replaces an assertion that banding came off the search ROW at zero cost. It
+    did — and it was wrong (canopy#608); the row's labels are per-message and cannot
+    see thread state. Correctness is worth one query. What must NOT return is a cost
+    that scales with the inbox, so the bound is asserted over THREE threads: two
+    searches total, however many threads are enumerated.
+    """
+    threads = [{"id": f"t{i}", "date": "2026-06-17 12:00", "messageCount": 1,
+                "from": "x", "subject": "s"} for i in range(3)]
+    runner = _searcher(threads, unread_ids={"t0"})
+    reader = _reader({f"t{i}": [_msg("them@partner.org", "Wed, 17 Jun 2026 12:00:00 +0000")]
+                      for i in range(3)})
+
+    owed = dangling_threads(_identity(), now=NOW, runner=runner, reader=reader)
+
+    assert {o["thread_id"]: o["disposition"] for o in owed} == {
+        "t0": "respond", "t1": "handled", "t2": "handled"}
+    assert len(runner.calls) == 2, "enumeration + one unread probe, regardless of thread count"
 
 
-def test_a_missing_labels_key_reads_as_handled_not_as_a_crash():
+def test_a_thread_the_unread_probe_does_not_return_reads_as_handled():
     """Absent evidence of a miss is not evidence of a miss. Defaulting the other way
-    would manufacture a NEEDS ATTENTION item out of a gog response shape change."""
+    would manufacture a NEEDS ATTENTION item out of a gog response shape change.
+
+    Same conservative default as before; it now hangs off the unread probe rather
+    than off a `labels` key, which is the thing that could not be trusted.
+    """
     runner = _searcher([{"id": "t", "date": "2026-06-17 12:00", "messageCount": 1,
-                         "from": "x", "subject": "s"}])
+                         "from": "x", "subject": "s"}], unread_ids=set())
     reader = _reader({"t": [_msg("them@partner.org", "Wed, 17 Jun 2026 12:00:00 +0000")]})
     assert dangling_threads(_identity(), now=NOW, runner=runner,
                             reader=reader)[0]["disposition"] == "handled"
