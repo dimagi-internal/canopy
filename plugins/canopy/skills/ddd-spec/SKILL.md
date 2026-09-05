@@ -845,6 +845,15 @@ scenes:                       # ordered story beats, numbered from 1 by position
     title: ...                # the story beat (a moment), NOT a capability name
     narrative: >-             # the persona-voiced beat the REVIEWER reads (write it!)
       <Named persona as subject, active voice, grounded, show-don't-tell.>
+    # narrative may also be a LIST, which splits this scene into that many BEATS.
+    # Use it when one scene legitimately demos more than one sentence's worth of
+    # work (a long AI wait; a form filled THEN submitted) — a single beat there
+    # hits the action-word warp's rate cap no matter how the sentence is paced.
+    #   narrative:
+    #     - She fills the form's identity block.
+    #     - Then the terms, and the question every firm must answer.
+    # NOTE the ownership boundary: narrative is a LOCK-owned field, so for a
+    # story owned by canopy-web the split must come from there, not the recipe.
     show: ...
     concept_claim: ...        # tightened, falsifiable assertion the JUDGE tests
     provenance: ...

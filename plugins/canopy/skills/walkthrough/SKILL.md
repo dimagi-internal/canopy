@@ -205,6 +205,15 @@ prewarm: true                   # default: false — visit every unique scene UR
 review_mode: autonomous
 
 # Auth (optional — omit for public pages)
+#
+# If the recorder's stored session has expired, the app 302s every page to its
+# login form. The recorder does NOT film that: `goto_and_settle` compares where
+# each scene ASKED to go against where it LANDED, and raises SessionExpiredError
+# the moment a navigation is bounced to a sign-in page — naming both URLs. Before
+# that check, a dead session read as a spec bug ("target_not_found" on a selector
+# several scenes later, after the whole capture was spent). Matched on path
+# SEGMENTS, and only when the spec did not itself ask for an auth page, so a
+# walkthrough that deliberately records a login flow is unaffected.
 auth:
   type: url                    # "url" or "command"
   url: "/auth/login?token=dev" # for type: url — navigate here to authenticate
