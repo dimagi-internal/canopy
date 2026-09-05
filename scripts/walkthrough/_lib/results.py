@@ -424,6 +424,18 @@ def scene_effecting_summary(trace: list[dict]) -> dict:
     }
 
 
+class SessionExpiredError(RuntimeError):
+    """Raised when a navigation is bounced to a sign-in page.
+
+    Distinct from :class:`ActionAssertError` because the cause is entirely
+    different and so is the fix: nothing is wrong with the spec, the
+    recorder's stored session simply died. Without this the run reads as a
+    spec bug — the recorder happily films the login page and dies several
+    scenes later on a selector that "isn't there", after burning the whole
+    capture.
+    """
+
+
 class ActionAssertError(RuntimeError):
     """Raised by ``execute_action`` when ``must_succeed=true`` on a failing action.
 

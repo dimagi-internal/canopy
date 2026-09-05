@@ -716,8 +716,10 @@ def build_snippets(
             print(
                 f"  ⚠ scene {idx}: footage runs {_slack:.0f}s past the narration "
                 f"({kept_dur:.0f}s vs ~{vo_est:.0f}s) — the tail will play silent, and "
-                f"dead air if the page has settled. Add ~{int(_slack * 2.6)} words, or "
-                f"split the scene with a narrative: list."
+                f"dead air if the page has settled. Add ~{int(_slack * 2.6)} words. "
+                f"(A narrative: LIST splits the scene into beats instead — but "
+                f"narrative is a lock-owned field, so for a web-owned story that "
+                f"split has to come from canopy-web, not the recipe.)"
             )
         for line in lint_narration_binding(idx, narration, action_marks):
             print(line)

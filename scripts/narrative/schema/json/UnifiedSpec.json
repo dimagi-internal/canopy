@@ -1205,9 +1205,19 @@
           "title": "Pace"
         },
         "narrative": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
           "default": "",
-          "title": "Narrative",
-          "type": "string"
+          "title": "Narrative"
         }
       },
       "required": [
