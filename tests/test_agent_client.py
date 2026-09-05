@@ -270,3 +270,39 @@ def test_register_sends_the_requested_workspace():
     assert method == "POST"
     assert url.endswith("/api/agents/")
     assert body["workspace"] == "connect"
+
+
+# --- the close-out join key -------------------------------------------------
+# The runner names a dispatched worktree `emdash-<task>-<suffix>` but reports the
+# session as `<task>`. The two halves of a turn therefore derived their join key from
+# different strings, `_claim_dispatch_row` matches exactly, and every close-out filed
+# from a dispatched worktree orphaned a fresh row instead of attaching to its own
+# dispatch. Measured 2026-09-05 fleet-wide.
+
+def test_a_dispatched_worktree_drops_the_emdash_prefix(tmp_path):
+    """The shape the runner actually creates for a dispatched turn."""
+    wt = tmp_path / "emdash-echo-api-611f-0901-1248-vk310"
+    wt.mkdir()
+    assert agent_client.emdash_task_from_cwd(wt) == "echo-api-611f-0901-1248"
+
+
+def test_it_matches_what_the_runner_reports(tmp_path):
+    """Both halves must land on the same string — that is the whole point."""
+    runner_side = "hal-api-0255-0904-1210"
+    wt = tmp_path / f"emdash-{runner_side}-4gk3d"
+    wt.mkdir()
+    assert agent_client.emdash_task_from_cwd(wt) == runner_side
+
+
+def test_an_unprefixed_worktree_is_unchanged(tmp_path):
+    """Not every worktree carries the prefix; those already worked and must keep to."""
+    wt = tmp_path / "ace-simple-povgraduate-component-6ba5-0901-1417"
+    wt.mkdir()
+    assert agent_client.emdash_task_from_cwd(wt) == "ace-simple-povgraduate-component-6ba5-0901-1417"
+
+
+def test_a_non_session_directory_still_returns_empty(tmp_path):
+    """Guessing is worse than not answering — the original contract, kept."""
+    wt = tmp_path / "emdash-not-a-session"
+    wt.mkdir()
+    assert agent_client.emdash_task_from_cwd(wt) == ""
