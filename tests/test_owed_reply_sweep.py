@@ -27,7 +27,12 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.agent_email import EmailIdentity, owed_replies, search_threads
+from orchestrator.agent_email import (
+    EmailIdentity,
+    dangling_threads,
+    owed_replies,
+    search_threads,
+)
 
 ME = "echo@dimagi-ai.com"
 NOW = dt.datetime(2026, 9, 4, 12, 0, 0, tzinfo=dt.timezone.utc)
@@ -89,7 +94,7 @@ def test_a_thread_we_answered_last_is_not_owed():
         _msg("Enock <enock@partner.org>", "Fri, 24 Jul 2026 09:00:00 +0000"),
         _msg(ME, "Sat, 01 Aug 2026 09:00:00 +0000"),
     ]})
-    assert owed_replies(_identity(), now=NOW, runner=runner, reader=reader) == []
+    assert dangling_threads(_identity(), now=NOW, runner=runner, reader=reader) == []
 
 
 def test_a_thread_they_spoke_last_on_is_owed():
@@ -100,7 +105,7 @@ def test_a_thread_they_spoke_last_on_is_owed():
         _msg(ME, "Mon, 20 Jul 2026 09:00:00 +0000"),
         _msg("Enock <enock@partner.org>", "Fri, 24 Jul 2026 09:00:00 +0000"),
     ]})
-    owed = owed_replies(_identity(), now=NOW, runner=runner, reader=reader)
+    owed = dangling_threads(_identity(), now=NOW, runner=runner, reader=reader)
     assert [o["thread_id"] for o in owed] == ["t1"]
     assert owed[0]["last_from"] == "Enock <enock@partner.org>"
     assert owed[0]["subject"] == "Design questions"
@@ -111,7 +116,7 @@ def test_our_address_is_matched_inside_a_display_name():
     runner = _searcher([{"id": "t1", "date": "2026-08-01 09:00", "messageCount": 1,
                          "from": "x", "subject": "s"}])
     reader = _reader({"t1": [_msg(f"Echo <{ME.upper()}>", "Sat, 01 Aug 2026 09:00:00 +0000")]})
-    assert owed_replies(_identity(), now=NOW, runner=runner, reader=reader) == []
+    assert dangling_threads(_identity(), now=NOW, runner=runner, reader=reader) == []
 
 
 # --------------------------------------------------------------------------------------
@@ -123,7 +128,7 @@ def test_the_sweep_never_filters_on_unread():
     read — it went unanswered *after* we read it. A query carrying `is:unread` finds
     exactly the threads this sweep is not for, and none of the ones it is."""
     runner = _searcher([])
-    owed_replies(_identity(), now=NOW, runner=runner, reader=_reader({}))
+    dangling_threads(_identity(), now=NOW, runner=runner, reader=_reader({}))
     query = " ".join(runner.calls[0])
     assert "is:unread" not in query
     assert "in:inbox" in query
@@ -132,7 +137,7 @@ def test_the_sweep_never_filters_on_unread():
 def test_it_reads_as_the_agents_own_mailbox():
     """One mailbox per agent, never shared — the fleet's one hard rule."""
     runner = _searcher([])
-    owed_replies(_identity(), now=NOW, runner=runner, reader=_reader({}))
+    dangling_threads(_identity(), now=NOW, runner=runner, reader=_reader({}))
     cmd = runner.calls[0]
     assert cmd[cmd.index("--account") + 1] == ME
 
@@ -149,8 +154,8 @@ def test_an_automated_last_message_is_not_an_owed_reply():
         _msg("drive-shares-dm-noreply@google.com", "Sat, 01 Aug 2026 09:00:00 +0000",
              automated=True),
     ]})
-    assert owed_replies(_identity(), now=NOW, runner=runner, reader=reader) == []
-    assert len(owed_replies(_identity(), now=NOW, runner=runner, reader=reader,
+    assert dangling_threads(_identity(), now=NOW, runner=runner, reader=reader) == []
+    assert len(dangling_threads(_identity(), now=NOW, runner=runner, reader=reader,
                             include_automated=True)) == 1
 
 
@@ -160,7 +165,7 @@ def test_age_is_measured_from_their_last_message():
                          "from": "x", "subject": "s"}])
     reader = _reader({"t1": [_msg("Enock <enock@partner.org>",
                                   "Fri, 24 Jul 2026 12:00:00 +0000")]})
-    assert owed_replies(_identity(), now=NOW, runner=runner, reader=reader)[0]["age_days"] == 42
+    assert dangling_threads(_identity(), now=NOW, runner=runner, reader=reader)[0]["age_days"] == 42
 
 
 def test_the_longest_silence_is_reported_first():
@@ -172,7 +177,7 @@ def test_the_longest_silence_is_reported_first():
         "recent": [_msg("a@partner.org", "Tue, 01 Sep 2026 12:00:00 +0000")],
         "ancient": [_msg("b@partner.org", "Fri, 24 Jul 2026 12:00:00 +0000")],
     })
-    owed = owed_replies(_identity(), now=NOW, runner=runner, reader=reader)
+    owed = dangling_threads(_identity(), now=NOW, runner=runner, reader=reader)
     assert [o["thread_id"] for o in owed] == ["ancient", "recent"]
 
 
@@ -181,7 +186,7 @@ def test_a_thread_we_have_never_answered_at_all_is_marked():
     runner = _searcher([{"id": "t1", "date": "2026-07-24 09:00", "messageCount": 1,
                          "from": "x", "subject": "s"}])
     reader = _reader({"t1": [_msg("new@partner.org", "Fri, 24 Jul 2026 12:00:00 +0000")]})
-    assert owed_replies(_identity(), now=NOW, runner=runner, reader=reader)[0]["ever_replied"] is False
+    assert dangling_threads(_identity(), now=NOW, runner=runner, reader=reader)[0]["ever_replied"] is False
 
 
 def test_one_unreadable_thread_does_not_sink_the_sweep():
@@ -198,14 +203,14 @@ def test_one_unreadable_thread_does_not_sink_the_sweep():
             raise RuntimeError("gog fell over")
         return {"thread_id": thread_id, "messages": good, "reply_all": {}}
 
-    owed = owed_replies(_identity(), now=NOW, runner=runner, reader=read)
+    owed = dangling_threads(_identity(), now=NOW, runner=runner, reader=read)
     assert [o["thread_id"] for o in owed] == ["good"]
 
 
 def test_an_empty_thread_is_skipped_not_crashed():
     runner = _searcher([{"id": "t1", "date": "2026-08-01 09:00", "messageCount": 0,
                          "from": "x", "subject": "s"}])
-    assert owed_replies(_identity(), now=NOW, runner=runner,
+    assert dangling_threads(_identity(), now=NOW, runner=runner,
                         reader=_reader({"t1": []})) == []
 
 
@@ -224,7 +229,7 @@ TURN = Path(__file__).resolve().parents[1] / "plugins" / "canopy" / "agent-core"
 
 
 def test_turn_md_mandates_the_sweep():
-    assert "canopy email owed" in TURN.read_text(), \
+    assert "canopy email dangling" in TURN.read_text(), \
         "the fleet turn procedure must name the sweep command, or no agent runs it"
 
 
@@ -232,7 +237,7 @@ def test_turn_md_puts_the_sweep_before_any_early_return():
     """The whole ACE failure in one assertion: the sweep must be stated to run even
     when there is no new mail, because that is precisely when it matters most."""
     text = TURN.read_text()
-    sweep = text.index("canopy email owed")
+    sweep = text.index("canopy email dangling")
     assert any(
         phrase in text[max(0, sweep - 3000):sweep + 3000].lower()
         for phrase in ("before any early return", "even when the inbox is clear",
@@ -258,47 +263,7 @@ def _one(thread_id: str, date: str, **kw):
     runner = _searcher([{"id": thread_id, "date": "2026-01-01 00:00", "messageCount": 1,
                          "from": "x", "subject": "s"}])
     reader = _reader({thread_id: [_msg("them@partner.org", date)]})
-    return owed_replies(_identity(), now=NOW, runner=runner, reader=reader, **kw)[0]
-
-
-def test_a_fresh_dangling_thread_is_for_responding():
-    assert _one("t", "Mon, 31 Aug 2026 12:00:00 +0000")["disposition"] == "respond"
-
-
-def test_an_old_dangling_thread_is_for_PRUNING_not_answering():
-    """The 79-day case. It is not an unanswered request — it is a conversation that
-    ENDED, usually because the last answer wasn't good enough. A late reply reopens what
-    a human deliberately closed."""
-    old = _one("t", "Wed, 17 Jun 2026 12:00:00 +0000")
-    assert old["age_days"] == 79
-    assert old["disposition"] == "prune"
-
-
-def test_the_boundary_is_inclusive_and_configurable():
-    assert _one("t", "Fri, 21 Aug 2026 12:00:00 +0000")["age_days"] == 14
-    assert _one("t", "Fri, 21 Aug 2026 12:00:00 +0000")["disposition"] == "respond"
-    assert _one("t", "Thu, 20 Aug 2026 12:00:00 +0000")["disposition"] == "prune"
-    assert _one("t", "Wed, 17 Jun 2026 12:00:00 +0000",
-                respond_within=200)["disposition"] == "respond"
-
-
-def test_an_unparseable_date_prunes_rather_than_replies():
-    """Unknown age must fail toward silence. Firing a late reply on a guess is the
-    expensive direction of this error — it reaches a person."""
-    row = _one("t", "not a date at all")
-    assert row["age_days"] is None
-    assert row["disposition"] == "prune"
-
-
-def test_never_having_replied_does_not_upgrade_an_old_thread():
-    """`ever_replied: False` feels like a stronger debt and is not one. On an old thread
-    it means the conversation was never ours to carry — age still rules."""
-    runner = _searcher([{"id": "t", "date": "2026-01-01 00:00", "messageCount": 1,
-                         "from": "x", "subject": "s"}])
-    reader = _reader({"t": [_msg("them@partner.org", "Wed, 17 Jun 2026 12:00:00 +0000")]})
-    row = owed_replies(_identity(), now=NOW, runner=runner, reader=reader)[0]
-    assert row["ever_replied"] is False
-    assert row["disposition"] == "prune"
+    return dangling_threads(_identity(), now=NOW, runner=runner, reader=reader, **kw)[0]
 
 
 def test_the_sweep_itself_never_archives_anything():
@@ -314,16 +279,112 @@ def test_the_sweep_itself_never_archives_anything():
                  "from": "x", "subject": "s"}]}), "stderr": ""})()
 
     reader = _reader({"t": [_msg("them@partner.org", "Wed, 17 Jun 2026 12:00:00 +0000")]})
-    owed_replies(_identity(), now=NOW, runner=runner, reader=reader)
+    dangling_threads(_identity(), now=NOW, runner=runner, reader=reader)
     flat = " ".join(" ".join(c) for c in calls)
     assert "modify" not in flat and "archive" not in flat
 
 
-def test_turn_md_says_prune_the_old_ones_rather_than_answer_them():
+def test_turn_md_says_handled_threads_are_not_answered_late():
     """The procedure must carry the verdict, not just the query. An agent reading only
     turn.md must not conclude that a 79-day thread wants an apology."""
     text = TURN.read_text().lower()
-    sweep = text.index("canopy email owed")
+    sweep = text.index("canopy email dangling")
     window = text[sweep:sweep + 4000]
-    assert "prune" in window
+    assert "handled" in window
     assert "do not answer it late" in window or "not answer" in window
+
+
+# --------------------------------------------------------------------------------------
+# HANDLED-NESS, not age — the discriminator that actually matches how a turn works
+# --------------------------------------------------------------------------------------
+#
+# Jonathan, 2026-09-05, correcting the age heuristic that replaced the first wrong verdict:
+# "The issue is less the response window and more whether the thread was handled... The
+# primary mode of operating is something comes in, you fire right away, and if we don't
+# conclude that session with a response, we didn't intend to come back to it (sometimes I
+# forget but this is less common than implicit failure)."
+#
+# A turn is synchronous. So READ + no reply is a DECISION — the exchange finished, moved to
+# Slack, or a human ended it. UNREAD is the failure: nothing ever disposed of it.
+#
+# The proof that this beats age rather than merely restating it: every thread the first
+# live run surfaced was already read. Handled-ness clears all three with no threshold;
+# age needed one tuned to 14d to reach the same answer for the wrong reason.
+
+def _row(*, unread: bool, date: str = "Wed, 17 Jun 2026 12:00:00 +0000", **kw):
+    labels = ["INBOX"] + (["UNREAD"] if unread else [])
+    runner = _searcher([{"id": "t", "date": "2026-06-17 12:00", "messageCount": 1,
+                         "from": "x", "subject": "s", "labels": labels}])
+    reader = _reader({"t": [_msg("them@partner.org", date)]})
+    return dangling_threads(_identity(), now=NOW, runner=runner, reader=reader, **kw)[0]
+
+
+def test_a_read_thread_was_DISPOSED_of_however_old_it_is():
+    """The 79-day thread. A turn looked at it and closed out without replying — that was
+    a decision, not a lapse. Answering reopens what someone closed."""
+    r = _row(unread=False)
+    assert r["age_days"] == 79
+    assert r["disposition"] == "handled"
+
+
+def test_a_read_thread_is_handled_even_when_it_is_FRESH():
+    """Age cannot rescue it: three days old and already concluded (the exchange finished,
+    or it moved to Slack) is still not a debt. This is where age got it wrong."""
+    assert _row(unread=False, date="Tue, 01 Sep 2026 12:00:00 +0000")["disposition"] == "handled"
+
+
+def test_an_unread_thread_needs_attention_even_when_it_is_OLD():
+    """The implicit failure, and the inverse of the case above: nothing ever looked. Age
+    does not convert it into a decision somebody made."""
+    r = _row(unread=True)
+    assert r["disposition"] == "respond"
+
+
+def test_an_unread_thread_needs_attention_when_it_is_fresh_too():
+    assert _row(unread=True, date="Tue, 01 Sep 2026 12:00:00 +0000")["disposition"] == "respond"
+
+
+def test_an_old_unread_thread_is_flagged_stale_without_being_dismissed():
+    """Stale qualifies the item; it does not demote it. Nobody looked AND the answer is
+    probably moot — usually close it rather than answer cold — but it is still the band
+    a human should see."""
+    r = _row(unread=True)
+    assert r["stale"] is True and r["disposition"] == "respond"
+    assert _row(unread=True, date="Tue, 01 Sep 2026 12:00:00 +0000")["stale"] is False
+
+
+def test_stale_never_applies_to_a_handled_thread():
+    """A disposed-of thread has no pending answer to go moot."""
+    assert _row(unread=False)["stale"] is False
+
+
+def test_the_unread_flag_is_read_from_the_search_row_not_a_second_call():
+    """Handled-ness must be free. A per-thread extra fetch would make the sweep expensive
+    enough to skip, and a sweep that gets skipped catches nothing."""
+    runner = _searcher([{"id": "t", "date": "2026-06-17 12:00", "messageCount": 1,
+                         "from": "x", "subject": "s", "labels": ["INBOX", "UNREAD"]}])
+    reader = _reader({"t": [_msg("them@partner.org", "Wed, 17 Jun 2026 12:00:00 +0000")]})
+    assert dangling_threads(_identity(), now=NOW, runner=runner, reader=reader)[0]["unread"]
+    assert len(runner.calls) == 1
+
+
+def test_a_missing_labels_key_reads_as_handled_not_as_a_crash():
+    """Absent evidence of a miss is not evidence of a miss. Defaulting the other way
+    would manufacture a NEEDS ATTENTION item out of a gog response shape change."""
+    runner = _searcher([{"id": "t", "date": "2026-06-17 12:00", "messageCount": 1,
+                         "from": "x", "subject": "s"}])
+    reader = _reader({"t": [_msg("them@partner.org", "Wed, 17 Jun 2026 12:00:00 +0000")]})
+    assert dangling_threads(_identity(), now=NOW, runner=runner,
+                            reader=reader)[0]["disposition"] == "handled"
+
+
+def test_owed_replies_still_resolves_for_anything_that_imported_it():
+    assert owed_replies is dangling_threads
+
+
+def test_turn_md_bands_on_handled_ness_rather_than_age():
+    text = TURN.read_text().lower()
+    window = text[text.index("canopy email dangling"):][:5000]
+    assert "unread" in window and "read" in window
+    assert "handled" in window
+    assert "proxy" in window, "turn.md must admit read-state is a proxy and name its limits"
