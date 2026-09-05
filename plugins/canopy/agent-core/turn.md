@@ -440,6 +440,25 @@ the warned-against view. Its item was alarm mail with no `Cc:`, so nothing was l
 thread that is the documented recipient-dropping failure, reached by following the only path the
 doc left open.)
 
+**A quoted tail can carry mail you were NEVER SENT — read `quoted_unseen` when it is
+non-empty.** `read` trims the quoted reply chain out of `body_text`, which is right almost
+always: the history is already in the thread as its own messages. It stops being right the
+moment someone takes a thread **off-list and adds you back** — those messages were never
+delivered to your mailbox and exist ONLY inside the tail of whatever message re-added you.
+Trimming then deletes the whole reason you were brought back, and it does so **silently**,
+because every message you DO have still reads complete. So `read` now returns per-message
+`quoted_unseen` (the part of the tail no message in the thread accounts for, matched by
+content) and thread-level `has_unseen_quoted`. Non-empty means inbound mail that reached
+you by no other route: **read it before you decide the action.** Empty on an ordinary reply
+chain, so it costs nothing to check.
+
+(Origin: 2026-09-05 — an ACE turn was handed a thread whose triggering message said "see
+Neal's email". No such mail was in the mailbox; the turn searched the whole box, correctly
+concluded it was missing, and drafted a reply asking for it to be forwarded. Neal's message
+and two further off-list exchanges were in the quoted tail of that very message — including
+the linked spec the whole task depended on. The operator corrected it by hand. The read had
+looked complete, which is exactly the shape this Step's other rules exist to prevent.)
+
 **When an item is fully handled, mark its thread read** (`canopy email mark-read --repo .
 <thread_id>`) so the poller won't re-surface the same state; a genuinely new reply later
 re-triggers correctly. If the item needs no action, mark it read anyway (it's handled).

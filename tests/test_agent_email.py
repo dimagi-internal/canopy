@@ -21,6 +21,7 @@ from orchestrator.agent_email import (
     parse_send_result,
     preflight,
     read_thread,
+    unseen_quoted,
     resolve_email_identity,
     send,
     to_html,
@@ -1381,3 +1382,129 @@ def test_read_thread_flags_machine_sender_despite_human_from():
                "body": {"data": _b64("invite")}}
     res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json_payload(payload)))
     assert res["messages"][0]["is_automated"] is True
+
+
+# --------------------------------------------------------------------------------------
+# quoted tails that carry mail the agent was NEVER SENT (the add-back case)
+#
+# A quoted tail is normally pure duplication, which is why body_text sheds it. It stops
+# being duplication the moment a human takes a thread off-list and later adds the agent
+# back: the messages exchanged meanwhile were never delivered to this mailbox and exist
+# ONLY inside the tail of whatever message re-added it. Trimming then deletes the entire
+# reason the agent was brought back, and the read still looks complete because every
+# message the agent HAS is present and intact.
+#
+# Measured 2026-09-05: an ACE turn was told "see Neal's email", found no such mail in the
+# mailbox, and drafted a reply asking for it to be forwarded. Neal's message — and two
+# further off-list exchanges — were sitting in the quoted tail of the very message that
+# triggered the turn. The operator had to correct it by hand.
+# --------------------------------------------------------------------------------------
+
+def _addback_thread_json(bodies_b64):
+    """A thread of N messages, each carrying one base64url text/plain part."""
+    import base64 as _b
+    msgs = []
+    for i, raw in enumerate(bodies_b64):
+        data = _b.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+        msgs.append({
+            "id": f"m{i}", "snippet": "",
+            "payload": {"headers": [
+                {"name": "From", "value": "Neal <nlesh@dimagi.com>"},
+                {"name": "To", "value": "ace@dimagi-ai.com"},
+                {"name": "Subject", "value": "KMC metrics"},
+                {"name": "Date", "value": "Fri, 05 Sep 2026 07:40:00 -0000"},
+            ], "parts": [{"mimeType": "text/plain",
+                          "body": {"size": len(raw), "data": data}}]},
+        })
+    return json.dumps({"thread": {"messages": msgs}})
+
+
+def test_unseen_quoted_is_empty_when_the_tail_only_repeats_the_thread():
+    """The ordinary reply chain. Everything quoted is already its own message here, so
+    there is nothing to surface and the field must stay quiet — a check that cried wolf
+    on every reply would be turned off within a day."""
+    sibling = "I dumped a ton of stuff into this gdoc. Let me know if there is a better way to share this with you or if you need other material."
+    tail = (
+        "On Mon, Aug 3, 2026 at 6:42 AM Neal Lesh <nlesh@dimagi.com> wrote:\n"
+        "> I dumped a ton of stuff into this gdoc. Let me know if there is a\n"
+        "> better way to share this with you or if you need other material.\n"
+    )
+    assert unseen_quoted(tail, [sibling]) == ""
+
+
+def test_unseen_quoted_survives_requoting_that_REWRAPS_the_lines():
+    """The design rests on this. Quoting re-wraps lines but does not rewrite words, so
+    matching normalizes whitespace away. If line breaks counted, every quote would look
+    unseen and the signal would be worthless."""
+    sibling = ("I dumped a ton of stuff into this gdoc.\n"
+               "Let me know if there is a better way to share this with you.")
+    tail = ("On Mon, Aug 3, 2026 at 6:42 AM Neal Lesh <nlesh@dimagi.com> wrote:\n"
+            "> I dumped a ton of stuff into this gdoc. Let me know if there is a better\n"
+            "> way to share this with you.\n")
+    assert unseen_quoted(tail, [sibling]) == ""
+
+
+def test_unseen_quoted_surfaces_an_off_list_message_the_mailbox_never_received():
+    """The failure this exists for. Nothing in the thread accounts for Neal's note, so it
+    must come back — it is inbound mail that reached the agent by no other route."""
+    tail = (
+        "On Sat, Sep 5, 2026 at 7:29 AM Neal Lesh <nlesh@dimagi.com> wrote:\n"
+        "> one thing that is not covered is the Scale-photo weight agreement\n"
+        "> which seems like it could be a winner. Here is the set of metrics we\n"
+        "> chose and definitions, similar to the proposal but drops peak-month.\n"
+    )
+    out = unseen_quoted(tail, ["Thanks ACE, when you read this don't take any action."])
+    assert "Scale-photo weight agreement" in out
+    assert "could be a winner" in out
+
+
+def test_unseen_quoted_ignores_a_signature_sized_fragment():
+    """Short blocks are signatures and stray lines, not messages. Surfacing them would
+    bury the one block that matters."""
+    tail = "On Sat, Sep 5, 2026 at 7:29 AM Neal Lesh <nlesh@dimagi.com> wrote:\n> -n\n"
+    assert unseen_quoted(tail, ["unrelated body text here"]) == ""
+
+
+def test_unseen_quoted_handles_nested_quote_depth():
+    """An off-list exchange arrives at depth >>, >>> — the deeper it is quoted the older
+    it is, and age is not seen-ness."""
+    tail = (
+        "On Sat, Sep 5, 2026 at 6:50 AM Jonathan <jjackson@dimagi.com> wrote:\n"
+        ">> Yeah the semantic stuff is ready to go, we need to pick a set of KPIs\n"
+        ">> to get it fully operational - are the ones we used in the OpenAI\n"
+        ">> proposal a good first set for now?\n"
+    )
+    out = unseen_quoted(tail, ["something else entirely in the thread"])
+    assert "semantic stuff is ready to go" in out
+
+
+def test_read_thread_exposes_quoted_unseen_and_the_thread_flag():
+    """End to end through the sanctioned read path — the field has to reach the caller,
+    not merely exist."""
+    mine = "Neal, you said hold, so to be clear about what this is."
+    trigger = (
+        "Ace - see Neal's email and lets come back with a complete working demo.\n"
+        "\n"
+        "On Sat, Sep 5, 2026 at 7:29 AM Neal Lesh <nlesh@dimagi.com> wrote:\n"
+        "> one thing that is not covered is the Scale-photo weight agreement\n"
+        "> which seems like it could be a winner, and there are more things not\n"
+        "> yet considered like a rolling three month indicator.\n"
+    )
+    res = read_thread(_ACE, "t", runner=_runner_ok(_addback_thread_json([mine, trigger])))
+
+    assert res["messages"][1]["body_text"].startswith("Ace - see Neal's email")
+    assert "Scale-photo weight agreement" in res["messages"][1]["quoted_unseen"]
+    assert res["messages"][0]["quoted_unseen"] == ""
+    assert res["has_unseen_quoted"] is True
+
+
+def test_read_thread_reports_no_unseen_quoted_on_an_ordinary_chain():
+    """The quiet case, through the same path: a reply quoting the message above it."""
+    first = "I dumped a ton of stuff into this gdoc and would like your read on it."
+    second = ("Thanks - reading it now.\n"
+              "\n"
+              "On Mon, Aug 3, 2026 at 6:42 AM Neal Lesh <nlesh@dimagi.com> wrote:\n"
+              "> I dumped a ton of stuff into this gdoc and would like your read on it.\n")
+    res = read_thread(_ACE, "t", runner=_runner_ok(_addback_thread_json([first, second])))
+    assert res["has_unseen_quoted"] is False
+    assert all(m["quoted_unseen"] == "" for m in res["messages"])
