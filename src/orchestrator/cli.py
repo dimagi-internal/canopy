@@ -905,6 +905,9 @@ def version_bump(repo):
     mp_n = result.get("marketplace_json_replacements", 0)
     if mp_path and mp_n:
         click.echo(f"  wrote: {mp_path} ({mp_n} version field{'s' if mp_n != 1 else ''})")
+    pp_path = result.get("pyproject_path")
+    if pp_path:
+        click.echo(f"  wrote: {pp_path}")
 
 
 @main.command("structure-drift")

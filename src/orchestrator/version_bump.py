@@ -350,4 +350,8 @@ def bump(repo_root: Path) -> dict:
         "marketplace_json_path": str(mp_path) if mp_path else None,
         "marketplace_json_replacements": mp_replacements,
         "pyproject_bumped": pyproject_bumped,
+        # Reported so the CLI can NAME it. pyproject was written but never
+        # mentioned, so a caller staging "the files it said it wrote" staged
+        # three of four and shipped a tree whose wheel disagreed with VERSION.
+        "pyproject_path": str(pyproject_path) if pyproject_bumped else None,
     }

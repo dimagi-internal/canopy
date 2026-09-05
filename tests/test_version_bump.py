@@ -90,6 +90,31 @@ class TestBump:
         plugin_json = json.loads((tmp_path / "plugins" / "canopy" / ".claude-plugin" / "plugin.json").read_text())
         assert plugin_json["version"] == "0.2.46"
 
+    def test_bump_reports_the_pyproject_it_wrote(self, tmp_path):
+        """Every file bump WRITES must be a file bump NAMES.
+
+        pyproject.toml was written and never mentioned, so staging "the files it
+        said it wrote" staged three of four — and the tree shipped a wheel whose
+        version disagreed with VERSION. CI caught it; the caller should not have
+        had to.
+        """
+        _setup_repo(tmp_path, "0.2.45")
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "canopy"\nversion = "0.2.45"\n'
+        )
+        with patch("orchestrator.version_bump.fetch_origin_main_version", return_value=None):
+            result = bump(tmp_path)
+        assert result["pyproject_bumped"] is True
+        assert result["pyproject_path"] == str(tmp_path / "pyproject.toml")
+        assert 'version = "0.2.46"' in (tmp_path / "pyproject.toml").read_text()
+
+    def test_bump_reports_no_pyproject_when_there_is_none(self, tmp_path):
+        _setup_repo(tmp_path, "0.2.45")
+        with patch("orchestrator.version_bump.fetch_origin_main_version", return_value=None):
+            result = bump(tmp_path)
+        assert result["pyproject_bumped"] is False
+        assert result["pyproject_path"] is None
+
     def test_bump_uses_origin_when_higher(self, tmp_path):
         _setup_repo(tmp_path, "0.2.45")
         with patch("orchestrator.version_bump.fetch_origin_main_version", return_value="0.2.50"):

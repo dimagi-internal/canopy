@@ -16,20 +16,20 @@ jobs:
           echo "VERSION file: $VERSION_FILE"
           echo "plugin.json:  $PLUGIN_VERSION"
           if [ "$VERSION_FILE" != "$PLUGIN_VERSION" ]; then
-            echo "::error::VERSION ($VERSION_FILE) does not match plugin.json ($PLUGIN_VERSION). Run \`canopy version bump\` (it updates all three files) instead of editing by hand."
+            echo "::error::VERSION ($VERSION_FILE) does not match plugin.json ($PLUGIN_VERSION). Run \`canopy version bump\` (it updates VERSION, pyproject.toml, plugin.json and marketplace.json together) instead of editing by hand."
             exit 1
           fi
           # marketplace.json carries the version in two fields (metadata.version
           # and plugins[0].version). A hand-bump that edits only VERSION +
           # plugin.json silently leaves these stale — exactly what slipped
           # through in the 0.2.157 bump (#120). `canopy version bump` updates
-          # all three; this gate makes the hand-bump drift visible in the PR.
+          # all of them; this gate makes the hand-bump drift visible in the PR.
           if [ -f .claude-plugin/marketplace.json ]; then
             MP_BAD=0
             while IFS= read -r MP_VERSION; do
               echo "marketplace.json: $MP_VERSION"
               if [ "$MP_VERSION" != "$VERSION_FILE" ]; then
-                echo "::error::marketplace.json carries version $MP_VERSION but VERSION is $VERSION_FILE. Run \`canopy version bump\` (it updates VERSION, plugin.json, and marketplace.json together)."
+                echo "::error::marketplace.json carries version $MP_VERSION but VERSION is $VERSION_FILE. Run \`canopy version bump\` (it updates VERSION, pyproject.toml, plugin.json and marketplace.json together)."
                 MP_BAD=1
               fi
             done < <(grep -o '"version": *"[^"]*"' .claude-plugin/marketplace.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')
