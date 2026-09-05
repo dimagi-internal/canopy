@@ -21,6 +21,7 @@ from orchestrator.agent_dispatch import (
     DispatchError,
     build_turn_payload,
     derive_idempotency_key,
+    dispatched_by,
     summarize_turn,
 )
 from orchestrator.cli import main
@@ -259,3 +260,43 @@ def test_project_dispatch_payload_stamps_too():
 
     payload = build_project_turn_payload("canopy", prompt="fix it", idempotency_key="k")
     assert payload["prompt"].endswith(DISPATCH_MARKER)
+
+
+# --- dispatcher lineage: origin_ref.dispatched_by ---------------------------
+# The provenance line and the `canopy:dispatched-by=` marker both live inside the
+# PROMPT, so the sender is legible to the receiving agent and invisible to anything
+# querying the queue. "Which turns did I dispatch?" had no answer.
+
+def test_origin_ref_records_who_dispatched():
+    p = build_turn_payload("hal", prompt="fix the thing", idempotency_key="k1",
+                           sender="ada")
+    assert p["origin_ref"]["dispatched_by"] == "ada"
+
+
+def test_a_board_drain_carries_lineage_even_with_no_prompt():
+    """The prompt-less drain has NO marker at all — it is the case with the least
+    provenance, so it is exactly the one that must carry the field."""
+    p = build_turn_payload("echo", prompt="", idempotency_key="k2", sender="ada")
+    assert "prompt" not in p
+    assert p["origin_ref"]["dispatched_by"] == "ada"
+
+
+def test_lineage_is_the_sender_not_the_target():
+    """thread_key encodes the TARGET, which is why it cannot answer this question:
+    two agents dispatching to the same target produce the same-shaped key."""
+    p = build_turn_payload("ace", prompt="x", idempotency_key="dispatch-ace-abc",
+                           sender="hal")
+    assert p["origin_ref"]["dispatched_by"] == "hal"
+    assert "ace" in p["origin_ref"]["thread_key"]
+
+
+def test_lineage_is_omitted_rather_than_blank_when_unknown():
+    """An empty slug must not write dispatched_by:'' — a reader filtering on the key
+    would then match a turn whose sender is genuinely unknown."""
+    p = build_turn_payload("hal", prompt="x", idempotency_key="k3", sender="")
+    assert "dispatched_by" not in p["origin_ref"]
+
+
+def test_the_prompt_marker_and_the_field_agree():
+    p = build_turn_payload("hal", prompt="do it", idempotency_key="k4", sender="ada")
+    assert dispatched_by(p["prompt"]) == p["origin_ref"]["dispatched_by"] == "ada"
