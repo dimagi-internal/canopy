@@ -25,7 +25,7 @@ __all__ = ["AgentIdentity", "BoardCommand", "AgentClient", "catalog_from_repo", 
 # is the correct answer for it — there is no dispatch row to join to. Greedy `.*`
 # anchors on the RIGHTMOST timestamp pair, so a subject containing four digits of
 # its own does not truncate the name.
-_EMDASH_TASK = re.compile(r"^(?P<task>.*-\d{4}-\d{4})(?:-[a-z0-9]+)?$")
+_EMDASH_TASK = re.compile(r"^(?:emdash-)?(?P<task>.*-\d{4}-\d{4})(?:-[a-z0-9]+)?$")
 
 
 def emdash_task_from_cwd(cwd: "Optional[Path]" = None) -> str:
@@ -33,6 +33,22 @@ def emdash_task_from_cwd(cwd: "Optional[Path]" = None) -> str:
 
     Returns "" rather than guessing: a WRONG task id would attach a close-out to
     another turn's row, which is worse than leaving it unattached.
+
+    THE `emdash-` PREFIX IS NOT PART OF THE TASK ID, and dropping it is what makes the
+    close-out attach at all. The runner names a dispatched worktree
+    `emdash-<task>-<suffix>` but reports the session to canopy-web as `<task>`
+    (execute.py's `client.finish(..., emdash_task_id=task)`), so the two halves of a
+    turn derived their join key from different strings. `_claim_dispatch_row` matches
+    on `emdash_task_id` exactly, so an agent closing out from a dispatched worktree
+    never found its own dispatch row and orphaned a fresh one instead.
+
+    Measured 2026-09-05 across the fleet — every close-out filed from a dispatched
+    worktree carried the prefix and attached to nothing: `emdash-echo-api-611f-0901-1248`,
+    `emdash-ace-api-2146-0904-1204`, `emdash-hal-api-0255-0904-1210`. The docstring above
+    was already right about the danger; the regex just captured a string that could never
+    match. This is the third place the same prefix has bitten (ada's close-sessions
+    current-task fail-safe was the second), which is why it is stripped here, at the one
+    function that derives the id, rather than compensated for at each reader.
     """
     name = (cwd or Path.cwd()).name
     match = _EMDASH_TASK.match(name)
