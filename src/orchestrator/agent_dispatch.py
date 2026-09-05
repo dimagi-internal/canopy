@@ -91,6 +91,26 @@ def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
     origin_ref = {"thread_key": idempotency_key}   # see §1 above — always, not conditionally
     if task_ext_id:
         origin_ref["task_ext_id"] = task_ext_id
+    # WHO DISPATCHED THIS, as a field rather than as prose. The provenance line and the
+    # `canopy:dispatched-by=` marker below both live inside the PROMPT, which makes the
+    # sender legible to the receiving agent and to a transcript reader, and invisible to
+    # anything querying the queue: canopy-web writes the marker and never parses it, and
+    # `GET /api/harness/turns/` cannot filter on it. So "which turns did I dispatch?" —
+    # the question any agent must answer to follow up on its own work — had no answer.
+    #
+    # The thread_key is not a substitute. It encodes the TARGET (`dispatch-<target>-<hash>`),
+    # so an agent reading it back cannot tell its own dispatches from another agent's to the
+    # same target, and would follow up on work it never sent. (2026-09-05: ada's
+    # session-review selected on `thread_key.startswith("dispatch-")` and would have closed
+    # emdash sessions that hal's dispatch-work had spawned.)
+    #
+    # origin_ref is free-form JSON server-side, so this needs no migration and no canopy-web
+    # change — it is readable through the existing turns projection the moment it is written.
+    # Written unconditionally, including for a prompt-less board drain, which carries no
+    # marker at all today and is therefore the case with the least provenance.
+    who = (local_agent_slug() if sender is None else sender or "").strip()
+    if who:
+        origin_ref["dispatched_by"] = who
 
     payload = {
         "agent_slug": slug,
@@ -101,8 +121,7 @@ def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
     # An absent prompt means "drain your board" — meaningfully different from an
     # empty one, so send nothing rather than "".
     if (prompt or "").strip():
-        payload["prompt"] = stamp_dispatched(
-            prompt, sender=local_agent_slug() if sender is None else sender)
+        payload["prompt"] = stamp_dispatched(prompt, sender=who)
     return payload
 
 
