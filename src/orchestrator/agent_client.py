@@ -16,16 +16,37 @@ __all__ = ["AgentIdentity", "BoardCommand", "AgentClient", "catalog_from_repo", 
           "list_agent_slugs", "emdash_task_from_cwd"]
 
 
-# A harness-dispatched emdash session is named `<subject>-<disc>-<MMDD>-<HHMM>` by
-# the runner (execute._task_name), and emdash gives its worktree that name plus a
-# short suffix: `.../hal/emdash/hal-api-df02-0810-0805-7ohfp`.
+# A harness-dispatched emdash session is named `c-<subject>-<disc>` by the runner
+# (canopy_runner.session_naming, which OWNS the format), and emdash gives its
+# worktree that name plus an optional 5-character de-dupe suffix:
+# `.../ace/emdash/c-issue-triage-4a4e-7ohfp`.
 #
-# The `-\d{4}-\d{4}` tail is what makes this safe to infer. A hand-made session
-# ("audit-76bl3", "labs-9i3mk") has no timestamp and simply does not match, which
-# is the correct answer for it — there is no dispatch row to join to. Greedy `.*`
-# anchors on the RIGHTMOST timestamp pair, so a subject containing four digits of
-# its own does not truncate the name.
-_EMDASH_TASK = re.compile(r"^(?:emdash-)?(?P<task>.*-\d{4}-\d{4})(?:-[a-z0-9]+)?$")
+# THIS IS A MIRROR of `session_naming.CANOPY_PREFIX` / `DISC_LEN`. The CLI and the
+# runner share no dependency (the runner ships to an EC2 box as a package with no
+# orchestrator in sight), so the format is restated here and nowhere else in this
+# repo. A false negative silently detaches an agent's close-out from its turn, so
+# if the runner's format moves, this moves with it.
+#
+# Two shapes, both live:
+#
+#   CURRENT — `c-` says canopy launched it, which is a far stronger signal than any
+#   inference from shape. The discriminator is EXACTLY 4 characters and emdash's
+#   suffix is 5, which is what tells the two apart now that there is no timestamp
+#   to anchor on; `session_naming._disc` pads a short key precisely to hold that.
+#
+#   LEGACY — `<agent>-<subject>-<disc>-<MMDD>-<HHMM>`. Sessions carrying it are
+#   still live and reuse resolves them by name, so it stays recognised. Greedy `.*`
+#   anchors on the RIGHTMOST timestamp pair, so a subject containing four digits of
+#   its own does not truncate the name.
+#
+# A hand-made session ("audit-76bl3", "labs-9i3mk") matches neither, which is the
+# correct answer for it — there is no dispatch row to join to.
+_EMDASH_TASK = re.compile(
+    r"^(?:emdash-)?(?:"
+    r"(?P<task>c-.*-[a-z0-9]{4})(?:-[a-z0-9]{5})?"          # current
+    r"|(?P<legacy>.*-\d{4}-\d{4})(?:-[a-z0-9]+)?"           # pre-2026-09 names
+    r")$"
+)
 
 
 def emdash_task_from_cwd(cwd: "Optional[Path]" = None) -> str:
@@ -52,7 +73,9 @@ def emdash_task_from_cwd(cwd: "Optional[Path]" = None) -> str:
     """
     name = (cwd or Path.cwd()).name
     match = _EMDASH_TASK.match(name)
-    return match.group("task") if match else ""
+    if not match:
+        return ""
+    return match.group("task") or match.group("legacy") or ""
 
 
 class AgentIdentity(BaseModel):
