@@ -174,8 +174,15 @@ def test_post_turn_transcript_optional_defaults_empty():
 
 
 @pytest.mark.parametrize("dirname,expected", [
-    # What the runner actually creates: subject + thread discriminator + MMDD-HHMM,
-    # plus emdash's own worktree suffix.
+    # CURRENT: `c-<subject>-<disc>`, plus emdash's optional 5-char de-dupe suffix.
+    # The 4-vs-5 character split is what replaces the old timestamp as the anchor.
+    ("c-issue-triage-4a4e-7ohfp", "c-issue-triage-4a4e"),
+    ("c-issue-triage-4a4e", "c-issue-triage-4a4e"),
+    ("emdash-c-weekly-manager-report-9f21-1me7x", "c-weekly-manager-report-9f21"),
+    # A subject whose own words are 4 and 5 characters long — the split must still
+    # land on the discriminator, not inside the subject.
+    ("c-fix-the-flaky-close-out-test-7f21", "c-fix-the-flaky-close-out-test-7f21"),
+    # LEGACY: still live in the fleet, still resolved by name.
     ("hal-api-df02-0810-0805-7ohfp", "hal-api-df02-0810-0805"),
     ("hal-canopy-scheduler-c4e0-0810-0721-d643m", "hal-canopy-scheduler-c4e0-0810-0721"),
     # No suffix — the task dir is the task name.
