@@ -91,12 +91,40 @@ Bash timeout as `Exit code 143 Command timed out`.
 correctly; the job is to run it where it doesn't block *you*:
 
 ```bash
-gh pr checks <n> --watch --fail-fast; gh pr checks <n> 2>&1 | tail -5
+gh pr checks <n> --watch; gh pr checks <n> --repo <owner>/<repo> \
+  --json name,state --jq 'group_by(.state)[] | "\(.[0].state): \(length)"'
 ```
 
 run via **`Bash` with `run_in_background: true`** — one background task, one notification when it
 settles, and the turn keeps working meanwhile. Don't schedule a wakeup to poll it either; the
 harness re-invokes you when it exits.
+
+**Read the STATE TABLE, never `--watch`'s exit code — and do not add `--fail-fast`.** This recipe
+used to be `--watch --fail-fast` followed by `| tail -5`, and that pair reported a clean green on a
+PR carrying two FAILED checks. Measured 2026-09-04 on canopy#590: the backgrounded command **exited
+0** and the `tail -5` showed five passing rows, while `--json name,state` on the same PR at the same
+moment reported `SUCCESS: 13, IN_PROGRESS: 2, FAILURE: 2`. Three things conspire, each individually
+reasonable:
+
+- **`--fail-fast` returns as soon as it decides, so it can exit while checks are still running** —
+  and a still-`IN_PROGRESS` check is not a passing one.
+- **`tail -5` is an arbitrary window on an unordered list.** The failures simply were not in the
+  last five rows, and five green lines read as "green".
+- **Exit 0 from `gh pr checks` is not "all checks passed."** It is also what you get from *"no
+  checks reported"* — the case the dropped-events section below is entirely about.
+
+So the wait tells you *when to look*; it never tells you *what you found*. Group by state and read
+the counts — `IN_PROGRESS` means look again, not merge. **If you cannot point at a state table, you
+have not verified CI; you have verified that a command exited.**
+
+**The same trap catches any gate you run through a pipe, not just `gh`.** A backgrounded
+`make test … 2>&1 | tail -25` reports the *pipeline's* status, which is `tail`'s, so a gate that
+never ran comes back as exit 0. (2026-09-07, connect-labs#1531: `pytest -n auto` copied verbatim
+from the CI workflow died with `unrecognized arguments: -n auto` — `pytest-xdist` is pinned in
+`requirements/dev.txt` but was absent from the local venv — and the harness reported the background
+task as *"completed (exit code 0)"*. Reading the captured output, not the status, was the only
+thing that caught it.) Same rule, one level out: **confirm the gate printed its OWN success output
+— a pass count, an `ok`, a named verdict — before believing it.**
 
 A bounded loop is fine *inside* a backgrounded command, and is what you want when the terminal
 state is a merge rather than a check result:
