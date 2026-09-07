@@ -55,7 +55,8 @@ exactly why you check instead of assuming:
 | **ace** | **yes** — required: `clean-install` only (`version-check` is advisory) | arm `--auto --merge`, wait, ~70s |
 | **canopy** | **yes** — required: `check-version`, `enforce_admins` on, **no `--auto`** | wait (~10s), then `gh pr merge <n> --merge` |
 | **canopy-web** | **yes** — required: `Backend tests`, `Frontend build` | **merge queue** — see below |
-| **connect-labs, ace-web** | **yes** | wait, then merge |
+| **connect-labs** | **yes** — required: `linter`, `pytest` | **merge queue** — see below |
+| **ace-web** | **yes** | wait, then merge |
 
 Re-derive the row (`ls .github/workflows/`, `grep -l pull_request`,
 `gh api repos/<owner>/<repo>/branches/main/protection --jq .required_status_checks.contexts`)
@@ -587,27 +588,67 @@ the report next, so the caller either re-polls by hand (defeating the point of b
 silently builds on unmerged work. This is `agent-turn-review` § B applied to shipping: a done-claim
 gets **verified, not asserted**.
 
-## Merge-queue repos — the verify step lies TWICE
+## Merge-queue repos — the verify step lies THREE ways
 
-Some repos (canopy-web today) protect `main` with a GitHub merge queue. There:
+**Do not carry a list of which repos these are — check.** This section said "canopy-web today" for
+weeks while **connect-labs** also had a queue, so an agent shipping there met the refusal-shaped
+messages below with nothing to match them against, and the repo table above actively told it to
+expect a plain merge. One call settles it:
 
-1. **Strategy flags are refused.** `gh pr merge <n> --squash` prints
-   `! The merge strategy for main is set by the merge queue` — which reads as a refusal, **but the
-   PR is enqueued anyway.**
+```bash
+gh api repos/<owner>/<repo>/rulesets --jq '.[]|"\(.id) \(.name)"'
+gh api repos/<owner>/<repo>/rulesets/<id> --jq '[.rules[].type]'   # "merge_queue" present?
+```
+
+Where a queue exists:
+
+1. **Strategy flags are refused, and the PR is enqueued anyway.** `gh pr merge <n> --squash` prints
+   `! The merge strategy for main is set by the merge queue` — which reads as a refusal, **but it
+   worked.**
 2. **Re-reading the PR lies a second time.** It shows `state=OPEN mergedAt=null`, which reads as
    independent confirmation that nothing happened. It isn't: the queue merges minutes later, after
    re-running the required checks against the *queued merge result*.
+3. **`--delete-branch` is refused and does NOT enqueue — the one case where the error is real.**
+   `gh pr merge <n> --squash --delete-branch` fails with
+   `X Cannot use '-d' or '--delete-branch' when merge queue enabled` and **nothing happens at all**.
+   This is the trap inside the trap: having learned that (1) succeeds despite its error, the
+   natural read of a *second* error is that it also succeeded. It did not. Merging-and-tidying in
+   one call — the normal habit everywhere else — silently does neither. Drop both flags.
 
 ```bash
-gh pr merge <n>                                # no strategy flag — the queue owns it
-gh pr view <n> --json state,mergeStateStatus   # "already queued to merge" = it IS queued
+gh pr merge <n>                                # no strategy flag, no --delete-branch
+```
+
+**The definitive check is `isInMergeQueue`, and it is GraphQL-only.** `gh pr view --json` does not
+expose it (it errors with `Unknown JSON field: "isInMergeQueue"` and prints the valid field list),
+and `mergeStateStatus` is **not** a queue indicator — a queued PR reads `CLEAN`, exactly like an
+un-queued mergeable one. So the field that actually answers "did my merge take" is reachable only
+this way:
+
+```bash
+gh api graphql -f query='{repository(owner:"<owner>",name:"<repo>"){
+  pullRequest(number:<n>){ state isInMergeQueue mergeStateStatus }}}' \
+  --jq .data.repository.pullRequest
+# {"isInMergeQueue":true,"mergeStateStatus":"CLEAN","state":"OPEN"}  <- enqueued, working
+```
+
+**A queued PR can sit at `OPEN` for minutes with everything green, by configuration.** Read
+`min_entries_to_merge_wait_minutes` off the ruleset before concluding anything is stuck —
+connect-labs sets it to **5**, so a single PR waits five minutes for a batch that never comes and
+then merges alone. Nothing is wrong during that window; an agent that goes looking will find only
+healthy state and may "help" by re-pushing.
+
+```bash
+gh api repos/<owner>/<repo>/rulesets/<id> --jq '.rules[]|select(.type=="merge_queue")|.parameters'
 ```
 
 Then wait for `MERGED` per Step 1 (bound it — the queue's own check timeout is 60min). Treat
 `OPEN` + `CLEAN` + "already queued" as **merging**, not failed. The failure this prevents is
 *acting on the false negative* — re-pushing, force-merging, or opening a duplicate PR on top of a
 merge already in flight. (2026-08-13, canopy-web#594: the strategy-flag error plus `state=OPEN`
-looked like two independent confirmations of failure; it landed as `fed3f2b`.)
+looked like two independent confirmations of failure; it landed as `fed3f2b`. 2026-09-07,
+connect-labs#1548: same two messages on a repo this section did not list, plus the
+`--delete-branch` refusal above; it landed as `dbe2fec` five minutes after the queue accepted it.)
 
 **Never report "shipped" on a merge-queue repo without `state=MERGED`.**
 
