@@ -25,7 +25,7 @@ enforce it.
 ## Tiers
 
 **FRAMEWORK** (agent-runtime substrate — must not import product):
-`agent_cli` · `agent_client` · `agent_coverage` · `agent_doctor` · `agent_email` · `agent_gdoc` · `review_receipt` · `agent_factory` · `agent_web` · `canopy_web` ·
+`agent_cli` · `agent_client` · `agent_coverage` · `agent_doctor` · `dependency_health` · `agent_email` · `agent_gdoc` · `review_receipt` · `agent_factory` · `agent_web` · `canopy_web` ·
 `inbox_filters` · `capture` · `transcripts` · `scanner` · `circuit_breaker` · `rate_limiter` ·
 `scheduler` · `paths` · `repo_map` · `repo_paths` · `repo_evidence` ·
 `skill_budget` · `skill_catalog` · `skill_runner` · `provision` · `run_log` ·

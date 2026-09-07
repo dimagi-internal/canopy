@@ -207,7 +207,7 @@ def test_run_agent_doctor_all_green(tmp_path):
         client_factory=_client_factory(),
         registry_path=str(_plugin_registry(tmp_path)))
     assert ok
-    assert [r.ok for r in results] == [True] * 12
+    assert [r.ok for r in results] == [True] * 14
 
 
 def test_run_agent_doctor_identity_failure_degrades_dependents(tmp_path):
@@ -240,7 +240,7 @@ def test_cli_agent_doctor_json_and_exit_code(tmp_path, monkeypatch):
     assert names == ["Identity", "Plugin install", "Required plugins", "Gating rails",
                      "Hook wiring", "Secrets manifest", "Secrets materialized",
                      "Rails enforced", "Email auth (gog)", "Auth client", "Auth services",
-                     "canopy-web board"]
+                     "canopy-web board", "Dependency upgrades", "Gog keychain trust"]
 
 
 def test_cli_agent_doctor_all_sweeps_fleet_and_gates_on_any_failure(tmp_path, monkeypatch):
