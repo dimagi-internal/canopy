@@ -52,6 +52,10 @@ from orchestrator.agent_email import (
     resolve_email_identity,
 )
 from orchestrator.agent_client import AgentClient, CanopyError
+from orchestrator.dependency_health import (
+    check_dependency_upgrades,
+    check_gog_keychain_trust,
+)
 from orchestrator.provision import (
     ProvisionError,
     load_env_block,
@@ -804,6 +808,8 @@ def run_agent_doctor(
         check_auth_client(identity, runner=runner),
         check_auth_services(identity, runner=runner),
         check_registration(identity, client_factory=client_factory),
+        check_dependency_upgrades(runner=runner),
+        check_gog_keychain_trust(identity, runner=runner),
     ]
     overall_ok = all(r.ok for r in results)
     return results, overall_ok
