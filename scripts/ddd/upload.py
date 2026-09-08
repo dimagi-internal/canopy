@@ -36,6 +36,7 @@ import json
 import mimetypes
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -165,6 +166,86 @@ def upload_narrative_video(
         "review_id": str(review_id),
         "narrative_url": narrative_landing_url(narrative_slug, base_url),
     }
+
+
+def _authored_path_candidates(run_dir: Path, narrative_slug: str, filename: str) -> list[Path]:
+    """Every place a run's authored spec / why-brief legitimately lives, in order.
+
+    ``upload_run`` used to hardcode ``run_dir / "unified_spec.yaml"``. That is
+    correct for a run whose spec was authored INTO the run dir, and wrong for
+    every run that was not — which is every ACE-originated run, because ACE
+    authors at the demo root under the narrative's own slug:
+
+        ~/.ace/demo/<opp>-<run>/<narrative_slug>.yaml     <- authored here
+        ~/.ace/demo/<opp>-<run>/why_brief.yaml
+        ~/.ace/demo/<opp>-<run>/.canopy/ddd/runs/<run_id>/ <- upload looked here
+
+    Every gate passes against the authored spec and the run then dies at the
+    last step, after the render and the judging are already paid for. The
+    workaround — copying the files into the run dir — is worse than the bug: it
+    leaves two divergent copies, so a later re-render reads the authored path
+    while upload reads the stale copy, silently.
+
+    Order matters. The run dir comes first so a run that DOES keep its spec
+    there is completely unaffected; only a run that would previously have
+    raised FileNotFoundError reaches the later candidates.
+
+    dimagi-internal/canopy#620.
+    """
+    candidates = [run_dir / filename]
+
+    # Slug-named sibling of the canonical name, in the run dir.
+    if filename.endswith(".yaml") and filename != f"{narrative_slug}.yaml":
+        candidates.append(run_dir / f"{narrative_slug}.yaml")
+
+    # The ACE shape: <ddd_dir>/../.. is the demo root the spec was authored in.
+    # run_dir is <...>/.canopy/ddd/runs/<run_id>, so walk up four.
+    demo_root = run_dir.parent.parent.parent.parent
+    candidates.append(demo_root / filename)
+    candidates.append(demo_root / f"{narrative_slug}.yaml")
+
+    # The in-repo convention findings_review._default_spec_path already uses.
+    try:
+        toplevel = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        if toplevel:
+            candidates.append(Path(toplevel) / "docs" / "walkthroughs" / f"{narrative_slug}.yaml")
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+
+    # Preserve order, drop duplicates.
+    seen: set[Path] = set()
+    ordered: list[Path] = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            ordered.append(c)
+    return ordered
+
+
+def _resolve_authored_path(run_dir: Path, narrative_slug: str, filename: str) -> Path:
+    """First existing candidate, else raise naming every path that was tried.
+
+    The old failure was a bare FileNotFoundError on a path the operator had
+    never chosen, which reads as "the run is broken" rather than "the spec is
+    somewhere else". Listing the candidates makes the actual question visible.
+    """
+    candidates = _authored_path_candidates(run_dir, narrative_slug, filename)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    tried = "\n".join(f"  - {c}" for c in candidates)
+    raise FileNotFoundError(
+        f"Could not locate {filename!r} for narrative {narrative_slug!r}.\n"
+        f"Tried, in order:\n{tried}\n"
+        f"Author it at one of these paths, or pass an explicit path. Do NOT copy "
+        f"it into the run dir as a workaround — that leaves two divergent copies "
+        f"and a later re-render will read the other one (canopy#620)."
+    )
 
 
 def _resolve_narrative_review_id(run_state: RunState) -> str | None:
@@ -1111,8 +1192,8 @@ def upload_run(
     run_dir = run_dir_for(run_id)
 
     # 2. Load spec + why_brief
-    spec_path = run_dir / "unified_spec.yaml"
-    why_brief_path = run_dir / "why_brief.yaml"
+    spec_path = _resolve_authored_path(run_dir, run_state.narrative_slug, "unified_spec.yaml")
+    why_brief_path = _resolve_authored_path(run_dir, run_state.narrative_slug, "why_brief.yaml")
 
     spec = load_spec(spec_path)
 
