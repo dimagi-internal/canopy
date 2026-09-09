@@ -23,6 +23,11 @@ evaluate each against the **latest code**, and recommend a disposition.
 **Per issue:**
 
 - **implement** — still valid, actionable, not yet done, **and fixable from here**
+- **fix-and-unwind** — an `implement` whose symptom is already **routed around by a
+  documented workaround in a skill, agent or CLAUDE.md**. Fixing the code is only half
+  the job: the same PR must delete the workaround prose. See § The `fix-and-unwind`
+  disposition — this is the one that quietly outranks the rest, because a workaround is
+  what stops an issue ever being closed.
 - **blocked** — the fix is known but cannot be validated from this session; it
   needs a live surface (a device, a live upstream form, a fresh run, someone
   else's permission grant). See § The `blocked` disposition.
@@ -259,12 +264,30 @@ move without a single tracked file changing. A carried-forward PR verdict is
 therefore stale by construction. PR triage is cheap enough (Phase 3b) that this
 costs nothing.
 
+### Phase 2b — Build the workaround index ONCE, before the fan-out
+
+One command for the whole repo, not one per issue. It is what makes
+`fix-and-unwind` (see its section) a disposition an agent can actually reach —
+an issue's own body never says "a skill routes around me", so without this index
+every such issue reads as an ordinary `implement` and keeps its immunity.
+
+```bash
+grep -rhoE '\b([a-z-]+#|#)[0-9]{2,4}\b' skills/ agents/ CLAUDE.md 2>/dev/null | sort -u
+```
+
+Intersect that with the open-issue list from Phase 1 and carry the resulting set —
+plus the citing `file:line` for each — into the fan-out below. Cheap, and it changes a
+verdict rather than decorating it.
+
 ## Phase 3 — Evaluate each stale issue (fan-out, read-only)
 
 Dispatch **one subagent per stale issue** (use the Agent tool; for many issues,
 batch so a handful run concurrently). Give each subagent:
 - the issue: number, title, body, labels, and existing comments
 - the path to the code (working tree root, or the cloned temp repo)
+- **whether this issue is in the Phase 2b workaround index, and where it is cited** —
+  if it is, the disposition is `fix-and-unwind` rather than `implement`, and the
+  subagent must return the workaround's `file:line` so the fix can delete it
 - the rubric and the required output shape below
 
 **Subagent instructions (per issue):**
@@ -684,6 +707,53 @@ Three specifics, because each was a real defect:
 - **If the ceremony is disproportionate to the task, say so once — in one
   sentence — and stop.** A 2-issue backlog does not need the clustering
   narrative. Naming the mismatch is useful signal; re-litigating it is not.
+
+## The `fix-and-unwind` disposition — a workaround is why an issue never closes
+
+**The mechanism.** An agent hits a defect, files it, and writes the workaround into a
+skill so the next run survives. The workaround *works*. Every run after that routes
+around the bug cleanly, nothing costs anything visible, and **the only force that would
+have closed the issue is gone.** The workaround became the closure.
+
+Measured 2026-09-09 across hal, ace and canopy: **594 issue references in skill/agent
+prose, 13 of them pointing at still-open issues.** The oldest was `canopy#416` — hal's
+`skills/ace-review` § Traps has carried *"Trusting `agent-review` signals raw → read the
+evidence; the taxonomy misfires on runs (canopy#416)"* since it was filed. **42 days
+open, zero comments**, while a fresh repro that day showed 31% of its `auth_friction`
+hits carried an explicit success marker. The bug was never fixed because it never hurt
+again.
+
+**Find them — one command, run it in Phase 2 for the whole repo at once** rather than
+per-issue:
+
+```bash
+# every issue number cited in skill/agent prose, cross-checked against open state
+grep -rhoE '\b([a-z-]+#|#)[0-9]{2,4}\b' skills/ agents/ CLAUDE.md 2>/dev/null \
+  | sort -u > /tmp/cited.txt
+gh issue list -R <owner>/<repo> --state open --limit 500 --json number \
+  --jq '.[].number' | sort -u > /tmp/open.txt
+# an issue that is BOTH cited in prose AND still open is a fix-and-unwind candidate
+```
+
+Also grep the *other* agent repos in the fleet, not only this one — the workaround
+usually lives in the repo that suffered, and the bug in the repo that owns it. That
+cross-repo split is exactly why a per-repo triage never sees the pair.
+
+**Why the disposition exists rather than just tagging these `implement`.** A plain
+`implement` fixes the code and leaves the prose, and the stale prose then does active
+harm in two directions: it tells the next agent to distrust a signal that now works, and
+it silently re-arms the same rot for the next bug. So the contract is:
+
+1. **One PR fixes the code and deletes the workaround.** Not two PRs, not a follow-up
+   issue — the deletion is the half that gets dropped.
+2. **Cite the workaround's `file:line` in the issue** before fixing, so the reviewer can
+   see what has to come out.
+3. **If the code fix is out of scope for this run, say so and leave the prose alone.**
+   Deleting a workaround whose bug is still live is strictly worse than leaving both.
+
+**Ranking.** `fix-and-unwind` items are the highest-yield `implement`s in the repo — each
+one is a defect with a *proven* cost (somebody paid to write the workaround) and a
+*measured* reason it survived. Rank them above ordinary `implement`s in Phase 4.
 
 ## The `blocked` disposition
 
