@@ -75,6 +75,9 @@ def infer_repo_from_project_key(project_key: str, repo_map: dict) -> str | None:
       ~/emdash/worktrees/<repo-short>/emdash/<branch>   →
         project_key = "-Users-<user>-emdash-worktrees-<repo-short>-emdash-<branch>"
 
+      ~/emdash/worktrees/<repo-short>-<hash8>/emdash/<branch>   →
+        project_key = "-Users-<user>-emdash-worktrees-<repo-short>-<hash8>-emdash-<branch>"
+
       ~/emdash/repositories/<repo-short>                →
         project_key = "-Users-<user>-emdash-repositories-<repo-short>"
 
@@ -84,25 +87,63 @@ def infer_repo_from_project_key(project_key: str, repo_map: dict) -> str | None:
     When multiple owners map to the same short name (rare), we return None
     rather than guessing.
 
+    THE CHECKOUT-HASH SEGMENT is newer than this function. On 2026-08-28 emdash
+    began stamping the checkout into the worktree directory, so `worktrees/ace`
+    became `worktrees/ace-1476c35d`. The old pattern captured non-greedily up to
+    the NEXT `-emdash-`, which yielded ``ace-1476c35d`` — a short name no
+    ``owner/repo`` ever ends with — so this fallback returned None for EVERY
+    hashed worktree, i.e. for every worktree created since that date.
+
+    Measured 2026-09-09 on one operator's machine: 5 of 51 hashed worktree
+    project dirs with activity in the last 14 days (4 ace, 1 hal, 57 session
+    files) had no hook-captured entry and so resolved to None. They are
+    invisible to every repo-filtered query — `canopy sessions list --project X`
+    drops them, because `(s.get("repo") or "").endswith("/X")` is False for
+    None. The docstring above promised the opposite ("deleted-worktree sessions
+    still get classified correctly"), which is exactly the shape of failure that
+    does not announce itself: a review of 90% of the sessions reads identically
+    to a review of all of them.
+
     Returns the inferred ``owner/repo`` or None if no confident match.
     """
-    # Worktree pattern: capture between "-emdash-worktrees-" and the next "-emdash-".
+    # Worktree pattern: capture between "-emdash-worktrees-" and the next
+    # "-emdash-". The optional trailing 8-hex checkout hash is AMBIGUOUS with a
+    # repo whose short name genuinely ends in `-<8 hex chars>`, so rather than
+    # picking one reading we try both and let the repo_map arbitrate — the same
+    # "return None rather than guess" doctrine this function already applies to
+    # duplicate owners.
+    candidates: list[str] = []
     m = re.search(r"-emdash-worktrees-(.+?)-emdash-", project_key)
     if m:
-        short = m.group(1)
+        raw = m.group(1)
+        candidates.append(raw)
+        hashless = re.sub(r"-[0-9a-f]{8}$", "", raw)
+        if hashless != raw:
+            candidates.append(hashless)
     else:
         # Repositories pattern: capture after "-emdash-repositories-" to end.
         m = re.search(r"-emdash-repositories-(.+)$", project_key)
         if not m:
             return None
-        short = m.group(1)
+        candidates.append(m.group(1))
 
-    if not short:
-        return None
+    resolved: set[str] = set()
+    for short in candidates:
+        if not short:
+            continue
+        matches = {
+            v for v in repo_map.values() if isinstance(v, str) and v.endswith(f"/{short}")
+        }
+        # A short name matching two owners is unresolvable on its own, but it
+        # must not poison the other candidate — skip it rather than bailing.
+        if len(matches) == 1:
+            resolved.add(next(iter(matches)))
 
-    matches = {v for v in repo_map.values() if isinstance(v, str) and v.endswith(f"/{short}")}
-    if len(matches) == 1:
-        return next(iter(matches))
+    # Exactly one repo across both readings, or both readings agreeing, is a
+    # confident answer. Two DIFFERENT repos means the hash strip changed the
+    # meaning and we cannot tell which was intended.
+    if len(resolved) == 1:
+        return next(iter(resolved))
     return None
 
 
