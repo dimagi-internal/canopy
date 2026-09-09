@@ -263,7 +263,10 @@ def _parse_verdicts_yaml(data: dict | list) -> dict[str, Verdict]:
         nid = str(e["nodeid"])
         out[nid] = Verdict(
             nodeid=nid,
-            score=int(e.get("score", 0)),
+            # `score: null` is what SKILL.md tells the judge to write for
+            # not-sampled tests on a large suite, so it must parse. int(None)
+            # raises, which took down a 6,012-test audit at the apply step.
+            score=int(e.get("score") or 0),
             verdict=str(e.get("verdict", "investigate")).lower(),
             reason_code=str(e.get("reason_code", "unknown")),
             reason=str(e.get("reason", "") or ""),

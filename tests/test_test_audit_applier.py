@@ -188,3 +188,24 @@ def test_apply_from_dir_dry_run_against_synthetic_suite(tmp_path):
     actions = sorted((c.nodeid.split("::")[-1], c.action) for c in result.changes)
     assert actions == [("test_always_passes", "delete"),
                        ("test_env_fragile", "skip")]
+
+
+def test_verdicts_with_a_null_score_parse_rather_than_crash(tmp_path):
+    """SKILL.md tells the judge to write `score: null` for not-sampled tests on
+    a large suite, so the applier has to accept it. `int(None)` raised, which
+    took down a 6,012-test audit at the apply step after all the judging was
+    already paid for."""
+    from orchestrator.test_audit.applier import _parse_verdicts_yaml
+
+    parsed = _parse_verdicts_yaml(
+        {
+            "verdicts": [
+                {"nodeid": "t.py::a", "score": None, "verdict": "keep", "reason_code": "not-sampled"},
+                {"nodeid": "t.py::b", "score": 2, "verdict": "prune", "reason_code": "tautology"},
+            ]
+        }
+    )
+
+    assert parsed["t.py::a"].score == 0
+    assert parsed["t.py::a"].verdict == "keep"
+    assert parsed["t.py::b"].score == 2

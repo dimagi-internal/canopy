@@ -65,3 +65,39 @@ def test_parse_junit_passing_parametrize_aggregates_to_passed(tmp_path):
     """))
     results = _parse_junit(xml)
     assert results["tests/test_foo.py::test_x"].status == "passed"
+
+
+def test_a_pytest_run_that_never_starts_says_so(tmp_path, monkeypatch):
+    """An empty JUnit XML used to surface as `ParseError: no element found`,
+    which names neither pytest nor the environment that broke it."""
+    import subprocess
+
+    import pytest as _pytest
+
+    from orchestrator.test_audit import runner
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 4, stdout="", stderr="ImproperlyConfigured: set DJANGO_SETTINGS_MODULE")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    with _pytest.raises(RuntimeError) as exc:
+        runner.run_pytest(tmp_path)
+
+    message = str(exc.value)
+    assert "--no-run" in message
+    assert "ImproperlyConfigured" in message
+
+
+def test_missing_pytest_binary_names_the_venv(tmp_path, monkeypatch):
+    import pytest as _pytest
+
+    from orchestrator.test_audit import runner
+
+    def boom(cmd, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory: 'pytest'")
+
+    monkeypatch.setattr(runner.subprocess, "run", boom)
+
+    with _pytest.raises(RuntimeError, match="virtualenv"):
+        runner.run_pytest(tmp_path)

@@ -73,9 +73,10 @@ def detect_framework(repo: Path, override: str | None = None) -> FrameworkAdapte
 
     Resolution order:
       1. explicit `override` ("pytest" | "vitest") — error if unknown
-      2. vitest config or package.json dep
-      3. pytest config (pyproject/pytest.ini/conftest.py)
-      4. fallback to pytest (preserves prior behavior)
+      2. BOTH configured: whichever backend collects more tests
+      3. vitest config or package.json dep
+      4. pytest config (pyproject/pytest.ini/conftest.py)
+      5. fallback to pytest (preserves prior behavior)
 
     Imported lazily to avoid a circular import — adapters import this module
     for the Protocol.
@@ -85,10 +86,25 @@ def detect_framework(repo: Path, override: str | None = None) -> FrameworkAdapte
     if override:
         return _build_adapter(override)
 
-    if _has_vitest(repo):
+    vitest, pytest_ = _has_vitest(repo), _has_pytest(repo)
+
+    # Both present: decide by COUNTING, not by order. A Django service with a
+    # little front-end tooling has vitest in package.json and 6,000 pytest
+    # tests; returning vitest there produced an audit of 143 tests and silently
+    # ignored the other 6,000. Whichever backend actually collects more tests
+    # is the suite the user means.
+    if vitest and pytest_:
+        counts = {}
+        for name in ("pytest", "vitest"):
+            try:
+                counts[name] = len(_build_adapter(name).collect(repo))
+            except Exception:  # noqa: BLE001 - a backend that cannot collect loses
+                counts[name] = 0
+        if counts["pytest"] or counts["vitest"]:
+            return _build_adapter(max(counts, key=lambda k: counts[k]))
+
+    if vitest:
         return _build_adapter("vitest")
-    if _has_pytest(repo):
-        return _build_adapter("pytest")
     return _build_adapter("pytest")
 
 
