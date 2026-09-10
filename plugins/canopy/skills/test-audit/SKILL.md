@@ -30,7 +30,12 @@ per framework — see step 7.**
 
 ### 1. Confirm scope
 
-Detect the framework. If you see jest/go test/rspec/etc., stop and report —
+Detect the framework. **Check the reported `test_count` against what you expect
+before going further.** When a repo has both backends configured, detection
+picks whichever collects more tests — but a mis-detect is silent and cheap to
+miss: a Django service with vitest in `package.json` once audited 143 JS tests
+and ignored 6,012 Python ones, and nothing in the output said so. If the count
+is implausibly low for the repo, re-collect with `--framework=`. If you see jest/go test/rspec/etc., stop and report —
 those aren't supported. (Vitest uses jest-compatible syntax for `it`/`test`/
 `expect`, so a real Jest suite often works through the vitest adapter, but
 don't rely on it without checking the corpus.)
@@ -103,6 +108,23 @@ is expensive (~25 lines/test × 300+ tests = 7K+ lines). Pick one of:
   with `score: null`. Document the sampling rate in `audit-report.md`
   so the user knows what wasn't audited.
 
+  **(c) Shape-driven sampling** (best above 2,000 tests). Compute cheap
+  static shapes over the WHOLE corpus to choose a reading list, then read
+  and judge those in context. Shapes worth ranking by, roughly in order of
+  hit rate: zero verification constructs; a single assertion that is
+  `is not None` / `isinstance(...)` / `assert True` / `status_code == N` /
+  `hasattr(...)`; duplicate bodies after normalising docstrings, comments
+  and indentation; near-duplicate bodies after also masking string and
+  number literals; and files where mocks outnumber assertions.
+
+  Its honest limit, which belongs in the report: **recall is unknown.** On a
+  6,012-test run this surfaced ~90 candidates and 10 real findings, but 2 of
+  the 10 were found by reading around a hit rather than by any shape —
+  `hasattr` was not in the filter list until it turned up by eye. Near-
+  duplicates mostly indicate parametrization debt, not slop. And nothing
+  static finds a test with four individually-trivial assertions; only
+  mutation testing does.
+
   Do NOT shell out to a Python heuristic classifier — the audit's value
   is the in-context cross-test reasoning. A heuristic that scans for
   `expect()` count and assertion shape doesn't catch redundancy clusters
@@ -121,6 +143,13 @@ is expensive (~25 lines/test × 300+ tests = 7K+ lines). Pick one of:
   vitest 4.x's `files`/`tasks` tree. The `investigate` verdict and
   `env-fragile` special case can't fire when runtime is null suite-wide
   — either re-collect with 0.2.88+ or skip those verdicts for the run.
+- **Pytest: an `assert`-line scan undercounts verification.** `pytest.raises`,
+  `mock.assert_called_once_with(...)`, `assert_not_called()`, `assertRaises`,
+  and a bare call to a function that RAISES on bad input are all real
+  assertions that contain no `assert` statement. Tests using them show up as
+  "zero assertions" and read as slop until you open them. On a real audit,
+  three of the strongest-looking prune candidates were cleared this way. Treat
+  `assertion_count == 0` as *read this*, never as *this is worthless*.
 - **Duplicate nodeids**: when two `it(...)` blocks under different
   `describe` parents share the same leaf name, they collapse to the same
   nodeid. Disambiguate in `verdicts.yaml` by suffixing `#L<line>` to the
@@ -151,6 +180,14 @@ Score these 5 dimensions in your head, then assign an overall score:
 | `refactor` | score 4–6 with a clear improvement path (mention in `reason`) |
 | `prune` | score ≤ 3, OR redundant with a sibling that already covers this, OR no real value |
 | `investigate` | runtime status=failed/error AND the assertion itself is meaningful (not env-fragile) |
+
+**The case the scores do not cover: a worthless body under a valuable name.**
+A test that is `assert True` beneath a comment describing exactly the property
+it should check scores 1, but `prune` is the wrong action — deleting it throws
+away the only written record of an intent someone had. Mark these `refactor`
+with the low score, say in `reason` what assertion to write, and note the
+deviation in the report. `refactor` is never auto-applied, so the intent
+survives to be fixed by a human.
 
 **Special case — environment-fragile tests:**
 If `runtime.status` is `error` AND the error mentions things like `no
@@ -193,6 +230,36 @@ whose name and body together communicate the most about the contract.
 `name-mismatch`, `redundant-with-sibling`, `env-fragile`,
 `unclear-purpose`, `weak-assertion`, `over-mocked`, `slow-and-low-value`.
 
+### 4b. Verify the two claims you cannot make by reading
+
+Reading tells you what a test *says*. Two claims need more than that, and both
+were got wrong on a real audit before this section existed.
+
+**"A sibling already covers this" — prove it by mutation, not by grep.**
+`redundant-with-sibling` is the most-used prune reason and the easiest to get
+backwards. On a real run the keeper was searched for by grepping the named file
+for "hull"; it covered the property thoroughly but called them "features", so
+the audit reported "this property is verified nowhere" — confidently, in
+writing, about a suite that was fine. Before citing a keeper, break the code
+both tests point at and confirm the keeper fails:
+
+```bash
+# edit the source to introduce exactly the bug the test names, then:
+pytest <keeper-nodeid> <candidate-nodeid>     # keeper must FAIL
+git checkout -- <source-file>                 # always revert
+```
+
+If the keeper passes on the mutant, it is not a keeper.
+
+**"This rewrite is better" — same check.** A confident replacement that also
+cannot fail is worse than the tautology it replaced, because it reads like
+coverage. Any test you rewrite in step 7 should be shown to fail against a
+deliberate bug before you claim it.
+
+Budget this for the handful of prunes and rewrites you actually act on, not for
+the whole corpus. Two mutations caught two wrong conclusions on a 6,012-test
+audit; that is the whole cost.
+
 ### 5. Write `verdicts.yaml`
 
 Write to `<stamp_dir>/verdicts.yaml`. Format:
@@ -225,6 +292,16 @@ problems: untested modules, over-mocked test files (often a CUT-design
 smell), slow-test hot lists, fixture sprawl, framework hygiene, missing
 test-pyramid balance. **You must do this pass too.** Skipping it produces
 the rubber-stamp failure mode: "every test is OK, suite is fine."
+
+**Sanity-check these numbers before reporting any of them.** They are derived
+from layout heuristics that do not fit every repo, and a wrong one is worse
+than a missing one because it reads as a finding. Specifically: if
+`untested_modules` is ~100% of `modules`, the scan did not understand the
+layout — say so and drop the signal rather than reporting the count. Same if
+every `modules[]` entry looks empty: check you are reading the right key
+(`module_name`, not `name`) before blaming the collector. And `mock_density`
+has `total_mocks`/`total_assertions` but **no** `ratio` field — computing one
+yourself is fine, reading a missing key and reporting 0.00 is not.
 
 Read the `architecture` key in `corpus.yaml`:
 

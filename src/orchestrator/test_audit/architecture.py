@@ -49,6 +49,17 @@ class SlowTest:
     duration_ms: int
 
 
+_IGNORED_DIR_PARTS = frozenset({
+    ".git", ".venv", "venv", "node_modules", "site-packages", "__pycache__",
+    ".tox", ".mypy_cache", ".pytest_cache", "build", "dist", ".canopy",
+})
+
+
+def _is_ignored_path(path: Path) -> bool:
+    """Keep the repo-wide test scan out of vendored and build trees."""
+    return any(part in _IGNORED_DIR_PARTS for part in path.parts)
+
+
 def _is_test_file_for(test_path: Path, module_name: str) -> bool:
     name = test_path.stem  # e.g., "test_alpha" or "alpha_test"
     return name == f"test_{module_name}" or name == f"{module_name}_test"
@@ -123,11 +134,26 @@ def module_inventory(repo: Path, src_root: str = "src",
     if not src_dir.exists():
         return []
 
+    # Tests are found wherever they live, not only under `<repo>/<tests_root>`.
+    # A top-level `tests/` is one convention; Django and many packages instead
+    # co-locate `<package>/<app>/tests/test_*.py`, and for those the old lookup
+    # matched nothing and reported EVERY module untested — a 100%-untested
+    # figure that is always noise and never a finding.
+    search_dirs = [tests_dir] if tests_dir.exists() else []
     test_paths_by_name: dict[str, Path] = {}
-    if tests_dir.exists():
-        for tp in tests_dir.rglob("*.py"):
-            test_paths_by_name[tp.stem] = tp
-    test_imports = _scan_test_imports(tests_dir)
+    for tp in repo.rglob("test_*.py"):
+        if _is_ignored_path(tp):
+            continue
+        test_paths_by_name.setdefault(tp.stem, tp)
+        if tests_dir not in tp.parents and tp.parent not in search_dirs:
+            search_dirs.append(tp.parent)
+    for tp in repo.rglob("*_test.py"):
+        if not _is_ignored_path(tp):
+            test_paths_by_name.setdefault(tp.stem, tp)
+
+    test_imports: list[str] = []
+    for d in search_dirs:
+        test_imports.extend(_scan_test_imports(d))
 
     inv: list[ModuleInfo] = []
     for src in sorted(src_dir.rglob("*.py")):

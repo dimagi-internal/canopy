@@ -116,13 +116,37 @@ def run_pytest(repo: Path, reruns: int = 0, extra_args: list[str] | None = None,
                 "-p", "no:cacheprovider",
                 *extra,
             ]
+            proc = None
             try:
-                subprocess.run(
+                proc = subprocess.run(
                     cmd, cwd=repo, capture_output=True, text=True, timeout=timeout,
                 )
             except subprocess.TimeoutExpired:
                 # Partial junit may still exist; carry on.
                 pass
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    "test-audit could not run pytest: no `pytest` on PATH. Activate the "
+                    "project's virtualenv, or collect with --no-run."
+                ) from exc
+
+            # A suite that cannot even start writes no JUnit XML, and parsing an
+            # empty file raises `ParseError: no element found` — an error that
+            # names neither pytest nor the environment. Say what happened, and
+            # point at the flag that gets the audit moving without a runner.
+            if not xml_path.exists() or xml_path.stat().st_size == 0:
+                detail = ""
+                if proc is not None:
+                    tail = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()
+                    if tail:
+                        detail = "\n  " + "\n  ".join(tail[-15:])
+                raise RuntimeError(
+                    "test-audit ran pytest but it produced no JUnit XML, so the suite "
+                    "never started (a missing settings module, an unset env var, or a "
+                    "collection error). Re-run with --no-run to audit statically, or fix "
+                    "the invocation so `pytest` works from the repo root."
+                    + (f"\n\npytest said:{detail}" if detail else "")
+                )
             runs.append(_parse_junit(xml_path))
         finally:
             try:

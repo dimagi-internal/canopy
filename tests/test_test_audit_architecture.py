@@ -171,3 +171,36 @@ def test_slow_tests_sorts_descending_by_duration():
     }
     slow = slow_tests(runtimes, threshold_ms=1000)
     assert [s.nodeid for s in slow] == ["b", "c", "a"]
+
+
+def test_module_inventory_finds_tests_that_live_beside_their_app(tmp_path):
+    """Django and many packages co-locate `<app>/tests/test_*.py` instead of a
+    top-level `tests/`. The old lookup only searched `<repo>/tests`, so those
+    repos reported EVERY module untested — a 100% figure that is always noise.
+    """
+    from orchestrator.test_audit.architecture import module_inventory
+
+    (tmp_path / "pkg" / "billing" / "tests").mkdir(parents=True)
+    (tmp_path / "pkg" / "billing" / "invoices.py").write_text("def total():\n    return 1\n")
+    (tmp_path / "pkg" / "billing" / "refunds.py").write_text("def refund():\n    return 1\n")
+    (tmp_path / "pkg" / "billing" / "tests" / "test_invoices.py").write_text("def test_total():\n    pass\n")
+
+    inv = {m.module_name: m for m in module_inventory(tmp_path, src_root="pkg")}
+
+    assert inv["invoices"].has_test_file is True
+    assert inv["refunds"].has_test_file is False
+
+
+def test_module_inventory_ignores_vendored_trees(tmp_path):
+    """The repo-wide scan must not credit a module because something inside
+    node_modules or .venv happens to share its name."""
+    from orchestrator.test_audit.architecture import module_inventory
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "invoices.py").write_text("def total():\n    return 1\n")
+    (tmp_path / "node_modules" / "x" / "tests").mkdir(parents=True)
+    (tmp_path / "node_modules" / "x" / "tests" / "test_invoices.py").write_text("def test_x():\n    pass\n")
+
+    inv = {m.module_name: m for m in module_inventory(tmp_path, src_root="pkg")}
+
+    assert inv["invoices"].has_test_file is False

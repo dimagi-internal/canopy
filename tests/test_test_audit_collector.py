@@ -75,3 +75,36 @@ def test_collect_works_when_no_pyproject(tmp_path):
     (tmp_path / "deep" / "test_b.py").write_text("def test_b(): assert 1\n")
     names = sorted(it.name for it in collect(tmp_path))
     assert names == ["test_a", "test_b"]
+
+
+def test_detection_prefers_the_framework_with_more_tests(tmp_path):
+    """A Django service with a little front-end tooling has vitest in
+    package.json and thousands of pytest tests. Detection used to return vitest
+    on sight of the dep, auditing the 143 JS tests and silently ignoring 6,012
+    Python ones."""
+    import json
+
+    from orchestrator.test_audit.framework import detect_framework
+
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (tmp_path / "package.json").write_text(json.dumps({"devDependencies": {"vitest": "^2"}}))
+
+    (tmp_path / "app" / "tests").mkdir(parents=True)
+    for i in range(12):
+        (tmp_path / "app" / "tests" / f"test_m{i}.py").write_text(f"def test_{i}():\n    assert True\n")
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "one.test.ts").write_text("import {it, expect} from 'vitest'\nit('a', () => expect(1).toBe(1))\n")
+
+    assert detect_framework(tmp_path).name == "pytest"
+
+
+def test_detection_still_picks_vitest_for_a_js_repo(tmp_path):
+    import json
+
+    from orchestrator.test_audit.framework import detect_framework
+
+    (tmp_path / "package.json").write_text(json.dumps({"devDependencies": {"vitest": "^2"}}))
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.test.ts").write_text("import {it, expect} from 'vitest'\nit('a', () => expect(1).toBe(1))\n")
+
+    assert detect_framework(tmp_path).name == "vitest"

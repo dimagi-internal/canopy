@@ -29,11 +29,19 @@ class PytestAdapter:
 
     def module_inventory(self, repo: Path,
                          source_roots: list[str] | None = None) -> list[ModuleInfo]:
-        # Pytest layout is single-rooted; pick the first explicit root if
-        # given, else default to "src". Multi-root Python projects are rare
-        # enough that this keeps the adapter simple — extend if needed.
-        root = (source_roots[0] if source_roots else "src")
-        return _module_inventory(repo, src_root=root)
+        # Every root the caller passed, not just the first. Silently dropping
+        # the rest is worse than not supporting them: the caller sees a module
+        # inventory that looks complete and is missing three quarters of the
+        # code (measured on a repo invoked with four roots).
+        roots = list(source_roots) if source_roots else ["src"]
+        seen: set[str] = set()
+        inv: list = []
+        for root in roots:
+            for m in _module_inventory(repo, src_root=root):
+                if m.src_path not in seen:
+                    seen.add(m.src_path)
+                    inv.append(m)
+        return inv
 
     def apply_delete(self, file: Path, name: str) -> bool:
         from orchestrator.test_audit.applier import _delete_test
