@@ -148,9 +148,15 @@ class RunState(BaseModel):
     # the gate asked a human "is this the right direction?" over an artifact known
     # to be wrong, and the fixes were never applied (ACE
     # spark-facilitator/20260820-0817: five accuracy findings dropped, zero
-    # iterations completed). The gate now waits for that work — but EXACTLY ONCE,
-    # so a mechanical backlog that keeps regenerating cannot starve it. Bounded by
-    # CONCEPT_GATE_MAX_DEFERRALS; never reset within a run.
+    # iterations completed). The gate now waits for that work for as long as it
+    # is demonstrably cleaning the artifact. This field is a LEDGER of deferrals
+    # taken, not a budget: the first deferral is free, and each further one is
+    # granted only if the previous pass moved the score outside the noise band
+    # (canopy#588 — a count bound of 1 cut consecutive clean runs off mid-climb
+    # with 29 and 14 mechanical fixes pending, and a crashed pass spent it on
+    # nothing). A persisted non-zero value therefore never blocks a resumed run
+    # by itself; what decides is whether the score moved. Never reset within a
+    # run; HARD_CAP is the runaway backstop.
     concept_gate_deferred: int = 0
     # Hosted narrative-review URL (0.2.150). Stamped by the ddd-narrative-review
     # gate after it posts the narrative to the canopy-web review surface — the

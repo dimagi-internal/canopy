@@ -9,6 +9,36 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.484] - 2026-09-10
+### Fixed
+- **The concept gate's deferral is exhaustion-based, not count-based** (#588).
+  `compute_auto_iterate` deferred the concept gate for pending mechanical work
+  exactly once (`CONCEPT_GATE_MAX_DEFERRALS = 1`). The bound was a count of
+  passes, not a property of the artifact, and it failed in two opposite shapes:
+  - Clean case: ACE `spark-fcap-facilitation-2026-09-09-001`/`-002` each did real
+    work on the deferred pass and still stopped `stop_concept_change` with 29
+    then 14 mechanical fixes pending. Applying the pending 29 moved every gating
+    judge +1.0 (`[2.0] -> [2.0, 3.0]`), far outside the noise band — the score
+    was demonstrably still climbing when the count cut it.
+  - Crash case: `hh-poverty-targeting-census-sweep-2026-09-01-001` deferred,
+    the pass was killed before applying anything, `concept_gate_deferred: 1`
+    persisted, and the resumed pass opened the gate with 13 fixes unapplied.
+  - Now: the first deferral is free; every further one is granted only if the
+    previous pass moved the score outside `denoise.NOISE_BAND`
+    (`denoise.improved(hist[-2], hist[-1]) is True`). A flat pass — whether it
+    applied nothing or applied fixes that changed nothing — buys no further
+    deferral, so both cases end the same honest way. A stall or plateau still
+    suppresses the deferral; `HARD_CAP` is the runaway backstop and now bounds
+    BOTH `continue` paths (the mechanical-only `continue` used to step over it).
+  - `CONCEPT_GATE_MAX_DEFERRALS` is removed (no other importer). The `reason`
+    string no longer prints `N/1`; it says why the deferral was granted (first
+    pass, or the score move that paid for it) and what will end it.
+    `RunState.concept_gate_deferred` is kept as a ledger of deferrals taken.
+  - Regression: `tests/ddd/test_loop_termination.py::TestConceptGateWaitsForMechanicalWork`
+    — second deferral granted on a real climb, refused on flat / in-band moves,
+    the crash case both ways, stall suppression even after an improving step,
+    and the hard cap ending a run that keeps climbing by real steps.
+
 ## [0.2.462] - 2026-09-02
 ### Fixed
 - **A `scroll_to` near the top of a page silently filmed the previous scene's

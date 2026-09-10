@@ -674,7 +674,8 @@ from scripts.ddd.run_pipeline import compute_auto_iterate
 # gating score to state.score_history and its finding fingerprints to
 # state.finding_fingerprints, and returns (action, reason) over:
 #   converged                                  -> stop_done / stop_partial
-#   STRATEGY redesign + mechanical pending     -> continue  (gate deferred, 1x)
+#   STRATEGY redesign + mechanical pending,
+#     first deferral or score still climbing   -> continue  (gate deferred)
 #   a STRATEGY CONCEPT/redesign finding        -> stop_concept_change
 #   score stalled/regressed (noise-banded)     -> stop_max_iter
 #   identical findings + no real score move    -> stop_max_iter  (plateau)
