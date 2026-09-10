@@ -156,12 +156,20 @@ Branch on output:
 - `PREFLIGHT: no-target` → ask for an `owner/repo`, then stop.
 - Otherwise capture `SLUG` and whether the code is `local` or `remote`.
 
-## Phase 0.5 — Declare the scope contract (one `AskUserQuestion`, before any spend)
+## Phase 0.5 — Declare the scope contract, before any spend
 
-Ask once, up front. This is the cheapest question in the skill and it prevents
-the failure mode in § Scope discipline.
+**DECLARE, which is not the same as ASK.** State the contract in one line and proceed on the
+recommended default. The rule this phase enforces is that the run has a stated boundary it stops
+at — not that a human picks it. A one-line declaration satisfies that, and the operator can
+redirect in their next message at no cost, because Phases 0–4 are read-only anyway.
 
-**Question:** "How far should this run go?"
+Ask only when the answer genuinely changes what you do and you cannot infer it: no recent triage
+AND an unusually large or unfamiliar repo, or an operator who has already signalled they want to
+choose. **Some operators have a standing preference against multiple-choice prompts entirely**
+(Jonathan's, in this fleet — recommend and act, ask inline in prose if you must). Honour it: an
+`AskUserQuestion` here is a convenience, and the phase's actual job is the announced boundary.
+
+**The contracts** — pick one and announce it (or offer these if you do ask):
 
 | Option | What it means |
 |--------|---------------|
@@ -263,6 +271,44 @@ PR's disposition turns on CI state, mergeability, and base drift — all of whic
 move without a single tracked file changing. A carried-forward PR verdict is
 therefore stale by construction. PR triage is cheap enough (Phase 3b) that this
 costs nothing.
+
+### Phase 2a-bis — Ask the CODE whether the issue is already closed. Do this FIRST.
+
+**The single highest-yield check in the whole skill, and it is one grep.** An agent that fixes a
+bug writes the issue number into the code or the commit that fixed it — and then very often does
+not close the issue, because nothing reads the backlog on a cadence. So the citation survives as
+a receipt nobody collected.
+
+```bash
+# for each open issue number N, in the resolved code
+git log --oneline --grep="#<N>\b" | head -3      # a commit claiming to fix it
+grep -rn "#<N>\b" --include='*.py' --include='*.ts' --include='*.md' . | head -5
+```
+
+A hit in a **docstring, comment or test name** is strong evidence the work landed — that is an
+author citing the issue they were closing. A hit in a **skill/agent prose file** is the opposite
+signal: it is a workaround, and belongs to Phase 2b below, not here. Distinguish them, because
+they point in opposite directions.
+
+Measured 2026-09-09 across `ada`, `ace-web` and `eva` — 7 open issues, and **4 were finished work
+nobody had closed**, three of them with the issue number sitting in the code that resolved them:
+
+| issue | age | the receipt |
+|---|---|---|
+| `ada#34` | 42d | `bin/ada-run-cursor` already delegates to `canopy cursor`; both named bugs gone |
+| `eva#120` | 43d | `bin/cos-state` docstring: *"cadence POLICY … (run-state lives in a canopy cursor)"* |
+| `ace-web#706` | 43d | `list_sessions_in_workspace` cites `ace-web#706` **in its own docstring** |
+
+Running this before the fan-out would have dispositioned three issues in about a minute, and it
+changes what the expensive per-issue evaluation is *for*: not "is this still broken?" but "the
+code says this is done — is it done *completely*?" That distinction matters, because the fourth
+(`ace-web#744`) had shipped **half** — the receipt was real and the work was not finished. So a
+citation is a strong prior, never a verdict: still confirm against the code, and still cite
+`file:line` in the close, exactly as § Critical rules requires.
+
+**Run it for every open issue at once, before Phase 3**, and carry the result into the fan-out —
+same shape as the workaround index below, and for the same reason: an issue's own body never
+says "the fix already shipped."
 
 ### Phase 2b — Build the workaround index ONCE, before the fan-out
 
