@@ -33,13 +33,17 @@ HARD_CAP: int = 10
 # Back-compat alias for older callers; no longer a hard 3-iteration cap.
 MAX_ITERATIONS: int = HARD_CAP
 
-# How many times pending MECHANICAL work may hold the concept gate open. The gate
-# buys a human's taste judgment on DIRECTION; opening it over an artifact that
-# still carries confidently-fixable defects spends that judgment on a
-# misrepresentation. One deferral = at most one extra render, then the gate opens
-# regardless — the bound is what stops a self-regenerating mechanical backlog from
-# starving it.
-CONCEPT_GATE_MAX_DEFERRALS: int = 1
+# There is deliberately NO count bound on how many passes pending MECHANICAL work
+# may hold the concept gate open. The gate buys a human's taste judgment on
+# DIRECTION; opening it over an artifact that still carries confidently-fixable
+# defects spends that judgment on a misrepresentation — and "clean" is a property
+# of the artifact, not a count of passes. The bound is EXHAUSTION instead: after
+# the first (free) deferral, each further one must be paid for by the previous
+# pass moving the score outside denoise.NOISE_BAND. A flat pass — one that applied
+# nothing, or applied fixes that changed nothing — buys no more waiting, so a
+# self-regenerating backlog cannot starve the gate and a crashed pass cannot
+# spend it. HARD_CAP is the runaway backstop. See compute_auto_iterate and
+# canopy#588 (a count of 1 cut consecutive clean runs off mid-climb).
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +251,8 @@ def compute_auto_iterate(
 
     - converged (both judges >= threshold)        -> ``stop_done`` / ``stop_partial``
     - a STRATEGY CONCEPT/redesign finding, with
-      mechanical fixes still pending (once only)  -> ``continue`` (gate deferred)
+      mechanical fixes still pending and the score
+      still climbing (or first deferral)          -> ``continue`` (gate deferred)
     - a STRATEGY CONCEPT/redesign finding          -> ``stop_concept_change``
     - any options/redesign finding                -> ``stop_unclear``
     - score stalled/regressed over last 2 iters   -> ``stop_max_iter`` (needs a human)
@@ -271,14 +276,19 @@ def compute_auto_iterate(
        wobbles; the defect it names does not. Two iterations producing the same
        finding fingerprints means the loop is re-deriving rather than progressing,
        whatever the numbers did.
-    4. **Lets pending mechanical work run BEFORE the concept gate opens**, exactly
-       once (:data:`CONCEPT_GATE_MAX_DEFERRALS`, counted in
-       ``state.concept_gate_deferred``). A strategy redesign is maximally uncertain
-       — it is precisely "we may have built the wrong thing" — so letting it jump
-       ahead of confident fixes inverted this function's own invariant. It also
-       spends the gate badly: the human is asked "is this the right direction?"
-       over an artifact wrong in ways nobody disputes, and the score and video
-       they judge measure a product that is about to stop existing.
+    4. **Lets pending mechanical work run BEFORE the concept gate opens**, for as
+       long as that work is demonstrably cleaning the artifact. A strategy
+       redesign is maximally uncertain — it is precisely "we may have built the
+       wrong thing" — so letting it jump ahead of confident fixes inverted this
+       function's own invariant. It also spends the gate badly: the human is
+       asked "is this the right direction?" over an artifact wrong in ways nobody
+       disputes, and the score and video they judge measure a product that is
+       about to stop existing. The bound is exhaustion, not a count
+       (canopy#588): the first deferral is free, and every further one requires
+       the previous pass to have moved the score outside the noise band
+       (``denoise.improved(hist[-2], hist[-1]) is True``). A stall, a plateau, or
+       the hard cap ends it regardless. ``state.concept_gate_deferred`` records
+       how many were taken; it is a ledger, not a budget.
 
     Mutates ``state.score_history`` (this iteration's gating score),
     ``state.finding_fingerprints`` (this iteration's fingerprint set) and
@@ -381,25 +391,48 @@ def compute_auto_iterate(
         )
     # Mechanical fixes come FIRST — a confident fix must never sit behind an
     # uncertain one, and a strategy REDESIGN is the most uncertain finding there
-    # is. So pending mechanical work holds the concept gate open, ONCE, and the
-    # human gets the direction question over a clean artifact instead of one
-    # carrying defects nobody disputes. A plateau still suppresses it: re-applying
-    # fixes that already failed to move anything is not worth the gate's wait.
+    # is. So pending mechanical work holds the concept gate open WHILE IT IS
+    # STILL CLEANING THE ARTIFACT, and the human gets the direction question over
+    # a clean artifact instead of one carrying defects nobody disputes. The bound
+    # is exhaustion, not a count (canopy#588): the first deferral is free; each
+    # further one must be paid for by the last pass moving the score outside the
+    # noise band. A flat pass buys nothing — which is what makes a crashed pass
+    # (applied nothing, score unchanged) and a spent one (applied fixes, score
+    # unchanged) end the same way: the gate opens. A stall or plateau still
+    # suppresses it (re-applying fixes that already failed to move anything is
+    # not worth the gate's wait), and the hard cap is the runaway backstop.
+    first_deferral = state.concept_gate_deferred == 0
+    last_pass_improved = (
+        len(hist) >= 2 and denoise.improved(hist[-2], hist[-1]) is True
+    )
+    under_cap = len(hist) < hard_cap
     defer_concept_gate = (
         bool(strategy_redesign)
         and bool(mechanical)
         and not plateau
-        and state.concept_gate_deferred < CONCEPT_GATE_MAX_DEFERRALS
+        and not stalled
+        and under_cap
+        and (first_deferral or last_pass_improved)
     )
     if defer_concept_gate:
         state.concept_gate_deferred += 1
+        if first_deferral:
+            why = (
+                "First deferral. The gate opens next pass unless that pass moves the "
+                f"score by more than the +/-{denoise.NOISE_BAND} noise band"
+            )
+        else:
+            why = (
+                f"Deferral {state.concept_gate_deferred}: the last pass moved the score "
+                f"{hist[-2]} -> {hist[-1]}, outside the +/-{denoise.NOISE_BAND} noise "
+                "band, so the fixes are still cleaning the artifact. The gate opens the "
+                "first pass that goes flat, regresses, or plateaus"
+            )
         return _finish(
             "continue",
             f"{len(mechanical)} mechanical (confident) fix(es) remain alongside a strategy "
             "finding — apply + re-fire so the concept question is asked over a clean "
-            f"artifact. The gate opens next pass if the strategy finding persists "
-            f"(deferral {state.concept_gate_deferred}/{CONCEPT_GATE_MAX_DEFERRALS}, "
-            f"history={hist}).",
+            f"artifact. {why} (history={hist}).",
         )
     if strategy_redesign:
         return _finish(
@@ -409,7 +442,9 @@ def compute_auto_iterate(
             + (" Unattended: reported, not waited on." if unattended else ""),
         )
     # A plateau means re-applying the mechanical fixes is not producing change.
-    if mechanical and not plateau:
+    # The hard cap applies here too — a backstop that a `continue` can step over
+    # is not a backstop.
+    if mechanical and not plateau and under_cap:
         return _finish(
             "continue",
             f"{len(mechanical)} mechanical (confident) fix(es) remain — apply + re-fire "

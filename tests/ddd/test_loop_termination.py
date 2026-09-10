@@ -19,6 +19,8 @@ Two regressions locked in here:
 """
 from __future__ import annotations
 
+import pytest
+
 from scripts.ddd.run_pipeline import classify_termination, compute_auto_iterate
 from scripts.ddd.schemas.models import RunState, Verdict
 
@@ -199,8 +201,16 @@ class TestTerminationStatus:
 class TestConceptGateWaitsForMechanicalWork:
     """A confident fix must never sit behind an uncertain one — redesign included.
 
-    The gate is deferred EXACTLY ONCE. It buys a human's judgment on direction,
-    and it must not be starved by a mechanical backlog that keeps regenerating.
+    The gate is deferred WHILE THE ARTIFACT IS STILL GETTING CLEANER, and opens the
+    moment it stops. "Clean" is a property of the artifact, not a count of passes
+    (canopy#588): a count of 1 cut two consecutive clean runs off with 29 and 14
+    mechanical fixes pending while the score was demonstrably still climbing
+    (`[2.0] -> [2.0, 3.0]`, +1.0 on every judge from exactly the deferred work), and
+    a crashed pass spent the same budget on nothing. So the bound is exhaustion:
+    the first deferral is free; every further one must be paid for by the previous
+    pass moving the score outside the noise band. A flat pass — whether it applied
+    nothing or applied fixes that changed nothing — buys no more waiting, and a
+    stall, a plateau, or the hard cap ends it regardless.
     """
 
     MECHANICAL = {
@@ -212,6 +222,11 @@ class TestConceptGateWaitsForMechanicalWork:
         "fix_recommendation": "Bind the column to the uncapped ordinal.",
     }
 
+    @classmethod
+    def _fresh_mechanical(cls, n: int) -> dict:
+        """A mechanical finding with a distinct detail, so passes never plateau."""
+        return {**cls.MECHANICAL, "detail": f"Mechanical defect #{n} in the drill."}
+
     def test_a_strategy_finding_does_not_preempt_pending_mechanical_fixes(self) -> None:
         """The live failure: five fixable defects were skipped for one taste question."""
         state = _state()
@@ -221,22 +236,157 @@ class TestConceptGateWaitsForMechanicalWork:
         )
         assert action == "continue", reason
         assert state.concept_gate_deferred == 1
+        assert "first deferral" in reason.lower(), reason
+        assert "/1" not in reason, reason  # no count-of-N bound is printed any more
 
-    def test_the_gate_is_deferred_once_not_indefinitely(self) -> None:
-        """Second pass with the strategy finding still standing: the gate opens."""
+    def test_the_gate_is_deferred_while_improving_and_opens_when_it_stalls(self) -> None:
+        """The new invariant, end to end: [2.0] defer -> [2.0, 3.0] defer again (the
+        pass paid for itself) -> [2.0, 3.0, 3.0] flat, the gate opens."""
         state = _state()
-        findings = [self.MECHANICAL, STRATEGY_BLOCKER]
         a1, _ = compute_auto_iterate(
-            state, _v(2.0, "fail"), _v(2.0, "fail"), findings, unattended=True
+            state, _v(2.0, "fail"), _v(2.0, "fail"),
+            [self._fresh_mechanical(1), STRATEGY_BLOCKER], unattended=True,
         )
         assert a1 == "continue"
-        moved = [{**self.MECHANICAL, "detail": "A different mechanical defect."}]
+        a2, r2 = compute_auto_iterate(
+            state, _v(3.0, "warn"), _v(3.0, "warn"),
+            [self._fresh_mechanical(2), STRATEGY_BLOCKER], unattended=True,
+        )
+        assert a2 == "continue", r2
+        assert state.concept_gate_deferred == 2
+        a3, r3 = compute_auto_iterate(
+            state, _v(3.0, "warn"), _v(3.0, "warn"),
+            [self._fresh_mechanical(3), STRATEGY_BLOCKER], unattended=True,
+        )
+        assert a3 == "stop_concept_change", r3
+        assert state.concept_gate_deferred == 2  # opening the gate is not a deferral
+        assert state.score_history == [2.0, 3.0, 3.0]
+
+    def test_a_second_deferral_is_granted_when_the_score_really_climbed(self) -> None:
+        """canopy#588 clean case: spark-fcap-facilitation-2026-09-09-002 stopped
+        `stop_concept_change` at history=[2.0, 3.0] with 14 mechanical pending. A
+        +1.0 move is outside the +/-0.5 noise band — the deferred pass paid for
+        itself, so the gate keeps waiting."""
+        state = _state()
+        a1, _ = compute_auto_iterate(
+            state, _v(2.0, "fail"), _v(2.0, "fail"),
+            [self._fresh_mechanical(1), STRATEGY_BLOCKER], unattended=True,
+        )
+        assert a1 == "continue"
         a2, reason = compute_auto_iterate(
-            state, _v(3.0, "warn"), _v(3.0, "warn"), moved + [STRATEGY_BLOCKER],
-            unattended=True,
+            state, _v(3.0, "warn"), _v(3.0, "warn"),
+            [self._fresh_mechanical(2), STRATEGY_BLOCKER], unattended=True,
+        )
+        assert a2 == "continue", reason
+        assert state.concept_gate_deferred == 2
+        assert "2.0" in reason and "3.0" in reason, reason  # says WHY it was granted
+        assert "/1" not in reason, reason
+
+    @pytest.mark.parametrize("second", [2.0, 2.4])
+    def test_a_second_deferral_is_refused_when_the_score_is_flat(self, second: float) -> None:
+        """canopy#588 clean case, run -001: history=[2.0, 2.0]. Flat, or a move
+        inside the noise band (2.4 - 2.0 < NOISE_BAND), is not evidence the fixes
+        are cleaning anything — the gate opens with the strategy finding standing."""
+        from scripts.ddd import denoise
+
+        assert abs(second - 2.0) < denoise.NOISE_BAND or second == 2.0
+        state = _state()
+        a1, _ = compute_auto_iterate(
+            state, _v(2.0, "fail"), _v(2.0, "fail"),
+            [self._fresh_mechanical(1), STRATEGY_BLOCKER], unattended=True,
+        )
+        assert a1 == "continue"
+        a2, reason = compute_auto_iterate(
+            state, _v(second, "fail"), _v(second, "fail"),
+            [self._fresh_mechanical(2), STRATEGY_BLOCKER], unattended=True,
         )
         assert a2 == "stop_concept_change", reason
         assert state.concept_gate_deferred == 1
+
+    def test_a_crashed_deferred_pass_does_not_spend_the_budget(self) -> None:
+        """canopy#588 crash case: hh-poverty-targeting-census-sweep-2026-09-01-001
+        deferred (counter=1 persisted to disk), the pass was killed before applying
+        anything, and the resumed pass found the gate already spent. Under the
+        exhaustion rule the persisted counter is a record, not a budget: the
+        resumed pass is judged on whether it moved the score."""
+        # (a) the resumed pass applied nothing -> flat -> the gate opens, honestly.
+        state = _state(score_history=[2.0], concept_gate_deferred=1)
+        a, reason = compute_auto_iterate(
+            state, _v(2.0, "fail"), _v(2.0, "fail"),
+            [self._fresh_mechanical(1), STRATEGY_BLOCKER], unattended=True,
+        )
+        assert a == "stop_concept_change", reason
+        assert state.concept_gate_deferred == 1
+        # (b) the resumed pass applied the fixes and the score climbed -> the
+        # deferral continues, exactly as if the crash had never happened.
+        state = _state(score_history=[2.0], concept_gate_deferred=1)
+        a, reason = compute_auto_iterate(
+            state, _v(3.0, "warn"), _v(3.0, "warn"),
+            [self._fresh_mechanical(1), STRATEGY_BLOCKER], unattended=True,
+        )
+        assert a == "continue", reason
+        assert state.concept_gate_deferred == 2
+
+    def test_a_stall_suppresses_the_deferral_even_if_the_last_step_improved(self) -> None:
+        """history=[4.0, 2.0, 3.0]: the last step climbed, but the last two
+        iterations are both below the prior best — a stall, which the loop
+        already hands to a human. The gate opens rather than waiting on fixes
+        that are not converging. Holds for a first deferral too."""
+        for deferred in (0, 1):
+            state = _state(score_history=[4.0, 2.0], concept_gate_deferred=deferred)
+            a, reason = compute_auto_iterate(
+                state, _v(3.0, "warn"), _v(3.0, "warn"),
+                [self._fresh_mechanical(1), STRATEGY_BLOCKER], unattended=True,
+            )
+            assert a == "stop_concept_change", (deferred, reason)
+            assert state.concept_gate_deferred == deferred
+
+    def test_the_hard_cap_still_ends_a_run_that_keeps_climbing_by_real_steps(self) -> None:
+        """HARD_CAP is the runaway backstop. A run that improves by a real step
+        every pass with a strategy finding standing must still terminate at the
+        cap — it must not defer forever."""
+        from scripts.ddd.run_pipeline import TERMINAL_ACTIONS
+
+        cap = 5
+        # +0.6 per pass: outside the +/-0.5 noise band, never reaching the 4.0
+        # convergence threshold, so nothing but the cap can end this run.
+        steps = [1.0 + 0.6 * k for k in range(cap)]
+        state = _state()
+        for i, sc in enumerate(steps[:-1], start=1):
+            a, reason = compute_auto_iterate(
+                state, _v(sc, "fail"), _v(sc, "fail"),
+                [self._fresh_mechanical(i), STRATEGY_BLOCKER],
+                unattended=True, hard_cap=cap,
+            )
+            assert a == "continue", (i, reason)
+        assert state.concept_gate_deferred == cap - 1
+        a, reason = compute_auto_iterate(
+            state, _v(steps[-1], "fail"), _v(steps[-1], "fail"),
+            [self._fresh_mechanical(cap), STRATEGY_BLOCKER],
+            unattended=True, hard_cap=cap,
+        )
+        assert a in TERMINAL_ACTIONS and a != "continue", reason
+        assert state.concept_gate_deferred == cap - 1  # the cap pass was not a deferral
+        assert len(state.score_history) == cap
+
+    def test_the_hard_cap_also_ends_a_mechanical_only_run_that_keeps_climbing(self) -> None:
+        """Same backstop, same class, no strategy finding: pending mechanical work
+        must not `continue` past the cap either."""
+        cap = 5
+        steps = [1.0 + 0.6 * k for k in range(cap)]
+        state = _state()
+        for i, sc in enumerate(steps[:-1], start=1):
+            a, _ = compute_auto_iterate(
+                state, _v(sc, "fail"), _v(sc, "fail"),
+                [self._fresh_mechanical(i)], unattended=True, hard_cap=cap,
+            )
+            assert a == "continue"
+        a, reason = compute_auto_iterate(
+            state, _v(steps[-1], "fail"), _v(steps[-1], "fail"),
+            [self._fresh_mechanical(cap)], unattended=True, hard_cap=cap,
+        )
+        assert a == "stop_max_iter", reason
+        assert "backstop" in reason
 
     def test_a_strategy_finding_alone_still_stops_immediately(self) -> None:
         """Regression guard: nothing mechanical pending means nothing to wait for."""
@@ -256,7 +406,7 @@ class TestConceptGateWaitsForMechanicalWork:
             state, _v(3.0, "warn"), _v(3.0, "warn"), findings, unattended=True
         )
         assert a1 == "continue"
-        state.concept_gate_deferred = 0  # isolate the plateau from the deferral bound
+        state.concept_gate_deferred = 0  # isolate the plateau from the exhaustion rule
         a2, _ = compute_auto_iterate(
             state, _v(3.0, "warn"), _v(3.0, "warn"), findings, unattended=True
         )

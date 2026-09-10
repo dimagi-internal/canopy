@@ -771,20 +771,32 @@ word" is fixed and re-fired rather than asked about. Whatever reaches this gate 
 legibly a strategy question — *is this the right thing to demonstrate?* — which is
 the only kind worth a human's taste.
 
-**The gate waits for pending mechanical work — once.** If `mechanical` findings are
-still outstanding when a strategy redesign appears, `compute_auto_iterate` returns
-`continue` instead, stamps `state.concept_gate_deferred`, and the gate opens on the
-next pass if the strategy finding persists (`CONCEPT_GATE_MAX_DEFERRALS = 1`, so at
-most one extra render). Two reasons, and the second is the important one: a
+**The gate waits for pending mechanical work — while that work is still cleaning
+the artifact.** If `mechanical` findings are still outstanding when a strategy
+redesign appears, `compute_auto_iterate` returns `continue` instead, increments
+`state.concept_gate_deferred`, and re-fires. The bound is **exhaustion, not a
+count**: the first deferral is free; every further one is granted only if the
+previous pass moved the score outside the `denoise.NOISE_BAND` (`+/-0.5`) — the
+`reason` string says which of the two applied and what will end it. The gate opens
+the first pass that goes flat, regresses, stalls, or plateaus, and `HARD_CAP` is
+the runaway backstop. Two reasons, and the second is the important one: a
 redesign finding is the MOST uncertain thing the judge emits, so letting it preempt
 confident fixes inverts "mechanical comes first"; and the gate exists to buy a
 human's judgment on *direction*, which is wasted if it is spent over an artifact
-carrying defects nobody disputes. Regression:
+carrying defects nobody disputes — and "clean" is a property of the artifact, not
+a count of passes. Regression:
 `tests/ddd/test_loop_termination.py::TestConceptGateWaitsForMechanicalWork`. Why it
 exists: ACE `spark-facilitator/20260820-0817` fired this gate on iteration 0
 alongside five accuracy findings; none were applied, the run ended
 `stopped_not_converged` with `score_history: [2.0]`, and its hero video filmed the
-defective artifact.
+defective artifact. Why it is no longer "once" (canopy#588): with a count of 1,
+ACE `spark-fcap-facilitation-2026-09-09-001`/`-002` each did real work on the
+deferred pass and still stopped `stop_concept_change` with 29 then 14 mechanical
+fixes pending; applying the pending 29 moved every judge +1.0 (`[2.0] -> [2.0, 3.0]`).
+And a pass killed mid-flight spent the same budget on nothing
+(`hh-poverty-targeting-census-sweep-2026-09-01-001`). Under the exhaustion rule a
+flat pass — whether it applied nothing or applied fixes that changed nothing —
+buys no further deferral, so both cases end the same honest way.
 
 **Unattended:** resolve through `gates.resolve('concept_change', …)`, which returns
 `defer` immediately rather than waiting. Upload the `--stuck` package, report
