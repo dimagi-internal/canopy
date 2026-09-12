@@ -200,6 +200,6 @@ exactly.
 
 ## Commit
 
-Single commit on `feat/agent-factory-package`. See status line below for SHA (this
-report is written before the commit; the caller's response will carry the SHA from the
-commit step that follows).
+Single commit `189d43b` on `feat/agent-factory-package` (parent `cba84fe`, current
+`origin/main` tip at cut time). Working tree clean after commit. Not pushed, no PR
+opened, per instructions.
