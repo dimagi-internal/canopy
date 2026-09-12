@@ -1,4 +1,14 @@
-"""`canopy runner …` — park a runner, or bring it back.
+"""`canopy runner …` — where work runs: park a box, bring it back, or move a
+live session from one box to another.
+
+`transfer` shares this group rather than getting its own because it answers the
+same question pause/unpause do — WHICH box — and reuses the whole of this
+module's resolution: name-or-id lookup, the ownership refusal below, and the
+capabilities read that says whether a target could claim a session turn at all.
+(It is deliberately not under `canopy sessions`, which means local transcript
+LOGS — a different noun that happens to share a word.)
+
+
 
 The remote half of the runner's local `~/.canopy/PAUSED` sentinel. Both set the
 SAME state (canopy-web `Runner.paused`): the local file is a control surface the
@@ -20,6 +30,7 @@ on 2026-07-25. Retire is a decommission; this is a park.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import click
 
@@ -91,9 +102,68 @@ def _resolve(name_or_id: str, workspace: str = "") -> dict:
     raise click.ClickException(f"no runner named '{needle}'. Visible: {names}")
 
 
+SESSIONS_PATH = "/api/canopy-sessions/"
+
+
+def _fetch_sessions(workspace: str = ""):
+    from orchestrator import canopy_web
+    rows = canopy_web.call("GET", SESSIONS_PATH, workspace=workspace or None) or []
+    if isinstance(rows, dict):
+        rows = rows.get("items") or rows.get("results") or []
+    return rows
+
+
+def _resolve_session(needle: str, workspace: str = "") -> dict:
+    """Accept a uuid, a title, or a unique substring of either.
+
+    Nobody has a session uuid to hand — you see one in the web UI or in
+    `canopy runner list`-adjacent output and then want to move it. An ambiguous
+    substring lists the candidates rather than picking one, because picking wrong
+    here moves the WRONG live conversation onto another box.
+    """
+    needle = (needle or "").strip()
+    if not needle:
+        raise click.ClickException("name a session (uuid, or part of its title)")
+    rows = _fetch_sessions(workspace)
+    exact = [r for r in rows if str(r.get("id")) == needle
+             or str(r.get("title") or "") == needle]
+    if len(exact) == 1:
+        return exact[0]
+    low = needle.lower()
+    fuzzy = [r for r in rows
+             if low in str(r.get("title") or "").lower()
+             or low in str(r.get("id") or "").lower()]
+    if len(fuzzy) == 1:
+        return fuzzy[0]
+    if fuzzy:
+        raise click.ClickException(
+            f"'{needle}' matches {len(fuzzy)} sessions; use the id:\n" + "\n".join(
+                f"  {r.get('id')}  {r.get('runner_name') or '(unbound)':<20} "
+                f"{str(r.get('title') or '')[:48]}" for r in fuzzy))
+    raise click.ClickException(
+        f"no active session matching '{needle}'. Visible: "
+        + (", ".join(str(r.get("title") or r.get("id")) for r in rows[:12])
+           or "(none)"))
+
+
+# What the CLI can honestly say without reading either box's disk. Deliberately
+# NOT a git-state brief: for the cloud->laptop direction the source worktree is on
+# another machine and unreachable, and for the two-account direction ada's
+# `user-switch` already owns that procedure (it reads the sibling worktree, carries
+# the unpushed commits and the uncommitted diff, and knows the four git-state
+# shapes). Duplicating a thinner version of it here would be a stale copy of
+# something another repo owns. Pass a real one with --brief/--brief-file.
+_DEFAULT_BRIEF = """\
+No handoff brief was supplied, so nothing about the prior worktree came with this
+transfer. Before continuing: work out where the work stands from the thread above,
+the repo's git log, and any open PRs — and say what you find before changing
+anything. If something looks half-finished, ask rather than guess.
+"""
+
+
 @click.group("runner")
 def runner():
-    """Park a runner, or bring it back."""
+    """The fleet — park a box, bring it back, or move a session between boxes."""
 
 
 @runner.command("pause")
@@ -157,6 +227,101 @@ def unpause_cmd(name_or_id, workspace, as_json):
         return
     click.echo(f"unpaused {out.get('name') or r.get('name')} — "
                f"now {out.get('status') or 'live'}")
+
+
+@runner.command("transfer")
+@click.argument("session")
+@click.option("--to", "target", required=True, metavar="RUNNER",
+              help="the runner to move it onto (name or id)")
+@click.option("--brief", default="", help="the handoff the receiving session reads")
+@click.option("--brief-file", type=click.Path(exists=True, dir_okay=False),
+              help="read the handoff from a file (preferred for anything long)")
+@click.option("--stop", is_flag=True,
+              help="cancel the source box's in-flight turn first, instead of refusing")
+@click.option("--workspace", default="", help="act within ONE tenant")
+@click.option("--json-output", "as_json", is_flag=True)
+def transfer_cmd(session, target, brief, brief_file, stop, workspace, as_json):
+    """Move a live session onto another runner — cloud -> laptop, or between the
+    two macOS accounts — carrying its message history across.
+
+    \b
+      canopy runner transfer 169212e2 --to jj-mbp-cdp --brief-file handoff.md
+
+    The target opens a FRESH session (it cannot resume another box's claude
+    session), so the brief is not decoration — it is the entire context the
+    receiving agent gets. Server-side, the transfer also opens a new transcript
+    epoch so the new box's ordinals land above the inherited history instead of
+    deleting it; `index_offset` in the output is that boundary.
+
+    Not the same as `canopy_sessions`' `place`, which re-pins one queued turn and
+    leaves the binding on the old box — so the next ship 404s and the next send
+    sticks to where you were moving away FROM. Doing it that way by hand on
+    2026-09-12 moved execution correctly and silently dropped the session's whole
+    pre-transfer history.
+
+    Reports LAUNCHED, never done: a pinned turn lands within seconds, and the
+    agent picking the thread up is a separate question from the move succeeding.
+    """
+    from orchestrator import canopy_web
+    if brief_file:
+        brief = Path(brief_file).read_text()
+    s = _resolve_session(session, workspace)
+    r = _resolve(target, workspace)
+    _refuse_if_not_ours(r, "transfer a session onto")
+
+    source = str(s.get("runner_name") or "") or "(unbound)"
+    if source == str(r.get("name")):
+        raise click.ClickException(
+            f"session '{s.get('title') or s.get('id')}' is already on "
+            f"{r.get('name')} — nothing to move.")
+    # A session-incapable target is refused SERVER-side (the pin would otherwise be
+    # unclaimable forever), but saying it here costs one dict lookup and names the
+    # actual fix instead of a 422.
+    if not (r.get("capabilities") or {}).get("sessions"):
+        raise click.ClickException(
+            f"'{r.get('name')}' is not session-capable (capabilities.sessions is not "
+            f"true), so a session turn pinned to it could never be claimed.\n"
+            f"  Fix it on that box, or pick a different target "
+            f"(`canopy runner list --json-output` shows capabilities).")
+
+    if stop:
+        try:
+            canopy_web.call("POST", f"{SESSIONS_PATH}{s['id']}/stop",
+                            {}, workspace=workspace or None)
+        except (CanopyError, RuntimeError) as e:
+            raise click.ClickException(f"could not stop the session first: {e}")
+
+    body = {"runner": str(r["id"]), "brief": brief or _DEFAULT_BRIEF}
+    try:
+        out = canopy_web.call("POST", f"{SESSIONS_PATH}{s['id']}/transfer", body,
+                              workspace=workspace or None) or {}
+    except (CanopyError, RuntimeError) as e:
+        msg = str(e)
+        if "409" in msg or "still executing" in msg:
+            raise click.ClickException(
+                f"{s.get('title') or s.get('id')} has a turn still executing on "
+                f"{source}, and a box mid-thought would keep writing into the epoch "
+                f"this closes.\n  Re-run with --stop to cancel it first, or wait for "
+                f"it to finish.")
+        raise click.ClickException(msg)
+
+    if as_json:
+        click.echo(json.dumps(out, indent=2))
+        return
+    click.echo(f"LAUNCHED (unverified) — moved '{s.get('title') or s.get('id')}' "
+               f"{out.get('transferred_from') or source} -> {out.get('runner')}")
+    click.echo(f"  turn:          {out.get('turn_id')}")
+    click.echo(f"  epoch base:    {out.get('index_offset')}  "
+               f"(history below this was carried across, not dropped)")
+    if not brief:
+        click.echo("  brief:         DEFAULT — the receiving session was told to work "
+                   "out the state itself.")
+        click.echo("                 For a two-account move, ada's `user-switch` "
+                   "composes a real one (branch, unpushed commits, uncommitted diff).")
+    click.echo(f"\nVerify it landed THERE, not merely that it was accepted:")
+    click.echo(f"  canopy runner list                 # {out.get('runner')} online + ready")
+    click.echo(f"  # then re-read the session — runner_name should be "
+               f"{out.get('runner')} and the thread should have a new reply")
 
 
 @runner.command("list")
