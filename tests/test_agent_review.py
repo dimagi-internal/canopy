@@ -9,7 +9,7 @@ from orchestrator.agent_review import (
     parse_findings,
     resolve_agent_repo,
 )
-from orchestrator.agent_factory import AgentSpec, create_agent
+from canopy_agent_factory import AgentSpec, create_agent
 
 
 def _write_transcript(path, cwd, calls):

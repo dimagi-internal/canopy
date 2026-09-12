@@ -1407,7 +1407,7 @@ def create_agent_cmd(slug, name, mandate, mailbox, stakeholders, target, force, 
     echo. See docs/agent-operating-model.md.
     """
     import subprocess
-    from orchestrator.agent_factory import (
+    from canopy_agent_factory import (
         AgentSpec, create_agent, normalize_slug, AgentFactoryError,
     )
 
@@ -2123,7 +2123,7 @@ def openclaw_bootstrap(snapshot_dir, slug, name, mandate, mailbox, into, force,
     import json as json_mod
     from pathlib import Path
     from orchestrator.openclaw_harvest import inventory_snapshot, bootstrap_from_snapshot, HarvestError
-    from orchestrator.agent_factory import normalize_slug, AgentFactoryError
+    from canopy_agent_factory import normalize_slug, AgentFactoryError
     try:
         slug = normalize_slug(slug)
         inv = inventory_snapshot(snapshot_dir)

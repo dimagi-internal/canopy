@@ -33,7 +33,7 @@ import tokenize
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SEARCH_ROOTS = ("src", "hooks", "plugins")
+SEARCH_ROOTS = ("src", "hooks", "plugins", "packages")
 
 # Functions that open a file in text mode.
 TEXT_IO_NAMES = {"open", "read_text", "write_text"}
@@ -41,7 +41,7 @@ TEXT_IO_NAMES = {"open", "read_text", "write_text"}
 # A binary mode makes the encoding argument meaningless (and a TypeError).
 BINARY_MODE_RE = re.compile(r"""["'][rwax+]*b[rwax+]*["']""")
 
-SKIP_DIR_PARTS = {".git", "node_modules", "__pycache__", ".venv", "runtime"}
+SKIP_DIR_PARTS = {".git", "node_modules", "__pycache__", ".venv", "runtime", "tests"}
 
 
 def _iter_py_files():

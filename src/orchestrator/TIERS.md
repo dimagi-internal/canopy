@@ -12,6 +12,10 @@
 - **FRAMEWORK** = the generic, *agent-agnostic* agent-runtime substrate: the
   canopy-web client, agent scaffolding, session/transcript capture + discovery,
   scheduling/safety infra, provisioning, version/structure tooling.
+  (Agent scaffolding itself — `create_agent`/`AgentSpec`/`templates()` — moved out
+  of this tiering entirely: it's the standalone `canopy-agent-factory` package at
+  `packages/canopy_agent_factory/`, a real dependency rather than an orchestrator
+  submodule, so it carries no tier here.)
   Any agent could reuse these.
 - **PRODUCT** = canopy's *own* features: the self-improvement brain (analyze →
   propose → review), DDD/narrative, walkthrough/portfolio/PM. Bespoke to canopy.
@@ -25,7 +29,7 @@ enforce it.
 ## Tiers
 
 **FRAMEWORK** (agent-runtime substrate — must not import product):
-`agent_cli` · `agent_client` · `agent_coverage` · `agent_doctor` · `dependency_health` · `agent_email` · `agent_gdoc` · `review_receipt` · `agent_factory` · `agent_web` · `canopy_web` ·
+`agent_cli` · `agent_client` · `agent_coverage` · `agent_doctor` · `dependency_health` · `agent_email` · `agent_gdoc` · `review_receipt` · `agent_web` · `canopy_web` ·
 `inbox_filters` · `capture` · `transcripts` · `scanner` · `circuit_breaker` · `rate_limiter` ·
 `scheduler` · `paths` · `repo_map` · `repo_paths` · `repo_evidence` ·
 `skill_budget` · `skill_catalog` · `skill_runner` · `provision` · `run_log` ·

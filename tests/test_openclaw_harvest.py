@@ -1,7 +1,7 @@
 """Tests for the OpenClaw harvester (inventory / compare / bootstrap / reconcile)."""
 import pytest
 
-from orchestrator.agent_factory import AgentSpec, create_agent
+from canopy_agent_factory import AgentSpec, create_agent
 from orchestrator.openclaw_harvest import (
     HarvestError,
     bootstrap_from_snapshot,

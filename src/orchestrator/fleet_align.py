@@ -16,7 +16,8 @@ Deterministic and offline: it reads files, extracts structural *markers*, and se
 The optional LLM judgment layer (which decides best-of-fleet on ties and writes PR rationale)
 lives elsewhere; this core is what the unit tests pin. Sibling to `agent_review` (which measures
 ONE agent's friction); this spreads improvements ACROSS the fleet. FRAMEWORK tier — imports
-`agent_factory` for the template baseline, never product code. See
+the standalone `canopy_agent_factory` package for the template baseline (via its public
+`templates()` / `gating_config()`, never its privates), never product code. See
 docs/superpowers/specs/2026-07-03-fleet-align-design.md.
 """
 from __future__ import annotations
@@ -29,7 +30,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from orchestrator import agent_factory
+import canopy_agent_factory
 
 # An agent repo is any repo carrying the operating model's defining primitive: the turn orchestrator.
 # `config/agent.json` is only a *secondary* signal (factory-marked vs. legacy) — echo is a real
@@ -48,14 +49,14 @@ _SKILL_RELPATH = re.compile(r"skills/([^/]+)/SKILL\.md")
 def _artifacts() -> tuple:
     """Shared-artifact taxonomy: `(name, relpath, kind)`.
 
-    Skill artifacts are DERIVED from the factory's stamp table (`agent_factory._TEMPLATES`) rather
-    than hardcoded — so a newly-stamped shared skill (e.g. `task-tracker`, added 2026-07-09) is
-    auto-covered and can never silently go un-checked. Gating is added explicitly (different
+    Skill artifacts are DERIVED from the factory's stamp table (`canopy_agent_factory.templates()`)
+    rather than hardcoded — so a newly-stamped shared skill (e.g. `task-tracker`, added 2026-07-09)
+    is auto-covered and can never silently go un-checked. Gating is added explicitly (different
     extractor). The template TEXT is looked up at call time (`_template_text`) so it always reflects
     the current factory. `kind` picks the extractor at compare time.
     """
     arts = [(m.group(1), Path(relpath), "skill")
-            for relpath in getattr(agent_factory, "_TEMPLATES", {})
+            for relpath in canopy_agent_factory.templates()
             if (m := _SKILL_RELPATH.fullmatch(relpath))]
     arts.append(("gating", Path("config") / "gating.json", "gating"))
     return tuple(arts)
@@ -64,8 +65,8 @@ def _artifacts() -> tuple:
 def _template_text(relpath, kind):
     """The current factory template text for an artifact (call-time, so it tracks the factory)."""
     if kind == "gating":
-        return getattr(agent_factory, "_GATING_JSON", None)
-    return getattr(agent_factory, "_TEMPLATES", {}).get(str(relpath))
+        return canopy_agent_factory.gating_config()
+    return canopy_agent_factory.templates().get(str(relpath))
 
 
 ARTIFACTS = _artifacts()
@@ -237,7 +238,7 @@ def extract_gating(text: str) -> dict:
 # ── template baseline ─────────────────────────────────────────────────────────
 
 def load_template_baseline() -> dict:
-    """The current factory templates, extracted straight from agent_factory (ground truth)."""
+    """The current factory templates, extracted straight from canopy_agent_factory (ground truth)."""
     base = {}
     for name, relpath, kind in ARTIFACTS:
         text = _template_text(relpath, kind)

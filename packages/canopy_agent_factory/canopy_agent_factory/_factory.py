@@ -24,6 +24,8 @@ import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
 
 
 class AgentFactoryError(Exception):
@@ -854,3 +856,19 @@ _TEMPLATES: dict[str, str] = {
     "skills/shipping/SKILL.md": _SHIPPING_SKILL,
     "skills/manager-sync/SKILL.md": _MANAGER_SYNC_SKILL,
 }
+
+
+def templates() -> Mapping[str, str]:
+    """The canonical stamp table: repo-relative path -> rendered-template source.
+
+    Public because the fleet-alignment lens diffs real agent repos against this baseline —
+    it is the ground truth for "what a factory-stamped agent looks like", not an
+    implementation detail. Returns a read-only view so a caller cannot mutate the
+    table backing every future `create_agent` call.
+    """
+    return MappingProxyType(dict(_TEMPLATES))
+
+
+def gating_config() -> str:
+    """The canonical `config/gating.json` body a stamped agent ships with."""
+    return _GATING_JSON

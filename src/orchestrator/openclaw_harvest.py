@@ -24,7 +24,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 
-from orchestrator.agent_factory import AgentSpec, create_agent
+from canopy_agent_factory import AgentSpec, create_agent
 
 # OpenClaw workspace layout (from reef's integration): persona + skills + memory live here.
 # USER.md is who the agent works for — the single most load-bearing file for an agent's voice,

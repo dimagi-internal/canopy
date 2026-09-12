@@ -1,0 +1,23 @@
+[project]
+name = "canopy-agent-factory"
+version = "1.0.0"
+description = "Stamp out a new Claude Code agent from the canopy operating model — a self-contained, zero-runtime-dependency factory. Pip-installable into canopy / canopy-web / any second consumer."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["canopy_agent_factory"]
+
+[tool.pytest.ini_options]
+# The package's own tests run with PLAIN pytest — no orchestrator import, no Django, no
+# repo-root conftest. `pythonpath = ["."]` makes `tests` importable as a package;
+# `canopy_agent_factory` itself resolves via the editable install (or via `uv run` in
+# this directory, which resolves the local source tree directly).
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

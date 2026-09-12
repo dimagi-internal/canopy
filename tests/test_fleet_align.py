@@ -265,8 +265,8 @@ def test_change_brief_gives_reference_text_not_a_mutation(monkeypatch):
     tmpl = ("# Self-review\n"
             "1. **Re-read the original request.** actual message.\n"
             "2. **Verify recipients.** pull to/cc from the structured reader, not a raw view.\n")
-    monkeypatch.setattr(fa.agent_factory, "_TEMPLATES",
-                        {**fa.agent_factory._TEMPLATES, "skills/agent-turn-review/SKILL.md": tmpl})
+    patched = {**fa.canopy_agent_factory.templates(), "skills/agent-turn-review/SKILL.md": tmpl}
+    monkeypatch.setattr(fa.canopy_agent_factory, "templates", lambda: patched)
     d = fa.Finding("distribute", "agent-turn-review", "canopy-template", ["eva"], "…", detail=["verify recipients"])
     brief = fa.change_brief(d)
     assert brief["target_relpath"].endswith("agent-turn-review/SKILL.md")
@@ -307,7 +307,7 @@ def test_artifact_taxonomy_is_derived_from_factory_stamp_table():
     # can never silently go un-checked (the gap that let eva lack it). Not a hardcoded list.
     names = {a[0] for a in fa.ARTIFACTS}
     stamped_skills = {
-        p.split("/")[1] for p in fa.agent_factory._TEMPLATES
+        p.split("/")[1] for p in fa.canopy_agent_factory.templates()
         if p.startswith("skills/") and p.endswith("/SKILL.md")
     }
     assert stamped_skills <= names, f"un-checked stamped skills: {stamped_skills - names}"
@@ -317,8 +317,8 @@ def test_artifact_taxonomy_is_derived_from_factory_stamp_table():
 def test_agent_missing_a_whole_stamped_skill_is_flagged(tmp_path, monkeypatch):
     # eva predates task-tracker → it lacks skills/task-tracker/SKILL.md entirely. The marker-diff
     # only compares agents that HAVE the file, so the whole-skill gap needs its own finding.
-    monkeypatch.setattr(fa.agent_factory, "_TEMPLATES",
-                        {**fa.agent_factory._TEMPLATES, "skills/task-tracker/SKILL.md": "# Task tracker\n"})
+    patched = {**fa.canopy_agent_factory.templates(), "skills/task-tracker/SKILL.md": "# Task tracker\n"}
+    monkeypatch.setattr(fa.canopy_agent_factory, "templates", lambda: patched)
     _write_agent(tmp_path, "eva", self_review=TEMPLATE_SELF_REVIEW,
                  gating={"deny": [{"pattern": "BLOCK_RAW_SEND"}], "approve": []})  # no task-tracker skill
     (tmp_path / "hal" / "skills" / "task-tracker").mkdir(parents=True)

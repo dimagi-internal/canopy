@@ -24,3 +24,14 @@ jobs:
         run: |
           uv sync --extra browser
           uv run pytest -q -p no:cacheprovider
+
+      # canopy_agent_factory (packages/canopy_agent_factory) is a standalone,
+      # zero-runtime-dependency distribution — the agent-scaffolding factory,
+      # published separately so canopy-web can consume it without inheriting
+      # canopy's Pillow/NumPy footprint. Its pyproject.toml has its own
+      # testpaths, so `uv run pytest` at repo root (above) never collects it;
+      # it needs its own step, run in its own directory with no orchestrator
+      # on the path, exactly as this package's own suite proves it stands alone.
+      - name: Run canopy_agent_factory tests
+        working-directory: packages/canopy_agent_factory
+        run: uv run --with pytest pytest -q
