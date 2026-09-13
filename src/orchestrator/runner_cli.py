@@ -264,7 +264,7 @@ def transfer_cmd(session, target, brief, brief_file, stop, workspace, as_json):
     """
     from orchestrator import canopy_web
     if brief_file:
-        brief = Path(brief_file).read_text()
+        brief = Path(brief_file).read_text(encoding="utf-8")
     s = _resolve_session(session, workspace)
     r = _resolve(target, workspace)
     _refuse_if_not_ours(r, "transfer a session onto")
