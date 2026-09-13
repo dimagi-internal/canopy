@@ -23,6 +23,17 @@
 # a workflow must not fail or double-publish. The tag is the record of what has shipped:
 # if v<VERSION> already exists, this is a merge that didn't bump, and the job exits green
 # having done nothing. That also makes the release safe to re-run by hand.
+#
+# It publishes to PyPI (not a GitHub Release asset like `canopy` above) because a second
+# consumer needs real version *resolution* via a normal `dependencies = [...]` entry —
+# a Release asset means pinning an exact download URL, untenable against a repo that
+# tags every release. Uses PyPI Trusted Publishing (OIDC): no long-lived token stored in
+# this repo. That requires a human to have registered `dimagi-internal/canopy` +
+# `release.yml` + this job as a "pending publisher" for the `canopy-agent-factory`
+# project on pypi.org BEFORE the first run — this workflow cannot do that part of the
+# setup itself. If it hasn't been done, the publish step fails with an OIDC/403 error;
+# everything else in the job (build, clean-venv version verification, the tag) still
+# ran and is safe to re-run once that's set up.
 name: Release
 
 on:

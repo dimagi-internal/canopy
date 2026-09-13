@@ -5,7 +5,7 @@ import json
 import pytest
 from click.testing import CliRunner
 
-from orchestrator.agent_factory import AgentSpec, create_agent
+from canopy_agent_factory import AgentSpec, create_agent
 from orchestrator.cli import main
 
 

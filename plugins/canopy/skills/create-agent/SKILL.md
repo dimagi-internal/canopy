@@ -102,5 +102,7 @@ The scaffold is a skeleton. Walk the human through filling it in, in this order:
 - **What the agent inherits later:** infra fixes (gating engine, channel adapters, canopy-web
   client) propagate via the shared kit version; domain-skill improvements arrive as canopy
   self-improvement PRs into the agent's repo.
-- The factory is `src/orchestrator/agent_factory.py`; templates live there as the editable
-  starting point every agent inherits.
+- The factory is the standalone `canopy-agent-factory` package at
+  `packages/canopy_agent_factory/` (published separately so a second consumer, e.g.
+  canopy-web, can scaffold an agent repo without inheriting canopy's video-tooling deps);
+  templates live there as the editable starting point every agent inherits.

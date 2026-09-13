@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from orchestrator.agent_factory import AgentSpec, create_agent
+from canopy_agent_factory import AgentSpec, create_agent
 from orchestrator.agent_web import (
     AgentWebError,
     catalog_from_repo,

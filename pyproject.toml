@@ -1,6 +1,6 @@
 [project]
 name = "canopy"
-version = "0.2.486"
+version = "0.2.487"
 description = "Self-improving MCP orchestration with autoresearch"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,6 +17,14 @@ dependencies = [
     # gate reported pass while comparing zero pairs. A check that only runs for
     # people who happen to have installed the test extra is not a check.
     "numpy>=1.26",
+    # The agent-scaffolding factory (`canopy create-agent`) — stdlib-only, versioned and
+    # published on its OWN clock. Lives in-repo at packages/canopy_agent_factory; resolved
+    # as an editable path dep via [tool.uv.sources] below so this checkout always builds
+    # against its own working copy. A second consumer (canopy-web) installs the same
+    # package from PyPI, which is the whole reason it's a separate distribution: canopy's
+    # runtime deps (Pillow, NumPy, for the DDD screenshot/video gates) must never leak into
+    # a Django web image that only needs to render text templates.
+    "canopy-agent-factory>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +60,12 @@ dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
 ]
+
+[tool.uv.sources]
+# The agent factory ships in-repo as a standalone installable package; wire it as an
+# editable path dep so `from canopy_agent_factory import ...` resolves under `uv run`
+# without publishing to an index. canopy-web installs the same package from PyPI.
+canopy-agent-factory = { path = "packages/canopy_agent_factory", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
