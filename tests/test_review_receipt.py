@@ -250,3 +250,47 @@ def test_send_stays_blocked_when_the_receipt_was_refused():
     # No receipt was ever issued (record refused), so the send rail still fires.
     with pytest.raises(AgentEmailError):
         rr.require("eva", THE_MISS)
+
+
+# ── token boundaries: a hyphenated identifier is not the verb (2026-09-14) ───────────────────
+
+
+def test_hyphenated_skill_name_is_not_a_commitment():
+    """`\\b` matches after a hyphen, so "fleet-align with" fired as "align with".
+
+    Agents are instructed to run the `fleet-align` skill, so they write its name in
+    replies, so a receipt was refused over the agent's own skill name.
+    """
+    body = "the skill says to run fleet-align with no arguments, so an empty result read as a verdict"
+    assert rr.scan_commitments(body) == []
+
+
+def test_other_hyphenated_compounds_do_not_fire_either():
+    for body in (
+        "the auto-check with the strict flag is green",
+        "a fleet-sync with the cache is not a person",
+        "our cross-coordinate with axes is a maths term",
+        "the for-loop in render.ts is fine",
+    ):
+        assert rr.scan_commitments(body) == [], body
+
+
+def test_the_real_human_dependencies_still_fire():
+    """The recall bias this table is built on is preserved — only the boundary narrowed."""
+    for body, kind in (
+        ("I'll align with Neal before sending", "human dependency"),
+        ("Let me sync with Shayoni on the runner", "human dependency"),
+        ("I'll loop in Amie", "human dependency"),
+        ("I'll check with Jon first", "human dependency"),
+        ("Happy to walk you through it live", "real-time human"),
+    ):
+        hits = rr.scan_commitments(body)
+        assert hits, f"missed a genuine commitment: {body}"
+        assert any(h["kind"] == kind for h in hits), (body, hits)
+
+
+def test_sentence_initial_and_post_punctuation_verbs_still_fire():
+    """The lookbehind must not require a preceding space."""
+    assert rr.scan_commitments("Align with them on scope.")
+    assert rr.scan_commitments("Next step: coordinate with the team.")
+    assert rr.scan_commitments("(check with Jon)")

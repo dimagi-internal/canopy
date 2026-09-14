@@ -85,14 +85,31 @@ def _path_for(slug: str, fp: str) -> Path:
 # exactly what prose cannot enforce. So the tool enumerates the phrases and
 # refuses the receipt until each is ruled; the send stays blocked by the gate
 # rather than by whether the reviewer remembered to look at the sign-off line.
+_NL = r"(?<![-\w])"  # start of a real word — unlike \b, NOT satisfied mid-hyphenated-identifier
+
 _COMMITMENT_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"walk\s+(?:you|him|her|them|anyone|someone|folks|the\s+team)\b[^.\n]{0,40}\bthrough\b",
      "real-time human"),
     (r"\bhop\s+on\b|\bjump\s+on\b|\bon\s+a\s+call\b|\bset\s+up\s+a\s+call\b|\bget\s+on\s+a\s+call\b",
      "real-time human"),
     (r"\bin\s+person\b|\bface[-\s]to[-\s]face\b", "real-time human"),
-    (r"\bsync\s+(?:up\s+)?with\b|\bloop\s+in\b|\bcheck\s+with\b|\brun\s+it\s+by\b"
-     r"|\bcoordinate\s+with\b|\balign\s+with\b|\breach\s+out\s+to\b", "human dependency"),
+    # `_NL` rather than `\b` on every verb that can be the TAIL of a hyphenated identifier.
+    # `\b` matches after a hyphen — `-` is a non-word char — so `\balign\s+with\b` fires on
+    # the SKILL NAME in "run fleet-align with no arguments". The same trap sits under
+    # `fleet-sync with`, `docs-sync`, `auto-check with`, and `the for-loop in render.ts`,
+    # and these are not contrived: they are canopy skill and CI-gate names, so agents write
+    # them constantly.
+    #
+    # This does NOT weaken the recall bias the docstring below is built on. That bias is a
+    # deliberate precision/recall trade on the SEMANTICS — "sounds like an offer, make them
+    # rule it". This is a different thing: the pattern matching a DIFFERENT TOKEN than the
+    # verb it names. A real "align with <person>" is never preceded by a hyphen, so the
+    # narrowing costs zero genuine hits. `\b` is kept wherever the phrase cannot be a
+    # compound's tail (`run it by`, `reach out to`). (2026-09-14: a hal reply citing the
+    # `fleet-align` skill was refused a receipt over its own skill's name.)
+    (_NL + r"sync\s+(?:up\s+)?with\b|" + _NL + r"loop\s+in\b|" + _NL + r"check\s+with\b"
+     r"|\brun\s+it\s+by\b|" + _NL + r"coordinate\s+with\b|" + _NL + r"align\s+with\b"
+     r"|\breach\s+out\s+to\b", "human dependency"),
     (r"\bhappy\s+to\b|\bglad\s+to\b", "offer"),
 )
 
