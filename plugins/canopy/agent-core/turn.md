@@ -262,6 +262,35 @@ against it, and died on a usage limit. Both threads were left unread and the inc
 understood: four sessions across two alarm transitions, zero findings. The turn that stood down
 instead spent its session on this paragraph.)
 
+**Before you decide it stalled at all, check for a live PROCESS — a transcript tail cannot tell
+you that, and it fails toward "dead."** The block above governs what to do once the owner really is
+stuck; this is the prior question, and the obvious way to answer it is wrong in a specific,
+repeatable way. A live session sitting between two tool calls writes harness records — `[mode]`,
+`[attachment]`, `[ai-title]`, `[last-prompt]` — after its last assistant message, so its tail is
+**metadata with no agent work under it: the same shape a dead session has.** Read the tail and you
+find "nothing real since HH:MM" in both cases, and "it died at HH:MM" is the conclusion that
+arrives — with a timestamp attached that makes it feel measured. It isn't; the tail is evidence of
+neither. `live-turns.sh` already computes the signal that settles it: sessions it prints under
+**live … sessions** have a live process, and the ones under **"active in the last 10m with NO live
+process"** do not. `ps aux | grep '[c]laude --session-id <uuid>'` confirms it in one call. Run it
+before you write the word "stalled" — in a closeout or in a dispatch.
+
+**And weigh the two errors, because they are not symmetric.** Wrongly thinking a dead turn is alive
+costs you one stood-down session, and its report is still worth something. Wrongly thinking a LIVE
+turn is dead spends a second session racing the first toward the same artifact and the same outbound
+send — the duplicate-reply failure this whole Step exists to prevent, now carrying a recovery
+dispatch's authority. When the two signals disagree, believe the process.
+
+(Origin: 2026-09-14. A fleet-conductor dispatch re-routed a stalled eva item to a fresh turn,
+correctly warning it not to read the owner's file mtime as liveness — and then declared that owner
+dead on exactly the reading above: "its last real action was at 21:18:52Z; everything after is
+harness metadata." The owner was alive. It held a live PID, had made a `WebSearch` call 6 seconds
+before the recovery turn looked, and was mid-§A3 of its pre-send review on a reply to a teammate —
+the step immediately before sending. Three further claims in the dispatch had gone stale while it
+was being written: the skill it believed unstarted was written, PR'd and merged, and the board task
+it asked to have corrected already read correctly. The recovery turn stood down and reported
+instead, so the second email never went out.)
+
 **Same ref is the NARROW case. Now widen it: a sibling turn on a DIFFERENT ref is still your
 problem.** The check above counts turns on your exact ref, so it answers "am I redundant?" — and it
 returns 1, all-clear, for the collision that is actually more common: two turns on *different* refs
