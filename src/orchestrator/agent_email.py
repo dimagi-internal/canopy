@@ -124,6 +124,7 @@ GOG_CONFIG_DIR = _default_gog_config_dir()
 # the scope must be granted at login (the doctor's check_auth_services verifies it).
 LOGIN_SERVICES = "gmail,drive,docs,sheets,forms,appscript"
 
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_+-]*)\s*$")
 LIST_RE = re.compile(r"^\s*([-*+]|\d+\.)\s+")
 ORDERED_START_RE = re.compile(r"^\s*(\d+)\.\s+")
 URL_RE = re.compile(r"(https?://[^\s<>()]+)")
@@ -401,6 +402,13 @@ def normalize(text: str) -> str:
     which flattened each agent's briefing timeline into one unreadable paragraph in BOTH
     the plain part and the HTML built from it. Only markdown bullets escaped, so the
     damage tracked whether an author happened to prefix rows with "- ".
+
+    A fenced ``` block is passed through VERBATIM — no strip(), no re-joining. Both of this
+    function's normal moves are wrong inside code: strip() destroys the indentation that
+    carries the meaning, and a wrap-rejoin can weld a `-H …` continuation onto the `curl`
+    line above it. Neither surfaces as an error; the recipient simply gets a command that no
+    longer runs. `to_html` has the matching fence branch — the two must agree, so both key
+    off FENCE_RE.
     """
     out: list[str] = []
 
@@ -409,7 +417,20 @@ def normalize(text: str) -> str:
         return bool(out) and out[-1] != ""
 
     mergeable = False
+    fence_marker: str | None = None
     for ln in text.split("\n"):
+        m = FENCE_RE.match(ln)
+        if fence_marker is not None:
+            out.append(ln.rstrip())               # verbatim, leading whitespace intact
+            if m and m.group(1)[0] * 3 == fence_marker and not m.group(2):
+                fence_marker = None
+            mergeable = False
+            continue
+        if m:
+            out.append(ln.strip())
+            fence_marker = m.group(1)[0] * 3
+            mergeable = False
+            continue
         s = ln.strip()
         if not s:
             out.append("")
@@ -547,6 +568,33 @@ def to_html(plain: str) -> str:
 
     i, n = 0, len(lines)
     while i < n:
+        fence = FENCE_RE.match(lines[i])
+        if fence:
+            # A ``` block is the one construct where the SOURCE is the content: no inline
+            # markdown, no autolinking, and whitespace is load-bearing. Until this existed,
+            # a fenced block fell through to flush_para() and the recipient got the literal
+            # ``` lines, `_inline_md` chewing on the code, and — worst — `_autolink` turning
+            # a URL INSIDE a shell command into an <a>. A command someone is meant to copy
+            # and run arrived as prose with a hyperlink in the middle of it.
+            flush_para()
+            marker = fence.group(1)[0] * 3
+            body: list[str] = []
+            i += 1
+            while i < n:
+                closing = FENCE_RE.match(lines[i])
+                if closing and closing.group(1)[0] * 3 == marker and not closing.group(2):
+                    i += 1
+                    break
+                body.append(lines[i])
+                i += 1
+            # Escape and emit verbatim. <pre> already preserves newlines and runs of spaces,
+            # so no <br> and no strip() — indentation inside a code block is meaningful.
+            code = html.escape("\n".join(body), quote=False)
+            parts.append(
+                '<pre style="white-space:pre-wrap;word-break:break-word;margin:0 0 1em">'
+                f"<code>{code}</code></pre>"
+            )
+            continue
         kind = _list_kind(lines[i])
         if kind:
             flush_para()
