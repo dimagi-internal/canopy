@@ -1,0 +1,404 @@
+run_date: '2026-09-14'
+repo: dimagi-internal/canopy
+scope_contract: triage-plus-quick-wins
+code_ref: efa23d6
+open_total: 21
+triaged: 21
+carried_forward: 0
+truncated: false
+carry_forward_note: Prior sidecar 2026-07-29 covered 4 issues; 220 commits and 259 changed files since,
+  so every evidence path had moved. Nothing carried.
+clusters:
+- name: verdict-contract-at-emit
+  members:
+  - 547
+  - 548
+  one_fix: 'One emit-time judge-output validator: #547 tightens fix_kind/verdict schema conformance and
+    gives the gate a home; #548 hangs per-pass provenance assertions off it. Sequence 547 first.'
+- name: loop-lens-false-gates
+  members:
+  - 621
+  - 624
+  - 625
+  one_fix: 'Deterministic DDD lenses must not emit a gate on an input they were never told changed: suppress
+    dead-air on a no-audio clip, de-gate action_disappeared, and refuse/stamp a mid-loop viewport change.'
+- name: cross-iteration-provenance
+  members:
+  - 556
+  - 625
+  one_fix: Stamp per-iteration render provenance on the verdict so a score series says which artifact
+    it measured (covers both 'fix applied but never re-rendered' and 're-rendered at a different frame
+    size').
+- name: scene-narrative-list-form
+  members:
+  - 623
+  one_fix: Route every narrative reader through scene_narration_text. SHIPPED.
+tier_counts:
+  blocks-e2e: 3
+  harness: 12
+  polish: 6
+fix_and_unwind_candidates:
+- issue: 416
+  workaround: hal/skills/ace-review/SKILL.md:144,401
+  verdict: bug still LIVE (lifecycle half unshipped) -> prose LEFT IN PLACE, not unwound
+- issue: 615
+  workaround: hal/skills/turn/SKILL.md:446-462
+  verdict: bug still LIVE (preflight cannot see a stale CLI) -> prose LEFT IN PLACE, not unwound
+prs:
+- number: 639
+  disposition: blocked
+  checks:
+    pytest: fail
+    docs-sync: pass
+    check-version: pass
+    structure-drift: pass
+    CodeQL: pass
+  blocker: greenlet 3.5.6 published at 14:22:33Z as a PARTIAL release (3 files, no sdist, no Linux wheels);
+    canopy commits no uv.lock so uv sync broke on EVERY canopy PR. CLEARED at 15:42:51Z - 79 files, sdist,
+    56 linux wheels.
+  mechanical: false
+  refs_issues: []
+  owner: live sibling hal turn (--thread 1a043f92a7ff114d), parked at its approval gate
+  action: NONE - stood down, sibling's lane
+  outcome: reported blocker cleared; re-run/merge is the owner's call
+verdicts:
+- number: 623
+  disposition: implement
+  blocking: blocks-e2e
+  confidence: high
+  effort: S
+  cluster: scene-narrative-list-form
+  evidence_paths:
+  - scripts/ddd/spec_qa.py
+  - scripts/ddd/narrative.py
+  - scripts/ddd/narrated_numbers.py
+  - scripts/narrative/models.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: 'shipped PR #642'
+  outcome: 'PR #642 open, merge-queue'
+  note: 'AttributeError reproduced in-process; 5 call sites. SHIPPED as PR #642.'
+- number: 546
+  disposition: implement
+  blocking: blocks-e2e
+  confidence: high
+  effort: M
+  cluster: preflight-consumes-state
+  evidence_paths:
+  - scripts/ddd/recipe_preflight.py
+  - scripts/ddd/duplicate_frames.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: preflight still actuates click/fill/select before filming; none of the 3 suggested guards exist.
+- number: 568
+  disposition: implement
+  blocking: blocks-e2e
+  confidence: high
+  effort: M
+  cluster: null
+  evidence_paths:
+  - src/orchestrator/agent_gdoc.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: Both halves open. Link-detection half is locally verifiable; the batchUpdate repair needs a live
+    Docs round-trip.
+- number: 547
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: S
+  cluster: verdict-contract-at-emit
+  evidence_paths:
+  - scripts/narrative/models.py
+  - scripts/ddd/verdicts.py
+  - scripts/ddd/run_pipeline.py
+  - scripts/ddd/validate.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: 'fix_kind is an unvalidated str; out-of-enum silently unroutable. Sequence BEFORE #548. Adjacent
+    dead isinstance at run_pipeline.py:353.'
+- number: 548
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: M
+  cluster: verdict-contract-at-emit
+  evidence_paths:
+  - scripts/narrative/models.py
+  - scripts/ddd/verdicts.py
+  - scripts/ddd/snapshot_consistency.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: No per-pass provenance on Verdict; a dead-subagent verdict is byte-identical to a real one.
+- number: 614
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: S
+  cluster: null
+  evidence_paths:
+  - scripts/narrative/models.py
+  - scripts/ddd/validate.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: 'Scene has no model_config so extra keys are silently dropped. CAUTION: extra=forbid may break
+    sibling (ACE) specs -- prefer an explicit unknown-key check in the validator.'
+- number: 624
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: S
+  cluster: loop-lens-false-gates
+  evidence_paths:
+  - scripts/ddd/regression_guard.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: action_disappeared lands in the same findings list that sets verdict=fail; hard-fails canopy's
+    own prescribed scroll_to deletion.
+- number: 625
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: S
+  cluster: loop-lens-false-gates
+  evidence_paths:
+  - scripts/walkthrough/record_video.py
+  - scripts/walkthrough/manifest.py
+  - scripts/ddd/schemas/models.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: Silent 1280x720 default; no resolved viewport recorded, so a score series spanning a viewport
+    change is not self-describing.
+- number: 627
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: S
+  cluster: null
+  evidence_paths:
+  - scripts/ddd/runstate.py
+  - scripts/ddd/resolve_ddd_dir.sh
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: Runs root keyed on worktree basename, not repo; every worktree silos its own score_history. Two
+    resolvers, two-line fix.
+- number: 416
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: M
+  cluster: null
+  evidence_paths:
+  - src/orchestrator/agent_review.py
+  - src/orchestrator/transcripts.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: 'HALF shipped: calibration (is_error) landed in a2006bd; the lifecycle-shaped taxonomy never did.
+    hal/skills/ace-review workaround prose MUST STAY.'
+- number: 492
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: M
+  cluster: null
+  evidence_paths:
+  - plugins/canopy/skills/ddd-concept-eval/SKILL.md
+  - scripts/ddd/denoise.py
+  - scripts/ddd/run_pipeline.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: PASS needs all 72 single-draw cells >=4; de-noising only protects cells <=2, so nothing guards
+    the 3/4 boundary that decides PASS.
+- number: 556
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: M
+  cluster: cross-iteration-provenance
+  evidence_paths:
+  - scripts/ddd/run_pipeline.py
+  - scripts/ddd/schemas/models.py
+  - plugins/canopy/agents/ddd.md
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: stop_concept_change still precedes the mechanical-fix continue; no render provenance on a verdict.
+- number: 586
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: M
+  cluster: null
+  evidence_paths:
+  - plugins/canopy/mcp/gws-server.ts
+  - plugins/canopy/mcp/gws/lib/identity.ts
+  - src/orchestrator/doctor.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: Server still exits mid-handshake; canopy doctor has no GWS probe. CONFIRMED live in this session
+    (canopy-gws failed to connect).
+- number: 615
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: M
+  cluster: null
+  evidence_paths:
+  - plugins/canopy/scripts/canopy-update-check.sh
+  - src/orchestrator/doctor.py
+  - src/orchestrator/version.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: Freshness rail compares the PLUGIN sha; the uv-tool CLI is a second, unchecked artifact. Version-label
+    checks are blind (both read 0.2.476). hal/skills/turn workaround prose MUST STAY.
+- number: 410
+  disposition: implement
+  blocking: harness
+  confidence: high
+  effort: L
+  cluster: null
+  evidence_paths:
+  - scripts/ddd/spec_qa.py
+  - scripts/ddd/narrative_coherence.py
+  - scripts/narrative/models.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: Nothing set-level exists; ddd-arc-eval judges ONE narrative's scenes and is structurally blind
+    to a SET.
+- number: 569
+  disposition: implement
+  blocking: polish
+  confidence: high
+  effort: S
+  cluster: null
+  evidence_paths:
+  - plugins/canopy/skills/ddd-arc-eval/SKILL.md
+  - plugins/canopy/skills/ddd-concept-eval/SKILL.md
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: 'Merge conflict ALREADY FIXED in #587 (both sides kept) and the missing-deps error already distinct.
+    Residual: 3 skill files still invoke the lenses with a bare `python`.'
+- number: 580
+  disposition: implement
+  blocking: polish
+  confidence: high
+  effort: S
+  cluster: null
+  evidence_paths:
+  - src/orchestrator/agent_email.py
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: collect_thread_attachments carries the Gmail filename; email_send discards it and attaches gog's
+    cache path. Locally verifiable via the fake-gog runner.
+- number: 621
+  disposition: implement
+  blocking: polish
+  confidence: high
+  effort: S
+  cluster: loop-lens-false-gates
+  evidence_paths:
+  - scripts/ddd/render_pacing_audit.py
+  - plugins/canopy/skills/ddd-run/SKILL.md
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: Runs on the silent screenshot clip; record_video never records audio, so the false DEAD-AIR finding
+    is guaranteed per scene.
+- number: 633
+  disposition: implement
+  blocking: polish
+  confidence: high
+  effort: S
+  cluster: null
+  evidence_paths:
+  - plugins/canopy/agent-core/turn.md
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: internal-vs-external is a recipient CATEGORY gate; a steerer without tracker access falls in the
+    wrong bin. Pure prose, propagates fleet-wide.
+- number: 618
+  disposition: implement
+  blocking: polish
+  confidence: high
+  effort: M
+  cluster: null
+  evidence_paths:
+  - scripts/ddd/narrative.py
+  - scripts/ddd/runstate.py
+  - .gitignore
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: null
+  outcome: null
+  note: 'PREVENTIVE, not an incident: zero live tokens in tracked files (two greps clean); new run dirs
+    already moved outside the repo. Writer still stamps ?t=<token>.'
+- number: 552
+  disposition: close
+  blocking: polish
+  confidence: high
+  effort: n/a
+  cluster: null
+  evidence_paths:
+  - plugins/canopy/skills/agent-turn-review/SKILL.md
+  - plugins/canopy/agent-core/gating-baseline.json
+  unblocked_by: null
+  duplicate_of: null
+  source: fresh
+  action: closed
+  outcome: closed as completed
+  note: 'Fixed in 3289877 (ancestor of origin/main): prose corrected AND the Skill-tool deny rail added.
+    CLOSED this run.'
