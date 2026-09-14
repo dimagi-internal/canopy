@@ -27,7 +27,7 @@ import os
 import re
 import subprocess
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Optional
 
 import canopy_agent_factory
@@ -42,6 +42,29 @@ DEFAULT_BASES = (
     Path.home() / "emdash" / "repositories",
     Path.home() / "emdash-projects",
 )
+
+# Where an operator keeps their repos is a local convention, and these two are Jonathan's. An
+# operator whose work lives anywhere else (e.g. `C:\Projects`) got "No agent repos found" and no
+# hint that the search space was the thing that was wrong — with `--repo` documented only in
+# `--help`, while the skill says to invoke fleet-align with no arguments at all. This env var makes
+# the machine's own layout a one-time setting rather than an argument every invocation must carry.
+BASES_ENV = "CANOPY_AGENT_BASES"  # os.pathsep-separated extra base directories
+
+
+def agent_bases(bases=None) -> tuple:
+    """The base directories to scan: the defaults, plus anything in `$CANOPY_AGENT_BASES`."""
+    resolved = tuple(Path(b) for b in bases) if bases is not None else DEFAULT_BASES
+    extra = tuple(
+        Path(p).expanduser()
+        for p in os.environ.get(BASES_ENV, "").split(os.pathsep)
+        if p.strip()
+    )
+    seen, out = set(), []
+    for b in (*resolved, *extra):
+        if str(b) not in seen:
+            seen.add(str(b))
+            out.append(b)
+    return tuple(out)
 
 _SKILL_RELPATH = re.compile(r"skills/([^/]+)/SKILL\.md")
 
@@ -63,10 +86,28 @@ def _artifacts() -> tuple:
 
 
 def _template_text(relpath, kind):
-    """The current factory template text for an artifact (call-time, so it tracks the factory)."""
+    """The current factory template text for an artifact (call-time, so it tracks the factory).
+
+    The key is `as_posix()`, NOT `str()`. `canopy_agent_factory.templates()` is keyed with
+    forward slashes on every platform, while `str(Path("skills/turn/SKILL.md"))` is
+    `skills\\turn\\SKILL.md` on Windows — so `str()` missed EVERY template there and returned
+    None for all of them. Nothing raised: the empty baseline flowed straight through
+    `load_template_baseline()` (which skips a None text) into an overlap of 0.0 for every
+    agent, below `_DIVERGENT_OVERLAP`, so the whole fleet was labelled "a divergent lineage
+    that likely predates the template" while DISTRIBUTE and PROMOTE were structurally
+    unreachable. The judgment pass then wrote a confident rationale over a comparison that had
+    never happened. (Reported by @smazumdar 2026-09-14 against f27c8ff, proven both directions:
+    before, two fabricated RECONCILE findings against `fizzy`; after, template markers 4/1/4/4/4
+    across turn, agent-turn-review, task-tracker, shipping and manager-sync, with `fizzy`
+    overlapping 1.00 on every one. See `assert_baseline_usable` for the rail.)
+    """
     if kind == "gating":
         return canopy_agent_factory.gating_config()
-    return canopy_agent_factory.templates().get(str(relpath))
+    # `relpath.as_posix()` when it is already a PurePath — NOT `Path(relpath)`, which re-parses a
+    # `PureWindowsPath` under the HOST's flavour and turns "skills\turn\SKILL.md" into one opaque
+    # component. That distinction is also what lets a POSIX CI box run the Windows regression test.
+    key = relpath.as_posix() if isinstance(relpath, PurePath) else Path(relpath).as_posix()
+    return canopy_agent_factory.templates().get(key)
 
 
 ARTIFACTS = _artifacts()
@@ -119,11 +160,11 @@ class Finding:
 
 # ── discovery ─────────────────────────────────────────────────────────────────
 
-def discover_agents(bases=DEFAULT_BASES, extra_repos=()) -> list[Agent]:
+def discover_agents(bases=None, extra_repos=()) -> list[Agent]:
     """Find agent repos (marker = skills/turn/SKILL.md) across `bases`, plus any explicit repos."""
     seen: dict[str, Agent] = {}
     candidates: list[Path] = []
-    for base in bases:
+    for base in agent_bases(bases):
         base = Path(base)
         if base.is_dir():
             candidates.extend(sorted(p for p in base.iterdir() if p.is_dir()))
@@ -146,7 +187,7 @@ def _git(path, *args) -> tuple[int, str]:
         return 1, ""
 
 
-def checkout_warnings(bases=DEFAULT_BASES, extra_repos=()) -> list[str]:
+def checkout_warnings(bases=None, extra_repos=()) -> list[str]:
     """Offline checkout-drift check (local refs only — never fetches): a repo whose origin
     default branch carries the agent marker but whose WORKING TREE is on another branch or
     behind it is stale — or entirely invisible — to discovery, with no error. This is the
@@ -154,7 +195,7 @@ def checkout_warnings(bases=DEFAULT_BASES, extra_repos=()) -> list[str]:
     commits behind main → "Fleet (3)")."""
     warnings: list[str] = []
     candidates: list[Path] = []
-    for base in bases:
+    for base in agent_bases(bases):
         base = Path(base)
         if base.is_dir():
             candidates.extend(sorted(p for p in base.iterdir() if p.is_dir()))
@@ -249,6 +290,39 @@ def load_template_baseline() -> dict:
         elif kind == "gating":
             base[name] = extract_gating(text)
     return base
+
+
+class BaselineUnusable(RuntimeError):
+    """The factory template baseline resolved to nothing, so no verdict below it is real."""
+
+
+def assert_baseline_usable(baseline: dict) -> None:
+    """Refuse to compare against a baseline that resolved to nothing.
+
+    This is the rail for the failure the `as_posix` fix above describes, and it exists because
+    the fix alone is not enough: an empty baseline is INDISTINGUISHABLE from "the template has
+    no markers", so every downstream number stays perfectly well-formed and the tool cannot
+    fail in either direction. `overlap = len(markers & set()) / max(1, 0)` is 0.0, which is
+    below `_DIVERGENT_OVERLAP`, so an empty baseline reports the entire fleet as divergent —
+    and an "aligned" verdict is equally unearned, because DISTRIBUTE and PROMOTE are both
+    gated on a non-empty template and are structurally unreachable. A silent wrong answer in
+    both directions is exactly the class this raises on instead.
+
+    Deliberately weak: ONE skill artifact with a non-empty marker set is enough. A single
+    template legitimately extracting zero markers is a content question; zero across all of
+    them is a plumbing failure, and only the second is knowable from here.
+    """
+    skills = [name for name, _relpath, kind in ARTIFACTS if kind == "skill"]
+    if not skills or any(baseline.get(name) for name in skills):
+        return
+    keys = sorted(canopy_agent_factory.templates())[:4]
+    raise BaselineUnusable(
+        "factory template baseline is empty — every artifact lookup returned None, so no "
+        "DISTRIBUTE/PROMOTE finding can be produced and an 'aligned' verdict would be "
+        f"unearned. Expected one of {skills!r} to resolve; canopy_agent_factory.templates() "
+        f"is keyed like {keys!r}. If those keys look right, the lookup is being built with "
+        "the wrong path separator (see _template_text)."
+    )
 
 
 # ── comparison ────────────────────────────────────────────────────────────────
@@ -364,6 +438,7 @@ def analyze(agents: list[Agent], baseline: Optional[dict] = None) -> list[Findin
     """Deterministic cross-agent comparison → typed findings. No network, no LLM."""
     if baseline is None:
         baseline = load_template_baseline()
+    assert_baseline_usable(baseline)
     findings: list[Finding] = []
     for name, relpath, kind in ARTIFACTS:
         present = [a for a in agents if (a.path / relpath).is_file()]

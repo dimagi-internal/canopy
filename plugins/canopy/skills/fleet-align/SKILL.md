@@ -61,6 +61,21 @@ You never pass which agents to look at — it finds them.
 deterministic-only), `--hours N` (evidence window, default 14d), `--no-evidence`, `--repo <dir>`
 (add a repo outside the default bases), `--model`.
 
+**"No agent repos found" means the SEARCH SPACE is wrong, not that the fleet is empty.** The two
+default bases (`~/emdash/repositories`, `~/emdash-projects`) are one operator's layout; a machine
+that keeps its repos anywhere else — say `C:\Projects` — discovers nothing, and this skill's own
+"just run it, no arguments" is what makes that read as a real verdict. The error now lists every
+directory it searched. Fix it once, for the machine, rather than per invocation:
+
+```bash
+export CANOPY_AGENT_BASES="/c/Projects"        # os.pathsep-separated; dirs that CONTAIN agent repos
+```
+
+(Reported 2026-09-14: combined with a Windows path-separator bug in the template lookup — since
+fixed — fleet-align had never once returned a true result on that machine, and reported a
+confidently-reasoned fabrication instead of an error. `analyze()` now raises `BaselineUnusable`
+rather than judging against a baseline that resolved to nothing.)
+
 ## Step 2 — Triage
 
 Present the findings as a table (kind · artifact · reference · → laggards · #evidence · action).

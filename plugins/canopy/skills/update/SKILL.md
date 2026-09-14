@@ -40,72 +40,44 @@ from Step 1:
 
 ```bash
 NEW_VERSION=<version from step 1> && \
-cd ~/.claude/plugins/marketplaces/canopy && \
+CLONE=~/.claude/plugins/marketplaces/canopy && \
+PY=$(command -v python3 || command -v python) && \
+cd "$CLONE" && \
 echo "ON BRANCH: $(git rev-parse --abbrev-ref HEAD)" && \
 git checkout main 2>&1 && \
 echo "PULLING: git pull origin main" && \
 git pull --ff-only origin main 2>&1 && \
-mkdir -p ~/.claude/plugins/cache/canopy/canopy/$NEW_VERSION && \
-rsync -a --delete --exclude=node_modules --exclude=runtime \
-  ~/.claude/plugins/marketplaces/canopy/plugins/canopy/ ~/.claude/plugins/cache/canopy/canopy/$NEW_VERSION/ && \
-mkdir -p ~/.claude/plugins/cache/canopy/canopy/$NEW_VERSION/runtime && \
-rsync -a --exclude=.venv --exclude=__pycache__ --exclude=node_modules \
-  ~/.claude/plugins/marketplaces/canopy/src \
-  ~/.claude/plugins/marketplaces/canopy/scripts \
-  ~/.claude/plugins/marketplaces/canopy/evals \
-  ~/.claude/plugins/marketplaces/canopy/pyproject.toml \
-  ~/.claude/plugins/cache/canopy/canopy/$NEW_VERSION/runtime/ && \
-echo "RUNTIME BUNDLE: synced" && \
-( cd ~/.claude/plugins/cache/canopy/canopy/$NEW_VERSION && { command -v npm >/dev/null 2>&1 && npm install --no-audit --no-fund >/dev/null 2>&1 && echo "GWS DEPS: installed" || echo "GWS DEPS: skipped (npm missing or install failed — canopy-gws MCP needs: cd $PWD && npm install)"; } ) && \
-cd ~/.claude/plugins/marketplaces/canopy && python3 -c "
-import json, subprocess, os
-from datetime import datetime, timezone
-
-home = os.path.expanduser('~')
-version = '$NEW_VERSION'
-cache_path = f'{home}/.claude/plugins/cache/canopy/canopy/{version}'
-sha = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
-now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
-
-path = f'{home}/.claude/plugins/installed_plugins.json'
-with open(path) as f:
-    data = json.load(f)
-
-entries = data.get('plugins', {}).get('canopy@canopy', [{}])
-entries[0]['version'] = version
-entries[0]['installPath'] = cache_path
-entries[0]['gitCommitSha'] = sha
-entries[0]['lastUpdated'] = now
-
-with open(path, 'w') as f:
-    json.dump(data, f, indent=2)
-    f.write('\n')
-
-# Verify
-with open(path) as f:
-    check = json.load(f)
-cv = check['plugins']['canopy@canopy'][0]['version']
-with open(f'{home}/.claude/plugins/marketplaces/canopy/plugins/canopy/.claude-plugin/plugin.json') as f:
-    mv = json.load(f)['version']
-
-if cv == mv:
-    print(f'VERIFIED: v{cv} installed and matches GitHub')
-else:
-    print(f'MISMATCH: installed v{cv} but GitHub has v{mv}')
-"
+"$PY" "$CLONE/plugins/canopy/hooks/fleet_session_start_update.py" --sync-cache \
+  --clone "$CLONE" --version "$NEW_VERSION"
 ```
 
-Three details in there are load-bearing, all learned the hard way on 2026-07-28:
+**No `rsync`.** This step used to shell out to it twice. rsync does not exist on Windows, and
+both calls were inside this one `&&` chain, so Step 2 died at `rsync: command not found`
+(exit 127) **after** the git pull and **before** the cache sync and the registry patch. That
+leaves the worst available state, silently: the marketplace clone is on the new commit while
+`installed_plugins.json` still points at the old cache dir, so the plugin is half-updated and
+nothing says so, and unlike the session-start hook's version of this skew it cannot self-heal.
+(Measured 2026-09-14 on a Windows operator's machine: cache stuck at 0.2.459, clone at 0.2.476.)
+`--sync-cache` reuses `mirror_tree`, the pure-Python mirror the hook in that same file already
+had for exactly this reason — one mirror in the codebase, covered by the hook's tests.
+
+`PY=$(command -v python3 || command -v python)` because a Windows git-bash often has only
+`python`; a hardcoded `python3` is the same class of assumption as rsync.
+
+Four details are load-bearing, the first three learned the hard way on 2026-07-28:
 
 - **`git checkout main` first.** The clone gets parked on feature branches, and
   `git pull origin main` from a parked branch merges main INTO that branch instead
   of updating the channel. (It was found on `ddd/preflight-applies-scroll`.)
 - **`--ff-only`.** If local main has diverged, fail loudly rather than quietly
   writing a merge commit into the update channel.
-- **`--delete` on the plugin rsync.** The cache dir is keyed by version, so when a
+- **Mirror-with-delete on the plugin dir.** The cache dir is keyed by version, so when a
   version number gets reused the dir already exists with the OTHER commit's files.
-  Without `--delete`, a plain overlay leaves that code in place. `node_modules` and
-  `runtime` are excluded because both are rebuilt by the steps right after this one.
+  Without the delete pass, a plain overlay leaves that code in place. `node_modules` and
+  `runtime` are excluded (and therefore preserved) because both are rebuilt right after.
+- **`--sync-cache` exits non-zero on ANY failed stage**, and the registry patch is the last
+  thing it does. So a non-zero exit means the registry was NOT moved — the old version stays
+  installed and working. Half-synced is the one state it will not leave you in.
 
 **Read the output:**
 - `VERIFIED` → continue to Step 3 (the plugin cache is updated; the CLI still needs deploying).
@@ -126,10 +98,34 @@ and serves a **cached build** — silently shipping stale CLI code (this strande
 `--reinstall` forces a rebuild from the freshly-pulled source.
 
 ```bash
-uv tool install --reinstall --force "$HOME/.claude/plugins/marketplaces/canopy" 2>&1 | tail -3 && \
-  canopy --help >/dev/null 2>&1 && echo "CLI DEPLOYED: $(canopy --version 2>/dev/null || echo ok)" \
-  || echo "CLI DEPLOY FAILED — run: uv tool install --reinstall --force ~/.claude/plugins/marketplaces/canopy"
+for attempt in 1 2 3; do
+  out=$(uv tool install --reinstall --force "$HOME/.claude/plugins/marketplaces/canopy" 2>&1); rc=$?
+  echo "$out" | tail -3
+  [ $rc -eq 0 ] && break
+  case "$out" in
+    *"Access is denied"*|*"os error -2147024891"*|*"being used by another process"*|*"Permission denied"*)
+      echo "RETRYING (transient file lock, attempt $attempt/3)"; sleep 3 ;;
+    *) break ;;
+  esac
+done
+if [ $rc -eq 0 ] && canopy --help >/dev/null 2>&1; then
+  echo "CLI DEPLOYED: $(canopy --version 2>/dev/null || echo ok)"
+else
+  echo "CLI DEPLOY FAILED (exit $rc) — run: uv tool install --reinstall --force ~/.claude/plugins/marketplaces/canopy"
+fi
 ```
+
+**Why this is a loop and not a one-liner** — two separate defects, both reported 2026-09-14:
+
+- **`… | tail -3 && …` read `tail`'s exit status, not `uv`'s.** A pipeline's status is its LAST
+  command's, and `tail` succeeds on anything. So a failed install fell through to the success
+  branch and printed **CLI DEPLOYED after uninstalling ten packages and installing nothing** —
+  the same wrong-thing-exited-0 shape as the `echo "exit=$?"` idiom. `rc` is captured from the
+  command itself, before anything is piped.
+- **On Windows the first attempt reliably fails and a plain retry succeeds** — Defender holds the
+  files open (`Access is denied. (os error -2147024891)`), the same pattern as
+  `claude plugin marketplace add`. The retry is narrow on purpose: only for messages that look
+  like contention, so a genuine error still surfaces on the first pass instead of three times.
 
 - `CLI DEPLOYED` → Tell the user: "Updated canopy to **vX.Y.Z** (plugin + CLI, verified). Run `/reload-plugins` to activate the plugin."
 - `CLI DEPLOY FAILED` → show the error; the plugin updated but the CLI didn't (commands like `canopy harvest` may be stale).

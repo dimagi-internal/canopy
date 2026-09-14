@@ -6,6 +6,8 @@ and assert the exact findings/kinds. No network, no LLM, no git required.
 from __future__ import annotations
 
 import json
+import os
+import pathlib
 
 import pytest
 
@@ -403,3 +405,80 @@ def test_checkout_drift_warning_quiet_when_clean_or_irrelevant(tmp_path):
     base, clone, g = _git_agent_repo(tmp_path, "cleanagent")           # on main, current
     _git_agent_repo(tmp_path, "notanagent", marker=False)             # no marker on main
     assert fa.checkout_warnings(bases=[base]) == []
+
+
+# ── Windows portability (reported by @smazumdar 2026-09-14, proven against f27c8ff) ──────────
+#
+# These run on POSIX CI and still reproduce the Windows failure, because the bug is a
+# path-FLAVOUR bug, not a host bug: PureWindowsPath gives us "skills\turn\SKILL.md" on any
+# platform. Without that, every one of these would be a decoration that can only pass.
+
+
+def test_template_lookup_survives_a_windows_flavoured_relpath():
+    """`str(PureWindowsPath(...))` is backslashed; the factory's keys never are.
+
+    Against the pre-fix `.get(str(relpath))` this returns None, which is the whole bug: no
+    exception, no warning, just a baseline that silently resolves to nothing.
+    """
+    win = pathlib.PureWindowsPath("skills/turn/SKILL.md")
+    assert "\\" in str(win)                                    # the Windows spelling, on any host
+    assert fa._template_text(win, "skill") is not None
+    assert fa._template_text(win, "skill") == fa._template_text(pathlib.PurePosixPath("skills/turn/SKILL.md"), "skill")
+
+
+def test_baseline_is_non_empty_for_every_stamped_skill():
+    """The real factory templates must all resolve — the state Windows never reached."""
+    baseline = fa.load_template_baseline()
+    skills = [name for name, _relpath, kind in fa.ARTIFACTS if kind == "skill"]
+    assert skills, "no skill artifacts declared — the taxonomy itself is broken"
+    resolved = [n for n in skills if n in baseline]
+    assert resolved == skills, f"unresolved templates: {sorted(set(skills) - set(resolved))}"
+
+
+def test_empty_baseline_raises_instead_of_reporting_a_divergent_fleet(tmp_path):
+    """The rail. An empty baseline used to yield confident RECONCILE findings against everyone.
+
+    overlap = len(markers & set()) / max(1, 0) == 0.0 < _DIVERGENT_OVERLAP, so every agent was
+    labelled a divergent lineage while DISTRIBUTE/PROMOTE were structurally unreachable.
+    """
+    _write_agent(tmp_path, "eva", self_review=TEMPLATE_SELF_REVIEW)
+    agents = fa.discover_agents(bases=[tmp_path])
+    assert agents, "fixture agent not discovered"
+
+    with pytest.raises(fa.BaselineUnusable) as exc:
+        fa.analyze(agents, baseline={})
+    assert "empty" in str(exc.value)
+
+    # ...and it is genuinely the EMPTY case that trips, not any partial baseline: the shipped
+    # BASELINE fixture covers only some artifacts and must still compare fine.
+    fa.analyze(agents, baseline=BASELINE)
+
+
+def test_a_baseline_of_only_empty_marker_sets_is_also_refused(tmp_path):
+    """`{"turn": set()}` is the exact shape load_template_baseline() produced on Windows."""
+    _write_agent(tmp_path, "eva", self_review=TEMPLATE_SELF_REVIEW)
+    agents = fa.discover_agents(bases=[tmp_path])
+    degenerate = {name: set() for name, _r, kind in fa.ARTIFACTS if kind == "skill"}
+    with pytest.raises(fa.BaselineUnusable):
+        fa.analyze(agents, baseline=degenerate)
+
+
+def test_agent_bases_env_var_extends_discovery(tmp_path, monkeypatch):
+    """An operator whose repos live outside the two hardcoded bases (e.g. C:\\Projects)."""
+    elsewhere = tmp_path / "Projects"
+    elsewhere.mkdir()
+    _write_agent(elsewhere, "fizzy", self_review=TEMPLATE_SELF_REVIEW)
+
+    monkeypatch.delenv(fa.BASES_ENV, raising=False)
+    assert [a.slug for a in fa.discover_agents(bases=[tmp_path / "nowhere"])] == []
+
+    monkeypatch.setenv(fa.BASES_ENV, str(elsewhere))
+    assert [a.slug for a in fa.discover_agents(bases=[tmp_path / "nowhere"])] == ["fizzy"]
+
+
+def test_agent_bases_env_var_accepts_several_and_dedupes(tmp_path, monkeypatch):
+    a, b = tmp_path / "one", tmp_path / "two"
+    a.mkdir(); b.mkdir()
+    monkeypatch.setenv(fa.BASES_ENV, os.pathsep.join([str(a), str(b), str(a)]))
+    resolved = fa.agent_bases(bases=[a])
+    assert resolved.count(a) == 1 and b in resolved
