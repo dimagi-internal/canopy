@@ -1659,6 +1659,7 @@ def fleet_align_cmd(extra_repos, hours, no_evidence, no_llm, model, as_json):
     See docs/superpowers/specs/2026-07-03-fleet-align-design.md.
     """
     import json as json_mod
+    import os
     from orchestrator import fleet_align as fa
 
     agents = fa.discover_agents(extra_repos=extra_repos)
@@ -1666,7 +1667,17 @@ def fleet_align_cmd(extra_repos, hours, no_evidence, no_llm, model, as_json):
     if not agents:
         for w in drift:
             click.echo(f"⚠ {w}")
-        raise click.ClickException("No agent repos found (marker: skills/turn/SKILL.md). Pass --repo <dir>.")
+        # Name what was searched. "No agent repos found" alone reads as "the fleet is empty" when
+        # the real answer is "your repos are somewhere this never looked" — the default bases are
+        # one operator's layout, and the fleet-align skill says to invoke this with no arguments.
+        searched = "\n".join(f"    {b}" for b in fa.agent_bases())
+        raise click.ClickException(
+            "No agent repos found (marker: skills/turn/SKILL.md).\n"
+            f"  Searched:\n{searched}\n"
+            "  Add yours with --repo <dir> (repeatable), or permanently by setting "
+            f"{fa.BASES_ENV} to a {os.pathsep!r}-separated list of directories that CONTAIN "
+            "agent repos."
+        )
     findings = fa.analyze(agents)
     unreadable = 0
     if not no_evidence:

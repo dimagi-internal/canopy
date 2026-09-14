@@ -595,7 +595,124 @@ def main() -> int:
     return 0
 
 
+# ── `--sync-cache`: the /canopy:update skill's Step 2, sharing this module's mirror ─────────
+#
+# The update SKILL.md used to do this in bash with two `rsync` calls. rsync does not exist on
+# Windows, and both calls sat inside a single `&&` chain, so Step 2 died at `rsync: command not
+# found` (exit 127) AFTER the git pull and BEFORE the cache sync and the registry patch. The
+# result is the worst available state and it is SILENT: the marketplace clone is on the new
+# commit while installed_plugins.json still points at the old cache dir, so the plugin is
+# half-updated with nothing to indicate it. Measured on @smazumdar's machine 2026-09-14 — cache
+# stuck at 0.2.459 with the clone at 0.2.476.
+#
+# The mirror this needs already existed here (`mirror_tree`, added for exactly this reason on the
+# hook path). Re-deriving it in the skill is what produced a fourth rsync call site; the fix is
+# for the skill to CALL this, so there is one mirror in the codebase and the hook's tests cover
+# the updater too.
+
+SYNC_RETRIES = 3
+SYNC_RETRY_DELAY = 2.0
+
+
+def _retry_sync(what: str, fn) -> str:
+    """Run a mirror step, retrying transient file-locking failures.
+
+    Windows Defender holds freshly-written files open for a moment, so a copy or an unlink
+    intermittently fails with `Access is denied. (os error -2147024891)` and then succeeds on a
+    plain retry — the same pattern `claude plugin marketplace add` shows. Reported 2026-09-14.
+    Retries are bounded and only for errors that look like contention; anything else returns at
+    once, because retrying a real error just delays the message.
+    """
+    transient = ("access is denied", "permission denied", "being used by another process",
+                 "resource busy", "errno 13", "winerror 5", "winerror 32")
+    err = ""
+    for attempt in range(1, SYNC_RETRIES + 1):
+        err = fn()
+        if not err:
+            return ""
+        if not any(t in err.lower() for t in transient) or attempt == SYNC_RETRIES:
+            return err
+        print(f"  {what}: {err} — retry {attempt}/{SYNC_RETRIES - 1}", file=sys.stderr)
+        time.sleep(SYNC_RETRY_DELAY)
+    return err
+
+
+def sync_cache(clone: str, version: str, name: str = "canopy", marketplace: str = "canopy") -> int:
+    """Mirror <clone>/plugins/<name> into the versioned cache, sync runtime, patch the registry.
+
+    Prints one line per stage and returns 0 only when ALL of them succeeded — the skill chains on
+    that exit code, so a partial sync must never look like a whole one.
+    """
+    clone_path = Path(clone).expanduser()
+    plugin_dir = clone_path / _plugin_source_subdir(str(clone_path), name)
+    cache_dir = PLUGINS_DIR / "cache" / marketplace / name / version
+
+    if not plugin_dir.is_dir():
+        print(f"SYNC FAILED: plugin source not found at {plugin_dir}", file=sys.stderr)
+        return 1
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"SYNC FAILED: mkdir {cache_dir}: {exc}", file=sys.stderr)
+        return 1
+
+    # `delete=True` reproduces the skill's `rsync --delete`: the cache dir is keyed by VERSION, so
+    # a reused version number finds the directory already populated with the OTHER commit's files
+    # and a plain overlay would leave them. `node_modules`/`runtime` are excluded (and so kept, as
+    # `mirror_tree` never deletes an excluded name) because the two stages below rebuild them.
+    err = _retry_sync("plugin", lambda: mirror_tree(
+        plugin_dir, cache_dir, exclude={".git", "node_modules", "runtime"}, delete=True))
+    if err:
+        print(f"SYNC FAILED: plugin mirror: {err}", file=sys.stderr)
+        return 1
+    print(f"PLUGIN CACHE: synced -> {cache_dir}")
+
+    manifest = _runtime_manifest(plugin_dir)
+    if manifest:
+        err = _retry_sync("runtime", lambda: sync_runtime(str(clone_path), manifest, cache_dir))
+        if err:
+            print(f"SYNC FAILED: runtime bundle: {err}", file=sys.stderr)
+            return 1
+        print("RUNTIME BUNDLE: synced")
+
+    if (cache_dir / "package.json").exists():
+        if shutil.which("npm"):
+            rc, _out, _err = run(["npm", "install", "--no-audit", "--no-fund"], NPM_TIMEOUT, cwd=str(cache_dir))
+            print(f"GWS DEPS: {'installed' if rc == 0 else 'skipped (npm install failed)'}")
+        else:
+            print(f"GWS DEPS: skipped (npm missing — canopy-gws MCP needs: cd {cache_dir} && npm install)")
+
+    rc, sha, err_txt = run(["git", "rev-parse", "HEAD"], 20, cwd=str(clone_path))
+    if rc != 0 or not sha:
+        print(f"SYNC FAILED: could not read clone HEAD sha: {err_txt}", file=sys.stderr)
+        return 1
+
+    if not patch_registry(name, marketplace, version, str(cache_dir), sha):
+        print("SYNC FAILED: registry patch failed", file=sys.stderr)
+        return 1
+    print(f"VERIFIED: v{version} installed and registered (sha {sha[:8]})")
+    return 0
+
+
+def _sync_cache_from_argv(argv: list[str]) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="fleet_session_start_update.py --sync-cache")
+    ap.add_argument("--sync-cache", action="store_true")
+    ap.add_argument("--clone", required=True, help="marketplace clone root")
+    ap.add_argument("--version", required=True, help="version to install as")
+    ap.add_argument("--name", default="canopy")
+    ap.add_argument("--marketplace", default="canopy")
+    args = ap.parse_args(argv)
+    return sync_cache(args.clone, args.version, args.name, args.marketplace)
+
+
 if __name__ == "__main__":
+    # `--sync-cache` is a real CLI the updater chains on, so it must FAIL LOUDLY. The bare hook
+    # path below must do the opposite — a session-start hook that raises breaks every session —
+    # which is why the blanket `except: sys.exit(0)` cannot be allowed to cover both.
+    if "--sync-cache" in sys.argv[1:]:
+        sys.exit(_sync_cache_from_argv(sys.argv[1:]))
     try:
         sys.exit(main())
     except Exception:  # noqa: BLE001 — a session-start hook must NEVER fail loudly

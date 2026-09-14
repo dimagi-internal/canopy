@@ -408,3 +408,127 @@ class TestMirrorTree:
         mod = flu
         err = mod.mirror_tree(tmp_path / "does-not-exist", tmp_path / "dest", exclude=set())
         assert err and "copy" in err
+
+
+# ── --sync-cache: the /canopy:update Step 2 the skill used to do with rsync ─────────────────
+
+
+def _clone_with_plugin(tmp_path, version="9.9.9", runtime=True):
+    """A marketplace clone shaped like canopy's: plugins/canopy/ + repo-root runtime paths."""
+    clone = tmp_path / "clone"
+    plugin = clone / "plugins" / "canopy" / ".claude-plugin"
+    plugin.mkdir(parents=True)
+    (plugin / "plugin.json").write_text(json.dumps({"version": version}), encoding="utf-8")
+    (clone / ".claude-plugin").mkdir(exist_ok=True)
+    (clone / ".claude-plugin" / "marketplace.json").write_text(
+        json.dumps({"plugins": [{"name": "canopy", "source": "./plugins/canopy"}]}), encoding="utf-8")
+    (clone / "plugins" / "canopy" / "skills").mkdir()
+    (clone / "plugins" / "canopy" / "skills" / "a.md").write_text("skill", encoding="utf-8")
+    if runtime:
+        (plugin / "runtime.json").write_text(
+            json.dumps({"dest": "runtime", "paths": ["src", "pyproject.toml"]}), encoding="utf-8")
+        (clone / "src").mkdir()
+        (clone / "src" / "mod.py").write_text("x = 1", encoding="utf-8")
+        (clone / "pyproject.toml").write_text("[project]", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=str(clone), check=True)
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-qm", "init")
+    return clone
+
+
+def _registry(tmp_path, install_path="/old/path", version="0.0.1"):
+    reg = tmp_path / "installed_plugins.json"
+    reg.write_text(json.dumps({"plugins": {"canopy@canopy": [
+        {"version": version, "installPath": install_path, "gitCommitSha": "dead", "lastUpdated": "x"}]}}),
+        encoding="utf-8")
+    return reg
+
+
+def test_sync_cache_mirrors_runtime_and_patches_registry(tmp_path, monkeypatch):
+    """The whole of Step 2, with no rsync anywhere — the Windows failure it replaces."""
+    clone = _clone_with_plugin(tmp_path)
+    reg = _registry(tmp_path)
+    monkeypatch.setattr(flu, "PLUGINS_DIR", tmp_path / "plugins")
+    monkeypatch.setattr(flu, "REGISTRY", reg)
+    monkeypatch.setattr(flu.shutil, "which", lambda _n: None)   # no npm in the test env
+
+    assert flu.sync_cache(str(clone), "9.9.9") == 0
+
+    cache = tmp_path / "plugins" / "cache" / "canopy" / "canopy" / "9.9.9"
+    assert (cache / "skills" / "a.md").read_text(encoding="utf-8") == "skill"
+    assert (cache / "runtime" / "src" / "mod.py").exists()      # repo-root runtime bundle
+    assert (cache / "runtime" / "pyproject.toml").exists()
+
+    entry = json.loads(reg.read_text(encoding="utf-8"))["plugins"]["canopy@canopy"][0]
+    assert entry["version"] == "9.9.9"
+    assert entry["installPath"] == str(cache)
+    assert entry["gitCommitSha"] == _rev(clone)
+
+
+def test_sync_cache_delete_pass_clears_a_reused_version_dir(tmp_path, monkeypatch):
+    """Version numbers get reused; the OTHER commit's files must not survive in the cache."""
+    clone = _clone_with_plugin(tmp_path)
+    monkeypatch.setattr(flu, "PLUGINS_DIR", tmp_path / "plugins")
+    monkeypatch.setattr(flu, "REGISTRY", _registry(tmp_path))
+    monkeypatch.setattr(flu.shutil, "which", lambda _n: None)
+
+    cache = tmp_path / "plugins" / "cache" / "canopy" / "canopy" / "9.9.9"
+    cache.mkdir(parents=True)
+    (cache / "stale.md").write_text("from the other commit", encoding="utf-8")
+    (cache / "node_modules").mkdir()                            # excluded => preserved
+    (cache / "node_modules" / "dep.js").write_text("dep", encoding="utf-8")
+
+    assert flu.sync_cache(str(clone), "9.9.9") == 0
+    assert not (cache / "stale.md").exists()
+    assert (cache / "node_modules" / "dep.js").exists()
+
+
+def test_sync_cache_leaves_the_registry_alone_when_a_stage_fails(tmp_path, monkeypatch):
+    """Non-zero exit must mean the OLD version is still the installed one.
+
+    This is the property the rsync chain lacked: it died between the pull and the registry
+    patch, so the clone moved and the registry didn't, with nothing said about it.
+    """
+    clone = _clone_with_plugin(tmp_path)
+    reg = _registry(tmp_path, install_path="/old/path", version="0.0.1")
+    monkeypatch.setattr(flu, "PLUGINS_DIR", tmp_path / "plugins")
+    monkeypatch.setattr(flu, "REGISTRY", reg)
+    monkeypatch.setattr(flu.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(flu, "sync_runtime", lambda *a, **k: "disk on fire")
+
+    assert flu.sync_cache(str(clone), "9.9.9") == 1
+    entry = json.loads(reg.read_text(encoding="utf-8"))["plugins"]["canopy@canopy"][0]
+    assert entry["version"] == "0.0.1" and entry["installPath"] == "/old/path"
+
+
+def test_sync_cache_fails_loudly_on_a_missing_plugin_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(flu, "PLUGINS_DIR", tmp_path / "plugins")
+    monkeypatch.setattr(flu, "REGISTRY", _registry(tmp_path))
+    assert flu.sync_cache(str(tmp_path / "nope"), "9.9.9") == 1
+
+
+def test_retry_sync_retries_only_transient_lock_errors(monkeypatch):
+    """Windows Defender's `Access is denied` clears on a retry; a real error must not loop."""
+    monkeypatch.setattr(flu.time, "sleep", lambda _s: None)
+
+    calls = []
+    def flaky():
+        calls.append(1)
+        return "copy a -> b: [WinError 5] Access is denied." if len(calls) < 3 else ""
+    assert flu._retry_sync("plugin", flaky) == ""
+    assert len(calls) == 3
+
+    hard = []
+    def broken():
+        hard.append(1)
+        return "runtime path missing in clone: src"
+    assert flu._retry_sync("runtime", broken) == "runtime path missing in clone: src"
+    assert len(hard) == 1                                        # no retry on a real error
+
+
+def test_no_rsync_left_in_the_update_skill():
+    """The fourth call site. rsync does not exist on Windows and this one cannot self-heal."""
+    skill = HOOK.parent.parent / "skills" / "update" / "SKILL.md"
+    body = skill.read_text(encoding="utf-8")
+    code = "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith(("- ", "**", "(")))
+    assert "rsync -a" not in code, "update/SKILL.md is shelling out to rsync again"
