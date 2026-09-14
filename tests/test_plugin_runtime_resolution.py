@@ -99,3 +99,64 @@ def test_runtime_manifest_paths_exist():
     assert "src" in manifest["paths"]
     assert "scripts" in manifest["paths"]
     assert "pyproject.toml" in manifest["paths"]
+
+
+def _pyproject_path_deps() -> list[str]:
+    """Every [tool.uv.sources] `path = "..."` dep declared by the root pyproject.toml.
+
+    Read with a regex rather than a TOML parser so this test has no import-time
+    dependency on the runtime it is asserting about.
+    """
+    text = (REPO / "pyproject.toml").read_text()
+    block = re.split(r"^\[tool\.uv\.sources\]\s*$", text, flags=re.M)
+    if len(block) < 2:
+        return []
+    body = re.split(r"^\[", block[1], flags=re.M)[0]
+    return re.findall(r'path\s*=\s*"([^"]+)"', body)
+
+
+def test_runtime_manifest_covers_every_pyproject_path_dep():
+    """A path dep outside the bundle makes the bundle unrunnable, invisibly.
+
+    THE REGRESSION THIS PINS (#636): packages/canopy_agent_factory was wired as an
+    editable path dep in the root pyproject.toml, which ships as the bundle's
+    runtime/pyproject.toml — but "packages" was never added to runtime.json's paths.
+    Every shape check still passed (pyproject.toml, src/orchestrator, scripts/ddd all
+    present), so scripts/canopy-runtime.sh selected the bundle, and then every
+    `uv run --project "$CANOPY_ROOT"` died with
+
+        error: Distribution not found at: file:///.../runtime/packages/canopy_agent_factory
+
+    That took out all of ada's bin/* (publish, close, withdraw, session-review — the
+    whole conduct enforcement layer), hal's bin/hal-verify-link and bin/hal-labs-review,
+    and the 18 skills that run through the resolved project. test_runtime_manifest_paths_
+    exist() only checks the converse (listed paths exist in the repo), so it passed too.
+    """
+    manifest = json.loads((PLUGIN / ".claude-plugin" / "runtime.json").read_text())
+    listed = {str(p).strip("/") for p in manifest["paths"]}
+    uncovered = [
+        dep for dep in _pyproject_path_deps()
+        # Covered if the dep itself, or any ancestor directory of it, is bundled.
+        if not any(
+            dep.strip("/") == entry or dep.strip("/").startswith(entry + "/")
+            for entry in listed
+        )
+    ]
+    assert not uncovered, (
+        "pyproject.toml declares [tool.uv.sources] path deps that the runtime bundle "
+        "does not carry, so `uv run --project <bundle>` will fail at resolve time. Add "
+        "the containing directory to plugins/canopy/.claude-plugin/runtime.json paths:\n"
+        + "\n".join(f"  {d}  (manifest paths: {sorted(listed)})" for d in uncovered)
+    )
+
+
+def test_resolver_skips_a_bundle_missing_its_path_deps():
+    """The resolver must not hand back a runtime that cannot resolve.
+
+    Belt to the manifest's braces: if a future path dep lands un-bundled anyway, the
+    ladder should fall through to the next candidate (the marketplace clone) rather
+    than select a cache bundle whose `uv run` dies opaquely.
+    """
+    resolver = (PLUGIN / "scripts" / "canopy-runtime.sh").read_text()
+    assert "_path_deps_ok" in resolver
+    assert "tool\\.uv\\.sources" in resolver or "tool.uv.sources" in resolver

@@ -36,8 +36,33 @@ set -u
 NEED_GIT=0
 [ "${1:-}" = "--git" ] && NEED_GIT=1
 
+# A candidate must also CARRY every [tool.uv.sources] editable path dep its own
+# pyproject.toml declares. The bundled runtime is an rsync of the path list in
+# .claude-plugin/runtime.json; when a new path dep lands in pyproject.toml without a
+# matching manifest entry, the bundle still satisfies every shape check above but
+# `uv run --project` dies at resolve time on
+#     error: Distribution not found at: file:///.../runtime/packages/<pkg>
+# — an opaque failure with no mention of the bundle. Skipping such a candidate lets the
+# ladder fall through to the marketplace clone, so a mis-bundled cache degrades to a
+# working runtime instead of taking every consumer down. (#636 shipped exactly this
+# breakage: packages/canopy_agent_factory became a path dep while runtime.json still
+# listed only src/scripts/evals/pyproject.toml, which killed every agent's bin/* and
+# all 18 skills that run `uv run --project "$CANOPY_ROOT"`.)
+_path_deps_ok() {
+  local root="$1" dep
+  while IFS= read -r dep; do
+    [ -n "$dep" ] || continue
+    [ -e "$root/$dep" ] || return 1
+  done <<PATHDEPS
+$(sed -n '/^\[tool\.uv\.sources\]/,/^\[/p' "$root/pyproject.toml" 2>/dev/null \
+    | sed -n 's/.*path[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p')
+PATHDEPS
+  return 0
+}
+
 _ok() {
   [ -f "$1/pyproject.toml" ] && [ -d "$1/src/orchestrator" ] && [ -d "$1/scripts/ddd" ] || return 1
+  _path_deps_ok "$1" || return 1
   [ "$NEED_GIT" = "1" ] && [ ! -e "$1/.git" ] && return 1
   return 0
 }
