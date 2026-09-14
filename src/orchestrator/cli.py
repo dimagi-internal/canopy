@@ -1,6 +1,7 @@
 """CLI entry point for the orchestrator."""
 
 import sys
+import datetime as _dt
 from pathlib import Path
 import click
 from orchestrator.paths import CANOPY_DIR, ensure_canopy_dir
@@ -1550,6 +1551,46 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
     if cm.get("unreadable"):
         click.echo("  ⚠ UNREADABLE sources (findings may be incomplete): "
                    + ", ".join(cm["unreadable"]))
+    if not result.get("turns"):
+        # `Turns reviewed: 0` under a readable whole-corpus scan reads as "the agent was
+        # quiet" — and for the one agent that runs on the CLOUD runner it is never true.
+        # echo's turns are claimed by `cloud-ec2-1` and its transcripts live on that box,
+        # not in any local ~/.claude/projects, so the corpus is legitimately whole (every
+        # readable source WAS read) while attributing nothing. The BLIND SCAN guard below
+        # cannot catch it: that one fires on considered>0 with none attributed, and here
+        # nothing was even a candidate. Measured 2026-09-14: `agent-review echo --hours 75`
+        # printed "Turns reviewed: 0 / No findings synthesized" while the harness held two
+        # completed echo turns in that window, both run on cloud-ec2-1 — so echo has been
+        # structurally invisible to the fleet's own self-improvement lens, silently.
+        # Best-effort and never fatal: an unreachable canopy-web must not break a review
+        # that is otherwise complete (offline runs, --no-llm) — we just lose the hint.
+        try:
+            from orchestrator import canopy_web as _cw
+            _rows = _cw.call("GET", f"/api/harness/turns/?agent={result['agent']}") or []
+            if isinstance(_rows, dict):
+                _rows = _rows.get("items") or []
+            _cut = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)
+            _elsewhere = {}
+            for _r in _rows:
+                _when = (_r.get("created_at") or "").replace("Z", "+00:00")
+                try:
+                    if _dt.datetime.fromisoformat(_when) < _cut:
+                        continue
+                except ValueError:
+                    continue
+                _runner = _r.get("claimed_by_name") or "an unnamed runner"
+                _elsewhere[_runner] = _elsewhere.get(_runner, 0) + 1
+            if _elsewhere:
+                _detail = ", ".join(f"{n} on {r}" for r, n in sorted(_elsewhere.items()))
+                click.echo(
+                    f"\n⚠  NOT A CLEAN BILL OF HEALTH — the harness recorded "
+                    f"{sum(_elsewhere.values())} turn(s) for this agent in the window "
+                    f"({_detail}), but none of their transcripts are readable on this "
+                    f"machine. Review them where that runner writes its sessions; this "
+                    f"run found nothing because it could not read them."
+                )
+        except Exception:
+            pass
     if cm.get("confidence") == "blind":
         # Same class of quiet-failure as the synthesis-pass warning below: `Turns
         # reviewed: 0` under a readable corpus reads as "the agent was quiet", and a

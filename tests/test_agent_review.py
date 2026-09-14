@@ -2012,3 +2012,87 @@ def test_multi_target_string_yields_each_file():
 def test_backticked_symbols_still_win():
     syms = _finding_symbols([{"title": "fix `normalize_confidence` in `agent_review.py`"}])
     assert "normalize_confidence" in syms and "agent_review.py" in syms
+
+
+# --- `Turns reviewed: 0` must not read as quiet when the turns ran on another runner ---
+#
+# THE REGRESSION THIS PINS. echo is the one agent claimed by the CLOUD runner
+# (`cloud-ec2-1`), so its transcripts are written on that box and never land in any local
+# ~/.claude/projects. The corpus is therefore legitimately "whole-corpus" — every readable
+# source WAS read — while attributing zero turns, and the BLIND SCAN guard cannot help:
+# that one fires on considered>0 with none attributed, and here nothing was even a
+# candidate. Measured 2026-09-14: `agent-review echo --hours 75` printed "Turns reviewed: 0"
+# then "No findings synthesized", while the harness held two completed echo turns in that
+# window. echo was structurally invisible to the fleet's self-improvement lens, silently.
+
+def _invoke_agent_review_text(monkeypatch, result, turns_rows, *, raise_web=False):
+    """Run `canopy agent-review` (text output) with run_review + the harness stubbed."""
+    from click.testing import CliRunner
+
+    from orchestrator import cli as cli_mod
+
+    monkeypatch.setattr(
+        "orchestrator.agent_review.run_review", lambda *a, **k: result, raising=False
+    )
+
+    def _call(method, path, *a, **k):
+        if raise_web:
+            raise RuntimeError("canopy-web unreachable")
+        return turns_rows
+
+    monkeypatch.setattr("orchestrator.canopy_web.call", _call, raising=False)
+    return CliRunner().invoke(cli_mod.main, ["agent-review", "echo", "--no-llm", "--hours", "75"])
+
+
+def _echo_result(**over):
+    base = {
+        "agent": "echo", "repo": "/tmp/echo", "turns": 0, "signals": [],
+        "corpus": {"confidence": "whole-corpus", "sources": ["local:jjackson"]},
+        "findings": [], "dropped_findings": [],
+    }
+    base.update(over)
+    return base
+
+
+def _row(when, runner="cloud-ec2-1"):
+    return {"created_at": when, "claimed_by_name": runner, "status": "done"}
+
+
+def _recent(hours_ago):
+    import datetime as dt
+    return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours_ago)).isoformat()
+
+
+def test_zero_local_turns_names_the_runner_that_has_them(monkeypatch):
+    r = _invoke_agent_review_text(
+        monkeypatch, _echo_result(), [_row(_recent(2)), _row(_recent(30))]
+    )
+    assert "NOT A CLEAN BILL OF HEALTH" in r.output
+    assert "2 turn(s)" in r.output
+    assert "cloud-ec2-1" in r.output
+
+
+def test_turns_outside_the_window_do_not_trigger_the_warning(monkeypatch):
+    """A genuinely idle agent must still read as idle — the window is the whole point."""
+    r = _invoke_agent_review_text(monkeypatch, _echo_result(), [_row(_recent(500))])
+    assert "NOT A CLEAN BILL OF HEALTH" not in r.output
+
+
+def test_no_harness_turns_at_all_stays_quiet(monkeypatch):
+    r = _invoke_agent_review_text(monkeypatch, _echo_result(), [])
+    assert "NOT A CLEAN BILL OF HEALTH" not in r.output
+
+
+def test_locally_attributed_turns_skip_the_harness_check(monkeypatch):
+    """turns>0 means the corpus worked; don't second-guess a review that read something."""
+    r = _invoke_agent_review_text(
+        monkeypatch, _echo_result(turns=5), [_row(_recent(2))]
+    )
+    assert "NOT A CLEAN BILL OF HEALTH" not in r.output
+
+
+def test_unreachable_canopy_web_does_not_break_the_review(monkeypatch):
+    """Best-effort: an offline box loses the hint, not the whole review."""
+    r = _invoke_agent_review_text(monkeypatch, _echo_result(), [], raise_web=True)
+    assert r.exit_code == 0
+    assert "Turns reviewed (last 75h): 0" in r.output
