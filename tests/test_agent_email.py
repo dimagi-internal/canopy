@@ -1508,3 +1508,84 @@ def test_read_thread_reports_no_unseen_quoted_on_an_ordinary_chain():
     res = read_thread(_ACE, "t", runner=_runner_ok(_addback_thread_json([first, second])))
     assert res["has_unseen_quoted"] is False
     assert all(m["quoted_unseen"] == "" for m in res["messages"])
+
+
+# ── fenced code blocks (2026-09-14) ─────────────────────────────────────────────────────────
+#
+# A ``` block is the one construct whose SOURCE is the content. Before this, it fell through
+# to the paragraph path: the literal fences shipped as text, inline markdown chewed on the
+# code, indentation was stripped by normalize(), and _autolink turned a URL inside a shell
+# command into an <a href>. Caught by a pre-send render check on a reply whose whole point was
+# a curl command the recipient had to copy and run.
+
+
+CURL_BLOCK = """Jon, this is one call:
+
+```
+curl -s -X POST "https://labs.connect.dimagi.com/canopy/api/workspaces/connect/invites/" \\
+  -H "Authorization: Bearer $tok" \\
+  -d '{"email":"a@b.com","role":"viewer"}'
+```
+
+That's it.
+"""
+
+
+def test_fenced_block_renders_as_pre_code_not_literal_backticks():
+    html_out = to_html(normalize(CURL_BLOCK))
+    assert "<pre" in html_out and "<code>" in html_out
+    assert "```" not in html_out, "the fence markers leaked into the rendered mail"
+
+
+def test_url_inside_a_fenced_command_is_not_linkified():
+    """The failure that motivated this: a copyable command with an <a> in the middle."""
+    html_out = to_html(normalize(CURL_BLOCK))
+    code = html_out[html_out.index("<pre"):html_out.index("</pre>")]
+    assert "<a href" not in code, "autolinked a URL inside a shell command"
+    assert "labs.connect.dimagi.com/canopy/api/workspaces/connect/invites/" in code
+
+
+def test_fenced_block_keeps_indentation_and_line_breaks():
+    """normalize() strips and re-joins; both are wrong inside code."""
+    normalized = normalize(CURL_BLOCK)
+    assert '\n  -H "Authorization: Bearer $tok" \\' in normalized, "indentation was stripped"
+    assert "curl -s -X POST" in normalized
+    # the continuation must NOT have been welded onto the curl line
+    curl_line = [l for l in normalized.split("\n") if l.startswith("curl ")][0]
+    assert "-H" not in curl_line
+
+
+def test_prose_around_a_fence_still_renders_normally():
+    html_out = to_html(normalize(CURL_BLOCK))
+    assert "<p>Jon, this is one call:</p>" in html_out
+    assert "<p>That's it.</p>" in html_out
+
+
+def test_info_string_fence_is_recognised_and_closed():
+    body = "before\n\n```bash\necho hi\n```\n\nafter\n"
+    html_out = to_html(normalize(body))
+    assert "<pre" in html_out and "echo hi" in html_out
+    assert "bash" not in html_out, "the info string leaked into the output"
+    assert "<p>after</p>" in html_out
+
+
+def test_tilde_fence_is_supported_and_does_not_close_a_backtick_fence():
+    body = "~~~\nkeep ``` this\n~~~\n"
+    html_out = to_html(normalize(body))
+    assert "<pre" in html_out
+    assert "keep ``` this" in html_out
+
+
+def test_code_inside_a_fence_is_escaped_not_interpreted():
+    body = "```\n<script>alert(1)</script> **not bold** `not code`\n```\n"
+    html_out = to_html(normalize(body))
+    assert "&lt;script&gt;" in html_out
+    assert "<strong>" not in html_out and "<code>not code</code>" not in html_out
+
+
+def test_unterminated_fence_does_not_swallow_the_rest_silently():
+    """An author who forgets the closing fence should still get their text, as code."""
+    body = "intro\n\n```\ncmd one\ncmd two\n"
+    html_out = to_html(normalize(body))
+    assert "<p>intro</p>" in html_out
+    assert "cmd one" in html_out and "cmd two" in html_out
