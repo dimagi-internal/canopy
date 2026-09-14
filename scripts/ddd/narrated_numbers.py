@@ -131,6 +131,7 @@ def _supported(value: float, on_screen: list[float]) -> bool:
 def check(run_dir: str | Path, recipe_path: str | Path) -> dict:
     """Compare each scene's narration against its own captured page text."""
     from scripts.ddd.spec_io import load_spec
+    from scripts.narrative.models import scene_narration_text
 
     run = Path(run_dir)
     spec = load_spec(str(recipe_path))
@@ -138,7 +139,7 @@ def check(run_dir: str | Path, recipe_path: str | Path) -> dict:
     checked = 0
 
     for index, scene in enumerate(spec.scenes, start=1):
-        narration = (getattr(scene, "narrative", "") or "").strip()
+        narration = scene_narration_text(getattr(scene, "narrative", ""))
         if not narration:
             continue
         capture = run / "snapshots" / f"scene_{index}_page_text.json"

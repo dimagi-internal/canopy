@@ -1951,3 +1951,45 @@ def test_pull_reports_a_narrative_it_cannot_render(tmp_path, monkeypatch, capsys
     out = capsys.readouterr()
     assert _json.loads(out.out)["renderable"] is True
     assert "no render recipe" not in out.err
+
+
+# ---------------------------------------------------------------------------
+# canopy#623 — a scene's `narrative` may be a LIST of beats. The review-surface
+# text resolver called `.strip()` on the raw field, so the list form raised
+# AttributeError and the review page could not be built at all. Both shapes
+# must resolve to prose, and the list must WIN over the sentence-split
+# fallback exactly as a plain string does.
+# ---------------------------------------------------------------------------
+class TestSceneNarrativeListFormReachesTheReviewSurface:
+    def _spec_with(self, narrative):
+        scenes = [
+            Scene(
+                persona="alice",
+                title="Area Selection",
+                show="Navigate to /areas and draw a boundary on the map.",
+                concept_claim="Users can draw a custom boundary to select the survey area in 30 seconds.",
+                provenance="S1",
+                narrative=narrative,
+            )
+        ]
+        return _make_spec(scenes=scenes)
+
+    def test_list_form_narrative_builds_the_review_request(self):
+        spec = self._spec_with(["She draws the boundary.", "The area locks in."])
+        result = build_narrative_review_request(spec, "run-623")
+        texts = [n.text for n in result.narration]
+        assert texts == ["She draws the boundary. The area locks in."]
+
+    def test_plain_string_narrative_is_unchanged(self):
+        spec = self._spec_with("She draws the boundary.")
+        result = build_narrative_review_request(spec, "run-623")
+        assert [n.text for n in result.narration] == ["She draws the boundary."]
+
+    def test_all_blank_beats_fall_through_to_the_legacy_resolution(self):
+        """An empty list must behave like an empty string, not like prose."""
+        spec = self._spec_with(["  ", ""])
+        result = build_narrative_review_request(spec, "run-623")
+        # one scene vs. one spec-narrative sentence -> the 1:1 fallback wins
+        assert [n.text for n in result.narration] == [
+            "Rooftop surveys ride Connect microplanning."
+        ]
