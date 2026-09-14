@@ -488,7 +488,7 @@ def spec_qa(
                 "microplans-study-groups."
             )
         for s in spec.scenes:
-            if not (getattr(s, "narrative", "") or "").strip():
+            if not scene_narration_text(getattr(s, "narrative", "")):
                 role = getattr(s, "role", "") or ""
                 what = "the overview's narrative IS the opening voiceover" if role == "overview" else (
                     "without it the render reads `show` aloud as a screen description "

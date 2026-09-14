@@ -995,6 +995,39 @@ def test_small_walkthrough_under_4_scenes_exempt():
 
 
 # ---------------------------------------------------------------------------
+# canopy#623 — Scene.narrative may be a LIST of beats (the schema allows it and
+# the emitter has always consumed it), but the ≥4-scene VO check called
+# ``.strip()`` on the raw field. A list has no ``.strip``, so the whole gate
+# died with AttributeError instead of returning a Verdict — and because
+# spec_qa gates ddd-run Step 1, that hard-blocked every full-demo spec written
+# the way the pacing lint recommends.
+# ---------------------------------------------------------------------------
+def _demo_spec_4_scenes_list_beats() -> dict:
+    spec = _demo_spec_4_scenes()
+    for scene in spec["scenes"]:
+        scene["narrative"] = [f"{scene['title']}, first beat.", "And the second beat."]
+    return spec
+
+
+def test_full_demo_with_list_form_narrative_does_not_crash_spec_qa():
+    """The list form must return a Verdict, not raise."""
+    from scripts.ddd.spec_qa import spec_qa
+    result = spec_qa(_demo_spec_4_scenes_list_beats())
+    assert result.verdict == "pass", result.blocking_reason
+
+
+def test_list_form_narrative_of_only_blank_beats_still_fails_the_vo_check():
+    """Joining must not turn an EMPTY list form into a passing narrative."""
+    from scripts.ddd.spec_qa import spec_qa
+    spec = _demo_spec_4_scenes()
+    for scene in spec["scenes"]:
+        scene["narrative"] = ["   ", ""]
+    result = spec_qa(spec)
+    assert result.verdict == "fail"
+    assert "narrative" in result.blocking_reason
+
+
+# ---------------------------------------------------------------------------
 # A concrete verify can be one token
 # ---------------------------------------------------------------------------
 

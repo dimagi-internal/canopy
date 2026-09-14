@@ -31,6 +31,7 @@ import yaml
 from scripts.ddd.schemas.models import Decision, Gate, NarrationItem, ReviewRequest, UnifiedSpec
 from scripts.ddd.spec_io import load_spec
 from scripts.ddd.review import _review_id_from_url
+from scripts.narrative.models import scene_narration_text
 
 
 # ---------------------------------------------------------------------------
@@ -146,9 +147,9 @@ def _scene_text_for_review(spec: "UnifiedSpec", scene_idx_zero_based: int) -> st
     3. ``scene.concept_claim`` as last-resort.
     """
     scene = spec.scenes[scene_idx_zero_based]
-    s_nar = getattr(scene, "narrative", "")
-    if s_nar and s_nar.strip():
-        return s_nar.strip()
+    s_nar = scene_narration_text(getattr(scene, "narrative", ""))
+    if s_nar:
+        return s_nar
     sentences = _split_narrative_sentences(spec.narrative)
     if len(sentences) == len(spec.scenes):
         return sentences[scene_idx_zero_based]
@@ -172,7 +173,7 @@ def _rebuild_spec_narrative(raw: dict) -> None:
     sentence_mode_fallback = len(old_sentences) == len(scenes)
     parts: list[str] = []
     for i, scene in enumerate(scenes):
-        s_nar = (scene.get("narrative") or "").strip()
+        s_nar = scene_narration_text(scene.get("narrative"))
         if s_nar:
             parts.append(s_nar)
         elif sentence_mode_fallback:
@@ -665,7 +666,7 @@ def apply_narrative_edits(
                 #   it stays a separate testable claim.
                 scene_dict = scenes[idx]
                 if narration:
-                    old_text = (scene_dict.get("narrative") or "").strip()
+                    old_text = scene_narration_text(scene_dict.get("narrative"))
                     if not old_text:
                         # First edit: derive old_text from the legacy mapping
                         # so we don't false-positive a no-op edit as a change.
