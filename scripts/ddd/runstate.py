@@ -112,6 +112,9 @@ def _resolve_runs_dir(ddd_dir: Path) -> Path:
       1. ``CANOPY_DDD_RUNS_DIR`` env var → used directly (operator override).
       2. ``ddd_dir`` already outside a repo (the $HOME fallback) → ``<ddd_dir>/runs``.
       3. otherwise → ``$HOME/.canopy/ddd/runs/<project-name>``.
+
+    The project name is the MAIN repo's name, never the worktree's — see
+    ``_repo_identity``.
     """
     env_dir = os.environ.get("CANOPY_DDD_RUNS_DIR", "").strip()
     if env_dir:
@@ -123,7 +126,7 @@ def _resolve_runs_dir(ddd_dir: Path) -> Path:
             # fallback. Nothing to protect, so keep runs alongside it.
             runs_dir = ddd_dir / "runs"
         else:
-            runs_dir = Path.home() / ".canopy" / "ddd" / "runs" / repo_root.name
+            runs_dir = Path.home() / ".canopy" / "ddd" / "runs" / _repo_identity(repo_root)
     runs_dir.mkdir(parents=True, exist_ok=True)
     return runs_dir
 
@@ -139,6 +142,42 @@ def _enclosing_repo(path: Path) -> Path | None:
         if (parent / ".git").exists():
             return parent
     return None
+
+
+def _repo_identity(repo_root: Path) -> str:
+    """The name keying this repo's runs root — the MAIN checkout's name.
+
+    ``_enclosing_repo`` stops at the first path with a ``.git``, which in a
+    ``git worktree add`` checkout is the WORKTREE root. Keying the runs root on
+    its basename gave every worktree a private, empty runs dir: the harness
+    hands agents temp-named worktrees, so ``score_history`` silently restarted
+    at zero on each one. That does not merely lose history — ``compute_auto_iterate``
+    reads the series to decide stall/plateau/convergence, so an empty one changes
+    the loop's TERMINAL VERDICT, not just its bookkeeping.
+
+    In a worktree, ``.git`` is a FILE reading ``gitdir: <main>/.git/worktrees/<name>``,
+    so the main root is recoverable by pure path parsing — no subprocess, which
+    keeps this unit-testable and safe to call when git is absent. Falls back to
+    the basename whenever the file is missing, unreadable, or not in that shape,
+    because a slightly-wrong key beats an exception in a path resolver.
+    """
+    dot_git = repo_root / ".git"
+    if dot_git.is_dir():
+        return repo_root.name          # ordinary checkout: already the main root
+    try:
+        content = dot_git.read_text().strip()
+    except OSError:
+        return repo_root.name
+    if not content.startswith("gitdir:"):
+        return repo_root.name
+    gitdir = Path(content.split("gitdir:", 1)[1].strip())
+    # <main>/.git/worktrees/<name>  ->  <main>
+    parts = gitdir.parts
+    if "worktrees" in parts:
+        idx = parts.index("worktrees")
+        if idx >= 2 and parts[idx - 1] == ".git":
+            return Path(*parts[: idx - 1]).name
+    return repo_root.name
 
 
 def _legacy_runs_dir(ddd_dir: Path) -> Path:
