@@ -1,10 +1,11 @@
 {
-  "_comment": "Runtime-bundle manifest. The canopy plugin's Python runtime (the orchestrator package, scripts/, evals/) lives at the REPO root, one level above plugins/canopy/, so a plain plugin install would exclude it. The updaters (skills/update Step 2 and hooks/fleet_session_start_update.py) read this manifest and rsync each listed repo-root path into <plugin-cache>/<dest>/ right after syncing the plugin itself, so every installed plugin version carries the exact matching runtime. Skills resolve it via scripts/canopy-runtime.sh — never via a dev checkout.",
+  "_comment": "Runtime-bundle manifest. The canopy plugin's Python runtime (the orchestrator package, scripts/, evals/) lives at the REPO root, one level above plugins/canopy/, so a plain plugin install would exclude it. The updaters (skills/update Step 2 and hooks/fleet_session_start_update.py) read this manifest and rsync each listed repo-root path into <plugin-cache>/<dest>/ right after syncing the plugin itself, so every installed plugin version carries the exact matching runtime. Skills resolve it via scripts/canopy-runtime.sh — never via a dev checkout. EVERY path pyproject.toml needs at RESOLVE time must be listed here, including [tool.uv.sources] editable path deps (packages/) — `uv run --project` dies on a missing one, and the resolver's shape checks cannot see it. tests/test_plugin_runtime_resolution.py enforces that coverage.",
   "dest": "runtime",
   "paths": [
     "src",
     "scripts",
     "evals",
+    "packages",
     "pyproject.toml"
   ]
 }
