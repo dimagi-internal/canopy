@@ -28,7 +28,18 @@ if [ "${1:-}" = "--runs" ]; then
   if [ -n "${CANOPY_DDD_RUNS_DIR:-}" ]; then
     RUNS_DIR="$CANOPY_DDD_RUNS_DIR"
   elif [ -n "${REPO_ROOT:-}" ]; then
-    RUNS_DIR="$HOME/.canopy/ddd/runs/$(basename "$REPO_ROOT")"
+    # The MAIN repo's name, never the worktree's. --git-common-dir resolves to
+    # the shared <main>/.git even from inside a `git worktree add` checkout,
+    # whereas --show-toplevel returns the worktree root; keying on the latter
+    # gave every worktree a private empty runs dir and silently reset
+    # score_history (canopy#627). Keep in sync with runstate._repo_identity().
+    COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    if [ -n "${COMMON_DIR:-}" ]; then
+      PROJECT=$(basename "$(dirname "$COMMON_DIR")")
+    else
+      PROJECT=$(basename "$REPO_ROOT")
+    fi
+    RUNS_DIR="$HOME/.canopy/ddd/runs/$PROJECT"
   else
     RUNS_DIR="$CANOPY_DDD_DIR/runs"
   fi

@@ -397,3 +397,88 @@ def test_run_dir_for_prefers_a_legacy_in_repo_run(tmp_path, monkeypatch):
     legacy.mkdir(parents=True)
 
     assert rs.run_dir_for("demo-2026-01-01-001", ddd_dir=ddd) == legacy
+
+
+# ---------------------------------------------------------------------------
+# canopy#627 — the runs root is keyed on the MAIN repo, not the worktree.
+#
+# _enclosing_repo stops at the first path carrying a `.git`, which in a
+# `git worktree add` checkout is the WORKTREE root. Keying the runs root on its
+# basename gave every worktree a private, empty runs dir — and since the
+# harness hands agents temp-named worktrees, score_history silently restarted
+# at zero on each one. compute_auto_iterate reads that series to decide
+# stall/plateau/convergence, so an empty one changes the loop's terminal
+# verdict, not merely its bookkeeping.
+# ---------------------------------------------------------------------------
+class TestRunsRootIsKeyedOnTheMainRepo:
+    def _main_checkout(self, tmp_path):
+        repo = tmp_path / "canopy"
+        (repo / ".git").mkdir(parents=True)
+        ddd = repo / ".canopy" / "ddd"
+        ddd.mkdir(parents=True)
+        return repo, ddd
+
+    def _worktree_of(self, tmp_path, main_repo, name="tmp.AbCdEf"):
+        wt = tmp_path / "worktrees" / name
+        ddd = wt / ".canopy" / "ddd"
+        ddd.mkdir(parents=True)
+        (wt / ".git").write_text(
+            f"gitdir: {main_repo}/.git/worktrees/{name}\n"
+        )
+        return wt, ddd
+
+    def test_worktree_and_main_checkout_agree_on_the_runs_root(self, tmp_path, monkeypatch):
+        """THE invariant: same repo, two checkouts, one runs root."""
+        import scripts.ddd.runstate as rs
+        monkeypatch.delenv("CANOPY_DDD_RUNS_DIR", raising=False)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+        main_repo, main_ddd = self._main_checkout(tmp_path)
+        _wt, wt_ddd = self._worktree_of(tmp_path, main_repo)
+
+        assert rs._resolve_runs_dir(wt_ddd) == rs._resolve_runs_dir(main_ddd)
+
+    def test_the_key_is_the_repo_name_not_the_worktree_name(self, tmp_path, monkeypatch):
+        import scripts.ddd.runstate as rs
+        monkeypatch.delenv("CANOPY_DDD_RUNS_DIR", raising=False)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+        main_repo, _ = self._main_checkout(tmp_path)
+        _wt, wt_ddd = self._worktree_of(tmp_path, main_repo, name="tmp.Zz99")
+
+        assert rs._resolve_runs_dir(wt_ddd).name == "canopy"
+
+    def test_an_ordinary_checkout_is_unchanged(self, tmp_path, monkeypatch):
+        import scripts.ddd.runstate as rs
+        monkeypatch.delenv("CANOPY_DDD_RUNS_DIR", raising=False)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+        _repo, ddd = self._main_checkout(tmp_path)
+        assert rs._resolve_runs_dir(ddd).name == "canopy"
+
+    def test_env_override_still_wins_from_a_worktree(self, tmp_path, monkeypatch):
+        import scripts.ddd.runstate as rs
+        main_repo, _ = self._main_checkout(tmp_path)
+        _wt, wt_ddd = self._worktree_of(tmp_path, main_repo)
+        override = tmp_path / "elsewhere"
+        monkeypatch.setenv("CANOPY_DDD_RUNS_DIR", str(override))
+
+        assert rs._resolve_runs_dir(wt_ddd) == override
+
+    @pytest.mark.parametrize("content", [
+        "not a gitdir line\n",
+        "gitdir: /elsewhere/no-worktrees-segment/.git\n",
+        "",
+    ])
+    def test_an_unparseable_dot_git_falls_back_to_the_basename(self, tmp_path, monkeypatch, content):
+        """A path resolver must not raise; a slightly-wrong key beats a crash."""
+        import scripts.ddd.runstate as rs
+        monkeypatch.delenv("CANOPY_DDD_RUNS_DIR", raising=False)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+        odd = tmp_path / "odd-checkout"
+        ddd = odd / ".canopy" / "ddd"
+        ddd.mkdir(parents=True)
+        (odd / ".git").write_text(content)
+
+        assert rs._resolve_runs_dir(ddd).name == "odd-checkout"
