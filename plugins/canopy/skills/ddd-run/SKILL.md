@@ -113,6 +113,20 @@ one browser and applies state-changing actions as it goes, so it catches the
 class the first loop lost most time to: a tab switch a later scene never undid,
 and a modal left open whose backdrop blocked everything after it.
 
+**Applying those actions makes preflight a mutator, and it now restores the
+world on the way out — but only when it CAN.** It reseeds via `setup.command`
+before the walk and again after it whenever the render will not reseed
+(`rerun: once`, where `record_video.run_setup` skips the command). A recipe that
+mutates state and declares **no `setup:` block at all** cannot be restored by
+anyone; preflight prints a `WARNING` and carries it on the result as
+`restore.warning`. **Treat that warning as a blocker, not a note** — it is the
+shape that produces canopy#546: the payoff action fires during preflight, the
+render films already-mutated state, and the no-op scores 10/10 because the click
+*dispatched*. Nothing in `run-report.json` models "and it changed something", so
+an orchestrator that trusts `failed: 0` burns a full judge round on a take that
+was dead on arrival. Give the spec a `setup.command` that resets the keys the
+demo mutates.
+
 ### Step 1b — Refresh the narrative from canopy-web (one-way; no pause)
 
 canopy-web owns the story. Before rendering, refresh the generated narrative
