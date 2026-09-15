@@ -180,16 +180,47 @@ fix, **run the new tests against the unfixed code and watch them fail.** Revert 
 tests), run, confirm red, restore, confirm green. It costs two commands and it is the only thing
 that distinguishes a regression test from a decoration:
 
+**Use `scripts/falsify.py` — don't hand-roll the revert.** It snapshots, reverts, runs, restores in
+a `finally`, and verifies the restore by hash:
+
+```bash
+uv run python -m scripts.falsify <the/file/you/fixed> [--base origin/main] -- <run the new tests>
+```
+
+| exit | verdict | what it means |
+|---|---|---|
+| 0 | **GATE** | the test failed without the fix — real evidence. Still read the failure message. |
+| 1 | **DECORATION** | the test PASSED without the fix. It guards nothing; tighten it. |
+| 3 | **INCONCLUSIVE** | the test never *ran* — it died at import/collection. Not evidence either way. |
+| 2 | usage | bad path, nothing to revert, or **the tree could not be restored** — fix that first. |
+
+The hand-rolled version below is what this replaces, and it is kept only to show the two traps,
+because both are silent:
+
 ```bash
 git show origin/main:<the/file/you/fixed> > <the/file/you/fixed>   # tests stay
 <run the new tests>            # MUST fail, and for the RIGHT reason — read the assertion
-git checkout <the/file/you/fixed>
+git checkout <the/file/you/fixed>     # ⚠ DESTROYS uncommitted work — see below
 <run again>                    # green
 ```
 
+- **`git checkout <file>` restores from a COMMIT**, so an edit you have not committed yet is
+  silently replaced, `git status` goes clean, and nothing errors. It cost a retyped skill edit on
+  2026-09-07 — in the same turn that wrote the warning against it. `falsify` snapshots *content*,
+  so this cannot happen.
+- **The window between revert and restore holds the unfixed code.** Any non-local exit in it — an
+  exception, a timeout, Ctrl-C — leaves your branch containing `origin/main`'s version of the file
+  while claiming to fix it. `falsify` restores in a `finally` and refuses to report a verdict until
+  the restore verifies.
+
 **Read *why* it failed, not just that it did.** A test that errors because a helper you added does
 not exist yet has told you nothing about the bug; that is the import failing, not the defect being
-detected. Only a failure on the assertion that encodes the defect counts.
+detected. Only a failure on the assertion that encodes the defect counts. **This is the common case,
+not an edge one** — reverting a whole file removes every symbol your fix added, so every test that
+imports one dies at collection and exits non-zero, which looks exactly like the red you wanted.
+`falsify` calls that **INCONCLUSIVE** rather than GATE; when you get it, revert the *rule* (put the
+old expression back by hand) instead of the file. (Found by pointing the tool at the first fix it
+was written for, canopy#546, whose author had already hit this by hand and worked around it.)
 
 The trap this catches is not carelessness — it is a test that exercises a **different code path than
 production does**, which looks completely correct on the page. The harness you reach for by default
