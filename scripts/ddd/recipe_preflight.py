@@ -15,6 +15,15 @@ target that will not resolve. It is deliberately NOT a dry-run of the render:
 it does not screenshot, does not record, and does not encode. It answers one
 question — will these selectors find their elements — in a few seconds.
 
+Applying those actions makes preflight a MUTATOR, so it puts the world back
+around its walk, not merely before it. It reseeds via the spec's
+``setup.command`` first (so the walk checks a known world), and reseeds AGAIN
+afterwards whenever the render will not — i.e. ``rerun: once``, where
+``record_video.run_setup`` skips the command and would otherwise film the state
+this walk consumed. A recipe that mutates and declares no setup command at all
+cannot be restored by anyone, and preflight says so loudly instead of assuming
+it was non-mutating (canopy#546).
+
 Auth is the recorder's, not a second one. A spec whose surfaces sit behind a
 login is preflighted with the SAME session the render will use — pass
 ``--storage-state`` (or ``--cookies``) exactly as ``record_video.py`` takes it.
@@ -124,6 +133,99 @@ def _scene_steps(scene: dict) -> list[tuple[int, str, str]]:
     return out
 
 
+def _run_setup_command(command: str, cwd, timeout: int, *, label: str, failure: str) -> None:
+    """Run the spec's setup command. Shared by the pre-walk reseed and the restore.
+
+    One implementation, because the two calls are the same contract pointed at
+    different ends of the walk, and two copies would drift the way the three
+    earlier re-derivations of the setup block did.
+    """
+    import subprocess
+
+    print(f"preflight: {label} via {command}", flush=True)
+    result = subprocess.run(
+        command, shell=True, cwd=str(cwd), capture_output=True, text=True,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            f"preflight: setup failed ({command}) — {failure}.\n{result.stderr[-800:]}"
+        )
+
+
+def scenes_mutate(scenes) -> bool:
+    """True when walking these scenes changes persisted state.
+
+    Any `_STATE_CHANGING` verb anywhere in the recipe. Preflight actuates those
+    on purpose (see :func:`preflight`), so this is not a defect to detect — it
+    is the fact that decides what preflight owes the render on its way out.
+    """
+    for scene in scenes or []:
+        raw = scene.model_dump() if hasattr(scene, "model_dump") else dict(scene)
+        for action in raw.get("actions") or []:
+            if (action or {}).get("kind") in _STATE_CHANGING:
+                return True
+    return False
+
+
+def restore_plan(setup, scenes) -> dict:
+    """What preflight owes the RENDER on its way out. Pure; no browser, no spec load.
+
+    Preflight applies state-changing actions deliberately, so that a scene which
+    depends on an earlier click is checked against the screen it will really
+    face. That makes it a mutator, and it already knows so: it reseeds via the
+    spec's ``setup.command`` **before** its walk. But a reseed before the walk
+    protects preflight from the PREVIOUS preflight; it protects the render from
+    nothing. The world the render films is the world *this* walk left behind.
+
+    Whether that is harmless is decided entirely by whether the render reseeds
+    AFTER us, and ``record_video.run_setup`` answers it: it skips the command
+    when ``rerun: once`` and the outputs file already exists. So:
+
+    - ``rerun: per_render`` (the default) — the render reseeds, preflight's
+      mutation is wiped before a frame is shot. Nothing owed.
+    - ``rerun: once`` — the render SKIPS setup, and films the state preflight
+      consumed. The payoff action is a no-op against already-mutated state, and
+      every signal says it worked: the action dispatches, ``must_succeed``
+      passes, ``run-report.json`` scores 10/10. Preflight must restore.
+    - **no setup command at all** — nothing reseeds, ever. Preflight has no
+      contract to restore with, so it cannot fix this; it can only say so.
+      The old comment here assumed such a recipe was non-mutating. That is an
+      assumption, not a fact, and when it is wrong it is wrong silently.
+
+    ``--skip-setup`` makes the render skip too, but it is a render-side operator
+    flag preflight cannot see, and ``ddd-run`` is forbidden from passing it.
+
+    (canopy#546, reproduced three times on ``hh-poverty-targeting/20260827-0323``
+    and again on ``spark-fcap-facilitation-2026-09-08-001``, where both LLM
+    judges caught the manufactured defect and it cost the run its gating score.)
+    """
+    block = _setup_block(setup)
+    command = (block.get("command") or "").strip()
+    rerun = block.get("rerun") or "per_render"
+    mutates = scenes_mutate(scenes)
+    render_reseeds = bool(command) and rerun == "per_render"
+
+    warning: str | None = None
+    if mutates and not command:
+        warning = (
+            "this recipe contains state-changing actions and declares no "
+            "setup.command, so nothing restores the world between preflight and "
+            "the render: the render will film the state this walk consumed. A "
+            "payoff action against already-mutated state still reports ok and "
+            "still scores 10/10. Declare a setup block whose command resets the "
+            "keys the demo mutates (canopy#546)."
+        )
+
+    return {
+        "mutates": mutates,
+        "rerun": rerun,
+        "render_reseeds": render_reseeds,
+        "restore_after": bool(mutates and command and not render_reseeds),
+        "warning": warning,
+    }
+
+
 def logged_out_hint(
     *, checked: int, unresolved: int, session_supplied: bool, authenticated: bool
 ) -> str | None:
@@ -213,19 +315,17 @@ def preflight(
     outputs_rel = setup_block.get("outputs")
     outputs_path = (setup_cwd / outputs_rel) if outputs_rel else None
 
-    if command:
-        import subprocess
+    # What we owe the render on the way out, decided before we mutate anything.
+    plan = restore_plan(getattr(spec, "setup", None), spec.scenes)
+    if plan["warning"]:
+        print(f"preflight: WARNING — {plan['warning']}", file=sys.stderr, flush=True)
 
-        print(f"preflight: reseeding via {command}", flush=True)
-        result = subprocess.run(
-            command, shell=True, cwd=str(setup_cwd), capture_output=True, text=True,
-            timeout=setup_timeout,
+    if command:
+        _run_setup_command(
+            command, setup_cwd, setup_timeout,
+            label="reseeding",
+            failure="the world is not in a checkable state",
         )
-        if result.returncode != 0:
-            raise SystemExit(
-                f"preflight: setup failed ({command}) — the world is not in a "
-                f"checkable state.\n{result.stderr[-800:]}"
-            )
 
     # The setup command MINTS the ids the scenes address (run ids, entity ids,
     # dates) and writes them to its outputs file; the spec refers to them as
@@ -400,6 +500,18 @@ def preflight(
         finally:
             browser.close()
 
+    # Put the world back BEFORE returning — the render films what this walk left.
+    # Unconditional on the walk's verdict: a preflight that found unresolved
+    # targets has still consumed the state it did reach, and a failing preflight
+    # is precisely the one whose render gets re-run.
+    if plan["restore_after"]:
+        _run_setup_command(
+            command, setup_cwd, setup_timeout,
+            label=f"restoring (rerun={plan['rerun']}; the render will not reseed after us)",
+            failure="preflight consumed state it could not put back, and the "
+                    "render would film the leftovers",
+        )
+
     return {
         "recipe": str(recipe_path),
         "base_url": resolved_base,
@@ -407,6 +519,7 @@ def preflight(
         "unresolved": len(findings),
         "findings": findings,
         "verdict": "pass" if not findings else "fail",
+        "restore": plan,
         "hint": logged_out_hint(
             checked=checked,
             unresolved=len(findings),
@@ -456,6 +569,11 @@ def _cli() -> int:
                 f"action {finding['action_index']} {finding['kind']}: {finding['target']}"
             )
             print(f"      {finding['error']}")
+        restore = result.get("restore") or {}
+        if restore.get("restore_after"):
+            print("  restored the world after the walk (the render does not reseed)")
+        if restore.get("warning"):
+            print(f"  WARNING: {restore['warning']}")
         if result.get("hint"):
             print(f"  hint: {result['hint']}")
     return 0 if result["verdict"] == "pass" else 1
