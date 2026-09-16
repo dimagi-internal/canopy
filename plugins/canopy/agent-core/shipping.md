@@ -250,6 +250,32 @@ prefix was already there and the bug could not appear. `ASGIRequest` instead ass
 first written, the PR would have carried three tests, a green suite, and no coverage of the thing it
 claimed to fix.)
 
+**A test double that is more PERMISSIVE than the tool it doubles cannot fail.** The table above is
+about reaching for the wrong *harness*; this is encoding the wrong *contract*, and it is harder to
+see because the double is usually yours and looks right. A hand-written fake records what you
+believed the tool does, so a rule you did not know about is missing from it **by construction** —
+and every test built on it then passes against code the real tool rejects. Write the double's
+REFUSALS first: each non-zero exit and precondition you have actually observed goes in before the
+happy path, so the fake is stricter than the tool rather than kinder.
+
+This compounds badly with a **fail-open** check, which is otherwise a sound design — degrade to
+"unverified" rather than fail a good deliverable. Fail-open plus fail-*silent* means a check that
+never runs is indistinguishable from a check that passes, and it will stay that way indefinitely,
+because the signal it emits on success is the same one it emits when dead. **If a check may fail
+open, make it say so on the way**; a permanent failure should be visible the first time, not
+archaeological.
+
+(2026-09-16, canopy#648. `gog docs export --out <path>` refuses a path that already EXISTS, and
+canopy's gdoc verifier handed it a `NamedTemporaryFile(delete=False)` path — which exists by
+construction, since creating the file is what `NamedTemporaryFile` does. The export therefore
+returned 1 on every call for months, the fail-open swallowed it, and every `"degraded": []` canopy
+printed meant *"we did not look"* while reading as *"we looked and it was fine"*. Six tests covered
+that verifier; none could see it, because the fake wrote the export file whatever path it was
+handed. It surfaced only when the check was run against real Drive and a deliberately-wrong source
+still came back clean. The issue it was found under, #568, had reported the SYMPTOM — "reports
+clean" — nine weeks earlier, and it read as a missing rule in the comparison table rather than a
+check that was never running at all.)
+
 ## Local gates — a suite you contaminate reports a FALSE failure
 
 Running the repo's suite in the background and then poking at a database in the foreground is the
