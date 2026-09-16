@@ -255,7 +255,8 @@ def test_publish_create_shares_and_verifies(tmp_path):
     assert res["shared"] == "domain"
     assert res["verified"] is True
     verbs = [c[2] for c in gog.calls]
-    assert verbs == ["upload", "share", "permissions"]  # created, shared, verified
+    # `export` is the #568 read-back: create is verified for RENDER as well as for share.
+    assert verbs == ["upload", "export", "share", "permissions"]
 
 
 def test_publish_reports_unverified_when_permission_missing(tmp_path):
@@ -401,6 +402,161 @@ def test_publish_replace_stays_verified_when_export_fails(tmp_path):
                   replace="DOCX", runner=gog)
     assert res["verified"] is True
     assert res["degraded"] == []
+
+
+# ---- The export path the verifier writes to (issue #568) ---------------------------------
+#
+# The whole round-trip check was dead for months and nothing noticed, because `_FakeGog`
+# writes the export file whatever path it is handed — while the REAL `gog docs export`
+# refuses a path that already exists. These tests assert the contract the fake cannot:
+# the path handed to gog must not exist yet.
+
+class _RefusesExistingOutput(_FakeGog):
+    """gog's real behaviour: `--out <path>` on an existing file is `exit 1, file exists`.
+
+    The bug this reproduces: the verifier used `NamedTemporaryFile(delete=False)`, which
+    CREATES the file, so every export failed and the fail-open reported every doc clean.
+    """
+
+    def __call__(self, cmd, capture_output=True, text=True, timeout=None):
+        if cmd[2] == "export":
+            out = Path(cmd[cmd.index("--out") + 1])
+            if out.exists():
+                self.calls.append(cmd)
+                return SimpleNamespace(returncode=1, stdout="",
+                                       stderr=f"open {out}: file exists")
+        return super().__call__(cmd, capture_output, text, timeout)
+
+
+def test_verifier_hands_gog_a_path_that_does_not_exist_yet(tmp_path):
+    """THE regression: a real gog refuses an existing --out, so the check never ran."""
+    md = tmp_path / "d.md"
+    md.write_text(SOURCE_WITH_LISTS)
+    gog = _RefusesExistingOutput(export_md=MANGLED_ORDERED_EXPORT)
+    res = publish(_ident(), name=None, parent=None, md_path=str(md), share="domain",
+                  replace="DOCX", runner=gog)
+    # If the output path were pre-created, the export would 1-out and this would be [] —
+    # a mangled doc reported clean, which is precisely what shipped.
+    assert res["degraded"], "the export never ran: gog refused the pre-created --out path"
+    assert "numbered lists were flattened" in res["degraded"][0]
+
+
+def test_a_failed_export_says_so_on_stderr(tmp_path, capsys):
+    """Fail-open is deliberate; fail-SILENT is how this went unnoticed for months."""
+    md = tmp_path / "d.md"
+    md.write_text(SOURCE_WITH_LISTS)
+    res = publish(_ident(), name=None, parent=None, md_path=str(md), share="domain",
+                  replace="DOCX", runner=_FakeGog(export_ok=False))
+    assert res["degraded"] == []          # still open — a blip must not fail a good publish
+    assert "nothing checked this body" in capsys.readouterr().err
+
+
+# ---- Hyperlink degradation (issue #568) --------------------------------------------------
+
+LINK_SOURCE = (
+    "# Probe\n\n"
+    "A [markdown link](https://github.com/dimagi-internal/canopy/issues/451) in a paragraph.\n\n"
+    "- A [link in a list item](https://example.com/probe) with trailing text.\n"
+)
+# What the doc exports as when the import kept the links (verified live, 2026-09-16).
+LINK_GOOD_EXPORT = (
+    "# **Probe**\n\n"
+    "A [markdown link](https://github.com/dimagi-internal/canopy/issues/451) in a paragraph.\n\n"
+    "> * A [link in a list item](https://example.com/probe) with trailing text.\n"
+)
+# The #568 failure: anchor text intact, every URL gone. Lists are textbook-clean, which is
+# why none of the list signatures can see it.
+LINK_STRIPPED_EXPORT = (
+    "# **Probe**\n\n"
+    "A markdown link in a paragraph.\n\n"
+    "> * A link in a list item with trailing text.\n"
+)
+
+
+def test_replace_degradations_catches_every_link_lost():
+    findings = replace_degradations(LINK_SOURCE, LINK_STRIPPED_EXPORT)
+    assert len(findings) == 1
+    assert "every hyperlink was lost" in findings[0]
+    # names the first casualty, so the report is actionable without re-reading the doc
+    assert "https://github.com/dimagi-internal/canopy/issues/451" in findings[0]
+
+
+def test_replace_degradations_catches_partial_link_loss():
+    partial = (
+        "# **Probe**\n\n"
+        "A [markdown link](https://github.com/dimagi-internal/canopy/issues/451) in a paragraph.\n\n"
+        "> * A link in a list item with trailing text.\n"
+    )
+    findings = replace_degradations(LINK_SOURCE, partial)
+    assert len(findings) == 1
+    assert "1 of 2 hyperlinks were lost" in findings[0]
+    assert "https://example.com/probe" in findings[0]
+
+
+def test_replace_degradations_clean_when_links_survive():
+    assert replace_degradations(LINK_SOURCE, LINK_GOOD_EXPORT) == []
+
+
+def test_replace_degradations_tolerates_links_the_export_gained():
+    # Drive auto-links a bare URL, so the export legitimately holds links the source did
+    # not. Only a MISSING source url is a loss — a count comparison would false-positive.
+    gained = LINK_GOOD_EXPORT + "\nSee [auto](https://example.org/auto) too.\n"
+    assert replace_degradations(LINK_SOURCE, gained) == []
+
+
+def test_replace_degradations_ignores_links_inside_code():
+    # A link shown as an EXAMPLE is content, not a citation — it is never rendered live,
+    # so its absence from the export is correct, not a degradation.
+    src = (
+        "# T\n\nWrite it as `[text](https://example.com/inline)`.\n\n"
+        "```\n[fenced](https://example.com/fenced)\n```\n"
+    )
+    assert replace_degradations(src, "# **T**\n\nWrite it as [text](...).\n") == []
+
+
+def test_replace_degradations_no_links_anywhere_is_clean():
+    assert replace_degradations("# T\n\njust prose\n", "# **T**\n\njust prose\n") == []
+
+
+def test_publish_create_reports_stripped_links(tmp_path):
+    """#568 head-on: the create path returned `verified: true` for a linkless doc."""
+    md = tmp_path / "d.md"
+    md.write_text(LINK_SOURCE)
+    gog = _FakeGog(export_md=LINK_STRIPPED_EXPORT)
+    res = publish(_ident(), name="Doc", parent="F1", md_path=str(md), share="domain",
+                  runner=gog)
+    assert res["degraded"] and "every hyperlink was lost" in res["degraded"][0]
+
+
+def test_publish_create_clean_when_links_survive(tmp_path):
+    md = tmp_path / "d.md"
+    md.write_text(LINK_SOURCE)
+    gog = _FakeGog(export_md=LINK_GOOD_EXPORT)
+    res = publish(_ident(), name="Doc", parent="F1", md_path=str(md), share="domain",
+                  runner=gog)
+    assert res["degraded"] == []
+    assert res["verified"] is True
+
+
+def test_publish_create_stays_clean_when_export_fails(tmp_path):
+    """Fail-open on create too: a flaky export must not fail a good publish."""
+    md = tmp_path / "d.md"
+    md.write_text(LINK_SOURCE)
+    gog = _FakeGog(export_ok=False)
+    res = publish(_ident(), name="Doc", parent="F1", md_path=str(md), share="domain",
+                  runner=gog)
+    assert res["degraded"] == []
+    assert res["verified"] is True
+
+
+def test_publish_replace_reports_stripped_links(tmp_path):
+    md = tmp_path / "d.md"
+    md.write_text(LINK_SOURCE)
+    gog = _FakeGog(export_md=LINK_STRIPPED_EXPORT)
+    res = publish(_ident(), name=None, parent=None, md_path=str(md), share="domain",
+                  replace="DOCX", runner=gog)
+    assert res["verified"] is False
+    assert res["degraded"] and "every hyperlink was lost" in res["degraded"][0]
 
 
 def test_build_export_command_pins_the_output_path():
