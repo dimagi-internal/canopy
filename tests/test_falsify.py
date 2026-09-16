@@ -126,6 +126,35 @@ def test_cli_passes_the_command_through(repo):
     assert rc == 0
 
 
+def test_cli_accepts_the_separator_with_no_option_before_it(monkeypatch):
+    """The DOCUMENTED form: `falsify <file> -- <tests>`, every option left at its default.
+
+    This is the shape shipping.md shows (`[--base origin/main]` in brackets) and the only
+    shape that never ran. argparse strips the `--` itself, and `paths` is nargs="+", so
+    with nothing optional in front of the separator it swallowed the entire test command
+    as more paths and left `rest` empty — the tool then refused a command it had just
+    eaten. `test_cli_passes_the_command_through` above stayed green throughout because it
+    puts --base and --repo first, which is the one arrangement that happened to work.
+
+    Asserted through a spy rather than a real run: the defect is in argv splitting, and a
+    live run would need the default base (`origin/main`) to exist in the fixture repo,
+    which would test the git plumbing instead of the parse.
+    """
+    captured: dict = {}
+
+    def spy(paths, command, *, base, repo):
+        captured.update(paths=paths, command=command, base=base)
+        return 0
+
+    monkeypatch.setattr("scripts.falsify.falsify", spy)
+    # Dashed flags after `--` belong to the COMMAND (`-q`, `-k` are how pytest is normally
+    # invoked); argparse would otherwise try to claim them as falsify's own options.
+    assert _cli(["src.py", "--", "pytest", "-q", "-k", "probe"]) == 0
+    assert captured["paths"] == ["src.py"]
+    assert captured["command"] == ["pytest", "-q", "-k", "probe"]
+    assert captured["base"] == "origin/main"   # the default survives the split
+
+
 # --- The third verdict -----------------------------------------------------
 #
 # Found by dogfooding: pointing this at canopy#546's fix reverted the whole
