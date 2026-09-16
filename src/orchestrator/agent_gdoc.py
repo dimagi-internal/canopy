@@ -50,10 +50,16 @@ gog exposes only `--format plain|markdown` (no HTML), so we cannot route the rep
 through our good renderer, and a Drive media overwrite is forbidden on native Docs — the
 degradation is currently unavoidable. What is NOT acceptable is doing it *silently*: this
 module used to return `"verified": true` for a replaced doc it had never read back. It now
-exports the doc after every replace and compares it to the source (`replace_degradations`),
-so a mangled deliverable fails loudly instead of being handed to a stakeholder. Origin:
-Echo's PRIDE drafts doc, which a reviewer called "unreadable… each line is numbered as
-bullet points."
+exports the doc after **every publish — create as well as replace** — and compares it to the
+source (`replace_degradations`), so a mangled deliverable fails loudly instead of being
+handed to a stakeholder. Origin: Echo's PRIDE drafts doc, which a reviewer called
+"unreadable… each line is numbered as bullet points."
+
+Create was exempt from that read-back until #568, on the reasoning that the HTML→Doc import
+renders faithfully. It does — for the constructs in the table above. It dropped every
+HYPERLINK, which none of those signatures can see, and reported the doc clean. The general
+lesson is in `verify_published_render`: an unexamined path is one whose degradations reach
+the reader first.
 
 Why NOT the ace-gdrive MCP: it authenticates as a shared GWS **service account**, so it
 cannot author a Doc *as* the agent — the entire point of a fleet deliverable. gog-OAuth
@@ -73,6 +79,7 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -368,10 +375,37 @@ _SRC_BULLET = re.compile(r"^\s*[-*+]\s+\S", re.M)
 # A real list item in a Drive markdown export (it prefixes list blocks with `> `).
 _EXP_LIST = re.compile(r"^\s*>?\s*(?:\d+\.|[-*+])\s+\S", re.M)
 
+# ---- Hyperlinks (issue #568) -------------------------------------------------------------
+#
+# A dropped hyperlink is the degradation a READER notices first and the check was blindest
+# to: the anchor text survives, so the doc looks and reads perfectly, and every citation
+# behind it is dead. The list signatures above cannot see it at all — a linkless doc has
+# textbook-clean lists.
+#
+# It is checked by CENSUS (source URL present in the export?) rather than by signature,
+# because a lost link leaves NO artefact behind — unlike a flattened list, which at least
+# leaves an escaped `1\.`. There is nothing to pattern-match; only the absence is evidence.
+#
+# WHY THIS IS A STANDING GUARD AND NOT A ONE-OFF FIX: #568 reported both paths dropping
+# every link, and on 2026-09-16 neither path reproduced it — 2 of 2 links survived create
+# AND replace, confirmed in the HTML export's `<a href>` (Docs' own redirect wrapper).
+# Nothing in canopy or gog changed in that window (gog 0.38.1 predates the report), so the
+# import's link handling moved underneath us, server-side, with no release to point at. A
+# behaviour that can flip without a version bump is exactly the thing that needs a live
+# check rather than a fix: we cannot pin it, so we must be able to SEE it.
+_MD_LINK = re.compile(r"\[[^\]]*\]\((https?://[^)\s]+)\)")
+# Inline code spans: `[x](y)` inside backticks is content being shown, not a live link.
+_INLINE_CODE = re.compile(r"`[^`\n]+`")
+
 
 def _strip_code_fences(md: str) -> str:
     """Drop fenced code blocks — a `1. x` inside one is content, not a list."""
     return re.sub(r"^```.*?^```", "", md, flags=re.M | re.S)
+
+
+def _link_targets(md: str) -> list[str]:
+    """The URLs of every real markdown link, ignoring fenced and inline code."""
+    return _MD_LINK.findall(_INLINE_CODE.sub("", _strip_code_fences(md)))
 
 
 def replace_degradations(source_md: str, exported_md: str) -> list[str]:
@@ -401,6 +435,22 @@ def replace_degradations(source_md: str, exported_md: str) -> list[str]:
             f"source has {src_items} list item(s) but the published Doc has none — "
             "the list structure was lost in conversion"
         )
+
+    # Hyperlinks (#568). Compare URL sets, not counts: the export legitimately gains links
+    # (Drive auto-links a bare URL), so only a source URL MISSING from the export is a loss.
+    src_urls = _link_targets(source_md)
+    if src_urls:
+        exp_urls = set(_link_targets(exp))
+        missing = [u for u in dict.fromkeys(src_urls) if u not in exp_urls]
+        if missing:
+            total = len(set(src_urls))
+            lost = len(missing)
+            scope = ("every hyperlink was lost" if lost == total
+                     else f"{lost} of {total} hyperlinks were lost")
+            findings.append(
+                f"{scope} — the anchor text survived but the URL behind it did not, so the "
+                f"doc reads fine and every citation is dead (first missing: {missing[0]})"
+            )
     return findings
 
 
@@ -613,32 +663,62 @@ def verify_permissions(identity: GdocIdentity, file_id: str, *, share: str,
     return False
 
 
-def verify_replace_render(identity: GdocIdentity, doc_id: str, *, md_path: str,
-                          runner=subprocess.run) -> list[str]:
-    """Export a just-replaced Doc and report what the conversion destroyed.
+def verify_published_render(identity: GdocIdentity, doc_id: str, *, md_path: str,
+                            runner=subprocess.run) -> list[str]:
+    """Export a just-published Doc and report what the conversion destroyed.
+
+    Runs on BOTH paths. It was `verify_replace_render` and replace-only, on the reasoning
+    that create (HTML→Doc import) renders faithfully while gog's markdown find-replace does
+    not. That reasoning was sound about LISTS and wrong in general: #568 was reported against
+    the CREATE path, which had no read-back at all and returned `verified: true` for a doc
+    whose every citation had been stripped. A path we never look at is a path whose
+    degradations we learn about from the reader.
 
     Returns [] when the render is faithful. **A failed export returns [] (treated as
     verified), deliberately**: this check exists to catch a mangled body, and turning a
     transient export blip into a publish failure would make a working deliverable look
     broken. A false clean beats a false alarm here — the loud signal is the mangled body,
-    which is deterministic, not the export, which is a network call."""
-    out_path = ""
+    which is deterministic, not the export, which is a network call.
+
+    **But it SAYS SO on stderr, because a check that can silently never run is worse than
+    no check at all.** It never ran. `gog docs export --out <path>` refuses to write a file
+    that already exists (`open <path>: file exists`, exit 1) and this function handed it a
+    `NamedTemporaryFile(delete=False)` path — which exists by construction, because
+    creating the file is what NamedTemporaryFile does. So the export returned 1 on every
+    call since #451 shipped, the fail-open below swallowed it, and every `"degraded": []`
+    canopy has ever reported was "we did not look", rendered indistinguishable from "we
+    looked and it was fine". That is exactly the silence #568 filed as "replace_degradations
+    reports clean".
+
+    The output path is now a fresh name inside a private `mkdtemp()` directory — nothing
+    creates it, so gog writes it. Deliberately NOT gog's `--overwrite` flag: that couples
+    this to a gog version (the module targets v0.12+, the flag is newer), and not creating
+    the file is correct against every version."""
+    out_dir = ""
     try:
-        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as tf:
-            out_path = tf.name
+        out_dir = tempfile.mkdtemp(prefix="canopy-gdoc-verify-")
+        # The file must NOT exist when gog opens it — see the docstring.
+        out_path = os.path.join(out_dir, "export.md")
         r = _run_gog(build_export_command(identity, doc_id, out_path), runner)
         if r.returncode != 0:
+            sys.stderr.write(
+                "note: could not read the doc back to verify its render "
+                f"(gog docs export exit {r.returncode}): "
+                f"{(r.stderr or r.stdout or '').strip()[:200]}\n"
+                "      publishing anyway — but nothing checked this body.\n")
             return []
         exported = Path(out_path).read_text(encoding="utf-8", errors="replace")
         if not exported.strip():
+            sys.stderr.write("note: the doc read back EMPTY, so its render was not "
+                             "verified — open it before sharing the link.\n")
             return []
         return replace_degradations(Path(md_path).read_text(encoding="utf-8"), exported)
     except (AgentGdocError, OSError):
         return []
     finally:
-        if out_path:
+        if out_dir:
             try:
-                os.unlink(out_path)
+                shutil.rmtree(out_dir, ignore_errors=True)
             except OSError:
                 pass
 
@@ -675,7 +755,7 @@ def publish(identity: GdocIdentity, *, name: str | None, parent: str | None, md_
         # Read the doc back and confirm it actually renders what we published. gog's
         # markdown find-replace silently flattens lists (see module docstring), so this
         # path used to hand out "verified": true for a body it had never looked at.
-        degraded = verify_replace_render(identity, replace, md_path=md_path, runner=runner)
+        degraded = verify_published_render(identity, replace, md_path=md_path, runner=runner)
         # Replace preserves the doc's existing sharing — never re-share (posture would drift).
         return {"id": replace, "url": url, "raw": "", "replaced": True,
                 "shared": "preserved", "verified": not degraded, "degraded": degraded}
@@ -709,6 +789,10 @@ def publish(identity: GdocIdentity, *, name: str | None, parent: str | None, md_
 
         result["shared"] = share if share != "none" else "none"
         result["verified"] = True
+        # Read the created doc back too (#568). `verified` keeps meaning "the share landed";
+        # a mangled body reports through `degraded`, which the CLI checks first.
+        result["degraded"] = verify_published_render(identity, file_id, md_path=md_path,
+                                                     runner=runner)
         if share != "none":
             s = _run_gog(build_share_command(identity, file_id, share=share, email=share_email), runner)
             if s.returncode != 0:
@@ -960,13 +1044,22 @@ def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, a
         return
     degraded = result.get("degraded") or []
     if degraded:
+        # The remedy differs by path, and the replace-path advice ("publish a new doc
+        # instead") is nonsense on a create — it already IS a new doc.
+        remedy = (
+            "  gog's markdown find-replace builds no Doc lists (canopy issue #451). "
+            "Publish a NEW doc instead (drop --replace), which renders correctly, or "
+            "rewrite the affected sections without list syntax.\n"
+            if result.get("replaced") else
+            "  Drive's HTML→Doc import dropped this (canopy issue #568). Check the doc "
+            "before sharing it; for lost hyperlinks, writing the URLs out in full survives "
+            "the import because they are just text.\n"
+        )
         sys.stderr.write(
-            "WARNING: the doc updated, but the conversion mangled it — do NOT hand out "
+            "WARNING: the doc published, but the conversion mangled it — do NOT hand out "
             "this link yet:\n"
             + "".join(f"  - {d}\n" for d in degraded)
-            + "  gog's markdown find-replace builds no Doc lists (canopy issue #451). "
-              "Publish a NEW doc instead (drop --replace), which renders correctly, or "
-              "rewrite the affected sections without list syntax.\n"
+            + remedy
         )
         sys.exit(1)
     if not result.get("verified", True):
