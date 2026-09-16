@@ -53,15 +53,49 @@ exactly why you check instead of assuming:
 |---|---|---|
 | **hal, echo, eva, ada** | **no** — single workflow on `push: main` | `gh pr merge <n> --squash`, immediately |
 | **ace** | **yes** — required: `clean-install` only (`version-check` is advisory) | arm `--auto --merge`, wait, ~70s |
-| **canopy** | **yes** — required: `check-version`, `enforce_admins` on, **no `--auto`** | wait (~10s), then `gh pr merge <n> --merge` |
+| **canopy** | **yes** — required: `pytest`, `check-version`, `structure-drift` | **merge queue** — see below (a strategy flag is REJECTED) |
 | **canopy-web** | **yes** — required: `Backend tests`, `Frontend build` | **merge queue** — see below |
 | **connect-labs** | **yes** — required: `linter`, `pytest` | **merge queue** — see below |
 | **ace-web** | **yes** | wait, then merge |
 
-Re-derive the row (`ls .github/workflows/`, `grep -l pull_request`,
-`gh api repos/<owner>/<repo>/branches/main/protection --jq .required_status_checks.contexts`)
-rather than trusting the table if a repo has been touched since. `gh pr checks` is the fact; the
-table is a starting point.
+Re-derive the row (`ls .github/workflows/`, `grep -l pull_request`, plus the protection read
+below) rather than trusting the table if a repo has been touched since. `gh pr checks` is the
+fact; the table is a starting point.
+
+**A repo can be gated two different ways and NEITHER endpoint sees both — read both.** GitHub
+has legacy *branch protection* and newer *rulesets*. This doc used to print only
+`gh api repos/<owner>/<repo>/branches/main/protection --jq .required_status_checks.contexts`,
+which is blind to rulesets, and its blindness is a **404**:
+
+```
+{"message":"Branch not protected", ... "status":"404"}
+```
+
+`Branch not protected` on a branch that is in fact protected — failing toward **"no gates"**,
+the expensive direction, because Step 0 above reads an absence of checks as permission to merge
+now. The rules endpoint has the mirror-image blind spot: it reports ruleset rules and omits
+legacy protection entirely. So run both and union them:
+
+```bash
+# rulesets (invisible to the legacy endpoint)
+gh api repos/<owner>/<repo>/rules/branches/main --jq '[.[].type]'        # merge_queue? pull_request?
+gh api repos/<owner>/<repo>/rules/branches/main \
+  --jq '[.[]|select(.type=="required_status_checks").parameters.required_status_checks[].context]'
+# legacy protection (invisible to the rules endpoint; 404 simply means "none of this kind")
+gh api repos/<owner>/<repo>/branches/main/protection --jq .required_status_checks.contexts
+```
+
+The `[.[].type]` call is also how you learn the **merge shape** without discovering it from a
+rejected merge: a `merge_queue` rule means no strategy flag (see below).
+
+Measured 2026-09-16, and the two repos land on opposite sides, which is the point:
+
+| Repo | legacy `branches/main/protection` | `rules/branches/main` |
+|---|---|---|
+| **canopy** | `404 Branch not protected` | `pull_request`, `required_status_checks` (pytest, check-version, structure-drift), `merge_queue` |
+| **ace** | `clean-install`, `enforce_admins: true` | `merge_queue` only — **does not show `clean-install`** |
+
+Read either one alone and you get a confident, wrong answer about one of them.
 
 **Know the merge latency too, not just the shape.** An ace PR merges in ~70 seconds (measured
 2026-08-17: 72s, 67s, 81s, 76s). A poll interval longer than the merge is how a wait costs more
