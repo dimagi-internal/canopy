@@ -272,7 +272,19 @@ find "nothing real since HH:MM" in both cases, and "it died at HH:MM" is the con
 arrives — with a timestamp attached that makes it feel measured. It isn't; the tail is evidence of
 neither. `live-turns.sh` already computes the signal that settles it: sessions it prints under
 **live … sessions** have a live process, and the ones under **"active in the last 10m with NO live
-process"** do not. `ps aux | grep '[c]laude --session-id <uuid>'` confirms it in one call. Run it
+process"** do not. One call confirms it — but **match the uuid ALONE, never the `--session-id`
+spelling**:
+
+```bash
+ps aux | grep "[c]laude.*<uuid>"      # NOT '[c]laude --session-id <uuid>'
+```
+
+**argv does not survive a resume here either.** That is the same fact this Step already applies to
+the COUNT ~55 lines up, and it lands harder on this check: a session resumed after an interrupt, a
+stall or a context handoff runs as `claude --resume <uuid>`, so the `--session-id` form matches
+nothing and reports **dead** for exactly the sessions this check exists to classify — a long or
+resumed turn is the turn a recovery dispatch was sent to replace. Nothing errors; you get a clean
+`0` and a confident wrong answer, pointing the expensive way (see the asymmetry below). Run it
 before you write the word "stalled" — in a closeout or in a dispatch.
 
 **And weigh the two errors, because they are not symmetric.** Wrongly thinking a dead turn is alive
@@ -290,6 +302,17 @@ the step immediately before sending. Three further claims in the dispatch had go
 was being written: the skill it believed unstarted was written, PR'd and merged, and the board task
 it asked to have corrected already read correctly. The recovery turn stood down and reported
 instead, so the second email never went out.)
+
+(Origin: 2026-09-16, ace. The paragraph above was right and the command under it was wrong — it
+shipped with the `--session-id` spelling, 57 lines below the line explaining that a resume drops
+exactly that argument. An unscoped ACE turn picked a thread out of its inbox, found a sibling
+session that mentioned the ref, and ran the documented check to see whether that owner was alive.
+It returned **0 matches**. The owner was a live `/ace:run` at Phase 4 — PID alive, 20+ MCP
+children, an assistant message 8 minutes old — running as `claude --resume <uuid>`, and its
+dispatch prompt ended with "then answer Sophie" on that exact thread. Believing the 0 meant taking
+over a live run and sending a second ACE email to an external design author. The turn caught it
+only by re-running the grep against the bare uuid on a hunch. The COUNT had been hardened against
+this in `live-turns.sh` for the same reason; the liveness one-liner never was.)
 
 **Same ref is the NARROW case. Now widen it: a sibling turn on a DIFFERENT ref is still your
 problem.** The check above counts turns on your exact ref, so it answers "am I redundant?" — and it
