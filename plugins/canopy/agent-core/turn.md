@@ -372,6 +372,41 @@ first turn was still working toward all three. Nothing in this procedure caught 
 avoided a duplicate event and a second email to the same person only because a *domain* skill told
 it to check the shared calendar for an existing event before creating one.)
 
+
+**Every check above resolves SESSIONS. Before you send, check the THREAD — it is the only one that
+sees a sibling you cannot.** Both counts read local processes and transcripts, so a sibling running
+anywhere else — a cloud runner, another machine, an SDK job — is invisible to them by construction.
+`live-turns.sh` says so itself, in the lower-bound warning it prints under every count; but a lower
+bound is not something you can act on, and nothing else in this Step gives you a second signal. So
+the counts return a truthful `COUNT=1` while another turn answers your counterpart, and you send on
+top of it.
+
+The artifact you are about to append to is the authoritative surface, and reading it costs one call:
+
+```bash
+canopy email read --repo . <thread_id>    # is the newest message still the inbound you are answering?
+```
+
+**Newest message is no longer the one you drafted against → do not send.** Read what landed. If it
+already answers the ask, stand down and say so in your closeout; if it answers it differently or
+partially, your reply is now a *follow-up* to that message, not a reply to the original — rewrite it
+as one or drop it. Two agent emails to one person about one task is the failure this whole Step
+exists to prevent, and it is the one a collaborator actually notices.
+
+This is the same discipline Drive already gets for free: `drive_update_file`'s `ifMatchRevisionId`
+CAS exists because Docs have no lock and no merge, so a blind write lands on top of a concurrent one
+with no error. Email has exactly that property and no equivalent guard — the re-read is you
+performing the compare-and-swap by hand.
+
+(Origin: 2026-09-16, ace. A `--thread`-scoped turn triaged its thread at 16:35Z, took the draft
+through review and the approval gate, re-ran both counts four minutes before sending — `COUNT=1`
+and `COUNT=1`, both true — and sent at 17:59Z. An off-machine ACE session had answered the same
+question on the same thread at 17:05Z, 55 minutes into that gate. Grepping every local transcript
+for the sibling's message id and for its distinctive body text returned only the reading session's
+own; there was nothing local to find. The counterpart had complained about email volume that same
+morning. In the same turn, Drive's CAS DID fire on the run's comms-log and caught a concurrent
+write — the Drive half had a guard and the email half had none.)
+
 **But a scoped turn still sweeps that ONE counterpart's other recent messages first — skipping the
 inbox scan is not the same as reading one thread in isolation.** People do not keep one topic on one
 thread. The decisive context for the thread you were handed is routinely on a *different* thread
@@ -770,6 +805,10 @@ queues work and approves outbound actions — independent of whether you publish
 0ac. **Both counts were RE-RUN immediately before the first write/send** (Step 2 Scope), not only at
    the top of the turn. A start-of-turn all-clear expires; if the turn stalled or ran long, say that
    you re-checked and what the re-check found.
+0ad. **The THREAD was re-read immediately before the send** (Step 2 Scope) — not just the session
+   counts, which cannot see a sibling running off this machine. Confirm the newest message was still
+   the inbound you drafted against. If something had landed, say what it was and that you stood down
+   or rewrote rather than sending on top of it.
 0a. **On a scoped turn, that counterpart's other recent mail was swept before the action was
    decided** (Step 2 Scope) — one `from:<them> newer_than:3d` search. If you cannot point to it, you
    read one thread in isolation and the context that changes the answer is exactly what you skipped.
