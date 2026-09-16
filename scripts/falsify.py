@@ -228,9 +228,21 @@ def _cli(argv: list[str] | None = None) -> int:
     parser.add_argument("paths", nargs="+", help="the source file(s) your fix changed")
     parser.add_argument("--base", default="origin/main", help="ref to revert to (default origin/main)")
     parser.add_argument("--repo", default=".", help="repo root (default cwd)")
-    ns, rest = parser.parse_known_args(argv)
 
-    command = rest[1:] if rest and rest[0] == "--" else rest
+    # Split on `--` OURSELVES, before argparse sees it. Letting argparse do it silently
+    # loses the command: `paths` is nargs="+", so with no optional in front of the
+    # separator argparse strips the `--` and swallows the whole test command as more
+    # paths, leaving `rest` empty — and the tool exits 2 "no test command" against a
+    # command that was right there. It only worked when an option happened to precede the
+    # separator, which is why the CLI test (which passes --base and --repo) stayed green
+    # while shipping.md's documented form — with --base shown as OPTIONAL — always failed.
+    argv = list(sys.argv[1:] if argv is None else argv)
+    command: list[str] = []
+    if "--" in argv:
+        cut = argv.index("--")
+        argv, command = argv[:cut], argv[cut + 1:]
+
+    ns = parser.parse_args(argv)
     if not command:
         print("falsify: no test command — put it after `--`", file=sys.stderr)
         return 2
