@@ -608,6 +608,31 @@ dimensions:
 For dimensions that scored ≥ 4 (no finding emitted), `fix_recommendation` and
 `fix_kind` are omitted.
 
+**Gate the verdict before Step 4 loads it (canopy#547).** `verdict-user.yaml` is
+written here and not checked until `load_verdict` in Step 4, so a contract
+mismatch surfaces as an assembly `ValidationError` — after both judge dispatches
+are paid for, and reading like a run failure rather than a schema one. One call
+moves that failure to the point where it is cheap and says which field is wrong:
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.validate verdict "$(realpath <run_dir>/verdict-user.yaml)") || exit 1
+```
+
+Two traps this catches, both measured on `hh-poverty-targeting/20260827-0323`:
+
+- **the judge's own field name.** `canopy:visual-judge` is a general-purpose
+  skill with its own output shape; the verdict it hands back is *collected* here,
+  not authored here, so its top-level key may not be the contract's. It emitted
+  `overall_verdict`, where `load_verdict` requires `verdict`. **Rename it when
+  you write the file — do not alias it in the loader.** Aliasing turns one
+  contract into two and every later judge inherits the ambiguity.
+- **a `fix_kind` outside the vocabulary above.** `compute_auto_iterate`
+  dispatches on this field, matching `mechanical` and `options`/`redesign` by
+  exact string, so a fourth value is routed by neither branch and drops out of
+  the loop decision in silence.
+
 ### Step 4 — Assemble + convergence
 
 Call `run_pipeline.assemble_run_state` to merge both verdict paths and findings

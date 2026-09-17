@@ -67,6 +67,15 @@ TRIGGER_PATHS: dict[str, list[str]] = {
     # The canonical spec-author surface (UnifiedSpec / Scene / Action) lives
     # here since the narrative-substrate refactor; scripts/ddd/schemas/models.py
     # above is now a re-export shim. Same audience, same required docs.
+    #
+    # KNOWN LIMITATION (canopy#547): this file hosts a SECOND author surface with
+    # a different audience — the judge-output contract (Finding, Verdict,
+    # FIX_KINDS, ROUTES), which is taught in the judge skills (ddd-concept-eval,
+    # ddd-arc-eval, ddd-run), not in the two spec-author docs below. This map is
+    # keyed by FILE, not by symbol, so it cannot tell the two apart and will
+    # demand the spec docs for a pure judge-contract change. Until it can, such a
+    # PR uses the `Docs-not-needed:` opt-out and NAMES the judge SKILL.md files it
+    # updated instead — an accurate reason, not the "engine-internal" one.
     "scripts/narrative/models.py": [
         "plugins/canopy/skills/ddd-spec/SKILL.md",
         "plugins/canopy/skills/walkthrough/SKILL.md",

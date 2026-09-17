@@ -22,6 +22,7 @@ HARD_CAP
 from __future__ import annotations
 
 from scripts.ddd.schemas.models import RunState, Verdict
+from scripts.narrative.models import FIX_KINDS, UNROUTABLE_FIX_KIND_FALLBACK
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -233,6 +234,32 @@ def format_verdict_line(verdict: Verdict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _routable_fix_kind(raw: object) -> str:
+    """Map a finding's ``fix_kind`` onto a value this function can actually route.
+
+    A recognised kind passes through untouched. Anything else — a judge emitting
+    ``targeted``, a typo, ``None``, a non-string — becomes
+    :data:`UNROUTABLE_FIX_KIND_FALLBACK`.
+
+    Without this an unrecognised kind is not merely mis-routed, it is INVISIBLE:
+    the branches below select ``mechanical`` and ``options``/``redesign``
+    explicitly, so a third value matches neither list and the finding drops out
+    of the decision. The loop then reports "No options/redesign ... re-fire" —
+    actively asserting there is nothing needing a human — and re-fires the
+    expensive judge dispatch on a defect it will never apply and never escalate,
+    until the hard cap. Measured on canopy#547's ``fix_kind: targeted``.
+
+    Falling back to ``options`` surfaces it to a human. That direction is the
+    safe one and the choice is not symmetric: routing an unclassified finding to
+    ``mechanical`` would hand the loop autonomy over something nobody has
+    classified. This is deliberately a ROUTING repair only — the label is not
+    rewritten on ``state.findings``, so the judge's original word stays readable
+    in the artifact, and ``validate("findings", ...)`` is what stops it being
+    emitted in the first place.
+    """
+    return raw if isinstance(raw, str) and raw in FIX_KINDS else UNROUTABLE_FIX_KIND_FALLBACK
+
+
 def compute_auto_iterate(
     state: RunState,
     concept_verdict: Verdict,
@@ -345,7 +372,7 @@ def compute_auto_iterate(
     all_findings = [
         {
             "route": f.get("route", "PRODUCT"),
-            "fix_kind": f.get("fix_kind", "options"),
+            "fix_kind": _routable_fix_kind(f.get("fix_kind", "options")),
             "finding_class": f.get("finding_class", finding_class.UNCLASSIFIED),
         }
         for f in findings
@@ -355,7 +382,7 @@ def compute_auto_iterate(
             all_findings.append(
                 {
                     "route": "PRODUCT",
-                    "fix_kind": d["fix_kind"],
+                    "fix_kind": _routable_fix_kind(d["fix_kind"]),
                     "finding_class": finding_class.UNCLASSIFIED,
                 }
             )
