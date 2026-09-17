@@ -398,6 +398,37 @@ CAS exists because Docs have no lock and no merge, so a blind write lands on top
 with no error. Email has exactly that property and no equivalent guard — the re-read is you
 performing the compare-and-swap by hand.
 
+**And re-read the ARTIFACTS the draft makes claims about, not only the thread — an unchanged thread
+is not an unchanged world.** The check above compares the newest message; it is silent about
+everything your draft actually *describes*. A reply that reports work — "it's on the calendar at X",
+"row N says Y", "the doc now reads Z" — is a set of **done-claims about live artifacts**, and §B/§5a
+says those are verified, not asserted. That verification has a shelf life, and **the approval gate
+is exactly where it expires**: the draft was true when written and sits there for minutes or hours
+while siblings, humans and upstream hosts keep editing. The thread stays still the whole time, so
+the thread re-read passes and hands you a false all-clear.
+
+So before sending, walk the draft for every concrete fact about an artifact — a time, a date, a
+venue, a row, a tag, a status, a count — and **re-read the artifact itself** for each one. It is a
+handful of cheap reads and it is the only thing standing between a stale draft and a confident
+wrong statement in someone's inbox.
+
+- **Verify against the ARTIFACT, never against the sibling's account of it.** A sibling's transcript
+  or note tells you *where to look*; it is not the fact. Open the event, the row, the doc.
+- **A correction you inherit propagates.** If the fact appears in more than one place you wrote —
+  the mail, a tracker row, a doc paragraph — fix them all in the same pass, or you have merely moved
+  the inconsistency.
+- **A changed artifact invalidates the review receipt, by design.** Revise the body, re-run the full
+  review (§D — not a delta check), and re-receipt. The rail enforces it; do not fight it.
+
+(Origin: 2026-09-17, eva. A reply-all reporting a conference-calendar add sat at the approval gate
+for ~2.5 hours. It said the principal spoke at **3:10pm**. While it waited, a concurrent
+`/eva:chief-of-staff` turn corrected that speaking slot to **15:35–15:50** from the organizer's
+updated invite and rewrote the event description. The thread never moved, so the §0ad re-read
+returned a truthful "newest message unchanged" and every session count read 1. The stale time was
+caught only because the turn opened the sibling's transcript on a hunch, then confirmed 15:35
+against the speaking event itself — and the same stale time was sitting in the tracker row it had
+written earlier, which nothing else would have flagged.)
+
 (Origin: 2026-09-16, ace. A `--thread`-scoped turn triaged its thread at 16:35Z, took the draft
 through review and the approval gate, re-ran both counts four minutes before sending — `COUNT=1`
 and `COUNT=1`, both true — and sent at 17:59Z. An off-machine ACE session had answered the same
