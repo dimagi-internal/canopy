@@ -8,7 +8,8 @@ Exposes:
 CLI:
   python -m scripts.ddd.validate <kind> <path>   # exits 0 on valid, 1 on invalid
 
-Supported kinds: why_brief, unified_spec, verdict, review_request, run_state
+Supported kinds: why_brief, unified_spec, verdict, findings, review_request,
+run_state
 """
 
 from __future__ import annotations
@@ -26,8 +27,11 @@ from pydantic import ValidationError
 from scripts.ddd.identity import scene_id
 from scripts.ddd.schemas.models import RunState
 from scripts.narrative.models import (
+    FIX_KINDS,
+    ROUTES,
     Decision,
     Feature,
+    Finding,
     ReviewRequest,
     UnifiedSpec,
     Verdict,
@@ -40,6 +44,18 @@ _MODEL_MAP = {
     "verdict": Verdict,
     "review_request": ReviewRequest,
     "run_state": RunState,
+    "findings": Finding,  # a LIST of these — see _validate_findings
+}
+
+# Fields judges have actually emitted in place of a required Verdict field.
+# Keyed by the real field name; the values are the near-misses seen in the wild.
+# This exists to turn Pydantic's truthful-but-unhelpful "verdict: Field required"
+# into a message that names what the judge wrote instead — the difference
+# between a schema error someone has to go diffing for and one they can fix.
+_VERDICT_NEAR_MISSES: dict[str, tuple[str, ...]] = {
+    "verdict": ("overall_verdict", "final_verdict", "verdict_label", "result"),
+    "overall_score": ("overallScore", "score", "overall"),
+    "dimensions": ("scores", "dimension_scores"),
 }
 
 
@@ -182,6 +198,80 @@ def _semantic_unified_spec(obj: UnifiedSpec, spec_path: Path | None) -> list[str
     return problems
 
 
+def _alias_hints(raw: Any, problems: list[str]) -> list[str]:
+    """Annotate 'Field required' problems with the near-miss the emitter DID write.
+
+    Returns a new problems list. A judge that emits ``overall_verdict`` instead of
+    ``verdict`` gets told exactly that, rather than being left to infer it from a
+    missing-field error about a field it thought it had supplied.
+    """
+    if not isinstance(raw, dict):
+        return problems
+    annotated: list[str] = []
+    for p in problems:
+        field = p.split(":", 1)[0].strip()
+        found = [a for a in _VERDICT_NEAR_MISSES.get(field, ()) if a in raw]
+        if found and "required" in p.lower():
+            p = (
+                f"{p} — the artifact carries {found[0]!r} instead. "
+                f"The contract field is {field!r}; rename it at the judge rather "
+                f"than aliasing it downstream, so one contract stays one contract."
+            )
+        annotated.append(p)
+    return annotated
+
+
+def _validate_findings(raw: Any) -> tuple[bool, list[str]]:
+    """Validate a findings artifact — a JSON list of Finding records.
+
+    This is the gate canopy#547 asked for: the loop DISPATCHES on ``fix_kind``
+    (``run_pipeline.compute_auto_iterate``), so a value outside :data:`FIX_KINDS`
+    is not a cosmetic schema nit — it is a finding that cannot be routed by
+    either branch. Catching it here means the failure names the offending
+    finding and field at EMIT, while the judge's work is still in hand, instead
+    of surfacing later as an unexplained loop decision.
+
+    ``route`` is checked the same way and for the same reason: ``DEFER`` is
+    filtered on by exact string, so a misspelled route silently changes whether
+    a finding counts at all.
+    """
+    if not isinstance(raw, list):
+        return False, [
+            f"findings artifact must be a JSON list of findings, got {type(raw).__name__}"
+        ]
+
+    problems: list[str] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            problems.append(f"findings[{i}]: not a record (got {type(item).__name__})")
+            continue
+        try:
+            Finding.model_validate(item)
+        except ValidationError as exc:
+            problems.extend(
+                f"findings[{i}].{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
+                for e in exc.errors()
+            )
+            continue
+        fix_kind = item.get("fix_kind")
+        if fix_kind not in FIX_KINDS:
+            problems.append(
+                f"findings[{i}].fix_kind: {fix_kind!r} is outside the routing "
+                f"vocabulary {list(FIX_KINDS)} — compute_auto_iterate dispatches on "
+                f"this field, so a finding carrying it is routed by NEITHER the "
+                f"auto-apply branch nor the human-escalation branch and drops out "
+                f"of the loop decision silently"
+            )
+        route = item.get("route")
+        if route not in ROUTES:
+            problems.append(
+                f"findings[{i}].route: {route!r} is outside {list(ROUTES)} — "
+                f"routes are matched by exact string, so an unrecognised one "
+                f"changes whether this finding is counted at all"
+            )
+    return (len(problems) == 0), problems
+
+
 def validate(
     kind: str,
     obj_or_path: Any,
@@ -191,7 +281,8 @@ def validate(
     Parameters
     ----------
     kind:
-        One of: why_brief, unified_spec, verdict, review_request, run_state
+        One of: why_brief, unified_spec, verdict, findings, review_request,
+        run_state
     obj_or_path:
         Either a ``Path`` / path-like to a YAML/JSON file, or a plain dict.
 
@@ -226,6 +317,11 @@ def validate(
     else:
         raw = obj_or_path
 
+    # A findings artifact is a LIST of records, not one document — it has no
+    # single model to validate against, so it takes its own path.
+    if kind == "findings":
+        return _validate_findings(raw)
+
     # Structural validation via Pydantic
     try:
         obj = model_cls.model_validate(raw)
@@ -234,6 +330,8 @@ def validate(
             f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
             for e in exc.errors()
         ]
+        if kind == "verdict":
+            problems = _alias_hints(raw, problems)
         return False, problems
 
     # Semantic validation

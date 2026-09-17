@@ -149,6 +149,37 @@ verdict: pass | warn | fail
 
 `<run_dir>/arc_findings.json` — the findings array from Step 3.
 
+### Step 4b — Gate both outputs before you report (canopy#547)
+
+**Do not skip this because the files "look right".** Your work is done at this
+point and the whole cost of the dispatch is already paid; a field outside the
+contract now costs the entire run, and it surfaces far downstream as an
+assembly error that reads like a run failure rather than a schema one.
+
+`fix_kind` is not a label here — `compute_auto_iterate` **dispatches** on it.
+This judge was measured emitting `fix_kind: targeted`, which is outside the
+vocabulary, and the consequence is worse than a rejected field: the finding
+matches neither the auto-apply branch nor the human-escalation branch, so it
+leaves the loop decision entirely and the loop reports *"No options/redesign —
+re-fire"* while never applying and never escalating it.
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+VERDICT_ABS="$(realpath <run_dir>/verdict-arc.yaml)"
+FINDINGS_ABS="$(realpath <run_dir>/arc_findings.json)"
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.validate verdict  "$VERDICT_ABS") || exit 1
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.validate findings "$FINDINGS_ABS") || exit 1
+```
+
+Non-zero exit → read each problem, fix the artifact, re-run. The valid values
+are `mechanical | options | redesign` for `fix_kind` and
+`PRODUCT | CONCEPT | RESEARCH | DEFER` for `route`. **Fix the field; do not
+invent a new one and do not alias it downstream** — if `targeted` is a
+distinction this judge genuinely needs, it has to enter `FIX_KINDS` and the
+routing logic in `run_pipeline` deliberately, which is a code change and a
+separate conversation, not something to smuggle in as a string.
+
 ### Step 5 — Report
 
 ```

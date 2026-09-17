@@ -115,6 +115,34 @@ class Feature(BaseModel):
     verify: str       # how to validate it's done (API assertion, UI state, test command)
 
 
+# The routing vocabulary a finding may carry. Single source of truth, in the
+# same spirit as ACTION_KINDS below: the validator, the loop's router and the
+# judge-facing skills all read these rather than re-listing the words, so the
+# contract cannot drift between the place that ACCEPTS a value and the place
+# that ACTS on it — which is exactly how canopy#547 happened.
+#
+# ``fix_kind`` is NOT merely a triage hint here. ``run_pipeline.compute_auto_iterate``
+# DISPATCHES on it: ``mechanical`` is auto-applied and keeps the loop running,
+# ``options``/``redesign`` stop the loop for a human. A value outside this tuple
+# matches neither branch, so the finding vanishes from the decision entirely —
+# see UNROUTABLE_FIX_KIND_FALLBACK.
+FIX_KINDS: tuple[str, ...] = (
+    "mechanical",  # determinate single change — the loop applies it itself
+    "options",     # more than one defensible fix — needs a human pick
+    "redesign",    # the artifact/idea has to change — needs a human
+)
+
+ROUTES: tuple[str, ...] = ("PRODUCT", "CONCEPT", "RESEARCH", "DEFER")
+
+# Where an UNRECOGNISED fix_kind is routed rather than being silently dropped.
+# ``options`` (surface to a human) is the only safe direction: the alternative
+# — treating an unknown label as ``mechanical`` — would grant the loop autonomy
+# over a finding nobody has classified, which is precisely the assumption
+# scripts.ddd.finding_class refuses to make ("only ever GRANTS autonomy on
+# evidence, never assumes it").
+UNROUTABLE_FIX_KIND_FALLBACK = "options"
+
+
 class Finding(BaseModel):
     """One judge-emitted design finding (the ddd-concept-eval contract shape).
 
@@ -124,9 +152,17 @@ class Finding(BaseModel):
     (``derive_severity``) when it's absent — the judge has the artifact context a
     route+fix_kind heuristic lacks.
 
-    ``route`` is one of PRODUCT / CONCEPT / RESEARCH / DEFER; ``fix_kind`` is
-    mechanical / options / redesign. ``fix_recommendation`` is optional (a
-    finding can describe the problem without prescribing the fix).
+    ``route`` is one of :data:`ROUTES`; ``fix_kind`` is one of :data:`FIX_KINDS`.
+    ``fix_recommendation`` is optional (a finding can describe the problem
+    without prescribing the fix).
+
+    Both stay plain ``str`` rather than ``Literal`` **deliberately**. Tightening
+    them here would move the failure to LOAD time, which is the cost canopy#547
+    is about: a judge dispatch is the expensive part of the loop, and rejecting
+    the whole artifact at load discards every good finding in it alongside the
+    one mislabelled word. The enum is enforced at EMIT instead —
+    ``scripts.ddd.validate.validate("findings", ...)`` — where the failure names
+    the judge and the offending field and nothing has been thrown away yet.
     """
 
     scene: str

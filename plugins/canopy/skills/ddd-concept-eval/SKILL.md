@@ -434,6 +434,35 @@ fix_recommendation: |
 ]
 ```
 
+### Step 6b — Gate both outputs before you report (canopy#547)
+
+**Do not skip this because the files "look right".** The expensive part of this
+skill — the per-scene multimodal passes and the k=3 re-judging of capping cells
+— is already paid for by the time you write these. A field outside the contract
+discards all of it, and it surfaces downstream as an assembly `ValidationError`
+that reads like a run failure rather than a schema one.
+
+Two contract fields are load-bearing rather than decorative, and neither fails
+loudly on its own: `verdict` (the user-artifact judge was measured writing
+`overall_verdict`, which `load_verdict` rejects outright) and `fix_kind`, which
+`compute_auto_iterate` **dispatches** on — a value outside the vocabulary
+matches neither the auto-apply branch nor the human-escalation branch, so the
+finding drops out of the loop decision silently.
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+VERDICT_ABS="$(realpath <run_dir>/verdict-concept.yaml)"
+FINDINGS_ABS="$(realpath <run_dir>/design_findings.json)"
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.validate verdict  "$VERDICT_ABS") || exit 1
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.validate findings "$FINDINGS_ABS") || exit 1
+```
+
+Non-zero exit → read each problem, fix the artifact, re-run. Valid values are
+`mechanical | options | redesign` for `fix_kind` and
+`PRODUCT | CONCEPT | RESEARCH | DEFER` for `route`. **Fix the field at the
+source; never alias it downstream** — one contract has to stay one contract.
+
 ### Step 7 — Report
 
 Print a summary:
