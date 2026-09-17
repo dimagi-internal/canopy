@@ -341,6 +341,72 @@ if [ -n "$REF" ]; then
     echo "(a mention may only be that session's own duplicate check — read, then decide)"
     echo
   fi
+
+  # SEVENTH FAILURE, measured 2026-09-17, ace — A FINISHED TURN IS NOT NO TURN.
+  #
+  # Both liveness sources above are real-time: `ps`, and transcripts touched in
+  # the last RECENT_MIN minutes. A turn that ran yesterday and ENDED is invisible
+  # to both, so COUNT=0 comes back true and useless — and "ended, still owed an
+  # answer" is the state a parked item spends almost all of its life in.
+  #
+  # The loop: in manual mode a turn triages the thread, asks the human something,
+  # and ends. turn.md then correctly tells it to leave the thread UNREAD, because
+  # unread is the only record that a draft or a question is live. The poller fires
+  # on unread. So the next poll dispatches a fresh turn, which runs this check, is
+  # told it is alone, and re-derives the identical triage from scratch — every
+  # poll, unbounded, until a human answers.
+  #
+  # Measured: thread 1a0ab6342ccdfa76, subject-only mail to ace@. Session
+  # 61830f67 triaged it on 2026-09-16 (46 assistant messages: read the thread,
+  # swept the sender, drained the board, ranked three options) and ended
+  # "Session paused — waiting on you". Nobody answered. The next day's turn got
+  # COUNT=0 here and redid all of it, finding the prior turn only by noticing a
+  # worktree directory named after the subject line. dimagi-internal/canopy#656.
+  #
+  # Printed OUTSIDE and UNDER the count, like the no-process block, and for the
+  # same reason: a completed turn is NEVER a duplicate to stand down on. It is a
+  # transcript to READ, so you resume from its conclusion instead of rebuilding
+  # it. Standing down on one would be strictly wrong — nobody is holding the item.
+  COMPLETED_DAYS="${CANOPY_LIVE_TURNS_COMPLETED_DAYS:-14}"
+  completed_hits=""
+  if [ "$COMPLETED_DAYS" -gt 0 ] 2>/dev/null; then
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      sid="$(basename "$f" .jsonl)"
+      case " $IDS_FLAT " in *" $sid "*) continue ;; esac     # live — already in COUNT
+      case " $RECENT_IDS " in *" $sid "*) continue ;; esac   # mid-resume — listed above
+      # Cheap prefilter FIRST. Without it this greps every transcript in the
+      # window end to end (~9s over 920 files here, because a non-match reads the
+      # whole file); bounding the read to the head makes it ~4s. The scope line
+      # lives in the FIRST user message, which sits at line <=20 in every
+      # transcript sampled, so 200 is ~10x margin. If Claude Code ever pushes it
+      # deeper this silently finds nothing — the fail-toward-silence shape this
+      # file has been burned by six times — so widen the bound, never tighten it.
+      # NOT `head … | grep -q`: this script runs under `set -o pipefail`, and
+      # `grep -q` exits the moment it matches, which SIGPIPEs `head` (141). With
+      # pipefail the pipeline then reports FAILURE **on a match**, so the guard
+      # skips exactly the sessions it is meant to find. Caught in validation
+      # against the real 61830f67 case before this shipped. Keep it pipe-free.
+      hdr="$(head -n 200 "$f" 2>/dev/null)"
+      case "$hdr" in *"$REF"*) ;; *) continue ;; esac
+      matches_scope "$f" F "command-args>--thread $REF<" \
+        && completed_hits="$completed_hits $sid"
+    done <<EOF
+$(find "$PROJECTS" -name '*.jsonl' -type f -mtime "-$COMPLETED_DAYS" 2>/dev/null)
+EOF
+  fi
+  if [ -n "$completed_hits" ]; then
+    echo "COMPLETED turns scoped to this ref (not live, last ${COMPLETED_DAYS}d) —"
+    echo "a turn ALREADY disposed of this ref. Read it before you re-derive its work:"
+    for sid in $completed_hits; do
+      f="$(transcript_for "$sid")"
+      echo "  $sid   ${f:-<transcript not found>}"
+    done
+    echo "These are NOT duplicates to stand down on — nobody is holding the item."
+    echo "If one ended parked on a human answer, the item is AWAITING A DECISION,"
+    echo "not untriaged: resume from its conclusion, do not start the triage again."
+    echo
+  fi
 fi
 
 if [ -n "$SLUG" ]; then
