@@ -193,6 +193,85 @@ def test_live_sessions_do_not_leak_into_the_no_process_block(projects):
         assert b not in tail, out
 
 
+def _age(path: Path, days: float) -> None:
+    """Backdate a transcript so it is neither live nor within RECENT_MIN."""
+    import time
+
+    when = time.time() - days * 86400
+    os.utime(path, (when, when))
+
+
+def test_a_completed_turn_on_this_ref_is_surfaced(projects):
+    """SEVENTH FAILURE. A turn that ENDED is invisible to both liveness sources.
+
+    That is the state a parked item spends almost all of its life in: a manual-mode
+    turn triages the thread, asks the human something, ends, and correctly leaves
+    the thread UNREAD. The poller fires on unread, so the next turn runs this check,
+    is told COUNT=0, and re-derives the identical triage. Measured on ace thread
+    1a0ab6342ccdfa76 across 2026-09-16/17 (canopy#656).
+
+    Also pins the pipefail trap this shipped with first: the prefilter was
+    `head … | grep -q`, and under `set -o pipefail` grep's early exit SIGPIPEs
+    head, so the pipeline reports failure ON A MATCH and the guard skips exactly
+    the sessions it exists to find. Reverting to a pipe fails this test.
+    """
+    live = "aaaaaaaa-0000-0000-0000-000000000001"
+    done = "dddddddd-0000-0000-0000-00000000000d"
+    _write_transcript(projects, live, _prompt(REF_B))
+    # The padding is load-bearing for the pipefail half of this test, not decor.
+    # SIGPIPE only fires if `head` is STILL WRITING when `grep -q` exits at the
+    # match on line 2 — so a tiny fixture passes even with the bug present, which
+    # is how the pipe version first shipped "green". Real transcripts are large;
+    # these lines make the fixture behave like one.
+    _age(
+        _write_transcript(
+            projects, done, _prompt(REF_A), later_lines=["x" * 4000] * 400
+        ),
+        days=2,
+    )
+
+    out = _run(projects, [live], "--ref", REF_A).stdout
+
+    # Never in COUNT — nobody is holding the item, so there is nothing to stand down on.
+    assert _count_under(out, f"turns scoped to ref {REF_A}") == 0, out
+    assert "COMPLETED turns scoped to this ref" in out, out
+    completed_block = out.split("COMPLETED turns scoped to this ref")[1]
+    assert done in completed_block, out
+    assert "NOT duplicates to stand down on" in completed_block, out
+
+
+def test_completed_block_does_not_repeat_live_or_resuming_sessions(projects):
+    """A session already in COUNT, or already flagged mid-resume, must not reappear.
+
+    Re-listing it would tell the reader a live owner had finished — the exact
+    inversion that makes someone take over a turn that is still running.
+    """
+    live = "aaaaaaaa-0000-0000-0000-000000000001"
+    resuming = "eeeeeeee-0000-0000-0000-000000000005"
+    _write_transcript(projects, live, _prompt(REF_A))
+    _write_transcript(projects, resuming, _prompt(REF_A))  # fresh mtime => RECENT
+
+    out = _run(projects, [live], "--ref", REF_A).stdout
+
+    assert _count_under(out, f"turns scoped to ref {REF_A}") == 1, out
+    if "COMPLETED turns scoped to this ref" in out:
+        completed_block = out.split("COMPLETED turns scoped to this ref")[1]
+        assert live not in completed_block, out
+        assert resuming not in completed_block, out
+
+
+def test_completed_scan_is_scoped_to_the_ref_asked_about(projects):
+    """Precision: a finished turn on a DIFFERENT ref is not my prior turn."""
+    live = "aaaaaaaa-0000-0000-0000-000000000001"
+    other = "dddddddd-0000-0000-0000-00000000000d"
+    _write_transcript(projects, live, _prompt(REF_A))
+    _age(_write_transcript(projects, other, _prompt(REF_B)), days=2)
+
+    out = _run(projects, [live], "--ref", REF_A).stdout
+
+    assert other not in out, out
+
+
 def test_cannot_read_projects_dir_is_not_an_all_clear(projects):
     """A check that cannot look must SAY SO — exit 2, never a clean COUNT=0.
 
