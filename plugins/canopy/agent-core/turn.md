@@ -554,6 +554,43 @@ own-mailbox rail, drops INBOX + UNREAD in one call. Use the CLI, not a hand-roll
 gmail thread modify`: the flag spelling is `--remove` (not `--remove-label`) and lives on
 `thread modify` (not `gmail modify`), which has cost agents several tool calls to rediscover.
 
+**But NOT while a reply is parked at the approval gate — there, UNREAD is load-bearing STATE,
+and marking it read destroys the only record that the draft exists.** In manual mode a turn
+routinely ends with the work done and a reviewed, receipted reply waiting on a human. That thread
+is not "fully handled": it is *parked*. And `canopy email dangling` — the Step 2.0 sweep above —
+bands purely on read-state, which is exactly right, because **unread is what tells the next turn a
+draft is live.** Its own source says so: `"respond" (unread) — … or a manual-mode draft is parked
+at the approval gate. Live either way.`
+
+So marking a parked thread read silently reclassifies it **HANDLED → "Archive it; do NOT answer it
+late."** The next turn's sweep then instructs an agent to throw away a finished, reviewed reply
+that a human was one word from approving — and it looks like tidy housekeeping the whole way,
+because nothing errors and the band it lands in is the one that means *someone decided this*.
+
+The trap is that the read-mark is locally reasonable: this Step tells you the poller re-fires on
+unread, and Step 2 Scope's duplicate-turn material explains that a parked draft therefore draws a
+second and third turn. Suppressing that with a read-mark trades a **recoverable** cost (a duplicate
+turn, which `live-turns.sh --ref` exists to catch and which stands down harmlessly) for an
+**unrecoverable** one (a reply nobody knows to send). Take the duplicate turns; that is what the
+collision checks are for.
+
+- **Parked at the gate → leave it UNREAD.** Say in your closeout that it is unread *on purpose*
+  and that a sibling turn should stand down rather than re-work it.
+- **Mark read / archive only once the item is actually disposed of** — sent, or consciously
+  decided against.
+- **If you already marked it read, put the label back**: there is deliberately no
+  `canopy email mark-unread`, so the one-off repair is
+  `gog gmail thread modify <thread_id> -a <your-mailbox> --add UNREAD` (own mailbox, reversible,
+  not outbound). Then re-run `canopy email dangling` and confirm it reads NEEDS ATTENTION again.
+
+(Origin: 2026-09-17, eva. A `--thread`-scoped turn added a forwarded invitation to a shared
+conference calendar, drafted the reply-all, reviewed and receipted it, presented it for approval —
+and then marked the thread read to stop the poller spawning a duplicate. A second turn on the same
+ref ran the Step 2.0 sweep minutes later and was told, correctly per the banding, `HANDLED … Do NOT
+answer these late … canopy email archive`. The draft was ~10 minutes old, fully reviewed, and one
+approval from sending. It survived only because the second turn was the same session and knew
+better; a fresh turn would have archived it.)
+
 Before every outbound reply, run **your own `<slug>:agent-turn-review`** — the full name, e.g.
 `hal:agent-turn-review`. Not the bare name (it resolves ambiguously across the fleet's wrappers)
 and **not `canopy:agent-turn-review`**: that skill is the shared discipline your wrapper delegates
