@@ -106,6 +106,27 @@ Explicitly instruct the judge:
 > concept judge. A run of individually-flawed scenes can still have an
 > excellent arc, and a run of perfect scenes can have none.
 
+And instruct it to **seal its own result as its last act** (canopy#548): write
+its full judgement to `<run_dir>/passes/arc/arc-1.md`, then run
+`(cd <DDD_REPO> && uv run python -m scripts.ddd.passes seal <abs run_dir>/passes/arc/arc-1.md)`.
+The sub-agent does not inherit your shell, so put the resolved absolute paths in
+its prompt, not the variable names. When it returns, **before Step 3**:
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.passes manifest "$(realpath <run_dir>)" arc --expect 1)
+```
+
+Non-zero exit means the judge did not return — **re-dispatch it as `arc-2`; do
+not write the verdict yourself.** On
+`hh-poverty-targeting-answer-quality-2026-08-27-001` the first arc judge stalled
+with no result event and a verdict was written anyway: well-formed, plausibly
+scored, and landing on the same five scores as the real judge that later
+replaced it, so nothing downstream could have told them apart. You never write
+under `passes/`. If the judge cannot be made to return, write `verdict: blocked`
+naming it.
+
 ### Step 3 — Findings
 
 For each dimension ≤ 3, emit a finding. Route:
@@ -144,12 +165,16 @@ dimensions:
 overall_score: N
 overall_rule: lowest
 one_sentence_story: "<the judge's one-sentence summary, or null if it could not>"
+passes:                   # the `passes manifest` output, VERBATIM
+  - { pass_id: arc-1, returned_at: "...", sha256: "..." }
+pass_quotes:              # optional — any line you quote from the judge, copied from its file
+  - { pass_id: arc-1, quote: "..." }
 verdict: pass | warn | fail
 ```
 
 `<run_dir>/arc_findings.json` — the findings array from Step 3.
 
-### Step 4b — Gate both outputs before you report (canopy#547)
+### Step 4b — Gate both outputs before you report (canopy#547, #548)
 
 **Do not skip this because the files "look right".** Your work is done at this
 point and the whole cost of the dispatch is already paid; a field outside the

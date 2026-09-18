@@ -340,6 +340,13 @@ def validate(
         problems = _semantic_why_brief(obj)  # type: ignore[arg-type]
     elif kind == "unified_spec":
         problems = _semantic_unified_spec(obj, spec_path)  # type: ignore[arg-type]
+    elif kind == "verdict":
+        # canopy#548: a multi-pass judge must prove its passes returned. A
+        # verdict synthesised around a killed sub-agent is well-formed YAML, so
+        # the model check above cannot see it — only the sealed pass files can.
+        from scripts.ddd.passes import check_verdict_passes
+
+        problems = check_verdict_passes(raw, spec_path)
 
     return (len(problems) == 0), problems
 
