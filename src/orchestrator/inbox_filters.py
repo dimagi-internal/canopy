@@ -74,16 +74,37 @@ FILTERS: list[dict] = [
     # mail history: 7/7 matches carry Auto-Submitted: auto-replied, zero false positives.
     # Overlaps the rule above on purpose (both are archive+mark_read, so overlap is free); this
     # one exists to catch the wordings that list hasn't learned yet.
+    #
+    # Widened 2026-09-18: a responder whose subject was "less responsive through Sept 25" and
+    # whose body said "in offsite meetings and traveling … checking email intermittently, but a
+    # bit slower to respond" matched NEITHER side of the conjunction, and spawned eva turns on
+    # 09-14 and 09-18. It is a "reduced availability" responder, not an "I am away" one, so both
+    # halves gained that vocabulary. The broad subject words it needed (through, until) stay safe
+    # only because the body half is still required. Re-verified against eva@'s full history:
+    # 10/10 matches carry Auto-Submitted: auto-replied, zero false positives.
     {
         "name": "auto-reply-ooo-body",
         "query": ('subject:(offline OR ooo OR "out of office" OR "on leave" OR "annual leave" '
-                  'OR vacation OR holiday OR away) '
+                  'OR vacation OR holiday OR away OR responsive OR traveling OR travelling '
+                  'OR offsite OR through OR until) '
                   '("i will be offline" OR "i am offline" OR "i will be out of the office" '
                   'OR "i am out of the office" OR "i am currently out of the office" '
                   'OR "i will be on leave" OR "i am on leave" OR "i am on vacation" '
                   'OR "i will be on vacation" OR "limited access to email" '
+                  'OR "limited email access" OR "intermittent access" '
+                  'OR "checking email intermittently" OR "check email intermittently" '
+                  'OR "slower to respond" OR "slow to respond" OR "delayed response" '
                   'OR "away from my email" OR "away from the office")'),
         "archive": True, "mark_read": True,
+        "supersedes": [
+            'subject:(offline OR ooo OR "out of office" OR "on leave" OR "annual leave" '
+            'OR vacation OR holiday OR away) '
+            '("i will be offline" OR "i am offline" OR "i will be out of the office" '
+            'OR "i am out of the office" OR "i am currently out of the office" '
+            'OR "i will be on leave" OR "i am on leave" OR "i am on vacation" '
+            'OR "i will be on vacation" OR "limited access to email" '
+            'OR "away from my email" OR "away from the office")',
+        ],
     },
     # Google Calendar "share my calendar" invitations. Ada's 2026-07-22 review caught one
     # (Beth sharing her calendar) spawn a full eva turn that spelunked the Calendar API before
