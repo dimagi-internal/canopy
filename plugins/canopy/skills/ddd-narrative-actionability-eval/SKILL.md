@@ -111,6 +111,35 @@ Record:
 - `cold_plan_1`, `cold_plan_2`, `cold_plan_3` — the three lists of inferred build steps
 - `consensus_plan` — the items that appeared consistently across ≥2 derivations
 
+**Each derivation SEALS its own result — this is what makes a verdict provable
+(canopy#548).** Tell every derivation pass, in its dispatch prompt, to end by
+writing its plan to `<run_dir>/passes/actionability/d<N>.md` and running, as its
+very last act:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.passes seal "$(realpath <run_dir>/passes/actionability/d<N>.md)")
+```
+
+A sub-agent does not inherit your shell, so put the resolved absolute paths
+(`$DDD_REPO` from Step 0, the run dir) in its prompt, not the variable names.
+Writing its own output file is not "reading the codebase" — it stays inside the
+sandbox rule above. If you derive inline rather than by sub-agent, write and seal
+each derivation before you start the next. **You, the orchestrator, never write
+under `passes/`.** Then, before Step 3:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.passes manifest "$(realpath <run_dir>)" actionability --expect 3)
+```
+
+Non-zero exit means a derivation did not return. **Re-dispatch it under a new id
+(`d4`, …) and do not score around the gap.** This exact judge, on
+`hh-poverty-targeting-answer-quality-2026-08-27-001`, had its derivation
+sub-agents killed mid-generation and wrote a verdict anyway — quoting passes
+that never returned. The orchestrator applied four narration edits on it before
+it was quarantined. If a pass cannot be made to return, the verdict is `blocked`
+with `blocking_reason` naming the missing pass — never synthesised. Keep the
+manifest's `passes:` output; it goes in the verdict verbatim.
+
 ### Step 3 — Score each scene against declared features
 
 For each scene, compare the `consensus_plan` (and any divergence) against the scene's
@@ -198,6 +227,11 @@ dimensions:
 overall_score: N
 overall_rule: lowest
 
+passes:                   # the `passes manifest` output, VERBATIM — never hand-written
+  - { pass_id: d1, returned_at: "...", sha256: "..." }
+pass_quotes:              # every quote you attribute to a derivation, with its pass id
+  - { pass_id: d2, quote: "<exact text from passes/actionability/d2.md>" }
+
 verdict: pass | warn | fail | blocked
 blocking_reason: <null unless verdict==blocked>
 
@@ -216,6 +250,17 @@ actionability_findings:
     ambiguous_phrases: [...]
     fix_recommendation: "..."
 ```
+
+### Step 7b — Gate the verdict before you report (canopy#547, #548)
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.validate verdict "$(realpath <run_dir>/verdict-actionability.yaml)") || exit 1
+```
+
+This re-checks every `passes:` entry against the sealed files on disk and every
+`pass_quotes` entry against the pass it names. A quote that does not appear in
+its pass is rejected — cite a derivation by copying from its file, never from
+memory of what it probably said.
 
 ### Step 8 — Report
 
@@ -263,6 +308,8 @@ dimensions:
   consistency:  { score: <float>, weight: 0.20 }
 overall_score: <float>
 overall_rule: lowest
+passes: [{ pass_id: <string>, returned_at: <ISO>, sha256: <hex> }, ...]   # from `passes manifest`
+pass_quotes: [{ pass_id: <string>, quote: <string> }, ...]                # optional; verified verbatim
 verdict: pass | warn | fail | blocked
 blocking_reason: <string | null>
 fix_recommendation: <string | null>

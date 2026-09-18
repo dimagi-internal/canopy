@@ -216,6 +216,27 @@ Collect the per-scene verdict object. Extract all dimension scores. If
 any verdict comes back `self_assessed: true`, surface that prominently
 in the report — those scores are not trustworthy as a convergence gate.
 
+**Each judge seals its own result (canopy#548).** Tell every dispatch to end by
+writing its full verdict object to `<run_dir>/passes/concept/scene_<N>.json`
+(Step 4a's re-judges: `scene_<N>_r2.json`, `scene_<N>_r3.json`) and running, as
+its very last act, `(cd <DDD_REPO> && uv run python -m scripts.ddd.passes seal
+<abs path to that file>)` — resolved absolute paths in the prompt, since a
+sub-agent does not inherit your shell. Score from the sealed files, not from your
+memory of the replies. Before assembling (Step 4), with `$DDD_REPO` resolved as
+in Step 6b:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.passes manifest "$(realpath <run_dir>)" concept --expect <scenes + re-judges>)
+```
+
+Non-zero exit names the scene whose judge did not return — **re-dispatch that
+scene; never fill its cells in.** This is the mechanical form of Step 4's
+"refuse to assemble" rule: a missing scene can no longer be a gap you narrate
+around, because the verdict cannot pass Step 6b without it. The orchestrator
+never writes under `passes/`. (Two judges did exactly this on one run,
+`hh-poverty-targeting-answer-quality-2026-08-27-001`: sub-agents killed or
+stalled, verdicts written anyway with invented per-pass quotes.)
+
 ### Step 3 — Tag design_findings per scene
 
 For each dimension score ≤ 3 in the per-scene visual-judge output, create a
@@ -408,6 +429,9 @@ noise:
   confirm_k: 3
   unconfirmed_caps: <count of caps that did NOT reproduce and therefore do not gate>
 
+passes:                     # the `passes manifest` output, VERBATIM — one per dispatch
+  - { pass_id: scene_1, returned_at: "...", sha256: "..." }
+
 verdict: pass | warn | fail | blocked
 blocking_reason: <null unless verdict==blocked>
 
@@ -434,7 +458,7 @@ fix_recommendation: |
 ]
 ```
 
-### Step 6b — Gate both outputs before you report (canopy#547)
+### Step 6b — Gate both outputs before you report (canopy#547, #548)
 
 **Do not skip this because the files "look right".** The expensive part of this
 skill — the per-scene multimodal passes and the k=3 re-judging of capping cells
