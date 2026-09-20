@@ -42,6 +42,7 @@ canopy agent add  --slug <slug> --title "…" --next-action "…" \
     --links "Thread|https://…, Doc|https://…"          # create (auto T<N>)
 canopy agent set  --slug <slug> --task-id T<N> \    # the ext_id off the card (or the numeric id)
     --rationale "why" --plan "first steps" --source-url <url>   # store context — never re-derive
+canopy agent add  --slug <slug> --title "…" --project "<Project>"   # file it into a project
 canopy agent tasks --slug <slug> --open       # DRAIN the board: unresolved tasks only
 canopy agent tasks --slug <slug>                # every task ever (needed to compute the next ext_id)
 canopy agent tasks --slug <slug> --status done  # one status (repeatable; human spellings ok)
@@ -64,16 +65,45 @@ canopy agent apply --slug <slug> --id <N> --note "what I did"   # mark it handle
 When you *suggest* a task, store the context immediately (`set` — rationale, plan,
 source url) so it is never re-derived later.
 
-## Project folder per work item (so links are clean)
-When taking on a work item that produces deliverables, give it a **Drive project folder** and
-keep its deliverables there, so the tracker links to one stable place instead of a loose doc:
+## Projects — one name, two halves
+
+A **project** is a real piece of work that outlives a turn: the conference you are planning,
+the partnership you are chasing, the initiative with four PRs in it. It has two halves and
+**one name**:
+
+- **The folder** — `$GDRIVE_ROOT_FOLDER/Projects/<name>/` holds the files (see
+  `deliverables.md`, the non-negotiable layout).
+- **The project on canopy-web** — holds what the folder cannot state: what is open, what is
+  parked on a person, whether the thing is still running. Visible at `/agents/<slug>` under
+  Projects.
+
+**Use the same string for both.** It is what `canopy gdoc publish --project "<name>"` already
+resolves the folder from, so one name keeps the folder, its deliverables and its state pointing
+at each other. A project registered under a different name than its folder is a second place to
+look instead of one place to look.
+
 ```
-gog drive mkdir "<Work item>" --parent "$PARENT_FOLDER_ID" --account <mailbox> --client canopy
-gog drive move <docId> --parent <projectFolderId> --account <mailbox> --client canopy
+canopy agent projects --slug <slug> --active           # what is running (JSON)
+canopy agent project-add --slug <slug> --name "<Project>" \
+    --outcome "what DONE looks like" --drive-folder-url "<folder link>"
+canopy agent project-set --slug <slug> --project "<Project>" --status done
 ```
-Put the **folder** link in the task's Links (gdoc deliverables get created in / moved into it).
-Keep your Drive parent-folder id in the worktree-clean global `.env`
-(`~/.<slug>/.env`, read via `bin/_env.py`) — e.g. `<slug>_DRIVE_FOLDER_ID`.
+
+Then **file the work into it** — a task takes the project's name or its `P<N>`:
+```
+canopy agent add --slug <slug> --title "…" --project "<Project>" --next-action "…"
+canopy agent set --slug <slug> --task-id T<N> --project "<Project>"   # file an existing one
+canopy agent set --slug <slug> --task-id T<N> --project ""            # take it out again
+```
+An unknown `--project` is **rejected and writes nothing** — it names what exists so you can
+pick or create. (The API itself keeps the task and files it nowhere, which is right for an API
+and would be silent here.)
+
+**One project per real project.** A project per task gives you a directory of single-task
+projects, which tells you less than the task list already did — and it is the same mistake the
+Drive layout warns about. A genuine one-off needs no project: create the task without one.
+Conversely, once a thread has produced deliverables and more than one task, it is a project:
+register it, put the folder link on it, and file its tasks in.
 
 ## When to use (turn-loop wiring)
 - **Start of every turn:** drain `commands` → act → `apply`. The board is a trigger surface
@@ -101,8 +131,10 @@ Keep your Drive parent-folder id in the worktree-clean global `.env`
   in-repo half had been shippable the whole week. The two `gh`/`aws` calls that proved it took
   under a minute; the card had been wrong for eight days, and its human read it as still blocked.)
 - **Taking on multi-turn work:** create the task (status `in_progress` if a human asked for it,
-  `suggested` if you are proposing it), immediately `set` rationale + plan + links,
-  and give it a **project folder** whose link goes in Links.
+  `suggested` if you are proposing it) and immediately `set` rationale + plan + links. If it
+  belongs to a project, pass `--project "<name>"`; if it IS a new project, register it first
+  (`project-add`, with its `Projects/<name>` folder link) so the folder and its state share
+  one name.
 - **Resuming an existing task: re-validate its brief against current reality BEFORE building.**
   A task's `rationale` / `plan` / dispatch brief is a *snapshot of when it was written*, and the
   board gives it no expiry — it reads equally authoritative on day 1 and day 30. Re-check the
