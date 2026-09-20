@@ -50,6 +50,12 @@ that's the whole contract.
      in place** rather than spawning a new doc each turn (`--replace <id>` keeps the link stable).
    - **Create** the subfolder if it doesn't — name it for the project / counterpart / initiative,
      stable across sessions so the next turn re-uses it.
+   - **Register it on canopy-web under the SAME name** — `canopy agent project-add --slug <slug>
+     --name "<Project>" --drive-folder-url <link>`, then file the work in with
+     `canopy agent add --project "<Project>"`. The folder holds the files; the project holds what
+     a folder cannot state (what is open, what is parked on a person, whether it is still
+     running). One name keeps them pointing at each other — it is the same string
+     `canopy gdoc publish --project` resolves the folder from. See `task-tracker.md`.
 3. **Process state goes in `Process State/`.** A recurring job's tracker/registry/run-log is a
    Drive artifact under your root's `Process State/`, so it persists across turns and isn't duplicated.
 4. **Share with the requester, then CONFIRM — before you hand over the link.** A raw Drive link

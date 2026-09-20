@@ -323,6 +323,127 @@ def agent_tasks(slug, open_only, statuses):
         raise click.ClickException(str(e))
 
 
+def resolve_project_ref(client, ref):
+    """A `--project` value → the board's `P<N>` ext_id.
+
+    Accepts the ext_id or the project's NAME, because the name is what an agent
+    has in hand: it is the Drive folder it just worked in, while `P3` lives only
+    on canopy-web.
+
+    An unknown value RAISES. The server deliberately does not 404 on one — it
+    keeps the task and files it nowhere, which is right for the API (a typo must
+    not cost an agent the work it just recorded) and wrong for a CLI, where it
+    would report success and leave the task unfiled. Failing here is the only
+    place that difference can be seen.
+    """
+    raw = str(ref or "").strip()
+    projects = client.list_projects()
+    for project in projects:
+        if str(project.get("ext_id") or "").strip().casefold() == raw.casefold():
+            return project["ext_id"]
+
+    named = [p for p in projects
+             if str(p.get("name") or "").strip().casefold() == raw.casefold()]
+    if len(named) == 1:
+        return named[0]["ext_id"]
+    if len(named) > 1:
+        raise click.ClickException(
+            f"{raw!r} is the name of {len(named)} projects on this board — "
+            f"pass the P<N> ext_id instead ({', '.join(p['ext_id'] for p in named)})."
+        )
+
+    known = ", ".join(f"{p['ext_id']} {p['name']}" for p in projects) or "none yet"
+    raise click.ClickException(
+        f"no project {raw!r} on this board — pass a P<N> ext_id or the exact name. "
+        f"Nothing was written. Known: {known}. "
+        f"(`canopy agent project-add --slug … --name …` creates one.)"
+    )
+
+
+@agent.command("projects")
+@click.option("--slug", required=True)
+@click.option("--active", "active_only", is_flag=True,
+              help="Only projects still running — the default reading of the board.")
+def agent_projects(slug, active_only):
+    """List the agent's projects (JSON).
+
+    A project is the piece of work a `Projects/<name>` Drive folder holds. canopy
+    keeps the state the folder cannot state — what is open, what is parked on a
+    person, whether it is still running; Drive keeps the files.
+    """
+    try:
+        projects = _client(slug).list_projects()
+        if active_only:
+            projects = [p for p in projects if (p.get("status") or "active") == "active"]
+        _emit(projects)
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
+@agent.command("project-add")
+@click.option("--slug", required=True)
+@click.option("--name", required=True,
+              help="What the work IS — use the Drive folder's own name, so the two "
+                   "cannot drift apart. Max 200 chars.")
+@click.option("--outcome", default="", help="What DONE looks like, in one line.")
+@click.option("--drive-folder-url", default="",
+              help="The `Projects/<name>` folder this project is the state of. Pass it "
+                   "at creation: a project whose folder nobody can find is a second "
+                   "place to look rather than one place to look.")
+@click.option("--drive-folder-id", default="")
+@click.option("--repo", "repo_slug", default="", help="owner/name, if the work has one.")
+@click.option("--owner", "owner_note", default="",
+              help="The human who owns the outcome. Max 200 chars.")
+@click.option("--notes", default="")
+@click.option("--links", default="", help='"label|url, label2|url2" (bare urls OK).')
+def agent_project_add(slug, name, outcome, drive_folder_url, drive_folder_id,
+                      repo_slug, owner_note, notes, links):
+    """Create ONE project (auto-assigns the next P<N>).
+
+    One project per real piece of work — the same rule the Drive layout already
+    states. A project per task produces a directory of single-task projects, which
+    tells you less than the task list did.
+    """
+    try:
+        client = _client(slug)
+        _emit(client.create_project(
+            name=name.strip(), outcome=outcome.strip(), owner_note=owner_note.strip(),
+            drive_folder_id=drive_folder_id.strip(),
+            drive_folder_url=drive_folder_url.strip(),
+            repo_slug=repo_slug.strip(), notes=notes.strip(),
+            links=parse_task_links(links),
+        ))
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
+@agent.command("project-set")
+@click.option("--slug", required=True)
+@click.option("--project", "ref", required=True, metavar="EXT_ID_OR_NAME",
+              help="The board's P<N> ext_id, or the project's exact name.")
+@click.option("--status", default=None,
+              help="active / done / archived. Closing a project KEEPS its tasks — the "
+                   "history of what the work was is the point of a finished one.")
+@click.option("--name", default=None)
+@click.option("--outcome", default=None)
+@click.option("--drive-folder-url", default=None)
+@click.option("--drive-folder-id", default=None)
+@click.option("--repo", "repo_slug", default=None)
+@click.option("--owner", "owner_note", default=None)
+@click.option("--notes", default=None)
+@click.option("--links", default=None, help='REPLACE the links: "label|url, …". "" clears them.')
+def agent_project_set(slug, ref, links, **fields):
+    """Patch a project — close it, point it at its Drive folder, restate the outcome."""
+    try:
+        client = _client(slug)
+        ext_id = resolve_project_ref(client, ref)
+        if links is not None:
+            fields["links"] = parse_task_links(links)
+        _emit(client.patch_project(ext_id, **fields))
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
 @agent.command("syncs")
 @click.option("--slug", required=True)
 @click.option("--limit", type=int, default=None, help="Cap the number returned (newest first).")
@@ -414,7 +535,10 @@ def resolve_task_id(client, task_id):
               help='ADD one link, keeping the existing ones: "label|url". The common case — '
                    "a turn attaches the artifact it just produced. A url already on the card "
                    "is not duplicated.")
-def agent_set(slug, task_id, links, append_link, **fields):
+@click.option("--project", "project", default=None, metavar="EXT_ID_OR_NAME",
+              help="File this task into a project (P<N> ext_id or its exact name). Pass \"\" "
+                   "to take it out of one; omitting it leaves the filing alone.")
+def agent_set(slug, task_id, links, append_link, project, **fields):
     """Patch a task (store rationale/source/plan/status/score/review/links/…).
 
     Score a task WHEN you mark it done (--status done --score --review) so a manager
@@ -429,6 +553,10 @@ def agent_set(slug, task_id, links, append_link, **fields):
     try:
         client = _client(slug)
         task_id = resolve_task_id(client, task_id)
+        if project is not None:
+            # "" is a deliberate un-filing, so it skips resolution; anything else
+            # has to name a project that exists.
+            fields["project"] = resolve_project_ref(client, project) if project.strip() else ""
         if links is not None:
             fields["links"] = parse_task_links(links)
         elif append_link is not None:
@@ -613,7 +741,12 @@ def next_task_ext_id(tasks):
 @click.option("--due", default=None, help="YYYY-MM-DD.")
 @click.option("--links", default="", help='"label|url, label2|url2" (bare urls OK).')
 @click.option("--notes", default="")
-def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confidence, due, links, notes):
+@click.option("--project", default="", metavar="EXT_ID_OR_NAME",
+              help="File the task into a project (P<N> ext_id or its exact name) — the "
+                   "same work its `Projects/<name>` Drive folder holds. Leave it off for "
+                   "a genuine one-off.")
+def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confidence, due,
+              links, notes, project):
     """Create ONE task on the board (upsert via tasks/sync; auto-assigns the next T<N>)."""
     import re
 
@@ -628,8 +761,12 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
     task_links = parse_task_links(links)
     try:
         client = _client(slug)
+        # Resolved BEFORE the task is built: an unknown project must cost nothing,
+        # not leave a task filed nowhere with a success on stdout.
+        filing = resolve_project_ref(client, project) if project.strip() else ""
         task = {
             "ext_id": ext_id or next_task_ext_id(client.list_tasks()),
+            "project": filing,
             "title": title,
             "next_action": next_action,
             "status": normalize_task_status(status),

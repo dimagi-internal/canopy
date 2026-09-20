@@ -203,6 +203,21 @@ class AgentClient:
     def list_tasks(self) -> "list[dict]":
         return _rows(self._call("GET", f"/api/agents/{self.slug}/tasks/"))
 
+    def list_projects(self) -> "list[dict]":
+        """The agent's projects — the state behind its Drive `Projects/<name>` folders.
+
+        Per agent, like the folders are: two agents on one initiative have a project
+        each and share files when they want to."""
+        return _rows(self._call("GET", f"/api/agents/{self.slug}/projects/"))
+
+    def create_project(self, **fields) -> dict:
+        return self._call("POST", f"/api/agents/{self.slug}/projects/", fields)
+
+    def patch_project(self, ref: str, **fields) -> dict:
+        """Patch by `P<N>` ext_id or numeric id. Omitted fields are left alone."""
+        patch = {k: v for k, v in fields.items() if v is not None}
+        return self._call("PATCH", f"/api/agents/{self.slug}/projects/{ref}/", patch)
+
     def list_syncs(self, limit: int | None = None) -> "list[dict]":
         """Past manager syncs, newest period_end first. The manager-sync window is
         the latest sync's period_end → today, so state lives here, not a repo file."""
