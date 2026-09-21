@@ -43,7 +43,7 @@ __all__ = ["AgentIdentity", "BoardCommand", "AgentClient", "catalog_from_repo", 
 # correct answer for it — there is no dispatch row to join to.
 _EMDASH_TASK = re.compile(
     r"^(?:emdash-)?(?:"
-    r"(?P<task>c-.*-[a-z0-9]{4})(?:-[a-z0-9]{5})?"          # current
+    r"(?P<task>cx?-.*-[a-z0-9]{4})(?:-[a-z0-9]{5})?"         # current (cx- = a caller's session)
     r"|(?P<legacy>.*-\d{4}-\d{4})(?:-[a-z0-9]+)?"           # pre-2026-09 names
     r")$"
 )
@@ -196,6 +196,11 @@ class AgentClient:
 
     def put_skills(self, items: list[dict]) -> dict:
         return self._call("PUT", f"/api/agents/{self.slug}/skills/", {"skills": items})
+
+    def put_interface(self, interface: dict) -> dict:
+        """Publish the declared interface (config/interface.yaml). Owner-or-admin
+        on the server: it decides what callers can make the agent do."""
+        return self._call("PUT", f"/api/agents/{self.slug}/interface", {"interface": interface})
 
     def sync_tasks(self, tasks: list[dict]) -> dict:
         return self._call("POST", f"/api/agents/{self.slug}/tasks/sync", {"tasks": tasks})

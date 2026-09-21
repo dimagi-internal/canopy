@@ -139,6 +139,27 @@ def agent_skills(slug, skills_root, url_template, json_file):
         raise click.ClickException(str(e))
 
 
+@agent.command("interface")
+@click.option("--slug", required=True)
+@click.option("--repo", type=click.Path(exists=True, file_okay=False), default=".",
+              help="Agent repo whose config/interface.yaml to publish.")
+def agent_interface(slug, repo):
+    """Publish the agent's declared interface — what CALLERS (anyone not its owner
+    or an admin) may ask it for. From then on, a caller's turn runs confined to
+    the capability it is offered, or is refused. canopy-web validates the file
+    strictly and answers a bad one with 422; publishing needs owner or admin."""
+    import yaml
+
+    path = Path(repo) / "config" / "interface.yaml"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        _emit(_client(slug).put_interface(doc or {}))
+    except FileNotFoundError:
+        raise click.ClickException(f"no {path}")
+    except (CanopyError, RuntimeError, yaml.YAMLError) as e:
+        raise click.ClickException(str(e))
+
+
 @agent.command("tasks-sync")
 @click.option("--slug", required=True)
 @click.option("--json", "json_file", required=True, type=click.Path(exists=True),
