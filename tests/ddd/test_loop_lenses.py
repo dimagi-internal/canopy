@@ -319,6 +319,54 @@ def test_an_action_that_stops_working_is_a_regression(tmp_path):
     assert result["regressions"][0]["kind"] == "action_regression"
 
 
+def test_a_deliberately_removed_action_warns_but_does_not_fail(tmp_path):
+    """canopy#624: replacing a no-op scroll_to with a pixel scroll — canopy's own
+    framing remedy — removed an action by design, and the guard failed a run that
+    went 20/20 -> 23/23 with nothing regressed."""
+    run = tmp_path / "run"
+    run.mkdir()
+    _write_report(
+        run,
+        [
+            {"scene_index": 2, "kind": "scroll_to", "target": "text:Meetings filed each week", "ok": True},
+            {"scene_index": 2, "kind": "click", "target": "btn", "ok": True},
+        ],
+    )
+    record(run)
+
+    _write_report(
+        run,
+        [
+            {"scene_index": 2, "kind": "scroll", "target": "519", "ok": True},
+            {"scene_index": 2, "kind": "click", "target": "btn", "ok": True},
+        ],
+    )
+    result = record(run)
+    assert result["verdict"] == "warn"
+    assert result["regressions"] == []
+    assert result["disappeared"][0]["kind"] == "action_disappeared"
+    assert result["disappeared"][0]["action"] == "scroll_to"
+
+
+def test_a_failing_action_still_fails_alongside_a_removed_one(tmp_path):
+    """Softening the absent case must not soften the real one."""
+    run = tmp_path / "run"
+    run.mkdir()
+    _write_report(
+        run,
+        [
+            {"scene_index": 1, "kind": "scroll_to", "target": "a", "ok": True},
+            {"scene_index": 1, "kind": "click", "target": "btn", "ok": True},
+        ],
+    )
+    record(run)
+    _write_report(run, [{"scene_index": 1, "kind": "click", "target": "btn", "ok": False}])
+    result = record(run)
+    assert result["verdict"] == "fail"
+    assert [f["kind"] for f in result["regressions"]] == ["action_regression"]
+    assert len(result["disappeared"]) == 1
+
+
 def test_a_newly_passing_action_is_not_a_regression(tmp_path):
     run = tmp_path / "run"
     run.mkdir()

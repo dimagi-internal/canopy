@@ -420,7 +420,10 @@ RUN_DIR="<run_dir>"; SPEC_ABS="$(realpath <unified_spec>)"
 
 - **regression_guard** — a previously-passing action now failing is a hard
   fail; a score that moved is reported, not gated (a judge is not
-  deterministic). This exists because a correct fix in one iteration removed
+  deterministic). An action that ran last iteration and is simply **absent**
+  now is a `warn` (`?` lines): confirm the recipe dropped it on purpose — the
+  documented `scroll_to` → pixel `scroll` framing fix does exactly that — and
+  move on (canopy#624). This exists because a correct fix in one iteration removed
   the control the next scene clicked, and nothing noticed.
 - **data_fidelity** — identical derived columns, duplicate rows, round-robin
   ids, implausibly flat ratios. This was the most-repeated judge finding of the

@@ -19,6 +19,15 @@ Only the action regression sets a failing verdict. The point is to be loud about
 the thing that is certainly a regression and merely informative about the thing
 that might be.
 
+An action that ran last iteration and is **absent** now is the second kind, so
+it is a ``warn``, not a ``fail``. Its own message says it cannot tell which it
+is — "either the recipe dropped it or the scene no longer reaches it" — and the
+common cause is a deliberate recipe edit: canopy's own framing remedy replaces a
+no-op ``scroll_to`` with a pixel ``scroll``, which removes an action by design.
+Failing that gated a run that went 20/20 -> 23/23 with nothing regressed
+(canopy#624). The case the guard exists for still fails: a scene that no longer
+reaches its controls has an action that now FAILS, and that is the other branch.
+
     python -m scripts.ddd.regression_guard <run_dir> [--json]
 """
 from __future__ import annotations
@@ -86,6 +95,7 @@ def record(run_dir: str | Path, *, iteration: int | None = None) -> dict:
     previous = history[-1] if history else None
 
     findings: list[dict[str, Any]] = []
+    disappeared: list[dict[str, Any]] = []
     score_moves: list[dict[str, Any]] = []
 
     if previous:
@@ -104,7 +114,7 @@ def record(run_dir: str | Path, *, iteration: int | None = None) -> dict:
                 )
             elif was_ok and key not in snapshot["actions"]:
                 scene, kind, target = key.split(":", 2)
-                findings.append(
+                disappeared.append(
                     {
                         "kind": "action_disappeared",
                         "scene": scene,
@@ -132,8 +142,9 @@ def record(run_dir: str | Path, *, iteration: int | None = None) -> dict:
         "actions_ok": f"{snapshot['ok']}/{snapshot['total']}",
         "previous_actions_ok": f"{previous['ok']}/{previous['total']}" if previous else None,
         "regressions": findings,
+        "disappeared": disappeared,
         "score_moves": score_moves,
-        "verdict": "pass" if not findings else "fail",
+        "verdict": "fail" if findings else ("warn" if disappeared else "pass"),
     }
 
 
@@ -145,7 +156,7 @@ def _cli() -> int:
     result = record(args[0])
     if "--json" in sys.argv:
         print(json.dumps(result, indent=1))
-        return 0 if result["verdict"] == "pass" else 1
+        return 1 if result["verdict"] == "fail" else 0
 
     print(f"regression-guard: {result['verdict']}  (iteration {result['iteration']})")
     print(f"  actions ok: {result['actions_ok']}", end="")
@@ -155,10 +166,12 @@ def _cli() -> int:
         print("  (first iteration — nothing to compare)")
     for finding in result["regressions"]:
         print(f"  ! {finding['detail']}")
+    for finding in result["disappeared"]:
+        print(f"  ? {finding['detail']} (confirm the recipe removed it on purpose)")
     for move in result["score_moves"]:
         arrow = "↑" if move["direction"] == "up" else "↓"
         print(f"  {arrow} {move['dimension']}: {move['from']:g} -> {move['to']:g}")
-    return 0 if result["verdict"] == "pass" else 1
+    return 1 if result["verdict"] == "fail" else 0
 
 
 if __name__ == "__main__":
