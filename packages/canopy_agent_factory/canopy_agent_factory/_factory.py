@@ -599,7 +599,7 @@ capabilities:
   ask:
     description: Ask {{AGENT_NAME}} a question by email.
     callers: [contact:verified, member]
-    entry: /{{AGENT_SLUG}}:ask --thread {thread_id}
+    entry: /{{AGENT_SLUG}}:answer-caller --thread {thread_id}
     tools: [Read, Grep, Glob, Write, "mcp__*canopy-web__who_is_asking"]
     bash:
       - "canopy email read --repo . {thread_id}"
@@ -610,16 +610,16 @@ callers_default: none
 '''
 
 _ASK_SKILL = '''---
-name: ask
-description: >
-  Answer a CALLER — someone who is not {{AGENT_NAME}}'s owner or an admin — through the
-  `ask` capability in config/interface.yaml. canopy starts this session for them; the
-  tools are confined to that capability. Not for the owner's own turns (that is `turn`).
+name: answer-caller
+description: Answer a caller (not {{AGENT_NAME}}'s owner or an admin) in a canopy-confined session.
+# Started by canopy as the `ask` capability's entry, never self-dispatched: a
+# full-profile turn has no business running the caller path.
+disable-model-invocation: true
 ---
 
-# Ask — answering a caller
+# Answer a caller
 
-You were started as `/{{AGENT_SLUG}}:ask --thread <id> --caller <path>`. This session is
+You were started as `/{{AGENT_SLUG}}:answer-caller --thread <id> --caller <path>`. This session is
 CONFINED: only what `config/interface.yaml` lists for `ask` will run, and everything
 else is refused by canopy's guard. That is the design, not a fault — do not look for a
 way around a refusal; say in the reply what you cannot do and that a human will follow up.
@@ -905,7 +905,7 @@ _TEMPLATES: dict[str, str] = {
     "config/gating.json": _GATING_JSON,
     "config/allowlist.txt": _ALLOWLIST,
     "config/interface.yaml": _INTERFACE_YAML,
-    "skills/ask/SKILL.md": _ASK_SKILL,
+    "skills/answer-caller/SKILL.md": _ASK_SKILL,
     "config/agent.json": _AGENT_JSON,
     ".claude/settings.json": _SETTINGS_JSON,
     "hooks/gating_guard.py": _GATING_GUARD,

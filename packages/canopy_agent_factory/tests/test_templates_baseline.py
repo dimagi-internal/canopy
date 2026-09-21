@@ -18,9 +18,11 @@ from canopy_agent_factory import gating_config, templates
 
 def test_templates_is_non_empty_with_expected_count():
     t = templates()
-    # 20 entries verified at extraction time (EXTRACTION-BRIEF.md) — a change to this
-    # number should be a deliberate template addition/removal, not a silent regression.
-    assert len(t) == 20
+    # 20 entries verified at extraction time (EXTRACTION-BRIEF.md), +2 on 2026-09-21 for
+    # the declared interface (config/interface.yaml, skills/answer-caller) — a change to
+    # this number should be a deliberate template addition/removal, not a silent regression.
+    assert len(t) == 22
+    assert "config/interface.yaml" in t
     assert "CLAUDE.md" in t
     assert "config/gating.json" in t
 
