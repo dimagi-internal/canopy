@@ -10,6 +10,7 @@ from orchestrator.pipeline import run_cycle, CycleConfig
 from orchestrator.server import run_server
 from orchestrator.agent_cli import agent as agent_group
 from orchestrator.agent_email import email_group
+from orchestrator.caller import caller_group
 from orchestrator.agent_gdoc import gdoc_group, gsheet_group
 from orchestrator.eval_cli import eval_group
 from orchestrator.project_cli import project as project_group
@@ -99,6 +100,7 @@ def main():
 
 main.add_command(agent_group)
 main.add_command(email_group)
+main.add_command(caller_group)
 main.add_command(gdoc_group)
 main.add_command(gsheet_group)
 main.add_command(eval_group)
