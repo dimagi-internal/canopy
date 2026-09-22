@@ -224,14 +224,16 @@ def _degraded(exc):
 
     tool = payload.get("tool_name", "")
     inp = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
-    if tool == "Bash":
+    shell = tool in ("Bash", "PowerShell")    # engine parity: a "Bash" rail covers every shell
+    if shell:
         subject = inp.get("command", "") or ""
     elif tool in ("Edit", "Write", "NotebookEdit"):
         subject = inp.get("file_path", "") or inp.get("notebook_path", "") or ""
     else:
         subject = ""
     for rule in cfg.get("deny", []):
-        if rule.get("tool") and rule["tool"] != tool:
+        want = rule.get("tool")
+        if want and want != tool and not (want == "Bash" and shell and not rule.get("bash_only")):
             continue
         if any(rule.get(k) for k in _RICH):
             pass                          # cannot evaluate it here -> assume it fires
@@ -269,7 +271,7 @@ _SETTINGS_JSON = '''{
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|Write|NotebookEdit|Skill",
+        "matcher": "Bash|PowerShell|Edit|Write|NotebookEdit|Skill",
         "hooks": [
           {
             "type": "command",

@@ -36,7 +36,12 @@ Reads `<repo>/config/gating.json` and enforces, at the tool-call boundary:
 
 A rule is `{"tool": ..., "tool_pattern": ..., "pattern": ..., "per_statement": ..., "message": ...}`:
 
-  tool           exact tool-name match.
+  tool           exact tool-name match — EXCEPT `"Bash"`, which means "any shell tool" (see
+                 SHELL_TOOLS). A rail written against a command line applies to every shell
+                 the harness offers unless it opts out with `bash_only`.
+  bash_only      restrict a `"tool": "Bash"` rule to the Bash tool alone. For rails about the
+                 SHELL rather than the command — e.g. zsh EQUALS expansion, which PowerShell
+                 does not have.
   tool_pattern   regex over the tool NAME. Needed because MCP tool names carry their plugin
                  mount — the same gdrive creator is `mcp__plugin_chrome-sales_gdrive__…` for
                  one agent and `mcp__plugin_ace_ace-gdrive__…` for another.
@@ -147,6 +152,19 @@ def baseline_rails(cfg, slug):
     return rails
 
 
+# Every tool that takes a command LINE. On Windows, Claude Code offers PowerShell beside Bash,
+# and until 2026-09-22 every rail in the fleet silently applied to Bash alone, in two layers:
+# the factory matcher never routed PowerShell to this hook, and even when it did, `subject_for`
+# fell through to the JSON-of-input path, so the command arrived as `{"command": "gog gmail
+# send …"}` and every rail anchored on `(?:^|[\n;&|(])` missed on the leading quote. And a
+# third layer neither of those fixes would have reached: every rail says `"tool": "Bash"`,
+# which `matches` compared EXACTLY. Measured on fizzy (Shayoni Mazumdar): `gog gmail send`, a
+# Salesforce `curl -X POST` and `python sf-refresh.py` were blocked in Bash and allowed in
+# PowerShell. So a shell rail means every shell — one family, not a PowerShell copy of each
+# rail, which would drift the day someone added a rail and forgot its twin.
+SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
+
+
 def subject_for(tool_name, tool_input):
     """The string a rule's pattern is tested against, per tool.
 
@@ -157,7 +175,7 @@ def subject_for(tool_name, tool_input):
     That left every Drive-creating MCP tool outside the filing rails while Bash was railed."""
     if not isinstance(tool_input, dict):
         return ""
-    if tool_name == "Bash":
+    if tool_name in SHELL_TOOLS:
         return tool_input.get("command", "") or ""
     if tool_name in ("Edit", "Write", "NotebookEdit"):
         return tool_input.get("file_path", "") or tool_input.get("notebook_path", "") or ""
@@ -170,7 +188,7 @@ def subject_for(tool_name, tool_input):
 def summarize_action(tool_name, subject):
     """A crisp, human-readable summary of the GATED action — so the approval prompt says exactly
     WHAT you're approving at a glance, not a generic 'needs approval' over a wall of bash."""
-    if tool_name != "Bash":
+    if tool_name not in SHELL_TOOLS:
         return tool_name + " -> " + subject[:80]
     s = subject
     m = re.search(r"\bgit\s+push\b([^\n;&|]*)", s)
@@ -207,9 +225,17 @@ def approval_reason(rule, tool_name, subject, cwd, name):
     return head + "\n  why: " + note + "\n  full command: " + cmd
 
 
+def tool_applies(rule, tool_name):
+    """Does the rule's `tool` cover this tool? `"Bash"` covers every shell unless `bash_only`."""
+    want = rule.get("tool")
+    if not want or want == tool_name:
+        return True
+    return want == "Bash" and tool_name in SHELL_TOOLS and not rule.get("bash_only")
+
+
 def matches(rule, tool_name, subject):
     """Does this rule fire on this call?"""
-    if rule.get("tool") and rule["tool"] != tool_name:
+    if not tool_applies(rule, tool_name):
         return False
     tpat = rule.get("tool_pattern")
     if tpat:

@@ -339,6 +339,38 @@ def test_gating_loader_degrades_without_bricking_or_weakening(tmp_path):
     assert r.returncode == 2 and "/canopy:update" in r.stderr
 
 
+def test_stamped_matcher_routes_every_shell_to_the_guard(tmp_path):
+    """On Windows the harness offers PowerShell beside Bash. A matcher without it never calls
+    the guard from that shell, so every rail is bypassed there (fizzy, 2026-09-22)."""
+    create_agent(_spec(), tmp_path / "echo")
+    settings = json.loads((tmp_path / "echo" / ".claude" / "settings.json").read_text())
+    matchers = [e["matcher"] for e in settings["hooks"]["PreToolUse"]
+                if any("gating_guard.py" in h["command"] for h in e["hooks"])]
+    assert any("PowerShell" in m.split("|") for m in matchers)
+    assert any("Bash" in m.split("|") for m in matchers)
+
+
+def test_degraded_loader_applies_local_shell_rails_to_powershell(tmp_path):
+    """Engine unreachable: the loader's fallback must treat PowerShell as a shell too, and
+    still honour `bash_only`."""
+    create_agent(_spec(), tmp_path / "echo")
+    root = tmp_path / "echo"
+    (root / "config" / "gating.json").write_text(json.dumps({"deny": [
+        {"tool": "Bash", "pattern": "forbidden_local_thing", "message": "BLOCKED: local rail."},
+        {"tool": "Bash", "bash_only": True, "pattern": "zsh_only_thing", "message": "BLOCKED."}]}))
+    broken = _hook_env(CANOPY_PLUGIN_DIR=str(tmp_path / "nonexistent"))
+
+    def run(tool, cmd):
+        return subprocess.run([sys.executable, str(root / "hooks" / "gating_guard.py")],
+                              input=json.dumps({"tool_name": tool, "tool_input": {"command": cmd}}),
+                              capture_output=True, text=True, env=broken).returncode
+
+    assert run("PowerShell", "forbidden_local_thing now") == 2
+    assert run("PowerShell", "Get-ChildItem") == 0
+    assert run("Bash", "zsh_only_thing") == 2
+    assert run("PowerShell", "zsh_only_thing") == 0
+
+
 def test_templates_carry_non_ascii_and_round_trip(tmp_path):
     """The shipped templates contain non-ASCII, and it must survive the write.
 
