@@ -12,7 +12,9 @@ skill. `From:` is forgeable. The allowlist said who is trusted; nothing said
 whether THIS message came from them. This command is the one deterministic place
 that combines the two, so no agent re-derives it:
 
-  act         allowlisted AND verified — may steer the agent
+  act         canopy granted the whole agent (owner, admin, or a `full:` domain
+              rule) — or, for an agent with no interface, allowlisted AND verified
+  caller      confined by canopy to one capability of the declared interface
   unverified  allowlisted address, but THIS message is not verified: treat as
               unknown (read-only, surface to the human) and say why
   unlisted    not on the allowlist — the agent derives any narrower tier
@@ -33,6 +35,8 @@ from pathlib import Path
 import click
 
 ACT, UNVERIFIED, UNLISTED, SYSTEM, BLOCKED = "act", "unverified", "unlisted", "system", "blocked"
+#: Confined by canopy to one capability of the declared interface.
+CALLER = "caller"
 
 
 def load_allowlist(repo: Path) -> list[str]:
@@ -77,6 +81,19 @@ def resolve(env: dict, rules: list[str]) -> dict:
                 "reason": "the workspace blocked this person; do not act on or reply to it"}
     if kind in ("system", "agent"):
         return {**out, "tier": SYSTEM, "reason": f"started by {who.get('via') or kind}"}
+    # canopy's DECISION, when the agent has a declared interface: it is the
+    # authority on who gets the whole agent (owner, admin, or a `full:` rule such as
+    # contact@dimagi.com:verified — domain-wide access), so a repo allowlist is not
+    # consulted. Only an agent with no interface falls back to the allowlist below.
+    granted = str(env.get("granted_by") or "")
+    out["granted_by"] = granted or None
+    if granted in ("owner", "admin") or granted.startswith("full:"):
+        return {**out, "tier": ACT,
+                "reason": f"canopy grants this sender the whole agent ({granted})"}
+    if granted.startswith("capability:"):
+        return {**out, "tier": CALLER,
+                "reason": f"confined by canopy to '{granted.split(':', 1)[1]}': answer within it; "
+                          "anything more is for the agent's owner"}
     if not allowlisted(address, rules):
         return {**out, "tier": UNLISTED,
                 "reason": "not on config/allowlist.txt; derive any narrower tier from your own state"}

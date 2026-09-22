@@ -3,7 +3,7 @@
 
 canopy-web decides, per turn, whether the person who asked is the agent's owner
 or an admin (full profile) or a caller — anyone else — who reaches only the
-capability the agent declares for them (`config/interface.yaml`; canopy-web
+capability the agent's DECLARED INTERFACE gives them (held on canopy-web; canopy-web
 `apps/agents/interface.py`). The runner opens every caller turn in its OWN
 emdash session, named `cx-…`, and writes that capability's profile to
 `~/.canopy/profiles/<task>.json` BEFORE the session starts. This hook, registered

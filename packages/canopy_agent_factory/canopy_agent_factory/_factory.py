@@ -583,34 +583,6 @@ _ALLOWLIST = '''# Counterparts {{AGENT_NAME}} may ACT on (send/reply/write). One
 # A line may be a full address (name@example.com) or a whole domain (@example.com).
 '''
 
-_INTERFACE_YAML = '''# What CALLERS may ask {{AGENT_NAME}} for: anyone who is not its owner or an admin.
-#
-# NOT IN EFFECT until published:  canopy agent interface --slug {{AGENT_SLUG}}
-# Once published, the owner and admins still get the whole agent; every other
-# person's turn runs confined to the capability below, or is refused. Everything
-# not listed is denied (canopy's profile_guard hook enforces it), so start narrow.
-#
-#   callers     member | contact | unknown, optionally :verified (THIS message is
-#               DMARC-aligned mail, or a signed assertion from a framed origin)
-#   entry       the command the caller's session starts with
-#   tools       Claude Code tool names (fnmatch); MCP tools by their full name
-#   bash        allowed commands, argument for argument; `*` is ONE argument;
-#               {thread_id} is the caller's own thread, {cwd} the worktree
-#   read_paths  where path-taking tools (Read, Grep, Glob, Write…) may reach
-capabilities:
-  ask:
-    description: Ask {{AGENT_NAME}} a question by email.
-    callers: [contact:verified, member]
-    entry: /{{AGENT_SLUG}}:answer-caller --thread {thread_id}
-    tools: [Read, Grep, Glob, Write, "mcp__*canopy-web__who_is_asking"]
-    bash:
-      - "canopy email read --repo . {thread_id}"
-      - "canopy email review-receipt --repo . --body-file {cwd}/*"
-      - "bin/{{AGENT_SLUG}}-email --reply-all --thread-id {thread_id} --subject * --body-file {cwd}/*"
-    read_paths: ["{cwd}/**"]
-callers_default: none
-'''
-
 _ASK_SKILL = '''---
 name: answer-caller
 description: Answer a caller (not {{AGENT_NAME}}'s owner or an admin) in a canopy-confined session.
@@ -622,7 +594,8 @@ disable-model-invocation: true
 # Answer a caller
 
 You were started as `/{{AGENT_SLUG}}:answer-caller --thread <id> --caller <path>`. This session is
-CONFINED: only what `config/interface.yaml` lists for `ask` will run, and everything
+CONFINED: only what the agent's declared interface (on canopy-web) lists for this
+capability will run, and everything
 else is refused by canopy's guard. That is the design, not a fault — do not look for a
 way around a refusal; say in the reply what you cannot do and that a human will follow up.
 
@@ -906,7 +879,6 @@ _TEMPLATES: dict[str, str] = {
     "bin/{{AGENT_SLUG}}-email": _EMAIL_SHIM,
     "config/gating.json": _GATING_JSON,
     "config/allowlist.txt": _ALLOWLIST,
-    "config/interface.yaml": _INTERFACE_YAML,
     "skills/answer-caller/SKILL.md": _ASK_SKILL,
     "config/agent.json": _AGENT_JSON,
     ".claude/settings.json": _SETTINGS_JSON,

@@ -139,24 +139,35 @@ def agent_skills(slug, skills_root, url_template, json_file):
         raise click.ClickException(str(e))
 
 
-@agent.command("interface")
-@click.option("--slug", required=True)
-@click.option("--repo", type=click.Path(exists=True, file_okay=False), default=".",
-              help="Agent repo whose config/interface.yaml to publish.")
-def agent_interface(slug, repo):
-    """Publish the agent's declared interface — what CALLERS (anyone not its owner
-    or an admin) may ask it for. From then on, a caller's turn runs confined to
-    the capability it is offered, or is refused. canopy-web validates the file
-    strictly and answers a bad one with 422; publishing needs owner or admin."""
-    import yaml
+@agent.group("interface")
+def agent_interface():
+    """An agent's DECLARED INTERFACE — who may make it do what: the whole agent for
+    trusted addresses (`full:`, e.g. contact@dimagi.com:verified), a confined
+    capability for everyone else. LIVE STATE held on canopy-web, never a file in
+    the agent's repo; also editable on the agent's Overview page."""
 
-    path = Path(repo) / "config" / "interface.yaml"
+
+@agent_interface.command("get")
+@click.option("--slug", required=True)
+def agent_interface_get(slug):
+    """Print the interface as saved (YAML), or the parsed form if it has none."""
     try:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        _emit(_client(slug).put_interface(doc or {}))
-    except FileNotFoundError:
-        raise click.ClickException(f"no {path}")
-    except (CanopyError, RuntimeError, yaml.YAMLError) as e:
+        body = _client(slug).get_interface()
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+    click.echo(body.get("source") or json.dumps(body.get("interface") or {}, indent=2))
+
+
+@agent_interface.command("set")
+@click.option("--slug", required=True)
+@click.option("--file", "file_", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="YAML to save — any path; it is not read from, or kept in, the repo.")
+def agent_interface_set(slug, file_):
+    """Save the interface on canopy-web. Validated there; a bad file is refused
+    with the reason. Needs the agent's owner or an admin."""
+    try:
+        _emit(_client(slug).put_interface_source(Path(file_).read_text(encoding="utf-8")))
+    except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 
 

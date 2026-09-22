@@ -1,27 +1,48 @@
-"""`canopy agent interface` publishes config/interface.yaml as-is; canopy-web validates."""
+"""`canopy agent interface get|set` — the interface lives on canopy-web, not in the repo."""
+import json
+
 from click.testing import CliRunner
 
 from orchestrator import agent_cli
 
 
-def test_publishes_the_repo_file(tmp_path, monkeypatch):
-    (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "interface.yaml").write_text(
-        "capabilities:\n  ask:\n    callers: [member]\ncallers_default: none\n", encoding="utf-8")
-    sent = {}
+class Fake:
+    def __init__(self, body=None):
+        self.body, self.sent = body or {}, None
 
-    class Fake:
-        def put_interface(self, doc):
-            sent["doc"] = doc
-            return {"interface": doc}
+    def get_interface(self):
+        return self.body
 
-    monkeypatch.setattr(agent_cli, "_client", lambda slug, **k: Fake())
-    r = CliRunner().invoke(agent_cli.agent, ["interface", "--slug", "ace", "--repo", str(tmp_path)])
+    def put_interface_source(self, source):
+        self.sent = source
+        return {"source": source}
+
+
+def test_set_sends_the_file_verbatim(tmp_path, monkeypatch):
+    f = tmp_path / "anywhere.yaml"
+    f.write_text("# kept\nfull: [contact@dimagi.com:verified]\n", encoding="utf-8")
+    fake = Fake()
+    monkeypatch.setattr(agent_cli, "_client", lambda slug, **k: fake)
+    r = CliRunner().invoke(agent_cli.agent, ["interface", "set", "--slug", "ace", "--file", str(f)])
     assert r.exit_code == 0, r.output
-    assert sent["doc"] == {"capabilities": {"ask": {"callers": ["member"]}}, "callers_default": "none"}
+    assert fake.sent == "# kept\nfull: [contact@dimagi.com:verified]\n"
 
 
-def test_a_missing_file_says_so(tmp_path, monkeypatch):
-    monkeypatch.setattr(agent_cli, "_client", lambda slug, **k: None)
-    r = CliRunner().invoke(agent_cli.agent, ["interface", "--slug", "ace", "--repo", str(tmp_path)])
-    assert r.exit_code != 0 and "interface.yaml" in r.output
+def test_get_prints_the_saved_yaml(monkeypatch):
+    monkeypatch.setattr(agent_cli, "_client", lambda slug, **k: Fake({"source": "full: []\n"}))
+    r = CliRunner().invoke(agent_cli.agent, ["interface", "get", "--slug", "ace"])
+    assert r.output.strip() == "full: []"
+
+
+def test_get_falls_back_to_the_parsed_form(monkeypatch):
+    monkeypatch.setattr(agent_cli, "_client",
+                        lambda slug, **k: Fake({"source": "", "interface": {"full": ["member"]}}))
+    r = CliRunner().invoke(agent_cli.agent, ["interface", "get", "--slug", "ace"])
+    assert json.loads(r.output) == {"full": ["member"]}
+
+
+def test_there_is_no_repo_default(tmp_path, monkeypatch):
+    """No --file means no guess at a repo path: the repo does not hold this."""
+    monkeypatch.setattr(agent_cli, "_client", lambda slug, **k: Fake())
+    r = CliRunner().invoke(agent_cli.agent, ["interface", "set", "--slug", "ace"])
+    assert r.exit_code != 0 and "--file" in r.output
