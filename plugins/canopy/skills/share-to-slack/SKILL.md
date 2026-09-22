@@ -7,7 +7,8 @@ description: |
   there). Use when asked to "share this to slack", "summarize and share what
   we're doing", "post an update to #channel", or "start a slack thread from
   this session". Argument: a channel (`#dev` or an id), plus `bind` for a
-  connected thread.
+  connected thread. Run it again on a bound session to post an update into
+  its thread.
 ---
 
 # Share to Slack
@@ -23,8 +24,14 @@ thread to this session.
 Parse the arguments: a channel (`#name`, `name`, or an id like `C0123ABCD`) and
 an optional `bind`.
 
-- **No channel given** → ask for one with `AskUserQuestion`. There is no default
-  channel; never guess one.
+- **This session was already shared with `bind`** (earlier in this conversation,
+  or the user says "post an update" / "update the thread") → no channel needed:
+  sharing a bound session posts the summary as an update in its own thread,
+  whatever channel or mode is passed. This is how the thread stays current: work
+  done here never reaches it on its own.
+- **No channel given** → call the tool without one first (it posts an update if
+  the session is bound). If it answers "Name a channel to share to", ask with
+  `AskUserQuestion`. There is no default channel; never guess one.
 - **Mode not stated** → `broadcast`. Use `bind` only when the user said `bind`,
   or asked for replies to come back to the session ("keep the thread connected",
   "let people reply to it here"). Binding lets anyone in the workspace who
@@ -32,7 +39,10 @@ an optional `bind`.
 
 ## Step 2 — write the summary
 
-Write it for a teammate who has NOT seen this session, in Markdown, short enough
+For an **update** to a bound thread, write what changed since the last post
+(done, found, next), not the whole story again.
+
+Otherwise, write it for a teammate who has NOT seen this session, in Markdown, short enough
 to read in Slack (aim for under ~150 words):
 
 1. **What** we're working on, in one sentence.
@@ -65,7 +75,8 @@ Call `share_session_to_slack` with:
 ## Step 4 — report
 
 On success, reply with the permalink the tool returned. For `bind`, add one
-line: replies in that thread now reach this session.
+line: replies in that thread now reach this session. A `status: updated` result
+means it went into the existing thread as a reply.
 
 The tool refuses in plain sentences. Relay them as they are; don't retry around
 them:
@@ -74,7 +85,6 @@ them:
 - **not linked**: mention @canopy once in Slack so canopy can link the account.
 - **no session** (bind only): canopy doesn't know this session (e.g. a Claude
   Code session outside emdash). Offer a broadcast instead.
-- **already bound**: this session already has a thread; it names the channel.
 - **agent not on Slack**: the agent's owner must turn Slack on for it.
 
 If the `canopy-web` MCP tools aren't available at all, say so. Don't fall back
