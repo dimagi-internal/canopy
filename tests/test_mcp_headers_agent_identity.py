@@ -84,3 +84,29 @@ def test_a_confined_session_never_gets_the_agents_pat_either(tmp_path):
     got = _run(home, _hal_repo(tmp_path), {"CANOPY_WEB_PAT": HAL,
                                            "CANOPY_PROFILE": str(tmp_path / "missing.json")})
     assert HAL not in got and got.startswith("Bearer cct_missing")
+
+
+def test_canopy_agent_names_the_agent_where_cwd_and_the_pat_env_cannot(tmp_path):
+    # Exactly how Claude Code runs the helper: from the PLUGIN's directory, with
+    # CANOPY_WEB_PAT stripped. Only CANOPY_AGENT (not a secret) gets through.
+    home = _home(tmp_path, operator=False, hal_env=f"CANOPY_WEB_PAT={HAL}\n")
+    plugin_root = tmp_path / "plugins" / "cache" / "canopy" / "0.2.513"
+    (plugin_root / ".claude-plugin").mkdir(parents=True)
+    (plugin_root / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "canopy"}))
+    assert _run(home, plugin_root, {"CANOPY_AGENT": "hal"}) == f"Bearer {HAL}"
+
+
+def test_canopy_agent_outranks_the_operator_file(tmp_path):
+    home = _home(tmp_path, hal_env=f"CANOPY_WEB_PAT={HAL}\n")
+    assert _run(home, tmp_path, {"CANOPY_AGENT": "hal"}) == f"Bearer {HAL}"
+
+
+def test_a_malformed_canopy_agent_reads_no_file(tmp_path):
+    home = _home(tmp_path)
+    assert _run(home, tmp_path, {"CANOPY_AGENT": "../.claude/canopy"}) == f"Bearer {OPERATOR}"
+
+
+def test_confinement_outranks_canopy_agent(tmp_path):
+    home = _home(tmp_path, hal_env=f"CANOPY_WEB_PAT={HAL}\n")
+    got = _run(home, tmp_path, {"CANOPY_AGENT": "hal", "CANOPY_PROFILE": str(tmp_path / "none.json")})
+    assert HAL not in got and got.startswith("Bearer cct_missing")
