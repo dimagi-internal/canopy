@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from click.testing import CliRunner
 
 from orchestrator.agent_doctor import (
@@ -42,7 +43,7 @@ def _agent_repo(tmp_path, *, email="hal@dimagi-ai.com", slug="hal",
         (repo / "hooks" / "gating_guard.py").write_text("# guard\n")
         (repo / ".claude").mkdir()
         (repo / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {"PreToolUse": [{"matcher": "Bash|Edit|Write",
+            "hooks": {"PreToolUse": [{"matcher": "Bash|PowerShell|Edit|Write",
                                       "hooks": [{"type": "command",
                                                  "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/gating_guard.py\""}]}]}
         }))
@@ -298,6 +299,48 @@ def test_hook_wiring_fails_without_guard_file(tmp_path):
     assert not result.ok and "no enforcement" in result.detail
 
 
+def _wire(repo, matcher):
+    (repo / ".claude" / "settings.json").write_text(json.dumps({
+        "hooks": {"PreToolUse": [{"matcher": matcher, "hooks": [
+            {"type": "command",
+             "command": 'python3 "$CLAUDE_PROJECT_DIR/hooks/gating_guard.py"'}]}]}}))
+
+
+def test_hook_wiring_fails_when_matcher_never_routes_powershell(tmp_path):
+    """The factory's pre-2026-09-22 matcher. The guard is registered, so the old check passed —
+    on fizzy, while every rail was bypassed from the Windows shell tool (Shayoni Mazumdar)."""
+    repo = _agent_repo(tmp_path)
+    _wire(repo, "Bash|Edit|Write|NotebookEdit|Skill")
+    result = check_hook_wiring(repo)
+    assert not result.ok
+    assert "PowerShell" in result.detail and "bypassed" in result.detail
+
+
+@pytest.mark.parametrize("matcher", [
+    "Bash|PowerShell|Edit|Write|NotebookEdit|Skill",   # the factory's matcher now
+    "*",
+    "",
+    "Bash|PowerShell|Edit|Write|NotebookEdit|Skill|^mcp__",   # eva's regex-bearing shape
+    "^(Bash|PowerShell)$",
+])
+def test_hook_wiring_accepts_every_matcher_that_covers_both_shells(tmp_path, matcher):
+    repo = _agent_repo(tmp_path)
+    _wire(repo, matcher)
+    assert check_hook_wiring(repo).ok
+
+
+def test_hook_wiring_counts_coverage_across_entries(tmp_path):
+    """Two PreToolUse entries that each route one shell to the guard cover both between them."""
+    repo = _agent_repo(tmp_path)
+    cmd = 'python3 "$CLAUDE_PROJECT_DIR/hooks/gating_guard.py"'
+    (repo / ".claude" / "settings.json").write_text(json.dumps({
+        "hooks": {"PreToolUse": [
+            {"matcher": "Bash|Edit", "hooks": [{"type": "command", "command": cmd}]},
+            {"matcher": "PowerShell", "hooks": [{"type": "command", "command": cmd}]},
+        ]}}))
+    assert check_hook_wiring(repo).ok
+
+
 def test_gating_zero_rails_fails_for_outbound_capable_agent(tmp_path):
     repo = _agent_repo(tmp_path)
     (repo / "config" / "gating.json").write_text(json.dumps({"deny": [], "approve": []}))
@@ -498,7 +541,7 @@ def test_hook_wiring_accepts_plugin_style_hooks_json(tmp_path):
     (repo / "hooks").mkdir()
     (repo / "hooks" / "gating_guard.py").write_text("# guard\n")
     (repo / "hooks" / "hooks.json").write_text(json.dumps({
-        "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+        "hooks": {"PreToolUse": [{"matcher": "Bash|PowerShell", "hooks": [
             {"type": "command",
              "command": 'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/gating_guard.py"'}]}]}
     }))
@@ -703,6 +746,18 @@ def test_rails_fire_catches_configured_but_unenforced(tmp_path, monkeypatch):
     repo = _railed_repo(tmp_path, monkeypatch, "import sys\nsys.exit(0)\n")
     r = check_rails_fire(repo)
     assert not r.ok and "DECLARED BUT NOT ENFORCED" in r.detail
+
+
+def test_rails_fire_catches_a_guard_that_only_blocks_bash(tmp_path, monkeypatch):
+    """The shape the old engine had: blocks the Bash probe, waves the identical PowerShell one
+    through. A Bash-only probe called this 'rails are in force'."""
+    from orchestrator.agent_doctor import check_rails_fire
+    guard = ("import json, sys\n"
+             "p = json.load(sys.stdin)\n"
+             "sys.exit(2 if p['tool_name'] == 'Bash' else 0)\n")
+    repo = _railed_repo(tmp_path, monkeypatch, guard)
+    r = check_rails_fire(repo)
+    assert not r.ok and "PowerShell" in r.detail and "NOT ENFORCED" in r.detail
 
 
 def test_rails_fire_skips_when_no_rail_predicts_a_block(tmp_path, monkeypatch):

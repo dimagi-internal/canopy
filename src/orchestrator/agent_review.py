@@ -575,7 +575,7 @@ _ERROR_MARKERS = re.compile(
 # produce one (a Read of the hook's own source contains "permissionDecision" but is not a block).
 # When a hook fires, its message IS the whole tool result, so the marker sits at the head —
 # a `cat config/gating.json` carries the same strings, but buried past the file preamble.
-_GATABLE_TOOLS = {"Bash", "Edit", "Write", "NotebookEdit"}
+_GATABLE_TOOLS = {"Bash", "PowerShell", "Edit", "Write", "NotebookEdit"}
 _GATING_HEAD = 300
 # No bare "PreToolUse" here — gating-policy prose mentions it constantly; hook RESULTS
 # always carry one of these instead.

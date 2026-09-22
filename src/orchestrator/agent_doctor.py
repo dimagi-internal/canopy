@@ -196,13 +196,39 @@ def check_gating(repo: Path) -> CheckResult:
     )
 
 
+# Every shell tool the harness can offer. On Windows, Claude Code has PowerShell beside Bash,
+# and a guard the matcher never routes a shell to is not guarding that shell. Mirrors the
+# engine's SHELL_TOOLS (agent-core/gating_guard.py).
+SHELL_TOOLS = ("Bash", "PowerShell")
+
+
+def _matcher_covers(matcher: str | None, tool: str) -> bool:
+    """Does a Claude Code hook matcher route `tool` to its hooks?
+
+    Empty / `*` match everything. A plain `A|B|C` list is exact names. Anything carrying regex
+    syntax (eva's `…|^mcp__`) is a regex searched against the tool name."""
+    if not matcher or matcher == "*":
+        return True
+    if re.fullmatch(r"[\w|]+", matcher):
+        return tool in matcher.split("|")
+    try:
+        return re.search(matcher, tool) is not None
+    except re.error:
+        return False
+
+
 def check_hook_wiring(repo: Path) -> CheckResult:
-    """The rails are only real if the PreToolUse hook is actually REGISTERED.
+    """The rails are only real if the PreToolUse hook is actually REGISTERED — for every shell.
 
     config/gating.json without .claude/settings.json wiring hooks/gating_guard.py is
     decorative — the exact "set up somewhere, not on this repo" drift class this doctor
     exists to catch. Checks: guard file exists + settings.json references it under a
-    PreToolUse matcher.
+    PreToolUse matcher + that matcher routes EVERY shell tool to it.
+
+    The last clause was added 2026-09-22. Before it, this check passed on fizzy while
+    PowerShell was completely unguarded: the guard was registered, just never called for the
+    one shell a Windows operator's agent actually has (found by Shayoni Mazumdar). "Is it
+    wired" was the wrong question; "is it wired for each way in" is the right one.
     """
     name = "Hook wiring"
     guard = Path(repo) / "hooks" / "gating_guard.py"
@@ -226,10 +252,24 @@ def check_hook_wiring(repo: Path) -> CheckResult:
             unreadable.append(f"{label} unreadable: {e}")
             continue
         pre = settings.get("hooks", {}).get("PreToolUse", [])
-        if any("gating_guard.py" in (h.get("command") or "")
-               for entry in pre for h in entry.get("hooks", [])):
+        matchers = [entry.get("matcher") for entry in pre
+                    if any("gating_guard.py" in (h.get("command") or "")
+                           for h in entry.get("hooks", []))]
+        if matchers:
+            unrouted = [t for t in SHELL_TOOLS
+                        if not any(_matcher_covers(m, t) for m in matchers)]
+            if unrouted:
+                return CheckResult(
+                    name, False,
+                    f"gating_guard.py is registered via {label}, but its matcher "
+                    f"({' / '.join(repr(m) for m in matchers)}) never routes "
+                    f"{', '.join(unrouted)} to it — every rail is bypassed from that shell "
+                    f"(PowerShell is the Windows shell tool). Add "
+                    f"{'|'.join(unrouted)} to the matcher in {repo}/{label}",
+                )
             return CheckResult(name, True,
-                               f"gating_guard.py registered as a PreToolUse hook via {label}")
+                               f"gating_guard.py registered as a PreToolUse hook via {label} "
+                               f"for every shell ({', '.join(SHELL_TOOLS)})")
     if unreadable:
         return CheckResult(name, False, "; ".join(unreadable))
     return CheckResult(
@@ -347,8 +387,14 @@ RAILS_PROBE = "gog gmail send --to probe@example.invalid --subject probe"
 
 
 def _rail_matches(rule: dict, tool_name: str, subject: str) -> bool:
-    """Mirror of gating_guard._matches — predicts whether a rule fires on a subject."""
-    if rule.get("tool") and rule["tool"] != tool_name:
+    """Mirror of gating_guard.matches — predicts whether a rule fires on a subject.
+
+    Including the shell family: a `"tool": "Bash"` rule covers PowerShell too unless it is
+    `bash_only` (gating_guard.tool_applies)."""
+    want = rule.get("tool")
+    if want and want != tool_name and not (
+        want == "Bash" and tool_name in SHELL_TOOLS and not rule.get("bash_only")
+    ):
         return False
     pattern = rule.get("pattern")
     if not pattern:
@@ -389,21 +435,28 @@ def check_rails_fire(repo: Path, *, runner=subprocess.run) -> CheckResult:
             "skipped — no deny rail predicts a block for the raw-send probe, so there is "
             "nothing to assert",
         )
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": RAILS_PROBE}})
-    try:
-        proc = runner([sys.executable, str(guard)], input=payload,
-                      capture_output=True, text=True, timeout=30)
-    except Exception as e:  # noqa: BLE001 — any launch failure is a real finding
-        return CheckResult(name, False, f"could not execute {guard}: {e}")
-    if proc.returncode == 2:
-        return CheckResult(name, True,
-                           "guard blocked the raw-send probe (exit 2) — rails are in force")
-    return CheckResult(
-        name, False,
-        f"config denies the raw-send probe but gating_guard.py exited {proc.returncode} "
-        f"instead of 2 — rails are DECLARED BUT NOT ENFORCED"
-        + (f"; stderr: {proc.stderr.strip()[:200]}" if (proc.stderr or "").strip() else ""),
-    )
+    # Probe from EVERY shell, not just Bash. Until 2026-09-22 this sent one Bash payload, so it
+    # reported "rails are in force" on an agent whose rails did nothing at all in PowerShell —
+    # the guard answered the one question it was asked. Each shell is its own way in.
+    for shell in SHELL_TOOLS:
+        payload = json.dumps({"tool_name": shell, "tool_input": {"command": RAILS_PROBE}})
+        try:
+            proc = runner([sys.executable, str(guard)], input=payload,
+                          capture_output=True, text=True, timeout=30)
+        except Exception as e:  # noqa: BLE001 — any launch failure is a real finding
+            return CheckResult(name, False, f"could not execute {guard}: {e}")
+        if proc.returncode != 2:
+            return CheckResult(
+                name, False,
+                f"config denies the raw-send probe but gating_guard.py exited "
+                f"{proc.returncode} instead of 2 for a {shell} call — rails are DECLARED BUT "
+                f"NOT ENFORCED from {shell}"
+                + (f"; stderr: {proc.stderr.strip()[:200]}"
+                   if (proc.stderr or "").strip() else ""),
+            )
+    return CheckResult(name, True,
+                       f"guard blocked the raw-send probe (exit 2) from every shell "
+                       f"({', '.join(SHELL_TOOLS)}) — rails are in force")
 
 
 def check_email_auth(
