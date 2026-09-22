@@ -4,7 +4,7 @@ import json
 import pytest
 from click.testing import CliRunner
 
-from orchestrator.caller import (ACT, BLOCKED, SYSTEM, UNLISTED, UNVERIFIED, allowlisted,
+from orchestrator.caller import (ACT, BLOCKED, CALLER, SYSTEM, UNLISTED, UNVERIFIED, allowlisted,
                                  caller_group, load_allowlist, resolve)
 
 RULES = ["@dimagi.com", "partner@llo-foo.org"]
@@ -79,3 +79,27 @@ def test_cli_exits_2_without_a_usable_envelope(tmp_path, content):
         f.write_text(content)
     r = CliRunner().invoke(caller_group, ["tier", "--caller", str(f), "--repo", str(tmp_path)])
     assert r.exit_code == 2
+
+
+# --- canopy's grant wins over the repo allowlist -------------------------------------
+
+def test_a_domain_grant_is_act_without_any_allowlist():
+    env = {**_env("nlesh@dimagi-associate.com"), "granted_by": "full:contact@dimagi-associate.com:verified"}
+    got = resolve(env, [])
+    assert got["tier"] == ACT and "dimagi-associate.com" in got["reason"]
+
+
+def test_a_capability_grant_is_a_confined_caller_even_if_allowlisted():
+    env = {**_env("beth@dimagi.com", verified=False), "granted_by": "capability:ask"}
+    assert resolve(env, RULES)["tier"] == CALLER
+
+
+def test_no_interface_falls_back_to_the_allowlist():
+    env = {**_env(), "granted_by": "no-interface"}
+    assert resolve(env, RULES)["tier"] == ACT
+    assert resolve({**env, "verified": False}, RULES)["tier"] == UNVERIFIED
+
+
+def test_blocked_still_wins_over_a_grant():
+    env = {**_env(blocked=True), "granted_by": "full:contact@dimagi.com:verified"}
+    assert resolve(env, RULES)["tier"] == BLOCKED
