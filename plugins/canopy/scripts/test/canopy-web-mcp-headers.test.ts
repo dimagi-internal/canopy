@@ -30,7 +30,13 @@ afterEach(async () => {
 });
 
 async function headers(env: NodeJS.ProcessEnv): Promise<{ stdout: string }> {
-  return run(process.execPath, [HELPER], { env: { ...process.env, ...env } });
+  // Isolated from the developer's own identity: the helper now also reads
+  // CANOPY_WEB_PAT and ~/.<slug>/.env before the token file, and either would
+  // otherwise leak into a test about the file.
+  return run(process.execPath, [HELPER], {
+    env: { ...process.env, HOME: dir, CANOPY_WEB_PAT: '', ...env },
+    cwd: dir,
+  });
 }
 
 describe('canopy-web-mcp-headers', () => {

@@ -81,14 +81,60 @@ if (confined) {
   process.exit(0);
 }
 
-// Mirror the skill's resolution order.
-const tokenFile =
-  process.env.CANOPY_WORKBENCH_TOKEN ||
-  path.join(os.homedir(), ".claude", "canopy", "workbench-token");
+// WHO this session is, in the same order the canopy CLI resolves it
+// (src/orchestrator/canopy_web.py::resolve_token): CANOPY_WEB_PAT, then the
+// agent's OWN PAT from ~/.<slug>/.env, and only then the operator's
+// workbench-token file.
+//
+// This used to read the file alone. A headless cloud runner has no such file by
+// design, so it sent no header, canopy-web 401'd, and Claude Code went looking
+// for OAuth metadata at the ORIGIN — where connect-labs, sharing the domain,
+// answered with its own: "Protected resource https://labs.connect.dimagi.com/mcp/
+// does not match expected" (cloud-ec2-1, 2026-09-22). On a laptop the same gap
+// was silent the other way round: every agent's MCP calls ran as the operator.
+
+// The agent's own PAT: walk up from cwd for `.claude-plugin/plugin.json`, take
+// its `name` as the slug, read CANOPY_WEB_PAT from that agent's env file.
+function agentEnvPat() {
+  let dir = process.cwd();
+  for (;;) {
+    const manifest = path.join(dir, ".claude-plugin", "plugin.json");
+    if (fs.existsSync(manifest)) {
+      let slug = "";
+      try {
+        slug = (JSON.parse(fs.readFileSync(manifest, "utf8")) || {}).name || "";
+      } catch {
+        return "";
+      }
+      if (!/^[a-z0-9][a-z0-9_-]*$/i.test(slug)) return "";
+      try {
+        for (const raw of fs.readFileSync(path.join(os.homedir(), `.${slug}`, ".env"), "utf8").split("\n")) {
+          const line = raw.trim();
+          if (line.startsWith("CANOPY_WEB_PAT=")) {
+            return line.slice("CANOPY_WEB_PAT=".length).trim().replace(/^["']|["']$/g, "");
+          }
+        }
+      } catch {
+        return "";
+      }
+      return "";
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return "";
+    dir = parent;
+  }
+}
+
+function fileToken() {
+  const tokenFile =
+    process.env.CANOPY_WORKBENCH_TOKEN ||
+    path.join(os.homedir(), ".claude", "canopy", "workbench-token");
+  return fs.readFileSync(tokenFile, "utf8").trim();
+}
 
 let headers = {};
 try {
-  const token = fs.readFileSync(tokenFile, "utf8").trim();
+  const token = (process.env.CANOPY_WEB_PAT || "").trim() || agentEnvPat() || fileToken();
   if (token) {
     headers = { Authorization: `Bearer ${token}` };
   }
