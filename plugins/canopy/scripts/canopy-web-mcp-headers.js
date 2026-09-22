@@ -93,6 +93,29 @@ if (confined) {
 // does not match expected" (cloud-ec2-1, 2026-09-22). On a laptop the same gap
 // was silent the other way round: every agent's MCP calls ran as the operator.
 
+// HOW CLAUDE CODE ACTUALLY RUNS THIS (measured on cloud-ec2-1, 2026-09-22): from
+// the PLUGIN's own directory, not the session's, and with secret-looking variables
+// stripped from its environment — CANOPY_WEB_PAT does not arrive, while a plain
+// variable like HAL_GMAIL_ACCOUNT does. So neither the env PAT nor the walk-up
+// below can identify an agent session here. CANOPY_AGENT can: a slug is not a
+// secret, so it survives, and the PAT is then read from that agent's own file.
+// The cloud runner sets it for every agent turn. (The other two legs still serve
+// anything that runs this helper directly, as the canopy CLI's rules do.)
+function slugEnvPat(slug) {
+  if (!/^[a-z0-9][a-z0-9_-]*$/i.test(slug || "")) return "";
+  try {
+    for (const raw of fs.readFileSync(path.join(os.homedir(), `.${slug}`, ".env"), "utf8").split("\n")) {
+      const line = raw.trim();
+      if (line.startsWith("CANOPY_WEB_PAT=")) {
+        return line.slice("CANOPY_WEB_PAT=".length).trim().replace(/^["']|["']$/g, "");
+      }
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
 // The agent's own PAT: walk up from cwd for `.claude-plugin/plugin.json`, take
 // its `name` as the slug, read CANOPY_WEB_PAT from that agent's env file.
 function agentEnvPat() {
@@ -134,7 +157,11 @@ function fileToken() {
 
 let headers = {};
 try {
-  const token = (process.env.CANOPY_WEB_PAT || "").trim() || agentEnvPat() || fileToken();
+  const token =
+    (process.env.CANOPY_WEB_PAT || "").trim() ||
+    slugEnvPat(process.env.CANOPY_AGENT) ||
+    agentEnvPat() ||
+    fileToken();
   if (token) {
     headers = { Authorization: `Bearer ${token}` };
   }
