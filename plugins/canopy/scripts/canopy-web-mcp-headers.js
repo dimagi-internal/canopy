@@ -37,6 +37,50 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+// A CONFINED session — a caller's, not the agent owner's — must never reach canopy
+// with the owner's PAT. The runner leaves the session's own credential (a caller
+// token, `cct_…`, which canopy runs as the caller and scopes to their capability)
+// in the session's profile, found either from CANOPY_PROFILE (a runner that spawns
+// claude itself) or from the `emdash-cx-<task>-<suffix>` directory emdash starts
+// the session in. A confined session with no token gets an invalid header: the
+// server refuses it, which is correct — the PAT would not be.
+const CONFINED_NO_TOKEN = { Authorization: "Bearer cct_missing-confined-session-token" };
+
+function readProfile(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function confinedProfile() {
+  if (process.env.CANOPY_PROFILE) {
+    return { confined: true, profile: readProfile(process.env.CANOPY_PROFILE) };
+  }
+  // Any component of the working directory: emdash starts the session in its
+  // worktree, and a helper run from a subdirectory must reach the same answer.
+  const parts = process.cwd().split(path.sep);
+  const marked = parts.filter((p) => p.startsWith("emdash-cx-"));
+  if (marked.length === 0) return { confined: false, profile: null };
+  const leaf = marked[0].slice("emdash-".length);           // cx-<subject>-<disc>-<suffix>
+  const root = path.join(os.homedir(), ".canopy", "profiles");
+  // emdash appends a random `-<suffix>` to the task name; try with and without it.
+  for (const name of [leaf, leaf.replace(/-[a-z0-9]+$/, "")]) {
+    if (!/^cx-[a-z0-9-]{1,200}$/.test(name)) continue;
+    const p = readProfile(path.join(root, `${name}.json`));
+    if (p) return { confined: true, profile: p };
+  }
+  return { confined: true, profile: null };
+}
+
+const { confined, profile } = confinedProfile();
+if (confined) {
+  const token = profile && typeof profile.mcp_token === "string" ? profile.mcp_token : "";
+  process.stdout.write(JSON.stringify(token ? { Authorization: `Bearer ${token}` } : CONFINED_NO_TOKEN));
+  process.exit(0);
+}
+
 // Mirror the skill's resolution order.
 const tokenFile =
   process.env.CANOPY_WORKBENCH_TOKEN ||

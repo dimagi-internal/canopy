@@ -50,7 +50,8 @@ import sys
 
 #: The runner reads this to decide whether it may report `profiles` to canopy-web.
 #: Bump only when the profile contract changes.
-PROFILE_ENFORCEMENT_VERSION = 1
+#: 2 = also honours CANOPY_PROFILE (the cloud runner, which spawns claude itself).
+PROFILE_ENFORCEMENT_VERSION = 2
 
 PROFILE_ROOT = os.path.expanduser("~/.canopy/profiles")
 _ANCHOR = re.compile(r"-worktrees-.+?-emdash-(?P<leaf>.+)$")
@@ -103,6 +104,16 @@ def load_profile(candidates, root=None):
         if isinstance(cap, dict):
             return prof
     return None
+
+
+def load_profile_file(path: str):
+    """A profile named by CANOPY_PROFILE. Missing or malformed → None → deny all."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            prof = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return prof if isinstance(prof, dict) and isinstance(prof.get("capability"), dict) else None
 
 
 def _subst(pattern: str, prof: dict, cwd: str) -> str:
@@ -167,8 +178,20 @@ def _path_ok(path: str, patterns, prof, cwd) -> bool:
                for p in patterns for t in targets)
 
 
+def _is_own_envelope(tool: str, tool_input: dict, prof: dict) -> bool:
+    """The session's caller envelope — the one file outside the worktree it is TOLD
+    to read (`--caller <path>`). Exactly that path, resolved, by Read only."""
+    own = prof.get("caller_path")
+    if tool != "Read" or not own:
+        return False
+    target = str((tool_input or {}).get("file_path") or "")
+    return bool(target) and os.path.realpath(os.path.expanduser(target)) == os.path.realpath(own)
+
+
 def decide(tool: str, tool_input: dict, prof: dict, cwd: str):
     """None to allow, else the reason to refuse."""
+    if _is_own_envelope(tool, tool_input, prof):
+        return None
     cap = prof["capability"]
     name = cap.get("name") or "?"
     tools = cap.get("tools") or []
@@ -205,10 +228,16 @@ def main() -> int:
         data = json.load(sys.stdin)
     except ValueError:
         return 0                            # not a hook payload we understand; not ours to judge
-    restricted, candidates = restricted_task(data.get("transcript_path", ""))
-    if not restricted:
-        return 0
-    prof = load_profile(candidates)
+    # A runner that spawns claude itself (the cloud runner) names the profile
+    # outright; it is inherited by this hook and cannot be unset by the agent.
+    explicit = os.environ.get("CANOPY_PROFILE", "")
+    if explicit:
+        prof = load_profile_file(explicit)
+    else:
+        restricted, candidates = restricted_task(data.get("transcript_path", ""))
+        if not restricted:
+            return 0
+        prof = load_profile(candidates)
     if prof is None:
         print("canopy: this is a caller's session and its profile could not be found, so "
               "nothing is allowed. The runner writes ~/.canopy/profiles/<task>.json before "

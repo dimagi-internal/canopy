@@ -198,3 +198,35 @@ def test_a_glob_pattern_cannot_reach_out_either(monkeypatch, capsys, profiles, t
     (profiles / f"{TASK}.json").write_text(json.dumps(prof))
     assert _run(monkeypatch, capsys, "Glob", {"pattern": pattern}, cwd=str(w))[0] == 2
     assert _run(monkeypatch, capsys, "Glob", {"pattern": "**/*.md"}, cwd=str(w))[0] == 0
+
+
+# --- v2: CANOPY_PROFILE, and the session's own caller envelope --------------------------
+
+def test_canopy_profile_env_confines_any_session(monkeypatch, capsys, tmp_path):
+    prof = tmp_path / "cloud-1.json"
+    prof.write_text(json.dumps(PROFILE))
+    monkeypatch.setenv("CANOPY_PROFILE", str(prof))
+    plain = "/home/u/.claude/projects/-opt-agents-ace/x.jsonl"         # not a cx- path at all
+    assert _run(monkeypatch, capsys, "Bash", {"command": "id"}, tp=plain)[0] == 2
+    assert _run(monkeypatch, capsys, "Bash", {"command": "canopy email read --repo . 18c9abc"},
+                tp=plain)[0] == 0
+
+
+def test_canopy_profile_env_pointing_nowhere_denies_everything(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("CANOPY_PROFILE", str(tmp_path / "missing.json"))
+    code, err = _run(monkeypatch, capsys, "Read", {"file_path": "/x"}, tp="/p/x.jsonl")
+    assert code == 2 and "could not be found" in err
+
+
+def test_the_sessions_own_envelope_is_readable_and_nothing_beside_it(monkeypatch, capsys, profiles, tmp_path):
+    env_dir = tmp_path / "caller"
+    env_dir.mkdir()
+    own, other = env_dir / "t1.json", env_dir / "t2.json"
+    own.write_text("{}")
+    other.write_text("{}")
+    prof = json.loads((profiles / f"{TASK}.json").read_text())
+    prof["caller_path"] = str(own)
+    (profiles / f"{TASK}.json").write_text(json.dumps(prof))
+    assert _run(monkeypatch, capsys, "Read", {"file_path": str(own)})[0] == 0
+    assert _run(monkeypatch, capsys, "Read", {"file_path": str(other)})[0] == 2
+    assert _run(monkeypatch, capsys, "Write", {"file_path": str(own)})[0] == 2
