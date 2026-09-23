@@ -14,11 +14,25 @@ carries deny rails only (it blocks wrong paths, it does not ask for you), so dra
 in Step 2 is the gate. There is no modal to catch you if you skip it.
 
 ## Turn mode — manual (default) vs auto
-Turn mode is **board-side STATE on canopy-web, not repo config**: read it at preflight with
-`canopy agent mode --slug <slug>` and **state it in your turn opening** ("running in auto mode").
-The human flips it from the agent's overview page (`/agents/<slug>` → Turn mode) or
-`PATCH /api/agents/<slug>/turn-mode` — never by editing a repo file, and never the agent itself
-mid-turn (the API enforces this: the agent-repo self-publish upsert cannot touch the field).
+Turn mode is **board-side STATE on canopy-web, not repo config**, and it is decided **per turn**:
+read it at preflight with
+
+```bash
+canopy agent mode --slug <slug> --caller <path>   # --caller only when your turn was given one
+# → {"turn_mode": "manual"|"auto", "basis": "rule email/beth@dimagi.com" | "agent" | …, "source": "turn"|"agent"}
+```
+
+and **state it in your turn opening with its basis** ("running in auto mode — rule email/beth@…").
+The agent has one default mode, but a routing rule on canopy-web can override it for one channel
+or one sender ("Beth's email → cloud, auto"). canopy-web picks the mode when the turn is claimed,
+and it is in the caller envelope; `--caller` reads it from there. An `auto` rule for a named
+sender only applies to a VERIFIED message from them — otherwise the basis says `auto withheld`
+and the turn is manual. Run exactly the mode the command prints, even if the agent-wide switch
+says otherwise. Without `--caller` (a turn started by hand, an older runner) it reads the
+agent-wide switch. The human sets both in the agent's Settings → Routing on canopy-web (or
+`PATCH /api/agents/<slug>/turn-mode` / `PUT …/runner-rules`) — never by editing a repo file, and
+never the agent itself mid-turn (the API enforces this: the agent-repo self-publish upsert cannot
+touch either).
 **If the read fails** (canopy-web unreachable, no PAT), run **manual** — fail safe — and name the
 fallback in your opening and closeout.
 
