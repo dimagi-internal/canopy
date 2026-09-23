@@ -445,7 +445,9 @@ That is it. The turn procedure is fleet-canonical: the agent reads its inbound
 channels, decides one action per counterpart, and closes with an explicit status
 line. Outbound actions (email, public writes) pause for your approval by default —
 that is the agent's **turn mode**, and it is board-side state you can read with
-`canopy agent mode --slug <slug>`.
+`canopy agent mode --slug <slug>`. A routing rule in the agent's Settings → Routing
+can override it for one channel or one sender (e.g. a trusted colleague's email runs
+auto); a turn reads its own mode with `--caller <path>`.
 
 ---
 

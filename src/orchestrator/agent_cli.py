@@ -816,18 +816,51 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
         raise click.ClickException(str(e))
 
 
+def turn_mode_from_envelope(caller_path) -> dict | None:
+    """THIS turn's mode from the caller envelope, or None to use the agent's.
+
+    canopy-web decides the mode per turn when it is claimed — a routing rule such
+    as "email from beth -> auto" overrides the agent-wide switch for its own work
+    — and writes the decision into the envelope as `turn_mode: {mode, basis}`.
+    None whenever there is nothing trustworthy to read: no file (a turn started
+    by hand), an unreadable one, or an envelope from a canopy-web that predates
+    per-turn modes. The caller then falls back to the agent-wide read, which is
+    what it did before this existed.
+    """
+    if not caller_path:
+        return None
+    try:
+        env = json.loads(Path(caller_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    tm = env.get("turn_mode") if isinstance(env, dict) else None
+    if not isinstance(tm, dict) or tm.get("mode") not in ("manual", "auto"):
+        return None
+    return {"turn_mode": tm["mode"], "basis": str(tm.get("basis") or ""), "source": "turn"}
+
+
 @agent.command("mode")
 @click.option("--slug", required=True)
-def agent_mode(slug):
-    """Print the agent's turn mode — {"slug": ..., "turn_mode": "manual"|"auto"}.
+@click.option("--caller", "caller_path", default="",
+              help="The caller envelope the runner passed as `--caller <path>`. When it "
+                   "carries this turn's mode, that wins over the agent-wide switch.")
+def agent_mode(slug, caller_path):
+    """Print the turn mode — {"slug", "turn_mode": "manual"|"auto", "basis", "source"}.
 
-    Board-side state (flipped from /agents/<slug> on canopy-web, or PATCH
-    /api/agents/<slug>/turn-mode — never a repo file). The turn procedure reads
-    this at preflight; if the call fails, the turn runs MANUAL (fail safe) and
-    says so.
+    With `--caller`, THIS turn's mode as canopy-web decided it at claim
+    (`source: "turn"`, `basis` saying which routing rule or "agent"). Otherwise,
+    or when the envelope carries no mode, the agent-wide switch (`source:
+    "agent"`) — board-side state flipped from the agent's Settings on canopy-web,
+    never a repo file. The turn procedure reads this at preflight; if the call
+    fails, the turn runs MANUAL (fail safe) and says so.
     """
+    from_turn = turn_mode_from_envelope(caller_path)
+    if from_turn is not None:
+        _emit({"slug": slug, **from_turn})
+        return
     try:
-        _emit({"slug": slug, "turn_mode": _client(slug).turn_mode()})
+        _emit({"slug": slug, "turn_mode": _client(slug).turn_mode(),
+               "basis": "agent", "source": "agent"})
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 
