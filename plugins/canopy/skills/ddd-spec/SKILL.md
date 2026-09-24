@@ -305,8 +305,10 @@ narrative first (Step 3) so the two stay in lockstep.
   `actions` records as a static scroll — which scores ~1/5 on "demonstrates using
   the features." Each action is `{kind, target?, value?, seconds?, note?}` where
   `kind` ∈ {goto, click, click_menu, fill, select, type, press, hover, scroll_to,
-  scroll, wait_for, hold, draw, capture} and `target` is visible text or a CSS
-  selector. For **`kind: capture`** (mint a `${var}` ON CAMERA so a fresh entity
+  scroll, wait_for, hold, draw, capture, upload} and `target` is visible text or a CSS
+  selector. For **`kind: upload`** (file a document on camera), `target` is the
+  `<input type=file>` and `value` the file's path, relative to the render's cwd —
+  keep specimens beside the seeder rather than linking them. For **`kind: capture`** (mint a `${var}` ON CAMERA so a fresh entity
   created mid-demo flows into later scenes — see "Capture + late binding" below),
   read an id off the live page into a variable later scenes resolve. For
   `kind: select` (native `<select>` controls — which `click` can't reliably open

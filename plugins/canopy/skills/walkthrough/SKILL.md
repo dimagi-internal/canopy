@@ -877,7 +877,8 @@ reads as a slideshow.
 Declare `actions` per scene in the spec (see `ddd-spec` for authoring + the
 `Action` schema in `scripts/narrative/models.py`). Verbs: `goto`, `click`,
 `click_menu`, `fill`, `select`, `type`, `press`, `hover`, `scroll_to`,
-`scroll`, `wait_for`, `hold`, `draw`, `map_click`, `capture`. Each action is
+`scroll`, `wait_for`, `hold`, `draw`, `map_click`, `capture`, `upload` (`target` =
+the `<input type=file>`, `value` = a file path relative to the render's cwd). Each action is
 `{kind, target?, value?, seconds?, note?, say?}`; `target` is visible text OR a CSS
 selector. `say` is the ONE narration word this action's field is named by — see
 **`say:` — binding a field to its spoken word** below. For `kind: capture` (mint a `${var}` on camera — see the **Capture +

@@ -58,7 +58,7 @@ except Exception:  # pragma: no cover — recorder may run without the narrative
     ACTION_KINDS = (
         "goto", "click", "click_menu", "fill", "select", "type", "press",
         "hover", "scroll_to", "scroll", "wait_for", "hold", "draw", "map_click", "map_zoom", "capture",
-        "snapshot",
+        "snapshot", "upload",
     )
 
 CURSOR_OVERLAY_JS = (Path(__file__).resolve().parent / "cursor_overlay.js").read_text()
@@ -183,6 +183,34 @@ def fill_field(page: Page, target: str, value: str, *, config: RecorderConfig | 
             rt.locator.type(value, delay=cfg.typing_delay_ms)
     except Exception as e:
         print(f"  ! fill failed: {target!r}: {e}")
+        return False
+    page.wait_for_timeout(cfg.post_fill_settle_ms)
+    return True
+
+
+def upload_file(page: Page, target: str, path: str, *, config: RecorderConfig | None = None) -> bool:
+    """Choose a file for an ``<input type=file>``, the way a person would.
+
+    The cursor glides to the input so the viewer sees which control took the
+    file; ``Locator.set_input_files`` then sets it and fires ``change``. There
+    is no click: clicking a file input opens an OS dialog a headless browser
+    never shows. A missing file is a failed action, not a Playwright crash.
+    """
+    cfg = config or RecorderConfig()
+    resolved = Path(path).expanduser()
+    if not resolved.is_absolute():
+        resolved = Path.cwd() / resolved
+    if not resolved.is_file():
+        print(f"  ! upload file not found: {str(resolved)!r}")
+        return False
+    rt = _glide_to(page, target, config=cfg, dwell_ms=cfg.pre_fill_dwell_ms)
+    if rt is None:
+        print(f"  ! upload target not found: {target!r}")
+        return False
+    try:
+        rt.locator.set_input_files(str(resolved), timeout=cfg.interaction_timeout_ms)
+    except Exception as e:
+        print(f"  ! upload failed: {target!r}: {e}")
         return False
     page.wait_for_timeout(cfg.post_fill_settle_ms)
     return True
@@ -1162,6 +1190,10 @@ def execute_action(
                 else:
                     error_kind = "capture_failed"
                     error_message = f"capture for ${{{captured_var}}} produced no value"
+        elif kind == "upload":
+            ok = upload_file(page, target or "", value or "", config=cfg)
+            if not ok:
+                error_kind = "target_not_found"
         elif kind == "snapshot":
             # Recorder-state, not a page interaction — the canonical scene frame
             # is written by Recorder.run_scene (which holds the snapshot context).

@@ -280,7 +280,7 @@ dimensions:
     # {kind, target, ok, must_succeed, note}), this dim owns whether the demo
     # ACTUALLY PERFORMED the act its narration claims, and whether the captured
     # frame is the legible RESULT of that act. EFFECTING kinds = click /
-    # click_menu / fill / select / type / press / draw; NON-EFFECTING = hover /
+    # click_menu / fill / select / type / press / draw / upload; NON-EFFECTING = hover /
     # scroll_to / scroll / wait_for / hold / goto. When action_trace is ABSENT,
     # ignore these rules and score motion as before (back-compat).
     anchor:

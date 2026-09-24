@@ -196,6 +196,7 @@ ACTION_KINDS: tuple[str, ...] = (
     "map_zoom",    # fly the Mapbox camera to a zoom level (zoom=level; seconds=animation length)
     "capture",     # read an id off the live page into ${var} for LATER scenes (source=url|element)
     "snapshot",    # write the canonical scene_<N>.png NOW — a chosen mid-scene frame, not the end frame
+    "upload",      # put a file into a file input (target=input, value=path relative to the setup cwd)
 )
 
 
@@ -532,6 +533,22 @@ class SnapshotAction(_ActionBase):
     kind: Literal["snapshot"]
 
 
+class UploadAction(_ActionBase):
+    """Put a file into an ``<input type=file>`` (``target``), as a person choosing it would.
+
+    ``value`` is the file's path: absolute, or relative to the directory the
+    render runs from (the same cwd a recipe's ``setup.command`` runs in), so a
+    spec can upload a specimen that lives beside its seeder. A file input
+    cannot be typed into, and clicking one opens an OS dialog a headless
+    browser never shows, so without this verb a scene could only LINK to a
+    document -- never file one.
+    """
+
+    kind: Literal["upload"]
+    target: str
+    value: str
+
+
 # Discriminated union: Pydantic picks the right subclass from ``kind`` alone.
 # Existing YAML specs (lists of dicts with ``kind: ...`` + the verb's fields)
 # validate against this without any spec edits — all real-world action shapes
@@ -541,7 +558,7 @@ Action = Annotated[
         GotoAction, ClickAction, ClickMenuAction, FillAction, SelectAction,
         TypeAction, PressAction, HoverAction, ScrollToAction, ScrollAction,
         WaitForAction, HoldAction, DrawAction, MapClickAction, MapZoomAction, CaptureAction,
-        SnapshotAction,
+        SnapshotAction, UploadAction,
     ],
     Field(discriminator="kind"),
 ]
@@ -554,7 +571,7 @@ ACTION_CLASSES: tuple[type[_ActionBase], ...] = (
     GotoAction, ClickAction, ClickMenuAction, FillAction, SelectAction,
     TypeAction, PressAction, HoverAction, ScrollToAction, ScrollAction,
     WaitForAction, HoldAction, DrawAction, MapClickAction, MapZoomAction, CaptureAction,
-    SnapshotAction,
+    SnapshotAction, UploadAction,
 )
 
 

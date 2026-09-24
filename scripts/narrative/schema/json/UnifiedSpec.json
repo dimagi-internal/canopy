@@ -1088,6 +1088,7 @@
                 "select": "#/$defs/SelectAction",
                 "snapshot": "#/$defs/SnapshotAction",
                 "type": "#/$defs/TypeAction",
+                "upload": "#/$defs/UploadAction",
                 "wait_for": "#/$defs/WaitForAction"
               },
               "propertyName": "kind"
@@ -1143,6 +1144,9 @@
               },
               {
                 "$ref": "#/$defs/SnapshotAction"
+              },
+              {
+                "$ref": "#/$defs/UploadAction"
               }
             ]
           },
@@ -1638,6 +1642,85 @@
         "value"
       ],
       "title": "TypeAction",
+      "type": "object"
+    },
+    "UploadAction": {
+      "additionalProperties": false,
+      "description": "Put a file into an ``<input type=file>`` (``target``), as a person choosing it would.\n\n``value`` is the file's path: absolute, or relative to the directory the\nrender runs from (the same cwd a recipe's ``setup.command`` runs in), so a\nspec can upload a specimen that lives beside its seeder. A file input\ncannot be typed into, and clicking one opens an OS dialog a headless\nbrowser never shows, so without this verb a scene could only LINK to a\ndocument -- never file one.",
+      "properties": {
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "say": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Say"
+        },
+        "word": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Word"
+        },
+        "must_succeed": {
+          "default": false,
+          "title": "Must Succeed",
+          "type": "boolean"
+        },
+        "timeout_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Ms"
+        },
+        "kind": {
+          "const": "upload",
+          "title": "Kind",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "value"
+      ],
+      "title": "UploadAction",
       "type": "object"
     },
     "WaitForAction": {
