@@ -11,6 +11,24 @@ The mechanics live here now.
 
 Applies to every repo an agent ships into: its own, canopy, canopy-web, and any product repo.
 
+## Whose name is on it — the GitHub identity, and `Requested-by:`
+
+**You act on GitHub as your OWNER.** On a cloud runner each turn is handed your owner's token for
+you (canopy-web `AgentDelegation`, canopy-web#747): `GH_TOKEN`/`GITHUB_TOKEN`, a git credential
+helper, and `GIT_AUTHOR_*`/`GIT_COMMITTER_*` set to the owner's GitHub identity — so `git push` and
+`gh pr create` just work, and commits are no longer `Ubuntu <ubuntu@ip-…>`. Its repository
+selection is exactly what you may touch.
+
+- **Don't `git config user.*`, and don't go looking for another token.** An empty `GH_TOKEN` or a
+  403 means your owner has not lent you one (or it lacks that repo): that is the finding. Say it in
+  the report — "no GitHub identity for this turn; the owner lends one at the agent's Settings →
+  Credentials → GitHub" — and stop the ship step there. There is no shared fallback on purpose.
+- **Say who caused the change.** The credential says whose authority; the trailer says who asked.
+  When `$CANOPY_REQUESTED_BY` is non-empty, end every commit message with
+  `Requested-by: $CANOPY_REQUESTED_BY` and put the same line in the PR body. On a laptop turn
+  (no variable), take it from the caller envelope (`who_is_asking`) when someone other than your
+  owner caused the work. Nobody in particular (a schedule, your own backlog) = no trailer.
+
 ## Step 0 — is there anything to wait FOR?
 
 **This is the step that pays**, because most of the time the answer removes the wait entirely. One
