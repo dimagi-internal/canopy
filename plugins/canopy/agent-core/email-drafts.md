@@ -35,8 +35,15 @@ and Docs gives it the Gmail icon.
 2. **Insert every block in ONE call**, as the same agent that owns the doc:
 
    ```bash
-   canopy gdoc email-blocks <docId> --blocks blocks.json --repo <agent-repo>
+   _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+   CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+   uv run --project "$CANOPY_ROOT" canopy gdoc email-blocks <docId> --blocks blocks.json --repo <agent-repo>
    ```
+
+   Run it through the plugin's **runtime bundle**, as above, and never through the global
+   `canopy` on PATH. The session-start hook keeps the runtime at the installed plugin's
+   version automatically. It does not touch the global CLI, so a skill that relies on the
+   global CLI gets a stale copy, or none, on any machine where nobody has reinstalled it.
 
    `blocks.json` is a list of `{"anchor", "to", "cc", "bcc", "subject", "body"}`. Only
    `anchor` is required, and `\n` in `body` separates paragraphs. When no address is known,
