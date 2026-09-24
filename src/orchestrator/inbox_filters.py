@@ -45,6 +45,21 @@ FILTERS: list[dict] = [
             'from:(noreply OR no-reply OR donotreply OR "do-not-reply" OR mailer-daemon OR postmaster)',
         ],
     },
+    # …and the carve-out's own blind spot: SNS is not only alarms. An SES configuration set
+    # can publish every Send / Delivery / Bounce event to an SNS email subscription, and those
+    # arrive from the SAME `no-reply@sns.amazonaws.com` as an alarm. ace@ is subscribed to
+    # `labs-jj-email-events`, so while someone iterated on a Labs supply-alert template
+    # (2026-09-23/24) every test send became 2-3 unread receipts, and each one started a
+    # confined `/ace:ask` caller session that read the thread, found no question, and replied
+    # nothing — 14 sessions on one thread (1a0d0a1632cfde4f) in 12 hours. The receipts carry a
+    # fixed subject that no alarm uses (alarms are `ALARM: "<name>" …` / `OK: "<name>" …`), so
+    # this rule matches sender AND subject and leaves alerting untouched. The receipts stay
+    # searchable in All Mail for anyone debugging a bounce.
+    {
+        "name": "ses-event-receipts",
+        "query": 'from:no-reply@sns.amazonaws.com subject:"Amazon SES Email Event Notification"',
+        "archive": True, "mark_read": True,
+    },
     {"name": "promotions", "query": "category:promotions", "archive": True, "mark_read": True},
     {"name": "social", "query": "category:social", "archive": True, "mark_read": True},
     # Out-of-office / auto-reply bounces. These wake an agent for zero-content mail:
