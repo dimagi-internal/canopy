@@ -182,6 +182,8 @@ For each scene in `unified_spec.yaml`:
      This is what lets `motion_friction` / `design_soundness` catch a hover-only
      scene whose narration claims a fill/submit, or a `must_succeed` action that
      timed out (see the rubric's action-fidelity deduction rules).
+     An `upload` (a scene filing a document on camera) counts as an effecting
+     action, like a fill or a click.
    - `domain`: `unified_spec.name`
    - `audience.name`: the person the artifact is FOR — inferred from the scene's
      `concept_claim` / `design_intent`. For an EVIDENCE / data product (dashboard,
