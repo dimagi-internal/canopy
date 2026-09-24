@@ -171,3 +171,4 @@ alternative. If you add a rail, make sure the path it names actually exists.
 - `turn.md` — the turn procedure; its reply-quality rules already say deliverables are gdocs, not
   local files. This doc is the *filing* standard behind that.
 - your agent's `gdoc-writer` — the thin per-agent stub that implements this.
+- `email-drafts.md` — when the deliverable is emails a person will send: email blocks with the Gmail icon.

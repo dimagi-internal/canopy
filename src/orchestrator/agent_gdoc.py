@@ -1068,6 +1068,35 @@ def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, a
         sys.exit(1)
 
 
+@gdoc_group.command("email-blocks")
+@_with_identity_options
+@click.argument("doc_id")
+@click.option("--blocks", "blocks_file", required=True, type=click.Path(exists=True, dir_okay=False),
+              help='JSON list of {"anchor", "to", "cc", "bcc", "subject", "body"} — one per block.')
+def gdoc_email_blocks(repo, agent, account, client, doc_id, blocks_file):
+    """Turn @@EMAIL_<key>@@ anchor paragraphs in DOC_ID into email draft blocks.
+
+    Each block is the To/Cc/Bcc/Subject/Body table Docs renders with a Gmail icon in the
+    margin — click it for a pre-filled Gmail draft. Publish the doc first (anchors alone on
+    Normal-text lines), then run this ONCE, last: a later `publish --replace` wipes the
+    blocks. Every anchor is validated before anything is written. Procedure:
+    agent-core/email-drafts.md.
+    """
+    from orchestrator.gdoc_email_blocks import EmailBlockError, GogDocs, insert_email_blocks
+    try:
+        ident = _gdoc_identity_from_opts(repo, agent, account, client)
+        blocks = json.loads(Path(blocks_file).read_text(encoding="utf-8"))
+        if not isinstance(blocks, list) or not blocks:
+            raise click.ClickException("--blocks must be a non-empty JSON list")
+        result = insert_email_blocks(GogDocs(ident.account, ident.client), doc_id, blocks)
+    except (AgentGdocError, EmailBlockError, json.JSONDecodeError) as e:
+        raise click.ClickException(str(e))
+    click.echo(json.dumps(result, indent=2))
+    if result["unusedAnchors"]:
+        sys.stderr.write("WARNING: anchors left in the doc with no block: "
+                         + ", ".join(result["unusedAnchors"]) + "\n")
+
+
 # --------------------------------------------------------------------------------------
 # CLI  (`canopy gsheet …`)
 # --------------------------------------------------------------------------------------
