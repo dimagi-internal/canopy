@@ -1374,6 +1374,26 @@ def test_read_thread_human_mail_not_flagged_automated():
     assert m["auto_submitted"] == "" and m["sender"] == ""
 
 
+def test_read_thread_flags_a_noreply_from_with_no_sender_header():
+    """SES event receipts: From is SNS's no-reply, and nothing else says 'machine' — no
+    Auto-Submitted, no Precedence, no Sender. They read as human and started 14 `ask`
+    sessions on one ace@ thread (1a0d0a1632cfde4f)."""
+    payload = {"mimeType": "text/plain",
+               "headers": [{"name": "From",
+                            "value": "Labs email events <no-reply@sns.amazonaws.com>"}],
+               "body": {"data": _b64('{"eventType":"Bounce"}')}}
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json_payload(payload)))
+    assert res["messages"][0]["is_automated"] is True
+
+
+def test_read_thread_a_person_whose_address_merely_contains_noreply_is_human():
+    payload = {"mimeType": "text/plain",
+               "headers": [{"name": "From", "value": "Fan <reply-noreply-fan@llo-foo.org>"}],
+               "body": {"data": _b64("hello")}}
+    res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json_payload(payload)))
+    assert res["messages"][0]["is_automated"] is False
+
+
 def test_read_thread_flags_machine_sender_despite_human_from():
     """The spoof turn.md warns about: From is a real person, Sender is a machine."""
     payload = {"mimeType": "text/plain",
