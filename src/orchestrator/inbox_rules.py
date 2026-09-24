@@ -150,7 +150,8 @@ _ALARM_SUBJECT = re.compile(r'^\s*(ALARM|OK):\s*"([^"]+)"')
 
 
 def _cloudwatch_alarm(m: Message) -> str | None:
-    if not m.address.endswith("sns.amazonaws.com"):
+    # The exact domain, not a suffix: `evilsns.amazonaws.com` must not pass for SNS.
+    if m.address.rpartition("@")[2] != "sns.amazonaws.com":
         return None
     hit = _ALARM_SUBJECT.match(m.subject)
     return f'{m.address}, subject {hit.group(1)}: "{hit.group(2)}"' if hit else None

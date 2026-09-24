@@ -222,7 +222,7 @@ def test_module_is_stdlib_only_so_the_runner_can_vendor_it():
 #:   1. update this hash;
 #:   2. copy the file into canopy-web at that path and update its pin to the same value;
 #:   3. ship both. Until canopy-web ships, the runner classifies with the old table.
-VENDORED_SHA256 = "05f290eeaddd5a64c17a756e7f1542bdd16f831d352db13467e41ae92fa10e29"
+VENDORED_SHA256 = "69a23cb125fd4b7b882248e40d2ce5d4a0477a72dc8facdb4f94897ff90b8b9a"
 
 
 def test_vendored_copy_pin():
@@ -232,3 +232,8 @@ def test_vendored_copy_pin():
         "(runner/canopy_runner/canopy_runner/inbox_rules.py) and update BOTH pins to "
         f"{digest} — see the comment above VENDORED_SHA256.")
 
+
+
+def test_a_lookalike_sns_domain_is_not_an_alarm():
+    m = msg(frm="Alerts <no-reply@evilsns.amazonaws.com>", subject='ALARM: "x" in US East')
+    assert row(m) != "wanted/cloudwatch-alarm"
