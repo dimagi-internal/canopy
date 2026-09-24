@@ -1,184 +1,66 @@
-"""Fleet inbox filters — the junk guard, defined ONCE for the whole fleet and
-applied to any/all agent mailboxes via gog Gmail filters. Conservative by design:
-only obviously automated / marketing mail is skipped-inbox + marked-read, so a real
-message from a person never gets silently archived.
+"""Fleet inbox filters — the Gmail half of the fleet's inbound-email table.
 
-Edit ``FILTERS`` and re-run ``canopy email apply-filters`` to update the fleet — this
-is the single source of truth for the whole fleet's inbox hygiene.
+The rules themselves live in ``orchestrator/inbox_rules.py`` (canopy#679): one table, one
+row per kind of mail, each row WAKE or ARCHIVE. This module turns every archive row that
+Gmail search can express into Gmail filters on any/all agent mailboxes, each one archiving,
+marking read and labelling the mail with its row's name. Edit the table, not this file,
+then re-run ``canopy email apply-filters --all``.
 
 Two operations:
-- ``apply_filters``   — create the Gmail filters (affect FUTURE mail). Idempotent.
-- ``sweep_existing``  — retroactively archive+mark-read mail already in the inbox that
-  the filters would have caught (clears the backlog so it doesn't spawn turns).
+- ``apply_filters``   — create the row labels and the Gmail filters (affect FUTURE mail).
+  Idempotent.
+- ``sweep_existing``  — retroactively archive + mark-read + label mail already in the inbox
+  that the filters would have caught (clears the backlog so it doesn't spawn turns).
 
-**Editing a rule's query? Add the OLD query to that rule's ``supersedes`` list.** Filters are
-matched by exact query string, so without it ``apply_filters`` installs the new rule and leaves
-the old one live beside it — and Gmail applies both. The narrower rule you just wrote is then
-decorative: the stale one keeps acting, on every mailbox, forever. ``supersedes`` makes the
-update path an actual update (delete the old, create the new).
+A filter counts as present only when a live filter has the same query AND already adds the
+row's label. A same-query filter without it (every filter from before the table) is
+replaced: the new one is created first, then the old one deleted, so the mailbox is never
+unfiltered in between.
+
+**Editing a row's query? Add the OLD query to that row's ``supersedes``.** Filters are
+matched by exact query string, so without it ``apply_filters`` installs the new rule and
+leaves the old one live beside it — and Gmail applies both. ``supersedes`` makes the update
+path an actual update (delete the old, create the new).
 """
 from __future__ import annotations
 
 import json
 import subprocess
 
-# Each rule: a Gmail match `query` + actions. Keep this list conservative and legible.
-FILTERS: list[dict] = [
-    # The broadest rule in the file, and the one with the sharpest edge: "no-reply" is also
-    # how OPERATIONAL ALERTING addresses you. CloudWatch alarms arrive as
-    # `Labs Alerts <no-reply@sns.amazonaws.com>`, so the bare from: list below archives +
-    # marks-read a production alarm on arrival — and because the runner polls
-    # `in:inbox is:unread`, the alarm then never spawns a turn. The agent isn't slow to a
-    # page; it never learns of it. Hal is the subscriber on `labs-jj-alerts` and email is his
-    # only alarm channel. Alerting is the opposite of junk: it is the mail with the shortest
-    # useful life in the whole inbox. So SNS is carved out, and any future alerting sender
-    # (PagerDuty, Grafana, statuspage) belongs in the same exclusion rather than in a new rule.
-    # (2026-08-26: found from the other end — a delivery-test alarm and a
-    # `labs-jj-web-worker-crash-loop` OK were both sitting archived and read on hal@ with no
-    # turn having touched either. `supersedes` below exists because of this same rule, too.)
-    {
-        "name": "automated-noreply",
-        "query": ('from:(noreply OR no-reply OR donotreply OR "do-not-reply" OR mailer-daemon '
-                  'OR postmaster) -from:sns.amazonaws.com'),
-        "archive": True, "mark_read": True,
-        "supersedes": [
-            'from:(noreply OR no-reply OR donotreply OR "do-not-reply" OR mailer-daemon OR postmaster)',
-        ],
-    },
-    # …and the carve-out's own blind spot: SNS is not only alarms. An SES configuration set
-    # can publish every Send / Delivery / Bounce event to an SNS email subscription, and those
-    # arrive from the SAME `no-reply@sns.amazonaws.com` as an alarm. ace@ is subscribed to
-    # `labs-jj-email-events`, so while someone iterated on a Labs supply-alert template
-    # (2026-09-23/24) every test send became 2-3 unread receipts, and each one started a
-    # confined `/ace:ask` caller session that read the thread, found no question, and replied
-    # nothing — 14 sessions on one thread (1a0d0a1632cfde4f) in 12 hours. The receipts carry a
-    # fixed subject that no alarm uses (alarms are `ALARM: "<name>" …` / `OK: "<name>" …`), so
-    # this rule matches sender AND subject and leaves alerting untouched. The receipts stay
-    # searchable in All Mail for anyone debugging a bounce.
-    {
-        "name": "ses-event-receipts",
-        "query": 'from:no-reply@sns.amazonaws.com subject:"Amazon SES Email Event Notification"',
-        "archive": True, "mark_read": True,
-    },
-    {"name": "promotions", "query": "category:promotions", "archive": True, "mark_read": True},
-    {"name": "social", "query": "category:social", "archive": True, "mark_read": True},
-    # Out-of-office / auto-reply bounces. These wake an agent for zero-content mail:
-    # Ada's 2026-07-20 conduct cycle caught Beth's "Offline through July 26th…" auto-reply
-    # spawning a full eva turn (which correctly did nothing — pure wasted tokens). Gmail
-    # can't match the RFC Auto-Submitted/Precedence headers, so match the high-precision
-    # auto-reply subject markers instead. Marking read on arrival means the runner's
-    # `is:unread` poll never sees it — the turn is never spawned. A later REAL reply in the
-    # same thread arrives unread and triggers normally, so nothing is permanently silenced.
-    {
-        "name": "auto-reply-ooo",
-        "query": ('subject:("out of office" OR "automatic reply" OR "auto-reply" OR autoreply '
-                  'OR "away from my email" OR "away from the office" OR "offline through" '
-                  'OR "offline until")'),
-        "archive": True, "mark_read": True,
-    },
-    # …and the same rule's blind spot, found the hard way on 2026-08-13: the subject list above
-    # is an ENUMERATION of wordings, so it keeps getting outrun by the next one. Beth's responder
-    # said "Offline through July 26th" in July (caught) and "Offline August 13-14" in August
-    # (missed) — same person, same responder, one word different — and it spawned a full eva turn
-    # that read the thread and correctly did nothing. Widening the subject list alone is a trap:
-    # a bare subject:offline would also archive a real "let's take this offline" thread, and a
-    # silently-archived human message is the one failure this whole file is written to avoid.
-    # So this rule requires BOTH an unavailability marker in the SUBJECT and a first-person
-    # availability statement in the BODY — a conjunction a vacation responder satisfies and a
-    # human writing about something else essentially never does. Verified against eva@'s full
-    # mail history: 7/7 matches carry Auto-Submitted: auto-replied, zero false positives.
-    # Overlaps the rule above on purpose (both are archive+mark_read, so overlap is free); this
-    # one exists to catch the wordings that list hasn't learned yet.
-    #
-    # Widened 2026-09-18: a responder whose subject was "less responsive through Sept 25" and
-    # whose body said "in offsite meetings and traveling … checking email intermittently, but a
-    # bit slower to respond" matched NEITHER side of the conjunction, and spawned eva turns on
-    # 09-14 and 09-18. It is a "reduced availability" responder, not an "I am away" one, so both
-    # halves gained that vocabulary. The broad subject words it needed (through, until) stay safe
-    # only because the body half is still required. Re-verified against eva@'s full history:
-    # 10/10 matches carry Auto-Submitted: auto-replied, zero false positives.
-    {
-        "name": "auto-reply-ooo-body",
-        "query": ('subject:(offline OR ooo OR "out of office" OR "on leave" OR "annual leave" '
-                  'OR vacation OR holiday OR away OR responsive OR traveling OR travelling '
-                  'OR offsite OR through OR until) '
-                  '("i will be offline" OR "i am offline" OR "i will be out of the office" '
-                  'OR "i am out of the office" OR "i am currently out of the office" '
-                  'OR "i will be on leave" OR "i am on leave" OR "i am on vacation" '
-                  'OR "i will be on vacation" OR "limited access to email" '
-                  'OR "limited email access" OR "intermittent access" '
-                  'OR "checking email intermittently" OR "check email intermittently" '
-                  'OR "slower to respond" OR "slow to respond" OR "delayed response" '
-                  'OR "away from my email" OR "away from the office")'),
-        "archive": True, "mark_read": True,
-        "supersedes": [
-            'subject:(offline OR ooo OR "out of office" OR "on leave" OR "annual leave" '
-            'OR vacation OR holiday OR away) '
-            '("i will be offline" OR "i am offline" OR "i will be out of the office" '
-            'OR "i am out of the office" OR "i am currently out of the office" '
-            'OR "i will be on leave" OR "i am on leave" OR "i am on vacation" '
-            'OR "i will be on vacation" OR "limited access to email" '
-            'OR "away from my email" OR "away from the office")',
-        ],
-    },
-    # Google Calendar "share my calendar" invitations. Ada's 2026-07-22 review caught one
-    # (Beth sharing her calendar) spawn a full eva turn that spelunked the Calendar API before
-    # concluding "no action." Same shape as the OOO rule: it's auto-generated
-    # (Auto-Submitted: auto-generated) but Gmail can't match that header — and worse, the
-    # From: is SPOOFED to the human sharer (Sender: is calendar-notification@google.com), so
-    # a from: filter would either miss it or archive the person's real mail. Match the exact
-    # high-precision subject the share-invite always carries. Real event invites/RSVPs use
-    # different subjects and are NOT matched. (Docs/Drive share pings stay unfiltered — those
-    # carry real work routing; a calendar SHARE invite does not.)
-    {
-        "name": "calendar-share-invites",
-        "query": 'subject:("invitation to join shared calendar" OR "invitation to view shared calendar")',
-        "archive": True, "mark_read": True,
-    },
-    # Ada's first fleet audit (2026-07-14) found ~90 junk threads across agent inboxes,
-    # dominated by these three senders (hal alone: 45 GitHub notifications, 10 Google
-    # Cloud upsells, 4 Expensify). Agents work GitHub via the gh CLI, never via email.
-    # Google Docs/Drive share notifications are deliberately NOT filtered — they carry
-    # real work routing (how an agent learns a doc was shared with it).
-    {
-        "name": "github-notifications",
-        "query": "from:notifications@github.com",
-        "archive": True, "mark_read": True,
-    },
-    {
-        "name": "google-cloud-marketing",
-        "query": "from:googlecloud@google.com",
-        "archive": True, "mark_read": True,
-    },
-    {
-        "name": "expensify",
-        "query": "from:(concierge@expensify.com OR notifications@expensify.com)",
-        "archive": True, "mark_read": True,
-    },
-    # Connect platform transactional notifications (via Amazon SES). ACE's own /ace:run
-    # cycles CREATE opportunities, and each one bounces a "New Opportunity Created: …" (plus
-    # "Reminder: … opportunities ending …", "Invitation to Program: …") FYI back to ace@ from
-    # this devops automation address — body: "This inbox is not monitored. Please do not
-    # respond." Ada's 2026-07-22 session review caught one ("20260722-1341 · Household Poverty
-    # Targeting Survey") auto-spawn a full ACE turn that read the thread, classified it as
-    # noise, and marked it read — zero output, pure wasted tokens. From: is a stable literal
-    # (not spoofed), so a from: filter catches it cleanly and the runner's is:unread poll never
-    # spawns the turn. Orphan/drift detection for unrecognized opps stays with /ace:sweep (the
-    # dedicated path), NOT this email — so nothing real is lost by never surfacing these.
-    {
-        "name": "connect-devops-notifications",
-        "query": "from:connect-devops@dimagi.com",
-        "archive": True, "mark_read": True,
-    },
-]
+from orchestrator import inbox_rules
+
+
+def _filters_from_table() -> list[dict]:
+    """One filter per Gmail query of every archive row, named after the row
+    (``<row>#2`` for a row's second query), labelled with the row name."""
+    out: list[dict] = []
+    for row in inbox_rules.TABLE:
+        if row.bucket != inbox_rules.ARCHIVE:
+            continue
+        for i, query in enumerate(row.gmail):
+            out.append({
+                "name": row.name if i == 0 else f"{row.name}#{i + 1}",
+                "row": row.name,
+                "query": query,
+                "archive": True, "mark_read": True,
+                "add_label": row.name,
+                "supersedes": list(row.supersedes) if i == 0 else [],
+            })
+    return out
+
+
+#: Derived, never edited by hand — see ``inbox_rules.TABLE``.
+FILTERS: list[dict] = _filters_from_table()
 
 
 class FilterError(Exception):
     pass
 
 
-def _existing_filters(mailbox: str, client: str, *, runner=subprocess.run) -> list[tuple[str, str]]:
-    """Live filters on the mailbox as ``(filter_id, query)`` pairs; ``filter_id`` may be ``""``.
+def _existing_filters(mailbox: str, client: str, *,
+                      runner=subprocess.run) -> list[tuple[str, str, frozenset]]:
+    """Live filters on the mailbox as ``(filter_id, query, added_label_ids)``;
+    ``filter_id`` may be ``""``.
 
     A query with no id still counts as PRESENT (so the rule is skipped, not re-created) but can
     never be deleted — the id is the only handle Gmail offers. Keeping the two concerns separate
@@ -206,37 +88,82 @@ def _existing_filters(mailbox: str, client: str, *, runner=subprocess.run) -> li
     for f in items:
         q = (f.get("criteria") or {}).get("query")
         if q:
-            out.append((f.get("id") or "", q))
+            added = frozenset((f.get("action") or {}).get("addLabelIds") or ())
+            out.append((f.get("id") or "", q, added))
     return out
 
 
+def _label_ids(mailbox: str, client: str, *, runner=subprocess.run) -> dict[str, str] | None:
+    """``{label name: label id}`` for the mailbox's labels, or ``None`` if unreadable."""
+    try:
+        r = runner(["gog", "gmail", "labels", "list", "--account", mailbox,
+                    "--client", client, "--json"], capture_output=True, text=True, timeout=30)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        labels = json.loads(r.stdout or "{}").get("labels") or []
+    except ValueError:
+        return None
+    return {lb["name"]: lb.get("id") or lb["name"] for lb in labels if lb.get("name")}
+
+
+def ensure_labels(mailbox: str, client: str, *, runner=subprocess.run,
+                  dry_run: bool = False) -> tuple[dict[str, str], list[str]]:
+    """Create any archive-row label the mailbox lacks. Returns ``(name→id, created)``.
+
+    Labels must exist before a filter or a ``thread modify --add`` can name them — the runner
+    falls back to skip-only when its labelled archive fails, so a mailbox without them quietly
+    loses the archive half of the table."""
+    ids = _label_ids(mailbox, client, runner=runner)
+    if ids is None:
+        raise FilterError(f"could not list labels on {mailbox}")
+    created = []
+    for name in inbox_rules.archive_labels():
+        if name in ids:
+            continue
+        created.append(name)
+        if dry_run:
+            continue
+        r = runner(["gog", "gmail", "labels", "create", name, "--account", mailbox,
+                    "--client", client, "--no-input"], capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            raise FilterError(f"label '{name}' on {mailbox}: {r.stderr.strip() or 'gog failed'}")
+    if created and not dry_run:
+        ids = _label_ids(mailbox, client, runner=runner) or ids
+    return ids, created
+
+
+def _delete_filter(mailbox: str, client: str, fid: str, what: str, *, runner) -> None:
+    d = runner(["gog", "gmail", "settings", "filters", "delete", fid,
+                "--account", mailbox, "--client", client, "--force", "--no-input"],
+               capture_output=True, text=True, timeout=30)
+    if d.returncode != 0:
+        raise FilterError(f"{what} ({fid}) on {mailbox}: {d.stderr.strip() or 'gog delete failed'}")
+
+
 def apply_filters(mailbox: str, client: str, *, runner=subprocess.run, dry_run: bool = False) -> dict:
-    """Create the FILTERS on one mailbox, idempotently (skip ones already present).
+    """Create the row labels and the FILTERS on one mailbox, idempotently.
     Gmail filters affect FUTURE mail only — pair with sweep_existing for the backlog."""
+    label_ids, labels_created = ensure_labels(mailbox, client, runner=runner, dry_run=dry_run)
     live = _existing_filters(mailbox, client, runner=runner)
-    existing = {q for _fid, q in live}
-    applied, skipped, superseded = [], [], []
+    applied, skipped, superseded, relabelled = [], [], [], []
     for flt in FILTERS:
         # Retire prior versions of THIS rule first, whether or not the current version needs
         # creating: a mailbox can already carry both (a hand-patched filter plus the stale one
         # it was meant to replace), and leaving the stale one live is the whole bug.
         for stale_q in flt.get("supersedes") or ():
-            for fid, q in live:
+            for fid, q, _added in live:
                 if q != stale_q or not fid:
                     continue
-                if dry_run:
-                    superseded.append(f"{flt['name']}:{fid}")
-                    continue
-                d = runner(["gog", "gmail", "settings", "filters", "delete", fid,
-                            "--account", mailbox, "--client", client, "--force", "--no-input"],
-                           capture_output=True, text=True, timeout=30)
-                if d.returncode != 0:
-                    raise FilterError(
-                        f"superseded filter '{flt['name']}' ({fid}) on {mailbox}: "
-                        f"{d.stderr.strip() or 'gog delete failed'}")
+                if not dry_run:
+                    _delete_filter(mailbox, client, fid, f"superseded filter '{flt['name']}'",
+                                   runner=runner)
                 superseded.append(f"{flt['name']}:{fid}")
-                existing.discard(stale_q)
-        if flt["query"] in existing:
+        same_query = [(fid, added) for fid, q, added in live if q == flt["query"]]
+        want = label_ids.get(flt["add_label"])
+        if any(want and want in added for _fid, added in same_query):
             skipped.append(flt["name"])
             continue
         cmd = ["gog", "gmail", "settings", "filters", "create",
@@ -253,12 +180,23 @@ def apply_filters(mailbox: str, client: str, *, runner=subprocess.run, dry_run: 
         if r.returncode != 0:
             raise FilterError(f"filter '{flt['name']}' on {mailbox}: {r.stderr.strip() or 'gog failed'}")
         applied.append(flt["name"])
-    return {"applied": applied, "skipped": skipped, "superseded": superseded}
+        # The same query without the row label: the pre-table filter this one replaces.
+        # Deleted only AFTER its replacement exists, so the mailbox is never unfiltered.
+        for fid, _added in same_query:
+            if not fid:
+                continue
+            if not dry_run:
+                _delete_filter(mailbox, client, fid, f"unlabelled filter '{flt['name']}'",
+                               runner=runner)
+            relabelled.append(f"{flt['name']}:{fid}")
+    return {"applied": applied, "skipped": skipped, "superseded": superseded,
+            "relabelled": relabelled, "labels_created": labels_created}
 
 
 def sweep_existing(mailbox: str, client: str, *, runner=subprocess.run, dry_run: bool = False) -> dict:
-    """Retroactively archive + mark-read mail ALREADY in the inbox that a filter would
-    catch — so an existing junk backlog doesn't spawn turns when polling starts.
+    """Retroactively archive + mark-read + label mail ALREADY in the inbox that a filter
+    would catch — so an existing junk backlog doesn't spawn turns when polling starts.
+    Run ``apply_filters`` first: it creates the labels this names.
 
     Counts reflect threads whose modify actually SUCCEEDED, and each rule pages
     past gog's per-search result cap until its matches are drained. (Ada's
@@ -287,8 +225,9 @@ def sweep_existing(mailbox: str, client: str, *, runner=subprocess.run, dry_run:
                 break  # can't drain pages without modifying — report first page only
             failures = []
             for tid in ids:
-                # one call archives AND marks read the whole thread
+                # one call archives, marks read AND labels the whole thread
                 a = runner(["gog", "gmail", "thread", "modify", tid, "--remove=INBOX,UNREAD",
+                            f"--add={flt['add_label']}",
                             "--account", mailbox, "--client", client, "--no-input"],
                            capture_output=True, text=True, timeout=45)
                 if a.returncode == 0:

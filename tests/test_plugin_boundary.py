@@ -23,7 +23,7 @@ PKG = ROOT / "src" / "orchestrator"
 # ── Tiers (canonical copy lives in src/orchestrator/TIERS.md; keep in sync) ─────
 FRAMEWORK = {
     "agent_cli", "agent_client", "agent_coverage", "agent_doctor", "dependency_health", "agent_email", "caller", "agent_gdoc", "review_receipt", "agent_health", "agent_web", "canopy_web",
-    "inbox_filters",
+    "inbox_filters", "inbox_rules",
     "capture", "transcripts", "scanner", "circuit_breaker", "rate_limiter",
     "scheduler", "paths", "repo_map", "repo_paths", "repo_evidence",
     "skill_budget", "skill_catalog", "skill_runner", "provision", "run_log",
