@@ -119,6 +119,13 @@ def test_prose_and_unrelated_commands_are_not_railed(cmd):
     ("canopy gdoc publish --md f.md --area 'Process State'", False),
     ("canopy gdoc publish --md f.md --replace DOCID", False),     # keeps its existing home
     ("canopy gdoc publish --md f.md --parent FOLDER", False),
+    # The runtime-bundle form skills are told to use (CLAUDE.md § runtime bundle). The
+    # rail was anchored on a bare `canopy`, so this form walked straight past it; the
+    # runner's own `--project` flag sits BEFORE `canopy` and must not count as a destination.
+    ('uv run --project "$CANOPY_ROOT" canopy gdoc publish --md f.md --name N', True),
+    ('uv run --project "$CANOPY_ROOT" canopy gsheet publish --tab r.tsv --name N', True),
+    ('uv run --project "$CANOPY_ROOT" canopy gdoc publish --md f.md --project P', False),
+    ('uv run --project "$CANOPY_ROOT" canopy gdoc publish --md f.md --replace DOCID', False),
 ])
 def test_engine_requires_a_destination(cmd, blocked):
     assert bash_blocks(cmd) is blocked

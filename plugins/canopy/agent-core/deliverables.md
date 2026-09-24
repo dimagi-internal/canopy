@@ -78,15 +78,25 @@ The shared engines resolve the layout from your Drive root — you name the proj
 find-or-create the subfolder, file, share, and verify the share landed:
 
 ```bash
+# run the engines from the plugin's runtime bundle, never the global CLI on PATH (see below)
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+
 # a deliverable → <your root>/Projects/<project>/  (find-or-create, reused next turn)
-canopy gdoc publish --md <file>.md --name "<Doc title>" --project "<Project>" --share domain
+uv run --project "$CANOPY_ROOT" canopy gdoc publish --md <file>.md --name "<Doc title>" --project "<Project>" --share domain
 
 # a durable tracker → <your root>/Process State/
-canopy gdoc publish --md <file>.md --name "<Tracker>" --area "Process State"
+uv run --project "$CANOPY_ROOT" canopy gdoc publish --md <file>.md --name "<Tracker>" --area "Process State"
 
 # iterate in place — same id, same link, same permissions
-canopy gdoc publish --md <file>.md --replace <docId>
+uv run --project "$CANOPY_ROOT" canopy gdoc publish --md <file>.md --replace <docId>
 ```
+
+**Why the runtime bundle and not `canopy` on PATH.** The session-start hook keeps
+`<plugin>/runtime` at the installed plugin's version on every machine. Nothing updates the
+global CLI: it is whatever was last `uv tool install`ed, so on a runner nobody reinstalled on,
+it silently lags behind or lacks a subcommand entirely. Below, `canopy gdoc|gsheet` is
+shorthand for this `uv run --project "$CANOPY_ROOT" canopy …` form.
 
 **Tabular deliverable? Use `canopy gsheet`, never raw `gog sheets create`.** Same contract,
 same flags — one `--tab` per worksheet, as `"Name=path.tsv"` (`.csv` is comma-delimited,
@@ -94,7 +104,7 @@ anything else tab-delimited):
 
 ```bash
 # a roster / grid a human works in → <your root>/Projects/<project>/
-canopy gsheet publish --name "<Sheet title>" --project "<Project>" \
+uv run --project "$CANOPY_ROOT" canopy gsheet publish --name "<Sheet title>" --project "<Project>" \
   --tab "Targets=roster.tsv" --tab "Clean-up=cleanup.tsv" --share domain
 ```
 

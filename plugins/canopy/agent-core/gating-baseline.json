@@ -56,7 +56,7 @@
       {
         "tool": "Bash",
         "_pattern_doc": "Same rail for the canopy publishing engines. Without a destination flag `publish` falls back to the agent's Drive ROOT, i.e. beside Projects/ rather than inside it — the mistake deliverables.md rule 1 names explicitly. `--replace` is exempt (it keeps the existing doc's home) and so is `--help`: before 2026-08-13 this rail matched `canopy gdoc publish --help`, so an agent could not read the usage of the command it was being told to use.",
-        "pattern": "(?:^|[\\n;&|(])\\s*canopy\\s+(?:gdoc|gsheet)\\s+publish\\b(?![\\s\\S]*(?:--parent|--replace|--project|--area|--help))",
+        "pattern": "(?:^|[\\n;&|(])\\s*(?:uv\\s+run\\s+(?:--project\\s+\\S+\\s+)?)?canopy\\s+(?:gdoc|gsheet)\\s+publish\\b(?![\\s\\S]*(?:--parent|--replace|--project|--area|--help))",
         "message": "BLOCKED: `canopy gdoc/gsheet publish` with no destination files into {slug}'s Drive ROOT, beside Projects/ instead of inside it. Pass `--project \"<Project>\"` (a per-project subfolder, find-or-create, reused across turns), `--area \"Process State\"` for a durable tracker, or `--replace <id>` to update an existing artifact in place. See agent-core/deliverables.md."
       },
       {
