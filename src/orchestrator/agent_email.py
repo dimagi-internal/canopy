@@ -1151,6 +1151,16 @@ _MACHINE_SENDER = re.compile(
     r"notification|notifications|automated)[@.-]", re.I)
 
 
+# A no-reply FROM address. Narrower than `_MACHINE_SENDER` on purpose: `From:` is the
+# address a person writes from, so only the addresses no person uses. Needed because
+# plenty of machine mail carries no Sender: header at all — SES event receipts from
+# `no-reply@sns.amazonaws.com` read as human and started 14 `ask` sessions on one
+# ace@ thread (1a0d0a1632cfde4f, 2026-09-23/24). Mirrors the canopy-web runner's gate.
+_NOREPLY_FROM = re.compile(
+    r"(?:^|[<\s\"])(?:noreply|no-reply|donotreply|do-not-reply|mailer-daemon|postmaster)@",
+    re.I)
+
+
 def _automation_of(h: dict) -> dict:
     """Classify a message as machine- or human-generated from its headers alone."""
     auto_submitted = h.get("auto-submitted", "")
@@ -1162,6 +1172,7 @@ def _automation_of(h: dict) -> dict:
         or precedence.strip().lower() in {"bulk", "list", "junk", "auto_reply"}
         or (x_autoreply and x_autoreply.strip().lower() not in {"", "no"})
         or (sender and _MACHINE_SENDER.search(sender))
+        or _NOREPLY_FROM.search(h.get("from", ""))
     )
     return {"auto_submitted": auto_submitted, "precedence": precedence,
             "sender": sender, "is_automated": automated}
