@@ -124,7 +124,7 @@ _BANNED_PHRASES: list[str] = [
 # Action kinds (from scripts.narrative.models.ACTION_KINDS) that EFFECT a state
 # change. Defined locally so this structural gate has no recorder dependency.
 _EFFECTING_ACTION_KINDS: frozenset[str] = frozenset(
-    {"click", "click_menu", "fill", "select", "type", "press", "draw"}
+    {"click", "click_menu", "fill", "select", "type", "press", "draw", "upload"}
 )
 
 # Concrete effecting verbs a narration uses to PROMISE an action happened.

@@ -339,7 +339,7 @@ def scene_timestamps(report: dict) -> dict[int, float]:
 # navigates but does not, on its own, effect a form action (it's the entry, not
 # the act). The judges use this set to apply action-fidelity deductions.
 EFFECTING_ACTION_KINDS: frozenset[str] = frozenset(
-    {"click", "click_menu", "fill", "select", "type", "press", "draw", "map_click"}
+    {"click", "click_menu", "fill", "select", "type", "press", "draw", "map_click", "upload"}
 )
 
 

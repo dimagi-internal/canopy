@@ -287,7 +287,7 @@ except Exception:  # pragma: no cover — portable-install fallback
 # orchestrator has no scripts.ddd dependency. (scripts.ddd.spec_qa and
 # scripts.walkthrough._lib.results carry the same set for their own gates.)
 _EFFECTING_ACTION_KINDS: frozenset[str] = frozenset(
-    {"click", "click_menu", "fill", "select", "type", "press", "draw", "map_click"}
+    {"click", "click_menu", "fill", "select", "type", "press", "draw", "map_click", "upload"}
 )
 
 
