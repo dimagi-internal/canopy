@@ -127,6 +127,21 @@ def test_automated_noreply_does_not_swallow_cloudwatch_alarm_mail():
         "the pre-carve-out query must be listed as superseded, or it stays live beside this one"
 
 
+def test_ses_event_receipts_are_junk_but_alarms_are_not():
+    """SES Send/Delivery/Bounce receipts come from the same no-reply@sns.amazonaws.com as a
+    CloudWatch alarm. Unfiltered, each receipt on ace@ started a confined /ace:ask session that
+    had nothing to answer (14 on one thread, 2026-09-23/24). The rule must be pinned to the
+    receipts' fixed subject so an ALARM:/OK: mail from the same sender still wakes an agent."""
+    rule = next((f for f in inbox_filters.FILTERS if f["name"] == "ses-event-receipts"), None)
+    assert rule is not None, "ses-event-receipts filter rule missing"
+    q = rule["query"]
+    assert "from:no-reply@sns.amazonaws.com" in q
+    assert 'subject:"Amazon SES Email Event Notification"' in q, \
+        "a sender-only SNS rule would swallow alarm mail; the subject is what makes it safe"
+    for alarm_word in ("ALARM", "OK:"):
+        assert alarm_word not in q
+
+
 def test_sweep_inherits_the_carve_out():
     """sweep_existing builds its search from the SAME query, so the retroactive pass must not
     archive alarm mail either — the live Gmail filter's carve-out does nothing for a sweep."""
