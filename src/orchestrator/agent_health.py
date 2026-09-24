@@ -10,8 +10,8 @@ non-work).
 Facts and deterministic signals only — junk VERDICTS are the caller's job (Ada's
 fleet-audit skill judges borderline mail; this module never does). Read-only by
 construction: it writes to no mailbox, no board, no turn queue. Junk findings feed
-the fleet filter set in ``inbox_filters.FILTERS`` — the remediation path is "add a
-rule there and re-run `canopy email apply-filters --all`", never per-mailbox
+the fleet's inbound-email table in ``inbox_rules.TABLE`` — the remediation path is "add a
+row there and re-run `canopy email apply-filters --all`", never per-mailbox
 hand-cleanup.
 
 Same shape as agent_doctor.py: small probes with injectable dependencies

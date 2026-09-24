@@ -50,6 +50,7 @@ from pathlib import Path
 
 import click
 
+from orchestrator import inbox_rules
 from orchestrator.agent_web import AgentWebError, resolve_identity
 from orchestrator.repo_paths import resolve_repo_path
 
@@ -1372,6 +1373,9 @@ def read_thread(
             "body_text": body,
             "attachments": _attachments_of(m),
             **_automation_of(h),
+            # The inbound-email table's row for this message (`canopy email why` explains it).
+            "inbox_row": inbox_rules.classify(
+                inbox_rules.message_from_gmail(m, identity.account)).row,
         })
 
     # Surface quoted history that no message in this thread accounts for — the off-list
@@ -1387,6 +1391,64 @@ def read_thread(
         "messages": messages,
         "reply_all": _reply_all_of(raw, identity.account),
         "has_unseen_quoted": any(msg["quoted_unseen"] for msg in messages),
+    }
+
+
+def why_thread(identity: EmailIdentity, thread_id: str, *, runner=subprocess.run) -> dict:
+    """Which row of the inbound-email table (``inbox_rules``) a thread lands in, and why.
+
+    Classifies the NEWEST message not written by the agent itself — the one that would
+    start a turn — exactly as the runner does, and reports the row labels the thread
+    already carries, so a thread archived by a Gmail filter (which cannot say why) and one
+    archived by the runner read the same way. ``{thread_id, message_id, from, subject, row,
+    bucket, label, evidence, thread_labels, in_inbox, unread}``."""
+    r = runner(["gog", "gmail", "thread", "get", thread_id, "--account", identity.account,
+                "--client", identity.client, "--json"],
+               capture_output=True, text=True, timeout=READ_TIMEOUT)
+    if r.returncode != 0:
+        raise AgentEmailError(f"why: could not read thread {thread_id} as {identity.account}: "
+                              f"{(r.stderr or '').strip()[:200]}")
+    try:
+        data = json.loads(r.stdout or "{}")
+    except ValueError:
+        raise AgentEmailError(f"why: unparseable gog output for {thread_id}")
+    msgs = data.get("messages") or (data.get("thread") or {}).get("messages") or []
+    if not msgs:
+        raise AgentEmailError(f"why: thread {thread_id} has no messages")
+    me = identity.account.lower()
+    inbound = [m for m in msgs if me not in _headers_of(m).get("from", "").lower()]
+    newest = (inbound or msgs)[-1]
+    msg = inbox_rules.message_from_gmail(newest, identity.account)
+    verdict = inbox_rules.classify(msg)
+    if not inbound:
+        verdict = inbox_rules.Verdict(verdict.row, verdict.bucket,
+                                      verdict.evidence + " (every message is the agent's own)")
+    label_ids: set[str] = set()
+    for m in msgs:
+        label_ids.update(m.get("labelIds") or ())
+    names = {}
+    lr = runner(["gog", "gmail", "labels", "list", "--account", identity.account,
+                 "--client", identity.client, "--json"],
+                capture_output=True, text=True, timeout=READ_TIMEOUT)
+    if lr.returncode == 0:
+        try:
+            names = {lb.get("id"): lb.get("name") for lb in json.loads(lr.stdout).get("labels") or []}
+        except ValueError:
+            names = {}
+    rows = set(inbox_rules.ROWS)
+    newest_labels = set(newest.get("labelIds") or ())
+    return {
+        "thread_id": thread_id,
+        "message_id": newest.get("id"),
+        "from": msg.from_,
+        "subject": msg.subject,
+        "row": verdict.row,
+        "bucket": verdict.bucket,
+        "label": verdict.label,
+        "evidence": verdict.evidence,
+        "thread_labels": sorted(n for n in (names.get(i, i) for i in label_ids) if n in rows),
+        "in_inbox": "INBOX" in newest_labels,
+        "unread": "UNREAD" in newest_labels,
     }
 
 
@@ -2162,6 +2224,35 @@ def email_read(repo, agent, account, client, thread_id):
     click.echo(json.dumps(result, indent=2))
 
 
+@email_group.command("why")
+@_with_identity_options
+@click.argument("thread_id")
+@click.option("--json-output", is_flag=True, help="Print the verdict as JSON.")
+def email_why(repo, agent, account, client, thread_id, json_output):
+    """Which row of the fleet's inbound-email table a thread lands in (wake or archive),
+    and the header, address or phrase that put it there. The table is
+    orchestrator/inbox_rules.py; the same rows drive the Gmail filters and the runner."""
+    try:
+        ident = _identity_from_opts(repo, agent, account, client)
+        res = why_thread(ident, thread_id)
+    except AgentEmailError as e:
+        raise click.ClickException(str(e))
+    if json_output:
+        click.echo(json.dumps(res, indent=2))
+        return
+    click.echo(f"thread   {res['thread_id']} ({ident.account})")
+    click.echo(f"message  {res['message_id']}  from {res['from']}")
+    click.echo(f"subject  {res['subject']}")
+    click.echo(f"row      {res['row']}")
+    action = f"label {res['label']}" if res["bucket"] == "archive" else "start a turn"
+    click.echo(f"bucket   {res['bucket']} — {action}")
+    click.echo(f"evidence {res['evidence']}")
+    state = ", ".join(res["thread_labels"]) or "none"
+    click.echo(f"now      row labels on thread: {state}; "
+               f"{'in inbox' if res['in_inbox'] else 'archived'}, "
+               f"{'unread' if res['unread'] else 'read'}")
+
+
 @email_group.command("fetch-attachment")
 @_with_identity_options
 @click.argument("message_id")
@@ -2192,8 +2283,9 @@ def email_fetch_attachment(repo, agent, account, client, message_id, attachment_
                    "(clears the junk backlog so it doesn't spawn turns).")
 @click.option("--dry-run", is_flag=True)
 def email_apply_filters(all_agents, repo, agent, account, client, sweep, dry_run):
-    """Push the fleet inbox filters (orchestrator/inbox_filters.py — the single source of
-    truth) to one mailbox or, with --all, every agent's. Idempotent."""
+    """Push the fleet inbox filters to one mailbox or, with --all, every agent's: the Gmail
+    half of the inbound-email table (orchestrator/inbox_rules.py — the single source of
+    truth). Creates the row labels, then one labelled filter per Gmail query. Idempotent."""
     from orchestrator import inbox_filters
     targets = []  # (label, account, client)
     if all_agents:
@@ -2223,6 +2315,10 @@ def email_apply_filters(all_agents, repo, agent, account, client, sweep, dry_run
             # rather than folding it into a silent "applied".
             if res.get("superseded"):
                 line += f" superseded={res['superseded']}"
+            if res.get("relabelled"):
+                line += f" replaced-unlabelled={res['relabelled']}"
+            if res.get("labels_created"):
+                line += f" labels-created={res['labels_created']}"
             if sweep:
                 line += f" | swept-existing={inbox_filters.sweep_existing(acct, cli, dry_run=dry_run)}"
         except inbox_filters.FilterError as e:
