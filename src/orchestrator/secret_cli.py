@@ -1,29 +1,29 @@
-"""`canopy secret` — spend a secret a person shared with a chat, without reading it.
+"""`canopy secret` — use a secret a person shared with THIS chat, without reading it.
 
-A person hands a chat a secret through canopy-web's "Share a secret…" (the
-`SessionSecret` model). The chat receives only a reference:
+A person adds a secret from the chat's "Secrets…" menu in canopy-web (the
+`SessionSecret` model). Nothing is posted into the chat; they just mention it by
+name. The session running that chat then:
 
-    canopy-secret://<session-id>/<NAME>
-
-and the agent spends it here:
-
-    canopy secret exec --stdin canopy-secret://<session>/GH_TOKEN -- \\
-        gh secret set GH_TOKEN --repo dimagi-internal/canopy                  # on stdin
-    canopy secret exec canopy-secret://<session>/GH_TOKEN -- \\
-        sh -c 'op item edit gh-token "credential=$GH_TOKEN"'                  # as $GH_TOKEN
+    canopy secret list                                   # what this chat holds
+    canopy secret exec --stdin GH_TOKEN -- \\
+        gh secret set GH_TOKEN --repo dimagi-internal/canopy          # on stdin
+    canopy secret exec GH_TOKEN -- \\
+        sh -c 'op item edit gh-token "credential=$GH_TOKEN"'          # as $GH_TOKEN
 
 The env-var form needs the `sh -c '…'` with SINGLE quotes: `"$GH_TOKEN"` typed
 straight into the calling shell is expanded there, where it is unset, before
 this command ever runs.
 
+**Only this session.** The session names itself by `CLAUDE_CODE_SESSION_ID`,
+which the canopy runner reports as the chat binding's transcript id, and
+canopy-web releases a secret only to the conversation bound to the chat that
+holds it. There is deliberately no flag to name another session or chat.
+
 The value goes to exactly one child process and never to this process's output:
 the child's stdout and stderr are relayed with every occurrence of the value
-replaced by `***`. That is the property the feature exists for — the model
-driving the terminal reads the command's output, so an unmasked `echo` or an
-error that quotes its input would put the secret straight into its context.
-
-There is deliberately no `get` / `print` verb. A way to show the value is a
-way for it to end up in a transcript.
+replaced by `***`. That is the point — the model driving the terminal reads the
+command's output, so an unmasked `echo` or an error that quotes its input would
+put the secret straight into its context. There is no verb that prints a value.
 """
 from __future__ import annotations
 
@@ -38,30 +38,39 @@ import click
 
 from orchestrator import canopy_web
 
-REF_RE = re.compile(r"^canopy-secret://([0-9a-fA-F-]{36})/([A-Z][A-Z0-9_]{0,63})$")
+NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 MASK = "***"
+SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
 
 
-def parse_ref(ref: str) -> tuple[str, str]:
-    m = REF_RE.match((ref or "").strip())
-    if not m:
-        raise click.BadParameter(
-            "expected canopy-secret://<session-id>/<NAME> (copy it from the chat message)",
-            param_hint="REF",
+def this_session() -> str:
+    sid = os.environ.get(SESSION_ENV, "").strip()
+    if not sid:
+        raise click.ClickException(
+            f"${SESSION_ENV} is not set — `canopy secret` only works inside the Claude Code "
+            f"session a chat is bound to, and uses that session's own secrets."
         )
-    return m.group(1), m.group(2)
+    return sid
+
+
+def _get(path: str, *, call=None):
+    call = call or canopy_web.call
+    try:
+        return call("GET", path)
+    except canopy_web.CanopyError as exc:
+        raise click.ClickException(
+            f"{exc}. A 404 means this session is not bound to a chat you can act for, "
+            f"or the secret does not exist or has expired (secrets live 30 minutes)."
+        ) from None
+
+
+def list_secrets(session_id: str, *, call=None) -> list[dict]:
+    return _get(f"/api/session-secrets/{session_id}", call=call) or []
 
 
 def fetch_value(session_id: str, name: str, *, call=None) -> str:
-    """The plaintext. Errors say what failed and never carry the value."""
-    call = call or canopy_web.call
-    try:
-        body = call("GET", f"/api/canopy-sessions/{session_id}/secrets/{name}/value")
-    except canopy_web.CanopyError as exc:
-        raise click.ClickException(
-            f"could not fetch {name}: {exc}. A 404 means no such secret, or this identity "
-            f"is neither a writer of that chat nor its agent."
-        ) from None
+    """The plaintext. Errors name the secret and never carry a value."""
+    body = _get(f"/api/session-secrets/{session_id}/{name}", call=call)
     value = (body or {}).get("value") or ""
     if not value:
         raise click.ClickException(f"{name} came back empty")
@@ -109,7 +118,19 @@ def run_masked(argv: list[str], value: str, *, env_name: Optional[str], stdin: b
 
 @click.group("secret")
 def secret_group() -> None:
-    """Spend a secret shared with a chat by reference, without reading it."""
+    """Use secrets shared with this chat, without reading them."""
+
+
+@secret_group.command("list")
+def list_cmd() -> None:
+    """The secrets shared with the chat this session is bound to (names only)."""
+    rows = list_secrets(this_session())
+    if not rows:
+        click.echo("No secrets shared with this chat.")
+        return
+    for r in rows:
+        used = "used" if r.get("last_used_at") else "not used yet"
+        click.echo(f"{r['name']}\t{used}\texpires {r.get('expires_at', '?')}")
 
 
 @secret_group.command(
@@ -120,21 +141,23 @@ def secret_group() -> None:
               help="Env var to set in the command (default: the secret's NAME).")
 @click.option("--stdin", "use_stdin", is_flag=True,
               help="Pipe the value to the command's stdin instead of setting an env var.")
-@click.argument("ref")
+@click.argument("name")
 @click.argument("command", nargs=-1, required=True, type=click.UNPROCESSED)
-def exec_cmd(env_name: Optional[str], use_stdin: bool, ref: str, command: tuple[str, ...]) -> None:
-    """Run COMMAND with the secret at REF, masking it out of the output.
+def exec_cmd(env_name: Optional[str], use_stdin: bool, name: str, command: tuple[str, ...]) -> None:
+    """Run COMMAND with the secret NAME from this chat, masking it out of the output.
 
-    REF is the `canopy-secret://<session>/<NAME>` from the chat. Put `--` before
-    COMMAND. Reference the value as "$NAME" inside a `sh -c '…'` if the command
-    needs it as an argument — single quotes, so YOUR shell does not expand it.
+    Put `--` before COMMAND. Reference the value as "$NAME" inside a
+    `sh -c '…'` if the command needs it as an argument — single quotes, so YOUR
+    shell does not expand it.
     """
-    session_id, name = parse_ref(ref)
-    # With interspersed args off, click stops option parsing at REF and hands
+    if not NAME_RE.match(name):
+        raise click.BadParameter("a secret name like GH_TOKEN (see `canopy secret list`)",
+                                 param_hint="NAME")
+    # With interspersed args off, click stops option parsing at NAME and hands
     # the `--` through as the first word of COMMAND.
     argv = list(command[1:] if command and command[0] == "--" else command)
     if not argv:
         raise click.UsageError("no command after --")
-    value = fetch_value(session_id, name)
+    value = fetch_value(this_session(), name)
     target = None if use_stdin else (env_name or name)
     sys.exit(run_masked(argv, value, env_name=target, stdin=use_stdin))

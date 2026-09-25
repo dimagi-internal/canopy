@@ -1,4 +1,4 @@
-"""`canopy secret exec` — the value reaches one child process and never our output."""
+"""`canopy secret` — this session's chat secrets, spent without being read."""
 from __future__ import annotations
 
 import sys
@@ -8,8 +8,7 @@ from click.testing import CliRunner
 
 from orchestrator import secret_cli
 
-SID = "4d0a7706-c56d-4dae-b80b-62f8478c42e8"
-REF = f"canopy-secret://{SID}/GH_TOKEN"
+SID = "eb742bd8-e16c-439e-a3d7-c8a5a769df60"
 VALUE = "ghp_not_a_real_token_0123456789"
 
 
@@ -19,9 +18,12 @@ def served(monkeypatch):
 
     def fake_call(method, path, body=None, **kw):
         calls.append((method, path))
-        return {"name": "GH_TOKEN", "value": VALUE}
+        if path.endswith("/GH_TOKEN"):
+            return {"name": "GH_TOKEN", "value": VALUE}
+        return [{"name": "GH_TOKEN", "last_used_at": None, "expires_at": "2026-09-25T13:30:00+00:00"}]
 
     monkeypatch.setattr(secret_cli.canopy_web, "call", fake_call)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SID)
     return calls
 
 
@@ -32,17 +34,24 @@ def _run(capfd, *args):
     return exc.value.code, out, err
 
 
-def test_the_value_is_in_the_childs_env_and_masked_in_its_stdout(served, capfd):
-    code, out, err = _run(capfd, REF, "--", sys.executable, "-c",
+def test_list_asks_for_THIS_sessions_secrets_and_shows_no_value(served):
+    r = CliRunner().invoke(secret_cli.secret_group, ["list"])
+    assert r.exit_code == 0, r.output
+    assert "GH_TOKEN" in r.output and VALUE not in r.output
+    assert served == [("GET", f"/api/session-secrets/{SID}")]
+
+
+def test_exec_fetches_from_this_session_and_masks_stdout(served, capfd):
+    code, out, err = _run(capfd, "GH_TOKEN", "--", sys.executable, "-c",
                           "import os; print('token=' + os.environ['GH_TOKEN'])")
     assert code == 0
     assert out.strip() == "token=***"
     assert VALUE not in out + err
-    assert served == [("GET", f"/api/canopy-sessions/{SID}/secrets/GH_TOKEN/value")]
+    assert served == [("GET", f"/api/session-secrets/{SID}/GH_TOKEN")]
 
 
 def test_stdin_mode_pipes_it_in_and_masks_stderr_too(served, capfd):
-    code, out, err = _run(capfd, "--stdin", REF, "--", sys.executable, "-c",
+    code, out, err = _run(capfd, "--stdin", "GH_TOKEN", "--", sys.executable, "-c",
                           "import sys, os; v = sys.stdin.read(); "
                           "sys.stderr.write('got ' + v + '\\n'); print('GH_TOKEN' in os.environ)")
     assert code == 0
@@ -52,30 +61,39 @@ def test_stdin_mode_pipes_it_in_and_masks_stderr_too(served, capfd):
 
 
 def test_a_custom_env_name(served, capfd):
-    code, out, _ = _run(capfd, "--env", "GITHUB_PAT", REF, "--", sys.executable, "-c",
-                        "import os; print(len(os.environ['GITHUB_PAT']))")
+    _, out, _ = _run(capfd, "--env", "GITHUB_PAT", "GH_TOKEN", "--", sys.executable, "-c",
+                     "import os; print(len(os.environ['GITHUB_PAT']))")
     assert out.strip() == str(len(VALUE))
 
 
 def test_the_childs_exit_code_is_propagated(served, capfd):
-    code, _, _ = _run(capfd, REF, "--", sys.executable, "-c", "raise SystemExit(7)")
+    code, _, _ = _run(capfd, "GH_TOKEN", "--", sys.executable, "-c", "raise SystemExit(7)")
     assert code == 7
 
 
-def test_a_malformed_reference_is_refused_before_any_fetch(served):
-    with pytest.raises(Exception):
-        secret_cli.exec_cmd.main(["canopy-secret://nope/GH_TOKEN", "--", "true"], standalone_mode=False)
+def test_outside_a_claude_session_it_refuses_before_any_fetch(served, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+    r = CliRunner().invoke(secret_cli.secret_group, ["list"])
+    assert r.exit_code != 0 and "CLAUDE_CODE_SESSION_ID" in r.output
     assert served == []
 
 
-def test_a_fetch_failure_names_the_secret_and_not_a_value(monkeypatch):
+def test_a_bad_name_is_refused_before_any_fetch(served):
+    with pytest.raises(Exception):
+        secret_cli.exec_cmd.main(["canopy-secret://x/GH_TOKEN", "--", "true"], standalone_mode=False)
+    assert served == []
+
+
+def test_a_fetch_failure_names_the_problem_and_not_a_value():
     def boom(*a, **k):
         raise secret_cli.canopy_web.CanopyError("GET … -> 404: no such secret")
 
     with pytest.raises(Exception) as exc:
         secret_cli.fetch_value(SID, "GH_TOKEN", call=boom)
-    assert "GH_TOKEN" in str(exc.value) and "404" in str(exc.value)
+    assert "404" in str(exc.value) and "30 minutes" in str(exc.value)
 
 
-def test_there_is_no_verb_that_prints_a_value():
-    assert set(secret_cli.secret_group.commands) == {"exec"}
+def test_no_verb_prints_a_value_and_none_names_another_session():
+    assert set(secret_cli.secret_group.commands) == {"list", "exec"}
+    params = {p.name for c in secret_cli.secret_group.commands.values() for p in c.params}
+    assert not params & {"session", "session_id", "chat", "ref"}
