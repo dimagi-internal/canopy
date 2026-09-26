@@ -202,12 +202,14 @@ def urllib_transport(method: str, url: str, headers: dict, body: Optional[bytes]
 def call(method: str, path: str, body=None, *,
          base_url: Optional[str] = None, token: Optional[str] = None,
          workspace: Optional[str] = None,
-         transport: Optional[Transport] = None) -> dict:
+         transport: Optional[Transport] = None,
+         headers: Optional[dict] = None) -> dict:
     base = resolve_base_url(base_url)
     tok = resolve_token(token)
     path = scoped_api_path(path, workspace)  # → /api/w/<ws>/… when a workspace is active
     transport = transport or urllib_transport
-    headers = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
+    headers = {**(headers or {}), "Authorization": f"Bearer {tok}",
+               "Content-Type": "application/json"}
     data = json.dumps(body).encode("utf-8") if body is not None else None
     status, text = transport(method, base + path, headers, data)
     if not (200 <= status < 300):

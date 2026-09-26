@@ -14,10 +14,14 @@ The env-var form needs the `sh -c '…'` with SINGLE quotes: `"$GH_TOKEN"` typed
 straight into the calling shell is expanded there, where it is unset, before
 this command ever runs.
 
-**Only this session.** The session names itself by `CLAUDE_CODE_SESSION_ID`,
-which the canopy runner reports as the chat binding's transcript id, and
-canopy-web releases a secret only to the conversation bound to the chat that
-holds it. There is deliberately no flag to name another session or chat.
+**Only this chat.** The session proves which chat it is driving with the chat
+KEY canopy issued when its runner claimed the chat's turn (`ChatKey` in
+canopy-web): `$CANOPY_CHAT_KEY` on a cloud box, or the file the laptop runner
+left under this session's id or its emdash worktree. The key reaches that
+chat's secrets and no other's. There is deliberately no flag to name another
+session or chat. (With no key — a session started before its runner learned to
+leave one — it falls back to naming itself by `CLAUDE_CODE_SESSION_ID`, the old
+way; that path goes away next.)
 
 The value goes to exactly one child process and never to this process's output:
 the child's stdout and stderr are relayed with every occurrence of the value
@@ -28,6 +32,7 @@ put the secret straight into its context. There is no verb that prints a value.
 from __future__ import annotations
 
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -41,6 +46,63 @@ from orchestrator import canopy_web
 NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 MASK = "***"
 SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
+KEY_ENV = "CANOPY_CHAT_KEY"
+KEY_HEADER = "X-Canopy-Chat-Key"
+KEY_ROOT = pathlib.Path.home() / ".canopy" / "chat"
+_SUFFIX = re.compile(r"-[0-9a-z]+$")
+_SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
+
+
+def _read_key(path: pathlib.Path) -> str:
+    try:
+        key = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return key if key.startswith("chk_") else ""
+
+
+def _task_candidates(cwd: str) -> list[str]:
+    """Names the laptop runner may have left this session's key under, from its
+    emdash worktree path: each component below ~/emdash/worktrees, with and
+    without emdash's `emdash-` prefix and random `-<suffix>`. Over-generating is
+    safe — only a task the runner actually wrote a key for has a file."""
+    root = pathlib.Path.home() / "emdash" / "worktrees"
+    try:
+        rel = pathlib.Path(cwd).resolve().relative_to(root.resolve())
+    except (ValueError, OSError):
+        return []
+    out: list[str] = []
+    for part in rel.parts:
+        for name in (part, part[len("emdash-"):] if part.startswith("emdash-") else ""):
+            for cand in (name, _SUFFIX.sub("", name)):
+                if cand and _SAFE.match(cand) and cand not in out:
+                    out.append(cand)
+    return out
+
+
+def chat_key(cwd: Optional[str] = None) -> str:
+    """This session's chat key, or "" when it has none."""
+    key = os.environ.get(KEY_ENV, "").strip()
+    if key.startswith("chk_"):
+        return key
+    sid = os.environ.get(SESSION_ENV, "").strip()
+    if sid and _SAFE.match(sid):
+        key = _read_key(KEY_ROOT / "session" / f"{sid}.key")
+        if key:
+            return key
+    for task in _task_candidates(cwd or os.getcwd()):
+        key = _read_key(KEY_ROOT / "task" / f"{task}.key")
+        if key:
+            return key
+    return ""
+
+
+def this_chat() -> tuple[str, str]:
+    """("key", <chat key>) — or, with none, ("session", <Claude session id>)."""
+    key = chat_key()
+    if key:
+        return "key", key
+    return "session", this_session()
 
 
 def this_session() -> str:
@@ -53,9 +115,15 @@ def this_session() -> str:
     return sid
 
 
-def _get(path: str, *, call=None):
+def _where(chat) -> tuple[str, str]:
+    return chat if isinstance(chat, tuple) else ("session", chat)
+
+
+def _get(path: str, *, call=None, key: str = ""):
     call = call or canopy_web.call
     try:
+        if key:
+            return call("GET", path, headers={KEY_HEADER: key})
         return call("GET", path)
     except canopy_web.CanopyError as exc:
         raise click.ClickException(
@@ -64,13 +132,20 @@ def _get(path: str, *, call=None):
         ) from None
 
 
-def list_secrets(session_id: str, *, call=None) -> list[dict]:
-    return _get(f"/api/session-secrets/{session_id}", call=call) or []
+def list_secrets(chat, *, call=None) -> list[dict]:
+    kind, val = _where(chat)
+    if kind == "key":
+        return _get("/api/session-secrets/key", call=call, key=val) or []
+    return _get(f"/api/session-secrets/{val}", call=call) or []
 
 
-def fetch_value(session_id: str, name: str, *, call=None) -> str:
+def fetch_value(chat, name: str, *, call=None) -> str:
     """The plaintext. Errors name the secret and never carry a value."""
-    body = _get(f"/api/session-secrets/{session_id}/{name}", call=call)
+    kind, val = _where(chat)
+    if kind == "key":
+        body = _get(f"/api/session-secrets/key/{name}", call=call, key=val)
+    else:
+        body = _get(f"/api/session-secrets/{val}/{name}", call=call)
     value = (body or {}).get("value") or ""
     if not value:
         raise click.ClickException(f"{name} came back empty")
@@ -124,7 +199,7 @@ def secret_group() -> None:
 @secret_group.command("list")
 def list_cmd() -> None:
     """The secrets shared with the chat this session is bound to (names only)."""
-    rows = list_secrets(this_session())
+    rows = list_secrets(this_chat())
     if not rows:
         click.echo("No secrets shared with this chat.")
         return
@@ -158,6 +233,6 @@ def exec_cmd(env_name: Optional[str], use_stdin: bool, name: str, command: tuple
     argv = list(command[1:] if command and command[0] == "--" else command)
     if not argv:
         raise click.UsageError("no command after --")
-    value = fetch_value(this_session(), name)
+    value = fetch_value(this_chat(), name)
     target = None if use_stdin else (env_name or name)
     sys.exit(run_masked(argv, value, env_name=target, stdin=use_stdin))
