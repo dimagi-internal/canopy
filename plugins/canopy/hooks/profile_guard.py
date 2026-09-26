@@ -37,6 +37,11 @@ Profile shape (written by the runner from canopy-web's envelope):
               argument; a command with an operator, $() or backticks is refused
   read_paths  fnmatch patterns a path-taking tool's target (resolved) must match;
               `{cwd}` is the session's working directory. Empty → no path allowed.
+  write_paths the same, for tools that CHANGE a file (Write/Edit/MultiEdit/
+              NotebookEdit). Checked INSTEAD of read_paths. Empty or absent →
+              no writes at all. Separate since 2026-09-26: with one list, a
+              caller who could read the worktree could overwrite the script its
+              `bash` allowlist runs (bin/ace-email) and then run it.
 
 `{thread_id}` in a pattern is the conversation's thread, so a caller's session
 can read and answer THEIR thread and no other.
@@ -51,7 +56,8 @@ import sys
 #: The runner reads this to decide whether it may report `profiles` to canopy-web.
 #: Bump only when the profile contract changes.
 #: 2 = also honours CANOPY_PROFILE (the cloud runner, which spawns claude itself).
-PROFILE_ENFORCEMENT_VERSION = 2
+#: 3 = writes are checked against `write_paths` (absent → none), not read_paths.
+PROFILE_ENFORCEMENT_VERSION = 3
 
 PROFILE_ROOT = os.path.expanduser("~/.canopy/profiles")
 _ANCHOR = re.compile(r"-worktrees-.+?-emdash-(?P<leaf>.+)$")
@@ -67,6 +73,8 @@ _PATH_KEYS = {
     "MultiEdit": ("file_path",), "NotebookRead": ("notebook_path",),
     "NotebookEdit": ("notebook_path",), "Glob": ("path",), "Grep": ("path",), "LS": ("path",),
 }
+#: Tools that CHANGE the file at their path: checked against write_paths.
+_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 
 
 def restricted_task(transcript_path: str):
@@ -217,8 +225,9 @@ def decide(tool: str, tool_input: dict, prof: dict, cwd: str):
         paths = [str((tool_input or {}).get(k) or "") for k in keys]
         if tool in ("Glob", "Grep", "LS") and not any(paths):
             paths = [cwd]
+        allowed = cap.get("write_paths") if tool in _WRITE_TOOLS else cap.get("read_paths")
         for p in paths:
-            if not _path_ok(p, cap.get("read_paths") or [], prof, cwd):
+            if not _path_ok(p, allowed or [], prof, cwd):
                 return f"this session answers a caller through '{name}'; {p or 'that path'} is outside what it may touch"
     return None
 

@@ -230,3 +230,37 @@ def test_the_sessions_own_envelope_is_readable_and_nothing_beside_it(monkeypatch
     assert _run(monkeypatch, capsys, "Read", {"file_path": str(own)})[0] == 0
     assert _run(monkeypatch, capsys, "Read", {"file_path": str(other)})[0] == 2
     assert _run(monkeypatch, capsys, "Write", {"file_path": str(own)})[0] == 2
+
+
+# --- writes have their own list ------------------------------------------------------
+#
+# 2026-09-26: Write was checked against read_paths, so a caller who could read
+# the worktree could overwrite bin/ace-email — the script their bash allowlist
+# runs — and then run it.
+
+def _with_cap(profiles, **cap):
+    doc = json.loads(json.dumps(PROFILE))
+    doc["capability"].update(cap)
+    (profiles / f"{TASK}.json").write_text(json.dumps(doc))
+
+
+def test_a_write_inside_write_paths_passes(monkeypatch, capsys, profiles):
+    _with_cap(profiles, tools=["Read", "Write"], write_paths=["{cwd}/.ace-ask/*"])
+    assert _run(monkeypatch, capsys, "Write", {"file_path": "/Users/a/w/.ace-ask/body.md"})[0] == 0
+
+
+@pytest.mark.parametrize("target", ["/Users/a/w/bin/ace-email", "/Users/a/w/.ace-ask/../bin/x",
+                                    "/Users/a/w/README.md"])
+def test_a_readable_path_is_not_writable(monkeypatch, capsys, profiles, target):
+    _with_cap(profiles, tools=["Read", "Write", "Edit"], write_paths=["{cwd}/.ace-ask/*"])
+    for tool in ("Write", "Edit"):
+        code, err = _run(monkeypatch, capsys, tool, {"file_path": target})
+        assert code == 2 and "outside what it may touch" in err
+    assert _run(monkeypatch, capsys, "Read", {"file_path": "/Users/a/w/README.md"})[0] == 0
+
+
+def test_no_write_paths_means_no_writes(monkeypatch, capsys, profiles):
+    # An interface published before write_paths existed must not keep the old,
+    # wide-open behaviour: fail closed.
+    _with_cap(profiles, tools=["Read", "Write"])
+    assert _run(monkeypatch, capsys, "Write", {"file_path": "/Users/a/w/.ace-ask/body.md"})[0] == 2
