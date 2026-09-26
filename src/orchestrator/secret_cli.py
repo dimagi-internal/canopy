@@ -19,9 +19,8 @@ KEY canopy issued when its runner claimed the chat's turn (`ChatKey` in
 canopy-web): `$CANOPY_CHAT_KEY` on a cloud box, or the file the laptop runner
 left under this session's id or its emdash worktree. The key reaches that
 chat's secrets and no other's. There is deliberately no flag to name another
-session or chat. (With no key — a session started before its runner learned to
-leave one — it falls back to naming itself by `CLAUDE_CODE_SESSION_ID`, the old
-way; that path goes away next.)
+session or chat, and no fallback: a session holding no key is not driving a
+chat, and has no chat secrets to reach.
 
 The value goes to exactly one child process and never to this process's output:
 the child's stdout and stderr are relayed with every occurrence of the value
@@ -97,55 +96,37 @@ def chat_key(cwd: Optional[str] = None) -> str:
     return ""
 
 
-def this_chat() -> tuple[str, str]:
-    """("key", <chat key>) — or, with none, ("session", <Claude session id>)."""
+def this_chat() -> str:
+    """This session's chat key, or a clear refusal when it holds none."""
     key = chat_key()
-    if key:
-        return "key", key
-    return "session", this_session()
-
-
-def this_session() -> str:
-    sid = os.environ.get(SESSION_ENV, "").strip()
-    if not sid:
+    if not key:
         raise click.ClickException(
-            f"${SESSION_ENV} is not set — `canopy secret` only works inside the Claude Code "
-            f"session a chat is bound to, and uses that session's own secrets."
+            "this session holds no chat key — `canopy secret` only works inside the Claude "
+            "Code session driving a canopy chat, where the runner leaves that chat's key "
+            f"(${KEY_ENV}, or ~/.canopy/chat/…)."
         )
-    return sid
+    return key
 
 
-def _where(chat) -> tuple[str, str]:
-    return chat if isinstance(chat, tuple) else ("session", chat)
-
-
-def _get(path: str, *, call=None, key: str = ""):
+def _get(path: str, *, call=None, key: str):
     call = call or canopy_web.call
     try:
-        if key:
-            return call("GET", path, headers={KEY_HEADER: key})
-        return call("GET", path)
+        return call("GET", path, headers={KEY_HEADER: key})
     except canopy_web.CanopyError as exc:
         raise click.ClickException(
-            f"{exc}. A 404 means this session is not bound to a chat you can act for, "
-            f"or the secret does not exist or has expired (secrets live 30 minutes)."
+            f"{exc}. A 404 means this session's chat key is not valid for any chat (it "
+            f"expired, or the chat's next turn was claimed on another box), or the secret "
+            f"does not exist or has expired (secrets live 30 minutes)."
         ) from None
 
 
-def list_secrets(chat, *, call=None) -> list[dict]:
-    kind, val = _where(chat)
-    if kind == "key":
-        return _get("/api/session-secrets/key", call=call, key=val) or []
-    return _get(f"/api/session-secrets/{val}", call=call) or []
+def list_secrets(key: str, *, call=None) -> list[dict]:
+    return _get("/api/session-secrets/key", call=call, key=key) or []
 
 
-def fetch_value(chat, name: str, *, call=None) -> str:
+def fetch_value(key: str, name: str, *, call=None) -> str:
     """The plaintext. Errors name the secret and never carry a value."""
-    kind, val = _where(chat)
-    if kind == "key":
-        body = _get(f"/api/session-secrets/key/{name}", call=call, key=val)
-    else:
-        body = _get(f"/api/session-secrets/{val}/{name}", call=call)
+    body = _get(f"/api/session-secrets/key/{name}", call=call, key=key)
     value = (body or {}).get("value") or ""
     if not value:
         raise click.ClickException(f"{name} came back empty")
