@@ -117,6 +117,15 @@ guarantee that independence, the judge will (per visual-judge's
 Independence requirement) mark the verdict `self_assessed: true` and
 apply −1 to every dimension — so make the dispatch genuinely fresh.
 
+**Judge scope (backlog mode).** If `<run_dir>/judge-scope.json` exists with
+`full: false`, `ddd-run` Step 2f already ran `judge_scope carry`: the `reuse`
+scenes' sealed passes (including any `_r2`/`_r3` confirmations) are back in
+`passes/concept/` byte-for-byte. Dispatch ONLY the `rejudge` scenes (and confirm
+only THEIR caps in Step 4a); score every scene from the sealed files as usual,
+so reused cells enter the floor, the distribution and `design_findings.json`
+unchanged. Never re-dispatch or re-confirm a reused scene — its inputs are
+byte-identical, so a new draw would only sample judge noise.
+
 **Before anything else, confirm the run dir is one render's work.** Run
 `python -m scripts.ddd.snapshot_consistency <run_dir>`. It fails when the
 snapshots came from more than one render — which happens when an iteration

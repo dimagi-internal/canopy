@@ -5,9 +5,10 @@ description: >
   .canopy/ddd/context.md + learnings.md, runs Phase 0 (evidence → why-brief →
   qa → eval), drafts and QA-gates a unified spec, machine-gates it for
   buildability (ddd-narrative-actionability-eval), then takes the story to the
-  user for explicit sign-off (ddd-narrative-review) before anything gets built.
-  Renders, dual-judges, routes design findings to specialist fixers, and
-  converges. On convergence runs the Video phase — renders the narrated
+  user for explicit sign-off (ddd-narrative-review) before anything gets built,
+  then gap-walks the product (ddd-gap-walk) so missing capabilities are built
+  before any render. Renders, dual-judges (v1 products: batch-fix, re-judge
+  only what changed), routes findings to fixers, and converges. On convergence runs the Video phase — renders the narrated
   connect-ddd-walkthrough, self-improves it via ddd-video-improve, and uploads
   it as the run package's hero to canopy-web. Two pause gates only:
   concept_change and external_release; everything else runs autonomously and
@@ -527,6 +528,21 @@ Do NOT render, build, or judge until the narrative is approved. Once approved,
 the lock is what lets you re-iterate the *product* (render → judge → converge →
 upload) again and again without ever regenerating the *narrative*.
 
+**Step 6d — Gap walk (before the FIRST render, and after every build batch):**
+Invoke `/canopy:ddd-gap-walk` with the run id and spec. One LLM pass, no
+screenshots: it reads the target repo's routes, views, operations and seed data
+against each scene's narration + `features[]` and writes `<run_dir>/gaps.json`.
+`python -m scripts.ddd.gap_walk check` then decides:
+
+| action | next |
+|--------|------|
+| `render` | proceed to Step 7. |
+| `build` | implement every `build` gap as ONE batch in the target repo (parallel fixers fine; one PR, one deploy), `judge_gate set-fix-sha <run_id> <merge-sha>`, re-walk. Never render first — on a v1 product a judge round would spend ~600k tokens re-discovering that the feature is missing. |
+| `decide` | `concept_change` gate with the `decision` gaps (or `redraft` the narrative). |
+
+Resumed runs whose product already renders can skip the walk when
+`state.open_gaps == 0` and nothing has been built since.
+
 ---
 
 ## Render + Judge
@@ -554,6 +570,14 @@ Invoke `ddd-run` with:
    never block; the summary renders every score via
    `run_pipeline.format_verdict_line`, so a capped verdict shows as
    `4.0/5 (pass — capped from 4.8, not live-state verified)`)
+
+Before judging, `ddd-run` runs the **judge gate** (Step 2e: every sample of the
+target's health URL must report the last fix batch's merge SHA, and no
+deterministic lens may have hard-failed) and plans the **judge scope** (Step 2f:
+render is always full; in backlog mode only scenes whose judge inputs changed are
+re-judged, the rest reuse their sealed cells). Steps 4–5 are ONE command,
+`python -m scripts.ddd.assemble <run_id> --spec <spec>` — never a hand-written
+assemble script, never hand-rolled judge briefs.
 
 After `ddd-run` returns, load `<run_dir>/run_state.yaml` and
 `<run_dir>/design_findings.json`.
@@ -607,7 +631,7 @@ every run.
 
 | Route | Destination | Action |
 |-------|-------------|--------|
-| `PRODUCT` | `/design-review`, `/review`, or `/qa` | Dispatch specialist skills via the Agent tool to fix the presentation layer: `design_soundness`/`motion_friction` findings → `/design-review`; `concept_clarity` content issues → `/review`; broken interactive flows → `/qa`. Re-render only the affected scenes after each fix commit. |
+| `PRODUCT` | `/design-review`, `/review`, or `/qa` | Dispatch specialist skills via the Agent tool to fix the presentation layer: `design_soundness`/`motion_friction` findings → `/design-review`; `concept_clarity` content issues → `/review`; broken interactive flows → `/qa`. Fixes land as ONE batch per iteration (see `continue`); the next render is full and the judging is scoped to what changed. |
 | `CONCEPT` | Edit spec + re-run `ddd-spec` | Edit the unified spec's `narration`, `design_intent`, or `concept_claim` fields to address the concept gap. Re-invoke `ddd-spec` and `ddd-spec-qa` to validate the change. If the fix requires changing *what the product does* (not just how it's described), escalate to a **concept_change** pause. |
 | `RESEARCH` | Autonomous investigation + Phase 0 re-run | Spawn an investigation subagent (Agent tool) to gather evidence addressing the gap. Update `evidence.json` and re-run `ddd-why-brief` → `ddd-why-qa` → `ddd-why-eval` for the affected spine items. |
 | `DEFER` | Log only | Append to the digest's collapsed autonomous section. Do not act on DEFER findings this iteration. Advisory findings (e.g. `claim_reality_coherence`) always land here. |
@@ -630,15 +654,34 @@ After routing all findings and re-rendering changed scenes, **read
 `state.auto_iterate_next_action`** from `run_state.yaml` (computed by
 `ddd-run` Step 5; see the `ddd-run` SKILL for the contract). Branch on it:
 
+**Two shapes of run, one loop.** A freshly-built (v1) product and a nearly-good
+one need different economics; the loop picks per run (`state.loop_mode`, re-read
+on every full judge pass; pin it with `loop.mode` in `.canopy/ddd/config.yaml`):
+
+- **backlog** (auto when a full pass has ≥ `loop.backlog_min_findings`, default
+  8, open findings) — the first full render + judge HARVESTS a backlog. Each
+  `continue` fixes ALL mechanical findings as one batch (one PR, one deploy),
+  re-renders in full (cheap), and re-judges only scenes whose frame / page text
+  / spec changed; byte-identical scenes reuse their sealed cells. Every
+  `loop.full_rejudge_every`-th batch (default 3) is judged in full, and an
+  incremental pass that would converge returns `confirm_full` — so convergence
+  is always decided by a full render + full judge.
+- **polish** — every pass is judged in full, as before.
+
+Progress is read from four signals per iteration (`state.progress_history`:
+gating score, open findings, mean concept cell, confirmed caps), because the
+floor alone sat at 2 through 19 of 23 iterations of real improvement on the v1
+supply narratives.
+
 **The loop owns its own termination — never invent a stopping rule.** If you find
 yourself deciding "hard stop after this pass", that is the signal you are
-hand-driving. `compute_auto_iterate` stops on FOUR conditions, in order, and
+hand-driving. `compute_auto_iterate` stops on these conditions, and
 `state.terminal_status` says which kind of ending it was:
 
 | condition | detector | action |
 |-----------|----------|--------|
 | converged | both gating judges ≥ threshold | `stop_done` / `stop_partial` |
-| score stalled or regressed | no new best over the last 2 iterations, judged through the **noise band** (`denoise.NOISE_BAND`, ±0.5 — per-cell judge variance is ±1 on byte-identical frames, so a smaller move is not evidence either way) | `stop_max_iter` |
+| stalled | NONE of the four progress signals improved over the last 2 iterations (score through `denoise.NOISE_BAND` ±0.5, mean cell through `progress.MEAN_BAND` ±0.15, open findings and confirmed caps must fall). Checked BEFORE pending mechanical work — it used to sit behind `mechanical → continue` and could never fire on a v1 run. | `stop_max_iter` |
 | **finding plateau** | two consecutive iterations produced an **identical finding-fingerprint set** with no real score move — the loop is re-deriving, not progressing. Unlike the score this signal does not wobble: an LLM's score for a cell moves ±1 on the same frame; the defect it names does not. | `stop_max_iter` |
 | runaway | `HARD_CAP` (10) iterations | `stop_max_iter` |
 
@@ -709,6 +752,13 @@ Outcomes:
 The external_release gate governs only the *public package publish*, not
 whether the upload runs: the upload ALWAYS runs on convergence.
 
+### `confirm_full` (an incremental pass would converge)
+
+Every gating judge passed, but this pass reused unchanged scenes' cells
+(backlog mode). Apply nothing; re-fire `ddd-run` — `state.next_judge_full` is
+set, so the render is judged in full, arc included. Only that pass can return
+`stop_done`. Non-terminal: no upload.
+
 ### `stop_partial` (converged on filtered scope)
 
 Both judges passed on the filtered scope, but `scene_filter` is set so
@@ -720,8 +770,10 @@ run — render budget is much larger and the user should opt in.
 ### `continue` (apply the confident fixes)
 
 There is at least one `fix_kind: mechanical` finding to act on. **Apply EVERY
-mechanical finding this iteration, re-fire ddd-run on the same scope, increment
-`state.iteration`.** Same `run_id` — don't create a sibling. Run silently per the
+mechanical finding this iteration as ONE batch, re-fire ddd-run, increment
+`state.iteration`.** One batch means one PR (and one deploy) per target repo per
+iteration — never a PR per finding; fan the fixes out to parallel fixers if you
+like, but they land together. Same `run_id` — don't create a sibling. Run silently per the
 autonomy mandate; surface only the digest at the end.
 
 **This fires even when `options`/`redesign` findings ALSO exist this iteration** —
@@ -738,7 +790,7 @@ For each mechanical finding, apply by route:
 
 | Route | Apply step |
 |-------|-----------|
-| **`PRODUCT`** | The fix lives in product code (labs repo). Use the Edit/Write tool against the relevant labs files. Open a labs PR with the fix_recommendation as the PR title + finding detail as the body. Merge `--squash --admin` (per the labs autonomy mandate — small PRs don't serialize on CI). Trigger `deploy-labs.yml --ref main`. Poll for worker cutover (workers serve stale code 2–4 min — verify the new code is live via a smoke-test endpoint before considering the deploy done). Then re-fire ddd-run. |
+| **`PRODUCT`** | The fix lives in product code (the target repo). Apply every PRODUCT mechanical finding of this iteration on ONE branch, open ONE PR titled for the batch (body: one line per finding + its `#scene-<N>` link), merge it per the target repo's policy, and deploy once. Record the merge SHA: `python -m scripts.ddd.judge_gate set-fix-sha <run_id> <sha>`. `ddd-run`'s judge gate then refuses to judge until every sample of the configured health URL reports that SHA — do not hand-poll. |
 | **`CONCEPT`** (mechanical) | The fix lives in `unified_spec.yaml`. Edit the named field (typically `narration`, `design_intent`, `show`, or `concept_claim`). Re-run `/canopy:ddd-spec-qa` to validate. If QA fails, stop and report. |
 | **`RESEARCH`** | The fix lives in `why_brief.yaml`. Apply the named change (add a spine item, patch evidence). Re-run `/canopy:ddd-why-qa` and `/canopy:ddd-why-eval` to validate. If QA fails, stop and report. |
 | **`DEFER`** | Append to `<run_dir>/deferred-findings.md` with the finding + recommendation. Never act on DEFER findings in the loop — they're advisory. |
@@ -753,6 +805,8 @@ state.iteration += 1
 save(state)
 ")
 # Then re-invoke /canopy:ddd-run with the same args (including --scene if set).
+# Backlog mode: the render is full; Step 2f scopes the judging from
+# state.next_judge_full (set by compute_auto_iterate).
 ```
 
 Same `run_id` — the iteration counter is the loop's only identity.
@@ -834,10 +888,11 @@ time fragment when the scene has been recorded.
 ### `stop_max_iter` (stalled / regressed — NOT a raw count)
 
 Fires when the loop is **no longer making progress** — `ddd-run` Step 5 detects
-that the gating score stalled or regressed across the last two iterations (e.g. a
-mechanical fix broke another scene), or the `HARD_CAP` runaway backstop (10) was
-hit. **It is NOT "you've done 3 iterations."** While every finding is mechanical
-AND the score is still climbing, the loop **keeps going on its own** via
+that none of the four progress signals (score, open findings, mean cell,
+confirmed caps) improved across the last two iterations (e.g. a mechanical fix
+broke another scene), a finding plateau, or the `HARD_CAP` runaway backstop (10).
+**It is NOT "you've done 3 iterations."** While the run is still making progress
+on any signal, the loop **keeps going on its own** via
 `continue` — that is the whole point of DDD, so do not stop a run that is still
 improving. Only when progress flatlines do you surface all remaining findings and
 ask the user whether to extend, abandon, or accept — a human-review checkpoint
@@ -873,8 +928,10 @@ and route through the user.
 Concept convergence is judged on the **screenshot** walkthrough. The narrated
 `connect-ddd-walkthrough` video — the artifact stakeholders actually watch — is a
 **separate render path** the concept loop never judges. On a `stop_done`
-convergence (and ONLY then — the video is expensive; don't render it every
-iteration), run this phase so the hero video is the narrated video, self-improved
+convergence (and ONLY then — the video is expensive, and a pre-convergence video
+films a product the loop is still changing; `scripts.ddd.video_gate` makes
+`ddd-ace-render` and `ddd-video-improve` refuse otherwise unless explicitly
+passed `--allow-unconverged`), run this phase so the hero video is the narrated video, self-improved
 and judged for audio-visual quality, not the silent walkthrough clip.
 
 Everything here goes through skills (per "Never hand-drive a run"): never
@@ -979,6 +1036,9 @@ proceeding with autonomous work.
   `scripts/ddd/finding_class.py`, not by remembering to do it.
 - Never auto-apply a self-tuning class demotion — always suggest-then-confirm.
 - Save learnings after every completed cycle via `runstate.append_learning`.
-- Loop is **progress-aware, not count-capped**: keep auto-iterating while findings are mechanical AND the run is still progressing; stop on a real gate, an options/redesign finding, a **stall/regression** (no new best across 2 iterations, judged through the ±0.5 noise band), a **finding plateau** (identical fingerprints, no real score move), or the `HARD_CAP` of 10 as a runaway backstop. Never invent your own stop — `compute_auto_iterate` owns it and `state.terminal_status` names the ending.
+- Loop is **progress-aware, not count-capped**: keep auto-iterating while findings are mechanical AND the run is still progressing; stop on a real gate, an options/redesign finding, a **stall** (none of score / open findings / mean cell / confirmed caps improved across 2 iterations, each through its noise band), a **finding plateau** (identical fingerprints, no progress), or the `HARD_CAP` of 10 as a runaway backstop. Never invent your own stop — `compute_auto_iterate` owns it and `state.terminal_status` names the ending.
 - When dispatching PRODUCT fixers, route by dimension: `design_soundness`/`motion_friction` → `/design-review`; `concept_clarity` → `/review`; broken flows → `/qa`.
-- Prefer re-rendering only changed scenes over full re-runs.
+- Render in full every iteration; scope the JUDGING (backlog mode) instead. A `--scene` partial render cannot converge.
+- Gap-walk before the first render; build missing capabilities before judging them.
+- Never judge an undeployed fix: record the batch's merge SHA (`judge_gate set-fix-sha`) and let the judge gate wait.
+- Steps 4–5 are `python -m scripts.ddd.assemble` — never a hand-written assemble script or hand-rolled judge briefs.

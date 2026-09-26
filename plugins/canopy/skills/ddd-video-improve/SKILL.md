@@ -54,6 +54,16 @@ NEVER auto-applied — surfaced as findings for a human:
 
 ## Procedure
 
+0. **Convergence gate.** Refuse unless the narrative's DDD run converged —
+   the video films the product as it is now, and a pre-convergence video
+   measures a product the concept loop is still changing:
+   ```bash
+   _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+   DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+   export DDD_DIR="${DDD_DIR:-$(git rev-parse --show-toplevel)/.canopy/ddd}"   # the PROJECT repo's runs, not the runtime's
+   (cd "$DDD_REPO" && uv run python -m scripts.ddd.video_gate --slug "<narrative-slug>") || exit 1
+   ```
+   `--allow-unconverged` is the explicit override for a deliberate preview only.
 1. **Baseline.** Render + `ddd-video-judge`; record `verdict-video.json` overall.
 2. **Gate.** If `verdict-timing` coverage is low only because of NARRATION-order
    inversions, that's a surface item, not a blocker. If the render's held-frame

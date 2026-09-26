@@ -21,6 +21,13 @@ at the thing the viewer actually experiences — the sequence.
 
 This is the lens that separates *"no scene is bad"* from *"this is amazing"*.
 
+**Skip when the scope says so.** In backlog mode, `<run_dir>/judge-scope.json`
+with `arc: false` means no scene's judge inputs changed since the last judged
+iteration; `judge_scope carry` restored the previous `verdict-arc.yaml`,
+`arc_findings.json` and sealed `passes/arc/`. Do not re-dispatch — the sequence
+the viewer sees is identical. Every full pass (and the confirming pass before
+convergence) runs this judge fresh.
+
 ## Inputs
 
 - **`run_dir`** — a rendered run dir with `scene_<N>.png` + `scene_<N>_page_text.json`

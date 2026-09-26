@@ -104,7 +104,10 @@ class RunState(BaseModel):
     #                           irreplaceable-taste pause.
     #   stop_unclear          — non-DEFER finding with fix_kind=options or
     #                           redesign; needs user pick.
-    #   stop_max_iter         — MAX_ITERATIONS would be exceeded.
+    #   stop_max_iter         — stalled / plateaued / HARD_CAP backstop.
+    #   confirm_full          — an INCREMENTAL judge pass (backlog mode) would
+    #                           converge; re-render and judge every scene fresh
+    #                           before declaring it. No fixes to apply.
     auto_iterate_next_action: str | None = None
     auto_iterate_reason: str | None = None
     # Hosted artifact URLs per iteration (0.2.135). Populated by
@@ -180,6 +183,37 @@ class RunState(BaseModel):
     # iteration that posts a findings review — the run tracks the LATEST one.
     findings_review_id: str | None = None
     findings_review_url: str | None = None
+    # --- v1 / backlog loop (0.2.5xx) -----------------------------------------
+    # Per-iteration PROGRESS points, appended by run_pipeline.compute_auto_iterate:
+    #   {score, open_findings, mean_cell, confirmed_caps, full}
+    # The gating score is a MINIMUM over ~70 cells and sat at 2 for 19 of 23
+    # judged iterations across five v1 supply narratives while the mean cell rose
+    # 3.14 -> 3.68 and open findings fell 61 -> 21. Stall/plateau read these
+    # (scripts.ddd.progress), not the floor alone.
+    progress_history: list[dict] = []
+    # "backlog" (harvest once, fix in batches, re-judge only what changed, full
+    # re-judge every Nth batch) or "polish" (full judge every pass). Chosen on
+    # each FULL judge pass by scripts.ddd.progress.select_mode from the
+    # per-repo config (.canopy/ddd/config.yaml `loop:`).
+    loop_mode: str | None = None
+    # Whether the judge pass that produced the CURRENT verdicts judged every
+    # scene fresh (True) or reused unchanged scenes' cells (False). Convergence
+    # is only ever declared on a full pass — an incremental pass that would
+    # converge returns ``confirm_full`` instead. Default True: legacy runs judged
+    # everything.
+    last_judge_full: bool = True
+    # Consecutive incremental (non-full) judge passes since the last full one.
+    batches_since_full: int = 0
+    # Set by compute_auto_iterate on ``continue``/``confirm_full``: whether the
+    # NEXT judge pass must be full. Read by `scripts.ddd.judge_scope plan`.
+    next_judge_full: bool = True
+    # Merge SHA of the last fix batch (PR) — what the deploy gate waits for the
+    # target's health endpoint to report before any judge runs.
+    last_fix_sha: str | None = None
+    # Pre-render gap walk (skills/ddd-gap-walk): path of gaps.json and how many
+    # scenes' claims the current product cannot yet show. Non-zero -> BUILD.
+    gaps_path: str | None = None
+    open_gaps: int | None = None
 
 
 __all__ = [

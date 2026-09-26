@@ -170,21 +170,25 @@ def test_skill_wires_extra_verdicts_into_aggregator() -> None:
     """Step 4 must plug the generic aggregator in (canopy#273 item 1): discover
     any out-of-chain verdict artifacts in the run dir via load_verdict /
     discover_extra_verdicts and pass them through extra_verdict_paths +
-    compute_convergence(extra=...). The reference-resolution drift gate
-    (tests/skills/test_ddd_skill_references.py) guards that these imports keep
-    resolving against scripts.ddd."""
+    compute_convergence(extra=...).
+
+    Since 0.2.525 Step 4 is ONE command, ``python -m scripts.ddd.assemble`` (agents
+    kept hand-writing their own assemble scripts), so the wiring is pinned in that
+    module's source and the SKILL must route Step 4 through it."""
     content = (SKILL_DIR / "SKILL.md").read_text()
-    assert "discover_extra_verdicts" in content, (
-        "Step 4 must discover extra verdicts via scripts.ddd.verdicts.discover_extra_verdicts"
+    assert "scripts.ddd.assemble" in content, "Step 4 must run python -m scripts.ddd.assemble"
+    src = (PLUGIN_ROOT.parent.parent / "scripts" / "ddd" / "assemble.py").read_text()
+    assert "discover_extra_verdicts" in src, (
+        "assemble must discover extra verdicts via scripts.ddd.verdicts.discover_extra_verdicts"
     )
-    assert "load_verdict" in content, (
-        "Step 4 must load the gating pair via scripts.ddd.verdicts.load_verdict"
+    assert "load_verdict" in src, (
+        "assemble must load the gating pair via scripts.ddd.verdicts.load_verdict"
     )
-    assert "extra_verdict_paths=" in content, (
-        "Step 4 must record extras via assemble_run_state(extra_verdict_paths=...)"
+    assert "extra_verdict_paths=" in src, (
+        "assemble must record extras via assemble_run_state(extra_verdict_paths=...)"
     )
-    assert "extra=extra_verdicts" in content, (
-        "Step 4 must pass extras via compute_convergence(extra=...)"
+    assert "compute_convergence(concept, user, extra=extra)" in src, (
+        "assemble must pass extras via compute_convergence(extra=...)"
     )
     for artifact in (
         "verdict-timing.json",
