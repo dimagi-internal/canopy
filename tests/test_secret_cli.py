@@ -10,6 +10,7 @@ from orchestrator import secret_cli
 
 SID = "eb742bd8-e16c-439e-a3d7-c8a5a769df60"
 VALUE = "ghp_not_a_real_token_0123456789"
+KEY = "chk_this_chat"
 
 
 @pytest.fixture()
@@ -24,8 +25,8 @@ def served(monkeypatch):
 
     monkeypatch.setattr(secret_cli.canopy_web, "call", fake_call)
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SID)
-    monkeypatch.delenv("CANOPY_CHAT_KEY", raising=False)
-    # No key file anywhere by default: the legacy route is what the old tests pin.
+    # The cloud runner's form by default; the file forms have their own tests.
+    monkeypatch.setenv("CANOPY_CHAT_KEY", KEY)
     monkeypatch.setattr(secret_cli, "KEY_ROOT", secret_cli.pathlib.Path("/nonexistent-canopy-chat"))
     return calls
 
@@ -41,7 +42,7 @@ def test_list_asks_for_THIS_sessions_secrets_and_shows_no_value(served):
     r = CliRunner().invoke(secret_cli.secret_group, ["list"])
     assert r.exit_code == 0, r.output
     assert "GH_TOKEN" in r.output and VALUE not in r.output
-    assert served == [("GET", f"/api/session-secrets/{SID}", None)]
+    assert served == [("GET", "/api/session-secrets/key", KEY)]
 
 
 def test_exec_fetches_from_this_session_and_masks_stdout(served, capfd):
@@ -50,7 +51,7 @@ def test_exec_fetches_from_this_session_and_masks_stdout(served, capfd):
     assert code == 0
     assert out.strip() == "token=***"
     assert VALUE not in out + err
-    assert served == [("GET", f"/api/session-secrets/{SID}/GH_TOKEN", None)]
+    assert served == [("GET", "/api/session-secrets/key/GH_TOKEN", KEY)]
 
 
 def test_stdin_mode_pipes_it_in_and_masks_stderr_too(served, capfd):
@@ -74,10 +75,12 @@ def test_the_childs_exit_code_is_propagated(served, capfd):
     assert code == 7
 
 
-def test_outside_a_claude_session_it_refuses_before_any_fetch(served, monkeypatch):
-    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+def test_with_no_chat_key_it_refuses_before_any_fetch(served, monkeypatch):
+    """No fallback: the old way (naming the Claude session id, as the chat's agent
+    login) is gone. A session holding no key is not driving a chat."""
+    monkeypatch.delenv("CANOPY_CHAT_KEY")
     r = CliRunner().invoke(secret_cli.secret_group, ["list"])
-    assert r.exit_code != 0 and "CLAUDE_CODE_SESSION_ID" in r.output
+    assert r.exit_code != 0 and "no chat key" in r.output
     assert served == []
 
 
@@ -92,7 +95,7 @@ def test_a_fetch_failure_names_the_problem_and_not_a_value():
         raise secret_cli.canopy_web.CanopyError("GET … -> 404: no such secret")
 
     with pytest.raises(Exception) as exc:
-        secret_cli.fetch_value(SID, "GH_TOKEN", call=boom)
+        secret_cli.fetch_value(KEY, "GH_TOKEN", call=boom)
     assert "404" in str(exc.value) and "30 minutes" in str(exc.value)
 
 
@@ -116,6 +119,7 @@ def test_a_laptop_sessions_key_is_found_by_its_session_id(served, monkeypatch, t
     (tmp_path / "session").mkdir()
     (tmp_path / "session" / f"{SID}.key").write_text("chk_laptop\n")
     monkeypatch.setattr(secret_cli, "KEY_ROOT", tmp_path)
+    monkeypatch.delenv("CANOPY_CHAT_KEY")
     assert secret_cli.fetch_value(secret_cli.this_chat(), "GH_TOKEN") == VALUE
     assert served == [("GET", "/api/session-secrets/key/GH_TOKEN", "chk_laptop")]
 
@@ -130,9 +134,5 @@ def test_a_laptop_sessions_key_is_found_from_its_emdash_worktree(served, monkeyp
     monkeypatch.setattr(secret_cli.pathlib.Path, "home", staticmethod(lambda: home))
     monkeypatch.setattr(secret_cli, "KEY_ROOT", keys)
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+    monkeypatch.delenv("CANOPY_CHAT_KEY")
     assert secret_cli.chat_key(cwd=str(wt / "src")) == "chk_task"
-
-
-def test_with_no_key_it_falls_back_to_naming_the_session(served):
-    CliRunner().invoke(secret_cli.secret_group, ["list"])
-    assert served == [("GET", f"/api/session-secrets/{SID}", None)]
