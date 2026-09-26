@@ -155,6 +155,51 @@ function fileToken() {
   return fs.readFileSync(tokenFile, "utf8").trim();
 }
 
+// WHICH CHAT this session is driving, when it drives one. canopy mints a chat key
+// when a runner claims a chat's turn (canopy-web `ChatKey`); sent as
+// X-Canopy-Chat-Key beside the bearer token, it narrows the page tools to THAT
+// chat's page — the bearer alone is the agent's login, which is in every chat
+// the agent is in. The runner leaves it where this helper can look without a
+// secret-looking variable (Claude Code strips those from this environment):
+//   cloud:  ~/.canopy/chat/chat/<CANOPY_CHAT_SESSION>.key   (that variable is a
+//           chat id, not a secret, so it survives)
+//   laptop: ~/.canopy/chat/task/<emdash task>.key, the task read off the
+//           session's worktree path the way the confined profile is found above.
+// No key found = no header, and the server answers the way it did before keys.
+function readKey(file) {
+  try {
+    const key = fs.readFileSync(file, "utf8").trim();
+    return key.startsWith("chk_") ? key : "";
+  } catch {
+    return "";
+  }
+}
+
+const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/;
+
+function chatKey() {
+  const root = path.join(os.homedir(), ".canopy", "chat");
+  const chat = (process.env.CANOPY_CHAT_SESSION || "").trim();
+  if (/^[0-9a-fA-F-]{8,64}$/.test(chat)) {
+    const key = readKey(path.join(root, "chat", `${chat}.key`));
+    if (key) return key;
+  }
+  const worktrees = path.join(os.homedir(), "emdash", "worktrees") + path.sep;
+  const cwd = process.cwd() + path.sep;
+  if (!cwd.startsWith(worktrees)) return "";
+  // Over-generating names is safe: only a task the runner wrote a key for has a file.
+  for (const part of cwd.slice(worktrees.length).split(path.sep).filter(Boolean)) {
+    for (const name of [part, part.startsWith("emdash-") ? part.slice("emdash-".length) : ""]) {
+      for (const cand of [name, name.replace(/-[0-9a-z]+$/, "")]) {
+        if (!cand || !SAFE_NAME.test(cand)) continue;
+        const key = readKey(path.join(root, "task", `${cand}.key`));
+        if (key) return key;
+      }
+    }
+  }
+  return "";
+}
+
 let headers = {};
 try {
   const token =
@@ -164,6 +209,8 @@ try {
     fileToken();
   if (token) {
     headers = { Authorization: `Bearer ${token}` };
+    const key = chatKey();
+    if (key) headers["X-Canopy-Chat-Key"] = key;
   }
 } catch (err) {
   // Missing/unreadable token file: emit no auth header. canopy-web then returns 401

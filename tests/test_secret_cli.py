@@ -17,13 +17,16 @@ def served(monkeypatch):
     calls = []
 
     def fake_call(method, path, body=None, **kw):
-        calls.append((method, path))
+        calls.append((method, path, (kw.get("headers") or {}).get("X-Canopy-Chat-Key")))
         if path.endswith("/GH_TOKEN"):
             return {"name": "GH_TOKEN", "value": VALUE}
         return [{"name": "GH_TOKEN", "last_used_at": None, "expires_at": "2026-09-25T13:30:00+00:00"}]
 
     monkeypatch.setattr(secret_cli.canopy_web, "call", fake_call)
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SID)
+    monkeypatch.delenv("CANOPY_CHAT_KEY", raising=False)
+    # No key file anywhere by default: the legacy route is what the old tests pin.
+    monkeypatch.setattr(secret_cli, "KEY_ROOT", secret_cli.pathlib.Path("/nonexistent-canopy-chat"))
     return calls
 
 
@@ -38,7 +41,7 @@ def test_list_asks_for_THIS_sessions_secrets_and_shows_no_value(served):
     r = CliRunner().invoke(secret_cli.secret_group, ["list"])
     assert r.exit_code == 0, r.output
     assert "GH_TOKEN" in r.output and VALUE not in r.output
-    assert served == [("GET", f"/api/session-secrets/{SID}")]
+    assert served == [("GET", f"/api/session-secrets/{SID}", None)]
 
 
 def test_exec_fetches_from_this_session_and_masks_stdout(served, capfd):
@@ -47,7 +50,7 @@ def test_exec_fetches_from_this_session_and_masks_stdout(served, capfd):
     assert code == 0
     assert out.strip() == "token=***"
     assert VALUE not in out + err
-    assert served == [("GET", f"/api/session-secrets/{SID}/GH_TOKEN")]
+    assert served == [("GET", f"/api/session-secrets/{SID}/GH_TOKEN", None)]
 
 
 def test_stdin_mode_pipes_it_in_and_masks_stderr_too(served, capfd):
@@ -97,3 +100,39 @@ def test_no_verb_prints_a_value_and_none_names_another_session():
     assert set(secret_cli.secret_group.commands) == {"list", "exec"}
     params = {p.name for c in secret_cli.secret_group.commands.values() for p in c.params}
     assert not params & {"session", "session_id", "chat", "ref"}
+
+
+
+# ---- the chat key: canopy's permission for THIS chat, preferred when present ----
+
+def test_a_cloud_turns_key_from_the_environment_is_presented(served, monkeypatch):
+    monkeypatch.setenv("CANOPY_CHAT_KEY", "chk_cloud")
+    r = CliRunner().invoke(secret_cli.secret_group, ["list"])
+    assert r.exit_code == 0, r.output
+    assert served == [("GET", "/api/session-secrets/key", "chk_cloud")]
+
+
+def test_a_laptop_sessions_key_is_found_by_its_session_id(served, monkeypatch, tmp_path):
+    (tmp_path / "session").mkdir()
+    (tmp_path / "session" / f"{SID}.key").write_text("chk_laptop\n")
+    monkeypatch.setattr(secret_cli, "KEY_ROOT", tmp_path)
+    assert secret_cli.fetch_value(secret_cli.this_chat(), "GH_TOKEN") == VALUE
+    assert served == [("GET", "/api/session-secrets/key/GH_TOKEN", "chk_laptop")]
+
+
+def test_a_laptop_sessions_key_is_found_from_its_emdash_worktree(served, monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    wt = home / "emdash" / "worktrees" / "hal" / "emdash" / "hal-chat-x1-q7r2k"
+    wt.mkdir(parents=True)
+    keys = tmp_path / "keys"
+    (keys / "task").mkdir(parents=True)
+    (keys / "task" / "hal-chat-x1.key").write_text("chk_task")
+    monkeypatch.setattr(secret_cli.pathlib.Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(secret_cli, "KEY_ROOT", keys)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+    assert secret_cli.chat_key(cwd=str(wt / "src")) == "chk_task"
+
+
+def test_with_no_key_it_falls_back_to_naming_the_session(served):
+    CliRunner().invoke(secret_cli.secret_group, ["list"])
+    assert served == [("GET", f"/api/session-secrets/{SID}", None)]
