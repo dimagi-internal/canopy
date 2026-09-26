@@ -25,6 +25,8 @@ its VO overruns, so the timing report at the end tells you whether to trim.
 - You have a DDD narrative spec (`docs/walkthroughs/<slug>.yaml`) and want the narrated video, now.
 - You changed the narration and want to re-render against fresh footage.
 - NOT the auto loop (that's `/canopy:ddd-run`), NOT publishing (that's `/canopy:ddd-upload`).
+- Only AFTER the narrative's DDD run has converged (Step 0 enforces it). Pass
+  `--allow-unconverged` to override deliberately.
 
 ## Prerequisites
 - Run from the **project repo** that owns the narrative (e.g. connect-labs) — the spec's `setup:` reseeds there.
@@ -57,6 +59,21 @@ done
 [ -n "${VE:-}" ] || { echo "ERROR: no canopy checkout with video-engine/node_modules — run /canopy:setup on a dev checkout first"; exit 1; }
 WORK="$(mktemp -d)"
 ```
+
+**0. Convergence gate (refuses before any recording).** The narrated video films
+whatever the product is right now, so it is rendered only after the DDD loop has
+converged on a full render + full judge. (The chlorine narrative's verdict-video
+was rendered at iteration 4 with a gating score of 2; every finding it produced
+described defects the concept loop was still fixing.)
+```bash
+export DDD_DIR="${DDD_DIR:-$(git rev-parse --show-toplevel)/.canopy/ddd}"   # the PROJECT repo's runs, not the runtime's
+(cd "$CANOPY" && uv run python -m scripts.ddd.video_gate --slug "$SLUG" ${ALLOW_UNCONVERGED:+--allow-unconverged}) \
+  || { echo "ddd video: REFUSED — the narrative's run has not converged (see reason above)"; exit 1; }
+```
+Exit 1 → stop and report the reason. `--allow-unconverged` (set
+`ALLOW_UNCONVERGED=1`) is an explicit, deliberate override for a one-off preview
+a person asked for — never a loop default; say in the report that the video
+predates convergence.
 
 **1. Record a fresh master clip.** Same recorder `/canopy:walkthrough` uses
 (it reseeds via the spec's `setup:` and films one continuous take). Export

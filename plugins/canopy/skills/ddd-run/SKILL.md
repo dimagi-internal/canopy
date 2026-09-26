@@ -9,7 +9,8 @@ description: |
   audience="feature user" → verdict-user.yaml) in parallel. Assembles both
   verdicts into run_state.yaml via run_pipeline.assemble_run_state, reports
   convergence via run_pipeline.compute_convergence, and prints the two
-  overall_scores + top findings.
+  overall_scores + top findings. Gates judging on a deployed fix, and in
+  backlog mode re-judges only scenes whose inputs changed.
   Use when asked to "run the ddd walkthrough", "render and judge", or "run SP4".
 ---
 
@@ -55,7 +56,10 @@ gate → render → judge (concept + user-artifact in parallel) → assemble →
   spec indices actually rendered) and `scene_filter` (the raw selector)
   so convergence reports and upload checks can tell partial runs from
   full ones. **Upload (`/canopy:ddd-upload`) requires a full run** —
-  a partial run cannot be uploaded as a feature package.
+  a partial run cannot be uploaded as a feature package, and a partial run can
+  never converge (it ends `stop_partial`). **For the iterate loop prefer backlog
+  mode** (Step 2f): render stays full, and only the JUDGING is scoped to what
+  changed — which does converge, via a full confirming pass.
 
 ## Procedure
 
@@ -444,7 +448,85 @@ RUN_DIR="<run_dir>"; SPEC_ABS="$(realpath <unified_spec>)"
   the judges' findings. A run recorded before this capture existed reports
   `skip` with the reason, never a green that means nothing.
 
+### Step 2e — Judge gate: deployed fix + no deterministic hard-fail
+
+Two measured ways a judge round was burned for nothing: judging a render taken
+before the fix batch was fully deployed (the judges re-find the same caps), and
+judging a take a millisecond check already failed. Before ANY judge dispatch:
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.judge_gate check "<run_id>" \
+  --lens regression_guard=<pass|warn|fail> \
+  --lens visual_geometry=<pass|warn|fail|skip> \
+  --lens render_pacing_audit=<pass|recording_bug>)
+```
+
+- **Deploy half** — configured per target repo in `.canopy/ddd/config.yaml`
+  (`deploy_gate: {health_url, sha_field, samples, interval_seconds, attempts,
+  retry_seconds}`). It samples the health URL `samples` times per round and
+  requires EVERY sample to report `state.last_fix_sha` (stamped by the
+  orchestrator after merging a fix batch: `judge_gate set-fix-sha <run_id>
+  <sha>`). Rolling deploys serve old tasks mid-rollout, so one good sample
+  proves nothing. No config or no recorded SHA → `skipped`.
+- **Lens half** — pass the Step 2c/2d verdicts. A regression-guard `fail`, a
+  visual-geometry `fail`, or a pacing-audit recording bug means the take is
+  already known-defective.
+
+Exit 0 → judge. Exit 1 → do NOT judge: `wait_deploy` (the render predates the
+fix — wait, re-render, re-check) or `fix_render` (apply the lens's mechanical
+fix, re-render). No verdict is assembled for a skipped round, so it adds no
+point to the progress history.
+
+### Step 2f — Judge scope (backlog mode: re-judge only what changed)
+
+Rendering is always FULL — it is cheap, and it is what makes scenes comparable.
+Judging need not be. Plan the scope from the fresh capture:
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+RUN_DIR="$(realpath <run_dir>)"; SPEC_ABS="$(realpath <unified_spec>)"
+RUBRIC="$_CANOPY_PLUGIN/skills/ddd-concept-eval/rubric.yaml"
+FULL=$(cd "$DDD_REPO" && uv run python -c "from scripts.ddd.runstate import load; print('--full' if load('<run_id>').next_judge_full else '')")
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.judge_scope plan "$RUN_DIR" "$SPEC_ABS" $FULL --context "$RUBRIC")
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.judge_scope carry "$RUN_DIR")
+```
+
+`plan` fingerprints each scene's judge INPUTS — after/before frames, page text
+(minus the per-render stamp), the scene's spec entry, its action trace, plus the
+why-brief and rubric — and compares them with the ledger of the last judged
+iteration (`judge-cache/`). It writes `judge-scope.json`:
+
+- `full: true` (first judge, `state.next_judge_full`, or the scene set changed)
+  → judge every scene and the arc, exactly as before.
+- `full: false` → `rejudge` = scenes whose inputs changed; `reuse` = scenes
+  whose inputs are byte-identical. Re-drawing identical inputs only samples
+  judge noise, so their confirmed cells are carried forward. `arc` is true iff
+  anything changed. `rejudge: []` means the last batch changed nothing visible.
+
+`carry` archives the re-judged scenes' stale pass files and restores the reused
+scenes' SEALED pass files (payload + seal, byte-for-byte), so the concept eval's
+`passes manifest --expect` counts them and Step 6b's validation still holds.
+Its output's `expect_concept_passes` + one per re-judged scene is the `--expect`.
+
+`state.next_judge_full` is set by the previous iteration's decision: polish mode
+judges in full every pass; backlog mode judges incrementally and in full every
+`loop.full_rejudge_every`-th batch (default 3). **Convergence is never declared
+on an incremental pass** — Step 5 answers `confirm_full` instead.
+
 ### Step 3 — Judge (parallel dispatch)
+
+**Scope first (Step 2f).** On an incremental pass: dispatch the concept judge
+ONLY for `judge-scope.json` `rejudge` scenes (the reused scenes' sealed passes
+are already in `passes/concept/` — their caps are already confirmed, never
+re-confirm them); dispatch the user-artifact judge only for `rejudge` scenes,
+write that partial verdict to `<run_dir>/verdict-user.partial.yaml`, then merge
+it over the ledger's rows with `python -m scripts.ddd.judge_scope merge-user
+<run_dir> <run_dir>/verdict-user.partial.yaml` (writes `verdict-user.yaml`);
+run the arc judge only when `arc: true` (otherwise its verdict and sealed pass
+were carried). On a full pass, everything below applies unchanged.
 
 Dispatch **both judges simultaneously** — they are independent and can run in
 parallel:
@@ -636,59 +718,30 @@ Two traps this catches, both measured on `hh-poverty-targeting/20260827-0323`:
   exact string, so a fourth value is routed by neither branch and drops out of
   the loop decision in silence.
 
-### Step 4 — Assemble + convergence
+### Step 4 — Assemble + convergence (one command)
 
-Call `run_pipeline.assemble_run_state` to merge both verdict paths and findings
-into `run_state.yaml`. Load the gating pair through the unified loader
-(`scripts.ddd.verdicts.load_verdict` — it stamps `kind`/`gate`/
-`live_state_verified` from `KIND_DEFAULTS` when the emitter didn't), then
-discover any **extra out-of-chain verdicts** present in the run dir —
-`verdict-timing.json` / `verdict-video.json` / `verdict-why.yaml` /
-`verdict-actionability.yaml` — so the four advisory verdicts flow through the
-same schema (canopy#273 item 1):
-
-```python
-import json
-from scripts.ddd.run_pipeline import assemble_run_state, compute_convergence
-from scripts.ddd.runstate import load, save
-from scripts.ddd.verdicts import discover_extra_verdicts, load_verdict
-
-# The render manifest is the single source of truth for what was rendered.
-manifest = json.load(open(f"{run_dir}/walkthrough-run-data.json"))
-
-# Gating pair — through the unified loader, never a bare yaml.safe_load.
-concept_verdict = load_verdict(f"{run_dir}/verdict-concept.yaml")
-user_verdict = load_verdict(f"{run_dir}/verdict-user.yaml")
-
-# Any of verdict-timing.json / verdict-video.json / verdict-why.yaml /
-# verdict-actionability.yaml present in the run dir loads through the same
-# schema (kind/gate/live_state_verified stamped; the out-of-chain score cap
-# enforced at the schema layer). n/a artifacts are skipped automatically.
-extra_verdicts, extra_paths = discover_extra_verdicts(run_dir)
-
-state = load(run_id)
-state = assemble_run_state(
-    state,
-    concept_verdict=concept_verdict,
-    user_verdict=user_verdict,
-    findings=<merged findings from design_findings.json>,
-    concept_path="<run_dir>/verdict-concept.yaml",
-    user_path="<run_dir>/verdict-user.yaml",
-    manifest=manifest,   # fills state.scenes_run / state.scene_filter from the manifest
-    extra_verdict_paths=extra_paths,   # recorded in state.verdicts alongside the pair
-)
-save(state)
-
-converged = compute_convergence(concept_verdict, user_verdict, extra=extra_verdicts)
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.assemble "<run_id>" --spec "$(realpath <unified_spec>)")
 ```
 
-Advisory verdicts (timing / video / why / actionability) are recorded and
-reported but never block convergence — each verdict's `gate` field decides its
-participation, so a future gating judge is data, not new assembler code.
+**Do not hand-write an assemble script.** `scripts.ddd.assemble` is the one
+implementation of Steps 4–5: it loads the gating pair through
+`verdicts.load_verdict`, discovers every extra verdict via
+`verdicts.discover_extra_verdicts` (`verdict-arc.yaml` — gating — plus the
+advisory `verdict-timing.json` / `verdict-video.json` / `verdict-why.yaml` /
+`verdict-actionability.yaml`), merges `design_findings.json` +
+`arc_findings.json` (one findings contract), calls
+`run_pipeline.assemble_run_state` (manifest → `scenes_run` / `scene_filter`),
+`compute_convergence`, and `compute_auto_iterate` with the concept verdict's
+`distribution:` block, the pass's `judge-scope.json` (full vs incremental) and
+the repo's `loop:` config; stamps `auto_iterate_next_action` /
+`auto_iterate_reason` / `terminal_status`; saves; and records the judge ledger
+(`judge-cache/`) the next pass reuses from. `--json` prints the same as data.
 
-`scenes_run` / `scene_filter` are now populated by `assemble_run_state` from the
-manifest — do NOT hand-stamp them. (The manifest is produced by the render step:
-`record_video.py --manifest <run_dir>/walkthrough-run-data.json`.)
+Advisory verdicts are recorded and reported but never block convergence — each
+verdict's `gate` field decides its participation.
 
 **Upload gate.** `state.scene_filter is not None` means this is a
 partial run — `/canopy:ddd-upload` MUST refuse to upload it. A
@@ -697,41 +750,41 @@ against the full spec.
 
 ### Step 5 — Report + auto_iterate signal
 
-Before printing the report, compute the **auto_iterate signal** so the
-orchestrator (and the human reader) knows whether the next iteration can
-proceed without user input.
+Step 4's `assemble` already computed the signal through
+`run_pipeline.compute_auto_iterate` — the single source of truth; never
+re-implement the decision tree. What it does, in order:
 
-```python
-from scripts.ddd.run_pipeline import compute_auto_iterate
+- **normalizes findings** (`finding_class`): an ACCURACY finding is forced
+  `mechanical`; only STRATEGY findings can open the concept gate;
+- records a **progress point** — gating score, open (non-DEFER) findings, mean
+  concept cell, confirmed caps — in `state.progress_history`;
+- decides:
 
-# Single source of truth — do NOT re-implement the decision tree here.
-# Before deciding anything it NORMALIZES the findings through
-# scripts.ddd.finding_class: an ACCURACY finding (the narration asserts something
-# the artifact itself contradicts) is forced to fix_kind=mechanical, because the
-# artifact is the authority and the correct assertion is readable off it. Only
-# STRATEGY findings (the artifact is wrong, not the words) can open the concept
-# gate. The normalized findings are written back to state.findings.
-#
-# Then it gates on PROGRESS (not a raw iteration cap): it appends this iteration's
-# gating score to state.score_history and its finding fingerprints to
-# state.finding_fingerprints, and returns (action, reason) over:
-#   converged                                  -> stop_done / stop_partial
-#   STRATEGY redesign + mechanical pending,
-#     first deferral or score still climbing   -> continue  (gate deferred)
-#   a STRATEGY CONCEPT/redesign finding        -> stop_concept_change
-#   score stalled/regressed (noise-banded)     -> stop_max_iter
-#   identical findings + no real score move    -> stop_max_iter  (plateau)
-#   hard-cap backstop                          -> stop_max_iter
-#   any options/redesign left                  -> stop_unclear
-#   else (mechanical + still progressing)      -> continue
-# It reads user_verdict.dimensions for per-dimension fix_kinds and honors
-# state.scene_filter for the partial case, and stamps state.terminal_status.
-auto_iterate_next_action, reason = compute_auto_iterate(
-    state, concept_verdict, user_verdict, findings, converged=converged,
-    # unattended defaults to gates.is_unattended() — with no human present a
-    # stuck stop is TERMINAL (report + --stuck package), never a wait.
-)
 ```
+converged on an INCREMENTAL pass           -> confirm_full  (full re-render + full judge, no fixes)
+converged on a full pass                   -> stop_done / stop_partial
+STRATEGY redesign + mechanical pending,
+  first deferral or last pass progressed   -> continue  (gate deferred)
+a STRATEGY CONCEPT/redesign finding        -> stop_concept_change
+STALLED: no progress signal improved
+  across the last 2 iterations             -> stop_max_iter   (checked BEFORE pending mechanical work)
+mechanical pending, no plateau, under cap  -> continue
+identical findings + no progress           -> stop_max_iter  (plateau)
+hard-cap backstop                          -> stop_max_iter
+any options/redesign left                  -> stop_unclear
+```
+
+- on `continue`, sets `state.loop_mode` (chosen on full passes: `backlog` when
+  open findings ≥ `loop.backlog_min_findings`, default 8, else `polish`, unless
+  the config pins one) and `state.next_judge_full` for Step 2f.
+
+**Why stall reads four signals, not the floor.** The gating score is a minimum
+over ~70 cells; on five freshly-built supply narratives it sat at 2 for 19 of 23
+iterations while the mean cell rose 3.14 → 3.68 and open findings fell 61 → 21.
+A floor-only stall would have stopped real progress; and because the old
+`mechanical → continue` branch preceded the stall check, it in fact never fired
+at all while mechanical findings existed. Now a pinned floor with a shrinking
+backlog keeps going, and a run where nothing improves stops.
 
 **Two things the score alone cannot tell you, both now folded in:**
 
@@ -751,25 +804,15 @@ auto_iterate_next_action, reason = compute_auto_iterate(
 > and was blind to regressions; trajectory-gating keeps looping while the score
 > improves and stops the instant it stalls or regresses.
 
-Stamp `auto_iterate_next_action` and `auto_iterate_reason` onto run_state
-(both are optional fields on RunState) and `save(state)`. `compute_auto_iterate`
-also stamps **`state.terminal_status`** — `converged_clean` |
+`assemble` has already stamped `auto_iterate_next_action`, `auto_iterate_reason`
+and **`state.terminal_status`** — `converged_clean` |
 `converged_with_open_questions` | `stopped_not_converged` | `diverging` |
 `running`. Report it: "converged, good", "converged, still failing" and
-"diverging" are genuinely different endings and must never print the same. Then print the
-summary. **Every verdict line MUST be rendered via
-`run_pipeline.format_verdict_line`** — a capped verdict (the out-of-chain cap
-fired because `live_state_verified: false`) renders as
+"diverging" are genuinely different endings and must never print the same.
+Every verdict line comes from `run_pipeline.format_verdict_line` (the
+`assemble` output already uses it) — a capped verdict renders as
 `4.0/5 (pass — capped from 4.8, not live-state verified)`, never as a bare
-`4.0/5` indistinguishable from an honest 4.0 (canopy#273 item 3):
-
-```python
-from scripts.ddd.run_pipeline import format_verdict_line
-
-concept_line = format_verdict_line(concept_verdict)
-user_line = format_verdict_line(user_verdict)
-advisory_lines = {k: format_verdict_line(v) for k, v in extra_verdicts.items()}
-```
+`4.0/5` (canopy#273 item 3). Print the summary:
 
 ```
 DDD Run — <run_id>
@@ -783,6 +826,10 @@ DDD Run — <run_id>
   Concept judge:       <concept_line>
   User-artifact judge: <user_line>
   Advisory:            <kind>: <advisory_lines[kind]>                   # one line per extra verdict, if any
+
+  Judge pass: FULL | incremental (<n> re-judged, <m> reused)            # from assemble
+  Progress:   score <s>  open findings <f>  mean cell <m>  confirmed caps <c>   # vs last iteration
+  Loop mode:  backlog | polish   (next judge: full | incremental)
 
   Convergence (filtered): YES | NO  (threshold: 4.0)                    # "filtered" tag if partial
 
@@ -816,7 +863,8 @@ can see at a glance which findings the orchestrator will auto-apply
 - `stop_concept_change` — "Strategy finding present (the artifact, not the wording, is wrong) — surface to user via canopy-web review surface." Deferred once if `mechanical` findings are still pending, so the user judges direction over a clean artifact rather than one with known defects.
 - `stop_unclear` — "Findings with `options`/`redesign` fix_kind block auto-iteration. List them and ask the user to pick or redesign."
 - `stop_max_iter` — "Loop stopped making progress (stall, plateau, or backstop). Stop and surface remaining findings."
-- `continue` — "Orchestrator can apply mechanical fixes per finding and re-fire `/canopy:ddd-run` on the same scope."
+- `continue` — "Apply ALL mechanical findings as ONE batch (one PR, one deploy; parallel fixers fine), record the merge SHA (`judge_gate set-fix-sha`), and re-fire `/canopy:ddd-run`." In backlog mode the next judge pass is incremental unless `next_judge_full`.
+- `confirm_full` — "An incremental pass would converge. Re-fire `/canopy:ddd-run` with no fixes; `next_judge_full` is set, so every scene and the arc are judged fresh. Only that pass can return `stop_done`."
 
 **Unattended runs never wait on a stuck stop.** With no human in the loop
 (`gates.is_unattended()`), every stuck stop is terminal: upload the `--stuck`
@@ -895,3 +943,6 @@ When the auto-gate does not post, build the links by hand:
 | `<run_dir>/verdict-user.yaml` | canopy:visual-judge (user-artifact) | User-artifact judge verdict |
 | `<run_dir>/run_state.yaml` | assemble_run_state + save | phase=judged, verdict paths (gating pair + any extras), findings |
 | `<run_dir>/verdict-timing.json` / `verdict-video.json` / `verdict-why.yaml` / `verdict-actionability.yaml` | other DDD skills (optional) | Advisory verdicts — discovered by Step 4 when present, recorded + reported, never convergence-blocking |
+| `<run_dir>/judge-scope.json` | `judge_scope plan` (Step 2f) | full vs incremental; `rejudge` / `reuse` scene lists; whether the arc re-runs |
+| `<run_dir>/judge-cache/` | `judge_scope record` (via `assemble --spec`) | Ledger of the last judged iteration: per-scene input fingerprints, sealed concept + arc passes, verdicts — the source of reused cells |
+| `<run_dir>/gaps.json` | `ddd-gap-walk` (before the first render) | Scenes whose claims the product cannot show yet |

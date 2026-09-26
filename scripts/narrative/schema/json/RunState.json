@@ -248,6 +248,78 @@
       ],
       "default": null,
       "title": "Findings Review Url"
+    },
+    "progress_history": {
+      "default": [],
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Progress History",
+      "type": "array"
+    },
+    "loop_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Loop Mode"
+    },
+    "last_judge_full": {
+      "default": true,
+      "title": "Last Judge Full",
+      "type": "boolean"
+    },
+    "batches_since_full": {
+      "default": 0,
+      "title": "Batches Since Full",
+      "type": "integer"
+    },
+    "next_judge_full": {
+      "default": true,
+      "title": "Next Judge Full",
+      "type": "boolean"
+    },
+    "last_fix_sha": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Fix Sha"
+    },
+    "gaps_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Gaps Path"
+    },
+    "open_gaps": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Open Gaps"
     }
   },
   "required": [

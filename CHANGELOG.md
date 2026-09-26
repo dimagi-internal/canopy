@@ -9,6 +9,39 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.525] - 2026-09-26
+### Added
+- **DDD v1 / backlog mode.** The loop was tuned for polishing a nearly-good
+  product; on five freshly-built connect-labs supply narratives it spent most
+  of its cost re-judging unchanged scenes and could not see its own progress.
+  - `ddd-gap-walk` (new skill) + `scripts.ddd.gap_walk`: after the narrative
+    locks and before any render, walk each scene's claims against the target
+    repo and write `gaps.json`; non-empty gaps route to BUILD, not render.
+  - `scripts.ddd.judge_scope`: render stays full; judging re-runs only scenes
+    whose inputs (frames, page text minus the render stamp, spec entry, action
+    trace, why-brief, rubric) changed. Byte-identical scenes carry their sealed
+    concept passes forward (score reuse); the arc re-runs only when a scene
+    changed. Full re-judge every `loop.full_rejudge_every`-th batch (default 3).
+  - `confirm_full`: an incremental pass that would converge triggers a full
+    render + full judge — convergence is only ever declared on a full pass.
+  - `scripts.ddd.progress`: per-iteration score / open findings / mean cell /
+    confirmed caps in `state.progress_history`; stall = none improved across
+    two iterations.
+  - `scripts.ddd.judge_gate`: judges wait until every sample of the target's
+    health URL reports the last fix batch's merge SHA (`deploy_gate:` in
+    `.canopy/ddd/config.yaml`), and are skipped when a deterministic lens
+    hard-fails.
+  - `scripts.ddd.video_gate`: `ddd-ace-render` / `ddd-video-improve` refuse
+    before convergence unless `--allow-unconverged`.
+  - `scripts.ddd.assemble`: one command for ddd-run Steps 4–5 (no more
+    hand-written assemble scripts); arc findings now reach the loop decision.
+### Fixed
+- Stall detection could never fire while mechanical findings existed (the
+  `mechanical -> continue` branch preceded it). It is now checked first, and is
+  progress-aware so a pinned floor with a shrinking backlog keeps going.
+- `agents/ddd.md`: fixes land as ONE batch (one PR, one deploy) per iteration,
+  not a PR per finding.
+
 ## [0.2.484] - 2026-09-10
 ### Fixed
 - **The concept gate's deferral is exhaustion-based, not count-based** (#588).

@@ -21,8 +21,13 @@ HARD_CAP
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from scripts.ddd.schemas.models import RunState, Verdict
 from scripts.narrative.models import FIX_KINDS, UNROUTABLE_FIX_KIND_FALLBACK
+
+if TYPE_CHECKING:
+    from scripts.ddd.loop_config import LoopConfig
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -269,6 +274,9 @@ def compute_auto_iterate(
     converged: bool | None = None,
     hard_cap: int = HARD_CAP,
     unattended: bool | None = None,
+    distribution: dict | None = None,
+    judge_full: bool = True,
+    loop_config: "LoopConfig | None" = None,
 ) -> tuple[str, str]:
     """Decide the next loop action from the SCORE TRAJECTORY, not an iteration count.
 
@@ -327,8 +335,29 @@ def compute_auto_iterate(
     does not change WHICH action is returned — it changes whether a stuck stop is
     TERMINAL. With no human present, a stuck stop must end the run with an honest
     report rather than wait on a click nobody will make.
+
+    v1 / backlog loop (see :mod:`scripts.ddd.progress`):
+
+    - ``distribution`` is the concept verdict's ``distribution:`` block
+      (:func:`scripts.ddd.progress.load_distribution`). With it, every iteration
+      records a progress point (score, open findings, mean cell, confirmed caps)
+      in ``state.progress_history``, and STALL means none of the four improved
+      across the last two iterations — not merely that the floor did not move.
+      The stall check now runs BEFORE ``mechanical -> continue``; before this it
+      could never fire while a mechanical finding existed.
+    - ``judge_full`` says whether this pass judged every scene fresh. An
+      incremental pass (backlog mode reuses unchanged scenes' cells) can never
+      declare convergence: it returns ``confirm_full`` and the next pass is a
+      full render + full judge. Fidelity of the final decision is unchanged.
+    - ``loop_config`` (default: auto mode, backlog at >= 8 open findings, full
+      re-judge every 3rd batch) picks backlog vs polish on full passes and sets
+      ``state.next_judge_full`` for the next pass.
     """
-    from scripts.ddd import denoise, finding_class, gates
+    from scripts.ddd import denoise, finding_class, gates, progress
+    from scripts.ddd.loop_config import LoopConfig
+
+    if loop_config is None:
+        loop_config = LoopConfig()
 
     if converged is None:
         converged = compute_convergence(concept_verdict, user_verdict)
@@ -346,13 +375,39 @@ def compute_auto_iterate(
     state.finding_fingerprints = (state.finding_fingerprints or []) + [fingerprints]
     fp_hist = state.finding_fingerprints
 
-    # "stalled" = the last two iterations produced no new best, judged through the
-    # noise band so a wobble inside +/-NOISE_BAND is neither progress nor regression.
+    point = progress.measure(findings, distribution, score, full=judge_full)
+    state.progress_history = (state.progress_history or []) + [point]
+    prog = state.progress_history
+
+    # Mode is (re)chosen on FULL passes only — an incremental pass's finding count
+    # includes reused cells and is not a fresh read of the backlog.
+    if judge_full or state.loop_mode is None:
+        state.loop_mode = progress.select_mode(
+            loop_config.mode,
+            point["open_findings"],
+            backlog_min_findings=loop_config.backlog_min_findings,
+        )
+    state.last_judge_full = bool(judge_full)
+    state.batches_since_full = 0 if judge_full else state.batches_since_full + 1
+
+    # "stalled" = the last two iterations produced no new best on ANY progress
+    # signal (score, open findings, mean cell, confirmed caps), each read through
+    # its own noise band. Falls back to the score alone for a run whose progress
+    # history is shorter than its score history (resumed from before 0.2.5xx).
     stalled = False
-    if len(hist) >= 3:
+    if len(prog) >= 3:
+        stalled = progress.stalled(prog)
+    elif len(hist) >= 3:
         best_before = max(hist[:-2])
         stalled = all(
             denoise.improved(best_before, h) is not True for h in hist[-2:]
+        )
+    # Did the LAST pass move anything? Progress-aware when both points exist.
+    if len(prog) >= 2:
+        last_pass_improved = progress.last_step_progressed(prog)
+    else:
+        last_pass_improved = (
+            len(hist) >= 2 and denoise.improved(hist[-2], hist[-1]) is True
         )
     # "plateau" = the same defects came back unchanged AND the score did not
     # genuinely improve. Identical findings alone is not enough — a stub-shaped
@@ -366,7 +421,7 @@ def compute_auto_iterate(
         and bool(fp_hist[-1])
         and fp_hist[-1] == fp_hist[-2]
         and len(hist) >= 2
-        and denoise.improved(hist[-2], hist[-1]) is not True
+        and not last_pass_improved
     )
 
     all_findings = [
@@ -410,6 +465,16 @@ def compute_auto_iterate(
         )["status"]
         return action, reason
 
+    if converged and not judge_full and not getattr(state, "scene_filter", None):
+        # An incremental pass reused unchanged scenes' cells. Convergence is only
+        # ever declared on a full render + full judge.
+        state.next_judge_full = True
+        return _finish(
+            "confirm_full",
+            "Every gating judge passed on an INCREMENTAL pass (unchanged scenes' cells "
+            "were reused). Re-render and judge every scene fresh, arc included, before "
+            "declaring convergence — no fixes to apply.",
+        )
     if converged and not getattr(state, "scene_filter", None):
         return _finish("stop_done", "Both judges passed full spec — ready for promotion.")
     if converged and getattr(state, "scene_filter", None):
@@ -429,10 +494,27 @@ def compute_auto_iterate(
     # suppresses it (re-applying fixes that already failed to move anything is
     # not worth the gate's wait), and the hard cap is the runaway backstop.
     first_deferral = state.concept_gate_deferred == 0
-    last_pass_improved = (
-        len(hist) >= 2 and denoise.improved(hist[-2], hist[-1]) is True
-    )
     under_cap = len(hist) < hard_cap
+
+    def _continue(reason: str) -> tuple[str, str]:
+        """``continue`` + the next pass's judge scope (backlog vs polish)."""
+        if state.loop_mode == "backlog":
+            state.next_judge_full = (
+                state.batches_since_full + 1 >= loop_config.full_rejudge_every
+            )
+            scope = (
+                "full re-judge (every "
+                f"{loop_config.full_rejudge_every}th batch)"
+                if state.next_judge_full
+                else "re-judge only scenes whose frame/text/spec changed"
+            )
+            reason += (
+                f" Backlog mode: apply ALL mechanical findings as ONE batch (one PR, one "
+                f"deploy), then full re-render; next judge: {scope}."
+            )
+        else:
+            state.next_judge_full = True
+        return _finish("continue", reason)
     defer_concept_gate = (
         bool(strategy_redesign)
         and bool(mechanical)
@@ -449,14 +531,14 @@ def compute_auto_iterate(
                 f"score by more than the +/-{denoise.NOISE_BAND} noise band"
             )
         else:
+            moved = ", ".join(progress.improved_signals(prog[-2:-1], prog[-1])) or "score"
             why = (
                 f"Deferral {state.concept_gate_deferred}: the last pass moved the score "
-                f"{hist[-2]} -> {hist[-1]}, outside the +/-{denoise.NOISE_BAND} noise "
+                f"{hist[-2]} -> {hist[-1]} and improved [{moved}] beyond its noise "
                 "band, so the fixes are still cleaning the artifact. The gate opens the "
                 "first pass that goes flat, regresses, or plateaus"
             )
-        return _finish(
-            "continue",
+        return _continue(
             f"{len(mechanical)} mechanical (confident) fix(es) remain alongside a strategy "
             "finding — apply + re-fire so the concept question is asked over a clean "
             f"artifact. {why} (history={hist}).",
@@ -468,20 +550,25 @@ def compute_auto_iterate(
             "judgment on direction."
             + (" Unattended: reported, not waited on." if unattended else ""),
         )
+    # A stall is checked BEFORE pending mechanical work: that branch used to come
+    # first, so on a v1 product (which always has mechanical findings) stall
+    # detection could never fire. Stall is now progress-aware, so a run whose
+    # floor is pinned while its backlog shrinks is NOT stalled and keeps going.
+    if stalled:
+        return _finish(
+            "stop_max_iter",
+            f"Stalled: no progress signal improved across the last 2 iterations "
+            f"(score, open findings, mean cell, confirmed caps; history={hist}, "
+            f"progress={[_short(p) for p in prog[-3:]]}, score noise band "
+            f"+/-{denoise.NOISE_BAND}) — fixes aren't converging; needs a human look.",
+        )
     # A plateau means re-applying the mechanical fixes is not producing change.
     # The hard cap applies here too — a backstop that a `continue` can step over
     # is not a backstop.
     if mechanical and not plateau and under_cap:
-        return _finish(
-            "continue",
+        return _continue(
             f"{len(mechanical)} mechanical (confident) fix(es) remain — apply + re-fire "
             f"before surfacing any options (history={hist}).",
-        )
-    if stalled:
-        return _finish(
-            "stop_max_iter",
-            f"Score stalled/regressed across the last 2 iterations (history={hist}, "
-            f"noise band +/-{denoise.NOISE_BAND}) — fixes aren't converging; needs a human look.",
         )
     if plateau:
         return _finish(
@@ -501,9 +588,16 @@ def compute_auto_iterate(
             "to auto-apply — surface ONLY these for a user pick."
             + (" Unattended: reported, not waited on." if unattended else ""),
         )
-    return _finish(
-        "continue",
+    return _continue(
         f"No options/redesign and score still moving (history={hist}) — re-fire.",
+    )
+
+
+def _short(point: dict) -> str:
+    """Compact progress point for a reason string."""
+    return (
+        f"s={point.get('score')} f={point.get('open_findings')} "
+        f"m={point.get('mean_cell')} c={point.get('confirmed_caps')}"
     )
 
 
