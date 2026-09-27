@@ -238,6 +238,45 @@ Arc Eval — <spec name>
 If the judge could not state the story in one sentence, say so first — that is
 the single most important signal this lens produces.
 
+## Storyboard mode (pre-build — the locked narrative, no screenshots)
+
+Run once per run, on the LOCKED narrative, in parallel with `ddd-gap-walk` and
+before the first build or render. The first live v1 run learned "move this
+scene" and "the data is too small to make the point" at iteration 4, after six
+fix batches; none of it needed pixels.
+
+**Inputs:** the composed spec (scenes in `build_order`: title, `narrative`,
+`concept_claim`, `persona`, `features[]`, `actions`), the why-brief, and the
+seed the recipe's `setup.command` runs (read it — count the entities each scene
+will show).
+
+Dispatch ONE fresh sub-agent over the whole sequence. It answers, per scene and
+for the arc:
+
+- **scene_order** — does each beat's setup come before its payoff? would a
+  different order escalate better?
+- **earns_place** — would the story lose anything if this scene were cut or
+  merged? (a scene outside the tagline that interrupts the rise is `scope`)
+- **data_scale / data_realism** — will the seeded data make THIS scene's point?
+  (a value claim over three rows is never felt; identical derived columns read
+  as generated)
+- **restatement** — the narration claims more (or other) than the scene will
+  show: say it at the strength the scene supports.
+
+It writes `<run_dir>/storyboard.json` (`one_sentence_story` + `findings[]`, each
+`{scenes: [int], dimension, kind, detail, fix_recommendation, evidence: [...]}`)
+with `kind` routing the fix: `restate` (auto-applied narrative wording), `seed`
+(joins the build batch), `order` / `scope` (the `concept_change` gate, asked
+once, up front). Validate before handing back:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.storyboard validate "$(realpath <run_dir>/storyboard.json)" --spec "$(realpath <spec>)")
+```
+
+`gap_walk check --storyboard` folds it into the walk's single answer. A clean
+storyboard writes `findings: []`. Do not score polish or wording here — that is
+the rendered judges' job.
+
 ## Why `gate: gating`
 
 A narrative can pass every per-scene judge and still not be worth watching.

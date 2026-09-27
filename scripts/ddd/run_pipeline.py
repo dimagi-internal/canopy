@@ -277,6 +277,8 @@ def compute_auto_iterate(
     distribution: dict | None = None,
     judge_full: bool = True,
     loop_config: "LoopConfig | None" = None,
+    target: str | None = None,
+    judges: list[str] | None = None,
 ) -> tuple[str, str]:
     """Decide the next loop action from the SCORE TRAJECTORY, not an iteration count.
 
@@ -352,6 +354,15 @@ def compute_auto_iterate(
     - ``loop_config`` (default: auto mode, backlog at >= 8 open findings, full
       re-judge every 3rd batch) picks backlog vs polish on full passes and sets
       ``state.next_judge_full`` for the next pass.
+
+    Inner loop + judge tiering (see :mod:`scripts.ddd.target`):
+
+    - ``target`` is where this pass rendered (``deploy`` | ``inner``) and
+      ``judges`` which judges ran fresh (``None`` = all). A pass on the inner
+      target, or one that ran only some judges, can never DECIDE: any stop, gate
+      or convergence it would return becomes ``checkpoint`` — land the batches,
+      then a full render + every judge on the deploy target decides. The target
+      is recorded on the progress point.
     """
     import copy
 
@@ -390,6 +401,7 @@ def compute_auto_iterate(
     fp_hist = state.finding_fingerprints
 
     point = progress.measure(findings, distribution, score, full=judge_full)
+    point["target"] = target or "deploy"
     state.progress_history = (state.progress_history or []) + [point]
     prog = state.progress_history
 
@@ -477,6 +489,21 @@ def compute_auto_iterate(
     strategy_redesign = [f for f in strategy_all if not f.get("parked")]
 
     def _finish(action: str, reason: str) -> tuple[str, str]:
+        # Fidelity: an inner-loop or concept-only pass may not decide anything.
+        from scripts.ddd import target as target_mod
+
+        if action in _CHECKPOINT_BEFORE and target_mod.decision_needs_checkpoint(target, judges):
+            state.next_judge_full = True
+            state.terminal_status = "running"
+            where = "the local inner-loop build" if (target or "deploy") != "deploy" else "a concept-only pass"
+            return (
+                "checkpoint",
+                f"This pass ran on {where}, which cannot decide {action!r}. Checkpoint: apply "
+                "the pending mechanical fixes (recipe ones included), land every batch since the "
+                "last checkpoint (PR, CI, deploy, judge_gate set-fix-sha), then render against "
+                "the deploy target and run every judge in full. That pass decides. "
+                f"Deferred decision: {reason}",
+            )
         # M17: a confirmed cap whose fix is a RECIPE edit (no deploy) is fixed,
         # and its scene re-judged, before it may open a gate or end the run.
         # Once per iteration: the re-assessment after the re-judge decides.
@@ -681,6 +708,18 @@ def compute_auto_iterate(
         f"No options/redesign and score still moving (history={hist}) — re-fire.",
     )
 
+
+#: Decisions an inner-loop / concept-only pass must hand to a checkpoint.
+_CHECKPOINT_BEFORE = frozenset(
+    {
+        "stop_done",
+        "stop_concept_change",
+        "stop_max_iter",
+        "stop_unclear",
+        "park_and_continue",
+        "confirm_full",
+    }
+)
 
 #: Terminal (or gate-opening) actions a recipe re-judge must come before (M17).
 _RECIPE_PREEMPTS = frozenset(

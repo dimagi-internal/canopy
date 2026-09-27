@@ -9,6 +9,38 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.534] - 2026-09-27
+DDD loop round 3, part B: storyboard critique, the inner-loop target, and judge tiering.
+### Added
+- **Pre-build storyboard critique.** `ddd-arc-eval` has a storyboard mode that
+  runs on the LOCKED narrative plus its seed, with no screenshots, in parallel
+  with the gap walk. It judges scene order, whether each scene earns its place,
+  and whether the seeded data's scale and realism make the point, and writes
+  `storyboard.json` (`scripts.ddd.storyboard`). `gap_walk check --storyboard`
+  folds it into the walk's single answer: `restate` is auto-applied to the
+  narrative, `seed` joins the build batch, and `order`/`scope` join the
+  `decide` gate. They are asked once (`storyboard mark`) and never re-raised.
+- **Inner-loop target** (`inner_loop: {base_url, setup, health_url,
+  ready_timeout_seconds}`, default off). Between checkpoints, batches are
+  rendered against a locally served build (`record_video.py --base-url`,
+  `recipe_preflight --base-url`) with no merge, CI or deploy. `scripts.ddd.target
+  plan` picks the target and stamps `state.current_target`. On an inner pass the
+  judge gate checks the local health URL instead of the deploy SHA. The
+  progress point records `target` for every iteration.
+- **Judge tiering** (`loop.judge_tiering: auto|on|off`; `auto` = on in backlog
+  mode). Between checkpoints only the concept judge runs, on changed scenes.
+  `judge_scope plan --tiered` writes `judges: ["concept"]`, and `carry` carries
+  the last user-artifact and arc verdicts forward.
+- **`checkpoint` action.** An inner-loop or concept-only pass cannot decide.
+  Any stop, gate or convergence it would return becomes `checkpoint`: land the
+  batches, then run a full render with every judge on the deploy target. The
+  convergence bar is unchanged.
+### Compatibility
+- Everything is opt-in or on only in backlog mode. New `RunState` fields
+  (`current_target`, `storyboard`) are optional. A missing or stale
+  `current_target` reads as the deploy target, so the behaviour is the same as
+  before.
+
 ## [0.2.533] - 2026-09-27
 DDD loop round 3, part A — from the first live v1-mode run
 (connect-labs `supply-sophie-rutf-2026-09-26-001`).

@@ -121,6 +121,23 @@ def check_deploy(
     }
 
 
+def inner_deploy_status(inner_cfg, *, wait: bool = True, **kw) -> dict[str, Any]:
+    """Deploy half for an INNER-loop pass: nothing is deployed between checkpoints
+    (that is the point), so the gate only asks whether the local build answers."""
+    from scripts.ddd import target as target_mod
+
+    ready = target_mod.wait_ready(
+        inner_cfg.health_url, timeout_s=inner_cfg.ready_timeout_seconds if wait else 0.0, **kw
+    )
+    if ready["status"] == "not_ready":
+        return {"status": "not_ready", "reason": f"inner-loop build: {ready['reason']}"}
+    return {
+        "status": "skipped",
+        "reason": "inner-loop pass — the fix branch is served locally, nothing is deployed "
+        f"between checkpoints ({ready['reason']})",
+    }
+
+
 def decide(deploy: dict | None, lenses: dict[str, str] | None) -> dict[str, Any]:
     """Judge, or say exactly why not."""
     hard = sorted(
@@ -189,8 +206,14 @@ def _main(argv: list[str] | None = None) -> int:
             save(state)
             print(json.dumps({"run_id": state.run_id, "last_fix_sha": state.last_fix_sha}))
             return 0
-        cfg = loop_config.load().deploy_gate
-        deploy = check_deploy(cfg, args.expect or state.last_fix_sha, wait=not args.no_wait)
+        from scripts.ddd import target as target_mod
+
+        full_cfg = loop_config.load()
+        cfg = full_cfg.deploy_gate
+        if target_mod.current(state).get("target") == target_mod.INNER:
+            deploy = inner_deploy_status(full_cfg.inner_loop, wait=not args.no_wait)
+        else:
+            deploy = check_deploy(cfg, args.expect or state.last_fix_sha, wait=not args.no_wait)
         result = decide(deploy, _parse_lenses(args.lens))
         result["deploy"] = deploy
     except (ValueError, OSError) as exc:

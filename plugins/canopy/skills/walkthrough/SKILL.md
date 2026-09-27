@@ -479,7 +479,9 @@ and the user will catch it.
 This skill runs on the **same render engine + manifest that DDD uses** —
 there is ONE renderer, not two. The three steps are:
 
-1. **Render once** (`record_video.py --manifest …`) — a single capture
+1. **Render once** (`record_video.py --manifest …`; add `--base-url <origin>` to
+   film a locally served build instead of the spec's `base_url` — the DDD inner
+   loop uses it) — a single capture
    pass drives the product, writes the mp4 + per-scene screenshots, AND
    emits the manifest (`walkthrough-run-data.json`). See **Render once via
    the engine** below.

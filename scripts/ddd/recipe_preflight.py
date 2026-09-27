@@ -580,13 +580,18 @@ def _cli() -> int:
         "--cookies",
         help="cookies JSON exported by `browse cookies`; ignored when --storage-state is given",
     )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="preflight against this origin instead of the spec's base_url (DDD inner loop)",
+    )
     ns = parser.parse_args()
     if not ns.recipe:
         print(__doc__, file=sys.stderr)
         return 2
     as_json = ns.json
     result = preflight(
-        ns.recipe, storage_state=ns.storage_state, cookies=ns.cookies
+        ns.recipe, storage_state=ns.storage_state, cookies=ns.cookies, base_url=ns.base_url
     )
     if as_json:
         print(json.dumps(result, indent=1))

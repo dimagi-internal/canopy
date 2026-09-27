@@ -51,7 +51,16 @@ classifies its claim + missing capability as accuracy, or when its
 The first live v1 run (0.2.528, M2) opened the gate for three such gaps, each
 then resolved by restating the recipe.
 
-    python -m scripts.ddd.gap_walk check <gaps.json> [--spec <spec>] [--run-id <id>]
+    python -m scripts.ddd.gap_walk check <gaps.json> [--spec <spec>] [--run-id <id>] \
+        [--storyboard <storyboard.json>]
+
+With ``--storyboard`` the pre-build storyboard critique (:mod:`scripts.ddd.storyboard`)
+comes out in the SAME answer: its ``restate`` findings join the restate list,
+``seed`` findings join the build batch, and ``order``/``scope`` findings join the
+``decide`` gate — once. With ``--run-id`` a storyboard with no order/scope
+questions is marked consumed here; one with questions is marked by the
+orchestrator after it posts the gate (``storyboard mark --status asked``).
+Later re-walks ignore a consumed storyboard.
 
 Exit 0 = render, 1 = build/decide, 2 = invalid gaps.json.
 """
@@ -151,8 +160,23 @@ def validate(doc: Any, *, scene_count: int | None = None) -> list[str]:
     return problems
 
 
-def decide(doc: dict) -> dict[str, Any]:
-    """The loop's next action from a VALID gaps document."""
+def decide(doc: dict, storyboard: dict | None = None) -> dict[str, Any]:
+    """The loop's next action from a VALID gaps document (+ optional routed storyboard).
+
+    ``storyboard`` is :func:`scripts.ddd.storyboard.route` output. Its buckets
+    fold into the same three actions, so the gap walk and the storyboard
+    critique produce ONE next step.
+    """
+    result = _decide_gaps(doc, storyboard or {})
+    if storyboard is not None:
+        result["storyboard"] = storyboard
+    return result
+
+
+def _decide_gaps(doc: dict, sb: dict) -> dict[str, Any]:
+    sb_restate = list(sb.get("restate") or [])
+    sb_seed = list(sb.get("seed") or [])
+    sb_decide = list(sb.get("decide") or [])
     gaps = [g for g in doc.get("gaps") or [] if isinstance(g, dict)]
     routed = [(g, *gap_class(g)) for g in gaps]
     decisions = [g for g, kind, _ in routed if kind == "decision"]
@@ -162,32 +186,44 @@ def decide(doc: dict) -> dict[str, Any]:
         for g, kind, why in routed
         if kind == "restate"
     ]
-    if decisions:
+    restates += [
+        {"scenes": r["scenes"], "claim": r["detail"], "why": "storyboard restatement", "fix": r["fix_recommendation"]}
+        for r in sb_restate
+    ]
+    scenes = sorted({g["scene"] for g in gaps} | {s for r in sb_restate + sb_seed + sb_decide for s in r.get("scenes") or []})
+    sb_note = ""
+    if sb_decide:
+        sb_note = f" Storyboard: {len(sb_decide)} scene order/scope question(s) go in the same gate — asked once, up front."
+    if decisions or sb_decide:
         return {
             "action": "decide",
             "open_gaps": len(gaps),
             "reason": (
                 f"{len(decisions)} scene claim(s) need a product decision before anything can "
                 "be built — open the concept_change gate with them (and build the "
-                f"{len(builds)} buildable gap(s) and restate the {len(restates)} accuracy "
-                "gap(s) in the same pass once decided)."
+                f"{len(builds) + len(sb_seed)} buildable gap(s) and restate the {len(restates)} "
+                "accuracy gap(s) in the same pass once decided)." + sb_note
             ),
-            "scenes": sorted({g["scene"] for g in gaps}),
+            "scenes": scenes,
             "restate": restates,
+            "seed": sb_seed,
+            "decisions": sb_decide,
         }
-    if builds or restates:
+    if builds or restates or sb_seed:
         return {
             "action": "build",
             "open_gaps": len(gaps),
             "reason": (
-                f"{len(builds)} scene claim(s) the product cannot show yet — BUILD them — and "
+                f"{len(builds)} scene claim(s) the product cannot show yet — BUILD them — "
+                f"{len(sb_seed)} scene(s) whose seeded data does not make the point — SEED them — and "
                 f"{len(restates)} where the recipe/narration says something the built page "
                 "does not — RESTATE them to the page (accuracy; no gate). One batch, one "
                 "PR/deploy, then re-walk. Do not render: a judge round would only "
                 "re-discover these."
             ),
-            "scenes": sorted({g["scene"] for g in gaps}),
+            "scenes": scenes,
             "restate": restates,
+            "seed": sb_seed,
         }
     return {"action": "render", "open_gaps": 0, "reason": "every scene's claim is buildable today"}
 
@@ -199,6 +235,7 @@ def _main(argv: list[str] | None = None) -> int:
     c.add_argument("gaps")
     c.add_argument("--spec", default=None, help="spec path; enforces every scene was walked")
     c.add_argument("--run-id", default=None, help="stamp gaps_path/open_gaps on run_state")
+    c.add_argument("--storyboard", default=None, help="storyboard.json from ddd-arc-eval storyboard mode")
     args = ap.parse_args(argv)
 
     path = Path(args.gaps)
@@ -216,13 +253,38 @@ def _main(argv: list[str] | None = None) -> int:
     if problems:
         print(json.dumps({"action": "invalid", "problems": problems}, indent=1))
         return 2
-    result = decide(doc)
+    state = None
     if args.run_id:
-        from scripts.ddd.runstate import load, save
+        from scripts.ddd.runstate import load
 
         state = load(args.run_id)
+    routed = None
+    if args.storyboard:
+        from scripts.ddd import storyboard as sbmod
+
+        try:
+            sb_doc = json.loads(Path(args.storyboard).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"gap_walk: cannot read {args.storyboard}: {exc}", file=sys.stderr)
+            return 2
+        sb_problems = sbmod.validate(sb_doc, scene_count=scene_count)
+        if sb_problems:
+            print(json.dumps({"action": "invalid", "problems": [f"storyboard: {p}" for p in sb_problems]}, indent=1))
+            return 2
+        if state is not None and sbmod.already_asked(state):
+            routed = {"restate": [], "seed": [], "decide": [], "suppressed": [], "consumed": True}
+        else:
+            routed = sbmod.route(sb_doc)
+    result = decide(doc, routed)
+    if state is not None:
+        from scripts.ddd.runstate import save
+
         state.gaps_path = str(path.resolve())
         state.open_gaps = result["open_gaps"]
+        if routed is not None and not routed.get("consumed") and not routed["decide"]:
+            from scripts.ddd import storyboard as sbmod
+
+            sbmod.mark(state, "applied" if (routed["restate"] or routed["seed"]) else "clean")
         save(state)
     print(json.dumps(result, indent=1))
     return 0 if result["action"] == "render" else 1

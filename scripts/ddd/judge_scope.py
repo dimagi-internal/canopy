@@ -285,7 +285,12 @@ def plan(
     *,
     force_full: bool = False,
     context: list[str | Path] | None = None,
+    tiered: bool = False,
 ) -> dict[str, Any]:
+    """Plan the judge scope. ``tiered`` (judge tiering, :mod:`scripts.ddd.target`):
+    an INCREMENTAL pass runs the concept judge only — ``judges: ["concept"]``,
+    ``arc: false`` — and ``carry`` restores the last user-artifact and arc
+    verdicts. A full pass always runs every judge."""
     run = Path(run_dir)
     ctx = list(context or [])
     wb = run / "why_brief.yaml"
@@ -312,6 +317,12 @@ def plan(
         scope["changed_components"] = changed_components(
             components, ledger.get("components")
         )
+    if tiered and not scope.get("full"):
+        scope["judges"] = ["concept"]
+        scope["arc"] = False
+        scope["reason"] += " — judge tiering: concept judge only (user + arc carried to the checkpoint)"
+    else:
+        scope["judges"] = ["concept", "user", "arc"]
     scope.update(
         {
             "planned_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -401,6 +412,15 @@ def carry(run_dir: str | Path) -> dict[str, Any]:
             if not (run / name).exists() and (cache / name).exists():
                 shutil.copy2(cache / name, run / name)
 
+    # Judge tiering: the user-artifact judge does not run on this pass, so its
+    # last verdict (findings included) is carried wholesale.
+    user_carried = False
+    if "user" not in (scope.get("judges") or ["user"]):
+        prior_user = cache / "verdict-user.yaml"
+        if prior_user.exists():
+            shutil.copy2(prior_user, run / "verdict-user.yaml")
+            user_carried = True
+
     return {
         "archived": archived,
         "restored": restored,
@@ -408,6 +428,8 @@ def carry(run_dir: str | Path) -> dict[str, Any]:
         "rejudge": sorted(rejudge),
         "reuse": sorted(reuse),
         "arc": bool(scope.get("arc")),
+        "judges": scope.get("judges") or ["concept", "user", "arc"],
+        "user_carried": user_carried,
         "expect_concept_passes": len(
             [f for f in concept.iterdir() if f.is_file() and not f.name.endswith(".seal.json")]
         ),
@@ -565,6 +587,7 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("spec")
     p.add_argument("--full", action="store_true", help="force a full judge pass")
     p.add_argument("--context", action="append", default=[])
+    p.add_argument("--tiered", action="store_true", help="judge tiering: incremental passes run the concept judge only")
     c = sub.add_parser("carry")
     c.add_argument("run_dir")
     u = sub.add_parser("reused-user")
@@ -580,7 +603,7 @@ def _main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     try:
         if args.cmd == "plan":
-            out = plan(args.run_dir, args.spec, force_full=args.full, context=args.context)
+            out = plan(args.run_dir, args.spec, force_full=args.full, context=args.context, tiered=args.tiered)
             out = {k: v for k, v in out.items() if k != "fingerprints"}
         elif args.cmd == "carry":
             out = carry(args.run_dir)

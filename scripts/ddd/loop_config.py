@@ -6,7 +6,9 @@ module reads the two blocks the v1/backlog loop adds::
     loop:
       mode: auto              # auto | backlog | polish
       backlog_min_findings: 8 # auto -> backlog when a FULL pass has >= this many open findings
-      full_rejudge_every: 3   # backlog: every Nth fix batch is judged in full
+      full_rejudge_every: 3   # backlog: every Nth fix batch is judged in full (= a checkpoint)
+      judge_tiering: auto     # auto (on in backlog mode) | on | off — between checkpoints
+                              # only the concept judge re-runs, on changed scenes
 
     deploy_gate:
       health_url: https://labs.connect.dimagi.com/health/
@@ -15,6 +17,12 @@ module reads the two blocks the v1/backlog loop adds::
       interval_seconds: 5     # between samples
       attempts: 12            # rounds of sampling before reporting not_ready
       retry_seconds: 30       # between rounds
+
+    inner_loop:               # optional, default OFF — see scripts.ddd.target
+      base_url: http://localhost:8000          # a locally served build of the fix branch
+      setup: make serve-demo                   # (re)start it; run under the watchdog
+      health_url: http://localhost:8000/health/  # optional readiness probe
+      ready_timeout_seconds: 120
 
     timeouts:                 # sub-step watchdog (scripts.ddd.watchdog)
       default_minutes: 45     # any step without its own key
@@ -42,6 +50,7 @@ from typing import Any
 import yaml
 
 MODES = ("auto", "backlog", "polish")
+TIERING = ("auto", "on", "off")
 
 
 @dataclass(frozen=True)
@@ -49,6 +58,27 @@ class LoopConfig:
     mode: str = "auto"
     backlog_min_findings: int = 8
     full_rejudge_every: int = 3
+    judge_tiering: str = "auto"
+
+    def tiered(self, loop_mode: str | None) -> bool:
+        """Concept-only judging between checkpoints? ``auto`` = on in backlog mode."""
+        if self.judge_tiering == "on":
+            return True
+        if self.judge_tiering == "off":
+            return False
+        return loop_mode == "backlog"
+
+
+@dataclass(frozen=True)
+class InnerLoopConfig:
+    base_url: str | None = None
+    setup: str | None = None
+    health_url: str | None = None
+    ready_timeout_seconds: float = 120.0
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.base_url)
 
 
 @dataclass(frozen=True)
@@ -98,6 +128,7 @@ class DDDConfig:
     loop: LoopConfig = field(default_factory=LoopConfig)
     deploy_gate: DeployGateConfig = field(default_factory=DeployGateConfig)
     timeouts: TimeoutsConfig = field(default_factory=TimeoutsConfig)
+    inner_loop: InnerLoopConfig = field(default_factory=InnerLoopConfig)
     auth_preflight: AuthPreflightConfig = field(default_factory=AuthPreflightConfig)
 
 
@@ -139,6 +170,26 @@ def _parse_timeouts(raw: Any) -> TimeoutsConfig:
     )
 
 
+def _tiering(raw: Any) -> str:
+    if raw is True:
+        return "on"
+    if raw is False:
+        return "off"
+    val = str(raw or "auto").strip().lower()
+    return val if val in TIERING else "auto"
+
+
+def _parse_inner(raw: Any) -> InnerLoopConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    base = str(raw.get("base_url") or "").strip().rstrip("/") or None
+    return InnerLoopConfig(
+        base_url=base,
+        setup=str(raw.get("setup") or "").strip() or None,
+        health_url=str(raw.get("health_url") or "").strip() or None,
+        ready_timeout_seconds=_positive(raw.get("ready_timeout_seconds"), 120.0),
+    )
+
+
 def _command_name(run: str) -> str:
     return " ".join(run.split()[:3]) or run
 
@@ -167,6 +218,7 @@ def parse(data: dict | None) -> DDDConfig:
         mode=mode if mode in MODES else "auto",
         backlog_min_findings=_int(loop_raw.get("backlog_min_findings"), 8),
         full_rejudge_every=_int(loop_raw.get("full_rejudge_every"), 3),
+        judge_tiering=_tiering(loop_raw.get("judge_tiering")),
     )
     gate_raw = data.get("deploy_gate") if isinstance(data.get("deploy_gate"), dict) else {}
     url = str(gate_raw.get("health_url") or "").strip() or None
@@ -182,6 +234,7 @@ def parse(data: dict | None) -> DDDConfig:
         loop=loop,
         deploy_gate=gate,
         timeouts=_parse_timeouts(data.get("timeouts")),
+        inner_loop=_parse_inner(data.get("inner_loop")),
         auth_preflight=_parse_auth(data.get("auth_preflight")),
     )
 

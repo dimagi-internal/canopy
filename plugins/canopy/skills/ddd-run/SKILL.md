@@ -163,6 +163,20 @@ The only durable human approval in the routine loop remains the
 
 ### Step 2 — Render: invoke the canopy walkthrough engine
 
+**Plan the target first** (inner loop + judge tiering, `scripts.ddd.target`):
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.target plan "<run_id>")
+```
+
+It stamps `state.current_target` = `{target: deploy|inner, base_url, judges,
+checkpoint}`. `target: inner` (only when the repo configured `inner_loop:` and
+this is not a checkpoint) → start/refresh the local build (`inner_loop.setup`,
+under the watchdog), `python -m scripts.ddd.target ready <run_id>`, and pass
+`--base-url <base_url>` to the recorder. A checkpoint (every
+`loop.full_rejudge_every`-th batch, and every pass after `checkpoint` /
+`confirm_full`) always renders the real deploy target.
+
 Invoke `canopy:walkthrough` (or the equivalent Skill tool call) against
 `<unified_spec>` to drive the live product and produce:
 
@@ -208,6 +222,7 @@ flags below.
 | `--skip-empty-scenes` | When the spec has narrative-only back-half scenes (no `actions`) | The mp4 doesn't waste `min_hold_ms` on identical static pages. Deck slides still cover them. |
 | `--skip-same-url` | When the spec uses continue-scene patterns (scenes that operate on the previous scene's URL) | Avoids re-navs that wipe JS state between scenes. |
 | `--capture-action-frames` | **Always** for DDD runs | For each scene with an effecting action, also writes `scene_<N>_before.png` (the action loop's starting line). The dual-judge passes the `{before, after}` pair to `canopy:visual-judge` so it can judge the state CHANGE, not just the end-frame — closing the single-still-frame blind spot. Single-frame scenes (no effecting action) are unaffected. |
+| `--base-url <origin>` | Only on an **inner-loop** pass (`target plan` says `target: inner`) | Renders against the locally served fix branch instead of the spec's `base_url`; the manifest records the origin used. Never on a checkpoint pass. |
 | `--input <run.json>` | Only for `--scene` partial runs (when reusing a previous walkthrough's capture set) | Without this, the spec is the only source of truth. |
 | `--skip-setup` | **Never in the iterate loop** | Specs with a `setup:` block run their synthetic generator before every render (`rerun: per_render`) — that reseed is load-bearing for state-mutating demos (a scene that creates an audit must find no audit on the next take). `--skip-setup` is a human escape hatch for one-off re-renders on known-fresh, non-mutating data; the orchestrator must not pass it. |
 | `--prewarm` / `--no-prewarm` | Usually neither — the spec's `prewarm:` value is the right default and the recorder honors it automatically (CLI overrides per invocation, CLI wins) | The pre-warm pass visits each unique resolved scene URL once in a NON-recorded context before filming, so cold caches (first-hit page renders, remote image fetches) are paid off camera instead of as frozen frames mid-scene. Best-effort: failures land in `run-report.json` (`prewarm` key: `{pages, duration_seconds, failures}`), never abort the render. Full model: walkthrough SKILL § "Recording time & dead space". |
@@ -519,8 +534,8 @@ _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduse
 DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 RUN_DIR="$(realpath <run_dir>)"; SPEC_ABS="$(realpath <unified_spec>)"
 RUBRIC="$_CANOPY_PLUGIN/skills/ddd-concept-eval/rubric.yaml"
-FULL=$(cd "$DDD_REPO" && uv run python -c "from scripts.ddd.runstate import load; print('--full' if load('<run_id>').next_judge_full else '')")
-(cd "$DDD_REPO" && uv run python -m scripts.ddd.judge_scope plan "$RUN_DIR" "$SPEC_ABS" $FULL --context "$RUBRIC")
+FLAGS=$(cd "$DDD_REPO" && uv run python -m scripts.ddd.target flags "<run_id>")   # --full and/or --tiered
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.judge_scope plan "$RUN_DIR" "$SPEC_ABS" $FLAGS --context "$RUBRIC")
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.judge_scope carry "$RUN_DIR")
 ```
 
@@ -547,6 +562,13 @@ false reuse is worse than a re-judge). `changed_components` in
 scenes' SEALED pass files (payload + seal, byte-for-byte), so the concept eval's
 `passes manifest --expect` counts them and Step 6b's validation still holds.
 Its output's `expect_concept_passes` + one per re-judged scene is the `--expect`.
+
+**Judge tiering** (`loop.judge_tiering`, `auto` = on in backlog mode): with
+`--tiered`, an incremental pass writes `judges: ["concept"]` and `arc: false`;
+`carry` restores the last `verdict-user.yaml` (findings included) and the arc
+verdict. Dispatch ONLY the concept judge, on the `rejudge` scenes. Checkpoints
+and every decision run all three judges; a concept-only or inner-loop pass that
+would decide anything returns `checkpoint` instead (Step 5).
 
 `state.next_judge_full` is set by the previous iteration's decision: polish mode
 judges in full every pass; backlog mode judges incrementally and in full every
@@ -800,6 +822,8 @@ re-implement the decision tree. What it does, in order:
 - decides:
 
 ```
+any decision from an inner-loop or
+  concept-only pass                        -> checkpoint  (land the batches; full pass on the deploy target decides)
 converged on an INCREMENTAL pass           -> confirm_full  (full re-render + full judge, no fixes)
 converged on a full pass                   -> stop_done / stop_partial
 STRATEGY redesign + mechanical pending,
