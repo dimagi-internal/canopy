@@ -541,6 +541,10 @@ def build_scenes_from_spec(
             # happened to be signed in first — 45 of 66 actions failed against
             # the wrong seat's app.
             "persona": s.get("persona"),
+            # Between-scenes state change, run off camera before this scene
+            # starts (see _lib.scene_hooks). Threaded through like persona —
+            # stripping it here would make it a silent no-op.
+            "before": s.get("before"),
             # 1-based ORIGINAL spec index — preserved even when ``--input`` /
             # ``--scene`` filters narrow the list (so ``scene_index=3`` on a
             # partial run still means "spec scene 3", not "third in the
@@ -942,7 +946,9 @@ def main() -> None:
             # exists, so none of it is on the film. Each gets a throwaway context;
             # the recorder swaps cookies per scene. No-op unless the spec declares
             # `auth.type: form`, so every existing spec is unaffected.
-            identities = mint_identities(browser, spec, base_url)
+            identities = mint_identities(
+                browser, spec, base_url, base_dir=resolve_setup_cwd(Path(args.spec))
+            )
             if identities:
                 print(f"Identities: {len(identities)} persona(s) signed in off camera")
 
@@ -1021,6 +1027,7 @@ def main() -> None:
                 # persona -> cookies, minted above off camera. The recorder
                 # swaps them before a scene's nav when its persona changes.
                 identities=identities,
+                hook_cwd=resolve_setup_cwd(Path(args.spec)),
             )
             recorder.recording_epoch = recording_started
             # Provenance: the data this film is made on is part of the run's

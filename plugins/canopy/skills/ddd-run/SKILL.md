@@ -307,8 +307,12 @@ UPLOAD="$DDD_REPO/scripts/walkthrough-share/upload.py"
 DECK_URL=$(uv run --project "$DDD_REPO" python "$UPLOAD" "$ITER_DECK" \
   --title "<unified_spec.name> iter${state.iteration}" \
   --run-id "<state.run_id>" --feature "<state.feature>" --role deck \
-  --public 2>&1 | grep -oE 'https://[^ ]*' | tail -1)
+  --public 2>&1 | sed -n 's/^View: \(https:[^ ]*\).*/\1/p' | tail -1)
 ```
+
+Parse the `View:` line — never "the last https URL in the output": `upload.py`
+also prints a `Share:` line carrying a `?t=` token and echoes companion links,
+so the last URL is the wrong one for both the deck and the clip.
 
 If the recorded mp4 exists in the run dir, upload that too — and attach the
 **companion links** the `/w/<id>` viewer renders so someone watching the clip
@@ -336,7 +340,7 @@ if [ -f "$ITER_CLIP" ]; then
     --spec "<unified_spec>" )
   [ -n "$DECK_URL" ] && CLIP_ARGS+=( --companion-url "$DECK_URL" )
   [ -n "$NARRATIVE_URL" ] && CLIP_ARGS+=( --narrative-url "$NARRATIVE_URL" )
-  CLIP_URL=$(uv run --project "$DDD_REPO" python "$UPLOAD" "${CLIP_ARGS[@]}" 2>&1 | grep -oE 'https://[^ ]*' | tail -1)
+  CLIP_URL=$(uv run --project "$DDD_REPO" python "$UPLOAD" "${CLIP_ARGS[@]}" 2>&1 | sed -n 's/^View: \(https:[^ ]*\).*/\1/p' | tail -1)
 fi
 ```
 
@@ -375,8 +379,14 @@ the pacing audit on the rendered clip before dispatching the judges:
 _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
 DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.render_pacing_audit \
-  "<run_dir>/iter${state.iteration}_clip.mp4" "<run_dir>/run-report.json" "<unified_spec.name>")
+  "<run_dir>/iter${state.iteration}_clip.mp4" "<run_dir>/run-report.json" "<unified_spec.name>" \
+  --no-audio-expected)
 ```
+
+`--no-audio-expected` is for this silent iteration clip only: with no audio
+track, DEAD-AIR / SILENT-MOTION would flag every cursor dwell, so they are
+skipped (BLANK frames and recording bugs still report). Never pass it for a
+narrated video — there a missing audio track must read as 100% silent.
 
 It classifies the video's silent budget and prints a timestamped issue list:
 

@@ -183,6 +183,11 @@ class RunReport:
     what the recorder KNEW it waited for, not a pixel-based freeze guess (which
     an animated spinner defeats). Empty ⇒ key omitted from :meth:`as_dict`."""
 
+    scene_hooks: list[dict] = field(default_factory=list)
+    """Provenance of each scene ``before:`` hook that ran —
+    ``{"scene_index", "command", "exit_code", "duration_seconds"}``. Empty ⇒ key
+    omitted from :meth:`as_dict`, so existing report consumers are unchanged."""
+
     _scene_timing_index: dict[int, dict] = field(default_factory=dict, repr=False)
     """``scene_index -> timing entry`` mirror of :attr:`scenes`, kept in sync by
     :meth:`record_scene_timing`. Lets :meth:`record_scene_urls` and
@@ -298,6 +303,8 @@ class RunReport:
             d["prewarm"] = self.prewarm
         if self.load_waits:
             d["load_waits"] = list(self.load_waits)
+        if self.scene_hooks:
+            d["scene_hooks"] = list(self.scene_hooks)
         return d
 
     def to_json(self, *, indent: int | None = 2) -> str:

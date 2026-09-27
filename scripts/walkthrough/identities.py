@@ -35,10 +35,25 @@ Spec shape (``auth`` on the UnifiedSpec)::
 Credentials are never in the spec: ``password_env`` names an environment
 variable, and a per-persona mapping may do the same. The spec is committed; the
 password is not.
+
+OAuth-only apps have no login form a recorder can fill. For those, the recipe's
+``setup:`` command mints each persona's session server-side and writes a
+Playwright storage state; the spec names the file per persona::
+
+    auth:
+      type: storage_state
+      personas:
+        sophie: scripts/walkthroughs/supply-sophie-rutf/sophie-state.json
+
+Paths are relative to the setup command's cwd (the git toplevel holding the
+spec) unless absolute, and are read AFTER setup runs — so a per-render reseed
+can mint a fresh session every take. The file never belongs in git.
 """
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 from typing import Any
 
 
@@ -84,6 +99,51 @@ def _password_for(persona: str, auth: dict) -> str:
     return value
 
 
+def storage_state_identities(
+    spec: dict,
+    *,
+    base_dir: str | Path | None = None,
+    personas: list[str] | None = None,
+) -> dict[str, list[dict]]:
+    """``{persona: cookies}`` read from per-persona Playwright storage-state files.
+
+    The ``auth.type: storage_state`` path (see module docstring). A persona the
+    spec visits whose file is missing, unreadable or cookie-less raises
+    :class:`IdentityError` — filming that scene as whoever happened to be signed
+    in would read as a product bug.
+    """
+    auth = spec.get("auth") or {}
+    wanted = personas if personas is not None else personas_in_spec(spec)
+    mapping = auth.get("personas") or {}
+    root = Path(base_dir) if base_dir is not None else Path.cwd()
+    identities: dict[str, list[dict]] = {}
+    for persona in wanted:
+        rel = mapping.get(persona)
+        if not rel:
+            continue
+        path = Path(str(rel)).expanduser()
+        if not path.is_absolute():
+            path = root / path
+        try:
+            state = json.loads(path.read_text())
+        except OSError as exc:
+            raise IdentityError(
+                f"storage state for {persona!r} not found at {path} — the recipe's "
+                f"setup command should write it before the render signs personas in."
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise IdentityError(f"storage state for {persona!r} is not JSON: {path}") from exc
+        cookies = state.get("cookies") if isinstance(state, dict) else None
+        if not isinstance(cookies, list) or not cookies:
+            raise IdentityError(
+                f"storage state for {persona!r} ({path}) carries no cookies, so there "
+                f"is no session to carry into the recording."
+            )
+        identities[persona] = cookies
+        print(f"  · loaded identity {persona} from storage state ({path.name}) off camera")
+    return identities
+
+
 def mint_identities(
     browser: Any,
     spec: dict,
@@ -91,6 +151,7 @@ def mint_identities(
     *,
     personas: list[str] | None = None,
     timeout_ms: int = 30000,
+    base_dir: str | Path | None = None,
 ) -> dict[str, list[dict]]:
     """Return ``{persona: cookies}``, signing each one in via the login form.
 
@@ -101,7 +162,10 @@ def mint_identities(
     a whole judge cycle to diagnose.
     """
     auth = spec.get("auth") or {}
-    if (auth.get("type") or "").strip() != "form":
+    auth_type = (auth.get("type") or "").strip()
+    if auth_type == "storage_state":
+        return storage_state_identities(spec, base_dir=base_dir, personas=personas)
+    if auth_type != "form":
         return {}
 
     wanted = personas if personas is not None else personas_in_spec(spec)

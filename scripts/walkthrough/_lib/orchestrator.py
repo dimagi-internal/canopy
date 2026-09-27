@@ -342,8 +342,13 @@ class Recorder:
         variables: dict[str, Any] | None = None,
         identities: dict[str, list[dict]] | None = None,
         identity: str | None = None,
+        hook_cwd: Path | str | None = None,
     ) -> None:
         self.config = config or RecorderConfig()
+        # Where a scene's ``before:`` hook runs — the same cwd as the spec's
+        # ``setup.command`` (the git toplevel holding the spec). None = the
+        # recorder's own cwd (ad-hoc/test callers).
+        self.hook_cwd: Path | None = Path(hook_cwd) if hook_cwd else None
         # persona -> that persona's session cookies, minted OFF CAMERA before
         # recording began (see scripts.walkthrough.identities). A scene declaring
         # ``persona:`` is switched into that identity before its nav, so a
@@ -447,6 +452,34 @@ class Recorder:
             print(f"  ! scene url still has an unresolved ${{var}}: {url!r} — not navigating")
             return None
         return url if url.startswith("http") else self.base_url + url
+
+    def run_before_hook(self, scene: dict, idx: int | None) -> dict | None:
+        """Run the scene's ``before:`` hook (see ``_lib.scene_hooks``), if any.
+
+        Raises ``SceneHookError`` on failure — the render must stop rather than
+        film a scene whose world never changed."""
+        if not scene.get("before"):
+            return None
+        from scripts.walkthrough._lib.scene_hooks import run_scene_hook
+
+        started = time.monotonic()
+        provenance = run_scene_hook(
+            scene.get("before"),
+            scene_index=idx,
+            variables=self.variables,
+            cwd=self.hook_cwd,
+            resolve=resolve_string,
+        )
+        if provenance is not None:
+            self.report.scene_hooks.append(provenance)
+            if self.recording_epoch is not None:
+                self.report.record_load_wait(
+                    scene_index=idx,
+                    start_seconds=started - self.recording_epoch,
+                    duration_seconds=time.monotonic() - started,
+                    target="before-hook",
+                )
+        return provenance
 
     def apply_scene_identity(self, page: Page, scene: dict) -> str | None:
         """Switch to this scene's ``persona`` off camera. Returns the persona applied.
@@ -949,6 +982,11 @@ class Recorder:
         scene_start = time.monotonic()
         if self.recording_epoch is None:
             self.recording_epoch = scene_start
+        # Between-scenes state change (``before:``): after the previous scene's
+        # capture, before this scene's persona swap and nav. Inside the scene's
+        # timing so its load-wait span sits in this scene's segment and the
+        # explainer excises the pause like any other loading wait.
+        self.run_before_hook(scene, idx)
         # Clear the shared nav sink at the TRUE scene start (before the goto) so
         # it accumulates only THIS scene's main-frame navigations — including
         # the scene's own goto and any client-side redirect that fires while the

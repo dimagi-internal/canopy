@@ -50,6 +50,22 @@ concept** is sound — not whether the video is pretty. Emits structured
 - **`unified_spec_path`** — optional explicit path to `unified_spec.yaml` if not inside `run_dir`.
 - **`why_brief_path`** — optional explicit path to `why_brief.yaml` if not inside `run_dir`.
 
+**Split specs (`<slug>.recipe.yaml` + `<slug>.narrative.lock.json`) are
+first-class.** Pass the recipe path wherever a spec path is asked for —
+`spec_qa` and every `scripts.ddd` loader compose it through `spec_io`. When you
+need ONE file to read, compose a self-contained copy instead of hand-merging:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.spec_io compose "$(realpath <recipe>)" --out "$(realpath <run_dir>)/unified_spec.yaml")
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.spec_io why-brief "$(realpath <recipe>)")   # THE why-brief
+```
+
+The composed copy names the why-brief by absolute path, so `spec_qa` on it
+resolves. **The canonical why-brief is the spec's** (`why-brief` prints it —
+the `<slug>.why_brief.yaml` that `narrative pull` maintains beside the spec).
+A run dir's own `why_brief.yaml` is the Phase-0 snapshot; if the two differ,
+judge against the spec's.
+
 ## Procedure
 
 ### Step 0 — Check QA gate

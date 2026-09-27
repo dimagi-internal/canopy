@@ -580,7 +580,47 @@ re-judged, the rest reuse their sealed cells). Steps 4–5 are ONE command,
 assemble script, never hand-rolled judge briefs.
 
 After `ddd-run` returns, load `<run_dir>/run_state.yaml` and
-`<run_dir>/design_findings.json`.
+`<run_dir>/design_findings.json`. `state.findings` already carries the
+user-artifact judge's findings (`source: user_artifact`) — never fold them in
+by hand.
+
+**Version skew.** A mid-session plugin update leaves the Skill registry on the
+OLD cache while `scripts.ddd` runs the new runtime. Before dispatching judges,
+run `python -m scripts.ddd.version_skew --skill-dir <the base directory the
+Skill tool printed for ddd-run>` from the runtime. On a WARNING, tell each judge
+subagent to Read its SKILL.md from `$_CANOPY_PLUGIN/skills/<name>/SKILL.md` (the
+runtime's version) instead of loading it through the Skill tool.
+
+### State-mutating narratives
+
+A narrative whose recording changes the world (an award, a submitted answer, a
+created record) needs three things, all declared in the recipe:
+
+- **`setup: {command, outputs, rerun: per_render}`** — reseed every take, so each
+  render starts from the same world. Ids differ every take; that is expected.
+- **`before:` on a scene** (`before: "<command>"` or `{command, timeout_seconds}`)
+  — a state change BETWEEN scenes that nothing on camera can do (a supplier
+  answers, a second seat acts). The recorder runs it off camera after the
+  previous scene's capture and before this scene's persona swap and nav, with
+  `${var}` resolved late, from the `setup.command` cwd; a non-zero exit aborts
+  the render. Its pause is recorded as a load-wait, so the explainer cuts it.
+  `recipe_preflight` runs the same hook at the same point, so every later scene
+  is preflighted against the right world (and preflight counts a hook as
+  mutating, so it restores when the render will not). Capture any id a hook
+  mints on camera with a `capture` action. Never spawn a watcher from `setup`
+  that fires on a snapshot file.
+- **Off-camera personas.** `auth.type: form` for apps with a login form;
+  `auth.type: storage_state` with `personas: {name: <storage-state path>}` for
+  OAuth-only apps — the setup command mints each persona's session server-side
+  and writes the file (relative to the setup cwd; never committed).
+
+**Reuse semantics.** Judge-scope fingerprints and the regression guard compare
+reseeded ids in their `${var}` spec form (`scripts.ddd.stable_ids`: action
+targets for every var, page text for id-named vars only), so a reseed alone
+changes no scene and drops no action. Screenshots stay byte-exact: a scene that
+SHOWS a reseeded id on screen re-judges every pass (`changed_components:
+[frames]` in `judge-scope.json` says so). Keep minted ids off screen where the
+story does not need them; when unsure, the loop re-judges rather than reuse.
 
 ---
 

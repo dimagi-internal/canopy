@@ -1192,6 +1192,21 @@
           "default": null,
           "title": "Full Page"
         },
+        "before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneHook"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before"
+        },
         "pace": {
           "anyOf": [
             {
@@ -1232,6 +1247,25 @@
         "provenance"
       ],
       "title": "Scene",
+      "type": "object"
+    },
+    "SceneHook": {
+      "description": "A scene's ``before:`` hook \u2014 a command run off camera between scenes.\n\nSee ``scripts.walkthrough._lib.scene_hooks``. Runs after the previous\nscene's capture and before this scene's persona swap and nav, from the\n``setup.command`` cwd, with ``${var}`` resolved late. Non-zero exit aborts.",
+      "properties": {
+        "command": {
+          "title": "Command",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 300,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "SceneHook",
       "type": "object"
     },
     "ScrollAction": {

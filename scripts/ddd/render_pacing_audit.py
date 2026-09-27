@@ -187,8 +187,27 @@ def recording_bugs(report_path: str | None) -> list[str]:
     return bugs
 
 
-def audit(video: str, report_path: str | None = None, label: str = "") -> dict:
+def audit(
+    video: str,
+    report_path: str | None = None,
+    label: str = "",
+    *,
+    audio_expected: bool = True,
+) -> dict:
+    """Pacing audit of *video*.
+
+    ``audio_expected=False`` is for the screenshot loop's ITERATION clip, which
+    has no narration by construction: there "silent" is every frame, so
+    "silent + frozen" reduces to "the cursor dwelt" and every hold over 1.5 s
+    was flagged DEAD-AIR — 27 flags of pure noise per iteration (0.2.528, M6).
+    With no audio track and no audio expected, the silence-derived flags
+    (DEAD-AIR, SILENT-MOTION) are skipped and said to be; BLANK frames and
+    recording bugs still report. A file WITH audio is audited normally either
+    way, and the default stays strict — a narrated deliverable that shipped
+    silent must still read as 100% silent (see test_pacing_audit_silent_video).
+    """
     dur = _duration(video)
+    silence_flags_skipped = not audio_expected and not has_audio(video)
     sil = silence_intervals(video, dur)
     frz = freeze_intervals(video, dur)
     dead_air = _intersect(sil, frz)          # silent AND frozen
@@ -202,14 +221,14 @@ def audit(video: str, report_path: str | None = None, label: str = "") -> dict:
     # a SILENT intro would show up as start-edge dead-air (a missing overview VO).
     is_edge = lambda s, e: s <= 1.0 or e >= dur - 0.6
     flags = []
-    for s, e in dead_air:
+    for s, e in ([] if silence_flags_skipped else dead_air):
         if e - s < DEAD_AIR_FLAG_S:
             continue
         if is_edge(s, e):
             flags.append(("EDGE-CARD", s, e, "intro/outro card (static+silent) — deliberate, not dead-air"))
         else:
             flags.append(("DEAD-AIR", s, e, "frozen + silent MID-VIDEO — cap blind spot, reads as a stall"))
-    for s, e in silent_motion:
+    for s, e in ([] if silence_flags_skipped else silent_motion):
         if e - s >= SILENT_MOTION_FLAG_S and not is_edge(s, e):
             flags.append(("SILENT-MOTION", s, e, "moving footage, no narration — shown loading or sparse VO over activity"))
     for s_, e_ in blank_intervals(video, dur):
@@ -223,7 +242,7 @@ def audit(video: str, report_path: str | None = None, label: str = "") -> dict:
     return {
         "label": label or video, "dur": dur, "speech": speech, "silence": _total(sil),
         "dead_air": _total(dead_air), "silent_motion": _total(silent_motion),
-        "flags": flags, "bugs": bugs,
+        "flags": flags, "bugs": bugs, "silence_flags_skipped": silence_flags_skipped,
     }
 
 
@@ -233,8 +252,11 @@ def render(a: dict) -> str:
     pct = lambda x: f"{100*x/a['dur']:.0f}%"
     L.append(f"  Speech (VO):        {a['speech']:.1f}s  ({pct(a['speech'])})")
     L.append(f"  Silent:             {a['silence']:.1f}s  ({pct(a['silence'])})")
-    L.append(f"    ├─ dead-air (silent+frozen):   {a['dead_air']:.1f}s   {'⚠️' if a['dead_air']>DEAD_AIR_FLAG_S else 'ok'}")
-    L.append(f"    └─ silent-motion (silent+move): {a['silent_motion']:.1f}s   {'⚠️' if a['silent_motion']>6 else 'ok'}")
+    if a.get("silence_flags_skipped"):
+        L.append("    (no audio track, none expected — iteration clip: dead-air / silent-motion not scored)")
+    else:
+        L.append(f"    ├─ dead-air (silent+frozen):   {a['dead_air']:.1f}s   {'⚠️' if a['dead_air']>DEAD_AIR_FLAG_S else 'ok'}")
+        L.append(f"    └─ silent-motion (silent+move): {a['silent_motion']:.1f}s   {'⚠️' if a['silent_motion']>6 else 'ok'}")
     issues = [f for f in a["flags"] if f[0] != "EDGE-CARD"]
     edges = [f for f in a["flags"] if f[0] == "EDGE-CARD"]
     if issues:
@@ -256,7 +278,9 @@ def render(a: dict) -> str:
 
 
 if __name__ == "__main__":
-    video = sys.argv[1]
-    report = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] != "-" else None
-    label = sys.argv[3] if len(sys.argv) > 3 else ""
-    print(render(audit(video, report, label)))
+    flags_ = {a for a in sys.argv[1:] if a.startswith("--")}
+    argv = [a for a in sys.argv[1:] if not a.startswith("--")]
+    video = argv[0]
+    report = argv[1] if len(argv) > 1 and argv[1] != "-" else None
+    label = argv[2] if len(argv) > 2 else ""
+    print(render(audit(video, report, label, audio_expected="--no-audio-expected" not in flags_)))

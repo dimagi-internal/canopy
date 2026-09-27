@@ -590,6 +590,17 @@ def scene_narration_text(narrative: str | list[str] | None) -> str:
     return str(narrative).strip()
 
 
+class SceneHook(BaseModel):
+    """A scene's ``before:`` hook — a command run off camera between scenes.
+
+    See ``scripts.walkthrough._lib.scene_hooks``. Runs after the previous
+    scene's capture and before this scene's persona swap and nav, from the
+    ``setup.command`` cwd, with ``${var}`` resolved late. Non-zero exit aborts."""
+
+    command: str
+    timeout_seconds: int = 300
+
+
 class Scene(BaseModel):
     id: str = ""
     """Stable, permanent identity for this scene.
@@ -676,6 +687,11 @@ class Scene(BaseModel):
     so this only matters for table-dominant pages. WebGL/Mapbox itself renders +
     composites headlessly via the recorder's SwiftShader flags given a long
     enough ``hold`` for tiles to paint — see ddd-spec "Map / WebGL scenes"."""
+    before: SceneHook | str | None = None
+    """Optional between-scenes state change (a supplier answers, a job runs):
+    a command run off camera after the previous scene's capture and before this
+    scene starts — see :class:`SceneHook`. A string is shorthand for
+    ``{command: <string>}``. Recipe-owned (not a lock field)."""
     pace: Literal["teach", "flow"] | None = None
     """Optional per-scene tempo. ``teach`` (the default — ``None`` is treated as
     ``teach``) gives the beat full read-time pacing: deliberate holds, settles,

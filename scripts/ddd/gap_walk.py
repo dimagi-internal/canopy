@@ -34,11 +34,22 @@ Every scene must appear in ``covered`` or ``gaps`` (a walk that skips scenes is
 not a walk), and every entry must cite evidence (a path the agent actually
 read). ``check`` then answers the loop's one question:
 
-* any gap of kind ``decision``  -> ``decide``  (concept_change: the story asks
-  for something nobody has decided the product should do)
-* any gap of kind ``build``     -> ``build``   (route to implementation, ONE
-  batch, then re-walk)
+* any STRATEGY gap of kind ``decision`` -> ``decide`` (concept_change: the story
+  asks for something nobody has decided the product should do)
+* any gap of kind ``build`` or ``restate`` -> ``build`` (ONE batch — product
+  code for ``build``, recipe/narration wording for ``restate`` — then re-walk)
 * no gaps                        -> ``render``
+
+The accuracy / strategy split (the same one ``finding_class`` applies to judge
+findings). "The recipe says 'Deadline' but the page says 'REPLIES BY'" is an
+ACCURACY gap: the built page is the authority and restating the recipe to match
+it is one determinate change, so it must never open the concept_change gate. A
+walker marks it ``kind: restate``; a gap it marked ``decision`` is demoted to
+``restate`` when it carries ``finding_class: accuracy``, when ``finding_class``
+classifies its claim + missing capability as accuracy, or when its
+``build_hint`` itself offers restating the narration / recipe to what is built.
+The first live v1 run (0.2.528, M2) opened the gate for three such gaps, each
+then resolved by restating the recipe.
 
     python -m scripts.ddd.gap_walk check <gaps.json> [--spec <spec>] [--run-id <id>]
 
@@ -48,11 +59,47 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
-GAP_KINDS = ("build", "decision")
+GAP_KINDS = ("build", "decision", "restate")
+
+# A build_hint that offers restating the story to the product as a resolution.
+_RESTATE_OFFER = re.compile(
+    r"\b(?:reword|restate|re-?target|rephrase)\b"
+    r"|\b(?:change|edit|update|adjust|align)\s+(?:scene\s+\d+'s\s+|the\s+)?"
+    r"(?:narration|narrative|recipe|concept_claim|wording|wait_for|hover)\b"
+    r"|\b(?:narration|narrative|recipe)\s+(?:drops|omits|stops\s+claiming)\b",
+    re.IGNORECASE,
+)
+
+
+def gap_class(gap: dict) -> tuple[str, str]:
+    """``(kind, reason)`` — the kind a gap is ROUTED as (build | restate | decision)."""
+    kind = gap.get("kind", "build")
+    if kind != "decision":
+        return kind, "declared"
+    explicit = str(gap.get("finding_class") or "").lower()
+    if explicit == "strategy":
+        return "decision", "explicit finding_class: strategy"
+    if explicit == "accuracy":
+        return "restate", "explicit finding_class: accuracy"
+    hint = str(gap.get("build_hint") or "")
+    if _RESTATE_OFFER.search(hint):
+        return "restate", "build_hint offers restating the story to what is built"
+    from scripts.ddd import finding_class
+
+    cls, why = finding_class.classify(
+        {
+            "detail": f"{gap.get('claim') or ''}. {gap.get('missing_capability') or ''}",
+            "fix_recommendation": hint,
+        }
+    )
+    if cls == finding_class.ACCURACY:
+        return "restate", f"accuracy: {why}"
+    return "decision", "strategy/unclassified decision"
 
 
 def validate(doc: Any, *, scene_count: int | None = None) -> list[str]:
@@ -107,8 +154,14 @@ def validate(doc: Any, *, scene_count: int | None = None) -> list[str]:
 def decide(doc: dict) -> dict[str, Any]:
     """The loop's next action from a VALID gaps document."""
     gaps = [g for g in doc.get("gaps") or [] if isinstance(g, dict)]
-    decisions = [g for g in gaps if g.get("kind", "build") == "decision"]
-    builds = [g for g in gaps if g.get("kind", "build") == "build"]
+    routed = [(g, *gap_class(g)) for g in gaps]
+    decisions = [g for g, kind, _ in routed if kind == "decision"]
+    builds = [g for g, kind, _ in routed if kind == "build"]
+    restates = [
+        {"scene": g.get("scene"), "claim": g.get("claim"), "why": why}
+        for g, kind, why in routed
+        if kind == "restate"
+    ]
     if decisions:
         return {
             "action": "decide",
@@ -116,20 +169,25 @@ def decide(doc: dict) -> dict[str, Any]:
             "reason": (
                 f"{len(decisions)} scene claim(s) need a product decision before anything can "
                 "be built — open the concept_change gate with them (and build the "
-                f"{len(builds)} buildable gap(s) in the same pass once decided)."
+                f"{len(builds)} buildable gap(s) and restate the {len(restates)} accuracy "
+                "gap(s) in the same pass once decided)."
             ),
             "scenes": sorted({g["scene"] for g in gaps}),
+            "restate": restates,
         }
-    if builds:
+    if builds or restates:
         return {
             "action": "build",
             "open_gaps": len(gaps),
             "reason": (
-                f"{len(builds)} scene claim(s) the product cannot show yet — BUILD them "
-                "(one batch, one PR/deploy), then re-walk. Do not render: a judge round "
-                "would only re-discover these."
+                f"{len(builds)} scene claim(s) the product cannot show yet — BUILD them — and "
+                f"{len(restates)} where the recipe/narration says something the built page "
+                "does not — RESTATE them to the page (accuracy; no gate). One batch, one "
+                "PR/deploy, then re-walk. Do not render: a judge round would only "
+                "re-discover these."
             ),
             "scenes": sorted({g["scene"] for g in gaps}),
+            "restate": restates,
         }
     return {"action": "render", "open_gaps": 0, "reason": "every scene's claim is buildable today"}
 

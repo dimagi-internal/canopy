@@ -305,6 +305,8 @@ def test_legacy_in_repo_run_is_still_read_and_written_in_place(tmp_path, monkeyp
 
     legacy = ddd / "runs" / "demo-2020-01-01-001"
     legacy.mkdir(parents=True)
+    # It has rendered there — an in-flight legacy run, not a Phase-0-only one.
+    (legacy / "run-report.json").write_text("{}")
     (legacy / "run_state.yaml").write_text(yaml.safe_dump({
         "run_id": "demo-2020-01-01-001", "narrative_slug": "demo",
         "phase": "phase0", "schema_version": 1,
@@ -394,9 +396,40 @@ def test_run_dir_for_prefers_a_legacy_in_repo_run(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
 
     legacy = ddd / "runs" / "demo-2026-01-01-001"
-    legacy.mkdir(parents=True)
+    (legacy / "snapshots").mkdir(parents=True)
 
     assert rs.run_dir_for("demo-2026-01-01-001", ddd_dir=ddd) == legacy
+
+
+def test_a_phase0_only_legacy_run_moves_to_the_external_root(tmp_path, monkeypatch):
+    """Phase 0 committed in the repo must not pull render artifacts into it (M1):
+    its files are COPIED out (the repo copy stays as committed) and the run
+    continues in the external root."""
+    import scripts.ddd.runstate as rs
+    repo, ddd = _fake_repo(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    legacy = ddd / "runs" / "demo-2026-01-01-002"
+    legacy.mkdir(parents=True)
+    (legacy / "why_brief.yaml").write_text("problem: p\n")
+    (legacy / "run_state.yaml").write_text(yaml.safe_dump({
+        "run_id": "demo-2026-01-01-002", "narrative_slug": "demo",
+        "phase": "phase0", "schema_version": 1,
+    }))
+
+    run_dir = rs.run_dir_for("demo-2026-01-01-002", ddd_dir=ddd)
+    external = tmp_path / "home" / ".canopy" / "ddd" / "runs" / repo.name / "demo-2026-01-01-002"
+    assert run_dir == external
+    assert (external / "why_brief.yaml").read_text() == "problem: p\n"
+    assert (legacy / "why_brief.yaml").exists()  # repo copy untouched
+
+    state = rs.load("demo-2026-01-01-002", ddd_dir=ddd)
+    state.phase = "judged"
+    rs.save(state, ddd_dir=ddd)
+    assert yaml.safe_load((external / "run_state.yaml").read_text())["phase"] == "judged"
+    assert yaml.safe_load((legacy / "run_state.yaml").read_text())["phase"] == "phase0"
+    # and it resolves to the external root from now on
+    assert rs.run_dir_for("demo-2026-01-01-002", ddd_dir=ddd) == external
 
 
 # ---------------------------------------------------------------------------
