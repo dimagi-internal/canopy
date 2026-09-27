@@ -182,3 +182,83 @@ def load_spec(path_or_slug, *, base_dir=None) -> UnifiedSpec:
     code called ``UnifiedSpec.model_validate`` on a spec file.
     """
     return UnifiedSpec.model_validate(load_spec_raw(path_or_slug, base_dir=base_dir))
+
+
+# ---------------------------------------------------------------------------
+# A composed copy judges can read (M8/M12, 0.2.528)
+# ---------------------------------------------------------------------------
+
+
+def resolve_why_brief(path_or_slug, *, base_dir=None) -> Path | None:
+    """THE why-brief for a spec: the file its ``why_brief:`` names, resolved
+    against the spec's own directory (the recipe's, for a split spec).
+
+    A run also carries a Phase-0 ``why_brief.yaml`` in its run dir; that is the
+    snapshot Phase 0 wrote, not the one ``narrative pull`` maintains beside the
+    spec. Judges on the first live v1 run found both, in different
+    serialisations, and had to choose — this is the choice. Falls back to
+    ``<slug>.why_brief.yaml`` beside the spec when the spec names none.
+    """
+    raw = load_spec_raw(path_or_slug, base_dir=base_dir)
+    p = Path(path_or_slug)
+    directory = Path(base_dir) if (base_dir is not None and not p.suffix) else p.parent
+    name = p.name
+    slug = name[: -len(_RECIPE_SUFFIX)] if name.endswith(_RECIPE_SUFFIX) else p.stem
+    candidates = []
+    if raw.get("why_brief"):
+        declared = Path(str(raw["why_brief"])).expanduser()
+        candidates.append(declared if declared.is_absolute() else directory / declared)
+    candidates.append(directory / f"{slug}.why_brief.yaml")
+    for c in candidates:
+        if c.exists():
+            return c.resolve()
+    return None
+
+
+def write_composed(path_or_slug, out_path, *, base_dir=None) -> dict:
+    """Write the composed spec to *out_path* with an ABSOLUTE ``why_brief``.
+
+    A composed copy lives somewhere else (usually the run dir), so a relative
+    ``why_brief:`` no longer resolves from it and ``spec_qa`` failed with "why_brief
+    declared but not resolvable" on every judge pass until the judge copied the
+    brief beside it by hand. Pinning the canonical brief by absolute path makes
+    the copy self-contained. Returns ``{"spec", "why_brief"}``.
+    """
+    raw = load_spec_raw(path_or_slug, base_dir=base_dir)
+    wb = resolve_why_brief(path_or_slug, base_dir=base_dir)
+    if wb is not None:
+        raw["why_brief"] = str(wb)
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True))
+    return {"spec": str(out), "why_brief": str(wb) if wb else None}
+
+
+def _main(argv=None) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="python -m scripts.ddd.spec_io")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    c = sub.add_parser("compose", help="write a self-contained composed copy of a spec")
+    c.add_argument("spec")
+    c.add_argument("--out", required=True)
+    w = sub.add_parser("why-brief", help="print the canonical why-brief path for a spec")
+    w.add_argument("spec")
+    args = ap.parse_args(argv)
+    try:
+        if args.cmd == "compose":
+            print(json.dumps(write_composed(args.spec, args.out)))
+            return 0
+        wb = resolve_why_brief(args.spec)
+        if wb is None:
+            print("no why-brief resolvable for this spec", file=sys.stderr)
+            return 1
+        print(wb)
+        return 0
+    except (OSError, SpecCompositionError, yaml.YAMLError) as exc:
+        print(f"spec_io {args.cmd}: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

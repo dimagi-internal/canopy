@@ -242,6 +242,22 @@ auth:
 #     ada: oes-lead@oes.example
 #     tomas: oes-review@oes.example
 
+# For an OAuth-only app (no login form the recorder can fill): the setup
+# command mints each persona's session server-side and writes a Playwright
+# storage state; the recorder loads its cookies off camera the same way.
+# auth:
+#   type: storage_state
+#   personas:                      # persona key -> storage-state JSON path
+#     sophie: scripts/walkthroughs/demo/sophie-state.json  # rel. to setup cwd; never commit it
+
+# Between-scenes state change (per scene): a command run OFF CAMERA after the
+# previous scene's capture and before this scene starts — e.g. an agent's
+# answer arriving. ${var} resolves late; non-zero exit aborts the render;
+# recipe_preflight runs it at the same point of its walk.
+#   - title: "A supplier answers"
+#     before: "python3 scripts/walkthroughs/demo/answer.py --tender ${tender_id}"
+#     # or: before: {command: "...", timeout_seconds: 120}
+
 # Data setup (optional — the synthetic generator that puts the world in a
 # recordable state; see "Data setup + ${var} substitution" under Record Video)
 setup:

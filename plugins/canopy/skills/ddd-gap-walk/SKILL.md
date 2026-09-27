@@ -63,8 +63,18 @@ A scene is **covered** when every claim has code behind it. Otherwise record a
 
 - `build` — the capability is unambiguous from the narration and can simply be
   implemented (a missing route, column, action, seed row).
+- `restate` — the recipe / narration says something the BUILT page does not
+  ("the recipe waits for 'Deadline', the page says 'REPLIES BY'"; "the header
+  claims 'buyer of record', the built heading drops it"). The page is the
+  authority: restating the recipe to it is one determinate change (ACCURACY, as
+  `finding_class` calls it). No gate.
 - `decision` — the narration asks the product to do something nobody has
   decided it should (a new policy, a new workflow shape). These go to a human.
+  Only STRATEGY questions belong here. `check` demotes a `decision` to
+  `restate` when you set `finding_class: accuracy`, when `finding_class`
+  reads the claim as an accuracy mismatch, or when your own `build_hint`
+  offers restating/rewording the narration or recipe as a resolution — so if
+  you would accept "change the words to match the page", write `restate`.
 
 Do not score polish, wording or layout — that is the judges' job after the
 render. The only question here is *can this scene be filmed at all?*
@@ -110,5 +120,5 @@ It stamps `gaps_path` / `open_gaps` on `run_state.yaml`.
 | action | next step |
 |--------|-----------|
 | `render` | proceed to `/canopy:ddd-run` |
-| `build` | implement every `build` gap as ONE batch in the target repo (one PR, one deploy; parallel fixers are fine), record the merge SHA with `judge_gate set-fix-sha`, then re-run this skill. Render only when it returns `render`. |
+| `build` | implement every `build` gap as ONE batch in the target repo (one PR, one deploy; parallel fixers are fine), restate every entry in the output's `restate` list in the recipe/narration (words only, to what the page shows), record the merge SHA with `judge_gate set-fix-sha`, then re-run this skill. Render only when it returns `render`. |
 | `decide` | open the `concept_change` gate with the `decision` gaps (build the `build` gaps alongside once decided). A decision may also mean the narrative should change — `redraft` returns to `ddd-spec`. |

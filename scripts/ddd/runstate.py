@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -185,17 +186,67 @@ def _legacy_runs_dir(ddd_dir: Path) -> Path:
     return ddd_dir / "runs"
 
 
+# Files only a render/judge writes. A legacy in-repo run dir holding any of these
+# is an in-flight run that already rendered there, and keeps living there so its
+# artifacts are never split across two roots. One holding only Phase-0 files
+# (evidence, why-brief, narrative agreement — typically COMMITTED to the target
+# repo) has not rendered yet.
+_RENDER_MARKERS = (
+    "run-report.json",
+    "walkthrough-run-data.json",
+    "verdict-concept.yaml",
+    "verdict-user.yaml",
+    "snapshots",
+    "passes",
+    "judge-cache",
+)
+
+
+def _has_rendered(run_dir: Path) -> bool:
+    return any((run_dir / m).exists() for m in _RENDER_MARKERS)
+
+
 def _run_dir_for(ddd_dir: Path, run_id: str) -> Path:
     """Resolve ONE run's directory.
 
-    A run that already exists in the legacy in-repo location keeps living there,
-    so resuming or re-saving an in-flight run never splits its artifacts across
-    two roots. Only genuinely new runs land in the external root.
+    * The external root wins whenever the run already exists there.
+    * A legacy in-repo run that has RENDERED keeps living there, so resuming an
+      in-flight pre-2026-07 run never splits its artifacts across two roots.
+    * A legacy in-repo run that holds only Phase-0 files is MIGRATED: its files
+      are copied (never moved — they may be committed to the target repo) into
+      the external root, and the run continues there. Before this, a Phase 0
+      committed to ``.canopy/ddd/runs/<run_id>/`` pulled every render artifact
+      (snapshots, clips, decks, judge passes) into the target repo (0.2.528, M1).
+    * Otherwise: the external root.
     """
+    external = _resolve_runs_dir(ddd_dir) / run_id
+    if external.exists():
+        return external
     legacy = _legacy_runs_dir(ddd_dir) / run_id
-    if legacy.exists():
-        return legacy
-    return _resolve_runs_dir(ddd_dir) / run_id
+    if legacy.is_dir():
+        if _has_rendered(legacy):
+            return legacy
+        _migrate_phase0(legacy, external)
+        return external
+    return external
+
+
+def _migrate_phase0(legacy: Path, external: Path) -> None:
+    """Copy a Phase-0-only legacy run dir into the external root (idempotent)."""
+    import shutil
+
+    external.parent.mkdir(parents=True, exist_ok=True)
+    tmp = external.with_name(external.name + ".migrating")
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    shutil.copytree(legacy, tmp)
+    tmp.rename(external)
+    print(
+        f"[ddd] run {legacy.name}: Phase-0 files copied from the repo ({legacy}) to the "
+        f"external runs root ({external}); render artifacts will land there. The repo "
+        "copy is left untouched.",
+        file=sys.stderr,
+    )
 
 
 def _next_run_id(runs_dir: Path | list[Path], narrative_slug: str) -> str:

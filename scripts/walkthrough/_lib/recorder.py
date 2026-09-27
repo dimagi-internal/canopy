@@ -865,15 +865,52 @@ def map_zoom(
     return True
 
 
+# Resolves once window.scrollY has not changed for `quiet` consecutive animation
+# frames (or `timeoutMs` passes). Returns the settled scrollY.
+_SCROLL_SETTLE_JS = """([timeoutMs, quiet]) => new Promise(res => {
+    const start = performance.now();
+    let last = window.scrollY, still = 0;
+    function tick() {
+        const y = window.scrollY;
+        still = (y === last) ? still + 1 : 0;
+        last = y;
+        if (still >= quiet || performance.now() - start > timeoutMs) return res(y);
+        requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+})"""
+
+
+def wait_scroll_settled(page: Page, *, timeout_ms: int = 2500, quiet_frames: int = 6) -> float | None:
+    """Block until an in-flight smooth scroll has LANDED; return the settled scrollY.
+
+    A smooth ``window.scrollTo`` is asynchronous. ``scroll: top`` used to return
+    after a fixed 600 ms, so on a long page an immediately following
+    ``scroll_to`` measured the page mid-animation and reported "did not move the
+    page: already framed at scrollTop 765" — the scroll to top had not arrived
+    yet (0.2.528, M13). Best-effort: a page that cannot evaluate returns None.
+    """
+    try:
+        y = page.evaluate(_SCROLL_SETTLE_JS, [int(timeout_ms), int(quiet_frames)])
+    except Exception:  # noqa: BLE001 — settling is best-effort, never fatal
+        return None
+    try:
+        return float(y)
+    except (TypeError, ValueError):
+        return None
+
+
 def scroll_page(page: Page, to: str = "bottom", *, max_duration_ms: int = 4000) -> None:
     """Eased scroll to ``"top"``, ``"bottom"``, or a pixel offset."""
     if to == "top":
         page.evaluate("() => window.scrollTo({top: 0, behavior: 'smooth'})")
         page.wait_for_timeout(600)
+        wait_scroll_settled(page)
         return
     if to.isdigit():
         page.evaluate("(y) => window.scrollTo({top: y, behavior: 'smooth'})", int(to))
         page.wait_for_timeout(600)
+        wait_scroll_settled(page)
         return
     page.evaluate(
         """(maxDur) => new Promise(res => {

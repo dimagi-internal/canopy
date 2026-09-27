@@ -9,6 +9,45 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.532] - 2026-09-26
+### Added
+- **Scene `before:` hooks** (M3): a command run off camera between scenes
+  (after the previous scene's capture, before this scene's persona swap and
+  nav), `${var}` resolved late, from the `setup.command` cwd. Non-zero exit or
+  an unresolved placeholder aborts the render; the pause is recorded as a
+  load-wait so the explainer cuts it; provenance lands in the run report's
+  `scene_hooks`. `recipe_preflight` runs the hook at the same point of its walk
+  (and counts it as mutating, so it restores). Replaces a detached watcher keyed
+  on a snapshot file. New `Scene.before` (`SceneHook | str`), recipe-owned.
+- **`auth.type: storage_state` personas** (M4): per-persona Playwright
+  storage-state files (relative to the setup cwd, written by the setup
+  command) are loaded off camera, so OAuth-only apps can film a demo persona.
+- `python -m scripts.ddd.spec_io compose <recipe> --out <file>` and
+  `spec_io why-brief <recipe>` (M8/M12): a self-contained composed copy pins
+  the canonical (spec-adjacent) why-brief by absolute path, so `spec_qa` on it
+  resolves; judge skills document split specs as first-class.
+- `python -m scripts.ddd.version_skew --skill-dir <dir>` (M7): warns when the
+  skill text a session loaded (old cache) and the runtime disagree.
+- ddd agent: "State-mutating narratives" section (per-render reseed, before
+  hooks, storage-state personas, reuse semantics).
+### Fixed
+- `runstate._run_dir_for` (M1): a legacy in-repo run dir holding only Phase-0
+  files is copied to the external runs root (repo copy untouched) and the run
+  continues there; only a legacy run that already RENDERED keeps living in the
+  repo. Render artifacts no longer land in the target repo.
+- `gap_walk` (M2): new gap kind `restate`; a `decision` gap that is really an
+  accuracy mismatch (explicit `finding_class: accuracy`, classified accuracy,
+  or a `build_hint` that offers restating the narration/recipe) routes to
+  `build` with a `restate` list instead of opening the concept_change gate.
+- `render_pacing_audit --no-audio-expected` (M6): the silent iteration clip no
+  longer flags every cursor dwell as DEAD-AIR; default stays strict.
+- ddd-run Step 2b parses the upload's `View:` line (M10) instead of "last https
+  URL" (which picked the `?t=` share link / a companion echo).
+- `scroll: top` / pixel scroll wait until the smooth scroll lands (M13), so a
+  following `scroll_to` no longer measures mid-animation.
+- The canopy runtime is no longer mistaken for a "canopy" agent repo (M5): no
+  borrowed-identity warning on every `scripts.ddd` call.
+
 ## [0.2.531] - 2026-09-26
 ### Fixed
 - **DDD score reuse now works on state-mutating narratives.** A narrative whose

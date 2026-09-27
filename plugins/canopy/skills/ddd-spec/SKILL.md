@@ -893,6 +893,11 @@ scenes:
   changes the world — a re-render without a reseed films "View Audit" where the
   narrative says "Create Audit". Use `rerun: once` only for expensive, idempotent
   generators whose data survives re-renders.
+- **A change BETWEEN scenes** (a supplier's answer arrives, a second seat acts)
+  is a scene `before:` hook — `before: "<command>"` runs off camera after the
+  previous scene's capture and before this scene starts, from the same cwd as
+  `setup.command`, `${var}` resolved late. Never a watcher spawned by `setup`.
+  See the ddd agent's "State-mutating narratives".
 - Substitution happens at render time and never mutates the spec file. An
   unresolved `${...}` is a hard error before recording starts, and **spec-qa
   rejects** a spec that uses `${...}` without declaring `setup.outputs`

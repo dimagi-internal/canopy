@@ -71,6 +71,13 @@ back from a mixed dir describes frames that no longer exist, and it looks
 exactly like a real one. Do not judge a run dir that fails this check — ask for
 a clean re-render of the whole run first.
 
+**Split specs are first-class:** pass a `<slug>.recipe.yaml` path as the spec
+(every `scripts.ddd` loader composes it via `spec_io`); for one readable file run
+`python -m scripts.ddd.spec_io compose <recipe> --out <run_dir>/unified_spec.yaml`
+(self-contained — the why-brief is pinned by absolute path), and take the
+why-brief from `python -m scripts.ddd.spec_io why-brief <recipe>`, not the run
+dir's Phase-0 copy.
+
 ## Procedure
 
 ### Step 1 — Assemble the sequence

@@ -55,6 +55,13 @@ ddd-narrative-actionability-eval: BLOCKED — ddd-spec-qa must pass first.
   - `show` — the browser actions that will be executed
   - `features[]` — the declared buildable features (id, description, verify)
 
+**Split specs are first-class:** pass a `<slug>.recipe.yaml` path as the spec
+(every `scripts.ddd` loader composes it via `spec_io`); for one readable file run
+`python -m scripts.ddd.spec_io compose <recipe> --out <run_dir>/unified_spec.yaml`
+(self-contained — the why-brief is pinned by absolute path), and take the
+why-brief from `python -m scripts.ddd.spec_io why-brief <recipe>`, not the run
+dir's Phase-0 copy.
+
 ## Procedure
 
 ### Step 0 — Check QA gate

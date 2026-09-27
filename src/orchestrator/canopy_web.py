@@ -73,6 +73,14 @@ def scoped_app_path(path: str, workspace: Optional[str] = None) -> str:
     return f"/w/{ws}{path}"
 
 
+# Plugins that carry a `.claude-plugin/plugin.json` but are NOT fleet agents. The
+# canopy runtime (where every `python -m scripts.ddd.*` runs) sits inside the
+# canopy plugin's own install dir, so without this every DDD call claimed to be
+# "in the 'canopy' agent repo" and warned about a borrowed identity that is
+# simply the operator's (0.2.528, M5).
+_NON_AGENT_SLUGS = frozenset({"canopy"})
+
+
 def _agent_slug_for_cwd(start: Optional[Path] = None) -> str:
     """The agent slug of the repo we're standing in, or "" if this isn't one.
 
@@ -85,9 +93,10 @@ def _agent_slug_for_cwd(start: Optional[Path] = None) -> str:
         if not manifest.is_file():
             continue
         try:
-            return (json.loads(manifest.read_text(encoding="utf-8")) or {}).get("name") or ""
+            slug = (json.loads(manifest.read_text(encoding="utf-8")) or {}).get("name") or ""
         except (OSError, ValueError):
             return ""
+        return "" if slug in _NON_AGENT_SLUGS else slug
     return ""
 
 
@@ -148,7 +157,7 @@ def _agent_env_pat(start: Optional[Path] = None) -> str:
             slug = (json.loads(manifest.read_text(encoding="utf-8")) or {}).get("name") or ""
         except (OSError, ValueError):
             return ""
-        if not slug:
+        if not slug or slug in _NON_AGENT_SLUGS:
             return ""
         env_file = Path.home() / f".{slug}" / ".env"
         try:

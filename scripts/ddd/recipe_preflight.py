@@ -156,12 +156,15 @@ def _run_setup_command(command: str, cwd, timeout: int, *, label: str, failure: 
 def scenes_mutate(scenes) -> bool:
     """True when walking these scenes changes persisted state.
 
-    Any `_STATE_CHANGING` verb anywhere in the recipe. Preflight actuates those
-    on purpose (see :func:`preflight`), so this is not a defect to detect — it
-    is the fact that decides what preflight owes the render on its way out.
+    Any `_STATE_CHANGING` verb anywhere in the recipe, or any scene ``before:``
+    hook (a hook exists to change the world). Preflight actuates those on
+    purpose (see :func:`preflight`), so this is not a defect to detect — it is
+    the fact that decides what preflight owes the render on its way out.
     """
     for scene in scenes or []:
         raw = scene.model_dump() if hasattr(scene, "model_dump") else dict(scene)
+        if raw.get("before"):
+            return True
         for action in raw.get("actions") or []:
             if (action or {}).get("kind") in _STATE_CHANGING:
                 return True
@@ -369,6 +372,7 @@ def preflight(
 
     findings: list[dict[str, Any]] = []
     checked = 0
+    hooks_run: list[int] = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -381,7 +385,7 @@ def preflight(
         # Mint against the SUBSTITUTED scenes — personas are read out of them,
         # and the rest of this function walks the substituted copy.
         raw_spec["scenes"] = raw_scenes
-        identities = mint_identities(browser, raw_spec, resolved_base)
+        identities = mint_identities(browser, raw_spec, resolved_base, base_dir=setup_cwd)
 
         context_kwargs: dict[str, Any] = {"viewport": {"width": 1440, "height": 900}}
         if storage_state:
@@ -396,6 +400,30 @@ def preflight(
 
             current_identity: str | None = None
             for scene_no, raw in enumerate(raw_scenes, start=1):
+                # A ``before:`` hook changes the world between scenes; run it at
+                # the same point the recorder does, so every scene after it is
+                # checked against the world the render will film (0.2.528 could
+                # not preflight past a between-scenes change at all). Preflight
+                # reseeds after its walk when the render will not, so the hook's
+                # effect does not leak into the film.
+                if raw.get("before"):
+                    from scripts.narrative.substitution import resolve_string
+                    from scripts.walkthrough._lib.scene_hooks import (
+                        SceneHookError,
+                        run_scene_hook,
+                    )
+
+                    try:
+                        run_scene_hook(
+                            raw.get("before"),
+                            scene_index=scene_no,
+                            variables=setup_vars,
+                            cwd=setup_cwd,
+                            resolve=resolve_string,
+                        )
+                    except SceneHookError as exc:
+                        raise SystemExit(f"preflight: {exc}")
+                    hooks_run.append(scene_no)
                 # Become the scene's persona before its nav, exactly as the
                 # recorder does — otherwise preflight resolves every selector as
                 # whoever happened to be signed in first, and a recipe whose
@@ -520,6 +548,7 @@ def preflight(
         "findings": findings,
         "verdict": "pass" if not findings else "fail",
         "restore": plan,
+        "before_hooks_run": hooks_run,
         "hint": logged_out_hint(
             checked=checked,
             unresolved=len(findings),
