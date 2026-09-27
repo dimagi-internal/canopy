@@ -28,6 +28,12 @@ Failing that gated a run that went 20/20 -> 23/23 with nothing regressed
 (canopy#624). The case the guard exists for still fails: a scene that no longer
 reaches its controls has an action that now FAILS, and that is the other branch.
 
+Actions are keyed by their SPEC-form target (``${round2_tender_id}``, not 94):
+a narrative that reseeds per render mints new ids every take, and keying on the
+resolved id reported every id-bearing action as "absent now" every iteration
+(canopy 0.2.528). A history entry written before this (no ``actions_spec``) is
+compared by its resolved keys, exactly as it was.
+
     python -m scripts.ddd.regression_guard <run_dir> [--json]
 """
 from __future__ import annotations
@@ -46,6 +52,18 @@ def _action_key(action: dict) -> str:
 
 def _snapshot_actions(report: dict) -> dict[str, bool]:
     return {_action_key(a): bool(a.get("ok")) for a in (report.get("actions") or [])}
+
+
+def _snapshot_actions_spec(report: dict) -> dict[str, bool]:
+    """Like :func:`_snapshot_actions`, keyed by the spec-form (un-substituted) target."""
+    from scripts.ddd.stable_ids import resolved_vars, unsubstitute
+
+    variables = resolved_vars(report)
+    out: dict[str, bool] = {}
+    for a in report.get("actions") or []:
+        spec_form = {**a, "target": unsubstitute(a.get("target"), variables)}
+        out[_action_key(spec_form)] = bool(a.get("ok"))
+    return out
 
 
 def _snapshot_scores(verdict: dict | None) -> dict[str, float]:
@@ -85,6 +103,7 @@ def record(run_dir: str | Path, *, iteration: int | None = None) -> dict:
     snapshot = {
         "iteration": iteration,
         "actions": _snapshot_actions(report),
+        "actions_spec": _snapshot_actions_spec(report),
         "scores": _snapshot_scores(verdict),
         "ok": sum(1 for a in (report.get("actions") or []) if a.get("ok")),
         "total": len(report.get("actions") or []),
@@ -99,8 +118,12 @@ def record(run_dir: str | Path, *, iteration: int | None = None) -> dict:
     score_moves: list[dict[str, Any]] = []
 
     if previous:
-        for key, was_ok in (previous.get("actions") or {}).items():
-            now_ok = snapshot["actions"].get(key)
+        # Compare spec-form keys when both sides have them; an entry written by
+        # an older guard only has resolved keys, so compare those as before.
+        field = "actions_spec" if "actions_spec" in previous else "actions"
+        current_actions = snapshot[field]
+        for key, was_ok in (previous.get(field) or {}).items():
+            now_ok = current_actions.get(key)
             if was_ok and now_ok is False:
                 scene, kind, target = key.split(":", 2)
                 findings.append(
@@ -112,7 +135,7 @@ def record(run_dir: str | Path, *, iteration: int | None = None) -> dict:
                         "detail": f"{kind} on {target} succeeded last iteration and fails now",
                     }
                 )
-            elif was_ok and key not in snapshot["actions"]:
+            elif was_ok and key not in current_actions:
                 scene, kind, target = key.split(":", 2)
                 disappeared.append(
                     {

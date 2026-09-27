@@ -16,7 +16,9 @@ fingerprints below comparable). Judging is scoped:
 
 1. ``plan``   — fingerprint every scene's judge INPUTS (after/before frames,
    captured page text minus the render stamp, the scene's spec entry, its action
-   trace, plus run-wide context such as the why-brief and rubric). Compare with
+   trace, plus run-wide context such as the why-brief and rubric). Ids minted by
+   a per-render reseed are compared in their ``${var}`` spec form
+   (:mod:`scripts.ddd.stable_ids`); frames stay byte-exact. Compare with
    the ledger of the last judged iteration. A scene whose fingerprint is
    identical is REUSED; anything else is RE-JUDGED. A full pass
    (``state.next_judge_full``, or no ledger yet) re-judges everything. The arc
@@ -60,6 +62,9 @@ CACHE_DIR = "judge-cache"
 INDEX_FILE = "index.json"
 _SCENE_PASS_RE = re.compile(r"^scene_(\d+)(?:_r\d+)?\.json(?:\.seal\.json)?$")
 _ARC_FILES = ("verdict-arc.yaml", "arc_findings.json")
+# v1 (<= 0.2.528): one hash over resolved targets and raw page text.
+# v2: per-component hashes; reseeded ids compared in their ${var} spec form.
+FINGERPRINT_VERSION = 2
 
 
 # ---------------------------------------------------------------------------
@@ -79,8 +84,13 @@ def _find(run_dir: Path, name: str) -> Path | None:
     return None
 
 
-def _page_text_payload(path: Path | None) -> Any:
-    """Captured page text WITHOUT the per-render stamp (render_id changes every take)."""
+def _page_text_payload(path: Path | None, variables: dict[str, str] | None = None) -> Any:
+    """Captured page text WITHOUT the per-render stamp (render_id changes every take).
+
+    With *variables* (the render's ``${var}`` bindings), id-shaped values are put
+    back into their ``${name}`` form, so a reseeded id in the url or text does not
+    read as a change (:mod:`scripts.ddd.stable_ids`).
+    """
     if path is None:
         return None
     try:
@@ -89,24 +99,54 @@ def _page_text_payload(path: Path | None) -> Any:
         return path.read_bytes().hex()
     if isinstance(data, dict):
         data = {k: v for k, v in data.items() if k != "render_id"}
+    if variables:
+        from scripts.ddd.stable_ids import id_vars, unsubstitute_deep
+
+        data = unsubstitute_deep(data, id_vars(variables))
     return data
 
 
-def _trace_by_scene(run_dir: Path) -> dict[int, list]:
+def _load_report(run_dir: Path) -> dict | None:
     report = run_dir / "run-report.json"
     if not report.exists():
+        return None
+    try:
+        data = json.loads(report.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def render_variables(run_dir: str | Path) -> dict[str, str]:
+    """The ``${var}`` bindings of the render in *run_dir* (empty when unknown)."""
+    from scripts.ddd.stable_ids import resolved_vars
+
+    return resolved_vars(_load_report(Path(run_dir)))
+
+
+def _trace_by_scene(run_dir: Path, variables: dict[str, str] | None = None) -> dict[int, list]:
+    data = _load_report(run_dir)
+    if data is None:
         return {}
     try:
         from scripts.walkthrough._lib.results import action_trace_by_scene
 
-        traces = action_trace_by_scene(json.loads(report.read_text()))
+        traces = action_trace_by_scene(data)
     except Exception:
         return {}
+    from scripts.ddd.stable_ids import unsubstitute
+
     # Only what a judge reasons over and is stable take-to-take — notes can
-    # carry timings.
+    # carry timings. The target is compared in its SPEC form: a reseeded id
+    # (``${round2_tender_id}`` 90 -> 92) is the same action.
     return {
         int(k): [
-            [a.get("kind"), a.get("target"), bool(a.get("ok")), bool(a.get("must_succeed"))]
+            [
+                a.get("kind"),
+                unsubstitute(a.get("target"), variables or {}),
+                bool(a.get("ok")),
+                bool(a.get("must_succeed")),
+            ]
             for a in v
         ]
         for k, v in traces.items()
@@ -132,24 +172,65 @@ def spec_scenes(spec_path: str | Path) -> dict[int, dict]:
     return {i: (s if isinstance(s, dict) else {}) for i, s in enumerate(scenes, start=1)}
 
 
+def fingerprint_components(
+    run_dir: str | Path, scenes: dict[int, dict], *, salt: str = ""
+) -> dict[str, dict[str, str]]:
+    """``{scene: {component: sha256}}`` — each judge input hashed on its own.
+
+    Components: ``frames`` (after/before PNG bytes), ``page_text`` (minus the
+    render stamp, reseeded ids in spec form), ``spec`` (the scene's spec entry),
+    ``trace`` (action kind / spec-form target / ok / must_succeed) and
+    ``context`` (why-brief + rubric). Kept separately so a plan can say WHICH
+    input changed — a scene that re-judges every iteration because its frame
+    shows a reseeded id is then visible as such, not a mystery.
+    """
+    run = Path(run_dir)
+    variables = render_variables(run)
+    traces = _trace_by_scene(run, variables)
+    out: dict[str, dict[str, str]] = {}
+    for idx, scene in sorted(scenes.items()):
+        frames = hashlib.sha256()
+        for name in (f"scene_{idx}.png", f"scene_{idx}_before.png"):
+            p = _find(run, name)
+            frames.update(name.encode())
+            frames.update(p.read_bytes() if p else b"<absent>")
+        text = _page_text_payload(_find(run, f"scene_{idx}_page_text.json"), variables)
+        out[str(idx)] = {
+            "context": hashlib.sha256(salt.encode()).hexdigest(),
+            "frames": frames.hexdigest(),
+            "page_text": hashlib.sha256(_canonical(text)).hexdigest(),
+            "spec": hashlib.sha256(_canonical(scene)).hexdigest(),
+            "trace": hashlib.sha256(_canonical(traces.get(idx, []))).hexdigest(),
+        }
+    return out
+
+
+def _combine(components: dict[str, str]) -> str:
+    return hashlib.sha256(_canonical(components)).hexdigest()
+
+
 def fingerprints(
     run_dir: str | Path, scenes: dict[int, dict], *, salt: str = ""
 ) -> dict[str, str]:
     """``{scene index (str): sha256}`` over every input a scene's judges read."""
-    run = Path(run_dir)
-    traces = _trace_by_scene(run)
-    out: dict[str, str] = {}
-    for idx, scene in sorted(scenes.items()):
-        h = hashlib.sha256()
-        h.update(salt.encode())
-        for name in (f"scene_{idx}.png", f"scene_{idx}_before.png"):
-            p = _find(run, name)
-            h.update(name.encode())
-            h.update(p.read_bytes() if p else b"<absent>")
-        h.update(_canonical(_page_text_payload(_find(run, f"scene_{idx}_page_text.json"))))
-        h.update(_canonical(scene))
-        h.update(_canonical(traces.get(idx, [])))
-        out[str(idx)] = h.hexdigest()
+    return {
+        s: _combine(c)
+        for s, c in fingerprint_components(run_dir, scenes, salt=salt).items()
+    }
+
+
+def changed_components(
+    current: dict[str, dict[str, str]], prior: dict[str, dict[str, str]] | None
+) -> dict[str, list[str]]:
+    """``{scene: [component, ...]}`` for scenes whose components differ from *prior*."""
+    out: dict[str, list[str]] = {}
+    for scene, comps in current.items():
+        before = (prior or {}).get(scene)
+        if not isinstance(before, dict):
+            continue
+        diff = sorted(k for k in comps if before.get(k) != comps[k])
+        if diff:
+            out[scene] = diff
     return out
 
 
@@ -210,14 +291,27 @@ def plan(
     wb = run / "why_brief.yaml"
     if wb.exists() and str(wb) not in {str(c) for c in ctx}:
         ctx.append(wb)
-    current = fingerprints(run, spec_scenes(spec_path), salt=context_salt(ctx))
+    components = fingerprint_components(run, spec_scenes(spec_path), salt=context_salt(ctx))
+    current = {s: _combine(c) for s, c in components.items()}
     ledger = load_ledger(run)
     # A ledger recorded against a different scene set cannot be reused safely.
     if ledger and set((ledger.get("fingerprints") or {})) != set(current):
         scope = decide_scope(current, None, force_full=True)
         scope["reason"] = "scene set changed since the ledger — full pass"
+    elif ledger and ledger.get("fingerprint_version") != FINGERPRINT_VERSION and not force_full:
+        # A ledger hashed by an older scheme cannot match any current fingerprint;
+        # say so instead of reporting every scene as "changed".
+        scope = decide_scope(current, None, force_full=True)
+        scope["reason"] = (
+            f"ledger fingerprints use scheme v{ledger.get('fingerprint_version', 1)}, "
+            f"this plan uses v{FINGERPRINT_VERSION} — full pass (reuse resumes next iteration)"
+        )
     else:
         scope = decide_scope(current, ledger, force_full=force_full)
+    if ledger and not scope.get("full"):
+        scope["changed_components"] = changed_components(
+            components, ledger.get("components")
+        )
     scope.update(
         {
             "planned_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -385,8 +479,25 @@ def merge_user(prior: dict, partial: dict, reuse: list[int]) -> dict:
         overall = min(float(d.get("score")) for d in merged_dims.values() if d.get("score") is not None)
         merged["overall_score"] = overall
         merged["verdict"] = "pass" if overall >= 4 else ("warn" if overall >= 3 else "fail")
+    # Findings: the partial's (re-judged scenes) plus the prior's for REUSED
+    # scenes — assemble routes on them, so a reused scene's open defects must not
+    # silently vanish from the backlog. A finding whose scene cannot be read is
+    # kept only from the partial (it came from a fresh judgement).
+    reused_findings = [
+        f
+        for f in prior.get("findings") or []
+        if isinstance(f, dict) and _finding_scene(f) in reuse_keys
+    ]
+    if reused_findings or "findings" in partial or "findings" in prior:
+        merged["findings"] = list(partial.get("findings") or []) + reused_findings
     merged["reused_scenes"] = sorted(int(s) for s in reuse)
     return merged
+
+
+def _finding_scene(finding: dict) -> str | None:
+    """A finding's scene as a key (``3``, ``"3"`` and ``"3: title"`` -> ``"3"``)."""
+    m = re.match(r"\s*(\d+)", str(finding.get("scene", "")))
+    return m.group(1) if m else None
 
 
 def record(
@@ -402,7 +513,8 @@ def record(
     wb = run / "why_brief.yaml"
     if wb.exists() and str(wb) not in {str(c) for c in ctx}:
         ctx.append(wb)
-    fps = fingerprints(run, spec_scenes(spec_path), salt=context_salt(ctx))
+    components = fingerprint_components(run, spec_scenes(spec_path), salt=context_salt(ctx))
+    fps = {sc: _combine(c) for sc, c in components.items()}
     scope = load_scope(run) or {}
     cache = run / CACHE_DIR
     tmp = run / f"{CACHE_DIR}.tmp"
@@ -429,7 +541,9 @@ def record(
         "iteration": iteration,
         "full": bool(scope.get("full", True)),
         "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "fingerprint_version": FINGERPRINT_VERSION,
         "fingerprints": fps,
+        "components": components,
     }
     (tmp / INDEX_FILE).write_text(json.dumps(index, indent=1) + "\n")
     if cache.exists():

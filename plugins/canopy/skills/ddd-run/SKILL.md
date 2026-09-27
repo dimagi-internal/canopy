@@ -425,7 +425,8 @@ RUN_DIR="<run_dir>"; SPEC_ABS="$(realpath <unified_spec>)"
 - **regression_guard** — a previously-passing action now failing is a hard
   fail; a score that moved is reported, not gated (a judge is not
   deterministic). An action that ran last iteration and is simply **absent**
-  now is a `warn` (`?` lines): confirm the recipe dropped it on purpose — the
+  now is a `warn` (`?` lines) — actions are keyed by their spec-form target, so a
+  reseeded `${var}` id is the same action, not a disappeared one: confirm the recipe dropped it on purpose — the
   documented `scroll_to` → pixel `scroll` framing fix does exactly that — and
   move on (canopy#624). This exists because a correct fix in one iteration removed
   the control the next scene clicked, and nothing noticed.
@@ -497,7 +498,14 @@ FULL=$(cd "$DDD_REPO" && uv run python -c "from scripts.ddd.runstate import load
 `plan` fingerprints each scene's judge INPUTS — after/before frames, page text
 (minus the per-render stamp), the scene's spec entry, its action trace, plus the
 why-brief and rubric — and compares them with the ledger of the last judged
-iteration (`judge-cache/`). It writes `judge-scope.json`:
+iteration (`judge-cache/`). Ids a per-render reseed minted (`setup.variables` and
+`capture` outputs in `run-report.json`) are compared in their `${var}` spec form
+in action targets and — for id-named vars only — in page text, so a reseed alone
+changes nothing (`scripts.ddd.stable_ids`). Frames are compared byte-for-byte: a
+scene that shows a reseeded id ON SCREEN re-judges every pass, by design (a
+false reuse is worse than a re-judge). `changed_components` in
+`judge-scope.json` names which input moved per scene (`frames`, `page_text`,
+`spec`, `trace`, `context`). It writes `judge-scope.json`:
 
 - `full: true` (first judge, `state.next_judge_full`, or the scene set changed)
   → judge every scene and the arc, exactly as before.
@@ -732,7 +740,9 @@ implementation of Steps 4–5: it loads the gating pair through
 `verdicts.discover_extra_verdicts` (`verdict-arc.yaml` — gating — plus the
 advisory `verdict-timing.json` / `verdict-video.json` / `verdict-why.yaml` /
 `verdict-actionability.yaml`), merges `design_findings.json` +
-`arc_findings.json` (one findings contract), calls
+`arc_findings.json` + the user-artifact verdict's `findings:` (stamped
+`source: user_artifact`, `route: PRODUCT` unless set — one findings contract, so
+never fold user findings in by hand), calls
 `run_pipeline.assemble_run_state` (manifest → `scenes_run` / `scene_filter`),
 `compute_convergence`, and `compute_auto_iterate` with the concept verdict's
 `distribution:` block, the pass's `judge-scope.json` (full vs incremental) and
