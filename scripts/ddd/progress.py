@@ -38,7 +38,14 @@ import yaml
 # smaller move is not evidence either way.
 MEAN_BAND: float = 0.15
 
+# Open findings wobble too: a re-judged scene can split one defect into two, or
+# a judge can name a known defect from a new angle. A rise of this many or fewer
+# is not evidence the artifact got worse.
+FINDINGS_BAND: int = 2
+
 SIGNALS = ("score", "open_findings", "mean_cell", "confirmed_caps")
+# The three signals a DIVERGING verdict needs to see fall together (M17).
+DECLINE_SIGNALS = ("score", "mean_cell", "open_findings")
 _LOWER_IS_BETTER = {"open_findings", "confirmed_caps"}
 
 
@@ -139,6 +146,43 @@ def last_step_progressed(history: list[dict]) -> bool:
     if len(history) < 2:
         return False
     return bool(improved_signals([history[-2]], history[-1]))
+
+
+def declined_signals(before: dict, point: dict) -> list[str]:
+    """Signals on which ``point`` is WORSE than ``before`` beyond each noise band."""
+    from scripts.ddd import denoise
+
+    out: list[str] = []
+    for signal in DECLINE_SIGNALS:
+        a, b = before.get(signal), point.get(signal)
+        if a is None or b is None:
+            continue
+        a, b = float(a), float(b)
+        if signal == "score":
+            worse = denoise.improved(a, b) is False
+        elif signal == "mean_cell":
+            worse = b < a - MEAN_BAND
+        else:  # open_findings: more is worse
+            worse = b > a + FINDINGS_BAND
+        if worse:
+            out.append(signal)
+    return out
+
+
+def declined(history: list[dict]) -> bool:
+    """True only when the last step fell on the floor AND the mean AND the backlog.
+
+    ``diverging`` is the one ending that says "stop, more iterations make it
+    worse". One cap can pin the floor (the gating score is a MINIMUM over ~70
+    cells), so the floor alone is a single-cell signal: the first live v1 run
+    was named diverging on 3.0 -> 2.0 from ONE recipe-caused cap while the mean
+    moved 3.71 -> 3.60 (inside :data:`MEAN_BAND`) — M17. A real decline shows on
+    the floor, the mean and the open-findings count at once, each beyond its
+    band.
+    """
+    if len(history) < 2:
+        return False
+    return len(declined_signals(history[-2], history[-1])) == len(DECLINE_SIGNALS)
 
 
 def select_mode(configured: str, open_findings: int, *, backlog_min_findings: int) -> str:

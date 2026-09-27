@@ -334,6 +334,26 @@ bootstrap pattern exactly.
    - **New run** (`decision: new`): `(cd "$DDD_REPO" && uv run python -c "from scripts.ddd.runstate import new_run; print(new_run('<narrative-slug>'))")`
    - **Resume** (`decision: resume`): `(cd "$DDD_REPO" && uv run python -c "from scripts.ddd.runstate import load; state = load('<run_id>'); print(state.phase)")`
 
+6. **Pin the run to one canopy version (M7/M18).** `new_run` stamps
+   `state.plugin_version` + `state.runtime_root`; a resumed pre-pin run is
+   pinned on first use. Resolve the runtime by that path for the WHOLE run —
+   a mid-run auto-update must not change it:
+
+   ```bash
+   DDD_REPO="$(cd "$DDD_REPO" && uv run python -m scripts.ddd.pin root <run_id>)"
+   export CANOPY_RUNTIME_ROOT="$DDD_REPO"   # canopy-runtime.sh honours it before the installed plugin
+   ```
+
+   Use that literal path in every later block (shell state does not persist
+   between tool calls) and pass it to every skill you invoke as
+   `runtime_root`. Before dispatching judges, run
+   `python -m scripts.ddd.pin check <run_id> --skill-dir <base dir the Skill tool printed>`
+   (one `--skill-dir` per loaded skill). Exit 1 is a loud WARNING recorded in
+   `state.version_warnings`: have each judge Read its SKILL.md from
+   `<runtime_root>/../skills/<name>/SKILL.md` instead of the Skill tool.
+   `assemble` also warns when it ran from another runtime. Every warning goes
+   in the digest.
+
 ### Step 4.5 — Hydrate from canopy-web (web → disk; source of truth)
 
 **canopy-web is the source of truth for the narrative** — the overview + scene
@@ -584,12 +604,25 @@ After `ddd-run` returns, load `<run_dir>/run_state.yaml` and
 user-artifact judge's findings (`source: user_artifact`) — never fold them in
 by hand.
 
-**Version skew.** A mid-session plugin update leaves the Skill registry on the
-OLD cache while `scripts.ddd` runs the new runtime. Before dispatching judges,
-run `python -m scripts.ddd.version_skew --skill-dir <the base directory the
-Skill tool printed for ddd-run>` from the runtime. On a WARNING, tell each judge
-subagent to Read its SKILL.md from `$_CANOPY_PLUGIN/skills/<name>/SKILL.md` (the
-runtime's version) instead of loading it through the Skill tool.
+**Version skew.** Covered by the run pin (Bootstrap step 6): `pin check`
+compares loaded skill text against the PINNED version, not merely the newest
+runtime.
+
+**Before every iteration** (before any seed, render or fix batch):
+
+1. `python -m scripts.ddd.preflight` — runs the repo's `auth_preflight.commands`
+   (e.g. `aws sts get-caller-identity --profile labs`, `gh auth status`). Exit 1
+   names the dead credential: stop the iteration BEFORE anything renders,
+   seeds or merges, and report it (unattended: terminal, "blocked on
+   credential <name>" in the digest). No config → `skipped`.
+2. `python -m scripts.ddd.parking poll <run_id>` — non-blocking; re-integrates
+   any parked decision that was resolved since the last pass (apply it — a
+   narrative edit, a redraft of those scenes, or accept — then their findings
+   rejoin the batch).
+3. Every long sub-step runs under the watchdog (`timeouts:` in config): shell
+   steps via `python -m scripts.ddd.watchdog run <run_id> --step <name> -- <cmd>`,
+   fixer subagents via `watchdog start` / `check` / `finish` (see `continue`). A
+   `timed_out` step is recorded on `state.steps` and reported — never waited on.
 
 ### State-mutating narratives
 
@@ -732,8 +765,10 @@ hand-driving. `compute_auto_iterate` stops on these conditions, and
   only a human can answer. The artifact is good; the story may not be right.
 - **`stopped_not_converged`** — out of autonomous moves without passing. Stable,
   and stably failing.
-- **`diverging`** — the gating score is moving backwards beyond the noise band.
-  Fixes are fighting each other; more iterations will make it worse.
+- **`diverging`** — the last step fell on the floor AND the mean cell AND the
+  open-findings count, each beyond its noise band (`progress.declined`). A
+  single capped cell pins the floor and is NOT a decline (M17). Fixes are
+  fighting each other; more iterations will make it worse.
 
 **In an unattended run every STUCK stop is TERMINAL.** Upload the `--stuck`
 package, report the terminal status and the open findings, and finish. Do not
@@ -799,6 +834,36 @@ Every gating judge passed, but this pass reused unchanged scenes' cells
 set, so the render is judged in full, arc included. Only that pass can return
 `stop_done`. Non-terminal: no upload.
 
+### `rejudge_scenes` (a recipe cap must be fixed before deciding)
+
+A terminal or gate-opening decision would have rested on a confirmed cap whose
+only findings are mechanical RECIPE fixes (`scripts.ddd.fix_scope`) — the
+demo framed the scene wrong, not the product. `state.recipe_rejudge` names the
+scenes and cells. Apply the recipe edit(s) (no PR/deploy wait — commit the
+recipe with the next batch), re-render, re-plan the judge scope (unchanged
+scenes reuse their cells; only the edited scenes re-judge), run the judges for
+the `rejudge` scenes, and re-run `assemble` for the SAME iteration — do NOT bump
+`state.iteration`. The re-assessment decides; it will not detour twice.
+Non-terminal: no upload, no gate.
+
+### `park_and_continue` (a decision parks only its scenes)
+
+A strategy finding needs the `concept_change` gate, but mechanical work remains
+on scenes it does not touch. Post the gate as usual, then park its scenes and
+keep going:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.parking park <run_id> --review-id <id> --review-url <url>)
+```
+
+Then treat it exactly like `continue`, EXCEPT: findings stamped `parked: true`
+are withheld from the batch (their direction may change). Parked scenes are
+still rendered and judged every pass and still count toward convergence.
+Unattended, `gates.resolve` returns `defer` — that parks, it does not end the
+run. The run ends on the gate only when nothing actionable remains outside the
+parked scenes (`stop_concept_change`); `parking poll` (every iteration)
+re-integrates the decision when it lands.
+
 ### `stop_partial` (converged on filtered scope)
 
 Both judges passed on the filtered scope, but `scene_filter` is set so
@@ -825,6 +890,23 @@ applying mechanical fixes across iterations until none remain; only THEN does
 `stop_unclear` surface whatever uncertain findings are left. (Apply only the
 `mechanical` findings here — leave `options`/`redesign` untouched for that later
 surface.)
+
+**Fixer brief — every fixer subagent, every batch** (the B3 fixer sat 4 h on a
+shared test DB another session held; nothing timed it out):
+
+- start the step first — `python -m scripts.ddd.watchdog start <run_id> fixer:<batch>`
+  prints the heartbeat file; put it in the brief;
+- the fixer touches that heartbeat file after every meaningful step (edit,
+  test run, commit), and runs tests on a PRIVATE test database (a per-run name,
+  e.g. `--create-db` with a unique suffix or `TEST_DB_SUFFIX=<run_id>`) — never
+  the shared test DBs another session may lock;
+- dispatch in the background and poll `watchdog check <run_id> fixer:<batch>`;
+  exit 3 = `timed_out` (total budget or heartbeat silence past
+  `timeouts.heartbeat_minutes`): stop the agent, `watchdog finish … --status
+  timed_out`, carry its findings to the next batch, report it;
+- on completion `watchdog finish <run_id> fixer:<batch> --status ok|failed`.
+
+Skip findings stamped `parked: true` (see `park_and_continue`).
 
 For each mechanical finding, apply by route:
 
@@ -893,7 +975,9 @@ flat pass — whether it applied nothing or applied fixes that changed nothing �
 buys no further deferral, so both cases end the same honest way.
 
 **Unattended:** resolve through `gates.resolve('concept_change', …)`, which returns
-`defer` immediately rather than waiting. Upload the `--stuck` package, report
+`defer` immediately rather than waiting. This action fires only when nothing
+actionable remains outside the decision's scenes (otherwise the loop returned
+`park_and_continue` and kept going). Upload the `--stuck` package, report
 `terminal_status: converged_with_open_questions` (or `stopped_not_converged`) with
 the strategy questions listed, and finish. The review stays open and resolvable;
 the run does not sit on it.
@@ -1053,6 +1137,9 @@ no gates fired).
   work ran autonomously."
 - **Ran autonomously:** collapsed summary of findings routed and fixed, specs
   updated, iterations completed, learnings appended.
+- **Loop health:** parked scenes and the review each waits on; any `timed_out`
+  step (`state.steps`); an auth-preflight failure (named credential); every
+  `state.version_warnings` entry, verbatim.
 - **Link to review page:** `<canopy-web review page URL>/runs/<run_id>` — the
   SP6 canopy-web review page where ReviewRequests are rendered. Until SP6 lands,
   include a note: "(review page not yet deployed — respond inline)".
@@ -1082,3 +1169,5 @@ proceeding with autonomous work.
 - Gap-walk before the first render; build missing capabilities before judging them.
 - Never judge an undeployed fix: record the batch's merge SHA (`judge_gate set-fix-sha`) and let the judge gate wait.
 - Steps 4–5 are `python -m scripts.ddd.assemble` — never a hand-written assemble script or hand-rolled judge briefs.
+- One canopy version per run: resolve the runtime with `scripts.ddd.pin root` and never switch mid-run.
+- Preflight credentials before every iteration; run long steps under the watchdog; never upload from a render that failed `render_check`.

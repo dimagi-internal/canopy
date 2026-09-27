@@ -108,6 +108,13 @@ class RunState(BaseModel):
     #   confirm_full          — an INCREMENTAL judge pass (backlog mode) would
     #                           converge; re-render and judge every scene fresh
     #                           before declaring it. No fixes to apply.
+    #   rejudge_scenes        — a terminal stop would rest on a confirmed cap
+    #                           whose fix is a RECIPE edit: fix the recipe,
+    #                           re-render, re-judge those scenes, re-assemble
+    #                           the SAME iteration (M17).
+    #   park_and_continue     — a strategy gate is due, but mechanical work
+    #                           remains on scenes it does not touch: post the
+    #                           gate, park its scenes, keep fixing the rest.
     auto_iterate_next_action: str | None = None
     auto_iterate_reason: str | None = None
     # Hosted artifact URLs per iteration (0.2.135). Populated by
@@ -214,6 +221,32 @@ class RunState(BaseModel):
     # scenes' claims the current product cannot yet show. Non-zero -> BUILD.
     gaps_path: str | None = None
     open_gaps: int | None = None
+    # --- loop round 3 (0.2.533) — every field optional so older run_state.yaml
+    # files load unchanged. ------------------------------------------------
+    # Recipe re-judge (M17). When a terminal decision would rest on a confirmed
+    # cap whose fix is a RECIPE edit (no deploy), compute_auto_iterate returns
+    # ``rejudge_scenes`` instead and records {iteration, scenes, cells, status}.
+    # The orchestrator fixes the recipe, re-renders, re-judges, and re-assembles
+    # the SAME iteration; status goes pending -> done so it fires once per
+    # iteration.
+    recipe_rejudge: dict | None = None
+    # Parked scenes (item 6). A pending gate decision parks only the scenes its
+    # findings name; the loop keeps fixing/judging the rest. See
+    # scripts.ddd.parking for the entry shape. ``park_request`` is what the
+    # last ``park_and_continue`` asked to park, consumed by `parking park`.
+    parked: list[dict] = []
+    park_request: dict | None = None
+    # Sub-step watchdog (item 5a): {step: {status, started_at, last_beat,
+    # timeout_minutes, heartbeat_minutes, finished_at, reason}}. status is
+    # running | ok | failed | timed_out. See scripts.ddd.watchdog.
+    steps: dict[str, dict] = {}
+    # Version pinning (M7/M18). Stamped at run start (or first resume) by
+    # scripts.ddd.pin: the canopy version and the runtime root every scripts.ddd
+    # call of this run should use. ``version_warnings`` collects skew warnings
+    # for the digest.
+    plugin_version: str | None = None
+    runtime_root: str | None = None
+    version_warnings: list[str] = []
 
 
 __all__ = [

@@ -9,6 +9,47 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.533] - 2026-09-27
+DDD loop round 3, part A — from the first live v1-mode run
+(connect-labs `supply-sophie-rutf-2026-09-26-001`).
+### Changed
+- **A recipe cap is fixed before it can open a gate (M17).** A confirmed cap
+  whose findings are all mechanical RECIPE fixes (`scripts.ddd.fix_scope`:
+  explicit `fix_scope: recipe`, a `[SCRIPTING]` tag, or `motion_friction`
+  phrased as recorder actions) turns any gate-opening/terminal decision into
+  `rejudge_scenes` — fix the recipe, re-render, re-judge those scenes,
+  re-assemble the SAME iteration (no history point left behind; once per
+  iteration). `state.recipe_rejudge` records it.
+- **`diverging` needs a multi-signal decline.** `terminal_status: diverging`
+  now requires the floor AND the mean cell AND the open-findings count to fall
+  beyond their noise bands (`progress.declined`; new `FINDINGS_BAND = 2`).
+  Runs without a progress history keep the old score-trend rule.
+- **A pending decision parks only its scenes.** A strategy finding with
+  mechanical work left on scenes it does not touch returns
+  `park_and_continue`: post the gate, `parking park`, keep fixing the rest.
+  Findings on parked scenes are stamped `parked: true` and withheld; parked
+  scenes are still judged and still count toward convergence. Unattended
+  `defer` parks instead of ending the run. `parking poll` re-integrates a
+  resolved decision.
+### Added
+- `scripts.ddd.watchdog` — heartbeat + timeout for sub-steps (`run` wraps a
+  shell step and kills its process group; `start`/`check`/`finish` for fixer
+  subagents). Budgets from `timeouts:` (`default_minutes` 45,
+  `heartbeat_minutes` 15, `<step>_minutes`). State on `RunState.steps`.
+- `scripts.ddd.preflight` — pre-iteration auth preflight from
+  `auth_preflight.commands`; fails fast naming the dead credential.
+- `scripts.ddd.render_check` — refuses an upload when the render exited
+  non-zero or any artifact predates the render (M16); `ddd-upload` raises
+  `StaleRenderError` for an iteration whose render failed it.
+- `scripts.ddd.pin` — runs are pinned to the canopy version and runtime root
+  they started on (`RunState.plugin_version` / `runtime_root`); `pin root`
+  resolves it, `pin check --skill-dir` and `assemble` warn loudly on skew and
+  record `RunState.version_warnings` for the digest (M7/M18).
+### Compatibility
+- Every new `RunState` field is optional; pre-0.2.533 `run_state.yaml`,
+  judge-cache and verdicts load unchanged. Unpinned runs are pinned on first
+  `pin root` / `assemble`.
+
 ## [0.2.532] - 2026-09-26
 ### Added
 - **Scene `before:` hooks** (M3): a command run off camera between scenes

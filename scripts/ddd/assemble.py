@@ -132,6 +132,13 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
     )
     state.auto_iterate_next_action = action
     state.auto_iterate_reason = reason
+    # M18: the run is pinned to one canopy version; say so loudly (and keep it
+    # for the digest) when this assemble ran from another runtime.
+    from scripts.ddd import pin
+
+    pin.ensure(state)  # backfills runs started before pinning existed
+    for msg in pin.skew(state):
+        pin.warn(state, msg)
     save(state, ddd_dir=ddd_dir)
 
     ledger = None
@@ -153,6 +160,9 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "auto_iterate_reason": reason,
         "terminal_status": state.terminal_status,
         "open_findings": len([f for f in state.findings if f.get("route") != "DEFER"]),
+        "parked_scenes": sorted({int(x) for p in state.parked if p.get("status") == "pending" for x in p.get("scenes") or []}),
+        "recipe_rejudge": state.recipe_rejudge,
+        "version_warnings": list(state.version_warnings or []),
         "ledger": ledger,
     }
 
@@ -190,6 +200,10 @@ def _main(argv: list[str] | None = None) -> int:
     print(f"  Convergence:  {'YES' if out['converged'] else 'NO'}")
     print(f"  Auto-iterate: {out['auto_iterate_next_action']}  ({out['auto_iterate_reason']})")
     print(f"  Termination:  {out['terminal_status']}")
+    if out["parked_scenes"]:
+        print(f"  Parked:       scene(s) {out['parked_scenes']} wait on a pending decision")
+    for msg in out["version_warnings"]:
+        print(f"  WARNING:      {msg}")
     return 0
 
 

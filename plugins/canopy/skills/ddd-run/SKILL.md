@@ -275,6 +275,25 @@ half-rendered scene.
 
 ### Step 2b — Upload artifacts to canopy-web (auto, every iteration)
 
+**Never upload from a failed or stale render (M16).** Take `RENDER_START=$(date +%s)`
+before Step 2's render, keep the recorder's (or your wrapper's) exit code, and
+gate every upload below on:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.render_check "<run_dir>" --since "$RENDER_START" \
+  --exit-code "$RENDER_RC" --run-id "<run_id>" \
+  $( [ -f "<run_dir>/iter${state.iteration}_clip.mp4" ] && echo --clip "<run_dir>/iter${state.iteration}_clip.mp4" )) \
+  || { echo "render failed or stale — NOT uploading; re-render"; exit 1; }
+```
+
+It fails on a non-zero exit code or on any manifest / run-report / scene PNG /
+clip older than `RENDER_START` (a wrapper that returned 0 over a failed
+recorder once uploaded the PREVIOUS iteration's deck as the new one). The
+verdict is stamped on `state.steps.render_check`; `ddd-upload` refuses to
+package an iteration whose render failed. Wrap the render itself in the
+watchdog so a hung recorder ends as `timed_out`, not a hang:
+`python -m scripts.ddd.watchdog run <run_id> --step render -- <render cmd>`.
+
 Immediately after render, BEFORE the judges run, generate the per-iteration
 HTML deck and upload it to canopy-web so every downstream consumer has a
 hosted URL to reference. This step exists so the orchestrator never has to
@@ -785,6 +804,9 @@ converged on an INCREMENTAL pass           -> confirm_full  (full re-render + fu
 converged on a full pass                   -> stop_done / stop_partial
 STRATEGY redesign + mechanical pending,
   first deferral or last pass progressed   -> continue  (gate deferred)
+a STRATEGY finding + mechanical work on
+  scenes it does NOT touch, still progressing -> park_and_continue (post the gate, park its scenes)
+every strategy finding on a parked scene   -> continue while unparked work remains
 a STRATEGY CONCEPT/redesign finding        -> stop_concept_change
 STALLED: no progress signal improved
   across the last 2 iterations             -> stop_max_iter   (checked BEFORE pending mechanical work)
@@ -794,6 +816,18 @@ hard-cap backstop                          -> stop_max_iter
 any options/redesign left                  -> stop_unclear
 ```
 
+- **before any gate-opening or terminal action** (`stop_concept_change`,
+  `stop_max_iter`, `stop_unclear`, `park_and_continue`): if a confirmed cap
+  (`distribution.capping_cells`, confirmed ≤ 2) carries only mechanical
+  RECIPE-scope findings (`scripts.ddd.fix_scope` — explicit `fix_scope: recipe`,
+  a `[SCRIPTING]` tag, or `motion_friction` phrased as recorder actions),
+  returns **`rejudge_scenes`** instead, records `state.recipe_rejudge`, and
+  leaves no progress point behind. Fix the recipe, re-render, re-plan the
+  judge scope (unchanged scenes reuse), re-judge, and re-run Step 4 for the
+  SAME iteration. It fires once per iteration (M17);
+- `terminal_status: diverging` needs the floor AND the mean cell AND the open
+  findings to fall beyond their noise bands on the last step
+  (`progress.declined`) — one capped cell is not a decline;
 - on `continue`, sets `state.loop_mode` (chosen on full passes: `backlog` when
   open findings ≥ `loop.backlog_min_findings`, default 8, else `polish`, unless
   the config pins one) and `state.next_judge_full` for Step 2f.

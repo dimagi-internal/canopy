@@ -320,6 +320,82 @@
       ],
       "default": null,
       "title": "Open Gaps"
+    },
+    "recipe_rejudge": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Recipe Rejudge"
+    },
+    "parked": {
+      "default": [],
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Parked",
+      "type": "array"
+    },
+    "park_request": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Park Request"
+    },
+    "steps": {
+      "additionalProperties": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "default": {},
+      "title": "Steps",
+      "type": "object"
+    },
+    "plugin_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Plugin Version"
+    },
+    "runtime_root": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime Root"
+    },
+    "version_warnings": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Version Warnings",
+      "type": "array"
     }
   },
   "required": [
