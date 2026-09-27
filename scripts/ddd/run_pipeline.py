@@ -504,7 +504,7 @@ def compute_auto_iterate(
             )
             scope = (
                 "full re-judge (every "
-                f"{loop_config.full_rejudge_every}th batch)"
+                f"{_ordinal(loop_config.full_rejudge_every)} batch)"
                 if state.next_judge_full
                 else "re-judge only scenes whose frame/text/spec changed"
             )
@@ -591,6 +591,13 @@ def compute_auto_iterate(
     return _continue(
         f"No options/redesign and score still moving (history={hist}) — re-fire.",
     )
+
+
+def _ordinal(n: int) -> str:
+    """``1st``, ``2nd``, ``3rd``, ``4th``, ``11th``, ``22nd`` …"""
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
 
 def _short(point: dict) -> str:

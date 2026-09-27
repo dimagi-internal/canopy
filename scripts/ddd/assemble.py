@@ -11,8 +11,9 @@ It reads everything from the run dir the judges already wrote:
 
 * ``verdict-concept.yaml`` / ``verdict-user.yaml`` (gating pair) and any extra
   verdict (arc, timing, video, why, actionability) via ``discover_extra_verdicts``
-* findings = ``design_findings.json`` + ``arc_findings.json`` (both use the one
-  findings contract ``compute_auto_iterate`` dispatches on)
+* findings = ``design_findings.json`` + ``arc_findings.json`` + the user-artifact
+  verdict's ``findings:`` (all normalised to the one findings contract
+  ``compute_auto_iterate`` dispatches on)
 * the concept verdict's ``distribution:`` block (the progress signal)
 * ``judge-scope.json`` — whether this pass was FULL or incremental
 * ``.canopy/ddd/config.yaml`` ``loop:`` block (backlog vs polish)
@@ -29,6 +30,41 @@ from pathlib import Path
 from typing import Any
 
 
+def _user_findings(run_dir: Path) -> list[dict]:
+    """The user-artifact judge's ``findings:`` in the one findings contract.
+
+    ``verdict-user.yaml`` carries its own findings list (scene, dimension, score,
+    fix_kind, fix_recommendation) — the same defects a person using the feature
+    would hit. Before 0.2.531 assemble never read it, so they were invisible to
+    routing, ``fix_kind`` dispatch and the open-findings stall signal, and the
+    orchestrator folded them in by hand. Each is stamped ``source:
+    user_artifact`` and given the contract's ``route`` (PRODUCT unless the judge
+    set one) and ``detail`` (its recommendation when it wrote no detail), so
+    ``finding_class`` and the fixers read it like any other finding.
+    """
+    p = run_dir / "verdict-user.yaml"
+    if not p.exists():
+        return []
+    try:
+        import yaml
+
+        data = yaml.safe_load(p.read_text())
+    except Exception:
+        return []
+    raw = data.get("findings") if isinstance(data, dict) else None
+    out: list[dict] = []
+    for f in raw or []:
+        if not isinstance(f, dict):
+            continue
+        g = dict(f)
+        g.setdefault("source", "user_artifact")
+        g.setdefault("route", "PRODUCT")
+        if not g.get("detail"):
+            g["detail"] = g.get("fix_recommendation") or ""
+        out.append(g)
+    return out
+
+
 def _load_findings(run_dir: Path) -> list[dict]:
     out: list[dict] = []
     for name in ("design_findings.json", "arc_findings.json"):
@@ -39,6 +75,7 @@ def _load_findings(run_dir: Path) -> list[dict]:
         if isinstance(data, dict):
             data = data.get("findings") or []
         out.extend(f for f in data if isinstance(f, dict))
+    out.extend(_user_findings(run_dir))
     return out
 
 

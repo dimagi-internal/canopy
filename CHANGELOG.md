@@ -9,6 +9,33 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.531] - 2026-09-26
+### Fixed
+- **DDD score reuse now works on state-mutating narratives.** A narrative whose
+  `setup: rerun: per_render` reseeds every take minted new ids each render, so
+  `judge_scope plan` (which hashed resolved action targets and page text) found
+  every scene changed and re-judged 7/7 every iteration, and `regression_guard`
+  warned on ~10 id-bearing actions as "absent now" (connect-labs
+  supply-sophie-rutf, 0.2.528). New `scripts.ddd.stable_ids` puts each id the
+  render bound (`setup.variables` + `capture` outputs from `run-report.json`)
+  back into its `${var}` spec form — in action targets for every var, in page
+  text for id-named vars only, whole tokens of 2+ chars only. Frames stay
+  byte-exact (a reseeded id shown on screen still re-judges: false reuse is
+  worse than a re-judge). The ledger now stores per-component hashes
+  (`fingerprint_version: 2`) and `judge-scope.json` names the
+  `changed_components` per scene; a v1 ledger (0.2.528 and earlier) plans an
+  honest full pass once. `regression_guard` keys actions by spec-form target
+  (`actions_spec`), falling back to resolved keys against history written by an
+  older guard.
+- **User-artifact findings reach the loop.** `assemble` now loads
+  `verdict-user.yaml`'s `findings:` (stamped `source: user_artifact`,
+  `route: PRODUCT` unless set, `detail` from the recommendation), so they count
+  for routing, `fix_kind` dispatch and the open-findings stall signal instead of
+  being folded in by hand. `judge_scope merge-user` carries reused scenes'
+  user findings forward.
+- `compute_auto_iterate` reason text said "every 3th batch"; ordinals are now
+  correct.
+
 ## [0.2.525] - 2026-09-26
 ### Added
 - **DDD v1 / backlog mode.** The loop was tuned for polishing a nearly-good
