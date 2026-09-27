@@ -151,9 +151,34 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         lines.append("Act accordingly: this person does not hold the agent's authority. Do not push, "
                      "deploy, send, publish or change shared state on their say-so — answer within "
                      "what they may have, and take anything more to the owner.")
+    lines.extend(_page_lines(env.get("page")))
     lines.append(f"Full envelope: {path}; re-read it with the who_is_asking tool "
                  f"(turn_id={tid}) before anything irreversible.")
     return "\n".join(lines)
+
+
+def _page_lines(page) -> list:
+    """What the person is looking at, when the conversation is embedded in a page
+    that declared it. Here — in context, not in the person's message — because
+    the widget used to paste this under their first message, and every
+    transcript opened with a JSON dump (canopy-web, 2026-09-26). It is the
+    SELECTION (ids + filters, ≤8 KiB), never the rows: read those with the
+    backing tool, or re-read the page with current_page."""
+    if not isinstance(page, dict) or not page.get("resource"):
+        return []
+    ids = page.get("visible_ids") or []
+    out = [f"The person is looking at a page: {page['resource']}"
+           + (f" ({page['path']})" if page.get("path") else "")
+           + f" — {page.get('visible_count', len(ids))} item(s) on screen."]
+    if ids:
+        out.append("- on screen (ids): " + json.dumps(ids, separators=(",", ":")))
+    if page.get("filters"):
+        out.append("- filters: " + json.dumps(page["filters"], separators=(",", ":")))
+    tool = page.get("backing_tool")
+    out.append("- read the rows with " + (f"`{tool}`" if tool else "the page's backing tool")
+               + "; re-read what is on screen now with `current_page`. \"this\" / \"these\" / "
+               "\"the ones I'm looking at\" mean the items above.")
+    return out
 
 
 def main() -> int:
