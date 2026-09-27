@@ -213,8 +213,12 @@ class TestConceptGateWaitsForMechanicalWork:
     stall, a plateau, or the hard cap ends it regardless.
     """
 
+    # Same scene as STRATEGY_BLOCKER on purpose: with mechanical work on a scene
+    # the decision does not touch, the gate parks its scenes and the loop keeps
+    # going (``park_and_continue`` — see tests/ddd/test_loop_round3.py). These
+    # tests pin the deferral rule for work the decision DOES touch.
     MECHANICAL = {
-        "scene": "5",
+        "scene": "4",
         "dimension": "claim_reality_coherence",
         "route": "PRODUCT",
         "fix_kind": "mechanical",

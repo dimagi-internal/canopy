@@ -324,6 +324,14 @@ def new_run(narrative_slug: str, ddd_dir: Path | None = None) -> str:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     state = RunState(run_id=run_id, narrative_slug=narrative_slug)
+    # Pin the canopy version this run starts on (M7/M18) — every later call
+    # resolves the runtime by this path (scripts.ddd.pin).
+    try:
+        from scripts.ddd import pin
+
+        pin.ensure(state)
+    except Exception:  # pinning must never stop a run from starting
+        pass
     _write_state(run_dir, state)
 
     return run_id

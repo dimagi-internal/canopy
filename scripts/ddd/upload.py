@@ -79,6 +79,17 @@ class NarrativeMissingError(RuntimeError):
     """
 
 
+class StaleRenderError(RuntimeError):
+    """Raised when the current iteration's render failed its ``render_check``.
+
+    ``python -m scripts.ddd.render_check --run-id`` stamps the verdict on
+    ``RunState.steps["render_check"]``. A failed recorder once returned 0
+    through a wrapper and the previous iteration's deck was uploaded as the new
+    one (M16); a package built on that render would carry the wrong frames.
+    Re-render (or set ``DDD_ALLOW_STALE_RENDER=1`` for a deliberate override).
+    """
+
+
 class DeckMissingError(RuntimeError):
     """Raised when ``upload_run`` cannot find a usable render manifest.
 
@@ -1162,6 +1173,19 @@ def upload_run(
             file=sys.stderr,
         )
         return run_package_url(run_state.narrative_slug, run_id, base_url)
+
+    # GUARD (M16): never package a render that failed or was stale.
+    rc = (getattr(run_state, "steps", None) or {}).get("render_check") or {}
+    if (
+        rc.get("ok") is False
+        and rc.get("iteration") == run_state.iteration
+        and not os.environ.get("DDD_ALLOW_STALE_RENDER")
+    ):
+        raise StaleRenderError(
+            f"Refusing to upload run {run_id!r}: iteration {run_state.iteration}'s render "
+            f"failed its render_check ({rc.get('reason')}). Re-render first; override "
+            "with DDD_ALLOW_STALE_RENDER=1 only for a deliberate one-off."
+        )
 
     # The narrative VERSION this run rendered — the ID the narrative-agreement
     # gate stamped on run_state. Lets canopy-web attach the run to its exact

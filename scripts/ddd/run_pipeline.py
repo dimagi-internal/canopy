@@ -353,11 +353,21 @@ def compute_auto_iterate(
       re-judge every 3rd batch) picks backlog vs polish on full passes and sets
       ``state.next_judge_full`` for the next pass.
     """
-    from scripts.ddd import denoise, finding_class, gates, progress
+    import copy
+
+    from scripts.ddd import denoise, finding_class, fix_scope, gates, parking, progress
     from scripts.ddd.loop_config import LoopConfig
 
     if loop_config is None:
         loop_config = LoopConfig()
+
+    # What a recipe re-judge must be able to put back: it re-assesses the SAME
+    # iteration, so this call must leave no history point behind.
+    snapshot = {k: copy.deepcopy(getattr(state, k)) for k in _REJUDGE_ROLLBACK}
+    rr = state.recipe_rejudge if isinstance(state.recipe_rejudge, dict) else None
+    recipe_rejudged_this_iteration = bool(rr and rr.get("iteration") == state.iteration)
+    if recipe_rejudged_this_iteration and rr.get("status") == "pending":
+        state.recipe_rejudge = {**rr, "status": "done"}
 
     if converged is None:
         converged = compute_convergence(concept_verdict, user_verdict)
@@ -365,6 +375,10 @@ def compute_auto_iterate(
         unattended = gates.is_unattended()
 
     findings = finding_class.normalize_findings(findings or [])
+    # Scenes parked on a pending gate decision: their findings are withheld from
+    # the batch (their direction may change) but stay visible and counted.
+    parked = parking.parked_scenes(state)
+    findings = parking.mark(findings, parked)
     state.findings = findings
 
     score = min(concept_verdict.overall_score, user_verdict.overall_score)
@@ -429,6 +443,8 @@ def compute_auto_iterate(
             "route": f.get("route", "PRODUCT"),
             "fix_kind": _routable_fix_kind(f.get("fix_kind", "options")),
             "finding_class": f.get("finding_class", finding_class.UNCLASSIFIED),
+            "scene": f.get("scene"),
+            "parked": bool(f.get("parked")),
         }
         for f in findings
     ]
@@ -442,26 +458,61 @@ def compute_auto_iterate(
                 }
             )
     non_defer = [f for f in all_findings if f["route"] != "DEFER"]
-    mechanical = [f for f in non_defer if f["fix_kind"] == "mechanical"]
+    mechanical_all = [f for f in non_defer if f["fix_kind"] == "mechanical"]
+    # Only mechanical work on UNPARKED scenes is actionable this pass.
+    mechanical = [f for f in mechanical_all if not f.get("parked")]
     unclear = [f for f in non_defer if f["fix_kind"] in ("options", "redesign")]
     # Only a STRATEGY finding can open the concept gate. An accuracy finding was
     # already forced mechanical above, so this can no longer fire on "the wrong
     # word is on screen" — which is what escalated two fixable defects to a human.
-    strategy_redesign = [
+    strategy_all = [
         f
         for f in non_defer
         if f["route"] == "CONCEPT"
         and f["fix_kind"] == "redesign"
         and f["finding_class"] != finding_class.ACCURACY
     ]
+    # A strategy finding on an already-parked scene is already waiting on its
+    # decision; only a NEW one can ask for a gate.
+    strategy_redesign = [f for f in strategy_all if not f.get("parked")]
 
     def _finish(action: str, reason: str) -> tuple[str, str]:
+        # M17: a confirmed cap whose fix is a RECIPE edit (no deploy) is fixed,
+        # and its scene re-judged, before it may open a gate or end the run.
+        # Once per iteration: the re-assessment after the re-judge decides.
+        if action in _RECIPE_PREEMPTS and not recipe_rejudged_this_iteration:
+            caps = fix_scope.recipe_caps(distribution, findings)
+            if caps:
+                for k, v in snapshot.items():
+                    setattr(state, k, v)
+                scenes = sorted({int(c["scene"]) for c in caps})
+                state.recipe_rejudge = {
+                    "iteration": state.iteration,
+                    "scenes": scenes,
+                    "cells": caps,
+                    "status": "pending",
+                    "deferred_action": action,
+                }
+                state.terminal_status = "running"
+                cells = "; ".join(
+                    f"scene {c['scene']} {c['dimension']} {c['confirmed']}: {c['fix_recommendation']}"
+                    for c in caps
+                )
+                return (
+                    "rejudge_scenes",
+                    f"Before deciding {action!r}: confirmed cap(s) whose fix is a RECIPE edit "
+                    f"(no deploy) — {cells}. Apply the recipe fix, re-render, re-judge scene(s) "
+                    f"{scenes} (judge_scope plan reuses every unchanged scene), and re-run "
+                    "assemble for THIS iteration (do not bump state.iteration). The deferred "
+                    f"decision was: {reason}",
+                )
         state.terminal_status = classify_termination(
             action,
             converged=bool(converged),
             score_history=hist,
             findings=findings,
             unattended=bool(unattended),
+            progress_history=prog,
         )["status"]
         return action, reason
 
@@ -496,7 +547,7 @@ def compute_auto_iterate(
     first_deferral = state.concept_gate_deferred == 0
     under_cap = len(hist) < hard_cap
 
-    def _continue(reason: str) -> tuple[str, str]:
+    def _continue(reason: str, action: str = "continue") -> tuple[str, str]:
         """``continue`` + the next pass's judge scope (backlog vs polish)."""
         if state.loop_mode == "backlog":
             state.next_judge_full = (
@@ -514,7 +565,12 @@ def compute_auto_iterate(
             )
         else:
             state.next_judge_full = True
-        return _finish("continue", reason)
+        if parked:
+            reason += (
+                f" Scene(s) {sorted(parked)} are PARKED on a pending decision — withhold "
+                "their findings from the batch; they are still rendered and judged."
+            )
+        return _finish(action, reason)
     defer_concept_gate = (
         bool(strategy_redesign)
         and bool(mechanical)
@@ -544,10 +600,43 @@ def compute_auto_iterate(
             f"artifact. {why} (history={hist}).",
         )
     if strategy_redesign:
+        # Park only the scenes the decision is about; keep working on the rest
+        # while there is progress to make there. A decision about every scene
+        # (or one whose scenes cannot be read) still stops the run.
+        affected = parking.affected_scenes(
+            [f for f in findings if _is_strategy(f, finding_class) and not f.get("parked")]
+        )
+        outside = [f for f in mechanical if not (parking.scene_refs(f.get("scene")) & affected)]
+        if affected and outside and not stalled and not plateau and under_cap:
+            state.park_request = {
+                "scenes": sorted(affected),
+                "reason": f"{len(strategy_redesign)} strategy finding(s) need a direction call",
+                "iteration": state.iteration,
+            }
+            return _continue(
+                f"Strategy decision needed on scene(s) {sorted(affected)} — post the "
+                "concept_change gate, then `parking park` those scenes and keep fixing: "
+                f"{len(outside)} mechanical fix(es) remain on scenes the decision does not "
+                f"touch (history={hist}).",
+                action="park_and_continue",
+            )
         return _finish(
             "stop_concept_change",
             "Strategy finding (the artifact, not the wording, is wrong) — needs user "
             "judgment on direction."
+            + (" Unattended: reported, not waited on." if unattended else ""),
+        )
+    if strategy_all:
+        # Every strategy finding sits on a parked scene: its decision is pending.
+        if mechanical and not stalled and not plateau and under_cap:
+            return _continue(
+                f"{len(mechanical)} mechanical fix(es) remain on unparked scenes while the "
+                f"decision on scene(s) {sorted(parked)} is pending (history={hist}).",
+            )
+        return _finish(
+            "stop_concept_change",
+            f"Only the parked scene(s) {sorted(parked)} have work left, and it waits on a "
+            "pending decision."
             + (" Unattended: reported, not waited on." if unattended else ""),
         )
     # A stall is checked BEFORE pending mechanical work: that branch used to come
@@ -593,6 +682,33 @@ def compute_auto_iterate(
     )
 
 
+#: Terminal (or gate-opening) actions a recipe re-judge must come before (M17).
+_RECIPE_PREEMPTS = frozenset(
+    {"stop_concept_change", "stop_max_iter", "stop_unclear", "park_and_continue"}
+)
+
+#: RunState fields compute_auto_iterate mutates that a recipe re-judge rolls back.
+_REJUDGE_ROLLBACK = (
+    "score_history",
+    "finding_fingerprints",
+    "progress_history",
+    "loop_mode",
+    "last_judge_full",
+    "batches_since_full",
+    "next_judge_full",
+    "concept_gate_deferred",
+    "park_request",
+)
+
+
+def _is_strategy(finding: dict, finding_class) -> bool:
+    return (
+        finding.get("route", "PRODUCT") == "CONCEPT"
+        and _routable_fix_kind(finding.get("fix_kind", "options")) == "redesign"
+        and finding.get("finding_class", finding_class.UNCLASSIFIED) != finding_class.ACCURACY
+    )
+
+
 def _ordinal(n: int) -> str:
     """``1st``, ``2nd``, ``3rd``, ``4th``, ``11th``, ``22nd`` …"""
     if 10 <= n % 100 <= 20:
@@ -625,6 +741,7 @@ def classify_termination(
     score_history: list[float] | None = None,
     findings: list[dict] | None = None,
     unattended: bool = False,
+    progress_history: list[dict] | None = None,
 ) -> dict:
     """Say WHICH kind of ending this is — the loop's own answer, not the caller's.
 
@@ -641,8 +758,12 @@ def classify_termination(
         Out of moves without passing — plateau, stall, or the runaway backstop.
         This is "converged, still failing": stable, and stably bad.
     ``diverging``
-        The score is going backwards beyond the noise band. Fixes are fighting
-        each other; more iterations will make it worse, not better.
+        The run is going backwards. With a progress history (two or more
+        points) that means the LAST step fell on the floor AND the mean cell AND
+        the open-findings count, each beyond its noise band
+        (:func:`scripts.ddd.progress.declined`) — a single capped cell pins the
+        floor and is not a decline (M17). Without one (legacy runs) the score
+        trend alone decides, as before.
     ``running``
         Not terminal — keep looping.
     """
@@ -653,13 +774,20 @@ def classify_termination(
         for f in (findings or [])
         if f.get("finding_class") == finding_class.STRATEGY and f.get("route") != "DEFER"
     ]
+    from scripts.ddd import progress
+
     direction = denoise.trend(score_history)
+    prog = [p for p in (progress_history or []) if isinstance(p, dict)]
+    if len(prog) >= 2:
+        is_diverging = progress.declined(prog)
+    else:
+        is_diverging = direction == "regressing"
 
     if action not in TERMINAL_ACTIONS:
         status = "running"
     elif action in ("stop_done", "stop_partial") or converged:
         status = "converged_with_open_questions" if open_strategy else "converged_clean"
-    elif direction == "regressing":
+    elif is_diverging:
         status = "diverging"
     else:
         status = "stopped_not_converged"
@@ -687,8 +815,8 @@ _TERMINATION_SUMMARY = {
         "Stable, and stably failing."
     ),
     "diverging": (
-        "Diverging — the gating score is moving backwards beyond the noise band. Fixes are "
-        "fighting each other; more iterations will not help."
+        "Diverging — the floor, the mean cell and the open-findings count all fell beyond "
+        "their noise bands. Fixes are fighting each other; more iterations will not help."
     ),
     "running": "Still iterating.",
 }
