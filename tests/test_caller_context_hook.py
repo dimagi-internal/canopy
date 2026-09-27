@@ -163,3 +163,27 @@ def test_it_is_registered_for_every_prompt():
     hooks = json.loads((_PATH.parent / "hooks.json").read_text())["hooks"]
     cmds = [h["command"] for g in hooks["UserPromptSubmit"] for h in g["hooks"]]
     assert any("caller_context.py" in c for c in cmds)
+
+
+# --- the page the person is on ---------------------------------------------------------
+#
+# The embedded widget used to paste the declared page state under the person's
+# first message, so every transcript opened with a JSON dump. The selection now
+# arrives through the envelope and is rendered here, as context.
+
+PAGE = {"resource": "labs-marketplace://orgs", "visible_ids": ["safari-doctors", "kesho-yetu"],
+        "visible_count": 2, "filters": {"country": "KE"}, "backing_tool": "marketplace_orgs_get",
+        "path": "/labs/marketplace/", "read_with": "current_page"}
+
+
+def test_the_page_selection_is_in_context(tmp_path):
+    text = cc.summarize({**ENV, "page": PAGE}, str(tmp_path / "env.json"), TID)
+    assert "labs-marketplace://orgs" in text and "2 item(s) on screen" in text
+    assert '["safari-doctors","kesho-yetu"]' in text
+    assert '{"country":"KE"}' in text
+    assert "`marketplace_orgs_get`" in text and "`current_page`" in text
+
+
+def test_no_page_says_nothing_about_one(tmp_path):
+    assert "looking at a page" not in cc.summarize(ENV, str(tmp_path / "env.json"), TID)
+    assert "looking at a page" not in cc.summarize({**ENV, "page": None}, str(tmp_path / "e"), TID)
