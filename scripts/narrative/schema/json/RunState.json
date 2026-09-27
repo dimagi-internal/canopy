@@ -396,6 +396,32 @@
       },
       "title": "Version Warnings",
       "type": "array"
+    },
+    "current_target": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Target"
+    },
+    "storyboard": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Storyboard"
     }
   },
   "required": [

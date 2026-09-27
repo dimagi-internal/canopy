@@ -732,6 +732,14 @@ def main() -> None:
         ),
     )
     ap.add_argument("--manifest", help="path to write the render manifest (walkthrough-run-data.json)")
+    ap.add_argument(
+        "--base-url",
+        default=None,
+        help=(
+            "render against this origin instead of the spec's base_url (DDD inner loop: a "
+            "locally served build — scripts.ddd.target). Recorded in the manifest."
+        ),
+    )
     args = ap.parse_args()
 
     # ---- Guardrail: don't hand-drive a DDD run's render ----------------------
@@ -845,6 +853,10 @@ def main() -> None:
 
     viewport_w = int(spec.get("video_viewport_width", 1280))
     viewport_h = int(spec.get("video_viewport_height", 720))
+    if getattr(args, "base_url", None):
+        # Inner-loop target: everything downstream (scene urls, auth, manifest)
+        # reads spec["base_url"], so override it once, here.
+        spec["base_url"] = args.base_url.rstrip("/")
     base_url = (spec.get("base_url") or "").rstrip("/")
 
     scenes = build_scenes_from_spec(spec, base_url, run_data=run_data, args=args)

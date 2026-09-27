@@ -109,6 +109,11 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
     cfg = loop_config.load(ddd_dir)
 
     state = load(run_id, ddd_dir=ddd_dir)
+    # The pass's target, if `target plan` stamped it for THIS iteration; a stale
+    # or missing stamp means the render used the spec's own base_url (deploy).
+    tgt = state.current_target or {}
+    if tgt.get("iteration") != state.iteration:
+        tgt = {}
     assemble_run_state(
         state,
         concept,
@@ -129,6 +134,8 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         distribution=progress.load_distribution(concept_path),
         judge_full=judge_full,
         loop_config=cfg.loop,
+        target=tgt.get("target"),
+        judges=scope.get("judges"),
     )
     state.auto_iterate_next_action = action
     state.auto_iterate_reason = reason
@@ -153,6 +160,8 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "advisory": {k: format_verdict_line(v) for k, v in extra.items()},
         "converged": converged,
         "judge_full": judge_full,
+        "target": tgt.get("target") or "deploy",
+        "judges": scope.get("judges") or ["concept", "user", "arc"],
         "loop_mode": state.loop_mode,
         "next_judge_full": state.next_judge_full,
         "progress": state.progress_history[-1] if state.progress_history else None,
@@ -192,6 +201,7 @@ def _main(argv: list[str] | None = None) -> int:
     for kind, line in out["advisory"].items():
         print(f"  {kind:<20} {line}")
     print(f"  Judge pass:   {'FULL' if out['judge_full'] else 'incremental (reused unchanged scenes)'}")
+    print(f"  Target:       {out['target']}  (judges: {', '.join(out['judges'])})")
     print(f"  Loop mode:    {out['loop_mode']}  (next judge: {'full' if out['next_judge_full'] else 'incremental'})")
     print(
         f"  Progress:     score {p.get('score')}  open findings {p.get('open_findings')}  "

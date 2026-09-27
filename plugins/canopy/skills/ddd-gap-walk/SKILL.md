@@ -103,13 +103,22 @@ render. The only question here is *can this scene be filmed at all?*
 Every scene appears in `covered` or `gaps`; every entry cites at least one path
 you actually read.
 
+### Step 3b — The storyboard critique comes out WITH the walk
+
+The orchestrator dispatches `ddd-arc-eval` in **storyboard mode** in parallel
+with this walk (same moment, before any build); it writes
+`<run_dir>/storyboard.json` — scene order, whether each scene earns its place,
+and whether the seeded data is at the scale and realism that makes the point.
+Pass it to `check` so both answers are one next step.
+
 ### Step 4 — Check + stamp
 
 ```bash
 _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
 DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 GAPS_ABS="$(realpath <run_dir>/gaps.json)"; SPEC_ABS="$(realpath <unified_spec>)"
-(cd "$DDD_REPO" && uv run python -m scripts.ddd.gap_walk check "$GAPS_ABS" --spec "$SPEC_ABS" --run-id "<run_id>")
+SB="<run_dir>/storyboard.json"; SB_ARG=$( [ -f "$SB" ] && echo --storyboard "$(realpath "$SB")" )
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.gap_walk check "$GAPS_ABS" --spec "$SPEC_ABS" --run-id "<run_id>" $SB_ARG)
 ```
 
 Exit 0 `render` · exit 1 `build` or `decide` · exit 2 invalid (fix gaps.json).
@@ -120,5 +129,5 @@ It stamps `gaps_path` / `open_gaps` on `run_state.yaml`.
 | action | next step |
 |--------|-----------|
 | `render` | proceed to `/canopy:ddd-run` |
-| `build` | implement every `build` gap as ONE batch in the target repo (one PR, one deploy; parallel fixers are fine), restate every entry in the output's `restate` list in the recipe/narration (words only, to what the page shows), record the merge SHA with `judge_gate set-fix-sha`, then re-run this skill. Render only when it returns `render`. |
-| `decide` | open the `concept_change` gate with the `decision` gaps (build the `build` gaps alongside once decided). A decision may also mean the narrative should change — `redraft` returns to `ddd-spec`. |
+| `build` | apply the storyboard's `restate` entries to the narrative (mechanical wording — no gate) and its `seed` entries to the seed/setup code in the same batch; implement every `build` gap as ONE batch in the target repo (one PR, one deploy; parallel fixers are fine), restate every entry in the output's `restate` list in the recipe/narration (words only, to what the page shows), record the merge SHA with `judge_gate set-fix-sha`, then re-run this skill. Render only when it returns `render`. |
+| `decide` | open the `concept_change` gate with the `decision` gaps AND the storyboard's `decisions` (order/scope), then `python -m scripts.ddd.storyboard mark <run_id> --status asked --review-id <id>` so they are never re-asked (build the `build` gaps alongside once decided). A decision may also mean the narrative should change — `redraft` returns to `ddd-spec`. |

@@ -112,6 +112,10 @@ class RunState(BaseModel):
     #                           whose fix is a RECIPE edit: fix the recipe,
     #                           re-render, re-judge those scenes, re-assemble
     #                           the SAME iteration (M17).
+    #   checkpoint            — a decision (convergence or any stop) came from
+    #                           an inner-loop or concept-only pass: land the
+    #                           batches, then render + judge in full against
+    #                           the real deploy target before deciding.
     #   park_and_continue     — a strategy gate is due, but mechanical work
     #                           remains on scenes it does not touch: post the
     #                           gate, park its scenes, keep fixing the rest.
@@ -247,6 +251,13 @@ class RunState(BaseModel):
     plugin_version: str | None = None
     runtime_root: str | None = None
     version_warnings: list[str] = []
+    # Render/judge target of the CURRENT pass (item 3), stamped by
+    # `scripts.ddd.target plan`: {target: deploy|inner, base_url, judges,
+    # iteration, reason}. assemble reads it; the progress point records it.
+    current_target: dict | None = None
+    # Pre-build storyboard critique (item 2): {status: clean|applied|asked,
+    # review_id, decision, at}. Order/scope questions are asked ONCE, up front.
+    storyboard: dict | None = None
 
 
 __all__ = [

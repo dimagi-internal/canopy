@@ -548,11 +548,18 @@ Do NOT render, build, or judge until the narrative is approved. Once approved,
 the lock is what lets you re-iterate the *product* (render → judge → converge →
 upload) again and again without ever regenerating the *narrative*.
 
-**Step 6d — Gap walk (before the FIRST render, and after every build batch):**
-Invoke `/canopy:ddd-gap-walk` with the run id and spec. One LLM pass, no
-screenshots: it reads the target repo's routes, views, operations and seed data
-against each scene's narration + `features[]` and writes `<run_dir>/gaps.json`.
-`python -m scripts.ddd.gap_walk check` then decides:
+**Step 6d — Gap walk + storyboard critique (together, before the FIRST build/render):**
+Dispatch, in parallel, `/canopy:ddd-gap-walk` (reads the target repo's routes,
+views, operations and seed against each scene → `gaps.json`) and
+`ddd-arc-eval` in **storyboard mode** (the locked narrative + seed, no
+screenshots: scene order, does each scene earn its place, will the seeded data
+make the point → `storyboard.json`). One
+`python -m scripts.ddd.gap_walk check <gaps> --spec <spec> --run-id <id> --storyboard <storyboard.json>`
+then decides for both — storyboard `restate` findings are auto-applied to the
+narrative, `seed` findings join the build batch, and `order`/`scope` findings
+join the `decide` gate ONCE (`storyboard mark --status asked` after posting;
+unattended `defer` also marks it, and the story proceeds as locked). Later
+re-walks after build batches run the gap walk only:
 
 | action | next |
 |--------|------|
@@ -741,6 +748,23 @@ on every full judge pass; pin it with `loop.mode` in `.canopy/ddd/config.yaml`):
   is always decided by a full render + full judge.
 - **polish** — every pass is judged in full, as before.
 
+Two optional accelerators between checkpoints (a checkpoint = every
+`loop.full_rejudge_every`-th batch, plus any pass after `checkpoint` /
+`confirm_full`), both fidelity-safe — neither can decide anything:
+
+- **inner loop** (`inner_loop: {base_url, setup, health_url}` in
+  `.canopy/ddd/config.yaml`; default OFF). Batches are committed to the fix
+  branch, served locally, and rendered with `--base-url` — no merge, CI or
+  deploy. Checkpoints land the accumulated batches and render the real target
+  through the deploy gate. `ddd-run` Step 2 runs `target plan`; the progress
+  point records `target` per iteration.
+- **judge tiering** (`loop.judge_tiering: auto|on|off`; `auto` = on in backlog
+  mode). Between checkpoints only the concept judge runs, on changed scenes;
+  user-artifact + arc run at checkpoints.
+
+Any stop, gate or convergence a non-checkpoint pass would return becomes
+`checkpoint`. The convergence bar is unchanged.
+
 Progress is read from four signals per iteration (`state.progress_history`:
 gating score, open findings, mean concept cell, confirmed caps), because the
 floor alone sat at 2 through 19 of 23 iterations of real improvement on the v1
@@ -863,6 +887,16 @@ Unattended, `gates.resolve` returns `defer` — that parks, it does not end the
 run. The run ends on the gate only when nothing actionable remains outside the
 parked scenes (`stop_concept_change`); `parking poll` (every iteration)
 re-integrates the decision when it lands.
+
+### `checkpoint` (an inner-loop / concept-only pass cannot decide)
+
+The pass rendered the local inner-loop build or ran only the concept judge, and
+would have returned a stop, a gate or convergence. Apply the pending mechanical
+fixes, land every batch since the last checkpoint (PR, CI, deploy,
+`judge_gate set-fix-sha`), bump `state.iteration`, and re-fire `ddd-run`:
+`state.next_judge_full` is set, so the next pass renders the REAL deploy target
+through the deploy gate and runs every judge in full. That pass decides.
+Non-terminal: no upload.
 
 ### `stop_partial` (converged on filtered scope)
 
@@ -1166,7 +1200,8 @@ proceeding with autonomous work.
 - Loop is **progress-aware, not count-capped**: keep auto-iterating while findings are mechanical AND the run is still progressing; stop on a real gate, an options/redesign finding, a **stall** (none of score / open findings / mean cell / confirmed caps improved across 2 iterations, each through its noise band), a **finding plateau** (identical fingerprints, no progress), or the `HARD_CAP` of 10 as a runaway backstop. Never invent your own stop — `compute_auto_iterate` owns it and `state.terminal_status` names the ending.
 - When dispatching PRODUCT fixers, route by dimension: `design_soundness`/`motion_friction` → `/design-review`; `concept_clarity` → `/review`; broken flows → `/qa`.
 - Render in full every iteration; scope the JUDGING (backlog mode) instead. A `--scene` partial render cannot converge.
-- Gap-walk before the first render; build missing capabilities before judging them.
+- Gap-walk AND storyboard-critique before the first build/render; build missing capabilities before judging them; ask arc order/scope questions once, up front.
+- Only a checkpoint pass (real deploy target, every judge) decides anything; inner-loop and concept-only passes only fix.
 - Never judge an undeployed fix: record the batch's merge SHA (`judge_gate set-fix-sha`) and let the judge gate wait.
 - Steps 4–5 are `python -m scripts.ddd.assemble` — never a hand-written assemble script or hand-rolled judge briefs.
 - One canopy version per run: resolve the runtime with `scripts.ddd.pin root` and never switch mid-run.
