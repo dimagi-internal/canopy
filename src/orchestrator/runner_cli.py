@@ -85,21 +85,16 @@ def _fetch(workspace: str = ""):
 
 def _resolve(name_or_id: str, workspace: str = "") -> dict:
     """Accept a NAME as well as a uuid — nobody reads uuids off a fleet listing, and
-    a pause is usually typed in a hurry."""
-    needle = (name_or_id or "").strip()
-    if not needle:
+    a pause is usually typed in a hurry. Shares `resolve_runner` with
+    `canopy agent dispatch --runner`, so both commands name boxes the same way."""
+    from orchestrator.agent_dispatch import DispatchError, resolve_runner
+
+    if not (name_or_id or "").strip():
         raise click.ClickException("name a runner (see `canopy runner list`)")
-    rows = _fetch(workspace)
-    exact = [r for r in rows
-             if str(r.get("id")) == needle or str(r.get("name") or "") == needle]
-    if len(exact) == 1:
-        return exact[0]
-    if len(exact) > 1:
-        raise click.ClickException(
-            f"'{needle}' matches {len(exact)} runners; use the id: "
-            + ", ".join(f"{r.get('name')}={r.get('id')}" for r in exact))
-    names = ", ".join(str(r.get("name") or "") for r in rows) or "(none visible)"
-    raise click.ClickException(f"no runner named '{needle}'. Visible: {names}")
+    try:
+        return resolve_runner(_fetch(workspace), name_or_id)
+    except DispatchError as e:
+        raise click.ClickException(str(e))
 
 
 SESSIONS_PATH = "/api/canopy-sessions/"
