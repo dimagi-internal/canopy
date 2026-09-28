@@ -339,6 +339,43 @@ def test_gating_loader_degrades_without_bricking_or_weakening(tmp_path):
     assert r.returncode == 2 and "/canopy:update" in r.stderr
 
 
+def test_gating_loader_names_the_bootstrap_when_canopy_is_not_installed(tmp_path):
+    """Fresh account: no canopy plugin at all. Still fail closed, but /canopy:update does not
+    exist there and the hook blocks the agent's own shell, so the message must hand the human
+    the `!`-prefixed install (which bypasses hooks). Installed-but-stale keeps /canopy:update."""
+    create_agent(_spec(), tmp_path / "echo")
+    hook = tmp_path / "echo" / "hooks" / "gating_guard.py"
+    home = tmp_path / "home"
+    env = _hook_env(HOME=str(home))
+    env.pop("CANOPY_PLUGIN_DIR", None)
+
+    def run():
+        return subprocess.run([sys.executable, str(hook)],
+                              input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
+                              capture_output=True, text=True, env=env)
+
+    # (a) no registry file at all
+    r = run()
+    assert r.returncode == 2
+    assert "not installed" in r.stderr
+    assert "! claude plugin marketplace add dimagi-internal/canopy && claude plugin install canopy@canopy" in r.stderr
+    assert "/canopy:update" not in r.stderr
+
+    # (b) registry exists but has no canopy@canopy entry
+    reg = home / ".claude" / "plugins" / "installed_plugins.json"
+    reg.parent.mkdir(parents=True)
+    reg.write_text(json.dumps({"version": 2, "plugins": {"other@x": [{"installPath": "/x"}]}}))
+    r = run()
+    assert r.returncode == 2 and "claude plugin install canopy@canopy" in r.stderr
+
+    # (c) installed, but the engine file is missing -> /canopy:update is the right fix
+    reg.write_text(json.dumps({"version": 2, "plugins": {
+        "canopy@canopy": [{"installPath": str(tmp_path / "stale-install")}]}}))
+    r = run()
+    assert r.returncode == 2
+    assert "/canopy:update" in r.stderr and "claude plugin install" not in r.stderr
+
+
 def test_stamped_matcher_routes_every_shell_to_the_guard(tmp_path):
     """On Windows the harness offers PowerShell beside Bash. A matcher without it never calls
     the guard from that shell, so every rail is bypassed there (fizzy, 2026-09-22)."""
