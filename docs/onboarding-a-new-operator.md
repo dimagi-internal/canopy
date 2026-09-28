@@ -338,6 +338,13 @@ Re-run `agent doctor` after each. **Do not move on until it is all green** — a
 re-run it on any new machine, since it catches setup that only ever existed on
 the old one.
 
+**Existing agents on a new machine or macOS account?** Steps 1–4 are automated for
+every agent at once — `canopy agent bootstrap --dry-run` to preview, then
+`canopy agent bootstrap` (add `--slug <x>` to limit it). It installs each agent's
+plugin + `required_plugins`, injects `~/.<slug>/.env`, imports the newest gog token
+(canopy-web vs 1Password) under the client the token names, and verifies Gmail —
+flagging loudly when the client an agent's turns ask for differs from the token's.
+
 Then fill in the two files that carry the actual judgment:
 
 - **`persona.md`** — voice, mandate detail, what is worth remembering.

@@ -321,6 +321,82 @@ def agent_doctor(repo, slug, all_agents, do_fix, as_json):
         raise SystemExit(1)
 
 
+@agent.command("bootstrap")
+@click.option("--slug", "slugs", multiple=True,
+              help="Agent slug to bootstrap (repeatable). Default: every agent repo discovered "
+                   "on this machine (the same discovery as `agent doctor --all`).")
+@click.option("--repo", type=click.Path(exists=True, file_okay=False),
+              help="Agent repo root, for a single agent not at the default location.")
+@click.option("--dry-run", is_flag=True,
+              help="Show what would happen. Reads token sources and the plugin/gog state, "
+                   "but installs, injects, imports and writes nothing, and skips the gmail call.")
+@click.option("--op-account", default="dimagi.1password.com", show_default=True,
+              help="1Password account for `op read` / `op inject`.")
+def agent_bootstrap(slugs, repo, dry_run, op_account):
+    """Make THIS machine ready to run agents — the laptop twin of the cloud runner's
+    bootstrap_agents.sh, same rules.
+
+    Per agent: install its plugin + config/agent.json required_plugins; `op inject` its
+    .env.tpl into ~/.<slug>/.env; take the NEWEST gog token (canopy-web vs
+    op://Agent-<Slug>/gog-token, by the token's own created_at); materialize the OAuth client
+    the TOKEN names; import it (skipped if gog already holds it) and map the account; verify
+    with one real gmail call and check the client turns ask for against the token's.
+    Idempotent — re-running on a ready machine changes nothing. One agent failing never
+    stops the others; exits non-zero if any agent has a problem.
+    """
+    from orchestrator.agent_bootstrap import Bootstrapper, render_table
+    from orchestrator.agent_email import AgentEmailError, find_agent_repo
+
+    targets: list[tuple[str, Path | None]] = []
+    if repo:
+        from orchestrator.agent_web import AgentWebError, resolve_identity
+        try:
+            targets.append((resolve_identity(Path(repo))["slug"], Path(repo)))
+        except AgentWebError as e:
+            raise click.ClickException(str(e))
+    elif slugs:
+        for s in slugs:
+            try:
+                targets.append((s, find_agent_repo(s)))
+            except AgentEmailError:
+                targets.append((s, None))
+    else:
+        from orchestrator.agent_web import AgentWebError, resolve_identity
+        from orchestrator.fleet_align import discover_agents
+        # Key on the agent's IDENTITY (plugin.json name), not the directory: a second
+        # checkout (`ace-2`) is the same agent, and bootstrapping it as "ace-2" would look up
+        # a vault and a canopy-web agent that don't exist. Prefer the checkout named for it.
+        by_slug: dict[str, Path] = {}
+        for a in sorted(discover_agents(), key=lambda x: (x.path.name, str(x.path))):
+            try:
+                ident = resolve_identity(a.path)["slug"]
+            except (AgentWebError, OSError, ValueError):
+                ident = a.slug
+            if ident not in by_slug or a.path.name == ident:
+                by_slug[ident] = a.path
+        targets = sorted(by_slug.items())
+        if not targets:
+            raise click.ClickException(
+                "no agent repos discovered on this machine — pass --slug <x> or --repo <dir>")
+
+    boot = Bootstrapper(dry_run=dry_run, op_account=op_account, echo=click.echo)
+    click.echo(f"{'DRY RUN — ' if dry_run else ''}bootstrapping "
+               f"{', '.join(s for s, _ in targets)}")
+    reports = []
+    for s, path in targets:
+        click.echo(f"  ... {s}")
+        reports.append(boot.bootstrap_one(s, path))
+    click.echo()
+    click.echo(render_table(reports))
+    bad = [r.slug for r in reports if not r.ok]
+    click.echo()
+    click.echo(f"{len(bad)} agent(s) need attention: {', '.join(bad)}" if bad
+               else f"All {len(reports)} agent(s) bootstrapped"
+                    f"{' (dry run — nothing changed)' if dry_run else ''}.")
+    if bad:
+        raise SystemExit(1)
+
+
 # The statuses a board drain actually wants: everything not yet resolved. `normalize_task_status`
 # maps the whole vocabulary onto four tokens, and the two below are the un-resolved pair.
 OPEN_TASK_STATUSES = ("suggested", "in_progress")
