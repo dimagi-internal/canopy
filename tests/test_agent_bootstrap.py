@@ -344,3 +344,15 @@ def test_locked_1password_is_reported_once_not_waited_out_per_call(tmp_path):
     r2 = b.bootstrap_one("ace", repo)
     assert sum(c[0] == "op" for c in calls) == 1           # first refusal short-circuits the rest
     assert r1.env == "FAIL" and "unlock the 1Password app" in " ".join(r1.notes + r2.notes)
+
+
+def test_never_downgrades_a_newer_token_gog_already_holds(tmp_path):
+    repo = _repo(tmp_path)
+    (tmp_path / "gog").mkdir()
+    (tmp_path / "gog" / "credentials-canopy.json").write_text("{}")
+    runner = FakeRunner(
+        op={"op://Agent-Ace/gog-token/credential": _tok(created="2026-05-01T00:00:00Z")},
+        gog_accounts=[{"email": "ace@dimagi-ai.com", "client": "canopy",
+                       "created_at": "2026-09-07T14:04:13Z"}])
+    rep = _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
+    assert runner.imported == [] and "(kept newer)" in rep.token

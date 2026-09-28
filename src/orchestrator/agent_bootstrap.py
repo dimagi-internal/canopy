@@ -159,6 +159,18 @@ def token_already_present(tok: Token, accounts: list[dict] | None) -> bool:
     return False
 
 
+def gog_holds_newer(tok: Token, accounts: list[dict] | None) -> str:
+    """created_at of a token gog ALREADY holds for this mailbox+client that is newer than
+    `tok`, else "". Importing over it would downgrade a working credential — which is what
+    happens when one source was unreadable and the older copy "won" by default."""
+    for a in accounts or []:
+        if (str(a.get("email") or "").lower() == tok.email
+                and (a.get("client") or "") == tok.client
+                and parse_created_at(a.get("created_at")) > tok.epoch):
+            return str(a.get("created_at"))
+    return ""
+
+
 def age_label(epoch: int, now: float | None = None) -> str:
     if not epoch:
         return "undated"
@@ -454,6 +466,9 @@ class Bootstrapper:
                      f"({web_err or 'none stored'})")
             return None
         rep.token = f"{tok.source} {tok.client or '?'} {age_label(tok.epoch)}"
+        if vault_raw is None and self._op_blocked:
+            rep.notes.append("token: vault copy not consulted (1Password locked) — "
+                             "newest-wins decided on canopy-web's copy alone")
         if not tok.client:
             rep.fail("token: the token names no `client` — refusing to guess one "
                      "(the client is a property of the token, never of agent.json)")
@@ -486,9 +501,14 @@ class Bootstrapper:
                 _write_private(creds, secret)
                 rep.notes.append(f"token: materialized credentials-{tok.client}.json")
 
-        # Import — unless gog already holds this exact token.
-        if token_already_present(tok, self.gog_accounts()):
+        # Import — unless gog already holds this exact token, or a newer one.
+        accounts = self.gog_accounts()
+        if token_already_present(tok, accounts):
             rep.token += " (present)"
+        elif newer := gog_holds_newer(tok, accounts):
+            rep.token += " (kept newer)"
+            rep.notes.append(f"token: gog already holds a newer {tok.client} token for "
+                             f"{tok.email} ({newer}) — not downgrading it")
         elif self.dry_run:
             rep.token += " (would import)"
         else:
