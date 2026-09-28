@@ -311,10 +311,22 @@ unscoped_sessions() {
   done
 }
 
+# The ref's scope pattern. The runner dispatches `--thread <ref> --caller <path>`,
+# so the ref is NOT necessarily the last arg: requiring `--thread <ref><` (the
+# ref immediately followed by `</command-args>`) made every runner-dispatched
+# turn invisible to COUNT — a false all-clear in exactly the case this check
+# exists for. (Measured 2026-09-28, eva: a `/eva:turn --thread <ref> --caller
+# <path>` session was told `COUNT=0 (includes you)` about its OWN ref.) So match
+# `--thread <ref>` anywhere inside the command-args, ended by a space or `<`
+# (the ref is escaped so a Slack-style ref's `.` stays literal, and a longer ref
+# sharing this one as a prefix never matches).
+REF_RE="$(printf '%s' "$REF" | sed 's/[][\\.*^$+?(){}|/]/\\&/g')"
+REF_SCOPE="command-args>[^<]*--thread ${REF_RE}([[:space:]]|<)"
+
 # Match the session's OWN scope line, not any mention of the ref. The slash
 # command's args are recorded verbatim in the first user message.
 if [ -n "$REF" ]; then
-  report "turns scoped to ref $REF:" F "command-args>--thread $REF<"
+  report "turns scoped to ref $REF:" E "$REF_SCOPE"
 
   # A turn that was NOT dispatched with --thread can still be working this ref:
   # an inbox-draining entry point (chief-of-staff, a morning briefing, a plain
@@ -331,7 +343,7 @@ if [ -n "$REF" ]; then
     # whole-file grep skips every session that merely quoted the ref while
     # reading a transcript, so those sessions would be neither counted nor
     # listed here, and would vanish from the output entirely.
-    matches_scope "$f" F "command-args>--thread $REF<" && continue
+    matches_scope "$f" E "$REF_SCOPE" && continue
     grep -qF -- "$REF" "$f" 2>/dev/null && hits="$hits $sid"
   done
   if [ -n "$hits" ]; then
@@ -389,7 +401,7 @@ if [ -n "$REF" ]; then
       # against the real 61830f67 case before this shipped. Keep it pipe-free.
       hdr="$(head -n 200 "$f" 2>/dev/null)"
       case "$hdr" in *"$REF"*) ;; *) continue ;; esac
-      matches_scope "$f" F "command-args>--thread $REF<" \
+      matches_scope "$f" E "$REF_SCOPE" \
         && completed_hits="$completed_hits $sid"
     done <<EOF
 $(find "$PROJECTS" -name '*.jsonl' -type f -mtime "-$COMPLETED_DAYS" 2>/dev/null)
