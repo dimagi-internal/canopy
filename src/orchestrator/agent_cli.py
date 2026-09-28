@@ -361,8 +361,20 @@ def agent_bootstrap(slugs, repo, dry_run, op_account):
             except AgentEmailError:
                 targets.append((s, None))
     else:
+        from orchestrator.agent_web import AgentWebError, resolve_identity
         from orchestrator.fleet_align import discover_agents
-        targets = [(a.slug, a.path) for a in sorted(discover_agents(), key=lambda x: x.slug)]
+        # Key on the agent's IDENTITY (plugin.json name), not the directory: a second
+        # checkout (`ace-2`) is the same agent, and bootstrapping it as "ace-2" would look up
+        # a vault and a canopy-web agent that don't exist. Prefer the checkout named for it.
+        by_slug: dict[str, Path] = {}
+        for a in sorted(discover_agents(), key=lambda x: (x.path.name, str(x.path))):
+            try:
+                ident = resolve_identity(a.path)["slug"]
+            except (AgentWebError, OSError, ValueError):
+                ident = a.slug
+            if ident not in by_slug or a.path.name == ident:
+                by_slug[ident] = a.path
+        targets = sorted(by_slug.items())
         if not targets:
             raise click.ClickException(
                 "no agent repos discovered on this machine — pass --slug <x> or --repo <dir>")

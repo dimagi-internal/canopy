@@ -68,7 +68,8 @@ SHARED_CLIENT_REFS = {
 
 #: stderr fragments meaning "1Password is locked / not signed in", not "item missing".
 OP_AUTH_FAILURES = ("authorization timeout", "not currently signed in", "authorization prompt",
-                    "session expired", "no accounts configured", "connect to 1password")
+                    "session expired", "no accounts configured", "connect to 1password",
+                    "prompterror")
 
 KEYCHAIN_HEADS_UP = (
     "Heads-up: gog reads its tokens from the macOS login Keychain — if a dialog asks to "
@@ -361,7 +362,10 @@ class Bootstrapper:
             return None, self._op_blocked
         err = (r.stderr or "").lower()
         if r.returncode != 0 and any(m in err for m in OP_AUTH_FAILURES):
-            self._op_blocked = (f"1Password did not authorize `op` ({_first_line(r.stderr)}) — "
+            # The reason only — op's full line names the FIRST ref tried, which would read as
+            # the wrong agent's secret in every later agent's report.
+            reason = _first_line(r.stderr).rsplit(": ", 1)[-1]
+            self._op_blocked = (f"1Password did not authorize `op` ({reason}) — "
                                 "unlock the 1Password app / approve its prompt, then re-run")
             return None, self._op_blocked
         return r, ""
