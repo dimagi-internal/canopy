@@ -265,4 +265,9 @@ else
   echo "After fixing the items above, re-run \`/canopy:setup\` — it's idempotent and skips completed steps."
 fi
 
+echo
+echo "Running agents on this machine (e.g. a new laptop or macOS account)? After the above:"
+echo "  canopy agent bootstrap --dry-run   # preview: plugins, ~/.<slug>/.env, gog token + client, per agent"
+echo "  canopy agent bootstrap             # do it (idempotent; same rules as the cloud runner's bootstrap)"
+
 exit "$FAILED"

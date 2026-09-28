@@ -708,6 +708,78 @@ def _plugin_source(repo: Path) -> str:
     return Path(repo).resolve().name
 
 
+class RequiredPlugin:
+    """One parsed `required_plugins` entry — the contract doctor AND bootstrap read.
+
+    `marketplace` is the declared `owner/repo` ("" when the entry is a bare name, which
+    bootstrap cannot install and doctor can only name). `marketplace_name` defaults to the
+    plugin name — true across this fleet (eva@eva, chrome-sales@chrome-sales).
+    """
+    __slots__ = ("name", "marketplace", "marketplace_name", "note")
+
+    def __init__(self, name: str, marketplace: str = "", marketplace_name: str = "",
+                 note: str = ""):
+        self.name = name
+        self.marketplace = marketplace
+        self.marketplace_name = marketplace_name or name
+        self.note = note
+
+    def __eq__(self, other):
+        return isinstance(other, RequiredPlugin) and all(
+            getattr(self, a) == getattr(other, a) for a in self.__slots__)
+
+    def __repr__(self):
+        return (f"RequiredPlugin({self.name!r}, {self.marketplace!r}, "
+                f"{self.marketplace_name!r}, {self.note!r})")
+
+
+def parse_required_plugins(declared) -> tuple[list[RequiredPlugin], list]:
+    """(parsed entries, malformed entries) for a config/agent.json `required_plugins` list.
+
+    ONE parser, shared by `check_required_plugins` and `canopy agent bootstrap`, because the
+    two MUST agree: a doctor failing an agent over a plugin bootstrap could not have installed
+    (or bootstrap installing one doctor does not look for) is worse than either alone. Mirrors
+    canopy-web runner/ec2/required_plugins.py, which the cloud bootstrap uses.
+    """
+    out: list[RequiredPlugin] = []
+    bad: list = []
+    if not isinstance(declared, list):
+        return out, ([declared] if declared else [])
+    for entry in declared:
+        spec = {"name": entry} if isinstance(entry, str) else entry
+        if not isinstance(spec, dict) or not str(spec.get("name") or "").strip():
+            bad.append(entry)
+            continue
+        out.append(RequiredPlugin(
+            name=str(spec["name"]).strip(),
+            marketplace=str(spec.get("marketplace") or "").strip(),
+            marketplace_name=str(spec.get("marketplace_name") or "").strip(),
+            note=" ".join(str(spec.get("note") or "").split()),
+        ))
+    return out, bad
+
+
+def declared_required_plugins(repo: Path) -> tuple[list[RequiredPlugin], list]:
+    """`parse_required_plugins` over the repo's config/agent.json (absent/unreadable → none)."""
+    try:
+        declared = json.loads(
+            (Path(repo) / "config" / "agent.json").read_text(encoding="utf-8")).get("required_plugins") or []
+    except (json.JSONDecodeError, OSError, AttributeError):
+        declared = []
+    return parse_required_plugins(declared)
+
+
+def installed_plugin_names(registry_path: str | None = None) -> set[str] | None:
+    """Plugin NAMES in the Claude Code plugin registry (marketplace suffix ignored), or None
+    when the registry cannot be read — absence of introspection, not evidence of absence."""
+    reg_file = Path(registry_path or PLUGIN_REGISTRY).expanduser()
+    try:
+        installed = json.loads(reg_file.read_text(encoding="utf-8")).get("plugins", {})
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return None
+    return {k.split("@", 1)[0] for k in installed}
+
+
 def check_required_plugins(repo: Path, *, registry_path: str | None = None) -> CheckResult:
     """OTHER plugins this agent's skills call must be installed here too.
 
@@ -720,51 +792,40 @@ def check_required_plugins(repo: Path, *, registry_path: str | None = None) -> C
 
     Declared per-agent in config/agent.json `required_plugins` — the AGENT's dependency, not a
     fleet constant (same rule as `gog_services`: hal must not fail over a plugin only eva
-    calls). Entries are a bare name, or an object with `marketplace` (the `owner/repo` to add)
-    and optional `marketplace_name` (defaults to the plugin name, true across this fleet:
-    eva@eva, chrome-sales@chrome-sales) and `note` for a follow-up setup step.
+    calls). Parsed by `parse_required_plugins`, which `canopy agent bootstrap` shares.
 
     A missing registry is a SKIP, not a failure — absence of introspection is not evidence of
     breakage, same as auth services.
     """
     name = "Required plugins"
-    try:
-        declared = json.loads(
-            (Path(repo) / "config" / "agent.json").read_text(encoding="utf-8")).get("required_plugins") or []
-    except (json.JSONDecodeError, OSError):
-        declared = []
+    declared, bad = declared_required_plugins(repo)
+    if bad:
+        return CheckResult(name, False,
+                           f"config/agent.json required_plugins has an entry with no name: "
+                           f"{bad[0]!r}")
     if not declared:
         return CheckResult(name, True, "n/a — none declared in config/agent.json")
-    reg_file = Path(registry_path or PLUGIN_REGISTRY).expanduser()
-    try:
-        installed = json.loads(reg_file.read_text(encoding="utf-8")).get("plugins", {})
-    except (json.JSONDecodeError, OSError):
+    have = installed_plugin_names(registry_path)
+    if have is None:
+        reg_file = Path(registry_path or PLUGIN_REGISTRY).expanduser()
         return CheckResult(name, True, f"skipped — no plugin registry at {reg_file}")
-    have = {k.split("@", 1)[0] for k in installed}
     missing = []
-    for entry in declared:
-        spec = {"name": entry} if isinstance(entry, str) else dict(entry or {})
-        if not (plugin := (spec.get("name") or "").strip()):
-            return CheckResult(name, False,
-                               f"config/agent.json required_plugins has an entry with no name: "
-                               f"{entry!r}")
-        if plugin in have:
+    for spec in declared:
+        if spec.name in have:
             continue
-        mkt_name = (spec.get("marketplace_name") or plugin).strip()
-        source = (spec.get("marketplace") or plugin).strip()
+        source = spec.marketplace or spec.name
         fix = (f"`/plugin marketplace add {source}` then "
-               f"`/plugin install {plugin}@{mkt_name}`")
-        if note := (spec.get("note") or "").strip():
-            fix += f" — {note}"
-        missing.append(f"{plugin}: {fix}")
+               f"`/plugin install {spec.name}@{spec.marketplace_name}`")
+        if spec.note:
+            fix += f" — {spec.note}"
+        missing.append(f"{spec.name}: {fix}")
     if missing:
         return CheckResult(
             name, False,
             f"{len(missing)} declared dependency plugin(s) NOT installed — the skills that "
             f"call them will fail mid-turn. " + " | ".join(missing),
         )
-    names = ", ".join(sorted(
-        (e if isinstance(e, str) else (e or {}).get("name", "?")) for e in declared))
+    names = ", ".join(sorted(s.name for s in declared))
     return CheckResult(name, True, f"all {len(declared)} declared plugin(s) installed ({names})")
 
 
