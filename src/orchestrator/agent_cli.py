@@ -1068,11 +1068,20 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
               help="The single concrete next step, verb-first. Max 300 chars — over-length "
                    "is REJECTED, never truncated.")
 @click.option("--idempotency-key", default=None,
-              help="Override the derived (agent, title, day) key — pass a fresh one to "
-                   "deliberately re-dispatch the same work.")
+              help="Override the derived (agent, title, day[, runner]) key — pass a fresh "
+                   "one to deliberately re-dispatch the same work.")
+@click.option("--runner", "runner_ref", default="",
+              help="Pin the turn to ONE runner, by name (e.g. jj-mbp-cdp) or id — for work "
+                   "only that box can do. Only it may claim the turn. Refused if the runner "
+                   "is unknown/ambiguous/retired or does not list the agent in "
+                   "capabilities.agents; see --queue-if-not-ready for paused/offline.")
+@click.option("--queue-if-not-ready", is_flag=True,
+              help="With --runner: enqueue even though the runner is paused/stale/offline. "
+                   "The server holds a pinned turn QUEUED (it never expires) and the runner "
+                   "claims it once back online. Without this flag such a pin is refused.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links,
-                   next_action, idempotency_key, as_json):
+                   next_action, idempotency_key, runner_ref, queue_if_not_ready, as_json):
     """Record work on an agent's board, then trigger a runner session to do it.
 
     The one-shot counterpart to a schedule: schedules are for recurring work, this is
@@ -1082,15 +1091,21 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     Reports the result as LAUNCHED (unverified) — a harness turn flips to `done` within
     seconds carrying "created session '<name>'", which is the runner finishing, not the
     agent's work succeeding. Verify with `canopy agent turns --slug <agent>`.
+
+    --runner pins the turn to one box (default: any runner serving the agent). The pin
+    is checked BEFORE the board is touched, so a refused pin leaves nothing behind.
     """
     import datetime as _dt
 
     from orchestrator import canopy_web
     from orchestrator.agent_dispatch import (
+        RUNNERS_PATH,
         DispatchError,
         TURNS_PATH,
         build_turn_payload,
+        check_runner_pin,
         derive_idempotency_key,
+        resolve_runner,
         summarize_turn,
     )
 
@@ -1105,9 +1120,39 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     title = check_task_field("title", title)
     next_action = check_task_field("next_action", next_action or "Work this dispatch")
     task_links = parse_task_links(links)
+    if queue_if_not_ready and not runner_ref.strip():
+        raise click.UsageError("--queue-if-not-ready only applies with --runner")
+
+    # Resolve and vet the pin FIRST: a refusal after the board write would leave a card
+    # for work that was never sent anywhere.
+    pinned = None
+    pin_notes: list[str] = []
+    if runner_ref.strip():
+        try:
+            rows = canopy_web.call("GET", RUNNERS_PATH) or []
+            if isinstance(rows, dict):
+                rows = rows.get("items") or rows.get("results") or []
+            pinned = resolve_runner(rows, runner_ref)
+        except DispatchError as e:
+            raise click.ClickException(str(e))
+        except (CanopyError, RuntimeError) as e:
+            raise click.ClickException(f"could not list runners to resolve --runner: {e}")
+        problems, not_ready, warnings = check_runner_pin(pinned, slug)
+        if problems:
+            raise click.ClickException(
+                "refusing to pin: " + "; ".join(problems) + ". Nothing was dispatched.")
+        if not_ready and not queue_if_not_ready:
+            raise click.ClickException(
+                "refusing to pin: " + "; ".join(not_ready)
+                + ". Pass --queue-if-not-ready to enqueue it anyway. Nothing was dispatched.")
+        pin_notes = not_ready + warnings
+        if not as_json:  # JSON carries them in `runner.warnings` instead
+            for note in pin_notes:
+                click.echo(f"warning: {note}", err=True)
 
     day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
-    key = idempotency_key or derive_idempotency_key(slug, title or prompt[:80], day)
+    key = idempotency_key or derive_idempotency_key(
+        slug, title or prompt[:80], day, runner_id=str(pinned["id"]) if pinned else "")
 
     try:
         client = _client(slug)
@@ -1126,7 +1171,8 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
             }])
 
         payload = build_turn_payload(slug, prompt=prompt, idempotency_key=key,
-                                     task_ext_id=task_ext_id)
+                                     task_ext_id=task_ext_id,
+                                     runner_id=str(pinned["id"]) if pinned else None)
         turn = canopy_web.call("POST", TURNS_PATH, payload)
     except DispatchError as e:
         raise click.ClickException(str(e))
@@ -1134,13 +1180,21 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
         raise click.ClickException(str(e))
 
     summary = summarize_turn(turn)
+    runner_out = None
+    if pinned:
+        runner_out = {"id": pinned.get("id"), "name": pinned.get("name"),
+                      "status": pinned.get("status"), "warnings": pin_notes}
     if as_json:
-        _emit({"task_ext_id": task_ext_id, "idempotency_key": key, "turn": summary})
+        _emit({"task_ext_id": task_ext_id, "idempotency_key": key, "turn": summary,
+               "runner": runner_out})
         return
 
     click.echo(f"Agent:  {slug}")
     if task_ext_id:
         click.echo(f"Task:   {task_ext_id}  {title.strip()}")
+    if pinned:
+        click.echo(f"Runner: {pinned.get('name')}  (pinned — only it may claim this turn; "
+                   f"now {pinned.get('status')})")
     click.echo(f"Turn:   {summary['id']}  →  {summary['headline']}")
     click.echo("")
     click.echo("This is a LAUNCH, not a result — the agent may not have read the brief yet.")

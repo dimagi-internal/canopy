@@ -12,6 +12,7 @@ into the code:
     as a completed outcome;
   - a double-dispatch of the same work must not spawn two sessions.
 """
+import datetime as dt
 import json
 
 import pytest
@@ -300,3 +301,216 @@ def test_lineage_is_omitted_rather_than_blank_when_unknown():
 def test_the_prompt_marker_and_the_field_agree():
     p = build_turn_payload("hal", prompt="do it", idempotency_key="k4", sender="ada")
     assert dispatched_by(p["prompt"]) == p["origin_ref"]["dispatched_by"] == "ada"
+
+
+# --- --runner: pin the turn to one box ---------------------------------------
+#
+# Server semantics these mirror (canopy-web apps/harness/services.py::claim_next_turn):
+# only the pinned runner may claim; the online guard sits ABOVE pin matching, so a
+# paused/stale runner leaves the turn QUEUED; a pin bypasses target matching, so the
+# server would hand an agent turn to a box that never declared that agent.
+
+from orchestrator.agent_dispatch import check_runner_pin, resolve_runner  # noqa: E402
+
+JJ_ID = "cb9d5262-52da-4d4d-a294-c59c47cd3e15"
+HAL_ID = "7421b48c-2516-4cfe-8cf8-53d3b43332e9"
+FLEET = ["ace", "ada", "echo", "eva", "hal"]
+
+
+def _runner(name, rid, *, status="online", paused=False, agents=FLEET, ready=True,
+            paused_note="", ready_note=""):
+    caps = {"projects": []}
+    if agents is not None:
+        caps["agents"] = agents
+    return {"id": rid, "name": name, "status": status, "paused": paused,
+            "paused_note": paused_note, "ready": ready, "ready_note": ready_note,
+            "capabilities": caps}
+
+
+RUNNERS = [
+    _runner("jj-mbp-cdp", JJ_ID),
+    _runner("haldimagi-mbp-cdp", HAL_ID),
+    _runner("cloud-ec2-1", "117ee3fb-979c-41d3-988f-58420bc422f3", agents=None),
+]
+
+
+def test_resolve_runner_by_name_or_uuid():
+    assert resolve_runner(RUNNERS, "jj-mbp-cdp")["id"] == JJ_ID
+    assert resolve_runner(RUNNERS, JJ_ID)["name"] == "jj-mbp-cdp"
+    assert resolve_runner(RUNNERS, JJ_ID.upper())["name"] == "jj-mbp-cdp"
+
+
+def test_resolve_runner_unknown_lists_what_is_visible():
+    with pytest.raises(DispatchError) as e:
+        resolve_runner(RUNNERS, "jj-mbp")  # a prefix is NOT a match — wrong box is the failure
+    msg = str(e.value)
+    assert "no runner named 'jj-mbp'" in msg
+    for r in RUNNERS:
+        assert r["name"] in msg
+
+
+def test_resolve_runner_ambiguous_name_demands_the_id():
+    dupes = RUNNERS + [_runner("jj-mbp-cdp", "00000000-0000-0000-0000-000000000001")]
+    with pytest.raises(DispatchError) as e:
+        resolve_runner(dupes, "jj-mbp-cdp")
+    assert "matches 2 runners" in str(e.value) and JJ_ID in str(e.value)
+
+
+def test_pin_to_online_runner_serving_the_agent_is_clean():
+    assert check_runner_pin(_runner("jj-mbp-cdp", JJ_ID), "eva") == ([], [], [])
+
+
+def test_pin_refuses_a_runner_that_does_not_serve_the_agent():
+    problems, _, _ = check_runner_pin(RUNNERS[2], "eva")
+    assert problems and "does not serve agent 'eva'" in problems[0]
+    problems, _, _ = check_runner_pin(_runner("x", "1", agents=["hal"]), "eva")
+    assert "capabilities.agents: hal" in problems[0]
+
+
+def test_pin_refuses_a_retired_runner():
+    problems, not_ready, _ = check_runner_pin(_runner("x", "1", status="retired"), "eva")
+    assert any("retired" in p for p in problems)
+    assert not_ready == [], "retired is permanent, never 'wait for it'"
+
+
+@pytest.mark.parametrize("status,paused", [("paused", True), ("stale", False),
+                                           ("disconnected", False), ("degraded", False)])
+def test_a_runner_that_is_not_online_would_leave_the_turn_queued(status, paused):
+    problems, not_ready, _ = check_runner_pin(
+        _runner("jj-mbp-cdp", JJ_ID, status=status, paused=paused, paused_note="token cap"),
+        "eva")
+    assert problems == []
+    assert not_ready and "stays QUEUED" in not_ready[0]
+    if paused:
+        assert "canopy runner unpause jj-mbp-cdp" in not_ready[0]
+        assert "token cap" in not_ready[0]
+
+
+def test_online_but_not_ready_is_a_warning_not_a_hold():
+    _, not_ready, warnings = check_runner_pin(
+        _runner("x", "1", ready=False, ready_note="emdash CDP unreachable"), "eva")
+    assert not_ready == []
+    assert warnings and "CDP unreachable" in warnings[0]
+
+
+def test_payload_carries_runner_id_only_when_pinned():
+    unpinned = build_turn_payload("eva", prompt="p", idempotency_key="k")
+    assert "runner_id" not in unpinned
+    pinned = build_turn_payload("eva", prompt="p", idempotency_key="k", runner_id=JJ_ID)
+    assert pinned["runner_id"] == JJ_ID
+    # everything else identical — the pin changes WHERE, not what
+    assert {k: v for k, v in pinned.items() if k != "runner_id"} == unpinned
+
+
+def test_a_pinned_key_never_dedupes_onto_an_unpinned_one():
+    base = derive_idempotency_key("eva", "Copy allowlist", "2026-09-28")
+    assert derive_idempotency_key("eva", "Copy allowlist", "2026-09-28", runner_id="") == base
+    on_jj = derive_idempotency_key("eva", "Copy allowlist", "2026-09-28", runner_id=JJ_ID)
+    on_hal = derive_idempotency_key("eva", "Copy allowlist", "2026-09-28", runner_id=HAL_ID)
+    assert len({base, on_jj, on_hal}) == 3
+    assert derive_idempotency_key("eva", "Copy allowlist", "2026-09-28",
+                                  runner_id=JJ_ID.upper()) == on_jj
+
+
+def _pin_transport(calls, runners=RUNNERS):
+    inner = _fake_transport(calls, turn_status="queued")
+
+    def transport(method, url, headers, data):
+        if method == "GET" and "/harness/runners/" in url:
+            calls.append((method, url, None))
+            return 200, json.dumps(runners)
+        return inner(method, url, headers, data)
+    return transport
+
+
+def _patch(monkeypatch, transport):
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+
+
+def test_cli_runner_by_name_pins_the_turn_by_uuid(monkeypatch):
+    calls = []
+    _patch(monkeypatch, _pin_transport(calls))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "eva", "--title", "Copy allowlist",
+                                  "--prompt", "read ~/.eva/allowlist.txt", "--runner", "jj-mbp-cdp",
+                                  "--json-output"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.output)
+    assert out["runner"]["id"] == JJ_ID and out["runner"]["warnings"] == []
+    posts = [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+    assert len(posts) == 1
+    body = posts[0][2]
+    assert body["runner_id"] == JJ_ID
+    # stamp + thread_key kept; key folds the runner in
+    assert "canopy:dispatched-prompt" in body["prompt"]
+    assert body["origin_ref"]["thread_key"] == body["idempotency_key"] == out["idempotency_key"]
+    day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    assert out["idempotency_key"] == derive_idempotency_key(
+        "eva", "Copy allowlist", day, runner_id=JJ_ID)
+    assert out["idempotency_key"] != derive_idempotency_key("eva", "Copy allowlist", day)
+
+
+def test_cli_unknown_runner_fails_before_touching_the_board(monkeypatch):
+    calls = []
+    _patch(monkeypatch, _pin_transport(calls))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "eva", "--title", "T",
+                                  "--prompt", "p", "--runner", "nope"])
+    assert r.exit_code != 0
+    assert "no runner named 'nope'" in r.output and "jj-mbp-cdp" in r.output
+    assert not [c for c in calls if c[0] == "POST"], "a refused pin must write nothing"
+
+
+def test_cli_refuses_a_runner_that_does_not_serve_the_agent(monkeypatch):
+    calls = []
+    _patch(monkeypatch, _pin_transport(calls))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "eva", "--title", "T",
+                                  "--prompt", "p", "--runner", "cloud-ec2-1",
+                                  "--queue-if-not-ready"])
+    assert r.exit_code != 0
+    assert "does not serve agent 'eva'" in r.output
+    assert not [c for c in calls if c[0] == "POST"]
+
+
+def test_cli_paused_runner_is_refused_without_the_escape(monkeypatch):
+    calls = []
+    paused = [_runner("jj-mbp-cdp", JJ_ID, status="paused", paused=True)]
+    _patch(monkeypatch, _pin_transport(calls, paused))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "eva", "--title", "T",
+                                  "--prompt", "p", "--runner", "jj-mbp-cdp"])
+    assert r.exit_code != 0
+    assert "stays QUEUED" in r.output and "--queue-if-not-ready" in r.output
+    assert not [c for c in calls if c[0] == "POST"]
+
+
+def test_cli_paused_runner_with_the_escape_enqueues_and_says_so(monkeypatch):
+    calls = []
+    paused = [_runner("jj-mbp-cdp", JJ_ID, status="paused", paused=True)]
+    _patch(monkeypatch, _pin_transport(calls, paused))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "eva", "--title", "T",
+                                  "--prompt", "p", "--runner", "jj-mbp-cdp",
+                                  "--queue-if-not-ready"])
+    assert r.exit_code == 0, r.output
+    assert "warning:" in r.output and "stays QUEUED" in r.output
+    assert "Runner: jj-mbp-cdp" in r.output
+    posts = [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+    assert posts and posts[0][2]["runner_id"] == JJ_ID
+
+
+def test_cli_queue_if_not_ready_needs_a_runner(monkeypatch):
+    _patch(monkeypatch, _pin_transport([]))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "eva", "--no-task",
+                                  "--prompt", "p", "--queue-if-not-ready"])
+    assert r.exit_code != 0 and "only applies with --runner" in r.output
+
+
+def test_cli_unpinned_dispatch_sends_no_runner_and_lists_no_runners(monkeypatch):
+    calls = []
+    _patch(monkeypatch, _pin_transport(calls))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "eva", "--no-task",
+                                  "--prompt", "p", "--json-output"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output)["runner"] is None
+    assert not [c for c in calls if "/harness/runners/" in c[1]]
+    posts = [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+    assert "runner_id" not in posts[0][2]

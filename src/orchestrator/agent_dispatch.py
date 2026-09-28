@@ -22,7 +22,9 @@ anything, or exited cleanly. `summarize_turn` therefore reports `launched` +
 on 2026-07-23; this is that miss, encoded.)
 
 **3. Re-running a dispatch spawns a second session.** The idempotency key is derived
-from (agent, title, day) so the same work dispatched twice is one turn.
+from (agent, title, day) so the same work dispatched twice is one turn. A dispatch
+PINNED to a runner folds the runner into that key, so it never dedupes onto an
+unpinned dispatch of the same title/day (which could be sitting on the wrong box).
 
 **4. A dispatched prompt is indistinguishable from a typed one downstream.** The runner
 hands the prompt to Claude Code as input, so the transcript records `origin: {kind:
@@ -31,6 +33,18 @@ downstream can tell an agent's brief from something Jonathan typed, and `agent-r
 `human_corrections` lens mined the briefs as the human shouting at the agent (canopy #488;
 measured 5 of 6 reported corrections on hal 2026-08-14). This layer is the one place that
 KNOWS, so it says so: `stamp_dispatched` appends a marker the extractor strips.
+
+**5. Some work can only run on ONE box** (a file that exists only in one macOS account,
+say). `--runner` pins the turn via canopy-web's `TurnIn.runner_id`. Server semantics,
+which `check_runner_pin` mirrors so the CLI refuses what can never work instead of
+queueing it silently (canopy-web `apps/harness/services.py::claim_next_turn`):
+a pin makes the turn invisible to every other runner and bypasses assignments and
+target matching — but NOT the online guard, which sits ABOVE pin matching, so a turn
+pinned to a paused/stale/offline runner stays QUEUED (queued turns never expire) and
+lands only when that runner is back online. It also still serializes per agent (it waits
+while that agent has an executing turn anywhere) and still passes the tenant and
+restricted-profile gates. A retired or invisible runner is a 422 at enqueue. Nothing server-side checks the runner can actually drive the agent, so the
+CLI checks the runner's self-declared `capabilities.agents` itself.
 
 Deterministic: builds payloads and reads status. Judgment about what to dispatch, and
 verification that it worked, stay with the caller.
@@ -44,6 +58,7 @@ import re
 from pathlib import Path
 
 TURNS_PATH = "/api/harness/turns/"
+RUNNERS_PATH = "/api/harness/runners/"
 
 # Runner statuses → what a human may honestly say about them.
 _LAUNCHED = {"done"}                       # spawned; the agent's own outcome is unknown
@@ -64,18 +79,104 @@ class DispatchError(Exception):
     """A dispatch that cannot be built correctly — raised, never silently degraded."""
 
 
-def derive_idempotency_key(slug: str, title: str, day: str) -> str:
-    """Stable key for (agent, work, day) so a repeat dispatch is one turn, not two.
+def derive_idempotency_key(slug: str, title: str, day: str, runner_id: str = "") -> str:
+    """Stable key for (agent, work, day[, runner]) so a repeat dispatch is one turn, not two.
 
     Scoped to the day rather than forever: dispatching the same title tomorrow is
     usually a deliberate re-run, and a permanent key would silently swallow it.
+
+    `runner_id` (the resolved UUID, never the name — `--runner jj-mbp-cdp` and
+    `--runner <its uuid>` are the same pin) joins the key only when the dispatch is
+    pinned. Otherwise a pinned re-dispatch of work first sent unpinned would dedupe onto
+    the unpinned turn — which may be the very turn that landed on the wrong box. Unpinned
+    keys are unchanged, so existing dedupe keeps working across the upgrade.
     """
-    digest = hashlib.sha256(f"{slug}|{title}|{day}".encode()).hexdigest()[:12]
+    basis = f"{slug}|{title}|{day}"
+    rid = (runner_id or "").strip().lower()
+    if rid:
+        basis += f"|runner={rid}"
+    digest = hashlib.sha256(basis.encode()).hexdigest()[:12]
     return f"dispatch-{(slug or '').strip().lower()}-{digest}"
 
 
+def resolve_runner(rows: list[dict], needle: str) -> dict:
+    """The one runner `needle` names — by exact NAME or UUID. Raises on none or many.
+
+    Exact only, no substring: a pin exists because the work must land on ONE specific
+    box, so guessing between `jj-mbp-cdp` and a hypothetical `jj-mbp-cdp-2` is exactly
+    the wrong-box outcome the flag exists to prevent.
+    """
+    needle = (needle or "").strip()
+    if not needle:
+        raise DispatchError("name a runner (see `canopy runner list`)")
+    low = needle.lower()
+    exact = [r for r in rows or []
+             if str(r.get("id") or "").lower() == low or str(r.get("name") or "") == needle]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        raise DispatchError(
+            f"'{needle}' matches {len(exact)} runners; use the id: "
+            + ", ".join(f"{r.get('name')}={r.get('id')}" for r in exact))
+    names = ", ".join(str(r.get("name") or "") for r in rows or []) or "(none visible)"
+    raise DispatchError(f"no runner named '{needle}'. Visible: {names}")
+
+
+# live_status values (canopy-web `Runner.live_status`). Only ONLINE claims; every other
+# live value leaves a pinned turn QUEUED until the runner comes back online.
+_RUNNER_ONLINE = "online"
+_RUNNER_RETIRED = "retired"
+
+
+def check_runner_pin(runner: dict, slug: str) -> tuple[list[str], list[str], list[str]]:
+    """(problems, not_ready, warnings) for pinning an agent turn for `slug` to `runner`.
+
+    - `problems` can never be fixed by waiting — the turn would never be claimed, or
+      would be claimed by a box that cannot drive the agent — so the caller refuses.
+    - `not_ready`: the server WILL hold the turn QUEUED until the runner is online again
+      (canopy-web `claim_next_turn` returns before pin matching unless `live_status ==
+      online`; a pause outranks a pin). The caller refuses unless the operator opts in.
+    - `warnings`: the turn will be claimed, but something the runner self-reports makes
+      it likely to fail (online but `ready: false`, e.g. emdash CDP unreachable). Said,
+      not blocked — the server does not gate claiming on it either.
+    """
+    name = runner.get("name") or runner.get("id")
+    problems: list[str] = []
+    not_ready: list[str] = []
+    warnings: list[str] = []
+    status = str(runner.get("status") or "").strip().lower()
+    if status == _RUNNER_RETIRED:
+        problems.append(f"runner '{name}' is retired — nothing will ever claim a turn pinned to it")
+    agents = (runner.get("capabilities") or {}).get("agents") or []
+    if slug not in agents:
+        # The server lets a pin bypass target matching, so it WOULD hand this turn over —
+        # and the runner would then try to drive an agent repo it never declared.
+        problems.append(
+            f"runner '{name}' does not serve agent '{slug}' "
+            f"(capabilities.agents: {', '.join(agents) or 'none'})")
+    if status not in (_RUNNER_RETIRED, _RUNNER_ONLINE):
+        if runner.get("paused") or status == "paused":
+            note = str(runner.get("paused_note") or "").strip()
+            why = "paused" + (f" ({note})" if note else "")
+            hint = (f"; release it with `canopy runner unpause {name}` "
+                    f"(or remove ~/.canopy/PAUSED on that box)")
+        else:
+            why = status or "in an unknown state"
+            hint = "; it lands when the runner's heartbeat is fresh again"
+        not_ready.append(
+            f"runner '{name}' is {why} — a turn pinned to it stays QUEUED until it is "
+            f"back online{hint}")
+    elif status == _RUNNER_ONLINE and runner.get("ready") is False:
+        note = str(runner.get("ready_note") or "").strip()
+        warnings.append(
+            f"runner '{name}' is online but reports NOT ready"
+            + (f" ({note})" if note else "") + " — it will still claim the turn, which may fail")
+    return problems, not_ready, warnings
+
+
 def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
-                       task_ext_id: str | None = None, sender: str | None = None) -> dict:
+                       task_ext_id: str | None = None, sender: str | None = None,
+                       runner_id: str | None = None) -> dict:
     """The `POST /api/harness/turns/` body for a one-shot dispatch.
 
     `sender` is the dispatching agent's slug, defaulting to whichever agent repo we are standing
@@ -122,6 +223,10 @@ def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
     # empty one, so send nothing rather than "".
     if (prompt or "").strip():
         payload["prompt"] = stamp_dispatched(prompt, sender=who)
+    # A pin (TurnIn.runner_id): only that runner may claim the turn. Omitted, not null,
+    # when unpinned, so an unpinned payload is byte-identical to before pins existed.
+    if (runner_id or "").strip():
+        payload["runner_id"] = runner_id.strip()
     return payload
 
 
