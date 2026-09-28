@@ -190,11 +190,21 @@ CONFIG = os.path.join(REPO, "config", "gating.json")
 _RICH = ("tool_pattern", "per_statement")   # engine-only rule features
 
 
+class _NotInstalled(Exception):
+    """The canopy plugin is not installed at all, so /canopy:update does not exist yet."""
+
+
 def _engine():
     plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
     if not plugin_dir:
-        reg = json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json"), encoding="utf-8"))
-        plugin_dir = reg["plugins"]["canopy@canopy"][0]["installPath"]
+        reg_path = os.path.expanduser("~/.claude/plugins/installed_plugins.json")
+        if not os.path.isfile(reg_path):
+            raise _NotInstalled(reg_path + " does not exist")
+        reg = json.load(open(reg_path, encoding="utf-8"))
+        entries = (reg.get("plugins") or {}).get("canopy@canopy")
+        if not entries:
+            raise _NotInstalled("no canopy@canopy entry in " + reg_path)
+        plugin_dir = entries[0]["installPath"]
     path = os.path.join(plugin_dir, "agent-core", "gating_guard.py")
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
@@ -215,6 +225,18 @@ def _degraded(exc):
     slug = cfg.get("slug") or os.path.basename(REPO) or "the agent"
     if cfg.get("channels"):
         # Depends on baseline rails it cannot read — same fail-closed contract as the engine.
+        if isinstance(exc, _NotInstalled):
+            # Fresh account: /canopy:update does not exist yet, and this hook blocks the
+            # agent's own shell, so only a human-typed `!` command (which skips hooks) can fix it.
+            sys.stderr.write(
+                "BLOCKED (fail closed): " + slug + " mounts gating channels but the canopy "
+                "plugin is not installed (" + str(exc) + ").\n"
+                "Fix: the human types this in the prompt (the leading ! runs it outside "
+                "this hook, which blocks the agent's own shell):\n"
+                "  ! claude plugin marketplace add dimagi-internal/canopy && "
+                "claude plugin install canopy@canopy\n"
+                "No restart needed: this hook re-resolves the engine on every call.\n")
+            sys.exit(2)
         sys.stderr.write(
             "BLOCKED (fail closed): " + slug + " mounts gating channels but the canopy gating "
             "engine (agent-core/gating_guard.py) is unresolvable - "
