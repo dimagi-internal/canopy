@@ -313,3 +313,51 @@ def test_help_prints_the_whole_header(projects):
     assert res.returncode == 0
     # The last paragraph of the header must survive.
     assert "must never render as" in res.stdout, res.stdout
+
+
+def _runner_prompt(ref: str, slug: str = "eva") -> str:
+    """What the canopy runner actually dispatches: the ref is followed by --caller."""
+    return (
+        f"<command-message>{slug}:turn</command-message>\n"
+        f"<command-name>/{slug}:turn</command-name>\n"
+        f"<command-args>--thread {ref} --caller /Users/x/.canopy/caller/abc.json</command-args>"
+    )
+
+
+def test_runner_dispatched_turn_with_trailing_caller_is_counted(projects):
+    """SEVENTH FAILURE. `--thread <ref> --caller <path>` must count as scoped to <ref>.
+
+    The pattern used to require `--thread <ref><`, so a runner-dispatched turn —
+    whose ref is followed by ` --caller …` — matched nothing: a live turn on the
+    ref was told `COUNT=0 (includes you)` about its OWN ref (2026-09-28, eva).
+    """
+    a, b = "aaaaaaaa-0000-0000-0000-000000000001", "bbbbbbbb-0000-0000-0000-000000000002"
+    _write_transcript(projects, a, _runner_prompt(REF_A))
+    _write_transcript(projects, b, _runner_prompt(REF_A))
+
+    out = _run(projects, [a, b], "--ref", REF_A, "--slug", "eva").stdout
+
+    assert _count_under(out, f"turns scoped to ref {REF_A}") == 2, out
+    scoped_block = out.split("COUNT=")[0]
+    assert a in scoped_block and b in scoped_block, out
+    # Scoped sessions are in COUNT, so they must not ALSO be listed as mere mentions.
+    assert "nonetheless mention it" not in out, out
+
+
+def test_ref_scope_does_not_match_a_longer_ref_or_regex_lookalike(projects):
+    """The looser match must stay exact: no prefix hits, and `.` in a ref is literal."""
+    a, b, c = (
+        "aaaaaaaa-0000-0000-0000-000000000001",
+        "bbbbbbbb-0000-0000-0000-000000000002",
+        "cccccccc-0000-0000-0000-000000000003",
+    )
+    slack_ref = "C0123/1712345.678"
+    _write_transcript(projects, a, _runner_prompt(REF_A + "ff"))           # longer ref
+    _write_transcript(projects, b, _runner_prompt("C0123/1712345x678"))    # `.` lookalike
+    _write_transcript(projects, c, _runner_prompt(slack_ref))
+
+    assert _count_under(_run(projects, [a, b, c], "--ref", REF_A).stdout,
+                        f"turns scoped to ref {REF_A}") == 0
+    out = _run(projects, [a, b, c], "--ref", slack_ref).stdout
+    assert _count_under(out, f"turns scoped to ref {slack_ref}") == 1, out
+    assert c in out.split("COUNT=")[0], out
