@@ -370,11 +370,16 @@ outside. So the count you are carrying when you finally write is not the count y
 both, cheaply, at the moment of action:
 
 ```bash
-"$CANOPY/scripts/live-turns.sh" --ref <the-ref> --slug <slug>   # again, right before you act
+"$CANOPY/scripts/live-turns.sh" --ref <the-ref> --slug <slug> --require-solo && <the write>
 ```
 
-Non-1 now → go read that session's transcript and apply the stand-down rules above **before** the
-write, not after. And the corollary for the slow case: **a turn resumed after a long stall must
+**Chain it with `--require-solo`, so the check can stop the write.** Without the flag the script
+always exits 0: it *prints* its warning, and a warning printed in the same command as the write is
+read after the write has run. With it, any sibling signal (a COUNT above 1, a session mentioning the
+ref, a same-scope session mid-resume) exits 3 and the `&&` never fires. On exit 3 → go read that
+session's transcript and apply the stand-down rules above **before** the write, not after. (Origin:
+2026-09-29, hal — a pre-write re-check printed `COUNT=2` and a mention in the same command as a
+prod write; the write ran first. The sibling was a benign confined caller session, which was luck.) And the corollary for the slow case: **a turn resumed after a long stall must
 treat its whole start-of-turn state as stale** — re-read the thread and re-run both counts, because
 a turn that idled overnight is exactly the turn a recovery dispatch was sent to replace.
 
