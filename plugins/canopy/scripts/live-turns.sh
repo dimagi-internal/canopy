@@ -130,13 +130,30 @@
 #
 # Exit 0 always when it could look; exit 2 if it could not enumerate sessions at
 # all, because "I could not check" must never render as "nothing found".
+#
+# --require-solo: exit 3 instead of 0 when ANY sibling signal was printed — a
+# COUNT above 1, a session that mentions the ref, or a same-scope session with no
+# live process. Use it to GATE the write it protects:
+#
+#     live-turns.sh --ref <ref> --slug <slug> --require-solo && <the write>
+#
+# Without it, "re-run the counts right before you write" is a printout, and a
+# printout chained into the write does not stop it. (Measured 2026-09-29, hal: a
+# pre-write re-check printed COUNT=2 plus a "go read these" mention in the SAME
+# command as a prod write, and the write ran before anyone read the output. The
+# sibling turned out to be benign — a confined caller session — which is luck,
+# not a check.) Live sessions with no scope line do NOT trip it: every machine
+# has some, and a gate that always fires is a gate people route around.
 
 set -uo pipefail
 
 REF=""
 SLUG=""
+REQUIRE_SOLO=0
+NOT_SOLO=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --require-solo) REQUIRE_SOLO=1; shift ;;
     --ref)  REF="${2:-}"; shift 2 ;;
     --slug) SLUG="${2:-}"; shift 2 ;;
     # Whole header block, found by SHAPE not by line number: a hardcoded range
@@ -148,7 +165,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$REF" ] && [ -z "$SLUG" ]; then
-  echo "usage: live-turns.sh [--ref <thread-id>] [--slug <agent-slug>]" >&2
+  echo "usage: live-turns.sh [--ref <thread-id>] [--slug <agent-slug>] [--require-solo]" >&2
   exit 64
 fi
 
@@ -280,6 +297,7 @@ report() {
     fi
   done
   echo "COUNT=$count (includes you)"
+  [ "$count" -gt 1 ] && NOT_SOLO=1
 
   # Same scope, second liveness source. Deliberately printed UNDER the count and
   # outside it: a session with no process is either mid-resume (an owner you must
@@ -292,6 +310,7 @@ report() {
     matches_scope "$f" "$mode" "$pattern" && recent_hits="$recent_hits $sid"
   done
   if [ -n "$recent_hits" ]; then
+    NOT_SOLO=1
     echo "  -- plus, matching this same scope, active in the last ${RECENT_MIN}m with NO live process:"
     for sid in $recent_hits; do echo "     $sid"; done
     echo "     A session being RESUMED has no process for a few seconds — that is the"
@@ -347,6 +366,7 @@ if [ -n "$REF" ]; then
     grep -qF -- "$REF" "$f" 2>/dev/null && hits="$hits $sid"
   done
   if [ -n "$hits" ]; then
+    NOT_SOLO=1
     echo "sessions NOT scoped to this ref that nonetheless mention it —"
     echo "the COUNT above cannot see these; go read them before you write or send:"
     for sid in $hits; do echo "  $sid"; done
@@ -437,6 +457,12 @@ if [ -n "$UNSCOPED" ]; then
   echo "tell what they are working on (resumed sessions, SDK/API runs, plain prompts):"
   for sid in $UNSCOPED; do echo "  $sid"; done
   echo
+fi
+
+if [ "$REQUIRE_SOLO" = 1 ] && [ "$NOT_SOLO" = 1 ]; then
+  echo "NOT SOLO — --require-solo refused: read the sessions listed above before" >&2
+  echo "you write or send, then decide. Exiting 3 so a chained write does not run." >&2
+  exit 3
 fi
 
 exit 0

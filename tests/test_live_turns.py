@@ -361,3 +361,48 @@ def test_ref_scope_does_not_match_a_longer_ref_or_regex_lookalike(projects):
     out = _run(projects, [a, b, c], "--ref", slack_ref).stdout
     assert _count_under(out, f"turns scoped to ref {slack_ref}") == 1, out
     assert c in out.split("COUNT=")[0], out
+
+
+# ---- --require-solo: the pre-write re-check must be able to GATE the write ----
+
+
+def test_require_solo_exits_3_when_a_second_turn_holds_the_ref(projects):
+    a, b = "aaaaaaaa-0000-0000-0000-000000000001", "bbbbbbbb-0000-0000-0000-000000000002"
+    _write_transcript(projects, a, _prompt(REF_A))
+    _write_transcript(projects, b, _prompt(REF_A))
+
+    res = _run(projects, [a, b], "--ref", REF_A, "--require-solo")
+
+    assert res.returncode == 3, res.stdout + res.stderr
+    assert "NOT SOLO" in res.stderr
+    assert _count_under(res.stdout, f"turns scoped to ref {REF_A}") == 2  # report still printed
+
+
+def test_require_solo_exits_3_on_a_mention_alone(projects):
+    """COUNT=1 with a mention is the 2026-09-29 case: the mention was the whole signal."""
+    a, b = "aaaaaaaa-0000-0000-0000-000000000001", "bbbbbbbb-0000-0000-0000-000000000002"
+    _write_transcript(projects, a, _prompt(REF_A))
+    _write_transcript(projects, b, _prompt(REF_B), later_lines=[f"reading thread {REF_A}"])
+
+    res = _run(projects, [a, b], "--ref", REF_A, "--require-solo")
+
+    assert _count_under(res.stdout, f"turns scoped to ref {REF_A}") == 1
+    assert res.returncode == 3, res.stdout + res.stderr
+
+
+def test_require_solo_passes_when_alone(projects):
+    a = "aaaaaaaa-0000-0000-0000-000000000001"
+    _write_transcript(projects, a, _prompt(REF_A))
+
+    res = _run(projects, [a], "--ref", REF_A, "--slug", "hal", "--require-solo")
+
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+def test_without_the_flag_exit_stays_0(projects):
+    """Existing callers parse the printout; the default contract must not change."""
+    a, b = "aaaaaaaa-0000-0000-0000-000000000001", "bbbbbbbb-0000-0000-0000-000000000002"
+    _write_transcript(projects, a, _prompt(REF_A))
+    _write_transcript(projects, b, _prompt(REF_A))
+
+    assert _run(projects, [a, b], "--ref", REF_A).returncode == 0
