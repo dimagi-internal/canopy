@@ -45,6 +45,15 @@ Profile shape (written by the runner from canopy-web's envelope):
 
 `{thread_id}` in a pattern is the conversation's thread, so a caller's session
 can read and answer THEIR thread and no other.
+
+**The session's own tool output is always readable.** Claude Code does not show a
+large tool result inline: it saves it to `<project-dir>/<session-id>/tool-results/`
+and shows the first 2 KB. That directory is outside the worktree, so without this
+rule an allowed command whose output is large (`canopy email read` on a 15-message
+thread) returns a preview and a path the session may not open, and the caller's
+newest message, which comes last, is never seen. Only a read tool may open it, only the
+session's OWN directory (derived from its transcript path), resolved like any
+other path so `..` and symlinks cannot leave it.
 """
 import fnmatch
 import json
@@ -96,6 +105,36 @@ def restricted_task(transcript_path: str):
     # emdash appends a random `-<suffix>` to the task name; older layouts did not.
     base, _, _ = leaf.rpartition("-")
     return True, [leaf] + ([base] if base.startswith(_RESTRICTED) else [])
+
+
+def own_results_dir(transcript_path: str):
+    """`<project-dir>/<session-id>/tool-results`, where Claude Code saves THIS
+    session's oversized tool output — or None if the path has no recognisable shape.
+
+    A top-level transcript is `<project-dir>/<session-id>.jsonl`; a subagent's is
+    `<project-dir>/<session-id>/subagents/agent-….jsonl` and shares its parent's
+    directory. Either way the session directory is the transcript's own sibling,
+    so one session can never name another's.
+    """
+    parts = (transcript_path or "").split("/")
+    if "subagents" in parts:
+        session_dir = "/".join(parts[:parts.index("subagents")])
+    elif transcript_path.endswith(".jsonl"):
+        session_dir = transcript_path[: -len(".jsonl")]
+    else:
+        return None
+    if not os.path.basename(session_dir):
+        return None
+    return os.path.join(session_dir, "tool-results")
+
+
+def _in_dir(path: str, directory, cwd: str) -> bool:
+    if not (path and directory):
+        return False
+    real = os.path.realpath(os.path.join(os.path.realpath(cwd) if cwd else "/",
+                                         os.path.expanduser(path)))
+    root = os.path.realpath(directory)
+    return real == root or real.startswith(root + "/")
 
 
 def load_profile(candidates, root=None):
@@ -196,8 +235,9 @@ def _is_own_envelope(tool: str, tool_input: dict, prof: dict) -> bool:
     return bool(target) and os.path.realpath(os.path.expanduser(target)) == os.path.realpath(own)
 
 
-def decide(tool: str, tool_input: dict, prof: dict, cwd: str):
-    """None to allow, else the reason to refuse."""
+def decide(tool: str, tool_input: dict, prof: dict, cwd: str, results_dir=None):
+    """None to allow, else the reason to refuse. `results_dir` is the session's own
+    tool-results directory (see `own_results_dir`), readable by any listed read tool."""
     if _is_own_envelope(tool, tool_input, prof):
         return None
     cap = prof["capability"]
@@ -225,8 +265,11 @@ def decide(tool: str, tool_input: dict, prof: dict, cwd: str):
         paths = [str((tool_input or {}).get(k) or "") for k in keys]
         if tool in ("Glob", "Grep", "LS") and not any(paths):
             paths = [cwd]
-        allowed = cap.get("write_paths") if tool in _WRITE_TOOLS else cap.get("read_paths")
+        writes = tool in _WRITE_TOOLS
+        allowed = cap.get("write_paths") if writes else cap.get("read_paths")
         for p in paths:
+            if not writes and _in_dir(p, results_dir, cwd):
+                continue
             if not _path_ok(p, allowed or [], prof, cwd):
                 return f"this session answers a caller through '{name}'; {p or 'that path'} is outside what it may touch"
     return None
@@ -253,7 +296,7 @@ def main() -> int:
               "the session starts.", file=sys.stderr)
         return 2
     why = decide(data.get("tool_name", ""), data.get("tool_input") or {}, prof,
-                 data.get("cwd") or "")
+                 data.get("cwd") or "", own_results_dir(data.get("transcript_path", "")))
     if why:
         print(f"canopy: {why}.", file=sys.stderr)
         return 2

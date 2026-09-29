@@ -264,3 +264,78 @@ def test_no_write_paths_means_no_writes(monkeypatch, capsys, profiles):
     # wide-open behaviour: fail closed.
     _with_cap(profiles, tools=["Read", "Write"])
     assert _run(monkeypatch, capsys, "Write", {"file_path": "/Users/a/w/.ace-ask/body.md"})[0] == 2
+
+
+# --- the session's own tool output -----------------------------------------------------
+#
+# 2026-09-29, hal cx-canopy-agent-dask: `canopy email read` on a 15-message thread
+# printed 90 KB. Claude Code saved it to <project>/<session>/tool-results/ and showed
+# the first 2 KB, the guard refused the file, and the caller's newest message (the
+# last one) was never read. Two turns stalled that way.
+
+def _session(tmp_path):
+    proj = tmp_path / "projects" / f"{ROOT_DIR}{TASK}-rn860"
+    results = proj / "0e1f" / "tool-results"
+    results.mkdir(parents=True)
+    (results / "b1l2.txt").write_text("{}")
+    return proj, results
+
+
+def test_the_sessions_own_tool_results_are_readable(monkeypatch, capsys, profiles, tmp_path):
+    proj, results = _session(tmp_path)
+    tp = str(proj / "0e1f.jsonl")
+    assert _run(monkeypatch, capsys, "Read", {"file_path": str(results / "b1l2.txt")}, tp=tp)[0] == 0
+    assert _run(monkeypatch, capsys, "Grep", {"pattern": "x", "path": str(results)}, tp=tp)[0] == 0
+
+
+def test_a_subagent_reads_its_parents_tool_results(monkeypatch, capsys, profiles, tmp_path):
+    proj, results = _session(tmp_path)
+    tp = str(proj / "0e1f" / "subagents" / "agent-1.jsonl")
+    assert _run(monkeypatch, capsys, "Read", {"file_path": str(results / "b1l2.txt")}, tp=tp)[0] == 0
+
+
+def test_another_sessions_tool_results_are_not(monkeypatch, capsys, profiles, tmp_path):
+    proj, results = _session(tmp_path)
+    other = proj / "9999" / "tool-results"
+    other.mkdir(parents=True)
+    (other / "x.txt").write_text("{}")
+    tp = str(proj / "0e1f.jsonl")
+    for target in (other / "x.txt", results / ".." / ".." / "9999" / "tool-results" / "x.txt",
+                   proj / "0e1f.jsonl"):
+        code, err = _run(monkeypatch, capsys, "Read", {"file_path": str(target)}, tp=tp)
+        assert code == 2 and "outside what it may touch" in err
+
+
+def test_a_symlink_out_of_tool_results_is_refused(monkeypatch, capsys, profiles, tmp_path):
+    proj, results = _session(tmp_path)
+    secret = tmp_path / "secret"
+    secret.write_text("x")
+    (results / "link").symlink_to(secret)
+    code, _ = _run(monkeypatch, capsys, "Read", {"file_path": str(results / "link")},
+                   tp=str(proj / "0e1f.jsonl"))
+    assert code == 2
+
+
+def test_tool_results_are_readable_not_writable(monkeypatch, capsys, profiles, tmp_path):
+    _with_cap(profiles, tools=["Read", "Write"], write_paths=["{cwd}/.ace-ask/*"])
+    proj, results = _session(tmp_path)
+    code, _ = _run(monkeypatch, capsys, "Write", {"file_path": str(results / "b1l2.txt")},
+                   tp=str(proj / "0e1f.jsonl"))
+    assert code == 2
+
+
+def test_tool_results_still_need_a_listed_read_tool(monkeypatch, capsys, profiles, tmp_path):
+    _with_cap(profiles, tools=["mcp__canopy-web__who_is_asking"])
+    proj, results = _session(tmp_path)
+    code, err = _run(monkeypatch, capsys, "Read", {"file_path": str(results / "b1l2.txt")},
+                     tp=str(proj / "0e1f.jsonl"))
+    assert code == 2 and "does not include the Read tool" in err
+
+
+@pytest.mark.parametrize("tp,want", [
+    ("/p/proj/0e1f.jsonl", "/p/proj/0e1f/tool-results"),
+    ("/p/proj/0e1f/subagents/agent-1.jsonl", "/p/proj/0e1f/tool-results"),
+    ("", None), ("/p/proj/0e1f", None), ("/.jsonl", None),
+])
+def test_own_results_dir(tp, want):
+    assert pg.own_results_dir(tp) == want
