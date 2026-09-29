@@ -123,8 +123,15 @@ You have three, and they differ in exactly the way that matters:
 | Workspace | Who gets in | Notes |
 |---|---|---|
 | `dimagi` | **auto-admits every `@dimagi.com` address as an EDITOR** on first login | the default a new agent lands in |
-| `connect` | no auto-join — membership is explicit | where `hal`, `ace`, `ada`, `echo` live |
+| **your division** — `connect`, `strategy`, `operations`, `commcare`, `global-solutions` | no auto-join — membership is explicit; each has its own admins | **the usual answer.** `hal`, `ace`, `ada`, `echo` live in `connect` |
 | **your own** | nobody until you invite them; you are the owner | one API call, below |
+
+**Workspaces nest.** The divisions sit *under* `dimagi`, and the tree grants exactly one thing:
+an **owner** of a workspace is an owner of everything below it (so Dimagi's owners can administer
+every division). Nothing else flows down — `dimagi`'s auto-admitted editors see **nothing** in a
+division workspace. That is why a division is the right home: private to its team, still
+administrable from the top. Pass `"parent": "dimagi"` when creating a workspace to nest it
+(you must own the parent); the rules are in canopy-web's `docs/architecture/roles.md`.
 
 Editor is not a read-only role: `DELETE /api/agents/{slug}` accepts editor or
 owner. So an agent left in `dimagi` can have its board, tasks, turns and work
