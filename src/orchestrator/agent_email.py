@@ -805,8 +805,8 @@ def derive_reply_all(
 
     Two modes (exactly one of thread_id / message_id):
     - **thread_id (preferred)** — reads the thread and replies to its LATEST non-self
-      message: To = that sender, Cc = everyone else on its To+Cc,
-      reply_to_message_id = its id. `gog gmail read` is a THREAD reader and 404s on a
+      message: To = that sender, Cc = every other participant of the WHOLE thread
+      (see _reply_all_of), reply_to_message_id = its id. `gog gmail read` is a THREAD reader and 404s on a
       bare message id — which is every multi-message thread's latest id. That bug bit
       echo live; thread mode is the shape that avoids it.
     - **message_id** — replies to that specific message when its id happens to be
@@ -843,11 +843,13 @@ def derive_reply_all(
         raise AgentEmailError(f"reply-all: no messages in {read_id}")
     self_lc = identity.account.lower()
     if thread_id:
-        # the message being replied to = latest one not sent by the agent itself
-        msg = next((m for m in reversed(msgs)
-                    if self_lc not in _headers_of(m).get("from", "").lower()), msgs[-1])
-    else:
-        msg = next((m for m in msgs if m.get("id") == message_id), None) or msgs[-1]
+        # Whole-thread participants, one implementation shared with `read` (see
+        # _reply_all_of for why a reply-all must not shrink to the latest message).
+        ra = _reply_all_of(msgs, identity.account)
+        if not ra["to"]:
+            raise AgentEmailError(f"reply-all: message in {read_id} has no From header")
+        return ra["to"].lower(), ra["cc"], ra["reply_to_message_id"]
+    msg = next((m for m in msgs if m.get("id") == message_id), None) or msgs[-1]
     h = _headers_of(msg)
     sender = getaddresses([h.get("from", "")])
     sender_email = sender[0][1].lower() if sender else ""
@@ -1317,9 +1319,17 @@ def unseen_quoted(tail: str, sibling_bodies: "list[str]") -> str:
 
 def _reply_all_of(raw_messages: list[dict], self_account: str) -> dict:
     """Compute reply-all recipients for a thread: To = the latest non-self sender, Cc =
-    everyone else on that message's To+Cc minus self and the To, deduped; reply_to_message_id
-    = that message's id. Same algorithm as derive_reply_all's thread mode, computed from the
-    already-parsed messages so `read` needs only ONE gog read."""
+    EVERY participant of the WHOLE thread (each message's From/To/Cc) minus self and the
+    To, deduped — the latest message's recipients first, then the rest in thread order;
+    reply_to_message_id = that latest message's id. derive_reply_all's thread mode calls
+    this, and `read` computes it from the already-parsed messages in ONE gog read.
+
+    Whole-thread, not latest-message, because a reply to a SUBSET is routine and must not
+    shrink everyone else's thread. Measured 2026-09-29 (hal): Jonathan opened a thread to
+    hal cc'ing five colleagues; Gillian replied to hal + Amie only; reply-all then derived
+    To=Gillian, Cc=Amie — dropping the person who asked AND four of his five cc's — and
+    the refusal text ("a reply-all goes to the thread's own participants") promised the
+    opposite of what the code did. Narrowing stays possible, but explicit (`--narrow`)."""
     from email.utils import getaddresses
     if not raw_messages:
         return {"to": "", "cc": "", "reply_to_message_id": ""}
@@ -1330,11 +1340,18 @@ def _reply_all_of(raw_messages: list[dict], self_account: str) -> dict:
     sender = [e for _, e in getaddresses([h.get("from", "")]) if e]
     to = sender[0] if sender else ""
     cc, seen = [], {me, to.lower()}
-    for _, e in getaddresses([h.get("to", ""), h.get("cc", "")]):
-        el = e.lower()
-        if e and el not in seen:
-            seen.add(el)
-            cc.append(e)
+
+    def add(values):
+        for _, e in getaddresses(values):
+            el = e.lower()
+            if e and el not in seen:
+                seen.add(el)
+                cc.append(e)
+
+    add([h.get("to", ""), h.get("cc", "")])
+    for m in raw_messages:
+        mh = _headers_of(m)
+        add([mh.get("from", ""), mh.get("to", ""), mh.get("cc", "")])
     return {"to": to, "cc": ", ".join(cc), "reply_to_message_id": latest.get("id", "")}
 
 

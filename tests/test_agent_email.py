@@ -606,8 +606,32 @@ def test_derive_reply_all_thread_mode_targets_latest_non_self_message():
     to, cc, msg_id = derive_reply_all(IDENT, thread_id="t1",
                                       runner=_reply_runner(_multi_message_thread()))
     assert to == "k@partner.org"          # sender of the latest NON-hal message (m2)
-    assert cc == "c@partner.org"          # m2's other recipient, minus hal + sender
+    # m2's other recipient first, then the rest of the WHOLE thread: ops@ was cc'd on m1
+    # and used to be silently dropped here (this assertion pinned the bug until 2026-09-29).
+    assert cc == "c@partner.org, ops@partner.org"
     assert msg_id == "m2"                 # threading targets m2, NOT the thread id
+
+
+def test_derive_reply_all_keeps_the_threads_opener_and_cc_after_a_subset_reply():
+    """2026-09-29, hal: Jonathan wrote to hal cc'ing five people; Gillian replied to hal +
+    Amie only; hal's own reply followed. Reply-all derived To=Gillian, Cc=Amie — dropping
+    the person who ASKED and four of his five cc's."""
+    def msg(mid, frm, to, cc=""):
+        return {"id": mid, "payload": {"headers": [
+            {"name": "From", "value": frm}, {"name": "To", "value": to},
+            {"name": "Cc", "value": cc}]}}
+    thread = json.dumps({"thread": {"messages": [
+        msg("m1", "Jonathan <jj@dimagi.com>", "Hal <hal@dimagi-ai.com>",
+            "Amie <a@dimagi.com>, Gillian <g@dimagi.com>, Sarvesh <s@dimagi.com>, "
+            "Shayoni <sm@dimagi.com>, Andrea <ak@dimagi.com>"),
+        msg("m2", "Gillian <g@dimagi.com>", "hal@dimagi-ai.com", "Amie <a@dimagi.com>"),
+        msg("m3", "hal@dimagi-ai.com", "g@dimagi.com", "a@dimagi.com"),
+    ]}})
+    to, cc, msg_id = derive_reply_all(IDENT, thread_id="t1", runner=_reply_runner(thread))
+    assert to == "g@dimagi.com" and msg_id == "m2"
+    assert set(cc.split(", ")) == {"a@dimagi.com", "jj@dimagi.com", "s@dimagi.com",
+                                   "sm@dimagi.com", "ak@dimagi.com"}
+    assert "hal@dimagi-ai.com" not in cc and "g@dimagi.com" not in cc
 
 
 # --------------------------------------------------------------------------------------
