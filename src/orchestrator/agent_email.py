@@ -107,15 +107,46 @@ def engine_staleness_error(clone_dir: Path | None = None) -> str | None:
 
 def _default_gog_config_dir() -> str:
     """Mirror gog's own resolution so canopy finds the dir gog writes to:
-    $GOG_HOME override, else macOS ~/Library/Application Support/gogcli,
-    else XDG ~/.config/gogcli. Hardcoding the macOS path broke headless Linux."""
+    $GOG_HOME override, else macOS ~/Library/Application Support/gogcli, else Windows
+    %APPDATA%\\gogcli, else XDG ~/.config/gogcli. Hardcoding the macOS path broke
+    headless Linux.
+
+    gog >= 0.40 splits $GOG_HOME into config/ data/ state/ cache/ (config.json in
+    config/, client credentials in data/); older gog kept everything flat in $GOG_HOME.
+    This returns the CONFIG dir either way — see `gog_client_credentials` for data/."""
     home = os.environ.get("GOG_HOME")
     if home:
-        return os.path.expanduser(home)
+        home = os.path.expanduser(home)
+        split = os.path.join(home, "config")
+        return split if os.path.isdir(split) else home
     if sys.platform == "darwin":
         return os.path.expanduser("~/Library/Application Support/gogcli")
+    if sys.platform == "win32" and os.environ.get("APPDATA"):
+        return os.path.join(os.environ["APPDATA"], "gogcli")
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     return os.path.join(xdg, "gogcli")
+
+
+def gog_client_credentials(gog_home: str, client: str) -> str | None:
+    """Where gog's `<client>` OAuth credentials actually are, or None.
+
+    gog >= 0.40 writes them to its DATA dir and still reads the legacy copy in the config
+    dir. The data dir is the config dir itself on macOS/Windows defaults, `<GOG_HOME>/data`
+    under the split $GOG_HOME layout, and $XDG_DATA_HOME/gogcli on Linux. Checking only
+    `<config>/credentials-<client>.json` called a working Windows mailbox broken
+    (Shayoni, 2026-09-29: gog 0.40 stored it at <GOG_HOME>/data/credentials-canopy.json)."""
+    name = f"credentials-{client}.json"
+    dirs = [gog_home, os.path.join(gog_home, "data")]
+    if os.path.basename(os.path.normpath(gog_home)) == "config":
+        dirs.append(os.path.join(os.path.dirname(os.path.normpath(gog_home)), "data"))
+    if sys.platform not in ("darwin", "win32"):
+        xdg_data = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+        dirs.append(os.path.join(xdg_data, "gogcli"))
+    for d in dirs:
+        path = os.path.join(d, name)
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            return path
+    return None
 
 
 GOG_CONFIG_DIR = _default_gog_config_dir()
@@ -1782,7 +1813,7 @@ def preflight(
     login_cmd = (f"gog login {identity.account} --client {identity.client} "
                  f"--services {LOGIN_SERVICES}")
     creds = os.path.join(gog_home, f"credentials-{identity.client}.json")
-    if not os.path.exists(creds):
+    if not gog_client_credentials(gog_home, identity.client):
         remedy = _provision_remedy(identity, creds)
         if remedy:
             return False, remedy

@@ -356,3 +356,55 @@ def test_never_downgrades_a_newer_token_gog_already_holds(tmp_path):
                        "created_at": "2026-09-07T14:04:13Z"}])
     rep = _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
     assert runner.imported == [] and "(kept newer)" in rep.token
+
+
+# ── an operator who cannot see Canopy-Shared (Shayoni, Windows, 2026-09-29) ────
+
+_AI_ID = "op://AI-Agents/Canopy - gog OAuth client/client_id"
+_AI_SECRET = "op://AI-Agents/Canopy - gog OAuth client/client_secret"
+
+
+def test_shared_client_falls_back_to_the_ai_agents_fields(tmp_path):
+    repo = _repo(tmp_path)
+    runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok(),
+                            _AI_ID: "id.apps.googleusercontent.com\n", _AI_SECRET: "s3cret\n"},
+                        gog_accounts=[])
+    rep = _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
+    creds = json.loads((tmp_path / "gog" / "credentials-canopy.json").read_text())
+    # the SAME shape as the Canopy-Shared credential: flat id + secret, stripped
+    assert creds == {"client_id": "id.apps.googleusercontent.com", "client_secret": "s3cret"}
+    assert any("from op://AI-Agents/Canopy - gog OAuth client" in n for n in rep.notes)
+
+
+def test_neither_vault_readable_names_both(tmp_path):
+    repo = _repo(tmp_path)
+    runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok()}, gog_accounts=[])
+    rep = _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
+    assert not rep.ok
+    msg = " ".join(rep.notes + [str(getattr(rep, "error", ""))] + [str(rep.__dict__)])
+    assert "Canopy-Shared" in msg and "AI-Agents" in msg
+
+
+def test_an_agents_own_client_has_no_fallback(tmp_path):
+    b = _boot(tmp_path, FakeRunner(op={_AI_ID: "x", _AI_SECRET: "y"}))
+    secret, source, err = b.read_client("echo", "echo")
+    assert secret is None and source == "op://Agent-Echo/gog-oauth-client/credential"
+    assert "AI-Agents" not in err
+
+
+def test_a_locked_1password_is_not_retried_against_the_fallback(tmp_path):
+    runner = FakeRunner(op={_AI_ID: "x", _AI_SECRET: "y"})
+    b = _boot(tmp_path, runner)
+    b._op_blocked = "1Password locked"
+    assert b.read_client("canopy", "ace")[0] is None
+    assert runner.calls == []
+
+
+def test_client_creds_in_gogs_data_dir_count_as_present(tmp_path):
+    # gog >= 0.40 writes credentials to <home>/data/, not the config dir.
+    repo = _repo(tmp_path)
+    (tmp_path / "gog" / "data").mkdir(parents=True)
+    (tmp_path / "gog" / "data" / "credentials-canopy.json").write_text("{}")
+    runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok()}, gog_accounts=[])
+    _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
+    assert not any("gog-oauth-client" in " ".join(c) for c in runner.calls)

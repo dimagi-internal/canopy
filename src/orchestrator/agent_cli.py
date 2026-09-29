@@ -34,10 +34,28 @@ def agent():
                    "workspace, where every @dimagi.com address is auto-admitted as an "
                    "editor and can therefore delete it.")
 def agent_register(slug, name, email, description, persona, avatar_url, workspace):
-    """Upsert agent identity."""
+    """Upsert agent identity.
+
+    canopy-web's upsert REPLACES every identity field and requires `name`, so on an agent
+    that already exists an omitted option is filled from its current record. Without
+    that, `register --slug fizzy --workspace strategy` 422'd, and adding `--name` to get
+    past it silently blanked the agent's email, description and persona (Shayoni,
+    2026-09-29)."""
+    given = {"name": name, "email": email, "description": description,
+             "persona": persona, "avatar_url": avatar_url}
     try:
-        c = _client(slug, name=name, email=email, description=description,
-                    persona=persona, avatar_url=avatar_url, workspace=workspace)
+        if not all(given.values()):
+            try:
+                current = _client(slug).get_agent()
+            except CanopyError as e:
+                if "-> 404:" not in str(e):
+                    raise
+                current = {}
+            given = {k: v or str(current.get(k) or "") for k, v in given.items()}
+            if not given["name"]:
+                raise click.ClickException(f"agent '{slug}' is not registered yet (or not "
+                                           "visible to you) — pass --name to create it")
+        c = _client(slug, workspace=workspace, **given)
         _emit(c.register())
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))

@@ -352,6 +352,29 @@ plugin + `required_plugins`, injects `~/.<slug>/.env`, imports the newest gog to
 (canopy-web vs 1Password) under the client the token names, and verifies Gmail —
 flagging loudly when the client an agent's turns ask for differs from the token's.
 
+### 5a. Mailbox setup on Windows — four things that bite
+
+From Shayoni's first Windows onboarding (Fizzy, 2026-09-29). The first three are fixed in
+canopy; the fourth is PowerShell and stays your problem.
+
+- **The shared OAuth client.** `agent bootstrap` reads it from
+  `op://Canopy-Shared/gog-oauth-client/credential`. If you are not a member of `Canopy-Shared`,
+  it now falls back to the same client in `AI-Agents` → *Canopy - gog OAuth client* (its
+  `client_id` + `client_secret` fields). You don't have to assemble the JSON by hand.
+- **Where gog keeps things.** gog on Windows defaults to `%APPDATA%\gogcli`. gog 0.40+ puts the
+  client credentials in a `data\` subfolder (`<GOG_HOME>\data\credentials-canopy.json`) and
+  `config.json` in `config\` when `GOG_HOME` is set. `agent doctor` now looks in all of these, so
+  a working mailbox no longer shows as failing.
+- **Moving an agent between workspaces.** `canopy agent register --slug <x> --workspace <ws>` now
+  keeps the agent's existing name, email, description and persona. Before, it failed with a 422
+  without `--name`, and passing `--name` blanked the rest. If you moved an agent that way, check
+  its page on canopy-web and re-register with the missing fields.
+- **PowerShell, not canopy:**
+  - `op read … > file` writes **UTF-16**, which gog cannot read. Pipe it in instead:
+    `op read "op://…" | gog auth credentials set - --client=canopy`.
+  - Write `--client=canopy`, not `--client canopy`. A long command pasted from chat can break
+    at the space.
+
 Then fill in the two files that carry the actual judgment:
 
 - **`persona.md`** — voice, mandate detail, what is worth remembering.

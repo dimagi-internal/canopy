@@ -52,6 +52,7 @@ from orchestrator.agent_email import (
     GOG_CONFIG_DIR,
     AgentEmailError,
     EmailIdentity,
+    gog_client_credentials,
     preflight,
     resolve_email_identity,
 )
@@ -64,6 +65,15 @@ KNOWN_MARKETPLACES = "~/.claude/plugins/known_marketplaces.json"
 SHARED_CLIENT_REFS = {
     "canopy": "op://Canopy-Shared/gog-oauth-client/credential",
     "canopy-web": "op://Canopy-Shared/gog-oauth-client-web/credential",
+}
+
+#: The SAME shared client, as separate id/secret fields in a vault a non-owner operator
+#: can see. Canopy-Shared is not shared with every operator; AI-Agents is (Shayoni's
+#: Windows onboarding, 2026-09-29: "I can't see a Canopy-Shared vault"). Read only when
+#: the primary ref is unreadable, and assembled into the primary's exact shape.
+SHARED_CLIENT_FALLBACKS = {
+    "canopy": ("op://AI-Agents/Canopy - gog OAuth client/client_id",
+               "op://AI-Agents/Canopy - gog OAuth client/client_secret"),
 }
 
 #: stderr fragments meaning "1Password is locked / not signed in", not "item missing".
@@ -378,6 +388,26 @@ class Bootstrapper:
             return None, _first_line(r.stderr)
         return r.stdout, ""
 
+    def read_client(self, client: str, slug: str) -> tuple[str | None, str, str]:
+        """(credentials JSON or None, where it came from, error) for `client`.
+
+        The primary ref first; for a shared client whose vault this operator cannot read,
+        the same client's id + secret fields in SHARED_CLIENT_FALLBACKS. A LOCKED 1Password
+        is not "unreadable" — no fallback then, since it would only wait out a second
+        authorization timeout."""
+        ref = client_op_ref(client, slug)
+        secret, err = self._op_read(ref)
+        if secret is not None or self._op_blocked or client not in SHARED_CLIENT_FALLBACKS:
+            return secret, ref, err
+        id_ref, secret_ref = SHARED_CLIENT_FALLBACKS[client]
+        cid, id_err = self._op_read(id_ref)
+        csecret, secret_err = self._op_read(secret_ref) if cid is not None else (None, "")
+        if cid is None or csecret is None:
+            return None, ref, (f"{err}; fallback {id_ref.rsplit('/', 1)[0]} also unreadable: "
+                               f"{id_err or secret_err}")
+        return (json.dumps({"client_id": cid.strip(), "client_secret": csecret.strip()}),
+                id_ref.rsplit("/", 1)[0], "")
+
     def gog_accounts(self) -> list[dict] | None:
         """`gog auth list --json`, ONCE per run (every gog call can be a Keychain prompt)."""
         if not self._accounts_read:
@@ -492,18 +522,19 @@ class Bootstrapper:
 
         # Client creds for the client the TOKEN names.
         creds = self.gog_dir / f"credentials-{tok.client}.json"
-        if not (creds.is_file() and creds.stat().st_size > 0):
+        if not gog_client_credentials(str(self.gog_dir), tok.client):
             ref = client_op_ref(tok.client, slug)
             if self.dry_run:
                 rep.notes.append(f"token: would materialize credentials-{tok.client}.json "
                                  f"from {ref}")
             else:
-                secret, err = self._op_read(ref)
+                secret, source, err = self.read_client(tok.client, slug)
                 if secret is None:
                     rep.fail(f"token: cannot read OAuth client '{tok.client}' from {ref}: {err}")
                     return tok
                 _write_private(creds, secret)
-                rep.notes.append(f"token: materialized credentials-{tok.client}.json")
+                rep.notes.append(f"token: materialized credentials-{tok.client}.json"
+                                 + (f" (from {source})" if source != ref else ""))
 
         # Import — unless gog already holds this exact token, or a newer one.
         accounts = self.gog_accounts()
