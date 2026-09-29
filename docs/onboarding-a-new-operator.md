@@ -358,9 +358,10 @@ From Shayoni's first Windows onboarding (Fizzy, 2026-09-29). The first three are
 canopy; the fourth is PowerShell and stays your problem.
 
 - **The shared OAuth client.** `agent bootstrap` reads it from
-  `op://Canopy-Shared/gog-oauth-client/credential`. If you are not a member of `Canopy-Shared`,
-  it now falls back to the same client in `AI-Agents` → *Canopy - gog OAuth client* (its
-  `client_id` + `client_secret` fields). You don't have to assemble the JSON by hand.
+  `op://Canopy-Shared/gog-oauth-client/credential`. Every operator needs membership in the
+  `Canopy-Shared` vault — if bootstrap says you are not a member, ask Jonathan (or Hal) to add
+  you. There is deliberately no fallback to `AI-Agents`: that vault is for humans only, and an
+  agent's secrets live in its own `Agent-<Slug>` vault plus `Canopy-Shared`.
 - **Where gog keeps things.** gog on Windows defaults to `%APPDATA%\gogcli`. gog 0.40+ puts the
   client credentials in a `data\` subfolder (`<GOG_HOME>\data\credentials-canopy.json`) and
   `config.json` in `config\` when `GOG_HOME` is set. `agent doctor` now looks in all of these, so
