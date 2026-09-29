@@ -67,14 +67,13 @@ SHARED_CLIENT_REFS = {
     "canopy-web": "op://Canopy-Shared/gog-oauth-client-web/credential",
 }
 
-#: The SAME shared client, as separate id/secret fields in a vault a non-owner operator
-#: can see. Canopy-Shared is not shared with every operator; AI-Agents is (Shayoni's
-#: Windows onboarding, 2026-09-29: "I can't see a Canopy-Shared vault"). Read only when
-#: the primary ref is unreadable, and assembled into the primary's exact shape.
-SHARED_CLIENT_FALLBACKS = {
-    "canopy": ("op://AI-Agents/Canopy - gog OAuth client/client_id",
-               "op://AI-Agents/Canopy - gog OAuth client/client_secret"),
-}
+#: Deliberately NO fallback vault. An operator who cannot read Canopy-Shared is granted
+#: membership in it — the fix is access, not a second copy. AI-Agents is a humans-only
+#: vault now that every agent has its own Agent-<Slug> vault plus Canopy-Shared (Jonathan,
+#: 2026-09-29, reverting #707's AI-Agents fallback: "Don't have anything fall back to
+#: ai-agents").
+SHARED_VAULT_HINT = ("you are not a member of the Canopy-Shared vault — ask a vault owner "
+                     "(Jonathan, or Hal) to add you, then re-run")
 
 #: stderr fragments meaning "1Password is locked / not signed in", not "item missing".
 OP_AUTH_FAILURES = ("authorization timeout", "not currently signed in", "authorization prompt",
@@ -388,26 +387,6 @@ class Bootstrapper:
             return None, _first_line(r.stderr)
         return r.stdout, ""
 
-    def read_client(self, client: str, slug: str) -> tuple[str | None, str, str]:
-        """(credentials JSON or None, where it came from, error) for `client`.
-
-        The primary ref first; for a shared client whose vault this operator cannot read,
-        the same client's id + secret fields in SHARED_CLIENT_FALLBACKS. A LOCKED 1Password
-        is not "unreadable" — no fallback then, since it would only wait out a second
-        authorization timeout."""
-        ref = client_op_ref(client, slug)
-        secret, err = self._op_read(ref)
-        if secret is not None or self._op_blocked or client not in SHARED_CLIENT_FALLBACKS:
-            return secret, ref, err
-        id_ref, secret_ref = SHARED_CLIENT_FALLBACKS[client]
-        cid, id_err = self._op_read(id_ref)
-        csecret, secret_err = self._op_read(secret_ref) if cid is not None else (None, "")
-        if cid is None or csecret is None:
-            return None, ref, (f"{err}; fallback {id_ref.rsplit('/', 1)[0]} also unreadable: "
-                               f"{id_err or secret_err}")
-        return (json.dumps({"client_id": cid.strip(), "client_secret": csecret.strip()}),
-                id_ref.rsplit("/", 1)[0], "")
-
     def gog_accounts(self) -> list[dict] | None:
         """`gog auth list --json`, ONCE per run (every gog call can be a Keychain prompt)."""
         if not self._accounts_read:
@@ -528,13 +507,15 @@ class Bootstrapper:
                 rep.notes.append(f"token: would materialize credentials-{tok.client}.json "
                                  f"from {ref}")
             else:
-                secret, source, err = self.read_client(tok.client, slug)
+                secret, err = self._op_read(ref)
                 if secret is None:
-                    rep.fail(f"token: cannot read OAuth client '{tok.client}' from {ref}: {err}")
+                    hint = ("; " + SHARED_VAULT_HINT
+                            if tok.client in SHARED_CLIENT_REFS and not self._op_blocked else "")
+                    rep.fail(f"token: cannot read OAuth client '{tok.client}' from {ref}: "
+                             f"{err}{hint}")
                     return tok
                 _write_private(creds, secret)
-                rep.notes.append(f"token: materialized credentials-{tok.client}.json"
-                                 + (f" (from {source})" if source != ref else ""))
+                rep.notes.append(f"token: materialized credentials-{tok.client}.json")
 
         # Import — unless gog already holds this exact token, or a newer one.
         accounts = self.gog_accounts()
