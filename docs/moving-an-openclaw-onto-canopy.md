@@ -60,7 +60,11 @@ section of the onboarding doc.
    [§5](onboarding-a-new-operator.md#5-make-it-real--let-agent-doctor-drive).
 4. **Re-authorise the mailbox.** The agent's Gmail consent does not move off the droplet —
    you (or Jonathan, who set the accounts up) sign in as `<slug>@dimagi-ai.com` once when
-   `canopy agent doctor` asks for it.
+   `canopy agent doctor` asks for it. **On Windows**, read
+   [§5a](onboarding-a-new-operator.md#5a-mailbox-setup-on-windows--four-things-that-bite)
+   first. If Google refuses the sign-in with *"couldn't verify this account belongs to you"*,
+   a dimagi-ai.com admin has to lift the login challenge for that account for a few minutes.
+   Ask Jonathan.
 5. **Run `canopy agent doctor --repo .` until it is all green.** It names every remaining fix.
    Anything it cannot explain is a bug — email it to hal@dimagi-ai.com.
 6. **Run the first turn yourself**: `/<slug>:turn` — [§7](onboarding-a-new-operator.md#7-your-first-turn).

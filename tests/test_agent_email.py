@@ -1609,3 +1609,44 @@ def test_unterminated_fence_does_not_swallow_the_rest_silently():
     html_out = to_html(normalize(body))
     assert "<p>intro</p>" in html_out
     assert "cmd one" in html_out and "cmd two" in html_out
+
+
+# ── where gog keeps things (gog >= 0.40, Windows) ────────────────────────────
+
+def test_gog_client_credentials_finds_the_data_dir_copy(tmp_path):
+    from orchestrator.agent_email import gog_client_credentials
+    home = tmp_path / "gogcli"
+    (home / "data").mkdir(parents=True)
+    assert gog_client_credentials(str(home), "canopy") is None
+    (home / "data" / "credentials-canopy.json").write_text("{}")
+    assert gog_client_credentials(str(home), "canopy") == str(home / "data" / "credentials-canopy.json")
+
+
+def test_gog_client_credentials_split_home_config_to_sibling_data(tmp_path):
+    from orchestrator.agent_email import gog_client_credentials
+    (tmp_path / "config").mkdir()
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "credentials-canopy.json").write_text("{}")
+    assert gog_client_credentials(str(tmp_path / "config"), "canopy")
+
+
+def test_gog_client_credentials_ignores_an_empty_file(tmp_path):
+    from orchestrator.agent_email import gog_client_credentials
+    (tmp_path / "credentials-canopy.json").write_text("")
+    assert gog_client_credentials(str(tmp_path), "canopy") is None
+
+
+def test_default_gog_dir_follows_gog_home_split_layout(tmp_path, monkeypatch):
+    from orchestrator import agent_email
+    monkeypatch.setenv("GOG_HOME", str(tmp_path))
+    assert agent_email._default_gog_config_dir() == str(tmp_path)          # gog <= 0.39: flat
+    (tmp_path / "config").mkdir()
+    assert agent_email._default_gog_config_dir() == str(tmp_path / "config")  # gog >= 0.40
+
+
+def test_default_gog_dir_on_windows_is_appdata(tmp_path, monkeypatch):
+    from orchestrator import agent_email
+    monkeypatch.delenv("GOG_HOME", raising=False)
+    monkeypatch.setattr(agent_email.sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert agent_email._default_gog_config_dir() == str(tmp_path / "gogcli")

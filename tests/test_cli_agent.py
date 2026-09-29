@@ -25,8 +25,41 @@ def test_agent_register(fake_http):
     r = CliRunner().invoke(main, ["agent", "register", "--slug", "echo", "--name", "Echo",
                                   "--email", "echo@dimagi-ai.com", "--persona", "p"])
     assert r.exit_code == 0, r.output
-    assert calls[0][:2] == ("POST", "https://x.test/api/agents/")
-    assert calls[0][2]["slug"] == "echo"
+    assert calls[-1][:2] == ("POST", "https://x.test/api/agents/")
+    assert calls[-1][2]["slug"] == "echo"
+
+
+def test_moving_an_agent_keeps_its_identity(fake_http):
+    """2026-09-29, fizzy: `--workspace` alone 422'd (name is required), and passing
+    `--name` to get past it blanked email/description/persona, since the upsert
+    replaces every field. Omitted fields now come from the agent's current record."""
+    calls, responses = fake_http
+    responses[("GET", "agents/fizzy/")] = (200, json.dumps({
+        "slug": "fizzy", "name": "Fizzy", "email": "fizzy@dimagi-ai.com",
+        "description": "d", "persona": "p", "avatar_url": ""}))
+    r = CliRunner().invoke(main, ["agent", "register", "--slug", "fizzy",
+                                  "--workspace", "strategy"])
+    assert r.exit_code == 0, r.output
+    method, url, body = calls[-1]
+    assert (method, url) == ("POST", "https://x.test/api/agents/")
+    assert body["workspace"] == "strategy" and body["name"] == "Fizzy"
+    assert body["email"] == "fizzy@dimagi-ai.com" and body["description"] == "d"
+
+
+def test_an_explicit_option_wins_over_the_current_record(fake_http):
+    calls, responses = fake_http
+    responses[("GET", "agents/fizzy/")] = (200, json.dumps({"name": "Fizzy", "persona": "old"}))
+    r = CliRunner().invoke(main, ["agent", "register", "--slug", "fizzy", "--persona", "new"])
+    assert r.exit_code == 0, r.output
+    assert calls[-1][2]["persona"] == "new" and calls[-1][2]["name"] == "Fizzy"
+
+
+def test_a_new_agent_without_a_name_is_a_clear_error(fake_http):
+    calls, responses = fake_http
+    responses[("GET", "agents/fizzy/")] = (404, "not found")
+    r = CliRunner().invoke(main, ["agent", "register", "--slug", "fizzy", "--workspace", "strategy"])
+    assert r.exit_code != 0 and "pass --name" in r.output
+    assert not any(c[0] == "POST" for c in calls)
 
 
 def test_agent_commands_lists(fake_http):
