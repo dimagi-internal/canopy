@@ -302,6 +302,11 @@ gh repo create dimagi-internal/<slug> --private --source=. --push
 
 ## 5. Make it real — let `agent doctor` drive
 
+> **Setting up an agent someone else created for you?** Paste the prompt in
+> [Setting up an agent from Claude](setting-up-an-agent-from-claude.md) instead. It runs this
+> section, and does the canopy-web side (vault key, invites) through the canopy-web MCP tools,
+> which `doctor` never touches.
+
 This is the step that replaces guesswork. From inside the agent's repo:
 
 ```bash
