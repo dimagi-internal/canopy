@@ -15,18 +15,20 @@
 // .sh — it returns EMPTY with EXIT 0. That is the worst possible failure shape:
 // no error, no output, indistinguishable from success.
 //
-// What the user actually sees is three steps removed from the cause. No auth header
-// is sent, so canopy-web correctly returns 401; Claude Code then falls back to OAuth
-// discovery and dynamic client registration; Labs has no such endpoint, so it serves
-// its own 404 HTML page, and the connection dies with:
+// What the user saw was three steps removed from the cause. No auth header was sent,
+// so canopy-web returned 401; Claude Code fell back to OAuth discovery and dynamic
+// client registration, which canopy-web did not serve then, and the connection died
+// with "Dynamic Client Registration rejected (HTTP 404)". Measured on a Windows
+// machine 2026-09-01→03: six MCP logs, the same failure in all six. The same file
+// under Git Bash emits the header correctly, which is exactly why it looked fine to
+// anyone testing it by hand.
 //
-//     Dynamic Client Registration rejected (HTTP 404): <!DOCTYPE html> … Page not found
-//
-// That 404 is a red herring. It reads as a canopy-web routing problem or an expired
-// login, and it sends people to re-mint a token that was fine all along. Measured on
-// a Windows machine 2026-09-01→03: six MCP logs, the same failure in all six, and the
-// server had never once connected there. The same file under Git Bash emits the
-// header correctly, which is exactly why it looks fine to anyone testing it by hand.
+// NO TOKEN IS NOW A WORKING STATE, NOT A FAILURE (canopy-web #1034, 2026-09-30).
+// canopy-web serves the MCP OAuth flow, so when this helper emits no header the 401
+// leads Claude Code to a browser sign-in on canopy-web, and the person is connected
+// as themselves. The token sources below still come first, because every one of them
+// is a session with NO person at a browser — a confined caller's session, an agent's
+// own turn, a headless runner — or an operator who minted a token on purpose.
 //
 // Node is guaranteed present, because Claude Code itself runs on it.
 //
@@ -213,10 +215,10 @@ try {
     if (key) headers["X-Canopy-Chat-Key"] = key;
   }
 } catch (err) {
-  // Missing/unreadable token file: emit no auth header. canopy-web then returns 401
-  // and /mcp surfaces the server as needing auth — the cue to run
-  // /canopy:canopy-web-pat-mint. Never throw: a helper that crashes produces the same
-  // empty-and-silent result this file exists to eliminate.
+  // Missing/unreadable token file: emit no auth header. canopy-web returns 401 and
+  // Claude Code offers the browser sign-in (/mcp shows the server as needing auth).
+  // Never throw: a helper that crashes produces the same empty-and-silent result
+  // this file exists to eliminate.
   headers = {};
 }
 

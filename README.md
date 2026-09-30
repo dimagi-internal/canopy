@@ -30,6 +30,13 @@ browser UI for inspecting transcripts.
 > the end-to-end path from nothing to a running agent, written for a first-timer.
 > The rest of this README is oriented to canopy's own development.
 
+> **Only want to work with canopy-web from Claude** (set up or configure an agent, a
+> workspace, routing, vaults…)? Install the slim **`canopy-web`** plugin from the same
+> marketplace — `/plugin install canopy-web@canopy` — which is just the canopy-web MCP
+> server, signing in with your canopy account in the browser. See
+> [plugins/canopy-web/README.md](plugins/canopy-web/README.md). Install that **or** the
+> full `canopy` plugin below, not both (the full plugin includes the same server).
+
 Canopy installs as a Claude Code plugin from its marketplace. The fastest path on
 a new machine is the bundled setup skill, which is idempotent:
 
