@@ -224,6 +224,11 @@ The CLI talks to canopy-web as **you**, using a token minted once per machine:
 
 This opens a browser, and writes the token to `~/.claude/canopy/workbench-token`.
 
+> **The MCP tools don't need this file.** Claude Code's canopy-web MCP server signs you in
+> through the browser on first use when there is no token (canopy-web #1034). The token is
+> for the `canopy` CLI and skills, which call canopy-web's REST API directly and cannot
+> borrow Claude Code's sign-in.
+
 > **The identity rule that will bite you later.** That file is *your human token*.
 > An **agent** gets its own token in `~/.<slug>/.env` as `CANOPY_WEB_PAT`. When you
 > run canopy tooling from inside an agent's repo, canopy prefers the agent's token

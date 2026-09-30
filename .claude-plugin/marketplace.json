@@ -6,14 +6,19 @@
     "url": "https://github.com/dimagi-internal"
   },
   "metadata": {
-    "version": "0.2.540"
+    "version": "0.2.541"
   },
   "plugins": [
     {
       "name": "canopy",
       "source": "./plugins/canopy",
-      "version": "0.2.540",
+      "version": "0.2.541",
       "description": "Self-improving AI workflow skills \u2014 session analysis, PM supervision, autonomous development"
+    },
+    {
+      "name": "canopy-web",
+      "source": "./plugins/canopy-web",
+      "description": "Just the canopy-web MCP server: configure agents and workspaces from Claude, signing in with your canopy account (no token). Install this OR canopy, not both."
     }
   ]
 }

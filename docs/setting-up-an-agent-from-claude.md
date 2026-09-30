@@ -15,7 +15,13 @@ No. `doctor` is half of it:
 
 `doctor` never changes canopy-web, which is why owners kept getting stuck on "paste this key into
 Settings". The MCP tools close that gap. They come with the canopy plugin and sign in with the
-token `/canopy:setup` gives you, so there's nothing extra to connect.
+token `/canopy:setup` gives you, so there's nothing extra to connect. (Without that token, the
+first MCP call opens a canopy-web sign-in in your browser instead: approve it once.)
+
+Only need the canopy-web half — no agent on this laptop, just configuring one? Install the slim
+`canopy-web` plugin instead (`/plugin install canopy-web@canopy`): the same MCP tools, signed in
+through the browser, without canopy's CLI, hooks or skills. See
+[`plugins/canopy-web/README.md`](../plugins/canopy-web/README.md).
 
 ## Before you paste it (once per laptop)
 

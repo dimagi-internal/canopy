@@ -1,0 +1,16 @@
+{
+  "name": "canopy-web",
+  "version": "1.0.0",
+  "description": "canopy-web from Claude: configure agents and workspaces, and everything else the canopy-web app can do, through its MCP server. Signs in with your canopy account in the browser; no token to copy.",
+  "author": {
+    "name": "Dimagi",
+    "url": "https://github.com/dimagi-internal"
+  },
+  "homepage": "https://labs.connect.dimagi.com/canopy/",
+  "mcpServers": {
+    "canopy-web": {
+      "type": "http",
+      "url": "https://labs.connect.dimagi.com/canopy/api/mcp/"
+    }
+  }
+}
