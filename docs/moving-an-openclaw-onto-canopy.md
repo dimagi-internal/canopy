@@ -49,7 +49,9 @@ the snapshot once in Hal's session). Then Hal:
 ### Phase 2 — You do this (about an hour, once)
 
 These need your laptop and your logins, so they cannot be done for you. Each links to the exact
-section of the onboarding doc.
+section of the onboarding doc. **Shortcut:** install canopy, then paste the prompt in
+[Setting up an agent from Claude](setting-up-an-agent-from-claude.md), and Claude works through
+steps 3–6 with you.
 
 1. **Install Claude Code, canopy and the prerequisites** — [§1](onboarding-a-new-operator.md#1-prerequisites)
    and [§2](onboarding-a-new-operator.md#2-install-canopy). Works on macOS and Windows.
