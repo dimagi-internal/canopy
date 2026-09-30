@@ -42,8 +42,9 @@ Use the canopy-web MCP tools for anything on canopy-web (pass workspace "<worksp
 and the canopy CLI for this machine. Skip any step that is already done, and show me
 each result before moving on.
 
-1. Clone dimagi-internal/<slug> and install it as a plugin
-   (/plugin marketplace add dimagi-internal/<slug>, then /plugin install <slug>@<slug>).
+1. Clone dimagi-internal/<slug>. Then tell me to type /plugin marketplace add
+   dimagi-internal/<slug> and /plugin install <slug>@<slug> (slash commands are mine
+   to type), and wait until I have.
 2. Run `canopy agent bootstrap --slug <slug> --dry-run`, show me the plan, then run it.
 3. Attach the agent's vault on canopy-web: vault Agent-<Agent>, with the token in the
    1Password item "canopy-web-service-account" in that vault. Read it with `op` and pass
