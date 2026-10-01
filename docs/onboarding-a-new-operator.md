@@ -46,15 +46,16 @@ Install these first. Everything below assumes they exist.
 | [GitHub CLI](https://cli.github.com/) | Creating the agent's repo | `gh auth status` |
 | [1Password CLI](https://developer.1password.com/docs/cli/get-started/) | Resolving the agent's secrets | `op whoami` |
 | [Node.js 20+](https://nodejs.org/en/download) | `npx` runs the token-mint script | `node --version` |
-| [gog](https://github.com/dimagi-internal/gogcli) | Your agent's Gmail/Drive access — §5 uses it | `gog --version` |
+| [gog](https://github.com/openclaw/gogcli) | Your agent's Gmail/Drive access — §5 uses it | `gog --version` |
 
 **`gog` on Windows.** There is no Homebrew, so install from the release
-archive: download the latest `gog_windows_amd64.zip` from
-[the releases page](https://github.com/dimagi-internal/gogcli/releases),
+archive: download the latest `gogcli_<version>_windows_amd64.zip` from
+[the releases page](https://github.com/openclaw/gogcli/releases),
 unzip it somewhere permanent (e.g. `%LOCALAPPDATA%\gog\`), and add that folder
 to your `PATH` (Settings → *Edit environment variables for your account* →
 `Path` → New). Open a NEW terminal afterwards — `PATH` changes do not reach
-already-running shells. On macOS/Linux: `brew install dimagi-internal/tap/gog`.
+already-running shells. On macOS/Linux: `brew install gogcli` (it is in homebrew-core — no tap, and
+nothing private to request access to).
 
 You also need **membership in the `dimagi-internal` GitHub org** and a
 **canopy-web login**. Ask Jonathan for both if `gh repo list dimagi-internal`
