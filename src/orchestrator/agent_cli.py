@@ -803,6 +803,47 @@ def preview_for_card(text, limit):
     return text[:limit].rstrip() + "\n\n[… truncated — the agent received the full brief]"
 
 
+def _split_task_links(cell):
+    """Split a `--links` cell into one string per link, keeping commas that aren't separators.
+
+    Each comma-separated fragment either STARTS a link — it contains `|` or begins with
+    `http` — or continues a neighbour:
+
+    - a fragment with no whitespace at all — not even after the comma — that follows a
+      URL is part of that URL (a query string like `?ids=1,2`). URLs carry no spaces,
+      so `url, Bad=url` is still a separator followed by a bad part, and still raises;
+    - any other fragment is the front of the NEXT link's label (`A (x, y)|url`).
+
+    Where the grammar is ambiguous (`a|https://x,b,c|https://y`) the URL wins: the
+    whitespace-free `b` stays on the first URL. A broken URL is a dead link; a label
+    missing a comma is merely less pretty.
+
+    A label with no `label|url` after it to join is returned whole as its own part, so
+    `parse_task_links` still raises on it, naming the full label — the #579 guard is
+    unchanged.
+    """
+    parts, pending = [], []
+    for frag in cell.split(","):
+        s = frag.strip()
+        if "|" in s or s.startswith("http"):
+            if pending and "|" in s:
+                frag = ",".join(pending + [frag])
+            elif pending:
+                parts.append(",".join(pending))
+            pending = []
+            parts.append(frag)
+        elif not s and not pending:
+            continue
+        elif (not pending and not any(c.isspace() for c in frag)
+              and parts and parts[-1].split("|", 1)[-1].strip().startswith("http")):
+            parts[-1] += "," + frag
+        else:
+            pending.append(frag)
+    if pending:
+        parts.append(",".join(pending))
+    return parts
+
+
 def parse_task_links(cell):
     """`"label|url, label2|url2"` → [{label, url}, …]; bare http urls get label "link".
 
@@ -817,9 +858,15 @@ def parse_task_links(cell):
     later, with no error anywhere to explain it. (2026-09-01, hal: two links onto a board
     task, both silently dropped; caught only because the card was re-read for an unrelated
     reason.)
+
+    Commas inside a label or a URL are kept. A naive `split(",")` cut
+    `"Slide deck (Dimagi brand, canonical)|https://…"` in half and rejected the first
+    half as an unparseable link, so the only way to write that label was to drop its
+    commas (2026-09-27 and 2026-09-30, eva — both retried without commas). See
+    `_split_task_links` for how a comma is assigned to a label, a URL, or a separator.
     """
     out = []
-    for part in (cell or "").split(","):
+    for part in _split_task_links(cell or ""):
         part = part.strip()
         if not part:
             continue

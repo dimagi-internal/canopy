@@ -128,3 +128,66 @@ class TestAnUnparseableLinkRaisesInsteadOfVanishing:
         client = FakeClient([{"id": 91, "links": [{"label": "Thread", "url": "https://mail/x"}]}])
         with pytest.raises(Exception):
             _appended_links(client, 91, "Bad=https://example.com/2")
+
+
+class TestCommasInALabelOrUrlAreKept:
+    """A comma inside a label or URL is not a link separator.
+
+    The parser used to `split(",")` the whole cell before looking for `|`, so a label with
+    a comma was cut in half and its first half rejected as an unparseable link. Nothing was
+    written (the guard above held), but there was no way to write the label you meant.
+    Seen twice in eva (2026-09-27, 2026-09-30); both calls were retried with the commas
+    stripped out of the label.
+    """
+
+    def test_a_label_with_a_comma(self):
+        assert parse_task_links("Deck source (draft 1, draft 2)|https://d/1") == [
+            {"label": "Deck source (draft 1, draft 2)", "url": "https://d/1"},
+        ]
+
+    def test_the_brief_repro_parentheses_and_a_comma_then_a_second_link(self):
+        assert parse_task_links("A (x, y)|https://a.example, B|https://b.example") == [
+            {"label": "A (x, y)", "url": "https://a.example"},
+            {"label": "B", "url": "https://b.example"},
+        ]
+
+    def test_two_links_whose_labels_both_have_commas(self):
+        """The 2026-09-30 eva call, verbatim in shape."""
+        cell = ("Slide deck (Dimagi brand, canonical)|https://claude.ai/artifact/C, "
+                "Slide deck (neutral, retired 2026-09-30)|https://claude.ai/artifact/D")
+        assert parse_task_links(cell) == [
+            {"label": "Slide deck (Dimagi brand, canonical)", "url": "https://claude.ai/artifact/C"},
+            {"label": "Slide deck (neutral, retired 2026-09-30)", "url": "https://claude.ai/artifact/D"},
+        ]
+
+    def test_bare_url_plus_a_labelled_link_with_commas(self):
+        assert parse_task_links("https://x/1, Run (a, b)|https://x/2") == [
+            {"label": "link", "url": "https://x/1"},
+            {"label": "Run (a, b)", "url": "https://x/2"},
+        ]
+
+    def test_a_comma_in_a_url_query_string_stays_in_the_url(self):
+        assert parse_task_links("Q|https://x?ids=1,2, https://y?ids=3,4") == [
+            {"label": "Q", "url": "https://x?ids=1,2"},
+            {"label": "link", "url": "https://y?ids=3,4"},
+        ]
+
+    def test_when_ambiguous_the_url_wins(self):
+        """`b` could be the tail of the first URL or the front of the second label; a
+        broken URL is a dead link, so the URL keeps it."""
+        assert parse_task_links("a|https://x,b,c|https://y") == [
+            {"label": "a", "url": "https://x,b"},
+            {"label": "c", "url": "https://y"},
+        ]
+
+    def test_the_wrong_separator_still_raises_after_a_good_link(self):
+        """The space after the comma marks a separator, so the bad part is not swallowed
+        into the previous URL — the #579 guard holds."""
+        with pytest.raises(Exception) as exc:
+            parse_task_links("Good|https://example.com/1, Bad=https://example.com/2")
+        assert "Bad=https://example.com/2" in str(exc.value)
+
+    def test_a_label_with_a_comma_and_no_url_raises_naming_the_whole_label(self):
+        with pytest.raises(Exception) as exc:
+            parse_task_links("A (x, y), https://b")
+        assert "A (x, y)" in str(exc.value)
