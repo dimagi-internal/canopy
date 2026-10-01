@@ -240,7 +240,7 @@ class GogDocs:
         try:
             p = self.runner(cmd, capture_output=True, text=True, timeout=GOG_TIMEOUT)
         except FileNotFoundError:
-            raise EmailBlockError("gog CLI not found on PATH (brew install steipete/tap/gogcli)")
+            raise EmailBlockError("gog CLI not found on PATH (brew install gogcli)")
         except subprocess.TimeoutExpired:
             raise EmailBlockError(f"gog api call docs {method} timed out after {GOG_TIMEOUT}s")
         if p.returncode != 0:

@@ -102,7 +102,7 @@ from orchestrator.agent_email import (
 )
 
 UPLOAD_TIMEOUT = 120  # seconds — a hung gog must not hang the whole turn
-GOG_NOT_FOUND = "gog CLI not found on PATH (brew install steipete/tap/gogcli)"
+GOG_NOT_FOUND = "gog CLI not found on PATH (brew install gogcli)"
 
 
 class AgentGdocError(Exception):
