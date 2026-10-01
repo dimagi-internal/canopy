@@ -118,8 +118,27 @@
 #   live-turns.sh --ref <ref> --slug <slug>          # both counts, labelled
 #
 # Prints one session id per line under each heading, plus a COUNT= line that
-# INCLUDES YOU. COUNT>1 means go read the other session's transcript and apply
-# turn.md's stand-down rules before you write or send.
+# says whether YOU are in it — and that is not a formality. A turn scoped to the
+# ref (or, for --slug, any turn of that agent) is in its own count, so COUNT>1
+# means a sibling. An UNSCOPED turn that picked the ref out of its inbox is NOT
+# in the --ref count, so for it COUNT=1 already means one other session holds
+# the thread. The line names which case you are in, and "OTHERS=" is the number
+# to act on either way: OTHERS>=1 means go read that session's transcript and
+# apply turn.md's stand-down rules before you write or send.
+#
+# EIGHTH FAILURE, measured live 2026-09-30 (ace) and again 2026-10-01 (hal) —
+# THE LABEL INVERTED THE ANSWER. Every COUNT line used to end "(includes you)",
+# unconditionally. turn.md tells an unscoped turn to run --ref on the thread it
+# just picked, and that turn is never in the --ref count — so a live
+# `--thread <ref>` sibling came back as `COUNT=1 (includes you)`, which reads as
+# "just me". Both times the unscoped turn started the work; both times it found
+# the owner only by accident (a sibling transcript, a worktree named after the
+# subject line). `--require-solo` had the same hole: it tripped at COUNT>1. The
+# caller is now identified by CLAUDE_CODE_SESSION_ID (CANOPY_LIVE_TURNS_SELF
+# overrides it — the test seam), it is also dropped from the "mentions" block
+# (its own earlier check mentions the ref, which made every unscoped turn's
+# --require-solo re-check refuse on itself), and when the caller CANNOT be
+# identified the line says so instead of guessing.
 #
 # COUNT=1 is NOT by itself an all-clear. Read the three blocks below it as well:
 # sessions that MENTION the ref without being scoped to it; sessions matching
@@ -131,9 +150,9 @@
 # Exit 0 always when it could look; exit 2 if it could not enumerate sessions at
 # all, because "I could not check" must never render as "nothing found".
 #
-# --require-solo: exit 3 instead of 0 when ANY sibling signal was printed — a
-# COUNT above 1, a session that mentions the ref, or a same-scope session with no
-# live process. Use it to GATE the write it protects:
+# --require-solo: exit 3 instead of 0 when ANY sibling signal was printed — an
+# OTHERS above 0, a session other than you that mentions the ref, or a
+# same-scope session with no live process. Use it to GATE the write it protects:
 #
 #     live-turns.sh --ref <ref> --slug <slug> --require-solo && <the write>
 #
@@ -170,6 +189,11 @@ if [ -z "$REF" ] && [ -z "$SLUG" ]; then
 fi
 
 PROJECTS="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+
+# Who is asking. Claude Code exports the running session's id to every Bash
+# call; without it the COUNT line cannot say whether you are in it (EIGHTH
+# FAILURE above), so the unknown case is labelled as unknown, never as "you".
+SELF="${CANOPY_LIVE_TURNS_SELF-${CLAUDE_CODE_SESSION_ID:-}}"
 if [ ! -d "$PROJECTS" ]; then
   echo "cannot read $PROJECTS — NOT a clean result, do not treat as all-clear" >&2
   exit 2
@@ -286,18 +310,34 @@ matches_scope() {
 }
 
 report() {
-  local heading="$1" mode="$2" pattern="$3" count=0
+  local heading="$1" mode="$2" pattern="$3" count=0 self_in=0 others
   echo "$heading"
   for sid in $IDS; do
     f="$(transcript_for "$sid")"
     [ -n "$f" ] || continue
     if matches_scope "$f" "$mode" "$pattern"; then
-      echo "  $sid"
+      if [ -n "$SELF" ] && [ "$sid" = "$SELF" ]; then
+        echo "  $sid   (you)"
+        self_in=1
+      else
+        echo "  $sid"
+      fi
       count=$((count + 1))
     fi
   done
-  echo "COUNT=$count (includes you)"
-  [ "$count" -gt 1 ] && NOT_SOLO=1
+  # The label is the answer, not decoration: see EIGHTH FAILURE in the header.
+  if [ -z "$SELF" ]; then
+    others=$((count > 0 ? count - 1 : 0))
+    echo "COUNT=$count OTHERS>=$others (could not identify this session — CLAUDE_CODE_SESSION_ID unset;"
+    echo "  if you are NOT scoped to this, every session listed is another turn)"
+  elif [ "$self_in" = 1 ]; then
+    others=$((count - 1))
+    echo "COUNT=$count OTHERS=$others (includes you)"
+  else
+    others=$count
+    echo "COUNT=$count OTHERS=$others (you are NOT in this count — every session listed is another turn)"
+  fi
+  [ "$others" -gt 0 ] && NOT_SOLO=1
 
   # Same scope, second liveness source. Deliberately printed UNDER the count and
   # outside it: a session with no process is either mid-resume (an owner you must
@@ -363,6 +403,10 @@ if [ -n "$REF" ]; then
     # reading a transcript, so those sessions would be neither counted nor
     # listed here, and would vanish from the output entirely.
     matches_scope "$f" E "$REF_SCOPE" && continue
+    # Not yourself: your own earlier run of this check put the ref in your
+    # transcript, so listing you here tells you to go read yourself — and made
+    # every unscoped turn's --require-solo re-check refuse on its own shadow.
+    [ -n "$SELF" ] && [ "$sid" = "$SELF" ] && continue
     grep -qF -- "$REF" "$f" 2>/dev/null && hits="$hits $sid"
   done
   if [ -n "$hits" ]; then
