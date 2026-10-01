@@ -183,7 +183,7 @@ risk two replies to one person about one task. So the first thing a scoped turn 
 sender sweep and before reading the thread:
 
 ```bash
-"$CANOPY/scripts/live-turns.sh" --ref <the-ref>    # COUNT>1 → you are a duplicate
+"$CANOPY/scripts/live-turns.sh" --ref <the-ref>    # OTHERS>=1 → you are a duplicate
 ```
 
 **An UNSCOPED turn owes the same check the moment it PICKS an item — and the wording above is
@@ -198,6 +198,13 @@ have covered the ref. So the moment you select an inbound item, before you do an
 ```bash
 "$CANOPY/scripts/live-turns.sh" --ref <the-ref-you-just-picked> --slug <slug>
 ```
+
+**Read `OTHERS=`, not `COUNT=` — an unscoped turn is never in its own `--ref` count.** You were not
+dispatched with that ref, so `COUNT=1` on it is not you: it is one other session already holding
+the thread. The script now says which case you are in (`(includes you)` vs `(you are NOT in this
+count …)`) and prints `OTHERS=`, the number to act on either way: **`OTHERS>=1` → stand down.**
+(Origin: 2026-09-30 ace and 2026-10-01 hal — the line used to end `(includes you)` unconditionally,
+so a live `--thread` sibling read as "just me" twice in two days. canopy#713.)
 
 The counts are cheap and this one is the highest-yield of the three, because the scoped sibling you
 collide with was dispatched BY the runner ON that ref — it is far likelier to exist than a random
@@ -237,7 +244,7 @@ documented check mid-turn and got 0 while four hal turns were live, two of them 
 it was asking about.) The script reads scope from the transcript, which a resume replays. Its
 header records the three wrong versions written before the right one, which is why this is code.
 
-More than one means you are the later turn. Find where the earlier one got to — its transcript is
+`OTHERS` at 1 or more means you are the later turn. Find where the earlier one got to — its transcript is
 at `~/.claude/projects/<worktree-path>/<session-id>.jsonl`; read its last few assistant messages —
 and then **stand down on everything it is already doing, the send above all**: two agent emails to
 one person about one task is worse than no email, and it is the failure a collaborator actually
@@ -336,7 +343,7 @@ that, and so does a board task and an email about the same project. You are not 
 there is no reason to stop — and you will still overwrite each other. So run the wider count too:
 
 ```bash
-"$CANOPY/scripts/live-turns.sh" --slug <slug>    # COUNT>1 → a sibling turn of YOURS is live
+"$CANOPY/scripts/live-turns.sh" --slug <slug>    # OTHERS>=1 → a sibling turn of YOURS is live
 ```
 
 **"A turn of yours" means ANY of your entry points, not just `:turn`.** The scheduled dispatches a

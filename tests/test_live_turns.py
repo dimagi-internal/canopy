@@ -59,10 +59,15 @@ def _write_transcript(projects: Path, sid: str, first_user: str, later_lines=())
     return f
 
 
-def _run(projects: Path, session_ids, *args):
+def _run(projects: Path, session_ids, *args, self_id: str = ""):
     env = dict(os.environ)
     env["CLAUDE_PROJECTS_DIR"] = str(projects)
     env["CANOPY_LIVE_TURNS_SESSION_IDS"] = " ".join(session_ids)
+    # Pin who is asking. Run from inside Claude Code, the suite would otherwise
+    # inherit the REAL CLAUDE_CODE_SESSION_ID, and whether a fixture's COUNT
+    # "includes you" would depend on which session ran pytest. Empty = unknown.
+    env.pop("CLAUDE_CODE_SESSION_ID", None)
+    env["CANOPY_LIVE_TURNS_SELF"] = self_id
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         capture_output=True,
@@ -406,3 +411,70 @@ def test_without_the_flag_exit_stays_0(projects):
     _write_transcript(projects, b, _prompt(REF_A))
 
     assert _run(projects, [a, b], "--ref", REF_A).returncode == 0
+
+
+# ---- EIGHTH FAILURE: the COUNT label must say whether the CALLER is in it ----
+#
+# An unscoped turn that picked a ref out of its inbox is never in that ref's
+# count, so `COUNT=1 (includes you)` on it described a live sibling as "just me".
+# Measured 2026-09-30 (ace) and 2026-10-01 (hal). canopy#713.
+
+
+def _unscoped_prompt(slug: str = "hal") -> str:
+    return (
+        f"<command-message>{slug}:turn</command-message>"
+        f"<command-name>/{slug}:turn</command-name>"
+        f"<command-args>— run a full turn --caller /x/caller.json</command-args>"
+    )
+
+
+def test_unscoped_caller_is_told_a_scoped_sibling_is_not_it(projects):
+    """The #713 repro: an unscoped turn checks the ref a --thread sibling holds."""
+    me, sib = "eeeeeeee-0000-0000-0000-000000000005", "aaaaaaaa-0000-0000-0000-000000000001"
+    _write_transcript(projects, me, _unscoped_prompt())
+    _write_transcript(projects, sib, _prompt(REF_A))
+
+    res = _run(projects, [me, sib], "--ref", REF_A, "--require-solo", self_id=me)
+
+    assert _count_under(res.stdout, f"turns scoped to ref {REF_A}") == 1
+    assert "includes you" not in res.stdout, res.stdout
+    assert "OTHERS=1 (you are NOT in this count" in res.stdout, res.stdout
+    assert res.returncode == 3, res.stdout + res.stderr
+
+
+def test_scoped_caller_alone_is_its_own_count(projects):
+    me = "aaaaaaaa-0000-0000-0000-000000000001"
+    _write_transcript(projects, me, _prompt(REF_A))
+
+    res = _run(projects, [me], "--ref", REF_A, "--slug", "hal", "--require-solo", self_id=me)
+
+    assert "COUNT=1 OTHERS=0 (includes you)" in res.stdout, res.stdout
+    assert f"{me}   (you)" in res.stdout, res.stdout
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+def test_caller_own_mention_is_not_a_sibling(projects):
+    """An unscoped turn's first check puts the ref in its own transcript; its
+    pre-write --require-solo re-check must not then refuse on itself."""
+    me = "eeeeeeee-0000-0000-0000-000000000005"
+    _write_transcript(
+        projects, me, _unscoped_prompt(),
+        later_lines=[f"turns scoped to ref {REF_A}:\nCOUNT=0 OTHERS=0"],
+    )
+
+    res = _run(projects, [me], "--ref", REF_A, "--require-solo", self_id=me)
+
+    assert "nonetheless mention it" not in res.stdout, res.stdout
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+def test_unknown_caller_says_so_and_keeps_the_old_threshold(projects):
+    """No session id: never claim "includes you"; gate as before (COUNT>1)."""
+    a = "aaaaaaaa-0000-0000-0000-000000000001"
+    _write_transcript(projects, a, _prompt(REF_A))
+
+    res = _run(projects, [a], "--ref", REF_A, "--require-solo")
+
+    assert "includes you" not in res.stdout, res.stdout
+    assert "could not identify this session" in res.stdout, res.stdout
+    assert res.returncode == 0, res.stdout + res.stderr
