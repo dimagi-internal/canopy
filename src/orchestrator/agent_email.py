@@ -943,7 +943,7 @@ def _remove_labels(
             results.append({"thread_id": th, "ok": False, "error": "timed out after 30s"})
             continue
         except FileNotFoundError:
-            raise AgentEmailError("gog CLI not found on PATH (brew install steipete/tap/gogcli)")
+            raise AgentEmailError("gog CLI not found on PATH (brew install gogcli)")
         if r.returncode == 0:
             results.append({"thread_id": th, "ok": True, "error": ""})
         else:
@@ -1673,7 +1673,7 @@ def search_threads(
     try:
         r = runner(cmd, capture_output=True, text=True, timeout=SEARCH_TIMEOUT)
     except FileNotFoundError:
-        raise AgentEmailError("gog CLI not found on PATH (brew install steipete/tap/gogcli)")
+        raise AgentEmailError("gog CLI not found on PATH (brew install gogcli)")
     except subprocess.TimeoutExpired:
         raise AgentEmailError(f"search: gog timed out after {SEARCH_TIMEOUT}s on {query!r}")
     if r.returncode != 0:
@@ -1863,7 +1863,7 @@ def preflight(
             capture_output=True, text=True, timeout=30,
         )
     except FileNotFoundError:
-        return False, ["FIX: gog CLI not installed (brew install gog / see GOG docs)."]
+        return False, ["FIX: gog CLI not installed (brew install gogcli)."]
     except subprocess.TimeoutExpired:
         return False, ["FIX: gog gmail search timed out — check network / re-login."]
     if r.returncode != 0:

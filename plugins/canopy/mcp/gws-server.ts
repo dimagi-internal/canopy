@@ -453,7 +453,7 @@ server.tool(
       ];
       const proc = spawnSync('gog', args, { encoding: 'utf8' });
       if (proc.error) {
-        return error(`gog binary not found or not executable: ${proc.error.message}. Install with: brew install steipete/tap/gogcli`);
+        return error(`gog binary not found or not executable: ${proc.error.message}. Install with: brew install gogcli`);
       }
       // gog can return exit 0 even on 404; check stderr and that the file
       // was actually written.
