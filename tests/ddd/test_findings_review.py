@@ -11,6 +11,7 @@ import io
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 from PIL import Image
 
@@ -525,15 +526,74 @@ def test_parse_selection_legacy_flat_decision_still_bucketed():
     assert sel["comments"] == {}
 
 
-def test_parse_selection_tolerates_empty_response():
-    sel = parse_selection({})
+def test_parse_selection_empty_decisions_is_a_valid_no_touch():
+    # The reviewer touched no finding: a present-but-empty decisions object.
+    sel = parse_selection({"decisions": {}})
     assert sel == {
         "selections": [],
         "implement": [],
         "skip": [],
+        "defer": [],
         "commented": [],
         "comments": {},
+        "overall": None,
     }
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},  # missing decisions entirely
+        {"decision": "implement"},  # wrong shape: top-level decision
+        {"decisions": None},
+        {"decisions": ["scene-2-visual-polish"]},
+        {"decisions": {"scene-2-visual-polish": {"decision": "approve"}}},  # unknown
+        {"decisions": {"scene-2-visual-polish": "yes"}},  # unknown (legacy flat)
+        {"decisions": {"scene-2-visual-polish": ["implement"]}},  # malformed entry
+        {"decisions": {"scene-2-visual-polish": {"decision": "implement", "comment": 3}}},
+        {"decisions": {"findings-verdict": "ship it"}},  # unknown overall
+        "implement",
+    ],
+)
+def test_parse_selection_fails_closed(response):
+    from scripts.ddd.review import InvalidReviewResponse
+
+    with pytest.raises(InvalidReviewResponse, match="'implement', 'skip', 'defer'"):
+        parse_selection(response)
+
+
+def test_parse_selection_defer_and_overall_are_reported():
+    sel = parse_selection(
+        {
+            "decisions": {
+                "scene-2-visual-polish": {"decision": "defer", "comment": ""},
+                "findings-verdict": "discuss",
+            }
+        }
+    )
+    assert sel["defer"] == ["scene-2-visual-polish"]
+    assert sel["implement"] == [] and sel["skip"] == []
+    assert sel["overall"] == "discuss"
+    # The overall verdict is not mistaken for a cluster.
+    assert [x["cluster_id"] for x in sel["selections"]] == ["scene-2-visual-polish"]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [{}, {"decisions": {"scene-2-visual-polish": {"decision": "approve"}}}],
+)
+def test_cli_apply_refuses_without_a_selection(tmp_path, capsys, response):
+    from scripts.ddd import findings_review as fr
+
+    path = tmp_path / "response.json"
+    path.write_text(json.dumps(response))
+    with pytest.raises(SystemExit) as exc:
+        fr.main(["apply", str(path)])
+    assert exc.value.code == 1
+    out = capsys.readouterr()
+    assert out.out == ""  # no selection JSON for a caller to act on
+    assert "refusing to apply" in out.err
+    assert "Expected shape" in out.err
 
 
 # ---------------------------------------------------------------------------

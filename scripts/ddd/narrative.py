@@ -30,7 +30,7 @@ import yaml
 
 from scripts.ddd.schemas.models import Decision, Gate, NarrationItem, ReviewRequest, UnifiedSpec
 from scripts.ddd.spec_io import load_spec
-from scripts.ddd.review import _review_id_from_url
+from scripts.ddd.review import InvalidReviewResponse, _review_id_from_url
 from scripts.narrative.models import scene_narration_text
 
 
@@ -443,6 +443,61 @@ def _apply_why_brief_edits(spec_path: Path, raw: dict, response_json: dict) -> i
     return changed
 
 
+#: The decision id the narrative-agreement gate posts (see
+#: ``build_narrative_review_request``) and reads back from ``response_json``.
+NARRATIVE_DECISION_ID = "narrative-verdict"
+
+#: Accepted ``narrative-verdict`` values -> the v3 decision they mean. The v2
+#: values are still accepted and coerced.
+NARRATIVE_DECISIONS: dict[str, str] = {
+    "approve": "approve",
+    "redraft": "redraft",
+    "agree": "approve",
+    "edit": "approve",
+    "rethink": "redraft",
+}
+
+_EXPECTED_NARRATIVE_SHAPE = (
+    '{"decisions": {"narrative-verdict": "approve" | "redraft"}, '
+    '"edited_scenes": [...]}  (edited_scenes / narration_edits optional)'
+)
+
+
+def narrative_decision(response_json) -> str:
+    """Return the v3 decision (``approve`` | ``redraft``) a response carries.
+
+    FAILS CLOSED. A missing, unknown or malformed decision raises
+    :class:`InvalidReviewResponse` — it is never read as an approval. The old
+    behaviour (``decisions.get("narrative-verdict", "approve")``) locked a spec
+    as approved when an orchestrator wrote a redraft in the wrong shape
+    (connect-labs run ``supply-sophie-unanswered-round-2026-10-02-001``).
+    """
+    accepted = ", ".join(repr(k) for k in NARRATIVE_DECISIONS)
+    hint = f"Accepted decisions: {accepted}. Expected shape: {_EXPECTED_NARRATIVE_SHAPE}"
+    if not isinstance(response_json, dict):
+        raise InvalidReviewResponse(
+            f"narrative response must be a JSON object, got {type(response_json).__name__}. {hint}"
+        )
+    decisions = response_json.get("decisions")
+    if not isinstance(decisions, dict):
+        found = "missing" if decisions is None else f"a {type(decisions).__name__}"
+        top = sorted(response_json)
+        raise InvalidReviewResponse(
+            f"narrative response has no 'decisions' object ({found}; top-level keys: {top}). {hint}"
+        )
+    if NARRATIVE_DECISION_ID not in decisions:
+        raise InvalidReviewResponse(
+            f"narrative response has no decisions[{NARRATIVE_DECISION_ID!r}] "
+            f"(decisions keys: {sorted(decisions)}). {hint}"
+        )
+    raw_decision = decisions[NARRATIVE_DECISION_ID]
+    if not isinstance(raw_decision, str) or raw_decision not in NARRATIVE_DECISIONS:
+        raise InvalidReviewResponse(
+            f"narrative response has an unknown decision {raw_decision!r}. {hint}"
+        )
+    return NARRATIVE_DECISIONS[raw_decision]
+
+
 def apply_narrative_edits(
     spec_path: str | Path,
     response_json: dict,
@@ -493,6 +548,10 @@ def apply_narrative_edits(
     Legacy v2 decision values are coerced:
     ``"agree"``/``"edit"`` → ``"approve"``; ``"rethink"`` → ``"redraft"``.
 
+    A missing, unknown or malformed decision raises
+    :class:`~scripts.ddd.review.InvalidReviewResponse` BEFORE anything is
+    written — the spec, its narrative lock and the why-brief stay untouched.
+
     Parameters
     ----------
     spec_path:
@@ -520,19 +579,13 @@ def apply_narrative_edits(
             {"decision": ..., "applied": ..., "needs_grounding": ...,
              "feedback": ..., "edited": n}
     """
+    # Validate the decision BEFORE touching anything: a response with no
+    # usable decision raises here, so the spec, the lock, the personas and the
+    # why-brief are all left exactly as they were (fail closed).
+    decision: str = narrative_decision(response_json)
+
     spec_path = Path(spec_path)
     raw = yaml.safe_load(spec_path.read_text())
-
-    decisions: dict[str, str] = response_json.get("decisions", {}) or {}
-    raw_decision: str = decisions.get("narrative-verdict", "approve")
-
-    # Normalise to v3 vocabulary: legacy "agree"/"edit" → "approve"; "rethink" → "redraft".
-    _LEGACY_MAP = {
-        "agree": "approve",
-        "edit": "approve",
-        "rethink": "redraft",
-    }
-    decision: str = _LEGACY_MAP.get(raw_decision, raw_decision)
 
     # Lock-on-approve: an approved narrative becomes durable input (ddd-spec will
     # reuse the whole spec verbatim instead of regenerating it); redraft clears
@@ -1122,8 +1175,20 @@ def _cmd_apply(spec_path_str: str, response_json_file: str) -> None:
         print(f"ERROR: response JSON file not found: {response_path}", file=sys.stderr)
         sys.exit(1)
 
-    response_json = json.loads(response_path.read_text())
-    result = apply_narrative_edits(spec_path_str, response_json)
+    try:
+        response_json = json.loads(response_path.read_text())
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: response JSON file is not valid JSON ({response_path}): {exc}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        result = apply_narrative_edits(spec_path_str, response_json)
+    except InvalidReviewResponse as exc:
+        print(
+            f"ERROR: refusing to apply {response_path}: {exc}\n"
+            "Nothing was changed: the spec and its narrative lock are untouched.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     print(json.dumps(result))
 
 

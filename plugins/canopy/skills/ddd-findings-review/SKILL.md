@@ -235,17 +235,25 @@ RESPONSE_JSON_FILE="$(mktemp /tmp/findings_response_XXXXXX.json)"
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.findings_review apply "$RESPONSE_JSON_FILE")
 ```
 
-It parses the contract `response_json` — `decisions` keyed by `cluster_id`, with
-`overall` / `notes` as siblings — and prints the machine-readable selection:
+It parses the contract `response_json` — `decisions` keyed by `cluster_id`, plus
+the optional overall `findings-verdict` — and prints the machine-readable selection:
 
 ```json
-{"overall": "proceed",
- "notes": "ship the read-only lock now",
- "selections": [{"cluster_id": "scene-9-task-completion", "decision": "implement"}],
+{"selections": [{"cluster_id": "scene-9-task-completion", "decision": "implement", "comment": ""}],
  "implement": ["scene-9-task-completion"],
  "skip": ["scene-3-clarity"],
- "defer": ["user-trust"]}
+ "defer": ["user-trust"],
+ "commented": [],
+ "comments": {},
+ "overall": "proceed with selected"}
 ```
+
+`apply` **fails closed**: a response with no `decisions` object, an unknown
+decision (anything but `implement` / `skip` / `defer` / `null`, or an overall other
+than `proceed with selected` / `discuss`), or a malformed entry exits **1**, names
+the accepted decisions and the expected shape on stderr, and prints no selection.
+Do not route on a non-zero exit — fix the response file and re-run. An empty
+`decisions: {}` is valid (the reviewer touched no finding).
 
 The `implement` list is the set downstream applies.
 
@@ -253,11 +261,12 @@ The `implement` list is the set downstream applies.
 
 | Outcome | Effect |
 |---------|--------|
-| `overall == "proceed"` | Apply ONLY the `implement` clusters (their `suggested_fix`), log `skip` to the digest, append `defer` clusters to learnings/backlog. Then re-fire `/canopy:ddd-run` on the same scope. |
+| `overall` is `"proceed with selected"` or absent | Apply ONLY the `implement` clusters (their `suggested_fix`), log `skip` to the digest, append `defer` clusters to learnings/backlog. Then re-fire `/canopy:ddd-run` on the same scope. |
 | `overall == "discuss"` | Do NOT apply anything. Surface the clusters inline and have the conversation; re-post after it resolves. |
 
-Unknown/missing decisions are treated as `defer` — never auto-apply on
-ambiguity.
+A finding the reviewer did not touch (absent from `decisions`) or left at `null`
+is treated as `defer` — never auto-apply on ambiguity. An unknown or malformed
+decision is not treated as anything: `apply` refuses it (exit 1).
 
 ### Step 7 — Report
 

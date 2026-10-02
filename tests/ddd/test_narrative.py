@@ -452,17 +452,20 @@ class TestApplyNarrativeEdits:
         result = apply_narrative_edits(str(spec_path), response)
         assert result["decision"] == "redraft"
 
-    def test_returns_dict_with_decision_and_edited_on_unknown(self, tmp_path):
-        """An unrecognised decision value passes through unchanged (unknown future values)."""
+    def test_unknown_decision_is_refused(self, tmp_path):
+        """An unrecognised decision value FAILS CLOSED — it is not passed through."""
+        from scripts.ddd.review import InvalidReviewResponse
+
         spec = _make_spec()
         spec_path = _write_spec(tmp_path, spec)
+        before = spec_path.read_text()
         response = {
             "decisions": {"narrative-verdict": "some-future-value"},
             "narration_edits": {},
         }
-        result = apply_narrative_edits(str(spec_path), response)
-        assert "decision" in result
-        assert "edited" in result
+        with pytest.raises(InvalidReviewResponse, match="'approve', 'redraft'"):
+            apply_narrative_edits(str(spec_path), response)
+        assert spec_path.read_text() == before
 
     def test_no_edits_returns_zero_edited_count(self, tmp_path):
         spec = _make_spec()
@@ -561,13 +564,18 @@ class TestApplyNarrativeEdits:
         result = apply_narrative_edits(spec_path, response)
         assert result["decision"] == "approve"
 
-    def test_missing_decisions_key_defaults_to_approve(self, tmp_path):
-        """Robust default: if 'decisions' key absent, decision defaults to 'approve'."""
+    def test_missing_decisions_key_is_refused_not_approved(self, tmp_path):
+        """A response with no 'decisions' is refused — never read as an approval."""
+        from scripts.ddd.review import InvalidReviewResponse
+
         spec = _make_spec()
         spec_path = _write_spec(tmp_path, spec)
+        before = spec_path.read_text()
         response = {"narration_edits": {}}
-        result = apply_narrative_edits(str(spec_path), response)
-        assert result["decision"] == "approve"
+        with pytest.raises(InvalidReviewResponse, match="no 'decisions' object"):
+            apply_narrative_edits(str(spec_path), response)
+        assert spec_path.read_text() == before
+        assert is_narrative_locked(spec_path) is False
 
     def test_missing_narration_edits_key_is_handled(self, tmp_path):
         """Robust default: if 'narration_edits' absent, no changes are applied."""
@@ -1993,3 +2001,132 @@ class TestSceneNarrativeListFormReachesTheReviewSurface:
         assert [n.text for n in result.narration] == [
             "Rooftop surveys ride Connect microplanning."
         ]
+
+
+# ---------------------------------------------------------------------------
+# apply FAILS CLOSED on a missing / unknown / malformed decision.
+#
+# Incident: in connect-labs run supply-sophie-unanswered-round-2026-10-02-001
+# the orchestrator wrote a REDRAFT response in the wrong shape (no
+# decisions["narrative-verdict"]) and `narrative apply` defaulted it to
+# "approve" and locked the spec. A missing decision must refuse, exit non-zero,
+# and leave the spec and its lock byte-for-byte untouched.
+# ---------------------------------------------------------------------------
+
+
+class TestApplyFailsClosed:
+    def _run_cli(self, spec_path: Path, response, tmp_path: Path, capsys):
+        import json
+
+        from scripts.ddd import narrative as nar
+
+        resp = tmp_path / "response.json"
+        resp.write_text(response if isinstance(response, str) else json.dumps(response))
+        argv = ["narrative", "apply", str(spec_path), str(resp)]
+        import sys
+
+        old = sys.argv
+        sys.argv = argv
+        try:
+            with pytest.raises(SystemExit) as exc:
+                nar.main()
+                raise SystemExit(0)
+        finally:
+            sys.argv = old
+        out = capsys.readouterr()
+        return exc.value.code, out.out, out.err
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            # The incident shape: a redraft written as a top-level "decision".
+            {"decision": "redraft", "overall_feedback": "re-draft scene 3"},
+            {"narration_edits": {}},
+            {"decisions": {}},
+            {"decisions": None},
+            {"decisions": ["redraft"]},
+            {"decisions": {"verdict": "redraft"}},
+            {"decisions": {"narrative-verdict": None}},
+            {"decisions": {"narrative-verdict": ""}},
+            {"decisions": {"narrative-verdict": True}},
+            {"decisions": {"narrative-verdict": "Approve"}},
+            {"decisions": {"narrative-verdict": "approved"}},
+            ["approve"],
+        ],
+    )
+    def test_cli_refuses_and_locks_nothing(self, tmp_path, capsys, response):
+        spec_path = _write_spec(tmp_path, _make_spec())
+        before = spec_path.read_text()
+
+        code, out, err = self._run_cli(spec_path, response, tmp_path, capsys)
+
+        assert code == 1
+        assert out == ""  # no result JSON for a caller to mistake for success
+        assert "refusing to apply" in err
+        assert "'approve'" in err and "'redraft'" in err  # names accepted decisions
+        assert '"narrative-verdict"' in err  # names the expected shape
+        assert spec_path.read_text() == before
+        assert is_narrative_locked(spec_path) is False
+
+    def test_refusal_leaves_an_existing_lock_in_place(self, tmp_path, capsys):
+        """A malformed redraft must not UNLOCK an approved spec either."""
+        spec_path = _write_spec(tmp_path, _make_spec())
+        set_narrative_lock(spec_path, True)
+        before = spec_path.read_text()
+
+        code, _, _ = self._run_cli(spec_path, {"decision": "redraft"}, tmp_path, capsys)
+
+        assert code == 1
+        assert spec_path.read_text() == before
+        assert is_narrative_locked(spec_path) is True
+
+    def test_refusal_leaves_why_brief_and_personas_untouched(self, tmp_path):
+        """Validation runs before the persona / why-brief edits are applied."""
+        from scripts.ddd.review import InvalidReviewResponse
+
+        spec_path = _write_spec(tmp_path, _make_spec())
+        before = spec_path.read_text()
+        response = {
+            "edited_personas": {"alice": {"name": "Changed"}},
+            "edited_scenes": [],
+        }
+        with pytest.raises(InvalidReviewResponse):
+            apply_narrative_edits(spec_path, response)
+        assert spec_path.read_text() == before
+
+    def test_cli_rejects_invalid_json(self, tmp_path, capsys):
+        spec_path = _write_spec(tmp_path, _make_spec())
+        before = spec_path.read_text()
+        code, out, err = self._run_cli(spec_path, "{not json", tmp_path, capsys)
+        assert code == 1 and out == ""
+        assert "not valid JSON" in err
+        assert spec_path.read_text() == before
+
+    @pytest.mark.parametrize("verdict,locked", [("approve", True), ("agree", True), ("edit", True)])
+    def test_cli_approve_still_locks(self, tmp_path, capsys, verdict, locked):
+        import json
+
+        spec_path = _write_spec(tmp_path, _make_spec())
+        code, out, _ = self._run_cli(
+            spec_path, {"decisions": {"narrative-verdict": verdict}, "edited_scenes": []}, tmp_path, capsys
+        )
+        assert code == 0
+        result = json.loads(out)
+        assert result["decision"] == "approve"
+        assert result["narrative_locked"] is True
+        assert is_narrative_locked(spec_path) is locked
+
+    @pytest.mark.parametrize("verdict", ["redraft", "rethink"])
+    def test_cli_redraft_still_unlocks(self, tmp_path, capsys, verdict):
+        import json
+
+        spec_path = _write_spec(tmp_path, _make_spec())
+        set_narrative_lock(spec_path, True)
+        code, out, _ = self._run_cli(
+            spec_path, {"decisions": {"narrative-verdict": verdict}, "edited_scenes": []}, tmp_path, capsys
+        )
+        assert code == 0
+        result = json.loads(out)
+        assert result["decision"] == "redraft"
+        assert result["narrative_locked"] is False
+        assert is_narrative_locked(spec_path) is False

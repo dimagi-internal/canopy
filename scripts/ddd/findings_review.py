@@ -69,6 +69,7 @@ from scripts.ddd.narrative import (
     _title_slug,
     _tokenized_review_url,
 )
+from scripts.ddd.review import InvalidReviewResponse
 from scripts.ddd.schemas.models import Decision, Gate, NarrationItem, ReviewRequest, UnifiedSpec
 
 GATE = Gate.PRODUCT_FINDINGS
@@ -642,44 +643,101 @@ def build_findings_review_request(
 # ---------------------------------------------------------------------------
 
 
+_EXPECTED_FINDINGS_SHAPE = (
+    '{"decisions": {"<cluster_id>": {"decision": "implement" | "skip" | "defer" | null, '
+    '"comment": "free text"}}}'
+)
+
+
 def parse_selection(response_json: dict) -> dict:
     """Turn a resolved review's ``response_json`` into a machine-readable selection.
 
     Contract ``response_json`` shape (per-finding decision + comment; nothing is
     pre-selected, only findings the reviewer touched are present)::
 
-        {"decisions": {"<cluster_id>": {"decision": "implement" | "skip" | null,
+        {"decisions": {"<cluster_id>": {"decision": "implement" | "skip" | "defer" | null,
                                         "comment": "free text"}}}
 
     ``decision`` is ``null`` when the reviewer left a comment but didn't pick
     implement/skip — treat that as guidance to address, never as an auto-skip.
+    The overall ``findings-verdict`` decision (``proceed with selected`` |
+    ``discuss``), when present, is reported as ``overall`` — not as a cluster.
     Returns::
 
         {"selections": [{"cluster_id": str, "decision": str|None, "comment": str}, ...],
          "implement": [cluster ids],          # decision == "implement"
          "skip": [cluster ids],               # decision == "skip"
+         "defer": [cluster ids],              # decision == "defer"
          "commented": [cluster ids],          # any non-empty comment
-         "comments": {cluster_id: comment}}   # non-empty comments, keyed by id
+         "comments": {cluster_id: comment},   # non-empty comments, keyed by id
+         "overall": str | None}               # the findings-verdict, if given
+
+    FAILS CLOSED: a response with no ``decisions`` object, an unknown decision
+    value, or a malformed per-cluster entry raises
+    :class:`~scripts.ddd.review.InvalidReviewResponse` — a wrong-shaped response
+    is never read as "the reviewer chose nothing, proceed". An empty
+    ``decisions`` object is valid (the reviewer touched no finding).
 
     Backward-compatible: a legacy flat value (``decisions[id] == "implement"``)
     is still bucketed correctly.
     """
-    response_json = response_json or {}
-    decisions: dict = response_json.get("decisions") or {}
+    accepted = ", ".join(repr(o) for o in CLUSTER_OPTIONS) + ", null"
+    hint = (
+        f"Accepted per-finding decisions: {accepted}; accepted {OVERALL_DECISION_ID!r}: "
+        + ", ".join(repr(o) for o in OVERALL_OPTIONS)
+        + f". Expected shape: {_EXPECTED_FINDINGS_SHAPE}"
+    )
+    if not isinstance(response_json, dict):
+        raise InvalidReviewResponse(
+            f"findings response must be a JSON object, got {type(response_json).__name__}. {hint}"
+        )
+    decisions = response_json.get("decisions")
+    if not isinstance(decisions, dict):
+        found = "missing" if decisions is None else f"a {type(decisions).__name__}"
+        raise InvalidReviewResponse(
+            f"findings response has no 'decisions' object ({found}; top-level keys: "
+            f"{sorted(response_json)}). {hint}"
+        )
+
+    overall = None
     selections: list[dict] = []
-    buckets: dict[str, list[str]] = {"implement": [], "skip": []}
+    buckets: dict[str, list[str]] = {o: [] for o in CLUSTER_OPTIONS}
     commented: list[str] = []
     comments: dict[str, str] = {}
     for cluster_id, entry in decisions.items():
+        if cluster_id == OVERALL_DECISION_ID:
+            value = entry.get("decision") if isinstance(entry, dict) else entry
+            if value not in OVERALL_OPTIONS:
+                raise InvalidReviewResponse(
+                    f"findings response has an unknown {OVERALL_DECISION_ID!r} {value!r}. {hint}"
+                )
+            overall = value
+            continue
         if isinstance(entry, dict):
             decision = entry.get("decision")
-            comment = (entry.get("comment") or "").strip()
-        else:
+            comment = entry.get("comment") or ""
+            if not isinstance(comment, str):
+                raise InvalidReviewResponse(
+                    f"findings response: decisions[{cluster_id!r}].comment must be a string, "
+                    f"got {type(comment).__name__}. {hint}"
+                )
+            comment = comment.strip()
+        elif entry is None or isinstance(entry, str):
             # Legacy flat shape: the value IS the decision string.
             decision = entry
             comment = ""
+        else:
+            raise InvalidReviewResponse(
+                f"findings response: decisions[{cluster_id!r}] is a {type(entry).__name__}, "
+                f"not an object. {hint}"
+            )
+        if decision is not None and decision not in buckets:
+            raise InvalidReviewResponse(
+                f"findings response: decisions[{cluster_id!r}] has an unknown decision "
+                f"{decision!r}. {hint}"
+            )
         selections.append({"cluster_id": cluster_id, "decision": decision, "comment": comment})
-        if decision in buckets:
+        if decision is not None:
             buckets[decision].append(cluster_id)
         if comment:
             commented.append(cluster_id)
@@ -688,8 +746,10 @@ def parse_selection(response_json: dict) -> dict:
         "selections": selections,
         "implement": buckets["implement"],
         "skip": buckets["skip"],
+        "defer": buckets["defer"],
         "commented": commented,
         "comments": comments,
+        "overall": overall,
     }
 
 
@@ -889,8 +949,17 @@ def _cmd_apply(args: argparse.Namespace) -> None:
     if not response_path.exists():
         print(f"ERROR: response JSON file not found: {response_path}", file=sys.stderr)
         sys.exit(1)
-    response_json = json.loads(response_path.read_text())
-    print(json.dumps(parse_selection(response_json)))
+    try:
+        response_json = json.loads(response_path.read_text())
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: response JSON file is not valid JSON ({response_path}): {exc}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        selection = parse_selection(response_json)
+    except InvalidReviewResponse as exc:
+        print(f"ERROR: refusing to apply {response_path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(selection))
 
 
 def _cmd_mode(args: argparse.Namespace) -> None:
