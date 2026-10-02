@@ -1819,6 +1819,117 @@ def dangling_threads(
 owed_replies = dangling_threads
 
 
+# --------------------------------------------------------------------------------------
+# Keyring a RUNNER-SPAWNED session can open (macOS laptops)
+# --------------------------------------------------------------------------------------
+#
+# gog keeps refresh tokens in a keyring. On a Mac that should be the Keychain: the login
+# session unlocks it, so a turn the runner spawns (launchd env = PATH + PYTHONUNBUFFERED,
+# no TTY) reads it with no password anywhere. gog's `file` backend instead needs
+# GOG_KEYRING_PASSWORD in the environment or a TTY to prompt on — fine on the cloud
+# runner, which injects the password at boot, and DEAD in every laptop turn.
+#
+# Measured 2026-10-02 on a second operator's laptop runner: ACE's plugin .env selected
+# the file backend + password. `bin/ace-doctor` exports those itself, so doctor passed;
+# the first real caller turn could neither read nor send mail ("no TTY available for
+# keyring file backend password prompt"). The check therefore models what a TURN sees —
+# launchd's environment and gog's config.json — never this process's own env.
+
+KEYRING_VARS = ("GOG_KEYRING_BACKEND", "GOG_KEYRING_PASSWORD")
+
+#: Overridable in tests; the check only applies on macOS.
+_PLATFORM = sys.platform
+
+
+def _launchd_env(name: str, runner=subprocess.run) -> str:
+    """`launchctl getenv NAME` — what a launchd-spawned runner (and so its turns) inherit."""
+    try:
+        r = runner(["launchctl", "getenv", name], capture_output=True, text=True, timeout=10)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    return (r.stdout or "").strip() if r.returncode == 0 else ""
+
+
+def gog_keyring_backend(gog_dir: str | None = None) -> str:
+    """gog's configured backend (`keyring_backend` in config.json), lowercased, or ""."""
+    try:
+        with open(os.path.join(gog_dir or GOG_CONFIG_DIR, "config.json"), encoding="utf-8") as f:
+            return str(json.load(f).get("keyring_backend") or "").strip().lower()
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def agent_env_files(slug: str, home: Path | None = None) -> list[Path]:
+    """The .env files an agent's tooling loads: canopy's `~/.<slug>/.env` and the agent
+    plugin's data dir (`~/.claude/plugins/data/<slug>-*/.env`)."""
+    home = home or Path.home()
+    found = [home / f".{slug}" / ".env"]
+    found += sorted((home / ".claude" / "plugins" / "data").glob(f"{slug}-*/.env"))
+    return [p for p in found if p.is_file()]
+
+
+def env_file_keyring_settings(paths: Sequence[Path]) -> dict[Path, dict[str, str]]:
+    """{path: {VAR: value}} for every GOG_KEYRING_* assignment in those .env files."""
+    out: dict[Path, dict[str, str]] = {}
+    for p in paths:
+        try:
+            lines = p.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            s = line.strip()
+            if s.startswith("export "):
+                s = s[len("export "):].lstrip()
+            key, sep, val = s.partition("=")
+            if sep and key.strip() in KEYRING_VARS:
+                out.setdefault(p, {})[key.strip()] = val.strip().strip('"').strip("'")
+    return out
+
+
+def session_keyring_problems(slug: str, *, gog_dir: str | None = None,
+                             home: Path | None = None, environ=None,
+                             runner=subprocess.run, platform: str | None = None) -> list[str]:
+    """[] when a turn the runner spawns on this Mac can open gog's keyring; otherwise
+    FIX lines. A no-op off macOS (the cloud runner's file backend is correct there)."""
+    if (platform or _PLATFORM) != "darwin":
+        return []
+    environ = os.environ if environ is None else environ
+    launchd_backend = _launchd_env("GOG_KEYRING_BACKEND", runner).lower()
+    launchd_password = _launchd_env("GOG_KEYRING_PASSWORD", runner)
+    turn_backend = launchd_backend or gog_keyring_backend(gog_dir) or "auto"
+    files = env_file_keyring_settings(agent_env_files(slug, home))
+    file_backends = {p: v["GOG_KEYRING_BACKEND"].lower()
+                     for p, v in files.items() if v.get("GOG_KEYRING_BACKEND")}
+    here = (environ.get("GOG_KEYRING_BACKEND") or "").strip().lower()
+
+    problems: list[str] = []
+    if turn_backend == "file" and not launchd_password:
+        problems.append(
+            f"FIX: gog uses the FILE keyring, and a turn the runner spawns has no TTY and no "
+            f"GOG_KEYRING_PASSWORD — so {slug}'s email is dead in every turn on this Mac "
+            f"(read AND send).")
+    elsewhere = [str(p) for p, b in file_backends.items() if b == "file"]
+    if here == "file":
+        elsewhere.append("this shell's environment")
+    if turn_backend != "file" and elsewhere:
+        problems.append(
+            f"FIX: turns use the {turn_backend} keyring, but {', '.join(elsewhere)} select the "
+            f"FILE keyring — two keyrings, so a token imported under one is invisible to the "
+            f"other and checks run here can pass while turns fail.")
+    if not problems:
+        return []
+    remove = sorted({str(p) for p in files} | ({"this shell"} if here else set()))
+    return problems + [
+        "     On a Mac, use the Keychain (your login unlocks it; no password, no TTY):",
+        "       1. gog auth keyring keychain",
+        f"       2. delete {' and '.join(KEYRING_VARS)} from: "
+        + (", ".join(remove) if remove else "(no agent .env sets them)"),
+        f"       3. canopy agent bootstrap --slug {slug}   # re-imports the token into the Keychain",
+        "     Never `launchctl setenv GOG_KEYRING_PASSWORD` — it hands the password to every "
+        "process of this user.",
+    ]
+
+
 def preflight(
     identity: EmailIdentity,
     *,
@@ -1827,6 +1938,11 @@ def preflight(
 ) -> tuple[bool, list[str]]:
     """Is the agent's gog Gmail auth alive? (ok, report-lines) — read-only, never logs in."""
     gog_home = gog_dir or GOG_CONFIG_DIR
+    # First, and a hard fail: a keyring turns can't open means a live search from HERE
+    # proves nothing about the agent's actual turns.
+    keyring = session_keyring_problems(identity.slug, gog_dir=gog_home)
+    if keyring:
+        return False, keyring
     login_cmd = (f"gog login {identity.account} --client {identity.client} "
                  f"--services {LOGIN_SERVICES}")
     creds = os.path.join(gog_home, f"credentials-{identity.client}.json")

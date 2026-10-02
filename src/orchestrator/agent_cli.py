@@ -1154,6 +1154,8 @@ def agent_health(slug, stale_needs_you_days, stale_inbox_days, as_json):
                        f"({sum(1 for i in a['board']['needs_you'] if i['stale'])} stale)  •  "
                        f"unread: {n_unread} ({n_junky} junk-signaled)"
                        + (f"  •  inbox error: {a['inbox']['error']}" if a["inbox"]["error"] else ""))
+            for line in a.get("keyring") or []:
+                click.echo(f"        {line}")
         click.echo()
         n_bad = sum(1 for a in out["agents"] if not a["ready"])
         click.echo(f"All {len(out['agents'])} agent(s) ready for their next turn."

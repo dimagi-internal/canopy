@@ -50,8 +50,11 @@ from orchestrator.agent_doctor import (
 )
 from orchestrator.agent_email import (
     GOG_CONFIG_DIR,
+    KEYRING_VARS,
     AgentEmailError,
     EmailIdentity,
+    agent_env_files,
+    env_file_keyring_settings,
     gog_client_credentials,
     preflight,
     resolve_email_identity,
@@ -387,14 +390,22 @@ class Bootstrapper:
             return None, _first_line(r.stderr)
         return r.stdout, ""
 
+    def _gog(self, argv: list[str], **kw):
+        """Run gog. On a Mac, WITHOUT any GOG_KEYRING_* from this shell: a turn the runner
+        spawns never has them, so a token imported under them lands in a keyring the
+        agent's turns cannot open (see agent_email.session_keyring_problems)."""
+        if self.platform == "darwin":
+            kw["env"] = {k: v for k, v in os.environ.items() if k not in KEYRING_VARS}
+        return self.run(argv, **kw)
+
     def gog_accounts(self) -> list[dict] | None:
         """`gog auth list --json`, ONCE per run (every gog call can be a Keychain prompt)."""
         if not self._accounts_read:
             self._accounts_read = True
             self._keychain_heads_up()
             try:
-                r = self.run(["gog", "auth", "list", "--json"],
-                             capture_output=True, text=True, timeout=60)
+                r = self._gog(["gog", "auth", "list", "--json"],
+                              capture_output=True, text=True, timeout=60)
                 if r.returncode == 0:
                     self._accounts = json.loads(r.stdout or "{}").get("accounts") or []
             except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
@@ -466,6 +477,46 @@ class Bootstrapper:
                 if "=" in line and not line.lstrip().startswith("#"))
         rep.env = f"OK ({n} vars)"
 
+    def step_keyring(self, slug: str, rep: AgentReport) -> None:
+        """macOS only: put gog on the Keychain and take the file-backend settings out of
+        the agent's .env files, BEFORE the token step imports into it.
+
+        A laptop turn runs under launchd with no TTY and no GOG_KEYRING_PASSWORD, so the
+        file backend (right for the cloud runner, which injects the password at boot)
+        makes the agent's email dead in every turn while every check run from a shell
+        that loaded the .env passes. 2026-10-02, a second operator's ACE laptop."""
+        if self.platform != "darwin":
+            return
+        cfg_path = self.gog_dir / "config.json"
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            if not isinstance(cfg, dict):
+                cfg = {}
+        except (OSError, ValueError):
+            cfg = {}
+        if str(cfg.get("keyring_backend") or "").strip().lower() == "file":
+            if self.dry_run:
+                rep.notes.append("keyring: would switch gog from the file keyring to the Keychain")
+            else:
+                cfg["keyring_backend"] = "keychain"
+                _write_private(cfg_path, json.dumps(cfg, indent=2) + "\n")
+                rep.notes.append("keyring: switched gog from the file keyring to the Keychain "
+                                 "(turns can't open a file keyring on a Mac)")
+        for path, found in env_file_keyring_settings(agent_env_files(slug, self.home)).items():
+            names = " and ".join(sorted(found))
+            if self.dry_run:
+                rep.notes.append(f"keyring: would remove {names} from {path}")
+                continue
+            kept = []
+            for line in path.read_text(encoding="utf-8").splitlines(keepends=True):
+                s = line.strip()
+                s = s[len("export "):].lstrip() if s.startswith("export ") else s
+                if s.partition("=")[0].strip() not in KEYRING_VARS:
+                    kept.append(line)
+            _write_private(path, "".join(kept))
+            rep.notes.append(f"keyring: removed {names} from {path} — on a Mac gog uses the "
+                             "Keychain; if a setup step re-adds them, delete them again")
+
     def step_token(self, slug: str, repo: Path, rep: AgentReport) -> Token | None:
         """Pick the newest token, materialize its client, import it, map the account."""
         vault_raw, vault_err = self._op_read(f"op://{agent_vault(slug)}/gog-token/credential")
@@ -534,8 +585,8 @@ class Bootstrapper:
                 os.fchmod(fd, 0o600)
                 with os.fdopen(fd, "w", encoding="utf-8") as fh:
                     fh.write(tok.raw)
-                r = self.run(["gog", "auth", "tokens", "import", tmp],
-                             capture_output=True, text=True, timeout=60)
+                r = self._gog(["gog", "auth", "tokens", "import", tmp],
+                              capture_output=True, text=True, timeout=60)
             finally:
                 try:
                     os.unlink(tmp)
@@ -605,7 +656,8 @@ class Bootstrapper:
                      "or pass --repo")
             return rep
         for step in (lambda: self.step_plugins(repo, rep),
-                     lambda: self.step_env(slug, repo, rep)):
+                     lambda: self.step_env(slug, repo, rep),
+                     lambda: self.step_keyring(slug, rep)):
             try:
                 step()
             except Exception as e:  # noqa: BLE001 — one step must not sink the agent

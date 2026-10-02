@@ -225,9 +225,16 @@ def health_report(slug: str, *, call: Callable = canopy_web.call,
         flags.append("inbox_unreachable")
     elif any(u["stale"] for u in inbox["unread"]):
         flags.append("stale_inbox")
+    # The inbox probe above runs in THIS shell's env; a turn the runner spawns may not
+    # see the same keyring (macOS file backend, no TTY). Not ready if it can't.
+    from orchestrator.agent_email import session_keyring_problems
+
+    keyring = session_keyring_problems(slug, runner=runner)
+    if keyring:
+        flags.append("keyring_unreachable_in_turns")
 
     return {"agent": slug, "ready": not flags, "flags": flags,
-            "board": board, "inbox": inbox}
+            "board": board, "inbox": inbox, "keyring": keyring}
 
 
 def run_agent_health(slug: Optional[str] = None, *, call: Callable = canopy_web.call,
