@@ -185,17 +185,21 @@ Invoke-RestMethod -Method Post `
   -Body '{"slug":"my-team","display_name":"My Team"}'
 ```
 
-Creating it makes you its **owner**. To add someone, open
-`https://labs.connect.dimagi.com/canopy/w/my-team/settings/members` and use
-**Invite someone**. canopy emails them the link, and shows it to you to copy as
-well (the email can fail — the page says so when it does). Invites last 14 days;
-an owner may invite at any role, an **admin** at `viewer` or `editor`.
+Creating it makes you its **owner**. To add someone (an owner, or an admin for viewers and editors):
 
-> **Inviting is browser-only.** Since 2026-10-02 canopy-web refuses an invite
-> made with a personal access token or an MCP client, like every other action
-> that hands out access (member roles and removal, an agent's credentials and
-> interface, the shared vault). A token is a whole role carried by a script or
-> an agent session, and granting access is a decision a person makes on screen.
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "https://labs.connect.dimagi.com/canopy/api/workspaces/my-team/invites/" `
+  -Headers @{ Authorization = "Bearer $tok" } -ContentType "application/json" `
+  -Body '{"email":"someone@dimagi.com","role":"editor"}'
+```
+
+canopy emails them the invite link, and the response carries it as `token` too
+(`https://labs.connect.dimagi.com/canopy/invite/<token>`) in case the email does
+not arrive — `email_status` says whether it went out. Invites last 14 days;
+`role` may be `viewer`, `editor`, `admin` or `owner` and defaults to `editor`.
+You can also do this on the workspace's **Settings → Members** page, or ask your
+assistant over canopy's MCP (`create_invite`).
 
 Only a domain-allowlisted account (any `@dimagi.com` address) or an existing
 workspace member may create a workspace — a purely invite-admitted user cannot,
