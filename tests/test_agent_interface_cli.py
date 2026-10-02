@@ -13,20 +13,19 @@ class Fake:
     def get_interface(self):
         return self.body
 
+    def put_interface_source(self, source):
+        self.sent = source
+        return {"source": source}
 
 
-def test_set_points_at_the_browser_instead_of_sending(tmp_path, monkeypatch):
-    """canopy-web refuses an interface from a token (`@human_only`), so `set`
-    must not send one: it says where to publish it, and fails so a script notices."""
+def test_set_sends_the_file_verbatim(tmp_path, monkeypatch):
     f = tmp_path / "anywhere.yaml"
     f.write_text("# kept\nfull: [contact@dimagi.com:verified]\n", encoding="utf-8")
     fake = Fake()
     monkeypatch.setattr(agent_cli, "_client", lambda slug, **k: fake)
-    monkeypatch.setenv("CANOPY_WEB_API_URL", "https://canopy.example/canopy")
     r = CliRunner().invoke(agent_cli.agent, ["interface", "set", "--slug", "ace", "--file", str(f)])
-    assert r.exit_code != 0
-    assert "https://canopy.example/canopy/agents/ace/settings" in r.output
-    assert fake.sent is None, "nothing may be sent with a token"
+    assert r.exit_code == 0, r.output
+    assert fake.sent == "# kept\nfull: [contact@dimagi.com:verified]\n"
 
 
 def test_get_prints_the_saved_yaml(monkeypatch):
