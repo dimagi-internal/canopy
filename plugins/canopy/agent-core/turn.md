@@ -990,5 +990,7 @@ The one turn-specific rule: **a turn that opened a PR does not close without a r
 - `deliverables` — the fleet filing standard for Drive work products (`agent-core/deliverables.md`):
   per-project subfolder under your shared Projects root, never My Drive root, shared + confirmed.
   Your `gdoc-writer` stub implements it.
+- `handoff` — taking a project over from another agent (`agent-core/handoff.md`): `canopy agent
+  handoff` finds the source sessions and opens the project; read them before acting.
 - canopy plugin (installed alongside every agent) — `create-agent`, `agent-publish`, `improve`, and
   the fleet self-improvement loop. Use them.
