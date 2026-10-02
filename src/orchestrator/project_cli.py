@@ -129,7 +129,7 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
         )
 
         # Unconditional. The escape hatch (`--no-preflight`) existed because this
-        # answer could not be trusted: the fleet was invisible to non-pairers (#509)
+        # answer could not be trusted: the fleet was invisible to non-owners (#509)
         # and the capability list was hand-typed (#513). Both are fixed server-side,
         # so a refusal here is a fact about the tenant — and routing around it is
         # precisely what left a turn queued forever in #428.
@@ -204,7 +204,7 @@ def project_runners_cmd(project_name, workspace, as_json):
     remedy for those is a different person's action.
     """
     from orchestrator.project_dispatch import (
-        can_manage, classify_runners, declared_projects,
+        can_manage, classify_runners, declared_projects, owner_email,
     )
 
     try:
@@ -219,7 +219,7 @@ def project_runners_cmd(project_name, workspace, as_json):
         if as_json:
             _emit([{"name": r.get("name"), "status": r.get("status"),
                     "ready": r.get("ready"), "can_manage": can_manage(r),
-                    "owner": r.get("paired_by_email"),
+                    "owner": owner_email(r) or None,
                     "projects": declared_projects(r)}
                    for r in runners])
             return
@@ -231,7 +231,7 @@ def project_runners_cmd(project_name, workspace, as_json):
             return
         for r in runners:
             flag = "" if r.get("ready", True) else "  (not ready)"
-            owner = str(r.get("paired_by_email") or "").strip()
+            owner = owner_email(r)
             mine = "" if can_manage(r) else f"  (owned by {owner or 'someone else'})"
             click.echo(f"{str(r.get('name')):<20} {str(r.get('status')):<8}{flag}{mine}")
             click.echo(f"    projects: {', '.join(declared_projects(r)) or '(none)'}")

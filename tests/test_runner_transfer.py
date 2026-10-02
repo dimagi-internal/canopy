@@ -180,7 +180,7 @@ def test_a_move_onto_someone_elses_box_asks_them_instead_of_refusing(fake_http):
     calls, responses = fake_http
     others = [dict(x) for x in RUNNERS]
     others[1]["can_manage"] = False
-    others[1]["paired_by_email"] = "someone@dimagi.com"
+    others[1]["owner_email"] = "someone@dimagi.com"
     responses[("GET", "harness/runners/")] = (200, json.dumps(others))
     responses[("POST", f"canopy-sessions/{SID}/transfer")] = (200, json.dumps({
         **TRANSFER_OK, "runner": "", "turn_id": "", "status": "pending",

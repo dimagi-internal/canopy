@@ -52,7 +52,7 @@ def _runner(name, *, status="online", ready=True, projects=(), agents=(), rid=No
             # canopy-web #509: the list is scoped by tenant, so it can contain runners
             # this caller may see but not mutate. Defaults True, as the schema does.
             "can_manage": can_manage,
-            "paired_by_email": owner,
+            "owner_email": owner,
             "capabilities": {"agents": list(agents), "projects": list(projects),
                              "sessions": True}}
 
@@ -747,7 +747,7 @@ def test_the_paused_field_alone_is_enough():
 def test_pause_refuses_a_runner_we_do_not_own_before_calling():
     from orchestrator.runner_cli import _refuse_if_not_ours
     import click as _click
-    r = {"name": "jj-mbp-cdp", "can_manage": False, "paired_by_email": "jj@dimagi.com"}
+    r = {"name": "jj-mbp-cdp", "can_manage": False, "owner_email": "jj@dimagi.com"}
     with pytest.raises(_click.ClickException) as exc:
         _refuse_if_not_ours(r, "pause")
     msg = str(exc.value)
@@ -766,3 +766,13 @@ def test_an_older_server_omitting_can_manage_is_not_blocked():
     break the command against a server that would have allowed it."""
     from orchestrator.runner_cli import _refuse_if_not_ours
     assert _refuse_if_not_ours({"name": "mine"}, "pause") is None
+
+
+def test_owner_email_reads_the_new_key_and_falls_back_to_the_old_one():
+    """canopy-web#1078 renamed paired_by_email -> owner_email; a server deployed
+    before it still sends only the old key."""
+    from orchestrator.project_dispatch import owner_email
+
+    assert owner_email({"owner_email": "a@x.org", "paired_by_email": "b@x.org"}) == "a@x.org"
+    assert owner_email({"paired_by_email": "b@x.org"}) == "b@x.org"
+    assert owner_email({}) == ""
