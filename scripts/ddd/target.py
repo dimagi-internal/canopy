@@ -20,6 +20,15 @@ Two cheaper tiers, both FIDELITY-SAFE — neither can decide anything:
   Between checkpoints only the concept judge runs, on changed scenes; the
   user-artifact and arc verdicts are carried from the last full pass. Every
   checkpoint and every decision runs all three.
+* **recipe-only batch** (always on). A batch whose every fix is recorder
+  framing, narration or why-brief (``fix_scope.batch_plan``) changes no product
+  code, so between checkpoints its pass skips the deploy gate
+  (``deploy_gate: skip`` — nothing to merge, CI or deploy) and re-judges only
+  the scenes it edited, holding the rest to their ledger cells. A pass that held
+  scenes cannot decide either.
+
+``expected_scope`` is what ``judge_scope plan`` derives from run_state itself,
+so the orchestrator never passes (or forgets to drop) ``--full``.
 
 The guard lives in ``run_pipeline.compute_auto_iterate``: a pass that was
 ``inner`` or concept-only can never return ``stop_done`` or any stop — it
@@ -53,6 +62,20 @@ ALL_JUDGES = ("concept", "user", "arc")
 CONCEPT_ONLY = ("concept",)
 
 
+def recipe_batch(state: Any) -> dict | None:
+    """The recipe-only batch this pass renders, or ``None``.
+
+    ``assemble`` stamps ``state.batch_plan`` on a ``continue`` for the NEXT
+    iteration; a stale plan (another iteration) is ignored.
+    """
+    bp = getattr(state, "batch_plan", None) or {}
+    if bp.get("scope") != "recipe":
+        return None
+    if bp.get("for_iteration") != getattr(state, "iteration", None):
+        return None
+    return bp
+
+
 def choose(state: Any, cfg: DDDConfig) -> dict[str, Any]:
     """The next pass's target + judges. Pure: reads state, never writes it."""
     checkpoint = bool(getattr(state, "next_judge_full", True)) or (
@@ -60,9 +83,24 @@ def choose(state: Any, cfg: DDDConfig) -> dict[str, Any]:
     )
     tiered = cfg.loop.tiered(getattr(state, "loop_mode", None))
     judges = list(ALL_JUDGES) if (checkpoint or not tiered) else list(CONCEPT_ONLY)
+    recipe = None if checkpoint else recipe_batch(state)
+    deploy_gate = "check"
+    judge_scenes = None
     if checkpoint:
         reason = "checkpoint — full render + every judge against the real deploy target"
         target = DEPLOY
+    elif recipe:
+        # No product code changed, so there is nothing to merge, wait on in CI, or
+        # deploy: the render reads the recipe from the local checkout and the
+        # deploy target already serves state.last_fix_sha.
+        target = DEPLOY
+        deploy_gate = "skip"
+        judge_scenes = recipe.get("judge_scenes")
+        reason = (
+            "recipe-only batch — no product change: no PR/CI/deploy wait, deploy gate "
+            "skipped, full render"
+            + (f", re-judge only scene(s) {judge_scenes}" if judge_scenes else "")
+        )
     elif cfg.inner_loop.enabled:
         target = INNER
         reason = f"between checkpoints — render against the local build at {cfg.inner_loop.base_url}"
@@ -77,13 +115,57 @@ def choose(state: Any, cfg: DDDConfig) -> dict[str, Any]:
         "setup": cfg.inner_loop.setup if target == INNER else None,
         "judges": judges,
         "checkpoint": checkpoint,
+        "deploy_gate": deploy_gate,
+        "judge_scenes": judge_scenes,
         "reason": reason,
     }
 
 
-def decision_needs_checkpoint(target: str | None, judges: list[str] | None) -> bool:
-    """True when this pass may not DECIDE anything (inner target or partial judges)."""
+def expected_scope(state: Any, cfg: DDDConfig) -> dict[str, Any]:
+    """What ``judge_scope plan`` must do for this pass, derived from state alone.
+
+    ``judge_scope plan`` reads this itself, so the orchestrator never has to
+    pass (or remember NOT to pass) ``--full``: a literal ``--full`` that
+    contradicts it is refused unless ``--reason`` is given and recorded.
+    """
+    rr = getattr(state, "recipe_rejudge", None) or {}
+    if rr.get("status") == "pending" and rr.get("iteration") == getattr(state, "iteration", None):
+        # M17: the SAME iteration, re-judged on the recipe-capped scenes only.
+        return {
+            "full": False,
+            "tiered": False,
+            "judge_scenes": list(rr.get("scenes") or []) or None,
+            "why": f"incremental — recipe re-judge of scene(s) {rr.get('scenes')} (M17)",
+        }
+    tgt = current(state) or choose(state, cfg)
+    full = bool(tgt.get("checkpoint")) or bool(getattr(state, "next_judge_full", True))
+    action = getattr(state, "auto_iterate_next_action", None)
+    if not full:
+        why = "incremental — between checkpoints (state.next_judge_full is false)"
+    elif action in ("checkpoint", "confirm_full"):
+        why = f"full — the last decision was {action!r}"
+    elif getattr(state, "loop_mode", None) != "backlog":
+        why = "full — polish mode (or no mode yet) judges every pass in full"
+    else:
+        why = (
+            f"full — checkpoint: every {cfg.loop.full_rejudge_every}th batch is judged in full"
+        )
+    return {
+        "full": full,
+        "tiered": "user" not in (tgt.get("judges") or ALL_JUDGES),
+        "judge_scenes": None if full else tgt.get("judge_scenes"),
+        "why": why,
+    }
+
+
+def decision_needs_checkpoint(
+    target: str | None, judges: list[str] | None, held: list | None = None
+) -> bool:
+    """True when this pass may not DECIDE anything (inner target, partial judges,
+    or scenes whose inputs moved but were held to their ledger cells)."""
     if (target or DEPLOY) != DEPLOY:
+        return True
+    if held:
         return True
     return judges is not None and not set(ALL_JUDGES) <= set(judges)
 
@@ -95,12 +177,15 @@ def current(state: Any) -> dict[str, Any]:
 
 
 def plan_flags(state: Any, cfg: DDDConfig) -> str:
-    """``judge_scope plan`` flags for this pass (from the stamp, else a fresh choice)."""
-    tgt = current(state) or choose(state, cfg)
+    """``judge_scope plan`` flags for this pass (from the stamp, else a fresh choice).
+
+    Kept for older skill text: ``judge_scope plan`` now derives the same scope
+    from run_state itself, so passing nothing is equivalent."""
+    exp = expected_scope(state, cfg)
     flags = []
-    if tgt.get("checkpoint") or getattr(state, "next_judge_full", True):
+    if exp["full"]:
         flags.append("--full")
-    if "user" not in (tgt.get("judges") or ALL_JUDGES):
+    if exp["tiered"]:
         flags.append("--tiered")
     return " ".join(flags)
 
@@ -164,6 +249,13 @@ def _main(argv: list[str] | None = None) -> int:
         out = wait_ready(cfg.inner_loop.health_url, timeout_s=cfg.inner_loop.ready_timeout_seconds)
         print(json.dumps(out))
         return 1 if out["status"] == "not_ready" else 0
+    from scripts.ddd import decision
+
+    try:
+        decision.require(state, where="target plan")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     out = choose(state, cfg)
     state.current_target = {**out, "iteration": state.iteration}
     save(state)
@@ -173,6 +265,8 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"target: {out['target']}  judges: {','.join(out['judges'])}  — {out['reason']}")
         if out["base_url"]:
             print(f"render with: --base-url {out['base_url']}")
+        if out["deploy_gate"] == "skip":
+            print("deploy gate: SKIPPED — recipe-only batch; do not open a product PR or wait on CI/deploy")
     return 0
 
 

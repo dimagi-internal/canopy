@@ -17,7 +17,9 @@ Record four signals per judged iteration and call it a stall only when NONE of
 them improved across the last two iterations:
 
 * ``score``          — the gating floor (noise-banded, :data:`denoise.NOISE_BAND`)
-* ``open_findings``  — non-DEFER findings after normalization (lower is better)
+* ``open_findings``  — non-DEFER findings after normalization (lower is better;
+                        a fall counts only beyond :data:`TRICKLE_FRACTION` of
+                        the best count, so a trickle of re-found nits is flat)
 * ``mean_cell``      — mean over every concept cell (higher is better; banded
                         by :data:`MEAN_BAND` — the mean of ~70 cells with a
                         per-cell sigma of ~1 moves ~0.12 on noise alone)
@@ -42,6 +44,17 @@ MEAN_BAND: float = 0.15
 # a judge can name a known defect from a new angle. A rise of this many or fewer
 # is not evidence the artifact got worse.
 FINDINGS_BAND: int = 2
+
+# A FALL in open findings is only progress when it is more than this fraction of
+# the best (lowest) count so far. On a v1 product the judges find new nits as old
+# ones are fixed, so the backlog trickles down whatever the fixes did: the
+# connect-labs run ``supply-sophie-rutf-2026-09-26-001`` (canopy 0.2.543) went
+# 42 -> 39 -> 36 -> 35 -> 34 over iterations 5-9 while the mean cell sat at
+# 3.60 +/- 0.05, the floor flipped 2/3/3/2/3 on a single cap, and every pass
+# cost ~60 minutes — and the stall detector never fired, because each 1-3
+# finding drop counted as "progress". Below ~7 findings the band is zero, so on
+# a small backlog every fixed finding still counts.
+TRICKLE_FRACTION: float = 0.15
 
 SIGNALS = ("score", "open_findings", "mean_cell", "confirmed_caps")
 # The three signals a DIVERGING verdict needs to see fall together (M17).
@@ -109,7 +122,14 @@ def _better(signal: str, best: float, value: float) -> bool:
         return denoise.improved(best, value) is True
     if signal == "mean_cell":
         return value > best + MEAN_BAND
-    return value < best  # lower-is-better counts
+    if signal == "open_findings":
+        return value < best - trickle_band(best)
+    return value < best  # confirmed caps: any fall is a real fix
+
+
+def trickle_band(best: float) -> int:
+    """How far open findings must fall below ``best`` before it is progress."""
+    return int(TRICKLE_FRACTION * max(float(best), 0.0))
 
 
 def improved_signals(before: list[dict], point: dict) -> list[str]:

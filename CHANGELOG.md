@@ -9,6 +9,33 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.546] - 2026-10-01
+DDD loop round 4: enforce the loop's own decisions, recipe-only batches, trickle stalls.
+Measured on connect-labs `supply-sophie-rutf-2026-09-26-001` iterations 5-9
+(~4.6 h at ~60 min/cycle, mean cell flat at 3.60, open findings 42 -> 34).
+### Added
+- **Sealed decisions** (`scripts.ddd.decision`). `assemble` seals the action it
+  returns plus a digest of the state it rests on; `target plan`,
+  `judge_scope plan` and `judge_gate check` refuse a run_state rewritten after
+  the seal, or a new pass past `stop_max_iter`/`stop_unclear`/
+  `stop_concept_change`/`stop_done`, unless `decision override --reason` logged
+  why (kept in `state.decision_overrides`, printed by `assemble`).
+  `decision bump` advances the iteration.
+- **Recipe-only batches.** `fix_scope.batch_plan` classifies a `continue`
+  batch; when no fix lands in product code the reason says RECIPE-ONLY (no
+  PR/CI/deploy/`set-fix-sha`), the next pass skips the deploy gate and
+  re-judges only the edited scenes, holding the rest (`held`; such a pass
+  cannot decide).
+- **Inner-loop recommendation.** `judge_gate check` prints one line when no
+  `inner_loop` is configured and a batch waited longer than
+  `loop.inner_loop_hint_minutes` (default 15) on PR/CI/deploy.
+### Changed
+- `judge_scope plan` derives full/incremental, tiering and recipe scenes from
+  run_state; a `--full` the state does not ask for exits 2 unless `--reason`
+  is given (recorded as `override` in `judge-scope.json`).
+- Stall: an open-findings fall counts as progress only beyond 15% of the best
+  count (`progress.TRICKLE_FRACTION`). The run above now stops at iteration 8.
+
 ## [0.2.534] - 2026-09-27
 DDD loop round 3, part B: storyboard critique, the inner-loop target, and judge tiering.
 ### Added
