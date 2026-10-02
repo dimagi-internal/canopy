@@ -28,7 +28,7 @@ PROJECTS_ROOT = Path(os.path.expanduser("~/.claude/projects"))
 def _first_prompt(path: Path, limit: int = 200) -> str:
     """The session's first real user prompt — what it was dispatched to do."""
     try:
-        with path.open() as fh:
+        with path.open(encoding="utf-8", errors="ignore") as fh:
             for line in fh:
                 try:
                     row = json.loads(line)
@@ -71,7 +71,7 @@ def find_sessions(refs, from_slug: str, root: Path | None = None,
         if exclude_session and path.stem == exclude_session:
             continue
         try:
-            text = path.read_text(errors="ignore")
+            text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         matched = [n for n in needles if n in text]
