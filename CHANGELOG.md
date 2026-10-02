@@ -9,6 +9,16 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.550] - 2026-10-02
+### Added
+- **Render viewport guard** (#625). `record_video.py --snapshots <dir>` records the
+  default viewport it rendered at in `<dir>/render-viewport.json` and refuses a later
+  render into that dir at a different size (`--allow-viewport-change` overrides). A
+  spec rebuilt mid-loop that dropped `video_viewport_width`/`_height` used to re-render
+  a 1440x900 run at 1280x720 silently, invalidating scroll offsets and the
+  cross-iteration score stall. Dirs that predate the record get a width inferred from
+  earlier `scene_<N>.png` frames and a warning, never a refusal.
+
 ## [0.2.546] - 2026-10-01
 DDD loop round 4: enforce the loop's own decisions, recipe-only batches, trickle stalls.
 Measured on connect-labs `supply-sophie-rutf-2026-09-26-001` iterations 5-9
