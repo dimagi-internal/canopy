@@ -762,7 +762,14 @@ Two optional accelerators between checkpoints (a checkpoint = every
   `supply-sophie-rutf-2026-09-26-001` about 35 of every 60-minute cycle was
   PR → CI → deploy. `judge_gate check` prints a one-line `RECOMMENDATION` when
   it is unset and a batch waited longer than `loop.inner_loop_hint_minutes`
-  (default 15) — put that line in the digest.
+  (default 15) — put that line in the digest. **Since 0.2.554 it is required**
+  on a repo with a `deploy_gate`: a backlog loop there without `inner_loop:`
+  stops with `stop_inner_loop_required` (below). Declaring `inner_loop: off`
+  with `inner_loop_off_reason: <why>` allows it; the reason is stamped in
+  `run_state.inner_loop_policy` and printed by every `assemble` (`Inner loop:
+  OFF by config — …`). The seed runs before every render on either target:
+  the recorder exports the origin it films as `CANOPY_RENDER_BASE_URL`, so a
+  recipe's `setup.command` can reseed the local build on an inner pass.
 - **recipe-only batches** (always on). When every mechanical finding in a batch
   is recorder framing, narration or why-brief (`fix_scope.batch_plan`), there
   is no product code to ship: `continue` says **RECIPE-ONLY**, the next pass
@@ -1085,6 +1092,24 @@ should be able to open the most recent capture(s) directly from the
 message — on whatever device they're reading on — and see the remaining
 gaps without re-running anything. Local file paths defeat this; upload
 the artifacts to ace-web BEFORE surfacing.
+
+### `stop_inner_loop_required` (a backlog loop with only the deploy target)
+
+The judged pass would `continue` a **backlog** (v1-product) loop, and the repo
+configures a `deploy_gate` but no `inner_loop:` — so every fix batch would pay
+PR → CI → deploy before a frame is judged. `run_state.inner_loop_policy` says
+`missing` and why; `terminal_status` is `needs_config`. Do not route around it:
+
+1. Add `inner_loop: {base_url, setup, health_url, ready_timeout_seconds}` to the
+   repo's `.canopy/ddd/config.yaml` (the repo must be able to serve a seeded
+   local build — e.g. connect-labs' `make serve-demo`), **or** declare
+   `inner_loop: off` with `inner_loop_off_reason: <why>` if it genuinely cannot.
+2. `python -m scripts.ddd.decision override <run_id> --reason "<what you configured>"`.
+3. Proceed exactly as the `continue` quoted in the reason: the batch scheduling
+   (next judge scope, batch plan) is already on `run_state`.
+
+A polish-mode loop, a repo without a deploy gate, and a repo that declared
+`inner_loop: off` with a reason are never stopped here.
 
 ---
 

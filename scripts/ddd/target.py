@@ -44,6 +44,10 @@ A repo opts in with::
       base_url: http://localhost:8000
       setup: make serve-demo
       health_url: http://localhost:8000/health/
+
+and since 0.2.554 a repo with a ``deploy_gate`` MUST: :func:`inner_loop_policy`
+makes a backlog loop there stop (``stop_inner_loop_required``) unless it is
+configured or declared ``inner_loop: off`` with ``inner_loop_off_reason:``.
 """
 from __future__ import annotations
 
@@ -118,6 +122,47 @@ def choose(state: Any, cfg: DDDConfig) -> dict[str, Any]:
         "deploy_gate": deploy_gate,
         "judge_scenes": judge_scenes,
         "reason": reason,
+    }
+
+
+#: ``inner_loop_policy`` statuses.
+POLICY_CONFIGURED = "configured"
+POLICY_OFF = "off"
+POLICY_MISSING = "missing"
+POLICY_NOT_REQUIRED = "not_required"
+
+
+def inner_loop_policy(cfg: DDDConfig) -> dict[str, Any]:
+    """May this repo run a backlog (v1-product) loop? ``{status, reason}``.
+
+    A repo with a configured ``deploy_gate`` ships every fix batch through PR, CI
+    and deploy before a frame can be judged. On connect-labs that was ~35 of every
+    50 minutes of an iteration — paid on batches that only needed the concept
+    judge to see a changed scene. So such a repo must say how it renders between
+    checkpoints: an ``inner_loop:`` (``configured``), or ``inner_loop: off`` WITH a
+    reason (``off`` — recorded in run_state, printed by every assemble). Anything
+    else is ``missing``, and ``compute_auto_iterate`` refuses to continue a
+    backlog loop (``stop_inner_loop_required``). A repo with no deploy gate has
+    nothing to wait on: ``not_required``.
+    """
+    inner = cfg.inner_loop
+    if inner.enabled:
+        return {"status": POLICY_CONFIGURED, "reason": f"inner loop at {inner.base_url}"}
+    if not cfg.deploy_gate.enabled:
+        return {"status": POLICY_NOT_REQUIRED, "reason": "no deploy_gate configured"}
+    if inner.off and inner.off_reason:
+        return {"status": POLICY_OFF, "reason": inner.off_reason}
+    if inner.off:
+        return {
+            "status": POLICY_MISSING,
+            "reason": "`inner_loop: off` needs a reason — add `inner_loop_off_reason: <why>` "
+            "to .canopy/ddd/config.yaml",
+        }
+    return {
+        "status": POLICY_MISSING,
+        "reason": "deploy_gate is configured but inner_loop is not — add `inner_loop: {base_url, "
+        "setup, health_url}` to .canopy/ddd/config.yaml, or `inner_loop: off` with "
+        "`inner_loop_off_reason: <why>`",
     }
 
 

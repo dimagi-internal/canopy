@@ -196,6 +196,19 @@
       "default": null,
       "title": "Terminal Status"
     },
+    "inner_loop_policy": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Inner Loop Policy"
+    },
     "concept_gate_deferred": {
       "default": 0,
       "title": "Concept Gate Deferred",

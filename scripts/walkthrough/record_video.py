@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -330,6 +331,23 @@ def load_setup_outputs(outputs_path: Path) -> dict:
                 f"key '{key}' is {type(value).__name__}: {outputs_path}"
             )
     return data
+
+
+RENDER_ORIGIN_ENV = "CANOPY_RENDER_BASE_URL"
+
+
+def export_render_origin(spec: dict, base_url: str | None) -> str:
+    """Export the origin this render films as ``CANOPY_RENDER_BASE_URL``.
+
+    Called BEFORE setup, so the seed — and every before:/after: hook, which
+    inherit this process's env — resets the SAME world the render films. On an
+    inner-loop pass (``--base-url``) that is the local build, not the deploy
+    target the spec names; a seeder that reads it can route itself there.
+    """
+    origin = (base_url or spec.get("base_url") or "").rstrip("/")
+    if origin:
+        os.environ[RENDER_ORIGIN_ENV] = origin
+    return origin
 
 
 def run_setup(setup: dict, spec_path: Path, *, skip_setup: bool = False) -> dict:
@@ -801,6 +819,7 @@ def main() -> None:
     # render, and the minted IDs must be substituted into scenes before the
     # first navigation. Never mutates the spec file on disk.
     setup = spec.get("setup") or None
+    export_render_origin(spec, getattr(args, "base_url", None))
     raw_scenes = spec.get("scenes") or []
     placeholders = scenes_placeholders(raw_scenes)
     # Vars minted ON CAMERA by ``capture`` actions — these are bound at RUNTIME

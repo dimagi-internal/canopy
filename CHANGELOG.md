@@ -9,6 +9,24 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.554] - 2026-10-02
+### Changed
+- **A repo with a deploy gate must configure the DDD inner loop.** On connect-labs
+  every v1 fix batch paid PR → CI → deploy (about 35 of every 50 minutes) before a
+  frame could be judged, because `inner_loop:` was optional and nothing asked for it.
+  A backlog (v1-product) loop on a repo whose `deploy_gate` is configured and whose
+  `inner_loop:` is not now stops with `stop_inner_loop_required` (terminal status
+  `needs_config`, a blocking stop) instead of `continue`. `inner_loop: off` with
+  `inner_loop_off_reason: <why>` (or `inner_loop: {off: true, reason: …}`) allows it;
+  `off` without a reason does not. Every `assemble` stamps the policy in
+  `run_state.inner_loop_policy` and prints it (`Inner loop: OFF by config — <reason>`).
+  The refusal leaves the batch scheduling the `continue` would have, so a logged
+  `decision override` resumes the same pass.
+### Added
+- **The recorder exports the origin it films as `CANOPY_RENDER_BASE_URL`** before the
+  spec's `setup.command` and hooks run. On an inner-loop pass (`--base-url`) the seed
+  can then reset the LOCAL build instead of the deploy target the spec names.
+
 ## [0.2.552] - 2026-10-02
 ### Fixed
 - **DDD gate appliers fail closed on a missing decision.** `narrative apply` read a
