@@ -35,7 +35,7 @@ from pathlib import Path
 import click
 
 from orchestrator.agent_client import CanopyError
-from orchestrator.project_dispatch import can_manage
+from orchestrator.project_dispatch import can_manage, owner_email
 
 RUNNERS_PATH = "/api/harness/runners/"
 
@@ -43,7 +43,7 @@ RUNNERS_PATH = "/api/harness/runners/"
 def _refuse_if_not_ours(r: dict, verb: str) -> None:
     """Say WHY, instead of letting the server's bare 404 be the answer.
 
-    Pausing a runner is an act-on operation, gated on OWNERSHIP (`paired_by`),
+    Pausing a runner is an act-on operation, gated on OWNERSHIP (`owner`),
     while listing one is only gated on tenancy — so `canopy runner list` shows a
     box that `pause` then 404s on. canopy-web's `_runner_visibility_q` names that
     asymmetry as deliberate and says the client is supposed to carry the
@@ -58,7 +58,7 @@ def _refuse_if_not_ours(r: dict, verb: str) -> None:
     """
     if can_manage(r):
         return
-    owner = str(r.get("paired_by_email") or "").strip() or "someone else"
+    owner = owner_email(r) or "someone else"
     raise click.ClickException(
         f"cannot {verb} '{r.get('name')}' — it is owned by {owner}, and this "
         f"identity is not that.\n"
@@ -345,7 +345,7 @@ def list_cmd(workspace, as_json):
             [{"name": r.get("name"), "id": r.get("id"), "status": r.get("status"),
               "ready": r.get("ready"), "paused": r.get("paused"),
               "paused_note": r.get("paused_note"), "host": r.get("host"),
-              "can_manage": can_manage(r), "owner": r.get("paired_by_email"),
+              "can_manage": can_manage(r), "owner": owner_email(r) or None,
               "projects": (r.get("capabilities") or {}).get("projects") or []}
              for r in rows], indent=2))
         return

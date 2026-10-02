@@ -53,7 +53,7 @@ That refusal is only sound when the fleet it inspected is the fleet that will be
 asked to claim. Two server-side facts decide that, and canopy-web #509 changed one
 of them (merged + deployed 2026-07-28):
 
-- **Runner listing is scoped by TENANT, not by `paired_by`.** It used to be the
+- **Runner listing is scoped by TENANT, not by ownership (`owner`, formerly `paired_by`).** It used to be the
   latter, so a caller who paired nothing saw zero runners no matter how many were
   live, and refusing on that empty list stated a conclusion drawn from no evidence.
   That is fixed: `_runner_read_q` now serves a workspace's whole fleet to any
@@ -213,6 +213,17 @@ def can_manage(runner: dict) -> bool:
     return bool((runner or {}).get("can_manage", True))
 
 
+def owner_email(runner: dict) -> str:
+    """The runner's owner — the human whose token it authenticates with.
+
+    canopy-web renamed `paired_by_email` to `owner_email` (canopy-web#1078) and keeps
+    the old key as a deprecated alias for a release; read the new one, falling back
+    to the old for servers deployed before the rename.
+    """
+    r = runner or {}
+    return str(r.get("owner_email") or r.get("paired_by_email") or "").strip()
+
+
 def classify_runners(runners: list[dict], project: str, *,
                      tenant_scoped: bool = False) -> dict:
     """Split the visible fleet by whether it can actually serve `project`.
@@ -309,7 +320,7 @@ def _runner_line(r: dict) -> str:
     projects = declared_projects(r)
     shown = ", ".join(projects[:8]) + ("…" if len(projects) > 8 else "")
     note = str(r.get("ready_note") or r.get("status_note") or "").strip()
-    owner = str(r.get("paired_by_email") or "").strip()
+    owner = owner_email(r)
     # Only worth printing when the caller cannot act on it — otherwise ownership is
     # noise. When it matters it is the whole answer: who to go ask.
     own = "" if can_manage(r) else f"  (owned by {owner or 'someone else'})"
@@ -397,7 +408,7 @@ def blocked_message(classified: dict, workspace: str = "") -> str:
     elif classified["unreported_theirs"]:
         # Visible-but-not-yours is a distinct dead end from nothing-there, and #509
         # is what made it distinguishable.
-        owners = sorted({str(r.get("paired_by_email") or "").strip()
+        owners = sorted({owner_email(r)
                          for r in classified["unreported_theirs"]} - {""})
         who = ", ".join(owners) if owners else "their owner"
         lines += [
@@ -494,5 +505,5 @@ def resolve_workspace_choice(explicit: str, env_value: str, memberships) -> str:
     raise DispatchError(
         "you belong to several workspaces (" + ", ".join(slugs) + ") — pass "
         "--workspace to say which tenant this turn belongs to. It is not cosmetic: "
-        "only runners whose pairer is a member of that workspace will claim it."
+        "only runners whose owner is a member of that workspace will claim it."
     )
