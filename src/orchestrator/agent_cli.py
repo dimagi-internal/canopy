@@ -162,7 +162,8 @@ def agent_interface():
     """An agent's DECLARED INTERFACE — who may make it do what: the whole agent for
     trusted addresses (`full:`, e.g. contact@dimagi.com:verified), a confined
     capability for everyone else. LIVE STATE held on canopy-web, never a file in
-    the agent's repo; also editable on the agent's Overview page."""
+    the agent's repo. Read it here; publish it on the agent's Settings page (a
+    person in the browser only — see `set`)."""
 
 
 @agent_interface.command("get")
@@ -179,14 +180,26 @@ def agent_interface_get(slug):
 @agent_interface.command("set")
 @click.option("--slug", required=True)
 @click.option("--file", "file_", required=True, type=click.Path(exists=True, dir_okay=False),
-              help="YAML to save — any path; it is not read from, or kept in, the repo.")
+              help="YAML to publish — any path; it is not read from, or kept in, the repo.")
 def agent_interface_set(slug, file_):
-    """Save the interface on canopy-web. Validated there; a bad file is refused
-    with the reason. Needs the agent's owner or an admin."""
-    try:
-        _emit(_client(slug).put_interface_source(Path(file_).read_text(encoding="utf-8")))
-    except (CanopyError, RuntimeError) as e:
-        raise click.ClickException(str(e))
+    """Publishing is done in the canopy web app; this says where.
+
+    An interface decides what people OUTSIDE the agent's admins may make it do
+    (a `full:` rule hands someone the whole agent), so since 2026-10-02
+    canopy-web takes it only from a person in the browser — a token, an agent
+    session holding its owner's PAT, or an MCP client is refused (`@human_only`
+    in canopy-web). Rather than send the file and print a bare 403, this checks
+    the file is readable and prints the page to paste it into."""
+    source = Path(file_).read_text(encoding="utf-8")
+    from orchestrator.canopy_web import resolve_base_url
+
+    url = f"{resolve_base_url(None)}/agents/{slug}/settings"
+    raise click.ClickException(
+        f"An agent's interface is published from the canopy web app, not with a token.\n"
+        f"Open {url} → \"Who can reach it\", paste the contents of {file_} "
+        f"({len(source.splitlines())} lines), and save. canopy-web validates it there.\n"
+        f"`canopy agent interface get --slug {slug}` still reads what is published."
+    )
 
 
 @agent.command("tasks-sync")
