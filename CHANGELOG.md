@@ -9,7 +9,7 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
-## [0.2.549] - 2026-10-02
+## [0.2.550] - 2026-10-02
 ### Added
 - **Render viewport guard** (#625). `record_video.py --snapshots <dir>` records the
   default viewport it rendered at in `<dir>/render-viewport.json` and refuses a later
