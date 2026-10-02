@@ -9,6 +9,9 @@ module reads the two blocks the v1/backlog loop adds::
       full_rejudge_every: 3   # backlog: every Nth fix batch is judged in full (= a checkpoint)
       judge_tiering: auto     # auto (on in backlog mode) | on | off — between checkpoints
                               # only the concept judge re-runs, on changed scenes
+      inner_loop_hint_minutes: 15  # no inner_loop + a batch waited longer than this on
+                              # CI + deploy -> judge_gate prints a one-line
+                              # recommendation to configure one (0 = never)
 
     deploy_gate:
       health_url: https://labs.connect.dimagi.com/health/
@@ -59,6 +62,7 @@ class LoopConfig:
     backlog_min_findings: int = 8
     full_rejudge_every: int = 3
     judge_tiering: str = "auto"
+    inner_loop_hint_minutes: float = 15.0
 
     def tiered(self, loop_mode: str | None) -> bool:
         """Concept-only judging between checkpoints? ``auto`` = on in backlog mode."""
@@ -219,6 +223,7 @@ def parse(data: dict | None) -> DDDConfig:
         backlog_min_findings=_int(loop_raw.get("backlog_min_findings"), 8),
         full_rejudge_every=_int(loop_raw.get("full_rejudge_every"), 3),
         judge_tiering=_tiering(loop_raw.get("judge_tiering")),
+        inner_loop_hint_minutes=max(_float(loop_raw.get("inner_loop_hint_minutes"), 15.0), 0.0),
     )
     gate_raw = data.get("deploy_gate") if isinstance(data.get("deploy_gate"), dict) else {}
     url = str(gate_raw.get("health_url") or "").strip() or None

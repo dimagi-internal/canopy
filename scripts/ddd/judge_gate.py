@@ -32,6 +32,7 @@ import json
 import sys
 import time
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from scripts.ddd.loop_config import DeployGateConfig
@@ -174,6 +175,35 @@ def decide(deploy: dict | None, lenses: dict[str, str] | None) -> dict[str, Any]
     }
 
 
+def batch_wait_minutes(state: Any, now: datetime | None = None) -> float | None:
+    """Minutes since the last fix batch's fixer finished — what this batch has
+    spent on PR + CI + deploy (+ render) before the judges may run."""
+    finished = []
+    for name, step in (getattr(state, "steps", None) or {}).items():
+        if not str(name).startswith("fixer:") or not isinstance(step, dict):
+            continue
+        try:
+            finished.append(datetime.fromisoformat(str(step.get("finished_at"))))
+        except ValueError:
+            continue
+    if not finished:
+        return None
+    now = now or datetime.now(timezone.utc)
+    return max(0.0, (now - max(finished)).total_seconds() / 60.0)
+
+
+def inner_loop_hint(waited: float | None, *, inner_enabled: bool, threshold: float) -> str | None:
+    """One line telling a v1 run to configure ``inner_loop:`` — or ``None``."""
+    if inner_enabled or not threshold or waited is None or waited < threshold:
+        return None
+    return (
+        f"RECOMMENDATION: this batch waited {waited:.0f} min on PR/CI/deploy before it could be "
+        "judged, and no inner_loop is configured — add `inner_loop: {base_url, setup, "
+        "health_url}` to .canopy/ddd/config.yaml so batches between checkpoints render "
+        "against a local build of the fix branch (checkpoints still render the deploy target)."
+    )
+
+
 def _parse_lenses(items: list[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for item in items:
@@ -206,16 +236,35 @@ def _main(argv: list[str] | None = None) -> int:
             save(state)
             print(json.dumps({"run_id": state.run_id, "last_fix_sha": state.last_fix_sha}))
             return 0
+        from scripts.ddd import decision
         from scripts.ddd import target as target_mod
 
+        decision.require(state, where="judge_gate check")
         full_cfg = loop_config.load()
         cfg = full_cfg.deploy_gate
-        if target_mod.current(state).get("target") == target_mod.INNER:
+        tgt = target_mod.current(state)
+        hint = None
+        if tgt.get("target") == target_mod.INNER:
             deploy = inner_deploy_status(full_cfg.inner_loop, wait=not args.no_wait)
+        elif tgt.get("deploy_gate") == "skip" and not args.expect:
+            deploy = {
+                "status": "skipped",
+                "reason": "recipe-only batch — no product code changed, so there is nothing "
+                "to deploy; the target still serves the last verified fix SHA",
+            }
         else:
             deploy = check_deploy(cfg, args.expect or state.last_fix_sha, wait=not args.no_wait)
+            if deploy.get("status") != "skipped":
+                hint = inner_loop_hint(
+                    batch_wait_minutes(state),
+                    inner_enabled=full_cfg.inner_loop.enabled,
+                    threshold=full_cfg.loop.inner_loop_hint_minutes,
+                )
         result = decide(deploy, _parse_lenses(args.lens))
         result["deploy"] = deploy
+        if hint:
+            result["recommendation"] = hint
+            print(hint, file=sys.stderr)
     except (ValueError, OSError) as exc:
         print(f"judge_gate {args.cmd}: {exc}", file=sys.stderr)
         return 2

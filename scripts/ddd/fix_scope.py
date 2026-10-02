@@ -151,12 +151,72 @@ def recipe_caps(distribution: dict | None, findings: list[dict] | None) -> list[
     return out
 
 
+# Routes whose mechanical fix edits the spec or the why-brief, never product code.
+_SPEC_ROUTES = frozenset({"CONCEPT", "RESEARCH"})
+
+
+def lands_in_product(finding: dict) -> bool:
+    """True when applying this finding changes product code (so it needs a deploy)."""
+    if str(finding.get("route") or "PRODUCT").upper() in _SPEC_ROUTES:
+        return False
+    return classify(finding) not in (RECIPE, NARRATIVE)
+
+
+def batch_plan(findings: list[dict] | None, *, for_iteration: int | None = None) -> dict | None:
+    """What the next ``continue`` batch touches, and what the next pass may skip.
+
+    ``scope`` is ``recipe`` when no actionable mechanical finding lands in product
+    code (recipe framing, narration, why-brief) — nothing to merge into the
+    product, so nothing to wait on in CI or deploy, and only the scenes it edits
+    need a fresh judge (``judge_scenes``). ``None`` when there is no actionable
+    mechanical finding at all.
+
+    The RENDER stays full even then: a ``--scene`` render rewrites
+    ``run-report.json`` and the manifest for those scenes only, which would
+    change every other scene's trace fingerprint and break the deck. A full
+    render is 2.5-6 minutes; the CI + deploy wait it replaces was ~35.
+    """
+    actionable = [
+        f
+        for f in findings or []
+        if isinstance(f, dict)
+        and f.get("route") != "DEFER"
+        and f.get("fix_kind") == "mechanical"
+        and not f.get("parked")
+    ]
+    if not actionable:
+        return None
+    product = [f for f in actionable if lands_in_product(f)]
+    research = [f for f in actionable if str(f.get("route") or "").upper() == "RESEARCH"]
+    keys = [scene_key(f.get("scene")) for f in actionable]
+    scenes = sorted({int(k) for k in keys if k is not None})
+    plan: dict = {
+        "for_iteration": for_iteration,
+        "scope": PRODUCT if product else RECIPE,
+        "findings": len(actionable),
+        "product_findings": len(product),
+        "scenes": scenes,
+        "deploy": bool(product),
+        # A recipe-only batch re-judges only the scenes it edits; every other
+        # scene keeps its ledger cells even when a reseed moved its frame bytes.
+        # None = scope by fingerprint as usual (a why-brief edit is run-wide).
+        "judge_scenes": (
+            scenes
+            if not product and None not in keys and scenes and not research
+            else None
+        ),
+    }
+    return plan
+
+
 __all__ = [
     "NARRATIVE",
     "PRODUCT",
     "RECIPE",
     "UNKNOWN",
+    "batch_plan",
     "classify",
+    "lands_in_product",
     "recipe_caps",
     "scene_key",
 ]

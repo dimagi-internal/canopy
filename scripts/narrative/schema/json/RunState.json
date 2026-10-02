@@ -422,6 +422,41 @@
       ],
       "default": null,
       "title": "Storyboard"
+    },
+    "decision_seal": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decision Seal"
+    },
+    "decision_overrides": {
+      "default": [],
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Decision Overrides",
+      "type": "array"
+    },
+    "batch_plan": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Batch Plan"
     }
   },
   "required": [

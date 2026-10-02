@@ -757,7 +757,18 @@ Two optional accelerators between checkpoints (a checkpoint = every
   branch, served locally, and rendered with `--base-url` — no merge, CI or
   deploy. Checkpoints land the accumulated batches and render the real target
   through the deploy gate. `ddd-run` Step 2 runs `target plan`; the progress
-  point records `target` per iteration.
+  point records `target` per iteration. **Configure it for any v1 (backlog)
+  run on a product that deploys through CI**: on
+  `supply-sophie-rutf-2026-09-26-001` about 35 of every 60-minute cycle was
+  PR → CI → deploy. `judge_gate check` prints a one-line `RECOMMENDATION` when
+  it is unset and a batch waited longer than `loop.inner_loop_hint_minutes`
+  (default 15) — put that line in the digest.
+- **recipe-only batches** (always on). When every mechanical finding in a batch
+  is recorder framing, narration or why-brief (`fix_scope.batch_plan`), there
+  is no product code to ship: `continue` says **RECIPE-ONLY**, the next pass
+  skips the deploy gate, renders in full, and re-judges only the edited scenes
+  (others are HELD to their cells; a pass that held scenes cannot decide). Do
+  not open a product PR, wait on CI/deploy, or `set-fix-sha` for it.
 - **judge tiering** (`loop.judge_tiering: auto|on|off`; `auto` = on in backlog
   mode). Between checkpoints only the concept judge runs, on changed scenes;
   user-artifact + arc run at checkpoints.
@@ -770,15 +781,25 @@ gating score, open findings, mean concept cell, confirmed caps), because the
 floor alone sat at 2 through 19 of 23 iterations of real improvement on the v1
 supply narratives.
 
-**The loop owns its own termination — never invent a stopping rule.** If you find
-yourself deciding "hard stop after this pass", that is the signal you are
-hand-driving. `compute_auto_iterate` stops on these conditions, and
+**The loop owns its own termination — never invent a stopping rule, and never
+quietly overrule one.** If you find yourself deciding "hard stop after this
+pass", that is the signal you are hand-driving. The reverse is the same
+mistake: never edit `run_state.yaml` to get past a decision — re-routing
+findings, de-duplicating or "rebasing" `progress_history`, setting
+`next_judge_full`, clearing `auto_iterate_next_action` — and never pass a
+literal `--full` to `judge_scope plan`. `assemble` seals its decision
+(`scripts.ddd.decision`); the next `target plan` / `judge_scope plan` /
+`judge_gate check` refuses a rewritten state or a pass past a stop. If you
+genuinely must overrule the loop (the narrative was re-locked; the history
+spans two narrative versions), log it first —
+`python -m scripts.ddd.decision override <run_id> --reason "<why>"` — and the
+digest will carry it. `compute_auto_iterate` stops on these conditions, and
 `state.terminal_status` says which kind of ending it was:
 
 | condition | detector | action |
 |-----------|----------|--------|
 | converged | both gating judges ≥ threshold | `stop_done` / `stop_partial` |
-| stalled | NONE of the four progress signals improved over the last 2 iterations (score through `denoise.NOISE_BAND` ±0.5, mean cell through `progress.MEAN_BAND` ±0.15, open findings and confirmed caps must fall). Checked BEFORE pending mechanical work — it used to sit behind `mechanical → continue` and could never fire on a v1 run. | `stop_max_iter` |
+| stalled | NONE of the four progress signals improved over the last 2 iterations (score through `denoise.NOISE_BAND` ±0.5, mean cell through `progress.MEAN_BAND` ±0.15, confirmed caps must fall, open findings must fall by more than `progress.TRICKLE_FRACTION` = 15% of the best count). Checked BEFORE pending mechanical work — it used to sit behind `mechanical → continue` and could never fire on a v1 run. The trickle band exists because judges re-find new nits as old ones are fixed: 42 → 39 → 36 → 35 → 34 with a flat mean and no cap fixed ran ~4.6 hours without stalling. | `stop_max_iter` |
 | **finding plateau** | two consecutive iterations produced an **identical finding-fingerprint set** with no real score move — the loop is re-deriving, not progressing. Unlike the score this signal does not wobble: an LLM's score for a cell moves ±1 on the same frame; the defect it names does not. | `stop_max_iter` |
 | runaway | `HARD_CAP` (10) iterations | `stop_max_iter` |
 
@@ -954,16 +975,18 @@ For each mechanical finding, apply by route:
 After all mechanical fixes are applied, re-fire ddd-run on the same scope:
 
 ```bash
-(cd "$DDD_REPO" && uv run python -c "
-from scripts.ddd.runstate import load, save
-state = load('$RUN_ID')
-state.iteration += 1
-save(state)
-")
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.decision bump "$RUN_ID")
 # Then re-invoke /canopy:ddd-run with the same args (including --scene if set).
-# Backlog mode: the render is full; Step 2f scopes the judging from
-# state.next_judge_full (set by compute_auto_iterate).
+# Backlog mode: the render is full; Step 2f's `judge_scope plan` derives the
+# judge scope from run_state itself — pass it NO --full. Bump only the
+# iteration: any other run_state edit is refused at the next plan (see
+# "The loop owns its own termination").
 ```
+
+**Recipe-only batch** (the `continue` reason says RECIPE-ONLY): skip the PR /
+CI / deploy / `set-fix-sha` steps in the table below — apply the recipe or
+spec edits in the local checkout, commit them to ride with the next product
+batch, bump, and re-fire.
 
 Same `run_id` — the iteration counter is the loop's only identity.
 
@@ -1197,12 +1220,14 @@ proceeding with autonomous work.
   `scripts/ddd/finding_class.py`, not by remembering to do it.
 - Never auto-apply a self-tuning class demotion — always suggest-then-confirm.
 - Save learnings after every completed cycle via `runstate.append_learning`.
-- Loop is **progress-aware, not count-capped**: keep auto-iterating while findings are mechanical AND the run is still progressing; stop on a real gate, an options/redesign finding, a **stall** (none of score / open findings / mean cell / confirmed caps improved across 2 iterations, each through its noise band), a **finding plateau** (identical fingerprints, no progress), or the `HARD_CAP` of 10 as a runaway backstop. Never invent your own stop — `compute_auto_iterate` owns it and `state.terminal_status` names the ending.
+- Loop is **progress-aware, not count-capped**: keep auto-iterating while findings are mechanical AND the run is still progressing; stop on a real gate, an options/redesign finding, a **stall** (none of score / open findings / mean cell / confirmed caps improved across 2 iterations, each through its noise band — an open-findings trickle within 15% of the best count is not progress), a **finding plateau** (identical fingerprints, no progress), or the `HARD_CAP` of 10 as a runaway backstop. Never invent your own stop — `compute_auto_iterate` owns it and `state.terminal_status` names the ending.
 - When dispatching PRODUCT fixers, route by dimension: `design_soundness`/`motion_friction` → `/design-review`; `concept_clarity` → `/review`; broken flows → `/qa`.
 - Render in full every iteration; scope the JUDGING (backlog mode) instead. A `--scene` partial render cannot converge.
 - Gap-walk AND storyboard-critique before the first build/render; build missing capabilities before judging them; ask arc order/scope questions once, up front.
 - Only a checkpoint pass (real deploy target, every judge) decides anything; inner-loop and concept-only passes only fix.
-- Never judge an undeployed fix: record the batch's merge SHA (`judge_gate set-fix-sha`) and let the judge gate wait.
+- Never judge an undeployed fix: record the batch's merge SHA (`judge_gate set-fix-sha`) and let the judge gate wait. A RECIPE-ONLY batch has nothing to deploy — no PR, no CI/deploy wait, no `set-fix-sha`.
+- Never edit `run_state.yaml` to get past a decision and never pass a literal `--full` to `judge_scope plan`; advance with `decision bump`, overrule only via `decision override --reason`.
+- v1 product that deploys through CI: configure `inner_loop:`; relay `judge_gate`'s RECOMMENDATION line when it appears.
 - Steps 4–5 are `python -m scripts.ddd.assemble` — never a hand-written assemble script or hand-rolled judge briefs.
 - One canopy version per run: resolve the runtime with `scripts.ddd.pin root` and never switch mid-run.
 - Preflight credentials before every iteration; run long steps under the watchdog; never upload from a render that failed `render_check`.

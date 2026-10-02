@@ -258,6 +258,25 @@ class RunState(BaseModel):
     # Pre-build storyboard critique (item 2): {status: clean|applied|asked,
     # review_id, decision, at}. Order/scope questions are asked ONCE, up front.
     storyboard: dict | None = None
+    # --- loop round 4 (0.2.546) ------------------------------------------------
+    # The decision `assemble` returned, sealed: {iteration, action, digest,
+    # sealed_at, overridden}. ``digest`` hashes the fields that decision rests on
+    # (progress/score/fingerprint history, next action, next_judge_full, mode).
+    # `judge_scope plan`, `judge_gate check` and `target plan` refuse to proceed
+    # when run_state was rewritten after the seal, or when the sealed action was
+    # a stop — unless `python -m scripts.ddd.decision override` logged a reason.
+    # Measured: supply-sophie-rutf-2026-09-26-001 ran four extra ~60-minute
+    # iterations after ad-hoc scripts reset its progress history past a
+    # ``stop_max_iter`` and forced every judge pass full. See scripts.ddd.decision.
+    decision_seal: dict | None = None
+    # Every logged override of a sealed decision: {iteration, action, reason, at}.
+    decision_overrides: list[dict] = []
+    # What the batch a ``continue`` asked for touches (scripts.ddd.fix_scope.batch_plan):
+    # {for_iteration, scope: recipe|product, scenes, deploy, render_scenes,
+    # render_reason}. A recipe-only batch changes no product code, so the next
+    # pass skips the deploy gate (nothing to deploy) and may re-render only the
+    # touched scenes; it is between checkpoints and cannot decide.
+    batch_plan: dict | None = None
 
 
 __all__ = [

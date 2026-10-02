@@ -38,7 +38,9 @@ fingerprints below comparable). Judging is scoped:
 Convergence is never declared on a reused cell: ``compute_auto_iterate`` answers
 ``confirm_full`` for an incremental pass that would converge.
 
-    python -m scripts.ddd.judge_scope plan   <run_dir> <spec> [--full] [--context F ...]
+    python -m scripts.ddd.judge_scope plan   <run_dir> <spec> [--context F ...]
+        # scope derived from <run_dir>/run_state.yaml; --full only with --reason
+        # when the state asked for an incremental pass
     python -m scripts.ddd.judge_scope carry  <run_dir>
     python -m scripts.ddd.judge_scope merge-user <run_dir> <partial-verdict-user.yaml>
     python -m scripts.ddd.judge_scope record <run_dir> <spec> --iteration N [--context F ...]
@@ -250,13 +252,28 @@ def load_ledger(run_dir: str | Path) -> dict | None:
 
 
 def decide_scope(
-    current: dict[str, str], ledger: dict | None, *, force_full: bool
+    current: dict[str, str],
+    ledger: dict | None,
+    *,
+    force_full: bool,
+    full_reason: str | None = None,
+    judge_scenes: list[int] | None = None,
 ) -> dict[str, Any]:
-    """Pure decision: which scenes to re-judge, which to reuse, whether arc re-runs."""
+    """Pure decision: which scenes to re-judge, which to reuse, whether arc re-runs.
+
+    ``judge_scenes`` (a recipe-only batch, :func:`scripts.ddd.fix_scope.batch_plan`)
+    limits an incremental pass to the scenes the batch edited: any OTHER scene
+    whose inputs moved (a per-render reseed, render noise) is HELD to its ledger
+    cells and listed in ``held``. A pass that held anything cannot decide
+    (``target.decision_needs_checkpoint``); the next checkpoint judges it fresh."""
     scenes = sorted(current, key=int)
     prior = (ledger or {}).get("fingerprints") or {}
     if force_full or not ledger:
-        reason = "full pass requested" if force_full else "no ledger from a prior judged iteration"
+        reason = (
+            (full_reason or "full pass requested")
+            if force_full
+            else "no ledger from a prior judged iteration"
+        )
         return {
             "full": True,
             "rejudge": [int(s) for s in scenes],
@@ -265,8 +282,13 @@ def decide_scope(
             "reason": reason,
         }
     changed = [s for s in scenes if prior.get(s) != current[s]]
+    held: list[str] = []
+    if judge_scenes is not None:
+        allowed = {str(int(x)) for x in judge_scenes}
+        held = [s for s in changed if s not in allowed]
+        changed = [s for s in changed if s in allowed]
     same = [s for s in scenes if s not in changed]
-    return {
+    out = {
         "full": False,
         "rejudge": [int(s) for s in changed],
         "reuse": [int(s) for s in same],
@@ -277,6 +299,13 @@ def decide_scope(
             + ("" if changed else " — NOTHING changed: the last batch had no visible effect")
         ),
     }
+    if held:
+        out["held"] = [int(s) for s in held]
+        out["reason"] += (
+            f" — recipe-only batch: scene(s) {out['held']} moved but the batch did not edit "
+            "them, so they keep their ledger cells until the next checkpoint"
+        )
+    return out
 
 
 def plan(
@@ -286,6 +315,9 @@ def plan(
     force_full: bool = False,
     context: list[str | Path] | None = None,
     tiered: bool = False,
+    full_reason: str | None = None,
+    judge_scenes: list[int] | None = None,
+    override: dict | None = None,
 ) -> dict[str, Any]:
     """Plan the judge scope. ``tiered`` (judge tiering, :mod:`scripts.ddd.target`):
     an INCREMENTAL pass runs the concept judge only — ``judges: ["concept"]``,
@@ -312,7 +344,12 @@ def plan(
             f"this plan uses v{FINGERPRINT_VERSION} — full pass (reuse resumes next iteration)"
         )
     else:
-        scope = decide_scope(current, ledger, force_full=force_full)
+        scope = decide_scope(
+            current, ledger, force_full=force_full, full_reason=full_reason,
+            judge_scenes=judge_scenes,
+        )
+    if override:
+        scope["override"] = override
     if ledger and not scope.get("full"):
         scope["changed_components"] = changed_components(
             components, ledger.get("components")
@@ -538,6 +575,15 @@ def record(
     components = fingerprint_components(run, spec_scenes(spec_path), salt=context_salt(ctx))
     fps = {sc: _combine(c) for sc, c in components.items()}
     scope = load_scope(run) or {}
+    # A HELD scene was not re-judged: its cells are the ledger's, so its ledger
+    # fingerprint stays the one those cells were judged on — the next pass that
+    # is not recipe-scoped re-judges it if its inputs still differ.
+    prior = load_ledger(run) or {}
+    for sc in (str(x) for x in scope.get("held") or []):
+        if sc in (prior.get("fingerprints") or {}):
+            fps[sc] = prior["fingerprints"][sc]
+            if sc in (prior.get("components") or {}):
+                components[sc] = prior["components"][sc]
     cache = run / CACHE_DIR
     tmp = run / f"{CACHE_DIR}.tmp"
     if tmp.exists():
@@ -579,13 +625,94 @@ def record(
 # ---------------------------------------------------------------------------
 
 
+def _run_state(run_dir: str | Path):
+    """The run's RunState from ``<run_dir>/run_state.yaml``, or ``None``."""
+    path = Path(run_dir) / "run_state.yaml"
+    if not path.exists():
+        return None
+    from scripts.ddd.schemas.models import RunState
+
+    return RunState.model_validate(yaml.safe_load(path.read_text()) or {})
+
+
+def resolve_plan_args(
+    run_dir: str | Path,
+    *,
+    full: bool = False,
+    tiered: bool = False,
+    reason: str | None = None,
+    state: Any = None,
+    cfg: Any = None,
+) -> dict[str, Any]:
+    """``plan`` kwargs for this pass, derived from run_state.
+
+    The scope is the LOOP's decision (``compute_auto_iterate`` ->
+    ``state.next_judge_full`` -> :func:`scripts.ddd.target.expected_scope`), not
+    the caller's. On ``supply-sophie-rutf-2026-09-26-001`` the orchestrator
+    re-used a command line with a literal ``--full`` for three iterations after
+    the loop had switched to incremental, so every pass judged all 7 scenes with
+    all three judges and the record said "full pass requested". Now:
+
+    * no flags -> the state's scope (full or incremental, tiered, recipe scenes);
+    * ``--full`` the state agrees with -> full, with the state's reason;
+    * ``--full`` the state does NOT ask for -> refused, unless ``reason`` is
+      given; then it is recorded in ``judge-scope.json`` as ``override`` and
+      ``assemble`` prints it.
+
+    Also refuses when the sealed decision was overruled without a logged
+    reason (:mod:`scripts.ddd.decision`). No run_state (a bare run dir, unit
+    use) -> the flags as given.
+    """
+    if state is None:
+        state = _run_state(run_dir)
+    if state is None:
+        return {"force_full": full, "tiered": tiered}
+    from scripts.ddd import decision, loop_config, target
+
+    decision.require(state, where="judge_scope plan")
+    exp = target.expected_scope(state, cfg or loop_config.load())
+    kw: dict[str, Any] = {
+        "force_full": exp["full"],
+        "tiered": tiered or exp["tiered"],
+        "full_reason": exp["why"],
+        "judge_scenes": exp["judge_scenes"],
+    }
+    if full and not exp["full"]:
+        if not (reason or "").strip():
+            raise ValueError(
+                "--full contradicts run_state: the loop asked for an INCREMENTAL pass "
+                f"({exp['why']}). Drop --full (plan derives the scope from run_state), "
+                "or pass --reason \"<why this pass must be full>\" to override it on the record."
+            )
+        kw.update(
+            {
+                "force_full": True,
+                "judge_scenes": None,
+                "full_reason": f"full pass OVERRIDE: {reason.strip()} (the loop asked for: {exp['why']})",
+                "override": {
+                    "requested": "full",
+                    "expected": "incremental",
+                    "reason": reason.strip(),
+                    "iteration": getattr(state, "iteration", None),
+                },
+            }
+        )
+    return kw
+
+
 def _main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m scripts.ddd.judge_scope")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("plan")
     p.add_argument("run_dir")
     p.add_argument("spec")
-    p.add_argument("--full", action="store_true", help="force a full judge pass")
+    p.add_argument(
+        "--full",
+        action="store_true",
+        help="force a full judge pass. Derived from run_state when omitted (the normal "
+        "case); a --full that contradicts run_state is refused unless --reason is given",
+    )
+    p.add_argument("--reason", default=None, help="why a --full overrides run_state (recorded)")
     p.add_argument("--context", action="append", default=[])
     p.add_argument("--tiered", action="store_true", help="judge tiering: incremental passes run the concept judge only")
     c = sub.add_parser("carry")
@@ -603,7 +730,8 @@ def _main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     try:
         if args.cmd == "plan":
-            out = plan(args.run_dir, args.spec, force_full=args.full, context=args.context, tiered=args.tiered)
+            kw = resolve_plan_args(args.run_dir, full=args.full, tiered=args.tiered, reason=args.reason)
+            out = plan(args.run_dir, args.spec, context=args.context, **kw)
             out = {k: v for k, v in out.items() if k != "fingerprints"}
         elif args.cmd == "carry":
             out = carry(args.run_dir)

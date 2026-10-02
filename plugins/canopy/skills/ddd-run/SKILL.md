@@ -514,7 +514,12 @@ DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR:
   requires EVERY sample to report `state.last_fix_sha` (stamped by the
   orchestrator after merging a fix batch: `judge_gate set-fix-sha <run_id>
   <sha>`). Rolling deploys serve old tasks mid-rollout, so one good sample
-  proves nothing. No config or no recorded SHA → `skipped`.
+  proves nothing. No config or no recorded SHA → `skipped`. A recipe-only
+  batch (`target plan` said `deploy_gate: skip`) → `skipped`: nothing deployed.
+  When the deploy half ran, no `inner_loop` is configured, and the batch has
+  waited longer than `loop.inner_loop_hint_minutes` (default 15) since its
+  fixer finished, `check` prints a one-line `RECOMMENDATION` (also in the JSON
+  as `recommendation`) to configure one — pass it on in the digest.
 - **Lens half** — pass the Step 2c/2d verdicts. A regression-guard `fail`, a
   visual-geometry `fail`, or a pacing-audit recording bug means the take is
   already known-defective.
@@ -534,10 +539,22 @@ _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduse
 DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 RUN_DIR="$(realpath <run_dir>)"; SPEC_ABS="$(realpath <unified_spec>)"
 RUBRIC="$_CANOPY_PLUGIN/skills/ddd-concept-eval/rubric.yaml"
-FLAGS=$(cd "$DDD_REPO" && uv run python -m scripts.ddd.target flags "<run_id>")   # --full and/or --tiered
-(cd "$DDD_REPO" && uv run python -m scripts.ddd.judge_scope plan "$RUN_DIR" "$SPEC_ABS" $FLAGS --context "$RUBRIC")
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.judge_scope plan "$RUN_DIR" "$SPEC_ABS" --context "$RUBRIC")
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.judge_scope carry "$RUN_DIR")
 ```
+
+**Pass no scope flags.** `plan` reads `<run_dir>/run_state.yaml` and derives
+full vs incremental, tiering and any recipe-only scene list from the loop's own
+decision (`target.expected_scope`). Never type a literal `--full`, and never
+re-use an earlier pass's command line: on connect-labs
+`supply-sophie-rutf-2026-09-26-001` a copied `plan ... --full` judged all 7
+scenes with all three judges on three passes the loop had made incremental, and
+the record said only "full pass requested". A `--full` that contradicts
+run_state now exits 2; if a pass genuinely must be full anyway, pass
+`--full --reason "<why>"` — the reason is written to `judge-scope.json`
+(`override`) and printed by `assemble`. `plan` also refuses when run_state was
+rewritten after the last `assemble` or when that `assemble` returned a stop
+(see `scripts.ddd.decision` below).
 
 `plan` fingerprints each scene's judge INPUTS — after/before frames, page text
 (minus the per-render stamp), the scene's spec entry, its action trace, plus the
@@ -574,6 +591,31 @@ would decide anything returns `checkpoint` instead (Step 5).
 judges in full every pass; backlog mode judges incrementally and in full every
 `loop.full_rejudge_every`-th batch (default 3). **Convergence is never declared
 on an incremental pass** — Step 5 answers `confirm_full` instead.
+
+**Recipe-only batches** (`state.batch_plan.scope == "recipe"`, stamped by the
+`continue` that asked for the batch): every fix is recorder framing, narration
+or why-brief — no product code. `target plan` then says `deploy_gate: skip`:
+there is nothing to merge, wait on in CI, or deploy, so do NOT open a product
+PR, do NOT wait on CI/deploy, and do NOT run `judge_gate set-fix-sha` (the
+render reads the recipe from the local checkout; commit it with the next
+product batch). The render stays full; `plan` re-judges only the scenes the
+batch edited and HOLDS every other scene to its ledger cells even if a reseed
+moved its frame bytes (`held` in `judge-scope.json`). A pass that held scenes
+cannot decide anything — a stop or convergence becomes `checkpoint` — and the
+held scenes keep their old ledger fingerprint, so the next full pass judges
+them fresh. Checkpoints never take this shortcut.
+
+**The decision is sealed (`scripts.ddd.decision`).** `assemble` seals the action
+it returns together with a digest of the state it rests on (progress, score and
+finding-fingerprint history, `next_judge_full`, loop mode). `target plan`,
+`judge_scope plan` and `judge_gate check` refuse to start a pass when that
+state was rewritten afterwards, or when the sealed action was `stop_max_iter`,
+`stop_unclear`, `stop_concept_change` or `stop_done`. Advance iterations with
+`python -m scripts.ddd.decision bump <run_id>` (not a hand-written script). To
+overrule the loop — a re-locked narrative, a history spanning two narrative
+versions — say so first:
+`python -m scripts.ddd.decision override <run_id> --reason "<why>"`. It is
+recorded in `state.decision_overrides` and printed by every later `assemble`.
 
 ### Step 3 — Judge (parallel dispatch)
 
@@ -833,7 +875,9 @@ a STRATEGY finding + mechanical work on
 every strategy finding on a parked scene   -> continue while unparked work remains
 a STRATEGY CONCEPT/redesign finding        -> stop_concept_change
 STALLED: no progress signal improved
-  across the last 2 iterations             -> stop_max_iter   (checked BEFORE pending mechanical work)
+  across the last 2 iterations (an open-
+  findings fall within 15% of the best
+  count is a trickle, not progress)        -> stop_max_iter   (checked BEFORE pending mechanical work)
 mechanical pending, no plateau, under cap  -> continue
 identical findings + no progress           -> stop_max_iter  (plateau)
 hard-cap backstop                          -> stop_max_iter
@@ -863,6 +907,17 @@ A floor-only stall would have stopped real progress; and because the old
 `mechanical → continue` branch preceded the stall check, it in fact never fired
 at all while mechanical findings existed. Now a pinned floor with a shrinking
 backlog keeps going, and a run where nothing improves stops.
+
+**A trickle is not a shrinking backlog.** On a v1 product the judges find new
+nits as old ones are fixed. On `supply-sophie-rutf-2026-09-26-001` open findings
+went 42 → 39 → 36 → 35 → 34 over iterations 5–9 while the mean cell sat at
+3.60 ± 0.05, no cap was fixed after iteration 6, and the floor flipped
+2/3/3/2/3 on one cap — and each 1–3 finding drop counted as progress, so the
+stall detector never fired across ~4.6 hours. An open-findings fall now counts
+only when it exceeds `progress.TRICKLE_FRACTION` (15%) of the best count so far
+(below ~7 findings every fix still counts); that run now stops at iteration 8.
+Severity was considered and not used: 20 of that run's 21 concept findings were
+`low`, so a severity filter would have left the signal almost empty.
 
 **Two things the score alone cannot tell you, both now folded in:**
 
@@ -941,7 +996,7 @@ can see at a glance which findings the orchestrator will auto-apply
 - `stop_concept_change` — "Strategy finding present (the artifact, not the wording, is wrong) — surface to user via canopy-web review surface." Deferred once if `mechanical` findings are still pending, so the user judges direction over a clean artifact rather than one with known defects.
 - `stop_unclear` — "Findings with `options`/`redesign` fix_kind block auto-iteration. List them and ask the user to pick or redesign."
 - `stop_max_iter` — "Loop stopped making progress (stall, plateau, or backstop). Stop and surface remaining findings."
-- `continue` — "Apply ALL mechanical findings as ONE batch (one PR, one deploy; parallel fixers fine), record the merge SHA (`judge_gate set-fix-sha`), and re-fire `/canopy:ddd-run`." In backlog mode the next judge pass is incremental unless `next_judge_full`.
+- `continue` — "Apply ALL mechanical findings as ONE batch (one PR, one deploy; parallel fixers fine), record the merge SHA (`judge_gate set-fix-sha`), `decision bump`, and re-fire `/canopy:ddd-run`." In backlog mode the next judge pass is incremental unless `next_judge_full`. If the reason says **RECIPE-ONLY**, there is no PR, CI, deploy or `set-fix-sha`: edit the recipe/spec locally and re-fire.
 - `confirm_full` — "An incremental pass would converge. Re-fire `/canopy:ddd-run` with no fixes; `next_judge_full` is set, so every scene and the arc are judged fresh. Only that pass can return `stop_done`."
 
 **Unattended runs never wait on a stuck stop.** With no human in the loop

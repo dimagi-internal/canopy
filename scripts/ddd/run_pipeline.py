@@ -279,6 +279,7 @@ def compute_auto_iterate(
     loop_config: "LoopConfig | None" = None,
     target: str | None = None,
     judges: list[str] | None = None,
+    held: list | None = None,
 ) -> tuple[str, str]:
     """Decide the next loop action from the SCORE TRAJECTORY, not an iteration count.
 
@@ -380,6 +381,7 @@ def compute_auto_iterate(
     if recipe_rejudged_this_iteration and rr.get("status") == "pending":
         state.recipe_rejudge = {**rr, "status": "done"}
 
+    state.batch_plan = None  # re-stamped by a `continue` below
     if converged is None:
         converged = compute_convergence(concept_verdict, user_verdict)
     if unattended is None:
@@ -492,10 +494,15 @@ def compute_auto_iterate(
         # Fidelity: an inner-loop or concept-only pass may not decide anything.
         from scripts.ddd import target as target_mod
 
-        if action in _CHECKPOINT_BEFORE and target_mod.decision_needs_checkpoint(target, judges):
+        if action in _CHECKPOINT_BEFORE and target_mod.decision_needs_checkpoint(target, judges, held):
             state.next_judge_full = True
             state.terminal_status = "running"
-            where = "the local inner-loop build" if (target or "deploy") != "deploy" else "a concept-only pass"
+            if (target or "deploy") != "deploy":
+                where = "the local inner-loop build"
+            elif held:
+                where = f"a recipe-scoped pass (scene(s) {list(held)} held to their last cells)"
+            else:
+                where = "a concept-only pass"
             return (
                 "checkpoint",
                 f"This pass ran on {where}, which cannot decide {action!r}. Checkpoint: apply "
@@ -592,6 +599,24 @@ def compute_auto_iterate(
             )
         else:
             state.next_judge_full = True
+        # What the batch touches: a RECIPE-ONLY batch (recorder framing, narration,
+        # why-brief — no product code) has nothing to merge, CI or deploy.
+        bp = fix_scope.batch_plan(findings, for_iteration=state.iteration + 1)
+        state.batch_plan = bp
+        if bp and bp["scope"] == fix_scope.RECIPE:
+            reason += (
+                f" RECIPE-ONLY batch ({bp['findings']} finding(s), scene(s) {bp['scenes']}): "
+                "no product code changes, so do NOT open a product PR or wait on CI/deploy "
+                "and do NOT run judge_gate set-fix-sha — edit the recipe/spec in the local "
+                "checkout (commit it with the next product batch), render in full, and the "
+                "next pass skips the deploy gate"
+                + (
+                    f" and re-judges only scene(s) {bp['judge_scenes']}"
+                    if bp.get("judge_scenes") and not state.next_judge_full
+                    else ""
+                )
+                + "."
+            )
         if parked:
             reason += (
                 f" Scene(s) {sorted(parked)} are PARKED on a pending decision — withhold "
@@ -737,6 +762,7 @@ _REJUDGE_ROLLBACK = (
     "next_judge_full",
     "concept_gate_deferred",
     "park_request",
+    "batch_plan",
 )
 
 

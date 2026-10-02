@@ -136,9 +136,15 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         loop_config=cfg.loop,
         target=tgt.get("target"),
         judges=scope.get("judges"),
+        held=scope.get("held"),
     )
     state.auto_iterate_next_action = action
     state.auto_iterate_reason = reason
+    # Seal the decision: a later rewrite of the fields it rests on, or a new pass
+    # past a stop, is refused until `decision override --reason` logs why.
+    from scripts.ddd import decision
+
+    decision.seal(state)
     # M18: the run is pinned to one canopy version; say so loudly (and keep it
     # for the digest) when this assemble ran from another runtime.
     from scripts.ddd import pin
@@ -171,6 +177,10 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "open_findings": len([f for f in state.findings if f.get("route") != "DEFER"]),
         "parked_scenes": sorted({int(x) for p in state.parked if p.get("status") == "pending" for x in p.get("scenes") or []}),
         "recipe_rejudge": state.recipe_rejudge,
+        "batch_plan": state.batch_plan,
+        "scope_override": scope.get("override"),
+        "held_scenes": scope.get("held") or [],
+        "decision_overrides": list(state.decision_overrides or []),
         "version_warnings": list(state.version_warnings or []),
         "ledger": ledger,
     }
@@ -201,6 +211,12 @@ def _main(argv: list[str] | None = None) -> int:
     for kind, line in out["advisory"].items():
         print(f"  {kind:<20} {line}")
     print(f"  Judge pass:   {'FULL' if out['judge_full'] else 'incremental (reused unchanged scenes)'}")
+    if out["scope_override"]:
+        print(f"  Scope OVERRIDE: forced full against the loop's incremental call — {out['scope_override'].get('reason')}")
+    if out["held_scenes"]:
+        print(f"  Held scenes:  {out['held_scenes']} (recipe-only batch; judged fresh at the next checkpoint)")
+    for o in out["decision_overrides"]:
+        print(f"  Decision OVERRIDE (iteration {o.get('iteration')}, overruled {o.get('action')!r}): {o.get('reason')}")
     print(f"  Target:       {out['target']}  (judges: {', '.join(out['judges'])})")
     print(f"  Loop mode:    {out['loop_mode']}  (next judge: {'full' if out['next_judge_full'] else 'incremental'})")
     print(
@@ -210,6 +226,9 @@ def _main(argv: list[str] | None = None) -> int:
     print(f"  Convergence:  {'YES' if out['converged'] else 'NO'}")
     print(f"  Auto-iterate: {out['auto_iterate_next_action']}  ({out['auto_iterate_reason']})")
     print(f"  Termination:  {out['terminal_status']}")
+    bp = out.get("batch_plan") or {}
+    if bp.get("scope") == "recipe":
+        print("  Next batch:   RECIPE-ONLY — no product PR, no CI/deploy wait, no set-fix-sha")
     if out["parked_scenes"]:
         print(f"  Parked:       scene(s) {out['parked_scenes']} wait on a pending decision")
     for msg in out["version_warnings"]:

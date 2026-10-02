@@ -100,13 +100,26 @@ class TestProgressSignal:
     def test_fewer_caps_or_findings_is_progress(self) -> None:
         a = {"score": 2.0, "open_findings": 10, "mean_cell": 3.5, "confirmed_caps": 3}
         assert progress.improved_signals([a], {**a, "confirmed_caps": 2}) == ["confirmed_caps"]
-        assert progress.improved_signals([a], {**a, "open_findings": 9}) == ["open_findings"]
+        assert progress.improved_signals([a], {**a, "open_findings": 8}) == ["open_findings"]
+
+    def test_a_trickle_of_open_findings_alone_is_not_progress(self) -> None:
+        """The judges re-find nits as old ones are fixed: 39 -> 36 is not a fix rate."""
+        a = {"score": 3.0, "open_findings": 39, "mean_cell": 3.6, "confirmed_caps": 0}
+        assert progress.trickle_band(39) == 5
+        assert progress.improved_signals([a], {**a, "open_findings": 36}) == []
+        assert progress.improved_signals([a], {**a, "open_findings": 34}) == []
+        assert progress.improved_signals([a], {**a, "open_findings": 33}) == ["open_findings"]
+
+    def test_on_a_small_backlog_every_fixed_finding_still_counts(self) -> None:
+        a = {"score": 3.0, "open_findings": 5, "mean_cell": 3.6, "confirmed_caps": 0}
+        assert progress.improved_signals([a], {**a, "open_findings": 4}) == ["open_findings"]
 
     def test_stall_needs_all_signals_flat_across_two_iterations(self) -> None:
         base = {"score": 2.0, "open_findings": 20, "mean_cell": 3.2, "confirmed_caps": 5}
         assert not progress.stalled([base, base])  # needs three points
         assert progress.stalled([base, base, base])
-        assert not progress.stalled([base, base, {**base, "open_findings": 19}])
+        assert progress.stalled([base, base, {**base, "open_findings": 19}])  # a trickle
+        assert not progress.stalled([base, base, {**base, "open_findings": 16}])
 
     @pytest.mark.parametrize(
         "configured,n,expected",
