@@ -26,6 +26,17 @@ from scripts.ddd.auth import (
 )
 
 
+class InvalidReviewResponse(ValueError):
+    """A resolved review's ``response_json`` carries no usable human decision.
+
+    Raised by the gate appliers (``narrative apply``, ``findings_review apply``)
+    when the decision is missing, unknown or malformed. Every applier FAILS
+    CLOSED on it: nothing is written, nothing is locked, and the CLI exits
+    non-zero naming the accepted decisions and the expected shape. A response
+    with no decision is never read as an approval.
+    """
+
+
 def _url(api: str, path: str, workspace: str | None = None) -> str:
     """Full canopy-web URL, workspace-scoped when a DDD workspace is active
     (``/api/reviews/`` → ``/api/w/<ws>/reviews/``)."""

@@ -247,6 +247,14 @@ RESPONSE_JSON_FILE="$(mktemp /tmp/narrative_response_XXXXXX.json)"
 The `apply` command folds any `narration_edits` back onto the matching scenes'
 `concept_claim` in the spec and prints `{"decision": "<decision>", "edited": <N>}`.
 
+The file MUST carry the decision as `{"decisions": {"narrative-verdict": "approve" | "redraft"}, ...}`
+— write the resolved `response_json` verbatim; never hand-build it. `apply` **fails
+closed**: a missing, unknown or malformed decision (e.g. a top-level `"decision":
+"redraft"`) exits **1**, prints the accepted decisions and the expected shape to
+stderr, and changes nothing — the spec and its narrative lock are untouched. On a
+non-zero exit, do NOT route on the gate: fix the response file and re-run `apply`.
+A response with no decision is never an approval.
+
 ### Step 5 — Gate: route on the decision
 
 | Decision  | Effect |

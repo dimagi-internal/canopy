@@ -9,6 +9,19 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.552] - 2026-10-02
+### Fixed
+- **DDD gate appliers fail closed on a missing decision.** `narrative apply` read a
+  response with no `decisions["narrative-verdict"]` as `approve` and LOCKED the spec —
+  in connect-labs run `supply-sophie-unanswered-round-2026-10-02-001` an orchestrator
+  wrote a redraft in the wrong shape and the narrative was locked as approved. A
+  missing, unknown or malformed decision now raises `InvalidReviewResponse` before
+  anything is written: `apply` exits 1, names the accepted decisions and the expected
+  shape, and leaves the spec, its lock, personas and why-brief untouched.
+  `findings_review apply` gets the same treatment (no `decisions` object or an
+  unknown per-finding decision is refused rather than read as "nothing to implement"),
+  and now reports `defer` and the overall `findings-verdict` it previously dropped.
+
 ## [0.2.551] - 2026-10-02
 ### Added
 - **`canopy agent set --append-notes`** — add a turn's log to a task's notes without
