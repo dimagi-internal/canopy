@@ -265,7 +265,7 @@ def transfer_cmd(session, target, brief, brief_file, stop, workspace, as_json):
     # No client-side ownership refusal here, unlike pause/unpause: since
     # canopy-web#1055 the SERVER decides. Onto a box you administer, or between two
     # boxes with the same owner, it moves now; onto someone else's it opens a
-    # teleport request for them to approve (status "pending" below).
+    # transfer request for them to approve (status "pending" below).
 
     source = str(s.get("runner_name") or "") or "(unbound)"
     if source == str(r.get("name")):
@@ -312,8 +312,8 @@ def transfer_cmd(session, target, brief, brief_file, stop, workspace, as_json):
                    f"'{s.get('title') or s.get('id')}' onto it needs their yes.")
         click.echo(f"  waiting on:    {who}")
         click.echo(f"  request:       {out.get('request_id')}")
-        click.echo("  Nothing moved yet. They approve with approve_teleport_request; "
-                   "check it with list_teleport_requests (status=all).")
+        click.echo("  Nothing moved yet. They approve with approve_transfer_request; "
+                   "check it with list_transfer_requests (status=all).")
         return
     click.echo(f"LAUNCHED (unverified) — moved '{s.get('title') or s.get('id')}' "
                f"{out.get('transferred_from') or source} -> {out.get('runner')}")
