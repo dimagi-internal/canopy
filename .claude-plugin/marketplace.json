@@ -6,13 +6,13 @@
     "url": "https://github.com/dimagi-internal"
   },
   "metadata": {
-    "version": "0.2.547"
+    "version": "0.2.548"
   },
   "plugins": [
     {
       "name": "canopy",
       "source": "./plugins/canopy",
-      "version": "0.2.547",
+      "version": "0.2.548",
       "description": "Self-improving AI workflow skills \u2014 session analysis, PM supervision, autonomous development"
     },
     {

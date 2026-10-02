@@ -173,14 +173,21 @@ def test_json_output_is_the_servers_answer(fake_http):
     assert json.loads(r.output)["index_offset"] == 20864
 
 
-def test_transfer_refuses_a_runner_someone_else_owns(fake_http):
-    """Ownership, not permissions — and usually an IDENTITY mix-up. Same refusal
-    pause/unpause use, reused rather than re-spelled."""
-    _calls, responses = fake_http
+def test_a_move_onto_someone_elses_box_asks_them_instead_of_refusing(fake_http):
+    """Since canopy-web#1055 the server decides: onto a box you don't run, the
+    transfer becomes a teleport request. The client must send it (not refuse
+    client-side) and must say PENDING, never LAUNCHED — nothing moved."""
+    calls, responses = fake_http
     others = [dict(x) for x in RUNNERS]
     others[1]["can_manage"] = False
     others[1]["paired_by_email"] = "someone@dimagi.com"
     responses[("GET", "harness/runners/")] = (200, json.dumps(others))
+    responses[("POST", f"canopy-sessions/{SID}/transfer")] = (200, json.dumps({
+        **TRANSFER_OK, "runner": "", "turn_id": "", "status": "pending",
+        "request_id": "9e000000-0000-4000-8000-000000000000",
+        "approvers": ["someone@dimagi.com"]}))
     r = _invoke(SID, "--to", "jj-mbp-cdp")
-    assert r.exit_code != 0
+    assert r.exit_code == 0, r.output
+    assert any(c[0] == "POST" and c[1].endswith("/transfer") for c in calls)
+    assert "PENDING" in r.output and "LAUNCHED" not in r.output
     assert "someone@dimagi.com" in r.output
