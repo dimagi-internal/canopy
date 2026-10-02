@@ -175,7 +175,7 @@ def test_json_output_is_the_servers_answer(fake_http):
 
 def test_a_move_onto_someone_elses_box_asks_them_instead_of_refusing(fake_http):
     """Since canopy-web#1055 the server decides: onto a box you don't run, the
-    transfer becomes a teleport request. The client must send it (not refuse
+    transfer becomes a transfer request. The client must send it (not refuse
     client-side) and must say PENDING, never LAUNCHED — nothing moved."""
     calls, responses = fake_http
     others = [dict(x) for x in RUNNERS]
