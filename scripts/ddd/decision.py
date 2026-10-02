@@ -61,7 +61,9 @@ SEALED_FIELDS = (
 #: Sealed actions a new pass may not proceed past without a logged override.
 #: ``stop_partial`` is excluded: its documented next step IS a re-fire on the
 #: full spec.
-BLOCKING_STOPS = frozenset({"stop_max_iter", "stop_unclear", "stop_concept_change", "stop_done"})
+BLOCKING_STOPS = frozenset(
+    {"stop_max_iter", "stop_unclear", "stop_concept_change", "stop_done", "stop_inner_loop_required"}
+)
 
 
 def _now() -> str:

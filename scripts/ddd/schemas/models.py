@@ -105,6 +105,9 @@ class RunState(BaseModel):
     #   stop_unclear          — non-DEFER finding with fix_kind=options or
     #                           redesign; needs user pick.
     #   stop_max_iter         — stalled / plateaued / HARD_CAP backstop.
+    #   stop_inner_loop_required — a backlog loop on a repo with a deploy gate
+    #                           and no inner_loop (nor inner_loop: off + a
+    #                           reason): configure it, override, proceed.
     #   confirm_full          — an INCREMENTAL judge pass (backlog mode) would
     #                           converge; re-render and judge every scene fresh
     #                           before declaring it. No fixes to apply.
@@ -152,10 +155,16 @@ class RunState(BaseModel):
     finding_fingerprints: list[list[str]] = []
     # Which KIND of ending this is, set by run_pipeline.classify_termination:
     #   converged_clean | converged_with_open_questions | stopped_not_converged |
-    #   diverging | running
+    #   diverging | needs_config | running
     # "converged, good", "converged, still failing" and "diverging" are genuinely
     # different outcomes and must never print the same way.
     terminal_status: str | None = None
+    # How this run renders BETWEEN checkpoints, stamped by every assemble from
+    # .canopy/ddd/config.yaml (scripts.ddd.target.inner_loop_policy):
+    #   {status: configured | off | missing | not_required, reason: str}
+    # ``off`` carries the config's own reason for running without an inner loop;
+    # ``missing`` on a backlog loop is a stop (stop_inner_loop_required).
+    inner_loop_policy: dict | None = None
     # How many times the concept gate has been HELD OPEN for pending mechanical
     # work, incremented by run_pipeline.compute_auto_iterate. A strategy redesign
     # finding used to preempt confidently-fixable defects sitting alongside it, so

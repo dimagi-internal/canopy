@@ -125,6 +125,9 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         extra_verdict_paths=extra_paths,
     )
     converged = compute_convergence(concept, user, extra=extra)
+    from scripts.ddd import target as target_mod
+
+    state.inner_loop_policy = target_mod.inner_loop_policy(cfg)
     action, reason = compute_auto_iterate(
         state,
         concept,
@@ -137,6 +140,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         target=tgt.get("target"),
         judges=scope.get("judges"),
         held=scope.get("held"),
+        inner_loop_policy=state.inner_loop_policy,
     )
     state.auto_iterate_next_action = action
     state.auto_iterate_reason = reason
@@ -169,6 +173,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "target": tgt.get("target") or "deploy",
         "judges": scope.get("judges") or ["concept", "user", "arc"],
         "loop_mode": state.loop_mode,
+        "inner_loop_policy": state.inner_loop_policy,
         "next_judge_full": state.next_judge_full,
         "progress": state.progress_history[-1] if state.progress_history else None,
         "auto_iterate_next_action": action,
@@ -219,6 +224,13 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"  Decision OVERRIDE (iteration {o.get('iteration')}, overruled {o.get('action')!r}): {o.get('reason')}")
     print(f"  Target:       {out['target']}  (judges: {', '.join(out['judges'])})")
     print(f"  Loop mode:    {out['loop_mode']}  (next judge: {'full' if out['next_judge_full'] else 'incremental'})")
+    policy = out.get("inner_loop_policy") or {}
+    if policy.get("status") == "off":
+        print(f"  Inner loop:   OFF by config — {policy.get('reason')}")
+    elif policy.get("status") == "missing":
+        print(f"  Inner loop:   MISSING — {policy.get('reason')}")
+    elif policy.get("status") == "configured":
+        print(f"  Inner loop:   {policy.get('reason')}")
     print(
         f"  Progress:     score {p.get('score')}  open findings {p.get('open_findings')}  "
         f"mean cell {p.get('mean_cell')}  confirmed caps {p.get('confirmed_caps')}"

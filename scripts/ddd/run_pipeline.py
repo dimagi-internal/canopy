@@ -280,6 +280,7 @@ def compute_auto_iterate(
     target: str | None = None,
     judges: list[str] | None = None,
     held: list | None = None,
+    inner_loop_policy: dict | None = None,
 ) -> tuple[str, str]:
     """Decide the next loop action from the SCORE TRAJECTORY, not an iteration count.
 
@@ -364,6 +365,12 @@ def compute_auto_iterate(
       or convergence it would return becomes ``checkpoint`` — land the batches,
       then a full render + every judge on the deploy target decides. The target
       is recorded on the progress point.
+    - ``inner_loop_policy`` (:func:`scripts.ddd.target.inner_loop_policy`) is
+      ``{status, reason}``. A ``missing`` policy -- a deploy gate and no
+      ``inner_loop:`` or reasoned ``inner_loop: off`` -- refuses to continue a
+      BACKLOG loop: every fix batch would pay PR + CI + deploy before a frame is
+      judged. The pass returns ``stop_inner_loop_required`` instead of
+      ``continue``. ``None`` (callers that predate it) is not checked.
     """
     import copy
 
@@ -622,6 +629,17 @@ def compute_auto_iterate(
                 f" Scene(s) {sorted(parked)} are PARKED on a pending decision — withhold "
                 "their findings from the batch; they are still rendered and judged."
             )
+        if state.loop_mode == "backlog" and (inner_loop_policy or {}).get("status") == "missing":
+            # Everything above is already scheduled, so once the config is fixed a
+            # logged `decision override` resumes exactly the pass this would have been.
+            return _finish(
+                "stop_inner_loop_required",
+                "Refusing to run a backlog (v1-product) fix loop with only the deploy target: "
+                f"{inner_loop_policy.get('reason')}. Every batch would merge, wait on CI and "
+                "deploy before a frame is judged. Configure inner_loop (or declare it off with "
+                "a reason), then `python -m scripts.ddd.decision override <run_id> --reason "
+                f"\"<what you configured>\"` and proceed as {action!r}: {reason}",
+            )
         return _finish(action, reason)
     defer_concept_gate = (
         bool(strategy_redesign)
@@ -795,7 +813,14 @@ def _short(point: dict) -> str:
 
 #: Every action the loop can return, and whether it hands control back.
 TERMINAL_ACTIONS = frozenset(
-    {"stop_done", "stop_partial", "stop_concept_change", "stop_unclear", "stop_max_iter"}
+    {
+        "stop_done",
+        "stop_partial",
+        "stop_concept_change",
+        "stop_unclear",
+        "stop_max_iter",
+        "stop_inner_loop_required",
+    }
 )
 
 
@@ -850,6 +875,8 @@ def classify_termination(
 
     if action not in TERMINAL_ACTIONS:
         status = "running"
+    elif action == "stop_inner_loop_required":
+        status = "needs_config"
     elif action in ("stop_done", "stop_partial") or converged:
         status = "converged_with_open_questions" if open_strategy else "converged_clean"
     elif is_diverging:
@@ -870,6 +897,10 @@ def classify_termination(
 
 
 _TERMINATION_SUMMARY = {
+    "needs_config": (
+        "Refused to continue: a backlog loop on a repo with a deploy gate needs an inner_loop "
+        "(or inner_loop: off with a reason) in .canopy/ddd/config.yaml."
+    ),
     "converged_clean": "Converged and clean — every gating judge passed and nothing strategic is open.",
     "converged_with_open_questions": (
         "Converged, with open strategy questions — the artifact passes, but findings remain "

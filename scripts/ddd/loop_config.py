@@ -27,7 +27,13 @@ module reads the two blocks the v1/backlog loop adds::
       health_url: http://localhost:8000/health/  # optional readiness probe
       ready_timeout_seconds: 120
 
-    timeouts:                 # sub-step watchdog (scripts.ddd.watchdog)
+    # ...or, deliberately without one (the reason is recorded in run_state and
+    # printed by every assemble):
+    inner_loop: off
+    inner_loop_off_reason: the product has no locally servable build yet
+    # (equivalently: inner_loop: {off: true, reason: "..."})
+
+    timeouts:                # sub-step watchdog (scripts.ddd.watchdog)
       default_minutes: 45     # any step without its own key
       heartbeat_minutes: 15   # no heartbeat for this long -> timed_out
       fixer_minutes: 45       # <step>_minutes overrides default_minutes per step
@@ -43,6 +49,12 @@ module reads the two blocks the v1/backlog loop adds::
 Every key is optional. A missing file, a missing block, or a malformed value
 falls back to the defaults below — a config problem must never stop a run, it
 only turns the optional behaviour off (the deploy gate reports ``skipped``).
+
+One deliberate exception (0.2.554, :func:`scripts.ddd.target.inner_loop_policy`):
+a repo whose ``deploy_gate`` is configured — every fix batch merges, waits on CI
+and deploys before a frame can be judged — must also say how it renders BETWEEN
+checkpoints. Without ``inner_loop:`` (or ``inner_loop: off`` plus a reason)
+``assemble`` refuses to continue a backlog (v1-product) loop.
 """
 from __future__ import annotations
 
@@ -79,10 +91,13 @@ class InnerLoopConfig:
     setup: str | None = None
     health_url: str | None = None
     ready_timeout_seconds: float = 120.0
+    # ``inner_loop: off`` — declared deliberately, rather than just missing.
+    off: bool = False
+    off_reason: str | None = None
 
     @property
     def enabled(self) -> bool:
-        return bool(self.base_url)
+        return bool(self.base_url) and not self.off
 
 
 @dataclass(frozen=True)
@@ -183,8 +198,21 @@ def _tiering(raw: Any) -> str:
     return val if val in TIERING else "auto"
 
 
-def _parse_inner(raw: Any) -> InnerLoopConfig:
+_OFF_WORDS = ("off", "false", "no", "disabled", "none")
+
+
+def _parse_inner(raw: Any, off_reason: Any = None) -> InnerLoopConfig:
+    """``inner_loop:`` — a mapping, or ``off`` (YAML reads a bare ``off`` as False).
+
+    ``off`` takes its reason from ``inner_loop_off_reason:``; the mapping form
+    ``{off: true, reason: ...}`` carries its own.
+    """
+    reason = str(off_reason or "").strip() or None
+    if raw is False or (isinstance(raw, str) and raw.strip().lower() in _OFF_WORDS):
+        return InnerLoopConfig(off=True, off_reason=reason)
     raw = raw if isinstance(raw, dict) else {}
+    if raw.get("off") is True or str(raw.get("off") or "").strip().lower() in ("true", "yes", "on"):
+        return InnerLoopConfig(off=True, off_reason=str(raw.get("reason") or "").strip() or reason)
     base = str(raw.get("base_url") or "").strip().rstrip("/") or None
     return InnerLoopConfig(
         base_url=base,
@@ -239,7 +267,7 @@ def parse(data: dict | None) -> DDDConfig:
         loop=loop,
         deploy_gate=gate,
         timeouts=_parse_timeouts(data.get("timeouts")),
-        inner_loop=_parse_inner(data.get("inner_loop")),
+        inner_loop=_parse_inner(data.get("inner_loop"), data.get("inner_loop_off_reason")),
         auth_preflight=_parse_auth(data.get("auth_preflight")),
     )
 
