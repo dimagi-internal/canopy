@@ -194,7 +194,11 @@ base_url: "http://localhost:8000"
 record_video: true              # default: false
 video_pace: fast                # fast | medium | slow (default: fast)
 video_viewport_width: 1280      # default: 1280
-video_viewport_height: 720      # default: 720
+video_viewport_height: 720      # default: 720 — with --snapshots, the size is recorded in
+                                # render-viewport.json and a LATER render into that dir at a
+                                # different size is refused (a spec rebuilt mid-loop that drops
+                                # these keys would otherwise silently re-render at 1280x720);
+                                # --allow-viewport-change overrides. Keep these keys explicit.
 prewarm: true                   # default: false — visit every unique scene URL once
                                 # OFF camera before filming, so cold caches don't
                                 # freeze-frame on film (see "Recording time & dead space")

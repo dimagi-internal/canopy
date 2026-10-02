@@ -64,6 +64,7 @@ except ImportError:
 
 from scripts.walkthrough._lib.capture_mode import snapshot_full_page
 from scripts.walkthrough._lib.urls import absolutize_url
+from scripts.walkthrough._lib.viewport_guard import check_viewport, record_viewport
 from scripts.walkthrough.identities import mint_identities
 from scripts.ddd.spec_io import load_spec_raw
 
@@ -723,6 +724,15 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--allow-viewport-change",
+        action="store_true",
+        help=(
+            "Render even though --snapshots was last rendered at a different default "
+            "viewport (render-viewport.json). Without it that is refused: a mid-loop "
+            "frame-size change invalidates scroll offsets and cross-iteration scores (#625)."
+        ),
+    )
+    ap.add_argument(
         "--force-hand-render",
         action="store_true",
         help=(
@@ -877,6 +887,23 @@ def main() -> None:
         sys.exit("ERROR: no scenes resolved from spec (check --input filtering)")
 
     print(f"Recording {len(scenes)} scenes at pace={pace} ({viewport_w}x{viewport_h})")
+
+    # ---- Guardrail: same frame size as the last render into --snapshots (#625) --
+    if args.snapshots:
+        snap_dir = Path(args.snapshots)
+        overridden = {
+            i for i, s in enumerate(spec.get("scenes") or [], start=1)
+            if isinstance(s, dict) and s.get("viewport")
+        }
+        vp_check = check_viewport(
+            snap_dir, viewport_w, viewport_h,
+            overridden_scenes=overridden, allow_change=args.allow_viewport_change,
+        )
+        if vp_check.verdict == "refuse":
+            sys.exit(f"ERROR: {vp_check.message}")
+        if vp_check.verdict == "warn":
+            print(f"⚠️  WARNING: {vp_check.message}")
+        record_viewport(snap_dir, viewport_w, viewport_h)
 
     prewarm_enabled = resolve_prewarm(args.prewarm, spec.get("prewarm"))
 
