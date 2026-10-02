@@ -42,6 +42,8 @@ canopy agent add  --slug <slug> --title "…" --next-action "…" \
     --links "Thread|https://…, Doc|https://…"          # create (auto T<N>)
 canopy agent set  --slug <slug> --task-id T<N> \    # the ext_id off the card (or the numeric id)
     --rationale "why" --plan "first steps" --source-url <url>   # store context — never re-derive
+canopy agent set  --slug <slug> --task-id T<N> \
+    --append-notes "--- <date> TURN ---\n<what this turn did>"  # LOG a turn; --notes REPLACES the history
 canopy agent add  --slug <slug> --title "…" --project "<Project>"   # file it into a project
 canopy agent tasks --slug <slug> --open       # DRAIN the board: unresolved tasks only
 canopy agent tasks --slug <slug>                # every task ever (needed to compute the next ext_id)
