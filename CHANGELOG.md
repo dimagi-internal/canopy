@@ -9,6 +9,13 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.551] - 2026-10-02
+### Added
+- **`canopy agent set --append-notes`** — add a turn's log to a task's notes without
+  restating the history. `--notes` replaces the field wholesale, so appending used to
+  mean a hand read-modify-write, and passing only the new entry silently deleted every
+  earlier turn's log. Mirrors `--append-link`; mutually exclusive with `--notes`.
+
 ## [0.2.550] - 2026-10-02
 ### Added
 - **Render viewport guard** (#625). `record_video.py --snapshots <dir>` records the
