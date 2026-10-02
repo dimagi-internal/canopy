@@ -726,7 +726,12 @@ def resolve_task_id(client, task_id):
               help="The single concrete next step, verb-first. Max 300 chars — over-length "
                    "is REJECTED, never truncated.")
 @click.option("--owner", default=None, help="The human who owns the outcome. Max 120 chars.")
-@click.option("--notes", default=None)
+@click.option("--notes", default=None,
+              help="REPLACE the card's notes wholesale. To add a turn's log without "
+                   "restating the history, use --append-notes.")
+@click.option("--append-notes", default=None,
+              help="ADD text to the end of the card's notes, keeping what is there "
+                   "(separated by a blank line). The common case — a turn logs what it did.")
 @click.option("--score", default=None, help="Self-grade captured at completion — e.g. A-, B+, 4/5.")
 @click.option("--review", default=None, help="One-line self-review captured when the task was done.")
 @click.option("--links", default=None,
@@ -740,13 +745,15 @@ def resolve_task_id(client, task_id):
 @click.option("--project", "project", default=None, metavar="EXT_ID_OR_NAME",
               help="File this task into a project (P<N> ext_id or its exact name). Pass \"\" "
                    "to take it out of one; omitting it leaves the filing alone.")
-def agent_set(slug, task_id, links, append_link, project, **fields):
+def agent_set(slug, task_id, links, append_link, append_notes, project, **fields):
     """Patch a task (store rationale/source/plan/status/score/review/links/…).
 
     Score a task WHEN you mark it done (--status done --score --review) so a manager
     sync reads the completion grade instead of re-grading later."""
     if links is not None and append_link is not None:
         raise click.ClickException("pass --links (replace) or --append-link (add), not both")
+    if fields.get("notes") is not None and append_notes is not None:
+        raise click.ClickException("pass --notes (replace) or --append-notes (add), not both")
     # Same caps, same rejection, as `agent add` — checked before the network call so the
     # caller gets the field name and the overage instead of the server's 422.
     for name, value in list(fields.items()):
@@ -763,6 +770,8 @@ def agent_set(slug, task_id, links, append_link, project, **fields):
             fields["links"] = parse_task_links(links)
         elif append_link is not None:
             fields["links"] = _appended_links(client, task_id, append_link)
+        if append_notes is not None:
+            fields["notes"] = _appended_notes(client, task_id, append_notes)
         _emit(client.patch_task(task_id, **fields))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
@@ -786,6 +795,26 @@ def _appended_links(client, task_id, spec):
             current.append(link)
             seen.add(link["url"])
     return current
+
+
+def _appended_notes(client, task_id, text):
+    """The card's existing notes + `text`, separated by a blank line.
+
+    Read-modify-write for the same reason as `_appended_links`: the PATCH replaces
+    `notes` wholesale, and a multi-turn task's notes ARE its history. The only append
+    path used to be reading the card, concatenating by hand and passing the whole thing
+    back through --notes. Passing just the new entry there instead succeeds and silently
+    deletes every earlier turn's log.
+    """
+    current = ""
+    for task in client.list_tasks():
+        if task.get("id") == task_id:
+            current = (task.get("notes") or "").rstrip()
+            break
+    addition = text.strip()
+    if not addition:
+        raise click.ClickException("--append-notes needs non-empty text")
+    return f"{current}\n\n{addition}" if current else addition
 
 
 def normalize_task_status(s):
