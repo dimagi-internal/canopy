@@ -570,6 +570,82 @@ def agent_project_set(slug, ref, links, **fields):
         raise click.ClickException(str(e))
 
 
+@agent.command("handoff")
+@click.option("--from", "from_slug", required=True, help="The agent giving the project up.")
+@click.option("--to", "to_slug", required=True, help="The agent taking it over.")
+@click.option("--name", required=True,
+              help="The project's name on the RECEIVING board — use the name of the "
+                   "Projects/<name> folder it will live in, as for project-add.")
+@click.option("--ref", "refs", multiple=True, required=True,
+              help="What the work is known by: a Gmail thread id, a Doc/folder id, a URL. "
+                   "Repeatable. Used to FIND the source sessions; URLs also become links.")
+@click.option("--from-project", default="",
+              help="The project's P<N> or name on the SOURCE board, to close it there.")
+@click.option("--outcome", default="")
+@click.option("--owner", "owner_note", default="")
+@click.option("--drive-folder-url", default="",
+              help="The folder AFTER the move (under the receiver's Projects root).")
+@click.option("--note", default="", help="One line on why it moved / what the receiver is to do.")
+@click.option("--exclude-session", default="",
+              help="Your own session id, so the handoff turn does not list itself.")
+@click.option("--dry-run", is_flag=True, help="Find the sessions and print the plan; write nothing.")
+def agent_handoff(from_slug, to_slug, name, refs, from_project, outcome, owner_note,
+                  drive_folder_url, note, exclude_session, dry_run):
+    """Hand a project from one agent to another (run by the RECEIVING agent).
+
+    Does the parts that are the same for every handoff and prints the rest:
+
+    \b
+    1. FINDS the source agent's sessions that touched the refs (read-only) —
+       the context the artifacts do not carry. Read them before acting.
+    2. OPENS the project on the receiving board, its notes naming where it came
+       from and which sessions to read, its links carrying the refs.
+    3. CLOSES it on the source board (status archived, note "handed off to …")
+       when --from-project is given. A source board this PAT cannot see is
+       reported, not fatal — the step is printed for a human.
+
+    The Drive folder move is NOT done here: who may move it depends on who owns
+    the files (often the source agent's service account, which the receiver
+    cannot act as), so it is a printed step. See agent-core/handoff.md.
+    """
+    from orchestrator.agent_handoff import find_sessions, handoff_notes
+
+    sessions = find_sessions(refs, from_slug, exclude_session=exclude_session)
+    notes = handoff_notes(from_slug, to_slug, sessions, note)
+    url_refs = [r for r in refs if r.startswith("http")]
+    links = ", ".join(f"ref|{u}" for u in url_refs)
+    result = {"from": from_slug, "to": to_slug, "name": name, "sessions": sessions,
+              "notes": notes, "dry_run": dry_run}
+    if dry_run:
+        _emit(result)
+        return
+    try:
+        result["project"] = _client(to_slug).create_project(
+            name=name.strip(), outcome=outcome.strip(), owner_note=owner_note.strip(),
+            drive_folder_id="", drive_folder_url=drive_folder_url.strip(), repo_slug="",
+            notes=notes, links=parse_task_links(links),
+        )
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(f"could not open the project on {to_slug}'s board: {e}")
+    if from_project:
+        try:
+            src = _client(from_slug)
+            ext_id = resolve_project_ref(src, from_project)
+            result["source_project"] = src.patch_project(
+                ext_id, status="archived",
+                notes=f"Handed off to {to_slug} as {result['project'].get('ext_id', name)!r}.")
+        except (CanopyError, RuntimeError, click.ClickException) as e:
+            msg = getattr(e, "message", None) or str(e)
+            result["source_project"] = {"error": msg, "todo": (
+                f"close {from_project!r} on {from_slug}'s board by hand: "
+                f"canopy agent project-set --slug {from_slug} --project {from_project!r} "
+                f"--status archived --notes 'Handed off to {to_slug}'")}
+    else:
+        result["source_project"] = {"todo": f"no --from-project given — if {from_slug} "
+                                             "tracked this on its board, close it there."}
+    _emit(result)
+
+
 @agent.command("syncs")
 @click.option("--slug", required=True)
 @click.option("--limit", type=int, default=None, help="Cap the number returned (newest first).")

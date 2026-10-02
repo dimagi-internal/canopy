@@ -105,6 +105,10 @@ Drive layout warns about. A genuine one-off needs no project: create the task wi
 Conversely, once a thread has produced deliverables and more than one task, it is a project:
 register it, put the folder link on it, and file its tasks in.
 
+**A project moving between agents** ("take this over from <agent>") is `canopy agent handoff`,
+run by the receiver — it finds the source agent's sessions and opens the project here with them in
+its notes. The procedure (files, grants, thread) is `agent-core/handoff.md`.
+
 ## When to use (turn-loop wiring)
 - **Start of every turn:** drain `commands` → act → `apply`. The board is a trigger surface
   alongside the inbox.
