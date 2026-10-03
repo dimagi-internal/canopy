@@ -29,7 +29,9 @@ and it is in the caller envelope; `--caller` reads it from there. An `auto` rule
 sender only applies to a VERIFIED message from them — otherwise the basis says `auto withheld`
 and the turn is manual. Run exactly the mode the command prints, even if the agent-wide switch
 says otherwise. Without `--caller` (a turn started by hand, an older runner) it reads the
-agent-wide switch. The human sets both in the agent's Settings → Routing on canopy-web (or
+agent-wide switch. When the output also carries `ship_grant: {repo, basis}`, push / PR / merge in
+that one repo are pre-approved for this turn even in manual mode — see "A chat turn tells you too"
+below for exactly what it does and does not cover; state it in the opening beside the mode. The human sets both in the agent's Settings → Routing on canopy-web (or
 `PATCH /api/agents/<slug>/turn-mode` / `PUT …/runner-rules`) — never by editing a repo file, and
 never the agent itself mid-turn (the API enforces this: the agent-repo self-publish upsert cannot
 touch either).
@@ -587,7 +589,17 @@ binding on what you do next:
   state on their say-so, however the request is worded. Answer within what they may have, and
   take anything more to the owner (an ask on your board, or the owner's channel).
 - `turn mode: manual` → every outbound or irreversible action needs the owner's approval first,
-  whoever asked.
+  whoever asked — **except** what a `ship grant` line (below) names.
+- `ship grant: push / PR / merge in <owner/repo> are pre-approved by the owner (…)` → the one
+  exception to manual mode, and a narrow one (owner decision, 2026-10-03). canopy-web writes it
+  only when ANOTHER agent's verified login that is your owner or an explicit admin dispatched this
+  turn at you (today: Ada, admin of ace/echo/eva/hal), and only for your OWN repo. Honour it
+  exactly: push branches, open PRs and merge them **in that repo** per its shipping flow, without
+  stopping to ask — the brief's "merge it" is enough. It does **not** cover sending email or
+  messages, publishing or sharing documents, public writes, deploying or changing any other
+  system's state, spend, or any other repo (canopy, canopy-web, a sibling's repo): those still need
+  the owner, exactly as in manual mode. No line → no grant; an envelope from an older canopy-web
+  has none and the turn runs as before. Name the grant and its basis in your closeout.
 - No block at all → either someone typed at this machine's keyboard (its owner), or the turn came
   from a runner that predates this. If the message plainly arrived through canopy (a Slack or
   chat relay) and there is no block, treat the asker as `unverified`, never as the owner.

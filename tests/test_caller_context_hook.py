@@ -187,3 +187,57 @@ def test_the_page_selection_is_in_context(tmp_path):
 def test_no_page_says_nothing_about_one(tmp_path):
     assert "looking at a page" not in cc.summarize(ENV, str(tmp_path / "env.json"), TID)
     assert "looking at a page" not in cc.summarize({**ENV, "page": None}, str(tmp_path / "e"), TID)
+
+
+# --- the repo-internal ship grant (owner decision, 2026-10-03) -----------------------
+# Ada's dispatches (eva#343, eva#347, canopy#715) each stopped for "yes merge": the
+# manual-mode line said a merge needs the owner. With a grant on the envelope, the hook
+# says push / PR / merge in the target's own repo are pre-approved — and nothing else.
+
+GRANT = {"repo": "dimagi-internal/eva", "actions": ["push", "pull_request", "merge"],
+         "basis": "dispatched by ada@dimagi-ai.com (agent ada), admin of eva",
+         "not_granted": ["send email or messages"]}
+ADA = {**ENV, "relationship": "admin", "verified": True,
+       "who": {"kind": "user", "via": "api", "assurance": "pat",
+               "user": {"email": "ada@dimagi-ai.com", "name": "ada@dimagi-ai.com"}},
+       "granted_by": "admin", "trigger": {"origin": "api", "runner": "jj-mbp"}}
+
+
+def test_a_ship_grant_is_one_explicit_line_and_the_mode_line_does_not_contradict_it(tmp_path):
+    text = cc.summarize({**ADA, "ship_grant": GRANT}, str(tmp_path / "e.json"), TID)
+    assert ("- ship grant: push / PR / merge in dimagi-internal/eva are pre-approved by the owner "
+            "(dispatched by ada@dimagi-ai.com (agent ada), admin of eva)") in text
+    assert "Sends, deploys of other systems, publishing and public writes still need the OWNER." in text
+    mode_line = next(line for line in text.splitlines() if line.startswith("- turn mode:"))
+    assert mode_line.startswith("- turn mode: manual (agent)")
+    assert "covered by the ship grant below" in mode_line
+    assert "sends, deploys, publishing" in mode_line
+    assert "(push, deploy, merge, send, publish)" not in mode_line
+    assert "Do not push" not in text
+
+
+def test_no_grant_keeps_todays_manual_line(tmp_path):
+    for env in (ADA, {**ADA, "ship_grant": None}):
+        text = cc.summarize(env, str(tmp_path / "e.json"), TID)
+        assert "ship grant" not in text
+        assert "(push, deploy, merge, send, publish) need the OWNER's approval first" in text
+
+
+@pytest.mark.parametrize("bad", ["eva", {"repo": ""}, {"repo": "../../etc"}, {"basis": "x"},
+                                 {"repo": "a/b c"}, ["dimagi-internal/eva"]])
+def test_a_malformed_grant_is_no_grant(tmp_path, bad):
+    text = cc.summarize({**ADA, "ship_grant": bad}, str(tmp_path / "e.json"), TID)
+    assert "ship grant" not in text and "merge, send, publish) need the OWNER" in text
+
+
+@pytest.mark.parametrize("override", [{"relationship": "member"}, {"relationship": "caller"},
+                                      {"relationship": "system"}, {"verified": False}])
+def test_a_grant_on_an_envelope_that_does_not_earn_it_is_ignored(tmp_path, override):
+    text = cc.summarize({**ADA, **override, "ship_grant": GRANT}, str(tmp_path / "e.json"), TID)
+    assert "ship grant" not in text
+
+
+def test_an_auto_turn_with_a_grant_still_names_it(tmp_path):
+    text = cc.summarize({**ADA, "turn_mode": {"mode": "auto", "basis": "agent"},
+                         "ship_grant": GRANT}, str(tmp_path / "e.json"), TID)
+    assert "- turn mode: auto (agent)\n" in text and "- ship grant:" in text

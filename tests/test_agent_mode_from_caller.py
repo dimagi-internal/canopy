@@ -74,3 +74,27 @@ def test_an_unknown_mode_is_not_trusted(tmp_path, monkeypatch):
     """Nothing silently resolves TO auto: an unrecognised value falls back."""
     out, _ = _run(monkeypatch, ["--caller", _envelope(tmp_path, {"mode": "yolo"})])
     assert out["source"] == "agent"
+
+
+GRANT = {"repo": "dimagi-internal/eva", "basis": "dispatched by ada@dimagi-ai.com (agent ada), admin of eva"}
+
+
+def _granted(tmp_path, **over):
+    p = tmp_path / "granted.json"
+    p.write_text(json.dumps({"version": 1, "turn_id": "t-1", "relationship": "admin",
+                             "verified": True, "turn_mode": {"mode": "manual", "basis": "agent"},
+                             "ship_grant": GRANT, **over}))
+    return str(p)
+
+
+def test_a_ship_grant_rides_beside_the_mode(tmp_path, monkeypatch):
+    out, _ = _run(monkeypatch, ["--caller", _granted(tmp_path)])
+    assert out["turn_mode"] == "manual"            # the grant never flips the mode
+    assert out["ship_grant"] == GRANT
+
+
+def test_a_grant_the_envelope_does_not_earn_is_dropped(tmp_path, monkeypatch):
+    for over in ({"relationship": "member"}, {"verified": False}, {"ship_grant": {"repo": ""}},
+                 {"ship_grant": None}):
+        out, _ = _run(monkeypatch, ["--caller", _granted(tmp_path, **over)])
+        assert "ship_grant" not in out, over
