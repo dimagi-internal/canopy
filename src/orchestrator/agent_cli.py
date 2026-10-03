@@ -31,8 +31,8 @@ def agent():
               help="canopy-web workspace slug to home the agent in (e.g. 'connect'). "
                    "Setting it on an already-registered agent MOVES it. Omit to leave "
                    "placement alone — which means a NEW agent lands in the default "
-                   "workspace, where every @dimagi.com address is auto-admitted as an "
-                   "editor and can therefore delete it.")
+                   "workspace, which any @dimagi.com address may self-join as an "
+                   "editor, and an editor can delete an agent.")
 def agent_register(slug, name, email, description, persona, avatar_url, workspace):
     """Upsert agent identity.
 
