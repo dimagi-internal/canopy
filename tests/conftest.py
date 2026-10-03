@@ -13,3 +13,11 @@ def _keyring_check_off_by_default(monkeypatch):
     from orchestrator import agent_email
 
     monkeypatch.setattr(agent_email, "_PLATFORM", "linux")
+
+
+@pytest.fixture(autouse=True)
+def _canopy_web_session_source_off_by_default(monkeypatch):
+    """The canopy-web session source joins the default set whenever a PAT resolves —
+    which it does on any developer laptop. Keep it out unless a test opts in, so no
+    test reaches the network or depends on the developer's token."""
+    monkeypatch.setenv("CANOPY_SESSION_WEB", "0")

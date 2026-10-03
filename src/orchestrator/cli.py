@@ -1555,6 +1555,25 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
     if cm.get("unreadable"):
         click.echo("  ⚠ UNREADABLE sources (findings may be incomplete): "
                    + ", ".join(cm["unreadable"]))
+        for _name, _why in (cm.get("unreadable_reasons") or {}).items():
+            if _why:
+                click.echo(f"      {_name}: {_why}")
+    for _name, _ws in (cm.get("web") or {}).items():
+        # Off-machine turns (the cloud runner's) come from canopy-web. Say what it
+        # held, and name the turns it could NOT produce a transcript for — those are
+        # invisible to this review, which is not the same as clean.
+        click.echo(
+            f"  {_name}: {_ws.get('turns_in_window', 0)} turn(s) in window — "
+            f"{_ws.get('fetched', 0)} fetched, {_ws.get('cached', 0)} from cache, "
+            f"{_ws.get('already_local', 0)} already local"
+        )
+        _missing = _ws.get("no_transcript") or []
+        if _missing:
+            click.echo(
+                f"  ⚠ {len(_missing)} turn(s) have no transcript on canopy-web and no "
+                f"matching local session — NOT reviewed: "
+                + ", ".join(m[:8] for m in _missing)
+            )
     if not result.get("turns"):
         # `Turns reviewed: 0` under a readable whole-corpus scan reads as "the agent was
         # quiet" — and for the one agent that runs on the CLOUD runner it is never true.
