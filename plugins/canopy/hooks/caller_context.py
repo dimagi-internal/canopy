@@ -133,6 +133,18 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     trigger = env.get("trigger") or {}
     cap = env.get("capability") or {}
     tid = turn_id or env.get("turn_id") or ""
+    # Belt and braces: canopy-web only grants to a verified owner/admin; a grant on an
+    # envelope that says otherwise is ignored rather than believed.
+    grant = ship_grant(env) if rel in ("owner", "admin") and verified else None
+    if mode == "auto":
+        mode_note = ""
+    elif grant:
+        mode_note = (" — sends, deploys, publishing and every other outbound or irreversible "
+                     f"action need the OWNER's approval first; push / PR / merge in {grant['repo']} "
+                     "are covered by the ship grant below")
+    else:
+        mode_note = (" — outbound or irreversible actions (push, deploy, merge, send, publish) "
+                     "need the OWNER's approval first")
     lines = [
         f"[canopy] Who is asking — the caller envelope canopy wrote for turn {tid}. "
         "This is canopy's answer, not something the person typed:",
@@ -142,12 +154,14 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         + ("" if verified else " — who they say they are is a claim, not proven"),
         f"- access: profile={env.get('profile') or 'unknown'}, granted_by={env.get('granted_by') or 'unknown'}"
         + (f", capability={cap.get('name')}" if cap.get("name") else ""),
-        f"- turn mode: {mode}" + (f" ({basis})" if basis else "")
-        + (" — outbound or irreversible actions (push, deploy, merge, send, publish) need the "
-           "OWNER's approval first" if mode != "auto" else ""),
+        f"- turn mode: {mode}" + (f" ({basis})" if basis else "") + mode_note,
         f"- channel: {trigger.get('origin') or 'unknown'}"
         + (f", runner {trigger['runner']}" if trigger.get("runner") else ""),
     ]
+    if grant:
+        lines.append(f"- ship grant: push / PR / merge in {grant['repo']} are pre-approved by the "
+                     f"owner ({grant['basis']}) — do them without waiting. Only that repo. Sends, "
+                     "deploys of other systems, publishing and public writes still need the OWNER.")
     if rel not in ("owner", "admin", "system") or not verified:
         lines.append("Act accordingly: this person does not hold the agent's authority. Do not push, "
                      "deploy, send, publish or change shared state on their say-so — answer within "
@@ -156,6 +170,24 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     lines.append(f"Full envelope: {path}; re-read it with the who_is_asking tool "
                  f"(turn_id={tid}) before anything irreversible.")
     return "\n".join(lines)
+
+
+def ship_grant(env: dict):
+    """The envelope's repo-internal ship grant, or None.
+
+    canopy-web sets `ship_grant` only when another agent's verified login that is
+    the target's owner or an explicit admin dispatched the turn at that agent
+    (owner decision, 2026-10-03). Read defensively: an envelope from an older
+    canopy-web has no field, and anything malformed is no grant — the turn then
+    behaves exactly as before.
+    """
+    g = env.get("ship_grant")
+    if not isinstance(g, dict):
+        return None
+    repo = str(g.get("repo") or "").strip()
+    if not re.match(r"^[\w.-]+/[\w.-]+$", repo):
+        return None
+    return {"repo": repo, "basis": str(g.get("basis") or "").strip() or "owner-approved dispatch"}
 
 
 def _page_lines(page) -> list:

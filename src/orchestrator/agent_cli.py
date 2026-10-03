@@ -1082,7 +1082,16 @@ def turn_mode_from_envelope(caller_path) -> dict | None:
     tm = env.get("turn_mode") if isinstance(env, dict) else None
     if not isinstance(tm, dict) or tm.get("mode") not in ("manual", "auto"):
         return None
-    return {"turn_mode": tm["mode"], "basis": str(tm.get("basis") or ""), "source": "turn"}
+    out = {"turn_mode": tm["mode"], "basis": str(tm.get("basis") or ""), "source": "turn"}
+    # The repo-internal ship grant (canopy-web, 2026-10-03): push / PR / merge in the
+    # agent's own repo pre-approved for a dispatch by another agent's admin login. Passed
+    # through only when well-formed, so the turn opening can state it beside the mode.
+    grant = env.get("ship_grant")
+    if (isinstance(grant, dict) and str(grant.get("repo") or "").strip()
+            and env.get("relationship") in ("owner", "admin") and env.get("verified") is True):
+        out["ship_grant"] = {"repo": str(grant["repo"]).strip(),
+                             "basis": str(grant.get("basis") or "")}
+    return out
 
 
 @agent.command("mode")
