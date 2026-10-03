@@ -19,7 +19,9 @@ that combines the two, so no agent re-derives it:
               unknown (read-only, surface to the human) and say why
   unlisted    not on the allowlist — the agent derives any narrower tier
               (e.g. ACE's run-derived `correspond`) from its own state
-  system      canopy itself or another agent started the turn
+  system      canopy itself started the turn (schedule, drill, agent dispatch),
+              or this agent's OWN login did — another agent's login is graded
+              by its grants like anyone's (canopy-web #986)
   blocked     the workspace has blocked this person: do not act, do not reply
 
 Exit status is 0 whenever a tier was resolved, so a skill reads the JSON rather

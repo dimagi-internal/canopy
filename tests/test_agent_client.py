@@ -246,9 +246,9 @@ def test_turn_mode_normalizes_the_pre_rename_gated_value():
 #
 # The API has always accepted `workspace` on AgentIn, but no CLI verb exposed
 # it, so placing or moving an agent meant a raw curl. That matters because the
-# DEFAULT workspace (`dimagi`) auto-admits every @dimagi.com address as an
-# EDITOR, and DELETE /api/agents/{slug} accepts editor — so taking the default
-# means any employee who has logged in once can delete the agent.
+# DEFAULT workspace (`dimagi`) is self-join for every @dimagi.com address, a
+# self-joiner lands as EDITOR, and DELETE /api/agents/{slug} is editor-tier —
+# so taking the default means any employee who joins it can delete the agent.
 # ---------------------------------------------------------------------------
 
 

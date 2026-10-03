@@ -45,7 +45,8 @@ _RELATIONSHIP = {
     "admin": "an ADMIN of this agent",
     "member": "a member of the agent's workspace — not its owner or an admin",
     "caller": "a CALLER — not the agent's owner, an admin, or a workspace member",
-    "system": "canopy itself or another agent (no outside person)",
+    "system": "canopy itself (a schedule, a drill, an agent dispatch) or this agent's OWN login "
+              "(no outside person; another agent's login is graded by its grants like anyone)",
 }
 
 

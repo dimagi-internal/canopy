@@ -90,11 +90,13 @@ class AgentIdentity(BaseModel):
     # workspace and an already-homed one is left where it is — so sending this
     # field changes nothing until someone actually sets it.
     #
-    # It is worth setting. The default workspace (`dimagi`) auto-admits every
-    # @dimagi.com address as an EDITOR, and DELETE /api/agents/{slug} accepts
-    # editor — so an agent left on the default can be deleted by anyone in the
-    # company who has logged in once. Until now the API supported placing an
-    # agent but no CLI verb exposed it, which left a raw curl as the only route.
+    # It is worth setting. Joining a workspace is explicit, but the default
+    # (`dimagi`) lists @dimagi.com in its self-join domains and a self-joiner
+    # lands as EDITOR — and DELETE /api/agents/{slug} is editor-tier
+    # (`agent.work`). Only an agent's keys (credentials, vault, interface) need
+    # its owner or an admin. So an agent left on the default can be reshaped or
+    # deleted by any employee who chooses to join it; a division or own
+    # workspace limits that to people someone actually let in.
     workspace: str = ""
 
 
