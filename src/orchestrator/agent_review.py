@@ -24,6 +24,7 @@ from orchestrator.repo_paths import resolve_repo_path
 from orchestrator.llm_output import parse_yaml_list
 from orchestrator.session_liveness import live_session_ids, mark_live
 from orchestrator.session_sources import (
+    collect_web_transcripts,
     corpus_confidence,
     local_transcript_dirs,
     session_sources,
@@ -1523,6 +1524,8 @@ def run_review(
             "sources": [str(projects_dir)],
             "unreadable": [],
         }
+        web_running = set()
+        web_paths = set()
     else:
         sources = session_sources()
         seen: set[str] = set()
@@ -1542,11 +1545,24 @@ def run_review(
                 if key not in seen:
                     seen.add(key)
                     transcripts.append(t)
+        # Off-machine turns (the cloud runner's, above all) from canopy-web, skipping
+        # any session already read from local disk so a turn is never reviewed twice.
+        # A listing/fetch failure flips that source unreadable -> half-blind below.
+        web = collect_web_transcripts(
+            sources, repo.name, hours,
+            local_session_ids={Path(t).stem for t in transcripts},
+        )
+        transcripts.extend(web.transcripts)
+        web_running = web.running
+        web_paths = {str(t) for t in web.transcripts}
         corpus_meta = {
             "confidence": corpus_confidence(sources),
             "sources": [s.name for s in sources if s.readable],
             "unreadable": [s.name for s in sources if not s.readable],
+            "unreadable_reasons": {s.name: s.reason for s in sources if not s.readable},
         }
+        if web.stats:
+            corpus_meta["web"] = web.stats
     # `corpus_confidence` only knows whether the SOURCES were readable — it is blind to
     # whether anything was actually collected from them, so a run that read every source
     # and attributed zero transcripts still reported "whole-corpus" with no unreadable
@@ -1576,6 +1592,10 @@ def run_review(
     # graded under two different definitions in one report).
     liveness = live_session_ids()
     live_map = mark_live(transcripts, liveness=liveness)
+    # A web-fetched copy's liveness is the turn's own status, not this box's
+    # process table or the cache file's mtime.
+    for p in web_paths:
+        live_map[p] = p in web_running
     corpus = [
         friction_signals(t, own_skills=own_skills,
                          in_progress=live_map.get(str(t), False))
