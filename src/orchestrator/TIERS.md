@@ -56,8 +56,10 @@ canopy-web's `api` app):
 > `session_upload` (the packageable transcript uploader behind `canopy agent turn`).
 
 > `session_sources` is FRAMEWORK: the typed, N-source seam for enumerating
-> readable session-transcript corpora (local `~/.claude/projects` today; a
-> future `kind` per additional runtime). `agent_coverage` (framework) depends on
+> readable session-transcript corpora: `local` (`/Users/*/.claude/projects`, or
+> the current user's own home on a Linux box) and `canopy-web` (an agent's turn
+> transcripts fetched from canopy-web into `~/.claude/canopy/session-cache/`, so
+> cloud-runner turns are reviewable from anywhere). `agent_coverage` (framework) depends on
 > it directly; `harvest` (product) now delegates its `user_session_roots` to it
 > too, so the `/Users/*/.claude/projects` glob lives in exactly one place.
 

@@ -224,3 +224,21 @@ def call(method: str, path: str, body=None, *,
     if not (200 <= status < 300):
         raise CanopyError(f"{method} {path} -> {status}: {text[:400]}")
     return json.loads(text) if text.strip() else {}
+
+
+def call_text(method: str, path: str, *,
+              base_url: Optional[str] = None, token: Optional[str] = None,
+              workspace: Optional[str] = None,
+              transport: Optional[Transport] = None) -> str:
+    """`call`, for a route whose body is NOT JSON (e.g. a turn's raw JSONL
+    transcript at ``/api/harness/turns/<id>/transcript``). Same auth, base-url and
+    error contract — a non-2xx raises `CanopyError` — but the body comes back as
+    text, undecoded."""
+    base = resolve_base_url(base_url)
+    tok = resolve_token(token)
+    path = scoped_api_path(path, workspace)
+    transport = transport or urllib_transport
+    status, text = transport(method, base + path, {"Authorization": f"Bearer {tok}"}, None)
+    if not (200 <= status < 300):
+        raise CanopyError(f"{method} {path} -> {status}: {text[:400]}")
+    return text

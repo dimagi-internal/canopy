@@ -33,6 +33,7 @@ from orchestrator import canopy_web
 from orchestrator.agent_client import list_agent_slugs
 from orchestrator.agent_review import find_turn_transcripts, resolve_agent_repo
 from orchestrator.session_sources import (
+    collect_web_transcripts,
     corpus_confidence,
     local_transcript_dirs,
     session_sources,
@@ -352,6 +353,8 @@ def coverage_report(slug: str, *, call: Callable = canopy_web.call,
         paths = find_turn_transcripts(repo, hours=window_days * 24, projects_dir=projects_dir)
         confidence = "whole-corpus"
         source_names = [str(projects_dir)]
+        web_stats = {}
+        unreadable = {}
     else:
         # No override: scan EVERY readable local source and merge. This is the
         # cross-user fix -- `agent_review._belongs_to_agent` already handles
@@ -361,8 +364,15 @@ def coverage_report(slug: str, *, call: Callable = canopy_web.call,
         paths = []
         for d in local_transcript_dirs(sources):
             paths += find_turn_transcripts(repo, hours=window_days * 24, projects_dir=d)
+        # Off-machine turns (cloud runner) from canopy-web, minus sessions already
+        # on local disk. A failed listing/fetch flips the source -> half-blind.
+        web = collect_web_transcripts(sources, repo.name, window_days * 24,
+                                      local_session_ids={p.stem for p in paths})
+        paths += web.transcripts
         confidence = corpus_confidence(sources)
         source_names = [s.name for s in sources if s.readable]
+        web_stats = web.stats
+        unreadable = {s.name: s.reason for s in sources if not s.readable}
     stamps = _activity_stamps(paths, reader)
     bursts = compute_bursts(stamps, gap_days=burst_gap_days)
     adequate = len(paths) >= min_transcripts
@@ -404,7 +414,9 @@ def coverage_report(slug: str, *, call: Callable = canopy_web.call,
         "agent": slug,
         "window_days": window_days,
         "corpus": {"transcripts": len(paths), "entries": len(stamps),
-                   "adequate": adequate, "sources": source_names},
+                   "adequate": adequate, "sources": source_names,
+                   **({"web": web_stats} if web_stats else {}),
+                   **({"unreadable": unreadable} if unreadable else {})},
         "confidence": confidence,
         "persona": persona_info(repo),
         "activity": _agent_activity(slug, call),
