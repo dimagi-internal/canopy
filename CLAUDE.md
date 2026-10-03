@@ -58,8 +58,7 @@ strands the work. So the PR is a record-keeping + CI step, not a review gate.
 # from the worktree branch, once work is committed:
 git push -u origin <branch>
 gh pr create --title "..." --body "...\n\nCloses #<issue>"   # link the issue if any
-gh pr checks <n>                    # wait for check-version to pass (~10s)
-gh pr merge <n> --merge             # then merge; a red check-version rejects the merge
+gh pr merge <n> --auto              # enqueue: main uses a MERGE QUEUE, which picks the strategy
 ```
 
 Then follow the plugin-update steps below (`/canopy:update` etc.) if
@@ -73,10 +72,12 @@ Then follow the plugin-update steps below (`/canopy:update` etc.) if
   **public** repo with branch protection: `check-version` is a **required status
   check** and `enforce_admins` is on. `gh pr merge --merge` on a PR whose
   `check-version` hasn't gone green is rejected ("base branch policy prohibits
-  the merge"). Repo-level auto-merge is **disabled** (`gh pr merge --auto` errors
-  with "Auto merge is not allowed for this repository"), so the flow is: wait for
-  `check-version` (it runs in ~10s — `gh pr checks <n>`), then `gh pr merge
-  --merge`. Don't reach for `--admin` to force past a red check — a red
+  the merge"). `main` now has a **merge queue** (ruleset `main protection`) and
+  repo auto-merge is on, so the flow is `gh pr merge <n> --auto` with **no
+  strategy flag** — the queue sets the strategy, and `--merge`/`--squash` print
+  "The merge strategy for main is set by the merge queue". The queue re-runs CI
+  on the merged result; if main moved and `VERSION` conflicts, rebase, re-bump
+  and push — the entry re-queues. Don't reach for `--admin` to force past a red check — a red
   `check-version` means the version isn't bumped right; fix that instead (see the
   STOP block below).
 - **No human reviews, but CI is a real gate now.** Required reviewers are NOT
@@ -594,7 +595,7 @@ server-side. The hooks now just catch the mistake earlier, before the push.
    git add -A && git commit -m "feat/fix: description"
    git push -u origin <branch>
    gh pr create --title "..." --body "..."
-   gh pr merge <n> --merge
+   gh pr merge <n> --auto      # merge queue; no strategy flag
    ```
 4. **IMMEDIATELY after pushing**, run `/canopy:update` in the current session.
    This is mandatory — it pulls from GitHub, creates a new cache dir, updates
