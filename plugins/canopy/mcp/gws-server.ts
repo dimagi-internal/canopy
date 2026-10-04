@@ -427,19 +427,32 @@ server.tool(
 );
 
 // 9b. Read a Drive file via personal OAuth (gog CLI fallback)
+/** The gog client for `account` from canopy's one rule (`canopy email client`),
+ *  or the fleet client `canopy` when the CLI cannot be run. */
+function resolveGogClient(account: string): string {
+  const proc = spawnSync('canopy', ['email', 'client', '--account', account], { encoding: 'utf8' });
+  const out = (proc.stdout || '').trim().split('\n').pop() || '';
+  return proc.status === 0 && out ? out : 'canopy';
+}
+
 server.tool(
   'read_personal_drive_doc',
-  "Read a Google Drive document via personal OAuth (gog CLI) — fallback for files shared with the human user account but not the server's service account. Requires gog to be installed and authorized for Drive on $GWS_GOG_ACCOUNT/$GWS_GOG_CLIENT. If the user has not yet granted Drive scope, re-run: `gog login $GWS_GOG_ACCOUNT --client $GWS_GOG_CLIENT --services gmail,drive`. Use only when drive_read_file fails with a permission error.",
+  "Read a Google Drive document via personal OAuth (gog CLI) — fallback for files shared with the human user account but not the server's service account. Requires gog to be installed and authorized for Drive on $GWS_GOG_ACCOUNT, under the fleet client (canopy or canopy-web; resolved by `canopy email client`). If the user has not yet granted Drive scope, re-run: `gog login $GWS_GOG_ACCOUNT --client canopy --services gmail,drive`. Use only when drive_read_file fails with a permission error.",
   {
     file_id: z.string().describe('The Google Drive file ID'),
     format: z.enum(['txt', 'md', 'csv']).optional().describe('Export format for Google Docs/Sheets (default: txt for Docs, csv for Sheets)'),
   },
   async ({ file_id, format }) => {
     const account = process.env.GWS_GOG_ACCOUNT;
-    const client = process.env.GWS_GOG_CLIENT;
-    if (!account || !client) {
-      return error('GWS_GOG_ACCOUNT and GWS_GOG_CLIENT must be set in the agent session env (these select the gog OAuth identity).');
+    if (!account) {
+      return error('GWS_GOG_ACCOUNT must be set in the agent session env (it selects the gog mailbox).');
     }
+    // The client by the one rule every gog caller follows: an explicit
+    // GWS_GOG_CLIENT, else `canopy email client` (the declared client if this
+    // machine holds a token under it, else the fleet client it does hold —
+    // canopy or canopy-web, one app). Nothing set GWS_GOG_CLIENT, so requiring
+    // it made this tool unusable everywhere.
+    const client = process.env.GWS_GOG_CLIENT || resolveGogClient(account);
     const fmt = format ?? 'txt';
     const tmpFile = path.join(os.tmpdir(), `gws-personal-drive-${process.pid}-${Date.now()}.${fmt}`);
     try {

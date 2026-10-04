@@ -1703,3 +1703,27 @@ def test_default_gog_dir_on_windows_is_appdata(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_email.sys, "platform", "win32")
     monkeypatch.setenv("APPDATA", str(tmp_path))
     assert agent_email._default_gog_config_dir() == str(tmp_path / "gogcli")
+
+
+def test_email_client_prints_the_resolved_client(tmp_path, monkeypatch):
+    """`canopy email client` is the one place every gog caller asks."""
+    import json as _json
+
+    from click.testing import CliRunner
+
+    from orchestrator import agent_email as ae
+    repo = _agent_repo(tmp_path, gog_client="canopy")
+    runner = _auth_accounts_runner(
+        [{"email": "hal@dimagi-ai.com", "client": "canopy-web", "services": ["gmail"]}],
+        token_keys=["token:canopy-web:hal@dimagi-ai.com"])
+    monkeypatch.setattr(ae.subprocess, "run", runner)
+    out = CliRunner().invoke(ae.email_group, ["client", "--repo", str(repo)])
+    assert out.exit_code == 0, out.output
+    assert out.output.strip() == "canopy-web"
+    out = CliRunner().invoke(ae.email_group, ["client", "--repo", str(repo), "--json"])
+    body = _json.loads(out.output)
+    assert body == {**body, "account": "hal@dimagi-ai.com", "client": "canopy-web",
+                    "declared": "canopy", "changed": True}
+    # An explicit --client is honoured verbatim.
+    out = CliRunner().invoke(ae.email_group, ["client", "--repo", str(repo), "--client", "x"])
+    assert out.output.strip() == "x"

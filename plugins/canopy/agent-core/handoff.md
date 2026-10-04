@@ -60,7 +60,7 @@ invisible to your own account.
 - A temporary grant you made to bridge identities (e.g. writer on your folder for the source
   service account, so it can create the shortcuts) is **revoked in the same turn** and the
   revocation verified with a permissions read.
-- Verify the result as YOU: `gog docs cat <id> -a <your account>` returns the text.
+- Verify the result as YOU: `gog docs cat <id> -a <your account> --client "$(canopy email client --repo .)"` returns the text.
 
 ## 4. Take over the thread
 
