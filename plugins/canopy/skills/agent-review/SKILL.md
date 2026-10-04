@@ -48,6 +48,12 @@ For each, decide implement / defer / skip. Bias:
 - **`channel_fix`** for auth/setup friction (e.g. echo's OAuth "API not enabled" loop, 1Password
   round-trip) — make setup self-heal / validate, don't just document it.
 
+**A human correction about HANDING BACK work** ("why are you asking me? just do it", or the
+reverse: a block on a legitimate outbound ask) is calibration data for the fleet's
+decide-don't-offer Stop prompt hook. Add the agent's verbatim closing as a labelled example in
+canopy — `canopy decide-guard add-example --closing "…" --handback true|false --why "…"` (it
+re-renders `hooks/hooks.json`) — then bump the version and ship. Don't write a per-agent rule.
+
 **`↻ fix_kind coerced from '<x>'` on a finding.** An invariant finding (never/always phrasing, or
 one mined from a human `safety_override`) must ship structurally, so when the synthesis pass
 routes one at `skill_edit`/`claude_update` anyway, `qualify_findings` corrects the label to

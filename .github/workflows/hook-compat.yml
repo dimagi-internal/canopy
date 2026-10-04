@@ -8,7 +8,7 @@ name: Hook Python compatibility
 # supported user python.
 #
 # `plugins/canopy/agent-core/*.py` is in scope because that is where the FLEET
-# engines live — `gating_guard.py` and `decide_guard.py` are exec'd by every
+# engines live — `gating_guard.py` and `gdoc_gate.py` are exec'd by every
 # agent's thin loader, so they run under the same unknown user python3 as anything
 # in hooks/, and reach five repos instead of one. They were outside this gate
 # until 2026-08-27.
