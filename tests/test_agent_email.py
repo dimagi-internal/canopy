@@ -52,9 +52,10 @@ def test_resolve_identity_from_agent_json(tmp_path):
     assert ident.client == "hal-oauth"
 
 
-def test_resolve_identity_client_defaults_to_slug(tmp_path):
+def test_resolve_identity_client_defaults_to_the_fleet_client(tmp_path):
+    """Not the slug: a client named after the agent exists for nobody (2026-10-04)."""
     ident = resolve_email_identity(_agent_repo(tmp_path))
-    assert ident.client == "hal"
+    assert ident.client == "canopy"
 
 
 def test_resolve_identity_requires_mailbox(tmp_path):
@@ -1249,14 +1250,42 @@ def test_reconcile_client_ambiguity_guard_is_reachable_via_the_token_store():
     surface one client per account, so the guard written for the multi-token state was
     unreachable in exactly that state."""
     from orchestrator.agent_email import reconcile_client
+    # Two NON-fleet clients: the fleet pair (canopy / canopy-web) is not ambiguity,
+    # see test_a_fleet_client_is_used_when_the_declared_one_has_no_token.
     runner = _auth_accounts_runner(
         [{"email": "echo@dimagi-ai.com", "client": "echo", "services": ["gmail"]}],
-        token_keys=["token:echo:echo@dimagi-ai.com", "token:canopy:echo@dimagi-ai.com"])
+        token_keys=["token:echo:echo@dimagi-ai.com", "token:legacy:echo@dimagi-ai.com"])
     ident = _echo(client="unmigrated")
     out = reconcile_client(ident, runner=runner, apply=True)
-    assert out.ambiguous == ["canopy", "echo"]
+    assert out.ambiguous == ["echo", "legacy"]
     assert not out.changed and ident.client == "unmigrated"
     assert "refusing to guess" in out.note
+
+
+@pytest.mark.parametrize("declared, tokens, expected", [
+    # A browser mint (canopy-web) serves an agent that declares canopy.
+    ("canopy", ["canopy-web"], "canopy-web"),
+    # And a CLI login (canopy) serves one that declares canopy-web.
+    ("canopy-web", ["canopy"], "canopy"),
+    # Holding both, plus a stale non-fleet client, is not a coin flip: the fleet
+    # client wins, `canopy` first.
+    ("unmigrated", ["echo", "canopy-web", "canopy"], "canopy"),
+    ("unmigrated", ["echo", "canopy-web"], "canopy-web"),
+    # The declared client still wins whenever it has a token.
+    ("canopy-web", ["canopy", "canopy-web"], "canopy-web"),
+])
+def test_a_fleet_client_is_used_when_the_declared_one_has_no_token(declared, tokens, expected):
+    """2026-10-04: the "Connect Google mailbox" button can only mint under
+    `canopy-web` (Google allows a browser redirect on a Web client only), while
+    every agent declares `canopy`. Both are the fleet's one app, so either works."""
+    from orchestrator.agent_email import reconcile_client
+    runner = _auth_accounts_runner(
+        [{"email": "echo@dimagi-ai.com", "client": tokens[0], "services": ["gmail"]}],
+        token_keys=[f"token:{c}:echo@dimagi-ai.com" for c in tokens])
+    ident = _echo(client=declared)
+    out = reconcile_client(ident, runner=runner, apply=True)
+    assert out.client == expected and ident.client == expected
+    assert out.changed == (expected != declared)
 
 
 def test_clients_for_account_falls_back_when_gog_has_no_tokens_subcommand():

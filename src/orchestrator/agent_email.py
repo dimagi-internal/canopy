@@ -197,6 +197,21 @@ class EmailIdentity:
     repo: Path | None = None  # agent repo root — lets preflight read config/secrets.yaml
 
 
+#: The fleet's own Google OAuth clients, in preference order — INTERCHANGEABLE.
+#: Both live in one GCP project behind one consent screen, so a mailbox token
+#: under either reads and sends the same; they differ only in how a token is
+#: MINTED. `canopy` is a Desktop client (gog's loopback login on a laptop);
+#: `canopy-web` is a Web client, the only kind Google lets run a browser redirect,
+#: so it is what canopy-web's "Connect Google mailbox" button mints under. An
+#: agent's turns must work with a token from EITHER door (2026-10-04), so the
+#: client follows whichever of these this machine holds for the mailbox.
+FLEET_CLIENTS: tuple[str, ...] = ("canopy", "canopy-web")
+
+#: What an agent that declares no `gog_client` uses. Not its slug: a client named
+#: after the agent exists for nobody, and the factory already stamps `canopy`.
+DEFAULT_CLIENT = FLEET_CLIENTS[0]
+
+
 @dataclass
 class ClientReconciliation:
     """What client this mailbox should actually use on THIS machine, and why.
@@ -333,8 +348,12 @@ def reconcile_client(
     fleet's one hard rule — and only the client follows the evidence:
 
       * a token exists for the declared pair            -> unchanged (the fast path)
+      * a FLEET client holds it (declared or not)        -> the first, in FLEET_CLIENTS order
       * exactly one OTHER client holds this mailbox     -> use it, and say so
       * two or more do                                  -> unchanged; guessing is a coin flip
+
+    The fleet clients (`canopy`, `canopy-web`) are one app with two ways in, so
+    holding both is not ambiguity: they are tried in order, never guessed between.
       * gog unreadable, or no token for this mailbox    -> unchanged; fail exactly as before
 
     `apply=True` writes the resolved client back onto `identity` — what the runtime path
@@ -348,6 +367,18 @@ def reconcile_client(
         return out
     out.candidates = [c["client"] for c in found]
     if declared in out.candidates:
+        return out
+    fleet = [c for c in FLEET_CLIENTS if c in out.candidates]
+    if fleet:
+        out.client = fleet[0]
+        out.changed = True
+        out.note = (
+            f"{identity.account} has no token under `{declared}`; using the fleet client "
+            f"`{fleet[0]}` it is authed under. `canopy` and `canopy-web` are one app with "
+            f"two ways to sign in, and either works."
+        )
+        if apply:
+            identity.client = out.client
         return out
     others = [c for c in out.candidates if c]
     if len(others) == 1:
@@ -375,7 +406,8 @@ def resolve_email_identity(repo_dir: Path) -> EmailIdentity:
     """Resolve the agent's email identity from its repo (plugin.json + config/agent.json).
 
     Mailbox comes from agent.json `email`; the gog client from agent.json `gog_client`,
-    defaulting to the slug (the fleet convention: client name == agent slug).
+    defaulting to the fleet's shared client (`DEFAULT_CLIENT`). This is the DECLARED
+    client; `reconcile_client` decides what this machine actually uses.
     """
     try:
         ident = resolve_identity(Path(repo_dir))
@@ -387,7 +419,7 @@ def resolve_email_identity(repo_dir: Path) -> EmailIdentity:
             f"no mailbox for agent {ident['slug']!r} — add \"email\" to "
             f"{Path(repo_dir) / 'config' / 'agent.json'}"
         )
-    client = (ident.get("gog_client") or "").strip() or ident["slug"]
+    client = (ident.get("gog_client") or "").strip() or DEFAULT_CLIENT
     return EmailIdentity(slug=ident["slug"], account=account, client=client,
                          repo=Path(repo_dir))
 

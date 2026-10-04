@@ -222,7 +222,9 @@ def test_drive_store_reads_writes_through_gog(tmp_path, monkeypatch):
     assert upload, "never uploaded the cursor"
     assert "--parent" in upload[0] and "STATEFOLDER" in upload[0]
     assert "hal--ace-review.cursor.json" in upload[0]
-    assert all("--account" in c and "hal@dimagi-ai.com" in c for c in calls)
+    # Every Drive call names the agent's account (the token-store lookups the client
+    # rule makes are account-wide reads and carry none).
+    assert all("--account" in c and "hal@dimagi-ai.com" in c for c in calls if c[1] != "auth")
 
 
 def test_drive_store_surfaces_gog_failure(tmp_path, monkeypatch):

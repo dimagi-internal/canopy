@@ -67,7 +67,7 @@ def test_resolve_identity_from_agent_json(tmp_path):
 
 def test_resolve_identity_defaults(tmp_path):
     ident = resolve_gdoc_identity(_agent_repo(tmp_path))
-    assert ident.client == "hal"           # client defaults to slug
+    assert ident.client == "canopy"        # the fleet client, never a slug-named one
     assert ident.root_folder == ""         # optional
     assert ident.share_default == "domain"  # safe default
 
