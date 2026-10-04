@@ -46,6 +46,14 @@ while that agent has an executing turn anywhere) and still passes the tenant and
 restricted-profile gates. A retired or invisible runner is a 422 at enqueue. Nothing server-side checks the runner can actually drive the agent, so the
 CLI checks the runner's self-declared `capabilities.agents` itself.
 
+**6. The MODE is a per-dispatch choice, not a standing rule.** `--mode auto|manual` sends
+canopy-web's `TurnIn.turn_mode`, the top rung of its turn-mode ladder — above every routing
+rule and the agent's own switch, and kept across a lost lease. `manual` is open to anyone who
+may dispatch; `auto` only to the target agent's owner or an admin (workspace owners included),
+on a signed-in session or their own PAT — canopy-web answers anyone else with a 403, and
+re-checks the admin at claim. Like a pin, a mode folds into the idempotency key, so an
+`--mode auto` re-dispatch never dedupes onto a turn first sent without one.
+
 Deterministic: builds payloads and reads status. Judgment about what to dispatch, and
 verification that it worked, stay with the caller.
 """
@@ -79,7 +87,11 @@ class DispatchError(Exception):
     """A dispatch that cannot be built correctly — raised, never silently degraded."""
 
 
-def derive_idempotency_key(slug: str, title: str, day: str, runner_id: str = "") -> str:
+TURN_MODES = ("auto", "manual")
+
+
+def derive_idempotency_key(slug: str, title: str, day: str, runner_id: str = "",
+                           mode: str = "") -> str:
     """Stable key for (agent, work, day[, runner]) so a repeat dispatch is one turn, not two.
 
     Scoped to the day rather than forever: dispatching the same title tomorrow is
@@ -95,6 +107,10 @@ def derive_idempotency_key(slug: str, title: str, day: str, runner_id: str = "")
     rid = (runner_id or "").strip().lower()
     if rid:
         basis += f"|runner={rid}"
+    # Same reasoning for a requested mode (§6): unmoded keys are unchanged.
+    m = (mode or "").strip().lower()
+    if m:
+        basis += f"|mode={m}"
     digest = hashlib.sha256(basis.encode()).hexdigest()[:12]
     return f"dispatch-{(slug or '').strip().lower()}-{digest}"
 
@@ -176,7 +192,7 @@ def check_runner_pin(runner: dict, slug: str) -> tuple[list[str], list[str], lis
 
 def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
                        task_ext_id: str | None = None, sender: str | None = None,
-                       runner_id: str | None = None) -> dict:
+                       runner_id: str | None = None, turn_mode: str | None = None) -> dict:
     """The `POST /api/harness/turns/` body for a one-shot dispatch.
 
     `sender` is the dispatching agent's slug, defaulting to whichever agent repo we are standing
@@ -227,6 +243,12 @@ def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
     # when unpinned, so an unpinned payload is byte-identical to before pins existed.
     if (runner_id or "").strip():
         payload["runner_id"] = runner_id.strip()
+    # A requested mode (TurnIn.turn_mode, §6). Omitted when unset so the rules decide.
+    mode = (turn_mode or "").strip().lower()
+    if mode:
+        if mode not in TURN_MODES:
+            raise DispatchError(f"turn mode must be one of {', '.join(TURN_MODES)}, not {mode!r}")
+        payload["turn_mode"] = mode
     return payload
 
 

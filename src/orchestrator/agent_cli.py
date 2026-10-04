@@ -1260,9 +1260,16 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
               help="With --runner: enqueue even though the runner is paused/stale/offline. "
                    "The server holds a pinned turn QUEUED (it never expires) and the runner "
                    "claims it once back online. Without this flag such a pin is refused.")
+@click.option("--mode", "turn_mode", type=click.Choice(["auto", "manual"]), default=None,
+              help="Run THIS turn in auto or manual mode, above every routing rule and the "
+                   "agent's own switch. manual: anyone who may dispatch. auto: only the "
+                   "agent's owner or an admin (workspace owners included), on a session or "
+                   "your own PAT — canopy-web refuses anyone else (403). Omit to let the "
+                   "agent's rules decide.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links,
-                   next_action, idempotency_key, runner_ref, queue_if_not_ready, as_json):
+                   next_action, idempotency_key, runner_ref, queue_if_not_ready, turn_mode,
+                   as_json):
     """Record work on an agent's board, then trigger a runner session to do it.
 
     The one-shot counterpart to a schedule: schedules are for recurring work, this is
@@ -1275,6 +1282,9 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
 
     --runner pins the turn to one box (default: any runner serving the agent). The pin
     is checked BEFORE the board is touched, so a refused pin leaves nothing behind.
+
+    --mode auto|manual chooses this turn's mode explicitly (default: the agent's routing
+    rules, then its own switch). auto is for the agent's owner/admins only.
     """
     import datetime as _dt
 
@@ -1333,7 +1343,8 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
 
     day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
     key = idempotency_key or derive_idempotency_key(
-        slug, title or prompt[:80], day, runner_id=str(pinned["id"]) if pinned else "")
+        slug, title or prompt[:80], day, runner_id=str(pinned["id"]) if pinned else "",
+        mode=turn_mode or "")
 
     try:
         client = _client(slug)
@@ -1353,7 +1364,8 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
 
         payload = build_turn_payload(slug, prompt=prompt, idempotency_key=key,
                                      task_ext_id=task_ext_id,
-                                     runner_id=str(pinned["id"]) if pinned else None)
+                                     runner_id=str(pinned["id"]) if pinned else None,
+                                     turn_mode=turn_mode)
         turn = canopy_web.call("POST", TURNS_PATH, payload)
     except DispatchError as e:
         raise click.ClickException(str(e))
@@ -1361,13 +1373,19 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
         raise click.ClickException(str(e))
 
     summary = summarize_turn(turn)
+    # What the server RECORDED, not what we asked for: an older canopy-web ignores the
+    # field, and saying "auto" when it was dropped is the exact falsehood to avoid.
+    turn = turn or {}
+    mode_out = {"requested": turn_mode,
+                "recorded": turn.get("requested_turn_mode") if "requested_turn_mode" in turn
+                else None}
     runner_out = None
     if pinned:
         runner_out = {"id": pinned.get("id"), "name": pinned.get("name"),
                       "status": pinned.get("status"), "warnings": pin_notes}
     if as_json:
         _emit({"task_ext_id": task_ext_id, "idempotency_key": key, "turn": summary,
-               "runner": runner_out})
+               "runner": runner_out, "mode": mode_out})
         return
 
     click.echo(f"Agent:  {slug}")
@@ -1376,6 +1394,19 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     if pinned:
         click.echo(f"Runner: {pinned.get('name')}  (pinned — only it may claim this turn; "
                    f"now {pinned.get('status')})")
+    else:
+        click.echo("Runner: (not pinned — any runner serving the agent may claim it)")
+    if turn_mode:
+        rec = mode_out["recorded"]
+        if rec == turn_mode:
+            click.echo(f"Mode:   {turn_mode}  (requested for this turn — outranks the agent's rules)")
+        elif rec is None:
+            click.echo(f"Mode:   {turn_mode} requested, but the server did not report recording it "
+                       "(older canopy-web?) — the agent's rules will decide", err=True)
+        else:
+            click.echo(f"Mode:   requested {turn_mode}, server recorded {rec!r}", err=True)
+    else:
+        click.echo("Mode:   (not requested — the agent's rules decide at claim)")
     click.echo(f"Turn:   {summary['id']}  →  {summary['headline']}")
     click.echo("")
     click.echo("This is a LAUNCH, not a result — the agent may not have read the brief yet.")

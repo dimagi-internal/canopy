@@ -514,3 +514,111 @@ def test_cli_unpinned_dispatch_sends_no_runner_and_lists_no_runners(monkeypatch)
     assert not [c for c in calls if "/harness/runners/" in c[1]]
     posts = [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
     assert "runner_id" not in posts[0][2]
+
+
+# --- --mode: choose this turn's mode ------------------------------------------
+#
+# canopy-web's TurnIn.turn_mode is the top rung of its turn-mode ladder; `auto` is
+# owner/admin-only server-side. The CLI passes it through, folds it into the key, and
+# reports what the server RECORDED rather than what was asked.
+
+def _mode_transport(calls, *, record=True, runners=RUNNERS):
+    def transport(method, url, headers, data):
+        body = json.loads(data) if data else None
+        calls.append((method, url, body))
+        if method == "GET" and "/harness/runners/" in url:
+            return 200, json.dumps(runners)
+        if "/harness/turns/" in url and method == "POST":
+            out = {"id": "turn-9", "status": "queued", "result_note": ""}
+            if record:
+                out["requested_turn_mode"] = (body or {}).get("turn_mode") or ""
+            return 201, json.dumps(out)
+        if "/tasks" in url:
+            return 200, json.dumps({"synced": 1})
+        return 200, json.dumps([])
+    return transport
+
+
+def test_payload_carries_turn_mode_only_when_requested():
+    plain = build_turn_payload("hal", prompt="p", idempotency_key="k")
+    assert "turn_mode" not in plain
+    auto = build_turn_payload("hal", prompt="p", idempotency_key="k", turn_mode="auto")
+    assert auto["turn_mode"] == "auto"
+    assert {k: v for k, v in auto.items() if k != "turn_mode"} == plain
+    with pytest.raises(DispatchError):
+        build_turn_payload("hal", prompt="p", idempotency_key="k", turn_mode="yolo")
+
+
+def test_a_moded_key_never_dedupes_onto_an_unmoded_one():
+    base = derive_idempotency_key("hal", "Ping", "2026-10-04")
+    assert derive_idempotency_key("hal", "Ping", "2026-10-04", mode="") == base
+    auto = derive_idempotency_key("hal", "Ping", "2026-10-04", mode="auto")
+    manual = derive_idempotency_key("hal", "Ping", "2026-10-04", mode="manual")
+    assert len({base, auto, manual}) == 3
+
+
+def test_cli_mode_and_runner_together(monkeypatch):
+    calls = []
+    _patch(monkeypatch, _mode_transport(calls))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "hal", "--no-task",
+                                  "--prompt", "ping", "--mode", "manual",
+                                  "--runner", "haldimagi-mbp-cdp"])
+    assert r.exit_code == 0, r.output
+    [post] = [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+    assert post[2]["turn_mode"] == "manual" and post[2]["runner_id"] == HAL_ID
+    assert "Runner: haldimagi-mbp-cdp" in r.output
+    assert "Mode:   manual" in r.output
+    assert "Turn:   turn-9" in r.output
+
+
+def test_cli_mode_json_reports_what_the_server_recorded(monkeypatch):
+    calls = []
+    _patch(monkeypatch, _mode_transport(calls))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "hal", "--no-task",
+                                  "--prompt", "ping", "--mode", "auto", "--json-output"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.output)
+    assert out["mode"] == {"requested": "auto", "recorded": "auto"}
+    day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    assert out["idempotency_key"] == derive_idempotency_key("hal", "ping", day, mode="auto")
+
+
+def test_cli_mode_warns_when_an_older_server_drops_it(monkeypatch):
+    calls = []
+    _patch(monkeypatch, _mode_transport(calls, record=False))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "hal", "--no-task",
+                                  "--prompt", "ping", "--mode", "auto"])
+    assert r.exit_code == 0, r.output
+    assert "did not report recording it" in r.output
+
+
+def test_cli_unmoded_dispatch_says_the_rules_decide(monkeypatch):
+    calls = []
+    _patch(monkeypatch, _mode_transport(calls))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "hal", "--no-task",
+                                  "--prompt", "ping"])
+    assert r.exit_code == 0, r.output
+    [post] = [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+    assert "turn_mode" not in post[2]
+    assert "not requested" in r.output and "not pinned" in r.output
+
+
+def test_cli_rejects_an_unknown_mode(monkeypatch):
+    calls = []
+    _patch(monkeypatch, _mode_transport(calls))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "hal", "--no-task",
+                                  "--prompt", "ping", "--mode", "yolo"])
+    assert r.exit_code != 0
+    assert not [c for c in calls if c[0] == "POST"]
+
+
+def test_cli_surfaces_a_403_for_auto(monkeypatch):
+    def transport(method, url, headers, data):
+        if "/harness/turns/" in url and method == "POST":
+            return 403, json.dumps({"detail": "turn_mode=auto is for hal's owner or admins"})
+        return 200, json.dumps([])
+    _patch(monkeypatch, transport)
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "hal", "--no-task",
+                                  "--prompt", "ping", "--mode", "auto"])
+    assert r.exit_code != 0
+    assert "owner or admins" in r.output or "403" in r.output
