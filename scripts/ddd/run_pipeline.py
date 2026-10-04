@@ -27,7 +27,7 @@ from scripts.ddd.schemas.models import RunState, Verdict
 from scripts.narrative.models import FIX_KINDS, UNROUTABLE_FIX_KIND_FALLBACK
 
 if TYPE_CHECKING:
-    from scripts.ddd.loop_config import LoopConfig
+    from scripts.ddd.loop_config import LoopConfig, ProductConfig
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -281,6 +281,8 @@ def compute_auto_iterate(
     judges: list[str] | None = None,
     held: list | None = None,
     inner_loop_policy: dict | None = None,
+    product_config: "ProductConfig | None" = None,
+    extra_verdicts: dict[str, Verdict] | None = None,
 ) -> tuple[str, str]:
     """Decide the next loop action from the SCORE TRAJECTORY, not an iteration count.
 
@@ -371,14 +373,27 @@ def compute_auto_iterate(
       BACKLOG loop: every fix batch would pay PR + CI + deploy before a frame is
       judged. The pass returns ``stop_inner_loop_required`` instead of
       ``continue``. ``None`` (callers that predate it) is not checked.
+
+    Objective (see :mod:`scripts.ddd.objective`): ``loop_config.objective``
+    resolves to ``product`` or ``demo`` once per run (``state.objective``). In
+    the PRODUCT objective findings are partitioned blocking / ride-along /
+    deferred, convergence is :func:`scripts.ddd.objective.converged` (product
+    dimensions >= floor, no blocking product finding) instead of every judge >=
+    4, the progress score is the weakest product dimension, and the deferred
+    polish findings are applied ONCE as a final ``continue`` (the polish pass)
+    before ``stop_done``. ``product_config`` is the repo's ``product:`` block and
+    ``extra_verdicts`` the advisory/arc verdicts (for the floor check).
     """
     import copy
 
     from scripts.ddd import denoise, finding_class, fix_scope, gates, parking, progress
-    from scripts.ddd.loop_config import LoopConfig
+    from scripts.ddd import objective as objective_mod
+    from scripts.ddd.loop_config import LoopConfig, ProductConfig
 
     if loop_config is None:
         loop_config = LoopConfig()
+    if product_config is None:
+        product_config = ProductConfig()
 
     # What a recipe re-judge must be able to put back: it re-assesses the SAME
     # iteration, so this call must leave no history point behind.
@@ -399,9 +414,32 @@ def compute_auto_iterate(
     # the batch (their direction may change) but stay visible and counted.
     parked = parking.parked_scenes(state)
     findings = parking.mark(findings, parked)
+
+    # WHAT the loop optimizes — decided once per run, then sticky.
+    state.objective = objective_mod.resolve(
+        loop_config.objective,
+        state,
+        sum(1 for f in findings if f.get("route", "PRODUCT") != "DEFER"),
+        backlog_min_findings=loop_config.backlog_min_findings,
+        judge_full=judge_full,
+    )
+    product_objective = state.objective == objective_mod.PRODUCT
+    polish = state.polish_pass if isinstance(state.polish_pass, dict) else None
+    if polish and polish.get("status") == "pending" and polish.get("iteration") == state.iteration:
+        state.polish_pass = {**polish, "status": "done"}
+    polish_done = bool(state.polish_pass and state.polish_pass.get("status") == "done")
+    all_verdicts = {**(extra_verdicts or {}), "concept": concept_verdict, "user_artifact": user_verdict}
+    if product_objective:
+        findings = objective_mod.partition(
+            findings, block_severities=product_config.block_severities
+        )
+        converged, product_why = objective_mod.converged(all_verdicts, findings, product_config)
     state.findings = findings
 
     score = min(concept_verdict.overall_score, user_verdict.overall_score)
+    if product_objective:
+        ps = objective_mod.product_score(all_verdicts)
+        score = ps if ps is not None else score
     state.score_history = (state.score_history or []) + [float(score)]
     hist = state.score_history
 
@@ -557,37 +595,6 @@ def compute_auto_iterate(
         )["status"]
         return action, reason
 
-    if converged and not judge_full and not getattr(state, "scene_filter", None):
-        # An incremental pass reused unchanged scenes' cells. Convergence is only
-        # ever declared on a full render + full judge.
-        state.next_judge_full = True
-        return _finish(
-            "confirm_full",
-            "Every gating judge passed on an INCREMENTAL pass (unchanged scenes' cells "
-            "were reused). Re-render and judge every scene fresh, arc included, before "
-            "declaring convergence — no fixes to apply.",
-        )
-    if converged and not getattr(state, "scene_filter", None):
-        return _finish("stop_done", "Both judges passed full spec — ready for promotion.")
-    if converged and getattr(state, "scene_filter", None):
-        return _finish(
-            "stop_partial", "Both judges passed the filtered scope — drop --scene and re-fire."
-        )
-    # Mechanical fixes come FIRST — a confident fix must never sit behind an
-    # uncertain one, and a strategy REDESIGN is the most uncertain finding there
-    # is. So pending mechanical work holds the concept gate open WHILE IT IS
-    # STILL CLEANING THE ARTIFACT, and the human gets the direction question over
-    # a clean artifact instead of one carrying defects nobody disputes. The bound
-    # is exhaustion, not a count (canopy#588): the first deferral is free; each
-    # further one must be paid for by the last pass moving the score outside the
-    # noise band. A flat pass buys nothing — which is what makes a crashed pass
-    # (applied nothing, score unchanged) and a spent one (applied fixes, score
-    # unchanged) end the same way: the gate opens. A stall or plateau still
-    # suppresses it (re-applying fixes that already failed to move anything is
-    # not worth the gate's wait), and the hard cap is the runaway backstop.
-    first_deferral = state.concept_gate_deferred == 0
-    under_cap = len(hist) < hard_cap
-
     def _continue(reason: str, action: str = "continue") -> tuple[str, str]:
         """``continue`` + the next pass's judge scope (backlog vs polish)."""
         if state.loop_mode == "backlog":
@@ -641,6 +648,66 @@ def compute_auto_iterate(
                 f"\"<what you configured>\"` and proceed as {action!r}: {reason}",
             )
         return _finish(action, reason)
+    if converged and not judge_full and not getattr(state, "scene_filter", None):
+        # An incremental pass reused unchanged scenes' cells. Convergence is only
+        # ever declared on a full render + full judge.
+        state.next_judge_full = True
+        return _finish(
+            "confirm_full",
+            "Every gating judge passed on an INCREMENTAL pass (unchanged scenes' cells "
+            "were reused). Re-render and judge every scene fresh, arc included, before "
+            "declaring convergence — no fixes to apply.",
+        )
+    if (
+        product_objective
+        and converged
+        and product_config.polish_pass
+        and not polish_done
+        and not getattr(state, "scene_filter", None)
+    ):
+        from scripts.ddd import target as target_mod
+
+        to_polish = objective_mod.polish_findings(findings)
+        if to_polish and not target_mod.decision_needs_checkpoint(target, judges, held):
+            # The product is done. Apply the deferred presentation / low-severity
+            # findings ONCE, as one batch, then the next full pass decides.
+            findings = objective_mod.restore_deferred(findings)
+            state.findings = findings
+            state.polish_pass = {"iteration": state.iteration + 1, "status": "pending"}
+            return _continue(
+                f"Product converged ({product_why}). POLISH PASS: apply the "
+                f"{len(to_polish)} deferred mechanical presentation / low-severity "
+                "finding(s) as ONE batch — never add explanatory copy to do it — then "
+                "re-render; the next full pass decides stop_done. One polish pass per run."
+            )
+    if converged and not getattr(state, "scene_filter", None):
+        if product_objective:
+            deferred = sum(1 for f in findings if f.get("objective_role") == "deferred")
+            return _finish(
+                "stop_done",
+                f"Product objective converged ({product_why})"
+                + (f"; {deferred} deferred presentation finding(s) reported, not chased." if deferred else "."),
+            )
+        return _finish("stop_done", "Both judges passed full spec — ready for promotion.")
+    if converged and getattr(state, "scene_filter", None):
+        return _finish(
+            "stop_partial", "Both judges passed the filtered scope — drop --scene and re-fire."
+        )
+    # Mechanical fixes come FIRST — a confident fix must never sit behind an
+    # uncertain one, and a strategy REDESIGN is the most uncertain finding there
+    # is. So pending mechanical work holds the concept gate open WHILE IT IS
+    # STILL CLEANING THE ARTIFACT, and the human gets the direction question over
+    # a clean artifact instead of one carrying defects nobody disputes. The bound
+    # is exhaustion, not a count (canopy#588): the first deferral is free; each
+    # further one must be paid for by the last pass moving the score outside the
+    # noise band. A flat pass buys nothing — which is what makes a crashed pass
+    # (applied nothing, score unchanged) and a spent one (applied fixes, score
+    # unchanged) end the same way: the gate opens. A stall or plateau still
+    # suppresses it (re-applying fixes that already failed to move anything is
+    # not worth the gate's wait), and the hard cap is the runaway backstop.
+    first_deferral = state.concept_gate_deferred == 0
+    under_cap = len(hist) < hard_cap
+
     defer_concept_gate = (
         bool(strategy_redesign)
         and bool(mechanical)
@@ -781,6 +848,7 @@ _REJUDGE_ROLLBACK = (
     "concept_gate_deferred",
     "park_request",
     "batch_plan",
+    "polish_pass",
 )
 
 

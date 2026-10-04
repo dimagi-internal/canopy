@@ -65,8 +65,39 @@ def _user_findings(run_dir: Path) -> list[dict]:
     return out
 
 
-def _load_findings(run_dir: Path) -> list[dict]:
+#: Findings files written by the product objective's two lenses: the LLM product
+#: review (skills/ddd-product-review) and the deterministic product lint
+#: (scripts.ddd.product_lint). Each finding is stamped with its ``source``.
+PRODUCT_FINDING_FILES = {
+    "product_findings.json": "product_lens",
+    "lint_findings.json": "product_lint",
+}
+
+
+def _load_findings(run_dir: Path, *, demo: bool = False) -> list[dict]:
+    """Every judge's and lens's findings, in the one findings contract.
+
+    ``demo``: the run's objective is ``demo`` — the product lens/lint findings are
+    still loaded (and reported) but as ``route: DEFER``, so they never drive the
+    demo loop.
+    """
     out: list[dict] = []
+    for name, source in PRODUCT_FINDING_FILES.items():
+        p = run_dir / name
+        if not p.exists():
+            continue
+        data = json.loads(p.read_text())
+        if isinstance(data, dict):
+            data = data.get("findings") or []
+        for f in data:
+            if not isinstance(f, dict):
+                continue
+            g = dict(f)
+            g.setdefault("source", source)
+            g.setdefault("route", "PRODUCT")
+            if demo:
+                g["route"] = "DEFER"
+            out.append(g)
     for name in ("design_findings.json", "arc_findings.json"):
         p = run_dir / name
         if not p.exists():
@@ -103,12 +134,13 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
     extra, extra_paths = discover_extra_verdicts(run_dir)
     manifest_path = run_dir / "walkthrough-run-data.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else None
-    findings = _load_findings(run_dir)
     scope = judge_scope.load_scope(run_dir) or {}
     judge_full = bool(scope.get("full", True))
     cfg = loop_config.load(ddd_dir)
 
     state = load(run_id, ddd_dir=ddd_dir)
+    demo = cfg.loop.objective == "demo" or getattr(state, "objective", None) == "demo"
+    findings = _load_findings(run_dir, demo=demo)
     # The pass's target, if `target plan` stamped it for THIS iteration; a stale
     # or missing stamp means the render used the spec's own base_url (deploy).
     tgt = state.current_target or {}
@@ -141,7 +173,15 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         judges=scope.get("judges"),
         held=scope.get("held"),
         inner_loop_policy=state.inner_loop_policy,
+        product_config=cfg.product,
+        extra_verdicts=extra,
     )
+    from scripts.ddd import objective as objective_mod
+
+    if state.objective == objective_mod.PRODUCT:
+        converged = objective_mod.converged(
+            {**extra, "concept": concept, "user_artifact": user}, state.findings, cfg.product
+        )[0]
     state.auto_iterate_next_action = action
     state.auto_iterate_reason = reason
     # Seal the decision: a later rewrite of the fields it rests on, or a new pass
@@ -173,6 +213,9 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "target": tgt.get("target") or "deploy",
         "judges": scope.get("judges") or ["concept", "user", "arc"],
         "loop_mode": state.loop_mode,
+        "objective": state.objective,
+        "objective_roles": objective_mod.summary(state.findings),
+        "polish_pass": state.polish_pass,
         "inner_loop_policy": state.inner_loop_policy,
         "next_judge_full": state.next_judge_full,
         "progress": state.progress_history[-1] if state.progress_history else None,
@@ -223,6 +266,13 @@ def _main(argv: list[str] | None = None) -> int:
     for o in out["decision_overrides"]:
         print(f"  Decision OVERRIDE (iteration {o.get('iteration')}, overruled {o.get('action')!r}): {o.get('reason')}")
     print(f"  Target:       {out['target']}  (judges: {', '.join(out['judges'])})")
+    roles = out.get("objective_roles") or {}
+    print(
+        f"  Objective:    {out.get('objective')}  (blocking {roles.get('blocking', 0)}, "
+        f"ride-along {roles.get('ride_along', 0)}, deferred {roles.get('deferred', 0)}"
+        + (f", polish {roles['polish']}" if roles.get("polish") else "")
+        + ")"
+    )
     print(f"  Loop mode:    {out['loop_mode']}  (next judge: {'full' if out['next_judge_full'] else 'incremental'})")
     policy = out.get("inner_loop_policy") or {}
     if policy.get("status") == "off":

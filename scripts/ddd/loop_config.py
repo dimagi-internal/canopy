@@ -4,7 +4,15 @@ The same file already carries ``workspace:`` (see :mod:`scripts.ddd.auth`). This
 module reads the two blocks the v1/backlog loop adds::
 
     loop:
-      mode: auto              # auto | backlog | polish
+      objective: demo         # demo (default) | product | auto — WHAT the loop optimizes
+                              # (scripts.ddd.objective). product: the demo is a
+                              # probe and the product getting better is the goal;
+                              # demo: the walkthrough itself is the deliverable.
+                              # auto -> product when the first FULL pass has
+                              # >= backlog_min_findings open findings, else demo;
+                              # chosen once per run and then sticky. Default demo:
+                              # ACE's /ace:demo runs ship the video.
+      mode: auto              # auto | backlog | polish — HOW it judges (economics)
       backlog_min_findings: 8 # auto -> backlog when a FULL pass has >= this many open findings
       full_rejudge_every: 3   # backlog: every Nth fix batch is judged in full (= a checkpoint)
       judge_tiering: auto     # auto (on in backlog mode) | on | off — between checkpoints
@@ -39,6 +47,19 @@ module reads the two blocks the v1/backlog loop adds::
       fixer_minutes: 45       # <step>_minutes overrides default_minutes per step
       render_minutes: 20
 
+    product:                  # the product objective (scripts.ddd.objective) — all optional
+      floor: 3                # every PRODUCT dimension's weakest cell must reach this
+      presentation_floor: 2   # a presentation cell below this still blocks (broken, not unpolished)
+      block_severities: [high, medium]  # product findings at these severities block
+      polish_pass: true       # one batch of the deferred polish findings before stop_done
+      lint:                   # scripts.ddd.product_lint — deterministic, every render
+        max_words_per_screen: 800
+        max_long_lines_per_screen: 3   # a "long line" = >= long_line_words words of UI text
+        long_line_words: 20
+        max_new_long_lines: 0          # explanatory lines a run may ADD over its baseline
+        glossary: {round: tender}      # banned term -> the product's word for it
+        fonts: [Inter]                 # allowed first font family of rendered text
+
     auth_preflight:           # run before every iteration (scripts.ddd.preflight)
       timeout_seconds: 20     # per command
       commands:               # a string, or {name, run}
@@ -65,11 +86,13 @@ from typing import Any
 import yaml
 
 MODES = ("auto", "backlog", "polish")
+OBJECTIVES = ("auto", "product", "demo")
 TIERING = ("auto", "on", "off")
 
 
 @dataclass(frozen=True)
 class LoopConfig:
+    objective: str = "demo"
     mode: str = "auto"
     backlog_min_findings: int = 8
     full_rejudge_every: int = 3
@@ -143,12 +166,32 @@ class AuthPreflightConfig:
 
 
 @dataclass(frozen=True)
+class LintConfig:
+    max_words_per_screen: int = 800
+    max_long_lines_per_screen: int = 3
+    long_line_words: int = 20
+    max_new_long_lines: int = 0
+    glossary: dict[str, str] = field(default_factory=dict)
+    fonts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProductConfig:
+    floor: float = 3.0
+    presentation_floor: float = 2.0
+    block_severities: tuple[str, ...] = ("high", "medium")
+    polish_pass: bool = True
+    lint: LintConfig = field(default_factory=LintConfig)
+
+
+@dataclass(frozen=True)
 class DDDConfig:
     loop: LoopConfig = field(default_factory=LoopConfig)
     deploy_gate: DeployGateConfig = field(default_factory=DeployGateConfig)
     timeouts: TimeoutsConfig = field(default_factory=TimeoutsConfig)
     inner_loop: InnerLoopConfig = field(default_factory=InnerLoopConfig)
     auth_preflight: AuthPreflightConfig = field(default_factory=AuthPreflightConfig)
+    product: ProductConfig = field(default_factory=ProductConfig)
 
 
 def _int(raw: Any, default: int, *, minimum: int = 1) -> int:
@@ -241,12 +284,50 @@ def _parse_auth(raw: Any) -> AuthPreflightConfig:
     )
 
 
+def _parse_product(raw: Any) -> ProductConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    lint_raw = raw.get("lint") if isinstance(raw.get("lint"), dict) else {}
+    glossary_raw = lint_raw.get("glossary")
+    glossary = (
+        {str(k).strip().lower(): str(v).strip() for k, v in glossary_raw.items() if str(k).strip()}
+        if isinstance(glossary_raw, dict)
+        else {}
+    )
+    fonts_raw = lint_raw.get("fonts")
+    if isinstance(fonts_raw, str):
+        fonts_raw = [fonts_raw]
+    fonts = tuple(str(f).strip() for f in fonts_raw or [] if str(f).strip())
+    sev_raw = raw.get("block_severities")
+    sev = (
+        tuple(str(s).strip().lower() for s in sev_raw if str(s).strip())
+        if isinstance(sev_raw, list)
+        else ("high", "medium")
+    )
+    lint = LintConfig(
+        max_words_per_screen=_int(lint_raw.get("max_words_per_screen"), 800),
+        max_long_lines_per_screen=_int(lint_raw.get("max_long_lines_per_screen"), 3, minimum=0),
+        long_line_words=_int(lint_raw.get("long_line_words"), 20),
+        max_new_long_lines=_int(lint_raw.get("max_new_long_lines"), 0, minimum=0),
+        glossary=glossary,
+        fonts=fonts,
+    )
+    return ProductConfig(
+        floor=_positive(raw.get("floor"), 3.0),
+        presentation_floor=_float(raw.get("presentation_floor"), 2.0),
+        block_severities=sev,
+        polish_pass=raw.get("polish_pass") is not False,
+        lint=lint,
+    )
+
+
 def parse(data: dict | None) -> DDDConfig:
     """Build a config from an already-parsed ``config.yaml`` mapping."""
     data = data if isinstance(data, dict) else {}
     loop_raw = data.get("loop") if isinstance(data.get("loop"), dict) else {}
     mode = str(loop_raw.get("mode") or "auto").strip().lower()
+    objective = str(loop_raw.get("objective") or "demo").strip().lower()
     loop = LoopConfig(
+        objective=objective if objective in OBJECTIVES else "demo",
         mode=mode if mode in MODES else "auto",
         backlog_min_findings=_int(loop_raw.get("backlog_min_findings"), 8),
         full_rejudge_every=_int(loop_raw.get("full_rejudge_every"), 3),
@@ -269,6 +350,7 @@ def parse(data: dict | None) -> DDDConfig:
         timeouts=_parse_timeouts(data.get("timeouts")),
         inner_loop=_parse_inner(data.get("inner_loop"), data.get("inner_loop_off_reason")),
         auth_preflight=_parse_auth(data.get("auth_preflight")),
+        product=_parse_product(data.get("product")),
     )
 
 

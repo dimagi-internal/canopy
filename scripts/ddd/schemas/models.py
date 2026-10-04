@@ -216,6 +216,14 @@ class RunState(BaseModel):
     # each FULL judge pass by scripts.ddd.progress.select_mode from the
     # per-repo config (.canopy/ddd/config.yaml `loop:`).
     loop_mode: str | None = None
+    # WHAT the loop optimizes (scripts.ddd.objective): "product" (the demo is a
+    # probe; blocking product findings decide) or "demo" (every gating judge >=
+    # threshold). Resolved once from `loop.objective` and then sticky.
+    objective: str | None = None
+    # Product objective's one final polish batch: {"iteration": N, "status":
+    # "pending" | "done"}. The deferred presentation/low-severity findings are
+    # applied once, after the product converges, instead of every iteration.
+    polish_pass: dict | None = None
     # Whether the judge pass that produced the CURRENT verdicts judged every
     # scene fresh (True) or reused unchanged scenes' cells (False). Convergence
     # is only ever declared on a full pass — an incremental pass that would

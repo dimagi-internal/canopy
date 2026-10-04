@@ -283,6 +283,31 @@
       "default": null,
       "title": "Loop Mode"
     },
+    "objective": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Objective"
+    },
+    "polish_pass": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Polish Pass"
+    },
     "last_judge_full": {
       "default": true,
       "title": "Last Judge Full",

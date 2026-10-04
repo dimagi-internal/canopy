@@ -183,7 +183,7 @@ def test_video_json_empty_scenes_returns_none(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_kind_defaults_covers_all_seven_families():
+def test_kind_defaults_covers_all_eight_families():
     assert set(KIND_DEFAULTS) == {
         "concept",
         "user_artifact",
@@ -192,7 +192,14 @@ def test_kind_defaults_covers_all_seven_families():
         "actionability",
         "timing",
         "video",
+        "product",
     }
+
+
+def test_product_lens_score_is_advisory():
+    """The product lens's FINDINGS block (scripts.ddd.objective); its score must
+    never become another weakest-link cell the loop chases."""
+    assert KIND_DEFAULTS["product"] == ("advisory", True)
 
 
 def test_arc_is_gating():
@@ -217,6 +224,7 @@ def test_extra_filenames_cover_the_out_of_chain_artifacts():
         "verdict-video.json",
         "verdict-why.yaml",
         "verdict-actionability.yaml",
+        "verdict-product.yaml",
     }
 
 

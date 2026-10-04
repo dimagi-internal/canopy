@@ -88,6 +88,48 @@ by hand or write a bespoke "continuation prompt" carrying state that should live
 in `run_state.yaml` — if you feel the urge to hand-carry state, that is the signal
 you've been hand-driving and should re-enter via the orchestrator instead.
 
+## Objective — product or demo (load-bearing — decide this before anything else)
+
+A DDD run optimizes ONE of two things, set by `loop.objective` in
+`.canopy/ddd/config.yaml` (`demo` — the default — | `product` | `auto`) and stamped once on
+`state.objective` by `assemble` (`scripts/ddd/objective.py`):
+
+| | **product** (v1 / "the product has distance to go") | **demo** (mature product; the video is the deliverable) |
+|---|---|---|
+| The demo is… | a probe of the product | the deliverable |
+| Blocks / drives `continue` | product findings (task completion, trust, clarity, design soundness, use-case soundness, product lens, product lint) at severity `high`/`medium` | every non-DEFER mechanical finding |
+| Converged when | every product dimension's weakest cell ≥ `product.floor` (3), no presentation cell < 2, no blocking product finding | every gating judge ≥ 4 |
+| Polish / arc / framing / claim wording | deferred (`route: DEFER`, `deferred_by: objective:product`), applied ONCE as the final polish pass | chased every iteration |
+| Accuracy findings | narration edits only (`fix_scope: narrative`) — never product code | same |
+| Narrative | approve the USE CASE (persona, job, the 3–4 moments); scene recipes follow the product without re-gating | locked scene by scene |
+| Video phase | skipped unless asked | runs on convergence |
+
+`auto` picks `product` when the first full pass has ≥ `loop.backlog_min_findings`
+open findings. Why this exists: on connect-labs `supply-sophie-unanswered-round`
+(2026-10-02..04) the demo objective ran ~24 iterations and 12 PRs over ~33 h and
+never converged — the weakest of ~70 noisy cells was always a polish nit — while
+fix batches accreted explanatory copy and special-case rules to satisfy scene
+judges. One human look at the slides found the real product problems (no
+"state of this procurement" view, walls of text, wrong vocabulary, off-brand
+fonts). The product objective gates on exactly those: the **product lens**
+(`ddd-product-review`, every full pass) and **product lint**
+(`scripts.ddd.product_lint`, every render).
+
+**Fix direction (product objective — every fixer brief carries it):**
+1. When narration and product disagree, the NARRATION moves. Change the product
+   only if the change passes *"would we build this if there were no demo?"*
+2. Never answer a clarity finding with explanatory copy. Express it as
+   structure — a field, a chip, a count, a table row — or leave it.
+3. Prefer a few general rules over a rule per scene; never hard-code narrative
+   text or demo-specific branches into product code.
+4. Use the product's existing design system and vocabulary
+   (`product.lint.glossary`, `product.lint.fonts`).
+
+**Before adding more loop machinery, ask whether the objective is the problem.**
+Twenty-two DDD commits between 2026-09-01 and 2026-10-04 tuned the loop's
+economics; none changed what it was aiming at, and none of the supply narratives
+converged.
+
 ## Pause policy (load-bearing — read this first)
 
 **Only two gates ever block execution and emit a ReviewRequest:**
@@ -839,7 +881,20 @@ deep-link, and decide what to do next. The ONLY case that doesn't upload is a
 non-terminal `continue` (mechanical fixes, loop again). A stuck run that never gets a
 package is a bug — the user is stuck precisely when they most need to inspect it.
 
+### `continue` with "POLISH PASS" (product objective converged)
+
+The product objective converged on a full deploy pass and deferred polish
+findings exist. `assemble` has restored their routes on `state.findings` and
+stamped `state.polish_pass`. Apply them as ONE batch exactly like `continue`
+(fix-direction rules still apply — no explanatory copy), re-render; the next
+full pass decides `stop_done`. There is one polish pass per run.
+
 ### `stop_done` (converged, full-spec)
+
+**Product objective:** skip the Video phase unless the user asked for the video
+— upload the package with the converged iteration's clip, and in the digest
+lead with what changed in the PRODUCT (PRs, before/after frames, open product
+findings), not the demo score.
 
 Both judges passed on the full spec. **Automatically upload — do NOT stop at
 "converged" and leave the user to publish by hand.** A converged full-spec run
@@ -955,6 +1010,10 @@ surface.)
 
 **Fixer brief — every fixer subagent, every batch** (the B3 fixer sat 4 h on a
 shared test DB another session held; nothing timed it out):
+
+- in the `product` objective, paste the four **Fix direction** rules (see
+  "Objective" above) into the brief verbatim; apply only findings that are not
+  `route: DEFER` (the deferred polish waits for the polish pass);
 
 - start the step first — `python -m scripts.ddd.watchdog start <run_id> fixer:<batch>`
   prints the heartbeat file; put it in the brief;
@@ -1233,6 +1292,7 @@ proceeding with autonomous work.
 
 ## Rules
 
+- Know the run's objective (`state.objective`): `product` gates on blocking product findings and defers polish to one final pass; `demo` gates on every judge >= 4. Fixers in `product` carry the fix-direction rules.
 - Always read `.canopy/ddd/context.md` and `.canopy/ddd/learnings.md` first.
 - Bootstrap context.md if it does not exist — never prompt the user for this.
 - The 8 skills do the actual work — you chain and route.
