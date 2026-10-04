@@ -483,6 +483,19 @@
       "title": "Decision Overrides",
       "type": "array"
     },
+    "store": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Store"
+    },
     "batch_plan": {
       "anyOf": [
         {

@@ -373,8 +373,42 @@ bootstrap pattern exactly.
    Carry the resolved `decision`, `narrative_slug`, and `run_id` into the next step.
 
 5. Start or resume the run (run from `$DDD_REPO` so `scripts.ddd` is importable):
-   - **New run** (`decision: new`): `(cd "$DDD_REPO" && uv run python -c "from scripts.ddd.runstate import new_run; print(new_run('<narrative-slug>'))")`
-   - **Resume** (`decision: resume`): `(cd "$DDD_REPO" && uv run python -c "from scripts.ddd.runstate import load; state = load('<run_id>'); print(state.phase)")`
+   - **New run** (`decision: new`) — a run is work on an **agent's project**
+     (`/agents/<agent>` → Projects), not on a repo. One repo carries projects of
+     several agents (connect-labs: ACE's demos, Hal's product work), so the
+     owner is a per-project choice and never inferred from the repo. First ask
+     canopy-web whether this narrative is already bound:
+
+     ```bash
+     (cd "$DDD_REPO" && DDD_DIR="$DDD_DIR" uv run python -m scripts.ddd.run_store resolve <narrative-slug>)
+     ```
+
+     - `status: bound` → start the run; it follows its narrative's project:
+       `(cd "$DDD_REPO" && DDD_DIR="$DDD_DIR" uv run python -c "from scripts.ddd.runstate import new_run; print(new_run('<narrative-slug>'))")`
+     - `status: unbound` → **ask the user which agent owns this work**
+       (`AskUserQuestion`; this is the one setup question DDD asks, because it
+       decides whose board and project the run lands on). Options: each
+       `projects[]` entry already touching this repo ("<agent> · <name>"), then
+       "New project for <agent>" for the likeliest agents (`agent_hint` first,
+       then `agents[]`) — the user can name another agent or a project name via
+       Other. Then start it:
+       `(cd "$DDD_REPO" && DDD_DIR="$DDD_DIR" uv run python -m scripts.ddd.run_store start <narrative-slug> --agent <agent> (--project <P> | --new-project "<name>" --outcome "<what done looks like>"))`
+       Every later run of the narrative follows that project without asking.
+       Unattended (no human), inside an agent's turn (`$CANOPY_AGENT_SLUG`), `new_run`
+       binds to a new project of that agent and says so in stderr — put it in the digest.
+     - `{"store": "local"}` → no canopy-web (no token / `CANOPY_DDD_STORE=local`):
+       `new_run` mints locally and every save warns the run is invisible to other
+       runners. Say so in the digest.
+
+     The run is then a run document on that project
+     (`/api/agent-runs/<run_id>/`): canopy-web minted its id, every
+     `runstate.save` writes through, and any runner can resume it —
+     `runstate.load` hydrates a run this machine has never seen and takes the
+     web copy when another runner advanced it. A `RunConflict` from a save means
+     two runners are driving one run: stop and report it, never force it.
+   - **Resume** (`decision: resume`) — the candidate may be a run started on
+     ANOTHER runner (`resolve_narrative` merges canopy-web's runs of this repo's
+     projects); `load` hydrates it here: `(cd "$DDD_REPO" && uv run python -c "from scripts.ddd.runstate import load; state = load('<run_id>'); print(state.phase)")`
 
 6. **Pin the run to one canopy version (M7/M18).** `new_run` stamps
    `state.plugin_version` + `state.runtime_root`; a resumed pre-pin run is

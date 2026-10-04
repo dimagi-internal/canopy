@@ -87,7 +87,50 @@ def _scan_runs(ddd_dir: Path) -> dict[str, dict[str, Any]]:
                 "phase": (raw.get("phase") or "").strip() or None,
                 "run_mtime": mtime,
             }
+    _merge_web_runs(ddd_dir, by_narrative_slug)
     return by_narrative_slug
+
+
+def _merge_web_runs(ddd_dir: Path, by_narrative_slug: dict[str, dict[str, Any]]) -> None:
+    """Add runs of this repo's projects that live on canopy-web — including ones
+    started on ANOTHER runner, which a local scan cannot see. ``load`` hydrates a
+    picked web-only run onto this machine. Best-effort: unreachable -> local only."""
+    from datetime import datetime
+
+    from scripts.ddd import run_store
+
+    if not run_store.enabled(ddd_dir):
+        return
+    try:
+        status, rows = run_store._call(
+            "GET", run_store.BASE,
+            query={"kind": run_store.KIND, "repo_slug": run_store.repo_slug(ddd_dir), "limit": 100},
+        )
+    except run_store.RunStoreError:
+        return
+    if status != 200:
+        return
+    for r in rows or []:
+        slug = (r.get("subject") or "").strip()
+        if not slug:
+            continue
+        stamp = r.get("holder_at") or r.get("created_at")
+        try:
+            mtime = datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+        prev = by_narrative_slug.get(slug)
+        if prev is None or mtime > prev["run_mtime"]:
+            phase = (r.get("summary") or {}).get("phase")
+            if (r.get("status") or "running") != "running":
+                phase = "uploaded" if phase == "uploaded" else (phase or "judged")
+            by_narrative_slug[slug] = {
+                "latest_run_id": r.get("ext_id"),
+                "phase": phase,
+                "run_mtime": mtime,
+                "agent": r.get("agent_slug"),
+                "project": (r.get("project") or {}).get("name"),
+            }
 
 
 def _scan_specs(repo_root: Path) -> dict[str, dict[str, Any]]:

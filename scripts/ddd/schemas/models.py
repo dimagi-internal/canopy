@@ -288,6 +288,12 @@ class RunState(BaseModel):
     decision_seal: dict | None = None
     # Every logged override of a sealed decision: {iteration, action, reason, at}.
     decision_overrides: list[dict] = []
+    # Where this run lives on canopy-web (scripts.ddd.run_store): the agent
+    # project it serves and the state_version this runner last wrote or read —
+    # {agent, project, version, synced_at, pending, error}. None = local-only
+    # (no token, CANOPY_DDD_STORE=local, or a run started before 0.2.563 that
+    # has not been bound to a project yet).
+    store: dict | None = None
     # What the batch a ``continue`` asked for touches (scripts.ddd.fix_scope.batch_plan):
     # {for_iteration, scope: recipe|product, scenes, deploy, render_scenes,
     # render_reason}. A recipe-only batch changes no product code, so the next
