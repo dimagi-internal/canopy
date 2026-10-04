@@ -43,15 +43,18 @@ target matching — but NOT the online guard, which sits ABOVE pin matching, so 
 pinned to a paused/stale/offline runner stays QUEUED (queued turns never expire) and
 lands only when that runner is back online. It also still serializes per agent (it waits
 while that agent has an executing turn anywhere) and still passes the tenant and
-restricted-profile gates. A retired or invisible runner is a 422 at enqueue. Nothing server-side checks the runner can actually drive the agent, so the
-CLI checks the runner's self-declared `capabilities.agents` itself.
+confined-profile gates. A retired or invisible runner is a 422 at enqueue, and a pin is a 403
+unless the dispatcher is the target agent's owner/admin or administers that runner, or unless
+the box's owner is one of the agent's admins (canopy-web docs/architecture/access.md). The
+CLI also checks the runner's self-declared `capabilities.agents` itself.
 
 **6. The MODE is a per-dispatch choice, not a standing rule.** `--mode auto|manual` sends
 canopy-web's `TurnIn.turn_mode`, the top rung of its turn-mode ladder — above every routing
 rule and the agent's own switch, and kept across a lost lease. `manual` is open to anyone who
-may dispatch; `auto` only to the target agent's owner or an admin (workspace owners included),
-on a signed-in session or their own PAT — canopy-web answers anyone else with a 403, and
-re-checks the admin at claim. Like a pin, a mode folds into the idempotency key, so an
+may dispatch (a workspace editor or above); `auto` only to the target agent's owner or an admin
+(workspace owners included; a workspace *admin* is not an agent admin), on a signed-in session
+or their own PAT — canopy-web answers anyone else with a 403, and re-checks the admin at claim.
+A workspace editor's dispatch runs manual even with no `--mode`. Like a pin, a mode folds into the idempotency key, so an
 `--mode auto` re-dispatch never dedupes onto a turn first sent without one.
 
 Deterministic: builds payloads and reads status. Judgment about what to dispatch, and

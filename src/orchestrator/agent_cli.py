@@ -1082,7 +1082,16 @@ def turn_mode_from_envelope(caller_path) -> dict | None:
     tm = env.get("turn_mode") if isinstance(env, dict) else None
     if not isinstance(tm, dict) or tm.get("mode") not in ("manual", "auto"):
         return None
+    from orchestrator.caller import normalize_profile, normalize_relationship
+
     out = {"turn_mode": tm["mode"], "basis": str(tm.get("basis") or ""), "source": "turn"}
+    # Who asked and what they reach, in envelope VERSION 2 words whatever the
+    # envelope's version (`caller` → `contact`, `restricted` → `confined`), so the
+    # turn opening can state them; terms: canopy-web docs/architecture/access.md.
+    if env.get("relationship") is not None:
+        out["relationship"] = normalize_relationship(env.get("relationship"))
+    if env.get("profile") is not None:
+        out["profile"] = normalize_profile(env.get("profile"))
     # The repo-internal ship grant (canopy-web, 2026-10-03): push / PR / merge in the
     # agent's own repo pre-approved for a dispatch by another agent's admin login. Passed
     # through only when well-formed, so the turn opening can state it beside the mode.
@@ -1103,7 +1112,10 @@ def agent_mode(slug, caller_path):
     """Print the turn mode — {"slug", "turn_mode": "manual"|"auto", "basis", "source"}.
 
     With `--caller`, THIS turn's mode as canopy-web decided it at claim
-    (`source: "turn"`, `basis` saying which routing rule or "agent"). Otherwise,
+    (`source: "turn"`, `basis` saying which routing rule or "agent"), plus who asked
+    (`relationship`: owner | admin | member | contact | system) and what they reach
+    (`profile`: full | confined) in envelope VERSION 2 words whatever the envelope's
+    version (canopy-web docs/architecture/access.md). Otherwise,
     or when the envelope carries no mode, the agent-wide switch (`source:
     "agent"`) — board-side state flipped from the agent's Settings on canopy-web,
     never a repo file. The turn procedure reads this at preflight; if the call

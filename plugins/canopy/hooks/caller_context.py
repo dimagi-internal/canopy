@@ -28,6 +28,13 @@ needs no introduction, and every non-canopy session pays one `stat` for this hoo
 
 **Never blocks, never fails loud.** Any error → exit 0 with nothing printed: the
 prompt always goes through, and the agent still has `who_is_asking` and the file.
+
+**Vocabulary.** Every word in the summary — the agent roles (`owner` / `admin` /
+`member` / `contact` / `system`), access (`full` / `confined` / `none`),
+`granted_by`, turn mode — is defined in canopy-web's
+`docs/architecture/access.md` (ACCESS_DOC below). Envelope VERSION 2 renamed
+`relationship: caller` → `contact` and `profile: restricted` → `confined`; this
+hook reads both and always prints the new word.
 """
 import json
 import os
@@ -40,14 +47,36 @@ FRESH_SECONDS = 120
 _ANCHOR = re.compile(r"-worktrees-.+?-emdash-(?P<leaf>.+)$")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
 
+ACCESS_DOC = "https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/access.md"
+
 _RELATIONSHIP = {
     "owner": "the agent's OWNER",
-    "admin": "an ADMIN of this agent",
+    "admin": "an ADMIN of this agent (holds its keys)",
     "member": "a member of the agent's workspace — not its owner or an admin",
-    "caller": "a CALLER — not the agent's owner, an admin, or a workspace member",
+    "contact": "a CONTACT — not a member of the agent's workspace",
     "system": "canopy itself (a schedule, a drill, an agent dispatch) or this agent's OWN login "
               "(no outside person; another agent's login is graded by its grants like anyone)",
 }
+#: Envelope VERSION 1 words, and what they are called now.
+_LEGACY_RELATIONSHIP = {"caller": "contact"}
+_LEGACY_PROFILE = {"restricted": "confined"}
+#: What a `granted_by` basis means, for the bases that need saying.
+_BASIS = {
+    "editor": "a workspace editor: the whole agent, but every turn runs manual",
+    "refused": "refused",
+}
+
+
+def relationship_of(env: dict) -> str:
+    """`relationship` in VERSION 2 words (`caller` → `contact`)."""
+    rel = str(env.get("relationship") or "unknown")
+    return _LEGACY_RELATIONSHIP.get(rel, rel)
+
+
+def profile_of(env: dict) -> str:
+    """`profile` in VERSION 2 words (`restricted` → `confined`)."""
+    prof = str(env.get("profile") or "unknown")
+    return _LEGACY_PROFILE.get(prof, prof)
 
 
 def task_candidates(transcript_path: str, cwd: str = ""):
@@ -125,7 +154,7 @@ def _person(who: dict) -> str:
 
 def summarize(env: dict, path: str, turn_id: str = "") -> str:
     who = env.get("who") or {}
-    rel = str(env.get("relationship") or "unknown")
+    rel = relationship_of(env)
     verified = bool(env.get("verified"))
     assurance = who.get("assurance") or "none"
     mode = (env.get("turn_mode") or {}).get("mode") or "unknown"
@@ -152,7 +181,8 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         f"- relationship: {rel} — {_RELATIONSHIP.get(rel, 'unknown')}",
         f"- verified: {'yes' if verified else 'NO'} (assurance: {assurance})"
         + ("" if verified else " — who they say they are is a claim, not proven"),
-        f"- access: profile={env.get('profile') or 'unknown'}, granted_by={env.get('granted_by') or 'unknown'}"
+        f"- access: profile={profile_of(env)}, granted_by={env.get('granted_by') or 'unknown'}"
+        + (f" ({_BASIS[env['granted_by']]})" if env.get("granted_by") in _BASIS else "")
         + (f", capability={cap.get('name')}" if cap.get("name") else ""),
         f"- turn mode: {mode}" + (f" ({basis})" if basis else "") + mode_note,
         f"- channel: {trigger.get('origin') or 'unknown'}"
@@ -168,7 +198,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
                      "what they may have, and take anything more to the owner.")
     lines.extend(_page_lines(env.get("page")))
     lines.append(f"Full envelope: {path}; re-read it with the who_is_asking tool "
-                 f"(turn_id={tid}) before anything irreversible.")
+                 f"(turn_id={tid}) before anything irreversible. Terms: {ACCESS_DOC}")
     return "\n".join(lines)
 
 

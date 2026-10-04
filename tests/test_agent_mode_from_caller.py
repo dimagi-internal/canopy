@@ -98,3 +98,14 @@ def test_a_grant_the_envelope_does_not_earn_is_dropped(tmp_path, monkeypatch):
                  {"ship_grant": None}):
         out, _ = _run(monkeypatch, ["--caller", _granted(tmp_path, **over)])
         assert "ship_grant" not in out, over
+
+
+def test_who_asked_is_printed_in_todays_words(tmp_path, monkeypatch):
+    # Envelope VERSION 1 said `caller` / `restricted`; the command prints the
+    # VERSION 2 words (canopy-web docs/architecture/access.md) for either.
+    for rel, prof in (("caller", "restricted"), ("contact", "confined")):
+        p = tmp_path / f"{rel}.json"
+        p.write_text(json.dumps({"version": 1, "turn_id": "t-1", "relationship": rel,
+                                 "profile": prof, "turn_mode": {"mode": "manual", "basis": "agent"}}))
+        out, _ = _run(monkeypatch, ["--caller", str(p)])
+        assert (out["relationship"], out["profile"]) == ("contact", "confined")
