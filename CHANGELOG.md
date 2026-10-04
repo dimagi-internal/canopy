@@ -9,6 +9,24 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.574] - 2026-10-04
+### Changed
+- **decide-don't-offer is now an LLM judgment, not a regex.** The Stop rail that blocks once
+  when an agent closes by handing back a call it could make ("Want me to ship the PR?") is a
+  native `{"type": "prompt"}` Stop hook in `hooks/hooks.json` (model `claude-sonnet-5-5`),
+  fed 60 labelled examples from `agent-core/decide_guard_examples.jsonl` and told to use its
+  judgment on phrasings not shown. Rule zero is `stop_hook_active` → allow, so it blocks at
+  most once. The regex was whack-a-mole: one ada session on 2026-10-04 got past it three
+  times. Eval before shipping: 22/22 held-out (three of them the 10-04 misses) on two runs,
+  ~2.4s median; 16/80 real closing messages flagged, 13 genuine handbacks.
+  The prompt is rendered by `canopy decide-guard render`; a test fails if hooks.json drifts.
+  `canopy decide-guard add-example` is the agent-review feed for new cases.
+### Removed
+- The regex engine in `agent-core/decide_guard.py` (now a no-op that exits 0, so agent
+  loaders not yet removed stay harmless) and its regex tests (the cases live on as examples).
+  Several labels were reviewed: closing a superseded PR, a deploy "yours to authorize", and an
+  issue whose close condition is met are dev actions, so deferring them is now a handback.
+
 ## [0.2.572] - 2026-10-04
 ### Fixed
 - **DDD progress compares open findings only between passes judged the same way.**

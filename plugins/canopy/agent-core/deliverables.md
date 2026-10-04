@@ -193,7 +193,7 @@ uv run --project "$CANOPY_ROOT" canopy gdoc check <docId> [--expect-links N] [--
 `$CANOPY_AGENT_HOME/gdoc-gate/passed/<docId>`, and `agent-core/gdoc_gate.py` refuses to let a
 turn end on a link to a doc you wrote and have not reviewed since your last write (at most once
 per write; a link you only READ never trips it). Wire it with a thin loader, exactly like
-`decide_guard.py`:
+`gating_guard.py`:
 
 ```json
 "PostToolUse": [{"matcher": "Bash|^mcp__", "hooks": [{"type": "command",

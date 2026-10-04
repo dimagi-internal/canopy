@@ -468,8 +468,8 @@ _DEFAULT_LINE = re.compile(r"(?i)--account|\bdefault\b|getenv|environ|@dimagi-ai
 _SHARED_CHANNEL = re.compile(r"(?i)\b(?:gdoc|google[- ]docs?|gmail|google[- ]drive|calendar|gcal|gog)\b")
 _CANOPY_PLUGIN = Path(__file__).resolve().parents[2] / "plugins" / "canopy"
 # A LOADER is what an agent-unique bin/hook becomes once its engine is promoted: a thin file that
-# resolves the canopy plugin and executes `agent-core/<engine>` (eva's hooks/gdoc_gate.py, every
-# agent's hooks/decide_guard.py). That is the promoted state, not a fork — so it is never a
+# resolves the canopy plugin and executes `agent-core/<engine>` (every agent's hooks/gdoc_gate.py, and
+# hooks/gating_guard.py). That is the promoted state, not a fork — so it is never a
 # candidate, provided canopy really ships the engine it names (checked in promotion_candidates).
 _RUNS_CODE = re.compile(r"\b(?:runpy|exec|execv\w*|subprocess|import_module|spec_from_file_location)\b")
 

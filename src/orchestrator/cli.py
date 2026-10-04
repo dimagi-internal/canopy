@@ -16,6 +16,7 @@ from orchestrator.eval_cli import eval_group
 from orchestrator.project_cli import project as project_group
 from orchestrator.runner_cli import runner as runner_group
 from orchestrator.secret_cli import secret_group
+from orchestrator.decide_guard_cli import decide_guard_group
 
 
 def _skill_hint(name: str) -> str | None:
@@ -108,6 +109,7 @@ main.add_command(eval_group)
 main.add_command(project_group)
 main.add_command(runner_group)
 main.add_command(secret_group)
+main.add_command(decide_guard_group)
 
 
 @main.group()

@@ -2,7 +2,7 @@
 """Fleet rail: a Google Doc the agent WROTE may not be handed over unreviewed.
 
 Each agent's `hooks/gdoc_gate.py` is a thin loader that runs this file out of the
-installed canopy plugin (the same pattern as decide_guard.py), wired twice in the
+installed canopy plugin (the same loader pattern as gating_guard.py), wired twice in the
 agent's `.claude/settings.json`:
 
     PostToolUse (matcher "Bash|^mcp__")  →  hooks/gdoc_gate.py record
