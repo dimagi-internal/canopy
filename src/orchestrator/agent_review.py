@@ -568,6 +568,9 @@ DEFAULT_TURN_STEPS = (
     ("self-review", (r"self-review", r"self review", r"agent-turn-review")),
     ("skill-self-check", (r"skill.?self.?check", r"did i (create|improve) a skill",
                           r"should be a skill")),
+    # turn.md Step 4's REQUIRED `projects:` close-out line, fed by `canopy agent
+    # project-audit`. Unconditional, like the self-check: `projects: clean` satisfies it.
+    ("project-audit", (r"project-audit", r"(?m)^\W*projects:\s")),
     # CONDITIONAL (3rd element) — see above. `turn-close`: the close-out script that PERFORMS
     # the publish; `agent turn` packages it.
     ("workspace-refresh",

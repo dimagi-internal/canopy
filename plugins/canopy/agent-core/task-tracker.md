@@ -89,6 +89,7 @@ canopy agent projects --slug <slug> --active           # what is running (JSON)
 canopy agent project-add --slug <slug> --name "<Project>" \
     --outcome "what DONE looks like" --drive-folder-url "<folder link>"
 canopy agent project-set --slug <slug> --project "<Project>" --status done
+canopy agent project-audit --slug <slug> [--json]      # what the board is missing (read-only)
 ```
 
 Then **file the work into it** — a task takes the project's name or its `P<N>`:
@@ -106,6 +107,19 @@ projects, which tells you less than the task list already did — and it is the 
 Drive layout warns about. A genuine one-off needs no project: create the task without one.
 Conversely, once a thread has produced deliverables and more than one task, it is a project:
 register it, put the folder link on it, and file its tasks in.
+
+**The board holds what is ACTIVE; Drive is the archive.** When work goes quiet, set the project
+`--status done` (or `archived`) and **leave its folder exactly where it is — never delete or move
+a `Projects/<name>/` folder.** Folders are expected to outlive their board entry; a dormant one
+is not a defect. When the work comes back, re-register it **against the existing folder, under
+the same name** (`project-add --name "<folder name>" --drive-folder-url <that folder>`), rather
+than starting a new folder.
+
+**Checked every turn, not remembered:** `canopy agent project-audit --slug <slug>` reports the
+gaps in the active direction — open project-like tasks filed nowhere, active projects with no
+folder, project/folder name drift, tasks advanced with no turn record — and feeds the REQUIRED
+`projects:` close-out line (`turn.md` Step 4). A task counts as project-like when it has ≥2
+links, ≥1 turn record, or ≥2 appended note entries.
 
 **A project moving between agents** ("take this over from <agent>") is `canopy agent handoff`,
 run by the receiver — it finds the source agent's sessions and opens the project here with them in
@@ -156,3 +170,5 @@ its notes. The procedure (files, grants, thread) is `agent-core/handoff.md`.
 - **Close of turn:** package every turn that advanced a task —
   `canopy agent turn --slug <slug> --title "…" --task <ext_id> --work-product-url <url>`.
   This builds the per-task history spine: which turn did what, with which deliverables.
+  Then run `canopy agent project-audit --slug <slug>`, fix the cheap gaps, and close with its
+  `projects:` line (`turn.md` Step 4) — that is what catches a turn you forgot to record.

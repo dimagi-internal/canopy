@@ -570,6 +570,44 @@ def agent_project_set(slug, ref, links, **fields):
         raise click.ClickException(str(e))
 
 
+@agent.command("project-audit")
+@click.option("--slug", required=True)
+@click.option("--repo", default=None, type=click.Path(file_okay=False),
+              help="The agent's repo (resolves its Drive identity, as `gdoc publish` does). "
+                   "Default: found from --slug.")
+@click.option("--recent-days", default=2, show_default=True, type=int,
+              help="Window for check (e): open tasks touched this recently need a turn record.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the full result as JSON.")
+def agent_project_audit(slug, repo, recent_days, as_json):
+    """Read-only audit: does the board's project model match the agent's actual work?
+
+    Findings: (a) open tasks with no project that look like project work, (b) active
+    projects with no Drive folder, (d) project/folder name drift, (e) open tasks touched in
+    the last --recent-days with no `canopy agent turn` record. (c) — Projects/ folders with
+    no active project — is informational only: Drive is the archive and outlives the board.
+    Ends with the `projects: …` close-out line turn.md Step 4 requires. ALWAYS exits 0.
+    """
+    from datetime import datetime, timezone
+
+    from orchestrator import project_audit as pa
+
+    try:
+        client = _client(slug)
+        tasks, projects, turns = client.list_tasks(), client.list_projects(), client.list_turns()
+    except (CanopyError, RuntimeError, OSError) as e:
+        line = f"projects: audit failed — canopy-web unreadable ({str(e)[:160]})"
+        _emit({"slug": slug, "error": str(e), "closeout": line}) if as_json else click.echo(line)
+        return
+    folders, note = pa.list_project_folders(repo, slug)
+    result = pa.audit(slug=slug, tasks=tasks, projects=projects, turns=turns,
+                      folders=folders, drive_note=note,
+                      now=datetime.now(timezone.utc), recent_days=recent_days)
+    if as_json:
+        _emit(result)
+    else:
+        click.echo(pa.render(result))
+
+
 @agent.command("handoff")
 @click.option("--from", "from_slug", required=True, help="The agent giving the project up.")
 @click.option("--to", "to_slug", required=True, help="The agent taking it over.")

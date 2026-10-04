@@ -946,6 +946,23 @@ human's call to make. (Origin: 2026-08-26 — an eva turn ended after a single r
 with independent, already-scoped work left undone. The human: *"keep going I didn't mean to
 stop."* Declining one action is not withdrawing the task.)
 
+**REQUIRED close-out line: `projects: <audit summary | clean>`.** Run
+`canopy agent project-audit --slug <slug>` (read-only, always exits 0; `--json` for the full
+result) and carry its last line into your summary verbatim. **An ABSENT line is the failure;
+`projects: clean` is a valid outcome** — same contract as the skill self-check: the line proves
+you looked, whatever you found. It reports the defects in one direction only — *active work the
+board cannot see*: (a) open tasks with no project that look like project work, (b) active
+projects with no Drive folder linked, (d) a project whose name differs from its linked folder,
+(e) tasks touched in the last 2 days with no `canopy agent turn` record. `Projects/` folders with
+no active project are **dormant, not defects** — Drive is the archive and outlives the board, so
+the audit only counts them. **Fix what is cheap in-turn** — file a task into its project (`agent
+set --project`), register the project for a folder you are actively working in again (same
+name, `--drive-folder-url` of the existing folder), record the turn (`agent turn --task
+--session-id`; without `--upload` that is board bookkeeping, not the opt-in publish below) — then
+report what is left, with the reason, in the line's place (e.g. `projects: 2 loose tasks — T4,
+T6 are single-run one-offs`). If the audit could not reach canopy-web it says so; report that
+line as-is rather than dropping it.
+
 **Publishing to canopy-web is MANUAL — none of it is an automatic close step** (one exception:
 an **auto-mode** turn always packages its turn record — `canopy agent turn` — as its audit
 trail; see "Turn mode"). The fleet has a
@@ -998,6 +1015,8 @@ queues work and approves outbound actions — independent of whether you publish
 1. `<slug>:agent-turn-review` — your own wrapper, by full name — ran on every outbound reply
    (Step 2).
 2. Skill-development self-check answered (Step 3).
+2a. **`projects:` line present** (Step 4) — from `canopy agent project-audit --slug <slug>`,
+   after fixing what was cheap. `clean` is fine; a missing line is not.
 3. Published to canopy-web (skills / work / turn) ONLY if the human asked — otherwise skip; none of
    it is an automatic close step.
 4. **Summary is legible + decidable:** no bare internal ids (`T7`, run/session ids) as the name of

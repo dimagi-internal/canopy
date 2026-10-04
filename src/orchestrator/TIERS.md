@@ -36,7 +36,7 @@ enforce it.
 `version_bump` · `version` · `doctor` · `agent_review` · `structure_drift` · `eval_cli` ·
 `eval_rubric` · `turn_synthesis` · `session_upload` · `fleet_align` · `session_sources` ·
 `session_liveness` ·
-`work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `runner_cli` · `secret_cli` ·
+`work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `project_audit` · `runner_cli` · `secret_cli` ·
 `llm_output` · `decide_guard_prompt` · `decide_guard_cli`
 
 **HUBS** (orchestration / composition roots — wire product into the CLI, the
