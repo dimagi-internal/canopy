@@ -609,3 +609,47 @@ def test_analyze_feeds_candidates_into_findings_and_judge_prompt(tmp_path):
         f for f in findings if f not in cands]
     prompt = fa.build_judgment_prompt(findings)
     assert "agent-unique artifact looks generic" in prompt and "CANDIDATE" in prompt
+
+
+_CANOPY_LOADER = (
+    '"""Stop/PostToolUse gdoc review rail — a LOADER. The engine lives in canopy.\n\n'
+    "Resolves the installed canopy plugin and runs `agent-core/gdoc_gate.py`, so one\n"
+    'implementation serves the whole fleet (gdoc, Google Docs)."""\n'
+    "import json, os, runpy, sys\n\n"
+    "def _engine():\n"
+    "    plugin_dir = os.environ.get('CANOPY_PLUGIN_DIR')\n"
+    "    return os.path.join(plugin_dir, 'agent-core', 'gdoc_gate.py')\n\n"
+    + "".join(f"# gdoc gmail calendar note {i}\n" for i in range(40))
+    + "runpy.run_path(_engine(), run_name='__main__')\n"
+)
+
+
+def test_loader_into_canopy_agent_core_is_not_a_candidate(tmp_path, monkeypatch):
+    # The shape eva's hooks/gdoc_gate.py and every agent's decide_guard.py took once promoted: a
+    # thin loader that runs canopy's agent-core engine. It IS the promoted state, not a fork —
+    # flagging it sent "delete the stale fork" at the very file that wires canopy's copy in.
+    plugin = tmp_path / "canopy" / "plugins" / "canopy"
+    (plugin / "agent-core").mkdir(parents=True)
+    (plugin / "agent-core" / "gdoc_gate.py").write_text("# fleet gate\n")
+    (plugin / "agent-core" / "decide_guard.py").write_text("# fleet guard\n")
+    monkeypatch.setattr(fa, "_CANOPY_PLUGIN", plugin)
+    base = tmp_path / "agents"
+    a = _write_agent(base, "eva")
+    b = _write_agent(base, "hal")
+    _add(a, "hooks/gdoc_gate.py", _CANOPY_LOADER)
+    for d in (a, b):
+        _add(d, "hooks/decide_guard.py", _CANOPY_LOADER.replace("gdoc_gate", "decide_guard"))
+    assert fa.promotion_candidates(fa.discover_agents(bases=[base])) == []
+
+
+def test_agent_copy_that_does_not_load_canopy_is_still_flagged(tmp_path, monkeypatch):
+    # The fork case must survive: same name as a canopy engine, but its own logic.
+    plugin = tmp_path / "canopy" / "plugins" / "canopy"
+    (plugin / "agent-core").mkdir(parents=True)
+    (plugin / "agent-core" / "gdoc_gate.py").write_text("# fleet gate\n")
+    monkeypatch.setattr(fa, "_CANOPY_PLUGIN", plugin)
+    base = tmp_path / "agents"
+    d = _write_agent(base, "eva")
+    _add(d, "hooks/gdoc_gate.py", _GENERIC_GDOC_CHECKER)
+    (f,) = fa.promotion_candidates(fa.discover_agents(bases=[base]))
+    assert "stale fork" in f.note

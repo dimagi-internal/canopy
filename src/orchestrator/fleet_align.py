@@ -467,6 +467,11 @@ _SKIP_PARTS = {"__pycache__", ".DS_Store", "node_modules"}
 _DEFAULT_LINE = re.compile(r"(?i)--account|\bdefault\b|getenv|environ|@dimagi-ai\.com|AGENT_SLUG|AGENT_NAME")
 _SHARED_CHANNEL = re.compile(r"(?i)\b(?:gdoc|google[- ]docs?|gmail|google[- ]drive|calendar|gcal|gog)\b")
 _CANOPY_PLUGIN = Path(__file__).resolve().parents[2] / "plugins" / "canopy"
+# A LOADER is what an agent-unique bin/hook becomes once its engine is promoted: a thin file that
+# resolves the canopy plugin and executes `agent-core/<engine>` (eva's hooks/gdoc_gate.py, every
+# agent's hooks/decide_guard.py). That is the promoted state, not a fork — so it is never a
+# candidate, provided canopy really ships the engine it names (checked in promotion_candidates).
+_RUNS_CODE = re.compile(r"\b(?:runpy|exec|execv\w*|subprocess|import_module|spec_from_file_location)\b")
 
 
 @dataclass
@@ -482,6 +487,7 @@ class UniqueArtifact:
     channel: bool         # touches a shared channel (gdoc/gmail/drive/calendar)
     channel_hits: int = 0  # how many shared-channel mentions (name counts as PROMOTE_CHANNEL_HITS)
     files: list[str] = field(default_factory=list)  # a skill dir's files (for the brief)
+    loads_canopy: bool = False  # a bin/hook that executes canopy's agent-core/<engine> (a loader)
 
 
 def _channel_hits(name: str, text: str) -> int:
@@ -537,6 +543,7 @@ def agent_unique_artifacts(agent: Agent) -> list[UniqueArtifact]:
             size=len(text.encode("utf-8")), persona_ratio=round(_persona_ratio(text, tokens), 3),
             has_code=has_code, channel=_channel_hits(name, text) >= PROMOTE_CHANNEL_HITS,
             channel_hits=_channel_hits(name, text), files=files,
+            loads_canopy=kind != "skill" and "agent-core" in text and bool(_RUNS_CODE.search(text)),
         ))
 
     for dirname, kind in _UNIQUE_DIRS:
@@ -605,7 +612,8 @@ def promotion_candidates(agents: list[Agent], *, min_bytes: int = PROMOTE_MIN_BY
                          max_persona_ratio: float = PROMOTE_MAX_PERSONA_RATIO) -> list[Finding]:
     """Deterministic PROMOTE candidates from agent-unique artifacts (rules (a)/(b) above)."""
     arts = [a for ag in _distinct_agents(agents)
-            for a in agent_unique_artifacts(ag) if a.size >= min_bytes]
+            for a in agent_unique_artifacts(ag)
+            if a.size >= min_bytes and not (a.loads_canopy and _canopy_ships(a))]
     findings: list[Finding] = []
     claimed: set[tuple[str, str]] = set()
     # (a) the same artifact name, non-trivially, in >= 2 agents
