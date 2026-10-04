@@ -9,6 +9,28 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.563] - 2026-10-04
+### Added
+- **A DDD run lives on an agent's project on canopy-web, not on one runner's disk.**
+  Until now a run's state existed only in `~/.canopy/ddd/runs/<repo>/<run_id>/` on the
+  machine that started it: no other runner could resume it, two runners could mint the
+  same run id (canopy-web groups decks and reviews by that string, so packages merged),
+  and nothing said which piece of work a narrative served. A run is now a run document
+  (`/api/agent-runs/`, canopy-web#1105) on an AGENT's project — ownership is per
+  project, never per repo (connect-labs carries projects of several agents).
+  `scripts/ddd/run_store.py`: canopy-web mints the id (`min_seq` clears ids already
+  minted on disk), `runstate.save` writes through with optimistic concurrency (a second
+  runner driving the run raises `RunConflict` before the local file is touched; a lost
+  stamp from the same runner is forced), `runstate.load` hydrates a run never seen on
+  this machine and takes a newer web copy, `resolve_narrative` sees other runners' runs,
+  and an unreachable canopy-web saves locally and marks the store `pending`. A new
+  narrative is UNBOUND until the user says which agent owns it: the orchestrator asks
+  (`run_store resolve` lists the repo's agent projects and visible agents) and starts it
+  with `run_store start`; later runs follow the binding. Unattended inside an agent's
+  turn, `$CANOPY_AGENT_SLUG` owns a new project. In-flight local runs are adopted under
+  their own ids once their narrative is bound (`run_store adopt` binds one explicitly).
+  `CANOPY_DDD_STORE=local` (or no token) keeps the old behaviour and says so.
+
 ## [0.2.562] - 2026-10-04
 ### Added
 - **`canopy gdoc suggest` — edit a doc as tracked SUGGESTIONS**, not direct writes. Text-

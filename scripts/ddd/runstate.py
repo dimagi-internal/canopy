@@ -310,20 +310,60 @@ def run_dir_for(run_id: str, ddd_dir: Path | None = None) -> Path:
     return _run_dir_for(ddd_dir if ddd_dir is not None else _resolve_ddd_dir(), run_id)
 
 
-def new_run(narrative_slug: str, ddd_dir: Path | None = None) -> str:
-    """Create a new run under the runs root (see _resolve_runs_dir) and return the run_id.
+def new_run(
+    narrative_slug: str,
+    ddd_dir: Path | None = None,
+    *,
+    agent: str | None = None,
+    project: str | None = None,
+) -> str:
+    """Create a new run and return the run_id.
+
+    With canopy-web reachable (``scripts.ddd.run_store``) the run is a document on
+    an AGENT's PROJECT and canopy-web mints the id. The project is ``agent`` /
+    ``project`` when given; else the narrative's existing binding (the project of
+    its newest run); else, unattended inside an agent's turn, a new project of
+    ``$CANOPY_AGENT_SLUG``; else :class:`run_store.NeedsBinding` — the human
+    says which agent owns the work. Local-only otherwise, as before.
 
     If *ddd_dir* is given it is used directly (no cwd/git resolution).
     """
+    from scripts.ddd import run_store
+
     if ddd_dir is None:
         ddd_dir = _resolve_ddd_dir()
     runs_dir = _resolve_runs_dir(ddd_dir)
+    local_next = _next_run_id([runs_dir, _legacy_runs_dir(ddd_dir)], narrative_slug)
 
-    run_id = _next_run_id([runs_dir, _legacy_runs_dir(ddd_dir)], narrative_slug)
+    store = None
+    run_id = local_next
+    if run_store.enabled(ddd_dir):
+        try:
+            if not agent:
+                agent, project = _bind(narrative_slug, ddd_dir)
+            doc = run_store.mint(
+                narrative_slug, agent=agent, project=project, min_seq=int(local_next.rsplit("-", 1)[1])
+            )
+            run_id = doc["ext_id"]
+            store = {
+                "agent": agent, "project": project, "version": doc.get("state_version", 0),
+                "synced_at": _now_iso(), "pending": False, "error": None,
+            }
+        except run_store.NeedsBinding:
+            raise  # the human's call — never guessed, never silently local
+        except run_store.RunStoreError as exc:
+            # canopy-web unreachable or not yet serving run documents: the run
+            # still starts, LOCAL-ONLY, and says so. A later save adopts it once
+            # its narrative is bound and canopy-web answers.
+            print(
+                f"[ddd run store] could not start {narrative_slug} on canopy-web ({exc}); "
+                f"starting LOCAL-ONLY run {local_next}.",
+                file=sys.stderr,
+            )
     run_dir = runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    state = RunState(run_id=run_id, narrative_slug=narrative_slug)
+    state = RunState(run_id=run_id, narrative_slug=narrative_slug, store=store)
     # Pin the canopy version this run starts on (M7/M18) — every later call
     # resolves the runtime by this path (scripts.ddd.pin).
     try:
@@ -333,31 +373,185 @@ def new_run(narrative_slug: str, ddd_dir: Path | None = None) -> str:
     except Exception:  # pinning must never stop a run from starting
         pass
     _write_state(run_dir, state)
+    if store is not None:
+        _push(state, run_dir)
 
     return run_id
 
 
-def load(run_id: str, ddd_dir: Path | None = None) -> RunState:
-    """Load a RunState from <run_dir>/run_state.yaml (external root, or legacy in-repo).
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _bind(narrative_slug: str, ddd_dir: Path) -> tuple[str, str | None]:
+    """The agent + project a new run of *narrative_slug* belongs to."""
+    from scripts.ddd import run_store
+
+    found = run_store.resolve(narrative_slug, ddd_dir)
+    if found["status"] == "bound":
+        return found["agent"], found["project"]
+    hint = run_store.agent_hint()
+    from scripts.ddd import gates
+
+    if hint and gates.is_unattended():
+        project = run_store.create_project(
+            hint, narrative_slug, repo=found.get("repo") or "",
+            outcome=f"DDD narrative {narrative_slug}",
+        )
+        print(
+            f"[ddd run store] {narrative_slug}: unattended in {hint}'s turn — started project "
+            f"{project} on {hint}. Rebind by starting the next run with `run_store start`.",
+            file=sys.stderr,
+        )
+        return hint, project
+    raise run_store.NeedsBinding(narrative_slug, found)
+
+def load(run_id: str, ddd_dir: Path | None = None, *, sync: bool = True) -> RunState:
+    """Load a run's state.
+
+    canopy-web holds the run when it is bound (``state.store``): a run never seen
+    on this machine is HYDRATED from it, and a local copy older than the web's
+    ``state_version`` (another runner advanced the run) is replaced by the web's.
+    Unreachable canopy-web -> the local copy, with a warning. ``sync=False`` reads
+    the local file only.
 
     If *ddd_dir* is given it is used directly (no cwd/git resolution).
     """
+    from scripts.ddd import run_store
+
     if ddd_dir is None:
         ddd_dir = _resolve_ddd_dir()
     state_file = _run_dir_for(ddd_dir, run_id) / "run_state.yaml"
-    raw = yaml.safe_load(state_file.read_text())
-    return RunState.model_validate(raw)
+    if not state_file.exists() and sync and run_store.enabled(ddd_dir):
+        return hydrate(run_id, ddd_dir=ddd_dir)
+    raw = yaml.safe_load(state_file.read_text())  # FileNotFoundError for an unknown run
+    state = RunState.model_validate(raw)
+    if sync and state.store and run_store.enabled(ddd_dir):
+        try:
+            remote = run_store.pull(run_id)
+        except run_store.RunStoreError as exc:
+            run_store._warn_once(f"pull:{run_id}", f"using the local copy of {run_id}: {exc}")
+            return state
+        if remote and int(remote.get("state_version") or 0) > int(state.store.get("version") or 0):
+            print(
+                f"[ddd run store] {run_id}: canopy-web is at state_version {remote['state_version']} "
+                f"(written by {remote.get('holder') or 'unknown'}), this runner had "
+                f"{state.store.get('version')} — taking the web copy.",
+                file=sys.stderr,
+            )
+            return _adopt_remote(remote, state_file.parent)
+    return state
 
 
-def save(state: RunState, ddd_dir: Path | None = None) -> None:
-    """Persist *state* to <run_dir>/run_state.yaml (external root, or legacy in-repo).
+def hydrate(run_id: str, ddd_dir: Path | None = None) -> RunState:
+    """Write canopy-web's copy of *run_id* onto this runner and return it."""
+    from scripts.ddd import run_store
+
+    if ddd_dir is None:
+        ddd_dir = _resolve_ddd_dir()
+    remote = run_store.pull(run_id)
+    if remote is None:
+        raise FileNotFoundError(f"run {run_id} is neither on this runner nor on canopy-web")
+    run_dir = _run_dir_for(ddd_dir, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return _adopt_remote(remote, run_dir)
+
+
+def _adopt_remote(remote: dict, run_dir: Path) -> RunState:
+    state = RunState.model_validate(remote.get("state") or {})
+    state.store = {
+        "agent": remote.get("agent_slug"),
+        "project": (remote.get("project") or {}).get("ext_id"),
+        "version": int(remote.get("state_version") or 0),
+        "synced_at": _now_iso(), "pending": False, "error": None,
+    }
+    _write_state(run_dir, state)
+    return state
+
+
+def peek_store(state_file: Path) -> dict | None:
+    """The ``store`` block of a local run_state.yaml, without validating the rest."""
+    if not state_file.exists():
+        return None
+    try:
+        return (yaml.safe_load(state_file.read_text()) or {}).get("store") or {"bound": False}
+    except Exception:
+        return {"error": "unreadable"}
+
+
+def save(state: RunState, ddd_dir: Path | None = None, *, force: bool = False) -> None:
+    """Persist *state* locally and, when the run is bound, write it through to
+    canopy-web (``state.store.version`` is the optimistic-concurrency base).
+
+    A conflict (another runner advanced the run) raises
+    :class:`run_store.RunConflict` BEFORE the local file is touched. An
+    unreachable canopy-web leaves the local write in place, marks the store
+    ``pending`` and says so; the next save retries.
 
     If *ddd_dir* is given it is used directly (no cwd/git resolution).
     """
+    from scripts.ddd import run_store
+
     if ddd_dir is None:
         ddd_dir = _resolve_ddd_dir()
     run_dir = _run_dir_for(ddd_dir, state.run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
+    if run_store.enabled(ddd_dir):
+        if not state.store:
+            _try_adopt(state, ddd_dir)
+        if state.store:
+            _push(state, run_dir, force=force)
+            return
+    _write_state(run_dir, state)
+
+
+def _try_adopt(state: RunState, ddd_dir: Path) -> None:
+    """A run started before runs lived on canopy-web: adopt it under its own id
+    into its narrative's project when the narrative is already bound; otherwise
+    say how to bind it (once) and stay local — never break an in-flight run."""
+    from scripts.ddd import run_store
+
+    try:
+        found = run_store.resolve(state.narrative_slug, ddd_dir)
+        if found["status"] != "bound":
+            run_store._warn_once(
+                f"adopt:{state.run_id}",
+                f"{state.run_id} is local-only: its narrative has no agent project yet. Bind it: "
+                f"`python -m scripts.ddd.run_store adopt {state.run_id} --agent <agent> "
+                "(--project <P> | --new-project <name>)`.",
+            )
+            return
+        run_store.mint(
+            state.narrative_slug, agent=found["agent"], project=found["project"], ext_id=state.run_id,
+        )
+        state.store = {"agent": found["agent"], "project": found["project"], "version": 0,
+                       "synced_at": _now_iso(), "pending": False, "error": None}
+    except run_store.RunStoreError as exc:
+        run_store._warn_once(f"adopt:{state.run_id}", f"could not adopt {state.run_id}: {exc}")
+
+
+def _push(state: RunState, run_dir: Path, *, force: bool = False) -> None:
+    from scripts.ddd import run_store
+
+    RunState.model_validate(state.model_dump())  # never push what could not be saved
+    try:
+        version = run_store.push(
+            state.model_dump(mode="json"),
+            base_version=int((state.store or {}).get("version") or 0),
+            force=force,
+        )
+        state.store = {**(state.store or {}), "version": version, "synced_at": _now_iso(),
+                       "pending": False, "error": None}
+    except run_store.RunConflict:
+        raise
+    except run_store.RunStoreError as exc:
+        state.store = {**(state.store or {}), "pending": True, "error": str(exc)[:300]}
+        run_store._warn_once(
+            f"push:{state.run_id}",
+            f"could not write {state.run_id} to canopy-web ({exc}); saved locally, will retry on the next save.",
+        )
     _write_state(run_dir, state)
 
 
