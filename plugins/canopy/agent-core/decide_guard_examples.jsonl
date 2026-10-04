@@ -1,6 +1,6 @@
 {"closing": "I diagnosed it to the line.\n\nWant me to ship the fix as a PR?", "handback": true, "why": "Shipping a PR is a dev action; the agent knew the fix and offered instead of shipping."}
 {"closing": "I diagnosed it to the line.\n\nWant me to kick the deploy, or delete the remnant?", "handback": true, "why": "Kicking the deploy of the agent's own merged fix and deleting a remnant are both within its shipping rules; offered, neither done."}
-{"closing": "Shall I open the PR?", "handback": true, "why": "Opening a PR needs no approval."}
+{"closing": "Shall I open the PR?", "handback": true, "why": "Opening a PR needs no approval.", "in_prompt": true}
 {"closing": "Should I merge this now?", "handback": true, "why": "Merging is a dev action; asking parks it on the human."}
 {"closing": "Would you like me to deploy it?", "handback": true, "why": "Deploying the agent's own just-merged fix, where its repo's shipping rules cover it, needs no approval."}
 {"closing": "Do you want me to fix the other two as well?", "handback": true, "why": "Fixing the remaining bugs is dev work the agent can just do."}
@@ -8,12 +8,15 @@
 {"closing": "Say the word and I'll delete it.", "handback": true, "why": "Deleting a stale artifact is a repo op; 'say the word' with no default hands the call back."}
 {"closing": "Done — merged and deployed.\n\nWant me to also delete the remnant?", "handback": true, "why": "Cleanup after a merge is the agent's to do."}
 {"closing": "In production the second is a cache hit, so it isn't costing you much — but it's redundant work I'd collapse if you want the next increment.", "handback": true, "why": "Deference trails the offer ('if you want'); collapsing the work is a dev change the agent could make."}
-{"closing": "I'd pull the diagnostic logging out if you'd like.", "handback": true, "why": "Removing debug logging is a code change, left conditional on the human's say-so."}
+{"closing": "I'd pull the diagnostic logging out if you'd like.", "handback": true, "why": "Removing debug logging is a code change, left conditional on the human's say-so.", "in_prompt": true}
 {"closing": "I can collapse those two reads into one if that's useful.", "handback": true, "why": "Code improvement offered conditionally instead of done."}
 {"closing": "I could drop the stale branch if that would help.", "handback": true, "why": "Deleting a stale branch is a repo op."}
 {"closing": "Everything you approved is merged.\n\nIt flags them now, but the lens drops them first. It's a small canopy PR if you want it.", "handback": true, "why": "2026-10-04 miss: the work is the subject and the deference trails; a canopy PR needs no approval."}
+{"closing": "It's a small canopy PR if you want it.", "handback": true, "why": "2026-10-04 miss: the work is the subject and the deference trails; a canopy PR needs no approval.", "in_prompt": true}
 {"closing": "Everything you approved is merged.\n\nI'd ship all three now (canopy PR plus an Ada PR) unless you'd rather keep the engine call as something you decide per case.", "handback": true, "why": "2026-10-04 miss: 'I'd ship … unless you'd rather' is deference, not a default — and the PRs were not shipped."}
+{"closing": "I'd ship all three now unless you'd rather decide it per case.", "handback": true, "why": "2026-10-04 miss: 'I'd ship … unless you'd rather' is deference, not a default — and the PRs were not shipped.", "in_prompt": true}
 {"closing": "Everything you approved is merged.\n\nTeaching fleet-align to recognise loader files would be a small follow-up.", "handback": true, "why": "2026-10-04 miss: undone dev work relabelled as a follow-up, neither done nor routed."}
+{"closing": "Teaching fleet-align to recognise loader files would be a small follow-up.", "handback": true, "why": "2026-10-04 miss: undone dev work relabelled as a follow-up, neither done nor routed.", "in_prompt": true}
 {"closing": "That's a one-line fix if you'd like it.", "handback": true, "why": "A one-line fix the agent could just make."}
 {"closing": "Everything you approved is merged.\n\nThe loader false positive is left as a follow-up.", "handback": true, "why": "A known defect parked as a 'follow-up' with no owner, issue, or plan."}
 {"closing": "I sent the PR through CI and it passed clean. Want me to merge it?", "handback": true, "why": "The offer's object is a merge (dev action); 'sent' earlier is not an outbound ask."}
@@ -25,14 +28,16 @@
 {"closing": "I haven't triggered it. A production deploy is outward-facing and yours to authorize, even when the diff is clean. **Want me to run it?**", "handback": false, "why": "Fleet authority: sends, deploys of other systems and public writes are not pre-approved — asking before a production deploy, with the reason stated, is correct."}
 {"closing": "**Your call, nothing blocking:** #1495 — my close condition is met. Want me to close it, or leave it until a full run confirms?", "handback": true, "why": "Relabelled: the agent's own close condition is met; closing an issue is a repo op it can do."}
 {"closing": "All three agents are green.\n\nNext step would be wiring the same check into eva and echo.", "handback": true, "why": "Undone dev work stated as a 'next step' and left for the human to trigger."}
+{"closing": "Next step would be wiring the same check into eva and echo.", "handback": true, "why": "Undone dev work stated as a 'next step' and left for the human to trigger.", "in_prompt": true}
 {"closing": "Fixed the parser and merged #212.\n\nThe same bug exists in the CSV exporter — I can fix that too.", "handback": true, "why": "A known identical bug the agent could fix, offered rather than fixed."}
 {"closing": "Tests pass locally. Ready to open the PR when you are.", "handback": true, "why": "Opening a PR waits on nothing but the agent."}
 {"closing": "Report above. One option would be to bump the timeout to 60s, which should clear the flake.", "handback": true, "why": "The agent knows the fix (a config change) and floats it as an option instead of applying it."}
 {"closing": "Summary above.\n\nI've drafted the reply to the funder thread. Want me to send it?", "handback": false, "why": "Sending email always waits for a human."}
+{"closing": "I've drafted the reply to the funder thread. Want me to send it?", "handback": false, "why": "Sending email always waits for a human.", "in_prompt": true}
 {"closing": "Summary above.\n\nDraft is ready via bin/hal-email --reply-all. Should I send?", "handback": false, "why": "Outbound email gate."}
 {"closing": "Want me to send this to sophie@example.org?", "handback": false, "why": "Sending to a person is outbound."}
 {"closing": "Want me to send the reply to the funder now?", "handback": false, "why": "Outbound reply."}
-{"closing": "Want me to publish this digest to the board?", "handback": false, "why": "Publishing is outbound."}
+{"closing": "Want me to publish this digest to the board?", "handback": false, "why": "Publishing is outbound.", "in_prompt": true}
 {"closing": "Draft is done. Want me to publish it to the site?", "handback": false, "why": "Publishing to a public site is outbound."}
 {"closing": "The doc is written. Should I share it with Shayoni and Natalia?", "handback": false, "why": "Sharing a document with people is outbound."}
 {"closing": "Want me to post it in the channel?", "handback": false, "why": "Posting to a channel is outbound."}
@@ -41,20 +46,24 @@
 {"closing": "I'd recommend the second option if you want the simpler path.", "handback": false, "why": "Advice on a choice the human is weighing, not an undone action."}
 {"closing": "I'd have caught it if the test had existed.", "handback": false, "why": "A counterfactual, not an offer."}
 {"closing": "Here's where it landed.\n\nThe full trace is in the PR if you want the detail.", "handback": false, "why": "A pointer to information."}
+{"closing": "The full trace is in the PR if you want the detail.", "handback": false, "why": "A pointer to information.", "in_prompt": true}
 {"closing": "The follow-up PR #742 is in the merge queue; I'll report when it lands.", "handback": false, "why": "Work in flight, owned by the agent."}
 {"closing": "I'll merge it at noon unless you object.", "handback": false, "why": "A stated default; nothing is handed back."}
-{"closing": "That would be a follow-up for the ace team, and I've filed it as ace#2501.", "handback": false, "why": "The follow-up is routed, not parked."}
+{"closing": "That would be a follow-up for the ace team, and I've filed it as ace#2501.", "handback": false, "why": "The follow-up is routed, not parked.", "in_prompt": true}
 {"closing": "It's recorded on the board so it can't age. Say the word and I'll pick it up now; default is next turn.", "handback": false, "why": "Stated default; the offer is only an override."}
+{"closing": "Say the word and I'll pick it up now; default is next turn.", "handback": false, "why": "Stated default; the offer is only an override.", "in_prompt": true}
 {"closing": "Want me to fold it into this PR? Otherwise I'll ship it separately.", "handback": false, "why": "Stated default ('otherwise I'll ship it')."}
 {"closing": "Should I widen the sweep? Unless you say otherwise I'll keep it to the three repos already named.", "handback": false, "why": "Stated default."}
 {"closing": "Never mind — I looked, fixed it, and shipped it.", "handback": false, "why": "Finished work."}
 {"closing": "Shipped as #624, merged, deployed, verified live.", "handback": false, "why": "Finished report."}
 {"closing": "I considered ending with 'want me to ship it' and decided that was the wrong move, so I shipped it instead. Then I verified the deploy and confirmed the row split correctly.\n\nMerged as 2b2cc78 and live on labs.", "handback": false, "why": "An offer mentioned mid-report then acted on; the close is a finished report."}
 {"closing": "Merged #88 and #89. Nothing else is open from this thread.", "handback": false, "why": "Finished report."}
-{"closing": "I went with the project-scoped key. Sound good?", "handback": false, "why": "Already decided and done; a confirmation, not a handback."}
+{"closing": "I went with the project-scoped key. Sound good?", "handback": false, "why": "Already decided and done; a confirmation, not a handback.", "in_prompt": true}
 {"closing": "Both readings are defensible and it turns on how much you care about the label vs the fork. Which matters more to you?", "handback": false, "why": "A genuine taste fork."}
 {"closing": "I'd rather not guess at your priorities here — is labs or ace the one to fix first?", "handback": false, "why": "A priority call only the human can make."}
 {"closing": "Its one live thread is waiting on you: should the pulse display open in live mode instead of replay? One-line change, product call. Say the word and I'll route it into the pulse session.", "handback": false, "why": "Product taste call, labelled as such."}
 {"closing": "It's a judgment call for you to weigh, so I stopped here unless you'd rather I pick.", "handback": false, "why": "Stated as the human's judgment call."}
 {"closing": "Two vendors quoted: A at $4k/mo, B at $2.5k/mo with a weaker SLA. I'd take B — the SLA gap doesn't matter for a batch job — but it's your budget. Which one?", "handback": false, "why": "Spending money is the human's call; recommendation and reason are given."}
+{"closing": "I'd take B — the SLA gap doesn't matter for a batch job — but it's your budget. Which one?", "handback": false, "why": "Spending money is the human's call; recommendation and reason are given.", "in_prompt": true}
 {"closing": "I couldn't find which AWS account the billing service runs in, and it isn't in any repo or the vault. Which account is it?", "handback": false, "why": "Asking for information the agent cannot get."}
+{"closing": "Want me to widen it? Otherwise I'll ship it as scoped.", "handback": false, "why": "Stated default: the agent will act either way.", "in_prompt": true}

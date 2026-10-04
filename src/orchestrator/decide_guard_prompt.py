@@ -59,58 +59,34 @@ LOADER_MARKER = "hooks/decide_guard.py"
 # Marks our entry in hooks.json so a re-render replaces it instead of appending.
 STATUS_MESSAGE = "decide-guard: checking whether the close hands back a call"
 
+# The prompt is sent on EVERY Stop of every canopy session, and shown to the agent in full
+# when it blocks — so it must stay SHORT (Jonathan, 2026-10-04: the 12K-char first version
+# was "way way too much text"). Only examples marked `"in_prompt": true` are rendered; the
+# rest of decide_guard_examples.jsonl is the held-out eval set. PROMPT_BUDGET is enforced.
+PROMPT_BUDGET = 3000
+
 _HEADER = """\
-You are the fleet's "decide, don't offer" check. An AI agent is about to end its turn. \
-The hook input JSON is at the bottom.
+Judge an AI agent's final message (last_assistant_message in the input below).
+If stop_hook_active is true, respond {"ok": true} and stop.
 
-RULE ZERO, before anything else: if "stop_hook_active" is true, respond {"ok": true} and \
-nothing more. The agent has already been nudged once; never block twice.
+Block only if the message ENDS by leaving undone something the agent could do itself \
+without approval — code, PRs, merges, repo ops, its own tooling, dispatching an agent — \
+whether it asks ("want me to…"), parks it ("…if you want it", "unless you'd rather", \
+"would be a small follow-up") or floats it as an option.
+Fine: outbound waits for a human (send, reply, publish, post, share, notify, production \
+deploys); a finished report; a stated default it will act on ("otherwise I'll…", "unless you \
+object"); work already routed; a pointer to info; a fork it says is the human's to weigh \
+(taste, priorities, budget). Use judgment beyond the \
+examples; when unsure, block — a wrong block costs one line.
 
-Otherwise judge "last_assistant_message" — the agent's final message to its human. \
-Decide whether it ENDS by handing back a call the agent was authorized to make itself, \
-instead of making it.
-
-Whose call is it:
-- DEV ACTIONS NEED NO APPROVAL: writing or fixing code, opening / merging / closing PRs \
-and issues, branches, repo and config ops, deploying the agent's own merged change where \
-its repo's shipping rules cover it, dispatching another fleet agent, \
-fixing the agent's own tooling. A close that defers one of these is a HANDBACK — whether \
-it offers it ("want me to…", "say the word", "shall I"), parks it ("…if you want it", \
-"would be a small follow-up", "left as a follow-up", "next step would be…", "unless \
-you'd rather"), or floats it as an option without doing it.
-- OUTBOUND ALWAYS WAITS for a human: sending or replying to email or messages, \
-publishing, posting, sharing a document, notifying people — and so do production deploys \
-the agent judges are the human's to authorize, and deploys of systems it does not own. \
-Asking before those is correct — NOT a handback.
-- Also NOT a handback: a finished report; a stated default ("default is next turn", \
-"otherwise I'll…", "unless you object"); a follow-up already routed ("filed as #…", \
-"queued"); a pointer to information ("the trace is in the PR if you want the detail"); \
-a genuine fork on the human's taste, priorities, budget or risk — ideally with the \
-agent's recommendation and reason; a question for information the agent cannot get.
-- Only the CLOSE matters: an offer mentioned mid-message and then acted on is not a \
-handback.
-
-Labelled examples (HANDBACK = should block; FINE = should not):
 """
 
 _FOOTER = """
-Use your AI judgment on phrasings not shown above — the examples illustrate the rule, \
-they do not bound it. The test: does the agent know the right end state, could it reach \
-it without approval, and did it stop short and leave the call with the human? When \
-genuinely unsure, lean toward blocking: a wrong block costs one beat (the agent explains \
-in one line and stops), a miss costs the human a full round trip.
+Respond with JSON only: {"ok": true}, or {"ok": false, "reason": "<one sentence: what \
+you handed back>. If it needs no approval, do it now; if it is outbound or truly the \
+human's call, say so in one line and stop."}
 
-Respond with JSON only.
-- Not a handback: {"ok": true}
-- A handback: {"ok": false, "reason": "<one sentence naming exactly what you handed \
-back>. Whose call is this actually? If it is a dev action (code, PR, merge, repo ops) it \
-needs no approval: do it now, in this session, and report what you did and what \
-you scoped out. Outbound (send, reply, publish, post, share) always waits for a human — \
-if that is this, or it truly turns on the human's taste, priorities or risk, say so in \
-one line and stop. This check will not fire again this session."}
-
-Hook input:
-$ARGUMENTS"""
+Input: $ARGUMENTS"""
 
 
 def _escape(text: str) -> str:
@@ -135,16 +111,23 @@ def load_examples(path: Path = EXAMPLES_PATH) -> list[dict]:
 
 
 def _example_line(row: dict) -> str:
-    label = "HANDBACK" if row["handback"] else "FINE"
-    closing = json.dumps(row["closing"], ensure_ascii=False)
-    return f"{label}: {_escape(closing)} — {_escape(row['why'])}"
+    label = "BLOCK" if row["handback"] else "FINE"
+    return f"{label}: {_escape(json.dumps(row['closing'], ensure_ascii=False))}"
+
+
+def prompt_examples(examples: list[dict]) -> list[dict]:
+    """The few examples rendered into the prompt; every other row is held out for eval."""
+    return [r for r in examples if r.get("in_prompt")]
 
 
 def render_prompt(examples: list[dict]) -> str:
-    # Handbacks first, then the fine ones: the contrast reads better grouped.
-    ordered = [r for r in examples if r["handback"]] + [r for r in examples if not r["handback"]]
-    body = "\n".join(_example_line(r) for r in ordered)
-    return _HEADER + body + "\n" + _FOOTER
+    shown = prompt_examples(examples)
+    ordered = [r for r in shown if r["handback"]] + [r for r in shown if not r["handback"]]
+    prompt = _HEADER + "\n".join(_example_line(r) for r in ordered) + "\n" + _FOOTER
+    if len(prompt) > PROMPT_BUDGET:
+        raise ValueError(f"decide-guard prompt is {len(prompt)} chars, over the "
+                         f"{PROMPT_BUDGET}-char budget — show fewer or shorter examples")
+    return prompt
 
 
 def hook_entry(prompt: str, model: str = MODEL, timeout: int = TIMEOUT_S) -> dict:
@@ -240,9 +223,14 @@ def settings_in_sync(settings_path: Path, examples_path: Path = EXAMPLES_PATH) -
 
 
 def add_example(closing: str, handback: bool, why: str,
-                examples_path: Path = EXAMPLES_PATH) -> dict:
-    """Append one labelled example (refusing an exact duplicate closing)."""
+                examples_path: Path = EXAMPLES_PATH, in_prompt: bool = False) -> dict:
+    """Append one labelled example (refusing an exact duplicate closing).
+
+    Held out (eval only) by default; `in_prompt=True` also shows it to the judge — spend that
+    sparingly, the prompt has a hard PROMPT_BUDGET."""
     row = {"closing": closing.strip(), "handback": bool(handback), "why": why.strip()}
+    if in_prompt:
+        row["in_prompt"] = True
     if not row["closing"] or not row["why"]:
         raise ValueError("closing and why must be non-empty")
     existing = load_examples(examples_path)
