@@ -91,6 +91,18 @@ FRICTION_TYPES = (
     "verify_late",     # a completion claim whose only substantiating tool_use lands in a LATER turn
 )
 
+# WHERE a finding's fix lives. Until 2026-10 the synthesis prompt said `target: the file/path in
+# the agent repo the fix touches`, so every finding was routed into the agent's own repo BY
+# CONSTRUCTION — there was no "this is generic, it belongs in canopy" outcome. That is how eva
+# grew a private copy of fleet-generic Google-Docs tooling: the 2026-09-07 review emitted
+# "[checklist_gap/high] Enforce gdoc-review before any Drive share … fix: hook_rule → eva repo"
+# and it shipped as eva's hooks/gdoc_gate.py, a share gate every doc-publishing agent needs.
+#   agent  — only this agent's persona/domain needs it
+#   canopy — any agent would want it, the same way (a mechanism: CLI, hook, rail, checker, engine fix)
+#   pack   — the capability is shared but the SETTING is taste (house style, edit marking, titles):
+#            the mechanism ships to canopy parameterized; the setting is recorded as a default.
+PLACEMENTS = ("agent", "pack", "canopy")
+
 # Human-correction mining — the lens agent-review was BLIND to (echo's last turn taught us: it
 # flagged git pathspec errors but missed Jonathan demanding "NEVER EVER submit without review").
 # A human overriding a safety behavior, or expressing confusion, outranks any mechanical friction.
@@ -971,7 +983,20 @@ def build_review_prompt(repo: Path, corpus: list[dict]) -> str:
         "      confidence_basis: one sentence justifying the level from the evidence above\n"
         "  - A finding whose evidence is not a complete record WILL BE DROPPED. Do not emit it.\n"
         "  - fix_kind: one of [skill_edit, hook_rule, schema_validator, claude_update, channel_fix, new_skill]\n"
-        "  - target: the file/path in the agent repo the fix touches\n"
+        f"  - placement: one of {list(PLACEMENTS)} — WHERE the fix lives. REQUIRED; a finding "
+        "without a valid placement WILL BE DROPPED.\n"
+        "      agent  = only THIS agent's persona/domain needs it (its voice, its counterparts, its "
+        "domain workflow).\n"
+        "      canopy = any agent would want it, the same way: a mechanism — a CLI, a hook, a "
+        "shared deny rail, a checker, a fix/workaround for a canopy engine bug.\n"
+        "      pack   = agents would want the capability but may differ on the SETTING/taste "
+        "(house style, how AI edits are marked in a doc, title conventions). The MECHANISM ships "
+        "to canopy, parameterized; the agent's setting is recorded as its default.\n"
+        "  - placement_basis: one sentence justifying the placement. For `agent`, name what is "
+        "persona-specific about it.\n"
+        "  - target: the file/path the fix touches — a path in the AGENT repo ONLY when "
+        "placement=agent; for canopy/pack it is a CANOPY path (e.g. "
+        "plugins/canopy/agent-core/<x>.py, src/orchestrator/<x>.py, a canopy CLI).\n"
         "  - recommendation: the concrete change to make\n"
         "  - confidence: high|medium|low  # SAME value as evidence.confidence above; "
         "fill BOTH, they are one judgment (this one is what the findings table prints)\n"
@@ -1004,6 +1029,15 @@ def build_review_prompt(repo: Path, corpus: list[dict]) -> str:
         "multi-step pattern repeats; only include findings with real evidence in the corpus.\n"
         "- an invariant ('never/always do X') finding MUST use hook_rule or schema_validator — a "
         "skill_edit/claude_update for an invariant WILL BE DROPPED.\n"
+        "- PLACEMENT heuristic: a hook, a bin/ tool, a fix/workaround for a canopy engine bug, or a "
+        "helper for a shared channel (gdoc / email / gmail / drive / calendar) defaults to "
+        "placement=canopy UNLESS the finding names what is persona-specific about it. Example: "
+        "'Enforce gdoc-review before any Drive share' is NOT an eva fix — every agent that "
+        "publishes Google Docs needs the same share gate, so it is placement=canopy with target "
+        "plugins/canopy/agent-core/gdoc_gate.py, not eva's hooks/gdoc_gate.py. Routing a generic "
+        "mechanism into one agent's repo is how the fleet forks its own infrastructure. An "
+        "agent-placed hook/bin/shared-channel fix with no persona-specific placement_basis is "
+        "re-routed to canopy.\n"
         "Output ONLY the YAML list.\n"
     )
 
@@ -1175,15 +1209,63 @@ def _valid_evidence(ev: object) -> tuple[bool, str]:
     return True, ""
 
 
-def qualify_findings(findings: list[dict]) -> tuple[list[dict], list[dict]]:
+# Placement rail. Two halves, deliberately different in strength:
+#
+#  1. A finding with NO valid placement is DROPPED (same style as the evidence gate). The
+#     placement is the whole point of the field — a finding that doesn't say where its fix
+#     lives falls straight back into the old "agent repo by construction" default, which is
+#     the defect. Case/whitespace near-misses ("Canopy ") are normalized, nothing else is.
+#
+#  2. placement=agent on a fix SHAPED like fleet infrastructure — a hooks/ or bin/ target, or a
+#     recommendation about a shared-channel helper (gdoc/gmail/drive/calendar) — must carry a
+#     non-empty `placement_basis` saying what is persona-specific about it. Without one it is
+#     RE-ROUTED to canopy (`_placement_coerced`), not dropped: like the fix_kind rail, the
+#     evidence is sound and only the routing label is wrong, and "defaults to canopy" is exactly
+#     the routing the prompt's heuristic prescribes. Deliberately narrow and testable — it does
+#     not try to judge WHETHER a written basis is convincing; the triager reads it.
+_INFRA_TARGET_RX = re.compile(r"(?:^|[/\s`'\"])(?:hooks|bin)/")
+_SHARED_CHANNEL_RX = re.compile(
+    r"(?i)\b(?:g-?docs?|google[- ]docs?|gmail|google[- ]drive|drive (?:share|folder|file|link)|"
+    r"calendar|gcal|gog)\b"
+)
+
+
+def _normalize_placement(raw: object) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    k = raw.strip().strip(".,;:\"'`").lower()
+    return k if k in PLACEMENTS else None
+
+
+def _infra_shaped(finding: dict) -> str:
+    """Why a finding looks like fleet infrastructure ('' when it doesn't): its target is a
+    hooks/ or bin/ path, or its text is about a shared-channel helper."""
+    target = str(finding.get("target") or "")
+    if _INFRA_TARGET_RX.search(target):
+        return f"target {target!r} is a hooks/ or bin/ path"
+    blob = f"{finding.get('title') or ''} {finding.get('recommendation') or ''} {target}"
+    m = _SHARED_CHANNEL_RX.search(blob)
+    if m:
+        return f"it is a shared-channel ({m.group(0)!r}) helper"
+    return ""
+
+
+def qualify_findings(findings: list[dict], *,
+                     require_placement: bool = True) -> tuple[list[dict], list[dict]]:
     """Split findings into (qualified, dropped). A finding with no valid evidence
     record is DROPPED, annotated with `_drop_reason`. Fail-loud: the caller logs
     each drop. This is the enforcement — a finding without verified evidence cannot
     survive to be published or dispatched.
 
-    Two labels are REPAIRED rather than dropped, because each is a routing/metadata
+    A finding with no valid `placement` (agent|pack|canopy) is also DROPPED — see the
+    placement rail note above `_INFRA_TARGET_RX`. `require_placement=False` skips that rail
+    for callers whose findings are not fixes to route (harvest's intent audit grades what a
+    human asked for vs. got; it has no repo to place a fix in).
+
+    Three labels are REPAIRED rather than dropped, because each is a routing/metadata
     word sitting on top of otherwise-sound evidence: `evidence.confidence`
-    (`_confidence_coerced`) and `fix_kind` (`_fix_kind_coerced`). Both repairs are
+    (`_confidence_coerced`), `fix_kind` (`_fix_kind_coerced`), and an agent placement of
+    an infra-shaped fix with no persona-specific basis (`_placement_coerced`). All repairs are
     annotated on the finding and logged by `_qualify_and_log`, so a silent fix stays
     visible and auditable."""
     qualified: list[dict] = []
@@ -1197,6 +1279,32 @@ def qualify_findings(findings: list[dict]) -> tuple[list[dict], list[dict]]:
             f["_drop_reason"] = reason
             dropped.append(f)
             continue
+        # Placement rail (see _INFRA_TARGET_RX): no valid placement → drop; an agent-placed
+        # infra-shaped fix with no persona-specific basis → re-routed to canopy.
+        placement = _normalize_placement(f.get("placement"))
+        if placement is None and require_placement:
+            f["_drop_reason"] = (
+                f"placement missing/invalid ({f.get('placement')!r}) — expected one of "
+                f"{list(PLACEMENTS)}: every finding must say whether its fix lives in the agent "
+                "repo, in canopy, or in canopy as a parameterized pack mechanism"
+            )
+            dropped.append(f)
+            continue
+        if placement is not None:
+            f["placement"] = placement
+        basis = str(f.get("placement_basis") or "").strip()
+        why_infra = _infra_shaped(f) if placement == "agent" else ""
+        if why_infra and not basis:
+            f["placement"] = "canopy"
+            f["_placement_coerced"] = {
+                "from": "agent",
+                "to": "canopy",
+                "reason": (
+                    f"placement=agent but {why_infra} and placement_basis names nothing "
+                    "persona-specific — fleet infrastructure defaults to canopy. Re-target the "
+                    "fix at a canopy path before implementing it."
+                ),
+            }
         # Confidence rail: repair the label, keep the evidence. Try the nested value
         # first, then the finding-level sibling the synthesis prompt also asks for —
         # the model routinely fills exactly one of the two. See normalize_confidence.
@@ -1282,6 +1390,11 @@ def _qualify_and_log(findings: list[dict], label: str) -> list[dict]:
                   f"{q.get('title')!r}: {c.get('from')!r} → {c.get('to')!r} "
                   "(invariant must ship structurally; kept, not dropped)",
                   file=sys.stderr)
+        pc = q.get("_placement_coerced")
+        if pc:
+            print(f"[agent-review:{label}] re-routed placement on finding "
+                  f"{q.get('title')!r}: {pc.get('from')!r} \u2192 {pc.get('to')!r} "
+                  f"({pc.get('reason')})", file=sys.stderr)
     return qualified
 
 

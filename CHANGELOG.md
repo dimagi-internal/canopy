@@ -9,6 +9,29 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.564] - 2026-10-04
+### Changed
+- **Agent-review findings say WHERE the fix lives; fleet-align sees agent-unique artifacts.**
+  Eva accumulated fleet-generic Google-Docs tooling (a visual-QA checker, a markdown linter, a
+  share-gate hook) in her own repo instead of canopy, for two structural reasons. (1)
+  `agent_review.build_review_prompt` told the reviewer `target: the file/path in the agent repo`,
+  so every finding was routed into the agent's repo by construction — the 2026-09-07 review's
+  "Enforce gdoc-review before any Drive share → hook_rule → eva repo" became eva's
+  `hooks/gdoc_gate.py`. Findings now carry a required `placement` (`agent` | `pack` | `canopy`)
+  + `placement_basis`; the target is an agent path only for `agent`. `qualify_findings` drops a
+  finding with no valid placement (like the evidence gate), and re-routes an `agent`-placed
+  hook / bin / shared-channel (gdoc/gmail/drive/calendar) fix with no persona-specific basis to
+  `canopy` (`_placement_coerced`, logged and shown in the findings table). harvest's intent
+  audit opts out (`require_placement=False`) — its findings grade a session, not a fix.
+  (2) `fleet_align` only compared the factory-stamped skills + gating.json, so PROMOTE could
+  never see an agent's own skills, bin/ tools or hooks. A new deterministic
+  `promotion_candidates` pass lists every non-stamped `skills/<name>/`, `bin/*`, `hooks/*` per
+  agent and feeds the judgment pass PROMOTE candidates ("agent-unique artifact looks generic")
+  when (a) the same name exists non-trivially in ≥2 agents, or (b) it is a persona-free
+  shared-channel mechanism (≤6% identity lines, gdoc/gmail/drive/calendar helper). Stubs <1.5KB
+  are ignored, second clones of one repo (`ace`/`ace-2`) count once, and a candidate canopy
+  already ships (`agent-core/<name>`) is noted as a likely stale fork.
+
 ## [0.2.563] - 2026-10-04
 ### Added
 - **A DDD run lives on an agent's project on canopy-web, not on one runner's disk.**

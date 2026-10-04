@@ -1500,7 +1500,8 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
         click.echo(f"Qualified ({len(qualified)}):")
         for f in qualified:
             title = f.get("title", "(untitled)") if isinstance(f, dict) else "(untitled)"
-            click.echo(f"  ✓ {title}")
+            placement = f.get("placement", "?") if isinstance(f, dict) else "?"
+            click.echo(f"  ✓ {title}  [placement: {placement}]")
         click.echo(f"Dropped ({len(dropped)}):")
         for f in dropped:
             if isinstance(f, dict):
@@ -1658,8 +1659,18 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
                 continue
             conf = f.get("confidence", "?")
             click.echo(f"  [{f.get('friction_type','?')}/{conf}] {f.get('title','')}")
+            placement = f.get("placement", "?")
             if f.get("target"):
-                click.echo(f"      fix: {f.get('fix_kind','?')} → {f['target']}")
+                click.echo(f"      fix: {f.get('fix_kind','?')} → {f['target']}   "
+                           f"[placement: {placement}]")
+            else:
+                click.echo(f"      [placement: {placement}]")
+            if f.get("placement_basis"):
+                click.echo(f"      placement basis: {str(f['placement_basis'])[:160]}")
+            pc = f.get("_placement_coerced")
+            if isinstance(pc, dict):
+                click.echo(f"      ↻ placement re-routed {pc.get('from')!r} → {pc.get('to')!r} — "
+                           "infra-shaped fix with no persona-specific basis; re-target into canopy")
             # An invariant finding routed at a non-structural fix is coerced rather
             # than dropped (see agent_review._STRUCTURAL_FIX_KINDS). Show the triager
             # BOTH the correction and what the model originally proposed — a silent

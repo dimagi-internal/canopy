@@ -627,6 +627,7 @@ def test_run_review_applies_source_gate(tmp_path, monkeypatch):
             stdout=(
                 "- title: already fixed thing\n"
                 "  friction_type: tool_failure\n"
+                "  placement: agent\n"
                 "  evidence:\n"
                 "    source_ref: skills/x/SKILL.md:1\n"
                 "    was_read: true\n"
@@ -668,6 +669,7 @@ def test_run_review_surfaces_verification_error(tmp_path, monkeypatch):
             stdout=(
                 "- title: t\n"
                 "  friction_type: tool_failure\n"
+                "  placement: agent\n"
                 "  evidence:\n"
                 "    source_ref: skills/x/SKILL.md:1\n"
                 "    was_read: true\n"
@@ -705,6 +707,7 @@ def test_run_review_no_verify_skips_gate(tmp_path, monkeypatch):
             stdout=(
                 "- title: t\n"
                 "  friction_type: tool_failure\n"
+                "  placement: agent\n"
                 "  evidence:\n"
                 "    source_ref: skills/x/SKILL.md:1\n"
                 "    was_read: true\n"
@@ -776,7 +779,7 @@ def test_full_record_is_valid():
 
 
 def test_qualify_splits_and_annotates():
-    good = {"title": "t", "evidence": _GOOD_EV}
+    good = {"title": "t", "placement": "agent", "evidence": _GOOD_EV}
     bad = {"title": "u", "evidence": "just a string"}
     qualified, dropped = qualify_findings([good, bad])
     assert qualified == [good]
@@ -785,7 +788,7 @@ def test_qualify_splits_and_annotates():
 
 
 def test_non_dict_finding_is_dropped_with_reason():
-    good = {"title": "t", "evidence": _GOOD_EV}
+    good = {"title": "t", "placement": "agent", "evidence": _GOOD_EV}
     findings = [good, "not a dict"]
     qualified, dropped = qualify_findings(findings)
     assert qualified == [good]
@@ -816,7 +819,7 @@ def test_prompt_demands_structured_evidence(tmp_path: Path):
 
 
 def test_qualify_and_log_drops_unqualified(capsys):
-    good = {"title": "t", "evidence": _GOOD_EV}
+    good = {"title": "t", "placement": "agent", "evidence": _GOOD_EV}
     bad = {"title": "u", "evidence": "string"}
     kept = _qualify_and_log([good, bad], label="test-agent")
     assert kept == [good]
@@ -843,7 +846,7 @@ def test_ordinary_finding_not_invariant():
 def test_invariant_with_skill_edit_is_coerced_not_dropped():
     """The rail used to DISCARD an evidence-valid finding over a label the engine's
     own prompt had already asked for. Repair the routing; keep the evidence."""
-    f = {"title": "NEVER post without a yes", "fix_kind": "skill_edit", "evidence": _GOOD_EV}
+    f = {"title": "NEVER post without a yes", "fix_kind": "skill_edit", "placement": "agent", "evidence": _GOOD_EV}
     qualified, dropped = qualify_findings([f])
     assert dropped == []
     assert len(qualified) == 1
@@ -857,7 +860,7 @@ def test_coercion_preserves_the_models_own_recommendation():
     label must not quietly rewrite what the finding actually says to do."""
     f = {"title": "ALWAYS verify the link before sending", "fix_kind": "claude_update",
          "target": "CLAUDE.md", "recommendation": "add a link-verification step",
-         "evidence": _GOOD_EV}
+         "placement": "agent", "evidence": _GOOD_EV}
     qualified, _ = qualify_findings([f])
     assert qualified[0]["recommendation"] == "add a link-verification step"
     assert qualified[0]["target"] == "CLAUDE.md"
@@ -865,7 +868,7 @@ def test_coercion_preserves_the_models_own_recommendation():
 
 def test_schema_target_coerces_to_schema_validator():
     f = {"title": "NEVER accept a finding without evidence", "fix_kind": "skill_edit",
-         "target": "config/findings.schema.json", "evidence": _GOOD_EV}
+         "target": "config/findings.schema.json", "placement": "agent", "evidence": _GOOD_EV}
     qualified, _ = qualify_findings([f])
     assert qualified[0]["fix_kind"] == "schema_validator"
 
@@ -875,7 +878,7 @@ def test_gating_json_target_coerces_to_hook_rule_not_schema_validator():
     .json extension instead of the word 'schema' would misroute the fleet's most
     common invariant target."""
     f = {"title": "NEVER send raw email", "fix_kind": "skill_edit",
-         "target": "config/gating.json", "evidence": _GOOD_EV}
+         "target": "config/gating.json", "placement": "agent", "evidence": _GOOD_EV}
     qualified, _ = qualify_findings([f])
     assert qualified[0]["fix_kind"] == "hook_rule"
 
@@ -883,7 +886,7 @@ def test_gating_json_target_coerces_to_hook_rule_not_schema_validator():
 def test_ordinary_finding_keeps_its_fix_kind_untouched():
     """Only INVARIANT findings are steered. A normal improvement is left alone."""
     f = {"title": "tidy the digest", "fix_kind": "skill_edit",
-         "recommendation": "reorder items", "evidence": _GOOD_EV}
+         "recommendation": "reorder items", "placement": "agent", "evidence": _GOOD_EV}
     qualified, _ = qualify_findings([f])
     assert qualified[0]["fix_kind"] == "skill_edit"
     assert "_fix_kind_coerced" not in qualified[0]
@@ -902,7 +905,7 @@ def test_evidence_gate_is_still_a_hard_drop_even_for_an_invariant():
 
 def test_qualify_and_log_reports_the_coercion(capsys):
     """A silent repair is just a different kind of quiet."""
-    f = {"title": "NEVER post without a yes", "fix_kind": "skill_edit", "evidence": _GOOD_EV}
+    f = {"title": "NEVER post without a yes", "fix_kind": "skill_edit", "placement": "agent", "evidence": _GOOD_EV}
     kept = _qualify_and_log([f], label="test-agent")
     assert len(kept) == 1
     err = capsys.readouterr().err
@@ -910,7 +913,7 @@ def test_qualify_and_log_reports_the_coercion(capsys):
 
 
 def test_invariant_with_hook_rule_is_kept():
-    f = {"title": "NEVER post without a yes", "fix_kind": "hook_rule", "evidence": _GOOD_EV}
+    f = {"title": "NEVER post without a yes", "fix_kind": "hook_rule", "placement": "agent", "evidence": _GOOD_EV}
     qualified, _ = qualify_findings([f])
     assert qualified == [f]
     assert "_fix_kind_coerced" not in f  # already structural — nothing to correct
@@ -921,7 +924,7 @@ def test_invariant_with_hook_rule_is_kept():
 def test_unhashable_confidence_does_not_crash_and_is_dropped():
     """M3 invariant preserved: a list where a level belongs must fail-loud, never
     raise. It is unmappable, so with no finding-level sibling it drops."""
-    f = {"title": "t", "evidence": dict(_GOOD_EV, confidence=["high"])}
+    f = {"title": "t", "placement": "agent", "evidence": dict(_GOOD_EV, confidence=["high"])}
     qualified, dropped = qualify_findings([f])
     assert qualified == []
     assert len(dropped) == 1 and dropped[0]["_drop_reason"]
@@ -931,7 +934,7 @@ def test_invariant_with_unhashable_fix_kind_is_coerced_not_crash():
     """M3 still holds: unhashable LLM output must never crash the qualifier. It now
     lands in the coercion path (a non-str fix_kind is by definition non-structural)
     rather than the drop path, and the original is preserved in the annotation."""
-    f = {"title": "NEVER post without a yes", "fix_kind": ["hook_rule"], "evidence": _GOOD_EV}
+    f = {"title": "NEVER post without a yes", "fix_kind": ["hook_rule"], "placement": "agent", "evidence": _GOOD_EV}
     qualified, dropped = qualify_findings([f])
     assert dropped == []
     assert len(qualified) == 1
@@ -1054,7 +1057,7 @@ from orchestrator.cli import main
 
 
 def _write_qualify_fixture(tmp_path):
-    good = {"title": "good finding", "evidence": _GOOD_EV}
+    good = {"title": "good finding", "placement": "agent", "evidence": _GOOD_EV}
     bad = {"title": "bad finding", "evidence": "just a string"}
     p = tmp_path / "findings.yaml"
     p.write_text(yaml.safe_dump([good, bad]))
@@ -1783,7 +1786,7 @@ import pytest
 
 @pytest.mark.parametrize("level", ["high", "medium", "low"])
 def test_valid_confidence_passes_through_uncoerced(level):
-    f = {"title": "t", "evidence": dict(_GOOD_EV, confidence=level)}
+    f = {"title": "t", "placement": "agent", "evidence": dict(_GOOD_EV, confidence=level)}
     qualified, dropped = qualify_findings([f])
     assert dropped == []
     assert qualified[0]["evidence"]["confidence"] == level
@@ -1798,7 +1801,7 @@ def test_valid_confidence_passes_through_uncoerced(level):
     ("weak", "low"), ("tentative", "low"), ("speculative", "low"),
 ])
 def test_alias_and_case_are_coerced_not_dropped(raw, expected):
-    f = {"title": "t", "evidence": dict(_GOOD_EV, confidence=raw)}
+    f = {"title": "t", "placement": "agent", "evidence": dict(_GOOD_EV, confidence=raw)}
     qualified, dropped = qualify_findings([f])
     assert dropped == []
     assert qualified[0]["evidence"]["confidence"] == expected
@@ -1812,7 +1815,7 @@ def test_alias_and_case_are_coerced_not_dropped(raw, expected):
     ("0.9", "high"), ("85%", "high"), ("40%", "low"),
 ])
 def test_numeric_confidence_is_banded(raw, expected):
-    f = {"title": "t", "evidence": dict(_GOOD_EV, confidence=raw)}
+    f = {"title": "t", "placement": "agent", "evidence": dict(_GOOD_EV, confidence=raw)}
     qualified, dropped = qualify_findings([f])
     assert dropped == [], f"{raw!r} was dropped"
     assert qualified[0]["evidence"]["confidence"] == expected
@@ -1821,7 +1824,7 @@ def test_numeric_confidence_is_banded(raw, expected):
 def test_unmappable_string_bands_down_to_low_never_up():
     """A repair must never INFLATE trust: an unrecognized-but-present label is
     conservative-defaulted to 'low', not to 'high'."""
-    f = {"title": "t", "evidence": dict(_GOOD_EV, confidence="banana")}
+    f = {"title": "t", "placement": "agent", "evidence": dict(_GOOD_EV, confidence="banana")}
     qualified, dropped = qualify_findings([f])
     assert dropped == []
     assert qualified[0]["evidence"]["confidence"] == "low"
@@ -1832,7 +1835,7 @@ def test_missing_nested_confidence_falls_back_to_finding_level():
     """The synthesis prompt asks for `confidence` at BOTH levels; the model routinely
     fills exactly one. Reading the sibling is a repair, not an invention."""
     ev = dict(_GOOD_EV); del ev["confidence"]
-    f = {"title": "t", "confidence": "high", "evidence": ev}
+    f = {"title": "t", "confidence": "high", "placement": "agent", "evidence": ev}
     qualified, dropped = qualify_findings([f])
     assert dropped == []
     assert qualified[0]["evidence"]["confidence"] == "high"
@@ -1843,7 +1846,7 @@ def test_confidence_absent_at_both_levels_is_still_dropped():
     """Genuinely absent is absent — the hard drop survives, and the drop reason now
     names BOTH observed values so a mislabel is distinguishable from an omission."""
     ev = dict(_GOOD_EV); del ev["confidence"]
-    f = {"title": "t", "evidence": ev}
+    f = {"title": "t", "placement": "agent", "evidence": ev}
     qualified, dropped = qualify_findings([f])
     assert qualified == []
     reason = dropped[0]["_drop_reason"]
@@ -1851,7 +1854,7 @@ def test_confidence_absent_at_both_levels_is_still_dropped():
 
 
 def test_empty_confidence_at_both_levels_is_dropped():
-    f = {"title": "t", "confidence": "   ", "evidence": dict(_GOOD_EV, confidence="")}
+    f = {"title": "t", "confidence": "   ", "placement": "agent", "evidence": dict(_GOOD_EV, confidence="")}
     qualified, dropped = qualify_findings([f])
     assert qualified == [] and len(dropped) == 1
 
@@ -1870,7 +1873,7 @@ def test_out_of_range_number_is_not_banded():
 def test_confidence_coercion_is_logged_to_stderr(capsys):
     """A silent repair is just a different kind of quiet — the fix_kind rail logs, so
     this one must too."""
-    f = {"title": "noisy finding", "evidence": dict(_GOOD_EV, confidence="very high")}
+    f = {"title": "noisy finding", "placement": "agent", "evidence": dict(_GOOD_EV, confidence="very high")}
     kept = _qualify_and_log([f], label="ace")
     assert len(kept) == 1
     err = capsys.readouterr().err
@@ -1883,7 +1886,7 @@ def test_five_findings_with_bad_confidence_all_survive():
     raws = ["very high", "VeryHigh", 0.9, "moderate", "Certain"]
     findings = [
         {"title": f"finding {i}", "fix_kind": "skill_edit",
-         "evidence": dict(_GOOD_EV, confidence=r)}
+         "placement": "agent", "evidence": dict(_GOOD_EV, confidence=r)}
         for i, r in enumerate(raws)
     ]
     qualified, dropped = qualify_findings(findings)
@@ -1900,7 +1903,7 @@ def test_both_confidence_fields_are_synced_to_the_resolved_level():
     Nothing normalized the latter, so a repaired finding could still print the raw label
     (or 'banana'). One resolved level, written to both."""
     f = {"title": "t", "confidence": "banana",
-         "evidence": dict(_GOOD_EV, confidence="very high")}
+         "placement": "agent", "evidence": dict(_GOOD_EV, confidence="very high")}
     qualified, dropped = qualify_findings([f])
     assert dropped == []
     assert qualified[0]["evidence"]["confidence"] == "high"
@@ -1909,7 +1912,7 @@ def test_both_confidence_fields_are_synced_to_the_resolved_level():
 
 def test_sibling_fallback_also_normalizes_the_displayed_label():
     ev = dict(_GOOD_EV); del ev["confidence"]
-    f = {"title": "t", "confidence": "VERY HIGH", "evidence": ev}
+    f = {"title": "t", "confidence": "VERY HIGH", "placement": "agent", "evidence": ev}
     qualified, _ = qualify_findings([f])
     assert qualified[0]["confidence"] == "high"
     assert qualified[0]["evidence"]["confidence"] == "high"
@@ -2096,3 +2099,89 @@ def test_unreachable_canopy_web_does_not_break_the_review(monkeypatch):
     r = _invoke_agent_review_text(monkeypatch, _echo_result(), [], raise_web=True)
     assert r.exit_code == 0
     assert "Turns reviewed (last 75h): 0" in r.output
+
+
+# --- Placement rail: every finding says WHERE its fix lives (agent | pack | canopy) ---------
+# Root cause it closes: the prompt used to say `target: the file/path in the agent repo`, so
+# every finding routed into the agent's repo by construction — which is how eva grew a private
+# hooks/gdoc_gate.py (a fleet-generic share gate) out of the 2026-09-07 review.
+
+
+def test_finding_without_placement_is_dropped():
+    f = {"title": "no placement", "evidence": _GOOD_EV, "target": "skills/x/SKILL.md"}
+    kept, dropped = qualify_findings([f])
+    assert kept == []
+    assert len(dropped) == 1 and "placement" in dropped[0]["_drop_reason"]
+
+
+def test_finding_with_invalid_placement_is_dropped():
+    f = {"title": "bad placement", "placement": "everywhere", "evidence": _GOOD_EV}
+    kept, dropped = qualify_findings([f])
+    assert kept == [] and "'everywhere'" in dropped[0]["_drop_reason"]
+
+
+@pytest.mark.parametrize("raw,want", [("canopy", "canopy"), (" Pack ", "pack"), ("AGENT.", "agent")])
+def test_placement_case_and_whitespace_normalized(raw, want):
+    f = {"title": "t", "placement": raw, "evidence": _GOOD_EV, "target": "persona.md"}
+    kept, _ = qualify_findings([f])
+    assert kept[0]["placement"] == want
+
+
+@pytest.mark.parametrize("target", ["hooks/gdoc_gate.py", "bin/eva-share", "eva repo: hooks/x.py"])
+def test_agent_placed_hook_or_bin_without_basis_is_rerouted_to_canopy(target):
+    f = {"title": "Enforce review before share", "placement": "agent", "fix_kind": "hook_rule",
+         "target": target, "evidence": _GOOD_EV}
+    kept, dropped = qualify_findings([f])
+    assert dropped == []
+    assert kept[0]["placement"] == "canopy"
+    assert kept[0]["_placement_coerced"]["from"] == "agent"
+
+
+def test_agent_placed_shared_channel_helper_without_basis_is_rerouted():
+    f = {"title": "Add a gdoc italic-bleed checker", "placement": "agent",
+         "target": "skills/gdoc-review/SKILL.md",
+         "recommendation": "ship a Google Docs export linter", "evidence": _GOOD_EV}
+    kept, _ = qualify_findings([f])
+    assert kept[0]["placement"] == "canopy" and "_placement_coerced" in kept[0]
+
+
+def test_agent_placed_hook_with_persona_basis_stays_agent():
+    f = {"title": "Block replies to Jonathan's family thread", "placement": "agent",
+         "placement_basis": "only eva handles Jonathan's personal calendar counterparts",
+         "target": "hooks/family_guard.py", "evidence": _GOOD_EV}
+    kept, _ = qualify_findings([f])
+    assert kept[0]["placement"] == "agent" and "_placement_coerced" not in kept[0]
+
+
+def test_agent_placed_persona_skill_edit_needs_no_basis():
+    f = {"title": "Tighten the funder voice", "placement": "agent",
+         "target": "skills/concept-notes/SKILL.md", "evidence": _GOOD_EV}
+    kept, _ = qualify_findings([f])
+    assert kept[0]["placement"] == "agent" and "_placement_coerced" not in kept[0]
+
+
+def test_qualify_and_log_reports_placement_reroute(capsys):
+    f = {"title": "share gate", "placement": "agent", "target": "hooks/gdoc_gate.py",
+         "evidence": _GOOD_EV}
+    _qualify_and_log([f], label="eva")
+    assert "re-routed placement" in capsys.readouterr().err
+
+
+def test_prompt_carries_placement_instructions(tmp_path: Path):
+    prompt = build_review_prompt(tmp_path, corpus=[])
+    assert "placement:" in prompt and "placement_basis" in prompt
+    for p in ("agent", "pack", "canopy"):
+        assert p in prompt
+    # target is an agent path ONLY for placement=agent, and the gdoc_gate example is the anchor
+    assert "ONLY when placement=agent" in prompt
+    assert "gdoc_gate" in prompt
+    assert "defaults to placement=canopy" in prompt
+    # the old by-construction routing sentence is gone
+    assert "target: the file/path in the agent repo the fix touches" not in prompt
+
+
+def test_placement_rail_opt_out_keeps_unplaced_findings():
+    # harvest's intent audit grades a session; its findings are not fixes to route.
+    f = {"title": "intent miss", "evidence": _GOOD_EV}
+    kept, dropped = qualify_findings([f], require_placement=False)
+    assert dropped == [] and kept[0]["title"] == "intent miss" and "placement" not in kept[0]
