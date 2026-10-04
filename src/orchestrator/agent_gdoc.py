@@ -44,7 +44,9 @@ no Docs list structures at all:
 | bullet list    | real `<ul>`          | a `•` glyph inside a paragraph    |
 | inline `code`  | `<code>`             | formatting dropped                |
 | two paragraphs | two paragraphs       | merged with a soft line break     |
-| headings/tables/bold | correct        | correct                           |
+| headings/bold  | correct              | correct                           |
+| pipe tables    | real `<table>` (since 2026-10-04; literal `|` text before) | correct |
+| `**bold**` wrapped across a line | correct | literal `**` — so replace unwraps first |
 
 gog exposes only `--format plain|markdown` (no HTML), so we cannot route the replace
 through our good renderer, and a Drive media overwrite is forbidden on native Docs — the
@@ -202,6 +204,14 @@ def _inline(t: str) -> str:
     return t
 
 
+_TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
+_TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
+
+
+def _table_cells(row: str) -> list[str]:
+    return [c.strip() for c in row.strip().strip("|").split("|")]
+
+
 def md_to_html(md: str) -> str:
     out: list[str] = []
     i = 0
@@ -246,6 +256,23 @@ def md_to_html(md: str) -> str:
             # here so the whole fleet gets it — see issue #451.
             out.append("<p>—&nbsp;&nbsp;—&nbsp;&nbsp;—</p>")
             i += 1
+            continue
+        if _TABLE_ROW.match(ln) and i + 1 < len(lines) and _TABLE_SEP.match(lines[i + 1]):
+            # A GFM pipe table. Drive's HTML import renders <table> as a real Doc table;
+            # before this the rows fell through to paragraph text and shipped as literal
+            # `| a | b | |---|` — the single most common converter leak across the fleet
+            # (eva + echo each documented "never write a table" as a standing rule).
+            flush_p(para)
+            head = _table_cells(ln)
+            i += 2
+            rows: list[list[str]] = []
+            while i < len(lines) and _TABLE_ROW.match(lines[i]):
+                rows.append(_table_cells(lines[i]))
+                i += 1
+            out.append("<table><tr>" + "".join(f"<th>{_inline(c)}</th>" for c in head) + "</tr>"
+                       + "".join("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in r) + "</tr>"
+                                 for r in rows)
+                       + "</table>")
             continue
         if re.match(r"^>\s?", ln):
             flush_p(para)
@@ -318,6 +345,35 @@ def build_upload_command(identity: GdocIdentity, *, html_path: str, name: str | 
     if parent:
         cmd += ["--parent", parent]
     return cmd
+
+
+def unwrap_markdown(md: str) -> str:
+    """Join soft-wrapped lines so every paragraph and list item sits on ONE line.
+
+    For the replace path only. gog's `find-replace --format markdown` matches inline
+    markup within a line, so a `**bold span**` that a text editor wrapped across two
+    source lines ships with both `**` visible — and it turns the continuation of a list
+    item into a separate paragraph. Authors wrap at ~90 columns by habit, so this was a
+    recurring leak that a careful read of the markup could not catch (eva, 2026-09-14).
+    Our own create-path renderer already joins wrapped lines, so this makes the two paths
+    agree. Fenced code, headings, tables, blockquotes and rules are left untouched."""
+    out: list[str] = []
+    in_fence = False
+    block = re.compile(r"^\s*(#{1,6}\s|>|\||(-{3,}|\*{3,}|_{3,})\s*$)")
+    item = re.compile(r"^\s*([-*+]|\d+\.)\s+")
+    for ln in md.split("\n"):
+        if ln.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append(ln)
+            continue
+        joinable = (not in_fence and ln.strip() and out and out[-1].strip()
+                    and not block.match(ln) and not item.match(ln)
+                    and not block.match(out[-1]) and not out[-1].lstrip().startswith("```"))
+        if joinable:
+            out[-1] = out[-1].rstrip() + " " + ln.strip()
+        else:
+            out.append(ln)
+    return "\n".join(out)
 
 
 def build_replace_commands(identity: GdocIdentity, *, doc_id: str, md_path: str,
@@ -435,6 +491,17 @@ def replace_degradations(source_md: str, exported_md: str) -> list[str]:
             f"source has {src_items} list item(s) but the published Doc has none — "
             "the list structure was lost in conversion"
         )
+
+    # Literal markup. Drive's markdown export ESCAPES markup characters that are plain
+    # text in the Doc, so a `**` the converter failed to turn into bold comes back as
+    # `\*\*`, and a pipe-table row that stayed a paragraph as `\|`. Count beyond what
+    # the source itself escaped, so a deliberately escaped asterisk is not a finding.
+    for token, what in (("\\*\\*", "bold markup (`**`) shipped as literal asterisks — "
+                                     "usually a bold span the converter could not close"),
+                        ("\\|", "table markup (`|`) shipped as literal pipe text — the "
+                                 "table was not converted")):
+        if exp.count(token) > src.count(token):
+            findings.append(what)
 
     # Hyperlinks (#568). Compare URL sets, not counts: the export legitimately gains links
     # (Drive auto-links a bare URL), so only a source URL MISSING from the export is a loss.
@@ -738,29 +805,51 @@ def publish(identity: GdocIdentity, *, name: str | None, parent: str | None, md_
 
     # ---- Replace: in-place Docs-API edit (native-Doc safe, keeps id/link/permissions) ----
     if replace:
-        replace_cmds = build_replace_commands(identity, doc_id=replace, md_path=md_path,
-                                              name=name)
-        url = f"https://docs.google.com/document/d/{replace}/edit"
-        if dry_run:
-            return {"dry_run": True, "account": identity.account, "client": identity.client,
-                    "replace": replace, "name": name, "url": url, "share": "preserved",
-                    "replace_cmds": replace_cmds}
-        for c in replace_cmds:
-            r = _run_gog(c, runner)
-            if r.returncode != 0:
-                raise AgentGdocError(
-                    f"gog {c[1]} {c[2]} failed (exit {r.returncode}) as {identity.account}: "
-                    f"{(r.stderr or r.stdout or '').strip()[:400]}"
-                )
-        # Read the doc back and confirm it actually renders what we published. gog's
-        # markdown find-replace silently flattens lists (see module docstring), so this
-        # path used to hand out "verified": true for a body it had never looked at.
-        degraded = verify_published_render(identity, replace, md_path=md_path, runner=runner)
-        # Replace preserves the doc's existing sharing — never re-share (posture would drift).
-        return {"id": replace, "url": url, "raw": "", "replaced": True,
-                "shared": "preserved", "verified": not degraded, "degraded": degraded}
+        # gog's converter needs every paragraph on one line — see unwrap_markdown.
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
+                                         encoding="utf-8") as tf:
+            tf.write(unwrap_markdown(Path(md_path).read_text(encoding="utf-8")))
+            unwrapped_path = tf.name
+        try:
+            return _publish_replace(identity, replace=replace, name=name, md_path=md_path,
+                                    content_path=unwrapped_path, dry_run=dry_run,
+                                    runner=runner)
+        finally:
+            os.unlink(unwrapped_path)
 
     # ---- Create: convert HTML→Doc into `parent`, share, verify ----
+    return _publish_create(identity, name=name, parent=parent, md_path=md_path, share=share,
+                           share_email=share_email, dry_run=dry_run, runner=runner)
+
+
+def _publish_replace(identity: GdocIdentity, *, replace: str, name: str | None, md_path: str,
+                     content_path: str, dry_run: bool, runner) -> dict:
+    replace_cmds = build_replace_commands(identity, doc_id=replace, md_path=content_path,
+                                          name=name)
+    url = f"https://docs.google.com/document/d/{replace}/edit"
+    if dry_run:
+        return {"dry_run": True, "account": identity.account, "client": identity.client,
+                "replace": replace, "name": name, "url": url, "share": "preserved",
+                "replace_cmds": replace_cmds}
+    for c in replace_cmds:
+        r = _run_gog(c, runner)
+        if r.returncode != 0:
+            raise AgentGdocError(
+                f"gog {c[1]} {c[2]} failed (exit {r.returncode}) as {identity.account}: "
+                f"{(r.stderr or r.stdout or '').strip()[:400]}"
+            )
+    # Read the doc back and confirm it actually renders what we published. gog's
+    # markdown find-replace silently flattens lists (see module docstring), so this
+    # path used to hand out "verified": true for a body it had never looked at.
+    degraded = verify_published_render(identity, replace, md_path=md_path, runner=runner)
+    # Replace preserves the doc's existing sharing — never re-share (posture would drift).
+    return {"id": replace, "url": url, "raw": "", "replaced": True,
+            "shared": "preserved", "verified": not degraded, "degraded": degraded}
+
+
+def _publish_create(identity: GdocIdentity, *, name: str | None, parent: str | None,
+                    md_path: str, share: str, share_email: str | None, dry_run: bool,
+                    runner) -> dict:
     body_html = md_to_html(Path(md_path).read_text(encoding="utf-8"))
     with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as tf:
         tf.write(body_html)
@@ -993,6 +1082,24 @@ def _report_reuse(identity: GdocIdentity, trace: list, parent: str | None, *,
     )
 
 
+def _review_after_write(ident: GdocIdentity, doc_id: str, **expect) -> dict:
+    """Record that the agent wrote DOC_ID, then review it (gdoc_review.py).
+
+    Both markers land here, in order, so a clean review clears the fleet Stop hook
+    (agent-core/gdoc_gate.py) without the agent having to remember a second command."""
+    from orchestrator import gdoc_review
+    gdoc_review.mark(gdoc_review.agent_home(ident.slug), "published", doc_id)
+    review = gdoc_review.review_doc(slug=ident.slug, account=ident.account,
+                                    client=ident.client, doc_id=doc_id, repo=ident.repo,
+                                    **expect)
+    if review.get("error"):
+        sys.stderr.write(f"note: the doc was written but NOT reviewed ({review['error']}). "
+                         f"Run `canopy gdoc check {doc_id}` before sharing the link.\n")
+    for w in review.get("warns", []):
+        sys.stderr.write(f"note: {w}\n")
+    return review
+
+
 @click.group("gdoc")
 def gdoc_group():
     """Author Google Docs as the agent — shared engine, per-agent identity
@@ -1039,6 +1146,10 @@ def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, a
         _report_reuse(ident, trace, parent, dry_run=dry_run)
     except AgentGdocError as e:
         raise click.ClickException(str(e))
+    if not dry_run and result.get("id"):
+        review = _review_after_write(ident, result["id"])
+        result["review"] = review
+        result["degraded"] = (result.get("degraded") or []) + review.get("fails", [])
     click.echo(json.dumps(result, indent=2))
     if dry_run:
         return
@@ -1091,10 +1202,47 @@ def gdoc_email_blocks(repo, agent, account, client, doc_id, blocks_file):
         result = insert_email_blocks(GogDocs(ident.account, ident.client), doc_id, blocks)
     except (AgentGdocError, EmailBlockError, json.JSONDecodeError) as e:
         raise click.ClickException(str(e))
+    review = _review_after_write(ident, doc_id)
+    result["review"] = review
     click.echo(json.dumps(result, indent=2))
     if result["unusedAnchors"]:
         sys.stderr.write("WARNING: anchors left in the doc with no block: "
                          + ", ".join(result["unusedAnchors"]) + "\n")
+    if review.get("fails"):
+        sys.stderr.write("WARNING: the blocks went in, but the doc fails review — do NOT "
+                         "hand out this link yet:\n"
+                         + "".join(f"  - {f}\n" for f in review["fails"]))
+        sys.exit(1)
+
+
+@gdoc_group.command("check")
+@_with_identity_options
+@click.argument("doc_id")
+@click.option("--font", help="Expected body font (default: agent.json gdoc_style.font).")
+@click.option("--body-size", help="Expected body size in pt (default: gdoc_style.body_size).")
+@click.option("--expect-blocks", type=int, help="Exact number of email-block tables.")
+@click.option("--expect-links", type=int,
+              help="Minimum hyperlinks — COUNT from the source, never guess.")
+def gdoc_check(repo, agent, account, client, doc_id, font, body_size, expect_blocks,
+               expect_links):
+    """Visually QA a Google Doc the agent wrote, before its link is shared.
+
+    Reads the HTML export (the rendered view) and fails on an empty body, italic bleed,
+    leaked markdown, dropped links or email blocks; warns on off-style fonts and sizes.
+    A PASS writes the receipt the fleet Stop hook (agent-core/gdoc_gate.py) looks for.
+    `publish` and `email-blocks` already run this — use it after any other kind of edit.
+    Exit 0 = pass, 1 = fail, 2 = could not export."""
+    from orchestrator import gdoc_review
+    try:
+        ident = _gdoc_identity_from_opts(repo, agent, account, client)
+    except AgentGdocError as e:
+        raise click.ClickException(str(e))
+    result = gdoc_review.review_doc(slug=ident.slug, account=ident.account,
+                                    client=ident.client, doc_id=doc_id, repo=ident.repo,
+                                    font=font, body_size=body_size,
+                                    expect_blocks=expect_blocks, expect_links=expect_links)
+    click.echo(gdoc_review.format_report(doc_id, result))
+    sys.exit(2 if result["passed"] is None else (0 if result["passed"] else 1))
 
 
 # --------------------------------------------------------------------------------------

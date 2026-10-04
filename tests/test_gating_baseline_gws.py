@@ -180,5 +180,8 @@ def test_every_rail_names_the_right_path_not_just_the_wrong_one():
     for r in RAILS:
         msg = r["message"]
         assert "BLOCKED" in msg
+        if "dry run" in msg:      # the gog-docs edit-safety rail: its right path is not filing
+            assert "documents.batchUpdate" in msg
+            continue
         assert "--parent" in msg or "--project" in msg, msg
         assert "deliverables.md" in msg, msg

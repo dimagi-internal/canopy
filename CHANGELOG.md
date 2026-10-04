@@ -9,6 +9,32 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.561] - 2026-10-04
+### Added
+- **`canopy gdoc check` + the fleet gdoc Stop rail (`agent-core/gdoc_gate.py`)**, promoted
+  from eva. The check reads a Doc's HTML export and fails on an emptied body, italic bleed,
+  leaked markdown and dropped links/blocks. `publish` and `email-blocks` now run it after
+  every write and fail (`degraded`, exit 1) on a defect; a pass writes the receipt the Stop
+  rail requires before a turn may end on a link to a doc the agent wrote. Agents wire the
+  rail with a thin loader, like `decide_guard.py` (see `deliverables.md`).
+- **`gog docs --dry-run` deny rail moved to the fleet `gws` baseline** (from eva's local
+  config): on gog v0.12.0 the flag performs the write, so dry-run-then-run applies twice.
+  Its message now points at a Docs API batch sent AS the agent (`gog api call docs v1
+  documents.batchUpdate`) rather than a shared service account.
+- **`deliverables.md`: "Editing a doc that already exists — what breaks" and "Sharing with
+  people outside the agent's domain"** — the `--replace` failure modes eva and echo each
+  rediscovered, the raw-`gog docs` habits, wrong-identity permission errors, and the
+  `@dimagi-ai.com` → `@dimagi.com` dead-link rule, written once for the fleet.
+### Fixed
+- **Pipe tables render on the create path.** `md_to_html` had no table support, so every
+  GFM table shipped as literal `| a | b | |---|` (measured 2026-10-04); eva and echo had each
+  written "never use a table" into their own skills to work around it.
+- **`--replace` no longer leaks a `**bold**` span wrapped across a source line.** gog's
+  markdown converter matches within a line; the engine now unwraps paragraphs and list items
+  before handing them over.
+- **The render check now sees leaked markup**: escaped `\*\*` / `\|` in the export beyond the
+  source's own count is reported as degraded (it returned `[]` for a doc full of `**`).
+
 ## [0.2.559] - 2026-10-04
 ### Added
 - **A DDD run now optimizes either the PRODUCT or the DEMO (`loop.objective`).**

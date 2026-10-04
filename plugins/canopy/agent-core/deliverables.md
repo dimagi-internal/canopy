@@ -166,6 +166,110 @@ have been pure friction while there was no sanctioned way to publish a spreadshe
 which is why `canopy gsheet` shipped in the same change as the rail that forbids the
 alternative. If you add a rail, make sure the path it names actually exists.
 
+## Review before you share the link — `canopy gdoc check`
+
+"It published" is not "it looks right". `canopy gdoc publish` and `canopy gdoc email-blocks`
+now **review the doc themselves** after writing it: they read its HTML export (the rendered
+view) and fail on an emptied body, italic bleed, leaked markdown (`**`, `|---|`, `&amp;`), or
+dropped links, and they warn on off-style fonts and sizes. A failure lands in `degraded` and the
+command exits non-zero — **do not hand out that link**.
+
+After any OTHER kind of edit (raw `gog docs` verbs, a Docs API batch, an MCP `docs_*` write),
+review it yourself before sharing:
+
+```bash
+uv run --project "$CANOPY_ROOT" canopy gdoc check <docId> [--expect-links N] [--expect-blocks N]
+```
+
+- **Count `--expect-links` from your source** (`grep -oE '\]\(https?://' src.md | wc -l`); a
+  guessed number fails a good doc and teaches you to drop the flag.
+- **House style** (font / body size) comes from `config/agent.json`
+  `"gdoc_style": {"font": "Arial", "body_size": 11}`; without it those checks are skipped.
+- Tables are fine now: the create path renders GFM pipe tables as real Doc tables (2026-10-04),
+  and `--replace` unwraps soft-wrapped lines before gog converts them, so a `**bold**` span
+  that your editor wrapped across two lines no longer ships its asterisks.
+
+**It is enforced on the Stop event, not just written here.** A pass writes a receipt to
+`$CANOPY_AGENT_HOME/gdoc-gate/passed/<docId>`, and `agent-core/gdoc_gate.py` refuses to let a
+turn end on a link to a doc you wrote and have not reviewed since your last write (at most once
+per write; a link you only READ never trips it). Wire it with a thin loader, exactly like
+`decide_guard.py`:
+
+```json
+"PostToolUse": [{"matcher": "Bash|^mcp__", "hooks": [{"type": "command",
+  "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/gdoc_gate.py\" record"}]}],
+"Stop": [{"hooks": [{"type": "command",
+  "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/gdoc_gate.py\" check"}]}]
+```
+
+Origin: eva, 2026-08-28 — three docs published, three links handed over, the checker run zero
+times with the rule in context. Promoted from eva to the fleet 2026-10-04.
+
+## Editing a doc that already exists — what breaks
+
+Every rule here cost a real deliverable somewhere in the fleet (mostly eva and echo, which
+each rediscovered the same `--replace` failures independently). `canopy gdoc check` now
+catches most of the damage after the fact; these keep you from causing it.
+
+**`publish --replace`** (same id, same link) runs through gog's markdown converter, not ours:
+- **It can empty the doc.** It clears the body and then injects; gog's find-replace has a hard
+  ~120s limit, and a timeout in between leaves only `__CANOPY_GDOC_BODY_SENTINEL__`. The old
+  version is gone and a retry fails the same way. Keep the source markdown, and fall back to a
+  fresh publish (rename the wreck `ZZ SUPERSEDED …`).
+- **Never `--replace` a doc whose link is already out.** If it fails, you have handed someone
+  a live link to a broken or empty doc. Publish fresh and send the new link.
+- **It reuses the old doc's run styling**, which is how one italic line became an all-italic doc.
+- **It can flatten lists and wipe headings** (echo, 2026-08-13: all 11 headings gone, every
+  paragraph a bullet; eva, 2026-08-17: every list flattened). The engine reports this in
+  `degraded` — believe it. For list-heavy docs, publish fresh.
+- **It wipes email blocks.** Insert blocks last; to change one, republish and re-insert.
+- A fresh publish has a new id, so **re-grant any per-person shares** the old doc had.
+
+**Raw `gog docs` edits:**
+- **No `--dry-run`.** On gog v0.12.0 the flag performed the write, so a dry-run-then-run pair
+  applied it twice. It is a fleet deny rail (gws channel).
+- **Capture before you edit** (`gog docs cat <id> > "$WD/before.txt"`), take indices from
+  `gog docs structure <id> --json`, write **once**, then re-read and `canopy gdoc check`.
+- **Scratch files go in `WD=$(mktemp -d)`, never a fixed `/tmp/<name>`.** Agents share `/tmp`;
+  a fixed path can silently hand you a sibling session's structure dump for the same doc, and a
+  stale index writes to the wrong offset in a live doc (eva, 2026-09-09).
+- **`find-replace` drops hyperlinks** on the text it rewrites. Check the span afterwards and
+  re-link with `gog docs format <id> --match "<unique phrase>" --link <url>` (`--match` styles
+  only the first hit, so make the phrase unique).
+- **For anything multi-step or index-based, send ONE Docs API batch as yourself** — it runs
+  exactly once and is atomic:
+  `gog api call docs v1 documents.batchUpdate --params '{"documentId":"<id>"}' --body
+  '{"requests":[…]}' --allow-write --force -a <acct> --client <client> --json`.
+- **`gog docs export` writes a FILE and prints its path** — it does not stream the doc. Read the
+  file you named with `--out`; grepping the command's stdout reads metadata and "finds" zero
+  headings in a perfectly good doc.
+- **A version that lacks a verb is usually just old.** Check `gog --version` and
+  `gog docs --help` before designing around a gap (eva ran gog 0.12 against an upstream 0.38).
+
+**"Permission denied" from a service-account Drive MCP means the wrong identity, not missing
+access.** gog runs as you; a gdrive MCP (chrome-sales, ace-gdrive) runs as a shared service
+account that starts with access to nothing. Do not share a doc with the service account to get
+past the error — on 2026-08-28 that put a writer grant on an externally-shared funder doc to
+change four margins that `gog docs page-layout` could do as the agent. Use gog.
+
+## Sharing with people outside the agent's domain
+
+Agent mailboxes are on `@dimagi-ai.com`; the team is on `@dimagi.com`. `--share domain` shares
+with the AGENT's domain, so to a `@dimagi.com` reader the link is dead until you share with
+them by address:
+
+```bash
+gog drive share <id> --to user --email "<person>" --role writer -a <acct> --client <client>
+gog drive permissions <id> -a <acct> --client <client>    # confirm it landed
+```
+
+- **Groups** (e.g. a team list) work as a share target, and they do NOT inherit folder access,
+  so add them to the doc explicitly.
+- **Resolve the address from your roster/records, never type it from memory**, and assert it is
+  non-empty before you use it.
+- Sharing with **the person who asked** is part of delivery. Wider or link-anyone sharing, and
+  **sending the link to anyone**, is outbound and follows your agent's approval gate.
+
 ## What each agent's `gdoc-writer` stub declares
 
 - **Your Drive root** — the id of your own agent folder. It is **environment-specific, so it lives
