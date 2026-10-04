@@ -231,3 +231,14 @@ def test_canopy_web_without_run_documents_falls_back_to_a_local_run(web, monkeyp
 def test_local_mode_under_pytest_by_default(monkeypatch, tmp_path):
     monkeypatch.delenv("CANOPY_DDD_STORE", raising=False)
     assert run_store.mode(tmp_path)[0] == "local"
+
+
+def test_holder_is_the_process_account_not_logname(monkeypatch):
+    """emdash sets LOGNAME=root, which made every account on a machine one
+    "runner" — and push() forces a same-runner 409."""
+    import os
+    import pwd
+
+    monkeypatch.setenv("LOGNAME", "root")
+    monkeypatch.setenv("USER", "root")
+    assert run_store.holder().split("@")[0] == pwd.getpwuid(os.getuid()).pw_name
