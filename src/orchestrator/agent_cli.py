@@ -1299,8 +1299,10 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
               help="The single concrete next step, verb-first. Max 300 chars — over-length "
                    "is REJECTED, never truncated.")
 @click.option("--idempotency-key", default=None,
-              help="Override the derived (agent, title, day[, runner]) key — pass a fresh "
-                   "one to deliberately re-dispatch the same work.")
+              help="Override the derived key — (agent, title, day[, runner][, mode]), or "
+                   "with no --title a hash of the whole prompt in the title's place, so a "
+                   "different prompt is a different dispatch and an identical retry dedupes. "
+                   "Pass a fresh key to deliberately re-dispatch the same work.")
 @click.option("--runner", "runner_ref", default="",
               help="Pin the turn to ONE runner, by name (e.g. jj-mbp-cdp) or id — for work "
                    "only that box can do. Only it may claim the turn. Refused if the runner "
@@ -1393,8 +1395,8 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
 
     day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
     key = idempotency_key or derive_idempotency_key(
-        slug, title or prompt[:80], day, runner_id=str(pinned["id"]) if pinned else "",
-        mode=turn_mode or "")
+        slug, title, day, runner_id=str(pinned["id"]) if pinned else "",
+        mode=turn_mode or "", prompt=prompt)
 
     try:
         client = _client(slug)

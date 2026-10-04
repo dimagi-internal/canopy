@@ -77,9 +77,12 @@ def project():
               help="Read the brief from a file (for briefs too long to quote on a shell line).")
 @click.option("--title", default="",
               help="Short label for the work — only feeds the idempotency key "
-                   "(there is no project board to title). Defaults to the prompt's head.")
+                   "(there is no project board to title). Without one, a hash of the "
+                   "whole prompt keys the dispatch.")
 @click.option("--idempotency-key", default=None,
-              help="Override the derived (project, title, day) key — pass a fresh one "
+              help="Override the derived (project, title, day) key — with no --title, a "
+                   "hash of the whole prompt in the title's place, so a different prompt is "
+                   "a different dispatch and an identical retry dedupes. Pass a fresh one "
                    "to deliberately re-dispatch the same work.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
@@ -158,7 +161,7 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
 
         day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
         key = idempotency_key or derive_project_idempotency_key(
-            project_name, title or prompt[:80], day)
+            project_name, title, day, prompt=prompt)
         payload = build_project_turn_payload(project_name, prompt=prompt,
                                              idempotency_key=key)
         turn = canopy_web.call("POST", project_turns_path(ws), payload)
