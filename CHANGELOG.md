@@ -9,6 +9,16 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.572] - 2026-10-04
+### Fixed
+- **DDD progress compares open findings only between passes judged the same way.**
+  Between checkpoints only the concept judge runs, so a full pass (concept + user + arc
+  + product lens) reports more findings than an inner one. Comparing the two counts
+  manufactured progress (a cheap pass with fewer findings) or a decline (the next full
+  pass). Each progress point now records its `judges`; `open_findings` is compared only
+  among points with the same set (legacy points compare as before). On the first live
+  product-objective run the full checkpoints still read 9 -> 11, so that stall was real.
+
 ## [0.2.571] - 2026-10-04
 ### Added
 - **`python -m scripts.ddd.iteration render|publish` — one command per iteration step.**

@@ -132,14 +132,31 @@ def trickle_band(best: float) -> int:
     return int(TRICKLE_FRACTION * max(float(best), 0.0))
 
 
+#: Signals whose value depends on WHICH judges ran. Between checkpoints only the
+#: concept judge runs (judge tiering), so a full pass reports findings from four
+#: judges and an inner pass from one: on the first live product-objective run the
+#: count read 9 -> 8 -> 7 -> 11, and the 7 -> 11 was a different instrument, not a
+#: regression. Such a signal is compared only between points judged the same way.
+JUDGE_SENSITIVE = frozenset({"open_findings"})
+
+
+def _comparable(a: dict, b: dict) -> bool:
+    """Same judge set (points recorded before ``judges`` existed compare as before)."""
+    if "judges" not in a or "judges" not in b:
+        return True
+    return sorted(a["judges"] or []) == sorted(b["judges"] or [])
+
+
 def improved_signals(before: list[dict], point: dict) -> list[str]:
-    """Signals on which ``point`` beats the best of ``before``."""
+    """Signals on which ``point`` beats the best of ``before`` (judge-sensitive
+    signals: the best of the points judged the same way, if any)."""
     out: list[str] = []
     for signal in SIGNALS:
         value = point.get(signal)
         if value is None:
             continue
-        prior = [p.get(signal) for p in before if p.get(signal) is not None]
+        pool = [p for p in before if _comparable(p, point)] if signal in JUDGE_SENSITIVE else before
+        prior = [p.get(signal) for p in pool if p.get(signal) is not None]
         if not prior:
             continue
         best = min(prior) if signal in _LOWER_IS_BETTER else max(prior)
@@ -176,6 +193,8 @@ def declined_signals(before: dict, point: dict) -> list[str]:
     for signal in DECLINE_SIGNALS:
         a, b = before.get(signal), point.get(signal)
         if a is None or b is None:
+            continue
+        if signal in JUDGE_SENSITIVE and not _comparable(before, point):
             continue
         a, b = float(a), float(b)
         if signal == "score":
