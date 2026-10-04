@@ -38,6 +38,18 @@ touch either).
 **If the read fails** (canopy-web unreachable, no PAT), run **manual** — fail safe — and name the
 fallback in your opening and closeout.
 
+**A dispatch can choose the mode (and the box) for ONE turn.** `canopy agent dispatch --slug <agent>
+--mode auto|manual [--runner <name|id>]` asks canopy-web to run that turn in that mode — the top
+rung, above every routing rule and the agent-wide switch, and kept if the lease is lost and the
+turn re-claimed. The basis then reads `dispatch by <email> (<owner|admin|member>)`; run it like
+any other basis. **Who may:** `manual` — anyone who may dispatch to the agent (lowering autonomy
+is always safe). `auto` — only the target agent's **owner or an admin** (workspace owners count),
+human or agent login, on a signed-in session or their own PAT; anyone else gets a 403, and an
+admin revoked while the turn sits queued gets manual (`auto withheld`). Not available on a
+project (repo) turn or an email turn. `--runner` pins the turn so only that box may claim it
+(refused up front if the box is unknown, retired, or does not serve the agent). Prefer this over
+standing per-person routing rules when the choice is about one piece of work, not a channel.
+
 - **`manual`** (the default, and the factory default for new agents): every outbound action —
   send, reply, public write, share — is drafted and **presented to the human for approval**
   before it happens. This is the mode the rest of this doc assumes wherever it says "present for
