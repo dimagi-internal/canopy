@@ -193,7 +193,7 @@ class AgentEmailError(Exception):
 class EmailIdentity:
     slug: str        # agent slug, e.g. "hal"
     account: str     # mailbox, e.g. hal@dimagi-ai.com
-    client: str      # gog client name (credentials-<client>.json), usually == slug
+    client: str      # gog client name (credentials-<client>.json): `canopy` or `canopy-web`
     repo: Path | None = None  # agent repo root — lets preflight read config/secrets.yaml
 
 
@@ -210,6 +210,31 @@ FLEET_CLIENTS: tuple[str, ...] = ("canopy", "canopy-web")
 #: What an agent that declares no `gog_client` uses. Not its slug: a client named
 #: after the agent exists for nobody, and the factory already stamps `canopy`.
 DEFAULT_CLIENT = FLEET_CLIENTS[0]
+
+
+def is_fleet_client(client: str) -> bool:
+    """Is `client` one of the fleet's interchangeable OAuth clients?"""
+    return (client or "").strip() in FLEET_CLIENTS
+
+
+def login_command(account: str, client: str, services: str = "") -> str:
+    """The terminal re-login for a mailbox — always under the DESKTOP fleet client.
+
+    `canopy-web` is a Web client: Google lets it run only the browser redirect that
+    canopy-web's "Connect Google mailbox" button drives, not gog's loopback login. So a
+    remedy for a mailbox resolved to `canopy-web` must still say `--client canopy` (a token
+    under either serves turns); only a non-fleet client is named as itself."""
+    login_client = DEFAULT_CLIENT if is_fleet_client(client) else client
+    return (f"gog login {account} --client {login_client} "
+            f"--services {services or LOGIN_SERVICES}")
+
+
+def button_remedy(slug: str) -> str:
+    """The browser alternative to a terminal `gog login` — an equal path since 2026-10-04."""
+    return (f"or, from a browser: canopy-web /w/<ws>/agents/{slug}/settings#credentials → "
+            f"\"Connect Google mailbox\" (mints under `canopy-web`; either fleet client serves "
+            f"turns), then `canopy agent bootstrap --slug {slug}` on a laptop / Refresh on a "
+            f"cloud runner")
 
 
 @dataclass
@@ -1091,12 +1116,12 @@ def _provision_remedy(identity: EmailIdentity, creds: str) -> list[str] | None:
             f"     ({str(e).splitlines()[0][:140] if str(e) else 'op read failed'})",
         ]
     # The item resolves — it just hasn't been written to this machine.
-    login_cmd = (f"gog login {identity.account} --client {identity.client} "
-                 f"--services {LOGIN_SERVICES}")
+    login_cmd = login_command(identity.account, identity.client)
     return [
         f"FIX: the `{identity.client}` gog client is in 1Password but not on this machine.",
         f"     Materialize it: {prov_cmd}",
         f"     Then consent {identity.slug}'s mailbox into it once (interactive): {login_cmd}",
+        f"     ({button_remedy(identity.slug)})",
     ]
 
 
@@ -1975,8 +2000,7 @@ def preflight(
     keyring = session_keyring_problems(identity.slug, gog_dir=gog_home)
     if keyring:
         return False, keyring
-    login_cmd = (f"gog login {identity.account} --client {identity.client} "
-                 f"--services {LOGIN_SERVICES}")
+    login_cmd = login_command(identity.account, identity.client)
     creds = os.path.join(gog_home, f"credentials-{identity.client}.json")
     if not gog_client_credentials(gog_home, identity.client):
         remedy = _provision_remedy(identity, creds)
@@ -2022,6 +2046,7 @@ def preflight(
         return False, [
             f"FIX: gog `{identity.client}` creds present but not logged in / token bad.",
             f"     Run: {login_cmd}",
+            f"     {button_remedy(identity.slug)}",
             f"     ({first_err[0] if first_err else 'no token'})",
         ]
     return True, [f"OK: gog Gmail ready (account {identity.account}, client {identity.client})."]

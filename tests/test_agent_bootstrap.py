@@ -138,7 +138,22 @@ def test_client_is_taken_from_token_not_agent_json(tmp_path):
     cfg = json.loads((tmp_path / "gog" / "config.json").read_text())
     assert cfg["account_clients"]["ace@dimagi-ai.com"] == "canopy-web"
     assert b.verified == [("ace@dimagi-ai.com", "canopy-web")]
-    # ...and the turn-client mismatch is reported loudly, not remapped.
+    # ...and a `canopy-web` token serves a `canopy` declaration: one app, two doors
+    # (FLEET_CLIENTS). This was a MISMATCH failure until 2026-10-04, which failed every
+    # mailbox signed in through canopy-web's "Connect Google mailbox" button.
+    assert rep.turn == "OK (canopy-web; declared canopy)"
+    assert not any("TURN-CLIENT MISMATCH" in n for n in rep.notes)
+
+
+def test_a_non_fleet_turn_client_mismatch_is_still_loud(tmp_path):
+    # A token under a non-fleet client (a legacy per-agent app) does NOT serve a fleet
+    # declaration — that is the 2026-09-08 shape, and it must stay a failure.
+    repo = _repo(tmp_path, gog_client="canopy")
+    runner = FakeRunner(op={
+        "op://Agent-Ace/gog-oauth-client/credential": '{"installed":{}}',
+    })
+    b = _boot(tmp_path, runner, web={"ace": _tok(client="ace")}, installed=("ace",))
+    rep = b.bootstrap_one("ace", repo)
     assert rep.turn.startswith("MISMATCH") and not rep.ok
     assert any("TURN-CLIENT MISMATCH" in n for n in rep.notes)
 

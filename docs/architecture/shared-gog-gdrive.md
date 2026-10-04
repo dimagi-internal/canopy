@@ -18,7 +18,7 @@ Every proven piece already exists — in three different repos:
 | Raw-send deny rail | echo `block_raw_gog_send.py` → hal's generalized `hooks/gating_guard.py` → ACE's copy (+ `tool_pattern` for MCP atom names) | Three near-identical copies |
 | Inbound routing contract (send records `thread_id` → inbound triage routes the reply to the right state scope) | ACE (comms-log per run) · echo (contact-memory per sender) | Same shape, agent-specific routing map |
 | Counterpart tiers (act / correspond / none) | ACE `config/allowlist.txt` + derived correspond tier | ACE innovation — see §3 |
-| Per-agent gog MAILBOX (`<slug>@dimagi-ai.com`, never shared) over a SHARED fleet OAuth client (`canopy`) | Mailbox enforced by convention in echo AND ace; client shared fleet-wide | The mailbox is the identity that must not bleed — the client is just the app |
+| Per-agent gog MAILBOX (`<slug>@dimagi-ai.com`, never shared) over the SHARED fleet OAuth app (clients `canopy` / `canopy-web`) | Mailbox enforced by convention in echo AND ace; client shared fleet-wide | The mailbox is the identity that must not bleed — the client is just the app |
 
 The problems with the status quo: echo consumes ACE's Drive MCP **under ACE's service-account
 identity** (it cannot see the Connect Marketing drive — wrong identity, no per-agent scoping); hal
@@ -73,11 +73,14 @@ identity, rules, secrets, and domain skills are the agent's"*):
 - `mark-read` — Gmail API UNREAD-label removal via the agent's own gog credentials.
 - `archive` — the other half of turn housekeeping: removes INBOX + UNREAD so a handled thread
   leaves the agent's own inbox. Own mailbox only and reversible, so it rides no approval gate.
-- `preflight` — gog auth liveness for the agent's client, with the exact `gog login …` remediation.
+- `preflight` — gog auth liveness for the agent's client, with the exact remediation: `gog login …
+  --client canopy` at a terminal, or canopy-web's "Connect Google mailbox" button (never
+  `--client canopy-web` at a terminal — a Web client cannot run gog's loopback login).
 
 **Per-agent carve-outs:**
 - **Identity:** one mailbox per agent (`<slug>@dimagi-ai.com`), minted at agent-creation time and
-  never shared, over ONE shared fleet OAuth client (`canopy`). A gog "client" is the app identity
+  never shared, over the ONE shared fleet OAuth app — two clients, `canopy` and `canopy-web`, one
+  GCP project (`canopy-494811`), interchangeable for every call. A gog "client" is the app identity
   (client_id + client_secret) — reusing it across agents is fine and reduces setup; the failure the
   fleet was built to avoid is acting as another agent's MAILBOX, governed by `--account`, not the
   client.
@@ -90,14 +93,17 @@ identity, rules, secrets, and domain skills are the agent's"*):
   is in Production. Don't "fix" a non-problem by flipping user type.) So when fleet email breaks, it's
   a **provisioning** issue — a missing/misnamed 1Password item so `credentials-canopy.json` never
   lands — which `canopy email preflight` now diagnoses precisely; it is not the OAuth app config.
-- **Migration status (2026-07-08, superseded 2026-07-25):** `hal` and every agent minted by the
-  factory use the shared `canopy` client (item `Canopy - gog OAuth client` in 1Password
-  AI-Agents). `echo` was **grandfathered** on its own hand-placed `credentials-echo.json`, not
-  declared for provisioning — a known latent gap. The fleet has since moved to `.env.tpl` + `op
-  inject`/`op read` as the standard (`config/secrets.yaml` deleted from ada/eva/hal/echo — see
-  `agent-core/agent-runtime.md`); a client credentials file like this one now resolves directly
-  via `op read "op://<vault>/<item>/<field>" > credentials-<slug>.json` rather than through a
-  declarative manifest.
+- **Where the pieces live today (2026-10-04).** Both fleet clients' id+secret are in the
+  workspace's SHARED vault (`op://Canopy-Shared/gog-oauth-client/credential` for `canopy`,
+  `…/gog-oauth-client-web/credential` for `canopy-web`), read with the workspace's key; each
+  mailbox's refresh token is the agent's `gog-token` — in its own vault
+  (`op://Agent-<Slug>/gog-token/credential`, minted at a terminal) and/or in canopy-web (minted
+  by the "Connect Google mailbox" button). A box imports the NEWER of the two by the token's own
+  `created_at` (cloud: `runner/ec2/bootstrap_agents.sh`; laptop: `canopy agent bootstrap`) and
+  materializes the client the token names as `credentials-<client>.json`. Every agent and the
+  factory declare `gog_client: canopy`; the per-agent clients (`echo`, `ace`) are retired.
+  *(History: 2026-07-08 `echo` was grandfathered on a hand-placed `credentials-echo.json`;
+  2026-07-25 the fleet moved to `.env.tpl` + `op inject`/`op read`.)*
 - **Tiers (generalizing ACE's model):** `act` = static allowlist (`config/allowlist.txt`) — senders
   who may steer the agent's work; `correspond` = **derived from the agent's own state** (ACE: LLO
   contacts in the routed run's `run_state.yaml`; echo: contacts with an existing contact-memory
@@ -140,7 +146,7 @@ formalized). ACE's ACE-aware atoms (`resolve_opp_path`, `validate_run_state`,
 ```
 GWS_IDENTITY_MODE = sa | gog          # service-account (headless) or agent-OAuth via gog creds
 GWS_SA_KEY_PATH   = <path>            # sa mode: per-agent SA key (or shared SA + per-drive grants)
-GWS_GOG_CLIENT    = <slug>            # gog mode: acts AS the agent (Docs authored by the persona)
+GWS_GOG_CLIENT    = <optional>        # gog mode: acts AS the agent; default = `canopy email client`
 GWS_ROOT_FOLDER_ID / GWS_ALLOWED_DRIVE_IDS   # scope: writes probe-checked against this allowlist
 ```
 

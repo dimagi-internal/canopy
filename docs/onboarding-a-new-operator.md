@@ -351,8 +351,14 @@ factory cannot do for you. Work them in this order:
    (editor or owner; takes the agent's tasks, turns, skills and work products
    with it). Deleting the GitHub repo is `gh repo delete dimagi-internal/<slug>`.
 3. **Email auth** — only if the agent has a mailbox. Needs a real Google account
-   provisioned first; ask Jonathan. Then
-   `gog login <slug>@dimagi-ai.com --client canopy --services gmail,drive,docs,sheets,forms`.
+   provisioned first; ask Jonathan. Then sign the mailbox in through EITHER door — they
+   are one Google app (`canopy` / `canopy-web`, `agent_email.FLEET_CLIENTS`) and a token
+   under either serves the agent's turns:
+   - browser: canopy-web `/w/<ws>/agents/<slug>/settings#credentials` → **Connect Google
+     mailbox** (mints under `canopy-web`, stored in canopy-web; boxes pick it up on their
+     next bootstrap — `canopy agent bootstrap` here, **Refresh** on a cloud runner);
+   - terminal: `gog login <slug>@dimagi-ai.com --client canopy --services gmail,drive,docs,sheets,forms,appscript`
+     (never `--client canopy-web` — that Web client cannot run gog's loopback login).
 4. **Secrets** — `op inject -i .env.tpl -o ~/.<slug>/.env --account dimagi.1password.com`.
 
 Re-run `agent doctor` after each. **Do not move on until it is all green** — and
@@ -363,8 +369,9 @@ the old one.
 every agent at once — `canopy agent bootstrap --dry-run` to preview, then
 `canopy agent bootstrap` (add `--slug <x>` to limit it). It installs each agent's
 plugin + `required_plugins`, injects `~/.<slug>/.env`, imports the newest gog token
-(canopy-web vs 1Password) under the client the token names, and verifies Gmail —
-flagging loudly when the client an agent's turns ask for differs from the token's.
+(canopy-web vs 1Password, newest `created_at` wins) under the client the token names,
+and verifies Gmail. Either fleet client serves a fleet declaration; it flags loudly only
+when the token is under a NON-fleet client the agent's turns would not use.
 
 ### 5a. Mailbox setup on Windows — four things that bite
 

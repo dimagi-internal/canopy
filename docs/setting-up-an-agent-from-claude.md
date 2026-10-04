@@ -73,7 +73,9 @@ each result before moving on.
 Claude stops at these on purpose. None of them is a gap in the tools.
 
 - **Signing in as the agent.** One private browser window, signed in as `<slug>@dimagi-ai.com`,
-  covers three things: the mailbox login (`gog login`), accepting the workspace invite, and
+  covers three things: the mailbox login (the agent's Settings → Credentials → **Connect Google
+  mailbox** in canopy-web, or `gog login <mailbox> --client canopy` at a terminal — either fleet
+  client serves the agent's turns), accepting the workspace invite, and
   minting the agent's own canopy-web token. Whoever holds the agent's Google login does this.
   If Google says it *"couldn't verify this account belongs to you"*, a dimagi-ai.com admin has to
   lift the login challenge for a few minutes first.
