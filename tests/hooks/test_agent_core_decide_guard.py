@@ -141,6 +141,37 @@ def test_a_postposed_condition_that_is_NOT_an_offer_does_not_block(guard, closin
     assert not guard.hands_back_a_call(f"Here's where it landed.\n\n{closing}")
 
 
+# --- 2026-10-04: three handbacks from ONE ada session, all past the matcher ----------
+# Jonathan: "this is a perfect example of you being suboptimal, why are you suggesting not
+# done things and making it unclear whether we should do them!?" Each closed the session on
+# undone, pre-authorized dev work, and none had the first-person "me to" / "I'd X if you
+# want" shape the matcher required.
+@pytest.mark.parametrize("closing", [
+    # impersonal subject: the work is the subject, the deference trails
+    "It flags them now, but the lens drops them first. It's a small canopy PR if you want it.",
+    "That's a one-line fix if you'd like it.",
+    # "unless you'd rather" is deference, not a stated default
+    "I'd ship all three now (canopy PR plus an Ada PR) unless you'd rather keep the"
+    " engine call as something you decide per case.",
+    # undone work relabelled as a follow-up, with no offer at all
+    "Teaching fleet-align to recognise loader files would be a small follow-up.",
+    "The loader false positive is left as a follow-up.",
+])
+def test_an_impersonal_or_unless_or_follow_up_handback_blocks(guard, closing):
+    assert guard.hands_back_a_call(f"Everything you approved is merged.\n\n{closing}")
+
+
+@pytest.mark.parametrize("closing", [
+    "The full trace is in the PR if you want the detail.",
+    "The follow-up PR #742 is in the merge queue; I'll report when it lands.",
+    "I'll merge it at noon unless you object.",
+    "It's a judgment call for you to weigh, so I stopped here unless you'd rather I pick.",
+    "That would be a follow-up for the ace team, and I've filed it as ace#2501.",
+])
+def test_the_new_shapes_do_not_over_fire(guard, closing):
+    assert not guard.hands_back_a_call(f"Here's where it landed.\n\n{closing}")
+
+
 def test_it_blocks_once_and_then_never_again(guard, tmp_path, monkeypatch, capsys):
     """Worst case must be one extra beat, never a session that cannot end."""
     t = _transcript(tmp_path, _assistant("Found it. Want me to fix it?"))
