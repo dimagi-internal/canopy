@@ -206,8 +206,13 @@ class DriveCursorStore:
     """
 
     def __init__(self, repo: Path, runner=subprocess.run):
+        from orchestrator.agent_email import reconcile_client
         from orchestrator.agent_gdoc import resolve_gdoc_identity
         self.identity = resolve_gdoc_identity(Path(repo))
+        # The client rule every gog caller follows: the declared client if this
+        # machine holds a token under it, else the fleet client it does hold — so
+        # a mailbox signed in through canopy-web (`canopy-web`) works here too.
+        reconcile_client(self.identity, runner=runner, apply=True)
         self.runner = runner
         self._folder: str | None = None
 

@@ -30,7 +30,9 @@ def _agent_repo(tmp_path, *, email="hal@dimagi-ai.com", slug="hal",
     (repo / ".claude-plugin").mkdir(parents=True)
     (repo / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": slug}))
     (repo / "config").mkdir()
-    agent = {"name": slug.title(), "email": email}
+    # The fixture's gog home holds `credentials-<slug>.json`, so the repo declares
+    # that client — an agent with no `gog_client` now gets the fleet's `canopy`.
+    agent = {"name": slug.title(), "email": email, "gog_client": slug}
     agent.update(agent_json_extra or {})
     (repo / "config" / "agent.json").write_text(json.dumps(agent))
     if gating:

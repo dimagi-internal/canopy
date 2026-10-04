@@ -45,6 +45,15 @@ identity, rules, secrets, and domain skills are the agent's"*):
 > moves which box is broken**. So the engine resolves the client from evidence at call time
 > (`agent_email.reconcile_client`): the declared pin wins when it holds a token, otherwise the
 > single client that actually holds this mailbox is used and the substitution is announced.
+>
+> **Two fleet clients, one app (2026-10-04).** `canopy` (a Desktop client — gog's loopback
+> login on a laptop) and `canopy-web` (a Web client — the only kind Google lets run a browser
+> redirect, so the one canopy-web's "Connect Google mailbox" button mints under) are in the same
+> GCP project behind the same consent screen, and a token under either reads and sends the same.
+> They are `FLEET_CLIENTS`, in that order: when the declared client holds no token for the
+> mailbox, the first fleet client that does is used — holding both is NOT ambiguity — so an
+> agent signed in from either door just works. An agent with no `gog_client` declares `canopy`
+> (`DEFAULT_CLIENT`), never a client named after itself.
 > The account is NEVER substituted — borrowing a sibling's token is identity bleed, the one
 > hard rule. Two or more candidates is a refusal, not a guess. `canopy agent doctor` reports
 > the drift separately (**Auth client**) so self-healing at runtime never hides a box whose

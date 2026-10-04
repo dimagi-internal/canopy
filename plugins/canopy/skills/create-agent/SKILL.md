@@ -72,8 +72,12 @@ The scaffold is a skeleton. Walk the human through filling it in, in this order:
    approval lives procedurally in the turn checklist. **This is how you "force" the
    guardrail** — do not rely on prose in `CLAUDE.md`. Test a rule by piping a PreToolUse
    payload to `hooks/gating_guard.py` (see the generated hook's docstring).
-4. **Channel + setup** — email is already wired: mint the agent's own mailbox + gog OAuth
-   client (named `<slug>`), `gog login <mailbox> --client <slug> --services gmail,drive,docs,sheets,forms,appscript`,
+4. **Channel + setup** — email is already wired: the agent gets its own MAILBOX, and signs it
+   in under the fleet's shared gog client — never a per-agent one. Either door works: the
+   agent's Settings → Credentials → "Connect Google mailbox" in canopy-web (mints under
+   `canopy-web`), or `gog login <mailbox> --client canopy --services gmail,drive,docs,sheets,forms,appscript`
+   on a laptop (mints under `canopy`). The two are one app; every gog caller uses whichever the
+   machine holds (`agent_email.reconcile_client`, `FLEET_CLIENTS`).
    verify with `uv run --project "$CANOPY_ROOT" canopy email preflight --repo .`, send via
    `bin/<slug>-email` (resolve `CANOPY_ROOT` with the same two-liner as Step 2 in each bash
    block). Then declare env-var secrets in `.env.tpl` (1Password `op://` refs — angle-bracket
