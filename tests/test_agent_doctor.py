@@ -845,6 +845,35 @@ def test_auth_client_fails_when_mailbox_is_authed_under_another_client():
     assert "gog login echo@dimagi-ai.com --client canopy" in r.detail
 
 
+@pytest.mark.parametrize("declared,held", [("canopy", "canopy-web"), ("canopy-web", "canopy")])
+def test_auth_client_passes_when_the_other_fleet_client_holds_the_mailbox(declared, held):
+    """`canopy` and `canopy-web` are one app (FLEET_CLIENTS). A mailbox signed in through
+    canopy-web's button (canopy-web) serves a repo that declares `canopy`, and turns
+    resolve to it — not drift, and no re-login to suggest."""
+    from orchestrator.agent_doctor import check_auth_client
+    from orchestrator.agent_email import EmailIdentity
+    ident = EmailIdentity(slug="ada", account="ada@dimagi-ai.com", client=declared)
+    r = check_auth_client(ident, runner=_accounts_runner([
+        {"email": "ada@dimagi-ai.com", "client": held, "services": ["gmail", "drive"]}]))
+    assert r.ok, r.detail
+    assert f"`{held}`" in r.detail and "gog login" not in r.detail
+
+
+def test_relogin_remedies_never_name_the_web_client():
+    """`canopy-web` is a Web client: gog's loopback login cannot run under it. A remedy for
+    a mailbox resolved to `canopy-web` must say `--client canopy`, and offer the button."""
+    from orchestrator.agent_doctor import check_auth_client
+    from orchestrator.agent_email import EmailIdentity, login_command
+    assert "--client canopy " in login_command("ada@dimagi-ai.com", "canopy-web")
+    assert "--client echo " in login_command("echo@dimagi-ai.com", "echo")
+    ident = EmailIdentity(slug="ada", account="ada@dimagi-ai.com", client="canopy-web")
+    r = check_auth_client(ident, runner=_accounts_runner([
+        {"email": "someone-else@dimagi-ai.com", "client": "canopy", "services": ["gmail"]}]))
+    assert not r.ok
+    assert "--client canopy-web" not in r.detail
+    assert "Connect Google mailbox" in r.detail
+
+
 def test_auth_client_relogin_fix_preserves_granted_scopes():
     """`gog login --services` REPLACES the grant set. A re-login onto the configured client
     must re-request what the stray token already had, or fixing the client silently revokes

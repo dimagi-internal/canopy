@@ -50,6 +50,9 @@ from orchestrator.agent_email import (
     preflight,
     reconcile_client,
     resolve_email_identity,
+    button_remedy,
+    is_fleet_client,
+    login_command,
 )
 from orchestrator.agent_client import AgentClient, CanopyError
 from orchestrator.dependency_health import (
@@ -530,12 +533,23 @@ def check_auth_client(
         return CheckResult(
             name, True,
             f"{identity.account} is authed under the configured `{identity.client}` client")
+    # `canopy` and `canopy-web` are one app with two ways to sign in (FLEET_CLIENTS): a
+    # repo pinning one is served by a token under the other, and turns resolve to it
+    # (reconcile_client). Not drift — "Connect Google mailbox" can ONLY mint under
+    # `canopy-web`, so calling this a disagreement failed every button-minted mailbox and
+    # told the operator to re-mint at a terminal (2026-10-04).
+    fleet = sorted(e["client"] for e in holders if is_fleet_client(e["client"]))
+    if is_fleet_client(identity.client) and fleet:
+        return CheckResult(
+            name, True,
+            f"{identity.account} is authed under fleet client `{fleet[0]}` (repo declares "
+            f"`{identity.client}`; either fleet client serves turns)")
     if not holders:
         return CheckResult(
             name, False,
             f"no gog token on this machine for {identity.account} under any client — "
-            f"run: gog login {identity.account} --client {identity.client} "
-            f"--services {','.join(sorted(required_services(identity)[0]))}")
+            f"run: {login_command(identity.account, identity.client, ','.join(sorted(required_services(identity)[0])))} "
+            f"— {button_remedy(identity.slug)}")
     names = sorted(e["client"] for e in holders)
     # Re-login onto the configured client must re-request what the stray token already had:
     # `gog login --services` REPLACES the grant set, so migrating the client with a narrower
@@ -555,8 +569,8 @@ def check_auth_client(
         f"{identity.account} is authed under {'`' + '`, `'.join(names) + '`'} but the repo "
         f"pins `{identity.client}` — this box and this checkout disagree. Runtime follows the "
         f"token, so the agent still works. Fix whichever side is stale: if the pin is right, "
-        f"migrate the box — gog login {identity.account} --client {identity.client} "
-        f"--services {','.join(sorted(keep))} — or if the box is right, point gog_client at "
+        f"migrate the box — {login_command(identity.account, identity.client, ','.join(sorted(keep)))} "
+        f"— or if the box is right, point gog_client at "
         f"`{names[0]}` in config/agent.json (pull first; the pin may already have moved)")
 
 
@@ -622,8 +636,7 @@ def check_auth_services(
         return CheckResult(
             name, False,
             f"missing scope(s) {missing} for {identity.account} (required per {source}) — "
-            f"re-run: gog login {identity.account} --client {identity.client} "
-            f"--services {relogin}",
+            f"re-run: {login_command(identity.account, identity.client, relogin)}",
         )
     return CheckResult(
         name, True,

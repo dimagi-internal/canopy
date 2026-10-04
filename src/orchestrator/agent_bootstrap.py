@@ -19,8 +19,10 @@ laptop has instead of per-agent service-account keys. Per agent:
                 into gog's config.json.
   6. verify   — ONE real call (agent_email.preflight), then the TURN-CLIENT check: the client
                 an agent's turns ask for (config/agent.json gog_client) against the live
-                token's client. A mismatch is a mailbox that verifies green while every email
-                turn fails (ACE, 2026-09-08). Reported loudly, never "fixed" by remapping.
+                token's client. Either FLEET client (`canopy` / `canopy-web`) serves a fleet
+                declaration — turns reconcile to the one this machine holds. Any OTHER
+                mismatch is a mailbox that verifies green while every email turn fails
+                (ACE, 2026-09-08), reported loudly, never "fixed" by remapping.
 
 Secrets hygiene: no secret is printed, passed in argv, or left on disk — tokens travel
 in-process and through 0600 temp files that are deleted. The macOS Keychain prompts on
@@ -58,6 +60,7 @@ from orchestrator.agent_email import (
     gog_client_credentials,
     preflight,
     resolve_email_identity,
+    is_fleet_client,
 )
 
 OP_ACCOUNT = "dimagi.1password.com"
@@ -638,6 +641,11 @@ class Bootstrapper:
                 rep.fail("gmail: " + " ".join(line.strip() for line in lines[:2]))
         if turn_client == tok.client:
             rep.turn = f"OK ({turn_client})"
+        elif is_fleet_client(turn_client) and is_fleet_client(tok.client):
+            # One app, two ways to sign in: turns resolve a `canopy` declaration to a
+            # `canopy-web` token (reconcile_client) and vice versa. The cloud box's
+            # bootstrap reads it the same way (canopy-web#1112).
+            rep.turn = f"OK ({tok.client}; declared {turn_client})"
         else:
             rep.turn = f"MISMATCH {turn_client}!={tok.client}"
             rep.fail(

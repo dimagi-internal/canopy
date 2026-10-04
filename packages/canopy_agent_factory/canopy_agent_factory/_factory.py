@@ -666,10 +666,13 @@ follows it: preflight → process inbound (one counterpart at a time) → skill 
    `op inject` resolves those too) and run `op inject -i .env.tpl -o ~/.{{AGENT_SLUG}}/.env` — they
    land in the worktree-clean global home, read by `bin/_env.py`.
 5. The agent's own thing is its MAILBOX ({{MAILBOX}}); the gog OAuth client is the SHARED fleet
-   app (`canopy`) — mint/place its credentials json with `op read` (see `.env.tpl`'s header) or the
-   legacy `canopy provision`. Then consent this mailbox into it once: `gog login {{MAILBOX}}
-   --client canopy --services gmail,drive,docs,sheets,forms,appscript`. Verify with
-   `canopy email preflight --repo .`; send via `bin/{{AGENT_SLUG}}-email`.
+   app — one Google app with two clients, `canopy` (a laptop's `gog login`) and `canopy-web`
+   (canopy-web's "Connect Google mailbox" button), and a token under either serves every turn.
+   Sign the mailbox in once through either door: the agent's Settings → Credentials → **Connect
+   Google mailbox** in canopy-web, or `gog login {{MAILBOX}} --client canopy --services
+   gmail,drive,docs,sheets,forms,appscript` (its credentials json via `op read` — see `.env.tpl`'s
+   header). Never type a client in a gog command — use `"$(canopy email client --repo .)"`. Verify
+   with `canopy email preflight --repo .`; send via `bin/{{AGENT_SLUG}}-email`.
 '''
 
 _GITIGNORE = '''.env

@@ -437,7 +437,7 @@ function resolveGogClient(account: string): string {
 
 server.tool(
   'read_personal_drive_doc',
-  "Read a Google Drive document via personal OAuth (gog CLI) — fallback for files shared with the human user account but not the server's service account. Requires gog to be installed and authorized for Drive on $GWS_GOG_ACCOUNT, under the fleet client (canopy or canopy-web; resolved by `canopy email client`). If the user has not yet granted Drive scope, re-run: `gog login $GWS_GOG_ACCOUNT --client canopy --services gmail,drive`. Use only when drive_read_file fails with a permission error.",
+  "Read a Google Drive document via personal OAuth (gog CLI) — fallback for files shared with the human user account but not the server's service account. Requires gog to be installed and authorized for Drive on $GWS_GOG_ACCOUNT, under the fleet client (canopy or canopy-web; resolved by `canopy email client`). If the user has not yet granted Drive scope, re-run: `gog login $GWS_GOG_ACCOUNT --client canopy --services gmail,drive,docs,sheets,forms,appscript` (`--services` replaces the grant set). Use only when drive_read_file fails with a permission error.",
   {
     file_id: z.string().describe('The Google Drive file ID'),
     format: z.enum(['txt', 'md', 'csv']).optional().describe('Export format for Google Docs/Sheets (default: txt for Docs, csv for Sheets)'),
@@ -472,7 +472,13 @@ server.tool(
       // was actually written.
       const stderr = (proc.stderr || '').trim();
       if (proc.status !== 0 || !fs.existsSync(tmpFile) || fs.statSync(tmpFile).size === 0) {
-        const reauth = `gog login ${account} --client ${client} --services gmail,drive`;
+        // `canopy-web` is a Web client — gog's loopback login cannot run under it, so a
+        // terminal re-auth always names the Desktop fleet client (`canopy`); a token under
+        // either serves. And `--services` REPLACES the grant set, so ask for the full one.
+        const loginClient = client === 'canopy-web' ? 'canopy' : client;
+        const reauth =
+          `gog login ${account} --client ${loginClient} --services gmail,drive,docs,sheets,forms,appscript` +
+          ` (for an agent mailbox, canopy-web's "Connect Google mailbox" button works too)`;
         return error(
           `gog drive download failed: ${stderr || 'no output written'}. ` +
           `If the error mentions scope/permission/insufficient, re-auth gog with Drive scope: ${reauth}`,
