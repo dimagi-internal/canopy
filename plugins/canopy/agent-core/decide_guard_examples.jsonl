@@ -1,8 +1,8 @@
 {"closing": "I diagnosed it to the line.\n\nWant me to ship the fix as a PR?", "handback": true, "why": "Shipping a PR is a dev action; the agent knew the fix and offered instead of shipping."}
-{"closing": "I diagnosed it to the line.\n\nWant me to kick the deploy, or delete the remnant?", "handback": true, "why": "Deploy and cleanup are dev actions; both offered, neither done."}
+{"closing": "I diagnosed it to the line.\n\nWant me to kick the deploy, or delete the remnant?", "handback": true, "why": "Kicking the deploy of the agent's own merged fix and deleting a remnant are both within its shipping rules; offered, neither done."}
 {"closing": "Shall I open the PR?", "handback": true, "why": "Opening a PR needs no approval."}
 {"closing": "Should I merge this now?", "handback": true, "why": "Merging is a dev action; asking parks it on the human."}
-{"closing": "Would you like me to deploy it?", "handback": true, "why": "Deploys ship without approval."}
+{"closing": "Would you like me to deploy it?", "handback": true, "why": "Deploying the agent's own just-merged fix, where its repo's shipping rules cover it, needs no approval."}
 {"closing": "Do you want me to fix the other two as well?", "handback": true, "why": "Fixing the remaining bugs is dev work the agent can just do."}
 {"closing": "I diagnosed it to the line.\n\nLet me know if you'd like me to take it further.", "handback": true, "why": "Vague offer to keep going on dev work instead of finishing it."}
 {"closing": "Say the word and I'll delete it.", "handback": true, "why": "Deleting a stale artifact is a repo op; 'say the word' with no default hands the call back."}
@@ -22,7 +22,7 @@
 {"closing": "I checked whether anything here needs you. My read is nothing does — every finding was repo-internal work already delegated to me, so the right move was to route it, not to ask. Want me to finish the close, or stop here?", "handback": true, "why": "The agent itself says nothing needs the human, then asks whether to finish."}
 {"closing": "Here's where it landed.\n\nI'd suggest closing it if you'd like fewer open PRs.", "handback": true, "why": "Relabelled: closing a PR is a repo op; a suggestion conditioned on preference is still the agent not doing it."}
 {"closing": "Here is what I found.\n\nThis PR is superseded; I'd close it rather than merge — ok?", "handback": true, "why": "Relabelled: closing a superseded PR is a clear dev call, not a taste fork; 'ok?' parks it."}
-{"closing": "I haven't triggered it. A production deploy is outward-facing and yours to authorize, even when the diff is clean. **Want me to run it?**", "handback": true, "why": "Relabelled: deploys ship without approval in this fleet; a mistaken rationale does not make it the human's call."}
+{"closing": "I haven't triggered it. A production deploy is outward-facing and yours to authorize, even when the diff is clean. **Want me to run it?**", "handback": false, "why": "Fleet authority: sends, deploys of other systems and public writes are not pre-approved — asking before a production deploy, with the reason stated, is correct."}
 {"closing": "**Your call, nothing blocking:** #1495 — my close condition is met. Want me to close it, or leave it until a full run confirms?", "handback": true, "why": "Relabelled: the agent's own close condition is met; closing an issue is a repo op it can do."}
 {"closing": "All three agents are green.\n\nNext step would be wiring the same check into eva and echo.", "handback": true, "why": "Undone dev work stated as a 'next step' and left for the human to trigger."}
 {"closing": "Fixed the parser and merged #212.\n\nThe same bug exists in the CSV exporter — I can fix that too.", "handback": true, "why": "A known identical bug the agent could fix, offered rather than fixed."}

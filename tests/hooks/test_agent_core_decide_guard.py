@@ -6,8 +6,7 @@ session). Its parametrized closings now live as labelled examples in
 `plugins/canopy/agent-core/decide_guard_examples.jsonl`; what is tested here is the
 plumbing that keeps the hook honest — the render agrees with the scope switch, the prompt
 keeps the rules the live probe showed it needs, and the agent-only stamp REPLACES the regex
-loader rather than adding a second judge. (The regex engine itself stays live until the
-replacement wiring ships; its own tests are test_agent_core_decide_guard_regex.py.)
+loader rather than adding a second judge, and the retired regex engine is a harmless no-op.
 """
 from __future__ import annotations
 
@@ -181,3 +180,22 @@ def test_stamp_cli_check_flags_stale_settings_then_stamps(tmp_path):
     assert ok.exit_code == 0 and "stamped" in ok.output
     again = CliRunner().invoke(decide_guard_group, ["stamp", "--agent-repo", str(repo), "--check"])
     assert again.exit_code == 0, again.output
+
+
+def test_production_deploy_asks_are_fine():
+    """Fleet authority: deploys of other systems are not pre-approved (Jonathan, 2026-10-04)."""
+    (row,) = [r for r in dg.load_examples() if "production deploy" in r["closing"]]
+    assert row["handback"] is False
+
+
+def test_the_retired_regex_engine_is_a_silent_no_op():
+    """The prompt hook is plugin-wide, so an agent loader not yet removed must not judge the
+    same Stop twice: the engine it execs reads nothing, prints nothing, exits 0."""
+    import subprocess
+    import sys
+
+    stub = REPO / "plugins" / "canopy" / "agent-core" / "decide_guard.py"
+    p = subprocess.run([sys.executable, str(stub)], input=json.dumps({
+        "transcript_path": "/nonexistent", "session_id": "s1"}),
+        capture_output=True, text=True, timeout=30)
+    assert p.returncode == 0 and p.stdout == ""

@@ -9,17 +9,17 @@ and let it use its judgment on phrasings the examples don't show.
 
 The prompt can be wired at one of TWO scopes, and `PLUGIN_WIDE` picks which:
 
-* **plugin-wide** (`PLUGIN_WIDE = True`): a `{"type": "prompt"}` Stop entry in the canopy
+* **plugin-wide** (`PLUGIN_WIDE = True`, the current setting): a `{"type": "prompt"}` Stop entry in the canopy
   plugin's `hooks/hooks.json` — fires in EVERY session on a machine with canopy installed.
-* **agent-only** (`PLUGIN_WIDE = False`, the current setting): the same entry is STAMPED into
+* **agent-only** (`PLUGIN_WIDE = False`): the same entry is STAMPED into
   each agent repo's `.claude/settings.json` Stop hooks by `canopy decide-guard stamp`,
   replacing that repo's `hooks/decide_guard.py` command hook (the regex loader). The plugin's
   hooks.json then carries no entry. Cost: a new example reaches an agent only when its
   settings are re-stamped (one PR per agent repo).
 
-Plugin-wide is NOT approved yet (2026-10-04: the approval turned out to be misrouted), so
-the switch is off. Flipping it is: set `PLUGIN_WIDE = True`, `canopy decide-guard render`,
-then unstamp/remove the agent wiring so no session is judged twice.
+Jonathan chose plugin-wide (2026-10-04), so the switch is on and agent repos carry no
+decide-guard wiring of their own. Going agent-only instead is: set `PLUGIN_WIDE = False`,
+`canopy decide-guard render`, then `stamp` each agent repo.
 
 THIS module is the only thing that writes the prompt:
 
@@ -51,7 +51,7 @@ MODEL = "claude-sonnet-5-5"
 TIMEOUT_S = 30
 
 # The scope switch — see the module docstring. False = agent-only (stamped per repo).
-PLUGIN_WIDE = False
+PLUGIN_WIDE = True
 
 # The regex loader command hook that an agent-only stamp replaces.
 LOADER_MARKER = "hooks/decide_guard.py"
@@ -72,14 +72,16 @@ instead of making it.
 
 Whose call is it:
 - DEV ACTIONS NEED NO APPROVAL: writing or fixing code, opening / merging / closing PRs \
-and issues, branches, deploys, repo and config ops, dispatching another fleet agent, \
+and issues, branches, repo and config ops, deploying the agent's own merged change where \
+its repo's shipping rules cover it, dispatching another fleet agent, \
 fixing the agent's own tooling. A close that defers one of these is a HANDBACK — whether \
 it offers it ("want me to…", "say the word", "shall I"), parks it ("…if you want it", \
 "would be a small follow-up", "left as a follow-up", "next step would be…", "unless \
 you'd rather"), or floats it as an option without doing it.
 - OUTBOUND ALWAYS WAITS for a human: sending or replying to email or messages, \
-publishing, posting, sharing a document, notifying people. Asking before those is \
-correct — NOT a handback.
+publishing, posting, sharing a document, notifying people — and so do production deploys \
+the agent judges are the human's to authorize, and deploys of systems it does not own. \
+Asking before those is correct — NOT a handback.
 - Also NOT a handback: a finished report; a stated default ("default is next turn", \
 "otherwise I'll…", "unless you object"); a follow-up already routed ("filed as #…", \
 "queued"); a pointer to information ("the trace is in the PR if you want the detail"); \
@@ -101,8 +103,8 @@ in one line and stops), a miss costs the human a full round trip.
 Respond with JSON only.
 - Not a handback: {"ok": true}
 - A handback: {"ok": false, "reason": "<one sentence naming exactly what you handed \
-back>. Whose call is this actually? If it is a dev action (code, PR, merge, deploy, repo \
-ops) it needs no approval: do it now, in this session, and report what you did and what \
+back>. Whose call is this actually? If it is a dev action (code, PR, merge, repo ops) it \
+needs no approval: do it now, in this session, and report what you did and what \
 you scoped out. Outbound (send, reply, publish, post, share) always waits for a human — \
 if that is this, or it truly turns on the human's taste, priorities or risk, say so in \
 one line and stop. This check will not fire again this session."}
