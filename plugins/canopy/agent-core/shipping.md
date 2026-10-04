@@ -195,6 +195,13 @@ gh pr view <n> --json number,state,mergedAt,mergeStateStatus \
 The `sleep` inside is fine — the block is on *foreground* sleeps. **Always bound it** so a stuck PR
 surfaces as a *result* instead of a hang.
 
+**In a one-shot cloud-runner turn, wait in the FOREGROUND instead.** There the backgrounded
+wait above is DENIED by `hooks/one_shot_turn_guard.py` (see `turn.md`): the session ends with
+the turn, so the notification would never arrive. Run the same bounded wait as a foreground
+`Bash` call with `timeout: 600000`, keep each call under 10 minutes (`timeout 540 gh pr checks
+<n> --watch` — `gh` blocks for you, no `sleep` needed), read the state table, and re-issue
+until it settles. Laptop (emdash) and interactive turns keep the backgrounded recipe.
+
 **`run_in_background`, not `Monitor`.** The two read as if they disagree; they don't. `Monitor` is
 for one notification *per occurrence*; a merge-wait wants exactly one at the end, and Monitor's own
 guidance sends that shape back here. Reach for `Monitor` only if you want running commentary.

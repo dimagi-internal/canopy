@@ -13,6 +13,17 @@ human approval; auto agents self-review and send). Approval is PROCEDURAL — th
 carries deny rails only (it blocks wrong paths, it does not ask for you), so drafting-then-asking
 in Step 2 is the gate. There is no modal to catch you if you skip it.
 
+**A cloud-runner turn is one-shot — finish in the foreground.** When the model ends its turn
+on a cloud runner, the session ends (`claude -p` exits; under ACP the runner closes the agent),
+and nothing ever re-opens it — so a background task's completion notification has nobody to
+deliver to, and "I'll pick this up when it reports back" silently drops the work (2026-10-04:
+Ada's fleet sync stalled and ACE's finished fix was never committed, both this way). The canopy
+rail `hooks/one_shot_turn_guard.py` therefore DENIES, in a one-shot runner turn only, Bash
+`run_in_background`, background/fork/remote Agent spawns, and Monitor / ScheduleWakeup /
+CronCreate. Run it in the FOREGROUND — split long runs into chunks under 10 minutes (the Bash
+timeout cap) and loop; never end the turn with work outstanding. Laptop (emdash) turns and
+interactive sessions are not affected: an emdash session stays open and a notification does wake it.
+
 ## Turn mode — manual (default) vs auto
 Every access word used here — agent roles `owner` / `admin` / `member` / `contact` / `system`,
 access `full` / `confined` / `none`, the interface, turn mode, the ship grant — has one meaning,
