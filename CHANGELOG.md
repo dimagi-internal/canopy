@@ -9,6 +9,15 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.567] - 2026-10-04
+### Fixed
+- **fleet-align no longer flags canopy loaders as promotion candidates.** A bin/hook that
+  executes canopy's `agent-core/<engine>` (eva's `hooks/gdoc_gate.py`, every agent's
+  `hooks/decide_guard.py`) IS the promoted state, but 0.2.564 listed it as a "stale fork to
+  delete" — pointing at the very file that wires canopy's engine in. A file that names
+  `agent-core` and executes code is skipped when canopy really ships that engine; a same-named
+  agent copy with its own logic is still flagged.
+
 ## [0.2.566] - 2026-10-04
 ### Fixed
 - **DDD run store: the runner identity is the process's account, not `$LOGNAME`.** The
