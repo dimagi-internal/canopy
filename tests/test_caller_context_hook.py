@@ -59,7 +59,7 @@ def test_a_delivered_prompt_gets_the_summary_as_additional_context(box, monkeypa
     assert hso["hookEventName"] == "UserPromptSubmit"
     ctx = hso["additionalContext"]
     assert "Xavier <x@partner.org> (contact)" in ctx
-    assert "relationship: caller" in ctx
+    assert "relationship: contact" in ctx   # a VERSION 1 `caller`, in today's word
     assert "verified: NO (assurance: none)" in ctx
     assert "turn mode: manual" in ctx and "OWNER's approval" in ctx
     assert "channel: slack" in ctx
@@ -109,7 +109,7 @@ def test_the_cwd_is_the_fallback_key(box, monkeypatch, capsys):
 def test_the_cloud_runner_names_the_envelope_outright(box, monkeypatch, capsys):
     monkeypatch.setenv("CANOPY_CALLER", str(box / f"{TID}.json"))
     code, out = _run(monkeypatch, capsys, tp="/tmp/x.jsonl", cwd="/srv/ace")
-    assert "relationship: caller" in out["hookSpecificOutput"]["additionalContext"]
+    assert "relationship: contact" in out["hookSpecificOutput"]["additionalContext"]
 
 
 def test_the_owner_gets_no_warning(box, monkeypatch, capsys):
@@ -241,3 +241,24 @@ def test_an_auto_turn_with_a_grant_still_names_it(tmp_path):
     text = cc.summarize({**ADA, "turn_mode": {"mode": "auto", "basis": "agent"},
                          "ship_grant": GRANT}, str(tmp_path / "e.json"), TID)
     assert "- turn mode: auto (agent)\n" in text and "- ship grant:" in text
+
+
+# --- envelope VERSION 2 words (canopy-web, 2026-10-04) -------------------------------
+
+@pytest.mark.parametrize("rel, prof", [("contact", "confined"), ("caller", "restricted")])
+def test_both_envelope_versions_render_todays_words(tmp_path, rel, prof):
+    env = {**ENV, "version": 2 if rel == "contact" else 1, "relationship": rel,
+           "profile": prof, "granted_by": "capability:ask", "capability": {"name": "ask"}}
+    text = cc.summarize(env, str(tmp_path / "e.json"), TID)
+    assert "relationship: contact — a CONTACT" in text
+    assert "profile=confined" in text and "restricted" not in text
+    assert "does not hold the agent's authority" in text
+    assert cc.ACCESS_DOC in text
+
+
+def test_the_editor_tier_is_said_plainly(tmp_path):
+    env = {**ENV, "version": 2, "relationship": "member", "verified": True, "profile": "full",
+           "granted_by": "editor", "turn_mode": {"mode": "manual", "basis": "editor e@x: manual"}}
+    text = cc.summarize(env, str(tmp_path / "e.json"), TID)
+    assert "granted_by=editor (a workspace editor: the whole agent, but every turn runs manual)" in text
+    assert "turn mode: manual" in text

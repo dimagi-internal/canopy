@@ -103,3 +103,22 @@ def test_no_interface_falls_back_to_the_allowlist():
 def test_blocked_still_wins_over_a_grant():
     env = {**_env(blocked=True), "granted_by": "full:contact@dimagi.com:verified"}
     assert resolve(env, RULES)["tier"] == BLOCKED
+
+
+# --- envelope VERSION 2 words (canopy-web, 2026-10-04) -------------------------------
+
+@pytest.mark.parametrize("rel", ["caller", "contact"])
+def test_relationship_is_reported_in_todays_word(rel):
+    assert resolve({**_env(), "relationship": rel}, RULES)["relationship"] == "contact"
+
+
+def test_a_workspace_editor_is_act_but_told_it_is_manual():
+    env = {**_env(kind="user"), "relationship": "member", "granted_by": "editor"}
+    got = resolve(env, [])
+    assert got["tier"] == ACT and "MANUAL" in got["reason"]
+
+
+def test_a_confined_envelope_is_the_caller_tier_in_either_version():
+    for prof in ("confined", "restricted"):
+        env = {**_env(), "profile": prof, "granted_by": "capability:ask"}
+        assert resolve(env, RULES)["tier"] == CALLER

@@ -12,9 +12,11 @@ skill. `From:` is forgeable. The allowlist said who is trusted; nothing said
 whether THIS message came from them. This command is the one deterministic place
 that combines the two, so no agent re-derives it:
 
-  act         canopy granted the whole agent (owner, admin, or a `full:` domain
-              rule) — or, for an agent with no interface, allowlisted AND verified
+  act         canopy granted the whole agent (owner, admin, a `full:` domain
+              rule, or a workspace editor — whose turns canopy runs MANUAL) —
+              or, for an agent with no interface, allowlisted AND verified
   caller      confined by canopy to one capability of the declared interface
+              (the envelope's `profile: confined`)
   unverified  allowlisted address, but THIS message is not verified: treat as
               unknown (read-only, surface to the human) and say why
   unlisted    not on the allowlist — the agent derives any narrower tier
@@ -23,6 +25,12 @@ that combines the two, so no agent re-derives it:
               or this agent's OWN login did — another agent's login is graded
               by its grants like anyone's (canopy-web #986)
   blocked     the workspace has blocked this person: do not act, do not reply
+
+The envelope's words (agent roles `owner` / `admin` / `member` / `contact` /
+`system`, access `full` / `confined` / `none`, `granted_by`) are defined in
+canopy-web's `docs/architecture/access.md`. Envelope VERSION 2 renamed
+`relationship: caller` → `contact` and `profile: restricted` → `confined`; this
+reads both and reports the new word.
 
 Exit status is 0 whenever a tier was resolved, so a skill reads the JSON rather
 than branching on the code. It is 2 when there is no usable envelope — an older
@@ -39,6 +47,24 @@ import click
 ACT, UNVERIFIED, UNLISTED, SYSTEM, BLOCKED = "act", "unverified", "unlisted", "system", "blocked"
 #: Confined by canopy to one capability of the declared interface.
 CALLER = "caller"
+
+#: Envelope VERSION 1 words, and what they are called now.
+_LEGACY_RELATIONSHIP = {"caller": "contact"}
+_LEGACY_PROFILE = {"restricted": "confined"}
+
+
+def normalize_relationship(value) -> str | None:
+    """`relationship` in envelope VERSION 2 words (`caller` → `contact`)."""
+    if value is None:
+        return None
+    return _LEGACY_RELATIONSHIP.get(str(value), str(value))
+
+
+def normalize_profile(value) -> str | None:
+    """`profile` in envelope VERSION 2 words (`restricted` → `confined`)."""
+    if value is None:
+        return None
+    return _LEGACY_PROFILE.get(str(value), str(value))
 
 
 def load_allowlist(repo: Path) -> list[str]:
@@ -76,7 +102,8 @@ def resolve(env: dict, rules: list[str]) -> dict:
     verified = bool(env.get("verified"))
     contact = env.get("contact") or {}
     out = {"address": address, "kind": kind, "verified": verified,
-           "relationship": env.get("relationship"), "assurance": who.get("assurance")}
+           "relationship": normalize_relationship(env.get("relationship")),
+           "assurance": who.get("assurance")}
 
     if contact.get("is_blocked"):
         return {**out, "tier": BLOCKED,
@@ -92,6 +119,11 @@ def resolve(env: dict, rules: list[str]) -> dict:
     if granted in ("owner", "admin") or granted.startswith("full:"):
         return {**out, "tier": ACT,
                 "reason": f"canopy grants this sender the whole agent ({granted})"}
+    if granted == "editor":
+        return {**out, "tier": ACT,
+                "reason": "canopy grants this workspace editor the whole agent, in MANUAL mode: "
+                          "act on their work, but every outbound or irreversible action waits "
+                          "for the owner or an admin"}
     if granted.startswith("capability:"):
         return {**out, "tier": CALLER,
                 "reason": f"confined by canopy to '{granted.split(':', 1)[1]}': answer within it; "
