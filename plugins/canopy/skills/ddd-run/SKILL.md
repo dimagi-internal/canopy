@@ -177,8 +177,24 @@ under the watchdog), `python -m scripts.ddd.target ready <run_id>`, and pass
 `loop.full_rejudge_every`-th batch, and every pass after `checkpoint` /
 `confirm_full`) always renders the real deploy target.
 
-Invoke `canopy:walkthrough` (or the equivalent Skill tool call) against
-`<unified_spec>` to drive the live product and produce:
+**Render with ONE command** — never re-assemble the recorder call by hand:
+
+```bash
+(cd "$DDD_REPO" && DDD_DIR="$DDD_DIR" uv run python -m scripts.ddd.iteration render "<run_id>" \
+  --spec "<unified_spec>" [--storage-state <file> | --cookies <file>] [-- <extra recorder flags>])
+```
+
+It stamps `<run_dir>/.render_start`, takes `--base-url` from the target
+`target plan` stamped for this iteration (an inner-loop pass renders the local
+build), runs `record_video.py` with the DDD flag set below under the watchdog
+(`render` budget from `timeouts:`) into `render-iter<N>.log`, and writes the
+exit code to `.render_rc`; its own exit code is the recorder's. The flag set is
+written down once, in `scripts.ddd.iteration.recorder_command`. On the first
+live product-objective run the orchestrator re-assembled this by hand every
+iteration — reading an old run's render log to recover the command, adding
+`PYTHONPATH` and the Playwright extra by trial and error.
+
+What the render produces (the `canopy:walkthrough` engine underneath):
 
 - `scene_<N>.png` — per-scene screenshot for each scene in the spec.
 - `scene_<N>_page_text.json` — captured page text (`$B text` output) per scene.
@@ -228,8 +244,8 @@ flags below.
 | `--allow-viewport-change` | **Never in the iterate loop** | The recorder writes the resolved default viewport to `<run_dir>/snapshots/render-viewport.json` and REFUSES a later render at a different size (#625): a spec rebuilt mid-run that dropped `video_viewport_width`/`_height` would otherwise re-render a 1440x900 run at 1280x720, breaking every scroll offset and the cross-iteration score stall. On that refusal, restore the two keys the error names; don't override. The flag is for a deliberate frame-size change, after which scores are not like-for-like with earlier iterations. |
 | `--prewarm` / `--no-prewarm` | Usually neither — the spec's `prewarm:` value is the right default and the recorder honors it automatically (CLI overrides per invocation, CLI wins) | The pre-warm pass visits each unique resolved scene URL once in a NON-recorded context before filming, so cold caches (first-hit page renders, remote image fetches) are paid off camera instead of as frozen frames mid-scene. Best-effort: failures land in `run-report.json` (`prewarm` key: `{pages, duration_seconds, failures}`), never abort the render. Full model: walkthrough SKILL § "Recording time & dead space". |
 
-**DDD orchestrator default flag set** — what `/canopy:ddd-run` should pass to
-`record_video.py`:
+**DDD orchestrator default flag set** — what `iteration render` passes to
+`record_video.py` (reference; do not hand-run it):
 
 ```bash
 _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
@@ -295,109 +311,40 @@ half-rendered scene.
 
 ### Step 2b — Upload artifacts to canopy-web (auto, every iteration)
 
-**Never upload from a failed or stale render (M16).** Take `RENDER_START=$(date +%s)`
-before Step 2's render, keep the recorder's (or your wrapper's) exit code, and
-gate every upload below on:
+**Publish with ONE command**, after `iteration render`:
 
 ```bash
-(cd "$DDD_REPO" && uv run python -m scripts.ddd.render_check "<run_dir>" --since "$RENDER_START" \
-  --exit-code "$RENDER_RC" --run-id "<run_id>" \
-  $( [ -f "<run_dir>/iter${state.iteration}_clip.mp4" ] && echo --clip "<run_dir>/iter${state.iteration}_clip.mp4" )) \
-  || { echo "render failed or stale — NOT uploading; re-render"; exit 1; }
+(cd "$DDD_REPO" && DDD_DIR="$DDD_DIR" uv run python -m scripts.ddd.iteration publish "<run_id>" \
+  --spec "<unified_spec>" [--title "<name>"] [--private])
 ```
 
-It fails on a non-zero exit code or on any manifest / run-report / scene PNG /
-clip older than `RENDER_START` (a wrapper that returned 0 over a failed
-recorder once uploaded the PREVIOUS iteration's deck as the new one). The
-verdict is stamped on `state.steps.render_check`; `ddd-upload` refuses to
-package an iteration whose render failed. Wrap the render itself in the
-watchdog so a hung recorder ends as `timed_out`, not a hang:
-`python -m scripts.ddd.watchdog run <run_id> --step render -- <render cmd>`.
+In order, it:
 
-Immediately after render, BEFORE the judges run, generate the per-iteration
-HTML deck and upload it to canopy-web so every downstream consumer has a
-hosted URL to reference. This step exists so the orchestrator never has to
-do a one-off upload at surface-time, and so surfaced findings can include
-hosted links the user can open from any device (per the pause-policy
-artifact-link contract in `agents/ddd.md`).
+1. **Refuses a failed or stale render (M16)** — `render_check` against the
+   `.render_start` / `.render_rc` that `iteration render` wrote: a non-zero exit
+   or any manifest / run-report / scene PNG / clip older than the render start
+   is exit 1 and NO upload (a wrapper that returned 0 over a failed recorder once
+   uploaded the PREVIOUS iteration's deck as the new one). The verdict is stamped
+   on `state.steps.render_check`; `ddd-upload` refuses to package an iteration
+   whose render failed.
+2. **Generates `iter<N>_deck.html`** (scene anchors `id="scene-<N>"` for deep links).
+3. **Uploads the deck, then the clip**, grouped under the run (`--run-id`,
+   `--feature`, `--role deck|clip`, `--public` unless `--private`), reading each
+   URL from the `View:` line — never the `Share:` line, which carries a `?t=`
+   token. The clip gets its companion links: the deck ("Still-frame
+   walkthrough"), the narrative review (`state.narrative_review_url`, "Back to
+   the narrative"), and one "Explore in the app" link per scene `url` in the spec.
+4. **Stamps `iteration_decks[N]` / `iteration_clips[N]`** through
+   `runstate.save` (so the run store writes them through to canopy-web) — no
+   inline `python -c` editing run_state.
 
-```bash
-_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
-DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
-# Generate the deck for this iteration. Same generator
-# /canopy:walkthrough uses; scene_index + scene_total + scenes_run +
-# scene_filter all flow through and the generator emits id="scene-<N>"
-# anchors on every scene slide for deep-linking.
-GEN="$DDD_REPO/scripts/walkthrough/generate_presentation.py"
-ITER_DECK="<run_dir>/iter${state.iteration}_deck.html"
-uv run --project "$DDD_REPO" python "$GEN" \
-  --input "<run_dir>/walkthrough-run-data.json" \
-  --output "$ITER_DECK"
+It prints `{deck_url, clip_url, upload_errors}`. Do this immediately after the
+render and BEFORE the judges, so every consumer — judges, surfaced findings,
+the digest — has hosted URLs.
 
-# Upload to canopy-web via /canopy:walkthrough-share's upload script.
-# --public mints a share token so the URL works for anyone with the link
-# (the user reading the surfaced finding on their phone). If you need
-# dimagi-OAuth-gated only, drop --public.
-#
-# --run-id / --feature / --role group this artifact under its DDD run so it
-# packages in canopy-web's /ddd views. Pass state.run_id and state.feature; the
-# per-iteration deck is role=deck, the clip is role=clip.
-UPLOAD="$DDD_REPO/scripts/walkthrough-share/upload.py"
-DECK_URL=$(uv run --project "$DDD_REPO" python "$UPLOAD" "$ITER_DECK" \
-  --title "<unified_spec.name> iter${state.iteration}" \
-  --run-id "<state.run_id>" --feature "<state.feature>" --role deck \
-  --public 2>&1 | sed -n 's/^View: \(https:[^ ]*\).*/\1/p' | tail -1)
-```
-
-Parse the `View:` line — never "the last https URL in the output": `upload.py`
-also prints a `Share:` line carrying a `?t=` token and echoes companion links,
-so the last URL is the wrong one for both the deck and the clip.
-
-If the recorded mp4 exists in the run dir, upload that too — and attach the
-**companion links** the `/w/<id>` viewer renders so someone watching the clip
-can act on it: jump back to the narrative, open the still-frame deck, and click
-into the app pages the demo visited.
-
-- `--narrative-url` — the narrative-review URL the gate stamped on
-  `state.narrative_review_url` ("Back to the narrative").
-- `--companion-url "$DECK_URL"` — the still-frame deck uploaded just above
-  (labelled "Still-frame walkthrough" automatically for a video).
-- `--spec "<unified_spec>"` — derives one "Explore in the app" reference link
-  per scene `url` (label = scene title, deduped). The clip's destinations,
-  clickable and live.
-
-```bash
-_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
-DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
-UPLOAD="$DDD_REPO/scripts/walkthrough-share/upload.py"
-ITER_CLIP="<run_dir>/iter${state.iteration}_clip.mp4"  # if recorded
-if [ -f "$ITER_CLIP" ]; then
-  NARRATIVE_URL=$(PYTHONPATH="$DDD_REPO" uv run --project "$DDD_REPO" python -c "from scripts.ddd.runstate import load; print(load('$run_id').narrative_review_url or '')")
-  CLIP_ARGS=( "$ITER_CLIP" --public
-    --title "<unified_spec.name> iter${state.iteration} (video)"
-    --run-id "<state.run_id>" --feature "<state.feature>" --role clip
-    --spec "<unified_spec>" )
-  [ -n "$DECK_URL" ] && CLIP_ARGS+=( --companion-url "$DECK_URL" )
-  [ -n "$NARRATIVE_URL" ] && CLIP_ARGS+=( --narrative-url "$NARRATIVE_URL" )
-  CLIP_URL=$(uv run --project "$DDD_REPO" python "$UPLOAD" "${CLIP_ARGS[@]}" 2>&1 | sed -n 's/^View: \(https:[^ ]*\).*/\1/p' | tail -1)
-fi
-```
-
-Stamp the URLs onto `run_state.yaml` so every downstream step (judges,
-surfaced findings, the digest) can read them without re-running the upload:
-
-```python
-from scripts.ddd.runstate import load, save
-state = load(run_id)
-state.iteration_decks[state.iteration] = DECK_URL
-if CLIP_URL:
-    state.iteration_clips[state.iteration] = CLIP_URL
-save(state)
-```
-
-**On upload failure:** log the failure to `<run_dir>/upload-errors.md` with
-the iteration number and reason, leave the `iteration_decks` entry unset,
-and CONTINUE to the judge step. The judges still score from the local
+**On upload failure:** `publish` logs it to `<run_dir>/upload-errors.md` with
+the iteration number and reason, leaves that URL unset, and still exits 0 —
+CONTINUE to the judge step. The judges still score from the local
 PNGs; the orchestrator's surface step will then fall back to a verbal
 description per the artifact-link-or-verbal-description rule in
 `agents/ddd.md`. **NEVER** fall back to `file://` paths.
