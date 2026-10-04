@@ -498,7 +498,7 @@ from the *same* person, sent minutes earlier — and a scoped turn is precisely 
 looks, because the runner resolved the ref and the procedure said go straight to it. So before you
 decide the action, spend one call on the sender:
 ```bash
-gog gmail search "from:<their-address> newer_than:3d" -a <your-mailbox> -p
+gog gmail search "from:<their-address> newer_than:3d" -a <your-mailbox> --client "$(canopy email client --repo .)" -p
 ```
 Read anything newer than the message you were handed, or on the same subject. This does **not**
 reopen the inbox scan and it does **not** break the one-counterpart rule — it is the same
@@ -720,7 +720,7 @@ collision checks are for.
   decided against.
 - **If you already marked it read, put the label back**: there is deliberately no
   `canopy email mark-unread`, so the one-off repair is
-  `gog gmail thread modify <thread_id> -a <your-mailbox> --add UNREAD` (own mailbox, reversible,
+  `gog gmail thread modify <thread_id> -a <your-mailbox> --client "$(canopy email client --repo .)" --add UNREAD` (own mailbox, reversible,
   not outbound). Then re-run `canopy email dangling` and confirm it reads NEEDS ATTENTION again.
 
 (Origin: 2026-09-17, eva. A `--thread`-scoped turn added a forwarded invitation to a shared

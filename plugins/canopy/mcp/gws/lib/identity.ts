@@ -11,9 +11,11 @@
  *   GWS_IDENTITY_MODE     — "sa" | "gog". Required.
  *   GWS_SA_KEY_PATH       — sa mode: absolute path to the service-account
  *                           JSON key. Required in sa mode.
- *   GWS_GOG_ACCOUNT /     — gog CLI identity used by the read_personal_drive_doc
- *   GWS_GOG_CLIENT          atom (subprocess shell-out; independent of the
+ *   GWS_GOG_ACCOUNT       — gog mailbox used by the read_personal_drive_doc
+ *                           atom (subprocess shell-out; independent of the
  *                           googleapis client identity).
+ *   GWS_GOG_CLIENT        — optional override; absent, the client comes from
+ *                           `canopy email client` (the fleet's one rule).
  *   GWS_ROOT_FOLDER_ID    — optional: the agent's default working root folder.
  *                           Surfaced via drive_diagnose; not enforced per-call.
  *   GWS_ALLOWED_DRIVE_IDS — optional: comma-separated Shared Drive IDs the

@@ -2522,6 +2522,45 @@ def email_apply_filters(all_agents, repo, agent, account, client, sweep, dry_run
         click.echo(line)
 
 
+@email_group.command("client")
+@_with_identity_options
+@click.option("--json", "as_json", is_flag=True,
+              help="Print account, client, declared client, the clients holding the mailbox, and why.")
+def email_client(repo, agent, account, client, as_json):
+    """The gog client this agent's Google calls use on THIS machine — the one rule.
+
+    Print it and pass it to gog: `gog … --account <mailbox> --client "$(canopy email
+    client --repo .)"`. The declared `gog_client` when this machine holds a token under
+    it; else the fleet client it does hold (`canopy`, then `canopy-web` — one app, two
+    ways to sign in); else the single other client holding the mailbox. Every caller
+    that builds a gog command — Python, TypeScript or a shell line in a skill — asks
+    this instead of hardcoding a client, so a mailbox signed in from either door works.
+    """
+    try:
+        if account:
+            # A bare mailbox: the fleet client is what it declares (no repo to read).
+            ident = EmailIdentity(slug=agent or account.split("@")[0], account=account,
+                                  client=DEFAULT_CLIENT)
+        else:
+            repo_dir = Path(repo) if repo else (find_agent_repo(agent) if agent else Path.cwd())
+            ident = resolve_email_identity(repo_dir)
+    except AgentEmailError as e:
+        raise click.ClickException(str(e))
+    if client:  # an explicit --client is a human decision: honoured, and reported as such
+        ident.client = client
+        rec = ClientReconciliation(account=ident.account, declared=client, client=client)
+    else:
+        rec = reconcile_client(ident, runner=subprocess.run, apply=True)
+    if as_json:
+        click.echo(json.dumps({
+            "slug": ident.slug, "account": ident.account, "client": ident.client,
+            "declared": rec.declared, "changed": rec.changed,
+            "candidates": rec.candidates, "note": rec.note,
+        }))
+    else:
+        click.echo(ident.client)
+
+
 @email_group.command("preflight")
 @_with_identity_options
 def email_preflight(repo, agent, account, client):

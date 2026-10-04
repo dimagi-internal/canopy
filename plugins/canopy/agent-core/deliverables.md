@@ -278,7 +278,7 @@ with the AGENT's domain, so to a `@dimagi.com` reader the link is dead until you
 them by address:
 
 ```bash
-gog drive share <id> --to user --email "<person>" --role writer -a <acct> --client <client>
+gog drive share <id> --to user --email "<person>" --role writer -a <acct> --client "$(canopy email client --repo .)"
 gog drive permissions <id> -a <acct> --client <client>    # confirm it landed
 ```
 

@@ -211,7 +211,15 @@ def health_report(slug: str, *, call: Callable = canopy_web.call,
     if resolved is None:
         inbox = {"unread": [], "error": f"no gog account for {slug}@{MAILBOX_DOMAIN} on this machine"}
     else:
-        inbox = probe_inbox(*resolved, runner=runner, now=now, stale_days=stale_inbox_days)
+        # The client by the one rule every gog caller follows (agent_email.reconcile_client),
+        # not the account listing's: that collapses to ONE row per mailbox, so it can name a
+        # stale client while a working one holds the same mailbox.
+        from orchestrator.agent_email import DEFAULT_CLIENT, EmailIdentity, reconcile_client
+        mailbox = resolved[0]
+        ident = EmailIdentity(slug=slug, account=mailbox, client=DEFAULT_CLIENT)
+        rec = reconcile_client(ident, runner=runner, apply=True)
+        client = ident.client if rec.candidates else resolved[1]
+        inbox = probe_inbox(mailbox, client, runner=runner, now=now, stale_days=stale_inbox_days)
 
     flags = []
     if any(i["stale"] for i in board["needs_you"]):

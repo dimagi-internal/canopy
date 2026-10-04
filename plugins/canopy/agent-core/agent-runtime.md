@@ -38,6 +38,26 @@ in a repo can't vary; a **1Password reference** can.
 > If yes → it's a reference. This is the rule that was being missed: ids kept getting written as
 > literals because "an id isn't a secret", which is true and irrelevant.
 
+## The gog client — never type one
+
+Every raw `gog` call names the mailbox (`-a <mailbox>`) and takes its client from
+**`canopy email client`**, the one rule every gog caller follows — the canopy engine, the
+runners, MCP servers, agent scripts and the lines in these procedures:
+
+```bash
+gog gmail search "is:unread" -a <your-mailbox> --client "$(canopy email client --repo .)"
+```
+
+It prints the client this machine should use for the agent's mailbox: the declared
+`gog_client` when this machine holds a token under it; else the fleet client it does hold —
+`canopy`, then `canopy-web`; else the single other client holding the mailbox. `canopy` and
+`canopy-web` are ONE Google app with two ways to sign in (a laptop's `gog login`, and
+canopy-web's "Connect Google mailbox" button, which can only mint under the Web client), so
+a mailbox signed in from either door works. Hardcoding `--client canopy` breaks the second
+door; omitting `--client` leans on gog's `account_clients` map, which nothing keeps in step.
+Code calls the same rule directly: `agent_email.reconcile_client` (Python) or
+`canopy email client --json` (anything else).
+
 ## Two-tier vault topology
 
 | Vault | Holds |
