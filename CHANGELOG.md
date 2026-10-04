@@ -9,6 +9,16 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.562] - 2026-10-04
+### Added
+- **`canopy gdoc suggest` — edit a doc as tracked SUGGESTIONS**, not direct writes. Text-
+  anchored edits (`replace` / `insert_after` / `insert_before` / `delete`, each `find` unique)
+  resolved against the doc as it reads now, pending suggestions included, and sent as one
+  Docs API batch with `writeMode: SUGGEST`. It fails loudly if anything landed as a direct
+  edit (no suggestion id, or the doc with suggestions rejected changed). Requires the Google
+  Workspace Developer Preview enrollment (done for the fleet 2026-10-04). Origin: eva,
+  2026-10-02, direct edits to a teammate's doc that had been asked for as suggestions.
+
 ## [0.2.561] - 2026-10-04
 ### Added
 - **`canopy gdoc check` + the fleet gdoc Stop rail (`agent-core/gdoc_gate.py`)**, promoted
