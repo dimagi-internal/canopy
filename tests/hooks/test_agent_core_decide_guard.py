@@ -51,8 +51,8 @@ def test_the_stop_hook_active_rule_comes_first():
     """Without it the live probe blocked 10 times in a row: a block re-triggers Stop."""
     prompt = dg.render_prompt(dg.load_examples())
     first_rule = prompt.index("stop_hook_active")
-    assert first_rule < prompt.index("DEV ACTIONS")
-    assert first_rule < prompt.index("HANDBACK:")
+    assert first_rule < prompt.index("Block only if")
+    assert first_rule < prompt.index("BLOCK:")
     assert prompt.count("$ARGUMENTS") == 1 and prompt.rstrip().endswith("$ARGUMENTS")
 
 
@@ -69,8 +69,8 @@ def test_examples_are_well_formed_and_cover_both_labels():
     "would be a small follow-up.",
 ])
 def test_the_2026_10_04_misses_are_labelled_handbacks(fragment):
-    (row,) = [r for r in dg.load_examples() if fragment in r["closing"]]
-    assert row["handback"] is True
+    rows = [r for r in dg.load_examples() if fragment in r["closing"]]
+    assert rows and all(r["handback"] is True for r in rows)
 
 
 @pytest.mark.parametrize("fragment", [
@@ -78,12 +78,13 @@ def test_the_2026_10_04_misses_are_labelled_handbacks(fragment):
 ])
 def test_outbound_asks_are_labelled_fine(fragment):
     """Outbound always waits for a human — asking there is correct."""
-    (row,) = [r for r in dg.load_examples() if fragment in r["closing"]]
-    assert row["handback"] is False
+    rows = [r for r in dg.load_examples() if fragment in r["closing"]]
+    assert rows and all(r["handback"] is False for r in rows)
 
 
 def test_dollar_signs_in_examples_cannot_become_placeholders():
-    out = dg.render_prompt([{"closing": "costs $ARGUMENTS $1", "handback": False, "why": "x"}])
+    out = dg.render_prompt([{"closing": "costs $ARGUMENTS $1", "handback": False, "why": "x",
+                             "in_prompt": True}])
     assert len(re.findall(r"(?<!\\)\$ARGUMENTS", out)) == 1 and "\\$1" in out
 
 
@@ -111,7 +112,7 @@ def test_add_example_appends_and_rerenders(tmp_path, monkeypatch):
     result = CliRunner().invoke(decide_guard_group, [
         "add-example", "--repo", str(tmp_path),
         "--closing", "The retry wrapper would be easy to add later.",
-        "--handback", "true", "--why", "Undone dev work parked as 'later'.",
+        "--handback", "true", "--why", "Undone dev work parked as 'later'.", "--in-prompt",
     ])
     assert result.exit_code == 0, result.output
     examples = plugin / "agent-core" / dg.EXAMPLES_PATH.name
@@ -132,7 +133,8 @@ def test_check_fails_when_stale(tmp_path, monkeypatch):
     monkeypatch.setattr(dg, "PLUGIN_WIDE", True)
     plugin = _fake_checkout(tmp_path)
     with open(plugin / "agent-core" / dg.EXAMPLES_PATH.name, "a") as fh:
-        fh.write(json.dumps({"closing": "new", "handback": False, "why": "y"}) + "\n")
+        fh.write(json.dumps({"closing": "new", "handback": False, "why": "y",
+                             "in_prompt": True}) + "\n")
     result = CliRunner().invoke(decide_guard_group, ["check", "--repo", str(tmp_path)])
     assert result.exit_code != 0 and "stale" in result.output
 
@@ -199,3 +201,16 @@ def test_the_retired_regex_engine_is_a_silent_no_op():
         "transcript_path": "/nonexistent", "session_id": "s1"}),
         capture_output=True, text=True, timeout=30)
     assert p.returncode == 0 and p.stdout == ""
+
+
+def test_the_prompt_stays_short_and_the_rest_is_held_out():
+    """Jonathan, 2026-10-04: the 12K-char first version was "way way too much text" for a
+    prompt sent on every Stop. Only `in_prompt` examples are rendered; the budget is enforced."""
+    rows = dg.load_examples()
+    prompt = dg.render_prompt(rows)
+    assert len(prompt) <= dg.PROMPT_BUDGET
+    held = [r for r in rows if not r.get("in_prompt")]
+    assert len(held) >= 40 and not any(json.dumps(r["closing"])[1:-1] in prompt for r in held
+                                        if len(r["closing"]) > 40)
+    with pytest.raises(ValueError, match="budget"):
+        dg.render_prompt([{"closing": "x" * 400, "handback": True, "why": "w", "in_prompt": True}] * 10)

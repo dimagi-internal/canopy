@@ -9,6 +9,14 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.579] - 2026-10-04
+### Changed
+- **decide-guard prompt cut from 12,136 to 1,993 chars.** It runs on every Stop of every canopy
+  session, and Jonathan found the first version far too much text. Only examples marked
+  `in_prompt` are rendered (14); the other 55 are a held-out eval set. `PROMPT_BUDGET` (3000) is
+  enforced at render. `add-example` holds out by default; `--in-prompt` shows it to the judge.
+  Held-out: 0–1/55 wrong; real endings: 10/80 flagged (was 16), 5 genuine, 3 borderline.
+
 ## [0.2.577] - 2026-10-04
 ### Changed
 - **decide-guard prompt hook is plugin-wide again — re-applies #749, deploy relabel fixed.**

@@ -96,12 +96,14 @@ def show_cmd(repo):
 @click.option("--handback", required=True, type=click.Choice(["true", "false"]),
               help="true = it handed back a call it could have made (should block)")
 @click.option("--why", required=True, help="one line: whose call it was and why")
+@click.option("--in-prompt", is_flag=True,
+              help="also render it into the judge's prompt (default: held-out eval set only)")
 @click.option("--repo", default=None)
-def add_example_cmd(closing, handback, why, repo):
+def add_example_cmd(closing, handback, why, in_prompt, repo):
     """Append a labelled example and re-render hooks.json. Bump the version and ship after."""
     hooks, examples = _paths(repo)
     try:
-        row = dg.add_example(closing, handback == "true", why, examples)
+        row = dg.add_example(closing, handback == "true", why, examples, in_prompt=in_prompt)
     except ValueError as e:
         raise click.ClickException(str(e))
     dg.sync_hooks_json(hooks, examples)
