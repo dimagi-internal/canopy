@@ -1215,6 +1215,35 @@ def gdoc_email_blocks(repo, agent, account, client, doc_id, blocks_file):
         sys.exit(1)
 
 
+@gdoc_group.command("suggest")
+@_with_identity_options
+@click.argument("doc_id")
+@click.option("--edits", "edits_file", required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help='JSON list of {"find": <unique text>, and one of "replace" / "insert_after" '
+                   '/ "insert_before" / "delete": true}.')
+@click.option("--dry-run", is_flag=True,
+              help="Resolve every edit against the doc and print the batch; write nothing.")
+def gdoc_suggest(repo, agent, account, client, doc_id, edits_file, dry_run):
+    """Edit a doc as TRACKED SUGGESTIONS (Suggesting mode), not direct writes.
+
+    Use this whenever the doc is not the agent's own, or a human asked for changes "in edit
+    mode" / "with track changes". Each `find` must match exactly once in the doc as it reads
+    now (pending suggestions included); everything goes in one batch, and a response without
+    suggestion ids is an error, because it means a direct edit."""
+    from orchestrator.gdoc_suggest import SuggestError, suggest
+    try:
+        ident = _gdoc_identity_from_opts(repo, agent, account, client)
+        edits = json.loads(Path(edits_file).read_text(encoding="utf-8"))
+        if not isinstance(edits, list) or not edits:
+            raise click.ClickException("--edits must be a non-empty JSON list")
+        result = suggest(account=ident.account, client=ident.client, doc_id=doc_id,
+                         edits=edits, dry_run=dry_run)
+    except (AgentGdocError, SuggestError, json.JSONDecodeError) as e:
+        raise click.ClickException(str(e))
+    click.echo(json.dumps(result, indent=2))
+
+
 @gdoc_group.command("check")
 @_with_identity_options
 @click.argument("doc_id")

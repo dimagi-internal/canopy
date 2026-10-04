@@ -225,6 +225,25 @@ catches most of the damage after the fact; these keep you from causing it.
 - **It wipes email blocks.** Insert blocks last; to change one, republish and re-insert.
 - A fresh publish has a new id, so **re-grant any per-person shares** the old doc had.
 
+**A doc that is not yours → edit it as TRACKED SUGGESTIONS.** When a human asks for changes
+"in edit mode" / "with track changes", or the doc belongs to someone else, they mean Suggesting
+mode: every change visible and accepted or rejected one by one. A direct write lands silently;
+its only trace is version history. Use:
+
+```bash
+uv run --project "$CANOPY_ROOT" canopy gdoc suggest <docId> --edits edits.json [--dry-run]
+# edits.json: [{"find": "<text that occurs once>", "replace": "<new>"},
+#              {"find": "...", "insert_after": "..."}, {"find": "...", "insert_before": "..."},
+#              {"find": "...", "delete": true}]
+```
+
+Each `find` must match exactly once in the doc as it reads now (text already suggested for
+deletion is skipped); everything goes in one batch, and the command fails loudly if anything
+went in as a direct edit. `--dry-run` here is honest: it reads the doc and prints the batch.
+If it reports the Developer Preview error, the account isn't enrolled. **Do not fall back to
+direct edits on someone else's doc** — ask. (eva, 2026-10-02: eight direct edits to a
+teammate's concept note, asked for as suggestions, undone by hand.)
+
 **Raw `gog docs` edits:**
 - **No `--dry-run`.** On gog v0.12.0 the flag performed the write, so a dry-run-then-run pair
   applied it twice. It is a fleet deny rail (gws channel).
