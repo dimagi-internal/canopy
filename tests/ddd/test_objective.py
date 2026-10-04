@@ -172,14 +172,16 @@ class TestPartition:
         assert roles["design_soundness:low"] == "deferred"
         assert roles["trust:medium"] == "blocking"
         assert roles["arc_shape:medium"] == "deferred"  # presentation, whatever the severity
-        assert roles["clarity:low"] == "ride_along"
+        assert roles["clarity:low"] == "deferred"  # low narration nits wait for the polish pass
 
     def test_accuracy_is_a_narration_edit_never_a_product_pr(self):
         from scripts.ddd import finding_class
 
         (f,) = objective.partition(
-            finding_class.normalize_findings([ACCURACY_CLARITY]), block_severities=("medium",)
+            finding_class.normalize_findings([{**ACCURACY_CLARITY, "severity": "medium"}]),
+            block_severities=("medium",),
         )
+        assert f["objective_role"] == "ride_along"
         assert f["fix_scope"] == "narrative"
         assert fix_scope.lands_in_product(f) is False
         assert fix_scope.batch_plan([f])["scope"] == fix_scope.RECIPE
