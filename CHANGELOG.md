@@ -9,6 +9,14 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.566] - 2026-10-04
+### Fixed
+- **DDD run store: the runner identity is the process's account, not `$LOGNAME`.** The
+  first live run recorded its holder as `root@Jonathans-MBP`: emdash sessions run with
+  `LOGNAME=root`, and `getpass.getuser()` reads it first, so every macOS account on one
+  machine looked like the same runner — and `push` forces a 409 from "the same runner", so
+  a real two-account conflict would have been silently overwritten instead of refused.
+
 ## [0.2.564] - 2026-10-04
 ### Changed
 - **Agent-review findings say WHERE the fix lives; fleet-align sees agent-unique artifacts.**

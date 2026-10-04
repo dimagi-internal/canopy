@@ -91,11 +91,24 @@ def _warn_once(key: str, msg: str) -> None:
 
 
 def holder() -> str:
-    """Who is writing: ``<user>@<host>`` — a runner is a user on a machine."""
+    """Who is writing: ``<user>@<host>`` — a runner is a user on a machine.
+
+    The user is the PROCESS's account (uid), never ``getpass.getuser()``: that
+    reads ``$LOGNAME`` first, and emdash sessions run with ``LOGNAME=root``, so
+    every macOS account on one machine (haldimagi, ace, jj) reported
+    ``root@<host>`` (2026-10-04, the first live run). Two runners then looked
+    like one, and :func:`push` FORCES a 409 from "this same runner" — a real
+    conflict between two accounts would have been silently overwritten.
+    """
     try:
-        user = getpass.getuser()
+        import pwd
+
+        user = pwd.getpwuid(os.getuid()).pw_name
     except Exception:
-        user = "unknown"
+        try:
+            user = getpass.getuser()
+        except Exception:
+            user = "unknown"
     return f"{user}@{socket.gethostname().split('.')[0]}"
 
 
