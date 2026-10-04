@@ -434,8 +434,226 @@ def _compare_gating(name, agents, template_g, per_agent) -> list[Finding]:
     return findings
 
 
-def analyze(agents: list[Agent], baseline: Optional[dict] = None) -> list[Finding]:
-    """Deterministic cross-agent comparison → typed findings. No network, no LLM."""
+# ── promotion candidates: agent-UNIQUE artifacts that look generic ────────────
+# The comparison above only sees the factory-stamped skills + gating.json, and only their
+# numbered steps — it is blind to everything an agent grew on its own: domain skills, bin/ tools,
+# hooks. So PROMOTE could never see e.g. eva's skills/gdoc-review/check_gdoc.py (a Google-Docs
+# visual-QA checker) or hooks/gdoc_gate.py (a share gate) — fleet-generic mechanisms that lived in
+# one agent's repo because nothing ever asked "is this generic?". This pass asks, deterministically,
+# and hands what it finds to the judgment pass as CANDIDATES (the LLM ranks/drops them).
+#
+# A non-stamped artifact (skills/<name>/, bin/<file>, hooks/<file>) is a candidate when either
+#   (a) SHARED NAME — a non-trivial copy of the same-named artifact exists in >= 2 agents (names
+#       are compared after stripping the agent's own slug prefix and extension, so
+#       `eva-preflight` and `echo_preflight.py` are both `preflight`), or
+#   (b) PERSONA-FREE SHARED-CHANNEL MECHANISM — a bin/ or hooks/ file, or a skill that ships
+#       code, whose text barely mentions the agent's own identity (slug / persona name / mailbox,
+#       ignoring lines that are just an --account / env / default value) AND that is a helper for
+#       a shared channel (gdoc / gmail / drive / calendar — named for it, or mentioning it often).
+# Thresholds are conservative and documented; both rules ignore trivial stubs. (b)'s channel
+# clause is the conservative part: measured on the 2026-10-04 fleet, "persona-free" alone flagged
+# ~55 single-agent artifacts, most of them domain tools (hal's labs scripts, ace's PDD QA skills)
+# that are persona-free but not fleet-generic. A shared-channel helper is the class the
+# agent-review placement heuristic also defaults to canopy — the class eva's gdoc tooling was in.
+PROMOTE_MIN_BYTES = 1500          # below this an artifact is a stub/shim — never a candidate
+PROMOTE_MAX_PERSONA_RATIO = 0.06  # (b): <= 6% of non-blank lines may name the agent's identity
+PROMOTE_CHANNEL_HITS = 8          # (b): channel term in the NAME, or >= this many mentions
+_UNIQUE_DIRS = (("bin", "bin"), ("hooks", "hook"))
+_CODE_SUFFIXES = {".py", ".sh", ".ts", ".js", ".mjs", ""}
+_TEXT_SUFFIXES = _CODE_SUFFIXES | {".md", ".json", ".yaml", ".yml", ".txt", ".toml"}
+_SKIP_PARTS = {"__pycache__", ".DS_Store", "node_modules"}
+# A line that names the agent only as a default/identity VALUE (`--account eva@…`, an env default)
+# is plumbing, not persona content — don't count it against (b).
+_DEFAULT_LINE = re.compile(r"(?i)--account|\bdefault\b|getenv|environ|@dimagi-ai\.com|AGENT_SLUG|AGENT_NAME")
+_SHARED_CHANNEL = re.compile(r"(?i)\b(?:gdoc|google[- ]docs?|gmail|google[- ]drive|calendar|gcal|gog)\b")
+_CANOPY_PLUGIN = Path(__file__).resolve().parents[2] / "plugins" / "canopy"
+
+
+@dataclass
+class UniqueArtifact:
+    """One non-factory-stamped skill dir / bin file / hook file in one agent repo."""
+    agent: str
+    relpath: str          # e.g. "hooks/gdoc_gate.py", "skills/gdoc-review"
+    kind: str             # skill | bin | hook
+    key: str              # cross-agent comparable name (slug prefix + extension stripped)
+    size: int             # bytes of text
+    persona_ratio: float  # fraction of non-blank lines naming the agent's identity
+    has_code: bool        # a bin/hook file, or a skill dir that ships a script
+    channel: bool         # touches a shared channel (gdoc/gmail/drive/calendar)
+    channel_hits: int = 0  # how many shared-channel mentions (name counts as PROMOTE_CHANNEL_HITS)
+    files: list[str] = field(default_factory=list)  # a skill dir's files (for the brief)
+
+
+def _channel_hits(name: str, text: str) -> int:
+    """Shared-channel mentions; a channel term in the artifact's NAME alone meets the bar."""
+    if _SHARED_CHANNEL.search(name.replace("_", "-").replace("-", " ")):
+        return max(PROMOTE_CHANNEL_HITS, len(_SHARED_CHANNEL.findall(text)))
+    return len(_SHARED_CHANNEL.findall(text))
+
+
+def _stamped_relpaths(agent: Agent) -> set[str]:
+    return {k.replace("{{AGENT_SLUG}}", agent.slug) for k in canopy_agent_factory.templates()}
+
+
+def _artifact_key(name: str, slug: str) -> str:
+    stem = name
+    for ext in (".py", ".sh", ".ts", ".js", ".mjs"):
+        if stem.endswith(ext):
+            stem = stem[: -len(ext)]
+    stem = stem.lower().lstrip("_")
+    for sep in ("-", "_"):
+        if stem.startswith(slug + sep):
+            stem = stem[len(slug) + 1:]
+    return stem.replace("_", "-")
+
+
+def _persona_ratio(text: str, tokens: list[str]) -> float:
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines or not tokens:
+        return 0.0
+    rx = re.compile(r"\b(?:" + "|".join(re.escape(t) for t in tokens) + r")\b", re.I)
+    hits = sum(1 for ln in lines if rx.search(ln) and not _DEFAULT_LINE.search(ln))
+    return hits / len(lines)
+
+
+def _read_text(p: Path) -> str:
+    try:
+        return p.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def agent_unique_artifacts(agent: Agent) -> list[UniqueArtifact]:
+    """Every skills/<name>/, bin/<file>, hooks/<file> in `agent` that the factory did NOT stamp."""
+    stamped = _stamped_relpaths(agent)
+    stamped_skills = {m.group(1) for k in stamped if (m := _SKILL_RELPATH.fullmatch(k))}
+    tokens = _identity_tokens(agent)
+    out: list[UniqueArtifact] = []
+
+    def _add(relpath, kind, name, texts, files, has_code):
+        text = "\n".join(texts)
+        out.append(UniqueArtifact(
+            agent=agent.slug, relpath=relpath, kind=kind, key=_artifact_key(name, agent.slug),
+            size=len(text.encode("utf-8")), persona_ratio=round(_persona_ratio(text, tokens), 3),
+            has_code=has_code, channel=_channel_hits(name, text) >= PROMOTE_CHANNEL_HITS,
+            channel_hits=_channel_hits(name, text), files=files,
+        ))
+
+    for dirname, kind in _UNIQUE_DIRS:
+        d = agent.path / dirname
+        if not d.is_dir():
+            continue
+        for f in sorted(d.iterdir()):
+            rel = f"{dirname}/{f.name}"
+            if not f.is_file() or f.name in _SKIP_PARTS or f.suffix == ".pyc" or rel in stamped:
+                continue
+            _add(rel, kind, f.name, [_read_text(f)], [], True)
+    skills = agent.path / "skills"
+    if skills.is_dir():
+        for sd in sorted(p for p in skills.iterdir() if p.is_dir()):
+            if sd.name in stamped_skills or sd.name in _SKIP_PARTS:
+                continue
+            files = sorted(p for p in sd.rglob("*") if p.is_file()
+                           and not (_SKIP_PARTS & set(p.parts)) and p.suffix in _TEXT_SUFFIXES)
+            has_code = any(p.suffix in _CODE_SUFFIXES and p.name != "SKILL.md" for p in files)
+            _add(f"skills/{sd.name}", "skill", sd.name, [_read_text(p) for p in files],
+                 [p.relative_to(sd).as_posix() for p in files], has_code)
+    return out
+
+
+def _canopy_ships(art: UniqueArtifact) -> Optional[str]:
+    """A canopy path that already ships an artifact of this name (so the agent copy may be a fork)."""
+    name = PurePath(art.relpath).name
+    cands = [_CANOPY_PLUGIN / "agent-core" / name, _CANOPY_PLUGIN / "skills" / art.key / "SKILL.md"]
+    if art.kind == "skill":
+        cands.append(_CANOPY_PLUGIN / "skills" / name / "SKILL.md")
+    for c in cands:
+        if c.is_file():
+            return c.relative_to(_CANOPY_PLUGIN.parents[1]).as_posix()
+    return None
+
+
+def _describe(art: UniqueArtifact) -> str:
+    bits = [f"{art.agent}: {art.relpath} ({art.size / 1024:.1f}KB, persona {art.persona_ratio:.0%}"]
+    if art.channel:
+        bits.append(", shared channel")
+    bits.append(")")
+    if art.kind == "skill" and art.has_code:
+        scripts = [f for f in art.files if f != "SKILL.md"]
+        bits.append(" ships " + ", ".join(scripts[:6]) + (" …" if len(scripts) > 6 else ""))
+    return "".join(bits)
+
+
+def _distinct_agents(agents: list[Agent]) -> list[Agent]:
+    """One repo per AGENT: a second clone of the same repo (e.g. `ace` and `ace-2`, both checkouts
+    of the same origin) is not a second agent, and counting it would make every one of that
+    agent's skills look 'shared by 2 agents' under rule (a). Identity = the git origin URL; a repo
+    without one stands for itself."""
+    seen: set[str] = set()
+    out: list[Agent] = []
+    for a in agents:
+        rc, url = _git(a.path, "config", "--get", "remote.origin.url")
+        ident = url.strip().lower().removesuffix(".git") if rc == 0 and url.strip() else str(a.path)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        out.append(a)
+    return out
+
+
+def promotion_candidates(agents: list[Agent], *, min_bytes: int = PROMOTE_MIN_BYTES,
+                         max_persona_ratio: float = PROMOTE_MAX_PERSONA_RATIO) -> list[Finding]:
+    """Deterministic PROMOTE candidates from agent-unique artifacts (rules (a)/(b) above)."""
+    arts = [a for ag in _distinct_agents(agents)
+            for a in agent_unique_artifacts(ag) if a.size >= min_bytes]
+    findings: list[Finding] = []
+    claimed: set[tuple[str, str]] = set()
+    # (a) the same artifact name, non-trivially, in >= 2 agents
+    by_key: dict[tuple[str, str], list[UniqueArtifact]] = {}
+    for a in arts:
+        by_key.setdefault((a.kind, a.key), []).append(a)
+    for (kind, key), group in sorted(by_key.items()):
+        owners = sorted({a.agent for a in group})
+        if len(owners) < 2:
+            continue
+        claimed.update((a.agent, a.relpath) for a in group)
+        shipped = next((s for a in group if (s := _canopy_ships(a))), None)
+        findings.append(Finding(
+            kind="promote", artifact=f"{kind}:{key}", reference=", ".join(owners), laggards=["canopy"],
+            summary=(f"agent-unique artifact looks generic: {kind} '{key}' exists in "
+                     f"{len(owners)} agents ({', '.join(owners)}) — candidate to lift into canopy"),
+            detail=[_describe(a) for a in sorted(group, key=lambda a: a.agent)],
+            note=("Shared-name candidate (rule a) — the judgment pass decides promote vs. drop."
+                  + (f" canopy already ships {shipped}: the agent copies may be stale forks to "
+                     "thin out or delete." if shipped else "")),
+        ))
+    # (b) a persona-free SHARED-CHANNEL mechanism in a single agent
+    for a in sorted(arts, key=lambda a: (-a.channel_hits, -a.size)):
+        if ((a.agent, a.relpath) in claimed or not a.has_code or not a.channel
+                or a.persona_ratio > max_persona_ratio):
+            continue
+        shipped = _canopy_ships(a)
+        findings.append(Finding(
+            kind="promote", artifact=f"{a.kind}:{a.key}", reference=a.agent, laggards=["canopy"],
+            summary=(f"agent-unique artifact looks generic: {a.relpath} in {a.agent} is a "
+                     "shared-channel helper with no persona-specific content — candidate to lift "
+                     "into canopy"),
+            detail=[_describe(a)],
+            note=(f"Persona-free candidate (rule b: >= {min_bytes}B, <= {max_persona_ratio:.0%} of "
+                  f"lines name the agent, shared channel in name or >= {PROMOTE_CHANNEL_HITS} "
+                  "mentions) — the judgment pass decides promote vs. drop."
+                  + (f" canopy already ships {shipped}: the agent copy may be a stale fork to "
+                     "delete." if shipped else "")),
+        ))
+    return findings
+
+
+def analyze(agents: list[Agent], baseline: Optional[dict] = None, *,
+            candidates: bool = True) -> list[Finding]:
+    """Deterministic cross-agent comparison → typed findings. No network, no LLM.
+
+    `candidates` (default on) appends the agent-unique PROMOTE candidates
+    (`promotion_candidates`) after the template-anchored findings."""
     if baseline is None:
         baseline = load_template_baseline()
     assert_baseline_usable(baseline)
@@ -469,6 +687,8 @@ def analyze(agents: list[Agent], baseline: Optional[dict] = None) -> list[Findin
     # rank: promote (convergence is the strongest signal) first, then by breadth of impact
     order = {"promote": 0, "distribute": 1, "reconcile": 2}
     findings.sort(key=lambda f: (order.get(f.kind, 9), -len(f.laggards)))
+    if candidates:
+        findings.extend(promotion_candidates(agents))
     return findings
 
 
@@ -648,6 +868,14 @@ def build_judgment_prompt(findings: list[Finding]) -> str:
         "  - rationale: one or two sentences. Weigh the EVIDENCE — a finding with real evidence "
         "that the gap cost something is far stronger than a speculative one. Say so.\n"
         "  - action: the concrete change (e.g. 'backport self-review steps 7-8 into eva & hal').\n\n"
+        "A `promote` finding whose summary starts 'agent-unique artifact looks generic' is a "
+        "CANDIDATE from a deterministic heuristic over an agent's OWN skills/bin/hooks (same name "
+        "in >=2 agents, or no persona-specific content). Promote it when any agent would want the "
+        "mechanism the same way (a checker, a hook, a CLI, a shared-channel helper — gdoc / email / "
+        "drive / calendar): the action lifts it into canopy (plugins/canopy/agent-core, a canopy "
+        "CLI) and parameterizes any per-agent setting. Drop it when it is domain/persona work only "
+        "that agent does. If its note says canopy already ships it, the action is to delete or "
+        "thin the agent's stale fork.\n\n"
         "Return ONLY a JSON array of {index, final_kind, direction_ok, rationale, action}.\n\n"
         f"FINDINGS:\n{json.dumps(rows, indent=2)}\n"
     )

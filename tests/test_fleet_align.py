@@ -482,3 +482,130 @@ def test_agent_bases_env_var_accepts_several_and_dedupes(tmp_path, monkeypatch):
     monkeypatch.setenv(fa.BASES_ENV, os.pathsep.join([str(a), str(b), str(a)]))
     resolved = fa.agent_bases(bases=[a])
     assert resolved.count(a) == 1 and b in resolved
+
+
+# ── promotion candidates: agent-UNIQUE artifacts (skills/bin/hooks the factory didn't stamp) ──
+# fleet-align used to compare only the stamped skills + gating.json, so it could never see e.g.
+# eva's hooks/gdoc_gate.py or skills/gdoc-review/check_gdoc.py — fleet-generic tooling that grew
+# in one agent's repo. These pin the deterministic candidate pass.
+
+_GENERIC_GDOC_CHECKER = (
+    '"""Visual QA for a Google Doc: export it as HTML and flag italic bleed, leaked markdown,\n'
+    'dropped links. Works on any gdoc the agent published via gog / Google Docs."""\n'
+    + "".join(f"def check_{i}(html):\n    return 'gdoc ok {i}'\n\n" for i in range(60))
+)
+_PERSONA_TOOL = "".join(
+    f"# Eva files Jonathan's goals into Eva's tracker, step {i}\nprint('eva step {i}')\n"
+    for i in range(80)
+)
+_DOMAIN_TOOL = "".join(f"def labs_metric_{i}():\n    return {i}\n\n" for i in range(80))
+
+
+def _add(agent_dir, relpath, text):
+    p = agent_dir / relpath
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
+def _candidates(tmp_path):
+    agents = fa.discover_agents(bases=[tmp_path])
+    return [f for f in fa.promotion_candidates(agents)]
+
+
+def test_stamped_artifacts_are_not_agent_unique(tmp_path):
+    d = _write_agent(tmp_path, "eva")
+    _add(d, "hooks/gating_guard.py", _GENERIC_GDOC_CHECKER)   # factory-stamped
+    _add(d, "bin/eva-email", _GENERIC_GDOC_CHECKER)            # factory-stamped ({{AGENT_SLUG}}-email)
+    _add(d, "skills/shipping/SKILL.md", _GENERIC_GDOC_CHECKER)  # factory-stamped skill
+    _add(d, "hooks/gdoc_gate.py", _GENERIC_GDOC_CHECKER)       # agent-unique
+    (agent,) = fa.discover_agents(bases=[tmp_path])
+    rels = {a.relpath for a in fa.agent_unique_artifacts(agent)}
+    assert rels == {"hooks/gdoc_gate.py"}
+
+
+def test_persona_free_shared_channel_hook_is_a_candidate(tmp_path):
+    d = _write_agent(tmp_path, "eva")
+    _add(d, "hooks/gdoc_gate.py", _GENERIC_GDOC_CHECKER)
+    (f,) = _candidates(tmp_path)
+    assert f.kind == "promote" and f.reference == "eva" and f.laggards == ["canopy"]
+    assert f.summary.startswith("agent-unique artifact looks generic")
+    assert "hooks/gdoc_gate.py" in f.summary
+
+
+def test_skill_dir_shipping_generic_scripts_is_a_candidate_and_lists_them(tmp_path):
+    d = _write_agent(tmp_path, "eva")
+    _add(d, "skills/gdoc-review/SKILL.md", "---\nname: gdoc-review\n---\nRun the checker.\n")
+    _add(d, "skills/gdoc-review/check_gdoc.py", _GENERIC_GDOC_CHECKER)
+    _add(d, "skills/gdoc-review/lint_md.py", _DOMAIN_TOOL)
+    (f,) = _candidates(tmp_path)
+    assert f.artifact == "skill:gdoc-review"
+    assert "check_gdoc.py" in f.detail[0] and "lint_md.py" in f.detail[0]
+
+
+def test_persona_heavy_artifact_is_not_a_candidate(tmp_path):
+    d = _write_agent(tmp_path, "eva")
+    _add(d, "bin/eva-goals", _PERSONA_TOOL + "# gdoc gmail calendar\n" * 10)
+    assert _candidates(tmp_path) == []
+
+
+def test_persona_free_but_not_shared_channel_is_not_a_candidate(tmp_path):
+    # Domain tooling (hal's labs scripts) is persona-free but not fleet-generic — rule (b) needs
+    # the shared-channel clause, which is what keeps this pass conservative.
+    d = _write_agent(tmp_path, "hal")
+    _add(d, "bin/hal-labs-telemetry", _DOMAIN_TOOL)
+    assert _candidates(tmp_path) == []
+
+
+def test_trivial_stub_is_never_a_candidate(tmp_path):
+    a = _write_agent(tmp_path, "eva")
+    b = _write_agent(tmp_path, "echo")
+    _add(a, "skills/gdoc-writer/SKILL.md", "thin stub over canopy gdoc\n")
+    _add(b, "skills/gdoc-writer/SKILL.md", "thin stub over canopy gdoc\n")
+    assert _candidates(tmp_path) == []
+
+
+def test_same_name_in_two_agents_is_a_candidate_after_slug_prefix_stripping(tmp_path):
+    a = _write_agent(tmp_path, "eva")
+    b = _write_agent(tmp_path, "echo")
+    _add(a, "bin/eva-preflight", _PERSONA_TOOL)        # persona-heavy, but the NAME converged
+    _add(b, "bin/echo_preflight.py", _DOMAIN_TOOL)
+    (f,) = _candidates(tmp_path)
+    assert f.artifact == "bin:preflight"
+    assert f.reference == "echo, eva"
+    assert "2 agents" in f.summary
+
+
+def test_second_clone_of_the_same_agent_is_not_a_second_agent(tmp_path):
+    import subprocess
+    for slug in ("ace", "ace-2"):
+        d = _write_agent(tmp_path, slug)
+        _add(d, "skills/app-deploy/SKILL.md", _DOMAIN_TOOL)
+        subprocess.run(["git", "init", "-q", str(d)], check=True)
+        subprocess.run(["git", "-C", str(d), "remote", "add", "origin",
+                        "https://github.com/x/ace.git"], check=True)
+    assert _candidates(tmp_path) == []
+
+
+def test_candidate_notes_when_canopy_already_ships_it(tmp_path, monkeypatch):
+    plugin = tmp_path / "canopy" / "plugins" / "canopy"
+    (plugin / "agent-core").mkdir(parents=True)
+    (plugin / "agent-core" / "gdoc_gate.py").write_text("# fleet gate\n")
+    monkeypatch.setattr(fa, "_CANOPY_PLUGIN", plugin)
+    base = tmp_path / "agents"
+    d = _write_agent(base, "eva")
+    _add(d, "hooks/gdoc_gate.py", _GENERIC_GDOC_CHECKER)
+    (f,) = fa.promotion_candidates(fa.discover_agents(bases=[base]))
+    assert "canopy already ships plugins/canopy/agent-core/gdoc_gate.py" in f.note
+
+
+def test_analyze_feeds_candidates_into_findings_and_judge_prompt(tmp_path):
+    d = _write_agent(tmp_path, "eva")
+    _add(d, "hooks/gdoc_gate.py", _GENERIC_GDOC_CHECKER)
+    agents = fa.discover_agents(bases=[tmp_path])
+    findings = fa.analyze(agents, baseline=BASELINE)
+    cands = [f for f in findings if f.summary.startswith("agent-unique artifact looks generic")]
+    assert len(cands) == 1 and cands[0].kind == "promote"
+    assert fa.analyze(agents, baseline=BASELINE, candidates=False) == [
+        f for f in findings if f not in cands]
+    prompt = fa.build_judgment_prompt(findings)
+    assert "agent-unique artifact looks generic" in prompt and "CANDIDATE" in prompt

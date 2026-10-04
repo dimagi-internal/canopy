@@ -25,10 +25,21 @@ This finds the agent's recent turn transcripts (by cwd, across repo + worktrees)
 deterministic friction signals (failures, gating blocks, auth friction, retry loops, checklist
 gaps), then runs a claude -p synthesis that returns ranked **findings**, each with a
 `friction_type`, `fix_kind` (skill_edit | hook_rule | claude_update | channel_fix | new_skill),
-a `target` path in the agent repo, and a `recommendation`. Use `--no-llm` for signals only.
+a **`placement`** (`agent` | `pack` | `canopy`) + `placement_basis`, a `target` path, and a
+`recommendation`. Use `--no-llm` for signals only.
+
+**Placement is where the fix lives** — and it is enforced: a finding with no valid placement is
+dropped. `agent` = only this agent's persona/domain needs it (target in the agent repo);
+`canopy` = any agent would want it the same way (a CLI, hook, rail, checker, engine fix — target
+in canopy); `pack` = the capability is shared but the setting is taste (house style, edit
+marking) — ship the mechanism to canopy parameterized and record this agent's setting as a
+default. A hook, a bin/ tool, or a shared-channel (gdoc/gmail/drive/calendar) helper placed at
+`agent` with no persona-specific `placement_basis` is re-routed to `canopy` (`↻ placement
+re-routed` in the table). This exists because the old prompt routed EVERY fix into the agent repo
+by construction — eva's fleet-generic gdoc share gate shipped as eva's `hooks/gdoc_gate.py`.
 
 ## Step 2 — Triage the findings
-Present the findings as a ranked table (friction_type · title · fix_kind · target · confidence).
+Present the findings as a ranked table (friction_type · title · fix_kind · placement · target · confidence).
 For each, decide implement / defer / skip. Bias:
 - **`hook_rule`** for any "never do X" invariant — a rule in the agent's `config/gating.json`,
   NOT prose. (Prose fails under load; the gating hook forces it. §1a / §6.6.)
@@ -47,9 +58,12 @@ implement it; the model was proposing a prose edit, so the target may want redir
 `config/gating.json`. The EVIDENCE gate is different — an unevidenced finding is still a hard
 drop, and is never rescued this way.
 
-## Step 3 — Execute (PR into the AGENT's repo)
-For each accepted finding, make the change **in the agent's own repo** (not canopy — unless the
-fix is shared infra, in which case it belongs in canopy per the §4a boundary). Ship via that
+## Step 3 — Execute (PR into the repo the PLACEMENT names)
+For each accepted finding, make the change where its `placement` says: `agent` → **the agent's
+own repo**; `canopy` / `pack` → **canopy** (the §4a boundary — shared infra never forks into one
+agent's repo; for `pack`, parameterize the mechanism and set this agent's value as its default).
+If a `canopy` finding's `target` still names an agent path (a re-routed placement), re-target it
+at the canopy equivalent first. Ship via that
 repo's flow: branch → commit → PR → merge (the agent repos use the same "no human review, merge
 it yourself" convention). One PR per finding (or a tight batch). The runtime guardrail still
 holds: this changes *code*, never sends on a human's behalf.

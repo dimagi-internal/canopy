@@ -414,7 +414,8 @@ def intent_audit(path: str, *, use_llm: bool = True, model: str = "sonnet",
         if err:
             return {"session": session, "qualified": [], "dropped": [], "error": err}
 
-    qualified, dropped = qualify_findings(findings or [])
+    # Intent findings grade the session, they are not fixes to route — no placement rail.
+    qualified, dropped = qualify_findings(findings or [], require_placement=False)
 
     # Grounding pass: qualify_findings only validates the evidence record's SHAPE —
     # a fabricated source_ref quote (the LLM inventing a Jonathan quote) passes that

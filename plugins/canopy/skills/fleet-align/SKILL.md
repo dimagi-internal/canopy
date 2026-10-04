@@ -37,6 +37,29 @@ each — so divergence is precise and computable, not vibes. Two things move:
 - **RECONCILE ?** divergence with no clear winner / a legacy lineage (e.g. echo, the ancestor) —
   surfaced for a human to harvest, never auto-patched.
 
+**Coverage — stamped AND agent-unique.** The template diff above only sees the factory-stamped
+artifacts (`turn`, `agent-turn-review`, `task-tracker`, `shipping`, `manager-sync`,
+`answer-caller` + `config/gating.json`), and only their numbered steps/headings. It is blind to
+what an agent grew on its own — which is exactly where fleet-generic tooling hides (eva's Google
+Docs QA checker, markdown linter and share-gate hook lived in eva's repo for weeks). So a second,
+deterministic **promotion-candidates** pass lists every NON-stamped `skills/<name>/`, `bin/<file>`
+and `hooks/<file>` in each agent and flags a PROMOTE candidate (summary: *"agent-unique artifact
+looks generic"*) when:
+- **(a) shared name** — a non-trivial copy of the same-named artifact exists in ≥2 agents (names
+  compared after stripping the agent's slug prefix + extension: `eva-preflight` ≡
+  `echo_preflight.py`); or
+- **(b) persona-free shared-channel mechanism** — a bin/hook file or a skill that ships code,
+  where ≤6% of non-blank lines name the agent (slug / persona name / mailbox — `--account`/env
+  default lines don't count), AND it is a gdoc / gmail / drive / calendar helper (named for the
+  channel, or ≥8 mentions).
+
+Both rules ignore stubs under 1.5KB, and a second clone of the same repo (same git origin, e.g.
+`ace` + `ace-2`) counts as ONE agent. When canopy already ships a same-named file
+(`plugins/canopy/agent-core/<name>`, `plugins/canopy/skills/<name>/`) the note says so — the
+agent copy is then likely a stale fork to delete. These are **candidates**: the judgment pass
+promotes the generic mechanisms and drops domain/persona work. Thresholds live as
+`PROMOTE_*` constants in `fleet_align.py`.
+
 **Evidence is the point.** A structural gap only matters if it costs something. For each finding
 the tool searches the laggards' recent turns for the moment the change would have helped, and the
 judgment pass ranks evidence-backed findings above speculative ones. Zero evidence is a real
@@ -83,6 +106,10 @@ Decide implement / defer / skip per finding. Bias:
 - **Evidence-backed DISTRIBUTE first** — a stale artifact that already cost a laggard a real miss.
 - **PROMOTE** when ≥2 agents converged — that's the strongest signal the template is behind
   (the §1b story: "ACE re-did echo's fixes by hand" → it belonged in canopy).
+- **PROMOTE candidates (agent-unique)** — lift the mechanism into canopy (a CLI under
+  `src/orchestrator/`, a fleet hook under `plugins/canopy/agent-core/`), parameterize any
+  per-agent setting, then thin the agent copy to a stub (or delete it). If canopy already ships
+  it, the action is just the delete. Drop candidates that are really the agent's own domain work.
 - **RECONCILE / legacy** — never auto-apply; note what's worth harvesting from the ancestor.
 
 ## Step 3 — Execute: dispatch an AI to make the edit + PR (never programmatic splicing)
@@ -112,6 +139,8 @@ into the **laggard's own repo**, handing it the finding + its `change_brief`. In
 > **In dry-run, stop after opening the PR (do NOT merge).** In apply mode, `gh pr merge <n> --squash`
 > (NEVER `--delete-branch` in a worktree). Report the PR URL + exactly what you changed/skipped.
 
+- **PROMOTE (agent-unique candidate)** → one PR into **canopy** adding the generic mechanism,
+  then one PR per owning agent removing/thinning its copy to call canopy's.
 - **PROMOTE** → the PR goes into **canopy**, editing the factory template string in
   `src/orchestrator/agent_factory.py`; because that touches `plugins/canopy/`, the agent runs
   `canopy version bump` and follows the plugin-update flow. Existing agents then adopt it via the
