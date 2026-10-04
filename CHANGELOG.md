@@ -9,6 +9,18 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.577] - 2026-10-04
+### Changed
+- **decide-guard prompt hook is plugin-wide again — re-applies #749, deploy relabel fixed.**
+  Jonathan confirmed the scope: every canopy session. `PLUGIN_WIDE = True`, so the LLM
+  decide-don't-offer Stop prompt is back in `hooks/hooks.json`, and the regex engine
+  `agent-core/decide_guard.py` is a no-op again (agent loaders are being removed; until
+  then they exec nothing, so no Stop is judged twice). One #749 relabel is reverted: a
+  production deploy the agent calls "yours to authorize" is FINE, not a handback — fleet
+  authority is that sends, deploys of other systems and public writes are not pre-approved.
+  The prompt now says so (deploying the agent's own merged change under its repo's shipping
+  rules stays a dev action).
+
 ## [0.2.576] - 2026-10-04
 ### Added
 - **`canopy agent project-audit --slug <slug> [--repo DIR] [--json]`** — read-only, always exits 0.
