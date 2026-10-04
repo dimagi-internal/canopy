@@ -9,6 +9,24 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.576] - 2026-10-04
+### Added
+- **`canopy agent project-audit --slug <slug> [--repo DIR] [--json]`** — read-only, always exits 0.
+  Checks the project model against the agent's actual work: (a) open tasks with no project
+  that look like project work (≥2 links, ≥1 turn record, or ≥2 appended note entries), (b) active
+  projects with no Drive folder, (d) project/folder name drift, (e) open tasks touched in the
+  last 2 days with no `canopy agent turn` record. `Projects/` folders with no active project
+  are counted as DORMANT, never a finding — the board holds what's active, Drive is the archive.
+  Unreachable Drive or canopy-web is reported, never fatal. `AgentClient.list_turns()` pages the
+  turns route (the only place a turn names its tasks).
+- **REQUIRED `projects:` turn close-out line** (`agent-core/turn.md` Step 4 + close checklist 2a):
+  fed by the audit; `projects: clean` is valid, an absent line is the failure. `agent-review`
+  grades it as the `project-audit` turn step.
+### Changed
+- `agent-core/task-tracker.md`: the board is what's active — when work goes quiet, mark the
+  project done and leave its folder in place (never delete/move it); a returning project is
+  re-registered against its existing folder under the same name. Close-of-turn points at the audit.
+
 ## [0.2.575] - 2026-10-04
 ### Changed
 - **decide-guard prompt hook pulled back from plugin-wide; scope is now a switch.** 0.2.574

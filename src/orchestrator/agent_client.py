@@ -230,6 +230,22 @@ class AgentClient:
         patch = {k: v for k, v in fields.items() if v is not None}
         return self._call("PATCH", f"/api/agents/{self.slug}/projects/{ref}/", patch)
 
+    def list_turns(self, *, page_size: int = 200, max_rows: int = 2000) -> "list[dict]":
+        """The agent's turn records (`canopy agent turn` reports + harness turns), newest
+        first. Each row carries `task_ext_ids` — the only place a turn names the tasks it
+        advanced. The route pages ({items, total, offset, limit}) and has no per-task
+        filter, so this walks the pages; `max_rows` bounds a runaway history."""
+        rows: list[dict] = []
+        while len(rows) < max_rows:
+            raw = self._call("GET", f"/api/agents/{self.slug}/turns/"
+                                    f"?limit={int(page_size)}&offset={len(rows)}")
+            page = _rows(raw)
+            rows.extend(page)
+            total = raw.get("total") if isinstance(raw, dict) else None
+            if not page or total is None or len(rows) >= int(total):
+                break
+        return rows[:max_rows]
+
     def list_syncs(self, limit: int | None = None) -> "list[dict]":
         """Past manager syncs, newest period_end first. The manager-sync window is
         the latest sync's period_end → today, so state lives here, not a repo file."""
