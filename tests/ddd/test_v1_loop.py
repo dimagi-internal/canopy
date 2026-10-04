@@ -701,3 +701,50 @@ class TestAssemble:
         state = load(rid, ddd_dir=ddd)
         assert state.phase == "judged" and state.progress_history
         assert (run / "judge-cache" / "index.json").exists()
+
+
+
+class TestOpenFindingsComparedLikeForLike:
+    """A concept-only (tiered) pass reports fewer findings than a full pass;
+    comparing the two counts manufactures progress or regression. Measured on
+    supply-sophie-unanswered-round-2026-10-04-001: 9 (full) -> 8, 7 (concept) -> 11 (full)."""
+
+    FULL = ["arc", "concept", "user"]
+
+    def _p(self, f, judges, **kw):
+        return {"score": 3.0, "open_findings": f, "mean_cell": 3.7, "confirmed_caps": 0,
+                "judges": judges, **kw}
+
+    def test_a_cheaper_pass_with_fewer_findings_is_not_progress(self):
+        from scripts.ddd import progress
+
+        before = [self._p(20, self.FULL)]
+        assert "open_findings" not in progress.improved_signals(before, self._p(6, ["concept"]))
+        assert "open_findings" in progress.improved_signals(before, self._p(6, self.FULL))
+
+    def test_a_full_pass_after_a_cheap_one_is_not_a_decline(self):
+        from scripts.ddd import progress
+
+        assert "open_findings" not in progress.declined_signals(
+            self._p(7, ["concept"]), self._p(11, self.FULL)
+        )
+        assert "open_findings" in progress.declined_signals(self._p(7, self.FULL), self._p(11, self.FULL))
+
+    def test_legacy_points_without_judges_compare_as_before(self):
+        from scripts.ddd import progress
+
+        legacy = {"score": 3.0, "open_findings": 20, "mean_cell": 3.7, "confirmed_caps": 0}
+        assert "open_findings" in progress.improved_signals([legacy], self._p(6, ["concept"]))
+
+    def test_the_progress_point_records_its_judges(self):
+        from scripts.ddd.run_pipeline import compute_auto_iterate
+        from scripts.ddd.schemas.models import RunState, Verdict
+
+        v = Verdict(schema_version=1, kind="concept", gate="gating", rubric_name="r",
+                    ran_at="2026-10-04T00:00:00Z", dimensions={}, overall_score=3.0,
+                    overall_rule="lowest", verdict="warn")
+        st = RunState(run_id="r", narrative_slug="n")
+        compute_auto_iterate(st, v, v, [], judges=["concept"], judge_full=False, unattended=True)
+        assert st.progress_history[-1]["judges"] == ["concept"]
+        compute_auto_iterate(st, v, v, [], unattended=True)
+        assert st.progress_history[-1]["judges"] == ["arc", "concept", "user"]

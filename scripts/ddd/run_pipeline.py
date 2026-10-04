@@ -449,6 +449,12 @@ def compute_auto_iterate(
 
     point = progress.measure(findings, distribution, score, full=judge_full)
     point["target"] = target or "deploy"
+    # Which judges produced this point's findings: a concept-only pass reports
+    # fewer than a full one, so open_findings is only compared like for like
+    # (scripts.ddd.progress._comparable).
+    from scripts.ddd import target as _target_mod
+
+    point["judges"] = sorted(judges) if judges else sorted(_target_mod.ALL_JUDGES)
     state.progress_history = (state.progress_history or []) + [point]
     prog = state.progress_history
 
