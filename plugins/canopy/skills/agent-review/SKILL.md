@@ -51,8 +51,8 @@ For each, decide implement / defer / skip. Bias:
 **A human correction about HANDING BACK work** ("why are you asking me? just do it", or the
 reverse: a block on a legitimate outbound ask) is calibration data for the fleet's
 decide-don't-offer Stop prompt hook. Add the agent's verbatim closing as a labelled example in
-canopy — `canopy decide-guard add-example --closing "…" --handback true|false --why "…"` (it
-re-renders `hooks/hooks.json`) — then bump the version and ship. Don't write a per-agent rule.
+canopy — `canopy decide-guard add-example --closing "…" --handback true|false --why "…"` then bump the version, ship, and re-stamp the agent repos
+(`canopy decide-guard stamp --agent-repo <repo>`) that carry the prompt hook. Don't write a per-agent rule.
 
 **`↻ fix_kind coerced from '<x>'` on a finding.** An invariant finding (never/always phrasing, or
 one mined from a human `safety_override`) must ship structurally, so when the synthesis pass
