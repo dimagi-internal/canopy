@@ -9,6 +9,15 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.568] - 2026-10-04
+### Fixed
+- **decide_guard catches impersonal, "unless", and follow-up handbacks.** One ada session
+  closed on undone, pre-authorized dev work three times and got past the matcher each time:
+  "It's a small canopy PR if you want it", "I'd ship all three now unless you'd rather…",
+  and "…would be a small follow-up". All three shapes now block (once per session, as
+  before); a follow-up the agent has already routed ("I've filed…") stays settled. 0 verdict
+  changes over 267 real sessions from the last 14 days.
+
 ## [0.2.567] - 2026-10-04
 ### Fixed
 - **fleet-align no longer flags canopy loaders as promotion candidates.** A bin/hook that

@@ -116,6 +116,27 @@ _OFFER_RE = re.compile(
     r"\bif\s+(?:you(?:'d|\s+would)?\s+(?:like|want|prefer)\b"
     r"|that(?:'s|\s+is|\s+would\s+be)?\s+(?:useful|helpful|worth)\b"
     r"|(?:it|that)\s+(?:helps|would\s+help)\b)"
+    # THREE MORE SHAPES, added 2026-10-04 — all from one ada session that closed on undone,
+    # pre-authorized dev work three times and got past every alternative above, because none
+    # of them says "me to" or "I'd <verb> … if you want". Jonathan: "why are you suggesting
+    # not done things and making it unclear whether we should do them!?"
+    #   (c) IMPERSONAL SUBJECT — the work itself is the subject and the deference trails:
+    #       "It's a small canopy PR if you want it." Anchored on an article + a unit-of-work
+    #       noun so "the trace is in the PR if you want the detail" (a pointer) stays silent.
+    r"|\b(?:it's|it\s+is|that's|that\s+is|this\s+is|it'd\s+be|it\s+would\s+be)\s+"
+    r"(?:a|an|one)\s+(?:[\w-]+\s+){0,3}?"
+    r"(?:pr|fix|change|patch|follow-?up|tweak|edit|commit)\b[^.!?\n]{0,40}?"
+    r"\bif\s+you(?:'d|\s+would)?\s+(?:like|want|prefer)\b"
+    #   (d) "I'd <act> UNLESS you'd rather" — deference, not a stated default. ("unless you
+    #       say/object" IS a default and stays exempt via _STATED_DEFAULT_RE.)
+    r"|\bi(?:'d|'ll|\s+would|\s+will)\s+"
+    r"(?!recommend|suggest|argue|say|expect|guess|think|lean|prefer|call\b|have\b)"
+    r"[a-z']+[^.!?\n]{0,120}?\bunless\s+you(?:'d|\s+would)?\s+(?:rather|prefer|want|like)\b"
+    #   (e) UNDONE WORK RELABELLED AS A FOLLOW-UP — no offer at all, just "would be a small
+    #       follow-up" / "left as a follow-up". It parks the same call on the human. A
+    #       follow-up already routed ("I've filed it as …") is settled via _STATED_DEFAULT_RE.
+    r"|\b(?:would|could)\s+be\s+(?:a|an)\s+(?:[\w-]+\s+){0,3}?follow-?up\b"
+    r"|\b(?:left|leaving)\s+(?:it\s+|that\s+|this\s+)?(?:as|for)\s+(?:a\s+)?(?:[\w-]+\s+){0,2}?follow-?up\b"
     r")",
     re.IGNORECASE | re.DOTALL,
 )
@@ -215,7 +236,9 @@ _SETTLED_RATIONALE_RE = re.compile(
 _STATED_DEFAULT_RE = re.compile(
     r"(?:default\s+is\b|by\s+default\b|otherwise\s+I(?:'ll|\s+will)\b"
     r"|if\s+(?:I\s+hear\s+nothing|you\s+say\s+nothing|not)\b"
-    r"|unless\s+you\s+(?:say|tell|object)\b|either\s+way\s+I(?:'ll|\s+will)\b)",
+    r"|unless\s+you\s+(?:say|tell|object)\b|either\s+way\s+I(?:'ll|\s+will)\b"
+    # a follow-up that has already been ROUTED somewhere is not parked on the human
+    r"|\bI(?:'ve|\s+have)\s+(?:filed|opened|dispatched|queued|routed)\b)",
     re.IGNORECASE | re.DOTALL,
 )
 
