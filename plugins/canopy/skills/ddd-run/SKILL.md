@@ -235,7 +235,7 @@ flags below.
 _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
 DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 REC="$DDD_REPO/scripts/walkthrough/record_video.py"
-uv run --project "$DDD_REPO" python "$REC" \
+uv run --project "$DDD_REPO" --extra browser python "$REC" \
   --spec "<unified_spec>" \
   --output "<run_dir>/iter${state.iteration}_clip.mp4" \
   --cookies "<session-cookies>" \
@@ -247,6 +247,10 @@ uv run --project "$DDD_REPO" python "$REC" \
   --capture-action-frames \
   --ddd-orchestrated
 ```
+
+`--extra browser` installs the recorder's Playwright dependency into the
+runtime's environment on first use. Without it, a fresh plugin runtime fails the
+render on `playwright not installed` and the agent has to `uv sync` it by hand.
 
 `--manifest` WRITES the manifest (the deck/links/run-state all read it; upload
 raises `DeckMissingError` without it). Do NOT pass `--input` on a first render —

@@ -34,9 +34,10 @@ So there are now two objectives, picked once per run and then sticky:
       design soundness, use-case soundness, or a product-lens / product-lint
       finding) at a blocking severity (default ``high``/``medium``). These drive
       ``continue`` and decide convergence.
-    * **ride-along** — accuracy findings (the narration overstates the screen).
-      Always a narration edit, never product code (:func:`route_accuracy`), so
-      they are cheap recipe-scope fixes that travel with any batch.
+    * **ride-along** — accuracy findings (the narration overstates the screen)
+      at a blocking severity. Always a narration edit, never product code
+      (:func:`route_accuracy`), so they are cheap recipe-scope fixes that travel
+      with any batch. A low-severity one is deferred to the polish pass.
     * **deferred** — presentation dimensions (visual polish, variety, motion,
       arc, claim/reality wording) and low-severity product nits. Stamped
       ``route: DEFER`` with the original route kept in ``deferred_route``; they
@@ -185,9 +186,19 @@ def partition(findings: list[dict], *, block_severities: Iterable[str]) -> list[
             continue
         if f.get("finding_class") == finding_class.ACCURACY and not is_narration_fix(f):
             f = _unaccuracy(f)
-        if f.get("finding_class") == finding_class.ACCURACY:
+        if f.get("finding_class") == finding_class.ACCURACY and _severity(f) in block:
+            # A narration that overstates the screen at a blocking severity is
+            # fixed in the words, every batch. A LOW one (a provenance date, a
+            # framing nit) is polish like any other low finding: on the first
+            # live run two such notes rode along every batch.
             f = route_accuracy(f)
             f["objective_role"] = "ride_along"
+        elif f.get("finding_class") == finding_class.ACCURACY:
+            f = route_accuracy(f)
+            f["deferred_route"] = f.get("route") or "PRODUCT"
+            f["deferred_by"] = DEFERRED_BY
+            f["route"] = "DEFER"
+            f["objective_role"] = "deferred"
         elif is_product_finding(f) and _severity(f) in block:
             f["objective_role"] = "blocking"
         else:

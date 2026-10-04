@@ -9,6 +9,18 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.569] - 2026-10-04
+### Changed
+- **DDD product objective: low-severity narration fixes wait for the polish pass.** An
+  accuracy finding (narration overstates the screen) still rides along with every batch
+  at a blocking severity; a LOW one is deferred like any other low finding. On the first
+  live product-objective run two low notes (a provenance date, a scroll-framing nit) rode
+  along every batch.
+### Fixed
+- **ddd-run's render command pulls the recorder's browser dependency**
+  (`uv run --extra browser`). A fresh plugin runtime failed the render on
+  `playwright not installed` and the agent had to `uv sync` it by hand.
+
 ## [0.2.568] - 2026-10-04
 ### Fixed
 - **decide_guard catches impersonal, "unless", and follow-up handbacks.** One ada session
