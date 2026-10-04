@@ -9,6 +9,23 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.571] - 2026-10-04
+### Added
+- **`python -m scripts.ddd.iteration render|publish` — one command per iteration step.**
+  `ddd-run` Steps 2/2b were copy-paste bash plus an inline `python -c` editing
+  run_state, and the first live product-objective run re-assembled them by hand every
+  iteration (recovering the recorder command from an old run's log, adding `PYTHONPATH`
+  and the Playwright extra by trial and error). `render` stamps the start, takes the
+  inner-loop `--base-url` from the pass's stamped target, runs the recorder with the DDD
+  flag set (written once, in `recorder_command`) under the watchdog into
+  `render-iter<N>.log`, and records the exit code. `publish` runs `render_check`
+  against both (refusing a failed or stale render), generates the deck, uploads deck
+  then clip with its companion links (deck, narrative review, the spec's app pages),
+  reads the `View:` URL (never `Share:`), and stamps `iteration_decks`/`iteration_clips`
+  through `runstate.save` so the run store writes them through. Upload failures go to
+  `upload-errors.md`, never a `file://` fallback. `ddd-run` Steps 2/2b now teach only
+  these commands.
+
 ## [0.2.569] - 2026-10-04
 ### Changed
 - **DDD product objective: low-severity narration fixes wait for the polish pass.** An

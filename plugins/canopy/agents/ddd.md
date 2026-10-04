@@ -1348,5 +1348,6 @@ proceeding with autonomous work.
 - Never edit `run_state.yaml` to get past a decision and never pass a literal `--full` to `judge_scope plan`; advance with `decision bump`, overrule only via `decision override --reason`.
 - v1 product that deploys through CI: configure `inner_loop:`; relay `judge_gate`'s RECOMMENDATION line when it appears.
 - Steps 4–5 are `python -m scripts.ddd.assemble` — never a hand-written assemble script or hand-rolled judge briefs.
+- Render and publish each iteration with `python -m scripts.ddd.iteration render|publish` — never a hand-assembled recorder call, upload pipeline, or inline edit of `iteration_decks`/`iteration_clips`.
 - One canopy version per run: resolve the runtime with `scripts.ddd.pin root` and never switch mid-run.
 - Preflight credentials before every iteration; run long steps under the watchdog; never upload from a render that failed `render_check`.
