@@ -40,7 +40,7 @@ def decide_guard_group():
 @decide_guard_group.command("render")
 @click.option("--repo", default=None, help="canopy checkout (default: the one containing cwd)")
 def render_cmd(repo):
-    """Re-render the Stop prompt in hooks.json from the examples file."""
+    """Make the plugin's hooks.json agree with the scope switch (PLUGIN_WIDE)."""
     hooks, examples = _paths(repo)
     changed = dg.sync_hooks_json(hooks, examples)
     click.echo(f"{'updated' if changed else 'unchanged'}: {hooks}")
@@ -54,6 +54,33 @@ def check_cmd(repo):
     if not dg.in_sync(hooks, examples):
         raise click.ClickException("hooks.json is stale — run `canopy decide-guard render`")
     click.echo(f"in sync: {len(dg.load_examples(examples))} examples")
+
+
+@decide_guard_group.command("stamp")
+@click.option("--agent-repo", "agent_repos", multiple=True, required=True,
+              type=click.Path(exists=True, file_okay=False),
+              help="agent repo whose .claude/settings.json gets the prompt hook (repeatable)")
+@click.option("--check", is_flag=True, help="exit 1 if any agent's settings are stale; write nothing")
+@click.option("--repo", default=None, help="canopy checkout to read examples from")
+def stamp_cmd(agent_repos, check, repo):
+    """Agent-only scope: stamp the rendered prompt hook into each agent repo's
+    .claude/settings.json Stop hooks, replacing its hooks/decide_guard.py loader hook."""
+    _, examples = _paths(repo)
+    stale = []
+    for agent in agent_repos:
+        settings = Path(agent) / ".claude" / "settings.json"
+        if not settings.exists():
+            raise click.ClickException(f"{settings} not found")
+        if check:
+            if not dg.settings_in_sync(settings, examples):
+                stale.append(str(settings))
+            continue
+        changed = dg.stamp_settings(settings, examples)
+        click.echo(f"{'stamped' if changed else 'unchanged'}: {settings}")
+    if stale:
+        raise click.ClickException("stale (re-run without --check): " + ", ".join(stale))
+    if check:
+        click.echo(f"in sync: {len(agent_repos)} agent repo(s)")
 
 
 @decide_guard_group.command("show")
@@ -79,4 +106,8 @@ def add_example_cmd(closing, handback, why, repo):
         raise click.ClickException(str(e))
     dg.sync_hooks_json(hooks, examples)
     click.echo(json.dumps(row, ensure_ascii=False))
-    click.echo(f"re-rendered {hooks} — now `uv run canopy version bump`, add a CHANGELOG line, and ship")
+    if dg.PLUGIN_WIDE:
+        click.echo(f"re-rendered {hooks} — now `uv run canopy version bump`, add a CHANGELOG line, and ship")
+    else:
+        click.echo("agent-only scope: ship this, then `canopy decide-guard stamp --agent-repo <repo>` "
+                   "in each agent repo and ship those")

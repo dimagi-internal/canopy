@@ -4,15 +4,15 @@ examples (`src/orchestrator/decide_guard_prompt.py`).
 The regex engine this replaced was whack-a-mole (2026-10-04: three misses in one ada
 session). Its parametrized closings now live as labelled examples in
 `plugins/canopy/agent-core/decide_guard_examples.jsonl`; what is tested here is the
-plumbing that keeps the hook honest — the render is in sync, the prompt keeps the rules
-the live probe showed it needs, and the retired engine is a harmless no-op.
+plumbing that keeps the hook honest — the render agrees with the scope switch, the prompt
+keeps the rules the live probe showed it needs, and the agent-only stamp REPLACES the regex
+loader rather than adding a second judge. (The regex engine itself stays live until the
+replacement wiring ships; its own tests are test_agent_core_decide_guard_regex.py.)
 """
 from __future__ import annotations
 
 import json
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -22,7 +22,6 @@ from orchestrator import decide_guard_prompt as dg
 from orchestrator.decide_guard_cli import decide_guard_group
 
 REPO = Path(__file__).resolve().parents[2]
-STUB = REPO / "plugins" / "canopy" / "agent-core" / "decide_guard.py"
 
 
 def _our_stop_hooks(hooks: dict) -> list[dict]:
@@ -35,8 +34,14 @@ def test_hooks_json_is_in_sync_with_the_examples():
     assert dg.in_sync(), "run `uv run canopy decide-guard render`"
 
 
-def test_exactly_one_prompt_hook_on_stop_with_a_full_model_id():
-    (hook,) = _our_stop_hooks(json.loads(dg.HOOKS_JSON_PATH.read_text()))
+def test_plugin_hooks_json_follows_the_scope_switch():
+    """Plugin-wide wiring fires in EVERY canopy session; it ships only when PLUGIN_WIDE."""
+    ours = _our_stop_hooks(json.loads(dg.HOOKS_JSON_PATH.read_text()))
+    assert len(ours) == (1 if dg.PLUGIN_WIDE else 0)
+
+
+def test_the_hook_entry_uses_a_full_model_id():
+    (hook,) = dg.hook_entry(dg.render_prompt(dg.load_examples()))["hooks"]
     assert hook["type"] == "prompt"
     # Probed 2026-10-04: an alias ("haiku") is rejected as unrecognized_model.
     assert hook["model"].startswith("claude-") and hook["model"].count("-") >= 2
@@ -101,7 +106,8 @@ def _fake_checkout(tmp_path) -> Path:
     return plugin
 
 
-def test_add_example_appends_and_rerenders(tmp_path):
+def test_add_example_appends_and_rerenders(tmp_path, monkeypatch):
+    monkeypatch.setattr(dg, "PLUGIN_WIDE", True)  # exercise the plugin-wide render
     plugin = _fake_checkout(tmp_path)
     result = CliRunner().invoke(decide_guard_group, [
         "add-example", "--repo", str(tmp_path),
@@ -123,7 +129,8 @@ def test_add_example_appends_and_rerenders(tmp_path):
     assert dup.exit_code != 0 and "already exists" in dup.output
 
 
-def test_check_fails_when_stale(tmp_path):
+def test_check_fails_when_stale(tmp_path, monkeypatch):
+    monkeypatch.setattr(dg, "PLUGIN_WIDE", True)
     plugin = _fake_checkout(tmp_path)
     with open(plugin / "agent-core" / dg.EXAMPLES_PATH.name, "a") as fh:
         fh.write(json.dumps({"closing": "new", "handback": False, "why": "y"}) + "\n")
@@ -131,9 +138,46 @@ def test_check_fails_when_stale(tmp_path):
     assert result.exit_code != 0 and "stale" in result.output
 
 
-def test_the_retired_engine_is_a_silent_no_op():
-    """Agent repos whose loader still execs this file must stay harmless."""
-    p = subprocess.run([sys.executable, str(STUB)], input=json.dumps({
-        "transcript_path": "/nonexistent", "session_id": "s1"}),
-        capture_output=True, text=True, timeout=30)
-    assert p.returncode == 0 and p.stdout == ""
+_AGENT_SETTINGS = {
+    "env": {"CANOPY_AGENT": "eva"},
+    "hooks": {
+        "PreToolUse": [{"matcher": "Bash", "hooks": [
+            {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/gating_guard.py\""}]}],
+        "Stop": [{"hooks": [
+            {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/decide_guard.py\""},
+            {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/gdoc_gate.py\" check"},
+        ]}],
+    },
+}
+
+
+def _agent_repo(tmp_path) -> Path:
+    repo = tmp_path / "eva"
+    (repo / ".claude").mkdir(parents=True)
+    (repo / ".claude" / "settings.json").write_text(json.dumps(_AGENT_SETTINGS, indent=2) + "\n")
+    return repo
+
+
+def test_stamp_replaces_the_loader_and_keeps_every_other_hook(tmp_path):
+    """Agent-only scope: the prompt hook takes the loader's place — never both, or the
+    session is judged twice — and the sibling Stop rail (gdoc_gate) survives."""
+    settings = _agent_repo(tmp_path) / ".claude" / "settings.json"
+    assert dg.stamp_settings(settings) is True
+    data = json.loads(settings.read_text())
+    stop_cmds = [h.get("command", "") for e in data["hooks"]["Stop"] for h in e["hooks"]]
+    assert not any("decide_guard.py" in c for c in stop_cmds)
+    assert any("gdoc_gate.py" in c for c in stop_cmds)
+    assert len(_our_stop_hooks(data)) == 1
+    assert data["hooks"]["PreToolUse"] == _AGENT_SETTINGS["hooks"]["PreToolUse"]
+    assert data["env"] == _AGENT_SETTINGS["env"]
+    assert dg.stamp_settings(settings) is False and dg.settings_in_sync(settings)
+
+
+def test_stamp_cli_check_flags_stale_settings_then_stamps(tmp_path):
+    repo = _agent_repo(tmp_path)
+    stale = CliRunner().invoke(decide_guard_group, ["stamp", "--agent-repo", str(repo), "--check"])
+    assert stale.exit_code != 0 and "stale" in stale.output
+    ok = CliRunner().invoke(decide_guard_group, ["stamp", "--agent-repo", str(repo)])
+    assert ok.exit_code == 0 and "stamped" in ok.output
+    again = CliRunner().invoke(decide_guard_group, ["stamp", "--agent-repo", str(repo), "--check"])
+    assert again.exit_code == 0, again.output

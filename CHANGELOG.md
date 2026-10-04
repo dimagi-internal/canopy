@@ -9,6 +9,19 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.575] - 2026-10-04
+### Changed
+- **decide-guard prompt hook pulled back from plugin-wide; scope is now a switch.** 0.2.574
+  wired the LLM decide-don't-offer prompt into the plugin's `hooks/hooks.json`, which fires
+  in EVERY session with canopy installed — but the approval for that scope turned out to be
+  misrouted. `PLUGIN_WIDE` in `decide_guard_prompt.py` (off) now picks the scope: plugin-wide
+  via `canopy decide-guard render`, or agent-only via the new `canopy decide-guard stamp
+  --agent-repo DIR`, which writes the prompt hook into an agent's `.claude/settings.json`
+  in place of its `hooks/decide_guard.py` regex loader (`--check` flags stale settings).
+### Restored
+- The regex engine `agent-core/decide_guard.py` and its tests, so agent loaders keep a working
+  rail until the replacement wiring is approved and stamped.
+
 ## [0.2.574] - 2026-10-04
 ### Changed
 - **decide-don't-offer is now an LLM judgment, not a regex.** The Stop rail that blocks once
