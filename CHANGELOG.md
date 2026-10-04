@@ -9,6 +9,42 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.559] - 2026-10-04
+### Added
+- **A DDD run now optimizes either the PRODUCT or the DEMO (`loop.objective`).**
+  On connect-labs `supply-sophie-unanswered-round` (2026-10-02..04) the only objective
+  (every gating judge >= 4, each the weakest of ~70 noisy cells) ran ~24 iterations,
+  12 PRs and ~33 h without converging; 25 of the final 27 findings were severity
+  `low`, and the fix batches accreted explanatory copy and special-case rules until a
+  human redesign deleted 4,148 lines. `objective: product` (opt in per repo; `auto`
+  picks it on a big first backlog; default stays `demo` for ACE's video runs)
+  partitions findings into blocking product findings (task completion, trust,
+  clarity, design/use-case soundness, product lens, product lint at `high`/`medium`),
+  ride-along narration edits, and deferred presentation/low-severity findings.
+  Converged = every product dimension >= `product.floor` (3), no presentation cell
+  < 2, no blocking finding; the deferred findings are applied once as a final polish
+  pass, then `stop_done`. Replaying the real final iteration: `stopped_not_converged`
+  under demo, polish pass → `converged_clean` under product. `scripts/ddd/objective.py`.
+- **Product lint** (`python -m scripts.ddd.product_lint <run_dir>`, ddd-run Step 2d):
+  words per screen, prose lines of 20+ words (table rows excluded), explanatory lines
+  ADDED since the run's first render, banned terms (`product.lint.glossary`, screens
+  and narration), fonts outside `product.lint.fonts`. 10 findings on the
+  pre-redesign supply screens, 0 on the redesigned ones. The recorder's visual capture
+  now records `font_family` per text element.
+- **Product lens** (`ddd-product-review`): one dispatch over all screens as the
+  persona — missing key view, prose doing structure's job, cross-screen consistency,
+  vocabulary, design system, domain correctness, special-case rules. Its severity-
+  graded findings block in the product objective; `verdict-product.yaml` is advisory.
+### Changed
+- In the product objective an accuracy finding is a narration edit
+  (`fix_scope: narrative`, recipe-scope batch), never a product PR — and only when it
+  is actually about the narration: `finding_class`'s "labelled"/"does not match"
+  phrases also describe product inconsistencies, which keep their own fix.
+- `ddd.md` documents the objective, the fix-direction rules every fixer brief
+  carries (narration follows the product; no explanatory copy; general rules over
+  per-scene ones; the product's own design system and vocabulary) and skips the video
+  phase for a product-objective `stop_done` unless asked.
+
 ## [0.2.554] - 2026-10-02
 ### Changed
 - **A repo with a deploy gate must configure the DDD inner loop.** On connect-labs

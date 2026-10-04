@@ -465,6 +465,10 @@ RUN_DIR="<run_dir>"; SPEC_ABS="$(realpath <unified_spec>)"
 
 # 4. Is the element carrying the claim actually VISIBLE? (exits 1 on a hard fail)
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.visual_geometry "$RUN_DIR" "$SPEC_ABS")
+
+# 5. Is the PRODUCT accreting prose, drifting off its vocabulary or design system?
+#    Writes lint_findings.json; assemble reads it (no hand-folding). Never a hard fail.
+(cd "$DDD_REPO" && DDD_DIR="$DDD_DIR" uv run python -m scripts.ddd.product_lint "$RUN_DIR" --spec "$SPEC_ABS")
 ```
 
 - **regression_guard** — a previously-passing action now failing is a hard
@@ -481,6 +485,13 @@ RUN_DIR="<run_dir>"; SPEC_ABS="$(realpath <unified_spec>)"
 - **narrated_numbers** — "Kukawa is eleven days out" over a screen that says
   nine. Survived three iterations because only a judge who happened to check
   would catch it.
+- **product_lint** — words per screen, prose lines of 20+ words (table rows
+  excluded), explanatory lines ADDED since the run's first render
+  (`lint-baseline.json`), banned terms from `product.lint.glossary` (screens
+  and narration), and fonts outside `product.lint.fonts`. On the
+  pre-redesign supply screens it reports 10 findings; on the redesigned ones,
+  1. In the `product` objective these block (severity medium/high); in `demo`
+  they are reported only.
 - **visual_geometry** — the first lens in this pipeline that is not reading
   text. Three invisible-element defects on one run scored `data_fidelity` 9/9
   and `narrated_numbers` 9/9 across FOUR iterations and were only found by a
@@ -647,6 +658,14 @@ that can see repetition, a sagging middle, or a payoff that lands before its
 setup. Every per-scene judge is structurally blind to those. Outputs
 `verdict-arc.yaml` + `arc_findings.json`, and it is `gate: gating` — a
 narrative that passes every per-scene judge and has no arc is not converged.
+
+**3d. Product lens** — on every FULL pass of a run whose objective is not
+`demo` (`state.objective` / `.canopy/ddd/config.yaml` `loop.objective`; an
+unresolved `auto` runs it), invoke `ddd-product-review` (Skill tool) — ONE
+dispatch over all scenes, as the persona doing the job. Outputs
+`product_findings.json` (severity-graded; these are what block in the product
+objective) + advisory `verdict-product.yaml`. Skip it on incremental passes:
+its last findings stay in the run dir and are re-judged at the next checkpoint.
 
 **3b. User-artifact judge** — invoke `canopy:visual-judge` (via Skill tool)
 over the rendered screenshots + page text, with `audience="feature user"`.

@@ -233,6 +233,9 @@ _VISUAL_CAPTURE_JS = r"""
       entry.bg_has_image = bg.hasImage;
       entry.font_px = parseFloat(cs.fontSize) || 0;
       entry.font_weight = parseFloat(cs.fontWeight) || 400;
+      // First family in the stack: what the product LINT checks against the
+      // repo's design fonts (scripts.ddd.product_lint).
+      entry.font_family = (cs.fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
     }
     elements.push(entry);
   }

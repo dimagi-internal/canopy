@@ -46,6 +46,11 @@ KIND_DEFAULTS: dict[str, tuple[str, bool]] = {
     "actionability": ("advisory", False),  # narration graded against features[]
     "timing": ("advisory", True),  # deterministic, measured off the real mp4
     "video": ("advisory", True),  # multimodal judge watches the produced video
+    # The product lens (skills/ddd-product-review): every screen at once, as the
+    # persona. Advisory as a SCORE — its findings (product_findings.json) are what
+    # block, through scripts.ddd.objective, so it never becomes another
+    # weakest-link cell to chase.
+    "product": ("advisory", True),
 }
 
 # filename stem -> kind, for the standard artifact names
@@ -57,6 +62,7 @@ _FILENAME_KINDS = {
     "verdict-actionability": "actionability",
     "verdict-timing": "timing",
     "verdict-video": "video",
+    "verdict-product": "product",
 }
 
 # The out-of-chain verdict artifacts a run dir may carry beyond the gating pair
@@ -68,6 +74,7 @@ EXTRA_VERDICT_FILENAMES: tuple[str, ...] = (
     "verdict-video.json",
     "verdict-why.yaml",
     "verdict-actionability.yaml",
+    "verdict-product.yaml",
 )
 
 
