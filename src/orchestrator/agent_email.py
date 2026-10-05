@@ -1765,6 +1765,90 @@ def _age_days(date_header: str, now: "dt.datetime") -> int | None:
     return max(0, (now - when).days)
 
 
+#: How far back a FINISHED canopy-web turn still counts as owning its thread. A
+#: queued/claimed/running turn always does. A chat session is a conversation the
+#: principal resumes at will — ten turns over two days on one email thread is the
+#: shape that motivated this (canopy#758) — so "finished" does not mean "let go".
+OWNER_WINDOW_DAYS = 7
+
+_LIVE_TURN_STATUSES = ("queued", "claimed", "running")
+
+
+def harness_turn_owners(
+    slug: str,
+    *,
+    now: "dt.datetime | None" = None,
+    window_days: int = OWNER_WINDOW_DAYS,
+    caller=None,
+) -> dict[str, dict]:
+    """Map Gmail thread id → the canopy-web turn that is working it.
+
+    canopy-web keys a turn to an inbound thread in `origin_ref.thread_key` — a chat
+    started from an email, an email-triggered turn, a dispatch on that ref. Those turns
+    can run on ANY runner, so neither read-state nor `live-turns.sh` (local processes
+    only) can see them. Asking canopy-web is the only way to know a thread has an owner.
+
+    Newest matching turn wins. A turn counts if it is live, or it last moved within
+    `window_days`. FAIL-SOFT: any error (no PAT, canopy-web down, odd payload) returns
+    {} — the sweep then bands exactly as it did before this existed, which is the safe
+    direction: it may over-report a thread, never hide one.
+    """
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if caller is None:
+        from orchestrator.canopy_web import call as caller
+    try:
+        turns = caller("GET", f"/api/harness/turns/?agent={slug}&limit=200")
+    except Exception:
+        return {}
+    if isinstance(turns, dict):  # tolerate a paginated / wrapped envelope
+        turns = turns.get("items") or turns.get("results") or turns.get("result") or []
+    if not isinstance(turns, list):
+        return {}
+
+    def when(t: dict):
+        for k in ("finished_at", "started_at", "claimed_at", "created_at"):
+            v = t.get(k)
+            if v:
+                try:
+                    w = dt.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                return w if w.tzinfo else w.replace(tzinfo=dt.timezone.utc)
+        return None
+
+    cutoff = now - dt.timedelta(days=window_days)
+    owners: dict[str, dict] = {}
+    for t in turns:
+        if not isinstance(t, dict):
+            continue
+        ref = t.get("origin_ref") or {}
+        key = ref.get("thread_key") if isinstance(ref, dict) else None
+        if not key:
+            continue
+        last = when(t)
+        live = t.get("status") in _LIVE_TURN_STATUSES
+        if not live and (last is None or last < cutoff):
+            continue
+        prev = owners.get(key)
+        if prev and prev["_when"] and last and prev["_when"] >= last:
+            prev["turns"] += 1
+            prev["live"] = prev["live"] or live
+            continue
+        owners[key] = {
+            "_when": last,
+            "session": ref.get("chat_session_id") or t.get("session_id") or "",
+            "origin": t.get("origin") or "",
+            "status": t.get("status") or "",
+            "runner": t.get("claimed_by_name") or "",
+            "last_at": last.isoformat() if last else "",
+            "live": live,
+            "turns": (prev["turns"] + 1) if prev else 1,
+        }
+    for o in owners.values():
+        o.pop("_when", None)
+    return owners
+
+
 def dangling_threads(
     identity: EmailIdentity,
     *,
@@ -1775,6 +1859,7 @@ def dangling_threads(
     now: "dt.datetime | None" = None,
     runner=subprocess.run,
     reader=None,
+    owners: "dict[str, dict] | None" = None,
 ) -> list[dict]:
     """DANGLING threads in the agent's inbox — their last message, no reply from us.
 
@@ -1796,6 +1881,11 @@ def dangling_threads(
       "handled" (read)   — a turn saw it and closed out without replying. That was a
                            decision: the exchange finished, moved to Slack, or a human
                            ended it. Residue. Archive it; do NOT answer it late.
+
+      "owned"   (unread) — unread, BUT a canopy-web turn keyed to this thread
+                           (`owners`, from `harness_turn_owners`) is working it or did
+                           recently — often a chat with the principal on another runner.
+                           Not yours to answer: read that session first (canopy#758).
 
     `stale` marks an UNREAD thread older than `stale_after` — nobody looked for a long
     time AND the answer is probably moot, so closing usually beats answering cold.
@@ -1849,6 +1939,10 @@ def dangling_threads(
             continue  # nobody waits on a reply to a share notification
         unread = tid in unread_ids
         age = _age_days(last.get("date", ""), now)
+        owner = (owners or {}).get(tid)
+        disposition = "handled"
+        if unread:
+            disposition = "owned" if owner else "respond"
         owed.append({
             "thread_id": tid,
             # the thread subject (gog's row) over the last message's, which carries
@@ -1863,9 +1957,11 @@ def dangling_threads(
             # UNREAD is the proxy for "no turn has disposed of this yet"; anything else
             # means a turn looked and closed out.
             "unread": unread,
-            "disposition": "respond" if unread else "handled",
-            # Only meaningful on the unread band: old AND unlooked-at.
-            "stale": bool(unread and (age is None or age > stale_after)),
+            "disposition": disposition,
+            # The canopy-web turn keyed to this thread, if any (canopy#758).
+            "owner": owner,
+            # Only meaningful on the unread, UNOWNED band: old AND unlooked-at.
+            "stale": bool(disposition == "respond" and (age is None or age > stale_after)),
         })
     owed.sort(key=lambda o: (o["age_days"] is None, -(o["age_days"] or 0)))
     return owed
@@ -2309,17 +2405,23 @@ def _dangling_options(fn):
                      help="Also report threads whose last message is machine-generated."),
         click.option("--json", "as_json", is_flag=True,
                      help="Emit JSON instead of a table."),
+        click.option("--no-owners", is_flag=True,
+                     help="Skip the canopy-web lookup that bands an unread thread OWNED "
+                          "when a turn keyed to it is working it (canopy#758)."),
     ]):
         fn = opt(fn)
     return fn
 
 
 def _run_dangling(repo, agent, account, client, days, limit, stale_after, older_than,
-                  include_automated, as_json):
+                  include_automated, as_json, no_owners=False, owner_lookup=None):
     try:
         ident = _identity_from_opts(repo, agent, account, client)
+        owners = None
+        if not no_owners:
+            owners = (owner_lookup or harness_turn_owners)(ident.slug)
         rows = dangling_threads(ident, days=days, limit=limit, stale_after=stale_after,
-                                include_automated=include_automated)
+                                include_automated=include_automated, owners=owners)
     except AgentEmailError as e:
         raise click.ClickException(str(e))
     if older_than:
@@ -2346,7 +2448,23 @@ def _run_dangling(repo, agent, account, client, days, limit, stale_after, older_
                 f"{o['subject'][:44]}{tag}")
 
     respond = [o for o in rows if o["disposition"] == "respond"]
+    owned = [o for o in rows if o["disposition"] == "owned"]
     handled = [o for o in rows if o["disposition"] == "handled"]
+
+    if owned:
+        click.echo(f"OWNED — {len(owned)} unread thread(s) a canopy-web turn keyed to "
+                   "the thread is working (or did recently):\n")
+        for o in owned:
+            click.echo(line(o))
+            w = o["owner"]
+            state = "LIVE" if w.get("live") else f"last {w.get('last_at') or '?'}"
+            click.echo(f"         owner: {w.get('origin') or 'turn'} session "
+                       f"{w.get('session') or '?'} on {w.get('runner') or '?'} "
+                       f"({w.get('turns', 1)} turn(s), {state})")
+        click.echo("\n  Unread is not the same as unhandled here: the work is happening in "
+                   "that session,\n  often a chat with the principal on another runner. "
+                   "Read it before acting; do NOT\n  answer this thread on top of it. "
+                   "Leave it unread — the owner disposes of it.\n")
 
     if respond:
         click.echo(f"NEEDS ATTENTION — {len(respond)} thread(s) NOTHING has disposed of "
@@ -2383,7 +2501,7 @@ def _run_dangling(repo, agent, account, client, days, limit, stale_after, older_
 @_with_identity_options
 @_dangling_options
 def email_dangling(repo, agent, account, client, days, limit, stale_after, older_than,
-                   include_automated, as_json):
+                   include_automated, as_json, no_owners):
     """DANGLING threads — their last message, no reply from us.
 
     Run this EVERY turn, BEFORE any "inbox clear" early return. A dangling thread
@@ -2405,14 +2523,14 @@ def email_dangling(repo, agent, account, client, days, limit, stale_after, older
     Read-only. It prints the `canopy email archive` line; it never archives anything.
     """
     _run_dangling(repo, agent, account, client, days, limit, stale_after, older_than,
-                  include_automated, as_json)
+                  include_automated, as_json, no_owners)
 
 
 @email_group.command("owed", hidden=True)
 @_with_identity_options
 @_dangling_options
 def email_owed(repo, agent, account, client, days, limit, stale_after, older_than,
-               include_automated, as_json):
+               include_automated, as_json, no_owners):
     """Deprecated alias for `dangling`.
 
     Renamed because the noun was teaching the wrong model: "owed" states a conclusion the
@@ -2423,7 +2541,7 @@ def email_owed(repo, agent, account, client, days, limit, stale_after, older_tha
     sys.stderr.write("NOTE: `canopy email owed` is now `canopy email dangling` — the "
                      "sweep finds dangling threads; it does not establish a debt.\n")
     _run_dangling(repo, agent, account, client, days, limit, stale_after, older_than,
-                  include_automated, as_json)
+                  include_automated, as_json, no_owners)
 
 
 @email_group.command("read")
