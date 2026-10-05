@@ -9,6 +9,15 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.581] - 2026-10-05
+### Fixed
+- **`canopy agent set|add --status` rejects a status the board does not have** (#659). `set`
+  sent the value raw and the board coerces unknowns to `suggested`, so `--status pending` on a
+  live card demoted it to an unaccepted proposal and printed success; `add`'s normaliser had the
+  same fallback. New `check_task_status` maps the existing synonyms (`blocked` → `in_progress`,
+  `shipped` → `done`, …) and otherwise refuses, naming the four statuses and writing nothing.
+  `normalize_task_status` stays lenient for READ paths (`agent tasks --status`).
+
 ## [0.2.579] - 2026-10-04
 ### Changed
 - **decide-guard prompt cut from 12,136 to 1,993 chars.** It runs on every Stop of every canopy
