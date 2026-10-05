@@ -186,8 +186,13 @@ def check_runner_pin(runner: dict, slug: str) -> tuple[list[str], list[str], lis
     status = str(runner.get("status") or "").strip().lower()
     if status == _RUNNER_RETIRED:
         problems.append(f"runner '{name}' is retired — nothing will ever claim a turn pinned to it")
-    agents = (runner.get("capabilities") or {}).get("agents") or []
-    if slug not in agents:
+    caps = runner.get("capabilities") or {}
+    agents = caps.get("agents") or []
+    # A cloud box declares no agent list: it bootstraps every agent routed to it, and
+    # canopy-web's claim matches it by routing, not by `capabilities.agents`
+    # (runner/ec2/cloud_runner.py RUNNER_CAPS). Absence there is not "serves none".
+    cloud_routed = runner.get("kind") == "cloud" and "agents" not in caps
+    if slug not in agents and not cloud_routed:
         # The server lets a pin bypass target matching, so it WOULD hand this turn over —
         # and the runner would then try to drive an agent repo it never declared.
         problems.append(
