@@ -787,3 +787,119 @@ def test_owner_email_reads_the_new_key_and_falls_back_to_the_old_one():
     assert owner_email({"owner_email": "a@x.org", "paired_by_email": "b@x.org"}) == "a@x.org"
     assert owner_email({"paired_by_email": "b@x.org"}) == "b@x.org"
     assert owner_email({}) == ""
+
+
+# --- --runner: pin a project turn to one box (#663) ---------------------------
+
+from orchestrator.project_dispatch import check_project_runner_pin  # noqa: E402
+
+
+def test_pin_needs_the_box_to_REPORT_the_repo():
+    """A pin bypasses the server's capabilities.projects match, so a box without the
+    repo WOULD be handed the turn and fail on a checkout that is not there."""
+    problems, _, _ = check_project_runner_pin(_runner("jj", projects=["canopy-web"]),
+                                              "connect-labs")
+    assert problems and "does not report project 'connect-labs'" in problems[0]
+    assert "RUNNER_PROJECTS" in problems[0]
+
+
+def test_pin_to_a_box_that_reports_the_repo_is_clean():
+    assert check_project_runner_pin(_runner("jj", projects=["connect-labs"]),
+                                    "connect-labs") == ([], [], [])
+
+
+def test_a_cloud_box_gets_no_exemption_for_a_missing_repo():
+    r = _runner("cloud-ec2-1", projects=[])
+    r["kind"] = "cloud"
+    problems, _, _ = check_project_runner_pin(r, "connect-labs")
+    assert problems
+
+
+def test_pin_liveness_is_shared_with_the_agent_path():
+    retired = check_project_runner_pin(
+        _runner("jj", status="retired", projects=["connect-labs"]), "connect-labs")
+    assert retired[0] and "retired" in retired[0][0]
+    asleep = check_project_runner_pin(
+        _runner("jj", status="stale", projects=["connect-labs"]), "connect-labs")
+    assert not asleep[0] and asleep[1] and "QUEUED" in asleep[1][0]
+    not_ready = check_project_runner_pin(
+        _runner("jj", ready=False, projects=["connect-labs"]), "connect-labs")
+    assert not not_ready[0] and not not_ready[1] and not_ready[2]
+
+
+def test_a_pinned_key_differs_per_runner_and_unpinned_keys_are_unchanged():
+    base = derive_project_idempotency_key("connect-labs", "fix", "2026-10-05")
+    assert derive_project_idempotency_key("connect-labs", "fix", "2026-10-05",
+                                          runner_id="") == base
+    a = derive_project_idempotency_key("connect-labs", "fix", "2026-10-05", runner_id="A")
+    b = derive_project_idempotency_key("connect-labs", "fix", "2026-10-05", runner_id="B")
+    assert len({base, a, b}) == 3
+    assert a == derive_project_idempotency_key("connect-labs", "fix", "2026-10-05",
+                                               runner_id="a"), "uuid case must not matter"
+
+
+def test_payload_carries_runner_id_only_when_pinned():
+    assert "runner_id" not in build_project_turn_payload("p", idempotency_key="k")
+    assert build_project_turn_payload("p", idempotency_key="k",
+                                      runner_id="rid-1")["runner_id"] == "rid-1"
+
+
+def test_cli_pins_the_turn_to_the_named_runner(net):
+    calls = []
+    net(calls, [_runner("jj-mbp", projects=["connect-labs"], rid="rid-jj"),
+                _runner("ace-mbp", projects=["connect-labs"], rid="rid-ace")])
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--workspace", "dimagi", "--prompt", "x",
+                                  "--runner", "ace-mbp", "--json-output"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.output)
+    assert out["runner"]["name"] == "ace-mbp"
+    post = [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]][0]
+    assert post[2]["runner_id"] == "rid-ace"
+    gets = [c for c in calls if c[0] == "GET" and "/harness/runners/" in c[1]]
+    assert gets and all("/api/w/dimagi/" in c[1] for c in gets), \
+        "the pin must resolve from the tenant the turn goes into"
+
+
+def test_cli_refuses_a_pin_to_a_box_without_the_repo_even_when_another_serves_it(net):
+    calls = []
+    net(calls, [_runner("jj-mbp", projects=["connect-labs"]),
+                _runner("ace-mbp", projects=["canopy-web"])])
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--workspace", "dimagi", "--prompt", "x",
+                                  "--runner", "ace-mbp"])
+    assert r.exit_code != 0
+    assert "does not report project" in r.output
+    assert not [c for c in calls if c[0] == "POST"]
+
+
+def test_cli_refuses_an_unknown_runner(net):
+    calls = []
+    net(calls, [_runner("jj-mbp", projects=["connect-labs"])])
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--workspace", "dimagi", "--prompt", "x",
+                                  "--runner", "nope"])
+    assert r.exit_code != 0 and "no runner named 'nope'" in r.output
+    assert not [c for c in calls if c[0] == "POST"]
+
+
+def test_cli_a_sleeping_pinned_box_needs_queue_if_not_ready(net):
+    calls = []
+    net(calls, [_runner("jj-mbp", status="stale", projects=["connect-labs"])])
+    args = ["project", "dispatch", "connect-labs", "--workspace", "dimagi",
+            "--prompt", "x", "--runner", "jj-mbp"]
+    r = CliRunner().invoke(main, args)
+    assert r.exit_code != 0 and "--queue-if-not-ready" in r.output
+    assert not [c for c in calls if c[0] == "POST"]
+
+    r = CliRunner().invoke(main, args + ["--queue-if-not-ready"])
+    assert r.exit_code == 0, r.output
+    assert "WARNING" in r.output and "QUEUED" in r.output
+    assert [c for c in calls if c[0] == "POST"]
+
+
+def test_cli_queue_if_not_ready_without_runner_is_a_usage_error(net):
+    net([], [_runner("jj-mbp", projects=["connect-labs"])])
+    r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
+                                  "--workspace", "dimagi", "--queue-if-not-ready"])
+    assert r.exit_code == 2

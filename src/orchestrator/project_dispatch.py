@@ -84,8 +84,18 @@ board — canopy-web's `Project` model carries context/actions, not a task list 
 project dispatch writes NO board state. Hanging it off some agent's board would be
 inventing a record that nothing reads and nobody owns.
 
+**Pinning (`--runner`, #663).** `TurnIn.runner_id` works for project turns exactly as
+for agent turns: only that runner may claim, and a pin BYPASSES the server's target
+matching (`claim_next_turn`'s `match_q = Q(pinned_runner=runner) | …`) — including the
+`capabilities.projects` match. So the server would hand a pinned project turn to a box
+that does not have the repo, and the session would then fail on a checkout that is not
+there. `check_project_runner_pin` refuses that up front, the project analogue of the
+agent pin's `capabilities.agents` check. A pin replaces the fleet-wide preflight: the
+only box that matters is the named one, read from the same tenant the turn goes into.
+
 What is deliberately shared with the agent path: `summarize_turn`, so a `done` turn is
-still reported as LAUNCHED-not-worked. That discipline is about what a harness turn
+still reported as LAUNCHED-not-worked, and the box-liveness half of a pin check
+(`check_pin_liveness`). That discipline is about what a harness turn
 means, and it means the same thing for both kinds.
 
 Deterministic: builds payloads, reads fleet state, decides whether a dispatch can
@@ -98,6 +108,7 @@ import hashlib
 
 from orchestrator.agent_dispatch import (
     DispatchError,
+    check_pin_liveness,
     local_agent_slug,
     stamp_dispatched,
     untitled_work_basis,
@@ -147,7 +158,7 @@ def project_turns_path(workspace: str) -> str:
 
 
 def derive_project_idempotency_key(project: str, title: str, day: str,
-                                   prompt: str = "") -> str:
+                                   prompt: str = "", runner_id: str = "") -> str:
     """Stable key for (project, work, day), in its OWN namespace from the agent key.
 
     The namespace is load-bearing, not tidiness: `Turn.idempotency_key` is globally
@@ -162,17 +173,26 @@ def derive_project_idempotency_key(project: str, title: str, day: str,
     With no `title`, a hash of the whole prompt takes its place (see
     `agent_dispatch.untitled_work_basis`): a prompt prefix made every untitled brief
     that opened the same way the same dispatch.
+
+    A pinned dispatch folds the resolved runner UUID into the key (as the agent key
+    does), so pinning the same work to a different box is a new turn rather than a
+    silent dedupe onto the unpinned — or differently pinned — one. Unpinned keys are
+    unchanged.
     """
     if not (title or "").strip():
         title = untitled_work_basis(prompt)
     project = (project or "").strip()
-    digest = hashlib.sha256(f"project|{project}|{title}|{day}".encode()).hexdigest()[:12]
+    basis = f"project|{project}|{title}|{day}"
+    rid = (runner_id or "").strip().lower()
+    if rid:
+        basis += f"|runner={rid}"
+    digest = hashlib.sha256(basis.encode()).hexdigest()[:12]
     safe = "".join(c if c.isalnum() else "-" for c in project.lower()).strip("-")
     return f"dispatch-project-{safe}-{digest}"
 
 
 def build_project_turn_payload(project: str, *, prompt: str = "",
-                               idempotency_key: str) -> dict:
+                               idempotency_key: str, runner_id: str | None = None) -> dict:
     """The `POST /api/w/<ws>/harness/turns/` body for a one-shot project dispatch.
 
     Note what is NOT here: `agent_slug`. The server enforces agent_slug XOR project
@@ -202,7 +222,34 @@ def build_project_turn_payload(project: str, *, prompt: str = "",
     # as the human speaking (canopy #488). See `agent_dispatch.stamp_dispatched`.
     if (prompt or "").strip():
         payload["prompt"] = stamp_dispatched(prompt, sender=local_agent_slug())
+    # A pin (TurnIn.runner_id): only that runner may claim. Omitted, not null, when unpinned.
+    if (runner_id or "").strip():
+        payload["runner_id"] = runner_id.strip()
     return payload
+
+
+def check_project_runner_pin(runner: dict,
+                             project: str) -> tuple[list[str], list[str], list[str]]:
+    """(problems, not_ready, warnings) for pinning a turn for repo `project` to `runner`.
+
+    The agent pin's contract (`agent_dispatch.check_runner_pin`), with the target check
+    swapped: the box must REPORT the repo. A pin bypasses the server's
+    `capabilities.projects` match, so without this the turn would be claimed by a
+    machine that has no checkout and fail there — and since #513 the list is reported
+    by the box, not typed, so "not in it" means "not on that machine".
+
+    No cloud exemption, unlike the agent check: a cloud runner serves exactly the repos
+    in its `RUNNER_PROJECTS`, which it reports, so an absent repo is genuinely absent.
+    """
+    name = runner.get("name") or runner.get("id")
+    problems, not_ready, warnings = check_pin_liveness(runner)
+    reported = declared_projects(runner)
+    if (project or "").strip() not in reported:
+        problems.append(
+            f"runner '{name}' does not report project '{project}' "
+            f"(capabilities.projects: {', '.join(reported) or 'none'}) — open it in emdash "
+            "on that box (laptop) or add it to RUNNER_PROJECTS (cloud), then retry")
+    return problems, not_ready, warnings
 
 
 def declared_projects(runner: dict) -> list[str]:

@@ -180,12 +180,7 @@ def check_runner_pin(runner: dict, slug: str) -> tuple[list[str], list[str], lis
       not blocked — the server does not gate claiming on it either.
     """
     name = runner.get("name") or runner.get("id")
-    problems: list[str] = []
-    not_ready: list[str] = []
-    warnings: list[str] = []
-    status = str(runner.get("status") or "").strip().lower()
-    if status == _RUNNER_RETIRED:
-        problems.append(f"runner '{name}' is retired — nothing will ever claim a turn pinned to it")
+    problems, not_ready, warnings = check_pin_liveness(runner)
     caps = runner.get("capabilities") or {}
     agents = caps.get("agents") or []
     # A cloud box declares no agent list: it bootstraps every agent routed to it, and
@@ -198,6 +193,22 @@ def check_runner_pin(runner: dict, slug: str) -> tuple[list[str], list[str], lis
         problems.append(
             f"runner '{name}' does not serve agent '{slug}' "
             f"(capabilities.agents: {', '.join(agents) or 'none'})")
+    return problems, not_ready, warnings
+
+
+def check_pin_liveness(runner: dict) -> tuple[list[str], list[str], list[str]]:
+    """The half of a pin check that is about the BOX, not the target — shared by the
+    agent pin (`check_runner_pin`) and the project pin
+    (`project_dispatch.check_project_runner_pin`). Same (problems, not_ready, warnings)
+    contract: retired can never claim; paused/stale/offline holds the turn QUEUED;
+    online-but-not-ready claims and may fail."""
+    name = runner.get("name") or runner.get("id")
+    problems: list[str] = []
+    not_ready: list[str] = []
+    warnings: list[str] = []
+    status = str(runner.get("status") or "").strip().lower()
+    if status == _RUNNER_RETIRED:
+        problems.append(f"runner '{name}' is retired — nothing will ever claim a turn pinned to it")
     if status not in (_RUNNER_RETIRED, _RUNNER_ONLINE):
         if runner.get("paused") or status == "paused":
             note = str(runner.get("paused_note") or "").strip()
