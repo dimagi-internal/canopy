@@ -1,5 +1,7 @@
 # Agent-core shared skills — design
 
+> **Status: shipped (PRs #312, #315) — `plugins/canopy/agent-core/` live. Historical record, not current-state.**
+
 **Date:** 2026-07-13
 **Status:** approved (brainstormed with Jonathan; sections approved in-session)
 **Supersedes:** the DISTRIBUTE half of routine fleet-align usage (the skill itself remains for
