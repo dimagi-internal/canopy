@@ -797,6 +797,8 @@ def agent_set(slug, task_id, links, append_link, append_notes, project, **fields
     for name, value in list(fields.items()):
         if value is not None and name in TASK_FIELD_LIMITS:
             fields[name] = check_task_field(name, value)
+    if fields.get("status") is not None:
+        fields["status"] = check_task_status(fields["status"])
     try:
         client = _client(slug)
         task_id = resolve_task_id(client, task_id)
@@ -855,8 +857,11 @@ def _appended_notes(client, task_id, text):
     return f"{current}\n\n{addition}" if current else addition
 
 
-def normalize_task_status(s):
-    """Human text ("In progress") AND canonical tokens ("in_progress") → the board's vocabulary.
+TASK_STATUSES = ("suggested", "in_progress", "done", "declined")
+
+
+def _task_status_token(s):
+    """The board token a human spelling names, or None when it names none of them.
 
     "blocked"/"waiting" are not a status — waiting on a person is expressed by `assigned`
     being that person; such items are still in progress on the outcome.
@@ -869,7 +874,38 @@ def normalize_task_status(s):
     if s in ("in progress", "doing", "wip", "active", "started", "ongoing",
              "blocked", "waiting", "on hold", "hold", "stuck"):
         return "in_progress"
-    return "suggested"
+    if s in ("suggested", "proposed", "todo", "to do", "backlog"):
+        return "suggested"
+    return None
+
+
+def normalize_task_status(s):
+    """Human text ("In progress") AND canonical tokens ("in_progress") → the board's vocabulary.
+
+    LENIENT — for READING statuses (filters, cards already on the board): anything
+    unrecognised reads as "suggested". Never use it on a value you are about to WRITE;
+    that is `check_task_status`.
+    """
+    return _task_status_token(s) or "suggested"
+
+
+def check_task_status(value):
+    """The board token for `value`, or raise `ClickException` — the strict twin for WRITES.
+
+    The lenient fallback above is wrong on a write path: an unrecognised status became
+    "suggested", so `agent set --status <typo>` demoted a live in-progress card to an
+    unaccepted proposal and reported success. The server coerces the same way, so the
+    raw value was no safer (dimagi-internal/canopy#659). Same contract as
+    `check_task_field`: reject, write nothing, name the valid values.
+    """
+    token = _task_status_token(value)
+    if token is None:
+        raise click.ClickException(
+            f"--status {value!r} is not a board status. Use one of: "
+            f"{', '.join(TASK_STATUSES)} (human synonyms like 'blocked' → in_progress "
+            f"are accepted). Nothing was written."
+        )
+    return token
 
 
 # The board's per-field caps, MIRRORING canopy-web `apps/agents/schemas.py`
@@ -1074,6 +1110,7 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
     owner = check_task_field("owner", owner)
     assigned = check_task_field("assigned", assigned)
     ext_id = check_task_field("ext_id", ext_id) if ext_id else ext_id
+    status = check_task_status(status)
     task_links = parse_task_links(links)
     try:
         client = _client(slug)
@@ -1085,7 +1122,7 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
             "project": filing,
             "title": title,
             "next_action": next_action,
-            "status": normalize_task_status(status),
+            "status": status,
             "owner": owner,
             "assigned": assigned,
             "confidence": conf if conf in ("high", "low") else "",
