@@ -158,7 +158,16 @@ thread — not how old it is:
 | Band | Signal | What it means | What you do |
 |---|---|---|---|
 | **NEEDS ATTENTION** | unread | Nothing concluded on it | Triage as a normal Step 2 item |
+| **OWNED** | unread, and a canopy-web turn is keyed to the thread | Someone is working it — often a chat with the principal on another runner | **Read that session; do not answer on top of it. Leave it unread.** |
 | **HANDLED** | read | A turn looked and closed out | **Archive it. Do not answer it late.** |
+
+**OWNED is the band `live-turns.sh` cannot give you.** The sweep asks canopy-web for
+turns whose `origin_ref.thread_key` is the thread id, so it sees owners on ANY runner;
+the session counts below see only local processes. If canopy-web is unreachable the
+lookup is skipped and the thread falls back to NEEDS ATTENTION — over-reported, never
+hidden. *(Origin, 2026-10-05, canopy#758: an ACE turn saw "KMC Workflows [never replied]"
+under NEEDS ATTENTION while ten chat turns keyed to that thread had run over two days on
+another machine; `live-turns.sh --ref` said `COUNT=0`. Finding the owner took ~8 calls.)*
 
 **A turn is synchronous: mail arrives, you fire, the session concludes.** So a thread you *read*
 and closed out without replying is a thread you **decided** about — the exchange finished, it

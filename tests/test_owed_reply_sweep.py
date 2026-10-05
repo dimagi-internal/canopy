@@ -498,3 +498,106 @@ def test_turn_md_bands_on_handled_ness_rather_than_age():
     assert "unread" in window and "read" in window
     assert "handled" in window
     assert "proxy" in window, "turn.md must admit read-state is a proxy and name its limits"
+
+
+# --------------------------------------------------------------------------------------
+# OWNED — an unread thread a canopy-web turn is working (canopy#758)
+# --------------------------------------------------------------------------------------
+#
+# 2026-10-05, ace: the sweep printed "KMC Workflows ... [never replied]" under NEEDS
+# ATTENTION while ten canopy-web chat turns keyed to that exact thread had run over two
+# days — the principal steering the ask in chat on another runner. live-turns.sh sees
+# only local processes, so it said COUNT=0. Read-state could not tell "nobody looked"
+# from "someone is working it elsewhere"; only canopy-web knows. A turn that trusted the
+# band would have answered the email cold on top of a live conversation.
+
+from orchestrator.agent_email import harness_turn_owners
+
+
+def _turn(thread_key, *, status="done", finished="2026-09-04T03:20:00Z", **kw):
+    t = {"origin": "canopy_web_chat", "status": status, "claimed_by_name": "box-1",
+         "session_id": "", "created_at": finished, "finished_at": finished,
+         "origin_ref": {"thread_key": thread_key, "chat_session_id": "chat-1"}}
+    t.update(kw)
+    return t
+
+
+def _caller(turns):
+    calls = []
+
+    def call(method, path, *a, **kw):
+        calls.append((method, path))
+        return turns
+    call.calls = calls
+    return call
+
+
+def test_an_unread_thread_with_a_turn_owner_is_OWNED_not_needs_attention():
+    owners = harness_turn_owners("echo", now=NOW, caller=_caller([_turn("t")]))
+    r = _row(unread=True, owners=owners)
+    assert r["disposition"] == "owned"
+    assert r["owner"]["session"] == "chat-1"
+    assert r["owner"]["runner"] == "box-1"
+    assert r["stale"] is False  # stale is a property of the UNOWNED band only
+
+
+def test_an_unread_thread_with_no_owner_still_needs_attention():
+    owners = harness_turn_owners("echo", now=NOW, caller=_caller([_turn("other")]))
+    r = _row(unread=True, owners=owners)
+    assert r["disposition"] == "respond"
+    assert r["owner"] is None
+
+
+def test_owners_do_not_reopen_a_read_thread():
+    """Read stays HANDLED whoever touched it — owners only split the unread band."""
+    owners = harness_turn_owners("echo", now=NOW, caller=_caller([_turn("t")]))
+    assert _row(unread=False, owners=owners)["disposition"] == "handled"
+
+
+def test_without_owners_the_sweep_bands_exactly_as_before():
+    assert _row(unread=True)["disposition"] == "respond"
+
+
+def test_a_finished_turn_outside_the_window_no_longer_owns_the_thread():
+    old = _turn("t", finished="2026-08-01T00:00:00Z")
+    assert harness_turn_owners("echo", now=NOW, caller=_caller([old])) == {}
+
+
+def test_a_live_turn_owns_the_thread_however_old():
+    live = _turn("t", status="running", finished=None, created_at="2026-08-01T00:00:00Z")
+    o = harness_turn_owners("echo", now=NOW, caller=_caller([live]))["t"]
+    assert o["live"] is True
+
+
+def test_the_newest_turn_names_the_owner_and_all_are_counted():
+    turns = [_turn("t", finished="2026-09-03T00:00:00Z",
+                   origin_ref={"thread_key": "t", "chat_session_id": "old"}),
+             _turn("t", finished="2026-09-04T03:00:00Z",
+                   origin_ref={"thread_key": "t", "chat_session_id": "new"})]
+    o = harness_turn_owners("echo", now=NOW, caller=_caller(turns))["t"]
+    assert o["session"] == "new" and o["turns"] == 2
+
+
+def test_the_lookup_asks_for_this_agents_turns():
+    c = _caller([])
+    harness_turn_owners("echo", now=NOW, caller=c)
+    assert c.calls and c.calls[0][0] == "GET" and "agent=echo" in c.calls[0][1]
+
+
+def test_the_owner_lookup_fails_soft():
+    """No PAT / canopy-web down must never sink the sweep — it falls back to read-state,
+    which over-reports a thread rather than hiding one."""
+    def boom(*a, **kw):
+        raise RuntimeError("canopy-web unreachable")
+    assert harness_turn_owners("echo", now=NOW, caller=boom) == {}
+
+
+def test_a_wrapped_turn_list_is_tolerated():
+    owners = harness_turn_owners("echo", now=NOW, caller=_caller({"items": [_turn("t")]}))
+    assert "t" in owners
+
+
+def test_turn_md_names_the_owned_band():
+    text = TURN.read_text()
+    sweep = text.index("canopy email dangling")
+    assert "OWNED" in text[sweep:sweep + 6000]
