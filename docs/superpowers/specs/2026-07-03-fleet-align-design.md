@@ -1,5 +1,7 @@
 # fleet-align — cross-agent improvement spread
 
+> **Status: shipped — `canopy fleet-align` + the `fleet-align` skill live; the factory template it compares against is now the `canopy_agent_factory` package (#636). Historical record, not current-state.**
+
 **Status:** implemented (analysis); apply is AI-dispatched from the skill
 **Author:** Jonathan Jackson + Claude
 **Related:** `docs/agent-operating-model.md` (§4a boundary, §1b reply-quality primitives, §6.5 spread/execute/measure), `src/orchestrator/agent_review.py` (Build 2, per-agent friction), `plugins/canopy/skills/alignment/SKILL.md` (2-repo directional precursor)
