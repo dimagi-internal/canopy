@@ -66,7 +66,13 @@ def _check_text(text: str) -> list[str]:
             problems.append(f"`from {module} import ...` does not import: {exc}")
             continue
         for attr in attrs:
-            if not hasattr(mod, attr):
+            if hasattr(mod, attr):
+                continue
+            # `from scripts.ddd import gates` names a SUBMODULE, which is not an
+            # attribute of the package until something imports it.
+            try:
+                importlib.import_module(f"{module}.{attr}")
+            except ImportError:
                 problems.append(f"`from {module} import {attr}`: no such attribute")
     for skill in sorted(_rubric_refs(text)):
         if not (PLUGIN / "skills" / skill / "rubric.yaml").exists():
@@ -115,6 +121,14 @@ def test_detects_unresolvable_module() -> None:
 
 def test_detects_missing_attribute() -> None:
     assert _check_text("from scripts.ddd.run_pipeline import no_such_function_xyz")
+
+
+def test_submodule_import_resolves() -> None:
+    assert not _check_text("from scripts.ddd import gates")
+
+
+def test_detects_missing_submodule() -> None:
+    assert _check_text("from scripts.ddd import no_such_module_xyz")
 
 
 def test_detects_missing_rubric() -> None:

@@ -41,7 +41,17 @@ If `ddd-spec-qa` returned `fail`, skip — do not judge a structurally broken
 spec. If the render's `run-report.json` shows any failed action, skip too: an
 arc judged over a broken take measures the take, not the arc.
 
-Then run `python -m scripts.ddd.duplicate_frames <run_dir>`. It fails when any
+Then run the duplicate-frames lens **through the canopy runtime** — it imports numpy and
+pillow, which live in the runtime's venv, not in whatever bare `python` is on PATH (a bare
+`python` dies on the import, canopy#569):
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.duplicate_frames "$(realpath <run_dir>)")
+```
+
+It fails when any
 two scenes captured the same picture — **every pair, not just neighbours**. The
 usual cause is a `scroll_to` that could not move the page: its target was
 already in the viewport, or centring it needed a scrollTop off the top or bottom
@@ -64,7 +74,15 @@ that trips it cannot score above 2 however good everything else is. If it fails,
 report that as the finding and stop. Re-pointing a camera is a one-line change,
 and a full eval over a stalled run measures the stall.
 
-Then run `python -m scripts.ddd.snapshot_consistency <run_dir>`. It fails when
+Then run the snapshot-consistency lens the same way:
+
+```bash
+_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
+DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.snapshot_consistency "$(realpath <run_dir>)")
+```
+
+It fails when
 the snapshots came from more than one render, which happens when an iteration
 re-renders into the run dir a judge is still reading. The verdict that comes
 back from a mixed dir describes frames that no longer exist, and it looks
