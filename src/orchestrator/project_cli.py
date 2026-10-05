@@ -84,9 +84,19 @@ def project():
                    "hash of the whole prompt in the title's place, so a different prompt is "
                    "a different dispatch and an identical retry dedupes. Pass a fresh one "
                    "to deliberately re-dispatch the same work.")
+@click.option("--runner", "runner_ref", default="",
+              help="Pin the turn to ONE runner, by name (e.g. jj-mbp-cdp) or id — for work "
+                   "that must land on a specific box. Only it may claim the turn. Read from "
+                   "the target workspace's fleet; refused if the runner is unknown/ambiguous/"
+                   "retired or does not report the project. See --queue-if-not-ready for "
+                   "paused/offline.")
+@click.option("--queue-if-not-ready", is_flag=True,
+              help="With --runner: enqueue even though the runner is paused/stale/offline. "
+                   "The server holds a pinned turn QUEUED (it never expires) and the runner "
+                   "claims it once back online. Without this flag such a pin is refused.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
-                         idempotency_key, as_json):
+                         idempotency_key, runner_ref, queue_if_not_ready, as_json):
     """Trigger a runner session in a repo — `canopy project dispatch connect-labs`.
 
     The one-shot counterpart to a schedule, aimed at a codebase rather than at a
@@ -103,15 +113,21 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
     Writes NO board task — a repo has no agent board, and inventing one would be a
     record nothing reads.
 
+    --runner pins the turn to one box (default: whichever serving runner polls first).
+    The pin replaces the fleet-wide preflight with a check of that one runner: it must
+    report the repo, because a pin bypasses the server's project matching and would
+    otherwise land the session on a machine with no checkout.
+
     Reports the result as LAUNCHED (unverified): a harness turn flips to `done`
     within seconds carrying "created session '<name>'", which is the runner finishing,
     not the work succeeding. Verify with `canopy project turns <project>`.
     """
     from orchestrator import canopy_web
-    from orchestrator.agent_dispatch import DispatchError, summarize_turn
+    from orchestrator.agent_dispatch import DispatchError, resolve_runner, summarize_turn
     from orchestrator.project_dispatch import (
         blocked_message,
         build_project_turn_payload,
+        check_project_runner_pin,
         classify_runners,
         derive_project_idempotency_key,
         dormant_message,
@@ -122,8 +138,11 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
 
     if prompt_file:
         prompt = Path(prompt_file).read_text(encoding="utf-8")
+    if queue_if_not_ready and not runner_ref.strip():
+        raise click.UsageError("--queue-if-not-ready only applies with --runner")
 
     warnings: list[str] = []
+    pinned = None
     try:
         ws = resolve_workspace_choice(
             workspace,
@@ -138,8 +157,26 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
         # precisely what left a turn queued forever in #428.
         # Read the fleet of the tenant this turn is going INTO, not the union of
         # every workspace the caller belongs to — see `_runners_path`.
-        classified = classify_runners(_fetch_runners(ws), project_name,
-                                      tenant_scoped=True)
+        fleet = _fetch_runners(ws)
+        if runner_ref.strip():
+            # A pin: only the named box matters, and it must have the repo (the server
+            # skips project matching for a pinned turn). Resolved from the tenant fleet,
+            # so a box outside the turn's workspace is "no runner named …", not a pin
+            # the server would refuse later.
+            pinned = resolve_runner(fleet, runner_ref)
+            problems, not_ready, pin_warnings = check_project_runner_pin(pinned, project_name)
+            if problems:
+                raise click.ClickException(
+                    "refusing to pin: " + "; ".join(problems) + ". Nothing was dispatched.")
+            if not_ready and not queue_if_not_ready:
+                raise click.ClickException(
+                    "refusing to pin: " + "; ".join(not_ready)
+                    + ". Pass --queue-if-not-ready to enqueue it anyway. Nothing was dispatched.")
+            warnings += not_ready + pin_warnings
+            classified = {"blocked": False, "unknown": False, "serving": [pinned],
+                          "degraded": [], "dormant": []}
+        else:
+            classified = classify_runners(fleet, project_name, tenant_scoped=True)
         if classified["blocked"]:
             raise click.ClickException(blocked_message(classified, ws))
         if classified["unknown"]:
@@ -161,9 +198,11 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
 
         day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
         key = idempotency_key or derive_project_idempotency_key(
-            project_name, title, day, prompt=prompt)
-        payload = build_project_turn_payload(project_name, prompt=prompt,
-                                             idempotency_key=key)
+            project_name, title, day, prompt=prompt,
+            runner_id=str(pinned["id"]) if pinned else "")
+        payload = build_project_turn_payload(
+            project_name, prompt=prompt, idempotency_key=key,
+            runner_id=str(pinned["id"]) if pinned else None)
         turn = canopy_web.call("POST", project_turns_path(ws), payload)
     except DispatchError as e:
         raise click.ClickException(str(e))
@@ -171,13 +210,20 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
         raise click.ClickException(str(e))
 
     summary = summarize_turn(turn)
+    runner_out = None
+    if pinned:
+        runner_out = {"id": pinned.get("id"), "name": pinned.get("name"),
+                      "status": pinned.get("status")}
     if as_json:
         _emit({"project": project_name, "workspace": ws, "idempotency_key": key,
-               "warnings": warnings, "turn": summary})
+               "runner": runner_out, "warnings": warnings, "turn": summary})
         return
 
     click.echo(f"Project:   {project_name}")
     click.echo(f"Workspace: {ws}")
+    if pinned:
+        click.echo(f"Runner:    {pinned.get('name')}  (pinned — only it may claim this turn; "
+                   f"now {pinned.get('status')})")
     click.echo(f"Turn:      {summary['id']}  →  {summary['headline']}")
     for w in warnings:
         click.echo(f"\nWARNING: {w}")
