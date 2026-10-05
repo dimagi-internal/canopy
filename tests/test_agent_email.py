@@ -14,6 +14,9 @@ from orchestrator.agent_email import (
     archive,
     build_send_command,
     collect_thread_attachments,
+    forward,
+    forward_body,
+    forward_subject,
     derive_reply_all,
     fetch_attachment,
     mark_read,
@@ -428,54 +431,86 @@ def test_send_passes_attachments_through_to_gog(reviewed, tmp_path):
     assert seen["cmd"][seen["cmd"].index("--attach") + 1] == str(f)
 
 
-def _thread_runner(attachments_per_message, downloads):
-    """Fake gog: `gmail read` returns a thread, `gmail attachment` returns a cached path."""
+def _thread_runner(attachments_per_message, downloads, cache_dir, headers=None, sent=None):
+    """Fake gog: `gmail read` returns a thread, `gmail attachment` writes a cache file
+    named the way gog really names it (`<msg>_<att>_attachment.bin`, canopy#580)."""
     def run(cmd, capture_output, text, timeout):
         if cmd[1:3] == ["gmail", "read"]:
             return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(
                 {"thread": {"messages": [
-                    {"id": mid, "payload": {"headers": [], "parts": [
-                        {"filename": a["filename"],
-                         "mimeType": a.get("mime_type", "application/pdf"),
-                         "body": {"attachmentId": a["attachment_id"], "size": a["size"]}}
-                        for a in atts]}}
+                    {"id": mid, "payload": {
+                        "headers": (headers or {}).get(mid, []),
+                        "parts": [
+                            {"filename": a["filename"],
+                             "mimeType": a.get("mime_type", "application/pdf"),
+                             "body": {"attachmentId": a["attachment_id"], "size": a["size"]}}
+                            for a in atts]}}
                     for mid, atts in attachments_per_message
                 ]}}))
         if cmd[1:3] == ["gmail", "attachment"]:
-            att_id = cmd[4]
+            msg_id, att_id = cmd[3], cmd[4]
             downloads.append(att_id)
+            path = cache_dir / f"{msg_id}_{att_id}_attachment.bin"
+            path.write_bytes(f"%PDF-{att_id}".encode())
             return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(
-                {"path": f"/cache/{att_id}.pdf", "bytes": 10, "cached": True}))
+                {"path": str(path), "bytes": 10, "cached": False}))
+        if cmd[1:3] == ["gmail", "send"] and sent is not None:
+            sent.append(cmd)
+            return SimpleNamespace(returncode=0, stderr="",
+                                   stdout='{"id": "m9", "threadId": "t9"}')
         raise AssertionError(f"unexpected gog call: {cmd[:3]}")
     return run
 
 
-def test_collect_thread_attachments_downloads_every_file():
+def test_collect_thread_attachments_downloads_every_file(tmp_path):
     downloads = []
     runner = _thread_runner([
         ("m1", [{"filename": "Invoice.pdf", "attachment_id": "a1", "size": 10}]),
         ("m2", [{"filename": "Receipt.pdf", "attachment_id": "a2", "size": 20}]),
-    ], downloads)
+    ], downloads, tmp_path)
     got = collect_thread_attachments(IDENT, "t1", runner=runner)
     assert [a["filename"] for a in got] == ["Invoice.pdf", "Receipt.pdf"]
-    assert [a["path"] for a in got] == ["/cache/a1.pdf", "/cache/a2.pdf"]
     assert downloads == ["a1", "a2"]
 
 
-def test_collect_thread_attachments_dedupes_quoted_forwards():
+def test_collect_thread_attachments_stages_under_original_filename(tmp_path):
+    """canopy#580: attaching gog's cache path sent `*_attachment.bin` — the staged copy
+    must carry the sender's filename, since that basename is what the recipient sees."""
+    runner = _thread_runner([
+        ("m1", [{"filename": "Invoice-KIMYKKKJ-0006.pdf", "attachment_id": "a1", "size": 10},
+                {"filename": "Receipt-2083-6317-9370.pdf", "attachment_id": "a2", "size": 11}]),
+    ], [], tmp_path)
+    got = collect_thread_attachments(IDENT, "t1", out_dir=str(tmp_path / "out"), runner=runner)
+    names = [os.path.basename(a["saved_to"]) for a in got]
+    assert names == ["Invoice-KIMYKKKJ-0006.pdf", "Receipt-2083-6317-9370.pdf"]
+    assert Path(got[0]["saved_to"]).read_bytes() == b"%PDF-a1"
+
+
+def test_collect_thread_attachments_name_collision_and_traversal(tmp_path):
+    runner = _thread_runner([
+        ("m1", [{"filename": "../../etc/a.pdf", "attachment_id": "a1", "size": 1},
+                {"filename": "a.pdf", "attachment_id": "a2", "size": 2}]),
+    ], [], tmp_path)
+    out = tmp_path / "out"
+    got = collect_thread_attachments(IDENT, "t1", out_dir=str(out), runner=runner)
+    assert [os.path.basename(a["saved_to"]) for a in got] == ["a.pdf", "a (2).pdf"]
+    assert all(Path(a["saved_to"]).parent == out for a in got)
+
+
+def test_collect_thread_attachments_dedupes_quoted_forwards(tmp_path):
     """The same file quoted forward and back must not ship three times."""
     downloads = []
     runner = _thread_runner([
         ("m1", [{"filename": "Invoice.pdf", "attachment_id": "a1", "size": 10}]),
         ("m2", [{"filename": "Invoice.pdf", "attachment_id": "a9", "size": 10}]),
-    ], downloads)
+    ], downloads, tmp_path)
     got = collect_thread_attachments(IDENT, "t1", runner=runner)
     assert [a["filename"] for a in got] == ["Invoice.pdf"]
     assert downloads == ["a1"]
 
 
-def test_collect_thread_attachments_empty_thread_is_empty_list():
-    runner = _thread_runner([("m1", [])], [])
+def test_collect_thread_attachments_empty_thread_is_empty_list(tmp_path):
+    runner = _thread_runner([("m1", [])], [], tmp_path)
     assert collect_thread_attachments(IDENT, "t1", runner=runner) == []
 
 
@@ -1727,3 +1762,68 @@ def test_email_client_prints_the_resolved_client(tmp_path, monkeypatch):
     # An explicit --client is honoured verbatim.
     out = CliRunner().invoke(ae.email_group, ["client", "--repo", str(repo), "--client", "x"])
     assert out.output.strip() == "x"
+
+
+# --------------------------------------------------------------------------------------
+# forward
+# --------------------------------------------------------------------------------------
+
+def test_forward_subject_does_not_stack_prefixes():
+    assert forward_subject("Your receipt") == "Fwd: Your receipt"
+    assert forward_subject("Fwd: Your receipt") == "Fwd: Your receipt"
+    assert forward_subject("FW: x") == "FW: x"
+
+
+def test_forward_body_carries_original_headers_and_text():
+    body = forward_body("FYI.", {"from": "Anthropic <i@a.com>", "date": "Thu, 1 Oct 2026",
+                                 "subject": "Receipt", "to": "ace@x.com", "cc": "",
+                                 "body_text": "Total $210.30\r\nPaid"})
+    assert body.startswith("FYI.\n\n---------- Forwarded message ---------\n")
+    assert "From: Anthropic <i@a.com>\nDate: Thu, 1 Oct 2026\nSubject: Receipt\nTo: ace@x.com" in body
+    assert "Cc:" not in body
+    assert body.rstrip().endswith("Total $210.30\nPaid")
+
+
+def _fwd_thread(tmp_path, sent):
+    hdr = lambda subj: [{"name": "From", "value": "Anthropic <i@a.com>"},
+                        {"name": "To", "value": "hal@dimagi-ai.com"},
+                        {"name": "Subject", "value": subj},
+                        {"name": "Date", "value": "Thu, 1 Oct 2026"}]
+    return _thread_runner([
+        ("m1", [{"filename": "Old.pdf", "attachment_id": "a0", "size": 5}]),
+        ("m2", [{"filename": "Receipt.pdf", "attachment_id": "a1", "size": 10}]),
+    ], [], tmp_path, headers={"m1": hdr("Older"), "m2": hdr("Your receipt")}, sent=sent)
+
+
+def test_forward_sends_latest_message_with_its_named_attachments(reviewed, tmp_path):
+    sent = []
+    reviewed("FYI — October receipt.\n")
+    result = forward(IDENT, "t1", to="j@dimagi.com", note="FYI — October receipt.\n",
+                     runner=_fwd_thread(tmp_path, sent))
+    assert result["thread_id"] == "t9"
+    cmd = sent[0]
+    assert cmd[cmd.index("--subject") + 1] == "Fwd: Your receipt"
+    attached = [cmd[i + 1] for i, c in enumerate(cmd) if c == "--attach"]
+    assert [os.path.basename(a) for a in attached] == ["Receipt.pdf"]
+
+
+def test_forward_review_is_keyed_to_the_note_not_the_quoted_original(reviewed, tmp_path):
+    """Only the agent's note needs a receipt; reviewing someone else's mail is not the ask."""
+    reviewed("note\n")
+    forward(IDENT, "t1", to="j@dimagi.com", note="note\n",
+            runner=_fwd_thread(tmp_path, []))  # no BLOCKED: the note was reviewed
+
+
+def test_forward_unreviewed_note_is_blocked(reviewed, tmp_path):
+    reviewed("something else\n")
+    with pytest.raises(Exception, match="(?i)review"):
+        forward(IDENT, "t1", to="j@dimagi.com", note="unreviewed\n",
+                runner=_fwd_thread(tmp_path, []))
+
+
+def test_forward_dry_run_shows_named_attachments(tmp_path):
+    r = forward(IDENT, "t1", to="j@dimagi.com", message_id="m1", dry_run=True,
+                runner=_fwd_thread(tmp_path, []))
+    assert r["subject"] == "Fwd: Older"
+    assert [os.path.basename(a) for a in r["attachments"]] == ["Old.pdf"]
+    assert "---------- Forwarded message ---------" in r["plain"]

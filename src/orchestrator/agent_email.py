@@ -783,9 +783,14 @@ def send(
     reply_to_message_id: str | None = None,
     attachments: Sequence[str] = (),
     dry_run: bool = False,
+    review_text: str | None = None,
     runner=subprocess.run,
 ) -> dict:
     """Send an HTML multipart email as the agent. Returns the normalized JSON result.
+
+    review_text is the part of the body the AGENT wrote, which is what the pre-send review
+    receipt is keyed to. It defaults to the whole body; `forward` passes only the note,
+    because the quoted original is someone else's words and is not the agent's to review.
 
     dry_run renders the plain + HTML bodies without invoking gog; its result carries the
     same message_id/thread_id keys (empty) as a real send so scripted callers never branch.
@@ -816,7 +821,7 @@ def send(
     # agent's PreToolUse hook). Keyed to THIS body: a review of an earlier revision does
     # not carry over. dry_run above is exempt on purpose — it is how agents iterate.
     from orchestrator import review_receipt
-    review_receipt.require(identity.slug, body_text)
+    review_receipt.require(identity.slug, body_text if review_text is None else review_text)
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as tf:
         tf.write(plain)
         plain_path = tf.name
@@ -1612,14 +1617,32 @@ def fetch_attachment(
     }
 
 
+def _staged_name(filename: str, taken: set[str]) -> str:
+    """A safe, unique on-disk name that keeps the sender's filename and extension.
+
+    The name is what the recipient sees: gog attaches a file under its basename, so a
+    cache path like `<msg>_<att>_attachment.bin` arrives as an unopenable .bin
+    (canopy#580). Path separators are stripped so a hostile filename cannot escape the
+    staging dir; a repeat name gets a ` (2)` suffix the way a mail client would."""
+    base = os.path.basename((filename or "").replace("\\", "/")).strip() or "attachment"
+    stem, ext = os.path.splitext(base)
+    name, n = base, 2
+    while name in taken:
+        name = f"{stem} ({n}){ext}"
+        n += 1
+    taken.add(name)
+    return name
+
+
 def collect_thread_attachments(
     identity: EmailIdentity,
     thread_id: str,
     *,
     out_dir: str | None = None,
+    message_id: str | None = None,
     runner=subprocess.run,
 ) -> list[dict]:
-    """Download EVERY attachment on a thread → [{filename, path, message_id, ...}].
+    """Download EVERY attachment on a thread → [{filename, path, saved_to, message_id, ...}].
 
     This is the forward path. Re-attaching an inbound document used to mean a manual
     `email read` → eyeball the attachment ids → N× `fetch-attachment` → N× `--attach`
@@ -1627,26 +1650,106 @@ def collect_thread_attachments(
     degraded the forward into a body-text summary instead. One call, so the cheap thing
     and the correct thing are the same thing.
 
+    `saved_to` is the file to attach: a copy staged under the ORIGINAL filename (in
+    out_dir, else a fresh temp dir). `path` is gog's cache file, whose name is an
+    internal id — attaching that sent recipients `*_attachment.bin` (canopy#580).
+
     De-duplicates by (filename, size): a thread whose attachment was quoted forward and
     back carries the same file on several messages, and a forward should not ship it
-    three times.
+    three times. message_id restricts the walk to one message (a single-message forward).
     """
+    import shutil
     thread = read_thread(identity, thread_id, runner=runner)
+    stage = out_dir or tempfile.mkdtemp(prefix="canopy-fwd-")
+    os.makedirs(stage, exist_ok=True)
     seen: set[tuple[str, object]] = set()
+    taken: set[str] = set()
     out: list[dict] = []
     for msg in thread.get("messages", []):
+        if message_id and msg.get("message_id") != message_id:
+            continue
         for att in msg.get("attachments", []):
             key = (att.get("filename", ""), att.get("size"))
             if key in seen:
                 continue
             seen.add(key)
             got = fetch_attachment(
-                identity, msg["message_id"], att["attachment_id"],
-                out_dir=out_dir, runner=runner,
+                identity, msg["message_id"], att["attachment_id"], runner=runner,
             )
-            out.append({**got, "filename": att.get("filename", ""),
+            saved_to = os.path.join(stage, _staged_name(att.get("filename", ""), taken))
+            shutil.copyfile(got["path"], saved_to)
+            out.append({**got, "saved_to": saved_to,
+                        "filename": att.get("filename", ""),
                         "mime_type": att.get("mime_type", "")})
     return out
+
+
+# --------------------------------------------------------------------------------------
+# forward — a real forward, not a summary
+# --------------------------------------------------------------------------------------
+
+def forward_subject(subject: str) -> str:
+    """`Fwd: <subject>`, without stacking a second prefix on an already-forwarded one."""
+    subject = (subject or "").strip()
+    return subject if re.match(r"(?i)^(fwd?|fw):", subject) else f"Fwd: {subject}"
+
+
+def forward_body(note: str, msg: dict) -> str:
+    """The agent's note, then the original message under Gmail's forward header block.
+
+    Same shape Gmail writes, so a human (or an expense system) reads the result as the
+    original mail rather than the agent's retelling of it."""
+    header = [
+        "---------- Forwarded message ---------",
+        f"From: {msg.get('from', '')}",
+        f"Date: {msg.get('date', '')}",
+        f"Subject: {msg.get('subject', '')}",
+        f"To: {msg.get('to', '')}",
+    ]
+    if msg.get("cc"):
+        header.append(f"Cc: {msg['cc']}")
+    original = (msg.get("body_text") or "").replace("\r\n", "\n").strip()
+    parts = [note.strip()] if note and note.strip() else []
+    parts += ["\n".join(header), original]
+    return "\n\n".join(parts) + "\n"
+
+
+def forward(
+    identity: EmailIdentity,
+    thread_id: str,
+    *,
+    to: str,
+    note: str = "",
+    cc: str | None = None,
+    message_id: str | None = None,
+    dry_run: bool = False,
+    runner=subprocess.run,
+) -> dict:
+    """Forward one message of a thread (default: the latest) — original headers, body and
+    every attachment under its real filename.
+
+    Exists because the fleet's send rails block raw `gog gmail send`, and `send
+    --attach-from-thread` is a NEW message: agents were writing a summary of the mail and
+    re-attaching the files, which is not what "forward this" asks for. The pre-send review
+    is keyed to `note` only — the quoted original is not the agent's prose."""
+    thread = read_thread(identity, thread_id, runner=runner)
+    msgs = thread.get("messages", [])
+    if message_id:
+        msgs = [m for m in msgs if m.get("message_id") == message_id]
+    if not msgs:
+        raise AgentEmailError(
+            f"forward: no message {message_id or ''} in thread {thread_id}".replace("  ", " ")
+        )
+    msg = msgs[-1]
+    atts = collect_thread_attachments(
+        identity, thread_id, message_id=msg["message_id"], runner=runner,
+    )
+    return send(
+        identity, to=to, cc=cc, subject=forward_subject(msg.get("subject", "")),
+        body_text=forward_body(note, msg),
+        attachments=[a["saved_to"] for a in atts],
+        dry_run=dry_run, review_text=note, runner=runner,
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -2286,7 +2389,7 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
         attachments = list(attach)
         if attach_from_thread:
             attachments += [
-                a["saved_to"] or a["path"]
+                a["saved_to"]
                 for a in collect_thread_attachments(ident, attach_from_thread)
             ]
         result = send(
@@ -2294,6 +2397,35 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
             cc=cc, reply_to_message_id=reply_to_message_id,
             attachments=attachments, dry_run=dry_run,
         )
+    except AgentEmailError as e:
+        raise click.ClickException(str(e))
+    click.echo(json.dumps(result, indent=2))
+
+
+@email_group.command("forward")
+@_with_identity_options
+@click.argument("thread_id")
+@click.option("--to", required=True, help="Comma-separated recipients.")
+@click.option("--cc")
+@click.option("--note-file", type=click.Path(exists=True, dir_okay=False),
+              help="Your note above the forwarded message (plain text). The pre-send "
+                   "review receipt is keyed to THIS file — record it with `review-receipt "
+                   "--body-file <note-file>`. Omit for a bare forward (review an empty file).")
+@click.option("--message-id", help="Forward this message of the thread instead of the latest.")
+@click.option("--dry-run", is_flag=True, help="Render the forward without sending.")
+def email_forward(repo, agent, account, client, thread_id, to, cc, note_file,
+                  message_id, dry_run):
+    """Forward a message as the agent — original From/Date/Subject/To, its body, and every
+    attachment under its real filename. Use this, not `send --attach-from-thread`, when
+    asked to "forward" something."""
+    stale = engine_staleness_error()
+    if stale:
+        raise click.ClickException(f"REFUSING to send — {stale}")
+    note = Path(note_file).read_text(encoding="utf-8") if note_file else ""
+    try:
+        ident = _identity_from_opts(repo, agent, account, client)
+        result = forward(ident, thread_id, to=to, cc=cc, note=note,
+                         message_id=message_id, dry_run=dry_run)
     except AgentEmailError as e:
         raise click.ClickException(str(e))
     click.echo(json.dumps(result, indent=2))
