@@ -9,6 +9,17 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.583] - 2026-10-05
+### Added
+- **`canopy email forward <thread-id> --to … [--note-file …]`** — a real forward: `Fwd:` subject,
+  the original From/Date/Subject/To block and body, and every attachment of the forwarded message
+  under its real filename. The pre-send review receipt is keyed to the agent's note only. Agents
+  had been faking forwards as a new `send` with a summary plus `--attach-from-thread`.
+### Fixed
+- **`--attach-from-thread` sent attachments as `*_attachment.bin`** (#580). It attached gog's cache
+  file, whose basename is an internal id; attachments are now staged under the sender's filename
+  (path-stripped, collision-suffixed).
+
 ## [0.2.581] - 2026-10-05
 ### Fixed
 - **`canopy agent set|add --status` rejects a status the board does not have** (#659). `set`
