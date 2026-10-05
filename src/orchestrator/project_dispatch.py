@@ -96,7 +96,12 @@ from __future__ import annotations
 
 import hashlib
 
-from orchestrator.agent_dispatch import DispatchError, local_agent_slug, stamp_dispatched
+from orchestrator.agent_dispatch import (
+    DispatchError,
+    local_agent_slug,
+    stamp_dispatched,
+    untitled_work_basis,
+)
 
 # Only a runner reporting itself ONLINE can claim (claim_next_turn's first guard,
 # on the DERIVED live_status the API serves — a stale heartbeat reads as `stale`).
@@ -141,7 +146,8 @@ def project_turns_path(workspace: str) -> str:
     return f"/api/w/{workspace}/harness/turns/"
 
 
-def derive_project_idempotency_key(project: str, title: str, day: str) -> str:
+def derive_project_idempotency_key(project: str, title: str, day: str,
+                                   prompt: str = "") -> str:
     """Stable key for (project, work, day), in its OWN namespace from the agent key.
 
     The namespace is load-bearing, not tidiness: `Turn.idempotency_key` is globally
@@ -152,7 +158,13 @@ def derive_project_idempotency_key(project: str, title: str, day: str) -> str:
 
     Day-scoped for the same reason the agent key is: re-dispatching the same title
     tomorrow is a deliberate re-run, and a permanent key would swallow it.
+
+    With no `title`, a hash of the whole prompt takes its place (see
+    `agent_dispatch.untitled_work_basis`): a prompt prefix made every untitled brief
+    that opened the same way the same dispatch.
     """
+    if not (title or "").strip():
+        title = untitled_work_basis(prompt)
     project = (project or "").strip()
     digest = hashlib.sha256(f"project|{project}|{title}|{day}".encode()).hexdigest()[:12]
     safe = "".join(c if c.isalnum() else "-" for c in project.lower()).strip("-")

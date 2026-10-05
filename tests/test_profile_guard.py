@@ -186,7 +186,8 @@ def test_the_hook_is_registered_for_every_tool():
     hooks = json.loads((Path(pg.__file__).parent / "hooks.json").read_text())["hooks"]
     cmds = [h["command"] for e in hooks["PreToolUse"] for h in e["hooks"]]
     assert any("profile_guard.py" in c for c in cmds)
-    assert all(e["matcher"] == "*" for e in hooks["PreToolUse"])
+    assert all(e["matcher"] == "*" for e in hooks["PreToolUse"]
+               if any("profile_guard.py" in h["command"] for h in e["hooks"]))
 
 
 @pytest.mark.parametrize("pattern", ["/etc/**", "../**", "a/../../**", "~/.ssh/*"])

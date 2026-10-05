@@ -138,6 +138,17 @@ def test_project_and_agent_keys_never_collide_for_the_same_name():
     assert agent_key != project_key
 
 
+def test_untitled_project_dispatch_is_keyed_on_the_whole_prompt():
+    head = "Investigate the slow audit page and fix it. " * 3
+    a = derive_project_idempotency_key("connect-labs", "", "2026-10-04", prompt=head + "A")
+    b = derive_project_idempotency_key("connect-labs", "", "2026-10-04", prompt=head + "B")
+    again = derive_project_idempotency_key("connect-labs", "", "2026-10-04", prompt=head + "A")
+    assert a != b and a == again
+    titled = derive_project_idempotency_key("connect-labs", "Fix scope", "2026-10-04")
+    assert derive_project_idempotency_key("connect-labs", "Fix scope", "2026-10-04",
+                                          prompt="x") == titled
+
+
 def test_same_project_work_derives_the_same_key():
     a = derive_project_idempotency_key("connect-labs", "Fix scope", "2026-07-28")
     b = derive_project_idempotency_key("connect-labs", "Fix scope", "2026-07-28")

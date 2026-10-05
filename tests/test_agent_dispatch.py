@@ -82,6 +82,41 @@ def test_different_work_or_day_derives_a_different_key():
     assert derive_idempotency_key("hal", "Fix the cursor", "2026-07-29") != base
 
 
+# An untitled dispatch is keyed on its WHOLE prompt (2026-10-04: a corrected re-dispatch
+# to ace whose brief opened like the first returned the earlier finished turn).
+_BRIEF = "Fix the failing labs export test. " * 4          # > 80 chars of shared head
+
+
+def test_untitled_dispatches_with_different_prompts_are_different_work():
+    first = derive_idempotency_key("ace", "", "2026-10-04", prompt=_BRIEF + "Use the v1 API.")
+    fixed = derive_idempotency_key("ace", "", "2026-10-04", prompt=_BRIEF + "Use the v2 API.")
+    assert first != fixed
+
+
+def test_an_identical_untitled_retry_still_dedupes():
+    a = derive_idempotency_key("ace", "", "2026-10-04", prompt=_BRIEF, mode="auto")
+    b = derive_idempotency_key("ace", "", "2026-10-04", prompt=_BRIEF, mode="auto")
+    assert a == b
+    assert derive_idempotency_key("ace", "", "2026-10-04", prompt=_BRIEF, mode="manual") != a
+
+
+def test_a_titled_key_ignores_the_prompt_and_is_unchanged():
+    base = derive_idempotency_key("hal", "Fix the cursor", "2026-07-28")
+    assert derive_idempotency_key("hal", "Fix the cursor", "2026-07-28", prompt="anything") == base
+
+
+def test_cli_untitled_redispatch_with_a_corrected_prompt_gets_a_new_key(monkeypatch):
+    calls = []
+    _patch(monkeypatch, _mode_transport(calls))
+    keys = []
+    for brief in (_BRIEF + "v1", _BRIEF + "v2", _BRIEF + "v2"):
+        r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "hal", "--no-task",
+                                      "--prompt", brief, "--json-output"])
+        assert r.exit_code == 0, r.output
+        keys.append(json.loads(r.output)["idempotency_key"])
+    assert keys[0] != keys[1] and keys[1] == keys[2]
+
+
 def test_key_is_filesystem_and_url_safe():
     k = derive_idempotency_key("hal", "Fix: the/cursor — now!", "2026-07-28")
     assert k.replace("-", "").isalnum()
@@ -580,7 +615,8 @@ def test_cli_mode_json_reports_what_the_server_recorded(monkeypatch):
     out = json.loads(r.output)
     assert out["mode"] == {"requested": "auto", "recorded": "auto"}
     day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
-    assert out["idempotency_key"] == derive_idempotency_key("hal", "ping", day, mode="auto")
+    assert out["idempotency_key"] == derive_idempotency_key("hal", "", day, mode="auto",
+                                                            prompt="ping")
 
 
 def test_cli_mode_warns_when_an_older_server_drops_it(monkeypatch):

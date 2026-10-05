@@ -43,6 +43,15 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/profile_guard.py\""
           }
         ]
+      },
+      {
+        "matcher": "Bash|Agent|Task|Monitor|ScheduleWakeup|CronCreate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/one_shot_turn_guard.py\""
+          }
+        ]
       }
     ],
     "Stop": [

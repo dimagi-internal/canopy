@@ -22,7 +22,12 @@ anything, or exited cleanly. `summarize_turn` therefore reports `launched` +
 on 2026-07-23; this is that miss, encoded.)
 
 **3. Re-running a dispatch spawns a second session.** The idempotency key is derived
-from (agent, title, day) so the same work dispatched twice is one turn. A dispatch
+from (agent, title, day) so the same work dispatched twice is one turn. With NO title,
+the work is the PROMPT, so a hash of the whole prompt stands in for the title: an
+identical retry still dedupes, a different (say, corrected) brief is a new turn. It
+used to be `prompt[:80]`, and every untitled dispatch whose brief opened the same way
+collapsed onto the first — a corrected re-dispatch to ace on 2026-10-04 returned the
+earlier, finished turn as "launched (unverified)" and nothing ran. A dispatch
 PINNED to a runner folds the runner into that key, so it never dedupes onto an
 unpinned dispatch of the same title/day (which could be sitting on the wrong box).
 
@@ -93,8 +98,17 @@ class DispatchError(Exception):
 TURN_MODES = ("auto", "manual")
 
 
+def untitled_work_basis(prompt: str) -> str:
+    """What stands in for the title when a dispatch has none: a hash of the WHOLE prompt.
+
+    Not a prefix — briefs to one agent routinely open the same way ("Do a turn…",
+    "Fix …"), and a prefix made every one of them the same work. Shared with the
+    project key, which had the same shape."""
+    return "prompt-sha256=" + hashlib.sha256((prompt or "").encode()).hexdigest()[:16]
+
+
 def derive_idempotency_key(slug: str, title: str, day: str, runner_id: str = "",
-                           mode: str = "") -> str:
+                           mode: str = "", prompt: str = "") -> str:
     """Stable key for (agent, work, day[, runner]) so a repeat dispatch is one turn, not two.
 
     Scoped to the day rather than forever: dispatching the same title tomorrow is
@@ -105,7 +119,13 @@ def derive_idempotency_key(slug: str, title: str, day: str, runner_id: str = "",
     pinned. Otherwise a pinned re-dispatch of work first sent unpinned would dedupe onto
     the unpinned turn — which may be the very turn that landed on the wrong box. Unpinned
     keys are unchanged, so existing dedupe keeps working across the upgrade.
+
+    With no `title`, the work IS the prompt (§3): `untitled_work_basis(prompt)` takes
+    the title's place, so a different brief is a different dispatch and an identical
+    retry is the same one. A titled key ignores `prompt` and is unchanged.
     """
+    if not (title or "").strip():
+        title = untitled_work_basis(prompt)
     basis = f"{slug}|{title}|{day}"
     rid = (runner_id or "").strip().lower()
     if rid:
