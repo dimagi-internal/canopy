@@ -402,6 +402,16 @@ def test_pin_refuses_a_runner_that_does_not_serve_the_agent():
     assert "capabilities.agents: hal" in problems[0]
 
 
+def test_pin_to_a_cloud_runner_with_no_agent_list_is_allowed():
+    # cloud-ec2-1 really reports kind=cloud and capabilities without "agents";
+    # it runs ada/eva turns by routing (2026-10-05: an ada pin there was refused).
+    cloud = {**RUNNERS[2], "kind": "cloud"}
+    assert check_runner_pin(cloud, "ada") == ([], [], [])
+    declared = {**cloud, "capabilities": {"agents": ["hal"]}}
+    problems, _, _ = check_runner_pin(declared, "ada")
+    assert problems, "a cloud box that DOES declare agents is held to its list"
+
+
 def test_pin_refuses_a_retired_runner():
     problems, not_ready, _ = check_runner_pin(_runner("x", "1", status="retired"), "eva")
     assert any("retired" in p for p in problems)
