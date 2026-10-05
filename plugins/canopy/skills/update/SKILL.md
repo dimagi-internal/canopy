@@ -92,10 +92,12 @@ fleet agents' shims (e.g. ACE's `bin/ace-email`), from the SAME marketplace clon
 came from (never an editable dev-checkout, which silently drifts with whatever branch is
 checked out — that bug stranded `canopy harvest` from a fresh session).
 
-**`--reinstall` is required, not optional.** The Python package version is pinned (`0.1.0`); it does
-NOT bump with the plugin VERSION. So `uv tool install --force` alone keys on the unchanged version
-and serves a **cached build** — silently shipping stale CLI code (this stranded `harvest --full`).
-`--reinstall` forces a rebuild from the freshly-pulled source.
+**`--reinstall` is required, not optional.** `uv tool install --force` alone keys on the package
+version and serves a **cached build** when that version is unchanged — silently shipping stale CLI
+code (this stranded `harvest --full` back when the package sat pinned at `0.1.0`). `canopy version
+bump` now keeps `pyproject.toml` in lockstep with VERSION, but this step is SHA-driven: a commit
+that reached main without a bump reuses the version, and only `--reinstall` rebuilds it from the
+freshly-pulled source.
 
 ```bash
 for attempt in 1 2 3; do
