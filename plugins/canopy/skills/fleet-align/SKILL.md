@@ -142,8 +142,11 @@ into the **laggard's own repo**, handing it the finding + its `change_brief`. In
 - **PROMOTE (agent-unique candidate)** → one PR into **canopy** adding the generic mechanism,
   then one PR per owning agent removing/thinning its copy to call canopy's.
 - **PROMOTE** → the PR goes into **canopy**, editing the factory template string in
-  `src/orchestrator/agent_factory.py`; because that touches `plugins/canopy/`, the agent runs
-  `canopy version bump` and follows the plugin-update flow. Existing agents then adopt it via the
+  `packages/canopy_agent_factory/canopy_agent_factory/_factory.py` (the factory is its own
+  published package since #636). Bump that package's own `[project] version` in
+  `packages/canopy_agent_factory/pyproject.toml` (it publishes to PyPI on its own clock, for
+  canopy-web) AND run `canopy version bump` (canopy's runtime bundle carries the package, so
+  installs only pick the change up on a canopy release), then follow the plugin-update flow. Existing agents then adopt it via the
   same distribute path — **never by re-scaffolding.**
 - **RECONCILE / legacy** — never auto-applied; surface for a human to harvest.
 
