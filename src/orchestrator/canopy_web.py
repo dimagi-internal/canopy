@@ -14,7 +14,7 @@ from typing import Callable, Optional
 # provenance.py). Imported by name so tests can monkeypatch it here.
 from orchestrator.provenance import provenance_headers
 
-DEFAULT_API = "https://labs.connect.dimagi.com/canopy"
+DEFAULT_API = "https://canopy.dimagi.com"
 TOKEN_FILE = Path.home() / ".claude" / "canopy" / "workbench-token"
 
 Transport = Callable[[str, str, dict, Optional[bytes]], "tuple[int, str]"]

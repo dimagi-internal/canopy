@@ -26,7 +26,7 @@ don't) plus canopy's skills, hooks and CLI. Installing both gives you the server
 
 ## Without a plugin
 
-- **Claude Code:** `claude mcp add --transport http canopy https://labs.connect.dimagi.com/canopy/api/mcp/`
+- **Claude Code:** `claude mcp add --transport http canopy https://canopy.dimagi.com/api/mcp/`
 - **Claude Desktop / claude.ai:** a Claude org admin can add
-  `https://labs.connect.dimagi.com/canopy/api/mcp/` as a custom connector for the whole
+  `https://canopy.dimagi.com/api/mcp/` as a custom connector for the whole
   org; each person then connects it and signs in the same way.

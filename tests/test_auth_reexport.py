@@ -5,7 +5,7 @@ from orchestrator import canopy_web
 
 
 def test_canopy_web_canonical_values():
-    assert canopy_web.DEFAULT_API == "https://labs.connect.dimagi.com/canopy"
+    assert canopy_web.DEFAULT_API == "https://canopy.dimagi.com"
     assert canopy_web.resolve_base_url("https://x/") == "https://x"
 
 

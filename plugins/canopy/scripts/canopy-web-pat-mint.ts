@@ -32,7 +32,7 @@
  *     label  defaults to `<hostname>-YYYY-MM-DD`
  *
  * Env:
- *   CANOPY_WEB_API_URL  base URL (default https://labs.connect.dimagi.com/canopy).
+ *   CANOPY_WEB_API_URL  base URL (default https://canopy.dimagi.com).
  *                       CANOPY_WEB_BASE is accepted as a legacy alias.
  *   TOKEN_FILE_OVERRIDE override the default ~/.claude/canopy/workbench-token path
  *
@@ -54,7 +54,7 @@ import { pathToFileURL } from 'node:url';
 
 const CANOPY_WEB_BASE = (
   process.env.CANOPY_WEB_API_URL || process.env.CANOPY_WEB_BASE ||
-  'https://labs.connect.dimagi.com/canopy'
+  'https://canopy.dimagi.com'
 ).replace(/\/$/, '');
 // 15 minutes, not 5. A first-time operator spends this window signing in to
 // Google, possibly picking an account and clearing MFA. Five minutes expired
