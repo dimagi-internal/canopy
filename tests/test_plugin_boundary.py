@@ -33,6 +33,7 @@ FRAMEWORK = {
     "session_sources", "session_liveness", "work_cursor", "agent_dispatch", "llm_output",
     "project_dispatch", "project_cli", "project_audit", "runner_cli", "secret_cli",
     "provenance",
+    "huddle", "huddle_store", "huddle_cli", "huddle_types",
 }
 # Orchestration hubs / composition roots — wire product features into the CLI, the
 # improvement pipeline, and the web server. Allowed to import product (like

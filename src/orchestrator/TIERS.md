@@ -37,7 +37,8 @@ enforce it.
 `eval_rubric` · `turn_synthesis` · `session_upload` · `fleet_align` · `session_sources` ·
 `session_liveness` ·
 `work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `project_audit` · `runner_cli` · `secret_cli` ·
-`llm_output` · `decide_guard_prompt` · `decide_guard_cli` · `provenance`
+`llm_output` · `decide_guard_prompt` · `decide_guard_cli` · `provenance` ·
+`huddle` · `huddle_store` · `huddle_cli` · `huddle_types`
 
 **HUBS** (orchestration / composition roots — wire product into the CLI, the
 improvement pipeline, and the web server; allowed to import product, like
@@ -83,6 +84,11 @@ canopy-web's `api` app):
 > no-state stance). Pure logic is Drive-free and injectable; `DriveCursorStore`
 > reuses `agent_gdoc`'s per-agent identity so it works for any agent without
 > per-agent code.
+
+> `huddle` · `huddle_store` · `huddle_cli` · `huddle_types` are FRAMEWORK: a huddle
+> (a team of agents syncing, led by one of them) is fleet runtime any team can run, the
+> same family as `agent_dispatch` and `work_cursor`. They tag dispatches, read canopy-web
+> and write the leader's own Drive — through framework modules only.
 
 Top-level `scripts/` (ddd, narrative, walkthrough), `video-engine/`, and
 `plugins/canopy/{skills,commands,agents}/` are all **product** — correct for a

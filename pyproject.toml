@@ -54,6 +54,8 @@ where = ["src"]
 [tool.setuptools.package-data]
 orchestrator = ["static/*.html", "TIERS.md"]
 "orchestrator.prompts" = ["*.md"]
+# Huddle types are data: round<N>.md templates + schema.json per type (huddle.load_type).
+"orchestrator.huddle_types" = ["*/*.md", "*/*.json"]
 
 [dependency-groups]
 dev = [
