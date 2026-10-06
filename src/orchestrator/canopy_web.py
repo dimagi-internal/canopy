@@ -10,6 +10,10 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
 
+# Every request says what made it and which turn/session it came from (see
+# provenance.py). Imported by name so tests can monkeypatch it here.
+from orchestrator.provenance import provenance_headers
+
 DEFAULT_API = "https://labs.connect.dimagi.com/canopy"
 TOKEN_FILE = Path.home() / ".claude" / "canopy" / "workbench-token"
 
@@ -217,7 +221,8 @@ def call(method: str, path: str, body=None, *,
     tok = resolve_token(token)
     path = scoped_api_path(path, workspace)  # → /api/w/<ws>/… when a workspace is active
     transport = transport or urllib_transport
-    headers = {**(headers or {}), "Authorization": f"Bearer {tok}",
+    # Provenance first, so a caller's own header (or the bearer) always wins.
+    headers = {**provenance_headers(), **(headers or {}), "Authorization": f"Bearer {tok}",
                "Content-Type": "application/json"}
     data = json.dumps(body).encode("utf-8") if body is not None else None
     status, text = transport(method, base + path, headers, data)
@@ -238,7 +243,8 @@ def call_text(method: str, path: str, *,
     tok = resolve_token(token)
     path = scoped_api_path(path, workspace)
     transport = transport or urllib_transport
-    status, text = transport(method, base + path, {"Authorization": f"Bearer {tok}"}, None)
+    status, text = transport(method, base + path,
+                             {**provenance_headers(), "Authorization": f"Bearer {tok}"}, None)
     if not (200 <= status < 300):
         raise CanopyError(f"{method} {path} -> {status}: {text[:400]}")
     return text
