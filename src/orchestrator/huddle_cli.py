@@ -14,7 +14,8 @@ Drive (`huddle_store`).
     await     → foreground; exit 0 when every dispatched member settled, 3 = run it again
     status    → per member per round, derived from canopy-web
     resume    → an unfinished huddle < 72 h old, and what to do next
-    proposals → round 2/3 proposals merged with round-3 co-sign answers      (props.json)
+    proposals → round 2/3 proposals merged with round-3 co-sign answers and the
+                round-4 resolution of any amend                            (props.json)
     file      → gates → board tasks (lead + partners) → Drive record → anchor finished
     view      → the huddle page URL
 
@@ -49,7 +50,7 @@ ROUND_DEADLINE = dt.timedelta(minutes=90)
 RESUME_WINDOW = dt.timedelta(hours=72)
 FAILED = {"failed", "lost", "error", "expired", "cancelled", "canceled"}
 CLOSED_TASK = {"done", "declined"}
-ROUND_NAMES = {1: "report", 2: "roundtable", 3: "co-sign"}
+ROUND_NAMES = {1: "report", 2: "roundtable", 3: "co-sign", 4: "resolve"}
 
 
 class HuddleError(click.ClickException):
@@ -244,7 +245,7 @@ def prior_text(records: list[dict]) -> str:
     return "\n".join(lines) or "none yet"
 
 
-# ── proposals (shared by prompt round 3, proposals, file) ────────────────────────
+# ── proposals (shared by prompt rounds 3-4, proposals, file) ─────────────────────
 def _answer(raw) -> str:
     a = H.norm(raw)
     if a in ("co sign", "cosign", "co signed", "cosigned"):
@@ -258,7 +259,8 @@ def _answer(raw) -> str:
 
 def collect_proposals(detail: dict) -> list[dict]:
     """Every proposal in round-2/3 blocks keyed by (lead, title) — a lead's round-3 revision
-    wins — with each partner's round-3 answer and whether the lead answered the critique."""
+    wins — with each partner's round-3 answer, any round-4 resolution of an `amend`, and
+    whether the lead answered the critique."""
     cells = sorted((c for c in detail.get("cells") or [] if isinstance(c.get("block"), dict)),
                    key=lambda c: (int(c.get("round") or 0), str(c.get("member"))))
     props: dict = {}
@@ -296,6 +298,7 @@ def collect_proposals(detail: dict) -> list[dict]:
                 props[k]["answers"][c.get("member")] = _answer(a.get("answer"))
                 if a.get("note"):
                     props[k]["answer_notes"][c.get("member")] = a.get("note")
+    _apply_resolutions(cells, props, order)
     out = []
     for k in order:
         p = props[k]
@@ -305,6 +308,66 @@ def collect_proposals(detail: dict) -> list[dict]:
                                   or bool(p.get("revised")))
         out.append(p)
     return out
+
+
+def _apply_resolutions(cells: list[dict], props: dict, order: list) -> None:
+    """Fold round-4 resolutions in. Only a proposal's resolver (`H.resolvers_of`: its lead, or
+    the teammate who named that lead) counts; when both answered, the lead's wins.
+    `accept` with a revised proposal replaces the proposal (same lead and key) and turns each
+    open amend into `amend→accepted`; `reject` turns them into `amend→rejected` (held).
+    An `accept` without a revised proposal resolves nothing — the amend stays open."""
+    picked: dict = {}
+    for c in cells:
+        if int(c.get("round") or 0) != 4:
+            continue
+        member = c.get("member")
+        for res in c["block"].get("resolutions") or []:
+            if not isinstance(res, dict):
+                continue
+            t = H.norm(res.get("title"))
+            for k in order:
+                if k[1] != t or (res.get("lead") and k[0] != res.get("lead")):
+                    continue
+                if member not in H.resolvers_of(props[k]):
+                    continue
+                if k in picked and picked[k][0] == props[k]["lead"]:
+                    continue                       # the lead already answered; it wins
+                picked[k] = (member, res)
+    for k, (member, res) in picked.items():
+        p = props[k]
+        amenders = [m for m in H.amenders_of(p) if m != member]   # before a revision edits `with`
+        verdict = H.norm(res.get("resolution"))
+        revised = res.get("proposal")
+        if verdict == H.ACCEPT and isinstance(revised, dict) and revised:
+            outcome = H.AMEND_ACCEPTED
+            p = props[k] = {**p, **revised, "title": p["title"], "lead": p["lead"],
+                            "proposed_by": p.get("proposed_by"), "round": 4, "revised": True,
+                            "answers": p["answers"], "answer_notes": p["answer_notes"]}
+        elif verdict == H.REJECT:
+            outcome = H.AMEND_REJECTED
+        else:
+            continue
+        for m in amenders:
+            p["answers"][m] = outcome
+        p["resolution"] = {"by": member, "resolution": verdict, "note": res.get("note") or ""}
+
+
+def resolve_text(props: list[dict], member: str) -> str:
+    """Round 4's body for one resolver: each proposal it must resolve, verbatim, then each
+    amend on it — who sent it and the note, verbatim."""
+    hidden = ("answers", "answer_notes", "critique_answered", "proposed_by", "round", "revised",
+              "resolution")
+    parts = []
+    for p in props:
+        if member not in H.resolvers_of(p):
+            continue
+        shown = {k: v for k, v in p.items() if k not in hidden}
+        notes = p.get("answer_notes") or {}
+        amends = "\n".join(f"- {m}: {json.dumps(notes.get(m) or '(no note given)', ensure_ascii=False)}"
+                           for m in H.amenders_of(p) if m != member)
+        parts.append(f"### {p['title']} (lead {p['lead']})\n```json\n{json.dumps(shown, indent=2)}\n```\n"
+                     f"Amendments:\n{amends}")
+    return "\n\n".join(parts)
 
 
 # ── await states ─────────────────────────────────────────────────────────────────
@@ -490,10 +553,15 @@ def prompt_cmd(plan_path, member, round_no, critique_path, out):
                 if (m, 1) in blocks:
                     reports.append(f"### {m}\n```json\n{json.dumps(blocks[(m, 1)], indent=2)}\n```")
             ctx["reports"] = "\n\n".join(reports)
+        elif round_no == 4:
+            ctx["resolve"] = resolve_text(collect_proposals(detail), member)
+            if not ctx["resolve"]:
+                raise HuddleError(f"nothing for {member} to resolve in round 4: no open `amend` "
+                                  "on a proposal it leads or proposed (round 4 is only for those)")
         else:
             per = crit.get("proposals") or {}
             hidden = ("answers", "answer_notes", "critique_answered", "proposed_by", "round",
-                      "revised")
+                      "revised", "resolution")
             asks = []
             for p in collect_proposals(detail):
                 if member in H.partners_of(p):
@@ -640,9 +708,14 @@ def next_steps(detail: dict, now: dt.datetime) -> list[str]:
     if any(not _settled(s) for s in res["states"].values()):
         steps.append(f"canopy huddle await --huddle {hid} --round {last}")
     elif not steps:
-        steps.append(f"round {last} settled — "
-                     + (f"continue with round {last + 1}" if last < H.MAX_ROUNDS
-                        else "`canopy huddle proposals` then `canopy huddle file`"))
+        if last < 3:
+            steps.append(f"round {last} settled — continue with round {last + 1}")
+        elif last == 3:
+            steps.append("round 3 settled — `canopy huddle proposals`; if any proposal has an "
+                         "`amend`, run round 4 (resolve) for its lead(s), else `canopy huddle file`")
+        else:
+            steps.append(f"round {last} settled — `canopy huddle proposals` then "
+                         "`canopy huddle file`")
     return steps
 
 
@@ -674,9 +747,13 @@ def resume_cmd(leader):
 @click.option("--huddle", "hid", required=True)
 @click.option("--out", default=None, type=click.Path(dir_okay=False))
 def proposals_cmd(hid, out):
-    """Round-2/3 proposals merged with round-3 co-sign answers — `file`'s input, after the
-    leader merges duplicates and ranks them."""
+    """Round-2/3 proposals merged with round-3 co-sign answers and round-4 resolutions —
+    `file`'s input, after the leader merges duplicates and ranks them. Each proposal's
+    `resolvers` names who still owes a round 4 (an open amend); [] for every proposal means
+    no round 4 is needed."""
     props = collect_proposals(get_detail(hid))
+    for p in props:
+        p["resolvers"] = H.resolvers_of(p)
     if out:
         Path(out).write_text(json.dumps(props, indent=2), encoding="utf-8")
         _emit({"huddle": hid, "proposals": len(props), "out": str(out)})

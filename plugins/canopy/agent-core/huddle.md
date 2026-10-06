@@ -8,8 +8,9 @@ apply this doc bound to that. To change THIS process for every team, PR canopy
 A **huddle** is a team of agents syncing, led by one of them. In the `work` type each member
 reports what it has been doing and what it understands the principal's / Dimagi's priorities to
 be (round 1), sees EVERY teammate's report and proposes solo or joint work (round 2), and
-co-signs — or amends / declines — joint work it is named in (round 3). Survivors become
-`suggested` board tasks; the principal decides on the board.
+co-signs — or amends / declines — joint work it is named in (round 3). When a partner amends,
+the proposal's lead accepts or rejects the change (round 4, only for those leads). Survivors
+become `suggested` board tasks; the principal decides on the board.
 
 **The conversation is not stored — it is derived.** Each round is a one-shot turn the engine
 tags (`origin_ref.kind = huddle_round`) and parents on the huddle's anchor turn; canopy-web reads
@@ -83,8 +84,25 @@ proposal a teammate named it LEAD of, which that lead must co-sign too. Dispatch
 member who proposed, or is named as a PARTNER or LEAD of, a proposal worth keeping (`prompt`
 refuses a member with nothing to answer), then foreground `await --round 3`.
 
+**4b. Round 4 — resolve amends (only if any).** `canopy huddle proposals --huddle <id> --out
+props.json`. An `amend` is neither a yes nor a no — the gate holds it, and the lead answered in
+the same round 3, so without this step every amended proposal is held by construction. Each
+proposal's `resolvers` lists who still owes a resolution (its lead, plus the teammate who
+proposed it when that teammate named someone else lead). All `resolvers` empty → no round 4,
+go to step 5. Otherwise, for each member that appears in some `resolvers`:
+```bash
+uv run --project "$CANOPY_ROOT" canopy huddle prompt --plan plan.json --member <lead> --round 4 --out <lead>-r4.md
+uv run --project "$CANOPY_ROOT" canopy huddle dispatch --plan plan.json --member <lead> --round 4 --prompt-file <lead>-r4.md
+```
+(the prompt quotes the proposal and each amend note verbatim with who sent it; `prompt`
+refuses a member with nothing to resolve), then foreground `await --round 4`. The lead answers
+`accept` (with the whole revised proposal, same title) — the amend becomes `amend→accepted`
+and counts as a co-sign of the revision — or `reject` (with why) — it becomes
+`amend→rejected` and the proposal is held. Then `proposals` again (step 5).
+
 **5. Merge, rank, file.** `canopy huddle proposals --huddle <id> --out props.json` again (it now
-carries each partner's answer and whether the lead answered your critique). Write `outcomes.json`
+carries each partner's answer, any round-4 resolution, and whether the lead answered your
+critique). Write `outcomes.json`
 from it: merge near-duplicates across members (keep one, say what merged in its `why`), drop what
 your critique sank, rank best first. Do not hand-edit `answers` — a co-sign is the partner's, not
 yours. Then:
@@ -93,7 +111,8 @@ uv run --project "$CANOPY_ROOT" canopy huddle file --plan plan.json --outcomes o
 uv run --project "$CANOPY_ROOT" canopy huddle file --plan plan.json --outcomes outcomes.json --repo <your-repo> --digest-out digest.md
 ```
 `file` enforces the type's gates — every partner co-signed, and so did a lead a teammate named
-(an unresolved `amend` holds), the
+(an unresolved `amend` holds, and so does one the lead rejected in round 4; an accepted amend
+counts as a co-sign), the
 priority was stated in some round-1 report, a project is named, the critique was answered,
 nothing declined before without `new_evidence`, at most 5 — and files each survivor as a
 `suggested` task on the lead's board (project find-or-create: a "(P3)" in the name that is on
@@ -118,6 +137,7 @@ filed and held, and who was not reached.
 - **`malformed`:** the block failed the type's schema (`await` prints the problems). Quote them in
   that member's next-round critique; a member malformed twice is not reached.
 - **`timed_out`:** a round's deadline is 90 minutes after its first dispatch. The member is not
-  reached for that round; a joint proposal it never co-signed is held.
+  reached for that round; a joint proposal it never co-signed is held — and an amend a lead
+  never resolved in round 4 stays held (`amend unresolved`).
 - **`file` stops part-way or the Drive record fails:** it reports the tasks already filed and does
   NOT claim success. Fix the cause and re-run `file` — nothing is duplicated.

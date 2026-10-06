@@ -32,7 +32,7 @@ R1_CTX = {"huddle": "h", "member": "eva", "leader": "ada", "principal": "Jonatha
 
 def test_work_type_loads_from_package_data():
     ht = H.load_type("work")
-    assert set(ht.rounds) == {1, 2, 3}
+    assert set(ht.rounds) == {1, 2, 3, 4}
     out = H.render_round(ht, 1, R1_CTX)
     assert "```huddle" in out and '"huddle": "h"' in out and "{{" not in out
 
@@ -164,3 +164,53 @@ def test_outcome_record_shape():
     assert a["task"] == {"agent": "eva", "ext_id": "T1"} and a["why"] == "w"
     assert b["fate"] == "held: x" and rec["not_reached"][0]["member"] == "hal"
     assert rec["finished_at"]
+
+
+# ── round 4: the lead resolves an amend ─────────────────────────────────────────
+def test_validate_round4_resolutions():
+    ht = H.load_type("work")
+    revised = {"title": "t", "lead": "eva", "with": ["echo"], "priority": "p",
+               "project": {"name": "x"}, "why": "w", "plan": ["s"], "effort": "S",
+               "success_measure": "m", "confidence": 0.5}
+    ok = {"huddle": "h", "round": 4, "member": "eva",
+          "resolutions": [{"title": "t", "lead": "eva", "resolution": "accept", "note": "",
+                           "proposal": revised},
+                          {"title": "u", "lead": "eva", "resolution": "reject",
+                           "note": "public only is too narrow"}]}
+    assert H.validate_block(ht, 4, ok) == []
+    assert "missing resolutions" in H.validate_block(ht, 4, {k: v for k, v in ok.items()
+                                                             if k != "resolutions"})
+    no_prop = {**ok, "resolutions": [{k: v for k, v in ok["resolutions"][0].items()
+                                      if k != "proposal"}]}
+    assert H.validate_block(ht, 4, no_prop) == [
+        "resolutions[0] missing proposal (required when resolution is accept)"]
+    bad = {**ok, "resolutions": [{**ok["resolutions"][1], "resolution": "maybe"}]}
+    assert any("resolution must be one of" in p for p in H.validate_block(ht, 4, bad))
+
+
+def test_round4_template_quotes_the_amends():
+    ht = H.load_type("work")
+    out = H.render_round(ht, 4, {"huddle": "h", "member": "eva", "leader": "ada", "round": 4,
+                                 "resolve": "RESOLVE-BLOCK"})
+    assert "RESOLVE-BLOCK" in out and "accept" in out and "reject" in out and "{{" not in out
+    assert '"round": 4' in out
+
+
+def test_resolvers_are_the_lead_and_a_proposer_who_named_it():
+    assert H.resolvers_of({**_p("A", with_=["echo"], answers={"echo": "amend"}),
+                           "proposed_by": "eva"}) == ["eva"]
+    named = {**_p("B", lead="hal", with_=["hal", "echo"]), "proposed_by": "eva",
+             "answers": {"echo": "amend", "hal": "co-sign"}}
+    assert H.resolvers_of(named) == ["hal", "eva"]
+    # the named lead amended — only the proposer can resolve its amend
+    assert H.resolvers_of({**named, "answers": {"echo": "co-sign", "hal": "amend"}}) == ["eva"]
+    # no amend → no round 4
+    assert H.resolvers_of({**named, "answers": {"echo": "co-sign", "hal": "co-sign"}}) == []
+
+
+def test_gates_amend_accepted_files_and_amend_rejected_holds():
+    filed, held = H.work_gates(
+        [_p("A", with_=["echo"], answers={"echo": H.AMEND_ACCEPTED}),
+         _p("B", with_=["echo"], answers={"echo": H.AMEND_REJECTED})], {"Q4 pipeline"}, [])
+    assert [p["title"] for p in filed] == ["A"]
+    assert held[0]["held"] == "amend rejected by lead (echo)"

@@ -17,7 +17,9 @@ critique, put the revised proposal — the WHOLE proposal, same title — in `pr
 {{critique}}
 
 For each joint proposal answer `co-sign` (you will do your part), `amend` (say the change in
-`note`), or `decline` (say why in `note`). Co-sign only what you can actually do.
+`note` — the lead then accepts it, which counts as your co-sign of the revised proposal, or
+rejects it, which holds the proposal), or `decline` (say why in `note`). Co-sign only what you
+can actually do.
 
 ```huddle
 {"huddle": "{{huddle}}", "round": {{round}}, "member": "{{member}}",

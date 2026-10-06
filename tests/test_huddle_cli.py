@@ -658,3 +658,128 @@ def test_view_prints_the_page(web):
     web.detail[H] = detail([])
     r = run("view", "--huddle", H)
     assert r.output.strip() == f"https://cw/w/connect/huddles/{H}"
+
+
+# ── round 4 (resolve an amend) ───────────────────────────────────────────────────
+def _amended_huddle(web, r4=None, lead="eva", proposer="eva", with_=("echo",)):
+    """eva proposes joint work with echo; echo amends it in round 3."""
+    r2 = {"huddle": H, "round": 2, "member": proposer,
+          "proposals": [prop("Joint Q4 brief", lead, list(with_)), prop("Solo thing", proposer)],
+          "critique_answers": [{"title": "t", "answer": "a"}]}
+    echo_r3 = {"huddle": H, "round": 3, "member": "echo",
+               "answers": [{"title": "Joint Q4 brief", "lead": lead, "answer": "amend",
+                            "note": "public material only; due 10/8 as a gdoc"}]}
+    cells = [_cell("eva", 1, r1("eva")), _cell("echo", 1, r1("echo")),
+             _cell(proposer, 2, r2), _cell("echo", 3, echo_r3)]
+    if lead != proposer:
+        cells += [_cell(lead, 1, r1(lead)),
+                  _cell(lead, 3, {"huddle": H, "round": 3, "member": lead,
+                                  "answers": [{"title": "Joint Q4 brief", "lead": lead,
+                                               "answer": "co-sign"}]})]
+    if r4:
+        cells.append(_cell(r4["member"], 4, r4))
+    web.detail[H] = detail(cells)
+
+
+def test_prompt_round4_quotes_the_proposal_and_each_amend(tmp_path, web):
+    _amended_huddle(web)
+    p = write_plan(tmp_path)
+    out = tmp_path / "eva-r4.md"
+    r = run("prompt", "--plan", str(p), "--member", "eva", "--round", "4", "--out", str(out))
+    assert r.exit_code == 0, r.output
+    text = out.read_text()
+    assert "{{" not in text
+    assert "### Joint Q4 brief (lead eva)" in text
+    assert '"why": "why Joint Q4 brief"' in text
+    assert 'echo: "public material only; due 10/8 as a gdoc"' in text
+    assert "Solo thing" not in text
+    assert f'--session-id "huddle:{H}:eva:r4"' in text
+
+
+def test_prompt_round4_refuses_a_member_with_nothing_to_resolve(tmp_path, web):
+    _amended_huddle(web)
+    p = write_plan(tmp_path)
+    r = run("prompt", "--plan", str(p), "--member", "echo", "--round", "4",
+            "--out", str(tmp_path / "x.md"))
+    assert r.exit_code == 2 and "nothing for echo to resolve" in r.output
+
+
+def test_prompt_round4_reaches_the_proposer_of_a_named_lead(tmp_path, web):
+    _amended_huddle(web, lead="hal", proposer="eva", with_=("hal", "echo"))
+    p = write_plan(tmp_path, members=["eva", "echo", "hal"])
+    for m in ("hal", "eva"):
+        out = tmp_path / f"{m}-r4.md"
+        r = run("prompt", "--plan", str(p), "--member", m, "--round", "4", "--out", str(out))
+        assert r.exit_code == 0, r.output
+        assert "### Joint Q4 brief (lead hal)" in out.read_text()
+
+
+def _r4(member, resolution, proposal=None, note=""):
+    res = {"title": "Joint Q4 brief", "lead": "eva", "resolution": resolution, "note": note}
+    if proposal is not None:
+        res["proposal"] = proposal
+    return {"huddle": H, "round": 4, "member": member, "resolutions": [res]}
+
+
+def test_accepted_amend_files_the_revised_proposal(tmp_path, web):
+    revised = prop("Joint Q4 brief", "eva", ["echo"], why="public material only; gdoc by 10/8")
+    _amended_huddle(web, r4=_r4("eva", "accept", revised))
+    [p, _solo] = json.loads(run("proposals", "--huddle", H).stdout)
+    assert p["why"] == "public material only; gdoc by 10/8" and p["revised"] is True
+    assert p["answers"] == {"echo": "amend→accepted"}
+    assert p["answer_notes"]["echo"] == "public material only; due 10/8 as a gdoc"
+    assert p["resolution"]["resolution"] == "accept" and p["resolution"]["by"] == "eva"
+    plan = write_plan(tmp_path)
+    props = tmp_path / "props.json"
+    props.write_text(json.dumps([p]))
+    r = run("file", "--plan", str(plan), "--outcomes", str(props), "--local", str(tmp_path / "r"))
+    assert r.exit_code == 0, r.output
+    assert [f["title"] for f in json.loads(r.stdout)["filed"]] == ["Joint Q4 brief"]
+    page = f"https://cw/w/connect/huddles/{H}"
+    [t] = [t for t in web.tasks["eva"] if t.get("source_url") == page]
+    assert "public material only; gdoc by 10/8" in t["rationale"]
+    rec = json.loads((tmp_path / "r" / f"{H}.json").read_text())
+    assert rec["outcomes"][0]["cosign"] == {"echo": "amend→accepted"}
+
+
+def test_rejected_amend_stays_held(tmp_path, web):
+    _amended_huddle(web, r4=_r4("eva", "reject", note="the gdoc is out of scope"))
+    [p, _solo] = json.loads(run("proposals", "--huddle", H).stdout)
+    assert p["answers"] == {"echo": "amend→rejected"} and p["why"] == "why Joint Q4 brief"
+    assert p["resolution"]["note"] == "the gdoc is out of scope"
+    plan = write_plan(tmp_path)
+    props = tmp_path / "props.json"
+    props.write_text(json.dumps([p]))
+    r = run("file", "--plan", str(plan), "--outcomes", str(props), "--local", str(tmp_path / "r"),
+            "--dry-run")
+    out = json.loads(r.stdout)
+    assert out["filed"] == [] and out["held"][0]["held"] == "amend rejected by lead (echo)"
+
+
+def test_a_resolution_from_someone_not_entitled_is_ignored(tmp_path, web):
+    revised = prop("Joint Q4 brief", "eva", ["echo"], why="hijacked")
+    _amended_huddle(web, r4=_r4("echo", "accept", revised))
+    [p, _solo] = json.loads(run("proposals", "--huddle", H).stdout)
+    assert p["answers"] == {"echo": "amend"} and p["why"] == "why Joint Q4 brief"
+
+
+def test_accept_without_a_revised_proposal_leaves_the_amend_unresolved(web):
+    _amended_huddle(web, r4=_r4("eva", "accept"))
+    [p, _solo] = json.loads(run("proposals", "--huddle", H).stdout)
+    assert p["answers"] == {"echo": "amend"}
+
+
+def test_a_huddle_without_amends_never_needs_round4(tmp_path, web):
+    _full_huddle(web)
+    for c in web.detail[H]["cells"]:
+        c["created_at"] = "2026-10-06T11:30:00Z"
+    p = write_plan(tmp_path)
+    for m in ("eva", "echo"):
+        r = run("prompt", "--plan", str(p), "--member", m, "--round", "4",
+                "--out", str(tmp_path / "x.md"))
+        assert r.exit_code == 2 and "nothing for" in r.output
+    web.huddles = [{"id": H, "leader": "ada", "members": ["eva", "echo"], "finished": False,
+                    "created_at": "2026-10-06T11:00:00Z"}]
+    nxt = json.loads(run("resume", "--leader", "ada").stdout)["next"]
+    assert any("proposals" in n and "round 4" in n for n in nxt), nxt
+    assert not any("continue with round 4" in n for n in nxt)
