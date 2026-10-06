@@ -24,7 +24,7 @@ a CLI, a plugin, and a website. Here is the whole map:
 | **Claude Code** | The agent runtime. Everything else is scaffolding around it. | Your machine | **Yes** |
 | **canopy** (this repo) | The framework: a Claude Code plugin + a `canopy` CLI. Holds the agent factory and the fleet-wide operating model. | Your machine | **Yes** |
 | **Your agent's repo** | One git repo per agent — its persona, skills, gating rails, secrets. Generated for you by the factory. | Your machine + GitHub | **Yes** |
-| **canopy-web** | The shared website: each agent's board, tasks, turns, work products. Lives at `labs.connect.dimagi.com/canopy`. | Already deployed — you just log in | **Yes** (read/write via CLI) |
+| **canopy-web** | The shared website: each agent's board, tasks, turns, work products. Lives at `canopy.dimagi.com`. | Already deployed — you just log in | **Yes** (read/write via CLI) |
 | **The runner** | A daemon that fires an agent's turns *unattended* (on a schedule, or when email arrives). Works on macOS and Windows. | Your machine, or a cloud box | **No — skip it at first**, unless you need email-triggered turns |
 
 **The runner is the piece to skip on day 1.** An agent is fully usable without
@@ -170,7 +170,7 @@ every URL your team uses.
 > it is.
 
 ```bash
-curl -X POST https://labs.connect.dimagi.com/canopy/api/workspaces/ \
+curl -X POST https://canopy.dimagi.com/api/workspaces/ \
   -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)" \
   -H 'Content-Type: application/json' \
   -d '{"slug":"my-team","display_name":"My Team"}'
@@ -181,7 +181,7 @@ curl -X POST https://labs.connect.dimagi.com/canopy/api/workspaces/ \
 ```powershell
 $tok = Get-Content "$env:USERPROFILE\.claude\canopy\workbench-token"
 Invoke-RestMethod -Method Post `
-  -Uri "https://labs.connect.dimagi.com/canopy/api/workspaces/" `
+  -Uri "https://canopy.dimagi.com/api/workspaces/" `
   -Headers @{ Authorization = "Bearer $tok" } -ContentType "application/json" `
   -Body '{"slug":"my-team","display_name":"My Team"}'
 ```
@@ -190,13 +190,13 @@ Creating it makes you its **owner**. To add someone (an owner, or an admin for v
 
 ```powershell
 Invoke-RestMethod -Method Post `
-  -Uri "https://labs.connect.dimagi.com/canopy/api/workspaces/my-team/invites/" `
+  -Uri "https://canopy.dimagi.com/api/workspaces/my-team/invites/" `
   -Headers @{ Authorization = "Bearer $tok" } -ContentType "application/json" `
   -Body '{"email":"someone@dimagi.com","role":"editor"}'
 ```
 
 canopy emails them the invite link, and the response carries it as `token` too
-(`https://labs.connect.dimagi.com/canopy/invite/<token>`) in case the email does
+(`https://canopy.dimagi.com/invite/<token>`) in case the email does
 not arrive — `email_status` says whether it went out. Invites last 14 days;
 `role` may be `viewer`, `editor`, `admin` or `owner` and defaults to `editor`.
 You can also do this on the workspace's **Settings → Members** page, or ask your
@@ -210,7 +210,7 @@ Creating one is **not a one-way door**: an owner can delete a workspace once it
 is empty.
 
 ```bash
-curl -X DELETE https://labs.connect.dimagi.com/canopy/api/workspaces/my-team/ \
+curl -X DELETE https://canopy.dimagi.com/api/workspaces/my-team/ \
   -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)"
 ```
 
