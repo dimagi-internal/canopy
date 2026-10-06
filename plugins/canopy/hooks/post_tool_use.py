@@ -151,7 +151,9 @@ def _record_hook_error(reason: str, context: dict) -> None:
 def _provenance_headers(session_id: str) -> dict:
     """The client + originating-session headers every canopy request carries (see
     src/orchestrator/provenance.py — a hook cannot import it, so this is the slim
-    stdlib subset a hook knows: its client, host, and the Claude session id).
+    stdlib subset a hook knows: its client, the parent turn/session from env, and the
+    Claude session id). Nothing runner-specific (task, host) is sent — canopy-web
+    derives the runner from the parent turn.
     Never raises."""
     out = {}
     try:
@@ -161,16 +163,8 @@ def _provenance_headers(session_id: str) -> dict:
         version = "unknown"
     out["X-Canopy-Client"] = f"canopy-hook/{version}"
     out["User-Agent"] = f"canopy-hook/{version}"
-    try:
-        import socket
-        host = socket.gethostname()
-        if host:
-            out["X-Canopy-Parent-Host"] = host
-    except Exception:
-        pass
     for key, header in (("CANOPY_TURN_ID", "X-Canopy-Parent-Turn"),
-                        ("CANOPY_SESSION_ID", "X-Canopy-Parent-Session"),
-                        ("CANOPY_EMDASH_TASK", "X-Canopy-Parent-Task")):
+                        ("CANOPY_SESSION_ID", "X-Canopy-Parent-Session")):
         val = os.environ.get(key, "").strip()
         if val and val.isprintable() and len(val) <= 200:
             out[header] = val

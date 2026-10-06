@@ -9,24 +9,29 @@ client now attaches, beside the bearer:
   X-Canopy-Client          <tool>/<version>          e.g. canopy-cli/0.2.590
   X-Canopy-Parent-Turn     canopy-web turn uuid       the turn this session is running
   X-Canopy-Parent-Session  canopy-web session uuid    that turn's chat session
-  X-Canopy-Parent-Task     emdash task name           laptop sessions
-  X-Canopy-Parent-Host     hostname
   X-Canopy-Claude-Session  Claude Code session id
   User-Agent               canopy-cli/<version> (python/<x.y>; <platform>)
 
-canopy-web (hal/turn-provenance) persists and logs them; it tolerates any of them
-missing, so a header that cannot be computed is simply left off.
+canopy-web persists and logs them; it tolerates any of them missing, so a header
+that cannot be computed is simply left off.
+
+THE PARENT TURN IS THE WHOLE CONTRACT. A canopy-web turn already records which
+runner claimed it (and so the runner's type and host), its chat session, its
+origin and its initiator — the server derives all of that from the id. Nothing
+runner-specific goes on the wire, so a new kind of runner only has to export
+`CANOPY_TURN_ID` (and `CANOPY_SESSION_ID` when it has one).
 
 WHERE THE PARENT COMES FROM — first source with a value wins, per field:
-  1. env `CANOPY_TURN_ID` / `CANOPY_SESSION_ID` / `CANOPY_EMDASH_TASK` — the cloud
-     runner exports these into every session it launches.
+  1. env `CANOPY_TURN_ID` / `CANOPY_SESSION_ID` — the cloud runner exports these
+     into every session it launches.
   2. the caller envelope `CANOPY_CALLER` names (`turn_id`, `conversation.session_id`)
      — the cloud runner's older contract, still set beside the above.
   3. `~/.canopy/caller/by-task/<task>.json` — the laptop path. emdash launches laptop
      sessions, so the runner cannot set env vars; the plugin's UserPromptSubmit hook
      (`plugins/canopy/hooks/caller_context.py`) claims the runner's one-shot caller
      pointer and leaves this durable record keyed by emdash task. The task is read off
-     the worktree path (`…/worktrees/<repo>/emdash-<task>-<suffix>/…`).
+     the worktree path (`…/worktrees/<repo>/emdash-<task>-<suffix>/…`). The task name
+     is only this machine's way of FINDING the turn id — it is never sent.
 The Claude session id is `CLAUDE_CODE_SESSION_ID` (what Claude Code exports to its
 tools), `CLAUDE_SESSION_ID`, then the by-task record's `claude_session_id` (the hook
 input's `session_id`).
@@ -41,7 +46,6 @@ import json
 import os
 import platform
 import re
-import socket
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -58,8 +62,6 @@ _HEADER_SAFE = re.compile(r"^[\x20-\x7e]{1,256}$")
 HEADER_CLIENT = "X-Canopy-Client"
 HEADER_TURN = "X-Canopy-Parent-Turn"
 HEADER_SESSION = "X-Canopy-Parent-Session"
-HEADER_TASK = "X-Canopy-Parent-Task"
-HEADER_HOST = "X-Canopy-Parent-Host"
 HEADER_CLAUDE = "X-Canopy-Claude-Session"
 
 
@@ -158,14 +160,13 @@ def _clean(value, pattern=None) -> str:
 
 
 def resolve_parent(cwd: Optional[str] = None) -> dict:
-    """The originating turn/session/task/host/claude-session, as far as it is knowable.
+    """The originating turn/session/claude-session, as far as it is knowable.
 
-    Keys: turn_id, session_id, task, host, claude_session_id — each "" when unknown.
+    Keys: turn_id, session_id, claude_session_id — each "" when unknown.
     """
     env = os.environ
     turn = _clean(env.get("CANOPY_TURN_ID"), _UUID)
     session = _clean(env.get("CANOPY_SESSION_ID"), _UUID)
-    task = _clean(env.get("CANOPY_EMDASH_TASK"), _NAME)
     claude = _clean(env.get("CLAUDE_CODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID"), _UUID)
 
     if not (turn and session):
@@ -173,23 +174,12 @@ def resolve_parent(cwd: Optional[str] = None) -> dict:
         turn = turn or _clean(caller.get("turn_id"), _UUID)
         session = session or _clean(caller.get("session_id"), _UUID)
 
-    candidates = [task] if task else task_candidates(cwd)
-    if not (turn and session and claude) or not task:
-        found, rec = _from_by_task(candidates)
-        if found:
-            task = task or found
-            turn = turn or _clean(rec.get("turn_id"), _UUID)
-            session = session or _clean(rec.get("session_id"), _UUID)
-            claude = claude or _clean(rec.get("claude_session_id"), _UUID)
-    if not task and candidates:
-        task = candidates[0]
-
-    try:
-        host = _clean(socket.gethostname())
-    except Exception:  # noqa: BLE001
-        host = ""
-    return {"turn_id": turn, "session_id": session, "task": task,
-            "host": host, "claude_session_id": claude}
+    if not (turn and session and claude):
+        _, rec = _from_by_task(task_candidates(cwd))
+        turn = turn or _clean(rec.get("turn_id"), _UUID)
+        session = session or _clean(rec.get("session_id"), _UUID)
+        claude = claude or _clean(rec.get("claude_session_id"), _UUID)
+    return {"turn_id": turn, "session_id": session, "claude_session_id": claude}
 
 
 def provenance_parent(cwd: Optional[str] = None) -> dict:
@@ -216,7 +206,6 @@ def provenance_headers(client: str = DEFAULT_CLIENT, *, cwd: Optional[str] = Non
     except Exception:  # noqa: BLE001 — provenance is best-effort, the request is not
         return headers
     for key, header in (("turn_id", HEADER_TURN), ("session_id", HEADER_SESSION),
-                        ("task", HEADER_TASK), ("host", HEADER_HOST),
                         ("claude_session_id", HEADER_CLAUDE)):
         if p.get(key):
             headers[header] = p[key]

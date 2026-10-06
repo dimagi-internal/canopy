@@ -41,7 +41,8 @@ def test_the_mcp_helper_sends_the_laptop_parent_beside_the_bearer(tmp_path):
     assert h["X-Canopy-Client"].startswith("canopy-mcp/")
     assert h["X-Canopy-Parent-Turn"] == TURN
     assert h["X-Canopy-Parent-Session"] == SESS
-    assert h["X-Canopy-Parent-Task"] == TASK
+    # the task only located the record; nothing runner-specific is sent
+    assert "X-Canopy-Parent-Task" not in h and "X-Canopy-Parent-Host" not in h
     assert h["X-Canopy-Claude-Session"] == CLAUDE
 
 

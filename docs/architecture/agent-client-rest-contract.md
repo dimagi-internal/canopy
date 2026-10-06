@@ -32,19 +32,23 @@ the DDD / share-session / walkthrough-share uploaders, the `post_tool_use` hook
 | `X-Canopy-Client` | `<tool>/<version>` — `canopy-cli/…`, `canopy-mcp/…`, `canopy-hook/…` |
 | `X-Canopy-Parent-Turn` | canopy-web turn uuid this session is running |
 | `X-Canopy-Parent-Session` | that turn's canopy-web chat session uuid |
-| `X-Canopy-Parent-Task` | emdash task name (laptop sessions) |
-| `X-Canopy-Parent-Host` | hostname |
 | `X-Canopy-Claude-Session` | Claude Code session id |
 | `User-Agent` | `canopy-cli/<version> (python/<x.y>; <platform>)` |
 
-Sources, first value wins per field: env **`CANOPY_TURN_ID` / `CANOPY_SESSION_ID` /
-`CANOPY_EMDASH_TASK`** (the cloud runner exports them into every session it launches)
+**The parent turn is the whole contract.** A canopy-web turn already records which
+runner claimed it (so its type and host), its chat session, origin and initiator; the
+server derives all of that from the id. Nothing runner-specific goes on the wire, so a
+new kind of runner only has to export `CANOPY_TURN_ID` (+ `CANOPY_SESSION_ID`).
+
+Sources, first value wins per field: env **`CANOPY_TURN_ID` / `CANOPY_SESSION_ID`**
+(the cloud runner exports them into every session it launches)
 → the envelope **`CANOPY_CALLER`** names (`turn_id`, `conversation.session_id`) →
 **`~/.canopy/caller/by-task/<task>.json`**, the laptop record. emdash launches laptop
 sessions so no env can be set; the `UserPromptSubmit` hook (`caller_context.py`), on
 claiming the runner's one-shot caller pointer, writes that record
 (`{turn_id, session_id, claude_session_id, updated_at}`, atomic, 0600), and the task is
-read back off the worktree path (`…/worktrees/<repo>/emdash-<task>-<suffix>/`). The
+read back off the worktree path (`…/worktrees/<repo>/emdash-<task>-<suffix>/`) — the
+task name is only the local key for finding the turn id, never sent. The
 Claude session id comes from `CLAUDE_CODE_SESSION_ID` (or `CLAUDE_SESSION_ID`), else the
 record. A header that cannot be computed is left off — provenance never fails a request,
 and canopy-web tolerates any of them missing. The MCP helper runs once per connect, so
