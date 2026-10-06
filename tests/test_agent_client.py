@@ -209,6 +209,18 @@ def test_post_turn_can_opt_out_of_the_join():
     assert calls[0][2]["emdash_task_id"] == ""
 
 
+def test_post_turn_sends_origin_ref_only_when_given():
+    """A huddle's anchor row is tagged through the close-out (canopy-web merges it into
+    the row's origin_ref). Every other close-out omits the key, so an older canopy-web
+    whose StrictModel does not know it keeps accepting them."""
+    c, calls = _recorder_client([(200, "{}"), (200, "{}")])
+    c.post_turn(cli_session_id="s1", title="t", emdash_task_id="")
+    assert "origin_ref" not in calls[0][2]
+    c.post_turn(cli_session_id="huddle:h", title="t", emdash_task_id="",
+                origin_ref={"kind": "huddle", "huddle": "h"})
+    assert calls[1][2]["origin_ref"] == {"kind": "huddle", "huddle": "h"}
+
+
 def test_record_verdict_posts_to_step_verdict_endpoint():
     rec = []
     c = make_client(rec)
