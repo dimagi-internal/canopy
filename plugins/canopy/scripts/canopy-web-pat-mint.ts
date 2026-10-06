@@ -5,9 +5,8 @@
  * Backs the `/canopy:canopy-web-pat-mint` slash command. Mints a
  * canopy-web PersonalToken bound to the human operator (the one signed
  * into canopy-web in their normal browser), then writes the raw token
- * to `~/.claude/canopy/workbench-token` (chmod 600). The canopy plugin's
- * post_tool_use hook + walkthrough-share/upload.py + canopy-doctor all
- * read from that path already.
+ * to `~/.claude/canopy/workbench-token` (chmod 600).
+ * walkthrough-share/upload.py and canopy-doctor read from that path.
  *
  * Replaces the previous shared-secret WORKBENCH_WRITE_TOKEN bootstrap
  * (which required ops to fetch the value from 1Password / Secret

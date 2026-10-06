@@ -42,7 +42,7 @@ HUBS = {"cli", "pipeline", "server"}
 PRODUCT = {
     "analyzer", "proposer", "reviewer", "briefing", "observations", "proposals",
     "campaigns", "tracker", "labels", "patterns", "router", "digest", "harvest",
-    "shareout", "portfolio_discover", "openclaw_harvest",
+    "shareout", "openclaw_harvest",
     "issue_origin", "verify_findings", "corpus", "test_audit", "prompts",
 }
 

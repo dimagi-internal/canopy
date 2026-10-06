@@ -110,10 +110,6 @@ internet beyond the redirect to your own laptop:
 - **Browser didn't open** — copy the URL printed in step `[2/3]` and
   paste it into your browser manually. The listener is waiting on the
   port shown in step `[1/3]`.
-- **HTTP 401 from `hooks/post_tool_use.py` afterward** — token not
-  picked up by the running hook. Run `/reload-plugins` to refresh, then
-  retry. If still 401, run `/canopy:canopy-doctor` and check the
-  workbench-token block.
 - **Wrong canopy-web** — set `CANOPY_WEB_API_URL` to the right host before
   invoking (e.g. for a labs/staging deploy).
 
@@ -124,5 +120,5 @@ internet beyond the redirect to your own laptop:
   one-click authorize page + PersonalToken mint
 - `/canopy:canopy-doctor` — verifies the workbench-token file is
   present + chmod 600
-- `hooks/post_tool_use.py` + `scripts/walkthrough-share/upload.py` —
-  primary consumers of the workbench-token
+- `scripts/walkthrough-share/upload.py` — a primary consumer of the
+  workbench-token

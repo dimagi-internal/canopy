@@ -62,19 +62,6 @@ def test_the_mcp_helper_sends_nothing_without_a_token(tmp_path):
     assert _helper(tmp_path, tmp_path, {"CANOPY_TURN_ID": TURN_ENV}) == {}
 
 
-def test_the_post_tool_use_hook_names_itself_and_its_session(monkeypatch):
-    spec = importlib.util.spec_from_file_location(
-        "post_tool_use_prov", ROOT / "plugins/canopy/hooks/post_tool_use.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    monkeypatch.setenv("CANOPY_TURN_ID", TURN_ENV)
-    h = mod._provenance_headers(CLAUDE)
-    assert h["X-Canopy-Client"].startswith("canopy-hook/")
-    assert h["X-Canopy-Parent-Turn"] == TURN_ENV
-    assert h["X-Canopy-Claude-Session"] == CLAUDE
-    assert "X-Canopy-Claude-Session" not in mod._provenance_headers("unknown")
-
-
 def test_every_direct_uploader_attaches_provenance():
     # These build their own urllib requests instead of going through canopy_web.call.
     for rel in ("scripts/ddd/upload.py", "scripts/ddd/review.py",
