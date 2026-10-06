@@ -14,7 +14,7 @@ reading the Python client.
 - **PAT resolution (precedence):** explicit arg → `CANOPY_WEB_PAT` env →
   `~/.claude/canopy/workbench-token`. Mint one with `/canopy:canopy-web-pat-mint`.
 - **Base URL (precedence):** explicit arg → `CANOPY_WEB_API_URL` env →
-  `https://labs.connect.dimagi.com/canopy` (prod default).
+  `https://canopy.dimagi.com` (prod default).
 - **Content-Type:** `application/json` on bodies. Non-2xx responses are errors.
 
 ## Provenance headers (who made this request, from which session)
