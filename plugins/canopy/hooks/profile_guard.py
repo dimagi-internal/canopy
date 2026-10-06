@@ -34,7 +34,8 @@ Profile shape (written by the runner from canopy-web's envelope):
 
   tools       fnmatch patterns over the TOOL NAME (`Read`, `mcp__canopy-web__who_is_asking`)
   bash        patterns over the command's ARGUMENTS, token for token: `*` is one
-              argument; a command with an operator, $() or backticks is refused
+              argument, and never a flag; a command with an operator, $(),
+              backticks or an UNQUOTED brace/glob/tilde (`{ } * ? [ ~`) is refused
   read_paths  fnmatch patterns a path-taking tool's target (resolved) must match;
               `{cwd}` is the session's working directory. Empty → no path allowed.
   write_paths the same, for tools that CHANGE a file (Write/Edit/MultiEdit/
@@ -76,6 +77,15 @@ _RESTRICTED = "cx-"
 #: invocation of an allowed program. Bodies travel by --body-file, never inline.
 _NEVER = re.compile(r"[`$\n\r\\]")
 _OPERATOR = set(";&|<>()")
+#: Characters bash EXPANDS when they stand unquoted in a word: braces (`{a,b}` → two
+#: arguments), globs (`*`, `?`, `[` → any number of paths) and tilde (`~` → a home
+#: directory). Each turns the ONE argument the matcher judged into something else by
+#: the time the program runs — `--body-file {/proc/self/environ,--repo=x}` is one
+#: token to shlex and two to bash, the second a flag nobody allowed. Refused when
+#: UNQUOTED; inside quotes they are text (a `--caught "a promise?"`).
+_EXPANDS = set("{}*?[~")
+#: A pattern slot that is a wildcard, not a literal.
+_WILD = re.compile(r"[*?\[]")
 #: Tools that act on a path, and the input keys that carry it.
 _PATH_KEYS = {
     "Read": ("file_path",), "Write": ("file_path",), "Edit": ("file_path",),
@@ -168,6 +178,24 @@ def _subst(pattern: str, prof: dict, cwd: str) -> str:
                    .replace("{cwd}", cwd or "\0no-cwd\0"))
 
 
+def _unquoted_expansion(cmd: str) -> bool:
+    """True if `cmd` holds a brace, glob or tilde character outside quotes.
+
+    Quoting here is simple because `_NEVER` has already refused backslashes, `$`
+    and backticks: nothing can escape a quote or end one early, so a `'…'` or
+    `"…"` span is literal text to bash exactly as it is to this scan."""
+    quote = ""
+    for ch in cmd:
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+        elif ch in _EXPANDS:
+            return True
+    return False
+
+
 def argv(cmd: str):
     """The command's arguments, or None if it is anything but one plain invocation.
 
@@ -175,7 +203,7 @@ def argv(cmd: str):
     `>`, `(`) comes out as its own token and is refused, while the same character
     inside quotes — a subject like "Re: payments (Q3)" — is just text.
     """
-    if _NEVER.search(cmd):
+    if _NEVER.search(cmd) or _unquoted_expansion(cmd):
         return None
     lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
@@ -190,9 +218,11 @@ def argv(cmd: str):
 
 def _argv_matches(toks, pattern: str, prof, cwd) -> bool:
     """Token for token: `*` stands for exactly ONE argument, never several — so
-    `--body-file *` cannot absorb a trailing `--to attacker@example.com`. A token
-    matched against a `{cwd}/…` pattern must also RESOLVE inside the worktree,
-    which is what stops `{cwd}/../../.ssh/id_rsa`."""
+    `--body-file *` cannot absorb a trailing `--to attacker@example.com`. Nor can
+    a wildcard slot hold a FLAG: `--caught *` takes `--caught none`, never
+    `--caught --repo=…`, which the program would read as an option nobody allowed.
+    A token matched against a `{cwd}/…` pattern must also RESOLVE inside the
+    worktree, which is what stops `{cwd}/../../.ssh/id_rsa`."""
     rcwd = os.path.realpath(cwd) if cwd else ""
     try:
         want = shlex.split(_subst(pattern, prof, rcwd))
@@ -202,6 +232,8 @@ def _argv_matches(toks, pattern: str, prof, cwd) -> bool:
         return False
     for tok, pat in zip(toks, want):
         if not fnmatch.fnmatchcase(tok, pat):
+            return False
+        if tok.startswith("-") and not pat.startswith("-") and _WILD.search(pat):
             return False
         if rcwd and pat.startswith(rcwd + "/"):
             real = os.path.realpath(os.path.join(rcwd, tok))
@@ -248,7 +280,8 @@ def decide(tool: str, tool_input: dict, prof: dict, cwd: str, results_dir=None):
         toks = argv(cmd)
         if toks is None:
             return (f"this session answers a caller through '{name}'; a command here is one "
-                    "program with its arguments — no chaining, pipes, redirection, $() or backticks")
+                    "program with its arguments — no chaining, pipes, redirection, $() or backticks, "
+                    "and no unquoted {}, *, ?, [ or ~")
         if any(_argv_matches(toks, p, prof, cwd) for p in cap.get("bash") or []):
             return None
         return f"this session answers a caller through '{name}', which does not allow: {cmd[:160]}"
