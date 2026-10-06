@@ -17,7 +17,10 @@ It reads everything from the run dir the judges already wrote:
 * the concept verdict's ``distribution:`` block (the progress signal)
 * ``judge-scope.json`` — whether this pass was FULL or incremental
 * ``.canopy/ddd/config.yaml`` ``loop:`` block (backlog vs polish)
+* the gating FLOOR (:mod:`scripts.ddd.floor`) and what the loop may edit —
+  ``loop.fixed_surfaces``, the spec's narrative lock, ``out_of_scope.json``
 
+stamps this pass's timing on ``state.pass_timings`` (:mod:`scripts.ddd.pass_timing`),
 then records the judged iteration in the judge ledger (``judge-cache/``) so the
 next pass can reuse unchanged scenes, and prints the report lines.
 """
@@ -157,9 +160,28 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         extra_verdict_paths=extra_paths,
     )
     converged = compute_convergence(concept, user, extra=extra)
+    from scripts.ddd import floor as floor_mod
     from scripts.ddd import target as target_mod
 
     state.inner_loop_policy = target_mod.inner_loop_policy(cfg)
+    objective_guess = state.objective or (
+        cfg.loop.objective if cfg.loop.objective in ("product", "demo") else "demo"
+    )
+    floor = floor_mod.locate(
+        {**extra, "concept": concept, "user_artifact": user},
+        run_dir=run_dir,
+        objective=objective_guess,
+    )
+    narrative_locked = False
+    if spec:
+        from scripts.ddd.narrative import is_narrative_locked
+
+        narrative_locked = is_narrative_locked(spec)
+    edit_scope = {
+        "narrative_locked": narrative_locked,
+        "fixed_surfaces": cfg.loop.fixed_surfaces,
+        "declined": floor_mod.load_declined(run_dir),
+    }
     action, reason = compute_auto_iterate(
         state,
         concept,
@@ -175,7 +197,12 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         inner_loop_policy=state.inner_loop_policy,
         product_config=cfg.product,
         extra_verdicts=extra,
+        floor=floor,
+        edit_scope=edit_scope,
     )
+    from scripts.ddd import pass_timing
+
+    timing = pass_timing.record(state, scope=scope, run_dir=run_dir)
     from scripts.ddd import objective as objective_mod
 
     if state.objective == objective_mod.PRODUCT:
@@ -230,6 +257,9 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "held_scenes": scope.get("held") or [],
         "decision_overrides": list(state.decision_overrides or []),
         "version_warnings": list(state.version_warnings or []),
+        "gating_floor": state.gating_floor,
+        "pass_timing": timing,
+        "changed_components": scope.get("changed_components"),
         "ledger": ledger,
     }
 
@@ -285,6 +315,27 @@ def _main(argv: list[str] | None = None) -> int:
         f"  Progress:     score {p.get('score')}  open findings {p.get('open_findings')}  "
         f"mean cell {p.get('mean_cell')}  confirmed caps {p.get('confirmed_caps')}"
     )
+    gf = out.get("gating_floor") or {}
+    if gf:
+        n_out = sum(1 for r in gf.get("findings") or [] if r.get("edit_scope") == "out")
+        print(
+            f"  Floor:        {'/'.join(gf.get('judges') or [])} "
+            f"{', '.join(gf.get('dimensions') or []) or 'overall'} = {gf.get('score')}"
+            + (f" on scene(s) {gf.get('scenes')}" if gf.get("scenes") else "")
+            + f"  ({len(gf.get('findings') or [])} finding(s), {n_out} outside the edit scope)"
+        )
+    t = out.get("pass_timing") or {}
+    if t:
+        jm = t.get("judge_minutes") or {}
+        print(
+            "  Pass timing:  "
+            + ", ".join(
+                f"{k} {v:.1f}m"
+                for k, v in [("wall", t.get("wall_minutes")), ("fix", t.get("fix_minutes")),
+                             ("render", t.get("render_minutes")), *sorted(jm.items())]
+                if isinstance(v, (int, float))
+            )
+        )
     print(f"  Convergence:  {'YES' if out['converged'] else 'NO'}")
     print(f"  Auto-iterate: {out['auto_iterate_next_action']}  ({out['auto_iterate_reason']})")
     print(f"  Termination:  {out['terminal_status']}")

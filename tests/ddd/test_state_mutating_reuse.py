@@ -148,7 +148,12 @@ class TestReuseAcrossReseeds:
         _render(tmp_path, 94, 232, png=b"other")
         scope = judge_scope.plan(tmp_path, spec)
         assert scope["full"] is False and scope["rejudge"] == [1, 2]
-        assert scope["changed_components"] == {"1": ["frames"], "2": ["frames"]}
+        # v3 (canopy#780): a frame that does not decode falls back to exact bytes,
+        # and both image components (the region crop and the layout guard) say so.
+        assert scope["changed_components"] == {
+            "1": ["layout", "region_image"],
+            "2": ["layout", "region_image"],
+        }
 
     def test_reseeded_render_reuses_every_scene(self, tmp_path: Path) -> None:
         spec = _render(tmp_path, 92, 227)

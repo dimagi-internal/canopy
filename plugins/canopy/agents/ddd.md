@@ -853,8 +853,18 @@ Two optional accelerators between checkpoints (a checkpoint = every
   (others are HELD to their cells; a pass that held scenes cannot decide). Do
   not open a product PR, wait on CI/deploy, or `set-fix-sha` for it.
 - **judge tiering** (`loop.judge_tiering: auto|on|off`; `auto` = on in backlog
-  mode). Between checkpoints only the concept judge runs, on changed scenes;
-  user-artifact + arc run at checkpoints.
+  mode). Between checkpoints the concept judge runs on changed scenes and,
+  **floor-first** (`loop.floor_first`, default on), so does the judge holding
+  the gating floor, on the floor's scenes when they changed; every other
+  verdict is carried to the checkpoint.
+
+**Impact-aware reuse (canopy#780).** A scene re-judges only when an input its
+judges read could have changed the verdict: its spec/trace, the page text
+(minus volatile stamps), the DOM text and crops of what the scene is ABOUT (its
+action targets and narrated elements, `scene_<N>_regions.json`), or — the guard
+— a large change to the frame's layout. A template edit that leaves a scene's
+subject alone no longer re-judges it. `judge-scope.json` names the changed
+component per scene and keeps every pass in `passes`.
 
 Any stop, gate or convergence a non-checkpoint pass would return becomes
 `checkpoint`. The convergence bar is unchanged.
@@ -885,6 +895,7 @@ digest will carry it. `compute_auto_iterate` stops on these conditions, and
 | stalled | NONE of the four progress signals improved over the last 2 iterations (score through `denoise.NOISE_BAND` ±0.5, mean cell through `progress.MEAN_BAND` ±0.15, confirmed caps must fall, open findings must fall by more than `progress.TRICKLE_FRACTION` = 15% of the best count). Checked BEFORE pending mechanical work — it used to sit behind `mechanical → continue` and could never fire on a v1 run. The trickle band exists because judges re-find new nits as old ones are fixed: 42 → 39 → 36 → 35 → 34 with a flat mean and no cap fixed ran ~4.6 hours without stalling. | `stop_max_iter` |
 | **finding plateau** | two consecutive iterations produced an **identical finding-fingerprint set** with no real score move — the loop is re-deriving, not progressing. Unlike the score this signal does not wobble: an LLM's score for a cell moves ±1 on the same frame; the defect it names does not. | `stop_max_iter` |
 | runaway | `HARD_CAP` (10) iterations | `stop_max_iter` |
+| **out-of-scope floor** | the gating floor (`state.gating_floor`, `scripts.ddd.floor`) HAS findings and every one is outside the loop's edit scope: `route: DEFER`, a `[DATA]`/`[REGISTRY]`/`[EXTERNAL]`/`[UPSTREAM]`/`[SEED]` fix, a narration edit under a locked narrative, a `loop.fixed_surfaces` match, or a fix a fixer declined. No batch can move a minimum held by a cell the loop may not touch; ACE Spark `-004` iterated to its stall rule on a registry string instead. | `stop_out_of_scope` |
 
 `state.terminal_status` distinguishes the endings that must never print the same:
 
@@ -897,6 +908,9 @@ digest will carry it. `compute_auto_iterate` stops on these conditions, and
   open-findings count, each beyond its noise band (`progress.declined`). A
   single capped cell pins the floor and is NOT a decline (M17). Fixes are
   fighting each other; more iterations will make it worse.
+- **`blocked_out_of_scope`** — the floor is held only by findings this loop
+  may not fix. Report each with where its fix lives (the reason lists them);
+  the run resumes after that source is fixed.
 
 **In an unattended run every STUCK stop is TERMINAL.** Upload the `--stuck`
 package, report the terminal status and the open findings, and finish. Do not
@@ -906,7 +920,7 @@ from `gates.is_unattended()`) stamps the reason so the digest can say it plainly
 **Always leave the user with a navigable package — converged OR stuck.** Whenever
 the loop reaches a TERMINAL stop that hands control back to the user — `stop_done`
 (release), and every STUCK stop (`stop_unclear`, `stop_concept_change`,
-`stop_max_iter`, `stop_partial`) — invoke `/canopy:ddd-upload <run_id>` so the run
+`stop_max_iter`, `stop_out_of_scope`, `stop_partial`) — invoke `/canopy:ddd-upload <run_id>` so the run
 publishes its `/ddd/<slug>/<run_id>` package and you surface THAT package URL (not a
 loose `/w/` artifact, and never a hand-made `walkthrough-share` upload). For the
 stuck stops use **`--stuck`** (review package: skips the external_release gate, leaves
@@ -1023,6 +1037,15 @@ ready, and offer to drop `--scene` and re-fire on the full spec when
 they're ready to upload. Do **not** auto-launch the full-spec
 run — render budget is much larger and the user should opt in.
 
+### `stop_out_of_scope` (the floor is outside the loop's edit scope)
+
+Every finding on the gating floor routes outside what this loop may edit, so no
+fix batch can move the score. Terminal (`terminal_status:
+blocked_out_of_scope`), unattended or not: upload the `--stuck` package and
+report each floor finding with where its fix lives and who owns it (the reason
+lists them, `state.gating_floor.findings` has the detail). Once the source is
+fixed, `decision override --reason "<what was fixed>"` and re-fire.
+
 ### `continue` (apply the confident fixes)
 
 There is at least one `fix_kind: mechanical` finding to act on. **Apply EVERY
@@ -1062,6 +1085,26 @@ shared test DB another session held; nothing timed it out):
 - on completion `watchdog finish <run_id> fixer:<batch> --status ok|failed`.
 
 Skip findings stamped `parked: true` (see `park_and_continue`).
+
+**Floor first** (canopy#780). When the `continue` reason opens with `FLOOR
+FIRST`, the findings stamped `floor: true` (ordered first in `state.findings`)
+hold the gating score down: brief them first, make sure every one is in this
+batch, and give them to the fixer that owns their surface before the polish
+findings. A fixer that finds a floor finding's fix OUTSIDE what this loop may
+edit (a registry string, seed data, a locked narration, another team's code)
+must not work around it — record it, so the next `assemble` can stop instead
+of iterating:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.floor decline "$RUN_DIR" \
+  --match "<text from the finding>" --reason "<where the fix lives, who owns it>" \
+  [--scene N] [--dimension D])
+```
+
+Declare the surfaces a repo's loop may never edit once, in
+`.canopy/ddd/config.yaml` `loop.fixed_surfaces` (regexes), instead of a
+free-text constraints note: findings naming one are out of scope by
+construction.
 
 For each mechanical finding, apply by route:
 

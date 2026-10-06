@@ -668,11 +668,46 @@ class Recorder:
         # Geometry + colour for the visual lens (canopy#525). Same frame, same
         # steady state, same scene index as the PNG and the text dump.
         self.take_visual_capture(page, scene_index)
+        # What the scene is ABOUT — its action targets and narrated elements,
+        # with their DOM text and frame boxes — so DDD's judge scope can tell a
+        # change to the scene's subject from a change elsewhere on a shared
+        # template (canopy#780).
+        self.take_region_capture(page, scene, scene_index, full_page=full_page)
         if png_ok:
             self.snapshots_taken.append(scene_index)
             print(f"  · snapshot scene_{scene_index}.png + scene_{scene_index}_page_text.json")
         else:
             print(f"  · snapshot scene_{scene_index}_page_text.json (PNG failed after retry)")
+
+    def take_region_capture(
+        self, page: Page, scene: dict, scene_index: int, *, full_page: bool
+    ) -> bool:
+        """Write ``scene_<N>_regions.json`` (see :mod:`scripts.walkthrough._lib.regions`).
+
+        Best-effort: on any failure no file is written and the DDD judge scope
+        falls back to comparing the whole frame — never a render failure.
+        """
+        if self.snapshot_dir is None:
+            return False
+        from scripts.walkthrough._lib import regions
+
+        try:
+            capture = regions.capture(
+                page,
+                scene,
+                full_page=full_page,
+                resolve=lambda s: resolve_string(s, self.variables),
+            )
+        except Exception as e:  # noqa: BLE001 — never fail a recording over a lens input
+            print(f"  ! region capture failed for scene {scene_index}: {e}")
+            return False
+        if not capture:
+            return False
+        capture = {"scene_index": scene_index, "render_id": self.render_id, **capture}
+        (self.snapshot_dir / f"scene_{scene_index}_regions.json").write_text(
+            json.dumps(capture, indent=1)
+        )
+        return True
 
     def take_visual_capture(self, page: Page, scene_index: int) -> bool:
         """Write ``scene_<N>_visual.json`` — geometry + colour for the DDD visual lens.

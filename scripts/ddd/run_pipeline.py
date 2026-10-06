@@ -283,6 +283,8 @@ def compute_auto_iterate(
     inner_loop_policy: dict | None = None,
     product_config: "ProductConfig | None" = None,
     extra_verdicts: dict[str, Verdict] | None = None,
+    floor: dict | None = None,
+    edit_scope: dict | None = None,
 ) -> tuple[str, str]:
     """Decide the next loop action from the SCORE TRAJECTORY, not an iteration count.
 
@@ -383,6 +385,26 @@ def compute_auto_iterate(
     polish findings are applied ONCE as a final ``continue`` (the polish pass)
     before ``stop_done``. ``product_config`` is the repo's ``product:`` block and
     ``extra_verdicts`` the advisory/arc verdicts (for the floor check).
+
+    Floor (see :mod:`scripts.ddd.floor`, canopy#780): ``floor`` is the cell
+    holding the gating score down (:func:`scripts.ddd.floor.locate`) and
+    ``edit_scope`` what this loop may edit (``{narrative_locked,
+    fixed_surfaces, declined}``). Both are optional; without ``floor`` nothing
+    below changes.
+
+    - The floor and its findings, each classified in or out of the loop's edit
+      scope, are stamped on ``state.gating_floor`` — the next ``judge_scope
+      plan`` re-judges that cell first.
+    - When the floor HAS findings and every one is out of scope (DEFER, a
+      narration edit under a locked narrative, data / registry / a configured
+      fixed surface, or declined by a fixer), the run stops with
+      ``stop_out_of_scope`` (terminal status ``blocked_out_of_scope``) instead
+      of iterating to the stall rule: nothing the loop can do moves the gate.
+      Like every stop, a pass that cannot decide hands it to a checkpoint.
+    - On ``continue`` (``loop.floor_first``, default on) the in-scope floor
+      findings are stamped ``floor: true`` and ordered first in
+      ``state.findings``, and the reason opens with them, so the batch fixes
+      what holds the gate before anything else.
     """
     import copy
 
@@ -434,6 +456,48 @@ def compute_auto_iterate(
             findings, block_severities=product_config.block_severities
         )
         converged, product_why = objective_mod.converged(all_verdicts, findings, product_config)
+
+    from scripts.ddd import floor as floor_mod
+
+    scope_ctx = {
+        "narrative_locked": bool((edit_scope or {}).get("narrative_locked")),
+        "fixed_surfaces": tuple((edit_scope or {}).get("fixed_surfaces") or ()),
+        "declined": list((edit_scope or {}).get("declined") or []),
+    }
+    floor_cls = (
+        floor_mod.classify_floor(floor, findings, verdicts=all_verdicts, **scope_ctx)
+        if floor
+        else None
+    )
+    floor_first: list[dict] = []
+    if floor_cls is not None:
+        for f in floor_mod.floor_findings(floor, findings):
+            if floor_mod.edit_scope(f, **scope_ctx)[0] == floor_mod.IN:
+                floor_first.append(f)
+        if floor_first and loop_config.floor_first:
+            ids = {id(f) for f in floor_first}
+            for f in findings:
+                if id(f) in ids:
+                    f["floor"] = True
+            findings = [f for f in findings if id(f) in ids] + [f for f in findings if id(f) not in ids]
+        state.gating_floor = {
+            **floor,
+            "iteration": state.iteration,
+            "judged_full": bool(judge_full),
+            "all_out_of_scope": floor_cls["all_out"],
+            "findings": [
+                {
+                    "scene": r.get("scene"),
+                    "dimension": r.get("dimension"),
+                    "fix_recommendation": str(r.get("fix_recommendation") or r.get("detail") or "")[:400],
+                    "edit_scope": r["edit_scope"],
+                    "edit_scope_reason": r["edit_scope_reason"],
+                }
+                for r in floor_cls["findings"]
+            ],
+        }
+    else:
+        state.gating_floor = None
     state.findings = findings
 
     score = min(concept_verdict.overall_score, user_verdict.overall_score)
@@ -552,6 +616,8 @@ def compute_auto_iterate(
                 where = "the local inner-loop build"
             elif held:
                 where = f"a recipe-scoped pass (scene(s) {list(held)} held to their last cells)"
+            elif judges and set(judges) != {"concept"}:
+                where = f"a partial-judge pass ({', '.join(sorted(judges))})"
             else:
                 where = "a concept-only pass"
             return (
@@ -603,6 +669,8 @@ def compute_auto_iterate(
 
     def _continue(reason: str, action: str = "continue") -> tuple[str, str]:
         """``continue`` + the next pass's judge scope (backlog vs polish)."""
+        if floor_cls is not None and loop_config.floor_first:
+            reason = _floor_first_reason(floor, floor_cls) + reason
         if state.loop_mode == "backlog":
             state.next_judge_full = (
                 state.batches_since_full + 1 >= loop_config.full_rejudge_every
@@ -698,6 +766,23 @@ def compute_auto_iterate(
     if converged and getattr(state, "scene_filter", None):
         return _finish(
             "stop_partial", "Both judges passed the filtered scope — drop --scene and re-fire."
+        )
+    if floor_cls is not None and floor_cls["all_out"] and not converged:
+        # The gate is a minimum: while its floor cell is held only by findings
+        # this loop may not touch, no batch can move the score. Iterating to the
+        # stall rule (run -004: three more passes) only re-confirms that.
+        lines = "; ".join(
+            f"scene {r.get('scene') or '?'} {r.get('dimension')}: "
+            f"{str(r.get('fix_recommendation') or r.get('detail') or '')[:160]} "
+            f"[{r['edit_scope_reason']}]"
+            for r in floor_cls["findings"]
+        )
+        return _finish(
+            "stop_out_of_scope",
+            f"The gating floor ({_floor_label(floor)}) is held only by finding(s) outside "
+            f"this loop's edit scope — {lines}. No fix batch the loop may make can move "
+            "the gating score. Fix them at their source (or widen the edit scope), then "
+            f"re-run (history={hist}).",
         )
     # Mechanical fixes come FIRST — a confident fix must never sit behind an
     # uncertain one, and a strategy REDESIGN is the most uncertain finding there
@@ -825,10 +910,39 @@ def compute_auto_iterate(
     )
 
 
+def _floor_label(floor: dict | None) -> str:
+    if not floor:
+        return "unknown"
+    scenes = floor.get("scenes") or []
+    return (
+        f"{'/'.join(floor.get('judges') or [])} "
+        f"{', '.join(floor.get('dimensions') or []) or 'overall'} = {floor.get('score')}"
+        + (f" on scene(s) {scenes}" if scenes else "")
+    )
+
+
+def _floor_first_reason(floor: dict | None, cls: dict) -> str:
+    """The FLOOR-FIRST preamble of a ``continue`` reason (canopy#780)."""
+    rows = [r for r in cls.get("findings") or [] if r.get("edit_scope") == "in"]
+    if not rows:
+        return ""
+    fixes = "; ".join(
+        f"scene {r.get('scene') or '?'} {r.get('dimension')}: "
+        f"{str(r.get('fix_recommendation') or r.get('detail') or '')[:200]}"
+        for r in rows
+    )
+    return (
+        f"FLOOR FIRST — the gate is held by {_floor_label(floor)}. Fix these "
+        f"{len(rows)} finding(s) first and make sure they are in this batch (stamped "
+        f"`floor: true`, ordered first in state.findings): {fixes}. "
+    )
+
+
 #: Decisions an inner-loop / concept-only pass must hand to a checkpoint.
 _CHECKPOINT_BEFORE = frozenset(
     {
         "stop_done",
+        "stop_out_of_scope",
         "stop_concept_change",
         "stop_max_iter",
         "stop_unclear",
@@ -890,6 +1004,7 @@ TERMINAL_ACTIONS = frozenset(
     {
         "stop_done",
         "stop_partial",
+        "stop_out_of_scope",
         "stop_concept_change",
         "stop_unclear",
         "stop_max_iter",
@@ -928,6 +1043,10 @@ def classify_termination(
         (:func:`scripts.ddd.progress.declined`) — a single capped cell pins the
         floor and is not a decline (M17). Without one (legacy runs) the score
         trend alone decides, as before.
+    ``blocked_out_of_scope``
+        The gating floor is held only by findings this loop may not fix
+        (``stop_out_of_scope``, canopy#780). Not a stall and not divergence:
+        the loop stopped because nothing it can do moves the gate.
     ``running``
         Not terminal — keep looping.
     """
@@ -951,6 +1070,8 @@ def classify_termination(
         status = "running"
     elif action == "stop_inner_loop_required":
         status = "needs_config"
+    elif action == "stop_out_of_scope":
+        status = "blocked_out_of_scope"
     elif action in ("stop_done", "stop_partial") or converged:
         status = "converged_with_open_questions" if open_strategy else "converged_clean"
     elif is_diverging:
@@ -987,6 +1108,11 @@ _TERMINATION_SUMMARY = {
     "diverging": (
         "Diverging — the floor, the mean cell and the open-findings count all fell beyond "
         "their noise bands. Fixes are fighting each other; more iterations will not help."
+    ),
+    "blocked_out_of_scope": (
+        "Stopped on an out-of-scope floor — the cell holding the gating score down is held only "
+        "by findings this loop may not fix (data, registry, a locked narration, a deferred or "
+        "declined finding). Fix them at their source, then re-run."
     ),
     "running": "Still iterating.",
 }

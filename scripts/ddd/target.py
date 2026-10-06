@@ -17,8 +17,13 @@ Two cheaper tiers, both FIDELITY-SAFE — neither can decide anything:
   same passes that are judged in full) and every decision renders against the
   real deploy target, through the deploy gate.
 * **judge tiering** (``loop.judge_tiering``, ``auto`` = on in backlog mode).
-  Between checkpoints only the concept judge runs, on changed scenes; the
-  user-artifact and arc verdicts are carried from the last full pass. Every
+  Between checkpoints the concept judge runs on changed scenes, and —
+  FLOOR-FIRST (``loop.floor_first``, default on; canopy#780) — so does the judge
+  holding the gating floor, on the floor's scenes when they changed
+  (``judge_scope plan`` decides from ``state.gating_floor``). Every other
+  verdict is carried from the last full pass. Before floor-first, a floor held
+  by the user-artifact judge could only move at a checkpoint: two of every three
+  passes on ACE Spark run ``-002`` could not change the gating score. Every
   checkpoint and every decision runs all three.
 * **recipe-only batch** (always on). A batch whose every fix is recorder
   framing, narration or why-brief (``fix_scope.batch_plan``) changes no product
@@ -112,7 +117,10 @@ def choose(state: Any, cfg: DDDConfig) -> dict[str, Any]:
         target = DEPLOY
         reason = "between checkpoints — no inner_loop configured, so the deploy target"
     if not checkpoint and tiered:
-        reason += "; judge tiering: concept judge only, on changed scenes"
+        reason += (
+            "; judge tiering: concept judge on changed scenes"
+            + (", plus the floor's judge on the floor's scenes (floor-first)" if cfg.loop.floor_first else "")
+        )
     return {
         "target": target,
         "base_url": cfg.inner_loop.base_url if target == INNER else None,

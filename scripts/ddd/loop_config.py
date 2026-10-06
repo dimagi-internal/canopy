@@ -20,6 +20,14 @@ module reads the two blocks the v1/backlog loop adds::
       inner_loop_hint_minutes: 15  # no inner_loop + a batch waited longer than this on
                               # CI + deploy -> judge_gate prints a one-line
                               # recommendation to configure one (0 = never)
+      floor_first: true       # between checkpoints, the judge holding the gating
+                              # floor re-judges its capping scene(s) every pass, and
+                              # the next batch fixes the floor's findings first
+                              # (scripts.ddd.floor, canopy#780)
+      fixed_surfaces:         # regexes naming what this loop may NOT edit; a floor
+        - registry            # finding whose fix names one is out of edit scope,
+        - seed data           # and a floor made only of those stops the run
+                              # (stop_out_of_scope) instead of iterating to a stall
 
     deploy_gate:
       health_url: https://labs.connect.dimagi.com/health/
@@ -98,6 +106,8 @@ class LoopConfig:
     full_rejudge_every: int = 3
     judge_tiering: str = "auto"
     inner_loop_hint_minutes: float = 15.0
+    floor_first: bool = True
+    fixed_surfaces: tuple[str, ...] = ()
 
     def tiered(self, loop_mode: str | None) -> bool:
         """Concept-only judging between checkpoints? ``auto`` = on in backlog mode."""
@@ -213,6 +223,25 @@ def _float(raw: Any, default: float) -> float:
 def _positive(raw: Any, default: float) -> float:
     val = _float(raw, default)
     return val if val > 0 else default
+
+
+def _patterns(raw: Any) -> tuple[str, ...]:
+    """A list of regexes; an invalid one is dropped (a config typo must not stop a run)."""
+    import re
+
+    if isinstance(raw, str):
+        raw = [raw]
+    out: list[str] = []
+    for item in raw or []:
+        pat = str(item or "").strip()
+        if not pat:
+            continue
+        try:
+            re.compile(pat)
+        except re.error:
+            continue
+        out.append(pat)
+    return tuple(out)
 
 
 def _parse_timeouts(raw: Any) -> TimeoutsConfig:
@@ -333,6 +362,8 @@ def parse(data: dict | None) -> DDDConfig:
         full_rejudge_every=_int(loop_raw.get("full_rejudge_every"), 3),
         judge_tiering=_tiering(loop_raw.get("judge_tiering")),
         inner_loop_hint_minutes=max(_float(loop_raw.get("inner_loop_hint_minutes"), 15.0), 0.0),
+        floor_first=loop_raw.get("floor_first") is not False,
+        fixed_surfaces=_patterns(loop_raw.get("fixed_surfaces")),
     )
     gate_raw = data.get("deploy_gate") if isinstance(data.get("deploy_gate"), dict) else {}
     url = str(gate_raw.get("health_url") or "").strip() or None

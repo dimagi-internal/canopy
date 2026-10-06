@@ -564,6 +564,12 @@ def build_scenes_from_spec(
             # starts (see _lib.scene_hooks). Threaded through like persona —
             # stripping it here would make it a silent no-op.
             "before": s.get("before"),
+            # What the scene SAYS. The recorder captures the elements these
+            # words name (``scene_<N>_regions.json``) so DDD's judge scope can
+            # re-judge a scene only when its subject changed (canopy#780).
+            "narrative": s.get("narrative"),
+            "show": s.get("show"),
+            "features": s.get("features"),
             # 1-based ORIGINAL spec index — preserved even when ``--input`` /
             # ``--scene`` filters narrow the list (so ``scene_index=3`` on a
             # partial run still means "spec scene 3", not "third in the
