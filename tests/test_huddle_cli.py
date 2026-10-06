@@ -18,7 +18,11 @@ NOW = dt.datetime(2026, 10, 6, 12, 0, tzinfo=dt.timezone.utc)
 
 
 class FakeWeb:
+    SYNC_COLUMNS = {"ext_id", "title", "next_action", "status", "owner", "assigned", "confidence",
+                    "due", "links", "notes", "position", "source", "project"}
+
     def __init__(self):
+        self.patches = []
         self.calls = []
         self.huddles = []                 # list rows
         self.detail = {}                  # id -> HuddleOut
@@ -57,8 +61,21 @@ class FakeWeb:
             return 200, json.dumps(self.tasks.get(m.group(1), []))
         m = re.match(r"^/api/agents/([^/]+)/tasks/sync$", path)
         if m and method == "POST":
-            self.tasks.setdefault(m.group(1), []).extend(body["tasks"])
+            rows = self.tasks.setdefault(m.group(1), [])
+            for t in body["tasks"]:
+                # like canopy-web: the sync writes only the sheet columns
+                kept = {k: v for k, v in t.items() if k in self.SYNC_COLUMNS}
+                rows.append({**kept, "id": 100 + len(rows), "source_url": "",
+                             "rationale": "", "plan": ""})
             return 200, json.dumps({"synced": len(body["tasks"])})
+        m = re.match(r"^/api/agents/([^/]+)/tasks/(\d+)/$", path)
+        if m and method == "PATCH":
+            self.patches.append((m.group(1), int(m.group(2)), body))
+            for t in self.tasks.get(m.group(1), []):
+                if t.get("id") == int(m.group(2)):
+                    t.update(body)
+                    return 200, json.dumps(t)
+            return 404, '{"detail": "no task"}'
         m = re.match(r"^/api/agents/([^/]+)/projects/$", path)
         if m and method == "GET":
             return 200, json.dumps(self.projects.get(m.group(1), []))
@@ -238,6 +255,117 @@ def test_prompt_round3_shows_the_partner_the_joint_asks(tmp_path, web):
     assert "### Joint Q4 brief (lead eva)" in text
     assert "Critique: Overlaps T41 — say how." in text
     assert "Solo thing" not in text
+
+
+def test_prompt_round3_reaches_a_lead_named_by_someone_else(tmp_path, web):
+    # The 2026-10-06 miss: eva proposed work with "lead": "hal"; hal's round 3 said "none".
+    r2 = {"huddle": H, "round": 2, "member": "eva",
+          "proposals": [prop("Diagnose chrome-sales MCP connect failures", "hal", ["hal", "eva"])]}
+    web.detail[H] = detail([_cell("eva", 1, r1("eva")), _cell("hal", 1, r1("hal")),
+                            _cell("eva", 2, r2), _cell("hal", 2, {"huddle": H, "round": 2,
+                                                                  "member": "hal",
+                                                                  "proposals": []})])
+    p = write_plan(tmp_path, members=["eva", "hal"])
+    out = tmp_path / "hal-r3.md"
+    r = run("prompt", "--plan", str(p), "--member", "hal", "--round", "3", "--out", str(out))
+    assert r.exit_code == 0, r.output
+    text = out.read_text()
+    assert "### Diagnose chrome-sales MCP connect failures (lead hal" in text
+    assert '"title": "Diagnose chrome-sales MCP connect failures"' in text
+    assert "none — no teammate" not in text
+
+
+def test_proposals_counts_the_named_leads_cosign(tmp_path, web):
+    r2 = {"huddle": H, "round": 2, "member": "eva", "critique_answers": [{"title": "t", "answer": "a"}],
+          "proposals": [prop("Diagnose MCP", "hal", ["hal", "eva"])]}
+    hal_r3 = {"huddle": H, "round": 3, "member": "hal",
+              "answers": [{"title": "Diagnose MCP", "lead": "hal", "answer": "co-sign"}]}
+    eva_r3 = {"huddle": H, "round": 3, "member": "eva",
+              "answers": [{"title": "Diagnose MCP", "lead": "hal", "answer": "co-sign"}]}
+    web.detail[H] = detail([_cell("eva", 1, r1("eva")), _cell("hal", 1, r1("hal")),
+                            _cell("eva", 2, r2), _cell("hal", 3, hal_r3), _cell("eva", 3, eva_r3)])
+    out = tmp_path / "props.json"
+    assert run("proposals", "--huddle", H, "--out", str(out)).exit_code == 0
+    [p] = json.loads(out.read_text())
+    assert p["proposed_by"] == "eva" and p["answers"] == {"hal": "co-sign", "eva": "co-sign"}
+    from orchestrator import huddle as Hm
+    filed, held = Hm.work_gates([p], {"Q4 funder pipeline (Jonathan's goals sheet)"}, [])
+    assert [x["title"] for x in filed] == ["Diagnose MCP"], held
+
+
+def test_prompt_round3_carries_the_members_own_proposals_and_their_critique(tmp_path, web):
+    eva_r2 = {"huddle": H, "round": 2, "member": "eva",
+              "proposals": [prop("Solo Q4 follow-ups", "eva"),
+                            prop("Joint Q4 brief", "eva", ["echo"])]}
+    web.detail[H] = detail([_cell("eva", 1, r1("eva")), _cell("echo", 1, r1("echo")),
+                            _cell("eva", 2, eva_r2)])
+    p = write_plan(tmp_path)
+    crit = tmp_path / "crit.json"
+    crit.write_text(json.dumps({"proposals": {"Solo Q4 follow-ups": "Which funders? Name them."}}))
+    out = tmp_path / "eva-r3.md"
+    r = run("prompt", "--plan", str(p), "--member", "eva", "--round", "3",
+            "--critique", str(crit), "--out", str(out))
+    assert r.exit_code == 0, r.output
+    text = out.read_text()
+    assert "{{" not in text
+    assert "### Solo Q4 follow-ups" in text and '"why": "why Solo Q4 follow-ups"' in text
+    assert "Critique: Which funders? Name them." in text
+    assert "### Joint Q4 brief" in text
+    own = text.index("### Solo Q4 follow-ups")
+    assert text.index("Which funders?") > own
+
+
+def test_proposals_lets_the_proposer_revise_a_proposal_it_named_another_lead_for(tmp_path, web):
+    r2 = {"huddle": H, "round": 2, "member": "eva",
+          "proposals": [prop("Diagnose MCP", "hal", ["hal"])]}
+    r3 = {"huddle": H, "round": 3, "member": "eva", "answers": [],
+          "proposals": [prop("Diagnose MCP", "hal", ["hal"], why="revised why")]}
+    web.detail[H] = detail([_cell("eva", 1, r1("eva")), _cell("eva", 2, r2), _cell("eva", 3, r3)])
+    [p] = json.loads(run("proposals", "--huddle", H).stdout)
+    assert p["why"] == "revised why" and p["revised"] is True
+
+
+def test_file_patches_what_the_sync_drops_and_repatches_on_rerun(tmp_path, web):
+    _full_huddle(web)
+    p = write_plan(tmp_path)
+    props = tmp_path / "props.json"
+    run("proposals", "--huddle", H, "--out", str(props))
+    r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "r"))
+    assert r.exit_code == 0, r.output
+    page = f"https://cw/w/connect/huddles/{H}"
+    by = {slug: body for slug, _, body in web.patches}
+    assert set(by) == {"eva", "echo"}
+    lead = by["eva"]
+    assert lead["source_url"] == page
+    assert lead["rationale"].startswith("Serves: Q4 funder pipeline")
+    assert lead["plan"] == "- start Joint Q4 brief\n- then more"
+    assert by["echo"]["source_url"] == page and by["echo"]["rationale"]
+    sync_bodies = [b for (m, path, _, b) in web.calls if path.endswith("/tasks/sync")]
+    assert all("source_url" not in t for b in sync_bodies for t in b["tasks"])
+    n = len(web.patches)
+    r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "r"))
+    assert r.exit_code == 0, r.output
+    assert len(web.patches) == n + 2                       # re-run re-patches
+    assert len(web.tasks["eva"]) == 1 and len(web.tasks["echo"]) == 1
+
+
+def test_file_reuses_a_pre_fix_task_with_an_empty_source_url(tmp_path, web):
+    _full_huddle(web)
+    page = f"https://cw/w/connect/huddles/{H}"
+    web.tasks = {"eva": [{"id": 7, "ext_id": "T42", "title": "Joint Q4 brief", "source_url": "",
+                          "links": [{"label": "Huddle", "url": page}]}],
+                 "echo": [{"id": 8, "ext_id": "T1", "source_url": "",
+                           "title": "Joint Q4 brief — echo's part (lead eva)",
+                           "links": [{"label": "Huddle", "url": page}]}]}
+    p = write_plan(tmp_path)
+    props = tmp_path / "props.json"
+    run("proposals", "--huddle", H, "--out", str(props))
+    r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "r"))
+    assert r.exit_code == 0, r.output
+    assert len(web.tasks["eva"]) == 1 and len(web.tasks["echo"]) == 1
+    assert {(s, i) for s, i, _ in web.patches} == {("eva", 7), ("echo", 8)}
+    assert web.tasks["eva"][0]["source_url"] == page
+    assert json.loads(r.stdout)["filed"][0]["task"]["reused"] is True
 
 
 # ── dispatch ─────────────────────────────────────────────────────────────────────
@@ -422,6 +550,53 @@ def test_file_creates_the_project_when_the_lead_has_none(tmp_path, web):
     assert r.exit_code == 0, r.output
     assert web.projects["eva"][0]["name"] == "Q4 pipeline"
     assert H in web.projects["eva"][0]["notes"]
+
+
+def _one_proposal_huddle(web, project_name):
+    eva_r2 = {"huddle": H, "round": 2, "member": "eva",
+              "proposals": [prop("Cascade demo", "eva", ["echo"], project=project_name)],
+              "critique_answers": [{"title": "t", "answer": "a"}]}
+    echo_r3 = {"huddle": H, "round": 3, "member": "echo",
+               "answers": [{"title": "Cascade demo", "lead": "eva", "answer": "co-sign"}]}
+    web.detail[H] = detail([_cell("eva", 1, r1("eva")), _cell("echo", 1, r1("echo")),
+                            _cell("eva", 2, eva_r2), _cell("echo", 3, echo_r3)])
+
+
+def _file_one(tmp_path, web):
+    p = write_plan(tmp_path)
+    props = tmp_path / "props.json"
+    assert run("proposals", "--huddle", H, "--out", str(props)).exit_code == 0
+    r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "r"))
+    assert r.exit_code == 0, r.output
+    page = f"https://cw/w/connect/huddles/{H}"
+    return ([t for t in web.tasks["eva"] if t.get("source_url") == page][0],
+            web.tasks["echo"][0])
+
+
+def test_file_resolves_a_project_by_its_ext_id_in_parentheses(tmp_path, web):
+    _one_proposal_huddle(web, "Spark cascade (P3)")
+    web.projects = {"eva": [{"ext_id": "P1", "name": "Other"},
+                            {"ext_id": "P3", "name": "Spark facilitator programme cascade demo"}],
+                    "echo": [{"ext_id": "P9", "name": "Spark facilitator programme cascade demo"}]}
+    lead, partner = _file_one(tmp_path, web)
+    assert lead["project"] == "P3" and len(web.projects["eva"]) == 2
+    # the partner resolves the lead's REAL project name on its own board
+    assert partner["project"] == "P9"
+
+
+def test_file_resolves_a_project_ignoring_a_trailing_suffix_and_case(tmp_path, web):
+    _one_proposal_huddle(web, "connect-labs  Reliability (T15/T37/T26)")
+    web.projects = {"eva": [{"ext_id": "P2", "name": "Connect-labs reliability"}]}
+    lead, _ = _file_one(tmp_path, web)
+    assert lead["project"] == "P2" and len(web.projects["eva"]) == 1
+
+
+def test_file_creates_a_missing_project_without_the_suffix(tmp_path, web):
+    _one_proposal_huddle(web, "Spark cascade demo (P7)")      # P7 is not on eva's board
+    web.projects = {"eva": [{"ext_id": "P1", "name": "Other"}]}
+    lead, _ = _file_one(tmp_path, web)
+    assert web.projects["eva"][-1]["name"] == "Spark cascade demo"
+    assert lead["project"] == web.projects["eva"][-1]["ext_id"] == "P2"
 
 
 def test_file_dry_run_writes_nothing(tmp_path, web):

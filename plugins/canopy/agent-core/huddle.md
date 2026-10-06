@@ -77,8 +77,11 @@ claims without a link. `{"<member>": ["question", …]}`. Then for every member 
 proposal — the evidence, overlap with open tasks and earlier huddle outcomes, value vs cost to the
 principal's attention, whether the owner is right, and for joint work whether the split makes
 sense — into `crit.json`: `{"proposals": {"<title>": "critique"}, "<member>": ["question on its own
-proposals"]}`. Dispatch round 3 to every member named as a PARTNER or LEAD of a proposal worth
-keeping (`prompt` refuses a member with nothing to answer), then foreground `await --round 3`.
+proposals"]}`. Each member's round-3 prompt carries its own round-2 proposals verbatim with your
+critique of each (it revises them, same title), plus every joint ask naming it — including a
+proposal a teammate named it LEAD of, which that lead must co-sign too. Dispatch round 3 to every
+member who proposed, or is named as a PARTNER or LEAD of, a proposal worth keeping (`prompt`
+refuses a member with nothing to answer), then foreground `await --round 3`.
 
 **5. Merge, rank, file.** `canopy huddle proposals --huddle <id> --out props.json` again (it now
 carries each partner's answer and whether the lead answered your critique). Write `outcomes.json`
@@ -89,12 +92,16 @@ yours. Then:
 uv run --project "$CANOPY_ROOT" canopy huddle file --plan plan.json --outcomes outcomes.json --repo <your-repo> --dry-run
 uv run --project "$CANOPY_ROOT" canopy huddle file --plan plan.json --outcomes outcomes.json --repo <your-repo> --digest-out digest.md
 ```
-`file` enforces the type's gates — every partner co-signed (an unresolved `amend` holds), the
+`file` enforces the type's gates — every partner co-signed, and so did a lead a teammate named
+(an unresolved `amend` holds), the
 priority was stated in some round-1 report, a project is named, the critique was answered,
 nothing declined before without `new_evidence`, at most 5 — and files each survivor as a
-`suggested` task on the lead's board (project find-or-create) plus a linked task on each
-partner's, then writes the Drive record and marks the anchor finished. Re-running is safe: tasks
-are found by huddle page + title, the record is replaced. An over-long field is REJECTED, never
+`suggested` task on the lead's board (project find-or-create: a "(P3)" in the name that is on
+the lead's board wins, else names match without a trailing "(…)", else a new project under the
+stripped name) plus a linked task on each
+partner's (patched with `source_url`/`rationale`/`plan` after the sync, which drops them), then
+writes the Drive record and marks the anchor finished. Re-running is safe: tasks are found by
+huddle page + title (and re-patched), the record is replaced. An over-long field is REJECTED, never
 truncated — shorten it in `outcomes.json` and re-run.
 
 **6. Tell the principal — once.** Run your pre-send review on `digest.md`, then send it through

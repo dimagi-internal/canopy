@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -273,10 +274,10 @@ def collect_proposals(detail: dict) -> list[dict]:
             if not isinstance(p, dict) or not p.get("title"):
                 continue
             lead = p.get("lead") or member
-            if rnd == 3 and lead != member:
-                continue  # only the lead revises its own proposal
             key = (lead, H.norm(p["title"]))
             prev = props.get(key, {})
+            if rnd == 3 and member not in (lead, prev.get("proposed_by")):
+                continue  # only the lead, or whoever proposed it, revises a proposal
             props[key] = {**prev, **p, "lead": lead, "proposed_by": prev.get("proposed_by", member),
                           "round": rnd, "revised": rnd == 3 and bool(prev),
                           "answers": prev.get("answers", {}),
@@ -298,7 +299,10 @@ def collect_proposals(detail: dict) -> list[dict]:
     out = []
     for k in order:
         p = props[k]
-        p["critique_answered"] = bool(r2_answered.get(p["lead"])) or bool(p.get("revised"))
+        # the critique went to whoever proposed it — the lead, or the teammate who named it
+        p["critique_answered"] = (bool(r2_answered.get(p["lead"]))
+                                  or bool(r2_answered.get(p.get("proposed_by")))
+                                  or bool(p.get("revised")))
         out.append(p)
     return out
 
@@ -488,22 +492,30 @@ def prompt_cmd(plan_path, member, round_no, critique_path, out):
             ctx["reports"] = "\n\n".join(reports)
         else:
             per = crit.get("proposals") or {}
+            hidden = ("answers", "answer_notes", "critique_answered", "proposed_by", "round",
+                      "revised")
             asks = []
-            mine = []
             for p in collect_proposals(detail):
                 if member in H.partners_of(p):
-                    shown = {k: v for k, v in p.items()
-                             if k not in ("answers", "answer_notes", "critique_answered",
-                                          "proposed_by", "round", "revised")}
-                    asks.append(f"### {p['title']} (lead {p['lead']})\n```json\n"
-                                f"{json.dumps(shown, indent=2)}\n```\n"
-                                f"Critique: {_bullets(per.get(p['title']))}")
-                if p["lead"] == member:
-                    mine.append(p)
-            if not asks and not mine:
-                raise HuddleError(f"nothing for {member} in round 3: no joint proposal names it "
-                                  "and it leads none")
+                    head = f"### {p['title']} (lead {p['lead']})"
+                elif p["lead"] == member and H.named_lead(p):
+                    head = (f"### {p['title']} (lead {p['lead']} — {p['proposed_by']} named YOU "
+                            "as lead; answer it like any joint ask)")
+                else:
+                    continue
+                shown = {k: v for k, v in p.items() if k not in hidden}
+                asks.append(f"{head}\n```json\n{json.dumps(shown, indent=2)}\n```\n"
+                            f"Critique: {_bullets(per.get(p['title']))}")
+            own = []
+            for p in (blocks.get((member, 2)) or {}).get("proposals") or []:
+                if isinstance(p, dict) and p.get("title"):
+                    own.append(f"### {p['title']}\n```json\n{json.dumps(p, indent=2)}\n```\n"
+                               f"Critique: {_bullets(per.get(p['title']))}")
+            if not asks and not own:
+                raise HuddleError(f"nothing for {member} in round 3: no proposal asks it to "
+                                  "co-sign and it proposed none")
             ctx["asks"] = "\n\n".join(asks) or "none — no teammate proposed joint work with you."
+            ctx["own"] = "\n\n".join(own) or "none — you proposed nothing in round 2."
     try:
         text = H.render_round(ht, round_no, ctx)
     except ValueError as e:
@@ -723,35 +735,82 @@ def _task_fields(p: dict, plan: dict, page: str) -> tuple[dict, list[dict]]:
     return lead_task, partner_tasks
 
 
-def _project_ref(client: AgentClient, name: str, hid: str, page: str, *, create: bool,
-                 projects_cache: dict) -> str:
+_TRAILING_PARENS = re.compile(r"\s*\(([^()]*)\)\s*$")
+_PROJECT_EXT_ID = re.compile(r"\(\s*(P\d+)\s*\)", re.I)
+
+
+def _project_key(name: str) -> str:
+    """A project name compared loosely: no trailing "(…)" suffix, case/whitespace folded."""
+    return " ".join(_TRAILING_PARENS.sub("", str(name or "")).split()).casefold()
+
+
+def _resolve_project(client: AgentClient, name: str, hid: str, page: str, *, create: bool,
+                     by_ext_id: bool, projects_cache: dict) -> dict:
+    """The agent's project row for `name`, or {} — never a duplicate of one it has.
+
+    Members write names like "Spark cascade demo (P3)" or "connect-labs reliability (T15/T37)":
+    (a) a parenthesised `P<N>` that exists on this board wins (`by_ext_id`: only the lead's
+    board — the id is the lead's); (b) else names match with the trailing "(…)" stripped and
+    case/whitespace folded; (c) else, with `create`, a new project under the stripped name."""
     if client.slug not in projects_cache:
         projects_cache[client.slug] = client.list_projects()
-    for pr in projects_cache[client.slug]:
-        if str(pr.get("name") or "").strip().casefold() == name.strip().casefold():
-            return str(pr.get("ext_id") or "")
+    rows = projects_cache[client.slug]
+    if by_ext_id:
+        ids = {i.upper() for i in _PROJECT_EXT_ID.findall(str(name or ""))}
+        for pr in rows:
+            if str(pr.get("ext_id") or "").upper() in ids:
+                return pr
+    want = _project_key(name)
+    for pr in rows:
+        if want and _project_key(pr.get("name")) == want:
+            return pr
     if not create:
-        return ""
+        return {}
     # The canopy-web half only. The Drive `Projects/<name>/` half belongs to the LEAD's Drive,
     # which the leader cannot write — the lead makes it on its first work turn.
-    made = client.create_project(name=name.strip(), notes=f"From huddle {hid}.",
+    clean = " ".join(_TRAILING_PARENS.sub("", str(name or "")).split()) or str(name).strip()
+    made = client.create_project(name=clean, notes=f"From huddle {hid}.",
                                  links=[{"label": "Huddle", "url": page}])
-    projects_cache[client.slug].append(made)
-    return str(made.get("ext_id") or "")
+    rows.append(made)
+    return made
+
+
+# What canopy-web's task SYNC drops (it writes only the sheet columns) — set by a PATCH after.
+# canopy-web finds a huddle's outputs BY `source_url`, so this is not cosmetic.
+_PATCH_AFTER_SYNC = ("source_url", "rationale", "plan")
+
+
+def _filed_here(t: dict, page: str, title: str) -> bool:
+    """A task this huddle already filed under this title. Tasks filed before the post-sync
+    PATCH existed carry source_url "" — those are recognised by their Huddle link."""
+    if str(t.get("title") or "") != title:
+        return False
+    if t.get("source_url") == page:
+        return True
+    return not t.get("source_url") and any(
+        isinstance(link, dict) and link.get("url") == page for link in t.get("links") or [])
 
 
 def _find_or_add_task(client: AgentClient, task: dict, page: str) -> dict:
-    """Reuse a task already filed for this huddle with this title; else add the next T<N>."""
+    """Reuse a task already filed for this huddle with this title; else add the next T<N>.
+    Either way, PATCH the fields the sync drops onto it (a re-run re-patches)."""
     from orchestrator.agent_cli import next_task_ext_id
     tasks = client.list_tasks()
-    for t in tasks:
-        if t.get("source_url") == page and str(t.get("title") or "") == task["title"]:
-            return {"agent": client.slug, "ext_id": t.get("ext_id"),
-                    "project": t.get("project_ext_id") or task.get("project", ""), "reused": True}
-    row = {**task, "ext_id": next_task_ext_id(tasks)}
-    client.sync_tasks([row])
-    return {"agent": client.slug, "ext_id": row["ext_id"], "project": row.get("project", ""),
-            "reused": False}
+    found = next((t for t in tasks if _filed_here(t, page, task["title"])), None)
+    if found is not None:
+        ext_id, reused = found.get("ext_id"), True
+        project = found.get("project_ext_id") or task.get("project", "")
+    else:
+        ext_id, reused = next_task_ext_id(tasks), False
+        project = task.get("project", "")
+        client.sync_tasks([{**{k: v for k, v in task.items() if k not in _PATCH_AFTER_SYNC},
+                            "ext_id": ext_id}])
+        found = next((t for t in client.list_tasks() if t.get("ext_id") == ext_id), None)
+    if found is None or found.get("id") is None:
+        raise RuntimeError(f"{client.slug} {ext_id}: synced but not found on the board to patch "
+                           "its source_url/rationale/plan")
+    client.patch_task(found["id"], **{k: task[k] for k in _PATCH_AFTER_SYNC if k in task})
+    return {"agent": client.slug, "ext_id": ext_id, "project": project, "reused": reused}
 
 
 def not_reached(plan: dict, detail: dict) -> list[dict]:
@@ -815,16 +874,20 @@ def file_cmd(plan_path, outcomes_path, repo, local, digest_out, dry_run):
             lead = _client(p["lead"])
             project = p.get("project") or {}
             name = project.get("name") if isinstance(project, dict) else str(project)
-            lead_task["project"] = _project_ref(lead, name, hid, page, create=True,
-                                                projects_cache=projects_cache)
+            lead_project = _resolve_project(lead, name, hid, page, create=True, by_ext_id=True,
+                                            projects_cache=projects_cache)
+            lead_task["project"] = str(lead_project.get("ext_id") or "")
+            # partners look up the lead's REAL project name on their own boards
+            name = lead_project.get("name") or name
             p["task"] = _find_or_add_task(lead, lead_task, page)
             created.append(p["task"])
             p["partner_tasks"] = []
             for pt in partner_tasks:
                 agent = pt.pop("agent")
                 pc = _client(agent)
-                pt["project"] = _project_ref(pc, name, hid, page, create=False,
-                                             projects_cache=projects_cache)
+                pt["project"] = str(_resolve_project(
+                    pc, name, hid, page, create=False, by_ext_id=False,
+                    projects_cache=projects_cache).get("ext_id") or "")
                 pt["links"] = pt["links"] + [{"label": f"Lead task ({p['lead']} {p['task']['ext_id']})",
                                               "url": board_url(base, ws, p["lead"])}]
                 ref = _find_or_add_task(pc, pt, page)

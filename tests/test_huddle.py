@@ -115,6 +115,21 @@ def test_gates_lead_listed_in_with_is_not_its_own_partner():
     assert [p["title"] for p in filed] == ["A"]
 
 
+def test_gates_a_lead_named_by_someone_else_must_cosign():
+    # eva proposed it but named hal as lead: hal never consented, so hal must answer too.
+    base = _p("Diagnose MCP", lead="hal", with_=["hal", "eva"])
+    filed, held = H.work_gates([{**base, "proposed_by": "eva", "answers": {"eva": "co-sign"}}],
+                               {"Q4 pipeline"}, [])
+    assert not filed and held[0]["held"] == "hal has not co-signed"
+    filed, _ = H.work_gates([{**base, "proposed_by": "eva",
+                              "answers": {"eva": "co-sign", "hal": "co-sign"}}],
+                            {"Q4 pipeline"}, [])
+    assert [p["title"] for p in filed] == ["Diagnose MCP"]
+    # the lead's own proposal needs no self-co-sign
+    filed, _ = H.work_gates([{**_p("Mine", lead="hal"), "proposed_by": "hal"}], {"Q4 pipeline"}, [])
+    assert [p["title"] for p in filed] == ["Mine"]
+
+
 def test_gates_priority_project_critique_cap_and_declined():
     props = [_p(f"P{i}") for i in range(7)] + [
         _p("X", priority="unknown"), _p("E", priority=""), _p("Y", critique=False),
