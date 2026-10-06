@@ -243,31 +243,26 @@ function provenanceHeaders() {
     const ok = (v, re) => (typeof v === "string" && PRINTABLE.test(v.trim()) && (!re || re.test(v.trim())) ? v.trim() : "");
     let turn = ok(env.CANOPY_TURN_ID, UUIDISH);
     let session = ok(env.CANOPY_SESSION_ID, UUIDISH);
-    let task = ok(env.CANOPY_EMDASH_TASK, SAFE_NAME);
     let claude = ok(env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_SESSION_ID, UUIDISH);
     if ((!turn || !session) && env.CANOPY_CALLER) {
       const c = readProfile(env.CANOPY_CALLER) || {};
       turn = turn || ok(c.turn_id, UUIDISH);
       session = session || ok((c.conversation || {}).session_id, UUIDISH);
     }
-    const cands = task ? [task] : taskCandidates();
-    if (!turn || !session || !claude || !task) {
-      for (const n of cands) {
+    // The task name only LOCATES this machine's by-task record; it is never sent —
+    // canopy-web derives runner, runner type and host from the parent turn.
+    if (!turn || !session || !claude) {
+      for (const n of taskCandidates()) {
         const rec = readProfile(path.join(os.homedir(), ".canopy", "caller", "by-task", `${n}.json`));
         if (!rec) continue;
-        task = task || n;
         turn = turn || ok(rec.turn_id, UUIDISH);
         session = session || ok(rec.session_id, UUIDISH);
         claude = claude || ok(rec.claude_session_id, UUIDISH);
         break;
       }
     }
-    if (!task && cands.length) task = cands[0];
-    const host = ok(os.hostname());
     if (turn) h["X-Canopy-Parent-Turn"] = turn;
     if (session) h["X-Canopy-Parent-Session"] = session;
-    if (task) h["X-Canopy-Parent-Task"] = task;
-    if (host) h["X-Canopy-Parent-Host"] = host;
     if (claude) h["X-Canopy-Claude-Session"] = claude;
   } catch {
     // best-effort: the client header alone is still true

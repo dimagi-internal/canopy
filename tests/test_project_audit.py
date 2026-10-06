@@ -5,7 +5,7 @@ folder, Projects/ folders with no project, and a multi-PR task living loose.
 """
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from click.testing import CliRunner
@@ -139,10 +139,16 @@ def test_closeout_counts_findings_and_says_when_drive_was_skipped():
     assert "skipped (Drive unchecked)" in pa.render(result)
 
 
+def _hours_ago(h):
+    return (datetime.now(timezone.utc) - timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 @pytest.fixture
 def fake_http(monkeypatch):
     responses = {
-        "agents/ace/tasks/": [task("T7", links=4, updated="2026-10-04T10:00:00Z")],
+        # Relative to NOW: the CLI's default --recent-days window is measured from the
+        # wall clock, so a fixed date ages out of it and fails the test two days later.
+        "agents/ace/tasks/": [task("T7", links=4, updated=_hours_ago(1))],
         "agents/ace/projects/": [project("P1", "UNGA follow-up video")],
     }
 

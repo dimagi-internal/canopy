@@ -16,7 +16,7 @@ CLAUDE = "0e1f0e1f-0000-4000-8000-000000000003"
 TASK = "c-please-deploy"
 CWD = f"/Users/a/emdash/worktrees/hal-0ceb29c5/emdash-{TASK}-x7o1w"
 
-_ENV_VARS = ("CANOPY_TURN_ID", "CANOPY_SESSION_ID", "CANOPY_EMDASH_TASK", "CANOPY_CALLER",
+_ENV_VARS = ("CANOPY_TURN_ID", "CANOPY_SESSION_ID", "CANOPY_CALLER",
              "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")
 
 
@@ -34,7 +34,7 @@ def test_nothing_known_sends_only_the_client_headers(root, tmp_path):
     h = pv.provenance_headers(cwd=str(tmp_path))
     assert h[pv.HEADER_CLIENT].startswith("canopy-cli/")
     assert h["User-Agent"].startswith("canopy-cli/")
-    for header in (pv.HEADER_TURN, pv.HEADER_SESSION, pv.HEADER_TASK, pv.HEADER_CLAUDE):
+    for header in (pv.HEADER_TURN, pv.HEADER_SESSION, pv.HEADER_CLAUDE):
         assert header not in h
 
 
@@ -43,12 +43,10 @@ def test_env_wins(root, monkeypatch):
         {"turn_id": "11111111-0000-4000-8000-000000000000", "session_id": SESSION}))
     monkeypatch.setenv("CANOPY_TURN_ID", TURN)
     monkeypatch.setenv("CANOPY_SESSION_ID", SESSION)
-    monkeypatch.setenv("CANOPY_EMDASH_TASK", "cloud-task")
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", CLAUDE)
     h = pv.provenance_headers(cwd=CWD)
     assert h[pv.HEADER_TURN] == TURN
     assert h[pv.HEADER_SESSION] == SESSION
-    assert h[pv.HEADER_TASK] == "cloud-task"
     assert h[pv.HEADER_CLAUDE] == CLAUDE
 
 
@@ -67,7 +65,8 @@ def test_by_task_record_is_found_from_the_worktree_path(root):
     assert h[pv.HEADER_TURN] == TURN
     assert h[pv.HEADER_SESSION] == SESSION
     assert h[pv.HEADER_CLAUDE] == CLAUDE
-    assert h[pv.HEADER_TASK] == TASK
+    # the task name only located the record; nothing runner-specific is sent
+    assert not any("Task" in k or "Host" in k for k in h)
 
 
 def test_unsafe_values_are_dropped_not_sent(root, monkeypatch, tmp_path):
@@ -129,5 +128,4 @@ def test_hook_claim_writes_a_record_the_cli_then_reads(root, monkeypatch, capsys
     rec = json.loads(rec_path.read_text())
     assert (rec["turn_id"], rec["session_id"], rec["claude_session_id"]) == (TURN, SESSION, CLAUDE)
     p = pv.resolve_parent(cwd=CWD)
-    assert (p["turn_id"], p["session_id"], p["claude_session_id"], p["task"]) == (
-        TURN, SESSION, CLAUDE, TASK)
+    assert (p["turn_id"], p["session_id"], p["claude_session_id"]) == (TURN, SESSION, CLAUDE)
