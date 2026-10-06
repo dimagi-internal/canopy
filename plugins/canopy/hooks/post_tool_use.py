@@ -39,7 +39,6 @@ TRACKED_SKILLS = {
     "canopy:session-review",
     "canopy:walkthrough",
     "canopy:walkthrough-eval",
-    "canopy:portfolio-review",
     "canopy:activity-summary",
     "code-review:code-review",
     "superpowers:requesting-code-review",

@@ -23,7 +23,7 @@ def test_scoped_api_path_rewrites_scoped_apps_only():
     assert cw.scoped_api_path("/api/reviews/abc/submit/", "connect") == "/api/w/connect/reviews/abc/submit/"
     assert cw.scoped_api_path("/api/ddd/narratives/x/", "connect") == "/api/w/connect/ddd/narratives/x/"
     # unscoped app + no-workspace are no-ops
-    assert cw.scoped_api_path("/api/insights/", "connect") == "/api/insights/"
+    assert cw.scoped_api_path("/api/sessions/", "connect") == "/api/sessions/"
     assert cw.scoped_api_path("/api/walkthroughs/", None) == "/api/walkthroughs/"
 
 

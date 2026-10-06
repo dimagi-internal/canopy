@@ -35,7 +35,7 @@ def resolve_base_url(base_url: Optional[str]) -> str:
 
 # Product apps that canopy-web scopes to a workspace. A path like
 # ``/api/walkthroughs/…`` is rewritten to ``/api/w/<ws>/walkthroughs/…`` when a
-# workspace is active; unscoped apps (insights, sessions, system, me, …) are
+# workspace is active; unscoped apps (sessions, system, me, …) are
 # left alone. Mirrors WS_SCOPED_API_PREFIXES on the canopy-web frontend.
 SCOPED_APPS = ("projects", "walkthroughs", "reviews", "shareouts", "ddd", "timeline")
 

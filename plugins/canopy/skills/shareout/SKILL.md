@@ -148,4 +148,4 @@ instead of duplicating.
 ## When NOT to use
 
 - For the internal strategic brief over orchestrator state, use `canopy:brief`.
-- For short categorized portfolio one-liners, use `canopy:portfolio-review` (/insights).
+- For fleet-level improvement findings, use `fleet-align` (agents) or an agent's own review lenses — they post to the agent board.

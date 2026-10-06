@@ -136,7 +136,7 @@ for Claude Code sessions:
 | Propose a change | — | `proposer.py` → `proposals.py` |
 | Execute the change | — | agent dispatch via `/canopy:improve` → PR |
 | Measure / track outcome | — | `tracker.py` |
-| Make it visible | HTML report | canopy-web feeds (`/insights`, `/agents/<name>`) |
+| Make it visible | HTML report | canopy-web feeds (`/agents/<name>` board items + tasks) |
 
 Echo's hand-rolled `manager-sync` + Step-4 self-check is a *per-agent miniature* of canopy's
 loop. **Don't rebuild reef. Point canopy's loop at the agents' turns.**
