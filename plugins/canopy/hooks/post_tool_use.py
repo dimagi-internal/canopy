@@ -26,7 +26,7 @@ POST_TIMEOUT_SECONDS = 15
 # runs under the system python3 with a bare sys.path and cannot import orchestrator.
 CANOPY_WEB_API = os.environ.get(
     "CANOPY_WEB_API_URL",
-    "https://labs.connect.dimagi.com/canopy",
+    "https://canopy.dimagi.com",
 )
 WORKBENCH_TOKEN_FILE = Path.home() / ".claude" / "canopy" / "workbench-token"
 
