@@ -46,6 +46,7 @@ from typing import Callable
 
 import yaml
 
+from orchestrator.provenance import provenance_headers
 from scripts.ddd.schemas.models import Decision, Gate, ReviewRequest, RunState, UnifiedSpec, WhyBrief
 from scripts.ddd.spec_io import load_spec
 from scripts.ddd.runstate import load as load_state
@@ -798,6 +799,7 @@ def _default_post(
     body = crlf.join(parts) + crlf + file_bytes + crlf + f"--{boundary}--".encode() + crlf
 
     headers = {
+        **provenance_headers(),
         "Content-Type": f"multipart/form-data; boundary={boundary}",
         "Authorization": f"Bearer {pat}",
     }
