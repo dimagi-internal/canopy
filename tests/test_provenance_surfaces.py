@@ -6,7 +6,6 @@ canopy-web a session uses — the MCP server (remote, but canopy owns its
 `headersHelper`) is the one an agent calls most, so without it a dispatch through
 `enqueue_turn` still arrived anonymous.
 """
-import importlib.util
 import json
 import os
 import subprocess
