@@ -19,6 +19,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from orchestrator import canopy_web
+from orchestrator.provenance import with_provenance
 
 # Canonical PAT/base-url conventions live in canopy_web; alias for back-compat.
 DEFAULT_API = canopy_web.DEFAULT_API
@@ -97,7 +98,7 @@ def fetch_latest_period_end(api_url: str, token: str, timeout: int = 15) -> dt.d
     """Return the most recent existing shareout's period_end (the feed is
     ordered newest-period-first), or None when there are none / on any error."""
     url = f"{api_url.rstrip('/')}/api/shareouts/?limit=1"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(url, headers=with_provenance({"Authorization": f"Bearer {token}"}))
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)
         data = json.loads(resp.read().decode("utf-8") or "{}")
@@ -442,10 +443,10 @@ def post(payload: dict, api_url: str, token: str, timeout: int = 60) -> tuple[in
         url,
         data=data,
         method="POST",
-        headers={
+        headers=with_provenance({
             "Content-Type": "application/json",
             "Authorization": f"Bearer {token}",
-        },
+        }),
     )
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)
@@ -468,7 +469,7 @@ def clear(filters: dict, api_url: str, token: str, timeout: int = 30) -> tuple[i
         url,
         data=data,
         method="POST",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        headers=with_provenance({"Content-Type": "application/json", "Authorization": f"Bearer {token}"}),
     )
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)

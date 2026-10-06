@@ -18,6 +18,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from orchestrator.provenance import with_provenance
+
 EMDASH_ROOTS = [
     Path.home() / "emdash" / "worktrees",
     Path.home() / "emdash" / "repositories",
@@ -82,7 +84,7 @@ def fetch_curated_slugs(api_url: str, token: str, timeout: float = 10.0) -> set[
     """
     req = urllib.request.Request(
         f"{api_url.rstrip('/')}/api/projects/slugs/",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=with_provenance({"Authorization": f"Bearer {token}"}),
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:

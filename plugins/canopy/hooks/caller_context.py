@@ -23,6 +23,13 @@ the summary as `additionalContext`, which Claude Code adds beside it.
     never followed must not attach a stranger's name to what a human types next.
   * Cloud runner (spawns `claude -p` itself): `CANOPY_CALLER=<envelope>` in the env.
 
+**It also leaves a durable parent record** at `~/.canopy/caller/by-task/<task>.json`
+(`turn_id`, `session_id`, `claude_session_id`, `updated_at`) when it claims a laptop
+pointer. The pointer is one-shot and emdash cannot pass env vars, so without this a
+`canopy` CLI call made later in the same session (a dispatch, a script) could not say
+which turn started it; `orchestrator/provenance.py` reads it to send the
+`X-Canopy-Parent-*` headers.
+
 **No pointer, no output.** A human typing at the keyboard is the machine's owner and
 needs no introduction, and every non-canopy session pays one `stat` for this hook.
 
@@ -110,10 +117,11 @@ def _inside(path: str, root: str) -> bool:
 
 
 def claim_pointer(candidates, *, root=None, now=time.time):
-    """The envelope path from a FRESH pointer for one of `candidates`, consuming it."""
+    """(envelope path, turn id, task) from a FRESH pointer for one of `candidates`,
+    consuming it; (None, None, None) when there is none."""
     pending = os.path.join(root or CALLER_ROOT, "pending")
     if not os.path.isdir(pending):
-        return None, None
+        return None, None, None
     for name in candidates:
         path = os.path.join(pending, f"{name}.json")
         claimed = os.path.join(pending, f".{name}.{os.getpid()}.claimed")
@@ -138,8 +146,32 @@ def claim_pointer(candidates, *, root=None, now=time.time):
             continue                              # stale: never guess who is typing
         env = str(doc.get("envelope") or "")
         if env and _inside(env, root or CALLER_ROOT):
-            return env, str(doc.get("turn_id") or "")
-    return None, None
+            return env, str(doc.get("turn_id") or ""), name
+    return None, None, None
+
+
+def record_parent(task: str, env: dict, turn_id: str, claude_session_id: str, *,
+                  root=None, now=time.time) -> None:
+    """Write `by-task/<task>.json` atomically, 0600. Best-effort: errors are swallowed."""
+    if not task or not _NAME.match(task):
+        return
+    conv = env.get("conversation") if isinstance(env.get("conversation"), dict) else {}
+    rec = {"task": task, "turn_id": turn_id or str(env.get("turn_id") or ""),
+           "session_id": str((conv or {}).get("session_id") or ""),
+           "claude_session_id": str(claude_session_id or ""), "updated_at": now()}
+    d = os.path.join(root or CALLER_ROOT, "by-task")
+    tmp = os.path.join(d, f".{task}.{os.getpid()}.tmp")
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(rec, fh)
+        os.replace(tmp, os.path.join(d, f"{task}.json"))
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def _person(who: dict) -> str:
@@ -248,17 +280,20 @@ def main() -> int:
     try:
         data = json.load(sys.stdin)
         explicit = os.environ.get("CANOPY_CALLER", "")
+        task = None
         if explicit:
             path, tid = (explicit if _inside(explicit, CALLER_ROOT) else None), ""
         else:
-            path, tid = claim_pointer(task_candidates(data.get("transcript_path", ""),
-                                                      data.get("cwd", "")))
+            path, tid, task = claim_pointer(task_candidates(data.get("transcript_path", ""),
+                                                            data.get("cwd", "")))
         if not path:
             return 0
         with open(path, encoding="utf-8") as fh:
             env = json.load(fh)
         if not isinstance(env, dict):
             return 0
+        if task:
+            record_parent(task, env, tid, str(data.get("session_id") or ""))
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
             "additionalContext": summarize(env, path, tid)}}))

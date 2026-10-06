@@ -19,6 +19,7 @@ from typing import Optional
 
 from orchestrator import canopy_web, turn_synthesis
 from orchestrator.canopy_web import CanopyError, Transport
+from orchestrator.provenance import provenance_headers
 
 UPLOAD_PATH = "/api/sessions/upload"
 
@@ -103,7 +104,7 @@ def upload_transcript(
     base = canopy_web.resolve_base_url(base_url)
     tok = canopy_web.resolve_token(token)
     tr = transport or canopy_web.urllib_transport
-    headers = {"Authorization": f"Bearer {tok}", "Content-Type": ctype}
+    headers = {**provenance_headers(), "Authorization": f"Bearer {tok}", "Content-Type": ctype}
     status, text = tr("POST", base + UPLOAD_PATH, headers, body)
     if not (200 <= status < 300):
         raise CanopyError(f"POST {UPLOAD_PATH} -> {status}: {text[:400]}")

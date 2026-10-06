@@ -37,7 +37,7 @@ enforce it.
 `eval_rubric` · `turn_synthesis` · `session_upload` · `fleet_align` · `session_sources` ·
 `session_liveness` ·
 `work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `project_audit` · `runner_cli` · `secret_cli` ·
-`llm_output` · `decide_guard_prompt` · `decide_guard_cli`
+`llm_output` · `decide_guard_prompt` · `decide_guard_cli` · `provenance`
 
 **HUBS** (orchestration / composition roots — wire product into the CLI, the
 improvement pipeline, and the web server; allowed to import product, like
