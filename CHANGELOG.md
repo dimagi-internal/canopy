@@ -9,6 +9,21 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.595] - 2026-10-06
+### Added
+- **`canopy huddle` — a team of agents syncs, led by one of them.** `plan / prompt / dispatch /
+  await / status / resume / proposals / file / view`. Stateless between steps: round turns are
+  one-shot, unpinned, tagged `origin_ref.kind = huddle_round` and parented on an anchor turn the
+  leader files as a close-out; the conversation is read back from canopy-web's derived
+  `GET /api/huddles/<id>`, never re-recorded. Huddle types are package data
+  (`huddle_types/<type>/round<N>.md` + `schema.json`); the first is `work` (report → roundtable →
+  co-sign) with its gates (every partner co-signed, a round-1 priority, a project, an answered
+  critique, no repeat of a declined outcome, ≤5). `file` puts survivors on the lead's and
+  partners' boards as `suggested` tasks (idempotent) and writes the clean-outcomes record to the
+  leader's Drive `Process State/Huddles/<id>.json`. Leader procedure:
+  `plugins/canopy/agent-core/huddle.md`. Needs canopy-web's huddle API (turn tags + `/api/huddles/`).
+- `AgentClient.post_turn(origin_ref=…)` — tags a close-out row (sent only when given).
+
 ## [0.2.591] - 2026-10-05
 ### Added
 - **Request provenance on the remaining doors to canopy-web.** 0.2.590 (#768) put
