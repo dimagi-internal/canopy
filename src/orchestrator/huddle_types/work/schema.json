@@ -17,4 +17,9 @@
      "proposals": {"type": "list", "max": 3,
                    "item_fields": ["title", "lead", "with", "priority", "project", "why", "plan",
                                    "effort", "success_measure", "confidence"]},
-     "feedback": {"type": "str"}}}}}
+     "feedback": {"type": "str"}}},
+  "4": {"fields": {
+     "resolutions": {"type": "list", "max": 9, "required": true,
+                     "item_fields": ["title", "lead", "resolution"],
+                     "item_enums": {"resolution": ["accept", "reject"]},
+                     "item_required_when": {"proposal": {"resolution": "accept"}}}}}}}

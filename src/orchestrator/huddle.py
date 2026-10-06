@@ -22,7 +22,9 @@ import json
 import re
 from importlib.resources import files
 
-MAX_ROUNDS = 3
+# Round 4 ("resolve") is CONDITIONAL: only the lead (and a proposer who named it) of a proposal
+# that drew an `amend` in round 3 gets one. A type may ship fewer rounds than this.
+MAX_ROUNDS = 4
 MAX_PROPOSALS = 3
 MAX_OUTCOMES = 5
 # The fence a member wraps its reply in. canopy-web parses the same fence (its own copy).
@@ -32,6 +34,10 @@ _TYPE_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 
 # What a co-signing partner may answer in round 3.
 COSIGN, AMEND, DECLINE = "co-sign", "amend", "decline"
+# What a round-4 resolution turns a partner's `amend` into. `amend→accepted` counts as a
+# co-sign (the lead folded the change in); `amend→rejected` holds the proposal.
+AMEND_ACCEPTED, AMEND_REJECTED = "amend→accepted", "amend→rejected"
+ACCEPT, REJECT = "accept", "reject"
 
 
 # ── ids, keys, tags ──────────────────────────────────────────────────────────────
@@ -129,13 +135,34 @@ def validate_block(ht: HuddleType, round_no: int, block) -> list[str]:
                 probs.append(f"{key} must be a list")
             elif "max" in rule and len(v) > rule["max"]:
                 probs.append(f"{key} has {len(v)} items (max {rule['max']})")
-            elif rule.get("item_fields"):
-                for i, item in enumerate(v):
-                    for f in rule["item_fields"]:
-                        if not isinstance(item, dict) or f not in item:
-                            probs.append(f"{key}[{i}] missing {f}")
+            else:
+                probs += _item_problems(key, v, rule)
         elif rule.get("type") == "str" and not isinstance(v, str):
             probs.append(f"{key} must be a string")
+    return probs
+
+
+def _item_problems(key: str, items: list, rule: dict) -> list[str]:
+    """Per-item checks of a list field: `item_fields` (required keys), `item_enums`
+    ({field: [allowed]}) and `item_required_when` ({field: {other: value}} — e.g. a revised
+    `proposal` is required when `resolution` is `accept`)."""
+    probs = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            if rule.get("item_fields"):
+                probs += [f"{key}[{i}] missing {f}" for f in rule["item_fields"]]
+            continue
+        probs += [f"{key}[{i}] missing {f}" for f in rule.get("item_fields") or []
+                  if f not in item]
+        for f, allowed in (rule.get("item_enums") or {}).items():
+            if f in item and str(item[f]).strip().lower() not in allowed:
+                probs.append(f"{key}[{i}] {f} must be one of {'|'.join(allowed)}")
+        for f, when in (rule.get("item_required_when") or {}).items():
+            if f in item and item[f]:
+                continue
+            if all(str(item.get(k, "")).strip().lower() == v for k, v in when.items()):
+                cond = " and ".join(f"{k} is {v}" for k, v in when.items())
+                probs.append(f"{key}[{i}] missing {f} (required when {cond})")
     return probs
 
 
@@ -188,6 +215,24 @@ def cosigners_of(p: dict) -> list[str]:
     return out
 
 
+def amenders_of(p: dict) -> list[str]:
+    """The co-signers whose round-3 answer is a still-open `amend`."""
+    ans = p.get("answers") or {}
+    return [m for m in cosigners_of(p) if ans.get(m) == AMEND]
+
+
+def resolvers_of(p: dict) -> list[str]:
+    """Who gets round 4 for this proposal: its lead, plus the teammate who proposed it when
+    that teammate named someone else lead — each only for an amend that is not its own. [] when
+    nothing is amended (no amend → no round 4)."""
+    amenders = amenders_of(p)
+    out = []
+    for r in (p.get("lead"), p.get("proposed_by") if named_lead(p) else None):
+        if r and r not in out and any(a != r for a in amenders):
+            out.append(r)
+    return out
+
+
 def _serves_stated_priority(priority, r1_priorities) -> bool:
     want = norm(priority)
     if not want:
@@ -199,7 +244,8 @@ def work_gates(proposals: list[dict], r1_priorities, prior_declined: list[dict]
                ) -> tuple[list[dict], list[dict]]:
     """Split proposals into (filed, held). Each held one carries `held`: the reason.
 
-    - a joint proposal files only when EVERY partner co-signed (an unresolved `amend` holds),
+    - a joint proposal files only when EVERY partner co-signed (an unresolved `amend` holds,
+      and so does one the lead rejected in round 4; one it accepted counts as a co-sign),
       and so must a lead someone else named (`proposed_by` ≠ `lead`);
     - it must serve a priority some member stated in round 1, and live in a project;
     - the leader's critique must have been answered;
@@ -213,13 +259,16 @@ def work_gates(proposals: list[dict], r1_priorities, prior_declined: list[dict]
         ans = p.get("answers") or {}
         partners = cosigners_of(p)
         refused = [m for m in partners if ans.get(m) == DECLINE]
+        rejected = [m for m in partners if ans.get(m) == AMEND_REJECTED]
         amended = [m for m in partners if ans.get(m) == AMEND]
-        missing = [m for m in partners if ans.get(m) != COSIGN]
+        missing = [m for m in partners if ans.get(m) not in (COSIGN, AMEND_ACCEPTED)]
         project = p.get("project") or {}
         project_name = project.get("name") if isinstance(project, dict) else project
         reason = ""
         if refused:
             reason = f"{refused[0]} declined"
+        elif rejected:
+            reason = f"amend rejected by lead ({', '.join(rejected)})"
         elif amended:
             reason = f"amend unresolved ({', '.join(amended)})"
         elif missing:
