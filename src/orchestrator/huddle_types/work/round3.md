@@ -7,7 +7,12 @@ Joint work teammates proposed WITH you (verbatim), and {{leader}}'s critique of 
 
 {{asks}}
 
-{{leader}}'s questions on your own proposals (answer by revising them in `proposals`, same title):
+Your own round-2 proposals (verbatim), each followed by {{leader}}'s critique of it. To answer a
+critique, put the revised proposal — the WHOLE proposal, same title — in `proposals`:
+
+{{own}}
+
+{{leader}}'s other questions for you:
 
 {{critique}}
 

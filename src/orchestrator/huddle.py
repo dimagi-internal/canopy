@@ -172,6 +172,22 @@ def partners_of(p: dict) -> list[str]:
     return [m for m in (p.get("with") or []) if m and m != p.get("lead")]
 
 
+def named_lead(p: dict) -> bool:
+    """True when someone other than the lead proposed this and named it lead — the lead never
+    consented, so it must answer in round 3 like a partner."""
+    by = p.get("proposed_by")
+    return bool(by and p.get("lead") and by != p.get("lead"))
+
+
+def cosigners_of(p: dict) -> list[str]:
+    """Everyone whose round-3 `co-sign` the gate needs: the partners, plus the lead when a
+    teammate named it lead."""
+    out = partners_of(p)
+    if named_lead(p) and p["lead"] not in out:
+        out.append(p["lead"])
+    return out
+
+
 def _serves_stated_priority(priority, r1_priorities) -> bool:
     want = norm(priority)
     if not want:
@@ -183,7 +199,8 @@ def work_gates(proposals: list[dict], r1_priorities, prior_declined: list[dict]
                ) -> tuple[list[dict], list[dict]]:
     """Split proposals into (filed, held). Each held one carries `held`: the reason.
 
-    - a joint proposal files only when EVERY partner co-signed (an unresolved `amend` holds);
+    - a joint proposal files only when EVERY partner co-signed (an unresolved `amend` holds),
+      and so must a lead someone else named (`proposed_by` ≠ `lead`);
     - it must serve a priority some member stated in round 1, and live in a project;
     - the leader's critique must have been answered;
     - nothing the principal declined before, unless it brings `new_evidence`;
@@ -194,7 +211,7 @@ def work_gates(proposals: list[dict], r1_priorities, prior_declined: list[dict]
     filed, held = [], []
     for p in proposals:
         ans = p.get("answers") or {}
-        partners = partners_of(p)
+        partners = cosigners_of(p)
         refused = [m for m in partners if ans.get(m) == DECLINE]
         amended = [m for m in partners if ans.get(m) == AMEND]
         missing = [m for m in partners if ans.get(m) != COSIGN]
