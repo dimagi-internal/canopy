@@ -6,7 +6,6 @@ canopy-web a session uses — the MCP server (remote, but canopy owns its
 `headersHelper`) is the one an agent calls most, so without it a dispatch through
 `enqueue_turn` still arrived anonymous.
 """
-import importlib.util
 import json
 import os
 import subprocess
@@ -60,19 +59,6 @@ def test_the_mcp_helper_drops_garbage(tmp_path):
 def test_the_mcp_helper_sends_nothing_without_a_token(tmp_path):
     # No bearer → {} exactly, so the 401 still leads to the browser sign-in.
     assert _helper(tmp_path, tmp_path, {"CANOPY_TURN_ID": TURN_ENV}) == {}
-
-
-def test_the_post_tool_use_hook_names_itself_and_its_session(monkeypatch):
-    spec = importlib.util.spec_from_file_location(
-        "post_tool_use_prov", ROOT / "plugins/canopy/hooks/post_tool_use.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    monkeypatch.setenv("CANOPY_TURN_ID", TURN_ENV)
-    h = mod._provenance_headers(CLAUDE)
-    assert h["X-Canopy-Client"].startswith("canopy-hook/")
-    assert h["X-Canopy-Parent-Turn"] == TURN_ENV
-    assert h["X-Canopy-Claude-Session"] == CLAUDE
-    assert "X-Canopy-Claude-Session" not in mod._provenance_headers("unknown")
 
 
 def test_every_direct_uploader_attaches_provenance():

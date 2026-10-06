@@ -90,11 +90,7 @@ Write an authoring doc to a temp file in this shape:
 - `period_start`/`period_end` are **ISO timestamps** — copy them verbatim from the
   corpus `period` (don't truncate to dates; the window is precise to the second so
   consecutive shareouts chain exactly).
-- `project_slug` must be a **canopy-web project slug**. Check available slugs:
-  `curl -s -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)" "https://labs.connect.dimagi.com/canopy/api/projects/slugs/" | python3 -c "import sys,json;[print(p['slug']) for p in json.load(sys.stdin)]"`
-  Map each corpus repo (e.g. `dimagi-internal/canopy`) to the matching slug (e.g. `canopy`).
-  **Skip a project** (leave it out of the doc) if no slug matches — the server would
-  skip it anyway.
+- `project_slug` is the corpus repo's name — `dimagi-internal/canopy` → `canopy`.
 
 ### 3. Post
 
@@ -143,7 +139,6 @@ instead of duplicating.
   titles/bodies reveal what shipped. No invented features, no filler.
 - **Teammate-facing, not a changelog.** Lead with why it matters and how to leverage it.
 - **Honest.** If a day was small or exploratory, say so briefly — don't inflate.
-- Slugs that don't exist on canopy-web are skipped; mention any skipped repos to the user.
 
 ## When NOT to use
 

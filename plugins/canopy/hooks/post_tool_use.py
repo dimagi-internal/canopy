@@ -17,34 +17,7 @@ from pathlib import Path
 
 LOG_FILE = Path.home() / ".claude" / "canopy" / "session-log.jsonl"
 REPO_MAP_FILE = Path.home() / ".claude" / "canopy" / "repo-map.json"
-HOOK_ERROR_LOG = Path.home() / ".claude" / "canopy" / "hook-errors.log"
 _PLUGINS_FILE = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
-
-POST_TIMEOUT_SECONDS = 15
-
-# Literal duplicate of orchestrator.canopy_web.DEFAULT_API — unavoidable: this hook
-# runs under the system python3 with a bare sys.path and cannot import orchestrator.
-CANOPY_WEB_API = os.environ.get(
-    "CANOPY_WEB_API_URL",
-    "https://canopy.dimagi.com",
-)
-WORKBENCH_TOKEN_FILE = Path.home() / ".claude" / "canopy" / "workbench-token"
-
-TRACKED_SKILLS = {
-    "canopy:doc-regen",
-    "canopy:doc-regeneration",
-    "canopy:improve",
-    "canopy:patterns",
-    "canopy:brief",
-    "canopy:session-review",
-    "canopy:walkthrough",
-    "canopy:walkthrough-eval",
-    "canopy:activity-summary",
-    "code-review:code-review",
-    "superpowers:requesting-code-review",
-    "dev-utils:resolve-ci-failures",
-    "dev-utils:resolve-pr-comments",
-}
 
 _seen_sessions: set[str] = set()
 _cached_version: str | None = None
@@ -127,128 +100,6 @@ except ImportError:
             f.write(json.dumps(entry, default=str) + "\n")
 
 
-def _record_hook_error(reason: str, context: dict) -> None:
-    """Append a one-line failure record to ~/.claude/canopy/hook-errors.log.
-
-    The hook must never block Claude Code, so this itself is best-effort. But
-    silent drops in `_post_action_to_workbench` made gaps invisible — this
-    sidecar gives `/canopy:doctor` something to read when actions seem missing.
-    """
-    try:
-        HOOK_ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
-        entry = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "reason": reason,
-            **context,
-        }
-        with open(HOOK_ERROR_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, default=str) + "\n")
-    except Exception:
-        pass
-
-
-def _provenance_headers(session_id: str) -> dict:
-    """The client + originating-session headers every canopy request carries (see
-    src/orchestrator/provenance.py — a hook cannot import it, so this is the slim
-    stdlib subset a hook knows: its client, the parent turn/session from env, and the
-    Claude session id). Nothing runner-specific (task, host) is sent — canopy-web
-    derives the runner from the parent turn.
-    Never raises."""
-    out = {}
-    try:
-        manifest = Path(__file__).resolve().parents[1] / ".claude-plugin" / "plugin.json"
-        version = json.loads(manifest.read_text(encoding="utf-8")).get("version") or "unknown"
-    except Exception:
-        version = "unknown"
-    out["X-Canopy-Client"] = f"canopy-hook/{version}"
-    out["User-Agent"] = f"canopy-hook/{version}"
-    for key, header in (("CANOPY_TURN_ID", "X-Canopy-Parent-Turn"),
-                        ("CANOPY_SESSION_ID", "X-Canopy-Parent-Session")):
-        val = os.environ.get(key, "").strip()
-        if val and val.isprintable() and len(val) <= 200:
-            out[header] = val
-    if session_id and session_id != "unknown" and session_id.isprintable() and len(session_id) <= 64:
-        out["X-Canopy-Claude-Session"] = session_id
-    return out
-
-
-def _post_action_to_workbench(skill_name: str, session_id: str, project_dir: str):
-    """POST a skill action to canopy-web's project actions API.
-
-    Failures are recorded to HOOK_ERROR_LOG with a category tag rather than
-    swallowed silently — see _record_hook_error.
-    """
-    import urllib.request
-
-    if not WORKBENCH_TOKEN_FILE.exists():
-        _record_hook_error("token_file_missing", {"skill": skill_name})
-        return
-    try:
-        token = WORKBENCH_TOKEN_FILE.read_text(encoding="utf-8").strip()
-    except Exception as exc:
-        _record_hook_error("token_read_failed", {"skill": skill_name, "error": str(exc)})
-        return
-    if not token:
-        _record_hook_error("token_empty", {"skill": skill_name})
-        return
-
-    repo_map = {}
-    if REPO_MAP_FILE.exists():
-        try:
-            with open(REPO_MAP_FILE, encoding="utf-8") as f:
-                repo_map = json.load(f)
-        except Exception as exc:
-            _record_hook_error("repo_map_read_failed", {"skill": skill_name, "error": str(exc)})
-            return
-
-    project_key = "-" + project_dir.lstrip("/").replace("/", "-")
-    github_repo = repo_map.get(project_key, "")
-    if not github_repo or "/" not in github_repo:
-        _record_hook_error(
-            "repo_unmapped",
-            {"skill": skill_name, "project_dir": project_dir, "project_key": project_key},
-        )
-        return
-
-    slug = github_repo.split("/")[-1]
-    now = datetime.now(timezone.utc).isoformat()
-    payload = json.dumps({
-        "skill_name": skill_name,
-        "session_id": session_id,
-        "status": "completed",
-        "started_at": now,
-        "completed_at": now,
-    }).encode()
-
-    try:
-        req = urllib.request.Request(
-            f"{CANOPY_WEB_API}/api/projects/{slug}/actions/",
-            data=payload,
-            headers={
-                **_provenance_headers(session_id),
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}",
-            },
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=POST_TIMEOUT_SECONDS)
-    except urllib.error.HTTPError as exc:
-        _record_hook_error(
-            "http_error",
-            {"skill": skill_name, "slug": slug, "status": exc.code, "reason": exc.reason},
-        )
-    except urllib.error.URLError as exc:
-        _record_hook_error(
-            "network_error",
-            {"skill": skill_name, "slug": slug, "error": str(exc.reason)},
-        )
-    except Exception as exc:
-        _record_hook_error(
-            "unexpected_error",
-            {"skill": skill_name, "slug": slug, "error": str(exc)},
-        )
-
-
 def _legacy_capture_registered() -> bool:
     """True if an older setup registered this hook in ~/.claude/settings.json.
 
@@ -316,8 +167,6 @@ def main():
             "project": os.environ.get("CLAUDE_PROJECT_DIR", "unknown"),
         }
         append_log_entry(LOG_FILE, skill_entry)
-        if skill_name in TRACKED_SKILLS and project_dir:
-            _post_action_to_workbench(skill_name, session_id, project_dir)
         return
 
     if not tool_name.startswith("mcp__"):

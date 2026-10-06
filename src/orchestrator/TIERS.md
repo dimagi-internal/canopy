@@ -48,7 +48,7 @@ canopy-web's `api` app):
 **PRODUCT** (canopy's own features — may import framework):
 `analyzer` · `proposer` · `reviewer` · `briefing` · `observations` · `proposals` ·
 `campaigns` · `tracker` · `labels` · `patterns` · `router` · `digest` · `harvest` ·
-`shareout` · `portfolio_discover` · `openclaw_harvest` ·
+`shareout` · `openclaw_harvest` ·
 `issue_origin` · `verify_findings` · `corpus` · `test_audit` · `prompts`
 
 > `turn_synthesis` was re-tiered PRODUCT → FRAMEWORK: it's a generic,

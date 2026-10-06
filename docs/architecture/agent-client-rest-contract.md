@@ -22,14 +22,14 @@ reading the Python client.
 The bearer names an *identity* (every hal turn uses hal's PAT), not a *caller*, so
 every request canopy sends also carries provenance — built in one place,
 `orchestrator/provenance.py::provenance_headers()`, and attached by
-`canopy_web.call`/`call_text`, `session_upload`, `shareout`, `portfolio_discover`,
+`canopy_web.call`/`call_text`, `session_upload`, `shareout`,
 the DDD / share-session / walkthrough-share uploaders, the `post_tool_use` hook
 (slim stdlib copy) and the canopy-web MCP `headersHelper`
 (`plugins/canopy/scripts/canopy-web-mcp-headers.js`, only beside a bearer):
 
 | Header | Value |
 |---|---|
-| `X-Canopy-Client` | `<tool>/<version>` — `canopy-cli/…`, `canopy-mcp/…`, `canopy-hook/…` |
+| `X-Canopy-Client` | `<tool>/<version>` — `canopy-cli/…`, `canopy-mcp/…` |
 | `X-Canopy-Parent-Turn` | canopy-web turn uuid this session is running |
 | `X-Canopy-Parent-Session` | that turn's canopy-web chat session uuid |
 | `X-Canopy-Claude-Session` | Claude Code session id |
