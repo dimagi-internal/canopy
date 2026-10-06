@@ -1,4 +1,4 @@
-"""Judge scope — re-judge only what changed; reuse cells whose inputs are identical.
+"""Judge scope — re-judge only what could have changed; reuse cells whose inputs did not.
 
 The problem, measured
 ---------------------
@@ -9,31 +9,43 @@ minutes and no judge tokens (connect-labs ``.canopy/ddd/learnings.md``,
 re-judging scenes no fix touched, and a re-draw of byte-identical inputs only
 samples judge noise (+/-1 per cell) — it cannot tell the loop anything new.
 
+The v2 fingerprint still reused nothing on the ACE Spark runs (canopy#780): it
+compared each frame byte for byte, so a fix batch that edited a shared report
+template moved every scene on that template. v3 (:mod:`scripts.ddd.impact`) asks
+what the scene is ABOUT — its action targets and the elements its narration
+names, captured by the recorder in ``scene_<N>_regions.json`` — and compares
+those elements' DOM text and their crops (tolerant of anti-aliasing), the page
+text minus volatile stamps, and a whole-frame LAYOUT guard so a large layout
+change still re-judges.
+
 The protocol
 ------------
 Rendering stays FULL every iteration (it is cheap, and it is what makes the
 fingerprints below comparable). Judging is scoped:
 
-1. ``plan``   — fingerprint every scene's judge INPUTS (after/before frames,
-   captured page text minus the render stamp, the scene's spec entry, its action
-   trace, plus run-wide context such as the why-brief and rubric). Ids minted by
-   a per-render reseed are compared in their ``${var}`` spec form
-   (:mod:`scripts.ddd.stable_ids`); frames stay byte-exact. Compare with
-   the ledger of the last judged iteration. A scene whose fingerprint is
-   identical is REUSED; anything else is RE-JUDGED. A full pass
-   (``state.next_judge_full``, or no ledger yet) re-judges everything. The arc
-   judge re-runs on a full pass or when any scene is re-judged. Writes
-   ``judge-scope.json``.
+1. ``plan``   — fingerprint every scene's judge INPUTS per component
+   (:mod:`scripts.ddd.impact`: ``context``, ``spec``, ``trace``, ``page_text``,
+   ``region_dom``, ``region_image``, ``layout``) and compare each with the
+   ledger of the last judged iteration. A scene none of whose components moved
+   is REUSED; anything else is RE-JUDGED, and ``changed_components`` says which
+   input moved. A full pass (``state.next_judge_full``, or no ledger yet)
+   re-judges everything. The arc judge re-runs on a full pass or when any scene
+   is re-judged. With judge tiering, an incremental pass runs the concept judge
+   and — FLOOR-FIRST (:mod:`scripts.ddd.floor`) — the judge holding the gating
+   floor, on the floor's scenes, whenever those scenes changed. Writes
+   ``judge-scope.json``; every plan is also appended to its ``passes`` list,
+   so the scope of every pass of the run stays auditable.
 2. ``carry``  — before the concept judge runs, archive stale pass files of the
    scenes being re-judged and restore the reused scenes' SEALED pass files
    (payload + seal, byte-for-byte — the seal stays valid because nothing about
    the pass changed). The concept eval then scores from ``passes/concept/`` as
    always; reused scenes' confirmed cells flow in unchanged.
-3. ``merge-user`` — the user-artifact judge dispatches only the re-judged
-   scenes; this merges their ``per_scene`` rows over the ledger's so the
-   verdict still covers every scene.
-4. ``record`` — after assembly, snapshot this iteration's fingerprints, pass
-   files and verdicts into ``judge-cache/`` as the next iteration's ledger.
+3. ``merge-user`` — the user-artifact judge dispatches only its scenes
+   (``user_scenes`` on a floor-first pass, else the re-judged scenes); this
+   merges their rows over the ledger's so the verdict still covers every scene.
+4. ``record`` — after assembly, snapshot this iteration's fingerprints, image
+   signatures, pass files and verdicts into ``judge-cache/`` as the next
+   iteration's ledger.
 
 Convergence is never declared on a reused cell: ``compute_auto_iterate`` answers
 ``confirm_full`` for an incremental pass that would converge.
@@ -62,11 +74,18 @@ import yaml
 SCOPE_FILE = "judge-scope.json"
 CACHE_DIR = "judge-cache"
 INDEX_FILE = "index.json"
+SIGNATURES_FILE = "signatures.json"
+#: How many past plans ``judge-scope.json`` keeps in ``passes`` (a run is capped
+#: at ~10 iterations plus re-judges; this only bounds a pathological loop).
+HISTORY_LIMIT = 200
 _SCENE_PASS_RE = re.compile(r"^scene_(\d+)(?:_r\d+)?\.json(?:\.seal\.json)?$")
 _ARC_FILES = ("verdict-arc.yaml", "arc_findings.json")
 # v1 (<= 0.2.528): one hash over resolved targets and raw page text.
 # v2: per-component hashes; reseeded ids compared in their ${var} spec form.
-FINGERPRINT_VERSION = 2
+# v3 (canopy#780): the frame is no longer compared byte for byte — region DOM +
+#     region crops (anti-aliasing tolerant) + a whole-frame layout guard; page
+#     text minus volatile stamps.
+FINGERPRINT_VERSION = 3
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +106,8 @@ def _find(run_dir: Path, name: str) -> Path | None:
 
 
 def _page_text_payload(path: Path | None, variables: dict[str, str] | None = None) -> Any:
-    """Captured page text WITHOUT the per-render stamp (render_id changes every take).
+    """Captured page text WITHOUT the per-render stamp (render_id changes every take)
+    and without volatile stamps (clock times, timestamps, "N minutes ago").
 
     With *variables* (the render's ``${var}`` bindings), id-shaped values are put
     back into their ``${name}`` form, so a reseeded id in the url or text does not
@@ -101,6 +121,10 @@ def _page_text_payload(path: Path | None, variables: dict[str, str] | None = Non
         return path.read_bytes().hex()
     if isinstance(data, dict):
         data = {k: v for k, v in data.items() if k != "render_id"}
+        if isinstance(data.get("page_text"), str):
+            from scripts.ddd.impact import scrub_volatile
+
+            data["page_text"] = scrub_volatile(data["page_text"])
     if variables:
         from scripts.ddd.stable_ids import id_vars, unsubstitute_deep
 
@@ -174,37 +198,52 @@ def spec_scenes(spec_path: str | Path) -> dict[int, dict]:
     return {i: (s if isinstance(s, dict) else {}) for i, s in enumerate(scenes, start=1)}
 
 
+def scene_inputs(
+    run_dir: str | Path, scenes: dict[int, dict], *, salt: str = ""
+) -> tuple[dict[str, dict[str, str]], dict[str, dict]]:
+    """``(components, signatures)`` — each judge input of each scene, hashed.
+
+    ``components`` is ``{scene: {component: sha256}}`` over
+    :data:`scripts.ddd.impact.COMPONENTS`; ``signatures`` holds what the
+    tolerant image comparisons need (region crops, layout grids). See
+    :mod:`scripts.ddd.impact` for what each component covers and why.
+    """
+    from scripts.ddd import impact
+
+    run = Path(run_dir)
+    variables = render_variables(run)
+    traces = _trace_by_scene(run, variables)
+    comps: dict[str, dict[str, str]] = {}
+    sigs: dict[str, dict] = {}
+    for idx, scene in sorted(scenes.items()):
+        text = _page_text_payload(_find(run, f"scene_{idx}_page_text.json"), variables)
+        image, sig = impact.scene_capture(
+            _find(run, f"scene_{idx}.png"),
+            _find(run, f"scene_{idx}_before.png"),
+            _find(run, f"scene_{idx}_regions.json"),
+            variables,
+        )
+        comps[str(idx)] = {
+            "context": hashlib.sha256(salt.encode()).hexdigest(),
+            "page_text": hashlib.sha256(_canonical(text)).hexdigest(),
+            "spec": hashlib.sha256(_canonical(scene)).hexdigest(),
+            "trace": hashlib.sha256(_canonical(traces.get(idx, []))).hexdigest(),
+            **image,
+        }
+        sigs[str(idx)] = sig
+    return comps, sigs
+
+
 def fingerprint_components(
     run_dir: str | Path, scenes: dict[int, dict], *, salt: str = ""
 ) -> dict[str, dict[str, str]]:
     """``{scene: {component: sha256}}`` — each judge input hashed on its own.
 
-    Components: ``frames`` (after/before PNG bytes), ``page_text`` (minus the
-    render stamp, reseeded ids in spec form), ``spec`` (the scene's spec entry),
-    ``trace`` (action kind / spec-form target / ok / must_succeed) and
-    ``context`` (why-brief + rubric). Kept separately so a plan can say WHICH
-    input changed — a scene that re-judges every iteration because its frame
-    shows a reseeded id is then visible as such, not a mystery.
+    Kept separately so a plan can say WHICH input changed. Equal hashes mean an
+    identical input; DIFFERENT hashes on ``region_image`` / ``layout`` are then
+    compared tolerantly by :func:`scripts.ddd.impact.compare_scene`.
     """
-    run = Path(run_dir)
-    variables = render_variables(run)
-    traces = _trace_by_scene(run, variables)
-    out: dict[str, dict[str, str]] = {}
-    for idx, scene in sorted(scenes.items()):
-        frames = hashlib.sha256()
-        for name in (f"scene_{idx}.png", f"scene_{idx}_before.png"):
-            p = _find(run, name)
-            frames.update(name.encode())
-            frames.update(p.read_bytes() if p else b"<absent>")
-        text = _page_text_payload(_find(run, f"scene_{idx}_page_text.json"), variables)
-        out[str(idx)] = {
-            "context": hashlib.sha256(salt.encode()).hexdigest(),
-            "frames": frames.hexdigest(),
-            "page_text": hashlib.sha256(_canonical(text)).hexdigest(),
-            "spec": hashlib.sha256(_canonical(scene)).hexdigest(),
-            "trace": hashlib.sha256(_canonical(traces.get(idx, []))).hexdigest(),
-        }
-    return out
+    return scene_inputs(run_dir, scenes, salt=salt)[0]
 
 
 def _combine(components: dict[str, str]) -> str:
@@ -251,6 +290,46 @@ def load_ledger(run_dir: str | Path) -> dict | None:
         return None
 
 
+def load_signatures(run_dir: str | Path) -> dict:
+    """The ledger's image signatures (``{}`` when absent — every image compare then
+    falls back to its hash, i.e. any difference re-judges)."""
+    p = Path(run_dir) / CACHE_DIR / SIGNATURES_FILE
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def impact_changes(
+    components: dict[str, dict[str, str]],
+    signatures: dict[str, dict],
+    ledger: dict | None,
+    prior_signatures: dict | None,
+) -> tuple[dict[str, list[str]], dict[str, dict]]:
+    """``({scene: [changed component, ...]}, {scene: detail})`` against the ledger.
+
+    Only scenes with at least one changed component appear. A scene the ledger
+    has no components for lists every component (it cannot be reused).
+    """
+    from scripts.ddd import impact
+
+    prior = (ledger or {}).get("components") or {}
+    changed: dict[str, list[str]] = {}
+    detail: dict[str, dict] = {}
+    for scene, comps in components.items():
+        diff, why = impact.compare_scene(
+            comps, prior.get(scene), signatures.get(scene), (prior_signatures or {}).get(scene)
+        )
+        if diff:
+            changed[scene] = diff
+            if why:
+                detail[scene] = why
+    return changed, detail
+
+
 def decide_scope(
     current: dict[str, str],
     ledger: dict | None,
@@ -258,8 +337,12 @@ def decide_scope(
     force_full: bool,
     full_reason: str | None = None,
     judge_scenes: list[int] | None = None,
+    changed: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Pure decision: which scenes to re-judge, which to reuse, whether arc re-runs.
+
+    ``changed`` (from :func:`impact_changes`) decides which scenes moved; without
+    it a scene moved when its combined fingerprint differs from the ledger's.
 
     ``judge_scenes`` (a recipe-only batch, :func:`scripts.ddd.fix_scope.batch_plan`)
     limits an incremental pass to the scenes the batch edited: any OTHER scene
@@ -281,22 +364,25 @@ def decide_scope(
             "arc": True,
             "reason": reason,
         }
-    changed = [s for s in scenes if prior.get(s) != current[s]]
+    if changed is not None:
+        moved = [s for s in scenes if changed.get(s)]
+    else:
+        moved = [s for s in scenes if prior.get(s) != current[s]]
     held: list[str] = []
     if judge_scenes is not None:
         allowed = {str(int(x)) for x in judge_scenes}
-        held = [s for s in changed if s not in allowed]
-        changed = [s for s in changed if s in allowed]
-    same = [s for s in scenes if s not in changed]
+        held = [s for s in moved if s not in allowed]
+        moved = [s for s in moved if s in allowed]
+    same = [s for s in scenes if s not in moved]
     out = {
         "full": False,
-        "rejudge": [int(s) for s in changed],
+        "rejudge": [int(s) for s in moved],
         "reuse": [int(s) for s in same],
-        "arc": bool(changed),
+        "arc": bool(moved),
         "reason": (
-            f"{len(changed)} scene(s) changed since iteration {ledger.get('iteration')}; "
-            f"{len(same)} identical scene(s) reuse their cells"
-            + ("" if changed else " — NOTHING changed: the last batch had no visible effect")
+            f"{len(moved)} scene(s) changed since iteration {ledger.get('iteration')}; "
+            f"{len(same)} unchanged scene(s) reuse their cells"
+            + ("" if moved else " — NOTHING changed: the last batch had no visible effect")
         ),
     }
     if held:
@@ -306,6 +392,71 @@ def decide_scope(
             "them, so they keep their ledger cells until the next checkpoint"
         )
     return out
+
+
+def _floor_judges(
+    floor: dict | None, rejudge: list[int], *, all_scenes: list[int]
+) -> tuple[list[str], dict[str, list[int]], str]:
+    """Floor-first (:mod:`scripts.ddd.floor`): which non-concept judges join an
+    incremental tiered pass, on which scenes, and why.
+
+    The judge holding the gating floor re-judges the floor's scenes whenever
+    those scenes' inputs changed. When they did not, its carried cell IS the
+    floor — re-drawing identical inputs only samples judge noise. A floor whose
+    scenes are unknown re-judges every changed scene with that judge.
+    """
+    if not floor:
+        return [], {}, ""
+    extra: list[str] = []
+    scenes_by: dict[str, list[int]] = {}
+    notes: list[str] = []
+    changed = set(rejudge)
+    for judge in floor.get("judges") or []:
+        if judge == "concept":
+            continue  # the concept judge already re-judges every changed scene
+        if judge == "arc":
+            if changed:
+                extra.append("arc")
+                notes.append("arc holds the floor and scenes changed: arc re-runs")
+            else:
+                notes.append("arc holds the floor; nothing changed, so its verdict is carried")
+            continue
+        cells = [c for c in floor.get("cells") or [] if c.get("judge") == judge]
+        wanted = sorted({s for c in cells for s in c.get("scenes") or []}) or list(all_scenes)
+        scenes = sorted(s for s in wanted if s in changed)
+        dims = sorted({c.get("dimension") for c in cells if c.get("dimension")})
+        if scenes:
+            extra.append(judge)
+            scenes_by[judge] = scenes
+            notes.append(
+                f"{judge} holds the floor ({', '.join(dims) or 'overall'} = {floor.get('score')}) "
+                f"on scene(s) {wanted}: it re-judges {scenes}"
+            )
+        else:
+            notes.append(
+                f"{judge} holds the floor on scene(s) {wanted}, none of which changed: "
+                "the floor cell is carried (the last batch did not touch it)"
+            )
+    return extra, scenes_by, "; ".join(notes)
+
+
+def _append_history(run: Path, scope: dict[str, Any], iteration: Any) -> list[dict]:
+    """Every plan of the run, oldest first — the audit trail ``judge-scope.json``
+    used to lose by overwriting itself each pass."""
+    prior = load_scope(run) or {}
+    passes = [p for p in prior.get("passes") or [] if isinstance(p, dict)]
+    entry = {
+        k: scope.get(k)
+        for k in (
+            "planned_at", "ledger_iteration", "full", "judges", "rejudge", "reuse", "held",
+            "user_scenes", "arc", "reason", "changed_components", "impact", "floor",
+            "would_reuse", "override",
+        )
+        if scope.get(k) is not None
+    }
+    entry["iteration"] = iteration
+    passes.append(entry)
+    return passes[-HISTORY_LIMIT:]
 
 
 def plan(
@@ -318,19 +469,39 @@ def plan(
     full_reason: str | None = None,
     judge_scenes: list[int] | None = None,
     override: dict | None = None,
+    floor: dict | None = None,
+    iteration: int | None = None,
 ) -> dict[str, Any]:
-    """Plan the judge scope. ``tiered`` (judge tiering, :mod:`scripts.ddd.target`):
-    an INCREMENTAL pass runs the concept judge only — ``judges: ["concept"]``,
-    ``arc: false`` — and ``carry`` restores the last user-artifact and arc
-    verdicts. A full pass always runs every judge."""
+    """Plan the judge scope.
+
+    ``tiered`` (judge tiering, :mod:`scripts.ddd.target`): an INCREMENTAL pass
+    runs the concept judge on the changed scenes, plus — when ``floor`` names
+    one — the judge holding the gating floor on the floor's changed scenes
+    (``user_scenes``); ``carry`` restores the last verdicts of every judge that
+    does not run. A full pass always runs every judge.
+
+    ``changed_components`` (per scene, which input moved) and ``impact`` (the
+    tolerant image comparisons behind ``region_image`` / ``layout``) are written
+    on every pass that has a comparable ledger — a full pass included, with
+    ``would_reuse`` naming the scenes an incremental pass would have reused.
+    """
     run = Path(run_dir)
     ctx = list(context or [])
     wb = run / "why_brief.yaml"
     if wb.exists() and str(wb) not in {str(c) for c in ctx}:
         ctx.append(wb)
-    components = fingerprint_components(run, spec_scenes(spec_path), salt=context_salt(ctx))
+    components, signatures = scene_inputs(run, spec_scenes(spec_path), salt=context_salt(ctx))
     current = {s: _combine(c) for s, c in components.items()}
     ledger = load_ledger(run)
+    comparable = bool(
+        ledger
+        and set((ledger.get("fingerprints") or {})) == set(current)
+        and ledger.get("fingerprint_version") == FINGERPRINT_VERSION
+    )
+    changed: dict[str, list[str]] | None = None
+    detail: dict[str, dict] = {}
+    if comparable:
+        changed, detail = impact_changes(components, signatures, ledger, load_signatures(run))
     # A ledger recorded against a different scene set cannot be reused safely.
     if ledger and set((ledger.get("fingerprints") or {})) != set(current):
         scope = decide_scope(current, None, force_full=True)
@@ -346,18 +517,34 @@ def plan(
     else:
         scope = decide_scope(
             current, ledger, force_full=force_full, full_reason=full_reason,
-            judge_scenes=judge_scenes,
+            judge_scenes=judge_scenes, changed=changed,
         )
     if override:
         scope["override"] = override
-    if ledger and not scope.get("full"):
-        scope["changed_components"] = changed_components(
-            components, ledger.get("components")
-        )
+    if changed is not None:
+        scope["changed_components"] = changed
+        if detail:
+            scope["impact"] = detail
+        if scope.get("full"):
+            scope["would_reuse"] = sorted(int(s) for s in current if not changed.get(s))
+    if floor:
+        scope["floor"] = {
+            k: floor.get(k) for k in ("score", "judges", "dimensions", "scenes", "iteration")
+            if floor.get(k) is not None
+        }
     if tiered and not scope.get("full"):
-        scope["judges"] = ["concept"]
-        scope["arc"] = False
-        scope["reason"] += " — judge tiering: concept judge only (user + arc carried to the checkpoint)"
+        extra, scenes_by, note = _floor_judges(
+            floor, list(scope.get("rejudge") or []), all_scenes=[int(s) for s in current]
+        )
+        scope["judges"] = ["concept", *extra]
+        scope["arc"] = "arc" in extra
+        if "user" in scenes_by:
+            scope["user_scenes"] = scenes_by["user"]
+        scope["reason"] += (
+            " — judge tiering: concept judge on changed scenes"
+            + (f"; FLOOR-FIRST: {note}" if note else "")
+            + ("" if extra else " (user + arc carried to the checkpoint)")
+        )
     else:
         scope["judges"] = ["concept", "user", "arc"]
     scope.update(
@@ -367,6 +554,7 @@ def plan(
             "fingerprints": current,
         }
     )
+    scope["passes"] = _append_history(run, scope, iteration)
     (run / SCOPE_FILE).write_text(json.dumps(scope, indent=1) + "\n")
     return scope
 
@@ -450,7 +638,9 @@ def carry(run_dir: str | Path) -> dict[str, Any]:
                 shutil.copy2(cache / name, run / name)
 
     # Judge tiering: the user-artifact judge does not run on this pass, so its
-    # last verdict (findings included) is carried wholesale.
+    # last verdict (findings included) is carried wholesale. On a floor-first
+    # pass it runs on ``user_scenes`` only and ``merge-user`` lays those rows
+    # over the carried verdict.
     user_carried = False
     if "user" not in (scope.get("judges") or ["user"]):
         prior_user = cache / "verdict-user.yaml"
@@ -467,20 +657,55 @@ def carry(run_dir: str | Path) -> dict[str, Any]:
         "arc": bool(scope.get("arc")),
         "judges": scope.get("judges") or ["concept", "user", "arc"],
         "user_carried": user_carried,
+        "user_scenes": user_scenes(scope),
+        "user_reuse": user_reuse(scope),
         "expect_concept_passes": len(
             [f for f in concept.iterdir() if f.is_file() and not f.name.endswith(".seal.json")]
         ),
     }
 
 
+def _all_scenes(scope: dict) -> list[int]:
+    return sorted({int(s) for k in ("rejudge", "reuse", "held") for s in scope.get(k) or []})
+
+
+def user_scenes(scope: dict) -> list[int]:
+    """The scenes the user-artifact judge dispatches on this pass."""
+    if scope.get("full"):
+        return _all_scenes(scope)
+    if "user" not in (scope.get("judges") or []):
+        return []
+    if scope.get("user_scenes") is not None:
+        return sorted(int(s) for s in scope["user_scenes"])
+    return sorted(int(s) for s in scope.get("rejudge") or [])
+
+
+def user_reuse(scope: dict) -> list[int]:
+    """The scenes whose user-artifact rows come from the ledger on this pass."""
+    if scope.get("full"):
+        return []
+    judged = set(user_scenes(scope))
+    return [s for s in _all_scenes(scope) if s not in judged]
+
+
 def reused_user_rows(run_dir: str | Path) -> dict[str, Any]:
-    """The ledger's user-artifact ``per_scene`` rows for the scenes being reused."""
+    """The ledger's user-artifact per-scene rows for the scenes being reused."""
     run = Path(run_dir)
     scope = load_scope(run) or {}
-    reuse = {str(s) for s in scope.get("reuse") or []}
+    reuse = {str(s) for s in user_reuse(scope)}
     prior = _load_yaml(run / CACHE_DIR / "verdict-user.yaml") or {}
-    rows = {str(k): v for k, v in (prior.get("per_scene") or {}).items()}
-    return {k: v for k, v in rows.items() if k in reuse}
+    return {k: v for k, v in _user_rows(prior).items() if k in reuse}
+
+
+def _user_rows(verdict: dict) -> dict[str, dict]:
+    """``{scene: {dimension: score}}`` from either shape the user judge writes:
+    a ``per_scene`` mapping, or a ``scenes`` list (:func:`scripts.ddd.floor.scene_scores`)."""
+    per = verdict.get("per_scene")
+    if isinstance(per, dict) and per:
+        return {str(k): v for k, v in per.items()}
+    from scripts.ddd.floor import scene_scores
+
+    return {str(k): v for k, v in scene_scores(verdict).items()}
 
 
 def _load_yaml(path: Path) -> dict | None:
@@ -504,8 +729,8 @@ def merge_user(prior: dict, partial: dict, reuse: list[int]) -> dict:
     dimension. A reused scene cannot be dropped: if the prior has no row for it,
     this raises rather than writing a verdict that silently covers fewer scenes.
     """
-    prior_rows = {str(k): v for k, v in (prior.get("per_scene") or {}).items()}
-    rows = {str(k): v for k, v in (partial.get("per_scene") or {}).items()}
+    prior_rows = _user_rows(prior)
+    rows = _user_rows(partial)
     for s in reuse:
         key = str(s)
         if key in rows:
@@ -534,6 +759,22 @@ def merge_user(prior: dict, partial: dict, reuse: list[int]) -> dict:
     merged["dimensions"] = merged_dims
     ordered = sorted(rows, key=lambda k: (0, int(k), "") if k.isdigit() else (1, 0, k))
     merged["per_scene"] = {(int(k) if k.isdigit() else k): rows[k] for k in ordered}
+    if isinstance(prior.get("scenes"), list) or isinstance(partial.get("scenes"), list):
+        # Keep the judge's own per-scene entries (notes, adversarial lists) too:
+        # the partial's for re-judged scenes, the prior's for reused ones.
+        from scripts.ddd.floor import _scene_key
+
+        by_scene: dict[int, Any] = {}
+        reuse_ints = {int(s) for s in reuse}
+        for entry in prior.get("scenes") or []:
+            k = _scene_key(entry.get("scene", entry.get("scene_index")) if isinstance(entry, dict) else None)
+            if k is not None and k in reuse_ints:
+                by_scene[k] = entry
+        for entry in partial.get("scenes") or []:
+            k = _scene_key(entry.get("scene", entry.get("scene_index")) if isinstance(entry, dict) else None)
+            if k is not None:
+                by_scene[k] = entry
+        merged["scenes"] = [by_scene[k] for k in sorted(by_scene)]
     if merged_dims:
         overall = min(float(d.get("score")) for d in merged_dims.values() if d.get("score") is not None)
         merged["overall_score"] = overall
@@ -572,18 +813,26 @@ def record(
     wb = run / "why_brief.yaml"
     if wb.exists() and str(wb) not in {str(c) for c in ctx}:
         ctx.append(wb)
-    components = fingerprint_components(run, spec_scenes(spec_path), salt=context_salt(ctx))
+    components, signatures = scene_inputs(run, spec_scenes(spec_path), salt=context_salt(ctx))
     fps = {sc: _combine(c) for sc, c in components.items()}
     scope = load_scope(run) or {}
-    # A HELD scene was not re-judged: its cells are the ledger's, so its ledger
-    # fingerprint stays the one those cells were judged on — the next pass that
-    # is not recipe-scoped re-judges it if its inputs still differ.
+    # A HELD or REUSED scene was not re-judged: its cells are the ledger's, so its
+    # ledger entry stays the one those cells were judged on. For a held scene the
+    # next pass that is not recipe-scoped re-judges it if its inputs still differ;
+    # for a reused one this stops sub-tolerance drift from accumulating pass
+    # over pass — every comparison is against the inputs the cell was judged on.
     prior = load_ledger(run) or {}
-    for sc in (str(x) for x in scope.get("held") or []):
+    prior_sigs = load_signatures(run)
+    keep = set(str(x) for x in scope.get("held") or [])
+    if not scope.get("full", True) and prior.get("fingerprint_version") == FINGERPRINT_VERSION:
+        keep |= {str(x) for x in scope.get("reuse") or []}
+    for sc in keep:
         if sc in (prior.get("fingerprints") or {}):
             fps[sc] = prior["fingerprints"][sc]
             if sc in (prior.get("components") or {}):
                 components[sc] = prior["components"][sc]
+            if sc in prior_sigs:
+                signatures[sc] = prior_sigs[sc]
     cache = run / CACHE_DIR
     tmp = run / f"{CACHE_DIR}.tmp"
     if tmp.exists():
@@ -614,6 +863,7 @@ def record(
         "components": components,
     }
     (tmp / INDEX_FILE).write_text(json.dumps(index, indent=1) + "\n")
+    (tmp / SIGNATURES_FILE).write_text(json.dumps(signatures) + "\n")
     if cache.exists():
         shutil.rmtree(cache)
     tmp.rename(cache)
@@ -670,12 +920,17 @@ def resolve_plan_args(
     from scripts.ddd import decision, loop_config, target
 
     decision.require(state, where="judge_scope plan")
-    exp = target.expected_scope(state, cfg or loop_config.load())
+    cfg = cfg or loop_config.load()
+    exp = target.expected_scope(state, cfg)
     kw: dict[str, Any] = {
         "force_full": exp["full"],
         "tiered": tiered or exp["tiered"],
         "full_reason": exp["why"],
         "judge_scenes": exp["judge_scenes"],
+        # Floor-first (canopy#780): the cell the last assemble found holding the
+        # gating score down; plan adds its judge to an incremental pass.
+        "floor": getattr(state, "gating_floor", None) if cfg.loop.floor_first else None,
+        "iteration": getattr(state, "iteration", None),
     }
     if full and not exp["full"]:
         if not (reason or "").strip():
@@ -732,7 +987,7 @@ def _main(argv: list[str] | None = None) -> int:
         if args.cmd == "plan":
             kw = resolve_plan_args(args.run_dir, full=args.full, tiered=args.tiered, reason=args.reason)
             out = plan(args.run_dir, args.spec, context=args.context, **kw)
-            out = {k: v for k, v in out.items() if k != "fingerprints"}
+            out = {k: v for k, v in out.items() if k not in ("fingerprints", "passes")}
         elif args.cmd == "carry":
             out = carry(args.run_dir)
         elif args.cmd == "reused-user":
@@ -744,7 +999,7 @@ def _main(argv: list[str] | None = None) -> int:
             partial = _load_yaml(Path(args.partial))
             if partial is None:
                 raise ValueError(f"{args.partial}: not a YAML mapping")
-            merged = merge_user(prior, partial, [int(s) for s in scope.get("reuse") or []])
+            merged = merge_user(prior, partial, user_reuse(scope))
             (run / "verdict-user.yaml").write_text(yaml.safe_dump(merged, sort_keys=False))
             out = {
                 "wrote": str(run / "verdict-user.yaml"),

@@ -62,7 +62,14 @@ SEALED_FIELDS = (
 #: ``stop_partial`` is excluded: its documented next step IS a re-fire on the
 #: full spec.
 BLOCKING_STOPS = frozenset(
-    {"stop_max_iter", "stop_unclear", "stop_concept_change", "stop_done", "stop_inner_loop_required"}
+    {
+        "stop_max_iter",
+        "stop_unclear",
+        "stop_concept_change",
+        "stop_done",
+        "stop_inner_loop_required",
+        "stop_out_of_scope",
+    }
 )
 
 

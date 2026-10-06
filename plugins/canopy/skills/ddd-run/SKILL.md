@@ -519,17 +519,35 @@ run_state now exits 2; if a pass genuinely must be full anyway, pass
 rewritten after the last `assemble` or when that `assemble` returned a stop
 (see `scripts.ddd.decision` below).
 
-`plan` fingerprints each scene's judge INPUTS — after/before frames, page text
-(minus the per-render stamp), the scene's spec entry, its action trace, plus the
-why-brief and rubric — and compares them with the ledger of the last judged
-iteration (`judge-cache/`). Ids a per-render reseed minted (`setup.variables` and
-`capture` outputs in `run-report.json`) are compared in their `${var}` spec form
-in action targets and — for id-named vars only — in page text, so a reseed alone
-changes nothing (`scripts.ddd.stable_ids`). Frames are compared byte-for-byte: a
-scene that shows a reseeded id ON SCREEN re-judges every pass, by design (a
-false reuse is worse than a re-judge). `changed_components` in
-`judge-scope.json` names which input moved per scene (`frames`, `page_text`,
-`spec`, `trace`, `context`). It writes `judge-scope.json`:
+`plan` fingerprints each scene's judge INPUTS per component and compares each
+with the ledger of the last judged iteration (`judge-cache/`) — impact-aware
+(`scripts.ddd.impact`, canopy#780): a scene re-judges only when an input its
+judges read COULD have changed the verdict. The components:
+
+- `context` (why-brief + rubric), `spec` (the scene's spec entry), `trace` (its
+  action trace, targets in `${var}` spec form);
+- `page_text` — the captured page text minus the render stamp, reseeded ids in
+  `${var}` form, and VOLATILE stamps (clock times, ISO timestamps, "N minutes
+  ago"). The whole page, below the fold included: the judges read and cite it;
+- `region_dom` — the DOM text and state attributes of what the scene is ABOUT:
+  its action and `wait_for` targets and the elements its narration names, from
+  `scene_<N>_regions.json` (the recorder writes it beside every frame);
+- `region_image` — those elements' crops out of the frame, compared with an
+  anti-aliasing tolerance (a crop changes at 16+ pixels moved by 40+ on a
+  channel). A crop follows its element, so content that merely moved is not a
+  change to it;
+- `layout` — the guard: the whole after/before frame as 16px cells; more than
+  20% of cells moved (or a new frame size) re-judges even when the region
+  looks the same.
+
+With no `scene_<N>_regions.json` (an older render) the region is the whole
+frame, still tolerance-compared. A reused scene keeps the ledger entry its cells
+were judged on, so sub-tolerance drift cannot accumulate across passes.
+`changed_components` in `judge-scope.json` names which input moved per scene
+and `impact` the image comparisons behind it; they are written on FULL passes
+too (with `would_reuse`), and every plan is appended to `judge-scope.json`
+`passes` — the run's whole scope history, never overwritten. It writes
+`judge-scope.json`:
 
 - `full: true` (first judge, `state.next_judge_full`, or the scene set changed)
   → judge every scene and the arc, exactly as before.
@@ -543,12 +561,20 @@ scenes' SEALED pass files (payload + seal, byte-for-byte), so the concept eval's
 `passes manifest --expect` counts them and Step 6b's validation still holds.
 Its output's `expect_concept_passes` + one per re-judged scene is the `--expect`.
 
-**Judge tiering** (`loop.judge_tiering`, `auto` = on in backlog mode): with
-`--tiered`, an incremental pass writes `judges: ["concept"]` and `arc: false`;
-`carry` restores the last `verdict-user.yaml` (findings included) and the arc
-verdict. Dispatch ONLY the concept judge, on the `rejudge` scenes. Checkpoints
-and every decision run all three judges; a concept-only or inner-loop pass that
-would decide anything returns `checkpoint` instead (Step 5).
+**Judge tiering** (`loop.judge_tiering`, `auto` = on in backlog mode): an
+incremental pass runs the concept judge on the `rejudge` scenes and, FLOOR-FIRST
+(`loop.floor_first`, default on; `scripts.ddd.floor`), the judge holding the
+gating floor (`state.gating_floor`, stamped by the last `assemble`) on the
+floor's scenes when they changed: `judges: ["concept", "user"]` with
+`user_scenes: [5]` when the user-artifact judge holds the floor on scene 5, or
+`"arc"` with `arc: true` when the arc does. An untouched floor scene is carried
+(the reason says so — the last batch did not touch the floor). `carry` restores
+the last verdict of every judge that does not run. Dispatch exactly the judges
+in `judges`. Checkpoints and every decision run all three judges; a partial or
+inner-loop pass that would decide anything returns `checkpoint` instead
+(Step 5). Before floor-first, a floor on the user-artifact judge could move only
+at a checkpoint: two of every three passes on ACE Spark `-002` could not change
+the gating score.
 
 `state.next_judge_full` is set by the previous iteration's decision: polish mode
 judges in full every pass; backlog mode judges incrementally and in full every
@@ -585,12 +611,23 @@ recorded in `state.decision_overrides` and printed by every later `assemble`.
 **Scope first (Step 2f).** On an incremental pass: dispatch the concept judge
 ONLY for `judge-scope.json` `rejudge` scenes (the reused scenes' sealed passes
 are already in `passes/concept/` — their caps are already confirmed, never
-re-confirm them); dispatch the user-artifact judge only for `rejudge` scenes,
-write that partial verdict to `<run_dir>/verdict-user.partial.yaml`, then merge
-it over the ledger's rows with `python -m scripts.ddd.judge_scope merge-user
-<run_dir> <run_dir>/verdict-user.partial.yaml` (writes `verdict-user.yaml`);
-run the arc judge only when `arc: true` (otherwise its verdict and sealed pass
-were carried). On a full pass, everything below applies unchanged.
+re-confirm them); dispatch the user-artifact judge only when `judges` lists
+`user`, only for `carry`'s `user_scenes` (the floor's changed scenes on a
+floor-first pass, else the `rejudge` scenes), write that partial verdict to
+`<run_dir>/verdict-user.partial.yaml`, then merge it over the ledger's rows with
+`python -m scripts.ddd.judge_scope merge-user <run_dir>
+<run_dir>/verdict-user.partial.yaml` (writes `verdict-user.yaml`; it reads both
+the `per_scene` and the `scenes:` list shapes); run the arc judge only when
+`arc: true` (otherwise its verdict and sealed pass were carried). On a full
+pass, everything below applies unchanged.
+
+**Time every judge** (canopy#780 — `assemble` records each pass's fix, render
+and per-judge minutes in `state.pass_timings`): wrap each dispatch in the
+watchdog, `python -m scripts.ddd.watchdog start <run_id> judge:<concept|user|arc>`
+before and `... finish <run_id> judge:<name> --status ok|failed` after. A judge
+without a `judge:` step is timed from its verdict file's mtime instead (marked
+`judge_timing_source: files`). `python -m scripts.ddd.pass_timing <run_dir>`
+prints the table.
 
 Dispatch **both judges simultaneously** — they are independent and can run in
 parallel:
@@ -817,6 +854,17 @@ the repo's `loop:` config; stamps `auto_iterate_next_action` /
 Advisory verdicts are recorded and reported but never block convergence — each
 verdict's `gate` field decides its participation.
 
+`assemble` also locates the gating FLOOR (`scripts.ddd.floor`: the judge,
+dimension(s) and scene(s) holding the score down), classifies each floor
+finding in or out of the loop's edit scope, stamps both on
+`state.gating_floor` (printed as `Floor:`), and appends this pass's timing to
+`state.pass_timings` (printed as `Pass timing:`). Out of scope = `route: DEFER`;
+a `[DATA]` / `[REGISTRY]` / `[EXTERNAL]` / `[UPSTREAM]` / `[SEED]` fix; a
+narration edit (`[NARRATION]`, `fix_scope: narrative`) while the spec is
+`narrative_locked`; a match on `loop.fixed_surfaces`; or a fix a fixer declined
+(`python -m scripts.ddd.floor decline <run_dir> --match "<text>" --reason
+"<where the fix lives>"`, recorded in `out_of_scope.json`).
+
 **Upload gate.** `state.scene_filter is not None` means this is a
 partial run — `/canopy:ddd-upload` MUST refuse to upload it. A
 feature is only uploadable when convergence has been demonstrated
@@ -839,6 +887,8 @@ any decision from an inner-loop or
   concept-only pass                        -> checkpoint  (land the batches; full pass on the deploy target decides)
 converged on an INCREMENTAL pass           -> confirm_full  (full re-render + full judge, no fixes)
 converged on a full pass                   -> stop_done / stop_partial
+the gating floor HAS findings and every
+  one is outside the loop's edit scope     -> stop_out_of_scope  (terminal: blocked_out_of_scope)
 STRATEGY redesign + mechanical pending,
   first deferral or last pass progressed   -> continue  (gate deferred)
 a STRATEGY finding + mechanical work on
@@ -869,6 +919,10 @@ any options/redesign left                  -> stop_unclear
 - `terminal_status: diverging` needs the floor AND the mean cell AND the open
   findings to fall beyond their noise bands on the last step
   (`progress.declined`) — one capped cell is not a decline;
+- on `continue` (`loop.floor_first`, default on), the in-scope findings on the
+  gating floor are stamped `floor: true`, ordered FIRST in `state.findings`, and
+  listed at the head of the reason (`FLOOR FIRST — ...`): the batch must fix
+  them before anything else;
 - on `continue`, sets `state.loop_mode` (chosen on full passes: `backlog` when
   open findings ≥ `loop.backlog_min_findings`, default 8, else `polish`, unless
   the config pins one) and `state.next_judge_full` for Step 2f.
@@ -969,6 +1023,7 @@ can see at a glance which findings the orchestrator will auto-apply
 - `stop_concept_change` — "Strategy finding present (the artifact, not the wording, is wrong) — surface to user via canopy-web review surface." Deferred once if `mechanical` findings are still pending, so the user judges direction over a clean artifact rather than one with known defects.
 - `stop_unclear` — "Findings with `options`/`redesign` fix_kind block auto-iteration. List them and ask the user to pick or redesign."
 - `stop_max_iter` — "Loop stopped making progress (stall, plateau, or backstop). Stop and surface remaining findings."
+- `stop_out_of_scope` — "The gating floor is held only by findings this loop may not fix (data, registry, a locked narration, a deferred or declined fix). No batch can move the gate. Report each floor finding with where its fix lives (the reason lists them)." Terminal; `terminal_status: blocked_out_of_scope`.
 - `stop_inner_loop_required` — "A backlog loop on a repo with a `deploy_gate` and no `inner_loop:`. Configure `inner_loop` (or `inner_loop: off` + `inner_loop_off_reason`) in `.canopy/ddd/config.yaml`, `decision override --reason`, then proceed as the quoted `continue`." See the agent's section of the same name.
 - `continue` — "Apply ALL mechanical findings as ONE batch (one PR, one deploy; parallel fixers fine), record the merge SHA (`judge_gate set-fix-sha`), `decision bump`, and re-fire `/canopy:ddd-run`." In backlog mode the next judge pass is incremental unless `next_judge_full`. If the reason says **RECIPE-ONLY**, there is no PR, CI, deploy or `set-fix-sha`: edit the recipe/spec locally and re-fire.
 - `confirm_full` — "An incremental pass would converge. Re-fire `/canopy:ddd-run` with no fixes; `next_judge_full` is set, so every scene and the arc are judged fresh. Only that pass can return `stop_done`."

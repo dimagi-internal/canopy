@@ -508,6 +508,28 @@
       ],
       "default": null,
       "title": "Batch Plan"
+    },
+    "gating_floor": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Gating Floor"
+    },
+    "pass_timings": {
+      "default": [],
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Pass Timings",
+      "type": "array"
     }
   },
   "required": [

@@ -553,6 +553,15 @@ subset — see **Scene filter**):
    best-effort: if the page's `evaluate` fails the file is simply absent and
    the lens reports `skip`, so its absence never means "clean".
 
+   A fourth file, `scene_{scene_index}_regions.json`, records what the scene
+   is ABOUT: each action / `wait_for` target and each element the scene's
+   `narrative` / `show` / feature `verify` text names (quoted strings, numbers
+   like `66.0%`, multi-word names, `${var}` values), with its DOM text, state
+   attributes and box in frame pixels. DDD's judge scope fingerprints these
+   regions so a template edit that leaves a scene's subject alone does not
+   re-judge it (canopy#780). Best-effort like the visual capture: absent means
+   the judge scope compares the whole frame.
+
    **If a captured screenshot is absurdly tall (10,000+ pixels):** This is a
    BUG in the app, not a capture problem. An infinitely growing element
    (e.g., Chart.js canvas with `maintainAspectRatio: false` in an

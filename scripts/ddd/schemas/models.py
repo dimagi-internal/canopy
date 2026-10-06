@@ -122,6 +122,10 @@ class RunState(BaseModel):
     #   park_and_continue     — a strategy gate is due, but mechanical work
     #                           remains on scenes it does not touch: post the
     #                           gate, park its scenes, keep fixing the rest.
+    #   stop_out_of_scope     — the gating floor is held only by findings this
+    #                           loop may not fix (DEFER, a narration edit under a
+    #                           locked narrative, data/registry, a declined fix):
+    #                           no batch can move the gate (canopy#780).
     auto_iterate_next_action: str | None = None
     auto_iterate_reason: str | None = None
     # Hosted artifact URLs per iteration (0.2.135). Populated by
@@ -300,6 +304,20 @@ class RunState(BaseModel):
     # pass skips the deploy gate (nothing to deploy) and may re-render only the
     # touched scenes; it is between checkpoints and cannot decide.
     batch_plan: dict | None = None
+    # --- canopy#780 — impact-aware reuse, floor-first, per-pass timing ----------
+    # The cell holding the gating score down, stamped by every assemble
+    # (scripts.ddd.floor.locate + run_pipeline.compute_auto_iterate):
+    # {score, objective, cells: [{verdict, judge, dimension, scenes}], judges,
+    # dimensions, scenes, iteration, judged_full, all_out_of_scope,
+    # findings: [{scene, dimension, fix_recommendation, edit_scope,
+    # edit_scope_reason}]}. The next `judge_scope plan` re-judges this cell first
+    # (floor-first); a floor held only by out-of-scope findings stops the run.
+    gating_floor: dict | None = None
+    # One row per assembled pass (scripts.ddd.pass_timing.record): {iteration,
+    # assembled_at, judge_full, judges, wall_minutes, fix_minutes, render_minutes,
+    # judge_minutes: {concept, user, arc, ...}, other_minutes, steps}. Appended,
+    # never overwritten, so "why is this slow" is answered from data.
+    pass_timings: list[dict] = []
 
 
 __all__ = [
