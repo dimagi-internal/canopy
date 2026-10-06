@@ -9,6 +9,15 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.591] - 2026-10-05
+### Added
+- **Request provenance on the remaining doors to canopy-web.** 0.2.590 (#768) put
+  `X-Canopy-Client` / `X-Canopy-Parent-{Turn,Session,Task,Host}` / `X-Canopy-Claude-Session`
+  on `canopy_web.call`; now the canopy-web MCP `headersHelper` sends them too (`canopy-mcp/…`,
+  only beside a bearer, so OAuth sign-in is unchanged), as do the `post_tool_use` hook
+  (`canopy-hook/…`) and the DDD / share-session / walkthrough-share uploaders. Contract
+  documented in `docs/architecture/agent-client-rest-contract.md` § Provenance headers.
+
 ## [0.2.583] - 2026-10-05
 ### Added
 - **`canopy email forward <thread-id> --to … [--note-file …]`** — a real forward: `Fwd:` subject,

@@ -203,6 +203,7 @@ def upload_multipart(
 ) -> tuple[int, dict]:
     body, ct = _build_multipart(fields, file_field, filename, content_type, file_bytes)
     headers = {
+        **canopy_web.provenance_headers(),
         "Content-Type": ct,
         "Authorization": f"Bearer {pat}",
     }

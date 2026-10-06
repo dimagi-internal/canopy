@@ -20,7 +20,10 @@ def _run(home, cwd, env=None):
     r = subprocess.run(["node", str(SCRIPT)], cwd=str(cwd), env=e, capture_output=True, text=True,
                        timeout=20)
     assert r.returncode == 0, r.stderr
-    return json.loads(r.stdout)
+    # Provenance headers (X-Canopy-Client, -Parent-*) ride along beside the bearer;
+    # they are pinned in test_provenance.py — here only auth + chat key matter.
+    return {k: v for k, v in json.loads(r.stdout).items()
+            if k in ("Authorization", "X-Canopy-Chat-Key")}
 
 
 def _key(home, kind, name, value):

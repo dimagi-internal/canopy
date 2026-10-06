@@ -148,6 +148,37 @@ def _record_hook_error(reason: str, context: dict) -> None:
         pass
 
 
+def _provenance_headers(session_id: str) -> dict:
+    """The client + originating-session headers every canopy request carries (see
+    src/orchestrator/provenance.py — a hook cannot import it, so this is the slim
+    stdlib subset a hook knows: its client, host, and the Claude session id).
+    Never raises."""
+    out = {}
+    try:
+        manifest = Path(__file__).resolve().parents[1] / ".claude-plugin" / "plugin.json"
+        version = json.loads(manifest.read_text(encoding="utf-8")).get("version") or "unknown"
+    except Exception:
+        version = "unknown"
+    out["X-Canopy-Client"] = f"canopy-hook/{version}"
+    out["User-Agent"] = f"canopy-hook/{version}"
+    try:
+        import socket
+        host = socket.gethostname()
+        if host:
+            out["X-Canopy-Parent-Host"] = host
+    except Exception:
+        pass
+    for key, header in (("CANOPY_TURN_ID", "X-Canopy-Parent-Turn"),
+                        ("CANOPY_SESSION_ID", "X-Canopy-Parent-Session"),
+                        ("CANOPY_EMDASH_TASK", "X-Canopy-Parent-Task")):
+        val = os.environ.get(key, "").strip()
+        if val and val.isprintable() and len(val) <= 200:
+            out[header] = val
+    if session_id and session_id != "unknown" and session_id.isprintable() and len(session_id) <= 64:
+        out["X-Canopy-Claude-Session"] = session_id
+    return out
+
+
 def _post_action_to_workbench(skill_name: str, session_id: str, project_dir: str):
     """POST a skill action to canopy-web's project actions API.
 
@@ -201,6 +232,7 @@ def _post_action_to_workbench(skill_name: str, session_id: str, project_dir: str
             f"{CANOPY_WEB_API}/api/projects/{slug}/actions/",
             data=payload,
             headers={
+                **_provenance_headers(session_id),
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {token}",
             },

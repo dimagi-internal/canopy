@@ -43,13 +43,15 @@ describe('canopy-web-mcp-headers', () => {
   it('emits a bearer header from the token file', async () => {
     await writeFile(tokenPath, 'sample-pat-value\n', 'utf8');
     const { stdout } = await headers({ CANOPY_WORKBENCH_TOKEN: tokenPath });
-    expect(JSON.parse(stdout)).toEqual({ Authorization: 'Bearer sample-pat-value' });
+    expect(JSON.parse(stdout).Authorization).toBe('Bearer sample-pat-value');
+    expect(JSON.parse(stdout)['X-Canopy-Client']).toMatch(/^canopy-mcp\//);
   });
 
   it('strips surrounding whitespace, not just the trailing newline', async () => {
     await writeFile(tokenPath, '  sample-pat-value \n\n', 'utf8');
     const { stdout } = await headers({ CANOPY_WORKBENCH_TOKEN: tokenPath });
-    expect(JSON.parse(stdout)).toEqual({ Authorization: 'Bearer sample-pat-value' });
+    expect(JSON.parse(stdout).Authorization).toBe('Bearer sample-pat-value');
+    expect(JSON.parse(stdout)['X-Canopy-Client']).toMatch(/^canopy-mcp\//);
   });
 
   it('emits {} when the token file is missing, and does NOT crash', async () => {

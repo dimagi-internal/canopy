@@ -146,7 +146,7 @@ def upload(
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": ct, "Authorization": f"Bearer {pat}"},
+        headers={**canopy_web.provenance_headers(), "Content-Type": ct, "Authorization": f"Bearer {pat}"},
     )
     try:
         resp = urllib.request.urlopen(req, timeout=120)
@@ -166,7 +166,8 @@ def post_json(url: str, pat: str, payload: dict) -> tuple[int, dict]:
         url,
         data=json.dumps(payload).encode("utf-8"),
         method="POST",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {pat}"},
+        headers={**canopy_web.provenance_headers(), "Content-Type": "application/json",
+                 "Authorization": f"Bearer {pat}"},
     )
     try:
         resp = urllib.request.urlopen(req, timeout=120)

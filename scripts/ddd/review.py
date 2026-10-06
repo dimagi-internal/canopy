@@ -15,6 +15,7 @@ import time
 import urllib.error
 import urllib.request
 
+from orchestrator.provenance import provenance_headers
 from scripts.ddd.schemas.models import ReviewRequest
 from scripts.ddd.auth import (
     DEFAULT_API,
@@ -75,6 +76,7 @@ def _json_request(method: str, url: str, token: str, body: dict | None = None) -
     """
     data = json.dumps(body).encode("utf-8") if body is not None else None
     headers = {
+        **provenance_headers(),
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "Accept": "application/json",

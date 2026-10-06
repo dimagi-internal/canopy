@@ -38,6 +38,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // A CONFINED session — a caller's, not the agent owner's — must never reach canopy
 // with the owner's PAT. The runner leaves the session's own credential (a caller
@@ -202,6 +203,78 @@ function chatKey() {
   return "";
 }
 
+// PROVENANCE — what client this is and which turn/session it came from, the MCP
+// side of src/orchestrator/provenance.py (same headers, same sources). Sent only
+// beside a bearer: with no token the 401 must lead to the browser sign-in exactly
+// as before. Computed once per connect, so on a laptop it reflects the by-task
+// record the caller_context hook had written by then. Never throws.
+const UUIDISH = /^[0-9a-fA-F-]{8,64}$/;
+const PRINTABLE = /^[\x20-\x7e]{1,256}$/;
+
+function pluginVersion() {
+  try {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    return JSON.parse(fs.readFileSync(path.join(here, "..", ".claude-plugin", "plugin.json"), "utf8")).version || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function taskCandidates() {
+  const out = [];
+  const parts = process.cwd().split(path.sep);
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] !== "worktrees") continue;
+    for (const p of parts.slice(i + 1, i + 3)) {
+      if (!p.startsWith("emdash-")) continue;
+      const leaf = p.slice("emdash-".length);
+      for (const n of [leaf.replace(/-[0-9a-z]+$/i, ""), leaf]) {
+        if (n && SAFE_NAME.test(n) && !out.includes(n)) out.push(n);
+      }
+    }
+  }
+  return out;
+}
+
+function provenanceHeaders() {
+  const h = { "X-Canopy-Client": `canopy-mcp/${pluginVersion()}` };
+  try {
+    const env = process.env;
+    const ok = (v, re) => (typeof v === "string" && PRINTABLE.test(v.trim()) && (!re || re.test(v.trim())) ? v.trim() : "");
+    let turn = ok(env.CANOPY_TURN_ID, UUIDISH);
+    let session = ok(env.CANOPY_SESSION_ID, UUIDISH);
+    let task = ok(env.CANOPY_EMDASH_TASK, SAFE_NAME);
+    let claude = ok(env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_SESSION_ID, UUIDISH);
+    if ((!turn || !session) && env.CANOPY_CALLER) {
+      const c = readProfile(env.CANOPY_CALLER) || {};
+      turn = turn || ok(c.turn_id, UUIDISH);
+      session = session || ok((c.conversation || {}).session_id, UUIDISH);
+    }
+    const cands = task ? [task] : taskCandidates();
+    if (!turn || !session || !claude || !task) {
+      for (const n of cands) {
+        const rec = readProfile(path.join(os.homedir(), ".canopy", "caller", "by-task", `${n}.json`));
+        if (!rec) continue;
+        task = task || n;
+        turn = turn || ok(rec.turn_id, UUIDISH);
+        session = session || ok(rec.session_id, UUIDISH);
+        claude = claude || ok(rec.claude_session_id, UUIDISH);
+        break;
+      }
+    }
+    if (!task && cands.length) task = cands[0];
+    const host = ok(os.hostname());
+    if (turn) h["X-Canopy-Parent-Turn"] = turn;
+    if (session) h["X-Canopy-Parent-Session"] = session;
+    if (task) h["X-Canopy-Parent-Task"] = task;
+    if (host) h["X-Canopy-Parent-Host"] = host;
+    if (claude) h["X-Canopy-Claude-Session"] = claude;
+  } catch {
+    // best-effort: the client header alone is still true
+  }
+  return h;
+}
+
 let headers = {};
 try {
   const token =
@@ -210,7 +283,7 @@ try {
     agentEnvPat() ||
     fileToken();
   if (token) {
-    headers = { Authorization: `Bearer ${token}` };
+    headers = { ...provenanceHeaders(), Authorization: `Bearer ${token}` };
     const key = chatKey();
     if (key) headers["X-Canopy-Chat-Key"] = key;
   }
