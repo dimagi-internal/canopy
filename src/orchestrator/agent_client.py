@@ -171,7 +171,7 @@ class AgentClient:
     def post_turn(self, *, cli_session_id, title, summary="", task_ext_ids=None,
                   work_product_urls=None, session_slug="", share_token="",
                   started_at=None, ended_at=None, source="turn",
-                  emdash_task_id=None) -> dict:
+                  emdash_task_id=None, origin_ref=None) -> dict:
         """Package one turn as a unit of work: the request(s) it advanced
         (`task_ext_ids`), what it did (`summary`), the deliverables produced
         (`work_product_urls`), and — optionally — a transcript link (`session_slug`
@@ -182,7 +182,11 @@ class AgentClient:
         so a turn is one row rather than a dispatch record and an unrelated report.
         Defaults to deriving it from the cwd; pass "" to skip, or an explicit value
         when closing out on someone else's behalf. Unmatched is not an error — the
-        report is still recorded, just standalone."""
+        report is still recorded, just standalone.
+
+        `origin_ref` tags the row (canopy-web MERGES it into the row's own origin_ref) —
+        e.g. a huddle's anchor turn. Sent only when given, so every other close-out is
+        byte-identical to before it existed."""
         if emdash_task_id is None:
             emdash_task_id = emdash_task_from_cwd()
         body = {"cli_session_id": cli_session_id, "title": title, "summary": summary,
@@ -191,6 +195,8 @@ class AgentClient:
                 "session_slug": session_slug, "share_token": share_token,
                 "started_at": started_at, "ended_at": ended_at, "source": source,
                 "emdash_task_id": emdash_task_id}
+        if origin_ref:
+            body["origin_ref"] = dict(origin_ref)
         return self._call("POST", f"/api/agents/{self.slug}/turns/", body)
 
     def put_work_products(self, items: list[dict]) -> dict:

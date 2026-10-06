@@ -1,0 +1,20 @@
+{"rounds": {
+  "1": {"fields": {
+     "worked_on": {"type": "list", "max": 5, "required": true},
+     "priorities": {"type": "list", "max": 6, "required": true},
+     "projects": {"type": "list", "max": 8, "item_fields": ["name", "state"]},
+     "offers": {"type": "list", "max": 5},
+     "needs": {"type": "list", "max": 5}}},
+  "2": {"fields": {
+     "proposals": {"type": "list", "max": 3, "required": true,
+                   "item_fields": ["title", "lead", "with", "priority", "project", "why", "plan",
+                                   "effort", "success_measure", "confidence"]},
+     "critique_answers": {"type": "list", "max": 6, "item_fields": ["title", "answer"]},
+     "feedback": {"type": "str"}}},
+  "3": {"fields": {
+     "answers": {"type": "list", "max": 9, "required": true,
+                 "item_fields": ["title", "lead", "answer"]},
+     "proposals": {"type": "list", "max": 3,
+                   "item_fields": ["title", "lead", "with", "priority", "project", "why", "plan",
+                                   "effort", "success_measure", "confidence"]},
+     "feedback": {"type": "str"}}}}}
