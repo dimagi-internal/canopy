@@ -265,8 +265,10 @@ a 5, pass this test — *"I am the CEO. I am about to forward this, with
 my name on it, into a high-stakes external thread (a board, a major
 customer, a funder). Would I find ANYTHING I'd want fixed before I hit
 Send?"* If the honest answer is "I'd tweak one thing first," that
-dimension is a 4, not a 5. One needed caveat, one hedge, one "let me
-just explain that number" = not a 5.
+dimension is a 4, not a 5. One needed caveat, one hedge, one number that
+needs explaining = not a 5 — and the fix for a number that needs
+explaining is a clearer structure (its label, its unit, its column), never
+an explanation added beside it.
 
 ### Phase 1: Adversarial listing (MANDATORY before any scoring)
 
@@ -276,13 +278,22 @@ Be specific throughout: quote exact text from `page_text`, name exact UI
 elements visible in the screenshot. Vague flaws ("a bit cluttered")
 don't count — if you can't point at it, you didn't find it.
 
-1. **At least EIGHT things you'd want fixed before `<context.audience>`
-   hits Send** — scale up for a denser view (a dashboard with 20+
-   elements should yield 12+). Cover *at least one per major region of
-   the layout* (header/chrome, hero/KPI area, charts, map/media,
-   footer/panels) — a region with "nothing wrong" almost always means
-   you skimmed it. Rank them by how embarrassing they'd be on Send.
-   **Fewer than eight means you didn't look** — go back. Things to hunt:
+1. **Every real defect you'd want fixed before `<context.audience>` hits
+   Send, each with a SEVERITY** — no quota. Sweep every major region of
+   the layout (header/chrome, hero/KPI area, charts, map/media,
+   footer/panels) so a region is skipped because it is clean, not because
+   you skimmed it, but list only what you can point at and would actually
+   fix. A clean region yields nothing; padding the list to look thorough
+   turns into a backlog the loop chases forever. Grade each:
+   - **high** — misleads or blocks: a wrong/contradictory number, a claim
+     the screen does not back, a broken or occluding layout, placeholder
+     data, the 5-second read lands wrong.
+   - **medium** — a careful user would stumble: inconsistent formats or
+     vocabulary across the screen, illegible load-bearing content, an
+     action whose effect is not visible, prose doing a structure's job.
+   - **low** — polish a designer would note (spacing, a slightly flat
+     hierarchy); it never holds a score below 4 on its own.
+   Rank by severity. Things to hunt:
    - **Fixture/placeholder DATA that signals an unfinished build** (`Untitled`,
      duplicate titles, `test-user`, placeholder avatars, lorem text) — these
      are flaws in any `artifact_kind`. **But do NOT conflate this with
@@ -303,14 +314,30 @@ don't count — if you can't point at it, you didn't find it.
    - **Inconsistencies** — the same quantity formatted two ways
      (`2,300` vs `2300`), two different numbers both presented as "the"
      headline, mismatched units, drifting capitalization
-   - **Jargon a non-expert in the audience can't parse** (acronyms,
-     stats notation `pp`/`CI`/`n=`, domain shorthand) presented without
-     a plain-language read
-   - Charts/figures with no axis labels, units, legend, or scale
+   - **Labels a non-expert in the audience can't parse** (acronyms, stats
+     notation `pp`/`CI`/`n=`, domain shorthand). The fix is a plainer
+     LABEL or unit in the structure itself — never a glossary, tooltip,
+     legend or definition added beside it.
+   - **Explanatory copy doing structure's job** — helper sentences,
+     captions, "click X to Y" hints, legends, info bubbles, inline
+     definitions. Each one is a flaw (medium), not a remedy: the screen
+     should say it through a label, a field, a chip, a column or its order.
+   - **Hardcoding / special-casing the demo** — copy or behaviour that only
+     makes sense for these records: a persona or partner named in the
+     product's own copy, a status or chip that exists for one row, a column
+     only this dataset fills, wording that narrates this scenario. A flaw
+     (high when it would mislead a real user, else medium); the fix is the
+     general rule or removal.
+   - Charts/figures with no axis labels, units, or scale
    - Low contrast, cramped spacing, inconsistent icon/type sizes,
      flat hierarchy (housekeeping metrics sized like headline findings)
    - Claimed-but-not-shown behavior (narrative says "streaming" but
      nothing streams)
+
+   **Every fix you name removes or restructures.** "Add a tooltip /
+   legend / definition / explanatory line" is never the recommendation;
+   if the only fix you can see is more words, say so and grade the flaw
+   low.
 
 2. **Claim-scrutiny — does the artifact's implicit claim survive
    `<context.domain_expert>`?** State, in one sentence, the claim a
@@ -395,9 +422,9 @@ Before emitting the verdict, check these sanity rules:
 - **If the send test (Phase 1.5) is NO, NO dimension can reach 5.** The
   CEO-send gate is the definition of a 5; a "fix one thing first" answer
   caps every dimension at 4.
-- **If ANY of your Phase-1.1 flaws is unfixed in the screenshot, any
-  "demo readiness" / "shippable" dimension cannot exceed 3.** No
-  exceptions.
+- **If ANY of your Phase-1.1 flaws graded HIGH is in the screenshot, any
+  "demo readiness" / "shippable" dimension cannot exceed 3**; a MEDIUM one
+  caps it at 4. LOW flaws never cap a score on their own.
 - **If a claim-scrutiny trigger fired (Phase 1.2)** — a self-disclaiming
   element, or a claim an expert calls unsupported by what's shown — then
   `claim_reality_coherence` (and any "concept" dimension) cannot exceed
@@ -452,10 +479,9 @@ screenshot_path: <input>
 
 # Phase 1 outputs
 adversarial:
-  embarrassing:          # ≥8 (more for dense views), ranked, ≥1 per layout region
-    - "verbatim quote / specific UI description"
-    - "..."
-    - "... (at least eight)"
+  embarrassing:          # every real defect, ranked by severity — no quota; [] for a clean frame
+    - { severity: high, flaw: "verbatim quote / specific UI description", fix: "the structural change (never added copy)" }
+    - { severity: medium, flaw: "...", fix: "..." }
   claim_scrutiny:
     inferred_claim: "<the claim a viewer draws from this view>"
     survives_expert: YES | NO
@@ -522,4 +548,5 @@ corpus, and the calibration doc.
 | 2026-06-02 | Harshness pass. Added (1) an **Independence requirement** — judge must run as a fresh sub-agent with no build context; self-assessment forces −1/dimension + `self_assessed` flag. (2) The **CEO-send gate** as the definition of a 5 (would the CEO forward it untouched, with their name on it?). (3) Raised the Phase-1 flaw floor from 3 to **≥8, ≥1 per layout region**, ranked. (4) A **claim-scrutiny** pass (self-disclaiming elements / unsupported claims cap claim_reality_coherence ≤2). (5) A **5-second first-impression** pass and an **internal-chrome / deliverable-readiness** check, each with sanity-floor caps. Motivated by an observed builder-as-judge inflation of ~2 points. | jjackson |
 | 2026-06-18 | **`action_trace` + `narrative` context fields (action-aware judging).** The judge scored ONE still screenshot per scene, so a scene that filled+submitted a form and one that only HOVERED over the same controls (same end-frame) scored identically. Added an optional `action_trace` (the per-scene slice of the recorder's run-report: `{kind, target, ok, must_succeed, note}`) and the scene's full `narrative`. When present, a new Phase-1 action-fidelity check compares the narrated act against what the trace actually did: a narration that asserts an effecting act (create/fill/submit/select/award/publish) while the trace only hovers/scrolls ⇒ "claimed, not shown" (top-rank flaw); any `ok:false` entry ⇒ the action failed/timed out. These feed the caller's action-fidelity `deduction_rules`. Back-compat: absent `action_trace` ⇒ score from the still frame exactly as before; the trace can only LOWER a score, never raise one. | jjackson |
 | 2026-06-18 | **`frames` input (before/after change-judging).** A scene that EFFECTS a state change (fills/submits/awards) can't be judged from one still — the before state is gone by the end-frame. Added an optional `frames: {before, after}` pair (the recorder's `--capture-action-frames` writes `scene_<N>_before.png` beside the canonical `scene_<N>.png`). When provided, the judge reads both and a new Phase-1 "change test" lists it as a flaw when the narration claims an effecting act but the after-frame is visually unchanged — feeding action-fidelity deductions. Back-compat: `frames` absent ⇒ judge the single `screenshot_path` (still required; always the after-frame) exactly as before. | jjackson |
+| 2026-10-07 | **Severity-gated findings replace the "at least EIGHT" quota (canopy#786).** A fixed flaw quota guaranteed a backlog on every pass, and with "any unfixed Phase-1.1 flaw caps demo readiness at 3" it guaranteed a 3 — the Spark and supply runs (~9 h each, 434 and 200 subagents) never converged. Phase 1.1 now lists only real defects, each graded high/medium/low; only high caps readiness at 3, medium at 4, low never caps. Added **explanatory copy** and **hardcoding / special-casing the demo** as flaws, re-pointed the jargon item at plainer labels instead of "a plain-language read", and every recommended fix must remove or restructure — never add a tooltip, legend or definition. | jjackson |
 | 2026-06-03 | **`artifact_kind` context field.** Distinguishes `product_walkthrough` (a frame of a real, shipping web app being driven through a flow) from `standalone_deliverable` (a slide/figure/report meant to stand alone, the default). For a `product_walkthrough` the surrounding product chrome — nav bar, sidebar, breadcrumbs, account menu, the app's own buttons — is EXPECTED and grounding, NOT a flaw: it is the evidence the demo is a real product and not a mockup. The "internal app chrome → max 3" sanity floor no longer fires in walkthrough mode. Test/placeholder DATA (raw primary-key slugs, `test-user`, `Untitled`, lorem) still caps in either mode. Motivated by walkthrough judges wrongly penalizing real-website nav that is the point of a live-product demo. | jjackson |

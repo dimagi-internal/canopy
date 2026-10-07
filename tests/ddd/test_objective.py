@@ -337,3 +337,56 @@ class TestAssembleLoadsLensFindings:
         assert got["product_lens"]["route"] == "PRODUCT"
         demo = _load_findings(tmp_path, demo=True)
         assert all(f["route"] == "DEFER" for f in demo)
+
+
+class TestProseBlocksInDemo:
+    """canopy#786: prose_density lint blocks in the demo objective too."""
+
+    PROSE = {
+        "scene": 6,
+        "dimension": "prose_density",
+        "source": "product_lint",
+        "route": "PRODUCT",
+        "fix_kind": "mechanical",
+        "severity": "high",
+        "detail": "This run ADDED 1 explanatory line(s) to scene 6 since its first render.",
+        "fix_recommendation": "Remove the added sentences and express what they explain as structure.",
+    }
+    PASSING = (_v("concept", {"concept_clarity": 4, "design_soundness": 4}), _v("user_artifact", {"clarity": 4}))
+
+    def _demo(self, findings):
+        s = _state(objective="demo")
+        action, reason = compute_auto_iterate(
+            s, *self.PASSING, findings, loop_config=LoopConfig(objective="demo"),
+            product_config=ProductConfig(), unattended=True,
+        )
+        return s, action, reason
+
+    def test_every_judge_passing_is_not_done_while_prose_is_open(self):
+        _, action, reason = self._demo([self.PROSE])
+        assert action == "continue"
+        assert "prose_density" in reason
+
+    def test_converges_once_the_prose_is_gone(self):
+        _, action, _ = self._demo([])
+        assert action == "stop_done"
+
+    def test_a_low_or_deferred_prose_finding_does_not_hold_it(self):
+        _, action, _ = self._demo([{**self.PROSE, "severity": "low"}])
+        assert action == "stop_done"
+        _, action, _ = self._demo([{**self.PROSE, "route": "DEFER"}])
+        assert action == "stop_done"
+
+    def test_demo_loader_keeps_prose_density_live_and_defers_the_rest(self, tmp_path):
+        from scripts.ddd.assemble import _load_findings
+
+        (tmp_path / "lint_findings.json").write_text(
+            json.dumps({"findings": [{"dimension": "prose_density"}, {"dimension": "terminology"}]})
+        )
+        (tmp_path / "product_findings.json").write_text(json.dumps({"findings": [{"dimension": "prose_density"}]}))
+        got = {(f["source"], f["dimension"]): f["route"] for f in _load_findings(tmp_path, demo=True)}
+        assert got == {
+            ("product_lint", "prose_density"): "PRODUCT",
+            ("product_lint", "terminology"): "DEFER",
+            ("product_lens", "prose_density"): "DEFER",
+        }

@@ -335,6 +335,19 @@
       "default": null,
       "title": "Last Fix Sha"
     },
+    "fix_gate": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fix Gate"
+    },
     "gaps_path": {
       "anyOf": [
         {

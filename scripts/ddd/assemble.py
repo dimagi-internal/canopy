@@ -82,8 +82,12 @@ def _load_findings(run_dir: Path, *, demo: bool = False) -> list[dict]:
 
     ``demo``: the run's objective is ``demo`` — the product lens/lint findings are
     still loaded (and reported) but as ``route: DEFER``, so they never drive the
-    demo loop.
+    demo loop. The exception is prose density
+    (:data:`scripts.ddd.objective.ALWAYS_BLOCKING_LINT`, canopy#786): explanatory
+    copy accreting on a screen blocks in every objective.
     """
+    from scripts.ddd.objective import blocks_every_objective
+
     out: list[dict] = []
     for name, source in PRODUCT_FINDING_FILES.items():
         p = run_dir / name
@@ -98,7 +102,7 @@ def _load_findings(run_dir: Path, *, demo: bool = False) -> list[dict]:
             g = dict(f)
             g.setdefault("source", source)
             g.setdefault("route", "PRODUCT")
-            if demo:
+            if demo and not blocks_every_objective(g):
                 g["route"] = "DEFER"
             out.append(g)
     for name in ("design_findings.json", "arc_findings.json"):

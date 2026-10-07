@@ -476,7 +476,9 @@ RUN_DIR="<run_dir>"; SPEC_ABS="$(realpath <unified_spec>)"
   and narration), and fonts outside `product.lint.fonts`. On the
   pre-redesign supply screens it reports 10 findings; on the redesigned ones,
   1. In the `product` objective these block (severity medium/high); in `demo`
-  they are reported only.
+  they are reported only — except `prose_density`, which blocks in both
+  (canopy#786: prose accreting on a screen is a product defect whatever the
+  loop optimizes).
 - **visual_geometry** — the first lens in this pipeline that is not reading
   text. Three invisible-element defects on one run scored `data_fidelity` 9/9
   and `narrated_numbers` 9/9 across FOUR iterations and were only found by a
