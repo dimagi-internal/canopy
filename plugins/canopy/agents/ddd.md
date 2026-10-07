@@ -598,7 +598,58 @@ independently derive the declared `features[]` from the narration alone.
 | `warn`  | Borderline — review the `fix_recommendation` in the output, then proceed with caution to Step 6c. |
 | `fail`  | Narrative is **too vague to act on** — **loop back to Step 5 (`ddd-spec`)** to add specificity to the flagged scenes before the human reviews. Do NOT advance to Step 6c with a `fail`. |
 
+**Narrative mode — build vs polish (canopy#789; decide before Step 6c):**
+`loop.narrative_mode` (`auto` | `build` | `polish`); `auto` = `polish` for the
+`demo` objective, else `build`. Print it:
+`(cd "$DDD_REPO" && uv run python -m scripts.ddd.narrative_guard mode --run <run_id>)`.
+
+| | **build** (ordinary builds — the default) | **polish** (high-polish demos) |
+|---|---|---|
+| Step 6c | post the first version for visibility, then **proceed** — do not wait | blocking, as below |
+| Agent revisions mid-run | allowed; each one passes the guard | allowed only through the guard; a MATERIAL one goes to the human |
+| Pending reviews | one per run at most — never one per edit | same |
+
+**Every narrative edit, in either mode, goes through the autonomous review.**
+Right after editing the spec's story (narration, scenes, features, personas) —
+before rendering — run:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.narrative_guard check "$REPO_ROOT/docs/walkthroughs/<narrative-slug>.yaml" --run <run_id> --reason "<why the story changed>" [--findings <ids>])
+```
+
+Run it once with no edit at the start of the run too: that records the run's
+starting story (`v0`) and, the first time, the narrative's baseline. Exit 2 =
+**rejected: revert the edit** (or re-make it without the violation). It rejects
+an edit that adds a feature neither the original brief nor a human steer asked
+for, contradicts a recorded steer (a forbidden term returns, a limited one grows,
+a required one is dropped), answers a judge by adding to the story rather than
+making the words follow the product, or adds explanatory narration in place of
+product. Accepted revisions are recorded under `<run_dir>/narrative-versions/`;
+none of them is posted as a review. `narrative post` refuses (exit 3) while the
+run's narrative review is still pending. `assemble` re-checks anything that
+changed without a guard run and names a rejection at the head of the next
+action's reason.
+
+**The intent ledger** (`docs/walkthroughs/<narrative-slug>.intent.yaml`, committed
+with the spec) holds every human steer verbatim. `narrative apply` files the
+reviewer's comments automatically; anything else a human says about the story —
+a chat message, an email, a findings-review note — you record yourself, in their
+words, with the terms it implies:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.narrative_guard steer "$SPEC" --quote "<their exact words>" --by "<who>" --source "<where>" [--forbid T ...] [--limit T ...] [--require T ...])
+```
+
+e.g. "the video was way too focused on the e-mail aspect vs. a clean and clear
+view" → `--limit email`; "comparable is not a key feature" → `--forbid comparable`.
+A steer you record WITHOUT terms is still shown to every later review, but only
+terms are enforced — add them. The digest reports material drift and rejections
+only (`narrative_guard digest <run_id>`), never minor wording.
+
 **Step 6c — Narrative-agreement gate (concept_change):**
+In **build** mode: post once (`/ddd-narrative-review`), give the link in the
+digest, and continue to Step 6d without waiting; if a decision arrives later,
+apply it then (its comments land in the intent ledger). In **polish** mode:
 Invoke `/ddd-narrative-review` with:
 - `spec_path`: `docs/walkthroughs/<narrative-slug>.yaml`
 - `run_id`: current run ID

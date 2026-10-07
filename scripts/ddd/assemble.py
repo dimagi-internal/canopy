@@ -113,6 +113,38 @@ def _load_findings(run_dir: Path, *, demo: bool = False) -> list[dict]:
     return out
 
 
+def _narrative_guard(state: Any, spec: str | None, run_dir: Path, cfg: Any) -> dict | None:
+    """The safety net under canopy#789: a narrative edit nobody ran through the guard.
+
+    Every narrative revision is meant to go through ``narrative_guard check``
+    when it is made. If the spec's story changed since the run's last recorded
+    version anyway, review it here so it cannot ride into a render unreviewed.
+    The first assemble of a run records the starting story as ``v0``. Never
+    fails the assemble: a guard error is reported and skipped.
+    """
+    if not spec or not Path(spec).exists():
+        return None
+    try:
+        from scripts.ddd import narrative_guard as ng
+
+        mode = ng.resolve_mode(cfg.loop.narrative_mode, state.objective or cfg.loop.objective)
+        if ng.latest_version(run_dir) is not None and not ng.unchecked_change(spec, run_dir):
+            return state.narrative_guard
+        current = ng.view_hash(ng.view(ng._read_raw(spec)))
+        if (state.narrative_guard or {}).get("hash") == current:
+            return state.narrative_guard  # this exact revision was already reviewed
+        rec = ng.check(spec, run_dir, reason="narrative changed without a guard check (caught at assemble)", mode=mode)
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"decision": "error", "detail": str(exc)}
+    out = {
+        "iteration": state.iteration,
+        "mode": mode,
+        **{k: rec.get(k) for k in ("hash", "decision", "version", "material", "material_why", "violations", "standing")},
+    }
+    state.narrative_guard = out
+    return out
+
+
 def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = None) -> dict[str, Any]:
     from scripts.ddd import judge_scope, loop_config, progress
     from scripts.ddd.run_pipeline import (
@@ -209,6 +241,15 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         converged = objective_mod.converged(
             {**extra, "concept": concept, "user_artifact": user}, state.findings, cfg.product
         )[0]
+    guard = _narrative_guard(state, spec, run_dir, cfg)
+    if guard and guard.get("decision") == "reject":
+        reason = (
+            "NARRATIVE EDIT REJECTED (scripts.ddd.narrative_guard, canopy#789) — revert it "
+            "before the next batch: "
+            + "; ".join(f"[{v.get('rule')}] {v.get('detail')}" for v in guard.get("violations") or [])
+            + ". "
+            + reason
+        )
     state.auto_iterate_next_action = action
     state.auto_iterate_reason = reason
     # Seal the decision: a later rewrite of the fields it rests on, or a new pass
@@ -258,6 +299,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "decision_overrides": list(state.decision_overrides or []),
         "version_warnings": list(state.version_warnings or []),
         "gating_floor": state.gating_floor,
+        "narrative_guard": state.narrative_guard,
         "pass_timing": timing,
         "changed_components": scope.get("changed_components"),
         "ledger": ledger,
@@ -335,6 +377,13 @@ def _main(argv: list[str] | None = None) -> int:
                              ("render", t.get("render_minutes")), *sorted(jm.items())]
                 if isinstance(v, (int, float))
             )
+        )
+    ng = out.get("narrative_guard") or {}
+    if ng.get("decision") in ("reject", "accept"):
+        print(
+            f"  Narrative:    {ng['decision'].upper()} ({ng.get('mode')})"
+            + (f" -> v{ng['version']}" if ng.get("version") is not None else "")
+            + (f"  MATERIAL: {'; '.join(ng.get('material_why') or [])}" if ng.get("material") else "")
         )
     print(f"  Convergence:  {'YES' if out['converged'] else 'NO'}")
     print(f"  Auto-iterate: {out['auto_iterate_next_action']}  ({out['auto_iterate_reason']})")

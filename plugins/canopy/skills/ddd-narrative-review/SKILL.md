@@ -44,6 +44,17 @@ approve/redraft gate only when:
 - **The user explicitly asks** to review the narrative (e.g. "let me approve the
   story before we render").
 
+In **build** mode (`loop.narrative_mode`, canopy#789 — the default unless the
+objective is `demo`) the first post does not block: post, report the link, and
+proceed. Mid-run revisions never come here in either mode — they go through
+`python -m scripts.ddd.narrative_guard check`, which reviews them autonomously
+against the prior version, the original brief and the intent ledger of human
+steers, and records them without minting a pending review. `narrative post`
+refuses while the run's review is still pending (`--force` only for a re-post a
+human asked for). When you `apply` a decision, the reviewer's comments are filed
+in the intent ledger (`steers_recorded` in the output); add the terms each one
+implies with `narrative_guard steer`.
+
 For every other narrative change, do NOT run this gate — edit the story on
 canopy-web, where posting IS the new version. The only durable human approval in
 the routine loop is the **`external_release`** gate at upload.

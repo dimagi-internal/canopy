@@ -1138,14 +1138,31 @@ def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
     return result
 
 
-def _cmd_post(spec_path_str: str, run_id: str) -> None:
-    """Post the narrative review request, stamp run_state, print {id, url, share_token}."""
+def _cmd_post(spec_path_str: str, run_id: str, *, force: bool = False) -> None:
+    """Post the narrative review request, stamp run_state, print {id, url, share_token}.
+
+    Refuses (exit 3) while this run's last narrative review is still pending: a
+    revision made while nobody has answered is recorded by ``narrative_guard
+    check`` and reported in the digest, not minted as another pending review
+    (canopy#789 — 20 pending versions on one narrative). ``--force`` posts anyway.
+    """
     from scripts.ddd import review as rv  # local import — network-touching
 
     spec_path = Path(spec_path_str)
     if not spec_path.exists():
         print(f"ERROR: spec file not found: {spec_path}", file=sys.stderr)
         sys.exit(1)
+    pending = None if force else _pending_review_for_run(run_id, rv)
+    if pending:
+        print(
+            f"REFUSED: narrative review {pending} for run {run_id} is still pending. A revision "
+            "made while nobody has answered is not another review: run "
+            "`python -m scripts.ddd.narrative_guard check <spec> --run <run_id> --reason ...` "
+            "(it records the version and reports material drift in the digest). "
+            "Pass --force only for a human-requested re-post.",
+            file=sys.stderr,
+        )
+        sys.exit(3)
 
     result = post_narrative_version(spec_path_str, run_id, rv=rv)
     # Surface BOTH link forms explicitly so callers (and skills) never hand the
@@ -1189,7 +1206,50 @@ def _cmd_apply(spec_path_str: str, response_json_file: str) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    result["steers_recorded"] = record_feedback_steers(spec_path_str, result, source=str(response_path))
     print(json.dumps(result))
+
+
+def record_feedback_steers(spec_path, result: dict, *, source: str = "", by: str = "reviewer") -> int:
+    """File every free-text comment a human left on the narrative in the intent ledger.
+
+    The reviewer's words are the steers later revisions are checked against
+    (:mod:`scripts.ddd.narrative_guard`, canopy#789). Only the quote is recorded
+    here; the orchestrator adds the terms it forbids / limits / requires with
+    ``narrative_guard steer`` once it has read it. Best-effort: returns how many
+    were recorded and never fails the apply.
+    """
+    try:
+        from scripts.ddd import narrative_guard as ng
+
+        n = 0
+        for fb in result.get("feedback") or []:
+            text = str((fb or {}).get("text") or "").strip()
+            if not text:
+                continue
+            scope = fb.get("scope") or "overall"
+            ref = fb.get("ref") or ""
+            ng.add_steer(spec_path, text, by=by, source=f"narrative review {source} ({scope}{':' + ref if ref else ''})")
+            n += 1
+        return n
+    except Exception:
+        return 0
+
+
+def _pending_review_for_run(run_id: str, rv) -> str | None:
+    """The run's narrative review id when it is still waiting on a human, else None."""
+    try:
+        from scripts.ddd import runstate as rs
+
+        rid = (rs.load(run_id).narrative_review_id or "").strip()
+    except Exception:
+        return None
+    if not rid:
+        return None
+    try:
+        return rid if (rv.get_review(rid) or {}).get("status") == "pending" else None
+    except Exception:
+        return None
 
 
 def _lock_scene(s: dict) -> dict:
@@ -1435,7 +1495,7 @@ def main() -> None:
     if len(sys.argv) < 2:
         print(
             "Usage:\n"
-            "  python -m scripts.ddd.narrative post <spec_path> <run_id>\n"
+            "  python -m scripts.ddd.narrative post <spec_path> <run_id> [--force]   # refused while the run's review is pending\n"
             "  python -m scripts.ddd.narrative apply <spec_path> <response_json_file>\n"
             "  python -m scripts.ddd.narrative status <run_id>     # prints narrative status JSON; exit 1 if upload would refuse\n"
             "  python -m scripts.ddd.narrative pull <slug> <dir>                   # fetch the narrative into <slug>.narrative.lock.json (one-way read)\n"
@@ -1449,13 +1509,14 @@ def main() -> None:
     subcmd = sys.argv[1]
 
     if subcmd == "post":
-        if len(sys.argv) != 4:
+        args = [a for a in sys.argv[2:] if a != "--force"]
+        if len(args) != 2:
             print(
-                "Usage: python -m scripts.ddd.narrative post <spec_path> <run_id>",
+                "Usage: python -m scripts.ddd.narrative post <spec_path> <run_id> [--force]",
                 file=sys.stderr,
             )
             sys.exit(2)
-        _cmd_post(sys.argv[2], sys.argv[3])
+        _cmd_post(args[0], args[1], force="--force" in sys.argv[2:])
 
     elif subcmd == "sync":
         # Removed in cd436a2 along with auto_version_if_changed, when the story

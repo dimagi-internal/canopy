@@ -24,6 +24,12 @@ module reads the two blocks the v1/backlog loop adds::
                               # floor re-judges its capping scene(s) every pass, and
                               # the next batch fixes the floor's findings first
                               # (scripts.ddd.floor, canopy#780)
+      narrative_mode: auto    # auto | build | polish — how the narrative is reviewed
+                              # (scripts.ddd.narrative_guard, canopy#789). build: a
+                              # living spec the loop may evolve, every revision
+                              # guarded autonomously, nothing waits on a human;
+                              # polish: the first version blocks on the human gate.
+                              # auto -> polish for the demo objective, else build.
       fixed_surfaces:         # regexes naming what this loop may NOT edit; a floor
         - registry            # finding whose fix names one is out of edit scope,
         - seed data           # and a floor made only of those stops the run
@@ -96,6 +102,7 @@ import yaml
 MODES = ("auto", "backlog", "polish")
 OBJECTIVES = ("auto", "product", "demo")
 TIERING = ("auto", "on", "off")
+NARRATIVE_MODES = ("auto", "build", "polish")
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,7 @@ class LoopConfig:
     inner_loop_hint_minutes: float = 15.0
     floor_first: bool = True
     fixed_surfaces: tuple[str, ...] = ()
+    narrative_mode: str = "auto"
 
     def tiered(self, loop_mode: str | None) -> bool:
         """Concept-only judging between checkpoints? ``auto`` = on in backlog mode."""
@@ -355,6 +363,7 @@ def parse(data: dict | None) -> DDDConfig:
     loop_raw = data.get("loop") if isinstance(data.get("loop"), dict) else {}
     mode = str(loop_raw.get("mode") or "auto").strip().lower()
     objective = str(loop_raw.get("objective") or "demo").strip().lower()
+    narrative_mode = str(loop_raw.get("narrative_mode") or "auto").strip().lower()
     loop = LoopConfig(
         objective=objective if objective in OBJECTIVES else "demo",
         mode=mode if mode in MODES else "auto",
@@ -364,6 +373,7 @@ def parse(data: dict | None) -> DDDConfig:
         inner_loop_hint_minutes=max(_float(loop_raw.get("inner_loop_hint_minutes"), 15.0), 0.0),
         floor_first=loop_raw.get("floor_first") is not False,
         fixed_surfaces=_patterns(loop_raw.get("fixed_surfaces")),
+        narrative_mode=narrative_mode if narrative_mode in NARRATIVE_MODES else "auto",
     )
     gate_raw = data.get("deploy_gate") if isinstance(data.get("deploy_gate"), dict) else {}
     url = str(gate_raw.get("health_url") or "").strip() or None
