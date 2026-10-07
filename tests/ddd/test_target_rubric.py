@@ -132,6 +132,27 @@ def test_partition_out_of_rubric_findings_are_advisory_unless_high():
     assert passing[0]["target_role"] == "advisory"
 
 
+def test_mechanical_advisory_rides_the_batch_and_a_decision_is_deferred():
+    """The rubric decides what blocks, not what gets fixed (canopy#788)."""
+    r = tr.Rubric(pass_score=3, blocking_dimensions=("clarity",), block_severities=("high",))
+    status = [{"id": "dim:clarity", "kind": "dimension", "passing": True}]
+    fs = [
+        {"dimension": "visual_variety", "severity": "low", "route": "PRODUCT", "fix_kind": "mechanical"},
+        {"dimension": "visual_variety", "severity": "low", "route": "PRODUCT", "fix_kind": "mechanical",
+         "parked": True},
+        {"dimension": "arc_shape", "severity": "medium", "route": "CONCEPT", "fix_kind": "options"},
+    ]
+    out = tr.partition(fs, r, status)
+    assert [f["target_role"] for f in out] == ["advisory"] * 3
+    assert out[0]["route"] == "PRODUCT" and "deferred_by" not in out[0]
+    assert out[1]["route"] == "DEFER" and out[2]["route"] == "DEFER"
+    assert out[2]["deferred_by"] == "target_rubric"
+    # ...and the fix batch picks the mechanical one up.
+    from scripts.ddd import fix_scope
+
+    assert fix_scope.batch_plan(out)["findings"] == 1
+
+
 def test_an_empty_rubric_never_passes_vacuously():
     v = {"concept": _verdict("concept", {"x": 2}, overall=2)}
     v["concept"].dimensions = {}
@@ -160,7 +181,8 @@ def test_compute_auto_iterate_converges_on_the_target_not_the_min(tmp_path):
     assert action == "stop_done", reason
     assert st.target["converged"] and st.target["source"] == "default:product"
     assert st.target_history and st.target_history[-1]["criteria"]["dim:clarity"] is True
-    assert st.findings[0]["route"] == "DEFER"
+    # Advisory never holds the run open, but a mechanical one is not DEFERred (#788).
+    assert st.findings[0]["route"] == "PRODUCT" and st.findings[0]["target_role"] == "advisory"
 
 
 def test_compute_auto_iterate_keeps_going_while_a_criterion_fails(tmp_path):

@@ -806,7 +806,7 @@ def compute_auto_iterate(
             "declaring convergence — no fixes to apply.",
         )
     if (
-        product_objective
+        (product_objective or target_why)
         and converged
         and product_config.polish_pass
         and not polish_done

@@ -55,8 +55,12 @@ Criteria = one per outcome + one per blocking dimension.
 Findings: a finding on a FAILING criterion (its dimension, or an outcome's scene
 and dimension) at ``high``/``medium`` blocks; everything else — a finding on a
 passing criterion, or on a dimension the rubric does not name — is advisory
-(``route: DEFER``, ``deferred_by: target_rubric``) unless its severity is in
-``block_severities`` (default ``high``).
+unless its severity is in ``block_severities`` (default ``high``). Advisory
+never holds the run open, but a MECHANICAL advisory finding on an unparked scene
+still rides the next batch (``target_role: advisory``, route unchanged): the
+rubric decides what blocks, not what gets fixed (canopy#788). Only an advisory
+finding no batch can fix without a decision (``options`` / ``redesign``, or a
+parked scene) becomes ``route: DEFER``, ``deferred_by: target_rubric``.
 
 Converged = every criterion passing AND no blocking finding AND no gating
 verdict ``blocked`` / never-live.
@@ -83,6 +87,8 @@ from statistics import median
 from typing import Any, Iterable
 
 import yaml
+
+from scripts.ddd.objective import rides_the_batch
 
 DEFAULT_DRAWS = 3
 DEFAULT_BLOCK_SEVERITIES = ("high",)
@@ -447,6 +453,12 @@ def partition(findings: list[dict], rubric: Rubric, status: list[dict]) -> list[
         )
         if (on_failing and sev in CRITERION_SEVERITIES) or sev in block:
             f["target_role"] = "blocking"
+        elif rides_the_batch(f):
+            # Advisory, but a confident fix still goes in the batch (canopy#788):
+            # the rubric decides what holds the run open, not what gets fixed.
+            f["target_role"] = "advisory"
+            if f.get("objective_role") == "blocking":
+                f["objective_role"] = "ride_along"
         else:
             f["deferred_route"] = f.get("route") or "PRODUCT"
             f["deferred_by"] = DEFERRED_BY
