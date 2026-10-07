@@ -1455,7 +1455,12 @@ A PRODUCT/NARRATION fix that changes the product or spec means re-firing `ddd-ru
 After every complete iteration:
 
 1. **Append learnings** via `runstate.append_learning(text)` for each resolved
-   finding (so it is not re-raised in future runs).
+   finding (so it is not re-raised in future runs). The run's own summary is
+   written for you: every `assemble` that ends the run (`stop_*`) writes a
+   `<!-- ddd-run:<run_id> -->` block to `.canopy/ddd/learnings.md` —
+   how it ended, the score trajectory, cells that never cleared, floor findings
+   outside the edit scope, time and reuse, a dropped inner loop
+   (`scripts.ddd.run_learnings`, canopy#788). Commit that file with the run.
 
 2. **Track gate escalation:** Record accept-vs-redirect per decision class in
    `.canopy/ddd/learnings.md`. If a particular decision class is accepted
