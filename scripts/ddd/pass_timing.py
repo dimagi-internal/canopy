@@ -11,7 +11,14 @@ iteration 3 overwrote iteration 2's, and judges were never timed at all.
 
     {iteration, assembled_at, judge_full, judges, wall_minutes, fix_minutes,
      render_minutes, judge_minutes: {concept, user, arc}, other_minutes,
-     judge_timing_source, steps: {name: minutes}}
+     judge_timing_source, steps: {name: minutes},
+     rejudged, reused, held, capture, captured, carried}
+
+``rejudged`` / ``reused`` / ``held`` count the scenes the judge scope re-judged
+and carried; ``capture`` is the pass's capture mode (``full`` | ``scenes`` |
+``none``, :mod:`scripts.ddd.capture_scope`) with ``captured`` / ``carried``
+scene counts — so what scoping saved is read off the table, not reconstructed
+(canopy#785).
 
 Steps come from the watchdog (``fixer:<batch>``, ``render``, and
 ``judge:<name>`` when the orchestrator wraps each judge dispatch). A judge with
@@ -133,13 +140,28 @@ def record(
         "wall_minutes": wall,
         **row,
         "other_minutes": round(max(wall - accounted, 0.0), 2) if wall is not None else None,
+        "rejudged": len(scope.get("rejudge") or []) if scope else None,
+        "reused": len(scope.get("reuse") or []) if scope else None,
+        "held": len(scope.get("held") or []) if scope else None,
     }
+    cap = scope.get("capture") or {}
+    if cap:
+        row["capture"] = cap.get("mode")
+        row["captured"] = len(cap.get("scenes") or []) if cap.get("mode") != "none" else 0
+        row["carried"] = len(cap.get("carried") or [])
     state.pass_timings = history + [row]
     return row
 
 
+def _n(v: Any) -> str:
+    return str(v) if isinstance(v, int) else "-"
+
+
 def format_table(rows: list[dict]) -> str:
-    head = f"{'iter':>4} {'judge':<8} {'wall':>6} {'fix':>6} {'render':>6} {'concept':>7} {'user':>6} {'arc':>6} {'other':>6}"
+    head = (
+        f"{'iter':>4} {'judge':<8} {'wall':>6} {'fix':>6} {'render':>6} {'concept':>7} {'user':>6} "
+        f"{'arc':>6} {'other':>6} {'rejudge':>7} {'reuse':>5} {'capture':<14}"
+    )
     lines = [head]
 
     def f(v: Any) -> str:
@@ -150,7 +172,10 @@ def format_table(rows: list[dict]) -> str:
         lines.append(
             f"{str(r.get('iteration')):>4} {('full' if r.get('judge_full') else 'scoped'):<8} "
             f"{f(r.get('wall_minutes'))} {f(r.get('fix_minutes'))} {f(r.get('render_minutes'))} "
-            f"{f(j.get('concept')):>7} {f(j.get('user'))} {f(j.get('arc'))} {f(r.get('other_minutes'))}"
+            f"{f(j.get('concept')):>7} {f(j.get('user'))} {f(j.get('arc'))} {f(r.get('other_minutes'))} "
+            f"{_n(r.get('rejudged')):>7} {_n(r.get('reused')):>5} "
+            + (f"{r.get('capture')} {r.get('captured')}/{(r.get('captured') or 0) + (r.get('carried') or 0)}"
+               if r.get("capture") else "-")
         )
     return "\n".join(lines)
 

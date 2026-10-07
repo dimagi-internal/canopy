@@ -683,7 +683,8 @@ def compute_auto_iterate(
             )
             reason += (
                 f" Backlog mode: apply ALL mechanical findings as ONE batch (one PR, one "
-                f"deploy), then full re-render; next judge: {scope}."
+                f"deploy), then `iteration render` (it re-films only what the batch changed); "
+                f"next judge: {scope}."
             )
         else:
             state.next_judge_full = True
@@ -696,7 +697,7 @@ def compute_auto_iterate(
                 f" RECIPE-ONLY batch ({bp['findings']} finding(s), scene(s) {bp['scenes']}): "
                 "no product code changes, so do NOT open a product PR or wait on CI/deploy "
                 "and do NOT run judge_gate set-fix-sha — edit the recipe/spec in the local "
-                "checkout (commit it with the next product batch), render in full, and the "
+                "checkout (commit it with the next product batch), `iteration render`, and the "
                 "next pass skips the deploy gate"
                 + (
                     f" and re-judges only scene(s) {bp['judge_scenes']}"

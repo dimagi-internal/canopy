@@ -72,6 +72,20 @@ def resolved_vars(report: dict | None) -> dict[str, str]:
     return out
 
 
+def scene_vars(report: dict | None, scene: int | str) -> dict[str, str]:
+    """The bindings scene ``scene`` was FILMED with.
+
+    A scene-scoped capture (canopy#785) re-films a few scenes and carries the
+    rest from an earlier take, whose reseed bound different ids; the merged
+    report keeps each carried scene's bindings in ``scene_variables``. Every
+    other scene was filmed with this take's :func:`resolved_vars`.
+    """
+    per = (report or {}).get("scene_variables") if isinstance(report, dict) else None
+    if isinstance(per, dict) and isinstance(per.get(str(scene)), dict):
+        return {str(k): str(v) for k, v in per[str(scene)].items()}
+    return resolved_vars(report)
+
+
 def id_vars(variables: dict[str, str]) -> dict[str, str]:
     """The subset of *variables* whose NAME says it holds an id."""
     return {k: v for k, v in variables.items() if _ID_NAME.search(k)}
@@ -111,4 +125,4 @@ def unsubstitute_deep(obj: Any, variables: dict[str, str]) -> Any:
     return obj
 
 
-__all__ = ["id_vars", "resolved_vars", "unsubstitute", "unsubstitute_deep"]
+__all__ = ["id_vars", "resolved_vars", "scene_vars", "unsubstitute", "unsubstitute_deep"]

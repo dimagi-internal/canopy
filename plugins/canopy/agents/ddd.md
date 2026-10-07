@@ -868,8 +868,10 @@ on every full judge pass; pin it with `loop.mode` in `.canopy/ddd/config.yaml`):
 - **backlog** (auto when a full pass has ≥ `loop.backlog_min_findings`, default
   8, open findings) — the first full render + judge HARVESTS a backlog. Each
   `continue` fixes ALL mechanical findings as one batch (one PR, one deploy),
-  re-renders in full (cheap), and re-judges only scenes whose frame / page text
-  / spec changed; byte-identical scenes reuse their sealed cells. Every
+  re-films only the scenes the batch changed, as stills (nothing at all after a
+  words-only batch — `scripts.ddd.capture_scope`), and re-judges only scenes
+  whose frame / page text / spec changed; unchanged scenes reuse their sealed
+  cells. Every
   `loop.full_rejudge_every`-th batch (default 3) is judged in full, and an
   incremental pass that would converge returns `confirm_full` — so convergence
   is always decided by a full render + full judge.

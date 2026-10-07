@@ -21,9 +21,12 @@ render uploaded), which is the exact failure ``render_check`` exists to stop.
 ``render``
     Stamps ``<run_dir>/.render_start``, picks ``--base-url`` from the pass's
     stamped target (``target plan``: an inner-loop pass renders the local build),
-    runs the recorder with the DDD flag set under the watchdog (``render`` step
-    budget from ``timeouts:``) into ``render-iter<N>.log``, and writes the exit
-    code to ``.render_rc``. Exit code = the recorder's.
+    decides WHAT to film (:mod:`scripts.ddd.capture_scope`: every scene with
+    video, stills of the scenes the batch changed, or nothing after a words-only
+    batch — ``--full-capture`` forces every scene), runs the recorder with the
+    DDD flag set under the watchdog (``render`` step budget from ``timeouts:``)
+    into ``render-iter<N>.log``, and writes the exit code to ``.render_rc``.
+    Exit code = the recorder's (0 when nothing needed filming).
 
 ``publish``
     ``render_check`` against that start stamp and exit code (refuses — exit 1 —
@@ -140,20 +143,39 @@ def render(
     cookies: str | None = None,
     storage_state: str | None = None,
     extra: list[str] | None = None,
+    full_capture: bool = False,
     popen=subprocess.Popen,
 ) -> dict[str, Any]:
-    from scripts.ddd import loop_config, watchdog
+    from scripts.ddd import capture_scope, loop_config, watchdog
     from scripts.ddd.runstate import load, save
 
     state, run_dir = _state_and_dir(run_id)
     it = state.iteration
     base_url = base_url or _pass_base_url(state)
-    cmd = recorder_command(spec, run_dir, it, base_url=base_url, cookies=cookies, storage_state=storage_state, extra=extra)
+    capture = capture_scope.plan(run_id, spec, base_url=base_url, force_full=full_capture)
+    cmd = recorder_command(
+        spec, run_dir, it, base_url=base_url, cookies=cookies, storage_state=storage_state,
+        extra=[*capture_scope.recorder_args(capture), *(extra or [])],
+    )
 
     started = time.time()
     (run_dir / START_FILE).write_text(f"{started:.3f}\n")
     (run_dir / RC_FILE).unlink(missing_ok=True)
     log_path = run_dir / f"render-iter{it}.log"
+    if capture["mode"] == capture_scope.NONE:
+        log_path.write_text(f"no capture: {capture['reason']}\nrc=0\n")
+        (run_dir / RC_FILE).write_text("0\n")
+        return {
+            "run_id": run_id,
+            "iteration": it,
+            "status": "skipped",
+            "exit_code": 0,
+            "elapsed_s": 0.0,
+            "base_url": base_url,
+            "log": str(log_path),
+            "reason": capture["reason"],
+            "capture": capture,
+        }
 
     cfg = loop_config.load()
     budget = cfg.timeouts.for_step("render")
@@ -172,6 +194,8 @@ def render(
     watchdog.finish(state, "render", out["status"], reason=out["reason"])
     save(state)
     (run_dir / RC_FILE).write_text(f"{out['exit_code']}\n")
+    if out["exit_code"] == 0:
+        capture_scope.record_capture(run_dir, spec, capture)
     return {
         "run_id": run_id,
         "iteration": it,
@@ -181,6 +205,7 @@ def render(
         "base_url": base_url,
         "log": str(log_path),
         "reason": out["reason"],
+        "capture": capture,
     }
 
 
@@ -223,12 +248,19 @@ def publish(
     public: bool = True,
     run=subprocess.run,
 ) -> dict[str, Any]:
-    from scripts.ddd import render_check
+    from scripts.ddd import capture_scope, render_check
     from scripts.ddd.runstate import load, save
 
     state, run_dir = _state_and_dir(run_id)
     it = state.iteration
     spec = Path(spec).resolve()
+    capture = capture_scope.load_plan(run_dir, it) or {}
+    if capture.get("mode") == capture_scope.NONE:
+        verdict = {"ok": True, "reason": f"nothing filmed this pass — {capture.get('reason')}"}
+        render_check.stamp(run_id, verdict)
+        return {"ok": True, "iteration": it, "render_check": verdict, "deck_url": None,
+                "clip_url": None, "upload_errors": [], "capture": capture,
+                "reason": "no new frames — the last deck still shows every scene"}
     start_file, rc_file = run_dir / START_FILE, run_dir / RC_FILE
     if not start_file.exists():
         return {"ok": False, "reason": f"no {START_FILE} in {run_dir} — render with `iteration render` first"}
@@ -306,6 +338,8 @@ def _main(argv: list[str] | None = None) -> int:
     r.add_argument("--base-url", default=None, help="default: the inner-loop URL `target plan` stamped")
     r.add_argument("--cookies", default=None)
     r.add_argument("--storage-state", default=None, help="Playwright storage state (an OAuth-only app's session)")
+    r.add_argument("--full-capture", action="store_true",
+                   help="film every scene with video, whatever capture_scope would scope it to")
     p = sub.add_parser("publish", help="render_check, deck, upload, stamp run_state")
     p.add_argument("run_id")
     p.add_argument("--spec", required=True)
@@ -315,7 +349,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "render":
         out = render(args.run_id, args.spec, base_url=args.base_url, cookies=args.cookies,
-                     storage_state=args.storage_state, extra=extra)
+                     storage_state=args.storage_state, extra=extra, full_capture=args.full_capture)
         print(json.dumps(out, indent=1))
         if out["exit_code"] != 0:
             print(f"render: {out['status']} ({out['reason']}) — see {out['log']}", file=sys.stderr)

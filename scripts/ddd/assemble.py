@@ -225,7 +225,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         loop_config=cfg.loop,
         target=tgt.get("target"),
         judges=scope.get("judges"),
-        held=scope.get("held"),
+        held=[*(scope.get("held") or []), *(scope.get("carried_unverified") or [])] or None,
         inner_loop_policy=state.inner_loop_policy,
         product_config=cfg.product,
         extra_verdicts=extra,
@@ -296,6 +296,8 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "batch_plan": state.batch_plan,
         "scope_override": scope.get("override"),
         "held_scenes": scope.get("held") or [],
+        "carried_unverified": scope.get("carried_unverified") or [],
+        "capture": scope.get("capture"),
         "decision_overrides": list(state.decision_overrides or []),
         "version_warnings": list(state.version_warnings or []),
         "gating_floor": state.gating_floor,
@@ -335,6 +337,14 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"  Scope OVERRIDE: forced full against the loop's incremental call — {out['scope_override'].get('reason')}")
     if out["held_scenes"]:
         print(f"  Held scenes:  {out['held_scenes']} (recipe-only batch; judged fresh at the next checkpoint)")
+    cap = out.get("capture") or {}
+    if cap:
+        print(
+            f"  Capture:      {cap.get('mode')}"
+            + (f" — re-filmed {cap.get('scenes')}" if cap.get("mode") == "scenes" else "")
+            + (f", carried {cap.get('carried')}" if cap.get("carried") else "")
+            + (" (unverified after a product batch: next checkpoint re-films)" if out.get("carried_unverified") else "")
+        )
     for o in out["decision_overrides"]:
         print(f"  Decision OVERRIDE (iteration {o.get('iteration')}, overruled {o.get('action')!r}): {o.get('reason')}")
     print(f"  Target:       {out['target']}  (judges: {', '.join(out['judges'])})")

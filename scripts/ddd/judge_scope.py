@@ -20,8 +20,10 @@ change still re-judges.
 
 The protocol
 ------------
-Rendering stays FULL every iteration (it is cheap, and it is what makes the
-fingerprints below comparable). Judging is scoped:
+Capture is scoped separately (:mod:`scripts.ddd.capture_scope`, canopy#785):
+between checkpoints only the scenes a batch changed are re-filmed, as stills,
+and merged into the last render — a carried scene's files are byte-identical,
+so it fingerprints unchanged. Judging is scoped:
 
 1. ``plan``   — fingerprint every scene's judge INPUTS per component
    (:mod:`scripts.ddd.impact`: ``context``, ``spec``, ``trace``, ``page_text``,
@@ -150,7 +152,7 @@ def render_variables(run_dir: str | Path) -> dict[str, str]:
     return resolved_vars(_load_report(Path(run_dir)))
 
 
-def _trace_by_scene(run_dir: Path, variables: dict[str, str] | None = None) -> dict[int, list]:
+def _trace_by_scene(run_dir: Path) -> dict[int, list]:
     data = _load_report(run_dir)
     if data is None:
         return {}
@@ -160,16 +162,17 @@ def _trace_by_scene(run_dir: Path, variables: dict[str, str] | None = None) -> d
         traces = action_trace_by_scene(data)
     except Exception:
         return {}
-    from scripts.ddd.stable_ids import unsubstitute
+    from scripts.ddd.stable_ids import scene_vars, unsubstitute
 
     # Only what a judge reasons over and is stable take-to-take — notes can
     # carry timings. The target is compared in its SPEC form: a reseeded id
-    # (``${round2_tender_id}`` 90 -> 92) is the same action.
+    # (``${round2_tender_id}`` 90 -> 92) is the same action — with the bindings
+    # the scene was filmed with (a carried scene keeps its own, canopy#785).
     return {
         int(k): [
             [
                 a.get("kind"),
-                unsubstitute(a.get("target"), variables or {}),
+                unsubstitute(a.get("target"), scene_vars(data, k)),
                 bool(a.get("ok")),
                 bool(a.get("must_succeed")),
             ]
@@ -210,12 +213,15 @@ def scene_inputs(
     """
     from scripts.ddd import impact
 
+    from scripts.ddd.stable_ids import scene_vars
+
     run = Path(run_dir)
-    variables = render_variables(run)
-    traces = _trace_by_scene(run, variables)
+    report = _load_report(run)
+    traces = _trace_by_scene(run)
     comps: dict[str, dict[str, str]] = {}
     sigs: dict[str, dict] = {}
     for idx, scene in sorted(scenes.items()):
+        variables = scene_vars(report, idx)
         text = _page_text_payload(_find(run, f"scene_{idx}_page_text.json"), variables)
         image, sig = impact.scene_capture(
             _find(run, f"scene_{idx}.png"),
@@ -308,11 +314,15 @@ def impact_changes(
     signatures: dict[str, dict],
     ledger: dict | None,
     prior_signatures: dict | None,
+    *,
+    edited: set[str] | None = None,
 ) -> tuple[dict[str, list[str]], dict[str, dict]]:
     """``({scene: [changed component, ...]}, {scene: detail})`` against the ledger.
 
     Only scenes with at least one changed component appear. A scene the ledger
     has no components for lists every component (it cannot be reused).
+    ``edited`` (scene keys the last fix batch touched) never gets a crop change
+    explained away by a reseeded id (:func:`scripts.ddd.impact.compare_scene`).
     """
     from scripts.ddd import impact
 
@@ -321,12 +331,13 @@ def impact_changes(
     detail: dict[str, dict] = {}
     for scene, comps in components.items():
         diff, why = impact.compare_scene(
-            comps, prior.get(scene), signatures.get(scene), (prior_signatures or {}).get(scene)
+            comps, prior.get(scene), signatures.get(scene), (prior_signatures or {}).get(scene),
+            explain=scene not in (edited or set()),
         )
         if diff:
             changed[scene] = diff
-            if why:
-                detail[scene] = why
+        if why and (diff or "region_image_explained" in why):
+            detail[scene] = why
     return changed, detail
 
 
@@ -450,7 +461,7 @@ def _append_history(run: Path, scope: dict[str, Any], iteration: Any) -> list[di
         for k in (
             "planned_at", "ledger_iteration", "full", "judges", "rejudge", "reuse", "held",
             "user_scenes", "arc", "reason", "changed_components", "impact", "floor",
-            "would_reuse", "override",
+            "would_reuse", "override", "capture", "carried_unverified",
         )
         if scope.get(k) is not None
     }
@@ -471,8 +482,14 @@ def plan(
     override: dict | None = None,
     floor: dict | None = None,
     iteration: int | None = None,
+    edited_scenes: list[int] | str | None = None,
 ) -> dict[str, Any]:
     """Plan the judge scope.
+
+    ``edited_scenes`` — the scenes the last fix batch touched
+    (``state.batch_plan``): their crop changes are never explained away by a
+    reseeded id, so a fix that lands on an id-bearing element re-judges.
+    ``"all"`` when the batch had a finding with no readable scene.
 
     ``tiered`` (judge tiering, :mod:`scripts.ddd.target`): an INCREMENTAL pass
     runs the concept judge on the changed scenes, plus — when ``floor`` names
@@ -501,7 +518,14 @@ def plan(
     changed: dict[str, list[str]] | None = None
     detail: dict[str, dict] = {}
     if comparable:
-        changed, detail = impact_changes(components, signatures, ledger, load_signatures(run))
+        changed, detail = impact_changes(
+            components, signatures, ledger, load_signatures(run),
+            edited=(
+                set(current)
+                if edited_scenes == "all"
+                else {str(int(x)) for x in edited_scenes or []}
+            ),
+        )
     # A ledger recorded against a different scene set cannot be reused safely.
     if ledger and set((ledger.get("fingerprints") or {})) != set(current):
         scope = decide_scope(current, None, force_full=True)
@@ -532,6 +556,20 @@ def plan(
             k: floor.get(k) for k in ("score", "judges", "dimensions", "scenes", "iteration")
             if floor.get(k) is not None
         }
+    from scripts.ddd import capture_scope
+
+    cap = capture_scope.load_plan(run, iteration) if iteration is not None else None
+    if cap:
+        scope["capture"] = {k: cap.get(k) for k in ("mode", "scenes", "carried")}
+        if cap.get("carried_unverified") and cap.get("carried") and not scope.get("full"):
+            # A product batch re-filmed only the scenes it named; what it carried
+            # may sit on a template it changed. Like a held scene, that is not a
+            # read this pass may decide on (canopy#785).
+            scope["carried_unverified"] = sorted(int(s) for s in cap["carried"])
+            scope["reason"] += (
+                f" — scoped capture after a product batch: scene(s) {scope['carried_unverified']} "
+                "were not re-filmed, so this pass cannot decide (the next checkpoint re-films them)"
+            )
     if tiered and not scope.get("full"):
         extra, scenes_by, note = _floor_judges(
             floor, list(scope.get("rejudge") or []), all_scenes=[int(s) for s in current]
@@ -885,6 +923,17 @@ def _run_state(run_dir: str | Path):
     return RunState.model_validate(yaml.safe_load(path.read_text()) or {})
 
 
+def _batch_scenes(state: Any) -> list[int] | str | None:
+    """The scenes the batch applied before THIS pass edited (``state.batch_plan``);
+    ``"all"`` when one of its findings named no scene."""
+    bp = getattr(state, "batch_plan", None)
+    if not isinstance(bp, dict) or bp.get("for_iteration") != getattr(state, "iteration", None):
+        return None
+    if bp.get("unscoped"):
+        return "all"
+    return [int(s) for s in bp.get("scenes") or []]
+
+
 def resolve_plan_args(
     run_dir: str | Path,
     *,
@@ -931,6 +980,7 @@ def resolve_plan_args(
         # gating score down; plan adds its judge to an incremental pass.
         "floor": getattr(state, "gating_floor", None) if cfg.loop.floor_first else None,
         "iteration": getattr(state, "iteration", None),
+        "edited_scenes": _batch_scenes(state),
     }
     if full and not exp["full"]:
         if not (reason or "").strip():

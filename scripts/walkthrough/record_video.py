@@ -23,7 +23,8 @@ Usage:
         [--snapshots screenshots/walkthroughs/<name>/] \\
         [--snapshot-empty-scenes] \\
         [--prewarm | --no-prewarm] \\
-        [--skip-setup]
+        [--skip-setup] \\
+        [--capture-scenes 3,6] [--no-video]
 
 ``--spec`` is the source of truth for scenes. ``--input`` is accepted for
 backward compatibility: a walkthrough-run-data.json from canopy:walkthrough
@@ -37,6 +38,14 @@ generator command run BEFORE recording — honoring ``rerun: per_render | once``
 the command's outputs JSON. ``--skip-setup`` skips the command (but still
 loads the outputs) for fast re-renders when the data is known-fresh; demos
 that mutate state during recording must not use it.
+
+``--capture-scenes 3,6`` (the DDD loop's scene-scoped capture, canopy#785)
+records only those scenes — replaying the scenes before them off the record when
+their state depends on it — and folds them into the existing ``--snapshots``,
+``--report`` and ``--manifest`` instead of overwriting them, so every other
+scene keeps the frame, trace and ``${var}`` bindings it was filmed with (see
+``_lib/scene_merge``). ``--no-video`` skips the screen recording: a still is
+enough for a pass whose judges read only frames and page text.
 
 Specs with ``prewarm: true`` (or CLI ``--prewarm``; ``--no-prewarm`` wins the
 other way) get a pre-warm pass after setup + auth and BEFORE the recorded
@@ -101,6 +110,7 @@ from _lib.config import RecorderConfig  # noqa: E402
 from _lib.orchestrator import Recorder, SkipSameUrlRecorder  # noqa: E402
 from _lib.recorder import CURSOR_OVERLAY_JS  # noqa: E402
 from manifest import build_manifest  # noqa: E402
+from scripts.walkthrough._lib import scene_merge  # noqa: E402
 from scripts.narrative.substitution import (  # noqa: E402
     UnresolvedPlaceholderError,
     has_unresolved,
@@ -584,6 +594,53 @@ def build_scenes_from_spec(
 # main
 
 
+def _write_scoped_artifacts(args, spec, recorder, setup_provenance, total_seconds, scratch: Path) -> None:
+    """``--capture-scenes``: fold the targets' files, report rows and slides into
+    what the last render left on disk (``_lib/scene_merge``)."""
+    targets = set(getattr(args, "capture_scene_list", []) or [])
+    captured = sorted(
+        {s["scene_index"] for s in getattr(recorder.report, "scenes", []) if s.get("scene_index") in targets}
+    )
+    snap_dir = Path(args.snapshots)
+    moved = scene_merge.adopt_scene_files(scratch, snap_dir, captured)
+    print(f"Scoped capture: scene(s) {captured} replaced ({len(moved)} file(s)); every other scene kept")
+    prior: dict | None = None
+    if args.report and Path(args.report).exists():
+        try:
+            prior = json.loads(Path(args.report).read_text())
+        except (OSError, json.JSONDecodeError):
+            prior = None
+    merged = scene_merge.merge_report(prior, recorder.report.as_dict(), captured)
+    if args.report:
+        Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.report).write_text(json.dumps(merged, indent=2))
+        print(f"Wrote report (merged): {args.report}")
+    if args.manifest:
+        scenes_run = sorted(
+            {s for s in (e.get("scene_index") for e in merged.get("scenes") or []) if s is not None}
+        )
+        manifest = build_manifest(
+            spec=spec,
+            report=scene_merge.ReportView(merged),
+            snapshots_dir=snap_dir,
+            scenes_run=scenes_run,
+            scene_filter=spec.get("scene_filter") or None,
+            substitution_vars=(setup_provenance or {}).get("variables", {}),
+            generated_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            duration_seconds=total_seconds,
+        )
+        carried = set(merged.get("carried_scenes") or [])
+        for slide in manifest["slides"]:
+            if slide.get("scene_index") in carried:
+                slide["mp4_start_offset"] = None  # it is not in this take's clip
+        manifest["captured_scenes"] = captured
+        manifest["carried_scenes"] = sorted(carried)
+        manifest_path = Path(args.manifest)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest, indent=2))
+        print(f"Wrote manifest (merged): {args.manifest}")
+
+
 def _write_render_artifacts(args, spec, recorder, setup_provenance, total_seconds) -> None:
     """Write the RunReport (--report) + the canonical manifest (--manifest).
 
@@ -767,6 +824,20 @@ def main() -> None:
     )
     ap.add_argument("--manifest", help="path to write the render manifest (walkthrough-run-data.json)")
     ap.add_argument(
+        "--capture-scenes",
+        default=None,
+        help=(
+            "record only these scenes (1-based: 3,6 or 2-4) and MERGE them into the existing "
+            "--snapshots/--report/--manifest; every other scene keeps its last capture. Earlier "
+            "scenes are replayed off the record when the targets depend on their state."
+        ),
+    )
+    ap.add_argument(
+        "--no-video",
+        action="store_true",
+        help="capture frames and page text only — no screen recording, no --output mp4",
+    )
+    ap.add_argument(
         "--base-url",
         default=None,
         help=(
@@ -775,6 +846,12 @@ def main() -> None:
         ),
     )
     args = ap.parse_args()
+    try:
+        args.capture_scene_list = scene_merge.parse_scenes(args.capture_scenes)
+    except ValueError as e:
+        sys.exit(f"ERROR: --capture-scenes: {e}")
+    if args.capture_scene_list and not args.snapshots:
+        sys.exit("ERROR: --capture-scenes merges into --snapshots; pass --snapshots")
 
     # ---- Guardrail: don't hand-drive a DDD run's render ----------------------
     # Calling this recorder directly (instead of going through /canopy:ddd-run)
@@ -908,6 +985,19 @@ def main() -> None:
         skipped = before - len(scenes)
         if skipped:
             print(f"  · --skip-empty-scenes: dropped {skipped} action-empty scene(s) from the recording")
+    if args.capture_scene_list:
+        run_idx, why = scene_merge.replay_scenes(spec, args.capture_scene_list)
+        targets = set(args.capture_scene_list)
+        scenes = [s for s in scenes if s["scene_index"] in run_idx]
+        for s in scenes:
+            if s["scene_index"] not in targets:
+                s["pace"] = "flow"  # replayed for its state only; nothing of it is kept
+        replayed = [s["scene_index"] for s in scenes if s["scene_index"] not in targets]
+        print(
+            f"Scoped capture: scene(s) {sorted(targets)}"
+            + (f", replaying {replayed} off the record" if replayed else "")
+            + f" — {why}"
+        )
     if not scenes:
         sys.exit("ERROR: no scenes resolved from spec (check --input filtering)")
 
@@ -1016,11 +1106,10 @@ def main() -> None:
             if identities:
                 print(f"Identities: {len(identities)} persona(s) signed in off camera")
 
-            context_kwargs = dict(
-                viewport={"width": viewport_w, "height": viewport_h},
-                record_video_dir=str(video_dir),
-                record_video_size={"width": viewport_w, "height": viewport_h},
-            )
+            context_kwargs: dict = dict(viewport={"width": viewport_w, "height": viewport_h})
+            if not args.no_video:
+                context_kwargs["record_video_dir"] = str(video_dir)
+                context_kwargs["record_video_size"] = {"width": viewport_w, "height": viewport_h}
             # storage_state must be supplied at context construction (Playwright
             # can't load it onto an existing context). It seeds the auth before
             # any page opens, so the first scene navigation is already logged in.
@@ -1077,7 +1166,13 @@ def main() -> None:
             recorder = recorder_cls(
                 config=config,
                 base_url=base_url,
-                snapshot_dir=Path(args.snapshots) if args.snapshots else None,
+                # A scoped capture writes into a scratch dir; only the targets'
+                # files are folded into --snapshots afterwards.
+                snapshot_dir=(
+                    video_dir / "scoped-snapshots"
+                    if args.capture_scene_list
+                    else (Path(args.snapshots) if args.snapshots else None)
+                ),
                 snapshot_empty_scenes=bool(args.snapshot_empty_scenes),
                 capture_action_frames=bool(args.capture_action_frames),
                 # Per-scene viewport overrides (Scene.viewport) are restored
@@ -1121,12 +1216,21 @@ def main() -> None:
                 context.close()  # flush video
                 browser.close()
                 recorder.print_summary()
-                _write_render_artifacts(
-                    args, spec, recorder, setup_provenance, total_seconds
-                )
+                if args.capture_scene_list:
+                    _write_scoped_artifacts(
+                        args, spec, recorder, setup_provenance, total_seconds,
+                        video_dir / "scoped-snapshots",
+                    )
+                else:
+                    _write_render_artifacts(
+                        args, spec, recorder, setup_provenance, total_seconds
+                    )
             if render_error is not None:
                 raise render_error
 
+        if args.no_video:
+            print(f"✓ frames captured, no video (--no-video; ~{total_seconds:.0f}s)")
+            return
         webms = list(video_dir.glob("*.webm"))
         if not webms:
             sys.exit("ERROR: no video file produced by Playwright")
