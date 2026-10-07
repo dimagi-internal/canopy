@@ -12,6 +12,7 @@ from orchestrator.agent_cli import agent as agent_group
 from orchestrator.agent_email import email_group
 from orchestrator.caller import caller_group
 from orchestrator.agent_gdoc import gdoc_group, gsheet_group
+from orchestrator.agent_gslides import gslides_group
 from orchestrator.eval_cli import eval_group
 from orchestrator.project_cli import project as project_group
 from orchestrator.runner_cli import runner as runner_group
@@ -106,6 +107,7 @@ main.add_command(email_group)
 main.add_command(caller_group)
 main.add_command(gdoc_group)
 main.add_command(gsheet_group)
+main.add_command(gslides_group)
 main.add_command(eval_group)
 main.add_command(project_group)
 main.add_command(runner_group)
