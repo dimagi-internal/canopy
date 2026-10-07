@@ -1161,7 +1161,13 @@ shared test DB another session held; nothing timed it out):
 
 - in the `product` objective, paste the four **Fix direction** rules (see
   "Objective" above) into the brief verbatim; apply only findings that are not
-  `route: DEFER` (the deferred polish waits for the polish pass);
+  `route: DEFER` (the deferred polish waits for the polish pass). A finding
+  stamped `recurring: N` (canopy#788) has been open
+  on its cell for N passes: the last fix did not clear it, so say so in the
+  brief and ask for a DIFFERENT fix, not the same one again;
+- fix the SHARED template or component the screen is built from, never a
+  per-demo fork or copy of it (Spark lost 21 fixes that landed in per-demo
+  template forks and had to be moved back by hand);
 
 - start the step first — `python -m scripts.ddd.watchdog start <run_id> fixer:<batch>`
   prints the heartbeat file; put it in the brief;
