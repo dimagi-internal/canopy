@@ -194,6 +194,28 @@ live product-objective run the orchestrator re-assembled this by hand every
 iteration — reading an old run's render log to recover the command, adding
 `PYTHONPATH` and the Playwright extra by trial and error.
 
+**What gets filmed is decided for you** (`scripts.ddd.capture_scope`,
+canopy#785) and printed as `capture` in the JSON:
+
+- `full` — every scene, with video: every checkpoint / full-judge pass, the
+  first capture, a new render target, a spec change outside its scenes, or a
+  batch the planner can't scope.
+- `scenes` — stills only (`--capture-scenes N,M --no-video`) of the scenes whose
+  recipe changed (url, actions, viewport, persona, pace, `before:`) plus the
+  scenes a product batch edited. The recorder replays earlier scenes off the
+  record when a target needs their state (a reseeding `setup`, a scene with no
+  url, a `${var}` captured earlier) and MERGES the targets into the existing
+  snapshots / `run-report.json` / manifest; every other scene keeps its last
+  capture. After a product batch the carried scenes are "unverified": that pass
+  cannot decide anything and the next checkpoint re-films everything.
+- `none` — the batch changed only words (narration, why-brief): no recorder
+  runs; the judge scope re-judges the scenes whose spec changed against their
+  existing frames.
+
+The full narrated video is made once, by the Video phase, after convergence.
+`--full-capture` forces `full` (logged in `capture-plan.json`); don't pass it to
+"be safe" — the checkpoints already are the safety net.
+
 What the render produces (the `canopy:walkthrough` engine underneath):
 
 - `scene_<N>.png` — per-scene screenshot for each scene in the spec.
@@ -337,6 +359,10 @@ In order, it:
 4. **Stamps `iteration_decks[N]` / `iteration_clips[N]`** through
    `runstate.save` (so the run store writes them through to canopy-web) — no
    inline `python -c` editing run_state.
+
+A `capture: none` pass has no new frames: `publish` stamps an ok render check
+and uploads nothing (the last deck still shows every scene). A `scenes` pass
+has no clip; its deck shows the re-filmed scenes beside the carried ones.
 
 It prints `{deck_url, clip_url, upload_errors}`. Do this immediately after the
 render and BEFORE the judges, so every consumer — judges, surfaced findings,

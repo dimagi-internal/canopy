@@ -56,11 +56,11 @@ def _snapshot_actions(report: dict) -> dict[str, bool]:
 
 def _snapshot_actions_spec(report: dict) -> dict[str, bool]:
     """Like :func:`_snapshot_actions`, keyed by the spec-form (un-substituted) target."""
-    from scripts.ddd.stable_ids import resolved_vars, unsubstitute
+    from scripts.ddd.stable_ids import scene_vars, unsubstitute
 
-    variables = resolved_vars(report)
     out: dict[str, bool] = {}
     for a in report.get("actions") or []:
+        variables = scene_vars(report, a.get("scene_index"))
         spec_form = {**a, "target": unsubstitute(a.get("target"), variables)}
         out[_action_key(spec_form)] = bool(a.get("ok"))
     return out

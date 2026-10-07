@@ -171,10 +171,10 @@ def batch_plan(findings: list[dict] | None, *, for_iteration: int | None = None)
     need a fresh judge (``judge_scenes``). ``None`` when there is no actionable
     mechanical finding at all.
 
-    The RENDER stays full even then: a ``--scene`` render rewrites
-    ``run-report.json`` and the manifest for those scenes only, which would
-    change every other scene's trace fingerprint and break the deck. A full
-    render is 2.5-6 minutes; the CI + deploy wait it replaces was ~35.
+    ``scenes`` is also what the next CAPTURE re-films after a product batch
+    (:mod:`scripts.ddd.capture_scope`): the recorder's ``--capture-scenes``
+    merges those scenes into the last render instead of overwriting it.
+    ``unscoped`` = a finding named no scene, so any scene may have changed.
     """
     actionable = [
         f
@@ -196,6 +196,8 @@ def batch_plan(findings: list[dict] | None, *, for_iteration: int | None = None)
         "findings": len(actionable),
         "product_findings": len(product),
         "scenes": scenes,
+        # A finding with no readable scene may have edited any of them.
+        "unscoped": None in keys,
         "deploy": bool(product),
         # A recipe-only batch re-judges only the scenes it edits; every other
         # scene keeps its ledger cells even when a reseed moved its frame bytes.

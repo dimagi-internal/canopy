@@ -72,9 +72,14 @@ def check(
     fresh(report if report.exists() else None, "run-report.json")
 
     scenes: list[int] = []
+    carried: list[int] = []
     if manifest_path.exists():
         try:
-            scenes = [int(s) for s in (json.loads(manifest_path.read_text()).get("scenes_run") or [])]
+            manifest = json.loads(manifest_path.read_text())
+            # A scene-scoped capture (canopy#785) re-films some scenes and keeps
+            # the rest: only the re-filmed ones must be fresh.
+            carried = [int(s) for s in manifest.get("carried_scenes") or []]
+            scenes = [int(s) for s in (manifest.get("scenes_run") or []) if int(s) not in carried]
         except (ValueError, TypeError, OSError):
             problems.append("walkthrough-run-data.json unreadable")
     for n in scenes:
@@ -87,6 +92,7 @@ def check(
         "upload": not problems,
         "problems": problems,
         "scenes_checked": scenes,
+        "scenes_carried": carried,
         "reason": "render fresh and successful" if not problems else "; ".join(problems),
     }
 

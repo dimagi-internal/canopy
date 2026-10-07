@@ -43,6 +43,21 @@ Each is compared on its own, and ``changed`` names the ones that moved:
     :data:`LAYOUT_FRACTION` of its cells did, or its size changed. A large
     layout change re-judges a scene even when its own region looks the same.
 
+Reseeded ids and volatile stamps ON SCREEN (canopy#785)
+--------------------------------------------------------
+Text comparisons already put reseeded ids back in ``${var}`` form, but pixels
+cannot be un-substituted: a region showing "Tender 341" one take and "Tender 342"
+the next moved its crop every render, so a state-mutating narrative (supply:
+``setup: rerun: per_render``) could never reuse a scene whose subject shows an
+id. Each crop's signature therefore carries the hash of its element's RAW text
+and of its NORMALISED text (volatile stamps masked, id-named ``${var}`` values
+put back). A crop that moved while its raw text changed and its normalised text
+did not is EXPLAINED by the reseed and does not count — the element says the
+same thing with a different id. Two guards keep this from hiding a real edit:
+``region_dom`` (text and state attributes) must be unchanged, and a scene the
+last fix batch edited never gets the explanation (``explain=False``), so a
+style fix landing on an id-bearing element still re-judges.
+
 With no ``scene_<N>_regions.json`` (an older render, or a capture failure) the
 region is the WHOLE frame: ``region_dom`` is empty and ``region_image`` compares
 the full frame with the same pixel tolerance. A frame that does not decode
@@ -258,18 +273,14 @@ def region_dom_payload(regions: dict | None, variables: dict[str, str] | None = 
     return payload
 
 
-def region_crops(frame, regions: dict | None) -> dict[str, list[str]] | None:
-    """``{region key: [crop png b64, ...]}``; the whole frame when no regions."""
-    if frame is None:
-        return None
-    if regions is None:
-        return {"<frame>": [_png_b64(frame)]}
-    out: dict[str, list[str]] = {}
+def _cropped_matches(frame, regions: dict) -> dict[str, list[tuple[Any, dict]]]:
+    """``{region key: [(crop array, match), ...]}`` for the matches that get a crop."""
+    out: dict[str, list[tuple[Any, dict]]] = {}
     area = float(frame.shape[0] * frame.shape[1]) or 1.0
     for r in regions.get("regions") or []:
         if not isinstance(r, dict):
             continue
-        crops = []
+        kept = []
         for m in r.get("matches") or []:
             box = m.get("box") if isinstance(m, dict) else None
             if not isinstance(box, list) or len(box) != 4 or m.get("tag") in _PAGE_TAGS:
@@ -278,8 +289,49 @@ def region_crops(frame, regions: dict | None) -> dict[str, list[str]] | None:
                 continue
             c = _crop(frame, box)
             if c is not None:
-                crops.append(_png_b64(c))
-        out[str(r.get("key"))] = crops
+                kept.append((c, m))
+        out[str(r.get("key"))] = kept
+    return out
+
+
+def region_crops(frame, regions: dict | None) -> dict[str, list[str]] | None:
+    """``{region key: [crop png b64, ...]}``; the whole frame when no regions."""
+    if frame is None:
+        return None
+    if regions is None:
+        return {"<frame>": [_png_b64(frame)]}
+    return {k: [_png_b64(c) for c, _ in v] for k, v in _cropped_matches(frame, regions).items()}
+
+
+def region_texts(
+    frame, regions: dict | None, variables: dict[str, str] | None = None
+) -> dict[str, list[dict[str, str]]] | None:
+    """``{region key: [{raw, norm}, ...]}`` aligned with :func:`region_crops`.
+
+    ``raw`` hashes the element's text as captured; ``norm`` hashes it with
+    volatile stamps masked and id-named ``${var}`` values put back. Equal
+    ``norm`` with different ``raw`` = the same words with a reseeded id or a new
+    clock time — which is what explains a crop that moved.
+    """
+    if frame is None or regions is None:
+        return None
+    ids: dict[str, str] = {}
+    if variables:
+        from scripts.ddd.stable_ids import id_vars
+
+        ids = id_vars(variables)
+    out: dict[str, list[dict[str, str]]] = {}
+    for key, kept in _cropped_matches(frame, regions).items():
+        rows = []
+        for _, m in kept:
+            raw = str(m.get("text") or "")
+            norm = scrub_volatile(raw)
+            if ids:
+                from scripts.ddd.stable_ids import unsubstitute
+
+                norm = unsubstitute(norm, ids)
+            rows.append({"raw": _sha(raw), "norm": _sha(norm)})
+        out[key] = rows
     return out
 
 
@@ -316,6 +368,9 @@ def scene_capture(
         return comps, sigs
     crops = region_crops(frame, regions)
     sigs["crops"] = crops
+    texts = region_texts(frame, regions, variables)
+    if texts is not None:
+        sigs["texts"] = texts
     sigs["layout"] = {
         "after": layout_signature(frame),
         "before": layout_signature(before_frame) if before_frame is not None else None,
@@ -334,13 +389,30 @@ def scene_capture(
 EXACT = ("context", "page_text", "region_dom", "spec", "trace")
 
 
+def _explained(sp: dict, sn: dict, key: str, i: int) -> bool:
+    """True when crop ``i`` of region ``key`` shows the same words with a reseeded
+    id or a new volatile stamp: its raw text changed and its normalised text did not."""
+    tp = ((sp.get("texts") or {}).get(key) or [])
+    tn = ((sn.get("texts") or {}).get(key) or [])
+    if i >= len(tp) or i >= len(tn):
+        return False
+    a, b = tp[i], tn[i]
+    return bool(a.get("raw") != b.get("raw") and a.get("norm") == b.get("norm"))
+
+
 def compare_scene(
     current: dict[str, str],
     prior: dict[str, str] | None,
     sig_now: dict | None,
     sig_prior: dict | None,
+    *,
+    explain: bool = True,
 ) -> tuple[list[str], dict[str, Any]]:
-    """``(changed components, detail)`` for one scene against its ledger entry."""
+    """``(changed components, detail)`` for one scene against its ledger entry.
+
+    ``explain`` lets a crop change that its element's text explains (a reseeded
+    id, a clock stamp — see the module doc) count as unchanged. Pass ``False``
+    for a scene the last fix batch edited."""
     if not isinstance(prior, dict):
         return sorted(current), {"reason": "no ledger entry for this scene"}
     changed: list[str] = []
@@ -375,7 +447,11 @@ def compare_scene(
             detail["region_image"] = {"reason": "region set changed"}
             changed.append("region_image")
             continue
+        # The explanation is only as good as the DOM text beside it: when the
+        # region's words or state attributes moved, nothing is explained.
+        can_explain = explain and prior.get("region_dom") == current.get("region_dom")
         moved: dict[str, Any] = {}
+        explained: dict[str, Any] = {}
         for key in sorted(cn):
             a, b = cp[key], cn[key]
             if len(a) != len(b):
@@ -385,9 +461,15 @@ def compare_scene(
                 if x == y:
                     continue
                 res = pixel_change(x, y)
-                if res["changed"]:
-                    moved[key] = res
-                    break
+                if not res["changed"]:
+                    continue
+                if can_explain and _explained(sp, sn, key, i):
+                    explained[key] = {**res, "explained_by": "reseeded id / volatile stamp in the element text"}
+                    continue
+                moved[key] = res
+                break
+        if explained:
+            detail["region_image_explained"] = explained
         if moved:
             detail["region_image"] = moved
             changed.append("region_image")
@@ -403,6 +485,7 @@ __all__ = [
     "layout_change",
     "pixel_change",
     "region_dom_payload",
+    "region_texts",
     "scene_capture",
     "scrub_volatile",
 ]
