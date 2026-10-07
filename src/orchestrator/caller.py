@@ -26,6 +26,12 @@ that combines the two, so no agent re-derives it:
               by its grants like anyone's (canopy-web #986)
   blocked     the workspace has blocked this person: do not act, do not reply
 
+`unproven_member` (canopy-web#1265, informational): a workspace MEMBER whose message
+could not be tied to their account because their domain's mail is not DMARC/DKIM
+aligned, so canopy graded them a `contact`. It grants nothing and the tier is
+unchanged; it is passed through in the output and, on `caller` / `unlisted`, the
+reason tells the agent to tell the owner rather than treat them as an outsider.
+
 The envelope's words (agent roles `owner` / `admin` / `member` / `contact` /
 `system`, access `full` / `confined` / `none`, `granted_by`) are defined in
 canopy-web's `docs/architecture/access.md`. Envelope VERSION 2 renamed
@@ -94,8 +100,46 @@ def _address(env: dict) -> str:
     return str(person.get("email") or "")
 
 
+#: Appended to a `caller` / `unlisted` reason when canopy-web says the sender is an
+#: UNPROVEN MEMBER (canopy-web#1265): a workspace member whose message could not be
+#: tied to their account. It grants nothing; it changes what the agent says.
+UNPROVEN_MEMBER_NOTE = (
+    "; {email} is a member of this workspace{role}, but this message could not be tied to "
+    "their account — the gap is their domain's mail authentication (needs {needs}), not "
+    "who they are. Tell the owner; do not treat them as an outsider, and do not escalate "
+    "their access yourself")
+
+
+def unproven_member_of(env: dict) -> dict | None:
+    """The envelope's `unproven_member` block, or None (older canopy-web, malformed)."""
+    um = env.get("unproven_member")
+    return um if isinstance(um, dict) and um else None
+
+
+def _unproven_note(um: dict, address: str) -> str:
+    needs = um.get("needs") if isinstance(um.get("needs"), list) else []
+    role = f" ({um['role']})" if um.get("role") else ""
+    return UNPROVEN_MEMBER_NOTE.format(
+        email=um.get("email") or address or "this sender", role=role,
+        needs=" + ".join(str(n) for n in needs) or "aligned DMARC/DKIM")
+
+
 def resolve(env: dict, rules: list[str]) -> dict:
-    """The tier for one envelope. Pure: no I/O, so it is testable exhaustively."""
+    """The tier for one envelope. Pure: no I/O, so it is testable exhaustively.
+
+    `unproven_member` (canopy-web#1265) never changes the tier: it is reported as-is
+    and, on the `caller` / `unlisted` tiers, explained in `reason`."""
+    out = _resolve(env, rules)
+    um = unproven_member_of(env)
+    if um is None:
+        return out
+    out = {**out, "unproven_member": um}
+    if out.get("tier") in (CALLER, UNLISTED):
+        out["reason"] = out["reason"] + _unproven_note(um, out.get("address") or "")
+    return out
+
+
+def _resolve(env: dict, rules: list[str]) -> dict:
     who = env.get("who") or {}
     kind = who.get("kind") or "unknown"
     address = _address(env)

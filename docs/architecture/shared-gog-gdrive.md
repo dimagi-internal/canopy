@@ -17,7 +17,7 @@ Every proven piece already exists — in three different repos:
 | Mark-read (gog has no mark-read; API reads don't clear UNREAD) | echo `bin/echo_mark_read.py` → ACE `bin/ace-mark-read` | Works; gog-credential reuse via keychain |
 | Raw-send deny rail | echo `block_raw_gog_send.py` → hal's generalized `hooks/gating_guard.py` → ACE's copy (+ `tool_pattern` for MCP atom names) | Three near-identical copies |
 | Inbound routing contract (send records `thread_id` → inbound triage routes the reply to the right state scope) | ACE (comms-log per run) · echo (contact-memory per sender) | Same shape, agent-specific routing map |
-| Counterpart tiers (act / correspond / none) | ACE `config/allowlist.txt` + derived correspond tier | ACE innovation — see §3 |
+| Counterpart tiers (act / correspond / none) | `act` = canopy-web's grant (declared interface + workspace membership, resolved by `canopy caller tier`; `config/allowlist.txt` only for an agent with no interface) + ACE's derived correspond tier | ACE innovation — see §3 |
 | Per-agent gog MAILBOX (`<slug>@dimagi-ai.com`, never shared) over the SHARED fleet OAuth app (clients `canopy` / `canopy-web`) | Mailbox enforced by convention in echo AND ace; client shared fleet-wide | The mailbox is the identity that must not bleed — the client is just the app |
 
 The problems with the status quo: echo consumes ACE's Drive MCP **under ACE's service-account
@@ -104,8 +104,10 @@ identity, rules, secrets, and domain skills are the agent's"*):
   factory declare `gog_client: canopy`; the per-agent clients (`echo`, `ace`) are retired.
   *(History: 2026-07-08 `echo` was grandfathered on a hand-placed `credentials-echo.json`;
   2026-07-25 the fleet moved to `.env.tpl` + `op inject`/`op read`.)*
-- **Tiers (generalizing ACE's model):** `act` = static allowlist (`config/allowlist.txt`) — senders
-  who may steer the agent's work; `correspond` = **derived from the agent's own state** (ACE: LLO
+- **Tiers (generalizing ACE's model):** `act` = canopy-web's grant — the agent's declared
+  interface plus workspace membership, resolved per message by `canopy caller tier` — senders who
+  may steer the agent's work (a static `config/allowlist.txt` is consulted only for an agent with
+  no declared interface; ACE retired its own in dimagi-internal/ace#2773); `correspond` = **derived from the agent's own state** (ACE: LLO
   contacts in the routed run's `run_state.yaml`; echo: contacts with an existing contact-memory
   page) — approval-gated replies only; unknown = read-only triage. The derived tier is the important
   invention: the allowlist stays in sync with the source of truth instead of rotting in a file. This
