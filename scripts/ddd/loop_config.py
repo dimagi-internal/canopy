@@ -81,6 +81,10 @@ module reads the two blocks the v1/backlog loop adds::
           run: aws sts get-caller-identity --profile labs
         - gh auth status
 
+A top-level ``target_rubric:`` block (outcomes, blocking dimensions, bar, draws)
+is the repo's default convergence target; it is read by
+:mod:`scripts.ddd.target_rubric`, not here.
+
 Every key is optional. A missing file, a missing block, or a malformed value
 falls back to the defaults below — a config problem must never stop a run, it
 only turns the optional behaviour off (the deploy gate reports ``skipped``).

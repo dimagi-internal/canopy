@@ -98,11 +98,49 @@ A DDD run optimizes ONE of two things, set by `loop.objective` in
 |---|---|---|
 | The demo is… | a probe of the product | the deliverable |
 | Blocks / drives `continue` | product findings (task completion, trust, clarity, design soundness, use-case soundness, product lens, product lint) at severity `high`/`medium` | every non-DEFER mechanical finding |
-| Converged when | every product dimension's weakest cell ≥ `product.floor` (3), no presentation cell < 2, no blocking product finding | every gating judge ≥ 4 |
+| Converged when | the **target rubric** passes (below) — default: each product dimension's median cell ≥ 3 | the **target rubric** passes — default: each gating dimension's median cell ≥ 4 |
 | Polish / arc / framing / claim wording | deferred (`route: DEFER`, `deferred_by: objective:product`), applied ONCE as the final polish pass | chased every iteration |
 | Accuracy findings | narration edits only (`fix_scope: narrative`) — never product code | same |
 | Narrative | approve the USE CASE (persona, job, the 3–4 moments); scene recipes follow the product without re-gating | locked scene by scene |
 | Video phase | skipped unless asked | runs on convergence |
+
+**Target rubric — what "converged" means (canopy#790, `scripts/ddd/target_rubric.py`).**
+A run converges on the rubric its caller sends, not on a fixed 4.0. The caller
+sends the outcomes the build or demo must demonstrate (each with a pass
+condition), the generic dimensions that block (anything else is advisory), and
+the bar. Precedence: pinned to the run > the spec's `target_rubric:` >
+`.canopy/ddd/config.yaml` `target_rubric:` > the objective's default (build:
+product dimensions at 3; polish: every gating dimension at 4).
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.target_rubric set <run_id> <rubric.yaml>)   # a caller's rubric for THIS run
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.target_rubric show <run_id> --spec "$SPEC")  # what the run converges on
+```
+
+```yaml
+target_rubric:
+  pass_score: 3
+  draws: 3                       # a criterion passes on the majority of its last 3 full passes
+  block_severities: [high]       # an out-of-rubric finding blocks only at these
+  blocking_dimensions: [task_completion, trust, clarity]
+  outcomes:
+    - id: state-at-a-glance
+      claim: Sophie sees the state of every tender at a glance
+      pass_when: the tender list shows quoted / silent / missing per supplier without opening a tender
+      scenes: [1, 2]
+```
+
+Each outcome and each blocking dimension is one criterion, and noise is handled
+two ways. First, a criterion is read by the **median** of its cells, never the
+minimum; only a cap the concept judge *confirmed* (median of 3 draws ≤ 2) fails
+it outright. Second, it passes when it passed on the **majority of its last
+`draws` full passes**, so one pass flipping 3→2 with nothing changed no longer
+un-converges a run (#492). An outcome with a `pass_when` is scored by the concept
+judge directly (`target_outcomes:`, k=3 draws). A finding blocks only when it sits
+on a failing criterion or has a severity in `block_severities`. Everything else is
+`route: DEFER, deferred_by: target_rubric` and is reported, not chased. That is
+why arc `visual_variety` no longer holds a build run open for 11 iterations.
+When you start a run for a caller who said what it is FOR, write their rubric.
 
 `auto` picks `product` when the first full pass has ≥ `loop.backlog_min_findings`
 open findings. Why this exists: on connect-labs `supply-sophie-unanswered-round`
@@ -1420,7 +1458,7 @@ proceeding with autonomous work.
 
 ## Rules
 
-- Know the run's objective (`state.objective`): `product` gates on blocking product findings and defers polish to one final pass; `demo` gates on every judge >= 4. Fixers in `product` carry the fix-direction rules.
+- Know the run's objective (`state.objective`): both converge on the run's target rubric (`state.target`); `product` defaults to product dimensions at 3 and defers polish to one final pass, `demo` defaults to every gating dimension at 4 (median, majority of draws). Fixers in `product` carry the fix-direction rules.
 - Always read `.canopy/ddd/context.md` and `.canopy/ddd/learnings.md` first.
 - Bootstrap context.md if it does not exist — never prompt the user for this.
 - The 8 skills do the actual work — you chain and route.

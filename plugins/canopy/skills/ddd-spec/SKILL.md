@@ -1058,6 +1058,30 @@ moment of the demo. But if you see multiple sentences each describing distinct
 user actions with distinct backing capabilities, that's the split signal — not
 a "leave it as a multi-sentence beat" signal.
 
+## Optional: `target_rubric:` — what this narrative's runs converge on
+
+When the caller said what the build or demo is FOR, put that in the spec as a
+`target_rubric:` block (canopy#790, `scripts/ddd/target_rubric.py`). Runs then
+converge when its criteria pass, not on a fixed 4.0. Write outcomes in the
+caller's terms. Each outcome needs a `pass_when` that one screenshot can answer
+yes or no:
+
+```yaml
+target_rubric:
+  pass_score: 3                    # optional; default 3 (build) / 4 (polish)
+  blocking_dimensions: [task_completion, trust, clarity]   # any other dimension is advisory
+  outcomes:
+    - id: state-at-a-glance
+      claim: Sophie sees the state of every tender at a glance
+      pass_when: the tender list shows quoted / silent / missing per supplier without opening a tender
+      scenes: [1, 2]               # 1-based; omit for every scene
+```
+
+Leave it out when nobody said. The objective's default applies then. A rubric
+pinned to a run (`target_rubric set`) overrides this one. Do not add outcomes
+the caller did not ask for. The narrative guard treats them like any other
+unrequested feature.
+
 ## After retitling — sync the build_order
 
 If you retitle a scene, regenerate any `build_order` entries that referenced

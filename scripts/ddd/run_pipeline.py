@@ -285,6 +285,8 @@ def compute_auto_iterate(
     extra_verdicts: dict[str, Verdict] | None = None,
     floor: dict | None = None,
     edit_scope: dict | None = None,
+    target_rubric: object | None = None,
+    run_dir: object | None = None,
 ) -> tuple[str, str]:
     """Decide the next loop action from the SCORE TRAJECTORY, not an iteration count.
 
@@ -405,6 +407,17 @@ def compute_auto_iterate(
       findings are stamped ``floor: true`` and ordered first in
       ``state.findings``, and the reason opens with them, so the batch fixes
       what holds the gate before anything else.
+
+    Target rubric (see :mod:`scripts.ddd.target_rubric`, canopy#790):
+    ``target_rubric`` is a resolved :class:`~scripts.ddd.target_rubric.Rubric`, or
+    its sources ``{run, spec, config}`` (resolved here, once the objective is
+    settled, so the default matches it), and ``run_dir`` where the judges' per-scene rows live. When given, it
+    DECIDES convergence: every criterion (each outcome, each blocking dimension)
+    passing on the majority of its last ``draws`` full passes, read by median
+    cell rather than minimum, and no blocking finding. Findings outside a
+    failing criterion become advisory (``route: DEFER``, ``deferred_by:
+    target_rubric``) unless their severity is in ``block_severities``. Without
+    it (callers that predate it) nothing changes.
     """
     import copy
 
@@ -456,6 +469,32 @@ def compute_auto_iterate(
             findings, block_severities=product_config.block_severities
         )
         converged, product_why = objective_mod.converged(all_verdicts, findings, product_config)
+    target_why: str | None = None
+    if target_rubric is not None:
+        from scripts.ddd import target_rubric as target_rubric_mod
+
+        if isinstance(target_rubric, dict):
+            # Sources, not a rubric: the default depends on the objective, which
+            # is only settled above.
+            target_rubric = target_rubric_mod.resolve(
+                objective=state.objective,
+                verdicts=all_verdicts,
+                run_rubric=target_rubric.get("run"),
+                spec_rubric=target_rubric.get("spec"),
+                config_rubric=target_rubric.get("config"),
+            )
+        tr = target_rubric_mod.evaluate(
+            target_rubric,
+            state,
+            findings,
+            run_dir=run_dir,
+            verdicts=all_verdicts,
+            distribution=distribution,
+            judge_full=judge_full,
+        )
+        findings = tr["findings"]
+        converged = tr["converged"]
+        target_why = product_why = tr["why"]
 
     from scripts.ddd import floor as floor_mod
 
@@ -762,6 +801,8 @@ def compute_auto_iterate(
                 f"Product objective converged ({product_why})"
                 + (f"; {deferred} deferred presentation finding(s) reported, not chased." if deferred else "."),
             )
+        if target_why:
+            return _finish("stop_done", f"Target rubric met ({target_why}) — ready for promotion.")
         return _finish("stop_done", "Both judges passed full spec — ready for promotion.")
     if converged and getattr(state, "scene_filter", None):
         return _finish(

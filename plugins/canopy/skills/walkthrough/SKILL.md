@@ -208,6 +208,11 @@ prewarm: true                   # default: false — visit every unique scene UR
 # auto-applying them; ignored by plain /canopy:walkthrough runs.
 review_mode: autonomous
 
+# Target rubric (optional, DDD-only) — what the DDD loop converges on: outcomes
+# with pass conditions + which judge dimensions block (canopy#790; authoring in
+# ddd-spec "target_rubric:"). The recorder ignores it.
+# target_rubric: {pass_score: 3, blocking_dimensions: [task_completion], outcomes: [...]}
+
 # Auth (optional — omit for public pages)
 #
 # If the recorder's stored session has expired, the app 302s every page to its

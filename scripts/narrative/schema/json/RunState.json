@@ -543,6 +543,41 @@
       ],
       "default": null,
       "title": "Narrative Guard"
+    },
+    "target_rubric": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target Rubric"
+    },
+    "target_history": {
+      "default": [],
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Target History",
+      "type": "array"
+    },
+    "target": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target"
     }
   },
   "required": [
