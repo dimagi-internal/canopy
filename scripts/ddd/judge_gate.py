@@ -23,7 +23,7 @@ see :mod:`scripts.ddd.loop_config`). No config -> the deploy half reports
         [--lens regression_guard=pass --lens visual_geometry=fail ...] [--no-wait]
 
 ``check`` exits 0 when the judges may run, 1 when they must not (the JSON says
-``wait_deploy`` or ``fix_render``), 2 on a usage error.
+``wait_deploy``, ``fix_render`` or ``rework_fix``), 2 on a usage error.
 """
 from __future__ import annotations
 
@@ -45,6 +45,9 @@ HARD_FAIL: dict[str, frozenset[str]] = {
     "render_pacing_audit": frozenset({"fail", "recording_bug"}),
     "snapshot_consistency": frozenset({"fail"}),
     "recipe_preflight": frozenset({"fail"}),
+    # Not a lens on the take: the fix batch's own diff (scripts.ddd.fix_gate). A
+    # batch that added explanatory copy or a demo-specific rule is not judged.
+    "fix_gate": frozenset({"fail"}),
 }
 
 _MIN_SHA = 7
@@ -146,6 +149,18 @@ def decide(deploy: dict | None, lenses: dict[str, str] | None) -> dict[str, Any]
         for name, verdict in (lenses or {}).items()
         if verdict in HARD_FAIL.get(name, frozenset())
     )
+    if "fix_gate=fail" in hard:
+        return {
+            "judge": False,
+            "action": "rework_fix",
+            "reason": (
+                "the last fix batch failed the fixer-diff gate (scripts.ddd.fix_gate): it added "
+                "explanatory copy, a fix-narrating comment, a demo name or a demo-specific rule — "
+                "send its findings back to the fixer to restructure (not annotate), re-run "
+                "`fix_gate --run-id`, and judge only once it passes"
+            ),
+            "hard_fails": hard,
+        }
     if deploy and deploy.get("status") == "not_ready":
         return {
             "judge": False,
@@ -260,7 +275,11 @@ def _main(argv: list[str] | None = None) -> int:
                     inner_enabled=full_cfg.inner_loop.enabled,
                     threshold=full_cfg.loop.inner_loop_hint_minutes,
                 )
-        result = decide(deploy, _parse_lenses(args.lens))
+        lenses = _parse_lenses(args.lens)
+        fix_gate = getattr(state, "fix_gate", None) or {}
+        if fix_gate.get("status"):
+            lenses.setdefault("fix_gate", str(fix_gate["status"]).lower())
+        result = decide(deploy, lenses)
         result["deploy"] = deploy
         if hint:
             result["recommendation"] = hint

@@ -730,6 +730,7 @@ def compute_auto_iterate(
         """``continue`` + the next pass's judge scope (backlog vs polish)."""
         if floor_cls is not None and loop_config.floor_first:
             reason = _floor_first_reason(floor, floor_cls) + reason
+        reason = prose_hold + reason
         if state.loop_mode == "backlog":
             state.next_judge_full = (
                 state.batches_since_full + 1 >= loop_config.full_rejudge_every
@@ -782,6 +783,18 @@ def compute_auto_iterate(
                 f"\"<what you configured>\"` and proceed as {action!r}: {reason}",
             )
         return _finish(action, reason)
+    prose_hold = ""
+    if converged and not product_objective:
+        # Every judge >= 4 is not "done" while a screen is accreting prose: that
+        # lint blocks in the demo objective too (canopy#786).
+        prose = objective_mod.open_prose_blockers(findings, block_severities=product_config.block_severities)
+        if prose:
+            converged = False
+            prose_hold = (
+                f"Every judge passed, but {len(prose)} prose_density finding(s) are open and "
+                "block in every objective — cut the copy (structure, not sentences) before "
+                "stop_done. "
+            )
     if converged and not judge_full and not getattr(state, "scene_filter", None):
         # An incremental pass reused unchanged scenes' cells. Convergence is only
         # ever declared on a full render + full judge.

@@ -242,6 +242,10 @@ class RunState(BaseModel):
     # Merge SHA of the last fix batch (PR) — what the deploy gate waits for the
     # target's health endpoint to report before any judge runs.
     last_fix_sha: str | None = None
+    # The last fix batch's diff gate (scripts.ddd.fix_gate, canopy#786):
+    # {status: pass|fail, counts: {check: n}, head, checked_at}. While it reads
+    # ``fail`` judge_gate refuses to judge — the batch goes back to its fixer.
+    fix_gate: dict | None = None
     # Pre-render gap walk (skills/ddd-gap-walk): path of gaps.json and how many
     # scenes' claims the current product cannot yet show. Non-zero -> BUILD.
     gaps_path: str | None = None

@@ -56,18 +56,49 @@ design_findings_output:
   fix_kind_values: [mechanical, options, redesign]
 
 # ─────────────────────────────────────────────────────────────────────────
-# OBJECTIVE-DATA STANDING RULE (read BEFORE scoring any data / evidence artifact)
+# ADDED-EXPLANATION + HARDCODING STANDING RULES (every product type; canopy#786)
 # ─────────────────────────────────────────────────────────────────────────
-# Many products exist to present EVIDENCE the user must judge for themselves —
-# dashboards, monitoring, analytics, audit/QA screens. For these the demo's job
-# is to show the objective data CLEANLY and let the reader draw the conclusion,
-# with explanations available ON DEMAND (info bubbles, tooltips, legends,
-# progressive disclosure). Score accordingly:
+# A clean, clear product states facts through STRUCTURE — labels, fields,
+# status chips, counts, columns, ordering, a view that answers the question.
+# The loop's failure mode is the opposite: every "this is unclear" became one
+# more sentence, tooltip, legend or definition, and every "the narration says X"
+# became a rule keyed on the demo's own data. On the Spark and supply runs
+# (2026-10) 32 of 232 fix recommendations were "add a tooltip / legend /
+# definition", and fixers shipped "Click a column name for its definition",
+# a seven-item legend, and `_TERMS_GAPS = frozenset({"tender duty terms", …})`.
 #
-#  • REWARD clean, uncluttered presentation of the raw measures, clear labels,
-#    and explanations the user opts into (an "i" bubble defining a metric, a
-#    legend, a method citation). A demo that shows the numbers plainly and lets
-#    the reader conclude scores HIGHER than one that pre-digests the verdict.
+#  • ADDED EXPLANATORY COPY SCORES AGAINST — for every product, evidence or not.
+#    Helper sentences, captions, "click X to Y" hints, info bubbles, tooltips
+#    carrying a definition, legends, footnotes, inline definitions: each one is
+#    the product admitting its structure does not say the thing. Deduct for it
+#    (see the visual_polish / concept_clarity deduction rules) UNLESS no
+#    structural fix exists — and then say so in the finding.
+#  • RECOMMEND STRUCTURE, NEVER COPY. When something reads as unclear, the
+#    fix_recommendation names the structural change: rename the label, split
+#    or merge a column, reorder, turn a sentence into a field or a chip, add the
+#    missing view, or delete the thing that confuses. "Add a tooltip / legend /
+#    definition / one-line explanation / caption / info bubble" is NOT a valid
+#    recommendation. When the narration assumes context the screen does not
+#    carry, the fix is usually in the NARRATION (route CONCEPT), not more text
+#    on the screen.
+#  • HARDCODING / SPECIAL-CASING IS A DEFECT. Product behaviour, copy or rules
+#    that only make sense for THIS demo's data — a persona or partner named in
+#    product copy, a status or chip that exists for one row, a column only this
+#    dataset fills, a keyword guess tuned to this dataset's labels, a "comparable"
+#    rule invented to make one scene's number come out — deduct
+#    (design_soundness). The fix is to generalize the rule from data the product
+#    already models, or remove it; never to extend the special case. Ask of every
+#    product change a scene implies: "would we build this if there were no
+#    demo?"
+#
+# EVIDENCE PRODUCTS (dashboards, monitoring, analytics, audit / QA screens)
+# exist to present data the user must judge for themselves. Show the objective
+# data CLEANLY and let the reader draw the conclusion:
+#
+#  • REWARD clean, uncluttered presentation of the raw measures and labels that
+#    say what each measure is. A demo that shows the numbers plainly and lets
+#    the reader conclude scores HIGHER than one that pre-digests the verdict —
+#    and higher than one that surrounds the numbers with explanations.
 #  • Do NOT reward — and DEDUCT for — on-screen EDITORIALIZING: derived
 #    "headline" conclusions, verdict banners, interpretive callouts ("the gap is
 #    +17 pts!"), or alarm-coloring that tells the user what to think. A
@@ -79,16 +110,13 @@ design_findings_output:
 #    value crossing a STATED threshold, or two recorded values that literally
 #    differ — never a subjective judgment. A bright "this is bad" fill that
 #    editorializes is a deduction; the same flag shown as a calm, defined marker
-#    with its meaning in a bubble is fine.
-#  • Objective interpretation that is load-bearing (a threshold rule, a metric
-#    definition) belongs in an explanation the user can OPEN, not asserted as a
-#    conclusion on the face of the chart.
+#    is fine.
 #
-# This rule does NOT apply to artifacts whose job is genuinely persuasion (a
-# pitch, a marketing page) — judge those by whether the argument lands. The
-# discriminator is the product's OWN intent, stated in the scene's
-# concept_claim / design_intent. When the concept is "show the user the
-# evidence and let them decide", reward restraint, not salesmanship.
+# The evidence rule does NOT apply to artifacts whose job is genuinely
+# persuasion (a pitch, a marketing page) — judge those by whether the argument
+# lands. The discriminator is the product's OWN intent, stated in the scene's
+# concept_claim / design_intent. The added-explanation and hardcoding rules
+# above apply to every product.
 # ─────────────────────────────────────────────────────────────────────────
 
 dimensions:
@@ -100,11 +128,12 @@ dimensions:
       "5": "A smart outsider watching the walkthrough for the first time can state in one sentence what the product does and why it matters — without any verbal caveats from the presenter."
       "4": "Concept is clear; one scene requires a spoken bridge to land the 'why it matters' for a cold audience."
       "3": "Concept is understandable to someone already familiar with the space, but a true outsider would need a question answered. (DEFAULT)"
-      "2": "The walkthrough establishes what the product does but not why anyone would want it; or it assumes context a new viewer won't have."
+      "2": "The walkthrough establishes what the product does but not why anyone would want it; or it assumes context a new viewer won't have. (The fix for missing context is structure on the screen or a change to the NARRATION — never added explanatory copy; see the ADDED-EXPLANATION standing rule.)"
       "1": "A smart outsider would leave confused about both what the product is and why it matters."
     deduction_rules:
       - "No scene names a concrete user or role the product serves: max 3"
       - "Opening scene fails to establish the problem being solved: max 2"
+      - "A screen leans on explanatory copy (helper sentences, a legend, definitions, info bubbles, 'click X to Y' hints) to make its point instead of structure: max 3 — recommend the structural change, never more copy"
 
   - id: use_case_soundness
     label: "Use-Case Soundness (Is this worth demonstrating?)"
@@ -151,7 +180,8 @@ dimensions:
       "2": "At least one core interaction shown is incoherent or would confuse a first-time user trying to reproduce it."
       "1": "The walkthrough shows interactions that contradict each other or that break the product's own logic."
     deduction_rules:
-      - "A scene shows an error state without explaining it: max 2"
+      - "A scene shows an error state the user cannot act on — the state itself does not say what failed and what to do next (a labelled cause, a retry/fix action): max 2. Fix in the state's structure, not with an explanatory sentence beside it"
+      - "HARDCODING / SPECIAL-CASING: the product visibly special-cases this demo's data — a persona or partner named in product copy, a status/chip/rule that exists for one row, a column only this dataset fills, behaviour keyed on the wording of a label: max 2 (fix = generalize from data the product models, or remove; never extend the special case)"
       - "A core action is clicked off-camera or skipped entirely with no narration: max 3"
       # Action-fidelity (only when context.action_trace is present): a core
       # interaction the narration calls out is absent from the trace entirely
@@ -212,7 +242,8 @@ dimensions:
       - "Real content (not a full-page-strip capture artifact) overflows the viewport or wraps awkwardly: max 3"
       - "Typography hierarchy is flat or arbitrary (no visible H1/H2/body distinction): max 3"
       - "Color usage is decorative rather than semantic (random brand-accent on non-action elements): max 3"
-      - "On-screen EDITORIALIZING of data — a derived verdict/headline callout, an interpretive banner, or alarm-coloring that tells the user the conclusion rather than showing the objective measure (see OBJECTIVE-DATA STANDING RULE): max 3. (Color/emphasis encoding an objective fact — a value crossing a stated threshold, values that literally differ — is NOT this; a 'this is bad' fill that editorializes IS.)"
+      - "Explanatory copy carrying what structure should — a helper sentence, caption, legend, inline definition, or tooltip/info bubble added to make the screen readable: max 3 (recommend the structural fix — label, field, chip, column, order, or removal — unless none exists; never more copy)"
+      - "On-screen EDITORIALIZING of data — a derived verdict/headline callout, an interpretive banner, or alarm-coloring that tells the user the conclusion rather than showing the objective measure (see the EVIDENCE PRODUCTS standing rule): max 3. (Color/emphasis encoding an objective fact — a value crossing a stated threshold, values that literally differ — is NOT this; a 'this is bad' fill that editorializes IS.)"
 
   - id: why_groundedness
     label: "Why Groundedness"

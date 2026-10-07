@@ -97,8 +97,8 @@ A DDD run optimizes ONE of two things, set by `loop.objective` in
 | | **product** (v1 / "the product has distance to go") | **demo** (mature product; the video is the deliverable) |
 |---|---|---|
 | The demo is… | a probe of the product | the deliverable |
-| Blocks / drives `continue` | product findings (task completion, trust, clarity, design soundness, use-case soundness, product lens, product lint) at severity `high`/`medium` | every non-DEFER mechanical finding |
-| Converged when | the **target rubric** passes (below) — default: each product dimension's median cell ≥ 3 | the **target rubric** passes — default: each gating dimension's median cell ≥ 4 |
+| Blocks / drives `continue` | product findings (task completion, trust, clarity, design soundness, use-case soundness, product lens, product lint) at severity `high`/`medium` | every non-DEFER mechanical finding, incl. `prose_density` lint (the one lint that blocks in both objectives) |
+| Converged when | the **target rubric** passes (below) — default: each product dimension's median cell ≥ 3 | the **target rubric** passes — default: each gating dimension's median cell ≥ 4 — and no open `prose_density` lint at `high`/`medium` |
 | Polish / arc / framing / claim wording | deferred (`route: DEFER`, `deferred_by: objective:product`), applied ONCE as the final polish pass | chased every iteration |
 | Accuracy findings | narration edits only (`fix_scope: narrative`) — never product code | same |
 | Narrative | approve the USE CASE (persona, job, the 3–4 moments); scene recipes follow the product without re-gating | locked scene by scene |
@@ -153,15 +153,26 @@ fonts). The product objective gates on exactly those: the **product lens**
 (`ddd-product-review`, every full pass) and **product lint**
 (`scripts.ddd.product_lint`, every render).
 
-**Fix direction (product objective — every fixer brief carries it):**
-1. When narration and product disagree, the NARRATION moves. Change the product
+**Fix direction (EVERY objective — every fixer brief carries it verbatim, canopy#786):**
+1. Prefer REMOVING or RESTRUCTURING over adding. The best fix deletes something
+   or reshapes what is there; adding copy, a control or a rule is the last resort.
+2. When narration and product disagree, the NARRATION moves. Change the product
    only if the change passes *"would we build this if there were no demo?"*
-2. Never answer a clarity finding with explanatory copy. Express it as
-   structure — a field, a chip, a count, a table row — or leave it.
-3. Prefer a few general rules over a rule per scene; never hard-code narrative
-   text or demo-specific branches into product code.
-4. Use the product's existing design system and vocabulary
+3. Never answer a clarity finding with explanatory copy — no tooltip, legend,
+   definition, caption, helper line or info bubble. Express it as structure — a
+   label, a field, a chip, a count, a table row — or leave it.
+4. Generalize; never special-case the demo data. No persona or partner names in
+   product code, no rule keyed on a label's wording or on one record, no
+   "comparable"-style rules invented so one scene's number comes out. A few
+   general rules over a rule per scene.
+5. No comments narrating the fix (what the screen used to show, which batch or
+   scene it was for, the demo's dates and names). The PR body narrates; the code
+   does not. Test files are named for the behaviour, never the demo or batch.
+6. Use the product's existing design system and vocabulary
    (`product.lint.glossary`, `product.lint.fonts`).
+
+The **fixer-diff gate** (`scripts.ddd.fix_gate`) enforces 3–5 on every batch's
+diff in every objective; see `continue` below.
 
 **Before adding more loop machinery, ask whether the objective is the problem.**
 Twenty-two DDD commits between 2026-09-01 and 2026-10-04 tuned the loop's
@@ -1159,9 +1170,9 @@ surface.)
 **Fixer brief — every fixer subagent, every batch** (the B3 fixer sat 4 h on a
 shared test DB another session held; nothing timed it out):
 
-- in the `product` objective, paste the four **Fix direction** rules (see
-  "Objective" above) into the brief verbatim; apply only findings that are not
-  `route: DEFER` (the deferred polish waits for the polish pass). A finding
+- paste the six **Fix direction** rules (see "Objective" above) into the brief
+  verbatim — in EVERY objective; apply only findings that are not `route: DEFER`
+  (in `product`, the deferred polish waits for the polish pass). A finding
   stamped `recurring: N` (canopy#788) has been open
   on its cell for N passes: the last fix did not clear it, so say so in the
   brief and ask for a DIFFERENT fix, not the same one again;
@@ -1202,6 +1213,26 @@ Declare the surfaces a repo's loop may never edit once, in
 `.canopy/ddd/config.yaml` `loop.fixed_surfaces` (regexes), instead of a
 free-text constraints note: findings naming one are out of scope by
 construction.
+
+**Fixer-diff gate — after every fixer batch, before its PR merges, every
+objective** (canopy#786). Run it on the batch's branch in the target repo:
+
+```bash
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.fix_gate "<target repo>" --base origin/main \
+  --head <fix branch> --spec "$SPEC_ABS" --run-dir "$RUN_DIR" --run-id <run_id>)
+```
+
+It flags, on ADDED lines only: new user-visible prose (`user_prose`), comments
+narrating the fix (`fix_comment`), persona/demo names in product code
+(`persona_name`), rules keyed on free text — a branch on a multi-word literal,
+a set of phrases, a keyword regex (`literal_rule`) — and new test files named
+for the demo or batch (`demo_test`). Exit 1 = **do not merge**: send the
+findings back to the SAME fixer with "restructure, generalize or delete — never
+annotate", and re-run the gate until it passes. The verdict is stamped on
+`state.fix_gate`; while it reads `fail`, `judge_gate check` refuses with
+`rework_fix`, so a flagged batch is never judged. A genuine false positive is
+waived in `.canopy/ddd/config.yaml` `fix_gate.allow` (a regex) — never by an
+annotation in the product. Recipe-only batches (no product diff) skip it.
 
 For each mechanical finding, apply by route:
 
@@ -1466,7 +1497,7 @@ proceeding with autonomous work.
 
 ## Rules
 
-- Know the run's objective (`state.objective`): both converge on the run's target rubric (`state.target`); `product` defaults to product dimensions at 3 and defers polish to one final pass, `demo` defaults to every gating dimension at 4 (median, majority of draws). Fixers in `product` carry the fix-direction rules.
+- Know the run's objective (`state.objective`): both converge on the run's target rubric (`state.target`); `product` defaults to product dimensions at 3 and defers polish to one final pass, `demo` defaults to every gating dimension at 4 (median, majority of draws) and also needs no open `prose_density` lint. Every fixer, in every objective, carries the fix-direction rules, and every product batch passes `scripts.ddd.fix_gate` before it merges.
 - Always read `.canopy/ddd/context.md` and `.canopy/ddd/learnings.md` first.
 - Bootstrap context.md if it does not exist — never prompt the user for this.
 - The 8 skills do the actual work — you chain and route.

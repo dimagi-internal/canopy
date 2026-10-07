@@ -218,9 +218,9 @@ For each scene in `unified_spec.yaml`:
      untouched" framing for artifacts whose job is genuinely persuasion (a pitch
      deck, a marketing page). The persuasion lens rewards salesmanship — for an
      evidence product that pushes the demo toward on-screen editorializing, which
-     the OBJECTIVE-DATA STANDING RULE penalizes.
+     the rubric's EVIDENCE PRODUCTS standing rule penalizes.
    - `audience.decision`: for an evidence product, "can I read the objective data
-     clearly and draw my own conclusion, with definitions available on demand?";
+     clearly and draw my own conclusion from what the screen shows?";
      for a persuasion artifact, "does the argument land?"
    - `domain_expert`: the harshest relevant expert for this domain (e.g. "an M&E statistician" for impact dashboards, "a clinician" for health content) — used by the claim-scrutiny pass
    - `competitors`: best-in-class analogues for this artifact type (e.g. ["a Bloomberg terminal", "a Stripe dashboard", "an FT data graphic"] for a metrics dashboard)
@@ -308,6 +308,20 @@ re-derives the class, overrides `fix_kind` on accuracy findings (recording
 assertion-side fix when your recommendation offered a choice the artifact does
 not actually leave open. Only strategy findings can open the `concept_change`
 gate.
+
+**Fix direction — every `fix_recommendation`, every route (canopy#786).** Read the
+rubric's ADDED-EXPLANATION + HARDCODING standing rules before writing one:
+
+- Prefer REMOVING or RESTRUCTURING over adding. Name the structural change —
+  rename, split, merge, reorder, a field, a chip, a column, the missing view, or
+  delete what confuses. "Add a tooltip / legend / definition / caption / info
+  bubble / one-line explanation" is not a valid recommendation; if no structural
+  fix exists, say that in `detail` and route the finding `DEFER`.
+- When the screen lacks context the NARRATION assumes, move the narration
+  (route CONCEPT), not the screen.
+- Never recommend special-casing the demo's data (a rule, label or status that
+  only these records need). Recommend the general rule from data the product
+  models, or removal.
 
 Route assignment rules:
 - `concept_clarity` findings → CONCEPT

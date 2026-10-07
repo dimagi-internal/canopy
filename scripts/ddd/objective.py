@@ -87,6 +87,13 @@ PRODUCT_DIMENSIONS = frozenset(
 #: Sources whose findings are product findings whatever their dimension says.
 PRODUCT_SOURCES = frozenset({"product_lens", "product_lint"})
 
+#: Product-lint dimensions that block in EVERY objective, ``demo`` included
+#: (canopy#786). Spark ran ``demo``, so "added 1 explanatory line to scene 6"
+#: was report-only and stayed open for nine passes while fixers kept adding
+#: copy. Prose accreting on a screen is a product defect whatever the loop is
+#: optimizing.
+ALWAYS_BLOCKING_LINT = frozenset({"prose_density"})
+
 DEFERRED_BY = "objective:product"
 
 
@@ -100,6 +107,25 @@ def _severity(f: dict) -> str:
 
 def is_product_finding(f: dict) -> bool:
     return str(f.get("source") or "") in PRODUCT_SOURCES or _dim(f) in PRODUCT_DIMENSIONS
+
+
+def blocks_every_objective(f: dict) -> bool:
+    """A product-lint finding that blocks even in the ``demo`` objective."""
+    return str(f.get("source") or "") == "product_lint" and _dim(f) in ALWAYS_BLOCKING_LINT
+
+
+def open_prose_blockers(findings: Iterable[dict], *, block_severities: Iterable[str]) -> list[dict]:
+    """Open (not deferred, not parked) :func:`blocks_every_objective` findings at a
+    blocking severity — what keeps a ``demo`` run from ``stop_done``."""
+    block = {s.lower() for s in block_severities}
+    return [
+        f
+        for f in findings or []
+        if blocks_every_objective(f)
+        and str(f.get("route") or "PRODUCT").upper() != "DEFER"
+        and not f.get("parked")
+        and _severity(f) in block
+    ]
 
 
 def resolve(configured: str, state: Any, open_findings: int, *, backlog_min_findings: int, judge_full: bool) -> str:
@@ -307,12 +333,15 @@ def summary(findings: list[dict]) -> dict[str, int]:
 
 
 __all__ = [
+    "ALWAYS_BLOCKING_LINT",
     "AUTO",
     "DEMO",
     "PRODUCT",
     "PRODUCT_DIMENSIONS",
+    "blocks_every_objective",
     "converged",
     "is_product_finding",
+    "open_prose_blockers",
     "partition",
     "polish_findings",
     "product_score",

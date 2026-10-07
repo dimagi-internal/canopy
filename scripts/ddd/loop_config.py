@@ -82,6 +82,14 @@ module reads the two blocks the v1/backlog loop adds::
         glossary: {round: tender}      # banned term -> the product's word for it
         fonts: [Inter]                 # allowed first font family of rendered text
 
+    fix_gate:                 # scripts.ddd.fix_gate — every fix batch's diff, every objective
+      prose_words: 7          # a new string / template text of this many words is a sentence
+      template_comment_words: 15  # a template comment this long explains the UI — flagged
+      demo_terms: [Spark]     # names banned from product code beyond the spec's personas
+      allow:                  # regexes over path or flagged text that waive a finding
+        - "Quantity must be"  # (the waiver lives here, never as a note in the product)
+      skip_paths: []          # extra regexes of paths the gate never reads
+
     auth_preflight:           # run before every iteration (scripts.ddd.preflight)
       timeout_seconds: 20     # per command
       commands:               # a string, or {name, run}
@@ -218,6 +226,15 @@ class ProductConfig:
 
 
 @dataclass(frozen=True)
+class FixGateConfig:
+    prose_words: int = 7
+    template_comment_words: int = 15
+    demo_terms: tuple[str, ...] = ()
+    allow: tuple[str, ...] = ()
+    skip_paths: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class DDDConfig:
     loop: LoopConfig = field(default_factory=LoopConfig)
     deploy_gate: DeployGateConfig = field(default_factory=DeployGateConfig)
@@ -225,6 +242,7 @@ class DDDConfig:
     inner_loop: InnerLoopConfig = field(default_factory=InnerLoopConfig)
     auth_preflight: AuthPreflightConfig = field(default_factory=AuthPreflightConfig)
     product: ProductConfig = field(default_factory=ProductConfig)
+    fix_gate: FixGateConfig = field(default_factory=FixGateConfig)
 
 
 def _int(raw: Any, default: int, *, minimum: int = 1) -> int:
@@ -372,6 +390,20 @@ def _parse_product(raw: Any) -> ProductConfig:
     )
 
 
+def _parse_fix_gate(raw: Any) -> FixGateConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    terms = raw.get("demo_terms")
+    if isinstance(terms, str):
+        terms = [terms]
+    return FixGateConfig(
+        prose_words=_int(raw.get("prose_words"), 7, minimum=2),
+        template_comment_words=_int(raw.get("template_comment_words"), 15, minimum=2),
+        demo_terms=tuple(str(t).strip() for t in terms or [] if str(t).strip()),
+        allow=_patterns(raw.get("allow")),
+        skip_paths=_patterns(raw.get("skip_paths")),
+    )
+
+
 def parse(data: dict | None) -> DDDConfig:
     """Build a config from an already-parsed ``config.yaml`` mapping."""
     data = data if isinstance(data, dict) else {}
@@ -410,6 +442,7 @@ def parse(data: dict | None) -> DDDConfig:
         inner_loop=_parse_inner(data.get("inner_loop"), data.get("inner_loop_off_reason")),
         auth_preflight=_parse_auth(data.get("auth_preflight")),
         product=_parse_product(data.get("product")),
+        fix_gate=_parse_fix_gate(data.get("fix_gate")),
     )
 
 
