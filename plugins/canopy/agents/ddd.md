@@ -99,7 +99,7 @@ A DDD run optimizes ONE of two things, set by `loop.objective` in
 | The demo is… | a probe of the product | the deliverable |
 | Blocks / drives `continue` | product findings (task completion, trust, clarity, design soundness, use-case soundness, product lens, product lint) at severity `high`/`medium` | every non-DEFER mechanical finding, incl. `prose_density` lint (the one lint that blocks in both objectives) |
 | Converged when | the **target rubric** passes (below) — default: each product dimension's median cell ≥ 3 | the **target rubric** passes — default: each gating dimension's median cell ≥ 4 — and no open `prose_density` lint at `high`/`medium` |
-| Polish / arc / framing / claim wording | deferred (`route: DEFER`, `deferred_by: objective:product`), applied ONCE as the final polish pass | chased every iteration |
+| Polish / arc / framing / claim wording | rides every batch when mechanical (`objective_role: ride_along`) but never holds the run open; only a non-blocking `options`/`redesign` finding is deferred (`route: DEFER`) | chased every iteration |
 | Accuracy findings | narration edits only (`fix_scope: narrative`) — never product code | same |
 | Narrative | approve the USE CASE (persona, job, the 3–4 moments); scene recipes follow the product without re-gating | locked scene by scene |
 | Video phase | skipped unless asked | runs on convergence |
@@ -138,7 +138,10 @@ it outright. Second, it passes when it passed on the **majority of its last
 un-converges a run (#492). An outcome with a `pass_when` is scored by the concept
 judge directly (`target_outcomes:`, k=3 draws). A finding blocks only when it sits
 on a failing criterion or has a severity in `block_severities`. Everything else is
-`route: DEFER, deferred_by: target_rubric` and is reported, not chased. That is
+advisory: it never holds the run open, but if it is mechanical it still rides the
+next batch (`target_role: advisory`) — the rubric decides what blocks, not what
+gets fixed (canopy#788). Only an advisory finding that needs a decision
+(`options`/`redesign`) becomes `route: DEFER, deferred_by: target_rubric`. That is
 why arc `visual_variety` no longer holds a build run open for 11 iterations.
 When you start a run for a caller who said what it is FOR, write their rubric.
 
@@ -695,6 +698,34 @@ A steer you record WITHOUT terms is still shown to every later review, but only
 terms are enforced — add them. The digest reports material drift and rejections
 only (`narrative_guard digest <run_id>`), never minor wording.
 
+**Narrative self-review — the judgment half (both modes).** The guard is a rail:
+it can refuse a bad edit, it cannot make the story better, and it only enforces
+steers someone turned into terms. Nobody reviews the narrative by hand in build
+mode, so the loop must. Run this when the narrative is first drafted (before the
+first render) and again on every MATERIAL revision (`material: true` from the
+guard), never on a wording-only edit. Dispatch ONE fresh subagent (no loop
+context — it must read the story as a newcomer) with: the original brief, the
+intent ledger's steers **verbatim** (with or without terms), the current spec's
+story, and the product's real screens (the last render's frames, if any). Ask it:
+
+1. **Is every scene the persona doing their job?** A beat that narrates what a
+   screen means, or exists to show a rule the system applies, is the product
+   explaining itself. The supply run's "three of three comparable" was a hard-coded
+   verdict standing in for Sophie's own judgment, and no human asked for it.
+2. **Does it honour every steer**, including the term-less ones? Quote the steer
+   and the beat that drifts from it.
+3. **Is there a feature or beat nobody asked for** that got in to satisfy a judge,
+   or to make a finding go away?
+4. **Is it the shortest story that still lands the job?** Fewer beats, fewer
+   features, plainer words.
+
+It returns `accept`, or `revise` with the rewritten scenes and one line per change
+citing which question it answers. Apply a `revise` and then run `narrative_guard
+check` on it like any edit, so the rail still has the final word. Add a steer's
+missing terms to the ledger whenever the reviewer shows one was violated without
+being caught. Don't loop: run it once per material revision, and if the guard
+rejects its rewrite, keep the prior version.
+
 **Step 6c — Narrative-agreement gate (concept_change):**
 In **build** mode: post once (`/ddd-narrative-review`), give the link in the
 digest, and continue to Step 6d without waiting; if a decision arrives later,
@@ -1037,10 +1068,11 @@ deep-link, and decide what to do next. The ONLY case that doesn't upload is a
 non-terminal `continue` (mechanical fixes, loop again). A stuck run that never gets a
 package is a bug — the user is stuck precisely when they most need to inspect it.
 
-### `continue` with "POLISH PASS" (product objective converged)
+### `continue` with "POLISH PASS" (the run converged)
 
-The product objective converged on a full deploy pass and deferred polish
-findings exist. `assemble` has restored their routes on `state.findings` and
+The run converged (product objective or target rubric) on a full deploy pass and
+non-blocking mechanical findings are still open — usually raised by the deciding
+pass itself, so no batch has had them yet. `assemble` has restored their routes on `state.findings` and
 stamped `state.polish_pass`. Apply them as ONE batch exactly like `continue`
 (fix-direction rules still apply — no explanatory copy), re-render; the next
 full pass decides `stop_done`. There is one polish pass per run.
@@ -1177,8 +1209,8 @@ surface.)
 shared test DB another session held; nothing timed it out):
 
 - paste the six **Fix direction** rules (see "Objective" above) into the brief
-  verbatim — in EVERY objective; apply only findings that are not `route: DEFER`
-  (in `product`, the deferred polish waits for the polish pass). A finding
+  verbatim — in EVERY objective; apply every finding that is not `route: DEFER`,
+  blocking and ride-along alike — each pass fixes everything it can. A finding
   stamped `recurring: N` (canopy#788) has been open
   on its cell for N passes: the last fix did not clear it, so say so in the
   brief and ask for a DIFFERENT fix, not the same one again;
@@ -1508,7 +1540,7 @@ proceeding with autonomous work.
 
 ## Rules
 
-- Know the run's objective (`state.objective`): both converge on the run's target rubric (`state.target`); `product` defaults to product dimensions at 3 and defers polish to one final pass, `demo` defaults to every gating dimension at 4 (median, majority of draws) and also needs no open `prose_density` lint. Every fixer, in every objective, carries the fix-direction rules, and every product batch passes `scripts.ddd.fix_gate` before it merges.
+- Know the run's objective (`state.objective`): both converge on the run's target rubric (`state.target`); `product` defaults to product dimensions at 3 and lets polish ride every batch without blocking, `demo` defaults to every gating dimension at 4 (median, majority of draws) and also needs no open `prose_density` lint. Every fixer, in every objective, carries the fix-direction rules, and every product batch passes `scripts.ddd.fix_gate` before it merges.
 - Always read `.canopy/ddd/context.md` and `.canopy/ddd/learnings.md` first.
 - Bootstrap context.md if it does not exist — never prompt the user for this.
 - The 8 skills do the actual work — you chain and route.

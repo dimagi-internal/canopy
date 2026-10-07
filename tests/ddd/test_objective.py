@@ -168,11 +168,12 @@ class TestPartition:
         )
         out = objective.partition(fs, block_severities=("high", "medium"))
         roles = {f["dimension"] + ":" + f["severity"]: f["objective_role"] for f in out}
-        assert roles["visual_polish:low"] == "deferred"
-        assert roles["design_soundness:low"] == "deferred"
+        # Mechanical non-blocking findings ride every batch; they never hold the run open.
+        assert roles["visual_polish:low"] == "ride_along"
+        assert roles["design_soundness:low"] == "ride_along"
         assert roles["trust:medium"] == "blocking"
-        assert roles["arc_shape:medium"] == "deferred"  # presentation, whatever the severity
-        assert roles["clarity:low"] == "deferred"  # low narration nits wait for the polish pass
+        assert roles["arc_shape:medium"] == "deferred"  # an options finding needs a decision
+        assert roles["clarity:low"] == "ride_along"  # accuracy: a narration edit
 
     def test_accuracy_is_a_narration_edit_never_a_product_pr(self):
         from scripts.ddd import finding_class
@@ -186,11 +187,17 @@ class TestPartition:
         assert fix_scope.lands_in_product(f) is False
         assert fix_scope.batch_plan([f])["scope"] == fix_scope.RECIPE
 
-    def test_deferred_findings_keep_their_route_for_the_polish_pass(self):
+    def test_a_mechanical_nit_rides_along_instead_of_waiting_for_a_polish_pass(self):
         (f,) = objective.partition([LOW_POLISH], block_severities=("medium",))
+        assert f["route"] == "PRODUCT" and f["objective_role"] == "ride_along"
+        assert fix_scope.batch_plan([f])["findings"] == 1
+
+    def test_a_parked_nit_is_deferred_and_keeps_its_route(self):
+        (f,) = objective.partition([{**LOW_POLISH, "parked": True}], block_severities=("medium",))
         assert f["route"] == "DEFER" and f["deferred_route"] == "PRODUCT"
+        # Still parked: the polish pass does not apply it.
         (g,) = objective.restore_deferred([f])
-        assert g["route"] == "PRODUCT" and g["objective_role"] == "polish"
+        assert g["route"] == "DEFER"
 
 
 class TestConvergence:
@@ -255,14 +262,14 @@ class TestLoop:
         action, reason = _iterate(s, self.FINDINGS + [MEDIUM_DOMAIN])
         assert action == "continue"
         assert "POLISH" not in reason
-        # Deferred polish does not ride in the product batch.
-        assert s.batch_plan["findings"] == 1
+        # Mechanical polish rides in the product batch alongside the blocker (#788).
+        assert s.batch_plan["findings"] == 3
 
     def test_progress_score_is_the_weakest_product_dimension(self):
         s = _state()
         _iterate(s, self.FINDINGS + [MEDIUM_DOMAIN])
         assert s.score_history == [3.0]
-        assert s.progress_history[-1]["open_findings"] == 1
+        assert s.progress_history[-1]["open_findings"] == 3
 
     def test_never_decides_from_an_inner_loop_pass(self):
         s = _state()

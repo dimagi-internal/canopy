@@ -34,14 +34,23 @@ So there are now two objectives, picked once per run and then sticky:
       design soundness, use-case soundness, or a product-lens / product-lint
       finding) at a blocking severity (default ``high``/``medium``). These drive
       ``continue`` and decide convergence.
-    * **ride-along** — accuracy findings (the narration overstates the screen)
-      at a blocking severity. Always a narration edit, never product code
-      (:func:`route_accuracy`), so they are cheap recipe-scope fixes that travel
-      with any batch. A low-severity one is deferred to the polish pass.
-    * **deferred** — presentation dimensions (visual polish, variety, motion,
-      arc, claim/reality wording) and low-severity product nits. Stamped
-      ``route: DEFER`` with the original route kept in ``deferred_route``; they
-      are applied ONCE, as the final polish pass, not chased every iteration.
+    * **ride-along** — every other MECHANICAL finding on an unparked scene:
+      accuracy findings (always a narration edit, never product code —
+      :func:`route_accuracy`), presentation dimensions (visual polish, variety,
+      motion, arc, claim/reality wording) and low-severity product nits. They
+      travel in every batch — each pass fixes everything it can — but they never
+      hold the run open: convergence reads only the blocking role.
+    * **deferred** — what no batch can fix without a decision: an ``options`` /
+      ``redesign`` finding that is not blocking, or one on a parked scene.
+      Stamped ``route: DEFER`` with the original route kept in
+      ``deferred_route``; reported, and offered once as the polish pass.
+
+    Riding along is not a licence to accrete: the fix-direction rules (no
+    explanatory copy, no special cases) apply to a ride-along fix exactly as to
+    a blocking one. What changed (canopy#788) is that the polish pass only ran on
+    convergence, and the audited runs never converged — so a "deferred"
+    mechanical fix was in practice a fix never made (supply-sophie-sheets: 33
+    mechanical findings still deferred at stop).
 
     Converged = no gating verdict blocked, every product dimension's weakest
     cell >= ``product.floor`` (3), no presentation cell below
@@ -212,21 +221,13 @@ def partition(findings: list[dict], *, block_severities: Iterable[str]) -> list[
             continue
         if f.get("finding_class") == finding_class.ACCURACY and not is_narration_fix(f):
             f = _unaccuracy(f)
-        if f.get("finding_class") == finding_class.ACCURACY and _severity(f) in block:
-            # A narration that overstates the screen at a blocking severity is
-            # fixed in the words, every batch. A LOW one (a provenance date, a
-            # framing nit) is polish like any other low finding: on the first
-            # live run two such notes rode along every batch.
+        if f.get("finding_class") == finding_class.ACCURACY:
+            # A narration that overstates the screen is fixed in the words.
             f = route_accuracy(f)
-            f["objective_role"] = "ride_along"
-        elif f.get("finding_class") == finding_class.ACCURACY:
-            f = route_accuracy(f)
-            f["deferred_route"] = f.get("route") or "PRODUCT"
-            f["deferred_by"] = DEFERRED_BY
-            f["route"] = "DEFER"
-            f["objective_role"] = "deferred"
-        elif is_product_finding(f) and _severity(f) in block:
+        if f.get("finding_class") != finding_class.ACCURACY and is_product_finding(f) and _severity(f) in block:
             f["objective_role"] = "blocking"
+        elif rides_the_batch(f):
+            f["objective_role"] = "ride_along"
         else:
             f["deferred_route"] = f.get("route") or "PRODUCT"
             f["deferred_by"] = DEFERRED_BY
@@ -236,31 +237,56 @@ def partition(findings: list[dict], *, block_severities: Iterable[str]) -> list[
     return out
 
 
-def restore_deferred(findings: list[dict]) -> list[dict]:
-    """Undo :func:`partition`'s deferral for what the polish pass applies.
+def rides_the_batch(f: dict) -> bool:
+    """A non-blocking finding the next batch still fixes: mechanical, scene unparked.
 
-    Only mechanical, unparked findings come back — an ``options`` finding is
-    still a choice nobody made, and stays deferred (reported, not applied).
+    Shared by :func:`partition` and :func:`scripts.ddd.target_rubric.partition`
+    so "advisory" means one thing everywhere: it does not hold the run open, and
+    it is still fixed if a confident fix exists.
     """
+    return str(f.get("fix_kind") or "") == "mechanical" and not f.get("parked")
+
+
+def restore_deferred(findings: list[dict]) -> list[dict]:
+    """Stamp what the polish pass applies (:func:`polish_findings`) ``polish``.
+
+    A deferred one gets its route back. Only mechanical, unparked findings are
+    applied — an ``options`` finding is still a choice nobody made, and stays
+    deferred (reported, not applied).
+    """
+    polish = {id(f) for f in polish_findings(findings)}
     out = []
     for raw in findings or []:
         f = dict(raw)
-        if f.get("deferred_by") == DEFERRED_BY and f.get("fix_kind") == "mechanical" and not f.get("parked"):
-            f["route"] = f.pop("deferred_route", "PRODUCT")
-            f.pop("deferred_by", None)
+        if id(raw) in polish:
+            if f.get("deferred_by") == DEFERRED_BY:
+                f["route"] = f.pop("deferred_route", "PRODUCT")
+                f.pop("deferred_by", None)
             f["objective_role"] = "polish"
         out.append(f)
     return out
 
 
 def polish_findings(findings: list[dict]) -> list[dict]:
-    """Deferred findings the polish pass can apply (mechanical, not parked)."""
+    """What the polish pass applies once the run has converged.
+
+    Non-blocking findings still open when the deciding pass converged — riding
+    along (raised on that very pass, so no batch has had them yet) or deferred —
+    that a batch can fix (mechanical, not parked). Without this the run would
+    stop with fixable findings from its last judge open.
+    """
     return [
         f
         for f in findings or []
-        if f.get("deferred_by") == DEFERRED_BY
-        and f.get("fix_kind") == "mechanical"
-        and not f.get("parked")
+        if rides_the_batch(f)
+        and (
+            f.get("deferred_by") == DEFERRED_BY
+            or (
+                f.get("route") != "DEFER"
+                and f.get("objective_role") != "blocking"
+                and f.get("target_role") != "blocking"
+            )
+        )
     ]
 
 
