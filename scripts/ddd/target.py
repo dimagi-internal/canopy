@@ -86,18 +86,39 @@ def recipe_batch(state: Any) -> dict | None:
 
 
 def choose(state: Any, cfg: DDDConfig) -> dict[str, Any]:
-    """The next pass's target + judges. Pure: reads state, never writes it."""
-    checkpoint = bool(getattr(state, "next_judge_full", True)) or (
-        getattr(state, "auto_iterate_next_action", None) in ("checkpoint", "confirm_full")
+    """The next pass's target + judges. Pure: reads state, never writes it.
+
+    Local first (canopy#787): with an inner loop configured, a FULL pass (the
+    periodic regression net, every ``loop.full_rejudge_every``-th batch) runs on
+    the local build too. Only a pass that DECIDES — after ``checkpoint`` /
+    ``confirm_full`` — renders the deploy target, so deployed labs serves the
+    final record and nothing else. Any decision a local pass would make is still
+    handed to that deploy pass (:func:`decision_needs_checkpoint`).
+    ``inner_loop.deploy_checkpoints: true`` restores every full pass on deploy.
+    """
+    action = getattr(state, "auto_iterate_next_action", None)
+    full = bool(getattr(state, "next_judge_full", True)) or action in ("checkpoint", "confirm_full")
+    local_full = (
+        full
+        and cfg.inner_loop.enabled
+        and not cfg.inner_loop.deploy_checkpoints
+        and action not in ("checkpoint", "confirm_full")
     )
+    checkpoint = full and not local_full
     tiered = cfg.loop.tiered(getattr(state, "loop_mode", None))
-    judges = list(ALL_JUDGES) if (checkpoint or not tiered) else list(CONCEPT_ONLY)
-    recipe = None if checkpoint else recipe_batch(state)
+    judges = list(ALL_JUDGES) if (full or not tiered) else list(CONCEPT_ONLY)
+    recipe = None if full else recipe_batch(state)
     deploy_gate = "check"
     judge_scenes = None
     if checkpoint:
         reason = "checkpoint — full render + every judge against the real deploy target"
         target = DEPLOY
+    elif local_full:
+        target = INNER
+        reason = (
+            f"full pass on the local build at {cfg.inner_loop.base_url} (every judge, every "
+            "scene); deployed labs is only for the pass that decides"
+        )
     elif recipe:
         # No product code changed, so there is nothing to merge, wait on in CI, or
         # deploy: the render reads the recipe from the local checkout and the
@@ -116,7 +137,7 @@ def choose(state: Any, cfg: DDDConfig) -> dict[str, Any]:
     else:
         target = DEPLOY
         reason = "between checkpoints — no inner_loop configured, so the deploy target"
-    if not checkpoint and tiered:
+    if not full and tiered:
         reason += (
             "; judge tiering: concept judge on changed scenes"
             + (", plus the floor's judge on the floor's scenes (floor-first)" if cfg.loop.floor_first else "")
@@ -127,6 +148,7 @@ def choose(state: Any, cfg: DDDConfig) -> dict[str, Any]:
         "setup": cfg.inner_loop.setup if target == INNER else None,
         "judges": judges,
         "checkpoint": checkpoint,
+        "full": full,
         "deploy_gate": deploy_gate,
         "judge_scenes": judge_scenes,
         "reason": reason,
@@ -138,9 +160,12 @@ POLICY_CONFIGURED = "configured"
 POLICY_OFF = "off"
 POLICY_MISSING = "missing"
 POLICY_NOT_REQUIRED = "not_required"
+POLICY_DROPPED = "dropped"
+#: Statuses that refuse to continue a backlog loop (``stop_inner_loop_required``).
+BLOCKING_POLICIES = frozenset({POLICY_MISSING, POLICY_DROPPED})
 
 
-def inner_loop_policy(cfg: DDDConfig) -> dict[str, Any]:
+def inner_loop_policy(cfg: DDDConfig, prior: dict | None = None) -> dict[str, Any]:
     """May this repo run a backlog (v1-product) loop? ``{status, reason}``.
 
     A repo with a configured ``deploy_gate`` ships every fix batch through PR, CI
@@ -152,10 +177,39 @@ def inner_loop_policy(cfg: DDDConfig) -> dict[str, Any]:
     else is ``missing``, and ``compute_auto_iterate`` refuses to continue a
     backlog loop (``stop_inner_loop_required``). A repo with no deploy gate has
     nothing to wait on: ``not_required``.
+
+    ``prior`` is the run's last policy (``state.inner_loop_policy``). A run that
+    STARTED with the inner loop and has lost it is ``dropped`` (canopy#787): on
+    ``supply-sophie-sheets-2026-10-06-001`` the loop rendered locally for two
+    passes, then a new scene filmed a clone "whose data exists only on labs" and
+    the config was switched off for the run — every later fix paid merge + CI +
+    deploy (7 deploys, ~3 of 9.6 hours). Data that exists only remotely is a
+    BUILD gap (export or seed it locally), not a reason to move the loop. A
+    dropped loop refuses to continue a backlog run until it is configured again
+    or ``target accept-remote <run_id> --reason`` records why it must not be.
     """
     inner = cfg.inner_loop
     if inner.enabled:
         return {"status": POLICY_CONFIGURED, "reason": f"inner loop at {inner.base_url}"}
+    prior = prior if isinstance(prior, dict) else {}
+    if prior.get("status") in (POLICY_CONFIGURED, POLICY_DROPPED):
+        was = prior.get("was") or prior.get("reason")
+        if prior.get("accepted"):
+            return {"status": POLICY_OFF, "reason": f"remote accepted mid-run: {prior['accepted']}",
+                    "was": was, "accepted": prior["accepted"]}
+        now = inner.off_reason or "inner_loop is no longer configured"
+        return {
+            "status": POLICY_DROPPED,
+            "was": was,
+            "reason": (
+                f"this run started on the local build ({was}) and the inner loop is now off ({now}). "
+                "A scene whose data exists only on the deployed target is a build gap: export or "
+                "seed that data locally (the setup command can reseed the local build — the "
+                "recorder exports CANOPY_RENDER_BASE_URL) and restore inner_loop. To go remote "
+                "anyway, record why: `python -m scripts.ddd.target accept-remote <run_id> --reason "
+                "\"...\"`"
+            ),
+        }
     if not cfg.deploy_gate.enabled:
         return {"status": POLICY_NOT_REQUIRED, "reason": "no deploy_gate configured"}
     if inner.off and inner.off_reason:
@@ -191,7 +245,7 @@ def expected_scope(state: Any, cfg: DDDConfig) -> dict[str, Any]:
             "why": f"incremental — recipe re-judge of scene(s) {rr.get('scenes')} (M17)",
         }
     tgt = current(state) or choose(state, cfg)
-    full = bool(tgt.get("checkpoint")) or bool(getattr(state, "next_judge_full", True))
+    full = bool(tgt.get("full", tgt.get("checkpoint"))) or bool(getattr(state, "next_judge_full", True))
     action = getattr(state, "auto_iterate_next_action", None)
     if not full:
         why = "incremental — between checkpoints (state.next_judge_full is false)"
@@ -290,6 +344,9 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     r = sub.add_parser("ready")
     r.add_argument("run_id")
+    a = sub.add_parser("accept-remote", help="record why a run that lost its inner loop goes remote")
+    a.add_argument("run_id")
+    a.add_argument("--reason", required=True)
     f = sub.add_parser("flags", help="judge_scope plan flags for this pass: --full / --tiered")
     f.add_argument("run_id")
     args = ap.parse_args(argv)
@@ -297,6 +354,16 @@ def _main(argv: list[str] | None = None) -> int:
     state = load(args.run_id)
     if args.cmd == "flags":
         print(plan_flags(state, cfg))
+        return 0
+    if args.cmd == "accept-remote":
+        if not args.reason.strip():
+            print("accept-remote: --reason must say why", file=sys.stderr)
+            return 2
+        policy = dict(state.inner_loop_policy or {})
+        policy["accepted"] = args.reason.strip()
+        state.inner_loop_policy = policy
+        save(state)
+        print(json.dumps(policy, indent=1))
         return 0
     if args.cmd == "ready":
         out = wait_ready(cfg.inner_loop.health_url, timeout_s=cfg.inner_loop.ready_timeout_seconds)

@@ -51,11 +51,13 @@ module reads the two blocks the v1/backlog loop adds::
       attempts: 12            # rounds of sampling before reporting not_ready
       retry_seconds: 30       # between rounds
 
-    inner_loop:               # optional, default OFF — see scripts.ddd.target
+    inner_loop:               # see scripts.ddd.target (required with a deploy_gate)
       base_url: http://localhost:8000          # a locally served build of the fix branch
       setup: make serve-demo                   # (re)start it; run under the watchdog
       health_url: http://localhost:8000/health/  # optional readiness probe
       ready_timeout_seconds: 120
+      deploy_checkpoints: false                # true = every full pass on deploy (pre-#787);
+                                               # default: only the pass that decides
 
     # ...or, deliberately without one (the reason is recorded in run_state and
     # printed by every assemble):
@@ -147,6 +149,9 @@ class InnerLoopConfig:
     setup: str | None = None
     health_url: str | None = None
     ready_timeout_seconds: float = 120.0
+    # canopy#787: full passes between decisions run locally; true = every full
+    # pass on the deploy target (the pre-#787 behaviour).
+    deploy_checkpoints: bool = False
     # ``inner_loop: off`` — declared deliberately, rather than just missing.
     off: bool = False
     off_reason: str | None = None
@@ -314,6 +319,7 @@ def _parse_inner(raw: Any, off_reason: Any = None) -> InnerLoopConfig:
         setup=str(raw.get("setup") or "").strip() or None,
         health_url=str(raw.get("health_url") or "").strip() or None,
         ready_timeout_seconds=_positive(raw.get("ready_timeout_seconds"), 120.0),
+        deploy_checkpoints=raw.get("deploy_checkpoints") is True,
     )
 
 

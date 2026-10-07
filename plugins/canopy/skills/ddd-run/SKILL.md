@@ -111,6 +111,13 @@ of a session-authenticated spec misses EVERY selector: an all-red report on a
 correct recipe, indistinguishable from a genuinely broken one (canopy#532). If
 you ever see 100% unresolved, read the `hint:` line before touching a selector.
 
+**On a run with an inner loop, preflight the LOCAL build too** — add
+`--base-url <inner_loop.base_url>`. A target that resolves on the deployed app
+but not locally means that scene's data is not reproducible locally (a clone or
+seed that exists only remotely): reproduce it locally (export the clone, extend
+the seed) before the scene is admitted. Do not answer it by turning the inner
+loop off — a run that loses its inner loop mid-run stops (canopy#787).
+
 Exit 1 means one or more targets will not resolve against the live app. **Fix
 the recipe and re-run preflight — do not render.** It walks scenes in order in
 one browser and applies state-changing actions as it goes, so it catches the
@@ -173,9 +180,10 @@ It stamps `state.current_target` = `{target: deploy|inner, base_url, judges,
 checkpoint}`. `target: inner` (only when the repo configured `inner_loop:` and
 this is not a checkpoint) → start/refresh the local build (`inner_loop.setup`,
 under the watchdog), `python -m scripts.ddd.target ready <run_id>`, and pass
-`--base-url <base_url>` to the recorder. A checkpoint (every
-`loop.full_rejudge_every`-th batch, and every pass after `checkpoint` /
-`confirm_full`) always renders the real deploy target.
+`--base-url <base_url>` to the recorder. The periodic full passes (every
+`loop.full_rejudge_every`-th batch) also run locally; only a pass after
+`checkpoint` / `confirm_full` renders the real deploy target (canopy#787;
+`inner_loop.deploy_checkpoints: true` restores deploy for every full pass).
 
 **Render with ONE command** — never re-assemble the recorder call by hand:
 
