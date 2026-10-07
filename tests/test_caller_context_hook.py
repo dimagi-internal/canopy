@@ -262,3 +262,32 @@ def test_the_editor_tier_is_said_plainly(tmp_path):
     text = cc.summarize(env, str(tmp_path / "e.json"), TID)
     assert "granted_by=editor (a workspace editor: the whole agent, but every turn runs manual)" in text
     assert "turn mode: manual" in text
+
+
+SYSTEM_ENV = {
+    "version": 2, "turn_id": TID, "relationship": "member", "verified": True,
+    "granted_by": "editor", "profile": "full",
+    "who": {"kind": "user", "via": "email", "assurance": "dkim_aligned",
+            "user": {"id": 9, "email": "connect.aws@system.canopy.invalid", "name": "AWS CloudWatch alarms"},
+            "system_account": {"id": 7, "name": "AWS CloudWatch alarms", "description": "labs alarms",
+                               "workspace": "connect"}},
+    "system_account": {"id": 7, "name": "AWS CloudWatch alarms", "description": "labs alarms",
+                       "workspace": "connect"},
+    "turn_mode": {"mode": "manual", "basis": "editor"},
+    "trigger": {"origin": "email"},
+}
+
+
+def test_a_system_account_is_named_as_automated_not_as_a_person(tmp_path):
+    """canopy-web#1253: alarm mail resolves to a system account with an editor's
+    standing. The note must say no one is there — not 'this person does not hold
+    the agent's authority', and not its synthetic email as if it were someone."""
+    text = cc.summarize(SYSTEM_ENV, str(tmp_path / "e.json"), TID)
+    assert "system account 'AWS CloudWatch alarms' (automated sender — no person)" in text
+    assert "AUTOMATED mail" in text and "do not reply to it" in text
+    assert "this person does not hold" not in text
+    assert "system.canopy.invalid" not in text
+
+
+def test_a_person_gets_no_system_account_line(tmp_path):
+    assert "system account" not in cc.summarize(ENV, str(tmp_path / "e.json"), TID)

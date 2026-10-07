@@ -122,3 +122,22 @@ def test_a_confined_envelope_is_the_caller_tier_in_either_version():
     for prof in ("confined", "restricted"):
         env = {**_env(), "profile": prof, "granted_by": "capability:ask"}
         assert resolve(env, RULES)["tier"] == CALLER
+
+
+def test_a_system_account_acts_in_the_editor_tier_and_is_named_as_automated():
+    """canopy-web#1253: alarm mail resolves to a system account with an editor's
+    standing. `act`, like any editor — but the reason must say nobody is there."""
+    system = {"id": 7, "name": "AWS CloudWatch alarms", "workspace": "connect"}
+    env = {"version": 2, "relationship": "member", "verified": True, "granted_by": "editor",
+           "who": {"kind": "user", "via": "email", "assurance": "dkim_aligned",
+                   "user": {"email": "connect.aws@system.canopy.invalid"},
+                   "system_account": system},
+           "system_account": system}
+    got = resolve(env, RULES)
+    assert got["tier"] == ACT
+    assert got["system_account"] == system
+    assert "automated sender" in got["reason"] and "do not reply" in got["reason"]
+
+
+def test_a_person_carries_no_system_account():
+    assert resolve(_env(), RULES)["system_account"] is None
