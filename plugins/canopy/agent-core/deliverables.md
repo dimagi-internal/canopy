@@ -116,6 +116,19 @@ uv run --project "$CANOPY_ROOT" canopy gsheet publish --name "<Sheet title>" --p
 - **`gsheet` refuses to create with no destination** — unlike a Doc there is no sensible root
   fallback for a tracker, and the fallback is what produced the incident below.
 
+**A deck? Use `canopy gslides`.** It converts a `.pptx` into a native Google Slides deck
+authored as you, filed, shared, and read back (the converted slide count must equal the
+pptx's). It needs no claude.ai Google Drive connector, which an org can disable — the
+`gslides-export` skill is the whole procedure for a Claude Slides deck (download its .pptx,
+then publish). Drive cannot overwrite a native deck in place, so every export is a NEW file
+and the link changes; pass `--supersede <previous id>` to trash the old copy once the new
+one verifies.
+
+```bash
+uv run --project "$CANOPY_ROOT" canopy gslides publish --pptx ~/Downloads/deck.pptx \
+  --project "<Project>" --share domain [--supersede <previous deck id>]
+```
+
 ### Landing on prior work is reported — read it
 
 When the engine REUSES a project folder that already holds files, it says so on stderr and
@@ -140,8 +153,8 @@ under its agent folder). So the "never My Drive root / never flat at root" invar
 `channels` list. The baseline rails then cover the whole creation surface:
 
 - **raw `gog`** — any `docs|sheets|slides|forms create`, `drive mkdir`, or `drive upload`
-  with no `--parent`.
-- **the engines** — `canopy gdoc|gsheet publish` with no `--project` / `--area` / `--parent` /
+  with no `--parent` (`drive upload --replace <id>` is exempt: it overwrites in place).
+- **the engines** — `canopy gdoc|gsheet|gslides publish` with no `--project` / `--area` / `--parent` /
   `--replace`, which would otherwise fall back to your Drive *root*, beside `Projects/`
   rather than inside it.
 - **MCP** — any gdrive-server `drive_create_*` / `docs_create*` / `sheets_create` whose

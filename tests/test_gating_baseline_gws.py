@@ -66,6 +66,9 @@ def test_creating_without_a_destination_is_blocked(cmd):
     "gog docs create 'X' --parent ABC123",
     "gog drive mkdir 'X' --parent ABC123",
     "gog drive upload f.pdf --parent ABC123",
+    # An in-place overwrite keeps the file's existing home and creates nothing — and gog
+    # rejects `--parent` alongside `--replace`, so railing it made replace unrunnable.
+    "gog drive upload f.pptx --replace FILEID",
 ])
 def test_a_destination_satisfies_the_rail(cmd):
     assert not bash_blocks(cmd)
@@ -119,6 +122,8 @@ def test_prose_and_unrelated_commands_are_not_railed(cmd):
     ("canopy gdoc publish --md f.md --area 'Process State'", False),
     ("canopy gdoc publish --md f.md --replace DOCID", False),     # keeps its existing home
     ("canopy gdoc publish --md f.md --parent FOLDER", False),
+    ("canopy gslides publish --pptx d.pptx --name N", True),
+    ("canopy gslides publish --pptx d.pptx --project 'IDM Talk'", False),
     # The runtime-bundle form skills are told to use (CLAUDE.md § runtime bundle). The
     # rail was anchored on a bare `canopy`, so this form walked straight past it; the
     # runner's own `--project` flag sits BEFORE `canopy` and must not count as a destination.
