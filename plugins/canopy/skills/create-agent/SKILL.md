@@ -46,6 +46,10 @@ deny-railed out of the box), `config/agent.json` (identity: mailbox + `gog_clien
 `.env.tpl` (the fleet-standard secrets template — see agent-core/agent-runtime.md;
 **never write a real `op://<vault>/<item>/<field>` in a comment**, `op inject` resolves those
 too — only the angle-bracket placeholder), `config/allowlist.txt`, and the plugin manifest.
+`config/allowlist.txt` is a **legacy fallback**: `canopy caller tier` consults it only while the
+agent has no declared interface on canopy-web. Once an interface is published, canopy-web
+(interface + workspace membership) decides who may steer the agent and the file is not read —
+grant people on canopy-web, not there.
 Report the path and file count back.
 
 ## Step 3 — Make it real (the part the factory can't do)

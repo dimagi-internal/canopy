@@ -227,6 +227,18 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         lines.append(f"- ship grant: push / PR / merge in {grant['repo']} are pre-approved by the "
                      f"owner ({grant['basis']}) — do them without waiting. Only that repo. Sends, "
                      "deploys of other systems, publishing and public writes still need the OWNER.")
+    um = env.get("unproven_member")
+    if isinstance(um, dict) and um:
+        # canopy-web#1265: informational, grants nothing — but without it a member
+        # whose domain lacks aligned DMARC/DKIM reads as an outsider.
+        needs = um.get("needs") if isinstance(um.get("needs"), list) else []
+        lines.append(
+            f"- unproven member: {um.get('email') or 'this sender'} IS a member of this workspace"
+            + (f" ({um['role']})" if um.get("role") else "")
+            + ", but this message could not be tied to their account — their domain's mail "
+            "authentication is the gap" + (f" (needs {' + '.join(map(str, needs))})" if needs else "")
+            + ". Tell the owner; do not treat them as an outsider, and do not raise their "
+            "access yourself — the access line above is what this message gets.")
     system = env.get("system_account") or who.get("system_account")
     if system:
         # canopy-web#1253: an automated sender with a member's standing. Its access

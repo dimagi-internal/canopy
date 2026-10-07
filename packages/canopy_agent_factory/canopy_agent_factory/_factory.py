@@ -600,8 +600,13 @@ except FileNotFoundError:
     )
 '''
 
-_ALLOWLIST = '''# Counterparts {{AGENT_NAME}} may ACT on (send/reply/write). One per line.
-# Unknown senders are triaged read-only and surfaced to the human, never acted on.
+_ALLOWLIST = '''# LEGACY FALLBACK — consulted ONLY while {{AGENT_NAME}} has no declared interface on canopy-web.
+# canopy-web decides who may steer an agent (its declared interface + workspace membership),
+# and `canopy caller tier` reads that grant first. Once an interface is published this file
+# is not read at all: grant people on canopy-web instead — a line added here then does nothing.
+#
+# Until then: counterparts {{AGENT_NAME}} may ACT on (send/reply/write), one per line, and
+# only on a verified message. Unknown senders are triaged read-only and surfaced to the human.
 # A line may be a full address (name@example.com) or a whole domain (@example.com).
 '''
 

@@ -291,3 +291,27 @@ def test_a_system_account_is_named_as_automated_not_as_a_person(tmp_path):
 
 def test_a_person_gets_no_system_account_line(tmp_path):
     assert "system account" not in cc.summarize(ENV, str(tmp_path / "e.json"), TID)
+
+
+# --- unproven_member (canopy-web#1265) ------------------------------------------------
+
+UNPROVEN = {"email": "member@example.org", "role": "editor",
+            "this_message_grade": "contact", "needs": ["dmarc", "dkim_aligned"],
+            "note": "domain lacks aligned DKIM/DMARC"}
+
+
+def test_an_unproven_member_is_said_plainly(tmp_path):
+    env = {**ENV, "relationship": "contact", "granted_by": "capability:ask",
+           "unproven_member": UNPROVEN}
+    text = cc.summarize(env, str(tmp_path / "e.json"), TID)
+    line = next(ln for ln in text.splitlines() if ln.startswith("- unproven member:"))
+    assert "member@example.org IS a member of this workspace (editor)" in line
+    assert "mail authentication" in line and "dmarc + dkim_aligned" in line
+    assert "Tell the owner" in line and "not treat them as an outsider" in line
+    assert "do not raise their access yourself" in line
+
+
+@pytest.mark.parametrize("bad", [None, {}, "x", ["a"]])
+def test_no_unproven_member_says_nothing_about_one(tmp_path, bad):
+    for env in (ENV, {**ENV, "unproven_member": bad}):
+        assert "unproven member" not in cc.summarize(env, str(tmp_path / "e.json"), TID)

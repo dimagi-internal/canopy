@@ -141,3 +141,43 @@ def test_a_system_account_acts_in_the_editor_tier_and_is_named_as_automated():
 
 def test_a_person_carries_no_system_account():
     assert resolve(_env(), RULES)["system_account"] is None
+
+
+# --- unproven_member (canopy-web#1265): a member whose mail can't be tied to them ----
+
+_UNPROVEN = {"email": "member@example.org", "role": "editor",
+             "this_message_grade": "contact", "needs": ["dmarc", "dkim_aligned"],
+             "note": "domain lacks aligned DKIM/DMARC"}
+
+
+def test_an_unproven_member_on_a_capability_grant_is_still_a_caller_and_says_why():
+    env = {**_env("member@example.org"), "granted_by": "capability:ask",
+           "unproven_member": _UNPROVEN}
+    got = resolve(env, [])
+    assert got["tier"] == CALLER
+    assert got["unproven_member"] == _UNPROVEN
+    assert "member of this workspace (editor)" in got["reason"]
+    assert "mail authentication" in got["reason"] and "dmarc + dkim_aligned" in got["reason"]
+    assert "Tell the owner" in got["reason"] and "do not escalate" in got["reason"]
+
+
+def test_an_unproven_member_on_the_unlisted_tier_says_why():
+    env = {**_env("member@example.org"), "unproven_member": _UNPROVEN}
+    got = resolve(env, RULES)
+    assert got["tier"] == UNLISTED and "not treat them as an outsider" in got["reason"]
+
+
+def test_an_unproven_member_never_changes_an_act_tier_or_its_reason():
+    env = {**_env(), "granted_by": "full:contact@dimagi.com:verified", "unproven_member": _UNPROVEN}
+    got = resolve(env, RULES)
+    assert got["tier"] == ACT and "mail authentication" not in got["reason"]
+    assert got["unproven_member"] == _UNPROVEN
+
+
+@pytest.mark.parametrize("value", ["absent", None, {}, "garbage"])
+def test_no_unproven_member_is_identical_to_today(value):
+    base = {**_env("x@elsewhere.org"), "granted_by": "capability:ask"}
+    env = base if value == "absent" else {**base, "unproven_member": value}
+    got = resolve(env, RULES)
+    assert got == resolve(base, RULES)
+    assert "unproven_member" not in got
