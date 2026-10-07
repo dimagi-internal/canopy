@@ -314,7 +314,7 @@ def _activity_stamps(paths: list[Path], reader: Callable) -> list[tuple[datetime
 
 
 def _agent_activity(slug: str, call: Callable) -> dict:
-    """Auxiliary canopy-web telemetry (turn/task/work-product counts).
+    """Auxiliary canopy-web telemetry (turn/task counts).
 
     Best-effort by design: bursts/evidence/buckets are computed purely from git +
     transcripts, so an unreachable canopy-web must not abort the whole coverage
@@ -328,7 +328,7 @@ def _agent_activity(slug: str, call: Callable) -> dict:
     except Exception as e:
         return {"error": str(e)}
     return {k: detail.get(k) for k in
-            ("turn_count", "task_count", "work_product_count", "latest_turn_at")}
+            ("turn_count", "task_count", "latest_turn_at")}
 
 
 def coverage_report(slug: str, *, call: Callable = canopy_web.call,

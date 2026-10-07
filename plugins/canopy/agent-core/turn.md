@@ -1000,13 +1000,12 @@ Do any of these ONLY when the human explicitly asks to publish/share:
 - **Mirror the skill catalog** (also registers the agent if new):
   `canopy agent skills --slug <slug> --from-repo skills`. `--from-repo` takes the dir that HOLDS
   the skill dirs — `skills` (globs `skills/*/SKILL.md`), NOT `.` — run from the repo/worktree root.
-- **Push a deliverable:** `canopy agent work <items.json>`.
+- **File a deliverable on its project:** `canopy agent project-set --slug <slug> --project "<Project>" --append-link "Label|<url>"`.
 - **Package / share this turn:**
   ```
   canopy agent turn --slug <slug> --title "<what this turn did>" \
     --session-id <claude-session-id> \       # REQUIRED — one of --session-id or --upload
     --task <ext_id> [--task <ext_id> …]      # the board task(s) this turn advanced
-    # --work-product-url <url> per deliverable produced this turn
     # --upload   share the transcript instead of just naming the session: publishes a
     #            /share/<token> link (an outbound action; rides the same approval gate as a
     #            send). Use ONLY if the human asked to share — but pass it OR --session-id,
@@ -1071,8 +1070,8 @@ The one turn-specific rule: **a turn that opened a PR does not close without a r
 - `shipping` — the ship loop (`agent-core/shipping.md` via your stub): per-repo check
   table, the backgrounded wait, and the merge-state checkpoint a turn cannot close without.
 - `task-tracker` — durable multi-turn state (`agent-core/task-tracker.md` via your stub); drain
-  board commands at turn start, package advanced tasks at close.
-- `deliverables` — the fleet filing standard for Drive work products (`agent-core/deliverables.md`):
+  the actions people took on your tasks at turn start, package advanced tasks at close.
+- `deliverables` — the fleet filing standard for Drive deliverables (`agent-core/deliverables.md`):
   per-project subfolder under your shared Projects root, never My Drive root, shared + confirmed.
   Your `gdoc-writer` stub implements it.
 - `handoff` — taking a project over from another agent (`agent-core/handoff.md`): `canopy agent

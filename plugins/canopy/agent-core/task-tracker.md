@@ -27,10 +27,15 @@ canopy CLI.
 - **Owner** — the human stakeholder who owns the outcome — **never the agent**.
 - **Assigned** — who the next action waits on: you, or the person it's on (renders as
   an amber "Waiting on X" on the board).
-- **Confidence** — `high` / `low`, for suggested items (how sure you are).
+- **Confidence** — `high` / `low`, for suggested tasks (how sure you are).
 - **Due** — `YYYY-MM-DD`; past-due un-done tasks are flagged on the board.
 - **Links** — every stable artifact: the thread, the doc, PRs, the project folder. Working state
-  (item maps, dossiers, notes) hangs off the task via links — NOT committed into target repos.
+  (maps, dossiers, notes) hangs off the task via links — NOT committed into target repos.
+- **Ask** — what a task asks a person, if anything: `review` ("should I do this?") or
+  `question` ("I need an answer"), with the ask text. Open until someone acts on it; the
+  board's *Waiting on you* is every open ask plus every task parked on a person. Raise one
+  by creating the task with `ask_kind` + `ask_body` (MCP `create_tasks`, or
+  `canopy agent-publish tasks <file.json>`); a task with no ask is simply work in flight.
 
 The board groups by **who has the ball**: Suggested · Waiting on a human · agent
 working · Done.
@@ -40,7 +45,7 @@ working · Done.
 canopy agent add  --slug <slug> --title "…" --next-action "…" \
     --status in_progress --owner <human> --assigned <agent-name> \
     --links "Thread|https://…, Doc|https://…"          # create (auto T<N>)
-canopy agent set  --slug <slug> --task-id T<N> \    # the ext_id off the card (or the numeric id)
+canopy agent set  --slug <slug> --task-id T<N> \    # the ext_id off the card — tasks have no other id
     --rationale "why" --plan "first steps" --source-url <url>   # store context — never re-derive
 canopy agent set  --slug <slug> --task-id T<N> \
     --append-notes "--- <date> TURN ---\n<what this turn did>"  # LOG a turn; --notes REPLACES the history
@@ -48,22 +53,26 @@ canopy agent add  --slug <slug> --title "…" --project "<Project>"   # file it 
 canopy agent tasks --slug <slug> --open       # DRAIN the board: unresolved tasks only
 canopy agent tasks --slug <slug>                # every task ever (needed to compute the next ext_id)
 canopy agent tasks --slug <slug> --status done  # one status (repeatable; human spellings ok)
-canopy agent commands --slug <slug>             # drain queued human actions each turn
-canopy agent apply --slug <slug> --id <N> --note "what I did"
+canopy agent actions --slug <slug>              # DRAIN the actions people took on your tasks
+canopy agent applied --slug <slug> --id <N> --note "what I did"
 ```
+Over MCP the same verbs are `list_tasks` / `create_tasks` / `patch_task` / `act_on_task` /
+`list_task_actions` / `mark_task_action_applied` / `patch_project`.
 
-## Acting on board commands (the canopy-web DB is the source of truth)
-The board at `/agents/<slug>` is a **control surface**: a human can Accept a suggested
-task, Decline it (with a reason), or Dispatch ("do this now") — each queues a command
-you drain. **At the start of every turn, check the queue:**
+## Acting on actions (the canopy-web DB is the source of truth)
+The board at `/agents/<slug>` is a **control surface**: a person acts on a task — **approve**,
+**decline** (the comment is the reason), **reply** (on a question, the reply is the answer),
+**dispatch** ("do this now") or **done** — and each action lands on your queue until you carry
+it out. **At the start of every turn, drain the queue:**
 ```
-canopy agent commands --slug <slug>      # list actions queued for you
+canopy agent actions --slug <slug>      # pending actions, oldest first: #<id> <action> -> T<N>
 # ... do the work (under the normal guardrails — outbound actions still need approval) ...
-canopy agent apply --slug <slug> --id <N> --note "what I did"   # mark it handled
+canopy agent applied --slug <slug> --id <N> --note "what I did"   # mark it carried out
 ```
-- **Accept** already flipped the task to in_progress / assigned to you; the queued
-  command means "go do it."
-- **Dispatch** ("do this now") is the same — just act and apply.
+- **approve** already flipped the task to in_progress and closed its ask; the action
+  means "go do it." **dispatch** is the same — act, then mark it applied.
+- **decline** closed the task; read the comment, record anything worth keeping, mark applied.
+- **reply** is an answer or a note — fold it into the task (`set --append-notes`) and act on it.
 When you *suggest* a task, store the context immediately (`set` — rationale, plan,
 source url) so it is never re-derived later.
 
@@ -126,7 +135,7 @@ run by the receiver — it finds the source agent's sessions and opens the proje
 its notes. The procedure (files, grants, thread) is `agent-core/handoff.md`.
 
 ## When to use (turn-loop wiring)
-- **Start of every turn:** drain `commands` → act → `apply`. The board is a trigger surface
+- **Start of every turn:** drain `actions` → act → `applied`. The board is a trigger surface
   alongside the inbox.
 - **Drain-time: re-check the BLOCKER on every task parked on a human** — *except* one whose Next
   action carries the `[MANUAL — …]` marker, which is off your queue entirely and must be skipped
@@ -168,7 +177,9 @@ its notes. The procedure (files, grants, thread) is `agent-core/handoff.md`.
   achievable in that repo at all. The re-read took ten minutes and replaced a day of wrong work.)
 - **During work:** keep **Next action** current — it is the card headline a human scans.
 - **Close of turn:** package every turn that advanced a task —
-  `canopy agent turn --slug <slug> --title "…" --task <ext_id> --work-product-url <url>`.
-  This builds the per-task history spine: which turn did what, with which deliverables.
+  `canopy agent turn --slug <slug> --title "…" --task <ext_id>`.
+  This builds the per-task history spine: which turn did what. A deliverable the turn produced
+  goes on its project's links: `canopy agent project-set --slug <slug> --project "<Project>"
+  --append-link "Label|<url>"` (or the task's, `agent set --append-link`, for a one-off).
   Then run `canopy agent project-audit --slug <slug>`, fix the cheap gaps, and close with its
   `projects:` line (`turn.md` Step 4) — that is what catches a turn you forgot to record.

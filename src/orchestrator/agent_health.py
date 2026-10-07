@@ -156,22 +156,21 @@ def probe_board(slug: str, *, call: Callable = canopy_web.call, now: datetime,
     (a scheduled agent runs hourly, an on-demand one may idle for days), so the
     judgment belongs to the caller reading the report, not to a threshold in here."""
     detail = call("GET", f"/api/agents/{slug}/")
-    # The inbox is a pure Item query now (canopy-web #304 deleted the needs_you
-    # aggregation): read the agent's OPEN items directly. The endpoint returns a
-    # bare list, each item carrying `kind` (review|question) + `created_at`.
-    open_items = call("GET", f"/api/agents/{slug}/items/?state=open")
-    if isinstance(open_items, dict):  # tolerate a paginated envelope if the API grows one
-        open_items = open_items.get("items") or []
+    # What waits on a person is the agent's tasks with an OPEN ASK: a bare list, each
+    # task carrying `ask_kind` (review|question) + `created_at`.
+    open_asks = call("GET", f"/api/agents/{slug}/tasks/?ask=open")
+    if isinstance(open_asks, dict):  # tolerate a paginated envelope if the API grows one
+        open_asks = open_asks.get("items") or []
     turns = call("GET", f"/api/harness/turns/?agent={slug}")
     if isinstance(turns, dict):  # tolerate a paginated envelope if the API grows one
         turns = turns.get("items") or []
 
     turn_age = _age_days(detail.get("latest_turn_at"), now)
     items = []
-    for i in open_items or []:
-        age = _age_days(i.get("created_at"), now)
+    for t in open_asks or []:
+        age = _age_days(t.get("created_at"), now)
         items.append({
-            "type": i.get("kind"), "title": i.get("title"), "age_days": age,
+            "type": t.get("ask_kind"), "title": t.get("title"), "age_days": age,
             "stale": age is not None and age > stale_needs_you_days,
         })
 

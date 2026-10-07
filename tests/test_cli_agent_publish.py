@@ -1,5 +1,5 @@
 # tests/test_cli_agent_publish.py
-"""CLI tests for `canopy agent-publish items` (posts a review-items batch)."""
+"""CLI tests for `canopy agent-publish tasks` (creates a batch of tasks, asks included)."""
 import json
 
 import pytest
@@ -33,35 +33,42 @@ def _agent_repo(tmp_path):
     return tmp_path / "echo"
 
 
-def test_agent_publish_items_cli(fake_http, tmp_path):
+def test_agent_publish_tasks_cli(fake_http, tmp_path):
     calls, _ = fake_http
     repo = _agent_repo(tmp_path)
-    items_json = tmp_path / "items.json"
-    items = [{"title": "x", "kind": "review"}]
-    items_json.write_text(json.dumps(items))
+    tasks_json = tmp_path / "tasks.json"
+    tasks = [{"title": "x", "ask_kind": "review", "ask_body": "ship it?"}]
+    tasks_json.write_text(json.dumps(tasks))
 
     r = CliRunner().invoke(
-        main, ["agent-publish", "items", "--repo", str(repo), str(items_json)]
+        main, ["agent-publish", "tasks", "--repo", str(repo), str(tasks_json)]
     )
 
     assert r.exit_code == 0, r.output
-    # register() + push_items() -> two calls; the second is the items POST
-    item_calls = [c for c in calls if c[1].endswith("/items/")]
-    assert len(item_calls) == 1
-    method, url, body = item_calls[0]
+    # register() + push_tasks() -> two calls; the second is the tasks POST
+    task_calls = [c for c in calls if c[1].endswith("/tasks/")]
+    assert len(task_calls) == 1
+    method, url, body = task_calls[0]
     assert method == "POST"
-    assert url == "https://x.test/api/agents/echo/items/"
-    assert body == items
+    assert url == "https://x.test/api/agents/echo/tasks/"
+    assert body == tasks  # a bare list
 
 
-def test_agent_publish_items_rejects_non_list(fake_http, tmp_path):
+def test_agent_publish_tasks_rejects_non_list(fake_http, tmp_path):
     repo = _agent_repo(tmp_path)
     bad_json = tmp_path / "bad.json"
     bad_json.write_text(json.dumps({"not": "a list"}))
 
     r = CliRunner().invoke(
-        main, ["agent-publish", "items", "--repo", str(repo), str(bad_json)]
+        main, ["agent-publish", "tasks", "--repo", str(repo), str(bad_json)]
     )
 
     assert r.exit_code != 0
-    assert "items file must be a JSON list" in r.output
+    assert "tasks file must be a JSON list" in r.output
+
+
+@pytest.mark.parametrize("verb", ["items", "work"])
+def test_the_old_verbs_are_gone(verb):
+    """items -> tasks; work products -> a project's links (`agent project-set --append-link`)."""
+    r = CliRunner().invoke(main, ["agent-publish", verb, "--help"])
+    assert r.exit_code != 0

@@ -2027,34 +2027,20 @@ def agent_publish_sync(repo, doc_url, title, summary, grades, period_start, peri
         raise click.ClickException(str(e))
 
 
-@agent_publish.command("work")
+@agent_publish.command("tasks")
 @click.option("--repo", default=None, type=click.Path(), help="Agent repo (default: cwd)")
-@click.argument("items_json", type=click.Path(exists=True))
-def agent_publish_work(repo, items_json):
-    """Push work products from a JSON file: [{title,kind,url,description,tags,source}]."""
+@click.argument("tasks_json", type=click.Path(exists=True))
+def agent_publish_tasks(repo, tasks_json):
+    """Create tasks (asks included) from a JSON file (must be a JSON list). Safe to re-run:
+    a task naming an ext_id replays instead of duplicating."""
     import json as json_mod
-    from orchestrator.agent_web import push_work, register, AgentWebError
+    from orchestrator.agent_web import push_tasks, register, AgentWebError
     try:
         register(_agent_repo(repo))
-        items = json_mod.load(open(items_json, encoding="utf-8"))
-        click.echo(json_mod.dumps(push_work(_agent_repo(repo), items)))
-    except AgentWebError as e:
-        raise click.ClickException(str(e))
-
-
-@agent_publish.command("items")
-@click.option("--repo", default=None, type=click.Path(), help="Agent repo (default: cwd)")
-@click.argument("items_json", type=click.Path(exists=True))
-def agent_publish_items(repo, items_json):
-    """Post a review-items batch from a JSON file (must be a JSON list)."""
-    import json as json_mod
-    from orchestrator.agent_web import push_items, register, AgentWebError
-    try:
-        register(_agent_repo(repo))
-        items = json_mod.load(open(items_json, encoding="utf-8"))
-        if not isinstance(items, list):
-            raise click.ClickException("items file must be a JSON list")
-        click.echo(json_mod.dumps(push_items(_agent_repo(repo), items)))
+        tasks = json_mod.load(open(tasks_json, encoding="utf-8"))
+        if not isinstance(tasks, list):
+            raise click.ClickException("tasks file must be a JSON list")
+        click.echo(json_mod.dumps(push_tasks(_agent_repo(repo), tasks)))
     except AgentWebError as e:
         raise click.ClickException(str(e))
 

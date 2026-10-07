@@ -87,6 +87,7 @@ def test_the_caps_match_canopy_webs_schema():
     assert TASK_FIELD_LIMITS["confidence"] == 10
     assert TASK_FIELD_LIMITS["score"] == 8
     assert TASK_FIELD_LIMITS["source_url"] == 500
+    assert TASK_FIELD_LIMITS["origin"] == 32
 
 
 # ---- links -------------------------------------------------------------------------

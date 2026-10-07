@@ -89,7 +89,7 @@ def test_probe_inbox_degrades_loud_on_gog_failure():
 def _board_call(agent_detail, open_items, harness_turns):
     def call(method, path, body=None, **kw):
         assert method == "GET"
-        if "/items/" in path:  # /api/agents/<slug>/items/?state=open — a bare list
+        if "/tasks/?ask=open" in path:  # tasks with an open ask — a bare list
             return open_items
         if "/harness/turns/" in path:
             return harness_turns
@@ -102,9 +102,9 @@ def test_probe_board_flags_stale_items_and_turns():
         "echo",
         call=_board_call(
             {"slug": "echo", "turn_count": 4, "latest_turn_at": "2026-07-01T00:00:00Z"},
-            [  # open items — a bare list, each carrying `kind` + `created_at`
-                {"kind": "review", "title": "old", "created_at": "2026-06-20T00:00:00Z"},
-                {"kind": "question", "title": "new", "created_at": "2026-07-13T00:00:00Z"},
+            [  # open asks — a bare list of tasks, each carrying `ask_kind` + `created_at`
+                {"ask_kind": "review", "title": "old", "created_at": "2026-06-20T00:00:00Z"},
+                {"ask_kind": "question", "title": "new", "created_at": "2026-07-13T00:00:00Z"},
             ],
             [  # list envelope (the live API returns a bare list)
                 {"id": "a", "status": "done", "finished_at": "2026-07-13T00:00:00Z",
@@ -157,7 +157,7 @@ def test_health_report_collects_flags():
         "echo",
         call=_full_call(
             latest_turn="2026-06-01T00:00:00Z",
-            items=[{"kind": "review", "title": "old", "created_at": "2026-06-01T00:00:00Z"}],
+            items=[{"ask_kind": "review", "title": "old", "created_at": "2026-06-01T00:00:00Z"}],
             turns=[{"id": "x", "status": "failed", "finished_at": "2026-07-14T00:00:00Z",
                     "lease_expires_at": None}],
         ),
@@ -200,7 +200,7 @@ def test_run_agent_health_sweeps_paginated_fleet():
                     "offset": 0, "limit": 2}
         if "offset=2" in path:
             return {"items": [{"slug": "hal"}], "total": 3, "offset": 2, "limit": 2}
-        if "/items/" in path:
+        if "/tasks/?ask=open" in path:
             return []
         if "/harness/turns/" in path:
             return []

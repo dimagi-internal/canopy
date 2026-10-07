@@ -90,7 +90,7 @@ class _FakeClient:
     def __init__(self, identity, *, error=None, pending=()):
         self._error, self._pending = error, list(pending)
 
-    def pending_commands(self):
+    def pending_actions(self):
         if self._error:
             raise self._error
         return self._pending
@@ -186,7 +186,7 @@ def test_registration_404_names_register_command(tmp_path):
     _, ident = check_identity(_agent_repo(tmp_path))
     result = check_registration(
         ident, client_factory=_client_factory(
-            error=CanopyError("GET /api/agents/hal/commands -> 404: agent 'hal' not found")))
+            error=CanopyError("GET /api/agents/hal/actions/?status=pending -> 404: agent 'hal' not found")))
     assert not result.ok
     assert "agent-publish register" in result.detail
 

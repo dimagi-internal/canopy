@@ -18,8 +18,12 @@ NOW = dt.datetime(2026, 10, 6, 12, 0, tzinfo=dt.timezone.utc)
 
 
 class FakeWeb:
-    SYNC_COLUMNS = {"ext_id", "title", "next_action", "status", "owner", "assigned", "confidence",
-                    "due", "links", "notes", "position", "source", "project"}
+    # canopy-web's AgentTaskIn — a StrictModel, so any other key is a 422.
+    TASK_IN_FIELDS = {"ext_id", "project", "title", "next_action", "status", "owner", "assigned",
+                      "waiting_on_email", "confidence", "score", "review", "rationale",
+                      "source_url", "plan", "due", "links", "notes", "position", "ask_kind",
+                      "ask_body", "on_approve", "batch_key", "idempotency_key", "origin",
+                      "origin_ref", "raised_by"}
 
     def __init__(self):
         self.patches = []
@@ -59,20 +63,28 @@ class FakeWeb:
         m = re.match(r"^/api/agents/([^/]+)/tasks/$", path)
         if m and method == "GET":
             return 200, json.dumps(self.tasks.get(m.group(1), []))
-        m = re.match(r"^/api/agents/([^/]+)/tasks/sync$", path)
         if m and method == "POST":
+            # a BARE list; an idempotency_key already seen replays the task it made
+            assert isinstance(body, list), body
             rows = self.tasks.setdefault(m.group(1), [])
-            for t in body["tasks"]:
-                # like canopy-web: the sync writes only the sheet columns
-                kept = {k: v for k, v in t.items() if k in self.SYNC_COLUMNS}
-                rows.append({**kept, "id": 100 + len(rows), "source_url": "",
-                             "rationale": "", "plan": ""})
-            return 200, json.dumps({"synced": len(body["tasks"])})
-        m = re.match(r"^/api/agents/([^/]+)/tasks/(\d+)/$", path)
+            out = []
+            for t in body:
+                extra = set(t) - self.TASK_IN_FIELDS
+                if extra:
+                    return 422, json.dumps({"detail": f"extra fields {sorted(extra)}"})
+                key = t.get("idempotency_key")
+                seen = next((r for r in rows if key and r.get("idempotency_key") == key), None)
+                if seen is None:
+                    seen = {"source_url": "", "rationale": "", "plan": "", **t,
+                            "ext_id": t.get("ext_id") or f"T{len(rows) + 1}"}
+                    rows.append(seen)
+                out.append(seen)
+            return 201, json.dumps(out)
+        m = re.match(r"^/api/agents/([^/]+)/tasks/([^/]+)/$", path)
         if m and method == "PATCH":
-            self.patches.append((m.group(1), int(m.group(2)), body))
+            self.patches.append((m.group(1), m.group(2), body))
             for t in self.tasks.get(m.group(1), []):
-                if t.get("id") == int(m.group(2)):
+                if t.get("ext_id") == m.group(2):
                     t.update(body)
                     return 200, json.dumps(t)
             return 404, '{"detail": "no task"}'
@@ -325,7 +337,9 @@ def test_proposals_lets_the_proposer_revise_a_proposal_it_named_another_lead_for
     assert p["why"] == "revised why" and p["revised"] is True
 
 
-def test_file_patches_what_the_sync_drops_and_repatches_on_rerun(tmp_path, web):
+def test_file_creates_tasks_with_every_field_and_repatches_on_rerun(tmp_path, web):
+    """POST /tasks/ takes source_url/rationale/plan at creation (the old sync dropped
+    them); a re-run reuses the task it filed and re-patches those three by ext_id."""
     _full_huddle(web)
     p = write_plan(tmp_path)
     props = tmp_path / "props.json"
@@ -333,28 +347,27 @@ def test_file_patches_what_the_sync_drops_and_repatches_on_rerun(tmp_path, web):
     r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "r"))
     assert r.exit_code == 0, r.output
     page = f"https://cw/w/connect/huddles/{H}"
-    by = {slug: body for slug, _, body in web.patches}
-    assert set(by) == {"eva", "echo"}
-    lead = by["eva"]
+    lead, = web.tasks["eva"]
     assert lead["source_url"] == page
     assert lead["rationale"].startswith("Serves: Q4 funder pipeline")
     assert lead["plan"] == "- start Joint Q4 brief\n- then more"
-    assert by["echo"]["source_url"] == page and by["echo"]["rationale"]
-    sync_bodies = [b for (m, path, _, b) in web.calls if path.endswith("/tasks/sync")]
-    assert all("source_url" not in t for b in sync_bodies for t in b["tasks"])
-    n = len(web.patches)
+    assert lead["origin"] == "huddle"
+    assert lead["idempotency_key"] == f"eva:{lead['ext_id']}"
+    assert web.tasks["echo"][0]["source_url"] == page and web.tasks["echo"][0]["rationale"]
+    assert web.patches == []                               # first run: create only
     r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "r"))
     assert r.exit_code == 0, r.output
-    assert len(web.patches) == n + 2                       # re-run re-patches
+    assert {(slug, ref) for slug, ref, _ in web.patches} == {
+        ("eva", lead["ext_id"]), ("echo", web.tasks["echo"][0]["ext_id"])}   # re-run re-patches
     assert len(web.tasks["eva"]) == 1 and len(web.tasks["echo"]) == 1
 
 
 def test_file_reuses_a_pre_fix_task_with_an_empty_source_url(tmp_path, web):
     _full_huddle(web)
     page = f"https://cw/w/connect/huddles/{H}"
-    web.tasks = {"eva": [{"id": 7, "ext_id": "T42", "title": "Joint Q4 brief", "source_url": "",
+    web.tasks = {"eva": [{"ext_id": "T42", "title": "Joint Q4 brief", "source_url": "",
                           "links": [{"label": "Huddle", "url": page}]}],
-                 "echo": [{"id": 8, "ext_id": "T1", "source_url": "",
+                 "echo": [{"ext_id": "T1", "source_url": "",
                            "title": "Joint Q4 brief — echo's part (lead eva)",
                            "links": [{"label": "Huddle", "url": page}]}]}
     p = write_plan(tmp_path)
@@ -363,7 +376,7 @@ def test_file_reuses_a_pre_fix_task_with_an_empty_source_url(tmp_path, web):
     r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "r"))
     assert r.exit_code == 0, r.output
     assert len(web.tasks["eva"]) == 1 and len(web.tasks["echo"]) == 1
-    assert {(s, i) for s, i, _ in web.patches} == {("eva", 7), ("echo", 8)}
+    assert {(s, i) for s, i, _ in web.patches} == {("eva", "T42"), ("echo", "T1")}
     assert web.tasks["eva"][0]["source_url"] == page
     assert json.loads(r.stdout)["filed"][0]["task"]["reused"] is True
 
@@ -518,7 +531,7 @@ def test_file_creates_tasks_writes_record_and_finishes_the_anchor(tmp_path, web)
     t = lead_task[0]
     assert t["ext_id"] == "T42" and t["project"] == "P3" and t["status"] == "suggested"
     assert t["owner"] == "Jonathan" and t["assigned"] == "eva" and t["confidence"] == "high"
-    assert t["next_action"] == "start Joint Q4 brief" and t["source"] == "huddle"
+    assert t["next_action"] == "start Joint Q4 brief" and t["origin"] == "huddle"
     assert {"label": "Huddle", "url": page} in t["links"]
     partner = web.tasks["echo"]
     assert len(partner) == 1 and partner[0]["title"] == "Joint Q4 brief — echo's part (lead eva)"

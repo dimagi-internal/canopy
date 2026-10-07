@@ -791,7 +791,7 @@ def _task_fields(p: dict, plan: dict, page: str) -> tuple[dict, list[dict]]:
                  "confidence": "high" if conf >= 0.8 else "low",
                  "rationale": f"Serves: {p.get('priority')}\n\n{p.get('why') or ''}".strip(),
                  "plan": "\n".join(f"- {s}" for s in steps),
-                 "notes": "\n".join(notes), "source": "huddle",
+                 "notes": "\n".join(notes), "origin": "huddle",
                  "source_url": _check("source_url", page),
                  "links": [{"label": "Huddle", "url": page}]}
     asks = p.get("ask_of_partners") or {}
@@ -807,7 +807,7 @@ def _task_fields(p: dict, plan: dict, page: str) -> tuple[dict, list[dict]]:
             "rationale": f"Your part of {p.get('lead')}'s \"{p.get('title')}\" "
                          f"(huddle {plan['id']}). Serves: {p.get('priority')}",
             "notes": f"Lead: {p.get('lead')}. From huddle {plan['id']} ({page}).",
-            "source": "huddle", "source_url": page,
+            "origin": "huddle", "source_url": page,
             "links": [{"label": "Huddle", "url": page}]})
     return lead_task, partner_tasks
 
@@ -852,14 +852,14 @@ def _resolve_project(client: AgentClient, name: str, hid: str, page: str, *, cre
     return made
 
 
-# What canopy-web's task SYNC drops (it writes only the sheet columns) — set by a PATCH after.
-# canopy-web finds a huddle's outputs BY `source_url`, so this is not cosmetic.
-_PATCH_AFTER_SYNC = ("source_url", "rationale", "plan")
+# Re-written onto a task this huddle already filed, so a re-run restates them. canopy-web
+# finds a huddle's outputs BY `source_url`, so this is not cosmetic.
+_REPATCH_ON_REUSE = ("source_url", "rationale", "plan")
 
 
 def _filed_here(t: dict, page: str, title: str) -> bool:
-    """A task this huddle already filed under this title. Tasks filed before the post-sync
-    PATCH existed carry source_url "" — those are recognised by their Huddle link."""
+    """A task this huddle already filed under this title. Tasks filed before source_url was
+    written carry source_url "" — those are recognised by their Huddle link."""
     if str(t.get("title") or "") != title:
         return False
     if t.get("source_url") == page:
@@ -869,25 +869,21 @@ def _filed_here(t: dict, page: str, title: str) -> bool:
 
 
 def _find_or_add_task(client: AgentClient, task: dict, page: str) -> dict:
-    """Reuse a task already filed for this huddle with this title; else add the next T<N>.
-    Either way, PATCH the fields the sync drops onto it (a re-run re-patches)."""
+    """Reuse a task already filed for this huddle with this title (re-patching its
+    source_url/rationale/plan); else create the next T<N> with every field at once."""
     from orchestrator.agent_cli import next_task_ext_id
     tasks = client.list_tasks()
     found = next((t for t in tasks if _filed_here(t, page, task["title"])), None)
     if found is not None:
-        ext_id, reused = found.get("ext_id"), True
-        project = found.get("project_ext_id") or task.get("project", "")
-    else:
-        ext_id, reused = next_task_ext_id(tasks), False
-        project = task.get("project", "")
-        client.sync_tasks([{**{k: v for k, v in task.items() if k not in _PATCH_AFTER_SYNC},
-                            "ext_id": ext_id}])
-        found = next((t for t in client.list_tasks() if t.get("ext_id") == ext_id), None)
-    if found is None or found.get("id") is None:
-        raise RuntimeError(f"{client.slug} {ext_id}: synced but not found on the board to patch "
-                           "its source_url/rationale/plan")
-    client.patch_task(found["id"], **{k: task[k] for k in _PATCH_AFTER_SYNC if k in task})
-    return {"agent": client.slug, "ext_id": ext_id, "project": project, "reused": reused}
+        ext_id = found.get("ext_id")
+        client.patch_task(ext_id, **{k: task[k] for k in _REPATCH_ON_REUSE if k in task})
+        return {"agent": client.slug, "ext_id": ext_id,
+                "project": found.get("project_ext_id") or task.get("project", ""), "reused": True}
+    created = client.create_tasks([{**task, "ext_id": next_task_ext_id(tasks)}])
+    if not created or not created[0].get("ext_id"):
+        raise RuntimeError(f"{client.slug}: creating {task['title']!r} returned no task")
+    return {"agent": client.slug, "ext_id": created[0]["ext_id"],
+            "project": task.get("project", ""), "reused": False}
 
 
 def not_reached(plan: dict, detail: dict) -> list[dict]:

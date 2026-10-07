@@ -1,7 +1,7 @@
 """canopy-web agent-workspace client — the shared generalization of echo's bin/echo_canopy.py.
 
 Lets ANY agent repo publish itself to canopy-web's `/api/agents/*` surface: register the agent,
-mirror its skill catalog, post syncs (with self-grades), and push work products. Backs the
+mirror its skill catalog, post syncs (with self-grades), and create tasks. Backs the
 `canopy agent-publish` CLI. This is the "common" half of the §4a boundary — canopy owns the
 client; the agent repo owns only its identity.
 
@@ -30,6 +30,7 @@ from pathlib import Path
 
 from orchestrator import canopy_web
 from orchestrator.agent_client import catalog_from_repo as _catalog_from_skills_root
+from orchestrator.agent_client import task_idempotency_key
 
 # Back-compat aliases — the canonical values live in canopy_web now.
 DEFAULT_BASE = canopy_web.DEFAULT_API
@@ -152,12 +153,12 @@ def post_sync(repo_dir: Path, *, doc_url: str, title: str, summary: str,
     })
 
 
-def push_work(repo_dir: Path, items: list[dict]) -> dict:
-    ident = resolve_identity(repo_dir)
-    return _call(f"/api/agents/{ident['slug']}/work-products/", {"work_products": items})
-
-
-def push_items(repo_dir: Path, items: list[dict]) -> dict:
-    """Post a review-items batch. Unlike push_work, the body is a BARE list (not wrapped)."""
-    ident = resolve_identity(repo_dir)
-    return _call(f"/api/agents/{ident['slug']}/items/", items)
+def push_tasks(repo_dir: Path, tasks: list[dict]) -> list:
+    """Create a batch of tasks — asks among them (`ask_kind` review|question) included.
+    The body is a BARE list. A task naming an `ext_id` is keyed `<slug>:<ext_id>`, so
+    re-pushing the same batch replays instead of duplicating."""
+    slug = resolve_identity(repo_dir)["slug"]
+    body = [{**t, "idempotency_key": t.get("idempotency_key") or task_idempotency_key(slug, t["ext_id"])}
+            if str(t.get("ext_id") or "").strip() else t
+            for t in tasks]
+    return _call(f"/api/agents/{slug}/tasks/", body)

@@ -35,7 +35,7 @@ def test_register_posts_identity():
 
 
 import json as _json
-from orchestrator.agent_client import BoardCommand
+from orchestrator.agent_client import TaskAction
 
 
 def _recorder_client(responses):
@@ -49,43 +49,58 @@ def _recorder_client(responses):
     return c, calls
 
 
-def test_post_sync_and_skills_and_workproducts():
-    c, calls = _recorder_client([(200, "{}"), (200, "{}"), (200, "{}")])
+def test_post_sync_and_skills():
+    c, calls = _recorder_client([(200, "{}"), (200, "{}")])
     c.post_sync(period_start="2026-06-01", period_end="2026-06-07", title="W",
                 doc_url="https://doc", self_grades={"work": "C+"})
-    c.put_work_products([{"title": "T", "url": "https://wp"}])
     c.put_skills([{"name": "s", "url": "https://s"}])
     assert calls[0][:2] == ("POST", "https://x.test/api/agents/echo/syncs/")
     assert calls[0][2]["self_grades"] == {"work": "C+"}
-    assert calls[1][:2] == ("POST", "https://x.test/api/agents/echo/work-products/")
-    assert calls[1][2] == {"work_products": [{"title": "T", "url": "https://wp"}]}
-    assert calls[2][:2] == ("PUT", "https://x.test/api/agents/echo/skills/")
-    assert calls[2][2] == {"skills": [{"name": "s", "url": "https://s"}]}
+    assert calls[1][:2] == ("PUT", "https://x.test/api/agents/echo/skills/")
+    assert calls[1][2] == {"skills": [{"name": "s", "url": "https://s"}]}
 
 
-def test_pending_commands_parses_models():
-    raw = _json.dumps([{"id": 5, "kind": "dispatch", "task_title": "Do it",
-                        "created_by": "jj@dimagi.com", "payload": {"note": "go"}}])
+def test_pending_actions_reads_the_queue():
+    raw = _json.dumps([{"id": 5, "agent_slug": "echo", "task_ext_id": "T3", "action": "approve",
+                        "comment": "go", "by": "jj@dimagi.com", "status": "pending",
+                        "applied_at": None, "result_note": "", "created_at": "2026-10-07T00:00:00Z"}])
     c, calls = _recorder_client([(200, raw)])
-    cmds = c.pending_commands()
-    assert calls[0][:2] == ("GET", "https://x.test/api/agents/echo/commands?status=pending")
-    assert isinstance(cmds[0], BoardCommand)
-    assert (cmds[0].id, cmds[0].kind, cmds[0].task_title) == (5, "dispatch", "Do it")
+    actions = c.pending_actions()
+    assert calls[0][:2] == ("GET", "https://x.test/api/agents/echo/actions/?status=pending")
+    assert isinstance(actions[0], TaskAction)
+    assert (actions[0].id, actions[0].action, actions[0].task_ext_id) == (5, "approve", "T3")
 
 
-def test_apply_command_and_patch_task_drops_none():
+def test_mark_action_applied_and_patch_task_by_ext_id_drops_none():
     c, calls = _recorder_client([(200, "{}"), (200, "{}")])
-    c.apply_command(5, result_note="done")
-    c.patch_task(9, rationale="why", plan=None, status="in_progress")
-    assert calls[0] == ("POST", "https://x.test/api/agents/echo/commands/5/apply", {"result_note": "done"})
-    assert calls[1] == ("PATCH", "https://x.test/api/agents/echo/tasks/9/", {"rationale": "why", "status": "in_progress"})
+    c.mark_action_applied(5, result_note="done")
+    c.patch_task("T9", rationale="why", plan=None, status="in_progress")
+    assert calls[0] == ("POST", "https://x.test/api/agents/echo/actions/5/applied", {"result_note": "done"})
+    assert calls[1] == ("PATCH", "https://x.test/api/agents/echo/tasks/T9/", {"rationale": "why", "status": "in_progress"})
 
 
-def test_sync_tasks_wraps_payload():
-    c, calls = _recorder_client([(200, "{}")])
-    c.sync_tasks([{"ext_id": "T1", "title": "x"}])
-    assert calls[0][:2] == ("POST", "https://x.test/api/agents/echo/tasks/sync")
-    assert calls[0][2] == {"tasks": [{"ext_id": "T1", "title": "x"}]}
+def test_create_tasks_posts_a_bare_list_keyed_by_ext_id():
+    """POST /tasks/ takes a BARE list; a task naming an ext_id carries the idempotency
+    key `<slug>:<ext_id>` so a retried create replays instead of duplicating."""
+    created = _json.dumps([{"ext_id": "T1", "title": "x"}, {"ext_id": "T7", "title": "y"}])
+    c, calls = _recorder_client([(201, created)])
+    out = c.create_tasks([{"ext_id": "T1", "title": "x"}, {"title": "y"}])
+    assert calls[0][:2] == ("POST", "https://x.test/api/agents/echo/tasks/")
+    assert calls[0][2] == [{"ext_id": "T1", "title": "x", "idempotency_key": "echo:T1"},
+                           {"title": "y"}]            # no ext_id -> server assigns, no key
+    assert [t["ext_id"] for t in out] == ["T1", "T7"]
+
+
+def test_create_tasks_keeps_a_callers_own_idempotency_key():
+    c, calls = _recorder_client([(201, "[]")])
+    c.create_tasks([{"ext_id": "T1", "title": "x", "idempotency_key": "huddle:42:a"}])
+    assert calls[0][2][0]["idempotency_key"] == "huddle:42:a"
+
+
+def test_list_tasks_passes_server_side_filters():
+    c, calls = _recorder_client([(200, "[]")])
+    c.list_tasks(ask="open", project="P2", status="")
+    assert calls[0][:2] == ("GET", "https://x.test/api/agents/echo/tasks/?ask=open&project=P2")
 
 
 def test_list_tasks_returns_list():
@@ -132,8 +147,8 @@ def test_delete_sync_calls_delete_endpoint():
 def test_patch_task_forwards_score_and_review():
     """Completion scoring: `set --status done --score --review` reaches the task PATCH."""
     c, calls = _recorder_client([(200, "{}")])
-    c.patch_task(13, status="done", score="A-", review="transcript-grounded")
-    assert calls[0] == ("PATCH", "https://x.test/api/agents/echo/tasks/13/",
+    c.patch_task("T13", status="done", score="A-", review="transcript-grounded")
+    assert calls[0] == ("PATCH", "https://x.test/api/agents/echo/tasks/T13/",
                         {"status": "done", "score": "A-", "review": "transcript-grounded"})
 
 

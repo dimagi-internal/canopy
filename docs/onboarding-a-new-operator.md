@@ -24,7 +24,7 @@ a CLI, a plugin, and a website. Here is the whole map:
 | **Claude Code** | The agent runtime. Everything else is scaffolding around it. | Your machine | **Yes** |
 | **canopy** (this repo) | The framework: a Claude Code plugin + a `canopy` CLI. Holds the agent factory and the fleet-wide operating model. | Your machine | **Yes** |
 | **Your agent's repo** | One git repo per agent — its persona, skills, gating rails, secrets. Generated for you by the factory. | Your machine + GitHub | **Yes** |
-| **canopy-web** | The shared website: each agent's board, tasks, turns, work products. Lives at `canopy.dimagi.com`. | Already deployed — you just log in | **Yes** (read/write via CLI) |
+| **canopy-web** | The shared website: each agent's projects, tasks, turns. Lives at `canopy.dimagi.com`. | Already deployed — you just log in | **Yes** (read/write via CLI) |
 | **The runner** | A daemon that fires an agent's turns *unattended* (on a schedule, or when email arrives). Works on macOS and Windows. | Your machine, or a cloud box | **No — skip it at first**, unless you need email-triggered turns |
 
 **The runner is the piece to skip on day 1.** An agent is fully usable without
@@ -348,7 +348,7 @@ factory cannot do for you. Work them in this order:
    `CANOPY_WEB_WORKSPACE=<slug>` if that is not what you want.
    Made a typo in the slug, or just trying one out? Registration is reversible:
    `curl -X DELETE .../api/agents/<slug>/ -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)"`
-   (editor or owner; takes the agent's tasks, turns, skills and work products
+   (editor or owner; takes the agent's projects, tasks, turns and skills
    with it). Deleting the GitHub repo is `gh repo delete dimagi-internal/<slug>`.
 3. **Email auth** — only if the agent has a mailbox. Needs a real Google account
    provisioned first; ask Jonathan. Then sign the mailbox in through EITHER door — they

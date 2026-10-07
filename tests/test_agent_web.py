@@ -9,7 +9,7 @@ from orchestrator.agent_web import (
     AgentWebError,
     catalog_from_repo,
     gh_blob_base,
-    push_items,
+    push_tasks,
     resolve_identity,
 )
 
@@ -81,7 +81,7 @@ def test_gh_blob_base_handles_https_remote(tmp_path):
     assert gh_blob_base(repo).startswith("https://github.com/foo/bar/blob/main/")
 
 
-def test_push_items_posts_bare_list_to_items_endpoint(tmp_path, monkeypatch):
+def test_push_tasks_posts_bare_list_to_tasks_endpoint(tmp_path, monkeypatch):
     repo = _agent(tmp_path)
     calls = []
 
@@ -93,11 +93,15 @@ def test_push_items_posts_bare_list_to_items_endpoint(tmp_path, monkeypatch):
     monkeypatch.setenv("CANOPY_WEB_API_URL", "https://x.test")
     monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
 
-    items = [{"title": "x", "kind": "review"}]
-    push_items(repo, items)
+    tasks = [{"title": "x", "ask_kind": "review"},
+             {"ext_id": "T4", "title": "y", "ask_kind": "question"}]
+    push_tasks(repo, tasks)
 
     assert len(calls) == 1
     method, url, body = calls[0]
     assert method == "POST"
-    assert url == "https://x.test/api/agents/echo/items/"
-    assert body == items  # BARE list, not wrapped in a key
+    assert url == "https://x.test/api/agents/echo/tasks/"
+    # BARE list, not wrapped in a key; a named ext_id is keyed so a re-push replays
+    assert body == [{"title": "x", "ask_kind": "review"},
+                    {"ext_id": "T4", "title": "y", "ask_kind": "question",
+                     "idempotency_key": "echo:T4"}]

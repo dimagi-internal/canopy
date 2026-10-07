@@ -20,27 +20,27 @@ class FakeClient:
 
 
 def test_append_keeps_existing_notes():
-    client = FakeClient([{"id": 7, "notes": "--- day 1 ---\nshipped A\n"}])
-    assert _appended_notes(client, 7, "--- day 2 ---\nshipped B") == (
+    client = FakeClient([{"ext_id": "T7", "notes": "--- day 1 ---\nshipped A\n"}])
+    assert _appended_notes(client, "T7", "--- day 2 ---\nshipped B") == (
         "--- day 1 ---\nshipped A\n\n--- day 2 ---\nshipped B"
     )
 
 
 def test_append_onto_empty_notes_has_no_leading_blank_line():
-    assert _appended_notes(FakeClient([{"id": 7, "notes": None}]), 7, "first") == "first"
-    assert _appended_notes(FakeClient([{"id": 7}]), 7, "first") == "first"
+    assert _appended_notes(FakeClient([{"ext_id": "T7", "notes": None}]), "T7", "first") == "first"
+    assert _appended_notes(FakeClient([{"ext_id": "T7"}]), "T7", "first") == "first"
 
 
 def test_append_reads_the_right_card():
-    client = FakeClient([{"id": 6, "notes": "other"}, {"id": 7, "notes": "mine"}])
-    assert _appended_notes(client, 7, "new") == "mine\n\nnew"
+    client = FakeClient([{"ext_id": "T6", "notes": "other"}, {"ext_id": "T7", "notes": "mine"}])
+    assert _appended_notes(client, "T7", "new") == "mine\n\nnew"
 
 
 def test_empty_append_is_refused_not_a_silent_noop():
     import click
 
     with pytest.raises(click.ClickException):
-        _appended_notes(FakeClient([{"id": 7, "notes": "x"}]), 7, "   ")
+        _appended_notes(FakeClient([{"ext_id": "T7", "notes": "x"}]), "T7", "   ")
 
 
 def test_notes_and_append_notes_are_mutually_exclusive():
