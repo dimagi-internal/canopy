@@ -403,6 +403,24 @@ are STILL recorded per scene in the `dimensions{}` map and STILL generate
 DEFER-routed `design_findings`, but they play no role in computing `overall_score`
 or the final verdict.
 
+#### Step 4b — Score the run's target outcomes (canopy#790)
+
+Print the rubric the run converges on:
+`(cd "$DDD_REPO" && uv run python -m scripts.ddd.target_rubric show <run_id> --spec <spec_path>)`.
+For every outcome with a `pass_when`, judge that condition against the
+screenshots of its `scenes` (every scene if none are listed). Use **three
+independent draws**, each a yes or no on the condition as written, and nothing
+broader. Record all three draws. The loop reads the majority. Write them to the
+verdict:
+
+```yaml
+target_outcomes:
+  - { id: <outcome id>, draws: [true, true, false], evidence: "<what on screen decided it>" }
+```
+
+An outcome without a `pass_when` is read from its scenes' cells by the loop;
+do not score it here. Skip this step when the rubric has no outcomes.
+
 ### Step 5 — Compute verdict
 
 | overall_score | verdict |

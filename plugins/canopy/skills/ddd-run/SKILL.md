@@ -991,7 +991,8 @@ DDD Run — <run_id>
   Progress:   score <s>  open findings <f>  mean cell <m>  confirmed caps <c>   # vs last iteration
   Loop mode:  backlog | polish   (next judge: full | incremental)
 
-  Convergence (filtered): YES | NO  (threshold: 4.0)                    # "filtered" tag if partial
+  Rubric:     <source> — <n>/<m> criteria passing                      # the run's target rubric (canopy#790)
+  Convergence (filtered): YES | NO                                      # "filtered" tag if partial
 
   Auto-iterate: <action>  (<reason>)                                    # NEW
   Termination:  <terminal_status>                                       # NEW

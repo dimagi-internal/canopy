@@ -214,6 +214,8 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "fixed_surfaces": cfg.loop.fixed_surfaces,
         "declined": floor_mod.load_declined(run_dir),
     }
+    from scripts.ddd import target_rubric as target_rubric_mod
+
     action, reason = compute_auto_iterate(
         state,
         concept,
@@ -231,13 +233,21 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         extra_verdicts=extra,
         floor=floor,
         edit_scope=edit_scope,
+        target_rubric={
+            "run": state.target_rubric,
+            "spec": target_rubric_mod.spec_rubric(spec),
+            "config": target_rubric_mod.config_rubric(ddd_dir),
+        },
+        run_dir=run_dir,
     )
     from scripts.ddd import pass_timing
 
     timing = pass_timing.record(state, scope=scope, run_dir=run_dir)
     from scripts.ddd import objective as objective_mod
 
-    if state.objective == objective_mod.PRODUCT:
+    if state.target and state.target.get("iteration") == state.iteration:
+        converged = bool(state.target.get("converged"))
+    elif state.objective == objective_mod.PRODUCT:
         converged = objective_mod.converged(
             {**extra, "concept": concept, "user_artifact": user}, state.findings, cfg.product
         )[0]
@@ -300,6 +310,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "version_warnings": list(state.version_warnings or []),
         "gating_floor": state.gating_floor,
         "narrative_guard": state.narrative_guard,
+        "target_rubric": state.target,
         "pass_timing": timing,
         "changed_components": scope.get("changed_components"),
         "ledger": ledger,
@@ -385,6 +396,16 @@ def _main(argv: list[str] | None = None) -> int:
             + (f" -> v{ng['version']}" if ng.get("version") is not None else "")
             + (f"  MATERIAL: {'; '.join(ng.get('material_why') or [])}" if ng.get("material") else "")
         )
+    tgt = out.get("target_rubric") or {}
+    if tgt:
+        crit = tgt.get("criteria") or []
+        print(
+            f"  Rubric:       {tgt.get('source')} — "
+            f"{sum(1 for c in crit if c.get('passing'))}/{len(crit)} criteria passing"
+        )
+        for c in crit:
+            if not c.get("passing"):
+                print(f"                  {c.get('id')}: {c.get('why')} (last passes {c.get('window')})")
     print(f"  Convergence:  {'YES' if out['converged'] else 'NO'}")
     print(f"  Auto-iterate: {out['auto_iterate_next_action']}  ({out['auto_iterate_reason']})")
     print(f"  Termination:  {out['terminal_status']}")

@@ -1964,6 +1964,19 @@
       "title": "Getting Started",
       "type": "array"
     },
+    "target_rubric": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target Rubric"
+    },
     "build_order": {
       "default": [],
       "items": {

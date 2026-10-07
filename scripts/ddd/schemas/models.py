@@ -323,6 +323,16 @@ class RunState(BaseModel):
     # {iteration, mode, decision, version, material, material_why, violations,
     # standing}. A rejected revision is named in the next action's reason.
     narrative_guard: dict | None = None
+    # --- canopy#790 — converge on a target rubric (scripts.ddd.target_rubric) ----
+    # A rubric pinned to this run by the caller (`target_rubric set`) — it wins
+    # over the spec's and the config's. None = not pinned.
+    target_rubric: dict | None = None
+    # One row per FULL judged pass: {iteration, criteria: {id: passed}}. A
+    # criterion's standing is the majority of its last `draws` rows.
+    target_history: list[dict] = []
+    # The last assemble's reading: {source, iteration, converged, why,
+    # criteria: [{id, kind, bar, passed, passing, window, why}]}.
+    target: dict | None = None
 
 
 __all__ = [

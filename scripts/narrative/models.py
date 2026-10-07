@@ -848,6 +848,11 @@ class UnifiedSpec(BaseModel):
     """Ordered, user-facing 'how do I start' steps for the docs page (what to run /
     do, in the reader's terms) — distinct from each scene's ``show`` (which is the
     demo's on-screen walkthrough, not adoption instructions)."""
+    target_rubric: dict | None = None
+    """What this narrative's runs converge on (canopy#790): the outcomes it must
+    demonstrate (each with a pass condition), the generic dimensions that block,
+    the bar, and how many full passes a criterion is read over. Shape and
+    precedence: ``scripts.ddd.target_rubric``. None = the objective's default."""
     build_order: list[str] = []
     """Ordered list of scene-title slugs representing the tackle sequence.
 
