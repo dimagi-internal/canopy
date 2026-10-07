@@ -275,6 +275,16 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
     for msg in pin.skew(state):
         pin.warn(state, msg)
     save(state, ddd_dir=ddd_dir)
+    learnings_path = None
+    from scripts.ddd import run_learnings
+
+    if run_learnings.ends_run(action):
+        # The next run's bootstrap reads this file; a run that ends without
+        # writing it hands the next one nothing (canopy#788).
+        try:
+            learnings_path = str(run_learnings.record(state, ddd_dir))
+        except OSError as exc:
+            print(f"assemble: could not write learnings ({exc})", file=sys.stderr)
 
     ledger = None
     if spec:
@@ -316,6 +326,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "pass_timing": timing,
         "changed_components": scope.get("changed_components"),
         "ledger": ledger,
+        "learnings": learnings_path,
     }
 
 
