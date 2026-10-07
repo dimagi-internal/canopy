@@ -318,6 +318,11 @@ class RunState(BaseModel):
     # judge_minutes: {concept, user, arc, ...}, other_minutes, steps}. Appended,
     # never overwritten, so "why is this slow" is answered from data.
     pass_timings: list[dict] = []
+    # --- canopy#789 — autonomous narrative review ------------------------------
+    # The last narrative-guard result assemble saw (scripts.ddd.narrative_guard):
+    # {iteration, mode, decision, version, material, material_why, violations,
+    # standing}. A rejected revision is named in the next action's reason.
+    narrative_guard: dict | None = None
 
 
 __all__ = [

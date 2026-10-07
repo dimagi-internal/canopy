@@ -530,6 +530,19 @@
       },
       "title": "Pass Timings",
       "type": "array"
+    },
+    "narrative_guard": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Narrative Guard"
     }
   },
   "required": [
