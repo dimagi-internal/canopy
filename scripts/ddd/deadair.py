@@ -17,6 +17,8 @@ though the bed is technically audible — that is intended. We want frozen + no-
 (dead air the viewer feels), not frozen + literal-digital-zero (which the looped
 bed makes impossible anyway). The bed's continuity is also why Layer 1 caps via
 re-render rather than a raw cut: a shorter total just re-laps the looped bed.
+A ``style: recorded`` cut has NO bed (``scripts.ddd.recorded``), so there a
+no-VO span is digital silence — the same thresholds flag it the same way.
 
 The parsing + intersection are pure and unit-tested; the ffmpeg probe and the
 human-readable report are thin wrappers around them.

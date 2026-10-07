@@ -107,6 +107,34 @@ Route it `NARRATION` (describe the state the frames actually show) or `FOOTAGE`
 action that triggers it). Do NOT route it `PRODUCT`: the product did the right
 thing, the camera was pointed elsewhere while it did.
 
+### Style: recorded
+
+A `style: recorded` cut (`/canopy:ddd-recorded-walkthrough`; the spec carries
+`style: recorded`) is meant to look like a well-made screen recording a person
+made for a colleague. **Judge each cut as its own video** (its own run dir and
+spec), and adjust:
+
+- **The absence of gloss is the brief, not a defect.** No music bed, no title or
+  end card, no zooms, callouts, lower-thirds or captions. Never deduct for any
+  of them and never route a finding asking for one.
+- **`pacing`:** the footage plays near real time (the warp is clamped to
+  0.85–1.35×), so a calm, unhurried pace is correct. Still flag frozen dead
+  spans and anything visibly fast-forwarded.
+- **`motion_quality`** also covers the cursor. It should travel and settle like
+  a hand (arcs, easing), not teleport, zip or slide in a ruler-straight line.
+  A darting cursor is a `RENDER` finding (warp) or a `FOOTAGE` finding
+  (recorder), never a reason to add an overlay.
+- **`vo_visual_coherence` is the core of this style.** Every sentence has to
+  describe something visible on screen at that moment. A sentence about
+  something off-screen, upcoming or abstract is a `NARRATION` finding even when
+  it is true.
+- **The opening:** the first frame is the live product screen, and the first
+  words are "This is a quick overview of how we <do X>." A cut that opens on a
+  blank or loading frame is a `FOOTAGE` finding. A wrong first line is a
+  `NARRATION` finding (lint should already have caught it).
+- **Length:** the deterministic gate (`scripts.ddd.recorded gate`, written as
+  `verdict-recorded.json`) owns the 30 s / 40 s rule. Do not re-score it.
+
 **Findings** — each carries a `route`:
 - `NARRATION` — reword/reorder/trim the scene's `narrative` (most VO↔visual misses
   are narration naming things in a different order than the demo shows them).

@@ -133,6 +133,13 @@ const AiBuildSchema = z.object({
 });
 
 export const ProgramSpecSchema = z.object({
+  // Video style (see style.ts). Absent = "explainer" — every spec written
+  // before this field renders exactly as before. "recorded" is the
+  // "I just recorded myself walking through this" cut: the superRefine below
+  // requires a beats list of ONLY body_walkthrough beats (no title/end card, no
+  // marketing beats) with no lower-thirds, and render.ts drops the music bed +
+  // captions and clamps the footage warp near real time.
+  style: z.enum(["explainer", "recorded"]).optional(),
   slug: z.string().regex(/^[a-z0-9-]+$/),
   name: z.string().min(1),
   country_focus: z.string().min(1),
@@ -243,6 +250,33 @@ export const ProgramSpecSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["scene"], message: "required when a body_scene beat is present" });
   if (has("body_product_beats") && !spec.product)
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["product"], message: "required when a body_product_beats beat is present" });
+
+  // style: recorded — a cut opens on the live screen and ends on the result:
+  // no intro/outro card, no marketing beats, no lower-third overlay.
+  if (spec.style === "recorded") {
+    if (!spec.beats || spec.beats.length === 0)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["beats"],
+        message: "style: recorded needs its own beats list (body_walkthrough beats only)",
+      });
+    for (const [i, b] of (spec.beats ?? []).entries()) {
+      if (b.kind !== "body_walkthrough")
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["beats", i, "kind"],
+          message: `style: recorded allows only body_walkthrough beats — "${b.id}" is ${b.kind} (no title/end cards)`,
+        });
+    }
+    for (const [id, wt] of Object.entries(spec.walkthrough ?? {})) {
+      if ((wt.lower_third ?? "").trim())
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["walkthrough", id, "lower_third"],
+          message: "style: recorded has no post-hoc overlays — leave lower_third empty",
+        });
+    }
+  }
 
   // Every body_walkthrough beat must have a matching walkthrough entry
   // (clip range + lower_third).

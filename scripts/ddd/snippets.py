@@ -39,6 +39,12 @@ from typing import Any
 
 import yaml
 
+from scripts.ddd.recorded import (
+    RecordedSpecError,
+    is_recorded,
+    lint_recorded_spec,
+    resolve_cuts,
+)
 from scripts.ddd.runstate import load, run_dir_for
 from scripts.ddd.spec_io import load_spec_raw
 
@@ -833,54 +839,19 @@ DEFAULT_VOICE_ID = "XB0fDUnXU5powFXDhCwa"
 DEFAULT_VOICE_MODEL = "eleven_turbo_v2"
 
 
-def build_explainer_spec(
-    manifest: dict[str, Any],
-    *,
-    workspace: str,
-    master_ref: str,
-    base_url: str,
-    tagline: str,
-    country_focus: str,
-    voice_id: str = DEFAULT_VOICE_ID,
-    voice_model: str = DEFAULT_VOICE_MODEL,
-    generated_at: str = "1970-01-01T00:00:00Z",
-    lower_thirds: bool = False,
-) -> dict[str, Any]:
-    """Map a snippet manifest onto an ace-web connect-ddd-walkthrough spec dict."""
-    slug = manifest["narrative_slug"]
-    name = manifest.get("name") or slug
-    snippets = manifest.get("snippets") or []
+def _walkthrough_body(
+    snippets: list[dict[str, Any]], *, lower_thirds: bool = False
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, str]]:
+    """The body_walkthrough beats for ``snippets`` (in order).
 
-    beats: list[dict[str, Any]] = [{"id": "title", "kind": "intro_title", "seconds": 4}]
+    Returns ``(beats, walkthrough, by_beat)`` — the beat list entries, the
+    per-beat clip ranges, and the per-beat VO. Shared by the explainer arc and
+    the recorded cuts so both play footage the same way.
+    """
+    beats: list[dict[str, Any]] = []
     walkthrough: dict[str, Any] = {}
-    # The opening title card's VOICEOVER. When the narrative declares a
-    # `role: overview` scene (the goal-setting opener), THAT scene's narrative is
-    # the intro voiceover — spoken over the held title card — and the scene is
-    # absorbed into the title beat rather than replayed as a body scene (its
-    # visual is the same product screen the first demo scene already shows). The
-    # title CARD text stays the `tagline` (a tight headline; see TitleCard).
-    # Without an overview scene, the tagline itself is spoken (a real headline —
-    # NOT "<slug>: …", which read the raw narrative slug aloud).
-    #
-    # This is the fix for the opening-slide mismatch: the card used to narrate
-    # the raw `tagline` while the overview replayed as a separate body scene, so
-    # the video opened on a stale headline instead of the narrated overview.
-    overview_id: str | None = None
-    if any((s.get("role") or "") != "overview" for s in snippets):
-        # never absorb the ONLY scene — that would leave a body-less title card
-        ov = next((s for s in snippets if (s.get("role") or "") == "overview"), None)
-        if ov and (ov.get("narration") or "").strip():
-            overview_id = ov.get("id")
-    intro_vo = ""
-    if overview_id is not None:
-        intro_vo = (
-            next(s for s in snippets if s.get("id") == overview_id).get("narration") or ""
-        ).strip()
-    by_beat: dict[str, str] = {"title": intro_vo or tagline or _humanize_slug(name)}
-
+    by_beat: dict[str, str] = {}
     for sn in snippets:
-        if sn.get("id") == overview_id:
-            continue  # absorbed into the narrated intro title beat above
         # A scene split into several beats (narrative: as a list) yields several
         # snippets with the SAME scene_index — the beat id has to stay unique or
         # they collide in `walkthrough` / `narration.by_beat` and one silently
@@ -916,6 +887,59 @@ def build_explainer_spec(
         # The renderer holds the section's last frame if narration runs longer
         # than the clip range, so the narrative can be any length without drift.
         by_beat[bid] = sn.get("narration") or sn.get("sentence") or ""
+    return beats, walkthrough, by_beat
+
+
+def build_explainer_spec(
+    manifest: dict[str, Any],
+    *,
+    workspace: str,
+    master_ref: str,
+    base_url: str,
+    tagline: str,
+    country_focus: str,
+    voice_id: str = DEFAULT_VOICE_ID,
+    voice_model: str = DEFAULT_VOICE_MODEL,
+    generated_at: str = "1970-01-01T00:00:00Z",
+    lower_thirds: bool = False,
+) -> dict[str, Any]:
+    """Map a snippet manifest onto an ace-web connect-ddd-walkthrough spec dict."""
+    slug = manifest["narrative_slug"]
+    name = manifest.get("name") or slug
+    snippets = manifest.get("snippets") or []
+
+    beats: list[dict[str, Any]] = [{"id": "title", "kind": "intro_title", "seconds": 4}]
+    # The opening title card's VOICEOVER. When the narrative declares a
+    # `role: overview` scene (the goal-setting opener), THAT scene's narrative is
+    # the intro voiceover — spoken over the held title card — and the scene is
+    # absorbed into the title beat rather than replayed as a body scene (its
+    # visual is the same product screen the first demo scene already shows). The
+    # title CARD text stays the `tagline` (a tight headline; see TitleCard).
+    # Without an overview scene, the tagline itself is spoken (a real headline —
+    # NOT "<slug>: …", which read the raw narrative slug aloud).
+    #
+    # This is the fix for the opening-slide mismatch: the card used to narrate
+    # the raw `tagline` while the overview replayed as a separate body scene, so
+    # the video opened on a stale headline instead of the narrated overview.
+    overview_id: str | None = None
+    if any((s.get("role") or "") != "overview" for s in snippets):
+        # never absorb the ONLY scene — that would leave a body-less title card
+        ov = next((s for s in snippets if (s.get("role") or "") == "overview"), None)
+        if ov and (ov.get("narration") or "").strip():
+            overview_id = ov.get("id")
+    intro_vo = ""
+    if overview_id is not None:
+        intro_vo = (
+            next(s for s in snippets if s.get("id") == overview_id).get("narration") or ""
+        ).strip()
+    by_beat: dict[str, str] = {"title": intro_vo or tagline or _humanize_slug(name)}
+
+    body_beats, walkthrough, body_vo = _walkthrough_body(
+        [sn for sn in snippets if sn.get("id") != overview_id],
+        lower_thirds=lower_thirds,
+    )
+    beats.extend(body_beats)
+    by_beat.update(body_vo)
     beats.append({"id": "outro", "kind": "outro_card", "seconds": 5})
     by_beat["outro"] = ""
 
@@ -951,6 +975,138 @@ def build_explainer_spec(
     }
 
 
+def build_recorded_cut_specs(
+    manifest: dict[str, Any],
+    cuts: list[dict[str, Any]],
+    *,
+    workspace: str,
+    master_ref: str | None,
+    base_url: str,
+    country_focus: str,
+    voice_id: str = DEFAULT_VOICE_ID,
+    voice_model: str = DEFAULT_VOICE_MODEL,
+    generated_at: str = "1970-01-01T00:00:00Z",
+) -> dict[str, dict[str, Any]]:
+    """One connect-ddd-walkthrough spec per cut of a ``style: recorded`` spec.
+
+    ``cuts`` comes from :func:`scripts.ddd.recorded.resolve_cuts`. Each cut's
+    spec carries ``style: recorded`` (the renderer drops the music bed and
+    captions and clamps the footage warp to near real time) and a beat list of
+    ONLY ``body_walkthrough`` beats — no ``intro_title``, no ``outro_card`` — so
+    the cut's first frame is the live screen and its last is the result. A
+    ``role: overview`` scene is NOT absorbed into a title card here (there is
+    none); it plays as an ordinary beat if a cut lists it. Lower-thirds are
+    always off.
+
+    All cuts share one master clip: the recorder films every scene once, and
+    each cut plays its own scenes' ranges of it. ``master_ref`` defaults to a
+    per-cut ``file:`` path so the local renderer can stage each cut on its own.
+
+    Returns ``{cut_id: spec}`` in cut order. Raises ``ValueError`` for a cut
+    whose scenes produced no footage (absent from the run report) — rendering
+    an empty cut would ship a black video.
+    """
+    slug = manifest["narrative_slug"]
+    snippets = manifest.get("snippets") or []
+    by_index: dict[int, list[dict[str, Any]]] = {}
+    for sn in snippets:
+        by_index.setdefault(int(sn["scene_index"]), []).append(sn)
+
+    out: dict[str, dict[str, Any]] = {}
+    for cut in cuts:
+        cut_snips = [sn for idx in cut["scene_indexes"] for sn in by_index.get(idx, [])]
+        if not cut_snips:
+            raise ValueError(
+                f"cut '{cut['id']}': none of its scenes ({', '.join(cut['scene_ids'])}) "
+                "appear in the recording report — was the scene skipped or never filmed?"
+            )
+        beats, walkthrough, by_beat = _walkthrough_body(cut_snips, lower_thirds=False)
+        cut_slug = f"{slug}-{cut['id']}"
+        out[cut["id"]] = {
+            "provenance": {
+                "generator": "video-from-walkthrough",
+                "template": "connect-ddd-walkthrough",
+                "generated_from": f"{slug} cut {cut['id']} (DDD run {manifest.get('run_id')})",
+                "generated_at": generated_at,
+            },
+            "style": "recorded",
+            "slug": cut_slug,
+            "workspace": workspace,
+            "name": cut.get("title") or cut["id"],
+            "country_focus": country_focus,
+            "status": "DDD recorded walkthrough",
+            # Schema-required, never drawn: a recorded cut has no title card.
+            "tagline": cut.get("title") or cut["id"],
+            "program_url": base_url,
+            "manifest": {
+                "master": master_ref or f"file:assets/programs/{cut_slug}/walkthrough.mp4"
+            },
+            "beats": beats,
+            "walkthrough": walkthrough,
+            "narration": {
+                "generator": "manual",
+                "prompt_version": "v1",
+                "start_seconds": 0,
+                "by_beat": by_beat,
+                "script": "\n".join(by_beat[b["id"]] for b in beats if by_beat.get(b["id"])),
+            },
+            "voice": {"provider": "elevenlabs", "voice_id": voice_id, "model": voice_model},
+        }
+    return out
+
+
+def write_recorded_cut_specs(
+    specs: dict[str, dict[str, Any]], out_dir: Path
+) -> dict[str, str]:
+    """Write each cut spec to ``<out_dir>/explainer_spec.<cut_id>.yaml``."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: dict[str, str] = {}
+    for cid, spec in specs.items():
+        path = out_dir / f"explainer_spec.{cid}.yaml"
+        path.write_text(yaml.safe_dump(spec, sort_keys=False, allow_unicode=True))
+        written[cid] = str(path)
+    return written
+
+
+def _emit_recorded(
+    spec: dict[str, Any],
+    manifest: dict[str, Any],
+    *,
+    out_dir: Path,
+    workspace: str,
+    master_ref: str | None,
+    base_url: str,
+    country_focus: str,
+    lower_thirds: bool,
+) -> dict[str, Any]:
+    """``style: recorded`` branch of both emitters: lint, then one spec per cut.
+
+    Prints the recorded lint (errors refuse the emit — a cut that opens wrong or
+    is over the ceiling before any footage plays is not worth rendering) and
+    writes ``explainer_spec.<cut_id>.yaml`` per cut into ``out_dir``. Returns
+    ``{"style": "recorded", "cuts": {id: spec}, "_written_to": {id: path}}``.
+    """
+    issues = lint_recorded_spec(spec)
+    for i in issues:
+        where = f"{i['cut']}: " if i["cut"] else ""
+        print(f"  {'✗' if i['level'] == 'error' else '⚠'} recorded {where}{i['message']}")
+    errors = [i for i in issues if i["level"] == "error"]
+    if errors:
+        raise RecordedSpecError(
+            "recorded spec fails lint — " + "; ".join(
+                (f"{i['cut']}: " if i["cut"] else "") + i["message"] for i in errors
+            )
+        )
+    if lower_thirds:
+        print("  ⚠ --lower-thirds ignored: a recorded cut has no post-hoc overlays")
+    specs = build_recorded_cut_specs(
+        manifest, resolve_cuts(spec), workspace=workspace, master_ref=master_ref,
+        base_url=base_url, country_focus=country_focus,
+    )
+    written = write_recorded_cut_specs(specs, out_dir)
+    return {"style": "recorded", "cuts": specs, "_written_to": written}
+
+
 def emit_explainer_spec(
     run_id: str,
     *,
@@ -981,6 +1137,14 @@ def emit_explainer_spec(
             master_ref = f"library:video/ddd/{Path(manifest['source_clip']).name}"
         else:
             master_ref = f"library:video/ddd/{manifest['narrative_slug']}.mp4"
+
+    if is_recorded(spec):
+        return _emit_recorded(
+            spec, manifest, out_dir=run_dir, workspace=workspace,
+            master_ref=master_ref, base_url=base_url,
+            country_focus=country_focus or spec.get("country_focus") or "Global",
+            lower_thirds=lower_thirds,
+        )
 
     explainer = build_explainer_spec(
         manifest,
@@ -1081,6 +1245,14 @@ def emit_explainer_from_capture(
     }
 
     base_url = spec.get("base_url") or "https://labs.connect.dimagi.com/"
+    if is_recorded(spec):
+        out_dir = Path(out_path).parent if out_path else Path(spec_path).parent
+        return _emit_recorded(
+            spec, manifest, out_dir=out_dir, workspace=workspace,
+            master_ref=master_ref, base_url=base_url,
+            country_focus=country_focus or spec.get("country_focus") or "Global",
+            lower_thirds=lower_thirds,
+        )
     # The connect-ddd-walkthrough schema requires tagline + country_focus to be
     # non-empty. Prefer explicit values (CLI / spec); otherwise derive a sane
     # default so any narrative renders without hand-editing (authors can set
@@ -1183,7 +1355,12 @@ def main(argv: list[str] | None = None) -> None:
             country_focus=args.country_focus,
             lower_thirds=args.lower_thirds,
         )
-        print(explainer["_written_to"])
+        written = explainer["_written_to"]
+        if isinstance(written, dict):  # style: recorded → one spec per cut
+            for cid, path in written.items():
+                print(f"{cid}\t{path}")
+        else:
+            print(written)
     elif args.cmd == "upload-video":
         from scripts.ddd.upload import upload_narrative_video
 

@@ -267,6 +267,33 @@
       "title": "ClickMenuAction",
       "type": "object"
     },
+    "Cut": {
+      "description": "One standalone cut of a ``style: recorded`` walkthrough.\n\nA recorded walkthrough is not one long arc: it is several short, separately\nwatchable videos, each its own mp4. A cut names the scenes it plays (by\n``Scene.id``, in play order) and nothing else \u2014 its narration is those\nscenes' ``narrative`` lines, so the spoken words stay lock-owned and editable\non canopy-web exactly as before. See ``scripts.ddd.recorded`` for the rules a\ncut is held to (opener line, 30 s target / 40 s ceiling, 65\u201380 words).",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "scenes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Scenes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "scenes"
+      ],
+      "title": "Cut",
+      "type": "object"
+    },
     "DrawAction": {
       "additionalProperties": false,
       "description": "Draw a polygon on a map or canvas by clicking a sequence of points.\n\nThe recorder has no way to express map drawing through the other verbs \u2014\n``click`` resolves a DOM element's centre, but a Mapbox-GL-Draw polygon (or any\ncanvas drawing tool) needs clicks at *coordinates on the canvas*, not on a\nlabelled element. ``draw`` fills that gap.\n\n``target`` is the map/canvas element (e.g. ``css:#review-map``). ``points`` is a\nlist of ``[fx, fy]`` fractional positions (0-1) within that element's bounding\nbox \u2014 fractions, not pixels, so the polygon is independent of viewport size. The\nsynthetic cursor glides to each vertex and clicks (real Playwright pointer events\nthe drawing tool receives), then double-clicks the last vertex to close the\npolygon (Mapbox finishes a polygon on double-click).\n\nSet ``tool`` to the draw-tool button (e.g. ``css:.mapbox-gl-draw_polygon``) and\n``draw`` activates it first with a coordinate mouse-click \u2014 which works on the\nsmall map-control buttons that a normal ``click`` can't (Playwright's\nactionability checks time out on them). Omit ``tool`` if the tool is already\nactive.",
@@ -1976,6 +2003,23 @@
       ],
       "default": null,
       "title": "Target Rubric"
+    },
+    "style": {
+      "default": "explainer",
+      "enum": [
+        "explainer",
+        "recorded"
+      ],
+      "title": "Style",
+      "type": "string"
+    },
+    "cuts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Cut"
+      },
+      "title": "Cuts",
+      "type": "array"
     },
     "build_order": {
       "default": [],

@@ -48,6 +48,10 @@ try:
     from scripts.ddd import deadair as _deadair  # type: ignore
 except Exception:  # noqa: BLE001 — detector is advisory; engine runs without it
     _deadair = None
+try:
+    from scripts.ddd import recorded as _recorded  # type: ignore
+except Exception:  # noqa: BLE001 — only needed for style: recorded specs
+    _recorded = None
 
 
 def engine_root() -> Path:
@@ -257,6 +261,35 @@ def _card_ignore_ranges(cv: Path, slug: str, run_id: str, mp4: str) -> list[tupl
         return []
 
 
+def recorded_gate(cv: Path, slug: str, run_id: str) -> dict | None:
+    """For a ``style: recorded`` cut, gate the rendered length (warn > 30 s,
+    fail > 40 s) and write ``verdict-recorded.json`` beside ``output.mp4``.
+
+    Returns the gate report, or None for any other style. A recorded cut whose
+    length cannot be measured FAILS — an unmeasured cut is not a passing one.
+    """
+    run_dir = cv / "programs" / slug / "runs" / run_id
+    try:
+        spec = _load_spec(run_dir / "spec.yaml")
+    except Exception:  # noqa: BLE001
+        return None
+    if (spec.get("style") or "explainer") != "recorded":
+        return None
+    if _recorded is None:
+        print("\n==> Recorded-cut gate skipped (scripts.ddd.recorded not importable)")
+        return None
+    import json
+
+    out = run_dir / "output.mp4"
+    words = sum(
+        _recorded.word_count(t) for t in ((spec.get("narration") or {}).get("by_beat") or {}).values()
+    )
+    report = _recorded.gate_cut_durations({slug: _recorded.probe_duration(out)}, {slug: words})
+    (run_dir / "verdict-recorded.json").write_text(json.dumps(report, indent=2))
+    print("\n" + _recorded.format_gate(report))
+    return report
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--local-spec", required=True,
@@ -313,6 +346,7 @@ def main() -> int:
 
     timing_report(cv, slug, run_id)
     report = dead_air_report(cv, slug, run_id)
+    gate = recorded_gate(cv, slug, run_id)
 
     out = cv / "programs" / slug / "runs" / run_id / "output.mp4"
     print(f"\n==> Done. Output: {out}")
@@ -326,6 +360,16 @@ def main() -> int:
             file=sys.stderr,
         )
         return 3
+    if gate and gate.get("verdict") == "fail":
+        # style: recorded — a cut over the 40 s ceiling is not shippable. The
+        # mp4 is left in place for inspection; the exit code tells a caller
+        # (ddd-recorded-walkthrough) to trim the cut's narration and re-render.
+        print(
+            f"\nERROR: recorded cut is over the {gate['ceiling_seconds']:.0f}s ceiling "
+            "— trim its narration and re-render.",
+            file=sys.stderr,
+        )
+        return 4
     return 0
 
 

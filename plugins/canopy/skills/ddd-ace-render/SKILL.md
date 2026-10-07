@@ -28,6 +28,15 @@ its VO overruns, so the timing report at the end tells you whether to trim.
 - Only AFTER the narrative's DDD run has converged (Step 0 enforces it). Pass
   `--allow-unconverged` to override deliberately.
 
+## Recorded style (`style: recorded`)
+If the spec sets `style: recorded` with a `cuts:` list, steps 0–1 are unchanged
+(one master recording, with a natural cursor). Step 2 then writes **one**
+`explainer_spec.<cut>.yaml` per cut (no title or end card, no lower-thirds)
+and prints `<cut>\t<path>` lines. Step 3 renders each cut against the same
+master: no music bed, no captions, footage near real time. `render_locally.py`
+gates each cut's length (warn above 30 s, exit 4 above 40 s). The full
+procedure, authoring rules and gate are in `/canopy:ddd-recorded-walkthrough`.
+
 ## Prerequisites
 - Run from the **project repo** that owns the narrative (e.g. connect-labs) — the spec's `setup:` reseeds there.
 - A live browse session authenticated to the target app, for session-auth specs (see `/canopy:walkthrough` setup).

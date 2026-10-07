@@ -96,6 +96,31 @@ a clean re-render of the whole run first.
 why-brief from `python -m scripts.ddd.spec_io why-brief <recipe>`, not the run
 dir's Phase-0 copy.
 
+## Style: recorded (`style: recorded` specs)
+
+A `style: recorded` spec is NOT one arc. It is several short **standalone
+cuts** (its `cuts:` list, see `/canopy:ddd-recorded-walkthrough`), each one
+"a quick overview of how we <do X>". Nobody watches them in order. So:
+
+- **Judge each cut as its own sequence.** Run Steps 1–2 once per cut over that
+  cut's scenes only, in cut order, and score `arc_shape`, `escalation`,
+  `visual_variety` and `opening_and_close` within the cut. The verdict's
+  overall is the weakest cut, as always.
+- **No cross-cut escalation is expected.** Cut 3 does not have to top cut 1,
+  and two cuts filming the same screen from different jobs (assigning vs
+  verifying on one list) are not "the same point with different pixels".
+  Re-establishing context at the start of a cut is how it stands alone.
+- **`opening_and_close` per cut:** the opening is the cut's first line, "This
+  is a quick overview of how we <do X>.", spoken over the live screen. That
+  line IS the opening, so do not deduct for "explains the product instead of
+  the problem". The close is the result of the job on screen. A cut that ends
+  on that result has closed: there is no title card, end card or sign-off by
+  design, so do not score it "simply stops".
+- **Do not reward or ask for gloss.** No music, no cards, no zooms or callouts
+  is the brief. Never route a finding asking for one.
+- `persona_coherence` still applies within a cut. The one-sentence test
+  becomes "state what this cut shows someone how to do."
+
 ## Procedure
 
 ### Step 1 — Assemble the sequence
