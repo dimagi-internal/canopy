@@ -910,7 +910,8 @@ re-implement the decision tree. What it does, in order:
 
 ```
 any decision from an inner-loop or
-  concept-only pass                        -> checkpoint  (land the batches; full pass on the deploy target decides)
+  concept-only pass                        -> checkpoint  (land the batches; full pass on the deploy target decides;
+                                              stop_out_of_scope is exempt unless scenes were held)
 converged on an INCREMENTAL pass           -> confirm_full  (full re-render + full judge, no fixes)
 converged on a full pass                   -> stop_done / stop_partial
 the gating floor HAS findings and every
@@ -921,6 +922,9 @@ a STRATEGY finding + mechanical work on
   scenes it does NOT touch, still progressing -> park_and_continue (post the gate, park its scenes)
 every strategy finding on a parked scene   -> continue while unparked work remains
 a STRATEGY CONCEPT/redesign finding        -> stop_concept_change
+FLAT: `loop.plateau_rounds` (3) full judges
+  with neither the score nor the open
+  backlog improving (findings may churn)   -> stop_max_iter   (a DIRECTION question, canopy#782/#788)
 STALLED: no progress signal improved
   across the last 2 iterations (an open-
   findings fall within 15% of the best
@@ -1049,7 +1053,7 @@ can see at a glance which findings the orchestrator will auto-apply
 - `stop_partial` — "Filtered scope passed. Drop `--scene` and re-fire for promotion."
 - `stop_concept_change` — "Strategy finding present (the artifact, not the wording, is wrong) — surface to user via canopy-web review surface." Deferred once if `mechanical` findings are still pending, so the user judges direction over a clean artifact rather than one with known defects.
 - `stop_unclear` — "Findings with `options`/`redesign` fix_kind block auto-iteration. List them and ask the user to pick or redesign."
-- `stop_max_iter` — "Loop stopped making progress (stall, plateau, or backstop). Stop and surface remaining findings."
+- `stop_max_iter` — "Loop stopped making progress (stall, plateau, flat score, or backstop). Stop and surface remaining findings." On a `FLAT:` reason, put its direction question to the owner with the open cells it lists: which matter for this narrative, which are non-blocking.
 - `stop_out_of_scope` — "The gating floor is held only by findings this loop may not fix (data, registry, a locked narration, a deferred or declined fix). No batch can move the gate. Report each floor finding with where its fix lives (the reason lists them)." Terminal; `terminal_status: blocked_out_of_scope`.
 - `stop_inner_loop_required` — "A backlog loop on a repo with a `deploy_gate` and no `inner_loop:`. Configure `inner_loop` (or `inner_loop: off` + `inner_loop_off_reason`) in `.canopy/ddd/config.yaml`, `decision override --reason`, then proceed as the quoted `continue`." See the agent's section of the same name.
 - `continue` — "Apply ALL mechanical findings as ONE batch (one PR, one deploy; parallel fixers fine), record the merge SHA (`judge_gate set-fix-sha`), `decision bump`, and re-fire `/canopy:ddd-run`." In backlog mode the next judge pass is incremental unless `next_judge_full`. If the reason says **RECIPE-ONLY**, there is no PR, CI, deploy or `set-fix-sha`: edit the recipe/spec locally and re-fire.

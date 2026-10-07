@@ -34,6 +34,11 @@ module reads the two blocks the v1/backlog loop adds::
         - registry            # finding whose fix names one is out of edit scope,
         - seed data           # and a floor made only of those stops the run
                               # (stop_out_of_scope) instead of iterating to a stall
+      recurring_after: 2      # a cell with an open finding this many passes running is
+                              # stamped `recurring` and briefed first (canopy#788)
+      plateau_rounds: 3       # this many full judges with neither the score nor the
+                              # open backlog improving -> stop with a direction
+                              # question, even while the findings churn (canopy#782)
       scoped_capture: true    # between checkpoints, re-film only the scenes a batch
                               # changed, as stills; narration-only batches film
                               # nothing (scripts.ddd.capture_scope, canopy#785)
@@ -124,6 +129,8 @@ class LoopConfig:
     fixed_surfaces: tuple[str, ...] = ()
     narrative_mode: str = "auto"
     scoped_capture: bool = True
+    recurring_after: int = 2
+    plateau_rounds: int = 3
 
     def tiered(self, loop_mode: str | None) -> bool:
         """Concept-only judging between checkpoints? ``auto`` = on in backlog mode."""
@@ -383,6 +390,8 @@ def parse(data: dict | None) -> DDDConfig:
         fixed_surfaces=_patterns(loop_raw.get("fixed_surfaces")),
         narrative_mode=narrative_mode if narrative_mode in NARRATIVE_MODES else "auto",
         scoped_capture=loop_raw.get("scoped_capture") is not False,
+        recurring_after=_int(loop_raw.get("recurring_after"), 2),
+        plateau_rounds=_int(loop_raw.get("plateau_rounds"), 3),
     )
     gate_raw = data.get("deploy_gate") if isinstance(data.get("deploy_gate"), dict) else {}
     url = str(gate_raw.get("health_url") or "").strip() or None

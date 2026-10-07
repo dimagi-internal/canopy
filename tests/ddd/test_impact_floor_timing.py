@@ -441,13 +441,13 @@ POLISH = {"scene": "1", "dimension": "visual_polish", "route": "PRODUCT", "fix_k
 
 
 class TestOutOfScopeStop:
-    def _run(self, *, declined: list | None = None, judges=None, judge_full: bool = True, findings=None):
+    def _run(self, *, declined: list | None = None, judges=None, judge_full: bool = True, findings=None, held=None):
         state = RunState(run_id="r", narrative_slug="n", loop_mode="backlog")
         action, reason = compute_auto_iterate(
             state, _v(3), _v(2, "user_artifact"),
             [dict(f) for f in (findings or [REGISTRY_FLOOR, POLISH])],
             converged=False, unattended=True, judge_full=judge_full, judges=judges,
-            floor=FLOOR_U, edit_scope={"declined": declined or []},
+            floor=FLOOR_U, edit_scope={"declined": declined or []}, held=held,
         )
         return state, action, reason
 
@@ -460,9 +460,19 @@ class TestOutOfScopeStop:
         assert "registry display.targets_note" in reason
         assert state.gating_floor["all_out_of_scope"] is True
 
-    def test_a_partial_pass_hands_the_stop_to_a_checkpoint(self) -> None:
+    def test_a_partial_pass_stops_without_a_checkpoint_detour(self) -> None:
+        # canopy#788: no checkpoint can move a cell the loop may not edit, and
+        # floor-first already re-judged the floor's scenes if they changed.
         state, action, _ = self._run(
             declined=[{"match": "Targets are the PDD", "reason": "registry"}], judges=["concept", "user"], judge_full=False
+        )
+        assert action == "stop_out_of_scope" and state.terminal_status == "blocked_out_of_scope"
+
+    def test_a_pass_that_held_scenes_still_hands_the_stop_to_a_checkpoint(self) -> None:
+        # A held scene changed and was not re-judged: it could hide a different floor.
+        state, action, _ = self._run(
+            declined=[{"match": "Targets are the PDD", "reason": "registry"}], judges=["concept"], judge_full=False,
+            held=[3],
         )
         assert action == "checkpoint" and state.next_judge_full is True
 

@@ -549,6 +549,17 @@ def compute_auto_iterate(
     fingerprints = denoise.fingerprint_findings(findings)
     state.finding_fingerprints = (state.finding_fingerprints or []) + [fingerprints]
     fp_hist = state.finding_fingerprints
+    # Every pass fixes everything it can (canopy#788). A cell whose finding has
+    # been open N passes running was not cleared by the last fix: stamp it, and
+    # brief it right after the floor, so the next fixer tries something else.
+    recurring = _stamp_recurring(findings, fp_hist, loop_config.recurring_after)
+    if recurring:
+        ids = {id(f) for f in recurring}
+        head = [f for f in findings if f.get("floor")]
+        findings = head + [f for f in findings if id(f) in ids and not f.get("floor")] + [
+            f for f in findings if id(f) not in ids and not f.get("floor")
+        ]
+        state.findings = findings
 
     point = progress.measure(findings, distribution, score, full=judge_full)
     point["target"] = target or "deploy"
@@ -648,7 +659,16 @@ def compute_auto_iterate(
         # Fidelity: an inner-loop or concept-only pass may not decide anything.
         from scripts.ddd import target as target_mod
 
-        if action in _CHECKPOINT_BEFORE and target_mod.decision_needs_checkpoint(target, judges, held):
+        # An uneditable floor stops NOW (canopy#788): no checkpoint can move a
+        # cell the loop may not edit, and floor-first already re-judged the
+        # floor's scenes if they changed. Only a held scene (changed, not
+        # re-judged) could still be hiding a different floor.
+        exempt = action == "stop_out_of_scope" and not held
+        if (
+            action in _CHECKPOINT_BEFORE
+            and not exempt
+            and target_mod.decision_needs_checkpoint(target, judges, held)
+        ):
             state.next_judge_full = True
             state.terminal_status = "running"
             if (target or "deploy") != "deploy":
@@ -909,6 +929,27 @@ def compute_auto_iterate(
             "pending decision."
             + (" Unattended: reported, not waited on." if unattended else ""),
         )
+    # Flat (canopy#782/#788): N full judges with neither the score nor the open
+    # backlog improving is a direction problem, not a fixing one — even when the
+    # findings churn (fix one email-wording finding, the judge raises the next),
+    # which the identical-findings plateau never sees. Stop and ask.
+    flat = _flat(prog, loop_config.plateau_rounds)
+    if flat and not converged:
+        cells = sorted(
+            {f"{fix_scope.scene_key(f.get('scene')) or '?'}:{f.get('dimension')}" for f in findings
+             if f.get("route") != "DEFER"}
+        )
+        return _finish(
+            "stop_max_iter",
+            f"FLAT: {loop_config.plateau_rounds} full judges at score "
+            f"{[p.get('score') for p in flat]} with the open backlog "
+            f"{[p.get('open_findings') for p in flat]} not shrinking past its trickle band — "
+            "the fixes are moving the judges' attention around, not the product. Direction "
+            f"question for a human: which of these matter for this narrative, and which are "
+            f"non-blocking? Open cells: {', '.join(cells[:20])}"
+            + (f" (+{len(cells) - 20} more)" if len(cells) > 20 else "")
+            + f" (history={hist}).",
+        )
     # A stall is checked BEFORE pending mechanical work: that branch used to come
     # first, so on a v1 product (which always has mechanical findings) stall
     # detection could never fire. Stall is now progress-aware, so a run whose
@@ -950,6 +991,68 @@ def compute_auto_iterate(
     return _continue(
         f"No options/redesign and score still moving (history={hist}) — re-fire.",
     )
+
+
+def _cell_of(scene: object, dimension: object) -> str:
+    from scripts.ddd import fix_scope
+
+    return f"{fix_scope.scene_key(scene) or ''}::{dimension or ''}"
+
+
+def _stamp_recurring(findings: list[dict], fp_hist: list, after: int) -> list[dict]:
+    """Stamp ``recurring: N`` on each finding whose (scene, dimension) cell has had an
+    open finding in each of the last N passes (N >= ``after``); return them.
+
+    By CELL, not by finding text: the judge re-words the same defect pass to
+    pass, so text fingerprints under-count it.
+    """
+    history = []
+    for fps in fp_hist or []:
+        cells = set()
+        for fp in fps or []:
+            parts = str(fp).split("::")
+            if len(parts) >= 2:
+                cells.add(_cell_of(parts[0], parts[1]))
+        history.append(cells)
+    out = []
+    for f in findings:
+        if f.get("route") == "DEFER" or f.get("parked"):
+            continue
+        cell = _cell_of(f.get("scene"), f.get("dimension"))
+        n = 0
+        for cells in reversed(history):
+            if cell not in cells:
+                break
+            n += 1
+        if n >= max(int(after), 2):
+            f["recurring"] = n
+            out.append(f)
+    return out
+
+
+def _flat(prog: list[dict], rounds: int) -> list[dict] | None:
+    """The last ``rounds`` FULL progress points when neither the score nor the open
+    backlog improved on the best full point before them; else ``None``."""
+    from scripts.ddd import denoise, progress
+
+    fulls = [p for p in prog or [] if isinstance(p, dict) and p.get("full", True)]
+    rounds = max(int(rounds), 2)
+    if len(fulls) < rounds + 1:
+        return None
+    before, last = fulls[:-rounds], fulls[-rounds:]
+    best_score = max(float(p.get("score") or 0.0) for p in before)
+    if any(denoise.improved(best_score, float(p.get("score") or 0.0)) is True for p in last):
+        return None
+    counts = [p.get("open_findings") for p in before if isinstance(p.get("open_findings"), (int, float))]
+    if counts:
+        best_open = min(counts)
+        if any(
+            isinstance(p.get("open_findings"), (int, float))
+            and p["open_findings"] < best_open - progress.trickle_band(best_open)
+            for p in last
+        ):
+            return None
+    return last
 
 
 def _floor_label(floor: dict | None) -> str:
