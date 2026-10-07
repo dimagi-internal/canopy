@@ -3,7 +3,7 @@
 Links are the task field most likely to rot — they point at runs, run summaries and
 docs, which advance — and until this landed `agent set` had no `--links` option at all.
 The only CLI surface that accepted links was `agent add`, which builds a COMPLETE task
-dict and pushes it through `sync_tasks`, so using it to correct one stale link blanked
+dict and pushed it through the old task sync, so using it to correct one stale link blanked
 `next_action`, `notes`, `owner`, `assigned`, `status` and `due` unless the caller
 re-supplied every one of them. The one field that rots had no safe update path.
 
@@ -32,23 +32,23 @@ def test_append_keeps_the_links_already_on_the_card():
     first would silently delete every existing link — the exact failure the replace-only
     path already had.
     """
-    client = FakeClient([{"id": 91, "links": [{"label": "Thread", "url": "https://mail/x"}]}])
-    out = _appended_links(client, 91, "Run summary|https://labs/run/2")
+    client = FakeClient([{"ext_id": "T91", "links": [{"label": "Thread", "url": "https://mail/x"}]}])
+    out = _appended_links(client, "T91", "Run summary|https://labs/run/2")
     assert [l["url"] for l in out] == ["https://mail/x", "https://labs/run/2"]
     assert out[0]["label"] == "Thread"
 
 
 def test_append_is_idempotent_on_url_so_reruns_do_not_stack_duplicates():
     """A turn that re-attaches the same artifact is the common case, not an error."""
-    client = FakeClient([{"id": 91, "links": [{"label": "Run", "url": "https://labs/run/2"}]}])
-    out = _appended_links(client, 91, "Run summary|https://labs/run/2")
+    client = FakeClient([{"ext_id": "T91", "links": [{"label": "Run", "url": "https://labs/run/2"}]}])
+    out = _appended_links(client, "T91", "Run summary|https://labs/run/2")
     assert len(out) == 1
     assert out[0]["label"] == "Run", "first label wins; a re-add must not relabel"
 
 
 def test_append_onto_a_card_with_no_links_yet():
-    client = FakeClient([{"id": 91}])
-    assert _appended_links(client, 91, "https://labs/run/2") == [
+    client = FakeClient([{"ext_id": "T91"}])
+    assert _appended_links(client, "T91", "https://labs/run/2") == [
         {"label": "link", "url": "https://labs/run/2"}
     ]
 
@@ -56,10 +56,10 @@ def test_append_onto_a_card_with_no_links_yet():
 def test_append_ignores_other_cards_links():
     """Task ids are matched exactly — appending to one card must not inherit another's."""
     client = FakeClient([
-        {"id": 90, "links": [{"label": "Other", "url": "https://other"}]},
-        {"id": 91, "links": [{"label": "Mine", "url": "https://mine"}]},
+        {"ext_id": "T90", "links": [{"label": "Other", "url": "https://other"}]},
+        {"ext_id": "T91", "links": [{"label": "Mine", "url": "https://mine"}]},
     ])
-    out = _appended_links(client, 91, "New|https://new")
+    out = _appended_links(client, "T91", "New|https://new")
     assert [l["url"] for l in out] == ["https://mine", "https://new"]
 
 
@@ -125,9 +125,9 @@ class TestAnUnparseableLinkRaisesInsteadOfVanishing:
     def test_appending_a_bad_link_does_not_drop_the_existing_ones(self):
         """The read-modify-write path is where a silent drop would be worst: it rewrites
         `links` wholesale, so failing loudly BEFORE the PATCH is what protects the card."""
-        client = FakeClient([{"id": 91, "links": [{"label": "Thread", "url": "https://mail/x"}]}])
+        client = FakeClient([{"ext_id": "T91", "links": [{"label": "Thread", "url": "https://mail/x"}]}])
         with pytest.raises(Exception):
-            _appended_links(client, 91, "Bad=https://example.com/2")
+            _appended_links(client, "T91", "Bad=https://example.com/2")
 
 
 class TestCommasInALabelOrUrlAreKept:

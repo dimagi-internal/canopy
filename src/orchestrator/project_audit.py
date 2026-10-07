@@ -364,7 +364,7 @@ def render(result: dict) -> str:
             result["unrecorded_tasks"],
             lambda it: [f"{it['ext_id']} {it['title'][:80]}  (updated {it['updated_at'][:16]})",
                         f"  → canopy agent turn --slug {s} --task {it['ext_id']} "
-                        f"--session-id <id> --title \"…\" [--work-product-url <url>]"])
+                        f"--session-id <id> --title \"…\""])
     lines.append("")
     lines.append(result["closeout"])
     return "\n".join(lines)

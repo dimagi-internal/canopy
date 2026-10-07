@@ -62,13 +62,42 @@ def test_a_new_agent_without_a_name_is_a_clear_error(fake_http):
     assert not any(c[0] == "POST" for c in calls)
 
 
-def test_agent_commands_lists(fake_http):
+def test_agent_actions_lists_the_pending_queue(fake_http):
     calls, responses = fake_http
-    responses[("GET", "agents/echo/commands?status=pending")] = (
-        200, json.dumps([{"id": 7, "kind": "dispatch", "task_title": "Do", "created_by": "jj", "payload": None}]))
-    r = CliRunner().invoke(main, ["agent", "commands", "--slug", "echo"])
+    responses[("GET", "agents/echo/actions/?status=pending")] = (
+        200, json.dumps([{"id": 7, "agent_slug": "echo", "task_ext_id": "T3", "action": "dispatch",
+                          "comment": "now please", "by": "jj", "status": "pending"}]))
+    r = CliRunner().invoke(main, ["agent", "actions", "--slug", "echo"])
     assert r.exit_code == 0, r.output
-    assert "#7" in r.output and "dispatch" in r.output
+    assert calls[0][:2] == ("GET", "https://x.test/api/agents/echo/actions/?status=pending")
+    assert "#7" in r.output and "dispatch" in r.output and "T3" in r.output
+    assert "now please" in r.output
+
+
+def test_agent_actions_empty_queue(fake_http):
+    _, responses = fake_http
+    responses[("GET", "agents/echo/actions/?status=pending")] = (200, "[]")
+    r = CliRunner().invoke(main, ["agent", "actions", "--slug", "echo"])
+    assert r.exit_code == 0, r.output
+    assert "no pending actions" in r.output
+
+
+def test_the_drain_marks_each_action_applied(fake_http):
+    """The turn-start drain: list pending actions, carry each out, mark each applied."""
+    calls, responses = fake_http
+    responses[("GET", "agents/echo/actions/?status=pending")] = (
+        200, json.dumps([{"id": 7, "task_ext_id": "T3", "action": "approve"},
+                         {"id": 8, "task_ext_id": "T4", "action": "decline", "comment": "no"}]))
+    runner = CliRunner()
+    assert runner.invoke(main, ["agent", "actions", "--slug", "echo"]).exit_code == 0
+    for action_id in ("7", "8"):
+        r = runner.invoke(main, ["agent", "applied", "--slug", "echo", "--id", action_id,
+                                 "--note", "done"])
+        assert r.exit_code == 0, r.output
+    assert [c for c in calls if c[0] == "POST"] == [
+        ("POST", "https://x.test/api/agents/echo/actions/7/applied", {"result_note": "done"}),
+        ("POST", "https://x.test/api/agents/echo/actions/8/applied", {"result_note": "done"}),
+    ]
 
 
 def test_agent_tasks_lists(fake_http):
@@ -81,17 +110,23 @@ def test_agent_tasks_lists(fake_http):
     assert "T1" in r.output and "T2" in r.output
 
 
-def test_agent_apply(fake_http):
+def test_agent_applied(fake_http):
     calls, _ = fake_http
-    r = CliRunner().invoke(main, ["agent", "apply", "--slug", "echo", "--id", "7", "--note", "ok"])
+    r = CliRunner().invoke(main, ["agent", "applied", "--slug", "echo", "--id", "7", "--note", "ok"])
     assert r.exit_code == 0, r.output
-    assert calls[0] == ("POST", "https://x.test/api/agents/echo/commands/7/apply", {"result_note": "ok"})
+    assert calls[0] == ("POST", "https://x.test/api/agents/echo/actions/7/applied", {"result_note": "ok"})
+
+
+@pytest.mark.parametrize("verb", ["commands", "apply", "work", "tasks-sync"])
+def test_the_old_verbs_are_gone(verb):
+    r = CliRunner().invoke(main, ["agent", verb, "--help"])
+    assert r.exit_code != 0
 
 
 def test_agent_error_exits_nonzero(fake_http):
     calls, responses = fake_http
-    responses[("POST", "agents/echo/commands/7/apply")] = (404, "missing")
-    r = CliRunner().invoke(main, ["agent", "apply", "--slug", "echo", "--id", "7"])
+    responses[("POST", "agents/echo/actions/7/applied")] = (404, "missing")
+    r = CliRunner().invoke(main, ["agent", "applied", "--slug", "echo", "--id", "7"])
     assert r.exit_code != 0
     assert "404" in r.output
 
@@ -107,9 +142,11 @@ def test_agent_add_creates_task_with_next_ext_id(fake_http):
         "--links", "Thread|https://t.example, https://bare.example"])
     assert r.exit_code == 0, r.output
     method, url, body = calls[-1]
-    assert (method, url) == ("POST", "https://x.test/api/agents/hal/tasks/sync")
-    task = body["tasks"][0]
+    assert (method, url) == ("POST", "https://x.test/api/agents/hal/tasks/")
+    task = body[0]                                     # a BARE list
     assert task["ext_id"] == "T4"                      # next free after T3; "junk" ignored
+    assert task["idempotency_key"] == "hal:T4"         # a retried add replays, never duplicates
+    assert task["origin"] == "task-tracker" and "source" not in task
     assert task["status"] == "in_progress"             # human text normalized
     assert task["links"] == [
         {"label": "Thread", "url": "https://t.example"},
@@ -124,8 +161,8 @@ def test_agent_add_explicit_ext_id_skips_board_read(fake_http):
                                   "--title", "X", "--ext-id", "T99"])
     assert r.exit_code == 0, r.output
     assert all(m != "GET" for m, _, _ in calls)        # no list_tasks round-trip
-    assert calls[-1][2]["tasks"][0]["ext_id"] == "T99"
-    assert calls[-1][2]["tasks"][0]["status"] == "suggested"   # default
+    assert calls[-1][2][0]["ext_id"] == "T99"
+    assert calls[-1][2][0]["status"] == "suggested"   # default
 
 
 def test_task_status_normalization_and_links_parsing():
@@ -182,35 +219,23 @@ def test_agent_coverage_cli_human_output_leads_with_decayed(monkeypatch):
 # `agent turn --task`, `agent dispatch --task`). Requiring the numeric id here cost every
 # agent a failed call plus a JSON grep on each task patch.
 
-def test_agent_set_accepts_ext_id(fake_http):
-    calls, responses = fake_http
-    responses[("GET", "agents/hal/tasks/")] = (
-        200, json.dumps([{"id": 70, "ext_id": "T6"}, {"id": 71, "ext_id": "T7"}]))
+def test_agent_set_patches_by_ext_id_without_a_board_read(fake_http):
+    """canopy-web addresses a task by its ext_id — there is no numeric id to resolve
+    to, so a plain `set` costs exactly one PATCH."""
+    calls, _ = fake_http
     r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
                                   "--task-id", "T7", "--plan", "p"])
     assert r.exit_code == 0, r.output
-    patch = [c for c in calls if c[0] == "PATCH"]
-    assert patch[0][1] == "https://x.test/api/agents/hal/tasks/71/"
-    assert patch[0][2] == {"plan": "p"}
+    assert calls == [("PATCH", "https://x.test/api/agents/hal/tasks/T7/", {"plan": "p"})]
 
 
-def test_agent_set_ext_id_is_case_insensitive(fake_http):
+def test_agent_set_unknown_ext_id_names_the_fix(fake_http):
     calls, responses = fake_http
-    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([{"id": 71, "ext_id": "T7"}]))
+    responses[("PATCH", "agents/hal/tasks/T99/")] = (404, '{"detail": "task T99 not found"}')
     r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
-                                  "--task-id", "t7", "--plan", "p"])
-    assert r.exit_code == 0, r.output
-    assert [c for c in calls if c[0] == "PATCH"][0][1].endswith("/tasks/71/")
-
-
-def test_agent_set_numeric_id_still_works_without_listing(fake_http):
-    """The existing contract is unchanged — and a numeric id must NOT cost a board read."""
-    calls, _ = fake_http
-    r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
-                                  "--task-id", "71", "--plan", "p"])
-    assert r.exit_code == 0, r.output
-    assert calls[0][:2] == ("PATCH", "https://x.test/api/agents/hal/tasks/71/")
-    assert not [c for c in calls if c[0] == "GET"]
+                                  "--task-id", "T99", "--plan", "p"])
+    assert r.exit_code != 0
+    assert "T99" in r.output and "canopy agent tasks" in r.output
 
 
 # --- `agent set --title` so a card whose HEADLINE is wrong can be corrected ---
@@ -222,10 +247,10 @@ def test_agent_set_numeric_id_still_works_without_listing(fake_http):
 def test_agent_set_can_correct_a_wrong_title(fake_http):
     calls, _ = fake_http
     r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
-                                  "--task-id", "86", "--title", "what was actually true"])
+                                  "--task-id", "T86", "--title", "what was actually true"])
     assert r.exit_code == 0, r.output
     patch = [c for c in calls if c[0] == "PATCH"]
-    assert patch[0][1] == "https://x.test/api/agents/hal/tasks/86/"
+    assert patch[0][1] == "https://x.test/api/agents/hal/tasks/T86/"
     assert patch[0][2] == {"title": "what was actually true"}
 
 
@@ -233,19 +258,9 @@ def test_agent_set_title_is_omitted_when_not_passed(fake_http):
     """The patch stays sparse — an unset --title must not blank the card's headline."""
     calls, _ = fake_http
     r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
-                                  "--task-id", "71", "--plan", "p"])
+                                  "--task-id", "T71", "--plan", "p"])
     assert r.exit_code == 0, r.output
     assert "title" not in [c for c in calls if c[0] == "PATCH"][0][2]
-
-
-def test_agent_set_unknown_ext_id_names_the_fix(fake_http):
-    calls, responses = fake_http
-    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([{"id": 71, "ext_id": "T7"}]))
-    r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal",
-                                  "--task-id", "T99", "--plan", "p"])
-    assert r.exit_code != 0
-    assert "T99" in r.output and "canopy agent tasks" in r.output
-    assert not [c for c in calls if c[0] == "PATCH"]
 
 
 # ── `agent tasks` filtering (canopy#516) ──────────────────────────────────────

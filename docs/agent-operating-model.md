@@ -258,7 +258,7 @@ adapter in canopy + mount it in the agents that want it — not a per-agent rebu
 
 **canopy-web is the web surface for the whole fleet**, not just a per-project dashboard. Echo
 already proved the shape: a first-class `/agents/<slug>` workspace with a kanban **board**,
-**syncs** (with self-grades), **work products**, and a mirrored **skill catalog**, fed by a
+**syncs** (with self-grades), **projects and tasks**, and a mirrored **skill catalog**, fed by a
 canopy-web client (echo's `bin/echo_canopy.py` against `/api/agents/*`). Generalize that client
 into canopy so **every** agent gets a workspace for free, and canopy-web becomes:
 

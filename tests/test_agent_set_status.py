@@ -25,20 +25,20 @@ from orchestrator.agent_cli import (
 class RecordingClient:
     def __init__(self):
         self.patched = []
-        self.synced = []
+        self.created = []
 
     def list_tasks(self):
-        return [{"id": 27, "ext_id": "T27", "status": "in_progress"}]
+        return [{"ext_id": "T27", "status": "in_progress"}]
 
     def patch_task(self, task_id, **fields):
         # Like the real client: an omitted option arrives as None and is not sent.
         fields = {k: v for k, v in fields.items() if v is not None}
         self.patched.append((task_id, fields))
-        return {"id": task_id, **fields}
+        return {"ext_id": task_id, **fields}
 
-    def sync_tasks(self, tasks):
-        self.synced.extend(tasks)
-        return {"ok": True}
+    def create_tasks(self, tasks):
+        self.created.extend(tasks)
+        return list(tasks)
 
 
 @pytest.fixture
@@ -71,7 +71,7 @@ class TestSetRejectsAnUnknownStatus:
         res = CliRunner().invoke(agent, ["set", "--slug", "hal", "--task-id", "T27",
                                          "--status", "blocked"])
         assert res.exit_code == 0, res.output
-        assert client.patched == [(27, {"status": "in_progress"})]
+        assert client.patched == [("T27", {"status": "in_progress"})]
 
     @pytest.mark.parametrize("given,token", [
         ("done", "done"), ("Shipped", "done"), ("in-progress", "in_progress"),
@@ -96,12 +96,12 @@ class TestAddRejectsAnUnknownStatus:
                                          "--status", "pending"])
         assert res.exit_code != 0
         assert "not a board status" in res.output
-        assert client.synced == []
+        assert client.created == []
 
     def test_default_is_still_suggested(self, client):
         res = CliRunner().invoke(agent, ["add", "--slug", "hal", "--title", "x"])
         assert res.exit_code == 0, res.output
-        assert client.synced[-1]["status"] == "suggested"
+        assert client.created[-1]["status"] == "suggested"
 
 
 def test_the_reader_stays_lenient():

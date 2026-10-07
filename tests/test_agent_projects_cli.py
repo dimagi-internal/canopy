@@ -112,9 +112,9 @@ def test_add_files_the_task_into_the_project(fake_http):
                                   "--project", "P1"])
 
     assert r.exit_code == 0, r.output
-    posted = [c for c in calls if c[1].endswith("/tasks/sync")][0][2]
-    assert posted["tasks"][0]["project"] == "P1"
-    assert posted["tasks"][0]["ext_id"] == "T4"
+    posted = [c for c in calls if c[0] == "POST" and c[1].endswith("/tasks/")][0][2]
+    assert posted[0]["project"] == "P1"
+    assert posted[0]["ext_id"] == "T4"
 
 
 def test_add_without_a_project_stays_a_one_off(fake_http):
@@ -127,13 +127,13 @@ def test_add_without_a_project_stays_a_one_off(fake_http):
 
     assert r.exit_code == 0, r.output
     assert [c for c in calls if c[1].endswith("/projects/")] == []   # not even looked up
-    assert [c for c in calls if c[1].endswith("/tasks/sync")][0][2]["tasks"][0]["project"] == ""
+    assert [c for c in calls if c[0] == "POST" and c[1].endswith("/tasks/")][0][2][0]["project"] == ""
 
 
 def test_set_moves_a_task_into_a_project(fake_http):
     calls, responses = fake_http
     _projects(responses, _project())
-    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([{"id": 9, "ext_id": "T1"}]))
+    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([{"ext_id": "T1"}]))
 
     r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal", "--task-id", "T1",
                                   "--project", "P1"])
@@ -146,7 +146,7 @@ def test_set_with_an_empty_project_takes_the_task_out_of_one(fake_http):
     """Omitted and empty differ: omitting leaves the filing alone, so a title
     edit cannot quietly unfile a task."""
     calls, responses = fake_http
-    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([{"id": 9, "ext_id": "T1"}]))
+    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([{"ext_id": "T1"}]))
 
     r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal", "--task-id", "T1",
                                   "--project", ""])
@@ -168,3 +168,41 @@ def test_two_projects_sharing_a_name_ask_for_the_ext_id(fake_http):
                                   "--status", "done"])
     assert r.exit_code != 0
     assert "P1, P2" in r.output
+
+
+def test_project_set_append_link_files_a_deliverable_on_the_project(fake_http):
+    """A project's links are where its deliverables go: --append-link reads the
+    project's current links first, because the PATCH replaces them wholesale."""
+    calls, responses = fake_http
+    _projects(responses, _project())
+    responses[("GET", "agents/hal/projects/P1/")] = (200, json.dumps(
+        {**_project(), "links": [{"label": "Folder", "url": "https://drive/x"}]}))
+
+    r = CliRunner().invoke(main, ["agent", "project-set", "--slug", "hal", "--project", "P1",
+                                  "--append-link", "Brief|https://doc/2"])
+
+    assert r.exit_code == 0, r.output
+    assert calls[-1][:2] == ("PATCH", "https://x.test/api/agents/hal/projects/P1/")
+    assert calls[-1][2] == {"links": [{"label": "Folder", "url": "https://drive/x"},
+                                      {"label": "Brief", "url": "https://doc/2"}]}
+
+
+def test_project_set_append_link_does_not_duplicate_a_url(fake_http):
+    calls, responses = fake_http
+    _projects(responses, _project())
+    responses[("GET", "agents/hal/projects/P1/")] = (200, json.dumps(
+        {**_project(), "links": [{"label": "Brief", "url": "https://doc/2"}]}))
+
+    r = CliRunner().invoke(main, ["agent", "project-set", "--slug", "hal", "--project", "P1",
+                                  "--append-link", "Brief v2|https://doc/2"])
+
+    assert r.exit_code == 0, r.output
+    assert calls[-1][2] == {"links": [{"label": "Brief", "url": "https://doc/2"}]}
+
+
+def test_project_set_links_and_append_link_are_mutually_exclusive(fake_http):
+    calls, _ = fake_http
+    r = CliRunner().invoke(main, ["agent", "project-set", "--slug", "hal", "--project", "P1",
+                                  "--links", "a|https://a", "--append-link", "b|https://b"])
+    assert r.exit_code != 0 and "not both" in r.output
+    assert calls == []

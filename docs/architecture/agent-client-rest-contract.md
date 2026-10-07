@@ -1,8 +1,8 @@
 # Agent-client REST contract (operator plane)
 
 The shared client for canopy-web's agent workspace (`/api/agents`). This is the
-**operator plane** only — identity, syncs, work-products, skills, tasks, and the
-board-command drain. It deliberately carries **no** run/step/artifact/verdict
+**operator plane** only — identity, syncs, skills, projects, tasks, and the
+action drain (what people did to the agent's tasks, which the agent carries out). It deliberately carries **no** run/step/artifact/verdict
 surface (that is a separate wave).
 
 A non-Python agent (e.g. ACE, TS) can conform to this contract directly without
@@ -62,13 +62,17 @@ its parent is whatever was knowable at connect time.
 | POST | `/api/agents/{slug}/syncs/` | `{period_start,period_end,title,summary,doc_url,self_grades,source}` | idempotent per period+source |
 | GET | `/api/agents/{slug}/turns/` | — | list packaged turns |
 | POST | `/api/agents/{slug}/turns/` | `{cli_session_id,title,summary,task_ext_ids,work_product_urls,session_slug,share_token,started_at,ended_at,source}` | package a turn; idempotent per `cli_session_id`. Transcript link (`session_slug`+`share_token`) optional |
-| POST | `/api/agents/{slug}/work-products/` | `{work_products:[{title,kind,url,description,tags,source}]}` | upsert by url |
 | PUT | `/api/agents/{slug}/skills/` | `{skills:[{name,description,url,improvement_note}]}` | replaces catalog |
-| POST | `/api/agents/{slug}/tasks/sync` | `{tasks:[{ext_id,title,next_action,status,owner,assigned,…}]}` | non-destructive upsert |
-| GET | `/api/agents/{slug}/tasks/` | — | list board tasks (e.g. to compute the next `ext_id`) |
-| GET | `/api/agents/{slug}/commands?status=pending` | — | drain queued board actions |
-| POST | `/api/agents/{slug}/commands/{id}/apply` | `{result_note}` | mark a command applied |
-| PATCH | `/api/agents/{slug}/tasks/{id}/` | partial task fields | store context (rationale/plan/status/…) |
+| POST | `/api/agents/{slug}/tasks/` | a BARE list `[{ext_id?,title,next_action,status,owner,assigned,project,ask_kind,ask_body,origin,idempotency_key,…}]` | create; an `idempotency_key` already seen replays the task it made (the client keys a named `ext_id` as `<slug>:<ext_id>`). Omit `ext_id` and the server assigns `T<n>`. Not an upsert — change an existing task with PATCH |
+| GET | `/api/agents/{slug}/tasks/` | — | list tasks; filters `project=P2\|none`, `status=a,b`, `waiting=me`, `ask=open\|closed`, `batch=` |
+| GET | `/api/agents/{slug}/tasks/{ext_id}/` | — | one task with its actions |
+| PATCH | `/api/agents/{slug}/tasks/{ext_id}/` | partial task fields | store context (rationale/plan/status/links/…). Tasks are addressed by `ext_id` only |
+| POST | `/api/agents/{slug}/tasks/{ext_id}/actions` | `{action: approve\|decline\|reply\|dispatch\|done, comment}` | what a person does to a task |
+| GET | `/api/agents/{slug}/actions/?status=pending` | — | the agent's queue: `[{id,task_ext_id,action,comment,by,status,…}]`, oldest first |
+| POST | `/api/agents/{slug}/actions/{id}/applied` | `{result_note}` | mark an action carried out |
+| GET/POST | `/api/agents/{slug}/projects/` | `{name,outcome,drive_folder_url,links,…}` | list (`?status=`) / create (auto `P<n>`) |
+| GET/PATCH | `/api/agents/{slug}/projects/{ref}/` | partial project fields | detail carries `tasks`, `recent_turns`, `links`. A project's `links` are where its deliverables go |
+| GET | `/api/tasks/`, `/api/projects/` | — | fleet-wide reads (`agent=`, same task filters; projects `status=`, `repo_slug=`) |
 
 ## Reference implementation
 
@@ -76,7 +80,8 @@ its parent is whatever was knowable at connect time.
   transport, single source of PAT/base-url resolution).
 - **Typed client:** `orchestrator/agent_client.py` (`AgentClient` + `catalog_from_repo`).
 - **CLI:** `canopy agent …` (`orchestrator/agent_cli.py`) — `register`, `sync`,
-  `turn`, `work`, `skills`, `tasks-sync`, `tasks`, `commands`, `apply`, `set`.
+  `turn`, `skills`, `tasks-create`, `tasks`, `add`, `set`, `actions`, `applied`,
+  `projects`, `project-add`, `project-set` (`--append-link` files a deliverable).
   `turn` packages a unit of work and (with `--upload`) reduces + uploads the
   session transcript via `orchestrator/session_upload.py`, hanging the
   `/share/<token>` link off the turn.

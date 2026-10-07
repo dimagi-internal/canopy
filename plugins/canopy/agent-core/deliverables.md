@@ -10,7 +10,7 @@
 There are two kinds of thing an agent keeps outside its repo, and both live in the same shared
 place so the team can find them and they survive across turns/worktrees:
 
-- **Deliverables** — any work product a human is meant to read, review, or keep (a brief, a draft,
+- **Deliverables** — anything a human is meant to read, review, or keep (a brief, a draft,
   a concept note, a research summary, a form submission). The point of publishing is that the team
   can **find it, comment on it, and rely on it surviving.**
 - **Process state** — the durable operational memory a recurring job needs across turns (a
@@ -56,6 +56,11 @@ that's the whole contract.
      a folder cannot state (what is open, what is parked on a person, whether it is still
      running). One name keeps them pointing at each other — it is the same string
      `canopy gdoc publish --project` resolves the folder from. See `task-tracker.md`.
+   - **Put each deliverable on the project's links** once it is shared —
+     `canopy agent project-set --slug <slug> --project "<Project>" --append-link "Label|<url>"`
+     (MCP: `patch_project` with `links`). The folder holds the file; the project's links are
+     what the board shows as the work's output, so a deliverable that is only in Drive is one
+     nobody looking at the project can find. A url already there is not duplicated.
 3. **Process state goes in `Process State/`.** A recurring job's tracker/registry/run-log is a
    Drive artifact under your root's `Process State/`, so it persists across turns and isn't duplicated.
 4. **Share with the requester, then CONFIRM — before you hand over the link.** A raw Drive link

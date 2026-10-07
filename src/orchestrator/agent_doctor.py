@@ -5,7 +5,7 @@ agent repo's operational readiness: identity config, gating rails, secrets
 manifest, gog email auth, and canopy-web registration + board reachability.
 Composes the point-checks that already exist (`resolve_email_identity`,
 provision's manifest loaders, `agent_email.preflight`,
-`AgentClient.pending_commands`) into one command, so "the agent was set up on
+`AgentClient.pending_actions`) into one command, so "the agent was set up on
 some machine once" stops diverging from "this machine can run the agent".
 
 Born from hal (2026-07-02): hal's gog client existed somewhere, but this
@@ -852,7 +852,7 @@ def check_registration(
     if identity is None:
         return CheckResult(name, False, "skipped — identity unresolved")
     try:
-        pending = client_factory({"slug": identity.slug}).pending_commands()
+        pending = client_factory({"slug": identity.slug}).pending_actions()
     except CanopyError as e:
         msg = str(e)
         if "404" in msg or "not found" in msg.lower():
@@ -864,7 +864,7 @@ def check_registration(
         return CheckResult(name, False, msg)
     except RuntimeError as e:  # missing PAT / transport config
         return CheckResult(name, False, str(e))
-    return CheckResult(name, True, f"registered; board reachable ({len(pending)} pending command(s))")
+    return CheckResult(name, True, f"registered; board reachable ({len(pending)} pending action(s))")
 
 
 def _default_provisioner(repo: Path) -> str:

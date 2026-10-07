@@ -80,19 +80,6 @@ def agent_sync(slug, doc_url, title, summary, grades, period_start, period_end, 
         raise click.ClickException(str(e))
 
 
-@agent.command("work")
-@click.option("--slug", required=True)
-@click.option("--json", "json_file", required=True, type=click.Path(exists=True),
-              help="JSON file: [{title,kind,url,description,tags,source}]")
-def agent_work(slug, json_file):
-    """Upsert work products from a JSON file."""
-    try:
-        items = json.load(open(json_file, encoding="utf-8"))
-        _emit(_client(slug).put_work_products(items))
-    except (CanopyError, RuntimeError) as e:
-        raise click.ClickException(str(e))
-
-
 @agent.command("turn")
 @click.option("--slug", required=True)
 @click.option("--title", required=True, help="What the turn did, in one line.")
@@ -189,32 +176,41 @@ def agent_interface_set(slug, file_):
         raise click.ClickException(str(e))
 
 
-@agent.command("tasks-sync")
+@agent.command("tasks-create")
 @click.option("--slug", required=True)
 @click.option("--json", "json_file", required=True, type=click.Path(exists=True),
-              help="JSON file: [{ext_id,title,next_action,status,owner,assigned,…}]")
-def agent_tasks_sync(slug, json_file):
-    """Non-destructive task upsert from a JSON file."""
+              help="JSON file: [{ext_id?,title,next_action,status,owner,assigned,…}]")
+def agent_tasks_create(slug, json_file):
+    """Create tasks from a JSON list — safe to re-run.
+
+    Each task that names an ext_id is keyed `<slug>:<ext_id>`, so a second run hands
+    back the tasks the first one made instead of duplicating them. It does NOT update
+    a task that already exists — that is `agent set`."""
     try:
         tasks = json.load(open(json_file, encoding="utf-8"))
-        _emit(_client(slug).sync_tasks(tasks))
+        if not isinstance(tasks, list):
+            raise click.ClickException("tasks file must be a JSON list")
+        _emit(_client(slug).create_tasks(tasks))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 
 
-@agent.command("commands")
+@agent.command("actions")
 @click.option("--slug", required=True)
-def agent_commands(slug):
-    """List board actions queued for the agent (drain on a turn)."""
+def agent_actions(slug):
+    """List the actions people took on the agent's tasks that it has not carried out yet
+    (approve / decline / reply / dispatch / done) — the queue a turn drains, oldest first.
+    Carry each out, then `agent applied --id <N>`."""
     try:
-        cmds = _client(slug).pending_commands()
+        actions = _client(slug).pending_actions()
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
-    if not cmds:
-        click.echo("no queued commands")
+    if not actions:
+        click.echo("no pending actions")
         return
-    for c in cmds:
-        click.echo(f"  #{c.id} {c.kind} -> {c.task_title or '(no task)'}  [{c.created_by}]  {c.payload or ''}")
+    for a in actions:
+        comment = f"  {a.comment}" if a.comment else ""
+        click.echo(f"  #{a.id} {a.action} -> {a.task_ext_id or '(no task)'}  [{a.by}]{comment}")
 
 
 @agent.command("doctor")
@@ -558,13 +554,24 @@ def agent_project_add(slug, name, outcome, drive_folder_url, drive_folder_id,
 @click.option("--owner", "owner_note", default=None)
 @click.option("--notes", default=None)
 @click.option("--links", default=None, help='REPLACE the links: "label|url, …". "" clears them.')
-def agent_project_set(slug, ref, links, **fields):
-    """Patch a project — close it, point it at its Drive folder, restate the outcome."""
+@click.option("--append-link", default=None,
+              help='ADD one link, keeping the existing ones: "label|url". This is where a '
+                   "deliverable goes — the doc, deck or PR the project produced. A url "
+                   "already on the project is not duplicated.")
+def agent_project_set(slug, ref, links, append_link, **fields):
+    """Patch a project — close it, point it at its Drive folder, restate the outcome,
+    attach a deliverable (--append-link)."""
+    if links is not None and append_link is not None:
+        raise click.ClickException("pass --links (replace) or --append-link (add), not both")
     try:
         client = _client(slug)
         ext_id = resolve_project_ref(client, ref)
         if links is not None:
             fields["links"] = parse_task_links(links)
+        elif append_link is not None:
+            # Read-modify-write: the PATCH replaces `links` wholesale.
+            current = list(client.get_project(ext_id).get("links") or [])
+            fields["links"] = _merge_links(current, append_link)
         _emit(client.patch_project(ext_id, **fields))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
@@ -712,44 +719,30 @@ def agent_sync_delete(slug, sync_id):
         raise click.ClickException(str(e))
 
 
-@agent.command("apply")
+@agent.command("applied")
 @click.option("--slug", required=True)
-@click.option("--id", "cmd_id", type=int, required=True)
-@click.option("--note", default="")
-def agent_apply(slug, cmd_id, note):
-    """Mark a queued command applied."""
+@click.option("--id", "action_id", type=int, required=True,
+              help="The action's id, from `agent actions`.")
+@click.option("--note", default="", help="What you did about it.")
+def agent_applied(slug, action_id, note):
+    """Mark a pending action applied — you carried it out."""
     try:
-        _emit(_client(slug).apply_command(cmd_id, result_note=note))
+        _emit(_client(slug).mark_action_applied(action_id, result_note=note))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 
 
-def resolve_task_id(client, task_id):
-    """Accept either the numeric DB id or the board's own `T<N>` ext_id.
-
-    The board only ever SHOWS you the ext_id — `agent add` reports it, the kanban card
-    is labelled with it, and `agent turn --task` / `agent dispatch --task` both take it.
-    The numeric id appears nowhere except a raw `agent tasks` dump, so requiring it here
-    cost one failed call plus a JSON grep every time an agent patched a task.
-    """
-    raw = str(task_id).strip()
-    if raw.isdigit():
-        return int(raw)
-
-    for task in client.list_tasks():
-        if str(task.get("ext_id") or "").strip().casefold() == raw.casefold():
-            return task["id"]
-
-    raise click.ClickException(
-        f"no task {raw!r} on this board — pass a T<N> ext_id or a numeric id "
-        f"(`canopy agent tasks --slug …` lists both)"
+def _no_such_task(ref):
+    return click.ClickException(
+        f"no task {ref!r} on this board — pass its T<N> ext_id "
+        f"(`canopy agent tasks --slug …` lists them)"
     )
 
 
 @agent.command("set")
 @click.option("--slug", required=True)
-@click.option("--task-id", required=True, metavar="ID_OR_EXT_ID",
-              help="The board's T<N> ext_id (as shown on the card) or the numeric id.")
+@click.option("--task-id", required=True, metavar="EXT_ID",
+              help="The board's T<N> ext_id, as shown on the card.")
 @click.option("--title", default=None,
               help="Rewrite the card's headline (max 300 chars). Use when the title states "
                    "something that turned out to be WRONG — a corrected note under a false "
@@ -801,7 +794,8 @@ def agent_set(slug, task_id, links, append_link, append_notes, project, **fields
         fields["status"] = check_task_status(fields["status"])
     try:
         client = _client(slug)
-        task_id = resolve_task_id(client, task_id)
+        # The ext_id IS the address — no board read just to resolve it.
+        task_id = str(task_id).strip()
         if project is not None:
             # "" is a deliberate un-filing, so it skips resolution; anything else
             # has to name a project that exists.
@@ -813,8 +807,19 @@ def agent_set(slug, task_id, links, append_link, append_notes, project, **fields
         if append_notes is not None:
             fields["notes"] = _appended_notes(client, task_id, append_notes)
         _emit(client.patch_task(task_id, **fields))
-    except (CanopyError, RuntimeError) as e:
+    except CanopyError as e:
+        if f"/tasks/{task_id}/ -> 404" in str(e):
+            raise _no_such_task(task_id)
         raise click.ClickException(str(e))
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
+
+
+def _task_by_ref(client, ref):
+    """The task with ext_id `ref` from the board listing, or {} when there is none."""
+    want = str(ref).strip().casefold()
+    return next((t for t in client.list_tasks()
+                 if str(t.get("ext_id") or "").strip().casefold() == want), {})
 
 
 def _appended_links(client, task_id, spec):
@@ -824,11 +829,12 @@ def _appended_links(client, task_id, spec):
     to start from what is already on the card. Without this, the only way to add one
     link is to restate every link the card already had.
     """
-    current = []
-    for task in client.list_tasks():
-        if task.get("id") == task_id:
-            current = list(task.get("links") or [])
-            break
+    return _merge_links(list(_task_by_ref(client, task_id).get("links") or []), spec)
+
+
+def _merge_links(current, spec):
+    """`current` links + the parsed `spec`, de-duplicated on url (first label wins).
+    Shared by a task's and a project's --append-link."""
     seen = {str(l.get("url") or "").strip() for l in current}
     for link in parse_task_links(spec):
         if link["url"] not in seen:
@@ -846,11 +852,7 @@ def _appended_notes(client, task_id, text):
     back through --notes. Passing just the new entry there instead succeeds and silently
     deletes every earlier turn's log.
     """
-    current = ""
-    for task in client.list_tasks():
-        if task.get("id") == task_id:
-            current = (task.get("notes") or "").rstrip()
-            break
+    current = (_task_by_ref(client, task_id).get("notes") or "").rstrip()
     addition = text.strip()
     if not addition:
         raise click.ClickException("--append-notes needs non-empty text")
@@ -922,7 +924,7 @@ TASK_FIELD_LIMITS = {
     "confidence": 10,
     "score": 8,
     "source_url": 500,
-    "source": 100,
+    "origin": 32,
     "link label": 200,
     "link url": 500,
 }
@@ -1099,7 +1101,10 @@ def next_task_ext_id(tasks):
                    "a genuine one-off.")
 def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confidence, due,
               links, notes, project):
-    """Create ONE task on the board (upsert via tasks/sync; auto-assigns the next T<N>)."""
+    """Create ONE task on the board (auto-assigns the next T<N>).
+
+    Safe to repeat: the create is keyed `<slug>:<ext_id>`, so re-running it hands back
+    the task already made instead of a duplicate — and does NOT change it (`agent set`)."""
     import re
 
     conf = confidence.strip().lower()
@@ -1129,10 +1134,11 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
             "due": due if re.match(r"^\d{4}-\d{2}-\d{2}$", due) else None,
             "links": task_links,
             "notes": notes.strip(),
-            "source": "task-tracker",
+            "origin": "task-tracker",
         }
-        result = client.sync_tasks([task])
-        _emit({"added": task["ext_id"], "result": result})
+        created = client.create_tasks([task])
+        _emit({"added": (created[0].get("ext_id") if created else None) or task["ext_id"],
+               "result": created})
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 
@@ -1437,10 +1443,10 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
 
     try:
         client = _client(slug)
-        # Board first: the agent must find the item already there when it arrives.
+        # Board first: the agent must find the task already there when it arrives.
         if make_task:
             task_ext_id = next_task_ext_id(client.list_tasks())
-            client.sync_tasks([{
+            client.create_tasks([{
                 "ext_id": task_ext_id,
                 "title": title,
                 "next_action": next_action,
@@ -1448,7 +1454,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
                 "assigned": slug,
                 "links": task_links,
                 "notes": preview_for_card(prompt, 2000),
-                "source": "dispatch",
+                "origin": "dispatch",
             }])
 
         payload = build_turn_payload(slug, prompt=prompt, idempotency_key=key,

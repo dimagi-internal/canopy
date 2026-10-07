@@ -1,5 +1,11 @@
 """Shared client for canopy-web's agent workspace (/api/agents). Operator-plane
-only (identity, syncs, work-products, skills, tasks, commands) — NO run lifecycle."""
+only (identity, syncs, skills, projects, tasks and the actions people take on
+them) — NO run lifecycle.
+
+Tasks are addressed by `ext_id` (T3) — canopy-web exposes no other task id. A
+person's approve / decline / reply / dispatch / done on a task is an ACTION; the
+agent drains its pending actions (`pending_actions`) and marks each one applied
+(`mark_action_applied`)."""
 from __future__ import annotations
 
 import glob
@@ -7,12 +13,13 @@ import os
 import re
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlencode
 from pydantic import BaseModel, ConfigDict
 
 from orchestrator import canopy_web
 from orchestrator.canopy_web import CanopyError, Transport  # re-export
 
-__all__ = ["AgentIdentity", "BoardCommand", "AgentClient", "catalog_from_repo", "CanopyError",
+__all__ = ["AgentIdentity", "TaskAction", "AgentClient", "task_idempotency_key", "catalog_from_repo", "CanopyError",
           "list_agent_slugs", "emdash_task_from_cwd"]
 
 
@@ -100,13 +107,28 @@ class AgentIdentity(BaseModel):
     workspace: str = ""
 
 
-class BoardCommand(BaseModel):
+class TaskAction(BaseModel):
+    """One thing a person did TO a task (approve / decline / reply / dispatch / done).
+
+    While `status` is `pending` it is on the agent's queue: carry it out, then
+    `mark_action_applied(id)`."""
     model_config = ConfigDict(extra="allow")
     id: int
-    kind: str
-    task_title: Optional[str] = None
-    created_by: str = ""
-    payload: Optional[dict] = None
+    task_ext_id: str = ""
+    action: str
+    comment: str = ""
+    by: str = ""
+    status: str = "pending"
+
+
+def task_idempotency_key(slug: str, ext_id: str) -> str:
+    """The key that makes creating task `ext_id` safe to repeat.
+
+    `POST /tasks/` replays a key it has already seen instead of making a second
+    task, so a create retried after a timeout — or re-run by a turn that does not
+    know the first one landed — returns the task it made the first time. Keyed on
+    the agent too: canopy-web refuses a key another agent already used."""
+    return f"{slug}:{ext_id}"
 
 
 def _rows(raw) -> "list[dict]":
@@ -199,9 +221,6 @@ class AgentClient:
             body["origin_ref"] = dict(origin_ref)
         return self._call("POST", f"/api/agents/{self.slug}/turns/", body)
 
-    def put_work_products(self, items: list[dict]) -> dict:
-        return self._call("POST", f"/api/agents/{self.slug}/work-products/", {"work_products": items})
-
     def put_skills(self, items: list[dict]) -> dict:
         return self._call("PUT", f"/api/agents/{self.slug}/skills/", {"skills": items})
 
@@ -215,11 +234,34 @@ class AgentClient:
         callers can make the agent do."""
         return self._call("PUT", f"/api/agents/{self.slug}/interface", {"source": source})
 
-    def sync_tasks(self, tasks: list[dict]) -> dict:
-        return self._call("POST", f"/api/agents/{self.slug}/tasks/sync", {"tasks": tasks})
+    def create_tasks(self, tasks: list[dict]) -> "list[dict]":
+        """Create tasks — the body is a BARE list. Returns the tasks as created.
 
-    def list_tasks(self) -> "list[dict]":
-        return _rows(self._call("GET", f"/api/agents/{self.slug}/tasks/"))
+        CREATE, not upsert: a task that names an `ext_id` gets the idempotency key
+        `<slug>:<ext_id>` (unless it brings its own), so repeating the call hands
+        back the task the first call made — UNCHANGED. To change a task that
+        exists, `patch_task` it. An `ext_id` already on the board under a
+        different key is a 409. Omit `ext_id` and the server assigns the next T<N>."""
+        body = []
+        for task in tasks:
+            task = dict(task)
+            ext_id = str(task.get("ext_id") or "").strip()
+            if ext_id and not task.get("idempotency_key"):
+                task["idempotency_key"] = task_idempotency_key(self.slug, ext_id)
+            body.append(task)
+        return _rows(self._call("POST", f"/api/agents/{self.slug}/tasks/", body))
+
+    def list_tasks(self, **filters) -> "list[dict]":
+        """The agent's tasks. Server-side filters, all optional: `project` (P2, or
+        `none` for one-offs), `status` (comma-separated), `waiting` (`me`),
+        `ask` (`open` | `closed`), `batch` (a batch_key)."""
+        query = urlencode({k: v for k, v in filters.items() if v})
+        path = f"/api/agents/{self.slug}/tasks/" + (f"?{query}" if query else "")
+        return _rows(self._call("GET", path))
+
+    def get_task(self, ref: str) -> dict:
+        """One task by its `ext_id` (T3), with every action taken on it."""
+        return self._call("GET", f"/api/agents/{self.slug}/tasks/{ref}/")
 
     def list_projects(self) -> "list[dict]":
         """The agent's projects — the state behind its Drive `Projects/<name>` folders.
@@ -227,6 +269,11 @@ class AgentClient:
         Per agent, like the folders are: two agents on one initiative have a project
         each and share files when they want to."""
         return _rows(self._call("GET", f"/api/agents/{self.slug}/projects/"))
+
+    def get_project(self, ref: str) -> dict:
+        """One project by `P<N>` or numeric id: its fields and links, its tasks and
+        the recent turns that worked on them."""
+        return self._call("GET", f"/api/agents/{self.slug}/projects/{ref}/")
 
     def create_project(self, **fields) -> dict:
         return self._call("POST", f"/api/agents/{self.slug}/projects/", fields)
@@ -266,17 +313,20 @@ class AgentClient:
         the wrong period is otherwise unreachable. Returns {} on success (204)."""
         return self._call("DELETE", f"/api/agents/{self.slug}/syncs/{int(sync_id)}/")
 
-    def pending_commands(self) -> "list[BoardCommand]":
-        raw = self._call("GET", f"/api/agents/{self.slug}/commands?status=pending")
-        return [BoardCommand(**c) for c in (raw or [])]
+    def pending_actions(self) -> "list[TaskAction]":
+        """The agent's queue: actions people took on its tasks that it has not yet
+        carried out, oldest first — the order to carry them out in."""
+        raw = self._call("GET", f"/api/agents/{self.slug}/actions/?status=pending")
+        return [TaskAction(**a) for a in _rows(raw)]
 
-    def apply_command(self, command_id: int, result_note: str = "") -> dict:
-        return self._call("POST", f"/api/agents/{self.slug}/commands/{command_id}/apply",
+    def mark_action_applied(self, action_id: int, result_note: str = "") -> dict:
+        return self._call("POST", f"/api/agents/{self.slug}/actions/{int(action_id)}/applied",
                           {"result_note": result_note})
 
-    def patch_task(self, task_id: int, **fields) -> dict:
+    def patch_task(self, ref: str, **fields) -> dict:
+        """Patch by `ext_id` (T3). Omitted (None) fields are left alone."""
         patch = {k: v for k, v in fields.items() if v is not None}
-        return self._call("PATCH", f"/api/agents/{self.slug}/tasks/{task_id}/", patch)
+        return self._call("PATCH", f"/api/agents/{self.slug}/tasks/{ref}/", patch)
 
     def record_verdict(self, run_id: str, step_key: str, *, kind: str,
                        score: float | None = None, passed: bool | None = None,
