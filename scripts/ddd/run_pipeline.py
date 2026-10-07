@@ -770,7 +770,7 @@ def compute_auto_iterate(
                 f" Scene(s) {sorted(parked)} are PARKED on a pending decision — withhold "
                 "their findings from the batch; they are still rendered and judged."
             )
-        if state.loop_mode == "backlog" and (inner_loop_policy or {}).get("status") == "missing":
+        if state.loop_mode == "backlog" and (inner_loop_policy or {}).get("status") in ("missing", "dropped"):
             # Everything above is already scheduled, so once the config is fixed a
             # logged `decision override` resumes exactly the pass this would have been.
             return _finish(

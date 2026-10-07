@@ -195,7 +195,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
     from scripts.ddd import floor as floor_mod
     from scripts.ddd import target as target_mod
 
-    state.inner_loop_policy = target_mod.inner_loop_policy(cfg)
+    state.inner_loop_policy = target_mod.inner_loop_policy(cfg, prior=state.inner_loop_policy)
     objective_guess = state.objective or (
         cfg.loop.objective if cfg.loop.objective in ("product", "demo") else "demo"
     )
@@ -372,6 +372,8 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"  Inner loop:   OFF by config — {policy.get('reason')}")
     elif policy.get("status") == "missing":
         print(f"  Inner loop:   MISSING — {policy.get('reason')}")
+    elif policy.get("status") == "dropped":
+        print(f"  Inner loop:   DROPPED MID-RUN — {policy.get('reason')}")
     elif policy.get("status") == "configured":
         print(f"  Inner loop:   {policy.get('reason')}")
     print(

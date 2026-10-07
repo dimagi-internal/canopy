@@ -182,9 +182,30 @@ class TestConfig:
 
 
 class TestTargetChoice:
-    def test_a_checkpoint_always_renders_the_deploy_target_with_every_judge(self) -> None:
+    def test_a_deciding_checkpoint_always_renders_the_deploy_target_with_every_judge(self) -> None:
+        for action in ("checkpoint", "confirm_full"):
+            st = _state(next_judge_full=True, loop_mode="backlog")
+            st.auto_iterate_next_action = action
+            out = target.choose(st, _cfg())
+            assert (out["target"], out["judges"], out["checkpoint"]) == ("deploy", ["concept", "user", "arc"], True)
+
+    def test_a_periodic_full_pass_runs_on_the_local_build(self) -> None:
+        # canopy#787: deployed labs is for the pass that decides, not the regression net.
         out = target.choose(_state(next_judge_full=True, loop_mode="backlog"), _cfg())
-        assert (out["target"], out["judges"], out["checkpoint"]) == ("deploy", ["concept", "user", "arc"], True)
+        assert (out["target"], out["judges"], out["checkpoint"], out["full"]) == (
+            "inner", ["concept", "user", "arc"], False, True
+        )
+        assert out["base_url"] == "http://localhost:8000"
+        exp = target.expected_scope(_state(next_judge_full=True, loop_mode="backlog"), _cfg())
+        assert exp["full"] is True and exp["tiered"] is False
+        # ...and anything it would decide goes to a deploy checkpoint first.
+        assert target.decision_needs_checkpoint(out["target"], out["judges"])
+
+    def test_deploy_checkpoints_restores_every_full_pass_on_deploy(self) -> None:
+        cfg = loop_config.parse({"loop": {"mode": "backlog"}, "inner_loop": {
+            "base_url": "http://localhost:8000", "deploy_checkpoints": True}})
+        out = target.choose(_state(next_judge_full=True, loop_mode="backlog"), cfg)
+        assert (out["target"], out["checkpoint"]) == ("deploy", True)
 
     def test_between_checkpoints_the_inner_build_and_concept_judge_only(self) -> None:
         out = target.choose(_state(next_judge_full=False, loop_mode="backlog"), _cfg())

@@ -920,10 +920,16 @@ Two optional accelerators between checkpoints (a checkpoint = every
 `confirm_full`), both fidelity-safe — neither can decide anything:
 
 - **inner loop** (`inner_loop: {base_url, setup, health_url}` in
-  `.canopy/ddd/config.yaml`; default OFF). Batches are committed to the fix
-  branch, served locally, and rendered with `--base-url` — no merge, CI or
-  deploy. Checkpoints land the accumulated batches and render the real target
-  through the deploy gate. `ddd-run` Step 2 runs `target plan`; the progress
+  `.canopy/ddd/config.yaml`). Batches are committed to the fix branch, served
+  locally, and rendered with `--base-url` — no merge, CI or deploy. The periodic
+  full passes run locally too (canopy#787); only the pass that DECIDES (after
+  `checkpoint` / `confirm_full`) lands the accumulated batches and renders the
+  real target through the deploy gate — deployed labs is for the final record.
+  A scene whose data exists only on the deployed target is a BUILD gap: export
+  or seed that data locally; never switch the run to remote. A run that started
+  local and loses its inner loop stops (`stop_inner_loop_required`, policy
+  `dropped`) until it is restored or `python -m scripts.ddd.target
+  accept-remote <run_id> --reason "…"` records why not. `ddd-run` Step 2 runs `target plan`; the progress
   point records `target` per iteration. **Configure it for any v1 (backlog)
   run on a product that deploys through CI**: on
   `supply-sophie-rutf-2026-09-26-001` about 35 of every 60-minute cycle was
