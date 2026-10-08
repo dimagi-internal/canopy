@@ -76,39 +76,6 @@ def test_an_unknown_mode_is_not_trusted(tmp_path, monkeypatch):
     assert out["source"] == "agent"
 
 
-GRANT = {"repo": "dimagi-internal/eva", "basis": "dispatched by ada@dimagi-ai.com (agent ada), admin of eva"}
-
-
-def _granted(tmp_path, **over):
-    p = tmp_path / "granted.json"
-    p.write_text(json.dumps({"version": 1, "turn_id": "t-1", "relationship": "admin",
-                             "verified": True, "turn_mode": {"mode": "manual", "basis": "agent"},
-                             "ship_grant": GRANT, **over}))
-    return str(p)
-
-
-def test_a_ship_grant_rides_beside_the_mode(tmp_path, monkeypatch):
-    out, _ = _run(monkeypatch, ["--caller", _granted(tmp_path)])
-    assert out["turn_mode"] == "manual"            # the grant never flips the mode
-    assert out["ship_grant"] == {**GRANT, "repos": ["dimagi-internal/eva"]}
-
-
-def test_a_standing_grant_on_a_scheduled_turn_rides_too(tmp_path, monkeypatch):
-    # 2026-10-08: the owner lists repos on the agent; its own schedule (`system`) carries them.
-    standing = {"repo": "dimagi-internal/eva",
-                "repos": ["dimagi-internal/eva", "dimagi-internal/chrome-sales"],
-                "basis": "standing grant set on eva (owner jj@dimagi.com)"}
-    out, _ = _run(monkeypatch, ["--caller", _granted(tmp_path, relationship="system",
-                                                     ship_grant=standing)])
-    assert out["turn_mode"] == "manual"
-    assert out["ship_grant"] == standing
-
-
-def test_a_grant_the_envelope_does_not_earn_is_dropped(tmp_path, monkeypatch):
-    for over in ({"relationship": "member"}, {"verified": False}, {"ship_grant": {"repo": ""}},
-                 {"ship_grant": None}):
-        out, _ = _run(monkeypatch, ["--caller", _granted(tmp_path, **over)])
-        assert "ship_grant" not in out, over
 
 
 def test_who_asked_is_printed_in_todays_words(tmp_path, monkeypatch):

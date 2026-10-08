@@ -189,58 +189,40 @@ def test_no_page_says_nothing_about_one(tmp_path):
     assert "looking at a page" not in cc.summarize({**ENV, "page": None}, str(tmp_path / "e"), TID)
 
 
-# --- the repo-internal ship grant (owner decision, 2026-10-03) -----------------------
-# Ada's dispatches (eva#343, eva#347, canopy#715) each stopped for "yes merge": the
-# manual-mode line said a merge needs the owner. With a grant on the envelope, the hook
-# says push / PR / merge in the target's own repo are pre-approved — and nothing else.
+# --- manual mode and code shipping (owner decision, 2026-10-08) -----------------------
+# Manual mode gates what reaches people or other systems. On the agent's OWN turns
+# (owner / admin / system, verified) it does not gate push / PR / merge — the agent's
+# GitHub credentials already bound which repos it can touch. Anyone else's say-so still
+# never pushes.
 
-GRANT = {"repo": "dimagi-internal/eva", "actions": ["push", "pull_request", "merge"],
-         "basis": "dispatched by ada@dimagi-ai.com (agent ada), admin of eva",
-         "not_granted": ["send email or messages"]}
-ADA = {**ENV, "relationship": "admin", "verified": True,
-       "who": {"kind": "user", "via": "api", "assurance": "pat",
-               "user": {"email": "ada@dimagi-ai.com", "name": "ada@dimagi-ai.com"}},
-       "granted_by": "admin", "trigger": {"origin": "api", "runner": "jj-mbp"}}
+OWN = {**ENV, "relationship": "system", "verified": True, "turn_mode": {"mode": "manual", "basis": "agent"},
+       "who": {"kind": "system", "via": "schedule:3", "assurance": "internal"},
+       "granted_by": "system", "trigger": {"origin": "canopy_scheduler", "runner": "jj-mbp"}}
 
 
-def test_a_ship_grant_is_one_explicit_line_and_the_mode_line_does_not_contradict_it(tmp_path):
-    text = cc.summarize({**ADA, "ship_grant": GRANT}, str(tmp_path / "e.json"), TID)
-    assert ("- ship grant: push / PR / merge in dimagi-internal/eva are pre-approved by the owner "
-            "(dispatched by ada@dimagi-ai.com (agent ada), admin of eva)") in text
-    assert "Sends, deploys of other systems, publishing and public writes still need the OWNER." in text
-    mode_line = next(line for line in text.splitlines() if line.startswith("- turn mode:"))
-    assert mode_line.startswith("- turn mode: manual (agent)")
-    assert "covered by the ship grant below" in mode_line
-    assert "sends, deploys, publishing" in mode_line
-    assert "(push, deploy, merge, send, publish)" not in mode_line
-    assert "Do not push" not in text
+def _mode_line(text):
+    return next(line for line in text.splitlines() if line.startswith("- turn mode:"))
 
 
-def test_no_grant_keeps_todays_manual_line(tmp_path):
-    for env in (ADA, {**ADA, "ship_grant": None}):
-        text = cc.summarize(env, str(tmp_path / "e.json"), TID)
-        assert "ship grant" not in text
-        assert "(push, deploy, merge, send, publish) need the OWNER's approval first" in text
+@pytest.mark.parametrize("rel", ["owner", "admin", "system"])
+def test_the_agents_own_manual_turn_does_not_gate_shipping(tmp_path, rel):
+    line = _mode_line(cc.summarize({**OWN, "relationship": rel}, str(tmp_path / "e.json"), TID))
+    assert "sends, publishing, public writes and deploys need the OWNER's approval first" in line
+    assert "push / PR / merge do not, your GitHub credentials are the boundary" in line
+    assert "(push, deploy, merge, send, publish)" not in line
 
 
-@pytest.mark.parametrize("bad", ["eva", {"repo": ""}, {"repo": "../../etc"}, {"basis": "x"},
-                                 {"repo": "a/b c"}, ["dimagi-internal/eva"]])
-def test_a_malformed_grant_is_no_grant(tmp_path, bad):
-    text = cc.summarize({**ADA, "ship_grant": bad}, str(tmp_path / "e.json"), TID)
-    assert "ship grant" not in text and "merge, send, publish) need the OWNER" in text
+@pytest.mark.parametrize("override", [{"relationship": "member"}, {"relationship": "contact"},
+                                      {"relationship": "caller"}, {"verified": False}])
+def test_anyone_else_still_needs_the_owner_for_a_push(tmp_path, override):
+    text = cc.summarize({**OWN, **override}, str(tmp_path / "e.json"), TID)
+    assert "(push, deploy, merge, send, publish) need the OWNER's approval first" in _mode_line(text)
+    assert "GitHub credentials are the boundary" not in text
 
 
-@pytest.mark.parametrize("override", [{"relationship": "member"}, {"relationship": "caller"},
-                                      {"relationship": "contact"}, {"verified": False}])
-def test_a_grant_on_an_envelope_that_does_not_earn_it_is_ignored(tmp_path, override):
-    text = cc.summarize({**ADA, **override, "ship_grant": GRANT}, str(tmp_path / "e.json"), TID)
-    assert "ship grant" not in text
-
-
-def test_an_auto_turn_with_a_grant_still_names_it(tmp_path):
-    text = cc.summarize({**ADA, "turn_mode": {"mode": "auto", "basis": "agent"},
-                         "ship_grant": GRANT}, str(tmp_path / "e.json"), TID)
-    assert "- turn mode: auto (agent)\n" in text and "- ship grant:" in text
+def test_an_auto_turn_adds_no_note(tmp_path):
+    text = cc.summarize({**OWN, "turn_mode": {"mode": "auto"}}, str(tmp_path / "e.json"), TID)
+    assert _mode_line(text) == "- turn mode: auto"
 
 
 # --- envelope VERSION 2 words (canopy-web, 2026-10-04) -------------------------------
@@ -439,35 +421,3 @@ def test_an_empty_person_is_one_line_plus_how_to_record():
     assert len(lines) == 2
     assert lines[1].startswith("Record a correction: `canopy people remember --person 5 "
                                "--workspace connect")
-
-
-# --- the STANDING ship grant (owner decision, 2026-10-08) ----------------------------
-# A scheduled Eva turn held a tested fix because `manual` files push / merge beside
-# send / publish. The owner now lists repos on the agent; its own turns — a schedule is
-# `system` — carry a grant for exactly those.
-
-SCHEDULE = {**ENV, "relationship": "system", "verified": True,
-            "who": {"kind": "system", "via": "schedule:3", "assurance": "internal"},
-            "granted_by": "system", "trigger": {"origin": "canopy_scheduler", "runner": "jj-mbp"}}
-STANDING = {"repo": "dimagi-internal/eva", "repos": ["dimagi-internal/eva", "dimagi-internal/chrome-sales"],
-            "basis": "standing grant set on eva (owner jj@dimagi.com)"}
-
-
-def test_a_scheduled_turn_states_a_standing_grant_for_every_listed_repo(tmp_path):
-    text = cc.summarize({**SCHEDULE, "ship_grant": STANDING}, str(tmp_path / "e.json"), TID)
-    assert ("- ship grant: push / PR / merge in dimagi-internal/eva, dimagi-internal/chrome-sales "
-            "are pre-approved by the owner (standing grant set on eva (owner jj@dimagi.com))") in text
-    assert "Only those repos." in text
-    mode_line = next(line for line in text.splitlines() if line.startswith("- turn mode:"))
-    assert "covered by the ship grant below" in mode_line
-    assert "(push, deploy, merge, send, publish)" not in mode_line
-
-
-def test_an_older_envelope_with_only_repo_still_reads(tmp_path):
-    assert cc.ship_grant({"ship_grant": {"repo": "dimagi-internal/eva"}})["repos"] == ["dimagi-internal/eva"]
-
-
-def test_malformed_entries_in_repos_are_dropped(tmp_path):
-    g = cc.ship_grant({"ship_grant": {"repos": ["dimagi-internal/eva", "../../etc", "a/b c"]}})
-    assert g["repos"] == ["dimagi-internal/eva"]
-    assert cc.ship_grant({"ship_grant": {"repos": ["nope"]}}) is None
