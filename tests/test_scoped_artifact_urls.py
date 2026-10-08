@@ -58,6 +58,10 @@ def workspace(monkeypatch):
     "https://canopy.dimagi.com/walkthrough/abc/content?t=x",
     # pre-tenancy walkthrough form
     "https://canopy.dimagi.com/w/22222222-2222-2222-2222-222222222222/content",
+    # moved under /w/<ws>/ by canopy-web#1340
+    "https://canopy.dimagi.com/storyboard/chlorine?t=x",
+    "https://canopy.dimagi.com/narrative/chlorine?b=2",
+    "https://canopy.dimagi.com/ddd-release/chlorine/chlorine-2026-10-08-004?t=x",
 ])
 def test_detector_flags_flat_artifact_links(url):
     assert FLAT_ARTIFACT_URL_RE.search(url)
@@ -89,6 +93,8 @@ def test_app_url_requires_a_workspace():
     ("https://localhost/share/tok", f"{API}/w/connect/share/tok"),
     # already scoped: the server's workspace wins
     (f"{API}/w/dimagi/review/r1", f"{API}/w/dimagi/review/r1"),
+    ("/ddd-release/n/r1?t=x", f"{API}/w/connect/ddd-release/n/r1?t=x"),
+    ("/storyboard/chlorine", f"{API}/w/connect/storyboard/chlorine"),
     # deployment mount is kept
     ("https://labs.connect.dimagi.com/canopy/review/r1/",
      "https://labs.connect.dimagi.com/canopy/w/connect/review/r1/"),
@@ -226,7 +232,9 @@ def test_share_session_output():
 
 # `{<base>}/review/…` in an f-string — a link built outside app_url/scope_link.
 # A `{…}` right after `/w/` is the workspace segment, i.e. already scoped.
-_FLAT_BUILD_RE = re.compile(r"(?<!/w/)\{[^{}]*\}/(?:walkthrough|review|share|ddd)/")
+_FLAT_BUILD_RE = re.compile(
+    r"(?<!/w/)\{[^{}]*\}/(?:%s)/" % "|".join(cw.ARTIFACT_ROUTES)
+)
 
 _SCANNED = ("scripts", "src", "plugins/canopy/scripts", "plugins/canopy/hooks")
 
