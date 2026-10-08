@@ -93,10 +93,20 @@ resolves the folder from, so one name keeps the folder, its deliverables and its
 at each other. A project registered under a different name than its folder is a second place to
 look instead of one place to look.
 
+**The folder is a property of the project.** `project-add` finds or creates
+`Projects/<name>` and links it; `project-folder` links one to an existing project; and
+`canopy gdoc|gsheet publish --project <P<N>|name>` files into the folder the project links
+(linking it on first use). A session in ANOTHER repo working on an agent's project reads the
+folder off the project (`get_project` → `drive_folder_url`) and publishes with
+`--agent <slug>` — no agent checkout, no sourced env, no asking the human where it is.
+
 ```
 canopy agent projects --slug <slug> --active           # what is running (JSON)
 canopy agent project-add --slug <slug> --name "<Project>" \
-    --outcome "what DONE looks like" --drive-folder-url "<folder link>"
+    --outcome "what DONE looks like"                  # links Projects/<name> too
+canopy agent project-folder --slug <slug> --project P<N>   # link a folder (idempotent)
+canopy agent project-folder --slug <slug> --all            # backfill every unlinked one
+canopy gdoc publish --agent <slug> --project P<N> --md x.md --name "…"   # from any repo
 canopy agent project-set --slug <slug> --project "<Project>" --status done
 canopy agent project-audit --slug <slug> [--json]      # what the board is missing (read-only)
 ```
