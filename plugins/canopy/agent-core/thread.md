@@ -32,7 +32,15 @@ proposal, and the proposal's **author** and that **asker** settle the change dir
    them, leave out.
 4. **Converge.** The budget is small (4 messages by default). Re-arguing a point already answered
    spends it. If you can live with the latest proposal, `agree`.
-5. **One block, last, filed.** Exactly one ```thread block, at the END of your final message,
+5. **Any message may be the last — say everything now.** The thread ends the moment its end
+   condition holds (agreement: both sides' latest positions are `agree`), so you may never get
+   another turn. Never promise something "in my next message". Put the constraints, dates and
+   facts the others need in this one. (First live thread, 2026-10-08: the author promised the
+   slot constraints for later; the asker agreed; the thread settled and they never came.)
+6. **Don't invent other conversations.** Someone named on the work but not in the thread is
+   exactly as the context says (e.g. "co-signed; there is NO thread with them"). Do not tell the
+   others they are "handled in a separate thread" unless the context says so.
+7. **One block, last, filed.** Exactly one ```thread block, at the END of your final message,
    then file it as your close-out. A block for another thread or another message number never
    counts.
 

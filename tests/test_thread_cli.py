@@ -457,3 +457,16 @@ def test_huddle_agree_end_to_end_through_thread_run(web, tmp_path):
     # the author's prompt quoted the proposal and echo's change request verbatim
     first = web.turn_posts[0]["prompt"]
     assert "public material only; due 10/8 as a gdoc" in first and "You are eva, the author" in first
+
+
+def test_agreement_context_names_the_others_and_that_there_is_no_thread_with_them():
+    # First live thread (2026-10-08): told only "Ace is not in this thread", the author
+    # invented "Ace's side is a separate thread" — Ace had simply co-signed.
+    from orchestrator.huddle_cli import agreement_context
+    p = {"title": "IDM talk", "lead": "eva", "with": ["ace", "echo"],
+         "answers": {"ace": "co-sign", "echo": "amend"},
+         "answer_notes": {"echo": "public material only"}, "threads": {}}
+    text = agreement_context(p, "echo")
+    assert '"public material only"' in text
+    assert "Others on this proposal (not in this thread): ace already said yes (co-signed); there is NO thread with them." in text
+    assert agreement_context({**p, "with": ["echo"]}, "echo").endswith('"public material only"')

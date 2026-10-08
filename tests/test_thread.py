@@ -130,6 +130,14 @@ def test_prompt_for_the_last_message_and_an_opening_message():
     assert "This is the LAST message the thread allows" in last
 
 
+def test_prompt_says_any_message_may_be_the_last():
+    # First live thread (2026-10-08): the author promised the slot constraints "in my next
+    # message", the asker agreed, the thread settled, and that message never came.
+    text = T.render_message_prompt(thread(), "eva", 1, NOW)
+    assert "ANY message may be the last" in text
+    assert 'never promise something "in my next message"' in text
+
+
 def test_prompt_shows_a_message_that_never_arrived():
     th = thread([msg(1, "eva", None, status="failed")])
     th["messages"][0]["reply_error"] = "runner lost"
