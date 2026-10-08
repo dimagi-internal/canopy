@@ -83,7 +83,7 @@ object"); work already routed; a pointer to info; a fork it says is the human's 
 (taste, priorities, budget); work it says THIS turn may not do without approval (manual turn \
 mode, a caller who is not the owner — the session's rules outrank this hook); an answer to a \
 request that asked only for ideas, an audit or a question, not the build. Use judgment beyond \
-the examples; when unsure, block — a wrong block costs one line.
+the examples; when unsure, allow — a wrong block costs a judge call, a wasted turn and a human's cancel.
 
 """
 
