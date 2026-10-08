@@ -253,7 +253,8 @@ def test_prompt_refuses_a_member_with_no_round1_reply(tmp_path, web):
 
 def test_prompt_round3_shows_the_partner_the_joint_asks(tmp_path, web):
     r2 = {"huddle": H, "round": 2, "member": "eva",
-          "proposals": [prop("Joint Q4 brief", "eva", ["echo"]), prop("Solo thing", "eva")]}
+          "proposals": [prop("Joint Q4 brief", "eva", ["echo"]),
+                        prop("Solo thing", "eva", priority="Ops hygiene")]}
     web.detail[H] = detail([_cell("eva", 1, r1("eva")), _cell("echo", 1, r1("echo")),
                             _cell("eva", 2, r2)])
     p = write_plan(tmp_path)
@@ -307,7 +308,7 @@ def test_proposals_counts_the_named_leads_cosign(tmp_path, web):
 
 def test_prompt_round3_carries_the_members_own_proposals_and_their_critique(tmp_path, web):
     eva_r2 = {"huddle": H, "round": 2, "member": "eva",
-              "proposals": [prop("Solo Q4 follow-ups", "eva"),
+              "proposals": [prop("Solo Q4 follow-ups", "eva", priority="Ops hygiene"),
                             prop("Joint Q4 brief", "eva", ["echo"])]}
     web.detail[H] = detail([_cell("eva", 1, r1("eva")), _cell("echo", 1, r1("echo")),
                             _cell("eva", 2, eva_r2)])
@@ -425,7 +426,8 @@ def test_await_exits_0_when_every_dispatched_member_settled(tmp_path, web):
     assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)
     assert out["states"] == {"eva": "replied", "echo": "malformed"}
-    assert any("worked_on" in p for p in out["problems"]["echo"])
+    # the block fits neither shape; the problems name the closest one (the brief shape)
+    assert any("state" in p or "worked_on" in p for p in out["problems"]["echo"])
 
 
 def test_await_exits_3_while_a_member_is_still_working(tmp_path, web):
@@ -677,7 +679,8 @@ def test_view_prints_the_page(web):
 def _amended_huddle(web, r4=None, lead="eva", proposer="eva", with_=("echo",)):
     """eva proposes joint work with echo; echo amends it in round 3."""
     r2 = {"huddle": H, "round": 2, "member": proposer,
-          "proposals": [prop("Joint Q4 brief", lead, list(with_)), prop("Solo thing", proposer)],
+          "proposals": [prop("Joint Q4 brief", lead, list(with_)),
+                        prop("Solo thing", proposer, priority="Ops hygiene")],
           "critique_answers": [{"title": "t", "answer": "a"}]}
     echo_r3 = {"huddle": H, "round": 3, "member": "echo",
                "answers": [{"title": "Joint Q4 brief", "lead": lead, "answer": "amend",
@@ -705,7 +708,9 @@ def test_prompt_round4_quotes_the_proposal_and_each_amend(tmp_path, web):
     assert "### Joint Q4 brief (lead eva)" in text
     assert '"why": "why Joint Q4 brief"' in text
     assert 'echo: "public material only; due 10/8 as a gdoc"' in text
-    assert "Solo thing" not in text
+    earlier, to_resolve = text.split("## Amends to resolve")
+    assert "Solo thing" not in to_resolve          # only the amended proposal is resolved…
+    assert '"title": "Solo thing"' in earlier       # …while eva's own round 2 is carried verbatim
     assert f'--session-id "huddle:{H}:eva:r4"' in text
 
 
@@ -796,3 +801,276 @@ def test_a_huddle_without_amends_never_needs_round4(tmp_path, web):
     nxt = json.loads(run("resume", "--leader", "ada").stdout)["next"]
     assert any("proposals" in n and "canopy huddle agree" in n for n in nxt), nxt
     assert not any("continue with round 4" in n for n in nxt)
+
+
+# ── huddle prompting v2 (Jonathan, 2026-10-08, after work-fleet-20261006) ─────────
+BRIEF = ("1. Close two Q4 funders — hard dates: 2026-10-20 — source: goals sheet\n"
+         "2. IDM talk lands well — hard dates: 2026-10-15 — source: calendar\n"
+         "Not now: new products")
+BRIEF_HEAD = ("## Jonathan's top priorities (the brief — work toward these; "
+              "do not re-derive them)")
+
+
+def r1b(member, levers=None, needs=()):
+    return {"huddle": H, "round": 1, "member": member, "state": [f"{member} mid-way on T1"],
+            "levers": levers if levers is not None else
+            [{"priority": 2, "move": f"{member} moves IDM", "kind": "new", "task": "",
+              "blocked_by": "", "verified": True}],
+            "offers": [], "needs": list(needs)}
+
+
+def propb(title, lead, with_=(), priority=2, cost=None, **kw):
+    return {"title": title, "lead": lead, "with": list(with_), "priority": priority,
+            "kind": "new", "project": {"name": "IDM", "new": False},
+            "why": f"why {title} (checked)", "plan": ["2026-10-09: start", "2026-10-13: ship"],
+            "effort": "S", "success_measure": "demo runs",
+            "cost_to_jonathan": cost or {"kind": "none", "detail": ""},
+            "fails_if": "the demo env is down",
+            "ask_of_partners": {m: f"{m} does a part" for m in with_}, **kw}
+
+
+def _dup_huddle(web, members=("ace", "eva", "echo")):
+    """The 2026-10-06 duplicate: Ace's and Eva's IDM-demo proposals were the same work."""
+    ace_r2 = {"huddle": H, "round": 2, "member": "ace", "critique_answers": [{"title": "t",
+                                                                              "answer": "a"}],
+              "proposals": [propb("Pre-flight the IDM live demo", "ace", ["echo"],
+                                  cost={"kind": "time", "detail": "20 min rehearsal Tue"})]}
+    eva_r2 = {"huddle": H, "round": 2, "member": "eva", "critique_answers": [{"title": "t",
+                                                                              "answer": "a"}],
+              "proposals": [propb("IDM talk: live demo + story slide", "eva", ["ace", "echo"]),
+                            propb("Two funder follow-ups", "eva", priority=1)]}
+    cells = [_cell(m, 1, r1b(m, needs=[{"from": "jonathan", "ask": "Rank the IDM options"}]))
+             for m in members]
+    web.detail[H] = detail(cells + [_cell("ace", 2, ace_r2), _cell("eva", 2, eva_r2)],
+                           members=list(members))
+
+
+def _merges(tmp_path, merges):
+    f = tmp_path / "merges.json"
+    f.write_text(json.dumps(merges))
+    return str(f)
+
+
+ABSORB = {"Pre-flight the IDM live demo": {"absorbs": ["IDM talk: live demo + story slide"],
+                                           "why": "one demo, one owner"}}
+
+
+def test_plan_stores_the_brief_verbatim(tmp_path, web):
+    brief = tmp_path / "priorities.md"
+    brief.write_text(BRIEF + "\n")
+    out = tmp_path / "plan.json"
+    r = run("plan", "--leader", "ada", "--team", "fleet", "--members", "eva",
+            "--principal", "Jonathan", "--priorities-file", str(brief),
+            "--local", str(tmp_path / "rec"), "--out", str(out))
+    assert r.exit_code == 0, r.output
+    assert json.loads(out.read_text())["priorities_brief"] == BRIEF
+    assert json.loads(r.stdout)["priorities"] == 2
+    # the anchor carries it, so canopy-web's page can name each idea's priority
+    assert web.closeouts[0][1]["origin_ref"]["priorities_brief"] == BRIEF
+    assert "WARNING" not in r.stderr
+
+
+def test_plan_without_a_brief_warns_and_still_runs(tmp_path, web):
+    out = tmp_path / "plan.json"
+    r = run("plan", "--leader", "ada", "--team", "fleet", "--members", "eva",
+            "--local", str(tmp_path / "rec"), "--out", str(out))
+    assert r.exit_code == 0, r.output
+    assert "WARNING: no --priorities-file" in r.stderr
+    assert json.loads(out.read_text())["priorities_brief"] == ""
+
+
+def test_plan_refuses_a_brief_with_no_numbered_priorities(tmp_path, web):
+    brief = tmp_path / "priorities.md"
+    brief.write_text("Jonathan cares about funders and the IDM talk.")
+    r = run("plan", "--leader", "ada", "--team", "fleet", "--members", "eva",
+            "--priorities-file", str(brief), "--local", str(tmp_path / "rec"),
+            "--out", str(tmp_path / "plan.json"))
+    assert r.exit_code == 2 and "no numbered priorities" in r.output
+
+
+def test_prompt_round1_with_a_brief_opens_with_it_and_asks_for_levers(tmp_path, web):
+    p = write_plan(tmp_path, priorities_brief=BRIEF)
+    out = tmp_path / "eva-r1.md"
+    assert run("prompt", "--plan", str(p), "--member", "eva", "--round", "1",
+               "--out", str(out)).exit_code == 0
+    text = out.read_text()
+    assert text.index(BRIEF_HEAD) < text.index("READ-ONLY") and BRIEF in text
+    assert '"levers"' in text and '"state"' in text and '"worked_on"' not in text
+    assert "today is 2026-10-06" in text and "{{" not in text
+
+
+def test_prompt_round1_without_a_brief_is_the_old_report(tmp_path, web):
+    p = write_plan(tmp_path)
+    out = tmp_path / "eva-r1.md"
+    assert run("prompt", "--plan", str(p), "--member", "eva", "--round", "1",
+               "--out", str(out)).exit_code == 0
+    text = out.read_text()
+    assert "top priorities" not in text and '"priorities"' in text and '"levers"' not in text
+
+
+def test_prompt_round2_with_a_brief(tmp_path, web):
+    web.detail[H] = detail([_cell("eva", 1, r1b("eva")), _cell("echo", 1, r1b("echo"))])
+    p = write_plan(tmp_path, priorities_brief=BRIEF)
+    out = tmp_path / "eva-r2.md"
+    assert run("prompt", "--plan", str(p), "--member", "eva", "--round", "2",
+               "--out", str(out)).exit_code == 0
+    text = out.read_text()
+    assert text.index(BRIEF_HEAD) < text.index("### eva")
+    assert '"cost_to_jonathan"' in text and '"fails_if"' in text and '"confidence"' not in text
+    assert "echo moves IDM" in text
+
+
+def test_prompt_round3_refuses_unresolved_overlaps(tmp_path, web):
+    _dup_huddle(web)
+    p = write_plan(tmp_path, priorities_brief=BRIEF, members=["ace", "eva", "echo"])
+    r = run("prompt", "--plan", str(p), "--member", "echo", "--round", "3",
+            "--out", str(tmp_path / "x.md"))
+    assert r.exit_code == 2
+    assert ('"Pre-flight the IDM live demo" (lead ace) ↔ "IDM talk: live demo + story slide"'
+            in r.output)
+    assert "--merges merges.json" in r.output
+    assert "Two funder follow-ups" not in r.output.split("Write merges.json")[0]
+
+
+def test_prompt_round3_after_a_merge(tmp_path, web):
+    _dup_huddle(web)
+    p = write_plan(tmp_path, priorities_brief=BRIEF, members=["ace", "eva", "echo"])
+    m = _merges(tmp_path, ABSORB)
+    out = tmp_path / "eva-r3.md"
+    r = run("prompt", "--plan", str(p), "--member", "eva", "--round", "3", "--merges", m,
+            "--out", str(out))
+    assert r.exit_code == 0, r.output
+    text = out.read_text()
+    assert text.index(BRIEF_HEAD) < text.index("## What you said earlier (verbatim)")
+    earlier = text.split("## What you said earlier (verbatim)")[1].split("## Joint work")[0]
+    assert '"eva mid-way on T1"' in earlier                  # round 1, verbatim
+    assert '"critique_answers"' in earlier and '"proposals"' not in earlier
+    # eva's own duplicate was absorbed: she is now a partner on ace's proposal…
+    assert "### Pre-flight the IDM live demo (lead ace)" in text
+    assert '"absorbed": [\n    "IDM talk: live demo + story slide"' in text
+    # …and her own copy says where it went
+    assert ('MERGED into "Pre-flight the IDM live demo" (lead ace): one demo, one owner'
+            in text)
+    # echo was on both: it answers one proposal, not two
+    out2 = tmp_path / "echo-r3.md"
+    assert run("prompt", "--plan", str(p), "--member", "echo", "--round", "3", "--merges", m,
+               "--out", str(out2)).exit_code == 0
+    echo = out2.read_text()
+    assert echo.count("### ") == 1 and "### Pre-flight the IDM live demo (lead ace)" in echo
+
+
+def test_prompt_round3_accepts_distinct_from(tmp_path, web):
+    _dup_huddle(web)
+    p = write_plan(tmp_path, priorities_brief=BRIEF, members=["ace", "eva", "echo"])
+    m = _merges(tmp_path, {"IDM talk: live demo + story slide": {
+        "distinct_from": ["Pre-flight the IDM live demo"], "why": "talk vs rehearsal"}})
+    r = run("prompt", "--plan", str(p), "--member", "echo", "--round", "3", "--merges", m,
+            "--out", str(tmp_path / "x.md"))
+    assert r.exit_code == 0, r.output
+
+
+def test_prompt_round3_refuses_a_merges_typo(tmp_path, web):
+    _dup_huddle(web)
+    p = write_plan(tmp_path, priorities_brief=BRIEF, members=["ace", "eva", "echo"])
+    m = _merges(tmp_path, {"Pre-flight IDM": {"absorbs": ["IDM talk: live demo + story slide"]}})
+    r = run("prompt", "--plan", str(p), "--member", "echo", "--round", "3", "--merges", m,
+            "--out", str(tmp_path / "x.md"))
+    assert r.exit_code == 2 and "no proposal titled 'Pre-flight IDM'" in r.output
+
+
+def test_proposals_marks_overlaps_and_collects_the_asks(tmp_path, web):
+    _dup_huddle(web)
+    out = tmp_path / "props.json"
+    r = run("proposals", "--huddle", H, "--out", str(out))
+    assert r.exit_code == 0, r.output
+    by = {p["title"]: p for p in json.loads(out.read_text())}
+    assert by["Pre-flight the IDM live demo"]["overlaps"] == ["IDM talk: live demo + story slide"]
+    assert by["Two funder follow-ups"]["overlaps"] == []
+    summary = json.loads(r.stdout)
+    assert len(summary["unresolved_overlaps"]) == 1
+    assert summary["asks_of_jonathan"] == [
+        {"ask": "Rank the IDM options", "who": ["ace", "echo", "eva"], "for": "", "kind": "need"},
+        {"ask": "20 min rehearsal Tue", "who": ["ace"], "for": "Pre-flight the IDM live demo",
+         "kind": "time"}]
+    # with the merges: one IDM proposal, partners the union
+    r = run("proposals", "--huddle", H, "--merges", _merges(tmp_path, ABSORB), "--out", str(out))
+    props = json.loads(out.read_text())
+    assert [p["title"] for p in props] == ["Pre-flight the IDM live demo", "Two funder follow-ups"]
+    assert props[0]["with"] == ["echo", "eva"] and json.loads(r.stdout)["unresolved_overlaps"] == []
+
+
+def _cosigned(web):
+    """The merged huddle after round 3: echo and eva co-signed ace's merged proposal."""
+    _dup_huddle(web)
+    cells = web.detail[H]["cells"]
+    for m in ("echo", "eva"):
+        cells.append(_cell(m, 3, {"huddle": H, "round": 3, "member": m, "answers": [
+            {"title": "Pre-flight the IDM live demo", "lead": "ace", "answer": "co-sign"}]}))
+
+
+def test_file_refuses_unresolved_overlaps(tmp_path, web):
+    _cosigned(web)
+    p = write_plan(tmp_path, priorities_brief=BRIEF, members=["ace", "eva", "echo"])
+    props = tmp_path / "props.json"
+    run("proposals", "--huddle", H, "--out", str(props))
+    r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "rec"),
+            "--dry-run")
+    assert r.exit_code == 2 and "file refused" in r.output
+
+
+def test_file_with_a_brief_files_the_merged_proposal_and_one_ask_list(tmp_path, web):
+    _cosigned(web)
+    p = write_plan(tmp_path, priorities_brief=BRIEF, members=["ace", "eva", "echo"])
+    props = tmp_path / "props.json"
+    m = _merges(tmp_path, ABSORB)
+    assert run("proposals", "--huddle", H, "--merges", m, "--out", str(props)).exit_code == 0
+    digest = tmp_path / "digest.md"
+    r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "rec"),
+            "--digest-out", str(digest))
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert [f["title"] for f in out["filed"]] == ["Pre-flight the IDM live demo",
+                                                  "Two funder follow-ups"]
+    assert out["filed"][0]["partners"] == ["echo", "eva"]
+    assert out["asks_of_jonathan"] == [
+        {"ask": "Rank the IDM options", "who": ["ace", "echo", "eva"], "for": "", "kind": "need"},
+        {"ask": "20 min rehearsal Tue", "who": ["ace"], "for": "Pre-flight the IDM live demo",
+         "kind": "time"}]
+    [t] = [t for t in web.tasks["ace"] if t["title"] == "Pre-flight the IDM live demo"]
+    assert t["rationale"].startswith("Serves: priority 2: IDM talk lands well")
+    assert "Needs from Jonathan: 20 min rehearsal Tue" in t["notes"]
+    assert "Would fail if: the demo env is down" in t["notes"]
+    assert "Merged in: IDM talk: live demo + story slide." in t["notes"]
+    assert t["confidence"] == "low"          # no confidence any more; Jonathan decides
+    text = digest.read_text()
+    assert 'serves "priority 2: IDM talk lands well"' in text
+    assert "would fail if the demo env is down" in text and "%" not in text
+    assert "Waiting on you:\n• Rank the IDM options — ace, echo, eva" in text
+    rec = json.loads((tmp_path / "rec" / f"{H}.json").read_text())
+    assert rec["priorities_brief"] == BRIEF
+    assert rec["outcomes"][0]["fails_if"] == "the demo env is down"
+
+
+def test_file_holds_a_proposal_off_the_brief(tmp_path, web):
+    _cosigned(web)
+    eva_r2 = web.detail[H]["cells"][4]["block"]
+    eva_r2["proposals"][1]["priority"] = 5
+    p = write_plan(tmp_path, priorities_brief=BRIEF, members=["ace", "eva", "echo"])
+    props = tmp_path / "props.json"
+    run("proposals", "--huddle", H, "--merges", _merges(tmp_path, ABSORB), "--out", str(props))
+    r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "rec"),
+            "--dry-run")
+    held = {h["title"]: h["held"] for h in json.loads(r.stdout)["held"]}
+    assert held == {"Two funder follow-ups": "priority 5 is not in the brief"}
+
+
+def test_file_applies_merges_itself(tmp_path, web):
+    """outcomes.json built WITHOUT the merges: `file --merges` folds them in, leniently."""
+    _cosigned(web)
+    p = write_plan(tmp_path, priorities_brief=BRIEF, members=["ace", "eva", "echo"])
+    props = tmp_path / "props.json"
+    run("proposals", "--huddle", H, "--out", str(props))
+    r = run("file", "--plan", str(p), "--outcomes", str(props), "--local", str(tmp_path / "rec"),
+            "--merges", _merges(tmp_path, {**ABSORB, "Gone": {"absorbs": ["x"]}}), "--dry-run")
+    assert r.exit_code == 0, r.output
+    assert len(json.loads(r.stdout)["filed"]) == 2

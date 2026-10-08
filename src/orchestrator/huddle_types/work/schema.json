@@ -1,23 +1,59 @@
 {"rounds": {
-  "1": {"fields": {
-     "worked_on": {"type": "list", "max": 5, "required": true},
-     "priorities": {"type": "list", "max": 6, "required": true},
-     "projects": {"type": "list", "max": 8, "item_fields": ["name", "state"]},
-     "offers": {"type": "list", "max": 5},
-     "needs": {"type": "list", "max": 5}}},
-  "2": {"fields": {
-     "proposals": {"type": "list", "max": 3, "required": true,
-                   "item_fields": ["title", "lead", "with", "priority", "project", "why", "plan",
-                                   "effort", "success_measure", "confidence"]},
-     "critique_answers": {"type": "list", "max": 6, "item_fields": ["title", "answer"]},
-     "feedback": {"type": "str"}}},
-  "3": {"fields": {
-     "answers": {"type": "list", "max": 9, "required": true,
-                 "item_fields": ["title", "lead", "answer"]},
-     "proposals": {"type": "list", "max": 3,
-                   "item_fields": ["title", "lead", "with", "priority", "project", "why", "plan",
-                                   "effort", "success_measure", "confidence"]},
-     "feedback": {"type": "str"}}},
+  "1": {"shapes": {
+    "brief": {"fields": {
+       "state": {"type": "list", "max": 3, "required": true},
+       "levers": {"type": "list", "max": 5, "required": true,
+                  "item_fields": ["priority", "move", "kind"],
+                  "item_types": {"priority": "int"},
+                  "item_enums": {"kind": ["new", "unblock", "existing"]},
+                  "item_required_when": {"task": {"kind": "existing"}},
+                  "item_unique": ["priority"]},
+       "offers": {"type": "list", "max": 5},
+       "needs": {"type": "list", "max": 5, "item_fields": ["from", "ask"]}}},
+    "status": {"fields": {
+       "worked_on": {"type": "list", "max": 5, "required": true},
+       "priorities": {"type": "list", "max": 6, "required": true},
+       "projects": {"type": "list", "max": 8, "item_fields": ["name", "state"]},
+       "offers": {"type": "list", "max": 5},
+       "needs": {"type": "list", "max": 5}}}}},
+  "2": {"shapes": {
+    "brief": {"fields": {
+       "proposals": {"type": "list", "max": 3, "required": true,
+                     "item_fields": ["title", "lead", "with", "priority", "kind", "project", "why",
+                                     "plan", "effort", "success_measure", "cost_to_jonathan",
+                                     "fails_if"],
+                     "item_types": {"priority": "int", "cost_to_jonathan": "dict"},
+                     "item_enums": {"kind": ["new", "unblock", "existing"],
+                                    "cost_to_jonathan.kind": ["none", "yes", "decision", "time"]},
+                     "item_required_when": {"why_huddle": {"kind": "existing"}}},
+       "critique_answers": {"type": "list", "max": 6, "item_fields": ["title", "answer"]},
+       "feedback": {"type": "str"}}},
+    "status": {"fields": {
+       "proposals": {"type": "list", "max": 3, "required": true,
+                     "item_fields": ["title", "lead", "with", "priority", "project", "why", "plan",
+                                     "effort", "success_measure", "confidence"]},
+       "critique_answers": {"type": "list", "max": 6, "item_fields": ["title", "answer"]},
+       "feedback": {"type": "str"}}}}},
+  "3": {"shapes": {
+    "brief": {"fields": {
+       "answers": {"type": "list", "max": 9, "required": true,
+                   "item_fields": ["title", "lead", "answer"]},
+       "proposals": {"type": "list", "max": 3,
+                     "item_fields": ["title", "lead", "with", "priority", "kind", "project", "why",
+                                     "plan", "effort", "success_measure", "cost_to_jonathan",
+                                     "fails_if"],
+                     "item_types": {"priority": "int", "cost_to_jonathan": "dict"},
+                     "item_enums": {"kind": ["new", "unblock", "existing"],
+                                    "cost_to_jonathan.kind": ["none", "yes", "decision", "time"]},
+                     "item_required_when": {"why_huddle": {"kind": "existing"}}},
+       "feedback": {"type": "str"}}},
+    "status": {"fields": {
+       "answers": {"type": "list", "max": 9, "required": true,
+                   "item_fields": ["title", "lead", "answer"]},
+       "proposals": {"type": "list", "max": 3,
+                     "item_fields": ["title", "lead", "with", "priority", "project", "why", "plan",
+                                     "effort", "success_measure", "confidence"]},
+       "feedback": {"type": "str"}}}}},
   "4": {"fields": {
      "resolutions": {"type": "list", "max": 9, "required": true,
                      "item_fields": ["title", "lead", "resolution"],

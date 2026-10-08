@@ -27,7 +27,8 @@ def test_keys_and_refs():
 
 R1_CTX = {"huddle": "h", "member": "eva", "leader": "ada", "principal": "Jonathan",
           "days": 7, "since": "2026-09-29", "context": "ctx", "prior": "none",
-          "sharing_rule": "share freely", "round": 1}
+          "sharing_rule": "share freely", "round": 1, "brief": "", "principal_key": "jonathan",
+          "today": "2026-10-09"}
 
 
 def test_work_type_loads_from_package_data():
@@ -191,7 +192,7 @@ def test_validate_round4_resolutions():
 def test_round4_template_quotes_the_amends():
     ht = H.load_type("work")
     out = H.render_round(ht, 4, {"huddle": "h", "member": "eva", "leader": "ada", "round": 4,
-                                 "resolve": "RESOLVE-BLOCK"})
+                                 "resolve": "RESOLVE-BLOCK", "brief": "", "earlier": "EARLIER"})
     assert "RESOLVE-BLOCK" in out and "accept" in out and "reject" in out and "{{" not in out
     assert '"round": 4' in out
 
@@ -214,3 +215,194 @@ def test_gates_amend_accepted_files_and_amend_rejected_holds():
          _p("B", with_=["echo"], answers={"echo": H.AMEND_REJECTED})], {"Q4 pipeline"}, [])
     assert [p["title"] for p in filed] == ["A"]
     assert held[0]["held"] == "amend rejected by lead (echo)"
+
+
+# ── huddle prompting v2: the brief, both block shapes, overlaps, merges, asks ────
+BRIEF = ("1. Close two Q4 funders — hard dates: 2026-10-20 — source: goals sheet\n"
+         "2. IDM talk lands well — hard dates: 2026-10-15 — source: calendar\n"
+         "3. Fleet reliability — hard dates: none — source: goals sheet\n"
+         "Not now: new products")
+
+
+def test_brief_items_and_section():
+    assert H.brief_items(BRIEF) == {
+        1: "Close two Q4 funders — hard dates: 2026-10-20 — source: goals sheet",
+        2: "IDM talk lands well — hard dates: 2026-10-15 — source: calendar",
+        3: "Fleet reliability — hard dates: none — source: goals sheet"}
+    sec = H.brief_section(BRIEF, "Jonathan")
+    assert sec.startswith("## Jonathan's top priorities (the brief — work toward these; "
+                          "do not re-derive them)\n\n1. Close")
+    assert sec.endswith("Not now: new products\n\n")
+    assert H.brief_section("", "Jonathan") == ""
+
+
+@pytest.mark.parametrize("v,n", [(2, 2), ("2", 2), ("#2", 2), ("2. IDM talk", 2),
+                                 ("priority 3", 3), ("Q4 funder pipeline", None), (True, None),
+                                 (None, None)])
+def test_priority_number(v, n):
+    assert H.priority_number(v) == n
+
+
+def test_priority_label_names_the_brief_line():
+    assert H.priority_label(2, BRIEF) == "priority 2: IDM talk lands well"
+    assert H.priority_label("Q4 pipeline", BRIEF) == "Q4 pipeline"
+    assert H.priority_label(9, BRIEF) == "9"
+
+
+def _lever(**kw):
+    return {"priority": 1, "move": "m", "kind": "new", "task": "", "blocked_by": "",
+            "verified": True, **kw}
+
+
+def _r1b(**kw):
+    return {"huddle": "h", "round": 1, "member": "eva", "state": ["T41 mid-way"],
+            "levers": [_lever()], "offers": [], "needs": [{"from": "jonathan", "ask": "a"}], **kw}
+
+
+def test_validate_round1_accepts_the_brief_shape_and_the_old_shape():
+    ht = H.load_type("work")
+    assert H.validate_block(ht, 1, _r1b()) == []
+    old = {"huddle": "h", "round": 1, "member": "eva", "worked_on": ["x"], "priorities": ["p"],
+           "projects": [{"name": "Q4", "state": "on"}], "needs": ["a string need"]}
+    assert H.validate_block(ht, 1, old) == []
+
+
+def test_validate_round1_brief_shape_problems():
+    ht = H.load_type("work")
+    probs = H.validate_block(ht, 1, _r1b(levers=[_lever(), _lever(priority="1", kind="maybe"),
+                                                  _lever(priority="two", kind="existing")]))
+    assert "levers[1] repeats priority 1 (at most one per priority)" in probs
+    assert "levers[1] kind must be one of new|unblock|existing" in probs
+    assert "levers[2] priority must be a number" in probs
+    assert "levers[2] missing task (required when kind is existing)" in probs
+    assert "needs[0] missing ask" in H.validate_block(ht, 1, _r1b(needs=[{"from": "x"}]))
+
+
+def _p2(**kw):
+    return {"title": "t", "lead": "eva", "with": [], "priority": 1, "kind": "new",
+            "project": {"name": "Q4", "new": False}, "why": "w (checked)",
+            "plan": ["2026-10-09: start"], "effort": "S", "success_measure": "s",
+            "cost_to_jonathan": {"kind": "none", "detail": ""}, "fails_if": "f", **kw}
+
+
+def test_validate_round2_accepts_both_proposal_shapes():
+    ht = H.load_type("work")
+    blk = {"huddle": "h", "round": 2, "member": "eva", "proposals": [_p2()]}
+    assert H.validate_block(ht, 2, blk) == []
+    old = {k: v for k, v in _p2(priority="verbatim", confidence=0.5).items()
+           if k not in ("kind", "cost_to_jonathan", "fails_if")}
+    assert H.validate_block(ht, 2, {**blk, "proposals": [old]}) == []
+    # round 3 revisions follow the same two shapes
+    r3 = {"huddle": "h", "round": 3, "member": "eva", "answers": [], "proposals": [_p2()]}
+    assert H.validate_block(ht, 3, r3) == []
+
+
+def test_validate_round2_brief_shape_problems():
+    ht = H.load_type("work")
+    bad = _p2(kind="existing", cost_to_jonathan={"kind": "money"})
+    probs = H.validate_block(ht, 2, {"huddle": "h", "round": 2, "member": "eva",
+                                     "proposals": [bad]})
+    assert "proposals[0] cost_to_jonathan.kind must be one of none|yes|decision|time" in probs
+    assert "proposals[0] missing why_huddle (required when kind is existing)" in probs
+    no_fail = {k: v for k, v in _p2().items() if k != "fails_if"}
+    assert "proposals[0] missing fails_if" in H.validate_block(
+        ht, 2, {"huddle": "h", "round": 2, "member": "eva", "proposals": [no_fail]})
+
+
+def test_round_templates_pick_the_brief_or_the_old_variant():
+    ht = H.load_type("work")
+    with_brief = H.render_round(ht, 1, {**R1_CTX, "brief": H.brief_section(BRIEF, "Jonathan")})
+    assert with_brief.index("## Jonathan's top priorities") < with_brief.index("READ-ONLY")
+    assert '"levers"' in with_brief and '"worked_on"' not in with_brief
+    assert '"from": "<teammate slug, or jonathan>"' in with_brief
+    old = H.render_round(ht, 1, R1_CTX, variant="nobrief")
+    assert '"worked_on"' in old and '"priorities"' in old and '"levers"' not in old
+    assert "{{" not in with_brief + old
+    for (n, _v), tmpl in ht.variants.items():
+        assert '--session-id "huddle:{{huddle}}:{{member}}:r{{round}}"' in tmpl, n
+
+
+def _o(title, lead, with_=(), priority=1, **kw):
+    return {"title": title, "lead": lead, "with": list(with_), "priority": priority, **kw}
+
+
+def test_overlaps_need_the_same_priority_and_a_shared_person():
+    props = H.find_overlaps([_o("IDM demo", "ace", ["echo"]), _o("IDM live demo", "eva", ["ace"]),
+                             _o("IDM story", "echo", priority="1"), _o("Funders", "ace", priority=2),
+                             _o("Alarms", "hal")])
+    by = {p["title"]: p for p in props}
+    assert by["IDM demo"]["overlaps"] == ["IDM live demo", "IDM story"]   # "1" == 1
+    assert by["IDM live demo"]["overlaps"] == ["IDM demo"]
+    assert by["Funders"]["overlaps"] == [] and by["Alarms"]["overlaps"] == []
+    assert by["IDM demo"]["unresolved_overlaps"] == by["IDM demo"]["overlaps"]
+    assert len(H.unresolved_overlaps(props)) == 2
+
+
+def test_merges_absorb_unions_people_and_drop_the_absorbed():
+    props = [_o("IDM demo", "ace", ["echo"], ask_of_partners={"echo": "story slide"}),
+             _o("IDM live demo", "eva", ["ace", "hal"], ask_of_partners={"hal": "infra"})]
+    out, probs = H.apply_merges(props, {"IDM demo": {"absorbs": ["idm live demo"],
+                                                     "why": "same demo"}})
+    assert probs == []
+    [kept] = out
+    assert kept["title"] == "IDM demo" and kept["with"] == ["echo", "eva", "hal"]
+    assert kept["ask_of_partners"]["echo"] == "story slide"
+    assert kept["ask_of_partners"]["hal"] == "infra"
+    assert "IDM live demo" in kept["ask_of_partners"]["eva"]
+    assert kept["absorbed"] == ["IDM live demo"] and kept["merge_why"] == "same demo"
+    assert kept["unresolved_overlaps"] == []
+    # idempotent: applying the same merges to the merged list changes nothing (lenient)
+    again, probs = H.apply_merges(out, {"IDM demo": {"absorbs": ["IDM live demo"]}},
+                                  strict=False)
+    assert probs == [] and again[0]["with"] == kept["with"]
+
+
+def test_merges_distinct_from_resolves_both_directions():
+    props = [_o("IDM demo", "ace"), _o("IDM slides", "ace")]
+    out, _ = H.apply_merges(props, {"IDM slides": {"distinct_from": ["IDM demo"], "why": "x"}})
+    assert all(p["overlaps"] and not p["unresolved_overlaps"] for p in out)
+    assert H.unresolved_overlaps(out) == []
+
+
+def test_merges_problems():
+    props = [_o("A", "ace"), _o("B", "ace")]
+    _, probs = H.apply_merges(props, {"Nope": {"absorbs": ["A"]}, "A": {"absorbs": ["A", "Z"]},
+                                      "B": {"distinct_from": ["Q"]}})
+    assert "merges: no proposal titled 'Nope'" in probs
+    assert "merges: 'A' cannot absorb 'A' (itself)" in probs
+    assert "merges: 'A' cannot absorb 'Z' (no such proposal)" in probs
+    assert "merges: 'B' distinct_from 'Q': no such proposal" in probs
+    _, lenient = H.apply_merges(props, {"Nope": {"absorbs": ["A"]}, "A": {"absorbs": ["Z"]}},
+                                strict=False)
+    assert lenient == []
+
+
+def test_asks_of_principal_dedupes_and_keeps_everyone_asking():
+    r1 = {"ace": {"needs": [{"from": "Jonathan", "ask": "Rank the IDM demo options"},
+                            {"from": "eva", "ask": "intro"}]},
+          "eva": {"needs": [{"from": "jonathan", "ask": "rank the IDM demo options!"},
+                            {"from": "jonathan", "ask": "Approve T22 budget"}]},
+          "echo": {"needs": ["an old-shape string need"]}}
+    props = [_o("PRIDE", "hal", cost_to_jonathan={"kind": "decision",
+                                                  "detail": "Pick the T22 vendor"}),
+             _o("Alarms", "hal", cost_to_jonathan={"kind": "none", "detail": ""}),
+             _o("Demo", "ace", cost_to_jonathan={"kind": "time", "detail": "20 minutes Tue"})]
+    asks = H.asks_of_principal(r1, props, "Jonathan")
+    assert asks == [
+        {"ask": "Rank the IDM demo options", "who": ["ace", "eva"], "for": "", "kind": "need"},
+        {"ask": "Approve T22 budget", "who": ["eva", "hal"], "for": "PRIDE", "kind": "decision"},
+        {"ask": "20 minutes Tue", "who": ["ace"], "for": "Demo", "kind": "time"}]
+
+
+def test_gates_with_a_brief_take_brief_numbers():
+    ok = {**_p("A"), "priority": 2, "critique_answered": True}
+    off = {**_p("B"), "priority": 7, "critique_answered": True}
+    text = {**_p("C"), "priority": "Q4 funder pipeline", "critique_answered": True}
+    filed, held = H.work_gates([ok, off, text], set(), [], brief_numbers={1, 2, 3})
+    assert [p["title"] for p in filed] == ["A"]
+    assert {h["title"]: h["held"] for h in held} == {
+        "B": "priority 7 is not in the brief",
+        "C": "priority is not a brief number: 'Q4 funder pipeline'"}
+    # no brief: the round-1 rule, unchanged
+    filed, held = H.work_gates([text], {"Q4 funder pipeline (sheet)"}, [])
+    assert [p["title"] for p in filed] == ["C"]
