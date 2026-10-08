@@ -1066,26 +1066,37 @@ def _task_fields(p: dict, plan: dict, page: str) -> tuple[dict, list[dict]]:
 
 _TRAILING_PARENS = re.compile(r"\s*\(([^()]*)\)\s*$")
 _PROJECT_EXT_ID = re.compile(r"\(\s*(P\d+)\s*\)", re.I)
+# A LEADING ref, as members also write it: "P1 IDM AI Talk", "P1: IDM AI Talk". Missing it
+# filed "P1 IDM AI Talk" as a new project beside P1 "IDM AI Talk" (eva, 2026-10-08).
+_LEADING_EXT_ID = re.compile(r"^\s*(P\d+)(?:\s*[:\u2013\u2014-]\s*|\s+)(?=\S)", re.I)
+
+
+def _bare_project_name(name: str) -> str:
+    """The name without a leading `P<N>` ref or a trailing "(…)" suffix."""
+    bare = _TRAILING_PARENS.sub("", _LEADING_EXT_ID.sub("", str(name or "")))
+    return " ".join(bare.split())
 
 
 def _project_key(name: str) -> str:
-    """A project name compared loosely: no trailing "(…)" suffix, case/whitespace folded."""
-    return " ".join(_TRAILING_PARENS.sub("", str(name or "")).split()).casefold()
+    """A project name compared loosely: no leading P<N> ref or trailing "(…)" suffix,
+    case/whitespace folded."""
+    return _bare_project_name(name).casefold()
 
 
 def _resolve_project(client: AgentClient, name: str, hid: str, page: str, *, create: bool,
                      by_ext_id: bool, projects_cache: dict) -> dict:
     """The agent's project row for `name`, or {} — never a duplicate of one it has.
 
-    Members write names like "Spark cascade demo (P3)" or "connect-labs reliability (T15/T37)":
-    (a) a parenthesised `P<N>` that exists on this board wins (`by_ext_id`: only the lead's
+    Members write names like "Spark cascade demo (P3)", "P1 IDM AI Talk" or "connect-labs
+    reliability (T15/T37)": (a) a parenthesised or leading `P<N>` that exists on this board wins (`by_ext_id`: only the lead's
     board — the id is the lead's); (b) else names match with the trailing "(…)" stripped and
     case/whitespace folded; (c) else, with `create`, a new project under the stripped name."""
     if client.slug not in projects_cache:
         projects_cache[client.slug] = client.list_projects()
     rows = projects_cache[client.slug]
     if by_ext_id:
-        ids = {i.upper() for i in _PROJECT_EXT_ID.findall(str(name or ""))}
+        ids = {i.upper() for i in _PROJECT_EXT_ID.findall(str(name or ""))
+               + _LEADING_EXT_ID.findall(str(name or ""))}
         for pr in rows:
             if str(pr.get("ext_id") or "").upper() in ids:
                 return pr
@@ -1097,7 +1108,7 @@ def _resolve_project(client: AgentClient, name: str, hid: str, page: str, *, cre
         return {}
     # The canopy-web half only. The Drive `Projects/<name>/` half belongs to the LEAD's Drive,
     # which the leader cannot write — the lead makes it on its first work turn.
-    clean = " ".join(_TRAILING_PARENS.sub("", str(name or "")).split()) or str(name).strip()
+    clean = _bare_project_name(name) or str(name).strip()
     made = client.create_project(name=clean, notes=f"From huddle {hid}.",
                                  links=[{"label": "Huddle", "url": page}])
     rows.append(made)
