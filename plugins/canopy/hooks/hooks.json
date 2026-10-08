@@ -10,6 +10,16 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/agent_op_env.py\"",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [

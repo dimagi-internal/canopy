@@ -335,6 +335,35 @@ def agent_doctor(repo, slug, all_agents, do_fix, as_json):
         raise SystemExit(1)
 
 
+@agent.command("op-token")
+@click.option("--slug", envvar="CANOPY_AGENT", required=True,
+              help="Agent slug. Default: $CANOPY_AGENT (set by every agent repo's settings.json).")
+def agent_op_token(slug):
+    """Print THIS agent's own 1Password service-account key, for `OP_SERVICE_ACCOUNT_TOKEN`.
+
+    The laptop twin of the cloud runner's `_agent_op_token`: the same canopy-web route
+    (`/credentials/resolve`), the same key — scoped to the agent's own vault — so `op` on an
+    emdash/laptop session never touches the 1Password desktop app (which locks, and then
+    `op` hangs on an unlock prompt nobody is there to answer). Authorized as the OPERATOR:
+    canopy-web hands the key only to a caller who pairs a live runner this agent routes to.
+
+    Prints the key alone on stdout, for `OP_SERVICE_ACCOUNT_TOKEN="$(canopy agent op-token)"`.
+    Exit 1 with the reason on stderr when there is none — never an empty success.
+    """
+    from orchestrator import canopy_web
+    from orchestrator.agent_bootstrap import _operator_token
+    try:
+        body = canopy_web.call("GET", f"/api/agents/{slug}/credentials/resolve",
+                               token=_operator_token()) or {}
+    except Exception as e:  # noqa: BLE001 — report, don't traceback
+        raise click.ClickException(f"could not resolve {slug}'s 1Password key: {str(e).splitlines()[0][:200]}")
+    token = str(body.get("op_sa_token") or "")
+    if not token:
+        raise click.ClickException(
+            f"canopy-web has no 1Password key for {slug} (register it: PUT /api/agents/{slug}/vault)")
+    click.echo(token)
+
+
 @agent.command("bootstrap")
 @click.option("--slug", "slugs", multiple=True,
               help="Agent slug to bootstrap (repeatable). Default: every agent repo discovered "
