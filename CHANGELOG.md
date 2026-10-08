@@ -9,6 +9,17 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.625] - 2026-10-08
+
+### Changed
+- **decide-guard is opt-in; the plugin no longer ships it.** Until now the Stop prompt
+  hook in the plugin's `hooks.json` fired for every canopy user. Jonathan asked that his
+  working preference stop being imposed on everyone. The plugin now carries no Stop hook
+  (`PLUGIN_WIDE = False`). Each fleet agent stamps decide-guard into its own
+  `.claude/settings.json` (ada#114, hal#245, ace#2813, eva#375, echo#164), and a person
+  opts in for their own sessions with the new `canopy decide-guard stamp --user`, which
+  writes `~/.claude/settings.json`.
+
 ## [0.2.622] - 2026-10-08
 
 ### Fixed

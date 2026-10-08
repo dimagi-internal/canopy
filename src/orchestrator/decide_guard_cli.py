@@ -57,22 +57,33 @@ def check_cmd(repo):
 
 
 @decide_guard_group.command("stamp")
-@click.option("--agent-repo", "agent_repos", multiple=True, required=True,
+@click.option("--agent-repo", "agent_repos", multiple=True,
               type=click.Path(exists=True, file_okay=False),
               help="agent repo whose .claude/settings.json gets the prompt hook (repeatable)")
-@click.option("--check", is_flag=True, help="exit 1 if any agent's settings are stale; write nothing")
+@click.option("--user", "user", is_flag=True,
+              help="your own ~/.claude/settings.json — a personal preference for every session "
+                   "on this macOS account")
+@click.option("--check", is_flag=True, help="exit 1 if any target is stale; write nothing")
 @click.option("--repo", default=None, help="canopy checkout to read examples from")
-def stamp_cmd(agent_repos, check, repo):
-    """Agent-only scope: stamp the rendered prompt hook into each agent repo's
-    .claude/settings.json Stop hooks, replacing its hooks/decide_guard.py loader hook."""
+def stamp_cmd(agent_repos, user, check, repo):
+    """Opt-in scope: stamp the rendered prompt hook into each agent repo's
+    .claude/settings.json and/or your own ~/.claude/settings.json (--user), replacing any
+    hooks/decide_guard.py loader hook. The plugin itself carries no decide-guard."""
+    if not agent_repos and not user:
+        raise click.ClickException("name at least one --agent-repo, or --user")
     _, examples = _paths(repo)
-    stale = []
+    targets = []
     for agent in agent_repos:
         settings = Path(agent) / ".claude" / "settings.json"
         if not settings.exists():
             raise click.ClickException(f"{settings} not found")
+        targets.append(settings)
+    if user:
+        targets.append(dg.user_settings_path())
+    stale = []
+    for settings in targets:
         if check:
-            if not dg.settings_in_sync(settings, examples):
+            if not settings.exists() or not dg.settings_in_sync(settings, examples):
                 stale.append(str(settings))
             continue
         changed = dg.stamp_settings(settings, examples)
@@ -80,7 +91,7 @@ def stamp_cmd(agent_repos, check, repo):
     if stale:
         raise click.ClickException("stale (re-run without --check): " + ", ".join(stale))
     if check:
-        click.echo(f"in sync: {len(agent_repos)} agent repo(s)")
+        click.echo(f"in sync: {len(targets)} target(s)")
 
 
 @decide_guard_group.command("show")
@@ -111,5 +122,6 @@ def add_example_cmd(closing, handback, why, in_prompt, repo):
     if dg.PLUGIN_WIDE:
         click.echo(f"re-rendered {hooks} — now `uv run canopy version bump`, add a CHANGELOG line, and ship")
     else:
-        click.echo("agent-only scope: ship this, then `canopy decide-guard stamp --agent-repo <repo>` "
-                   "in each agent repo and ship those")
+        click.echo("opt-in scope: ship this, then re-stamp — `canopy decide-guard stamp "
+                   "--agent-repo <repo>` in each agent repo that carries it (and ship those), "
+                   "and `--user` on each account that opted in")
