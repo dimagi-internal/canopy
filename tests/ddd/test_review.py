@@ -62,6 +62,7 @@ def _mock_urlopen(response_body: dict, status: int = 200):
 # post_review_request
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("pinned_write_workspace")
 class TestPostReviewRequest:
     def test_serialises_with_class_alias(self, monkeypatch):
         """The captured POST body must use the 'class' key, not 'class_'."""
@@ -105,7 +106,8 @@ class TestPostReviewRequest:
                 _make_review_request(),
                 base_url="https://canopy.test",
             )
-        assert result == expected
+        # Plus the workspace it was posted into (and read back from).
+        assert result == {**expected, "workspace": "connect"}
 
     def test_visibility_sent_in_body(self, monkeypatch):
         captured: list[dict] = []
@@ -155,7 +157,7 @@ class TestPostReviewRequest:
                 _make_review_request(),
                 base_url="https://canopy.test",
             )
-        assert captured_urls[0] == "https://canopy.test/api/reviews/"
+        assert captured_urls[0] == "https://canopy.test/api/w/connect/reviews/"
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +416,7 @@ class TestNarrativeExistence:
             assert rv.narrative_version_exists("gone", base_url="https://canopy.test") is False
 
 
+@pytest.mark.usefixtures("pinned_write_workspace")
 class TestResolveReview:
     """resolve_review POSTs the decision to the canopy-web submit endpoint
     (Bearer-PAT authed → attributed), so an agent can record an approval a human
@@ -434,6 +437,6 @@ class TestResolveReview:
 
             rv.resolve_review("rev1", {"publish": "publish"}, base_url="https://canopy.test")
 
-        assert captured["url"] == "https://canopy.test/api/reviews/rev1/submit/"
+        assert captured["url"] == "https://canopy.test/api/w/connect/reviews/rev1/submit/"
         assert captured["auth"] == "Bearer pat-xyz"
         assert captured["body"] == {"response_json": {"publish": "publish"}}

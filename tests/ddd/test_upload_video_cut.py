@@ -72,7 +72,7 @@ def test_a_plain_upload_is_unchanged(tmp_path):
     assert kw["cut_id"] is None
 
 
-def test_publish_artifact_sends_the_cut_fields(monkeypatch):
+def test_publish_artifact_sends_the_cut_fields(monkeypatch, pinned_write_workspace):
     monkeypatch.setenv("CANOPY_WEB_PAT", "test-pat")
     sent: list[dict] = []
 

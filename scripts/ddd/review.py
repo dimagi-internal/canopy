@@ -3,7 +3,11 @@
 Mirrors the auth and URL-resolution conventions from
 scripts/walkthrough-share/upload.py:
   - Base URL: env var CANOPY_WEB_API_URL, default DEFAULT_API
-  - PAT:      env var CANOPY_WEB_PAT, then ~/.claude/canopy/workbench-token
+  - PAT:      env var CANOPY_WEB_PAT, then the agent's own ~/.<slug>/.env, then
+              ~/.claude/canopy/workbench-token — never that last one in an agent's
+              session (scripts.ddd.auth.resolve_token is strict)
+  - Writes:   must name a workspace (auth.require_write_workspace) and are read
+              back from it (auth.confirm_landed)
 
 HTTP transport: stdlib urllib (no requests dep — matches upload.py).
 """
@@ -20,6 +24,8 @@ from scripts.ddd.schemas.models import ReviewRequest
 from scripts.ddd.auth import (
     DEFAULT_API,
     TOKEN_FILE,
+    confirm_landed as _confirm_landed,
+    require_write_workspace as _require_write_ws,
     resolve_base_url as _resolve_base_url,
     resolve_token as _resolve_token,
     resolve_ddd_workspace as _resolve_ws,
@@ -107,15 +113,25 @@ def post_review_request(
     Serialises with ``model_dump(by_alias=True)`` so Decision objects emit
     the ``"class"`` key (alias) rather than ``class_`` (field name).
 
-    Returns ``{id, url, share_token}`` from the server.
+    Returns ``{id, url, share_token}`` from the server, plus ``workspace`` — the
+    workspace it was posted into and read back from.
+
+    Refuses (``WorkspaceRequiredError``) when no workspace is named: the flat
+    route files it in the server's default (ace#2805 — a Connect narrative landed
+    in dimagi).
     """
     api = _resolve_base_url(base_url)
     tok = _resolve_token(token)
+    ws = _require_write_ws()
     payload = {
         "request_json": review_request.model_dump(by_alias=True),
         "visibility": visibility,
     }
-    return _json_request("POST", _url(api, "/api/reviews/"), tok, payload)
+    result = _json_request("POST", _url(api, "/api/reviews/", ws), tok, payload)
+    if result.get("id"):
+        _confirm_landed("reviews", result["id"], ws, query={"q": review_request.run_id},
+                        base_url=api, token=tok)
+    return {**result, "workspace": ws}
 
 
 def get_review(
@@ -258,6 +274,8 @@ def resolve_review(
     """
     api = _resolve_base_url(base_url)
     tok = _resolve_token(token)
+    ws = _require_write_ws()
     return _json_request(
-        "POST", _url(api, f"/api/reviews/{review_id}/submit/"), tok, {"response_json": response_json}
+        "POST", _url(api, f"/api/reviews/{review_id}/submit/", ws), tok,
+        {"response_json": response_json},
     )
