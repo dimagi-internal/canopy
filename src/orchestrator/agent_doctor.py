@@ -867,6 +867,26 @@ def check_registration(
     return CheckResult(name, True, f"registered; board reachable ({len(pending)} pending action(s))")
 
 
+def check_github_identity(identity: EmailIdentity | None, *, resolver=None) -> CheckResult:
+    """Which GitHub identity this agent's sessions act as on this machine (canopy#832).
+
+    The credential canopy-web holds for the agent, asked of GitHub. With none, an agent
+    session here REFUSES git push / gh writes (the `agent_op_env` SessionStart hook)
+    instead of acting as the machine owner's `gh` login — so this failing is the
+    reason a push will fail, said before the push."""
+    name = "GitHub identity"
+    if identity is None:
+        return CheckResult(name, False, "skipped — identity unresolved")
+    if resolver is None:
+        from orchestrator.agent_github import resolve_identity as resolver
+    from orchestrator.agent_github import GitHubIdentityError
+    try:
+        gh = resolver(identity.slug)
+    except GitHubIdentityError as e:
+        return CheckResult(name, False, f"{e} — agent sessions here will refuse to push")
+    return CheckResult(name, True, f"acts as {gh.describe()}")
+
+
 def _default_provisioner(repo: Path) -> str:
     from orchestrator.provision import provision as _provision
     summary = _provision(Path(repo))
@@ -914,10 +934,11 @@ def run_agent_doctor(
     runner=subprocess.run,
     client_factory=AgentClient,
     registry_path: str | None = None,
+    github_resolver=None,
 ) -> tuple[list[CheckResult], bool]:
     """Run every per-agent check and return (results, overall_ok).
 
-    ``gog_dir``, ``runner`` and ``client_factory`` are injectable for testing;
+    ``gog_dir``, ``runner``, ``client_factory`` and ``github_resolver`` are injectable for testing;
     production callers pass nothing and the real dependencies are used.
     """
     repo = Path(repo)
@@ -935,6 +956,7 @@ def run_agent_doctor(
         check_auth_client(identity, runner=runner),
         check_auth_services(identity, runner=runner),
         check_registration(identity, client_factory=client_factory),
+        check_github_identity(identity, resolver=github_resolver),
         check_dependency_upgrades(runner=runner),
         check_gog_keychain_trust(identity, runner=runner),
     ]
