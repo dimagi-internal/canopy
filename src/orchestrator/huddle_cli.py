@@ -795,7 +795,35 @@ def agreement_context(p: dict, amender: str) -> str:
     return (f"The proposal (lead {p.get('lead')}), verbatim:\n```json\n"
             f"{json.dumps(shown, indent=2, ensure_ascii=False)}\n```\n\n"
             f"{amender} answered `amend` — in, with changes. Its change request, verbatim:\n"
-            f"{json.dumps(note, ensure_ascii=False)}")
+            f"{json.dumps(note, ensure_ascii=False)}"
+            f"{_others_line(p, amender)}")
+
+
+_ANSWER_WORDS = {"co-sign": "already said yes (co-signed)", "amend": "asked for changes too",
+                 "decline": "said no", "amend→accepted": "had changes, now agreed",
+                 "amend→rejected": "had changes, not agreed"}
+
+
+def _others_line(p: dict, amender: str) -> str:
+    """Who else the proposal involves and where they stand — so nobody in the thread invents a
+    side conversation for them (first live thread, 2026-10-08: the author told the asker "Ace's
+    side is a separate thread" when Ace had simply co-signed)."""
+    lead = p.get("lead")
+    others = [m for m in H.partners_of(p) if m not in (lead, amender)]
+    if not others:
+        return ""
+    answers = p.get("answers") or {}
+    threads = p.get("threads") or {}
+    parts = []
+    for m in others:
+        a = str(answers.get(m) or "")
+        where = _ANSWER_WORDS.get(a, "has not answered")
+        if m in threads:
+            where += f" and is settling it in its own thread ({threads[m].get('id')})"
+        else:
+            where += "; there is NO thread with them"
+        parts.append(f"{m} {where}")
+    return ("\n\nOthers on this proposal (not in this thread): " + "; ".join(parts) + ".")
 
 
 @huddle_group.command("agree")

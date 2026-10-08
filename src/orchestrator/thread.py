@@ -288,6 +288,10 @@ Positions: `agree` (you accept the latest proposal on the table — or yours, if
 `proposal`), `counter` (you want a change — say it, and put the WHOLE revised proposal in
 `proposal`), `decline` (you cannot agree — say why), `question` (you need an answer first — ask it).
 {left_line}
+ANY message may be the last: the thread ends the moment the end condition holds (for agreement,
+when both sides' latest positions are `agree`), so nobody may get another turn. Put EVERYTHING the
+others need in THIS message — never promise something "in my next message", and never assume a
+later message will reach you.
 Speak only to the purpose; quote nothing private outside its audience.
 
 ```thread
