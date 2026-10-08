@@ -1,18 +1,25 @@
 ---
 name: people-digest
-description: Refresh what the fleet knows about ONE person after they talked to this agent — record durable work-context facts and rewrite their digest. Started by canopy-web as a system turn, not by hand.
-# canopy-web enqueues this after a human's turn with this agent finishes (debounced per
-# agent+person). A model has no business choosing to run it mid-conversation.
+description: Refresh what the fleet knows about the people this agent talked to — record durable work-context facts and rewrite their digests, one person at a time (--batch walks canopy-web's candidate list). Started by canopy-web as a system turn, not by hand.
+# canopy-web enqueues `--batch` once a day per agent with someone new to digest (people
+# digest v2, canopy#820). A model has no business choosing to run it mid-conversation.
 disable-model-invocation: true
 ---
 
-# People digest — keep one person's record current
+# People digest — keep people's records current
 
-You were started as
-`/canopy:people-digest --person <id> --workspace <slug> --since <iso>`
-by canopy-web, because this person just had a conversation with this agent. This is the
-**forced write** of the fleet brain (canopy#804): earlier brains died because the model had to
-*choose* to remember. Here canopy chose; your job is to do it well.
+You were started by canopy-web in one of two modes:
+
+- **Batch** (the normal one, since canopy#820):
+  `/canopy:people-digest --batch --agent <slug> --workspace <slug>` — canopy's daily sweep
+  found people who had **real conversations** with this agent since it last digested them
+  (chat, email or Slack from the person; never dispatches, huddles, approvals or schedules).
+  Follow **Batch mode** below.
+- **Per person**: `/canopy:people-digest --person <id> --workspace <slug> --since <iso>` —
+  one person. Follow Steps 1–4, then Close.
+
+This is the **forced write** of the fleet brain (canopy#804): earlier brains died because the
+model had to *choose* to remember. Here canopy chose; your job is to do it well.
 
 Every fact you write is printed into the prompt of **every later turn any agent has with this
 person** (the `caller_context` hook). So a wrong fact is worse than a missing one, and an
@@ -36,8 +43,39 @@ agent's repo** — that is what makes it act as the agent's own login (`resolve_
 both what the conversations route requires and what stamps `asserted_by_agent` on each fact.
 
 **Exit code 3 from any `canopy people` command means this canopy-web has no `/api/people/`
-routes yet.** Stop: report `people-digest: server predates the people API — nothing to do`
-and end the turn. That is not a finding.
+routes yet** (or, for `candidates`, no digest-candidates route). Stop: report
+`people-digest: server predates the people API — nothing to do` and end the turn. That is not
+a finding.
+
+## Batch mode — `--batch --agent <slug> --workspace <slug>`
+
+```bash
+uv run --project "$CANOPY_ROOT" canopy people candidates --agent "$AGENT" --limit 25 --json-output
+```
+
+The answer is `{"agent", "workspace", "candidates": [{"person", "display_name", "email",
+"since", "conversations"}]}`. **An empty `candidates` list is a fine answer**: close with
+`people-digest: batch — nobody new` and end the turn.
+
+Otherwise take the candidates **one person at a time, at most 25 per run** (the rest stay on
+the list for tomorrow's sweep — don't page past 25). For each one, run Steps 1–4 below with
+`<id>` = `person`, `<slug>` = the workspace and `<iso>` = that person's `since`, and finish
+that person completely before you open the next. Do not carry one person's conversations,
+facts or digest into another's: re-read Step 1 for each.
+
+**Always finish a person with Step 4's `digest put`, passing every conversation turn you read
+with `--turn`** — even when you recorded no facts and the digest text barely changes. That
+put is what moves this agent's watermark for them; skip it and they come back on tomorrow's
+list. If one person fails (a 4xx, a read you cannot make), note it and move on to the next —
+never retry in a loop.
+
+Then close the batch with **one line per person** and nothing else:
+
+```
+people-digest: person <id> (<display_name>) — <n> facts recorded (<k> superseding), digest updated
+people-digest: person <id> (<display_name>) — no new facts; digest refreshed
+people-digest: person <id> (<display_name>) — skipped: <why>
+```
 
 ## Step 1 — Read what is already known
 
@@ -130,7 +168,7 @@ uv run --project "$CANOPY_ROOT" canopy people digest put --person <id> --workspa
   --text-file <file> --turn <conversation turn id> [--turn …]
 ```
 
-## Close
+## Close (per-person mode)
 
 One line, nothing else: `people-digest: person <id> — <n> facts recorded (<k> superseding),
 digest updated` (or `no new facts; digest unchanged` / `digest refreshed`). This is a system

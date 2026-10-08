@@ -1109,8 +1109,8 @@ queues work and approves outbound actions — independent of whether you publish
    declared|inferred` (the person id is in the `[canopy] Known about` block). A `correction`
    `--supersedes` the fact it corrects. Work context only — role, project, instance, preference,
    correction, terminology; never health, personal life, performance judgements or sentiment.
-   canopy-web also runs `/canopy:people-digest` after the conversation, but a correction recorded
-   now reaches the very next turn, from any agent. Nothing to record → say `people: nothing new`.
+   canopy-web also runs a daily `/canopy:people-digest --batch` over the day's conversations, but
+   a correction recorded now reaches the very next turn, from any agent. Nothing to record → say `people: nothing new`.
    Exit 3 means the server predates the people API: skip it.
 
 **Shipping anything — the ship loop lives in `agent-core/shipping.md`.** Branch -> PR -> wait ->

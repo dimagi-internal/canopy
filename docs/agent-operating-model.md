@@ -180,7 +180,8 @@ above rather than reversing them. **Behaviors still go in skills and hooks**: th
 not in memory. **What is stored is narrow and per-person**: append-only `PersonFact`s of six
 work-context kinds plus a regenerable digest, kept server-side in canopy-web on `Person`. Two
 things are forced so they don't depend on the model choosing to do them. The **write** is a
-`/canopy:people-digest` turn that canopy-web enqueues after each conversation. The **read** is
+`/canopy:people-digest --batch` turn that canopy-web enqueues once a day, on a cloud runner, for
+each agent that had real conversations since its last digest (v2, canopy#820). The **read** is
 the `caller_context` hook printing the envelope's `person` block into every prompt.
 Mechanics: `canopy people …`. Design: `docs/proposals/2026-10-07-caller-context-brain.md` in
 dimagi-internal/hal; record: canopy#804.

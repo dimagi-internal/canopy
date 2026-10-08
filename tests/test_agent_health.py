@@ -220,3 +220,72 @@ def test_run_agent_health_single_slug():
                            runner=_accounts_runner(
                                [{"email": "echo@dimagi-ai.com", "client": "echo"}], []))
     assert len(out["agents"]) == 1 and out["agents"][0]["agent"] == "echo"
+
+
+# ---------- the people brain (canopy#820) ----------
+
+def _brain_call(rows=None, *, coverage_error=None, workspace="connect"):
+    """Board + a coverage answer in canopy-web's live shape (`/api/people/coverage/`)."""
+    base = _board_call({"slug": "echo", "turn_count": 4, "workspace": workspace,
+                        "latest_turn_at": "2026-07-14T09:00:00Z"}, [], [])
+    seen = []
+
+    def call(method, path, body=None, **kw):
+        if path.startswith("/api/people/coverage/"):
+            seen.append(path)
+            if coverage_error is not None:
+                raise coverage_error
+            return {"workspace": workspace, "days": 7, "digest_enabled_globally": True,
+                    "healthy": all(r["healthy"] for r in rows if r.get("enabled")),
+                    "agents": rows}
+        return base(method, path, body, **kw)
+    call.seen = seen
+    return call
+
+
+def _brain_row(enabled, healthy, reasons=()):
+    return {"agent": "echo", "enabled": enabled, "digest_enabled": enabled,
+            "healthy": healthy, "reasons": list(reasons)}
+
+
+def _echo_runner():
+    return _accounts_runner([{"email": "echo@dimagi-ai.com", "client": "echo"}], [])
+
+
+def test_brain_unhealthy_only_when_enabled_and_unhealthy():
+    rep = health_report("echo", call=_brain_call([_brain_row(True, False, ["12 real conversations and no facts written"])]),
+                        now=NOW, runner=_echo_runner())
+    assert "brain_unhealthy" in rep["flags"] and rep["ready"] is False
+    assert rep["brain"]["reasons"] == ["12 real conversations and no facts written"]
+
+
+def test_a_switched_off_brain_is_silent():
+    rep = health_report("echo", call=_brain_call([_brain_row(False, False)]), now=NOW,
+                        runner=_echo_runner())
+    assert "brain_unhealthy" not in rep["flags"]
+    rep = health_report("echo", call=_brain_call([_brain_row(True, True)]), now=NOW,
+                        runner=_echo_runner())
+    assert "brain_unhealthy" not in rep["flags"]
+
+
+def test_an_older_server_without_coverage_is_silent():
+    from orchestrator.canopy_web import CanopyError
+
+    err = CanopyError("GET /api/people/coverage/?workspace=connect -> 404: Not Found")
+    rep = health_report("echo", call=_brain_call([], coverage_error=err), now=NOW,
+                        runner=_echo_runner())
+    assert "brain_unhealthy" not in rep["flags"] and rep["brain"] is None
+    # A v1 server: rows without `enabled` are not judged either.
+    rep = health_report("echo", call=_brain_call([{"agent": "echo", "healthy": False}]),
+                        now=NOW, runner=_echo_runner())
+    assert "brain_unhealthy" not in rep["flags"] and rep["brain"] is None
+
+
+def test_a_sweep_reads_coverage_once_per_workspace():
+    from orchestrator.agent_health import probe_brain
+
+    call = _brain_call([_brain_row(True, True)])
+    cache: dict = {}
+    probe_brain("echo", "connect", call=call, cache=cache)
+    probe_brain("eva", "connect", call=call, cache=cache)
+    assert len(call.seen) == 1

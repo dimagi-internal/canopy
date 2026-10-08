@@ -3,9 +3,10 @@
 `canopy agent doctor` answers "can this MACHINE run the agent" (identity, secrets,
 gog auth, canopy-web registration). THIS module answers the next question: "is the
 agent's WORKLOAD in a healthy state for its next turn" — stale needs-you items
-sitting on the board, stuck or recently-failed harness turns, turn recency, and
-inbox hygiene (unread junk that would pollute inbox-triage into burning a turn on
-non-work).
+sitting on the board, stuck or recently-failed harness turns, turn recency, inbox
+hygiene (unread junk that would pollute inbox-triage into burning a turn on
+non-work), and whether its people brain is working (`brain_unhealthy`: the agent's
+people digest is ON and canopy-web's coverage calls it unhealthy).
 
 Facts and deterministic signals only — junk VERDICTS are the caller's job (Ada's
 fleet-audit skill judges borderline mail; this module never does). Read-only by
@@ -190,9 +191,41 @@ def probe_board(slug: str, *, call: Callable = canopy_web.call, now: datetime,
         "latest_turn_at": detail.get("latest_turn_at"),
         "turn_age_days": turn_age,
         "turn_count": detail.get("turn_count"),
+        "workspace": detail.get("workspace"),
         "needs_you": items,
         "harness_turns": anomalies,
     }
+
+
+# ---------- the people brain ----------
+
+def probe_brain(slug: str, workspace: Optional[str], *, call: Callable = canopy_web.call,
+                cache: Optional[dict] = None) -> Optional[dict]:
+    """This agent's row of canopy-web's people-brain coverage
+    (`GET /api/people/coverage/?workspace=`), or None when there is nothing to judge.
+
+    Reports `{"enabled", "healthy", "reasons"}`; the caller raises `brain_unhealthy`
+    only for an agent whose digest is ENABLED and unhealthy. A switched-off digest is a
+    decision, not a fault (canopy#820) — silent. So is a server without the route (an
+    older canopy-web, 404) or an answer of another shape: a probe that could not look
+    has made no finding. `cache` holds one coverage read per workspace for a sweep."""
+    if not workspace:
+        return None
+    cache = {} if cache is None else cache
+    if workspace not in cache:
+        try:
+            cache[workspace] = call("GET", f"/api/people/coverage/?workspace={workspace}", None)
+        except RuntimeError:
+            cache[workspace] = None
+    doc = cache[workspace]
+    rows = doc.get("agents") if isinstance(doc, dict) else None
+    if not isinstance(rows, list):
+        return None
+    row = next((r for r in rows if isinstance(r, dict) and r.get("agent") == slug), None)
+    if row is None or "enabled" not in row:
+        return None   # not this agent's workspace view, or a server older than `enabled`
+    return {"enabled": bool(row.get("enabled")), "healthy": bool(row.get("healthy")),
+            "reasons": list(row.get("reasons") or [])}
 
 
 # ---------- assembly ----------
@@ -200,11 +233,13 @@ def probe_board(slug: str, *, call: Callable = canopy_web.call, now: datetime,
 def health_report(slug: str, *, call: Callable = canopy_web.call,
                   runner=subprocess.run, now: Optional[datetime] = None,
                   stale_needs_you_days: float = DEFAULT_STALE_NEEDS_YOU_DAYS,
-                  stale_inbox_days: float = DEFAULT_STALE_INBOX_DAYS) -> dict:
-    """One agent's readiness: board + inbox facts, derived flags, ready bool."""
+                  stale_inbox_days: float = DEFAULT_STALE_INBOX_DAYS,
+                  coverage_cache: Optional[dict] = None) -> dict:
+    """One agent's readiness: board + inbox + people-brain facts, derived flags, ready bool."""
     now = now or datetime.now(timezone.utc)
     board = probe_board(slug, call=call, now=now,
                         stale_needs_you_days=stale_needs_you_days)
+    brain = probe_brain(slug, board.get("workspace"), call=call, cache=coverage_cache)
 
     resolved = resolve_mailbox(slug, list_gog_accounts(runner=runner))
     if resolved is None:
@@ -232,6 +267,8 @@ def health_report(slug: str, *, call: Callable = canopy_web.call,
         flags.append("inbox_unreachable")
     elif any(u["stale"] for u in inbox["unread"]):
         flags.append("stale_inbox")
+    if brain is not None and brain["enabled"] and not brain["healthy"]:
+        flags.append("brain_unhealthy")
     # The inbox probe above runs in THIS shell's env; a turn the runner spawns may not
     # see the same keyring (macOS file backend, no TTY). Not ready if it can't.
     from orchestrator.agent_email import session_keyring_problems
@@ -241,7 +278,7 @@ def health_report(slug: str, *, call: Callable = canopy_web.call,
         flags.append("keyring_unreachable_in_turns")
 
     return {"agent": slug, "ready": not flags, "flags": flags,
-            "board": board, "inbox": inbox, "keyring": keyring}
+            "board": board, "inbox": inbox, "keyring": keyring, "brain": brain}
 
 
 def run_agent_health(slug: Optional[str] = None, *, call: Callable = canopy_web.call,
@@ -251,8 +288,10 @@ def run_agent_health(slug: Optional[str] = None, *, call: Callable = canopy_web.
     """Probe one agent (slug) or sweep the whole registered fleet (slug=None)."""
     now = now or datetime.now(timezone.utc)
     slugs = [slug] if slug else list_agent_slugs(call)
+    coverage_cache: dict = {}   # one coverage read per workspace, not per agent
     agents = [health_report(s, call=call, runner=runner, now=now,
                             stale_needs_you_days=stale_needs_you_days,
-                            stale_inbox_days=stale_inbox_days)
+                            stale_inbox_days=stale_inbox_days,
+                            coverage_cache=coverage_cache)
               for s in slugs]
     return {"ok": all(a["ready"] for a in agents), "agents": agents}

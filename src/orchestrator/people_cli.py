@@ -17,6 +17,7 @@ does what is easy to get silently wrong:
         [--instance-ref "…"] [--supersedes FACT_ID]
     canopy people retract <fact id> --person <id|email>
     canopy people conversations --person <id|email> --agent SLUG [--since ISO]
+    canopy people candidates --agent SLUG [--limit N] [--json-output]
     canopy people digest put --person <id|email> --workspace SLUG --text-file F [--turn ID …]
 
 **An older canopy-web has none of these routes.** A 404 is then probed against
@@ -260,6 +261,57 @@ def conversations_cmd(person: str, agent: str, since: Optional[str], as_json: bo
         click.echo(f"prompt: {r.get('prompt') or ''}")
         if r.get("result_note"):
             click.echo(f"result: {r['result_note']}")
+
+
+def fetch_candidates(agent: str, limit: int = 50, *, call=None) -> dict:
+    """The people digest's work list for AGENT (canopy#820), as canopy-web sends it:
+    ``{"agent", "workspace", "candidates": [{"person", "display_name", "email",
+    "since", "conversations"}]}``.
+
+    Strict about that envelope on purpose: canopy#816 was a reader that took a
+    wrapped list for a bare one and read every digest as "nothing new". Anything
+    else is an error, never an empty list."""
+    call = call or canopy_web.call
+    path = _qs("/api/people/digest-candidates/", agent=agent, limit=limit)
+    try:
+        doc = call("GET", path, None)
+    except RuntimeError as exc:
+        msg = str(exc)
+        if " -> 404" in msg:
+            if "Agent not found" in msg:
+                raise click.ClickException(f"no agent '{agent}' that you can see") from None
+            raise NoPeopleApi(
+                "this canopy-web has no /api/people/digest-candidates/ route (people digest "
+                "v2, canopy#820, is not deployed there yet) — nothing was read.") from None
+        raise click.ClickException(msg) from None
+    if not isinstance(doc, dict) or not isinstance(doc.get("candidates"), list):
+        raise click.ClickException(
+            f"unexpected response from {path}: expected an object with a 'candidates' "
+            f"list, got {type(doc).__name__}")
+    return doc
+
+
+@people_group.command("candidates")
+@click.option("--agent", "agent", required=True,
+              help="Agent slug — the caller must be its login or admin.")
+@click.option("--limit", type=click.IntRange(1, 200), default=50, show_default=True)
+@click.option("--json-output", "as_json", is_flag=True)
+def candidates_cmd(agent: str, limit: int, as_json: bool) -> None:
+    """Who AGENT has had real conversations with since it last digested them."""
+    doc = fetch_candidates(agent, limit)
+    if as_json:
+        click.echo(json.dumps(doc, indent=2, default=str))
+        return
+    rows = doc["candidates"]
+    if not rows:
+        click.echo(f"no candidates for {doc.get('agent') or agent} — nobody new to digest")
+        return
+    click.echo(f"{len(rows)} candidate(s) for {doc.get('agent') or agent} "
+               f"in workspace {doc.get('workspace')}:")
+    for r in rows:
+        click.echo(f"  person {r.get('person')} · {r.get('display_name') or '?'} "
+                   f"<{r.get('email') or '?'}> · {r.get('conversations')} conversation(s) "
+                   f"since {r.get('since')}")
 
 
 @people_group.group("digest")
