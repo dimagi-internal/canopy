@@ -29,8 +29,22 @@ def _private(**kw) -> list[str]:
 
 def test_link_share_prints_the_share_url_alone():
     assert upload.format_session_result(
-        API, visibility="link", slug="s", token="tok"
-    ) == [f"Share: {API}/share/tok"]
+        API, visibility="link", slug="s", token="tok", workspace="connect"
+    ) == [f"Share: {API}/w/connect/share/tok"]
+
+
+def test_link_share_normalizes_a_flat_or_localhost_server_share_url():
+    """canopy-web#1337: the flat /share/<token> route is removed, and an
+    in-process mint once came back on https://localhost."""
+    assert upload.format_session_result(
+        API, visibility="link", slug="s", token="tok", workspace="connect",
+        share_url="https://localhost/share/tok",
+    ) == [f"Share: {API}/w/connect/share/tok"]
+
+
+def test_link_share_without_a_workspace_prints_no_flat_link():
+    [line] = upload.format_session_result(API, visibility="link", slug="s", token="tok")
+    assert "/share/" not in line and "tok" in line
 
 
 def test_no_line_puts_a_bare_id_after_a_url():
@@ -85,8 +99,9 @@ def test_private_arc_says_it_has_no_page_at_all():
 
 def test_link_arc_prints_the_share_url():
     assert upload.format_arc_result(
-        API, visibility="link", slug="ARC1", token="tok"
-    ) == [f"Arc: {API}/share/tok"]
+        API, visibility="link", slug="ARC1", token="tok",
+        share_url=f"{API}/w/dimagi/share/tok", workspace="dimagi",
+    ) == [f"Arc: {API}/w/dimagi/share/tok"]
 
 
 @pytest.mark.parametrize("fn", ["format_session_result", "format_arc_result"])

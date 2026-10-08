@@ -337,7 +337,7 @@ prompts. Post via the gate's own tooling — the **narrative-agreement gate** us
 the user can glance at the arc in chat, then act on the page; pick up their decision by
 polling `review.await_resolution` (async) or from their reply (live). When you present
 that URL, give the user the **internal owner link** — the returned `url` with the
-`?t=<token>` query **stripped** (`<base_url>/review/<id>/`), which opens inside the
+`?t=<token>` query **stripped** (`<base_url>/w/<workspace>/review/<id>`), which opens inside the
 workbench with the left rail. The token-bearing `?t=` form is the standalone, no-rail
 external share link — only for recipients who are not signed in, never the user's
 primary review link.

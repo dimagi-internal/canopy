@@ -474,14 +474,15 @@ def main(argv: list[str] | None = None) -> int:
     except canopy_web.WorkspaceMismatchError as exc:
         fail(str(exc))
 
-    # The viewer lives at /walkthrough/<id> on the same host as the API base
-    # (/w/ was reclaimed as the workspace tenant prefix in mid-2026).
-    print(f"View: {api}/walkthrough/{wid}")
+    # The viewer lives at /w/<workspace>/walkthrough/<id> on the API host; the
+    # flat /walkthrough/<id> is gone (canopy-web#1337), so never print it.
+    print(f"View: {canopy_web.app_url(f'/walkthrough/{wid}', workspace, api)}")
     # Public walkthroughs are token-gated: the API returns the owner-only
-    # share_url (…/walkthrough/<id>?t=<token>) and never the raw token.
+    # share_url (…/walkthrough/<id>?t=<token>) and never the raw token. It may
+    # come back flat or on localhost, so it is normalized, not echoed.
     share_url = body.get("share_url")
     if visibility == "link" and share_url:
-        print(f"Share: {share_url}")
+        print(f"Share: {canopy_web.scope_link(share_url, workspace, api)}")
     return 0
 
 

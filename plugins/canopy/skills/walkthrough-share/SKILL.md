@@ -85,8 +85,8 @@ uv run --project "$CANOPY_ROOT" python "$UPLOAD" \
 uv run --project "$CANOPY_ROOT" python "$UPLOAD" \
   screenshots/walkthroughs/my-demo.mp4 \
   --public \
-  --narrative-url "https://canopy-web.../review/42/?t=abc" \
-  --companion-url "https://canopy-web.../walkthrough/<deck-uuid>?t=def" \
+  --narrative-url "https://canopy.dimagi.com/w/<workspace>/review/42/?t=abc" \
+  --companion-url "https://canopy.dimagi.com/w/<workspace>/walkthrough/<deck-uuid>?t=def" \
   --spec docs/walkthroughs/my-demo.yaml \
   --link "Connect microplanning::https://connect.dimagi.com/microplanning"
 ```
@@ -97,8 +97,8 @@ The script prints:
 inlining HTML assets from <dir>…
 uploading <N> MB to <api>…
 attaching <N> companion link(s)   # only when links are passed
-View: <api>/walkthrough/<uuid>
-Share: <api>/walkthrough/<uuid>?t=<token>   # only with --public (the server-returned share_url)
+View: <api>/w/<workspace>/walkthrough/<uuid>
+Share: <api>/w/<workspace>/walkthrough/<uuid>?t=<token>   # only with --public (the server-returned share_url, normalized)
 ```
 
 Pass the `Share:` line back to the user verbatim.

@@ -115,7 +115,7 @@ The uploader prints:
 using transcript: <path>                        # stderr — only on auto-discovery
 reduced to <N> conversation turn(s) …           # stderr — unless --full
 uploading <N> KB to <api>…                      # stderr
-Share: <api>/share/<token>                      # stdout — the link to hand out
+Share: <api>/w/<workspace>/share/<token>        # stdout — the link to hand out
 <N> messages · <N> secrets redacted (best-effort)   # stderr
 ```
 

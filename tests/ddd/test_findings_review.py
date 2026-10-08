@@ -680,6 +680,7 @@ def test_cli_post_stamps_run_state_and_emits_run_child(tmp_path, monkeypatch, ca
             "id": "rev-123",
             "url": "/review/rev-123/?t=sharetok",
             "share_token": "sharetok",
+            "workspace": "connect",
         }
 
     monkeypatch.setattr(rv, "post_review_request", fake_post)
@@ -692,8 +693,11 @@ def test_cli_post_stamps_run_state_and_emits_run_child(tmp_path, monkeypatch, ca
     assert out["posted"] is True
     assert out["id"] == "rev-123"
     assert out["clusters"] == 1
-    assert out["internal_url"].endswith("/review/rev-123/")
+    assert out["internal_url"].endswith("/w/connect/review/rev-123")
+    assert "/w/connect/review/rev-123/" in out["share_url"]
     assert "t=sharetok" in out["share_url"]
+    # The server's raw (flat, relative) url is replaced, never echoed.
+    assert out["url"] == out["share_url"]
 
     # The posted request is a run-child carrying inline-thumb evidence.
     req = posted["request"]

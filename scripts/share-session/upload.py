@@ -246,8 +246,23 @@ def _owner_clause(owner_email: str) -> str:
     )
 
 
+def _share_line(label: str, api: str, token: str, share_url: str | None,
+                workspace: str | None) -> str:
+    """``<label>: https://<host>/w/<workspace>/share/<token>`` — the only share
+    page canopy-web serves (canopy-web#1337 removes the flat ``/share/<token>``).
+    Built from the server's ``share_url`` when it sent one, else from the token
+    and the ``workspace`` it echoed. With neither, there is no correct link to
+    print, so the line says so instead of printing a flat one."""
+    try:
+        return f"{label}: {canopy_web.scope_link(share_url or f'/share/{token}', workspace, api)}"
+    except canopy_web.WorkspaceRequiredError:
+        return (f"{label} token (no link — canopy-web returned no workspace for it, "
+                f"and share pages live only under /w/<workspace>/): {token}")
+
+
 def format_session_result(
-    api: str, *, visibility: str, slug: str, token: str | None, owner_email: str = ""
+    api: str, *, visibility: str, slug: str, token: str | None, owner_email: str = "",
+    share_url: str | None = None, workspace: str | None = None,
 ) -> list[str]:
     """The stdout block for one uploaded session.
 
@@ -268,7 +283,7 @@ def format_session_result(
        usually not the person who asked for the share. Name the owner instead.
     """
     if visibility == "link" and token:
-        return [f"Share: {api}/share/{token}"]
+        return [_share_line("Share", api, token, share_url, workspace)]
     return [
         f"Uploaded PRIVATE — nothing is shared. {_owner_clause(owner_email)}",
         "Open it from that account's session list:",
@@ -279,7 +294,8 @@ def format_session_result(
 
 
 def format_arc_result(
-    api: str, *, visibility: str, slug: str, token: str | None, owner_email: str = ""
+    api: str, *, visibility: str, slug: str, token: str | None, owner_email: str = "",
+    share_url: str | None = None, workspace: str | None = None,
 ) -> list[str]:
     """The stdout block for a created arc.
 
@@ -293,7 +309,7 @@ def format_arc_result(
     "re-run this".
     """
     if visibility == "link" and token:
-        return [f"Arc: {api}/share/{token}"]
+        return [_share_line("Arc", api, token, share_url, workspace)]
     return [
         f"Arc created PRIVATE — nothing is shared. {_owner_clause(owner_email)}",
         "A private arc has NO page: /share/<token> is the only arc surface, and a",
@@ -347,6 +363,8 @@ def run_arc(args, api: str, pat: str) -> int:
         slug=body.get("slug", ""),
         token=body.get("share_token"),
         owner_email=body.get("owner_email", ""),
+        share_url=body.get("share_url"),
+        workspace=body.get("workspace"),
     ):
         print(line)
     print(f"{item_count} sessions stitched", file=sys.stderr)
@@ -466,6 +484,8 @@ def main(argv: list[str] | None = None) -> int:
         slug=slug,
         token=token,
         owner_email=body.get("owner_email", ""),
+        share_url=body.get("share_url"),
+        workspace=body.get("workspace"),
     ):
         print(line)
     print(

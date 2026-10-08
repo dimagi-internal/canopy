@@ -70,4 +70,6 @@ def test_write_urls_flat_without_workspace(monkeypatch):
     api = "https://labs.connect.dimagi.com/canopy"
     # Unset → flat routes (server resolves the org default, dimagi). No repo config here.
     assert rv._url(api, "/api/reviews/", workspace=None).endswith("/api/reviews/")
-    assert up.run_package_url("reef", "r1", base_url=api).endswith("/ddd/reef/r1")
+    # …but a link a human opens is never flat: no workspace → refuse (canopy-web#1337).
+    with pytest.raises(cw.WorkspaceRequiredError):
+        up.run_package_url("reef", "r1", base_url=api)

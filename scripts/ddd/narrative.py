@@ -1018,12 +1018,18 @@ def reconstruct_why_brief(request_json: dict) -> dict:
     return wb
 
 
-def _tokenized_review_url(result: dict) -> str | None:
-    """Token-bearing review URL from a post result ``{id, url, share_token}``.
+def _tokenized_review_url(result: dict, base_url: str | None = None) -> str | None:
+    """Token-bearing review URL from a post result ``{id, url, share_token, workspace}``.
 
     Prefers an already-tokenized ``url``; otherwise appends ``?t=<share_token>``
     so a non-owner viewer (e.g. the user reading on another device) can open it.
+    Always the scoped ``https://<host>/w/<workspace>/review/<id>…`` form: the flat
+    ``/review/<id>`` route is going away (canopy-web#1337), and a flat link from
+    this output already reached an external reviewer once. A result with no
+    workspace to scope a flat link under raises ``WorkspaceRequiredError``.
     """
+    from scripts.ddd.auth import scope_link
+
     url = (result.get("url") or "").strip()
     if not url:
         return None
@@ -1031,32 +1037,31 @@ def _tokenized_review_url(result: dict) -> str | None:
     if token and "t=" not in url:
         sep = "&" if "?" in url else "?"
         url = f"{url}{sep}t={token}"
-    return url
+    return scope_link(url, result.get("workspace"), base_url)
 
 
 def _internal_review_url(result: dict, base_url: str) -> str | None:
-    """Owner (internal) review URL from a post result ``{id, url, share_token}``.
+    """Owner (internal) review URL from a post result ``{id, url, share_token, workspace}``.
 
     The ``?t=<share_token>`` query forces canopy-web into standalone share mode
     with NO left rail — that's for recipients who are not signed in. The signed-in
     owner wants the page WITHOUT the token, which opens inside the workbench (left
-    rail intact). Prefer reconstructing ``<base>/review/<id>/`` from the review id;
-    fall back to stripping the query off the returned ``url``. Returns an absolute
-    URL so it is click-ready regardless of whether the server returned a relative
-    or absolute ``url``.
+    rail intact). Prefer building ``<base>/w/<ws>/review/<id>`` from the review id;
+    fall back to stripping the query off the returned ``url``. Returns an absolute,
+    workspace-scoped URL (canopy-web#1337) so it is click-ready regardless of
+    whether the server returned a relative, flat or scoped ``url``.
     """
-    base = (base_url or "").rstrip("/")
+    from scripts.ddd.auth import scope_link
+
     rid = (result.get("id") or "").strip()
     raw = (result.get("url") or "").strip()
     if rid:
-        path = f"/review/{rid}/"
+        path = f"/review/{rid}"
     elif raw:
         path = raw.split("?", 1)[0]
     else:
         return None
-    if path.startswith("http://") or path.startswith("https://"):
-        return path.split("?", 1)[0]
-    return f"{base}{path}"
+    return scope_link(path, result.get("workspace"), base_url).split("?", 1)[0]
 
 
 def _stamp_run_state(run_id: str, result: dict) -> None:
@@ -1084,10 +1089,23 @@ def _stamp_run_state(run_id: str, result: dict) -> None:
         return
     if review_id:
         state.narrative_review_id = review_id
-    url = _tokenized_review_url(result)
+    url = _scoped_or_warn(_tokenized_review_url, result)
     if url:
         state.narrative_review_url = url
     rs.save(state)
+
+
+def _scoped_or_warn(build, result: dict, *args) -> str | None:
+    """``build(result, *args)``, or None with a warning when the result names no
+    workspace to scope its link under — a stamp records no link rather than a
+    flat one (canopy-web#1337)."""
+    from scripts.ddd.auth import WorkspaceRequiredError
+
+    try:
+        return build(result, *args)
+    except WorkspaceRequiredError as exc:
+        print(f"WARNING: not recording a review link — {exc}", file=sys.stderr)
+        return None
 
 
 def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
@@ -1169,14 +1187,18 @@ def _cmd_post(spec_path_str: str, run_id: str, *, force: bool = False) -> None:
     # user the no-rail share link by mistake:
     #   internal_url — owner view, opens inside the workbench (LEFT RAIL). Default.
     #   share_url    — token-bearing standalone share link (NO rail), externals only.
+    # All three are /w/<workspace>/… links; the server's raw `url` is replaced,
+    # never echoed (a flat /review/<id> from this JSON reached an external
+    # reviewer — canopy-web#1337).
     base = rv._resolve_base_url(None)
     out = dict(result)
     internal = _internal_review_url(result, base)
     if internal:
         out["internal_url"] = internal
-    share = _tokenized_review_url(result)
+    share = _tokenized_review_url(result, base)
     if share:
-        out["share_url"] = share if share.startswith("http") else f"{base.rstrip('/')}{share}"
+        out["share_url"] = share
+    out["url"] = share or internal
     # Human-readable hint to stderr (the JSON on stdout stays machine-parseable).
     if internal:
         print(f"internal (owner, left rail): {internal}", file=sys.stderr)

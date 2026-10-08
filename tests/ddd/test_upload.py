@@ -305,7 +305,8 @@ class TestPublishArtifact:
             base_url="https://canopy.test",
             _post=mock,
         )
-        assert url == "https://canopy.test/walkthrough/abc?t=s1"
+        # A flat share_url from the server is normalized, never echoed (canopy-web#1337).
+        assert url == "https://canopy.test/w/connect/walkthrough/abc?t=s1"
 
     def test_falls_back_to_bare_viewer_url_without_share_url(self, monkeypatch):
         monkeypatch.setenv("CANOPY_WEB_PAT", "test-pat")
@@ -317,7 +318,7 @@ class TestPublishArtifact:
             base_url="https://canopy.test",
             _post=mock,
         )
-        assert url == "https://canopy.test/walkthrough/abc"
+        assert url == "https://canopy.test/w/connect/walkthrough/abc"
 
     def test_posts_to_walkthroughs_endpoint(self, monkeypatch):
         monkeypatch.setenv("CANOPY_WEB_PAT", "test-pat")
@@ -478,6 +479,8 @@ class TestUploadRun:
         # upload resolves through runstate.run_dir_for, which looks the resolver
         # up at call time — it no longer joins "runs"/run_id for itself.
         monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
+        # Package links are /w/<workspace>/ddd/… — a real upload names one.
+        monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")
         assert pm.run_dir_for is rs.run_dir_for
 
         run_id = "smart-routing-2026-01-01-001"
@@ -580,8 +583,8 @@ class TestUploadRun:
             _gate=gate,
         )
 
-        assert url == "https://canopy.test/ddd/smart-routing/smart-routing-2026-01-01-001"
-        assert "/w/" not in url, "must return the package URL, not a loose artifact link"
+        assert url == "https://canopy.test/w/connect/ddd/smart-routing/smart-routing-2026-01-01-001"
+        assert "/walkthrough/" not in url, "must return the package URL, not a loose artifact link"
         # Both video and html must have been uploaded
         kinds = [c["kind"] for c in upload_calls]
         assert "video" in kinds
@@ -618,7 +621,7 @@ class TestUploadRun:
             _gate=gate,
         )
 
-        assert url == "https://canopy.test/ddd/smart-routing/smart-routing-2026-01-01-001"
+        assert url == "https://canopy.test/w/connect/ddd/smart-routing/smart-routing-2026-01-01-001"
         assert upload_calls == [], "must not re-upload an already-uploaded run"
         assert gate.calls == [], "must not re-run the gate for an uploaded run"
 
@@ -658,7 +661,7 @@ class TestUploadRun:
             release=False,
         )
 
-        assert url == "https://canopy.test/ddd/smart-routing/smart-routing-2026-01-01-001"
+        assert url == "https://canopy.test/w/connect/ddd/smart-routing/smart-routing-2026-01-01-001"
         assert gate.calls == [], "stuck upload must NOT run the external_release gate"
         kinds = [c["kind"] for c in upload_calls]
         assert "video" in kinds and "html" in kinds, "package (video + docs) must still upload"

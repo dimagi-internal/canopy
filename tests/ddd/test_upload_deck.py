@@ -100,6 +100,8 @@ def tmp_run(tmp_path, monkeypatch):
 
     # Patching runstate is enough — upload goes through runstate.run_dir_for.
     monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
+    # Package links are /w/<workspace>/ddd/… — a real upload names one.
+    monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")
     assert pm.run_dir_for is rs.run_dir_for
     monkeypatch.setenv("CANOPY_WEB_PAT", "test-pat")
 

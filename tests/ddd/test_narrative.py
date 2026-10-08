@@ -1478,21 +1478,40 @@ class TestNarrativeLock:
 # ---------------------------------------------------------------------------
 
 class TestStampRunState:
+    # Every link is /w/<workspace>/review/<id> — the flat /review/<id> route is
+    # removed (canopy-web#1337); a flat one from `narrative post` reached an
+    # external reviewer once.
     def test_tokenized_url_appends_share_token(self):
         from scripts.ddd.narrative import _tokenized_review_url
 
         out = _tokenized_review_url(
-            {"url": "https://c/review/abc/", "share_token": "tok9"}
+            {"url": "https://c/review/abc/", "share_token": "tok9", "workspace": "connect"}
         )
-        assert out == "https://c/review/abc/?t=tok9"
+        assert out == "https://c/w/connect/review/abc/?t=tok9"
 
     def test_tokenized_url_keeps_already_tokenized(self):
         from scripts.ddd.narrative import _tokenized_review_url
 
         out = _tokenized_review_url(
-            {"url": "https://c/review/abc/?t=existing", "share_token": "tok9"}
+            {"url": "https://c/review/abc/?t=existing", "share_token": "tok9",
+             "workspace": "connect"}
         )
-        assert out == "https://c/review/abc/?t=existing"
+        assert out == "https://c/w/connect/review/abc/?t=existing"
+
+    def test_tokenized_url_keeps_a_server_scoped_url(self):
+        from scripts.ddd.narrative import _tokenized_review_url
+
+        out = _tokenized_review_url(
+            {"url": "https://c/w/connect/review/abc?t=x", "share_token": "x"}
+        )
+        assert out == "https://c/w/connect/review/abc?t=x"
+
+    def test_tokenized_url_refuses_to_print_flat_without_workspace(self):
+        from orchestrator.canopy_web import WorkspaceRequiredError
+        from scripts.ddd.narrative import _tokenized_review_url
+
+        with pytest.raises(WorkspaceRequiredError):
+            _tokenized_review_url({"url": "/review/abc/", "share_token": "t"}, "https://c")
 
     def test_internal_url_strips_token_and_is_absolute(self):
         from scripts.ddd.narrative import _internal_review_url
@@ -1500,27 +1519,30 @@ class TestStampRunState:
         # server returns a RELATIVE, token-bearing url — internal must drop the
         # token and absolutize against base, so it opens with the left rail.
         out = _internal_review_url(
-            {"id": "abc-123", "url": "/review/abc-123/?t=TOK", "share_token": "TOK"},
+            {"id": "abc-123", "url": "/review/abc-123/?t=TOK", "share_token": "TOK",
+             "workspace": "connect"},
             "https://c",
         )
-        assert out == "https://c/review/abc-123/"
+        assert out == "https://c/w/connect/review/abc-123"
         assert "?t=" not in out
 
     def test_internal_url_falls_back_to_url_path_without_id(self):
         from scripts.ddd.narrative import _internal_review_url
 
         out = _internal_review_url(
-            {"id": "", "url": "https://c/review/zzz/?t=Q", "share_token": "Q"},
+            {"id": "", "url": "https://c/review/zzz/?t=Q", "share_token": "Q",
+             "workspace": "connect"},
             "https://c",
         )
-        assert out == "https://c/review/zzz/"
+        assert out == "https://c/w/connect/review/zzz/"
 
     def test_internal_url_differs_from_share_url(self):
         from scripts.ddd.narrative import _internal_review_url, _tokenized_review_url
 
-        result = {"id": "d-9", "url": "/review/d-9/?t=Z", "share_token": "Z"}
+        result = {"id": "d-9", "url": "/review/d-9/?t=Z", "share_token": "Z",
+                  "workspace": "connect"}
         internal = _internal_review_url(result, "https://c")
-        share = _tokenized_review_url(result)
+        share = _tokenized_review_url(result, "https://c")
         assert "?t=" not in internal
         assert "?t=" in share
 
@@ -1541,12 +1563,29 @@ class TestStampRunState:
 
         _stamp_run_state(
             run_id,
-            {"id": "rev-uuid-1", "url": "https://c/review/rev-uuid-1/", "share_token": "t0"},
+            {"id": "rev-uuid-1", "url": "https://c/review/rev-uuid-1/", "share_token": "t0",
+             "workspace": "connect"},
         )
 
         reloaded = rs.load(run_id)
         assert reloaded.narrative_review_id == "rev-uuid-1"
-        assert reloaded.narrative_review_url == "https://c/review/rev-uuid-1/?t=t0"
+        assert reloaded.narrative_review_url == "https://c/w/connect/review/rev-uuid-1/?t=t0"
+
+    def test_stamp_without_workspace_records_no_flat_link(self, tmp_path, monkeypatch, capsys):
+        import scripts.ddd.runstate as rs
+        from scripts.ddd.narrative import _stamp_run_state
+        from scripts.ddd.schemas.models import RunState
+
+        monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
+        run_id = "verified-monitoring-2026-06-04-001"
+        rs.save(RunState(run_id=run_id, narrative_slug="verified-monitoring", phase="converged"))
+
+        _stamp_run_state(run_id, {"id": "rev-uuid-1", "url": "/review/rev-uuid-1/"})
+
+        reloaded = rs.load(run_id)
+        assert reloaded.narrative_review_id == "rev-uuid-1"
+        assert not reloaded.narrative_review_url
+        assert "WARNING" in capsys.readouterr().err
 
     def test_stamp_missing_run_state_warns_not_raises(self, tmp_path, monkeypatch, capsys):
         import scripts.ddd.runstate as rs
@@ -1582,7 +1621,8 @@ class _FakeReview:
         self._version += 1
         self.posts.append(request)
         rid = f"rev-{self._version}"
-        return {"id": rid, "url": f"https://c/review/{rid}/", "share_token": "t"}
+        return {"id": rid, "url": f"https://c/review/{rid}/", "share_token": "t",
+                "workspace": "connect"}
 
     def get_narrative(self, slug, **kwargs):
         v = self._web_version_override if self._web_version_override is not None else self._version
@@ -1658,6 +1698,7 @@ class TestPostNarrativeVersion:
             "id": "rev-1",
             "url": "https://c/review/rev-1/",
             "share_token": "t",
+            "workspace": "connect",
         }
         assert len(fake.posts) == 1
         # …and the run really was stamped on the way through.
