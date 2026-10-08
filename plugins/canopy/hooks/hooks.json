@@ -17,7 +17,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/agent_op_env.py\"",
-            "timeout": 75
+            "timeout": 30
           }
         ]
       }

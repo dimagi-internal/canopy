@@ -199,29 +199,6 @@ def test_registration_ok_counts_pending(tmp_path):
     assert "2 pending" in result.detail
 
 
-def _gh_ok(slug):
-    from orchestrator.agent_github import GitHubIdentity
-    return GitHubIdentity(slug=slug, token="ghp_x", login=f"{slug}-bot", name=slug, user_id=1)
-
-
-def test_github_identity_check_names_who_the_agent_acts_as(tmp_path):
-    from orchestrator.agent_doctor import check_github_identity
-    _, ident = check_identity(_agent_repo(tmp_path))
-    r = check_github_identity(ident, resolver=_gh_ok)
-    assert r.ok and f"@{ident.slug}-bot" in r.detail and "ghp_x" not in r.detail
-
-
-def test_github_identity_check_fails_when_none_and_says_pushes_are_refused(tmp_path):
-    from orchestrator.agent_doctor import check_github_identity
-    from orchestrator.agent_github import GitHubIdentityError
-
-    def none(slug):
-        raise GitHubIdentityError(f"canopy-web holds no GitHub credential for {slug}")
-    _, ident = check_identity(_agent_repo(tmp_path))
-    r = check_github_identity(ident, resolver=none)
-    assert not r.ok and "refuse to push" in r.detail
-
-
 # --------------------------------------------------------------------------------------
 # composition + CLI
 # --------------------------------------------------------------------------------------
@@ -231,16 +208,16 @@ def test_run_agent_doctor_all_green(tmp_path):
     results, ok = run_agent_doctor(
         repo, gog_dir=_gog_home(tmp_path), runner=_ok_runner,
         client_factory=_client_factory(),
-        registry_path=str(_plugin_registry(tmp_path)), github_resolver=_gh_ok)
+        registry_path=str(_plugin_registry(tmp_path)))
     assert ok
-    assert [r.ok for r in results] == [True] * 15
+    assert [r.ok for r in results] == [True] * 14
 
 
 def test_run_agent_doctor_identity_failure_degrades_dependents(tmp_path):
     repo = _agent_repo(tmp_path, email="")
     results, ok = run_agent_doctor(
         repo, gog_dir=_gog_home(tmp_path), runner=_ok_runner,
-        client_factory=_client_factory(), github_resolver=_gh_ok)
+        client_factory=_client_factory())
     assert not ok
     by_name = {r.name: r for r in results}
     assert not by_name["Identity"].ok
@@ -258,7 +235,6 @@ def test_cli_agent_doctor_json_and_exit_code(tmp_path, monkeypatch):
         lambda identity, gog_dir=None, runner=None: (True, ["OK: gog Gmail ready"]))
     monkeypatch.setattr(
         "orchestrator.agent_doctor.AgentClient", _client_factory())
-    monkeypatch.setattr("orchestrator.agent_github.resolve_identity", _gh_ok)
     result = CliRunner().invoke(main, ["agent", "doctor", "--repo", str(repo), "--json-output"])
     assert result.exit_code == 1  # secrets manifest missing
     payload = json.loads(result.output)
@@ -267,8 +243,7 @@ def test_cli_agent_doctor_json_and_exit_code(tmp_path, monkeypatch):
     assert names == ["Identity", "Plugin install", "Required plugins", "Gating rails",
                      "Hook wiring", "Secrets manifest", "Secrets materialized",
                      "Rails enforced", "Email auth (gog)", "Auth client", "Auth services",
-                     "canopy-web board", "GitHub identity", "Dependency upgrades",
-                     "Gog keychain trust"]
+                     "canopy-web board", "Dependency upgrades", "Gog keychain trust"]
 
 
 def test_cli_agent_doctor_all_sweeps_fleet_and_gates_on_any_failure(tmp_path, monkeypatch):
@@ -958,7 +933,7 @@ def test_agent_doctor_runs_the_auth_client_check(tmp_path):
     from orchestrator.agent_doctor import run_agent_doctor
     repo = _agent_repo(tmp_path)
     results, _ = run_agent_doctor(repo, runner=_accounts_runner([]),
-                                  client_factory=_FakeClient, github_resolver=_gh_ok)
+                                  client_factory=_FakeClient)
     assert any(r.name == "Auth client" for r in results)
 
 
