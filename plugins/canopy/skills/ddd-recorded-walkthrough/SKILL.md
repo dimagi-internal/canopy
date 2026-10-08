@@ -168,11 +168,16 @@ it or split the cut in two: a cut over 40 s is not shippable.
   screen (`vo_visual_coherence`), which is this style's core rule.
 - `/canopy:ddd-arc-eval` and `/canopy:ddd-concept-eval`: same note. Arc is
   judged **per cut**, with no cross-cut escalation expected.
-- Upload: `snippets upload-video <slug> <cut output.mp4> --title "<cut title>"`
-  per cut attaches each cut to the narrative version. A run package has one
-  hero slot, so publish the package with the first cut as `--video` and list
-  the others in the package description. Multi-cut packages are not in scope
-  for this change.
+- Upload, once per cut: `snippets upload-video <slug> <cut output.mp4> --cut
+  <cut id> --spec <recipe>`. The narrative version keeps one video **per cut
+  id** (re-uploading a cut replaces only that cut), and the review link's
+  **Cuts** tab shows each video beside that cut's narration, for guests too
+  (canopy-web#1288). `--spec` resolves the cut's title and scenes from the
+  recipe; a wrong id fails before anything is uploaded. The narrative's hero
+  is the first cut unless you pass `--hero` on the one you want. Without
+  `--cut` an upload is the version's single video, as for an explainer — so
+  never upload cuts without it, or each one replaces the last. A run package
+  still has one hero slot: publish it with the first cut as `--video`.
 
 ## Common mistakes
 
