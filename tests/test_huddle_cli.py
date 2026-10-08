@@ -899,6 +899,16 @@ def test_prompt_round1_with_a_brief_opens_with_it_and_asks_for_levers(tmp_path, 
     assert "today is 2026-10-06" in text and "{{" not in text
 
 
+def test_prompt_round1_builds_on_each_goals_known_state(tmp_path, web):
+    # Jonathan, 2026-10-08: Eva's brief carries each goal's known state; agents build on it.
+    web.detail[H] = detail([])
+    p = write_plan(tmp_path, priorities_brief=BRIEF)
+    out = tmp_path / "eva-r1.md"
+    assert run("prompt", "--plan", str(p), "--member", "eva", "--round", "1",
+               "--out", str(out)).exit_code == 0
+    assert "starting from its `state` in the brief" in out.read_text()
+
+
 def test_prompt_round1_without_a_brief_is_the_old_report(tmp_path, web):
     p = write_plan(tmp_path)
     out = tmp_path / "eva-r1.md"
