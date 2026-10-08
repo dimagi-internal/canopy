@@ -179,41 +179,28 @@ class TestBuildDocsPage:
         assert "<head>" in result
         assert "<body>" in result
 
-    def test_canopy_viewer_url_embeds_content_stream_as_video(self):
-        """A canopy-web /w/<id> viewer URL must embed the public /content byte
-        stream as <video> — NOT an <iframe> to the viewer page, which is
-        auth-gated (redirects to login) and X-Frame-Options: DENY, so it renders
-        blank. The share token is preserved on the rewritten URL."""
-        spec = _make_spec()
-        why = _make_why_brief()
-        result = build_docs_page(spec, why, "https://canopy.example.com/w/abc123?t=tok")
-        assert "<video" in result
-        assert "https://canopy.example.com/w/abc123/content?t=tok" in result
-        # The bare viewer page must not be framed.
-        assert '<iframe src="https://canopy.example.com/w/abc123?t=tok"' not in result
-
     def test_canopy_walkthrough_url_embeds_content_stream_as_video(self):
-        """The current /walkthrough/<id> viewer URL (what token-gated uploads
-        return) rewrites to its /content stream with the token preserved."""
+        """A canopy-web /w/<ws>/walkthrough/<id> viewer URL (what uploads return)
+        must embed its /content byte stream as <video> — NOT an <iframe> to the
+        viewer page, which is auth-gated and X-Frame-Options: DENY, so it renders
+        blank. The stream stays workspace-scoped (canopy-web#1338: the flat
+        /walkthrough/<id>/content is a 404) and the share token is kept."""
         spec = _make_spec()
         why = _make_why_brief()
-        result = build_docs_page(
-            spec, why, "https://canopy.example.com/walkthrough/abc123?t=tok"
-        )
+        page = "https://canopy.example.com/w/connect/walkthrough/abc123?t=tok"
+        result = build_docs_page(spec, why, page)
         assert "<video" in result
-        assert "https://canopy.example.com/walkthrough/abc123/content?t=tok" in result
-        assert (
-            '<iframe src="https://canopy.example.com/walkthrough/abc123?t=tok"'
-            not in result
-        )
+        assert "https://canopy.example.com/w/connect/walkthrough/abc123/content?t=tok" in result
+        assert f'<iframe src="{page}"' not in result
 
     def test_canopy_content_url_is_not_double_rewritten(self):
         """An already-/content URL embeds as <video> unchanged (idempotent)."""
         spec = _make_spec()
         why = _make_why_brief()
-        result = build_docs_page(spec, why, "https://canopy.example.com/w/abc123/content?t=tok")
+        url = "https://canopy.example.com/w/connect/walkthrough/abc123/content?t=tok"
+        result = build_docs_page(spec, why, url)
         assert "<video" in result
-        assert "https://canopy.example.com/w/abc123/content?t=tok" in result
+        assert url in result
         assert "/content/content" not in result
 
     def test_external_embed_without_w_path_uses_iframe(self):

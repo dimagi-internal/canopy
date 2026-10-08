@@ -454,24 +454,23 @@ def build_evidence(
 
 
 # ``base`` captures the host AND any deployment sub-path (e.g. ``/canopy`` on
-# labs.connect.dimagi.com/canopy) so the derived ``/w/<id>/content`` URL keeps
-# the prefix — otherwise the clip stream 404s and the review drops clip_url.
-_W_PAGE_RE = re.compile(
-    r"^(?P<base>https?://[^/]+(?:/[^/]+)*?)/w/(?P<wid>[0-9a-fA-F-]{36})"
-)
-# The scoped page canopy-web serves now (canopy-web#1337): /w/<ws>/walkthrough/<id>.
+# labs.connect.dimagi.com/canopy) so the derived ``…/content`` URL keeps the
+# prefix — otherwise the clip stream 404s and the review drops clip_url. Only
+# the scoped page ``/w/<ws>/walkthrough/<id>`` has a stream (canopy-web#1338):
+# a flat or pre-tenancy ``/w/<id>`` page has no address, so no clip.
 _SCOPED_PAGE_RE = re.compile(
-    r"^(?P<base>https?://[^/]+(?:/[^/]+)*?)(?:/w/[^/]+)?/walkthrough/(?P<wid>[0-9a-fA-F-]{36})"
+    r"^(?P<base>https?://[^/]+(?:/[^/]+)*?)/w/(?P<ws>[^/?#]+)/walkthrough/(?P<wid>[0-9a-fA-F-]{36})"
 )
 
 
 def _clip_content_url(clip_url: str | None) -> str | None:
-    """Derive the streamable ``/w/<id>/content`` URL from a ``/w/<id>`` page URL.
+    """Derive the streamable ``/w/<ws>/walkthrough/<id>/content`` URL from the
+    ``/w/<ws>/walkthrough/<id>`` page URL.
 
-    The review surface embeds ``request_json.video.url`` in a player; the
-    ``/w/<id>`` page URL is an HTML app route, not media — the bytes live at
-    ``/w/<id>/content``.  Preserves any existing query (e.g. a share token).
-    Returns ``None`` when *clip_url* isn't a recognisable ``/w/`` URL.
+    The review surface embeds ``request_json.video.url`` in a player; the page
+    URL is an HTML app route, not media — the bytes live at ``…/content``.
+    Preserves any existing query (e.g. a share token). Returns ``None`` when
+    *clip_url* isn't a scoped canopy walkthrough page.
     """
     if not clip_url:
         return None
@@ -479,12 +478,9 @@ def _clip_content_url(clip_url: str | None) -> str | None:
     if "?" in clip_url:
         query = "?" + clip_url.split("?", 1)[1].split("#", 1)[0]
     m = _SCOPED_PAGE_RE.match(clip_url)
-    if m:
-        return f"{m.group('base')}/walkthrough/{m.group('wid')}/content{query}"
-    m = _W_PAGE_RE.match(clip_url)
     if not m:
         return None
-    return f"{m.group('base')}/w/{m.group('wid')}/content{query}"
+    return f"{m.group('base')}/w/{m.group('ws')}/walkthrough/{m.group('wid')}/content{query}"
 
 
 # ---------------------------------------------------------------------------

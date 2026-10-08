@@ -54,6 +54,10 @@ def workspace(monkeypatch):
     "https://canopy.dimagi.com/ddd/reef/reef-2026-01-01-001",
     "https://labs.connect.dimagi.com/canopy/review/abc/",
     "https://localhost/walkthrough/abc?t=s",
+    # the byte stream is scoped too since canopy-web#1338
+    "https://canopy.dimagi.com/walkthrough/abc/content?t=x",
+    # pre-tenancy walkthrough form
+    "https://canopy.dimagi.com/w/22222222-2222-2222-2222-222222222222/content",
 ])
 def test_detector_flags_flat_artifact_links(url):
     assert FLAT_ARTIFACT_URL_RE.search(url)
@@ -62,8 +66,7 @@ def test_detector_flags_flat_artifact_links(url):
 @pytest.mark.parametrize("url", [
     "https://canopy.dimagi.com/w/connect/review/abc?t=x",
     "https://canopy.dimagi.com/w/connect/ddd/reef",
-    # the byte stream a page embeds — served only at the flat path, not a page
-    "https://canopy.dimagi.com/walkthrough/abc/content?t=x",
+    "https://canopy.dimagi.com/w/connect/walkthrough/abc/content?t=x",
     # third-party URL with /review/ deeper in its path
     "https://labs.connect.dimagi.com/microplans/program/133/plan/3536/review/",
 ])
@@ -222,7 +225,8 @@ def test_share_session_output():
 # --------------------------------------------------------------------------
 
 # `{<base>}/review/…` in an f-string — a link built outside app_url/scope_link.
-_FLAT_BUILD_RE = re.compile(r"\{[^{}]*\}/(?:walkthrough|review|share|ddd)/")
+# A `{…}` right after `/w/` is the workspace segment, i.e. already scoped.
+_FLAT_BUILD_RE = re.compile(r"(?<!/w/)\{[^{}]*\}/(?:walkthrough|review|share|ddd)/")
 
 _SCANNED = ("scripts", "src", "plugins/canopy/scripts", "plugins/canopy/hooks")
 
@@ -232,10 +236,46 @@ def test_no_source_builds_a_flat_artifact_link():
     for root in _SCANNED:
         for py in (REPO / root).rglob("*.py"):
             for n, line in enumerate(py.read_text(errors="ignore").splitlines(), 1):
-                # the /content byte stream is served only at the flat path
-                if _FLAT_BUILD_RE.search(line) and "/content" not in line:
+                if _FLAT_BUILD_RE.search(line):
                     offenders.append(f"{py.relative_to(REPO)}:{n}: {line.strip()}")
     assert not offenders, (
         "build canopy-web links with orchestrator.canopy_web.app_url / scope_link "
         "(always /w/<workspace>/…, canopy-web#1337):\n" + "\n".join(offenders)
     )
+
+
+# --------------------------------------------------------------------------
+# Send-path rail: `canopy email send` refuses a flat canopy link
+# --------------------------------------------------------------------------
+
+def _ident():
+    from orchestrator.agent_email import EmailIdentity
+    return EmailIdentity(slug="ace", account="ace@dimagi-ai.com", client="canopy")
+
+
+def test_send_refuses_a_flat_canopy_link():
+    """The 2026-10-08 email, as it went out."""
+    from orchestrator.agent_email import AgentEmailError, send
+
+    body = ("To watch all the cuts in one place: https://canopy.dimagi.com/review/"
+            "4bca7921-9a57-49f5-ad9b-6cd518c9c138/?t=tok (open the Cuts tab).")
+    with pytest.raises(AgentEmailError, match="flat canopy-web link"):
+        send(_ident(), to="x@dimagi.com", subject="s", body_text=body, dry_run=True)
+
+
+def test_send_allows_scoped_and_third_party_links():
+    from orchestrator.agent_email import send
+
+    body = ("Cuts: https://canopy.dimagi.com/w/connect/review/4bca7921?t=tok\n\n"
+            "Someone else's share page: https://example.org/share/abc")
+    assert send(_ident(), to="x@dimagi.com", subject="s", body_text=body, dry_run=True)["dry_run"]
+
+
+def test_send_judges_only_the_agents_own_words():
+    """A forward quotes someone else's message; only the note is the agent's."""
+    from orchestrator.agent_email import send
+
+    quoted = "Original: https://canopy.dimagi.com/walkthrough/abc?t=s"
+    out = send(_ident(), to="x@dimagi.com", subject="Fwd", body_text="FYI\n\n" + quoted,
+               review_text="FYI", dry_run=True)
+    assert out["dry_run"]

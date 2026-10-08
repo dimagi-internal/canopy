@@ -805,6 +805,18 @@ def send(
         raise AgentEmailError(
             "cannot attach — file(s) not found: " + ", ".join(missing)
         )
+    # A flat canopy-web artifact link is a 404 (canopy-web#1337/#1338) — one copied out
+    # of `narrative post` reached an external reviewer on 2026-10-08. Judged on the
+    # agent's own words (a forwarded original is not theirs) and before the dry run,
+    # which is where the draft is iterated.
+    from orchestrator.canopy_web import flat_canopy_links
+    flat = flat_canopy_links(body_text if review_text is None else review_text)
+    if flat:
+        raise AgentEmailError(
+            "refusing to send a flat canopy-web link — it 404s; links live under "
+            "/w/<workspace>/ (canopy-web#1337). Use the scoped URL the CLI printed "
+            "(or `canopy_web.scope_link`): " + ", ".join(flat)
+        )
     if dry_run:
         # cc must appear here even when empty — the dry-run is HOW an agent verifies
         # recipients before approval, and omitting it hides cc'd people (same failure

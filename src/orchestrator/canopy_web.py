@@ -86,15 +86,37 @@ def scoped_app_path(path: str, workspace: Optional[str] = None) -> str:
 # (ace, 2026-10-08).
 ARTIFACT_ROUTES = ("walkthrough", "review", "share", "ddd")
 
-#: An absolute link whose path STARTS with a flat artifact route. The ratchet in
-#: tests/test_scoped_artifact_urls.py runs every link-printing path through this.
-#: ``…/walkthrough/<id>/content`` is exempt: it is the byte stream a page
-#: embeds, served by the backend only at that flat path — not a page a person
-#: is sent to.
+#: An absolute link whose path STARTS with a flat artifact route — the page, its
+#: ``/content`` byte stream (scoped too since canopy-web#1338) — or with the
+#: pre-tenancy ``/w/<uuid>`` walkthrough form. canopy-web answers every one with
+#: a 404. The ratchet in tests/test_scoped_artifact_urls.py runs every
+#: link-printing path through this, and ``canopy email send`` refuses a body
+#: that carries one (:func:`flat_canopy_links`).
 FLAT_ARTIFACT_URL_RE = re.compile(
-    r"https?://[^/\s\"'<>]+(?:/canopy)?/(?:%s)/[^/\s?#\"'<>]+(?![^/\s?#\"'<>]|/content)"
-    % "|".join(ARTIFACT_ROUTES)
+    r"https?://(?P<host>[^/\s\"'<>]+)(?:/canopy)?"
+    r"/(?:(?:%s)/|w/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\w-]))"
+    r"[^\s\"'<>)\]]*" % "|".join(ARTIFACT_ROUTES)
 )
+
+#: Hosts that serve canopy-web, for checks on free text (an email body) where a
+#: third party's ``https://other.site/share/…`` is not ours to judge.
+CANOPY_HOSTS = ("canopy.dimagi.com", "labs.connect.dimagi.com")
+
+
+def flat_canopy_links(text: str, base_url: Optional[str] = None) -> list:
+    """Every flat canopy-web artifact link in ``text`` — on a canopy host
+    (:data:`CANOPY_HOSTS` plus the resolved base URL's), so a stranger's
+    ``/share/`` link in a quoted thread is not flagged."""
+    from urllib.parse import urlsplit
+
+    hosts = set(CANOPY_HOSTS)
+    hosts.add((urlsplit(resolve_base_url(base_url)).hostname or "").lower())
+    out = []
+    for m in FLAT_ARTIFACT_URL_RE.finditer(text or ""):
+        host = m.group("host").split(":", 1)[0].lower()
+        if host in hosts:
+            out.append(m.group(0))
+    return out
 
 _ARTIFACT_PATH_RE = re.compile(
     # prefix: the deployment mount (/canopy on labs, CANOPY_PUBLIC_BASE_URL) —

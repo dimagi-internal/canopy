@@ -577,18 +577,20 @@ section {
 # ---------------------------------------------------------------------------
 
 
-# A canopy-web walkthrough URL: the viewer page ``/walkthrough/<id>`` (or the
-# legacy pre-tenancy ``/w/<id>`` form baked into old artifacts) or its byte
-# stream ``…/content`` (optionally with a ``?t=`` share token, kept intact).
+# A canopy-web walkthrough URL: the viewer page ``/w/<ws>/walkthrough/<id>`` or
+# its byte stream ``…/content`` (optionally with a ``?t=`` share token, kept
+# intact). The flat forms are matched so an old link is still recognised as a
+# canopy artifact, but canopy-web serves neither any more (canopy-web#1338).
 _CANOPY_W_RE = re.compile(r"/(?:w|walkthrough)/[^/?#]+(?:/content)?/?$")
 
 
 def _to_content_url(url: str) -> str:
     """Rewrite a canopy-web viewer URL to its public byte-stream URL.
 
-    ``https://host/walkthrough/<id>?t=tok`` ->
-    ``https://host/walkthrough/<id>/content?t=tok`` (same for legacy ``/w/``
-    URLs, whose /content path 302-redirects server-side). The viewer page is
+    ``https://host/w/<ws>/walkthrough/<id>?t=tok`` ->
+    ``https://host/w/<ws>/walkthrough/<id>/content?t=tok`` — the stream is
+    workspace-scoped like the page (canopy-web#1338; the flat
+    ``/walkthrough/<id>/content`` is a 404). The viewer page is
     auth-gated for anonymous callers and sends ``X-Frame-Options: DENY``, so
     framing it renders blank; the ``/content`` endpoint serves the bytes
     token-gated and same-origin frameable. Idempotent if already a
@@ -598,9 +600,6 @@ def _to_content_url(url: str) -> str:
     base = base.rstrip("/")
     if base.endswith("/content"):
         return url
-    # The page lives at /w/<ws>/walkthrough/<id>; its bytes only at the flat
-    # /walkthrough/<id>/content (a backend stream, not a page — canopy-web#1337).
-    base = re.sub(r"/w/[^/]+(?=/walkthrough/)", "", base)
     return f"{base}/content{sep}{query}"
 
 
