@@ -9,6 +9,16 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.633] - 2026-10-08
+
+### Changed
+- **MCP headers helper: a colleague's full-profile session sends the asker's caller token.**
+  canopy-web#1332 (who-is-asking phase 5): a turn the agent's owner/admin did not ask — a `full:`
+  rule, an editor — used the runner's PAT and read other conversations as the runner's owner.
+  The runner now leaves a scoped caller token (`~/.canopy/scoped/turn/<id>.token` on the cloud,
+  `…/task/<emdash task>.token` on a laptop); the helper sends it and never falls back to a PAT
+  once a scoped session is identified.
+
 ## [0.2.626] - 2026-10-08
 
 ### Changed

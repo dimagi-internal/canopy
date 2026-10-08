@@ -84,6 +84,56 @@ if (confined) {
   process.exit(0);
 }
 
+// A COLLEAGUE'S FULL-PROFILE session (canopy-web#1332, who-is-asking phase 5): the
+// agent's whole profile, asked by someone who is not its owner, an admin or canopy
+// (a `full:` rule, an editor). It is not confined, but its canopy tools must run as
+// the ASKER — with the box's PAT they read every other conversation as the box's
+// owner. The runner leaves the asker's caller token where this helper can look
+// without a secret-looking variable (Claude Code strips those from this environment):
+//   cloud:  ~/.canopy/scoped/turn/<CANOPY_SCOPED_TURN>.token   (a turn id, not a secret)
+//   laptop: ~/.canopy/scoped/task/<emdash task>.token, the task read off the
+//           session's worktree path the way the chat key is found below.
+// Once a scoped session is identified the helper NEVER falls back to a PAT: on the
+// cloud the variable alone makes it scoped, so a missing file sends an invalid
+// header, which the server refuses — correct, where the box's PAT would not be.
+const SCOPED_ROOT = path.join(os.homedir(), ".canopy", "scoped");
+
+function scopedSession() {
+  const turn = (process.env.CANOPY_SCOPED_TURN || "").trim();
+  if (turn) {
+    if (!/^[0-9a-fA-F-]{8,64}$/.test(turn)) return { scoped: true, token: "" };
+    return { scoped: true, token: readScoped(path.join(SCOPED_ROOT, "turn", `${turn}.token`)) };
+  }
+  const worktrees = path.join(os.homedir(), "emdash", "worktrees") + path.sep;
+  const cwd = process.cwd() + path.sep;
+  if (!cwd.startsWith(worktrees)) return { scoped: false, token: "" };
+  for (const part of cwd.slice(worktrees.length).split(path.sep).filter(Boolean)) {
+    for (const name of [part, part.startsWith("emdash-") ? part.slice("emdash-".length) : ""]) {
+      for (const cand of [name, name.replace(/-[0-9a-z]+$/, "")]) {
+        if (!cand || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/.test(cand)) continue;
+        const token = readScoped(path.join(SCOPED_ROOT, "task", `${cand}.token`));
+        if (token) return { scoped: true, token };
+      }
+    }
+  }
+  return { scoped: false, token: "" };
+}
+
+function readScoped(file) {
+  try {
+    const token = fs.readFileSync(file, "utf8").trim();
+    return token.startsWith("cct_") ? token : "";
+  } catch {
+    return "";
+  }
+}
+
+const scoped = scopedSession();
+if (scoped.scoped && !scoped.token) {
+  process.stdout.write(JSON.stringify(CONFINED_NO_TOKEN));
+  process.exit(0);
+}
+
 // WHO this session is, in the same order the canopy CLI resolves it
 // (src/orchestrator/canopy_web.py::resolve_token): CANOPY_WEB_PAT, then the
 // agent's OWN PAT from ~/.<slug>/.env, and only then the operator's
@@ -273,6 +323,7 @@ function provenanceHeaders() {
 let headers = {};
 try {
   const token =
+    scoped.token ||
     (process.env.CANOPY_WEB_PAT || "").trim() ||
     slugEnvPat(process.env.CANOPY_AGENT) ||
     agentEnvPat() ||
