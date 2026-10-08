@@ -421,3 +421,38 @@ def test_an_empty_person_is_one_line_plus_how_to_record():
     assert len(lines) == 2
     assert lines[1].startswith("Record a correction: `canopy people remember --person 5 "
                                "--workspace connect")
+
+
+# --- HCP recall (canopy-web apps/contacts/hcp.py): the block is a search, not the profile ---
+
+RECALL = {"tool": "hcp_searchPreferences", "turn": "7c0f3c5e-1111-2222-3333-444455556666",
+          "categories": ["general_preferences", "goals_and_constraints", "work_context",
+                         "coordination_context"]}
+
+
+def test_with_recall_every_relevant_fact_is_shown_and_more_is_a_tool_call():
+    term = _fact(5, "terminology", "Calls the KC audit bot 'the coach'.")
+    lines = cc.person_lines({**PERSON, "workspace": "connect", "digest": "",
+                             "facts": PERSON["facts"] + [term],
+                             "grant": {"id": "urn:uuid:g", "client": "Ace over Slack", "scopes": []},
+                             "recall": RECALL})
+    text = "\n".join(lines)
+    assert "- terminology: Calls the KC audit bot 'the coach'." in lines     # not re-filtered
+    assert lines[1] == "- CORRECTION: Say KC (kangaroo care), not KMC."
+    assert "`hcp_searchPreferences` with turn=7c0f3c5e-1111-2222-3333-444455556666" in lines[-1]
+    assert "`hcp_addPreference`" in lines[-1]
+    assert "canopy people show" not in text                                  # agents recall via HCP
+    assert len(text) <= cc.PERSON_BUDGET
+
+
+def test_with_recall_and_nothing_relevant_says_so():
+    lines = cc.person_lines({"id": 5, "display_name": "New Person", "workspace": "connect",
+                             "digest": "", "facts": [], "grant": {"id": "g"}, "recall": RECALL})
+    assert lines[0] == "[canopy] Nothing relevant recorded about New Person (person 5)."
+    assert lines[1].startswith("Only facts relevant to this message are shown.")
+
+
+def test_a_revoked_client_is_told_nothing_and_not_to_look():
+    lines = cc.person_lines({**PERSON, "grant": None, "recall": None})
+    assert lines == ["[canopy] Lilianna Bagnoli (person 12) has not allowed this agent, here, "
+                     "to be told what canopy knows about them. Do not look it up another way."]
