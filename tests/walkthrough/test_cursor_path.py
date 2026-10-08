@@ -76,6 +76,9 @@ def test_slow_move_linear_is_unchanged():
 
 def test_slow_move_natural_walks_the_path_from_the_last_position():
     page = FakePage()
+    # _LAST_POS is keyed by id(page); a collected FakePage from an earlier test can
+    # share this id and leave a stale "last position" behind.
+    recorder._LAST_POS.pop(id(page), None)
     recorder.slow_move(page, 100, 100, steps=36, path="natural")  # no known start → linear
     assert page.mouse.moves == [(100.0, 100.0, 36)]
     recorder.slow_move(page, 700, 400, steps=24, path="natural")
