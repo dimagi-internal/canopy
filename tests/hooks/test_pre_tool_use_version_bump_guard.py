@@ -164,3 +164,36 @@ def test_block_message_contains_fix(hook):
     assert "canopy version bump" in msg
     assert "plugins/canopy/skills/foo.md" in msg
     assert "0.2.10" in msg
+
+
+# --- the pushed repo, not the session's project --------------------------------
+
+def _git_repo(path: Path) -> Path:
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    return path
+
+
+def test_pushed_repo_follows_git_dash_c_and_leading_cd(hook, tmp_path, monkeypatch):
+    other = _git_repo(tmp_path / "canopy-web")
+    session = _git_repo(tmp_path / "canopy")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(session))
+    resolved = other.resolve()
+    assert hook._pushed_repo(f"git -C {other} push -u origin b", {}).resolve() == resolved
+    assert hook._pushed_repo(f'cd "{other}" && git push', {}).resolve() == resolved
+    assert hook._pushed_repo("git push", {"cwd": str(other)}).resolve() == resolved
+    assert hook._pushed_repo("git push", {}).resolve() == session.resolve()
+
+
+def test_push_of_a_non_canopy_repo_is_never_judged_by_the_session_branch(
+    hook, tmp_path, monkeypatch
+):
+    """A canopy session pushing canopy-web was blocked for the CANOPY worktree's
+    un-bumped plugin change. The real loader finds no version_bump.py in the
+    pushed repo → allow."""
+    other = _git_repo(tmp_path / "canopy-web")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(Path(__file__).resolve().parents[2]))
+    action, _ = hook.evaluate(_push_payload(f"git -C {other} push -u origin fix/x"))
+    assert action == "allow"

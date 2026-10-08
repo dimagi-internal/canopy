@@ -179,8 +179,10 @@ when a human asked for the shareable link (that ask *is* the external_release
 sign-off); otherwise run it bare and resolve the gate in the UI.
 
 **Report the package URL**, not the loose artifact URL: the public form is
-`<base>/canopy/ddd-release/<slug>/<run_id>?t=<share_token>` — read `share_token`
-from `GET <base>/canopy/api/ddd/release/<run_id>/` (the package assembles the
+`https://canopy.dimagi.com/w/<workspace>/ddd-release/<slug>/<run_id>?t=<share_token>`
+— copy the `share_url` from `GET <base>/api/w/<workspace>/ddd/release/<run_id>/`
+rather than assembling it (canopy-web#1340: the flat `/ddd-release/…` and the old
+`/canopy/` prefix both 404) (the package assembles the
 hero video, docs, narrative, and every scene's product links; the loose
 `/walkthrough/` link has none of that).
 

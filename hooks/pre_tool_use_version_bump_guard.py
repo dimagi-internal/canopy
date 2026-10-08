@@ -66,6 +66,37 @@ def _repo_root() -> Path:
     return Path.cwd()
 
 
+_GIT_C_RE = re.compile(r"\bgit\s+-C\s+(\"[^\"]+\"|'[^']+'|\S+)")
+_LEADING_CD_RE = re.compile(r"^\s*cd\s+(\"[^\"]+\"|'[^']+'|\S+)\s*(?:&&|;)")
+
+
+def _pushed_repo(command: str, hook_data: dict) -> Path:
+    """The repo the push is FROM — not the session's project. A session opened in
+    a canopy worktree also pushes other repos (`git -C ~/x push`, `cd ~/x && git
+    push`); judging those by the canopy worktree's branch blocked a canopy-web
+    push for a canopy bump it could never contain (canopy-web#1337 follow-up).
+    Order: `git -C <dir>` → a leading `cd <dir>` → the hook's `cwd` →
+    :func:`_repo_root`. Resolved to the git toplevel; on any failure, the old
+    behaviour (:func:`_repo_root`)."""
+    m = _GIT_C_RE.search(command) or _LEADING_CD_RE.search(command)
+    if m:
+        start = m.group(1).strip("\"'")
+    else:
+        start = str(hook_data.get("cwd") or _repo_root())
+    start = os.path.expandvars(os.path.expanduser(start))
+    try:
+        import subprocess
+
+        proc = subprocess.run(["git", "-C", start, "rev-parse", "--show-toplevel"],
+                              capture_output=True, text=True, timeout=10, check=False)
+        top = proc.stdout.strip()
+        if proc.returncode == 0 and top and Path(top).is_dir():
+            return Path(top)
+    except Exception:
+        pass
+    return _repo_root()
+
+
 def _load_version_bump(repo_root: Path):
     """Import version_bump.py by file path — avoids importing the orchestrator
     package (which would need src/ on sys.path and is heavier than needed)."""
@@ -146,10 +177,11 @@ def evaluate(hook_data: dict) -> tuple[str, object]:
     if not _is_git_push(command):
         return "allow", None
 
-    repo_root = _repo_root()
+    repo_root = _pushed_repo(command, hook_data)
     module = _load_version_bump(repo_root)
     if module is None:
-        # Can't find the checker — fail open rather than wedge the push.
+        # Not a canopy checkout (no version_bump.py), or the checker is missing —
+        # nothing of canopy's to protect; fail open rather than wedge the push.
         return "allow", None
 
     try:

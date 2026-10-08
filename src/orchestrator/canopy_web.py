@@ -79,12 +79,13 @@ def scoped_app_path(path: str, workspace: Optional[str] = None) -> str:
 
 
 # Artifact pages canopy-web serves ONLY under /w/<workspace>/ (canopy-web#1289,
-# #1337): the flat /walkthrough/, /review/, /share/ and /ddd/ forms are being
-# removed, not redirected. A link the CLI prints or stores is always built by
+# #1337, #1338, #1340): the flat forms are a plain 404, never redirected. A link the CLI prints or stores is always built by
 # app_url / scope_link, never by gluing a flat path onto the base URL — a flat
 # /review/<id> copied out of `narrative post` went to an external reviewer
 # (ace, 2026-10-08).
-ARTIFACT_ROUTES = ("walkthrough", "review", "share", "ddd")
+# ddd-release before ddd: a regex alternation takes the first that fits.
+ARTIFACT_ROUTES = ("walkthrough", "review", "share", "ddd-release", "ddd",
+                   "storyboard", "narrative")
 
 #: An absolute link whose path STARTS with a flat artifact route — the page, its
 #: ``/content`` byte stream (scoped too since canopy-web#1338) — or with the
