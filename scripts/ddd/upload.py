@@ -134,12 +134,21 @@ def upload_narrative_video(
     *,
     base_url: str | None = None,
     token: str | None = None,
-    role: str = "hero_video",
+    role: str | None = None,
     title: str | None = None,
+    cut: dict | None = None,
     _detail=None,
     _upload=None,
 ) -> dict:
     """Upload a rendered mp4 and pin it to the narrative's CURRENT version.
+
+    ``cut`` (one entry of :func:`scripts.ddd.recorded.resolve_cuts`) uploads the
+    video as THAT cut of a ``style: recorded`` narrative: canopy-web keeps one
+    video per cut id on the version and shows each beside its narration on the
+    review link, instead of the latest upload replacing the last
+    (canopy-web#1288). A cut defaults to ``role=clip``; pass
+    ``role="hero_video"`` to make it the narrative's hero. Without ``cut`` the
+    video is the version's own (``role=hero_video``), as before.
 
     Resolves the current narrative version on canopy-web and stamps the uploaded
     artifact with its review id (``narrative_review_id``), so the video attaches
@@ -162,17 +171,26 @@ def upload_narrative_video(
             "narrative (run the narrative-review gate) before attaching a video."
         )
     data = Path(video_path).read_bytes()
+    if cut:
+        default_title = cut.get("title") or cut["id"]
+        role = role or "clip"
+    else:
+        default_title = f"{narrative_slug} v{version}"
+        role = role or "hero_video"
     video_url = (_upload or publish_artifact)(
         data,
         kind="video",
-        title=title or f"{narrative_slug} v{version}",
+        title=title or default_title,
         narrative_slug=narrative_slug,
         role=role,
         narrative_review_id=str(review_id),
+        cut_id=cut["id"] if cut else None,
+        cut_scene_ids=list(cut.get("scene_ids") or []) if cut else None,
         base_url=base_url,
         token=token,
     )
     return {
+        "cut_id": cut["id"] if cut else None,
         "video_url": video_url,
         "version": version,
         "review_id": str(review_id),
@@ -860,6 +878,8 @@ def publish_artifact(
     role: str | None = None,
     narrative_review_id: str | None = None,
     links: list[dict] | None = None,
+    cut_id: str | None = None,
+    cut_scene_ids: list[str] | None = None,
     _post=None,
 ) -> str:
     """Upload *content* to canopy-web and return the hosted URL.
@@ -918,6 +938,12 @@ def publish_artifact(
     # Link this run's artifacts to the narrative version they rendered.
     if narrative_review_id:
         fields["narrative_review_id"] = narrative_review_id
+    # One cut of a recorded narrative: canopy-web keeps a video per cut id on
+    # the version, and places it beside the narration of the scenes it plays.
+    if cut_id:
+        fields["cut_id"] = cut_id
+        if cut_scene_ids:
+            fields["cut_scene_ids"] = ",".join(cut_scene_ids)
     # External systems the run used/created — rendered as a section on the run
     # page. Sent as a JSON list of {label, url, kind}.
     if links:

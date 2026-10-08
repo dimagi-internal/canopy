@@ -9,6 +9,15 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.616] - 2026-10-07
+### Added
+- **`snippets upload-video --cut <id> --spec <recipe>` (canopy-web#1288).** A `style: recorded`
+  narrative's videos are uploaded one per cut: the upload carries the recipe's cut id and the
+  scene ids it plays (resolved from the recipe, so a wrong id fails before uploading), and
+  canopy-web keeps one video per cut on the version and shows each beside its narration on the
+  review link's Cuts tab. A cut is a `clip` unless `--hero` makes it the narrative's hero; an
+  upload without `--cut` is unchanged.
+
 ## [0.2.613] - 2026-10-07
 ### Added
 - **Fleet brain v1, canopy half (canopy#804).** The `caller_context` hook prints envelope

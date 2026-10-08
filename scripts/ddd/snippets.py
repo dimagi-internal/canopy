@@ -1281,6 +1281,29 @@ def emit_explainer_from_capture(
     return explainer
 
 
+def _cut_for_upload(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Resolve ``upload-video --cut`` against the spec's cut list.
+
+    The cut's scenes come from the recipe, never from the caller: canopy-web
+    places the video beside the narration of exactly these scenes, so a typo'd
+    or stale id must fail here rather than attach a video to the wrong words."""
+    if args.hero and not args.cut:
+        raise SystemExit("--hero only applies to a cut; without --cut the video is already the hero")
+    if not args.cut:
+        return None
+    if not args.spec:
+        raise SystemExit("--cut needs --spec <recipe> to resolve the cut's title and scenes")
+    spec = load_spec_raw(Path(args.spec)) or {}
+    if not is_recorded(spec):
+        raise SystemExit(f"{args.spec} is not a `style: recorded` spec — it has no cuts")
+    cuts = {c["id"]: c for c in resolve_cuts(spec)}
+    if args.cut not in cuts:
+        raise SystemExit(
+            f"no cut {args.cut!r} in {args.spec} — its cuts are: {', '.join(cuts)}"
+        )
+    return cuts[args.cut]
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="scripts.ddd.snippets")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1326,6 +1349,20 @@ def main(argv: list[str] | None = None) -> None:
     u.add_argument("video", help="path to the rendered mp4")
     u.add_argument("--base-url", default=None, help="canopy-web API base URL")
     u.add_argument("--title", default=None)
+    u.add_argument(
+        "--cut", default=None, metavar="CUT_ID",
+        help="upload as this cut of a `style: recorded` narrative (the recipe's "
+             "cuts[].id): canopy-web keeps one video per cut and shows it beside "
+             "that cut's narration on the review link. Needs --spec.",
+    )
+    u.add_argument(
+        "--spec", default=None,
+        help="the narrative's spec/recipe — resolves --cut to its title and scenes",
+    )
+    u.add_argument(
+        "--hero", action="store_true",
+        help="with --cut: make this cut the narrative's hero video",
+    )
 
     args = p.parse_args(argv)
 
@@ -1364,11 +1401,14 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "upload-video":
         from scripts.ddd.upload import upload_narrative_video
 
+        cut = _cut_for_upload(args)
         result = upload_narrative_video(
-            args.slug, args.video, base_url=args.base_url, title=args.title
+            args.slug, args.video, base_url=args.base_url, title=args.title, cut=cut,
+            role="hero_video" if args.hero else None,
         )
+        what = f"cut {cut['id']!r}" if cut else "video"
         print(
-            f"attached video to {args.slug} v{result['version']} → {result['narrative_url']}\n"
+            f"attached {what} to {args.slug} v{result['version']} → {result['narrative_url']}\n"
             f"  video: {result['video_url']}"
         )
 
