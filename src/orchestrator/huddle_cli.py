@@ -14,8 +14,10 @@ Drive (`huddle_store`).
     await     → foreground; exit 0 when every dispatched member settled, 3 = run it again
     status    → per member per round, derived from canopy-web
     resume    → an unfinished huddle < 72 h old, and what to do next
-    proposals → round 2/3 proposals merged with round-3 co-sign answers and the
-                round-4 resolution of any amend                            (props.json)
+    agree     → one AGREEMENT THREAD per open amend (lead ↔ amender, `canopy thread`);
+                the leader then moderates each with `canopy thread run`
+    proposals → round 2/3 proposals merged with round-3 co-sign answers and how each
+                amend was settled (agreement thread, or a relayed round 4)  (props.json)
     file      → gates → board tasks (lead + partners) → Drive record → anchor finished
     view      → the huddle page URL
 
@@ -149,6 +151,22 @@ def blocks_by(detail: dict) -> dict:
     """{(member, round): block} for every cell that has a parsed reply block."""
     return {(c.get("member"), int(c.get("round") or 0)): c["block"]
             for c in detail.get("cells") or [] if isinstance(c.get("block"), dict)}
+
+
+def huddle_threads(huddle: str) -> list[dict]:
+    """The agreement threads this huddle opened (`GET /api/threads/?parent_key=huddle…`).
+    Advisory for reads: a canopy-web without the threads API yields [] with a warning, so a
+    huddle that never opened a thread works exactly as before."""
+    from orchestrator.thread_cli import list_threads
+    try:
+        return list_threads(parent_key="huddle", parent_value=huddle)
+    except CanopyError as e:
+        click.echo(f"[huddle] warning: could not read {huddle}'s agreement threads: {e}", err=True)
+        return []
+
+
+def with_thread_outcomes(props: list[dict], threads: list[dict]) -> list[dict]:
+    return [H.apply_thread_outcomes(p, threads) for p in props] if threads else props
 
 
 # ── context packs (plan) ─────────────────────────────────────────────────────────
@@ -712,7 +730,8 @@ def next_steps(detail: dict, now: dt.datetime) -> list[str]:
             steps.append(f"round {last} settled — continue with round {last + 1}")
         elif last == 3:
             steps.append("round 3 settled — `canopy huddle proposals`; if any proposal has an "
-                         "`amend`, run round 4 (resolve) for its lead(s), else `canopy huddle file`")
+                         "`amend`, `canopy huddle agree` and `canopy thread run` each thread to "
+                         "its close, else `canopy huddle file`")
         else:
             steps.append(f"round {last} settled — `canopy huddle proposals` then "
                          "`canopy huddle file`")
@@ -747,18 +766,83 @@ def resume_cmd(leader):
 @click.option("--huddle", "hid", required=True)
 @click.option("--out", default=None, type=click.Path(dir_okay=False))
 def proposals_cmd(hid, out):
-    """Round-2/3 proposals merged with round-3 co-sign answers and round-4 resolutions —
-    `file`'s input, after the leader merges duplicates and ranks them. Each proposal's
-    `resolvers` names who still owes a round 4 (an open amend); [] for every proposal means
-    no round 4 is needed."""
-    props = collect_proposals(get_detail(hid))
+    """Round-2/3 proposals merged with round-3 co-sign answers and how each amend settled —
+    `file`'s input, after the leader merges duplicates and ranks them. An amend settled AGREED
+    in its agreement thread is `amend→accepted` (the thread's proposal adopted); one that closed
+    any other way is `amend→not agreed` (held); an OPEN thread leaves it `amend`. `threads`
+    names each amend's thread; `needs_agreement` lists amends with no thread yet (run
+    `canopy huddle agree`); `resolvers` is who would owe a relayed round 4 instead."""
+    props = with_thread_outcomes(collect_proposals(get_detail(hid)), huddle_threads(hid))
     for p in props:
         p["resolvers"] = H.resolvers_of(p)
+        # open amends with no agreement thread yet — `canopy huddle agree` opens them
+        p["needs_agreement"] = [m for m in H.amenders_of(p) if m not in (p.get("threads") or {})]
     if out:
         Path(out).write_text(json.dumps(props, indent=2), encoding="utf-8")
         _emit({"huddle": hid, "proposals": len(props), "out": str(out)})
     else:
         _emit(props)
+
+
+_HIDDEN = ("answers", "answer_notes", "critique_answered", "proposed_by", "round", "revised",
+           "resolution", "resolvers", "threads", "needs_agreement")
+
+
+def agreement_context(p: dict, amender: str) -> str:
+    """What an agreement thread opens with: the proposal verbatim and the amend verbatim."""
+    shown = {k: v for k, v in p.items() if k not in _HIDDEN}
+    note = (p.get("answer_notes") or {}).get(amender) or "(no note given)"
+    return (f"The proposal (lead {p.get('lead')}), verbatim:\n```json\n"
+            f"{json.dumps(shown, indent=2, ensure_ascii=False)}\n```\n\n"
+            f"{amender} answered `amend` — in, with changes. Its change request, verbatim:\n"
+            f"{json.dumps(note, ensure_ascii=False)}")
+
+
+@huddle_group.command("agree")
+@click.option("--plan", "plan_path", required=True, type=click.Path(exists=True))
+@click.option("--max-messages", default=4, show_default=True, type=int)
+@click.option("--deadline-minutes", default=90, show_default=True, type=int)
+@click.option("--dry-run", is_flag=True, help="List the threads it would open; open none.")
+def agree_cmd(plan_path, max_messages, deadline_minutes, dry_run):
+    """Open one AGREEMENT THREAD per open `amend`: the proposal's author (its lead) and the
+    teammate who amended it settle the change directly. Idempotent — canopy-web hands back the
+    open thread for the same proposal and pair. Then run `canopy thread run --thread <id>` on
+    each, in the foreground, until it exits 0."""
+    from orchestrator import thread as T
+    from orchestrator.thread_cli import open_thread
+    plan = _load_plan(plan_path)
+    hid, leader = plan["id"], plan["leader"]
+    threads = huddle_threads(hid)
+    props = with_thread_outcomes(collect_proposals(get_detail(hid)), threads)
+    rows = []
+    for p in props:
+        for m in H.amenders_of(p):
+            author = H.agreement_author(p, m)
+            if not author or author == m:
+                continue
+            row = {"title": p["title"], "lead": p["lead"], "author": author, "asker": m}
+            existing = (p.get("threads") or {}).get(m)
+            if existing and existing.get("result") != T.OPEN:
+                continue   # settled already — `proposals` carries its outcome
+            if dry_run:
+                rows.append({**row, "thread": (existing or {}).get("id")})
+                continue
+            purpose = _clip(f"Settle {m}'s change to \"{p['title']}\" (lead {p['lead']})", 300)
+            try:
+                th = open_thread(
+                    kind=T.AGREEMENT, purpose=purpose,
+                    participants=[{"agent": author, "role": "author"},
+                                  {"agent": m, "role": "asker"}],
+                    moderator=leader,
+                    parent={"huddle": hid, "title": p["title"], "lead": p["lead"]},
+                    context=agreement_context(p, m), max_messages=max_messages,
+                    deadline_minutes=deadline_minutes)
+            except CanopyError as e:
+                raise HuddleError(f"could not open the agreement thread for {p['title']!r} "
+                                  f"({author} ↔ {m}): {e}")
+            rows.append({**row, "thread": th.get("id"), "status": th.get("status"),
+                         "run": f"canopy thread run --thread {th.get('id')}"})
+    _emit({"huddle": hid, "dry_run": dry_run, "threads": rows})
 
 
 def _check(name: str, value: str) -> str:
@@ -919,6 +1003,9 @@ def file_cmd(plan_path, outcomes_path, repo, local, digest_out, dry_run):
     if not isinstance(proposals, list):
         raise HuddleError(f"{outcomes_path} must be a JSON list of proposals")
     detail = get_detail(hid)
+    # An agreement thread that closed after `proposals` ran still counts: fold outcomes in
+    # again (only amends still open are touched).
+    proposals = with_thread_outcomes(proposals, huddle_threads(hid))
     blocks = blocks_by(detail)
     r1_priorities = {pr for (m, n), b in blocks.items() if n == 1
                      for pr in (b.get("priorities") or []) if isinstance(pr, str)}

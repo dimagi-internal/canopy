@@ -38,7 +38,7 @@ enforce it.
 `session_liveness` ·
 `work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `project_audit` · `runner_cli` · `secret_cli` · `people_cli` ·
 `llm_output` · `decide_guard_prompt` · `decide_guard_cli` · `provenance` ·
-`huddle` · `huddle_store` · `huddle_cli` · `huddle_types`
+`huddle` · `huddle_store` · `huddle_cli` · `huddle_types` · `thread` · `thread_cli`
 
 **HUBS** (orchestration / composition roots — wire product into the CLI, the
 improvement pipeline, and the web server; allowed to import product, like
@@ -88,7 +88,8 @@ canopy-web's `api` app):
 > `huddle` · `huddle_store` · `huddle_cli` · `huddle_types` are FRAMEWORK: a huddle
 > (a team of agents syncing, led by one of them) is fleet runtime any team can run, the
 > same family as `agent_dispatch` and `work_cursor`. They tag dispatches, read canopy-web
-> and write the leader's own Drive — through framework modules only.
+> and write the leader's own Drive — through framework modules only. `thread` · `thread_cli`
+> (agent threads: bounded, moderated agent↔agent conversations) are the same family.
 
 Top-level `scripts/` (ddd, narrative, walkthrough), `video-engine/`, and
 `plugins/canopy/{skills,commands,agents}/` are all **product** — correct for a

@@ -794,5 +794,5 @@ def test_a_huddle_without_amends_never_needs_round4(tmp_path, web):
     web.huddles = [{"id": H, "leader": "ada", "members": ["eva", "echo"], "finished": False,
                     "created_at": "2026-10-06T11:00:00Z"}]
     nxt = json.loads(run("resume", "--leader", "ada").stdout)["next"]
-    assert any("proposals" in n and "round 4" in n for n in nxt), nxt
+    assert any("proposals" in n and "canopy huddle agree" in n for n in nxt), nxt
     assert not any("continue with round 4" in n for n in nxt)
