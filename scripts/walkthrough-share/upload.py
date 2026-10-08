@@ -76,9 +76,11 @@ def _describe_error(body: dict) -> str:
 
 
 def resolve_pat() -> str:
-    """Read the PAT via the canonical canopy_web precedence (env → token file)."""
+    """Read the PAT via the canonical canopy_web precedence (env → the agent's own
+    ~/.<slug>/.env → token file), STRICT about agent identity: in an agent's session
+    with no PAT of its own this fails rather than upload as the operator (ace#2805)."""
     try:
-        return canopy_web.resolve_token(None)
+        return canopy_web.resolve_token(None, agent_strict=True)
     except RuntimeError as exc:
         fail(str(exc))
         raise SystemExit  # unreachable, helps the type checker
@@ -321,9 +323,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--feature", help="Narrative slug (defaults from run_id server-side)")
     p.add_argument(
         "--workspace",
-        help="Workspace slug to upload INTO. Required when you belong to more "
-        "than one: reads are workspace-scoped, so a video uploaded to the wrong "
-        "workspace silently never binds to its narrative.",
+        default=os.environ.get("CANOPY_WEB_WORKSPACE", ""),
+        help="Workspace slug to upload INTO (default: $CANOPY_WEB_WORKSPACE). "
+        "Required — the upload refuses rather than land in the server's "
+        "default: reads are workspace-scoped, so a "
+        "video uploaded to the wrong workspace silently never binds to its narrative.",
     )
     p.add_argument(
         "--role",
@@ -436,11 +440,15 @@ def main(argv: list[str] | None = None) -> int:
     # (`apps/runs/aggregate._scope`), so a video that lands in the wrong one is
     # invisible to the narrative and the storyboard, with no error at upload
     # time and no way to tell from the artifact itself.
-    endpoint = (
-        f"{api}/api/w/{args.workspace}/walkthroughs/"
-        if args.workspace
-        else f"{api}/api/walkthroughs/"
-    )
+    # So the upload never goes flat: no workspace named → refuse.
+    try:
+        workspace = canopy_web.require_write_workspace(
+            args.workspace,
+            how_to_set="pass --workspace <slug> or set CANOPY_WEB_WORKSPACE=<slug>",
+        )
+    except canopy_web.WorkspaceRequiredError as exc:
+        fail(str(exc))
+    endpoint = f"{api}/api/w/{workspace}/walkthroughs/"
     status, body = upload_multipart(
         endpoint,
         pat=pat,
@@ -459,6 +467,12 @@ def main(argv: list[str] | None = None) -> int:
     wid = body.get("id")
     if not wid:
         fail(f"unexpected response: {body}")
+    try:
+        canopy_web.confirm_landed("walkthroughs", str(wid), workspace,
+                                  query={"mine": "true", "kind": kind},
+                                  base_url=api, token=pat)
+    except canopy_web.WorkspaceMismatchError as exc:
+        fail(str(exc))
 
     # The viewer lives at /walkthrough/<id> on the same host as the API base
     # (/w/ was reclaimed as the workspace tenant prefix in mid-2026).

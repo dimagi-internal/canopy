@@ -93,8 +93,12 @@ def test_explicit_env_still_wins_over_agent_env(monkeypatch, tmp_path):
     assert resolve_token(None) == "runner-pinned"
 
 
-def test_agent_repo_without_env_falls_back_to_token_file(monkeypatch, tmp_path):
-    """An unprovisioned agent keeps working exactly as before."""
+def test_agent_repo_without_env_refuses_the_operator_token(monkeypatch, tmp_path):
+    """DDD writes publish under a name: an unprovisioned agent must NOT quietly post
+    as the operator (ace#2805 — ACE posted a narrative as Jonathan). It fails loud,
+    naming CANOPY_WEB_PAT, instead of falling back to the workbench-token."""
+    from scripts.ddd.auth import AgentIdentityError
+
     home, repo = tmp_path / "home", tmp_path / "repo"
     home.mkdir()
     _make_agent_repo(repo, "hal", home, pat=None)
@@ -104,7 +108,51 @@ def test_agent_repo_without_env_falls_back_to_token_file(monkeypatch, tmp_path):
     monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home))
     monkeypatch.delenv("CANOPY_WEB_PAT", raising=False)
     monkeypatch.chdir(repo)
-    assert resolve_token(None) == "operator-token"
+    with pytest.raises(AgentIdentityError, match="CANOPY_WEB_PAT"):
+        resolve_token(None)
+
+
+def test_canopy_agent_env_marks_an_agent_session_even_from_the_runtime_cwd(monkeypatch, tmp_path):
+    """The live failure: `python -m scripts.ddd.*` runs with cwd = the canopy runtime
+    (a non-agent), so the cwd walk-up saw nobody. $CANOPY_AGENT says whose session
+    it is — and then the operator's token is refused."""
+    from scripts.ddd.auth import AgentIdentityError
+
+    home, runtime = tmp_path / "home", tmp_path / "runtime"
+    home.mkdir()
+    _make_agent_repo(runtime, "canopy", home, pat=None)   # cwd = canopy, not an agent
+    tok = tmp_path / "token"
+    tok.write_text("operator-token")
+    monkeypatch.setattr("orchestrator.canopy_web.TOKEN_FILE", tok)
+    monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home))
+    monkeypatch.delenv("CANOPY_WEB_PAT", raising=False)
+    monkeypatch.setenv("CANOPY_AGENT", "ace")
+    monkeypatch.chdir(runtime)
+    with pytest.raises(AgentIdentityError, match="ace"):
+        resolve_token(None)
+
+
+def test_canopy_agent_env_resolves_that_agents_own_pat(monkeypatch, tmp_path):
+    home, runtime = tmp_path / "home", tmp_path / "runtime"
+    home.mkdir()
+    _make_agent_repo(runtime, "canopy", home, pat=None)
+    (home / ".ace").mkdir()
+    (home / ".ace" / ".env").write_text("CANOPY_WEB_PAT=ace-own-pat\n")
+    tok = tmp_path / "token"
+    tok.write_text("operator-token")
+    monkeypatch.setattr("orchestrator.canopy_web.TOKEN_FILE", tok)
+    monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home))
+    monkeypatch.delenv("CANOPY_WEB_PAT", raising=False)
+    monkeypatch.setenv("CANOPY_AGENT", "ace")
+    monkeypatch.chdir(runtime)
+    assert resolve_token(None) == "ace-own-pat"
+
+
+def test_explicit_env_pat_is_honoured_in_an_agent_session(monkeypatch, tmp_path):
+    """CANOPY_WEB_PAT is the named escape hatch — strict mode never overrides it."""
+    monkeypatch.setenv("CANOPY_AGENT", "ace")
+    monkeypatch.setenv("CANOPY_WEB_PAT", "pinned")
+    assert resolve_token(None) == "pinned"
 
 
 def test_resolves_from_a_subdirectory_of_the_agent_repo(monkeypatch, tmp_path):

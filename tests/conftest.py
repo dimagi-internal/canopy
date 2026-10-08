@@ -21,3 +21,13 @@ def _canopy_web_session_source_off_by_default(monkeypatch):
     which it does on any developer laptop. Keep it out unless a test opts in, so no
     test reaches the network or depends on the developer's token."""
     monkeypatch.setenv("CANOPY_SESSION_WEB", "0")
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_agent_identity(monkeypatch):
+    """`$CANOPY_AGENT` / `$CANOPY_AGENT_SLUG` mark a session as an agent's, which
+    changes which canopy-web PAT resolves (and makes DDD writes refuse the operator's
+    token). A suite run inside an agent turn inherits them — so clear them, and let
+    the tests about agent identity set them explicitly."""
+    monkeypatch.delenv("CANOPY_AGENT", raising=False)
+    monkeypatch.delenv("CANOPY_AGENT_SLUG", raising=False)
