@@ -22,8 +22,9 @@ SHARING: {{sharing_rule}}
 {{prior}}
 
 3. For each priority in the brief, name your LEVER: the most valuable thing you could do toward
-   it in the next 2 weeks (today is {{today}}). At most one per priority; skip a priority you
-   cannot move. `kind`: `new` (nobody is doing it), `unblock` (frees something stuck — name the
+   it in the next 2 weeks (today is {{today}}), starting from its `state` in the brief — build
+   on what is already done, never redo it; if the state is `unknown`, check before you assume.
+   At most one per priority; skip a priority you cannot move. `kind`: `new` (nobody is doing it), `unblock` (frees something stuck — name the
    task) or `existing` (a task already open — name it). `verified`: true only if you checked the
    facts it rests on THIS turn. Something that cannot land before a hard date in the brief is
    not a lever.
