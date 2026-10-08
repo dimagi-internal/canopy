@@ -346,8 +346,8 @@ def export_cmd(session, out, workspace, as_json):
 
     The sibling of `transfer`, aimed at you instead of a runner — for when the
     runner is out of tokens, or you want to take it from here. Writes the
-    conversation as you saw it (your messages and the agent's replies, not its
-    tool calls) as markdown, built by canopy-web from the session it already
+    session as canopy's web view shows it (tool output shortened) as markdown,
+    built by canopy-web from the session it already
     holds; the runner is not involved. Only the person who started the session can
     export it.
     """
