@@ -39,8 +39,10 @@ from orchestrator.canopy_web import (  # noqa: F401  (re-exported public API)
     AgentIdentityError,
     WorkspaceMismatchError,
     WorkspaceRequiredError,
+    app_url,
     resolve_base_url,
     resolve_workspace,
+    scope_link,
     scoped_api_path,
     scoped_app_path,
 )
@@ -128,4 +130,6 @@ __all__ = [
     "resolve_ddd_workspace",
     "scoped_api_path",
     "scoped_app_path",
+    "app_url",
+    "scope_link",
 ]

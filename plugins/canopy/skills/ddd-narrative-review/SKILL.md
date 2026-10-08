@@ -174,10 +174,15 @@ This returns JSON with **two explicit link fields** — use the right one:
 
 ```json
 {"id": "<review_id>",
- "internal_url": "<base>/review/<review_id>/",          // owner view, LEFT RAIL — give the user THIS
- "share_url":    "<base>/review/<review_id>/?t=<token>", // standalone, NO rail — externals only
- "url": "...", "share_token": "..."}
+ "internal_url": "<base>/w/<workspace>/review/<review_id>",           // owner view, LEFT RAIL — give the user THIS
+ "share_url":    "<base>/w/<workspace>/review/<review_id>/?t=<token>", // standalone, NO rail — externals only
+ "url": "<same as share_url>", "share_token": "...", "workspace": "<workspace>"}
 ```
+
+Every link is workspace-scoped (`/w/<workspace>/…`). Never send, paste or
+hand-build a flat `<base>/review/<id>` link — that route is removed
+(canopy-web#1337) and a flat link from this output once reached an external
+reviewer. Copy the URL the command printed; don't reconstruct one.
 
 - **`internal_url` — present THIS to the user.** It opens inside the workbench
   with the left rail / navigation because the user is signed in. This is the
@@ -207,8 +212,7 @@ proceed.
 Before waiting for the user's response, present:
 
 1. **The review URL** — present the **internal (owner) link**
-   (`<base_url>/review/<review_id>/`, the returned `url` with the `?t=` token
-   stripped), the editable web page where the user reads each story beat and can
+   (`<base_url>/w/<workspace>/review/<review_id>` — the returned `internal_url`), the editable web page where the user reads each story beat and can
    approve or redraft. It opens inside the workbench with the left rail. Do NOT
    present the token-bearing `?t=` link as the primary review URL — that is the
    no-rail external share link, for non-signed-in recipients only.
@@ -233,7 +237,7 @@ Before waiting for the user's response, present:
      Features: ...
    ...
 
-   ▶ Review and approve at: <internal_review_url>   (= <base_url>/review/<review_id>/ , no ?t= token)
+   ▶ Review and approve at: <internal_review_url>   (= <base_url>/w/<workspace>/review/<review_id> , no ?t= token)
    ```
 
    Make reviewing easy and inviting.  The user should be able to glance at the

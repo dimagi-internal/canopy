@@ -78,6 +78,87 @@ def scoped_app_path(path: str, workspace: Optional[str] = None) -> str:
     return f"/w/{ws}{path}"
 
 
+# Artifact pages canopy-web serves ONLY under /w/<workspace>/ (canopy-web#1289,
+# #1337): the flat /walkthrough/, /review/, /share/ and /ddd/ forms are being
+# removed, not redirected. A link the CLI prints or stores is always built by
+# app_url / scope_link, never by gluing a flat path onto the base URL — a flat
+# /review/<id> copied out of `narrative post` went to an external reviewer
+# (ace, 2026-10-08).
+ARTIFACT_ROUTES = ("walkthrough", "review", "share", "ddd")
+
+#: An absolute link whose path STARTS with a flat artifact route. The ratchet in
+#: tests/test_scoped_artifact_urls.py runs every link-printing path through this.
+#: ``…/walkthrough/<id>/content`` is exempt: it is the byte stream a page
+#: embeds, served by the backend only at that flat path — not a page a person
+#: is sent to.
+FLAT_ARTIFACT_URL_RE = re.compile(
+    r"https?://[^/\s\"'<>]+(?:/canopy)?/(?:%s)/[^/\s?#\"'<>]+(?![^/\s?#\"'<>]|/content)"
+    % "|".join(ARTIFACT_ROUTES)
+)
+
+_ARTIFACT_PATH_RE = re.compile(
+    # prefix: the deployment mount (/canopy on labs, CANOPY_PUBLIC_BASE_URL) —
+    # nothing else, so a third-party URL with /review/ deeper in it is left alone.
+    r"^(?P<prefix>(?:/canopy)?)(?:/w/(?P<ws>[^/?#]+))?/(?P<kind>%s)(?P<rest>/.*)?$"
+    % "|".join(ARTIFACT_ROUTES)
+)
+
+
+def app_url(path: str, workspace: Optional[str], base_url: Optional[str] = None) -> str:
+    """The absolute link a human opens for an artifact page:
+    ``https://<host>/w/<workspace><path>``.
+
+    ``workspace`` is the workspace the artifact was written into (a write's
+    resolved target, or the slug the server echoed back). There is no flat
+    fallback: with none, this raises :class:`WorkspaceRequiredError` rather than
+    print a link that 404s once canopy-web#1337 lands."""
+    ws = (workspace or "").strip()
+    if not ws:
+        raise WorkspaceRequiredError(
+            f"cannot build a canopy-web link for {path!r} without its workspace — "
+            "artifact pages exist only under /w/<workspace>/ (canopy-web#1337)."
+        )
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"{resolve_base_url(base_url)}/w/{ws}{path}"
+
+
+def scope_link(url: str, workspace: Optional[str], base_url: Optional[str] = None) -> str:
+    """Normalize an artifact link canopy-web returned (relative or absolute,
+    flat or scoped) to its absolute ``/w/<workspace>/…`` form, keeping the
+    query (``?t=``) and fragment.
+
+    A link already under ``/w/<ws>/`` keeps the server's workspace. A relative
+    link, or one minted on ``localhost`` (canopy-web#1289's MCP-in-process bug),
+    is rebased onto ``base_url``. A non-artifact URL (an external embed, a
+    Drive link) is returned unchanged. A flat artifact link with no workspace
+    to put it under raises :class:`WorkspaceRequiredError`."""
+    raw = (url or "").strip()
+    if not raw:
+        return raw
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(raw)
+    if parts.scheme and parts.scheme not in ("http", "https"):
+        return raw
+    m = _ARTIFACT_PATH_RE.match(parts.path or "")
+    if not m:
+        return raw
+    host = (parts.hostname or "").lower()
+    if parts.netloc and host not in ("localhost", "127.0.0.1"):
+        origin = f"{parts.scheme}://{parts.netloc}{m.group('prefix')}"
+    else:
+        origin = resolve_base_url(base_url)
+    ws = m.group("ws") or (workspace or "").strip()
+    path = f"/{m.group('kind')}{m.group('rest') or ''}"
+    scoped = app_url(path, ws, origin)
+    if parts.query:
+        scoped += f"?{parts.query}"
+    if parts.fragment:
+        scoped += f"#{parts.fragment}"
+    return scoped
+
+
 # Plugins that carry a `.claude-plugin/plugin.json` but are NOT fleet agents. The
 # canopy runtime (where every `python -m scripts.ddd.*` runs) sits inside the
 # canopy plugin's own install dir, so without this every DDD call claimed to be

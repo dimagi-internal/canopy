@@ -459,6 +459,10 @@ def build_evidence(
 _W_PAGE_RE = re.compile(
     r"^(?P<base>https?://[^/]+(?:/[^/]+)*?)/w/(?P<wid>[0-9a-fA-F-]{36})"
 )
+# The scoped page canopy-web serves now (canopy-web#1337): /w/<ws>/walkthrough/<id>.
+_SCOPED_PAGE_RE = re.compile(
+    r"^(?P<base>https?://[^/]+(?:/[^/]+)*?)(?:/w/[^/]+)?/walkthrough/(?P<wid>[0-9a-fA-F-]{36})"
+)
 
 
 def _clip_content_url(clip_url: str | None) -> str | None:
@@ -471,12 +475,15 @@ def _clip_content_url(clip_url: str | None) -> str | None:
     """
     if not clip_url:
         return None
-    m = _W_PAGE_RE.match(clip_url)
-    if not m:
-        return None
     query = ""
     if "?" in clip_url:
         query = "?" + clip_url.split("?", 1)[1].split("#", 1)[0]
+    m = _SCOPED_PAGE_RE.match(clip_url)
+    if m:
+        return f"{m.group('base')}/walkthrough/{m.group('wid')}/content{query}"
+    m = _W_PAGE_RE.match(clip_url)
+    if not m:
+        return None
     return f"{m.group('base')}/w/{m.group('wid')}/content{query}"
 
 
@@ -922,12 +929,14 @@ def _cmd_post(args: argparse.Namespace) -> None:
     review_id = (result.get("id") or "").strip()
     if review_id:
         state.findings_review_id = review_id
-    share = _tokenized_review_url(result)
+    base = rv._resolve_base_url(None)
+    share = _tokenized_review_url(result, base)
     if share:
         state.findings_review_url = share
     rs.save(state)
 
-    base = rv._resolve_base_url(None)
+    # Every link here is /w/<workspace>/… — the server's raw `url` is replaced,
+    # never echoed (canopy-web#1337).
     out = dict(result)
     out["posted"] = True
     out["clusters"] = len(request.findings)
@@ -935,7 +944,8 @@ def _cmd_post(args: argparse.Namespace) -> None:
     if internal:
         out["internal_url"] = internal
     if share:
-        out["share_url"] = share if share.startswith("http") else f"{base.rstrip('/')}{share}"
+        out["share_url"] = share
+    out["url"] = share or internal
     if internal:
         print(f"internal (owner, left rail): {internal}", file=sys.stderr)
     if out.get("share_url"):

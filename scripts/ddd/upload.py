@@ -60,8 +60,9 @@ from scripts.ddd.auth import (
     resolve_base_url as _resolve_base_url,
     resolve_token as _resolve_token,
     resolve_ddd_workspace as _resolve_ws,
+    app_url as _app_url,
+    scope_link as _scope_link,
     scoped_api_path as _scoped_api,
-    scoped_app_path as _scoped_app,
 )
 from scripts.ddd.review import _review_id_from_url
 
@@ -108,7 +109,9 @@ class DeckMissingError(RuntimeError):
     """
 
 
-def run_package_url(narrative_slug: str, run_id: str, base_url: str | None = None) -> str:
+def run_package_url(
+    narrative_slug: str, run_id: str, base_url: str | None = None, workspace: str | None = None
+) -> str:
     """Return the canopy-web **run package** URL for a DDD run.
 
     canopy-web routes the navigable package (video + deck + narrative + links)
@@ -116,18 +119,22 @@ def run_package_url(narrative_slug: str, run_id: str, base_url: str | None = Non
     the plugin sends (a slug in real use). This is the link a human should get
     — NOT a loose ``/walkthrough/<artifact-id>`` single-artifact URL. Path segments are
     URL-quoted defensively in case a narrative_slug carries unsafe characters.
+
+    Always ``/w/<workspace>/ddd/…`` (canopy-web#1337): with no DDD workspace
+    resolvable this raises ``WorkspaceRequiredError`` rather than print a flat link.
     """
-    api = _resolve_base_url(base_url)
     feat = urllib.parse.quote(narrative_slug or run_id, safe="")
     rid = urllib.parse.quote(run_id, safe="")
-    return f"{api}{_scoped_app(f'/ddd/{feat}/{rid}', _resolve_ws(None))}"
+    return _app_url(f"/ddd/{feat}/{rid}", _resolve_ws(workspace), _resolve_base_url(base_url))
 
 
-def narrative_landing_url(narrative_slug: str, base_url: str | None = None) -> str:
-    """The canopy-web narrative landing page (versions list) for a slug."""
-    api = _resolve_base_url(base_url)
+def narrative_landing_url(
+    narrative_slug: str, base_url: str | None = None, workspace: str | None = None
+) -> str:
+    """The canopy-web narrative landing page (versions list) for a slug, at
+    ``/w/<workspace>/ddd/<slug>`` (no flat fallback — see :func:`run_package_url`)."""
     path = f"/ddd/{urllib.parse.quote(narrative_slug, safe='')}"
-    return f"{api}{_scoped_app(path, _resolve_ws(None))}"
+    return _app_url(path, _resolve_ws(workspace), _resolve_base_url(base_url))
 
 
 def upload_narrative_video(
@@ -591,6 +598,9 @@ def _to_content_url(url: str) -> str:
     base = base.rstrip("/")
     if base.endswith("/content"):
         return url
+    # The page lives at /w/<ws>/walkthrough/<id>; its bytes only at the flat
+    # /walkthrough/<id>/content (a backend stream, not a page — canopy-web#1337).
+    base = re.sub(r"/w/[^/]+(?=/walkthrough/)", "", base)
     return f"{base}/content{sep}{query}"
 
 
@@ -917,7 +927,7 @@ def publish_artifact(
     -------
     str
         The hosted view URL — the tokened share link when the server returns
-        one (``https://canopy-web.../walkthrough/<id>?t=<token>``), else the
+        one (``https://<host>/w/<ws>/walkthrough/<id>?t=<token>``), else the
         bare viewer URL.
     """
     if kind not in _CT_BY_KIND:
@@ -976,10 +986,9 @@ def publish_artifact(
     # Public walkthroughs are token-gated: canopy-web returns the owner-only
     # tokened share_url (…/walkthrough/<id>?t=<token>) and never the raw
     # token. Fall back to the bare viewer URL (session-authed access only).
-    share_url = body.get("share_url")
-    if share_url:
-        return share_url
-    return f"{api}/walkthrough/{wid}"
+    # Either way the link is /w/<ws>/walkthrough/<id>: the server's share_url is
+    # normalized (it may be flat, or minted on localhost), never passed through.
+    return _scope_link(body.get("share_url") or f"/walkthrough/{wid}", ws, api)
 
 
 # ---------------------------------------------------------------------------
@@ -1015,7 +1024,11 @@ def _default_gate(review_request: ReviewRequest, base_url: str | None, token: st
         token=token,
     )
     review_id = result["id"]
-    review_url = result.get("url") or f"{_resolve_base_url(base_url)}/review/{review_id}/"
+    review_url = _scope_link(
+        result.get("url") or f"/review/{review_id}",
+        result.get("workspace"),
+        _resolve_base_url(base_url),
+    )
     print(
         f"\n[external_release] review posted — resolve it in canopy-web to publish:\n"
         f"    {review_url}\n",

@@ -17,7 +17,7 @@ import scripts.ddd.upload as up
 
 
 def _post_stub(*_a, **_k):
-    return {"id": "rev1", "url": "http://canopy/review/rev1/"}
+    return {"id": "rev1", "url": "http://canopy/review/rev1/", "workspace": "connect"}
 
 
 def test_non_interactive_holds_without_blocking(monkeypatch):

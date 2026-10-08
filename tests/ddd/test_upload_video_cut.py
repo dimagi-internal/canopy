@@ -19,6 +19,12 @@ from tests.ddd.test_recorded import _spec
 DETAIL = {"current_version": {"review_id": "rev-1", "version": 2}}
 
 
+@pytest.fixture(autouse=True)
+def _workspace(monkeypatch):
+    """The narrative link is /w/<workspace>/ddd/<slug> — never flat (canopy-web#1337)."""
+    monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")
+
+
 def _capture():
     calls: list[dict] = []
 
