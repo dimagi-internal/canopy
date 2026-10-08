@@ -331,6 +331,48 @@ def transfer_cmd(session, target, brief, brief_file, stop, workspace, as_json):
                f"{out.get('runner')} and the thread should have a new reply")
 
 
+@runner.command("export")
+@click.argument("session")
+@click.option("--out", type=click.Path(dir_okay=False, path_type=Path), default=None,
+              help="where to write it (default: ~/.canopy/exports/<session>.md)")
+@click.option("--workspace", default="", help="act within ONE tenant")
+@click.option("--json-output", "as_json", is_flag=True)
+def export_cmd(session, out, workspace, as_json):
+    """Take a session's conversation to YOUR Claude, to carry the work on yourself.
+
+    \b
+      canopy runner export 169212e2
+      claude "Read ~/.canopy/exports/169212e2….md — pick up where it left off"
+
+    The sibling of `transfer`, aimed at you instead of a runner — for when the
+    runner is out of tokens, or you want to take it from here. Writes the
+    conversation as you saw it (your messages and the agent's replies, not its
+    tool calls) as markdown, built by canopy-web from the session it already
+    holds; the runner is not involved. Only the person who started the session can
+    export it.
+    """
+    from orchestrator import canopy_web
+    s = _resolve_session(session, workspace)
+    try:
+        exp = canopy_web.call("GET", f"{SESSIONS_PATH}{s['id']}/export",
+                              workspace=workspace or None) or {}
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+    dest = out or (Path.home() / ".canopy" / "exports" / f"{s['id']}.md")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(exp.get("markdown") or "", encoding="utf-8")
+
+    if as_json:
+        click.echo(json.dumps({"path": str(dest), "session_id": str(s["id"]),
+                               "message_count": exp.get("message_count")}, indent=2))
+        return
+    click.echo(f"exported '{s.get('title') or s.get('id')}' — "
+               f"{exp.get('message_count')} messages -> {dest}")
+    click.echo("  From the repo it was working in (check out its branch first):")
+    click.echo(f'  claude "Read {dest} — that is where we left off in canopy. '
+               f'Check git for where the work stands, then carry on."')
+
+
 @runner.command("list")
 @click.option("--workspace", default="", help="read the fleet of ONE tenant")
 @click.option("--json-output", "as_json", is_flag=True)
