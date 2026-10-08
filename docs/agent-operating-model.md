@@ -168,6 +168,23 @@ evidence says **deprioritize memory as fleet infrastructure**:
 Memory would have made reef *feel* smarter without making it *get* better. Skills are how it
 gets better.
 
+### 3a. Update 2026-10-07 — the trigger fired
+
+The condition this section (and §6.4) set for building memory — a real, non-empty
+per-contact case — has now occurred. Workspace members and contacts talk to several agents over
+Slack, email and the Labs widget, and an answer went wrong because the agent did not know who
+was asking: a KC team member asked ACE about "the AI coach" and got the generic template
+(canopy#804). Jonathan approved building **fleet brain v1** that day. It follows the lessons
+above rather than reversing them. **Behaviors still go in skills and hooks**: the "there is no
+*the*" answering rule ships in `agent-core/turn.md` and the factory's `answer-caller` template,
+not in memory. **What is stored is narrow and per-person**: append-only `PersonFact`s of six
+work-context kinds plus a regenerable digest, kept server-side in canopy-web on `Person`. Two
+things are forced so they don't depend on the model choosing to do them. The **write** is a
+`/canopy:people-digest` turn that canopy-web enqueues after each conversation. The **read** is
+the `caller_context` hook printing the envelope's `person` block into every prompt.
+Mechanics: `canopy people …`. Design: `docs/proposals/2026-10-07-caller-context-brain.md` in
+dimagi-internal/hal; record: canopy#804.
+
 ---
 
 ## 4. Recommendation — three builds, in order
@@ -503,7 +520,7 @@ an embedded-runtime fallback); channel messages route via a static `bindings` ar
 - **Net for us (reinforces §3):** memory pays off specifically for *cross-session synthesis*
   and *per-entity isolation* — echo's per-contact partition. It does **not** substitute for
   skills as the learning mechanism. Don't build it as fleet infra until a non-empty inbox makes
-  the per-contact case real.
+  the per-contact case real. *(That happened on 2026-10-07. See §3a and canopy#804.)*
 
 ### 6.5 Fleet orchestration — and the "passive observatory" trap reef fell into
 
