@@ -7,19 +7,23 @@ whack-a-mole: on 2026-10-04 one ada session got past it three times with shapes 
 had written a pattern for. Jonathan's call: judge it with an LLM fed labelled examples,
 and let it use its judgment on phrasings the examples don't show.
 
-The prompt can be wired at one of TWO scopes, and `PLUGIN_WIDE` picks which:
+The prompt can be wired at two scopes, and `PLUGIN_WIDE` picks between them:
 
-* **plugin-wide** (`PLUGIN_WIDE = True`, the current setting): a `{"type": "prompt"}` Stop entry in the canopy
-  plugin's `hooks/hooks.json` — fires in EVERY session on a machine with canopy installed.
-* **agent-only** (`PLUGIN_WIDE = False`): the same entry is STAMPED into
-  each agent repo's `.claude/settings.json` Stop hooks by `canopy decide-guard stamp`,
-  replacing that repo's `hooks/decide_guard.py` command hook (the regex loader). The plugin's
-  hooks.json then carries no entry. Cost: a new example reaches an agent only when its
-  settings are re-stamped (one PR per agent repo).
+* **plugin-wide** (`PLUGIN_WIDE = True`): a `{"type": "prompt"}` Stop entry in the canopy
+  plugin's `hooks/hooks.json`. It fires in EVERY session on every machine with canopy
+  installed, which makes one person's working preference everyone's.
+* **opt-in** (`PLUGIN_WIDE = False`, the current setting): the plugin carries no entry. The
+  same entry is STAMPED by `canopy decide-guard stamp` into each place that wants it:
+  - an agent repo's `.claude/settings.json` (`--agent-repo DIR`): the agent's own rail,
+    shipped as part of that agent;
+  - a person's `~/.claude/settings.json` (`--user`): a personal preference for every
+    session on that macOS account.
+  Cost: a new example reaches a stamped place only when it is re-stamped (`stamp --check`
+  finds the stale ones).
 
-Jonathan chose plugin-wide (2026-10-04), so the switch is on and agent repos carry no
-decide-guard wiring of their own. Going agent-only instead is: set `PLUGIN_WIDE = False`,
-`canopy decide-guard render`, then `stamp` each agent repo.
+History: plugin-wide from 2026-10-04 (Jonathan's choice at the time); moved to opt-in on
+2026-10-08, when Jonathan asked that it stop being imposed on every canopy user. It is now
+his own preference plus a rail in the agents that want it.
 
 THIS module is the only thing that writes the prompt:
 
@@ -50,8 +54,8 @@ HOOKS_JSON_PATH = PLUGIN_ROOT / "hooks" / "hooks.json"
 MODEL = "claude-sonnet-5-5"
 TIMEOUT_S = 30
 
-# The scope switch — see the module docstring. False = agent-only (stamped per repo).
-PLUGIN_WIDE = True
+# The scope switch — see the module docstring. False = opt-in (stamped per agent repo / user).
+PLUGIN_WIDE = False
 
 # The regex loader command hook that an agent-only stamp replaces.
 LOADER_MARKER = "hooks/decide_guard.py"
@@ -209,9 +213,19 @@ def _fresh_settings(settings_path: Path, examples_path: Path) -> tuple[str, str]
     return current, fresh
 
 
+def user_settings_path() -> Path:
+    """The person's own Claude Code settings — the `--user` stamp target."""
+    return Path.home() / ".claude" / "settings.json"
+
+
 def stamp_settings(settings_path: Path, examples_path: Path = EXAMPLES_PATH) -> bool:
-    """Agent-only scope: write the prompt hook into an agent repo's .claude/settings.json,
-    replacing its regex loader command hook. True if the file changed."""
+    """Opt-in scope: write the prompt hook into a settings.json (an agent repo's
+    .claude/settings.json, or a person's ~/.claude/settings.json), replacing any regex
+    loader command hook. A missing file is created. True if the file changed."""
+    settings_path = Path(settings_path)
+    if not settings_path.exists():
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text("{}\n", encoding="utf-8")
     current, fresh = _fresh_settings(settings_path, examples_path)
     if fresh == current:
         return False

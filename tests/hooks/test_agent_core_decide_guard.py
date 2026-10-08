@@ -214,3 +214,29 @@ def test_the_prompt_stays_short_and_the_rest_is_held_out():
                                         if len(r["closing"]) > 40)
     with pytest.raises(ValueError, match="budget"):
         dg.render_prompt([{"closing": "x" * 400, "handback": True, "why": "w", "in_prompt": True}] * 10)
+
+
+def test_the_plugin_carries_no_decide_guard():
+    """Opt-in since 2026-10-08: the plugin must not impose one person's Stop rail on every
+    canopy user. Agents stamp it into their own settings; a person stamps it with --user."""
+    assert dg.PLUGIN_WIDE is False
+    hooks = json.loads(dg.HOOKS_JSON_PATH.read_text(encoding="utf-8"))
+    assert not any(dg._is_ours(e) for e in hooks.get("hooks", {}).get("Stop", []))
+
+
+def test_stamp_user_writes_your_own_settings_creating_them(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(dg, "user_settings_path", lambda: home / ".claude" / "settings.json")
+
+    stale = CliRunner().invoke(decide_guard_group, ["stamp", "--user", "--check"])
+    assert stale.exit_code != 0
+    ok = CliRunner().invoke(decide_guard_group, ["stamp", "--user"])
+    assert ok.exit_code == 0 and "stamped" in ok.output
+    stop = json.loads((home / ".claude" / "settings.json").read_text())["hooks"]["Stop"]
+    assert any(dg._is_ours(e) for e in stop)
+    assert CliRunner().invoke(decide_guard_group, ["stamp", "--user", "--check"]).exit_code == 0
+
+
+def test_stamp_needs_a_target():
+    result = CliRunner().invoke(decide_guard_group, ["stamp"])
+    assert result.exit_code != 0 and "--user" in result.output
