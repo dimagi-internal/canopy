@@ -20,7 +20,8 @@ def _fake_canopy(tmp_path, out=KEY, rc=0):
     bindir.mkdir(exist_ok=True)
     log = tmp_path / "canopy-args"
     script = bindir / "canopy"
-    script.write_text(f"#!/bin/sh\necho \"$@\" > {log}\nprintf '%s\\n' '{out}'\n"
+    script.write_text(f"#!/bin/sh\necho \"$@\" >> {log}\n"
+                      f"[ \"$2\" = stage-delegated ] && exit 0\nprintf '%s\\n' '{out}'\n"
                       f"[ {rc} -ne 0 ] && echo 'no live runner you pair' >&2\nexit {rc}\n")
     script.chmod(0o755)
     return str(bindir), log
@@ -45,7 +46,8 @@ def test_exports_the_agents_own_key_into_the_session_env(tmp_path):
     r, ef, log = _run(tmp_path)
     assert r.returncode == 0
     assert ef.read_text() == f"export OP_SERVICE_ACCOUNT_TOKEN={KEY}\n"
-    assert log.read_text().split() == ["agent", "op-token", "--slug", "eva"]
+    assert log.read_text().splitlines() == ["agent stage-delegated --slug eva",
+                                            "agent op-token --slug eva"]
     assert KEY not in r.stdout + r.stderr          # never into the transcript
 
 
@@ -54,9 +56,17 @@ def test_inert_outside_an_agent_session(tmp_path):
     assert r.returncode == 0 and r.stdout == "" and not ef.exists() and not log.exists()
 
 
-def test_inert_when_a_key_is_already_present(tmp_path):
+def test_a_key_already_present_is_kept_but_borrowed_creds_are_still_staged(tmp_path):
+    # A cloud turn has its key; it still gets what it borrows staged (canopy-web#1291).
     r, ef, log = _run(tmp_path, have_key=True)
-    assert r.returncode == 0 and not ef.exists() and not log.exists()
+    assert r.returncode == 0 and not ef.exists()
+    assert log.read_text().splitlines() == ["agent stage-delegated --slug eva"]
+
+
+def test_a_callers_confined_turn_never_stages_borrowed_creds(tmp_path, monkeypatch):
+    monkeypatch.setenv("CANOPY_PROFILE", "caller")
+    r, _, log = _run(tmp_path)
+    assert "stage-delegated" not in (log.read_text() if log.exists() else "")
 
 
 def test_failure_is_fail_open_and_says_so(tmp_path):
