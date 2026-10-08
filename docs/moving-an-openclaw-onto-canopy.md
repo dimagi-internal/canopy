@@ -92,5 +92,5 @@ tasks, with whose turn it is. Start there, not here.
 
 | Agent | Operator | Workspace | Board |
 |---|---|---|---|
-| Jarvis | Andrea King | `connect` | [/canopy/w/connect/agents/jarvis](https://labs.connect.dimagi.com/canopy/w/connect/agents/jarvis) |
+| Jarvis | Andrea King | `connect` | [/w/connect/agents/jarvis](https://canopy.dimagi.com/w/connect/agents/jarvis) |
 | Fizzy | Shayoni Mazumdar | `strategy` (when Shayoni registers it) | repo exists; Shayoni is mid-way through Phase 2 on Windows |

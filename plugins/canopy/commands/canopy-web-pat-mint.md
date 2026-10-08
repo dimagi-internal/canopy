@@ -26,7 +26,7 @@ back to the actual human.
 ## Prerequisites
 
 - A reachable canopy-web at `$CANOPY_WEB_API_URL` (default
-  `https://labs.connect.dimagi.com/canopy`; `CANOPY_WEB_BASE` is a legacy alias)
+  `https://canopy.dimagi.com`; `CANOPY_WEB_BASE` is a legacy alias)
 - A signed-in browser session at that URL — or willingness to sign in
   when the browser tab opens
 
