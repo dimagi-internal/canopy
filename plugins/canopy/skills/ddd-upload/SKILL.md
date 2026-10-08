@@ -207,8 +207,8 @@ VIDEO_ABS="$(realpath <video_path>)"
 every DDD write — the narrative post, `upload-video`, render uploads, this upload —
 refuses in an agent's session (`$CANOPY_AGENT`) that has no PAT of its own (it will
 not borrow the operator's workbench-token; set `CANOPY_WEB_PAT`), and refuses when no
-workspace resolves unless you belong to exactly one (set `CANOPY_WEB_WORKSPACE`, or
-commit `workspace: <slug>` in the target repo's `.canopy/ddd/config.yaml`). Each write
+workspace is named (set `CANOPY_WEB_WORKSPACE`, or commit `workspace: <slug>` in the
+target repo's `.canopy/ddd/config.yaml` — an agent provides it, it is never guessed). Each write
 is then read back from that workspace and prints `landed in workspace '<slug>'`. Fix
 the configuration the error names; never swap tokens to get past it.
 

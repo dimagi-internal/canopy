@@ -5,9 +5,8 @@ for `connect`) as Jonathan — his workbench-token — into `dimagi`, the server
 default for a flat route. Nothing said so. Three guards now stand in the way:
 
 1. In an agent's session the operator's workbench-token is refused (test_auth.py).
-2. A write with no workspace configured proceeds only when the caller belongs to
-   exactly one; otherwise it refuses, naming CANOPY_WEB_WORKSPACE and
-   .canopy/ddd/config.yaml.
+2. A write with no workspace named refuses — no guessing from memberships —
+   naming CANOPY_WEB_WORKSPACE and .canopy/ddd/config.yaml.
 3. Every write is read back through the tenant-pinned list and the workspace it
    landed in is printed — absent there means it landed elsewhere, and that raises.
 
@@ -52,7 +51,6 @@ def _clean(monkeypatch, tmp_path):
     monkeypatch.delenv("CANOPY_WEB_WORKSPACE", raising=False)
     monkeypatch.setenv("CANOPY_WEB_PAT", "pat")
     monkeypatch.setenv("CANOPY_WEB_API_URL", "https://canopy.test")
-    monkeypatch.setattr(auth, "_MEMBERSHIP_WORKSPACE", None)
     # No per-repo .canopy/ddd/config.yaml in scope.
     monkeypatch.setattr("scripts.ddd.runstate._resolve_ddd_dir", lambda: tmp_path)
 
@@ -73,9 +71,9 @@ def _review():
     )
 
 
-# ---- 2. no workspace → refuse unless exactly one membership -----------------
+# ---- 2. no workspace named → refuse ----------------------------------------
 
-def test_a_configured_workspace_needs_no_lookup(monkeypatch):
+def test_a_configured_workspace_is_used_without_any_lookup(monkeypatch):
     server = _serve(monkeypatch, FakeServer(workspaces=("dimagi", "connect")))
     monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")
     assert auth.require_write_workspace() == "connect"
@@ -83,35 +81,24 @@ def test_a_configured_workspace_needs_no_lookup(monkeypatch):
 
 
 def test_repo_config_names_the_workspace(monkeypatch, tmp_path):
-    _serve(monkeypatch, FakeServer(workspaces=("dimagi", "connect")))
     (tmp_path / "config.yaml").write_text("workspace: connect\n")
     assert auth.require_write_workspace() == "connect"
 
 
-def test_several_memberships_and_nothing_configured_refuses(monkeypatch):
-    _serve(monkeypatch, FakeServer(workspaces=("dimagi", "connect")))
+def test_no_workspace_named_refuses(monkeypatch):
     with pytest.raises(auth.WorkspaceRequiredError) as exc:
         auth.require_write_workspace()
     msg = str(exc.value)
     assert "CANOPY_WEB_WORKSPACE" in msg and ".canopy/ddd/config.yaml" in msg
-    assert "dimagi" in msg and "connect" in msg
 
 
-def test_exactly_one_membership_is_used_and_links_follow_it(monkeypatch, capsys):
-    _serve(monkeypatch, FakeServer(workspaces=("connect",)))
-    assert auth.require_write_workspace() == "connect"
-    assert "'connect'" in capsys.readouterr().err
-    # The links printed after the write point into the same tenant.
-    from scripts.ddd import upload as up
-    assert up.run_package_url("chlorine", "r1").endswith("/w/connect/ddd/chlorine/r1")
-
-
-def test_an_unlistable_membership_refuses_rather_than_guess(monkeypatch):
-    def down(method, url, headers, body):
-        return 503, "down"
-    monkeypatch.setattr(cw, "urllib_transport", down)
-    with pytest.raises(auth.WorkspaceRequiredError, match="CANOPY_WEB_WORKSPACE"):
+def test_a_single_membership_is_not_a_workspace(monkeypatch):
+    """Guessing from memberships is the server's default one step removed — the
+    agent must name its workspace."""
+    server = _serve(monkeypatch, FakeServer(workspaces=("connect",)))
+    with pytest.raises(auth.WorkspaceRequiredError):
         auth.require_write_workspace()
+    assert server.requests == []
 
 
 def test_narrative_post_refuses_before_writing_anything(monkeypatch):

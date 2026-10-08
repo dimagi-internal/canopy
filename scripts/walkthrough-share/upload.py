@@ -325,8 +325,8 @@ def main(argv: list[str] | None = None) -> int:
         "--workspace",
         default=os.environ.get("CANOPY_WEB_WORKSPACE", ""),
         help="Workspace slug to upload INTO (default: $CANOPY_WEB_WORKSPACE). "
-        "Required when you belong to more than one — the upload refuses rather "
-        "than land in the server's default: reads are workspace-scoped, so a "
+        "Required — the upload refuses rather than land in the server's "
+        "default: reads are workspace-scoped, so a "
         "video uploaded to the wrong workspace silently never binds to its narrative.",
     )
     p.add_argument(
@@ -440,10 +440,10 @@ def main(argv: list[str] | None = None) -> int:
     # (`apps/runs/aggregate._scope`), so a video that lands in the wrong one is
     # invisible to the narrative and the storyboard, with no error at upload
     # time and no way to tell from the artifact itself.
-    # So the upload never goes flat: no workspace → the caller's only one, or refuse.
+    # So the upload never goes flat: no workspace named → refuse.
     try:
         workspace = canopy_web.require_write_workspace(
-            args.workspace, base_url=api, token=pat,
+            args.workspace,
             how_to_set="pass --workspace <slug> or set CANOPY_WEB_WORKSPACE=<slug>",
         )
     except canopy_web.WorkspaceRequiredError as exc:

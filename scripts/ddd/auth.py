@@ -19,8 +19,8 @@ resolve_base_url(base_url: str | None) -> str
 resolve_token(token: str | None) -> str
     Effective PAT; raises ``RuntimeError`` if none can be resolved (and
     ``AgentIdentityError`` in an agent session with no PAT of its own).
-require_write_workspace(workspace=None, *, base_url, token) -> str
-    The workspace a DDD write goes into; refuses rather than guess.
+require_write_workspace(workspace=None) -> str
+    The workspace a DDD write goes into; refuses when none is named.
 confirm_landed(app, obj_id, workspace, *, query, base_url, token) -> dict
     Read a write back, tenant-pinned, and print the workspace it landed in.
 """
@@ -50,40 +50,19 @@ HOW_TO_SET_WORKSPACE = (
     "repo's .canopy/ddd/config.yaml"
 )
 
-# The workspace a write settled on from the caller's memberships (the one-workspace
-# case), so the links printed afterwards (run package, narrative landing) point
-# into the same tenant the write went to.
-_MEMBERSHIP_WORKSPACE: Optional[str] = None
-
-
 def resolve_token(token: Optional[str]) -> str:
     """The PAT for DDD calls — strict about agent identity (see module docstring)."""
     return _cw.resolve_token(token, agent_strict=True)
 
 
-def require_write_workspace(
-    workspace: Optional[str] = None,
-    *,
-    base_url: Optional[str] = None,
-    token: Optional[str] = None,
-) -> str:
-    """The workspace a DDD write goes INTO. Resolves like
-    :func:`resolve_ddd_workspace`; with nothing configured, proceeds only when the
-    caller belongs to exactly one workspace, else raises
+def require_write_workspace(workspace: Optional[str] = None) -> str:
+    """The workspace a DDD write goes INTO, resolved like
+    :func:`resolve_ddd_workspace`; none named raises
     :class:`WorkspaceRequiredError` naming CANOPY_WEB_WORKSPACE and
     ``.canopy/ddd/config.yaml``."""
-    global _MEMBERSHIP_WORKSPACE
-    ws = resolve_ddd_workspace(workspace)
-    if ws:
-        return ws
-    ws = _cw.require_write_workspace(
-        None,
-        base_url=resolve_base_url(base_url),
-        token=resolve_token(token),
-        how_to_set=HOW_TO_SET_WORKSPACE,
+    return _cw.require_write_workspace(
+        resolve_ddd_workspace(workspace), how_to_set=HOW_TO_SET_WORKSPACE
     )
-    _MEMBERSHIP_WORKSPACE = ws
-    return ws
 
 
 def confirm_landed(
@@ -111,8 +90,7 @@ def resolve_ddd_workspace(
     :func:`require_write_workspace`, which refuses on None.
 
     Precedence: explicit arg → env ``CANOPY_WEB_WORKSPACE`` → per-repo
-    ``<repo>/.canopy/ddd/config.yaml`` (``workspace:`` key) → the workspace an
-    earlier write in this process settled on from memberships → None. The per-repo
+    ``<repo>/.canopy/ddd/config.yaml`` (``workspace:`` key) → None. The per-repo
     file is how a repo pins its DDD artifacts to a workspace (e.g. the Connect
     repo commits ``workspace: connect``) without anyone remembering an env var.
     """
@@ -129,11 +107,10 @@ def resolve_ddd_workspace(
         if cfg.exists():
             data = yaml.safe_load(cfg.read_text()) or {}
             val = str(data.get("workspace") or "").strip()
-            if val:
-                return val
+            return val or None
     except Exception:
-        pass
-    return _MEMBERSHIP_WORKSPACE
+        return None
+    return None
 
 
 __all__ = [

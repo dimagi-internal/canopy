@@ -904,7 +904,7 @@ def publish_artifact(
         last never in an agent's session (``AgentIdentityError`` instead).
 
     The upload goes into a NAMED workspace (``auth.require_write_workspace`` —
-    refuses rather than let the server default it) and is read back from that
+    refuses when none is configured) and is read back from that
     workspace afterwards, printing where it landed.
     _post:
         Injected HTTP callable for testing.  Signature::
@@ -925,7 +925,7 @@ def publish_artifact(
 
     api = _resolve_base_url(base_url)
     pat = _resolve_token(token)
-    ws = _require_write_ws(base_url=api, token=pat)
+    ws = _require_write_ws()
     file_bytes = content.encode("utf-8") if isinstance(content, str) else content
     filename = _FILENAME_BY_KIND[kind]
     content_type = _CT_BY_KIND[kind]

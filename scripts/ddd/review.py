@@ -116,13 +116,13 @@ def post_review_request(
     Returns ``{id, url, share_token}`` from the server, plus ``workspace`` — the
     workspace it was posted into and read back from.
 
-    Refuses (``WorkspaceRequiredError``) when no workspace resolves and the caller
-    belongs to more than one: the flat route files it in the server's default
-    (ace#2805 — a Connect narrative landed in dimagi).
+    Refuses (``WorkspaceRequiredError``) when no workspace is named: the flat
+    route files it in the server's default (ace#2805 — a Connect narrative landed
+    in dimagi).
     """
     api = _resolve_base_url(base_url)
     tok = _resolve_token(token)
-    ws = _require_write_ws(base_url=api, token=tok)
+    ws = _require_write_ws()
     payload = {
         "request_json": review_request.model_dump(by_alias=True),
         "visibility": visibility,
@@ -274,7 +274,7 @@ def resolve_review(
     """
     api = _resolve_base_url(base_url)
     tok = _resolve_token(token)
-    ws = _require_write_ws(base_url=api, token=tok)
+    ws = _require_write_ws()
     return _json_request(
         "POST", _url(api, f"/api/reviews/{review_id}/submit/", ws), tok,
         {"response_json": response_json},

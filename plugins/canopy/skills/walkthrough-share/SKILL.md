@@ -37,9 +37,9 @@ the tokened share link, rotate it, or delete. Non-owners just see the player.
   flag needed. In an **agent's** session (`$CANOPY_AGENT` set) the agent's own
   PAT (`~/.<slug>/.env` or `CANOPY_WEB_PAT`) is required — the operator's
   workbench-token is refused, so an agent never uploads as the human (ace#2805).
-- **Workspace**: `--workspace <slug>` (default `$CANOPY_WEB_WORKSPACE`). With
-  neither, the upload proceeds only if you belong to exactly one workspace and
-  otherwise refuses — it never lands in the server's default. After uploading
+- **Workspace**: `--workspace <slug>` (default `$CANOPY_WEB_WORKSPACE`) is
+  required. With neither, the upload refuses — it never lands in the server's
+  default. After uploading
   it reads the walkthrough back from that workspace and prints
   `landed in workspace '<slug>'`.
 - **Canopy-web reachability**: defaults to the production deploy. Override
@@ -157,8 +157,7 @@ The script exits non-zero with a one-line `error: ...` message on stderr:
 - Missing PAT → tells you to run `/canopy:canopy-web-pat-mint`.
 - Agent session with no PAT of its own → names `CANOPY_WEB_PAT`; set it to the
   agent's PAT or materialize `~/.<slug>/.env`.
-- No workspace and several memberships → names `--workspace` /
-  `CANOPY_WEB_WORKSPACE`. Never work around it by switching tokens.
+- No workspace named → names `--workspace` / `CANOPY_WEB_WORKSPACE`. Never work around it by switching tokens.
 - Uploaded but not found in the workspace on read-back → it landed elsewhere;
   check which identity wrote it.
 - HTTP 401 → PAT is expired or revoked. Re-mint via the slash command.

@@ -303,12 +303,8 @@ def call_text(method: str, path: str, *,
 # so. These helpers make a write name its tenant up front and confirm afterwards
 # where it actually landed.
 
-WORKSPACES_PATH = "/api/workspaces/"
-
-
 class WorkspaceRequiredError(RuntimeError):
-    """A canopy-web write refused because no workspace resolved and the caller
-    belongs to more than one (so the server's default would be a guess)."""
+    """A canopy-web write refused because the caller named no workspace."""
 
 
 class WorkspaceMismatchError(RuntimeError):
@@ -316,48 +312,21 @@ class WorkspaceMismatchError(RuntimeError):
     meant for — it landed somewhere else."""
 
 
-def member_workspace_slugs(*, base_url: Optional[str] = None, token: Optional[str] = None,
-                           transport: Optional[Transport] = None) -> list[str]:
-    """Slugs of every workspace the token's user belongs to (GET /api/workspaces/)."""
-    rows = call("GET", WORKSPACES_PATH, base_url=base_url, token=token,
-                transport=transport) or []
-    if isinstance(rows, dict):
-        rows = rows.get("items") or rows.get("results") or []
-    return [str(r.get("slug")) for r in rows if isinstance(r, dict) and r.get("slug")]
-
-
-def require_write_workspace(workspace: Optional[str], *, base_url: Optional[str] = None,
-                            token: Optional[str] = None,
-                            transport: Optional[Transport] = None,
+def require_write_workspace(workspace: Optional[str], *,
                             how_to_set: str = "set CANOPY_WEB_WORKSPACE=<slug>") -> str:
-    """The workspace a write goes INTO — never "whatever the server defaults to".
+    """The workspace a write goes INTO — always one the caller named.
 
-    ``workspace`` is the caller's already-resolved choice (arg/env/config). When it
-    is empty, the write may proceed only if the caller belongs to exactly one
-    workspace (then there is nothing to guess). Otherwise raise
-    :class:`WorkspaceRequiredError`, naming the memberships and ``how_to_set``.
+    ``workspace`` is the caller's already-resolved choice (arg/env/config). Empty
+    raises :class:`WorkspaceRequiredError`: a flat route lets the server pick its
+    default, and guessing from memberships is the same guess one step removed.
     """
     ws = (workspace or "").strip()
     if ws:
         return ws
-    try:
-        slugs = member_workspace_slugs(base_url=base_url, token=token, transport=transport)
-    except (CanopyError, OSError, ValueError) as exc:
-        raise WorkspaceRequiredError(
-            f"no canopy-web workspace resolved for this write, and listing your "
-            f"workspaces failed ({exc}). Refusing to write to the server's default "
-            f"workspace — {how_to_set}."
-        ) from exc
-    if len(slugs) == 1:
-        print(f"[canopy] no workspace configured — writing to '{slugs[0]}', the only "
-              f"workspace this identity belongs to.", file=sys.stderr)
-        return slugs[0]
-    have = ", ".join(slugs) if slugs else "none"
     raise WorkspaceRequiredError(
-        f"no canopy-web workspace resolved for this write, and this identity belongs "
-        f"to {len(slugs)} workspaces ({have}). Refusing to let the server pick its "
-        f"default (that is how a Connect narrative landed in dimagi, ace#2805) — "
-        f"{how_to_set}."
+        f"no canopy-web workspace named for this write. Refusing to let the server "
+        f"pick its default (that is how a Connect narrative landed in dimagi, "
+        f"ace#2805) — {how_to_set}."
     )
 
 
