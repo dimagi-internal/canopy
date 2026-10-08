@@ -55,6 +55,8 @@ from scripts.ddd.runstate import run_dir_for
 from scripts.ddd.auth import (
     DEFAULT_API,
     TOKEN_FILE,
+    confirm_landed as _confirm_landed,
+    require_write_workspace as _require_write_ws,
     resolve_base_url as _resolve_base_url,
     resolve_token as _resolve_token,
     resolve_ddd_workspace as _resolve_ws,
@@ -897,8 +899,13 @@ def publish_artifact(
         canopy-web API base URL.  Falls back to ``CANOPY_WEB_API_URL`` env var
         then ``DEFAULT_API``.
     token:
-        Bearer PAT.  Falls back to ``CANOPY_WEB_PAT`` env var then
-        ``~/.claude/canopy/workbench-token``.
+        Bearer PAT.  Falls back to ``CANOPY_WEB_PAT`` env var, then the agent's
+        own ``~/.<slug>/.env``, then ``~/.claude/canopy/workbench-token`` — the
+        last never in an agent's session (``AgentIdentityError`` instead).
+
+    The upload goes into a NAMED workspace (``auth.require_write_workspace`` —
+    refuses rather than let the server default it) and is read back from that
+    workspace afterwards, printing where it landed.
     _post:
         Injected HTTP callable for testing.  Signature::
 
@@ -918,6 +925,7 @@ def publish_artifact(
 
     api = _resolve_base_url(base_url)
     pat = _resolve_token(token)
+    ws = _require_write_ws(base_url=api, token=pat)
     file_bytes = content.encode("utf-8") if isinstance(content, str) else content
     filename = _FILENAME_BY_KIND[kind]
     content_type = _CT_BY_KIND[kind]
@@ -951,7 +959,7 @@ def publish_artifact(
 
     post_fn = _post if _post is not None else _default_post
     body = post_fn(
-        f"{api}{_scoped_api('/api/walkthroughs/', _resolve_ws(None))}",
+        f"{api}{_scoped_api('/api/walkthroughs/', ws)}",
         pat,
         fields,
         filename,
@@ -962,6 +970,8 @@ def publish_artifact(
     wid = body.get("id")
     if not wid:
         raise RuntimeError(f"canopy-web returned unexpected response: {body}")
+    _confirm_landed("walkthroughs", str(wid), ws, query={"mine": "true", "kind": kind},
+                    base_url=api, token=pat)
 
     # Public walkthroughs are token-gated: canopy-web returns the owner-only
     # tokened share_url (…/walkthrough/<id>?t=<token>) and never the raw

@@ -203,6 +203,15 @@ VIDEO_ABS="$(realpath <video_path>)"
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.upload <run_id> --video "$VIDEO_ABS" --stuck)
 ```
 
+**Identity and workspace are checked before anything is written** (ace#2805):
+every DDD write — the narrative post, `upload-video`, render uploads, this upload —
+refuses in an agent's session (`$CANOPY_AGENT`) that has no PAT of its own (it will
+not borrow the operator's workbench-token; set `CANOPY_WEB_PAT`), and refuses when no
+workspace resolves unless you belong to exactly one (set `CANOPY_WEB_WORKSPACE`, or
+commit `workspace: <slug>` in the target repo's `.canopy/ddd/config.yaml`). Each write
+is then read back from that workspace and prints `landed in workspace '<slug>'`. Fix
+the configuration the error names; never swap tokens to get past it.
+
 **RULE — a human's in-session approval IS the gate approval, so pass `--release-approved`.**
 When a human told you to publish in the session (e.g. "publish it", "externally publish"),
 that *is* the external_release sign-off — pass `--release-approved` so it resolves through an

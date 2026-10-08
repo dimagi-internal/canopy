@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -128,7 +129,7 @@ def _warn_borrowed_identity(slug: str) -> None:
         return
     _WARNED_BORROWED_IDENTITY = True
     print(
-        f"[canopy] WARNING: in the '{slug}' agent repo, but ~/.{slug}/.env has no "
+        f"[canopy] WARNING: this is agent '{slug}''s session, but ~/.{slug}/.env has no "
         f"CANOPY_WEB_PAT — falling back to the operator's workbench-token.\n"
         f"[canopy] Calls will be attributed to the OPERATOR, not to '{slug}', and "
         f"will see the operator's workspaces.\n"
@@ -136,6 +137,21 @@ def _warn_borrowed_identity(slug: str) -> None:
         f"(`op inject -i .env.tpl -o ~/.{slug}/.env`) or set CANOPY_WEB_PAT.",
         file=sys.stderr,
     )
+
+
+def _slug_env_pat(slug: str) -> str:
+    """CANOPY_WEB_PAT out of agent ``slug``'s provisioned ``~/.<slug>/.env``, or ""."""
+    if not slug or slug in _NON_AGENT_SLUGS or not _SLUG_RE.match(slug):
+        return ""
+    env_file = Path.home() / f".{slug}" / ".env"
+    try:
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("CANOPY_WEB_PAT="):
+                return line.partition("=")[2].strip().strip('"').strip("'")
+    except OSError:
+        return ""
+    return ""
 
 
 def _agent_env_pat(start: Optional[Path] = None) -> str:
@@ -152,30 +168,49 @@ def _agent_env_pat(start: Optional[Path] = None) -> str:
     failing to reveal it. Resolving from the repo makes identity follow the agent
     on every host instead of depending on how it happened to be launched.
     """
-    here = (start or Path.cwd()).resolve()
-    for d in (here, *here.parents):
-        manifest = d / ".claude-plugin" / "plugin.json"
-        if not manifest.is_file():
-            continue
-        try:
-            slug = (json.loads(manifest.read_text(encoding="utf-8")) or {}).get("name") or ""
-        except (OSError, ValueError):
-            return ""
-        if not slug or slug in _NON_AGENT_SLUGS:
-            return ""
-        env_file = Path.home() / f".{slug}" / ".env"
-        try:
-            for line in env_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line.startswith("CANOPY_WEB_PAT="):
-                    return line.partition("=")[2].strip().strip('"').strip("'")
-        except OSError:
-            return ""
-        return ""
-    return ""
+    return _slug_env_pat(_agent_slug_for_cwd(start))
 
 
-def resolve_token(token: Optional[str]) -> str:
+# Env vars that name the agent whose session this is. `CANOPY_AGENT` is set by
+# every agent repo's settings.json and by the cloud runner for every agent turn;
+# `CANOPY_AGENT_SLUG` is the harness's name for the same thing (run_store, shareout).
+_AGENT_ENV_VARS = ("CANOPY_AGENT", "CANOPY_AGENT_SLUG")
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$", re.I)
+
+
+def agent_context_slug(start: Optional[Path] = None) -> str:
+    """The agent this process is working FOR, or "" when it is a human's own.
+
+    The env wins over the cwd walk-up because the cwd lies in exactly the case that
+    matters: every `python -m scripts.ddd.*` runs with cwd = the canopy runtime
+    (inside the canopy plugin, a non-agent), so an ACE session posting a narrative
+    looked like nobody's — and fell through to the operator's token (ace#2805).
+    """
+    for var in _AGENT_ENV_VARS:
+        slug = os.environ.get(var, "").strip()
+        if slug and slug not in _NON_AGENT_SLUGS and _SLUG_RE.match(slug):
+            return slug
+    return _agent_slug_for_cwd(start)
+
+
+class AgentIdentityError(RuntimeError):
+    """An agent's session has no PAT of its own, and strict mode refused to borrow
+    the operator's workbench-token."""
+
+
+def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
+    """The canopy-web PAT this process acts with.
+
+    Precedence: explicit arg → env ``CANOPY_WEB_PAT`` → the agent's own PAT
+    (``~/.<slug>/.env``, slug from :func:`agent_context_slug`'s env vars, then the
+    cwd's agent repo) → the operator's ``TOKEN_FILE``.
+
+    ``agent_strict=True`` turns that last fallback into a refusal whenever this is
+    an agent's session: writes that publish under someone's name (DDD narratives,
+    videos, walkthroughs) must not silently go out as the human who owns the
+    laptop. Without it the fallback only warns — a human working in an agent repo
+    must not be blocked from read-mostly CLI work.
+    """
     if token:
         return token
     # Explicit env wins: it is how a runner pins the identity for a turn.
@@ -185,15 +220,24 @@ def resolve_token(token: Optional[str]) -> str:
     # Then the agent's own PAT, so an agent acts as ITSELF rather than as whoever
     # owns TOKEN_FILE. This must come BEFORE the global file — that file exists on
     # every operator laptop, so checking it first is exactly what masked the bug.
-    agent_pat = _agent_env_pat()
+    slug = agent_context_slug()
+    agent_pat = _slug_env_pat(slug) or _agent_env_pat()
     if agent_pat:
         return agent_pat
+    if slug and agent_strict:
+        raise AgentIdentityError(
+            f"this is agent '{slug}'s session, but no PAT of its own resolved: "
+            f"CANOPY_WEB_PAT is unset and ~/.{slug}/.env has no CANOPY_WEB_PAT. "
+            f"Refusing to fall back to the operator's workbench-token ({TOKEN_FILE}) — "
+            f"the write would be attributed to the operator and land in the operator's "
+            f"workspaces. Set CANOPY_WEB_PAT to {slug}'s PAT, or materialize its env "
+            f"(`op inject -i .env.tpl -o ~/.{slug}/.env`)."
+        )
     if TOKEN_FILE.exists():
         stored = TOKEN_FILE.read_text(encoding="utf-8").strip()
         if stored:
-            # About to act as the operator. If we're standing in an agent's repo
-            # that is an identity swap, and it must not happen quietly.
-            slug = _agent_slug_for_cwd()
+            # About to act as the operator. If this is an agent's session that is
+            # an identity swap, and it must not happen quietly.
             if slug:
                 _warn_borrowed_identity(slug)
             return stored
@@ -248,3 +292,108 @@ def call_text(method: str, path: str, *,
     if not (200 <= status < 300):
         raise CanopyError(f"{method} {path} -> {status}: {text[:400]}")
     return text
+
+
+# --- Writes that must land in a NAMED workspace -------------------------------
+#
+# A write with no workspace goes to the flat route, and canopy-web files it in the
+# caller's default workspace — for a human in dimagi + connect that is `dimagi`,
+# whatever the content is about. ace#2805 / canopy-web#1289: an ACE session posted
+# the chlorine narrative (Connect's) into dimagi, as the operator, and nothing said
+# so. These helpers make a write name its tenant up front and confirm afterwards
+# where it actually landed.
+
+WORKSPACES_PATH = "/api/workspaces/"
+
+
+class WorkspaceRequiredError(RuntimeError):
+    """A canopy-web write refused because no workspace resolved and the caller
+    belongs to more than one (so the server's default would be a guess)."""
+
+
+class WorkspaceMismatchError(RuntimeError):
+    """A write succeeded but the object is not readable in the workspace it was
+    meant for — it landed somewhere else."""
+
+
+def member_workspace_slugs(*, base_url: Optional[str] = None, token: Optional[str] = None,
+                           transport: Optional[Transport] = None) -> list[str]:
+    """Slugs of every workspace the token's user belongs to (GET /api/workspaces/)."""
+    rows = call("GET", WORKSPACES_PATH, base_url=base_url, token=token,
+                transport=transport) or []
+    if isinstance(rows, dict):
+        rows = rows.get("items") or rows.get("results") or []
+    return [str(r.get("slug")) for r in rows if isinstance(r, dict) and r.get("slug")]
+
+
+def require_write_workspace(workspace: Optional[str], *, base_url: Optional[str] = None,
+                            token: Optional[str] = None,
+                            transport: Optional[Transport] = None,
+                            how_to_set: str = "set CANOPY_WEB_WORKSPACE=<slug>") -> str:
+    """The workspace a write goes INTO — never "whatever the server defaults to".
+
+    ``workspace`` is the caller's already-resolved choice (arg/env/config). When it
+    is empty, the write may proceed only if the caller belongs to exactly one
+    workspace (then there is nothing to guess). Otherwise raise
+    :class:`WorkspaceRequiredError`, naming the memberships and ``how_to_set``.
+    """
+    ws = (workspace or "").strip()
+    if ws:
+        return ws
+    try:
+        slugs = member_workspace_slugs(base_url=base_url, token=token, transport=transport)
+    except (CanopyError, OSError, ValueError) as exc:
+        raise WorkspaceRequiredError(
+            f"no canopy-web workspace resolved for this write, and listing your "
+            f"workspaces failed ({exc}). Refusing to write to the server's default "
+            f"workspace — {how_to_set}."
+        ) from exc
+    if len(slugs) == 1:
+        print(f"[canopy] no workspace configured — writing to '{slugs[0]}', the only "
+              f"workspace this identity belongs to.", file=sys.stderr)
+        return slugs[0]
+    have = ", ".join(slugs) if slugs else "none"
+    raise WorkspaceRequiredError(
+        f"no canopy-web workspace resolved for this write, and this identity belongs "
+        f"to {len(slugs)} workspaces ({have}). Refusing to let the server pick its "
+        f"default (that is how a Connect narrative landed in dimagi, ace#2805) — "
+        f"{how_to_set}."
+    )
+
+
+def confirm_landed(app: str, obj_id: str, workspace: str, *, query: Optional[dict] = None,
+                   base_url: Optional[str] = None, token: Optional[str] = None,
+                   transport: Optional[Transport] = None) -> dict:
+    """Read a just-written object back through the TENANT-PINNED list
+    (``/api/w/<ws>/<app>/``) and return its row.
+
+    The pinned list holds only that workspace's rows, so finding the id there is
+    proof of where it landed (a by-id GET is not: a link-visibility object reads
+    from any tenant). Prints the workspace it landed in. Raises
+    :class:`WorkspaceMismatchError` when the id is absent; a failed READ (network,
+    5xx) only warns — the write already happened and a flaky read must not hide it.
+    """
+    import urllib.parse
+
+    path = f"/api/w/{workspace}/{app}/"
+    if query:
+        path += "?" + urllib.parse.urlencode(query)
+    try:
+        rows = call("GET", path, base_url=base_url, token=token, transport=transport) or []
+    except (CanopyError, OSError, ValueError) as exc:
+        print(f"[canopy] WARNING: wrote {app} {obj_id} but could not read it back from "
+              f"workspace '{workspace}' to confirm where it landed: {exc}", file=sys.stderr)
+        return {}
+    if isinstance(rows, dict):
+        rows = rows.get("items") or rows.get("results") or []
+    for row in rows:
+        if isinstance(row, dict) and str(row.get("id")) == str(obj_id):
+            who = f", owner {row['owner_email']}" if row.get("owner_email") else ""
+            print(f"[canopy] landed in workspace '{workspace}' ({app} {obj_id}{who})",
+                  file=sys.stderr)
+            return row
+    raise WorkspaceMismatchError(
+        f"wrote {app} {obj_id} but it is NOT in workspace '{workspace}' — it landed in "
+        f"another workspace. Check which identity wrote it (CANOPY_WEB_PAT) and move or "
+        f"delete it."
+    )

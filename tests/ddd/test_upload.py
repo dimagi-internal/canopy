@@ -264,6 +264,7 @@ class TestBuildDocsPage:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("pinned_write_workspace")
 class TestPublishArtifact:
     def _mock_post(self, *, wid="art123", share_url=None):
         """Return a fake _post callable that records call args.
@@ -328,7 +329,7 @@ class TestPublishArtifact:
             base_url="https://canopy.test",
             _post=mock,
         )
-        assert mock.calls[0]["url"] == "https://canopy.test/api/walkthroughs/"
+        assert mock.calls[0]["url"] == "https://canopy.test/api/w/connect/walkthroughs/"
 
     def test_html_kind_sets_correct_content_type(self, monkeypatch):
         monkeypatch.setenv("CANOPY_WEB_PAT", "test-pat")

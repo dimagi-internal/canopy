@@ -34,7 +34,14 @@ the tokened share link, rotate it, or delete. Non-owners just see the player.
   var). Mint with `/canopy:canopy-web-pat-mint` — gh-style loopback flow,
   one click in the browser. The PAT identifies the human caller; uploaded
   walkthroughs are owned by whoever minted the token, no separate `--as`
-  flag needed.
+  flag needed. In an **agent's** session (`$CANOPY_AGENT` set) the agent's own
+  PAT (`~/.<slug>/.env` or `CANOPY_WEB_PAT`) is required — the operator's
+  workbench-token is refused, so an agent never uploads as the human (ace#2805).
+- **Workspace**: `--workspace <slug>` (default `$CANOPY_WEB_WORKSPACE`). With
+  neither, the upload proceeds only if you belong to exactly one workspace and
+  otherwise refuses — it never lands in the server's default. After uploading
+  it reads the walkthrough back from that workspace and prints
+  `landed in workspace '<slug>'`.
 - **Canopy-web reachability**: defaults to the production deploy. Override
   with `CANOPY_WEB_API_URL` env var (e.g. for local dev against
   `http://localhost:8000`).
@@ -148,6 +155,12 @@ Same token is used by the post-tool-use hook and `/canopy:canopy-doctor`.
 The script exits non-zero with a one-line `error: ...` message on stderr:
 
 - Missing PAT → tells you to run `/canopy:canopy-web-pat-mint`.
+- Agent session with no PAT of its own → names `CANOPY_WEB_PAT`; set it to the
+  agent's PAT or materialize `~/.<slug>/.env`.
+- No workspace and several memberships → names `--workspace` /
+  `CANOPY_WEB_WORKSPACE`. Never work around it by switching tokens.
+- Uploaded but not found in the workspace on read-back → it landed elsewhere;
+  check which identity wrote it.
 - HTTP 401 → PAT is expired or revoked. Re-mint via the slash command.
 - HTTP 500 with `Drive not configured` → canopy-web is missing
   `CANOPY_DRIVE_SA_KEY_JSON` / `CANOPY_DRIVE_ROOT_FOLDER_ID`. Deployment
