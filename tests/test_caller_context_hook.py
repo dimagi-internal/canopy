@@ -231,7 +231,7 @@ def test_a_malformed_grant_is_no_grant(tmp_path, bad):
 
 
 @pytest.mark.parametrize("override", [{"relationship": "member"}, {"relationship": "caller"},
-                                      {"relationship": "system"}, {"verified": False}])
+                                      {"relationship": "contact"}, {"verified": False}])
 def test_a_grant_on_an_envelope_that_does_not_earn_it_is_ignored(tmp_path, override):
     text = cc.summarize({**ADA, **override, "ship_grant": GRANT}, str(tmp_path / "e.json"), TID)
     assert "ship grant" not in text
@@ -439,3 +439,35 @@ def test_an_empty_person_is_one_line_plus_how_to_record():
     assert len(lines) == 2
     assert lines[1].startswith("Record a correction: `canopy people remember --person 5 "
                                "--workspace connect")
+
+
+# --- the STANDING ship grant (owner decision, 2026-10-08) ----------------------------
+# A scheduled Eva turn held a tested fix because `manual` files push / merge beside
+# send / publish. The owner now lists repos on the agent; its own turns — a schedule is
+# `system` — carry a grant for exactly those.
+
+SCHEDULE = {**ENV, "relationship": "system", "verified": True,
+            "who": {"kind": "system", "via": "schedule:3", "assurance": "internal"},
+            "granted_by": "system", "trigger": {"origin": "canopy_scheduler", "runner": "jj-mbp"}}
+STANDING = {"repo": "dimagi-internal/eva", "repos": ["dimagi-internal/eva", "dimagi-internal/chrome-sales"],
+            "basis": "standing grant set on eva (owner jj@dimagi.com)"}
+
+
+def test_a_scheduled_turn_states_a_standing_grant_for_every_listed_repo(tmp_path):
+    text = cc.summarize({**SCHEDULE, "ship_grant": STANDING}, str(tmp_path / "e.json"), TID)
+    assert ("- ship grant: push / PR / merge in dimagi-internal/eva, dimagi-internal/chrome-sales "
+            "are pre-approved by the owner (standing grant set on eva (owner jj@dimagi.com))") in text
+    assert "Only those repos." in text
+    mode_line = next(line for line in text.splitlines() if line.startswith("- turn mode:"))
+    assert "covered by the ship grant below" in mode_line
+    assert "(push, deploy, merge, send, publish)" not in mode_line
+
+
+def test_an_older_envelope_with_only_repo_still_reads(tmp_path):
+    assert cc.ship_grant({"ship_grant": {"repo": "dimagi-internal/eva"}})["repos"] == ["dimagi-internal/eva"]
+
+
+def test_malformed_entries_in_repos_are_dropped(tmp_path):
+    g = cc.ship_grant({"ship_grant": {"repos": ["dimagi-internal/eva", "../../etc", "a/b c"]}})
+    assert g["repos"] == ["dimagi-internal/eva"]
+    assert cc.ship_grant({"ship_grant": {"repos": ["nope"]}}) is None
