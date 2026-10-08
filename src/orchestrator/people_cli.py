@@ -244,8 +244,10 @@ def conversations_cmd(person: str, agent: str, since: Optional[str], as_json: bo
     pid = resolve_person(person)
     rows = _call("GET", _qs(f"/api/people/{pid}/conversations/", agent=agent,
                             since=parse_since(since))) or []
-    if isinstance(rows, dict):                      # tolerate a paginated envelope
-        rows = rows.get("items") or rows.get("results") or []
+    if isinstance(rows, dict):
+        # canopy-web answers {"person", "agent", "conversations": [...]}; reading only
+        # the paginated keys turned every digest's read into [] ("no new facts").
+        rows = rows.get("conversations") or rows.get("items") or rows.get("results") or []
     if as_json:
         click.echo(json.dumps(rows, indent=2, default=str))
         return
