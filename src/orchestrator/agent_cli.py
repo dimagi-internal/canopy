@@ -413,53 +413,6 @@ def agent_stage_delegated(slug):
     click.echo(f"salesforce: staged {slug}'s borrowed Salesforce identity at {target}")
 
 
-@agent.command("github")
-@click.option("--slug", envvar="CANOPY_AGENT", required=True,
-              help="Agent slug. Default: $CANOPY_AGENT.")
-@click.option("--json-output", is_flag=True, help="Machine-readable output (never the token).")
-def agent_github_cmd(slug, json_output):
-    """Which GitHub identity this agent's sessions act as on THIS machine.
-
-    Reads the agent's credential from canopy-web (the one its runner turns get) and
-    asks GitHub who it is. Exit 1 with the reason when there is none — in which case
-    an agent session here refuses to push rather than using your own `gh` login.
-    Never prints the token."""
-    from orchestrator.agent_github import GitHubIdentityError, resolve_identity
-    try:
-        ident = resolve_identity(slug)
-    except GitHubIdentityError as e:
-        if json_output:
-            click.echo(json.dumps({"slug": slug, "ok": False, "error": str(e)}))
-            raise SystemExit(1)
-        raise click.ClickException(str(e))
-    if json_output:
-        click.echo(json.dumps({"slug": slug, "ok": True, "login": ident.login,
-                               "name": ident.name, "email": ident.email}))
-    else:
-        click.echo(f"github: {slug} acts as {ident.describe()}")
-
-
-@agent.command("github-env")
-@click.option("--slug", envvar="CANOPY_AGENT", required=True,
-              help="Agent slug. Default: $CANOPY_AGENT.")
-def agent_github_env(slug):
-    """Print `export …` lines giving a session this agent's GitHub identity.
-
-    For the SessionStart hook (`agent_op_env.py`), which appends them to
-    `$CLAUDE_ENV_FILE`: GH_TOKEN for gh, a credential helper + author/committer for
-    git. stdout carries the token — never run it where output is shown. The identity
-    goes to stderr. Exit 1 with the reason when there is none (the hook then writes
-    a refusal, not a fallback)."""
-    from orchestrator.agent_github import (GitHubIdentityError, export_lines,
-                                           resolve_identity, session_env)
-    try:
-        ident = resolve_identity(slug)
-    except GitHubIdentityError as e:
-        raise click.ClickException(str(e))
-    click.echo(export_lines(session_env(ident)), nl=False)
-    click.echo(f"git/gh act on GitHub as {ident.describe()} — {slug}'s identity", err=True)
-
-
 @agent.command("bootstrap")
 @click.option("--slug", "slugs", multiple=True,
               help="Agent slug to bootstrap (repeatable). Default: every agent repo discovered "
