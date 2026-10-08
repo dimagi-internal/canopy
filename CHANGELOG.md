@@ -9,6 +9,18 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.613] - 2026-10-07
+### Added
+- **Fleet brain v1, canopy half (canopy#804).** The `caller_context` hook prints envelope
+  v3's `person` block (what the fleet has recorded about the asker: corrections first, other
+  facts capped at 12, the digest, and where they can see it all) beside every delivered prompt.
+  A v2 envelope renders byte-for-byte as before. New `canopy people {show|remember|retract|
+  conversations|digest put}` CLI over canopy-web `/api/people/` (exit 3 on an older server
+  that lacks the routes). New `people-digest` skill: the forced-write turn canopy-web enqueues
+  after a conversation. `agent-core/turn.md` and the factory `answer-caller` template gain the
+  "there is no *the*" answering rule and read the person block; the close checklist gains
+  "did anyone correct you? → `canopy people remember`".
+
 ## [0.2.604] - 2026-10-07
 ### Added
 - **Recorded-walkthrough video mode (`style: recorded`).** A DDD spec can now declare

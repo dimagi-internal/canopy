@@ -48,3 +48,18 @@ def test_gating_config_is_present_and_non_empty():
     assert isinstance(cfg, str)
     assert cfg.strip()
     assert "deny" in cfg
+
+
+def test_answer_caller_reads_the_person_block_and_resolves_the_instance():
+    """canopy#804: a confined `ask` session gets the fleet's record of the asker from the
+    envelope (no tool needed) and must not answer about a generic template as if it were
+    the asker's own instance."""
+    t = templates()["skills/answer-caller/SKILL.md"]
+    assert "`person`" in t and "no tool is needed" in t
+    assert "Honour every\n   `correction`" in t
+    assert "contact.notes" in t                      # the fallback for an older envelope
+    assert 'there is no "the"' in t
+    assert "resolve it to a specific instance" in t
+    assert "Never describe a generic template as if it were theirs." in t
+    # the confined session answers; it cannot write people facts (not in its allowlist)
+    assert "canopy people remember" not in t
