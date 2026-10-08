@@ -8,6 +8,15 @@ disable-model-invocation: true
 
 # People digest — keep one person's record current
 
+> **Paused, and must be reworked before it is turned back on.** The digest is off fleet-wide
+> (canopy-web#1298) while Jonathan works out what it is for. Since the people brain moved onto
+> the Human Context Protocol (canopy-web `apps/contacts/hcp.py`), an agent's login can no
+> longer bulk-read a person (`canopy people show` → 403): agents recall with
+> `hcp_searchPreferences`, scoped to the person who started their turn, and the envelope no
+> longer carries a digest. Step 2's read below no longer works for an agent. Redesign this turn
+> under HCP — write inferred facts with `hcp_addPreference` (`model-inferred` + `confidence`),
+> drop the digest — rather than reopening the bulk read.
+
 You were started as
 `/canopy:people-digest --person <id> --workspace <slug> --since <iso>`
 by canopy-web, because this person just had a conversation with this agent. This is the
