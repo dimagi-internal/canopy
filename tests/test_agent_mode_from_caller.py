@@ -90,7 +90,18 @@ def _granted(tmp_path, **over):
 def test_a_ship_grant_rides_beside_the_mode(tmp_path, monkeypatch):
     out, _ = _run(monkeypatch, ["--caller", _granted(tmp_path)])
     assert out["turn_mode"] == "manual"            # the grant never flips the mode
-    assert out["ship_grant"] == GRANT
+    assert out["ship_grant"] == {**GRANT, "repos": ["dimagi-internal/eva"]}
+
+
+def test_a_standing_grant_on_a_scheduled_turn_rides_too(tmp_path, monkeypatch):
+    # 2026-10-08: the owner lists repos on the agent; its own schedule (`system`) carries them.
+    standing = {"repo": "dimagi-internal/eva",
+                "repos": ["dimagi-internal/eva", "dimagi-internal/chrome-sales"],
+                "basis": "standing grant set on eva (owner jj@dimagi.com)"}
+    out, _ = _run(monkeypatch, ["--caller", _granted(tmp_path, relationship="system",
+                                                     ship_grant=standing)])
+    assert out["turn_mode"] == "manual"
+    assert out["ship_grant"] == standing
 
 
 def test_a_grant_the_envelope_does_not_earn_is_dropped(tmp_path, monkeypatch):
