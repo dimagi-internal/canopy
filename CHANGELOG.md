@@ -9,6 +9,15 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.621] - 2026-10-08
+### Changed
+- **The `person` block in the prompt is an index, not the record (canopy#804).** It rides on
+  every turn, so the `caller_context` hook now prints one header line, corrections (capped at
+  5), at most two orienting facts (role / instance / project), and one line naming
+  `canopy people show <id> --workspace <slug>` to pull the digest and the rest on demand.
+  Never the digest itself; hard ceiling 900 chars (~225 tokens), down from a worst case of
+  ~8,000. `agent-core/turn.md` tells the agent to pull when the question names a kind of thing.
+
 ## [0.2.616] - 2026-10-07
 ### Added
 - **`snippets upload-video --cut <id> --spec <recipe>` (canopy-web#1288).** A `style: recorded`
