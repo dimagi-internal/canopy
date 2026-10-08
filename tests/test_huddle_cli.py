@@ -917,6 +917,8 @@ def test_prompt_round2_with_a_brief(tmp_path, web):
     text = out.read_text()
     assert text.index(BRIEF_HEAD) < text.index("### eva")
     assert '"cost_to_jonathan"' in text and '"fails_if"' in text and '"confidence"' not in text
+    # Two of the last huddle's five ideas were the tooling work the brief's "Not now" excludes.
+    assert "`Not now:` line rules out" in text
     assert "echo moves IDM" in text
 
 

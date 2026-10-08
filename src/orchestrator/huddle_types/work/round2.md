@@ -14,7 +14,8 @@ Every teammate's round-1 report (yours included):
 Propose AT MOST 3 pieces of work, best first — fewer is better; zero is fine. The bar:
 {{principal}} would rather this happen than not, given it costs his attention to approve and your
 turns to build. Each proposal:
-- serves ONE priority in the brief — its NUMBER in `priority`;
+- serves ONE priority in the brief — its NUMBER in `priority` — and is not something the brief's
+  `Not now:` line rules out (if it is, drop it, however useful);
 - moves it in a way that would not happen without this huddle. `kind`: `new` (nobody is doing
   it), `unblock` (frees something stuck) or `existing` (an open task — only with `why_huddle`:
   what the huddle adds, e.g. a partner; your own open task re-wrapped is not a proposal);
