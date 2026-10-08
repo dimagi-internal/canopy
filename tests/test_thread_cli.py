@@ -315,7 +315,8 @@ def test_show_prints_a_readable_transcript(web, tmp_path):
 # ── the huddle's agreement step ──────────────────────────────────────────────────
 def _amended(web):
     r2 = {"huddle": H, "round": 2, "member": "eva",
-          "proposals": [prop("Joint Q4 brief", "eva", ["echo"]), prop("Solo thing", "eva")],
+          "proposals": [prop("Joint Q4 brief", "eva", ["echo"]),
+                        prop("Solo thing", "eva", priority="Ops hygiene")],
           "critique_answers": [{"title": "t", "answer": "a"}]}
     echo_r3 = {"huddle": H, "round": 3, "member": "echo",
                "answers": [{"title": "Joint Q4 brief", "lead": "eva", "answer": "amend",
@@ -470,3 +471,24 @@ def test_agreement_context_names_the_others_and_that_there_is_no_thread_with_the
     assert '"public material only"' in text
     assert "Others on this proposal (not in this thread): ace already said yes (co-signed); there is NO thread with them." in text
     assert agreement_context({**p, "with": ["echo"]}, "echo").endswith('"public material only"')
+
+
+def test_huddle_agree_applies_the_merges_first(web, tmp_path):
+    """Merges apply before agreement: an amend on a proposal the leader absorbed opens no
+    thread, and an unresolved overlap refuses `agree` like it refuses round 3."""
+    r2 = {"huddle": H, "round": 2, "member": "eva", "critique_answers": [{"title": "t", "answer": "a"}],
+          "proposals": [prop("Joint Q4 brief", "eva", ["echo"]),
+                        prop("Q4 brief, echo's take", "eva", ["echo"])]}
+    echo_r3 = {"huddle": H, "round": 3, "member": "echo", "answers": [
+        {"title": "Joint Q4 brief", "lead": "eva", "answer": "co-sign"},
+        {"title": "Q4 brief, echo's take", "lead": "eva", "answer": "amend", "note": "shorter"}]}
+    web.detail[H] = detail([_cell("eva", 1, r1("eva")), _cell("echo", 1, r1("echo")),
+                            _cell("eva", 2, r2), _cell("echo", 3, echo_r3)])
+    plan = write_plan(tmp_path)
+    r = run("huddle", "agree", "--plan", str(plan))
+    assert r.exit_code == 2 and "agree refused" in r.output and not web.thread_posts
+    merges = tmp_path / "merges.json"
+    merges.write_text(json.dumps({"Joint Q4 brief": {"absorbs": ["Q4 brief, echo's take"]}}))
+    r = run("huddle", "agree", "--plan", str(plan), "--merges", str(merges))
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["threads"] == [] and not web.thread_posts

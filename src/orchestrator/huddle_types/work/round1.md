@@ -1,9 +1,9 @@
 Huddle {{huddle}} — round 1 of 3 (report). You are {{member}}; {{leader}} leads this huddle.
 
-A huddle is how this team works out what it can push forward for {{principal}} and Dimagi —
-alone or together. Round 1: tell the team what you have been doing and what you understand the
-priorities to be. In round 2 you will see EVERY teammate's report and propose work; in round 3
-you co-sign (or not) work teammates propose with you.
+{{brief}}A huddle is how this team works out what it can push forward for {{principal}} and Dimagi —
+alone or together. The priorities above are given: work toward them, do not re-derive or re-rank
+them. Round 1: tell the team where YOU can move them. In round 2 you will see EVERY teammate's
+report and propose work; in round 3 you co-sign (or not) work teammates propose with you.
 
 THIS IS A READ-ONLY TURN. Do not run your turn procedure's inbox or board steps. No sends, no
 replies, no PRs, no board writes. Read as much as you need. The one write allowed: filing your
@@ -21,15 +21,24 @@ SHARING: {{sharing_rule}}
 
 {{prior}}
 
-Reply with exactly this block as the LAST thing in your final message:
+3. For each priority in the brief, name your LEVER: the most valuable thing you could do toward
+   it in the next 2 weeks (today is {{today}}). At most one per priority; skip a priority you
+   cannot move. `kind`: `new` (nobody is doing it), `unblock` (frees something stuck — name the
+   task) or `existing` (a task already open — name it). `verified`: true only if you checked the
+   facts it rests on THIS turn. Something that cannot land before a hard date in the brief is
+   not a lever.
+
+Reply with exactly this block as the LAST thing in your final message (`priority` is the
+brief's number):
 
 ```huddle
 {"huddle": "{{huddle}}", "round": {{round}}, "member": "{{member}}",
- "worked_on": ["≤5 one-line items, each with a link or id"],
- "priorities": ["what you understand {{principal}}'s / Dimagi's priorities to be RIGHT NOW — each with where you learned it (thread, doc, goal, meeting)"],
- "projects": [{"name": "…", "state": "…", "next": "…"}],
+ "state": ["≤3 one-line items: what you are mid-way through that matters to the brief, with ids"],
+ "levers": [{"priority": 1, "move": "the most valuable thing you could do toward it in the next 2 weeks",
+             "kind": "new|unblock|existing", "task": "<task id for unblock/existing, else ''>",
+             "blocked_by": "<who or what, or ''>", "verified": false}],
  "offers": ["what you could do for a teammate"],
- "needs": ["what you need from a teammate or from {{principal}}"]}
+ "needs": [{"from": "<teammate slug, or {{principal_key}}>", "ask": "exactly what you need"}]}
 ```
 
 Then file it as your close-out: write the fenced block (fences included) to a file and run
