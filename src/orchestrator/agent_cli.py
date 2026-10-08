@@ -1,6 +1,5 @@
 """`canopy agent …` — thin CLI over AgentClient for shell-driven agents."""
 import json
-import re
 from pathlib import Path
 
 import click
@@ -1252,34 +1251,7 @@ def turn_mode_from_envelope(caller_path) -> dict | None:
         out["relationship"] = normalize_relationship(env.get("relationship"))
     if env.get("profile") is not None:
         out["profile"] = normalize_profile(env.get("profile"))
-    # The ship grant (canopy-web): push / PR / merge pre-approved in the repos it names —
-    # per dispatch (2026-10-03: another agent's admin login, the agent's own repo) or
-    # STANDING (2026-10-08: the repos the owner listed on the agent, on any of the
-    # agent's own verified turns, schedules included — hence `system`). Passed through
-    # only when well-formed, so the turn opening can state it beside the mode.
-    grant = ship_grant_repos(env)
-    if grant:
-        out["ship_grant"] = grant
     return out
-
-
-def ship_grant_repos(env: dict) -> dict | None:
-    """`{"repo", "repos", "basis"}` for a well-formed ship grant on a verified
-    owner / admin / system envelope, else None. `repos` falls back to `[repo]` for
-    an envelope from a canopy-web that predates the standing grant."""
-    grant = env.get("ship_grant")
-    if not isinstance(grant, dict) or env.get("verified") is not True:
-        return None
-    if env.get("relationship") not in ("owner", "admin", "system"):
-        return None
-    raw = grant.get("repos") if isinstance(grant.get("repos"), list) else [grant.get("repo")]
-    repos = [r for r in (str(x or "").strip() for x in raw) if _OWNER_REPO.match(r)]
-    if not repos:
-        return None
-    return {"repo": repos[0], "repos": repos, "basis": str(grant.get("basis") or "")}
-
-
-_OWNER_REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
 @agent.command("mode")

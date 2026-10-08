@@ -199,17 +199,17 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     trigger = env.get("trigger") or {}
     cap = env.get("capability") or {}
     tid = turn_id or env.get("turn_id") or ""
-    # Belt and braces: canopy-web only grants on a verified owner / admin / system turn
-    # (system = the agent's own schedule, for the STANDING grant); a grant on an
-    # envelope that says otherwise is ignored rather than believed.
-    grant = ship_grant(env) if rel in ("owner", "admin", "system") and verified else None
-    where = ", ".join(grant["repos"]) if grant else ""
+    # Manual mode gates what reaches PEOPLE or other systems. It does not gate code
+    # shipping on the agent's own turns: the GitHub credential the agent holds is
+    # already the record of which repos it may push to, so a second approval would
+    # only duplicate it (Jonathan, 2026-10-08). A member's or contact's say-so still
+    # never pushes anything (the "Act accordingly" line below).
+    own = rel in ("owner", "admin", "system") and verified
     if mode == "auto":
         mode_note = ""
-    elif grant:
-        mode_note = (" — sends, deploys, publishing and every other outbound or irreversible "
-                     f"action need the OWNER's approval first; push / PR / merge in {where} "
-                     "are covered by the ship grant below")
+    elif own:
+        mode_note = (" — sends, publishing, public writes and deploys need the OWNER's approval "
+                     "first; push / PR / merge do not, your GitHub credentials are the boundary")
     else:
         mode_note = (" — outbound or irreversible actions (push, deploy, merge, send, publish) "
                      "need the OWNER's approval first")
@@ -227,11 +227,6 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         f"- channel: {trigger.get('origin') or 'unknown'}"
         + (f", runner {trigger['runner']}" if trigger.get("runner") else ""),
     ]
-    if grant:
-        only = "Only that repo" if len(grant["repos"]) == 1 else "Only those repos"
-        lines.append(f"- ship grant: push / PR / merge in {where} are pre-approved by the "
-                     f"owner ({grant['basis']}) — do them without waiting. {only}. Sends, "
-                     "deploys of other systems, publishing and public writes still need the OWNER.")
     um = env.get("unproven_member")
     if isinstance(um, dict) and um:
         # canopy-web#1265: informational, grants nothing — but without it a member
@@ -262,28 +257,6 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     lines.append(f"Full envelope: {path}; re-read it with the who_is_asking tool "
                  f"(turn_id={tid}) before anything irreversible. Terms: {ACCESS_DOC}")
     return "\n".join(lines)
-
-
-def ship_grant(env: dict):
-    """The envelope's ship grant, or None.
-
-    canopy-web sets `ship_grant` when another agent's verified login that is the
-    target's owner or an explicit admin dispatched the turn at that agent (owner
-    decision, 2026-10-03), and — the STANDING grant — on any verified turn of the
-    agent's own when its owner listed repos on it (2026-10-08). `repos` names every
-    repo; an envelope from before the standing grant has only `repo`. Read
-    defensively: no field, or anything malformed, is no grant — the turn then
-    behaves exactly as before.
-    """
-    g = env.get("ship_grant")
-    if not isinstance(g, dict):
-        return None
-    raw = g.get("repos") if isinstance(g.get("repos"), list) else [g.get("repo")]
-    repos = [r for r in (str(x or "").strip() for x in raw) if re.match(r"^[\w.-]+/[\w.-]+$", r)]
-    if not repos:
-        return None
-    return {"repo": repos[0], "repos": repos,
-            "basis": str(g.get("basis") or "").strip() or "owner-approved dispatch"}
 
 
 def _page_lines(page) -> list:
