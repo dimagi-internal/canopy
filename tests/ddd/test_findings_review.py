@@ -34,7 +34,7 @@ from scripts.ddd.findings_review import (
 from scripts.ddd.schemas.models import ReviewRequest
 
 DECK = "https://canopy-web.example/w/11111111-1111-1111-1111-111111111111?t=decktok"
-CLIP = "https://canopy-web.example/w/22222222-2222-2222-2222-222222222222?t=cliptok"
+CLIP = "https://canopy-web.example/w/connect/walkthrough/22222222-2222-2222-2222-222222222222?t=cliptok"
 
 
 def _finding(scene=2, dimension="visual_polish", severity="medium", detail="The hero chart is illegibly small.",
@@ -321,8 +321,16 @@ def test_format_ts():
 def test_clip_content_url_derivation():
     assert (
         _clip_content_url(CLIP)
-        == "https://canopy-web.example/w/22222222-2222-2222-2222-222222222222/content?t=cliptok"
+        == "https://canopy-web.example/w/connect/walkthrough/"
+        "22222222-2222-2222-2222-222222222222/content?t=cliptok"
     )
+    # Flat and pre-tenancy pages have no stream any more (canopy-web#1338).
+    assert _clip_content_url(
+        "https://canopy-web.example/walkthrough/22222222-2222-2222-2222-222222222222"
+    ) is None
+    assert _clip_content_url(
+        "https://canopy-web.example/w/22222222-2222-2222-2222-222222222222?t=x"
+    ) is None
     assert _clip_content_url("https://elsewhere.example/video.mp4") is None
     assert _clip_content_url(None) is None
 
