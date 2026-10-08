@@ -9,6 +9,18 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.622] - 2026-10-08
+
+### Fixed
+- **decide-guard stops blocking closes the session is not allowed to act on.** About a
+  third of the Stop-hook blocks in the four days to 2026-10-07 led to no action at
+  all. The agent had stopped because its turn's own rules (manual turn mode, a
+  caller who is not the owner) required approval for the push or merge, or because
+  the request had only asked a question or wanted an audit. The guard assumed repo
+  ops never need approval, so it blocked, and the agent could only repeat itself
+  while a human cancelled. The prompt now treats both cases as fine, with three new
+  labelled examples.
+
 ## [0.2.621] - 2026-10-08
 ### Changed
 - **The `person` block in the prompt is an index, not the record (canopy#804).** It rides on

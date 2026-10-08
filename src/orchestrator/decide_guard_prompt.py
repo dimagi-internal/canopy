@@ -76,8 +76,10 @@ whether it asks ("want me to…"), parks it ("…if you want it", "unless you'd 
 Fine: outbound waits for a human (send, reply, publish, post, share, notify, production \
 deploys); a finished report; a stated default it will act on ("otherwise I'll…", "unless you \
 object"); work already routed; a pointer to info; a fork it says is the human's to weigh \
-(taste, priorities, budget). Use judgment beyond the \
-examples; when unsure, block — a wrong block costs one line.
+(taste, priorities, budget); work it says THIS turn may not do without approval (manual turn \
+mode, a caller who is not the owner — the session's rules outrank this hook); an answer to a \
+request that asked only for ideas, an audit or a question, not the build. Use judgment beyond \
+the examples; when unsure, block — a wrong block costs one line.
 
 """
 
