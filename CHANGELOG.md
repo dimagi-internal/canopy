@@ -9,6 +9,14 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.626] - 2026-10-08
+
+### Changed
+- **decide-guard: when unsure, allow.** The tie-breaker was "when unsure, block — a wrong
+  block costs one line". In practice a wrong block cost a Sonnet judge call, a wasted model
+  turn and a human cancelling it. Jonathan approved the flip on 2026-10-08. Re-stamp the
+  agents and `--user` copies to pick it up.
+
 ## [0.2.625] - 2026-10-08
 
 ### Changed
