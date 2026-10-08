@@ -364,6 +364,55 @@ def agent_op_token(slug):
     click.echo(token)
 
 
+def delegated_chrome_sales_home(slug: str) -> Path:
+    """Where chrome-sales reads Salesforce creds in this agent's sessions — the same
+    path the cloud runner stages to (canopy-web#1291), so chrome-sales has one rule."""
+    return Path.home() / ".canopy" / "delegated" / slug / "chrome-sales"
+
+
+@agent.command("stage-delegated")
+@click.option("--slug", envvar="CANOPY_AGENT", required=True,
+              help="Agent slug. Default: $CANOPY_AGENT.")
+def agent_stage_delegated(slug):
+    """Stage the credentials this agent BORROWS onto this machine.
+
+    Today: the Salesforce identity lent to it (canopy-web#1291 — agents act in
+    Salesforce with delegated access to Eva's credential), written to
+    ~/.canopy/delegated/<slug>/chrome-sales/.sf-creds.json (0600). When canopy-web
+    says it borrows none, a stale file is REMOVED: a withdrawn loan must stop
+    acting here too. The laptop twin of the cloud runner's `_stage_salesforce`;
+    same route (`/credentials/resolve`, operator-authorized), same path.
+
+    Prints one line saying what it did; never the credential.
+    """
+    import os
+
+    from orchestrator import canopy_web
+    from orchestrator.agent_bootstrap import _operator_token
+    try:
+        body = canopy_web.call("GET", f"/api/agents/{slug}/credentials/resolve",
+                               token=_operator_token()) or {}
+    except Exception as e:  # noqa: BLE001 — report, don't traceback
+        raise click.ClickException(
+            f"could not resolve {slug}'s delegated credentials: {str(e).splitlines()[0][:200]}")
+    home = delegated_chrome_sales_home(slug)
+    target = home / ".sf-creds.json"
+    creds = str(body.get("salesforce_creds") or "")
+    if not creds:
+        existed = target.exists()
+        target.unlink(missing_ok=True)
+        click.echo(f"salesforce: {slug} borrows no Salesforce identity"
+                   + (" — removed the stale staged copy" if existed else ""))
+        return
+    home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = target.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(creds)
+    os.replace(tmp, target)
+    click.echo(f"salesforce: staged {slug}'s borrowed Salesforce identity at {target}")
+
+
 @agent.command("bootstrap")
 @click.option("--slug", "slugs", multiple=True,
               help="Agent slug to bootstrap (repeatable). Default: every agent repo discovered "
