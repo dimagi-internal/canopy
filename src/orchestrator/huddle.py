@@ -38,6 +38,10 @@ COSIGN, AMEND, DECLINE = "co-sign", "amend", "decline"
 # co-sign (the lead folded the change in); `amend→rejected` holds the proposal.
 AMEND_ACCEPTED, AMEND_REJECTED = "amend→accepted", "amend→rejected"
 ACCEPT, REJECT = "accept", "reject"
+# What an AGREEMENT THREAD (`canopy thread`, the replacement for the relayed round 4) turns an
+# `amend` into when it closes without agreement: declined, out of messages, or out of time. The
+# proposal is held, and the reason says who did not agree and why (`thread_held_reason`).
+AMEND_NOT_AGREED = "amend→not agreed"
 
 
 # ── ids, keys, tags ──────────────────────────────────────────────────────────────
@@ -233,6 +237,64 @@ def resolvers_of(p: dict) -> list[str]:
     return out
 
 
+def _name(slug) -> str:
+    return str(slug or "").strip().capitalize()
+
+
+def thread_held_reason(p: dict, member: str) -> str:
+    """"Eva and Echo didn't agree: <why>" — the plain reason an amend settled in an agreement
+    thread holds its proposal."""
+    t = (p.get("threads") or {}).get(member) or {}
+    other = t.get("author") or p.get("lead")
+    return f"{_name(other)} and {_name(member)} didn't agree: {t.get('why') or 'no reason given'}"
+
+
+def agreement_author(p: dict, amender: str) -> str:
+    """Who answers an amend in an agreement thread: the proposal's lead — or, when the lead is
+    the one amending (a teammate named it lead), the teammate who proposed it."""
+    lead = p.get("lead") or ""
+    if amender == lead:
+        return p.get("proposed_by") or ""
+    return lead
+
+
+def apply_thread_outcomes(p: dict, threads: list[dict]) -> dict:
+    """Fold agreement-thread outcomes into one proposal's open amends (returns a new dict).
+
+    A thread belongs to an amend when its `parent` names this proposal (title + lead) and its
+    participants include the amender; the newest wins. Settled AGREED → `amend→accepted`
+    (adopting the thread's proposal, same title and lead, when it carries one); closed any other
+    way → `amend→not agreed` (held: "Eva and Echo didn't agree: <why>"); OPEN → the amend stays
+    open. Only an amend still open is touched — a round-4 resolution is never overridden.
+    Every matched thread is recorded in `p["threads"][amender]`."""
+    from orchestrator import thread as T
+    p = {**p, "answers": dict(p.get("answers") or {}), "threads": dict(p.get("threads") or {})}
+    title, lead = norm(p.get("title")), p.get("lead")
+    mine = [t for t in threads or []
+            if norm((t.get("parent") or {}).get("title")) == title
+            and (t.get("parent") or {}).get("lead") in (None, "", lead)]
+    mine.sort(key=lambda t: str(t.get("created_at") or ""))
+    for m in amenders_of(p):
+        ts = [t for t in mine if m in T.agents_of(t)]
+        if not ts:
+            continue
+        t = ts[-1]
+        author = next((a for a in T.agents_of(t) if a != m), agreement_author(p, m))
+        result = T.result_of(t)
+        p["threads"][m] = {"id": t.get("id"), "status": t.get("status"), "result": result,
+                           "author": author, "why": T.why_of(t) if result != T.OPEN else ""}
+        if result == T.AGREED:
+            revised = (t.get("outcome") or {}).get("proposal")
+            if isinstance(revised, dict) and revised:
+                keep = {k: p[k] for k in ("title", "lead", "proposed_by", "answers",
+                                          "answer_notes", "threads") if k in p}
+                p = {**p, **revised, **keep, "revised": True}
+            p["answers"][m] = AMEND_ACCEPTED
+        elif result == T.NOT_AGREED:
+            p["answers"][m] = AMEND_NOT_AGREED
+    return p
+
+
 def _serves_stated_priority(priority, r1_priorities) -> bool:
     want = norm(priority)
     if not want:
@@ -245,7 +307,8 @@ def work_gates(proposals: list[dict], r1_priorities, prior_declined: list[dict]
     """Split proposals into (filed, held). Each held one carries `held`: the reason.
 
     - a joint proposal files only when EVERY partner co-signed (an unresolved `amend` holds,
-      and so does one the lead rejected in round 4; one it accepted counts as a co-sign),
+      and so does one the lead rejected in round 4 or an agreement thread closed without
+      agreement; one accepted either way counts as a co-sign),
       and so must a lead someone else named (`proposed_by` ≠ `lead`);
     - it must serve a priority some member stated in round 1, and live in a project;
     - the leader's critique must have been answered;
@@ -260,7 +323,10 @@ def work_gates(proposals: list[dict], r1_priorities, prior_declined: list[dict]
         partners = cosigners_of(p)
         refused = [m for m in partners if ans.get(m) == DECLINE]
         rejected = [m for m in partners if ans.get(m) == AMEND_REJECTED]
+        not_agreed = [m for m in partners if ans.get(m) == AMEND_NOT_AGREED]
         amended = [m for m in partners if ans.get(m) == AMEND]
+        talking = [m for m in amended
+                   if ((p.get("threads") or {}).get(m) or {}).get("result") == "open"]
         missing = [m for m in partners if ans.get(m) not in (COSIGN, AMEND_ACCEPTED)]
         project = p.get("project") or {}
         project_name = project.get("name") if isinstance(project, dict) else project
@@ -269,6 +335,11 @@ def work_gates(proposals: list[dict], r1_priorities, prior_declined: list[dict]
             reason = f"{refused[0]} declined"
         elif rejected:
             reason = f"amend rejected by lead ({', '.join(rejected)})"
+        elif not_agreed:
+            reason = thread_held_reason(p, not_agreed[0])
+        elif talking:
+            reason = ("amend still being settled in thread "
+                      f"{p['threads'][talking[0]].get('id')} ({', '.join(talking)})")
         elif amended:
             reason = f"amend unresolved ({', '.join(amended)})"
         elif missing:
