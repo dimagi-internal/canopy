@@ -766,6 +766,27 @@ class SetupBlock(BaseModel):
     """Abort the render (loudly) if the setup command runs longer than this."""
 
 
+class Cut(BaseModel):
+    """One standalone cut of a ``style: recorded`` walkthrough.
+
+    A recorded walkthrough is not one long arc: it is several short, separately
+    watchable videos, each its own mp4. A cut names the scenes it plays (by
+    ``Scene.id``, in play order) and nothing else — its narration is those
+    scenes' ``narrative`` lines, so the spoken words stay lock-owned and editable
+    on canopy-web exactly as before. See ``scripts.ddd.recorded`` for the rules a
+    cut is held to (opener line, 30 s target / 40 s ceiling, 65–80 words)."""
+
+    id: str
+    """Stable cut id — becomes the output slug suffix (``<slug>-<id>``). Keep it
+    short and kebab-case (``assign-dispensers``)."""
+    title: str = ""
+    """Human label for the cut (the review surface / file listing). Never drawn
+    on screen: a recorded cut has no title card."""
+    scenes: list[str]
+    """``Scene.id`` values this cut plays, in order. Each scene belongs to at
+    most one cut; a scene in no cut is recorded but not rendered."""
+
+
 class UnifiedSpec(BaseModel):
     name: str
     narrative: str
@@ -853,6 +874,23 @@ class UnifiedSpec(BaseModel):
     demonstrate (each with a pass condition), the generic dimensions that block,
     the bar, and how many full passes a criterion is read over. Shape and
     precedence: ``scripts.ddd.target_rubric``. None = the objective's default."""
+    style: Literal["explainer", "recorded"] = "explainer"
+    """How the narrated video is produced.
+
+    ``explainer`` (the default — every spec written before this field existed):
+    one long arc with a title card, the brand end card and the music bed.
+
+    ``recorded``: "I just recorded myself walking through this for someone".
+    No music bed, no title or end cards, no lower-thirds, captions or other
+    post-hoc overlays, a natural cursor path, and the footage played close to
+    real time. Instead of one arc the spec declares ``cuts`` — several short
+    standalone videos, each opening on the live screen with the line "This is a
+    quick overview of how we …", 30 s target, 40 s hard ceiling. Recipe-owned
+    (not a lock field): it is a render decision, not part of the story. See
+    ``scripts.ddd.recorded`` and the ``ddd-recorded-walkthrough`` skill."""
+    cuts: list[Cut] = []
+    """The standalone cuts of a ``style: recorded`` spec — see :class:`Cut`.
+    Required (non-empty) when ``style`` is ``recorded``; ignored otherwise."""
     build_order: list[str] = []
     """Ordered list of scene-title slugs representing the tackle sequence.
 

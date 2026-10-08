@@ -1249,6 +1249,9 @@ post-click settles:
 
 Any individual knob can be overridden via `video_recorder_config: {<field>: <ms>}`
 (see `scripts/walkthrough/_lib/config.py` for the full field list).
+`cursor_path: natural` (a gentle arc with minimum-jerk easing, like a hand)
+replaces the straight constant-speed glide. It is on by default for
+`style: recorded` specs (`/canopy:ddd-recorded-walkthrough`) and off otherwise.
 
 **Per-scene `pace: teach | flow`** is a tempo modifier layered on top of the
 global preset, set on an individual scene (not the whole video like `video_pace`):

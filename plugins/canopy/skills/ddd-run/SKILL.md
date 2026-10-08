@@ -258,6 +258,12 @@ run specifically — the defaults are tuned for one-off `/canopy:walkthrough`
 calls, not for the dual-judge pipeline. When invoking the recorder, pass the
 flags below.
 
+A `style: recorded` spec records with `video_recorder_config.cursor_path: natural`
+by default (the cursor arcs and eases like a hand instead of sliding in a
+straight line); set `cursor_path` explicitly in `video_recorder_config` to
+override. Every other spec records exactly as before. The full recorded-cut
+procedure is the `ddd-recorded-walkthrough` skill.
+
 | Flag | When to pass | Why |
 | --- | --- | --- |
 | `--cookies <path>` | Always when the spec's `auth: type: session` | Without this the recorder hits the login wall. |

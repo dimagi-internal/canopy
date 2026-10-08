@@ -44,6 +44,7 @@ from typing import Any
 from playwright.sync_api import Page
 
 from .config import RecorderConfig
+from .cursor_path import natural_path
 from .results import ActionAssertError, ActionResult
 from .targets import measure_box, resolve_target, wait_for_target
 
@@ -69,13 +70,33 @@ CURSOR_OVERLAY_JS = (Path(__file__).resolve().parent / "cursor_overlay.js").read
 # --------------------------------------------------------------------------- #
 
 
-def slow_move(page: Page, x: float, y: float, *, steps: int = 36) -> None:
+#: Last cursor position per page (``id(page)`` → (x, y)). Playwright does not
+#: expose the mouse position, and a natural path needs to know where it starts.
+_LAST_POS: dict[int, tuple[float, float]] = {}
+
+
+def slow_move(
+    page: Page, x: float, y: float, *, steps: int = 36, path: str = "linear"
+) -> None:
     """Mouse move with enough steps that the cursor overlay animates the glide.
 
     Deliberately slow — a cursor that teleports reads as a jump-cut; a cursor that
     visibly travels to its target reads as a person operating the page.
+
+    ``path="linear"`` (the default) is Playwright's straight, constant-speed
+    interpolation. ``path="natural"`` (``RecorderConfig.cursor_path``, on for
+    ``style: recorded`` specs) follows :func:`cursor_path.natural_path` — a
+    gentle arc with minimum-jerk timing — so the cursor moves the way a
+    person's hand does. With no known start point (the first move on a page)
+    it falls back to the linear glide.
     """
-    page.mouse.move(x, y, steps=steps)
+    start = _LAST_POS.get(id(page))
+    if path == "natural" and start is not None:
+        for px, py in natural_path(start[0], start[1], x, y, steps=steps):
+            page.mouse.move(px, py)
+    else:
+        page.mouse.move(x, y, steps=steps)
+    _LAST_POS[id(page)] = (float(x), float(y))
 
 
 def _glide_to(page: Page, target: str, *, config: RecorderConfig, dwell_ms: int | None = None):
@@ -88,7 +109,7 @@ def _glide_to(page: Page, target: str, *, config: RecorderConfig, dwell_ms: int 
     rt = resolve_target(page, target, timeout_ms=config.glide_timeout_ms)
     if rt is None:
         return None
-    slow_move(page, rt.box["x"], rt.box["y"], steps=config.cursor_steps)
+    slow_move(page, rt.box["x"], rt.box["y"], steps=config.cursor_steps, path=config.cursor_path)
     page.wait_for_timeout(dwell_ms if dwell_ms is not None else config.glide_dwell_ms)
     return rt
 
@@ -120,7 +141,7 @@ def click_text(page: Page, target: str, *, config: RecorderConfig | None = None)
     # Re-measure right before the click in case a settle moved the element
     # mid-glide; the cursor lands on its current centre, not where it was.
     box = measure_box(rt.locator) or rt.box
-    slow_move(page, box["x"], box["y"], steps=cfg.cursor_steps_short)
+    slow_move(page, box["x"], box["y"], steps=cfg.cursor_steps_short, path=cfg.cursor_path)
     page.wait_for_timeout(cfg.pre_click_dwell_ms)
     try:
         rt.locator.click(timeout=cfg.interaction_timeout_ms)
@@ -321,7 +342,7 @@ def _reveal_select(page: Page, rt, value, cfg: RecorderConfig) -> bool:
     if not mid:
         return False
     try:
-        slow_move(page, float(mid["x"]), float(mid["y"]), steps=cfg.cursor_steps)
+        slow_move(page, float(mid["x"]), float(mid["y"]), steps=cfg.cursor_steps, path=cfg.cursor_path)
         page.wait_for_timeout(int(getattr(cfg, "select_reveal_dwell_ms", 700)))
     except Exception:
         pass
@@ -483,7 +504,7 @@ def scroll_to_reporting(
     # Pre-scroll glide — cursor lands on the target at its current viewport
     # position. Same shape every other primitive uses; keeps "boring" frames
     # from accumulating when ``scroll_to`` is a no-op.
-    slow_move(page, rt.box["x"], rt.box["y"], steps=cfg.cursor_steps)
+    slow_move(page, rt.box["x"], rt.box["y"], steps=cfg.cursor_steps, path=cfg.cursor_path)
     try:
         rt.locator.scroll_into_view_if_needed(timeout=cfg.glide_timeout_ms)
     except Exception:
@@ -526,7 +547,7 @@ def scroll_to_reporting(
     # to "cursor must end on the scrolled-to element".
     new_box = measure_box(rt.locator)
     if new_box is not None:
-        slow_move(page, new_box["x"], new_box["y"], steps=cfg.cursor_steps_short)
+        slow_move(page, new_box["x"], new_box["y"], steps=cfg.cursor_steps_short, path=cfg.cursor_path)
     page.wait_for_timeout(cfg.scroll_settle_ms)
     # Read the SETTLED position — a smooth scroll is asynchronous, so anything
     # sampled before the settle measures the animation, not the outcome.
@@ -576,7 +597,7 @@ def draw_polygon(
             tbox = trt.locator.bounding_box()
             if tbox:
                 # Glide the visible cursor onto the tool so the video shows the reach...
-                slow_move(page, tbox["x"] + tbox["width"] / 2, tbox["y"] + tbox["height"] / 2, steps=cfg.cursor_steps)
+                slow_move(page, tbox["x"] + tbox["width"] / 2, tbox["y"] + tbox["height"] / 2, steps=cfg.cursor_steps, path=cfg.cursor_path)
                 page.wait_for_timeout(cfg.glide_dwell_ms)
             # ...but TOGGLE via the element's own click() handler. Mapbox-GL-Draw tool
             # buttons don't enter draw mode on a synthetic mouse/Locator click (the
@@ -597,7 +618,7 @@ def draw_polygon(
         for fx, fy in points
     ]
     for x, y in coords:
-        slow_move(page, x, y, steps=cfg.cursor_steps)
+        slow_move(page, x, y, steps=cfg.cursor_steps, path=cfg.cursor_path)
         page.wait_for_timeout(cfg.glide_dwell_ms)
         page.mouse.click(x, y)
     # Close the polygon — Mapbox GL Draw finishes on a double-click at the last vertex.
@@ -818,7 +839,7 @@ def map_click(
     # Mirror the draw coordinate-click path: glide the visible cursor to the pixel,
     # dwell so the viewer registers WHERE the click lands, then a real mouse click
     # the app's `map.on('click', FILL)` handler receives.
-    slow_move(page, x, y, steps=cfg.cursor_steps)
+    slow_move(page, x, y, steps=cfg.cursor_steps, path=cfg.cursor_path)
     page.wait_for_timeout(cfg.click_dwell_ms)
     page.mouse.click(x, y)
     page.wait_for_timeout(cfg.glide_dwell_ms)

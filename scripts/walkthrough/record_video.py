@@ -447,6 +447,20 @@ def run_setup(setup: dict, spec_path: Path, *, skip_setup: bool = False) -> dict
     return provenance
 
 
+def recorder_config_for_spec(spec: dict, pace: str) -> RecorderConfig:
+    """The pace preset + the spec's ``video_recorder_config`` overrides.
+
+    A ``style: recorded`` spec records with ``cursor_path: natural`` — the cursor
+    arcs and eases like a hand instead of sliding in a straight line — unless its
+    ``video_recorder_config`` sets ``cursor_path`` explicitly. Every other spec
+    records exactly as before.
+    """
+    overrides = dict(spec.get("video_recorder_config") or {})
+    if spec.get("style") == "recorded":
+        overrides.setdefault("cursor_path", "natural")
+    return RecorderConfig.for_pace(pace).with_overrides(overrides)
+
+
 def build_scenes_from_spec(
     spec: dict, base_url: str, *, run_data: dict | None, args=None
 ) -> list[dict]:
@@ -961,7 +975,7 @@ def main() -> None:
     pace = spec.get("video_pace", "fast")
     if pace not in ("fast", "medium", "slow"):
         sys.exit(f"ERROR: video_pace must be fast | medium | slow (got: {pace!r})")
-    config = RecorderConfig.for_pace(pace).with_overrides(spec.get("video_recorder_config") or {})
+    config = recorder_config_for_spec(spec, pace)
 
     viewport_w = int(spec.get("video_viewport_width", 1280))
     viewport_h = int(spec.get("video_viewport_height", 720))

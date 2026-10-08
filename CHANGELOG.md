@@ -9,6 +9,20 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.604] - 2026-10-07
+### Added
+- **Recorded-walkthrough video mode (`style: recorded`).** A DDD spec can now declare
+  `style: recorded` plus a `cuts:` list. Each cut renders as its own short mp4 in a
+  deliberately low-gloss "I recorded myself walking through this" style: no music bed,
+  no title or end cards, no lower-thirds or captions, footage played near real time
+  (warp clamped to 0.85–1.35×), and a natural cursor path (an arc with minimum-jerk easing).
+  `scripts.ddd.recorded` holds the rules: cuts resolve to scenes, each cut opens with
+  "This is a quick overview of how we <do X>.", a 65–80 word warning band, and a per-cut
+  timing gate (warn above 30 s, fail above 40 s; `render_locally.py` exits 4 on a fail).
+  `spec_qa` enforces the cut structure and opener and waives the single-overview rule for
+  recorded specs. Style notes were added to the video, arc and concept judges so they
+  don't penalise the missing gloss. New skill: `ddd-recorded-walkthrough`.
+
 ## [0.2.595] - 2026-10-06
 ### Added
 - **`canopy huddle` — a team of agents syncs, led by one of them.** `plan / prompt / dispatch /

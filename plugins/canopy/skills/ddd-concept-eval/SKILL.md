@@ -173,6 +173,18 @@ For each scene in `unified_spec.yaml`:
 > (e.g. the program workspace) is the intended artifact, not a flaw — do not
 > expect, or deduct for the absence of, a feature being operated.
 
+> **`style: recorded` specs** (see `/canopy:ddd-recorded-walkthrough`) are
+> several standalone cuts in a deliberately low-gloss "I recorded myself
+> walking through this" style, with no title or end cards, music, zooms,
+> callouts or captions. Score the PRODUCT exactly as usual (`visual_polish` is
+> about the product's screens, not video production, and is unchanged). But:
+> (a) never deduct for, or recommend, any of those production elements;
+> (b) apply the "opening scene establishes the problem" anchor to **each cut's
+> first scene**, whose narration opens "This is a quick overview of how we
+> <do X>.", and do not expect the spec's first scene to frame the whole run;
+> (c) a recorded spec needs no `role: overview` scene, so do not deduct for
+> its absence.
+
 1. Identify the screenshot path: `<run_dir>/scene_<N>.png` (the after-frame; or
    the path recorded in the run manifest). If a `<run_dir>/scene_<N>_before.png`
    exists (the render used `--capture-action-frames` and this scene effects a

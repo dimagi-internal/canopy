@@ -8,6 +8,13 @@
 #
 # Scored ONCE per narrative, over all scenes in order, from the per-scene
 # screenshots + page text + the narration.
+#
+# STYLE NOTE — `style: recorded` specs are several standalone cuts, not one
+# arc. Score each cut as its own sequence; do not expect escalation ACROSS
+# cuts or penalise two cuts for sharing a screen; the cut's first line ("This
+# is a quick overview of how we <do X>.") is its opening and the on-screen
+# result is its close (no cards, no sign-off, by design). See the skill's
+# "Style: recorded" section.
 name: ddd-arc-eval
 default_score: 3
 overall_rule: lowest

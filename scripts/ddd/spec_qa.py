@@ -53,6 +53,7 @@ from typing import Any, Union
 import yaml
 
 from scripts.ddd.identity import slugify
+from scripts.ddd.recorded import is_recorded, lint_recorded_spec
 from scripts.ddd.schemas.models import UnifiedSpec, Verdict
 from scripts.ddd.spec_io import load_spec
 from scripts.ddd.validate import validate
@@ -477,9 +478,19 @@ def spec_qa(
     # walkthroughs (≥4 scenes); small utility demos and single-scene fixtures
     # are exempt. The 3 canonical narratives (verified-monitoring /
     # create-survey-solicitation / microplans-study-groups) are the template.
+    # A `style: recorded` spec is N standalone cuts, not one arc: each cut opens
+    # on its own "This is a quick overview of how we …" line (checked below), so
+    # the single opening `overview` scene is not required of it.
+    recorded = spec is not None and is_recorded(spec)
+    if recorded:
+        for issue in lint_recorded_spec(spec):
+            if issue["level"] == "error":
+                where = f"cut '{issue['cut']}': " if issue["cut"] else ""
+                violations.append(f"recorded style — {where}{issue['message']}")
+
     if spec is not None and spec.scenes and len(spec.scenes) >= 4:
         overviews = [s for s in spec.scenes if (getattr(s, "role", "") or "") == "overview"]
-        if not overviews:
+        if not overviews and not recorded:
             violations.append(
                 "spec has no `role: overview` scene — a full demo (≥4 scenes) must open "
                 "with a goal-setting overview scene (the holistic 'why', carrying its own "

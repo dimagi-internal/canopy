@@ -67,6 +67,11 @@ export interface BuildWarpArgs {
   voSec: number;
   /** Beat on-screen OUTPUT duration (durationInFrames / fps) — VO-aligned. */
   beatSec: number;
+  /** Override the playback-rate clamp (defaults RATE_MIN / RATE_MAX). A
+   * `style: recorded` cut passes a tighter band so the footage stays near real
+   * time — see style.ts. */
+  rateMin?: number;
+  rateMax?: number;
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
@@ -114,6 +119,8 @@ export function resolveAnchors(
  */
 export function buildActionWarp(args: BuildWarpArgs): WarpPiece[] {
   const { marks, resolveWord, footageOnscreenSec, voSec, beatSec } = args;
+  const rateLo = args.rateMin ?? RATE_MIN;
+  const rateHi = args.rateMax ?? RATE_MAX;
   if (footageOnscreenSec <= 0 || beatSec <= 0) return [];
   const anchors = resolveAnchors(marks, resolveWord, voSec);
   if (anchors.length === 0) return [];
@@ -136,7 +143,7 @@ export function buildActionWarp(args: BuildWarpArgs): WarpPiece[] {
     const outDur = pts[i + 1].out - pts[i].out;
     const srcDur = pts[i + 1].src - pts[i].src;
     if (outDur <= 1e-6 || srcDur <= 1e-6) continue;
-    const rate = clamp(srcDur / outDur, RATE_MIN, RATE_MAX);
+    const rate = clamp(srcDur / outDur, rateLo, rateHi);
     pieces.push({
       outStartSec: r3(pts[i].out),
       outDurSec: r3(outDur),

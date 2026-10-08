@@ -201,6 +201,13 @@ class RecorderConfig:
     cursor_steps_short: int = 10
     """Mouse-move steps for a final re-centring before a click."""
 
+    cursor_path: str = "linear"
+    """Shape of every cursor glide: ``linear`` (Playwright's straight,
+    constant-speed move — the default, unchanged) or ``natural`` (a gentle arc
+    with minimum-jerk timing, see ``_lib.cursor_path``). ``record_video`` turns
+    ``natural`` on for ``style: recorded`` specs unless the spec's
+    ``video_recorder_config`` says otherwise."""
+
     pre_click_dwell_ms: int = 250
     """Pause after the cursor lands on a click target, before mouse-down."""
 

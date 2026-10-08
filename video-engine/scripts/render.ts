@@ -9,6 +9,7 @@ import { resolveRun, specPath, outputPath } from "../src/lib/runs.node.ts";
 import { synthesize, synthesizePerBeat, readAlignment, wordStartSeconds, type PerBeatNarration } from "../src/lib/voiceover";
 import { estimateCaptionTimeline, captionsFromBeats } from "../src/lib/captions";
 import { planActionWarp, type RenderPiece } from "../src/lib/actionsync";
+import { renderPolicy } from "../src/lib/style";
 import { evaluateTiming, type TimingBeatInput } from "../src/lib/timingeval";
 import { resolveAssetRefs, formatMissingError } from "../src/lib/asset-resolver.node.ts";
 import {
@@ -239,6 +240,14 @@ async function main() {
   // step for both arcs.
   let timeline = resolveBeats(effectiveBeatsForSpec(defaults, spec), spec.beat_overrides ?? {});
   const activeByBeat = resolveActiveByBeat(spec);
+  // Style policy (style.ts): a `style: recorded` cut renders with no music bed,
+  // no burned-in captions, and the footage warp held near real time.
+  const policy = renderPolicy(spec);
+  const musicBed = policy.musicBed ? defaults.music_bed : undefined;
+  if (policy.style === "recorded") {
+    console.log("Style: recorded — no music bed, no captions, warp clamped to " +
+      `${policy.rateMin}–${policy.rateMax}×.`);
+  }
 
   if (!spec.narration.script.trim()) {
     console.error(
@@ -320,7 +329,7 @@ async function main() {
   // Captions: prefer per-beat text when provided (via resolveActiveByBeat) for
   // tight visual-caption sync. Otherwise fall back to the older
   // sentence-proportional estimator over the full narration window.
-  const captions = cli.noCaptions
+  const captions = cli.noCaptions || !policy.captions
     ? []
     : Object.keys(activeByBeat).length > 0
       ? captionsFromBeats(timeline.beats, activeByBeat)
@@ -404,6 +413,8 @@ async function main() {
       voSec,
       beatSec: beat.durationFrames / timeline.fps,
       segments,
+      rateMin: policy.rateMin,
+      rateMax: policy.rateMax,
     });
     if (plan.length > 0) {
       actionWarpByBeat[beat.id] = plan;
@@ -510,7 +521,7 @@ async function main() {
   // Mux voiceover (mid-video) and optional music bed (full duration) into
   // the silent Remotion render. Builds the ffmpeg filter graph dynamically
   // based on which audio sources are present.
-  if (voicePath || perBeat.length > 0 || defaults.music_bed) {
+  if (voicePath || perBeat.length > 0 || musicBed) {
     const muxed = muxedFinal;
     const voiceOffsetMs = Math.round(narrationStartSec * 1000);
 
@@ -547,8 +558,8 @@ async function main() {
       mixLabels.push("[vo]");
     }
 
-    if (defaults.music_bed) {
-      const mb = defaults.music_bed;
+    if (musicBed) {
+      const mb = musicBed;
       const musicAbs = path.isAbsolute(mb.asset) ? mb.asset : path.join(root, mb.asset);
       if (!fs.existsSync(musicAbs)) {
         console.warn(

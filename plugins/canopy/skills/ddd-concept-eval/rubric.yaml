@@ -134,6 +134,9 @@ dimensions:
       - "No scene names a concrete user or role the product serves: max 3"
       - "Opening scene fails to establish the problem being solved: max 2"
       - "A screen leans on explanatory copy (helper sentences, a legend, definitions, info bubbles, 'click X to Y' hints) to make its point instead of structure: max 3 — recommend the structural change, never more copy"
+      # style: recorded — "opening scene" means each CUT's first scene (its
+      # "This is a quick overview of how we <do X>." line). No title card /
+      # overview scene is expected; never deduct for missing production gloss.
 
   - id: use_case_soundness
     label: "Use-Case Soundness (Is this worth demonstrating?)"

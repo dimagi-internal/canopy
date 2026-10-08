@@ -32,3 +32,10 @@ notes: |
   still falls back to the 60s marketing arc, so this template is purely
   additive. See templates/connect-ddd-walkthrough/example.spec.yaml for a
   worked five-section example.
+
+  `style: recorded` turns the same template into one short standalone cut
+  with no gloss: the beats list may hold ONLY body_walkthrough beats (no
+  title or end card), lower_third must be empty, and render.ts drops the
+  music bed and captions and clamps the footage warp to 0.85–1.35x
+  (src/lib/style.ts). canopy's DDD emitter writes one such spec per cut —
+  see the canopy ddd-recorded-walkthrough skill.
