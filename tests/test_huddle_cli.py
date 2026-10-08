@@ -599,6 +599,23 @@ def test_file_resolves_a_project_by_its_ext_id_in_parentheses(tmp_path, web):
     assert partner["project"] == "P9"
 
 
+def test_file_resolves_a_project_by_a_leading_ext_id(tmp_path, web):
+    """2026-10-08: "P1 IDM AI Talk" was filed as a NEW project beside P1 "IDM AI Talk"."""
+    _one_proposal_huddle(web, "P1 IDM AI Talk")
+    web.projects = {"eva": [{"ext_id": "P1", "name": "IDM AI Talk"}],
+                    "echo": [{"ext_id": "P4", "name": "IDM AI Talk"}]}
+    lead, partner = _file_one(tmp_path, web)
+    assert lead["project"] == "P1" and len(web.projects["eva"]) == 1
+    assert partner["project"] == "P4"   # the partner's board matches on the bare name
+
+
+def test_file_creates_a_missing_project_without_a_leading_ref(tmp_path, web):
+    _one_proposal_huddle(web, "P7: Spark cascade demo")       # P7 is not on eva's board
+    web.projects = {"eva": [{"ext_id": "P1", "name": "Other"}]}
+    _file_one(tmp_path, web)
+    assert web.projects["eva"][-1]["name"] == "Spark cascade demo"
+
+
 def test_file_resolves_a_project_ignoring_a_trailing_suffix_and_case(tmp_path, web):
     _one_proposal_huddle(web, "connect-labs  Reliability (T15/T37/T26)")
     web.projects = {"eva": [{"ext_id": "P2", "name": "Connect-labs reliability"}]}
