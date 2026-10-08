@@ -95,7 +95,8 @@ def resolve_identity(repo_dir: Path) -> dict:
     pj = repo / ".claude-plugin" / "plugin.json"
     if not pj.exists():
         raise AgentWebError(
-            f"no .claude-plugin/plugin.json in {repo} — run this from an agent repo root"
+            f"no .claude-plugin/plugin.json in {repo} — run this from an agent repo root, "
+            "or pass --agent <slug> to act as that agent from anywhere"
         )
     p = json.loads(pj.read_text(encoding="utf-8"))
     slug = p.get("name")

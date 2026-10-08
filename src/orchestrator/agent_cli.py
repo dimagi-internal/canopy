@@ -1,5 +1,6 @@
 """`canopy agent …` — thin CLI over AgentClient for shell-driven agents."""
 import json
+import sys
 from pathlib import Path
 
 import click
@@ -591,30 +592,89 @@ def agent_projects(slug, active_only):
                    "at creation: a project whose folder nobody can find is a second "
                    "place to look rather than one place to look.")
 @click.option("--drive-folder-id", default="")
+@click.option("--no-folder", is_flag=True,
+              help="Do not find-or-create Projects/<name> in Drive (the default links one).")
 @click.option("--repo", "repo_slug", default="", help="owner/name, if the work has one.")
 @click.option("--owner", "owner_note", default="",
               help="The human who owns the outcome. Max 200 chars.")
 @click.option("--notes", default="")
 @click.option("--links", default="", help='"label|url, label2|url2" (bare urls OK).')
-def agent_project_add(slug, name, outcome, drive_folder_url, drive_folder_id,
+def agent_project_add(slug, name, outcome, drive_folder_url, drive_folder_id, no_folder,
                       repo_slug, owner_note, notes, links):
-    """Create ONE project (auto-assigns the next P<N>).
+    """Create ONE project (auto-assigns the next P<N>) and link its Drive folder.
 
     One project per real piece of work — the same rule the Drive layout already
     states. A project per task produces a directory of single-task projects, which
     tells you less than the task list did.
+
+    Without --drive-folder-url/--drive-folder-id, `<agent root>/Projects/<name>` is
+    found or created as the agent and linked (see `project-folder`). A Drive failure
+    does not undo the project; the output's `folder.error` says what to run.
     """
     try:
         client = _client(slug)
-        _emit(client.create_project(
+        made = client.create_project(
             name=name.strip(), outcome=outcome.strip(), owner_note=owner_note.strip(),
             drive_folder_id=drive_folder_id.strip(),
             drive_folder_url=drive_folder_url.strip(),
             repo_slug=repo_slug.strip(), notes=notes.strip(),
             links=parse_task_links(links),
-        ))
+        )
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
+    if not no_folder and not (drive_folder_url.strip() or drive_folder_id.strip()):
+        made["folder"] = _ensure_folder(client, slug, made)
+    _emit(made)
+
+
+def _ensure_folder(client, slug, project, *, dry_run=False):
+    """`project_folder.ensure_project_folder` as the agent, failures returned not raised —
+    a project or a backfill row must not be lost to one Drive error."""
+    from orchestrator.agent_gdoc import AgentGdocError, _gdoc_identity_from_opts
+    from orchestrator.project_folder import ensure_project_folder
+
+    try:
+        ident = _gdoc_identity_from_opts(None, slug, None, None)
+        return ensure_project_folder(client, ident, project, dry_run=dry_run)
+    except (AgentGdocError, CanopyError, RuntimeError, ValueError) as e:
+        sys.stderr.write(
+            f"NOTE: {project.get('ext_id')} has no Drive folder linked: {str(e)[:200]}\n"
+            f"  Fix the cause, then: canopy agent project-folder --slug {slug} "
+            f"--project {project.get('ext_id')}\n")
+        return {"ext_id": project.get("ext_id"), "error": str(e)[:300]}
+
+
+@agent.command("project-folder")
+@click.option("--slug", required=True)
+@click.option("--project", "ref", default=None, metavar="EXT_ID_OR_NAME",
+              help="The board's P<N> ext_id, or the project's exact name.")
+@click.option("--all", "all_active", is_flag=True,
+              help="Every ACTIVE project with no folder linked (the backfill).")
+@click.option("--dry-run", is_flag=True, help="Report what would be linked; write nothing.")
+def agent_project_folder(slug, ref, all_active, dry_run):
+    """Make a project's Drive folder a property of the project (JSON).
+
+    Finds or creates `<agent root>/Projects/<project name>` AS THE AGENT and writes its id
+    and url onto the canopy-web project, so any session reading the project, in any repo,
+    gets the folder. Idempotent: a folder the project already links wins. Works from any
+    directory; the agent's identity and Drive root come from --slug.
+    """
+    if bool(ref) == bool(all_active):
+        raise click.ClickException("pass --project <P-ref|name> or --all, not both")
+    try:
+        client = _client(slug)
+        if ref:
+            targets = [client.get_project(resolve_project_ref(client, ref))]
+        else:
+            targets = [p for p in client.list_projects()
+                       if (p.get("status") or "active") == "active"
+                       and not str(p.get("drive_folder_id") or "").strip()]
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+    results = [_ensure_folder(client, slug, p, dry_run=dry_run) for p in targets]
+    _emit(results[0] if ref else results)
+    if any("error" in r for r in results):
+        sys.exit(1)
 
 
 @agent.command("project-set")

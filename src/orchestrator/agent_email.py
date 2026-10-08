@@ -450,13 +450,62 @@ def resolve_email_identity(repo_dir: Path) -> EmailIdentity:
 
 
 def find_agent_repo(slug: str) -> Path:
-    """Locate an agent repo by slug across the machine's emdash root conventions."""
-    path = resolve_repo_path(slug)
+    """Locate an agent repo by slug: a local checkout (the emdash root conventions), else the
+    agent's INSTALLED plugin.
+
+    The plugin fallback is what lets `--agent <slug>` work from any directory. A session in a
+    project repo (connect-labs, say) working on an agent's project has no agent checkout to
+    stand in, and a cloud runner may have only the installed plugin — which carries the same
+    `.claude-plugin/plugin.json` + `config/agent.json` identity resolution reads."""
+    path = resolve_repo_path(slug) or installed_plugin_root(slug)
     if path is None:
         raise AgentEmailError(
-            f"no local repo found for agent {slug!r} — pass --repo <dir> explicitly"
+            f"no local repo or installed plugin found for agent {slug!r} — "
+            "pass --repo <dir> explicitly"
         )
     return path
+
+
+def installed_plugin_root(slug: str, home: Path | None = None) -> Path | None:
+    """Install path of the agent's own plugin (`<slug>@<marketplace>`) per
+    installed_plugins.json, when it carries a plugin.json. None when not installed."""
+    reg = (home or Path.home()) / ".claude" / "plugins" / "installed_plugins.json"
+    try:
+        plugins = json.loads(reg.read_text(encoding="utf-8")).get("plugins") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    for key, entries in plugins.items():
+        if str(key).split("@")[0] != slug or not isinstance(entries, list):
+            continue
+        for entry in entries:
+            root = Path(str((entry or {}).get("installPath") or ""))
+            if str(root) and (root / ".claude-plugin" / "plugin.json").is_file():
+                return root
+    return None
+
+
+def agent_env_value(slug: str, var: str, home: Path | None = None) -> str:
+    """`var` as the agent's own provisioned .env files set it (see `agent_env_files`), or "".
+
+    A session that is not the agent's own turn never sourced `~/.<slug>/.env`, so the
+    process env either lacks the agent's settings or holds a DIFFERENT agent's."""
+    for path in agent_env_files(slug, home):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[len("export "):].strip()
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == var:
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                    value = value[1:-1]
+                if value:
+                    return value
+    return ""
 
 
 # --------------------------------------------------------------------------------------

@@ -100,6 +100,7 @@ from orchestrator.agent_email import (
     EmailIdentity,
     _identity_from_opts,
     _with_identity_options,
+    agent_env_value,
     resolve_email_identity,
 )
 
@@ -164,16 +165,34 @@ def _gdoc_identity_from_opts(repo, agent, account, client) -> GdocIdentity:
     identity-bleed warning stay identical to `canopy email`; the share default comes from
     agent.json only when a repo is resolvable (explicit --account has none). The Drive
     root comes from the provisioned env either way, so a bare --account still files
-    correctly on a provisioned box."""
-    base: EmailIdentity = _identity_from_opts(repo, agent, account, client)
+    correctly on a provisioned box.
+
+    An explicit --agent means "act as that agent from wherever I am": its Drive root comes
+    from ITS provisioned .env first, because the process env belongs to whoever this session
+    is (unset in a project repo, another agent's root in an agent's turn). Without --agent
+    the process env wins and the agent's .env is the fallback.
+
+    Identity failures surface as AgentGdocError, so every gdoc command prints one line
+    naming --agent instead of a traceback (2026-10-08: a connect-labs session ran
+    `canopy gdoc publish` for Hal's project and got `AgentEmailError: no
+    .claude-plugin/plugin.json …` as an uncaught exception)."""
+    try:
+        base: EmailIdentity = _identity_from_opts(repo, agent, account, client)
+    except AgentEmailError as e:
+        raise AgentGdocError(
+            f"{e}. To write as an agent from outside its repo, pass --agent <slug> "
+            "(e.g. `canopy gdoc publish --agent hal --project P1 …`).") from e
+    own_root = agent_env_value(base.slug, GDRIVE_ROOT_ENV)
+    env_root = (os.environ.get(GDRIVE_ROOT_ENV) or "").strip()
     ident = GdocIdentity(slug=base.slug, account=base.account, client=base.client,
                          repo=base.repo,
-                         root_folder=(os.environ.get(GDRIVE_ROOT_ENV) or "").strip())
+                         root_folder=(own_root or env_root) if agent else (env_root or own_root))
     if base.repo:
         try:
             resolved = resolve_gdoc_identity(base.repo)
-            ident.root_folder = resolved.root_folder
             ident.share_default = resolved.share_default
+            if not ident.root_folder:
+                ident.root_folder = resolved.root_folder
         except AgentGdocError:
             pass
     return ident
@@ -1100,6 +1119,21 @@ def _review_after_write(ident: GdocIdentity, doc_id: str, **expect) -> dict:
     return review
 
 
+def _destination(ident: GdocIdentity, area: str | None, project: str | None, trace: list,
+                 dry_run: bool) -> str:
+    """The folder a --project/--area publish files into.
+
+    A project deliverable resolves THROUGH the agent's canopy-web project (`--project P1` or
+    its name): the folder the project links, linked on first use when it has none — so the
+    folder is a property of the project rather than a name two systems must keep agreeing
+    on. A dry run never writes the board, so it resolves by name only."""
+    area = (area or "Projects").strip()
+    if project and area == "Projects" and not dry_run:
+        from orchestrator.project_folder import resolve_project_destination
+        return resolve_project_destination(ident, project, trace=trace)
+    return resolve_subfolder(ident, area=area, project=project, trace=trace)
+
+
 @click.group("gdoc")
 def gdoc_group():
     """Author Google Docs as the agent — shared engine, per-agent identity
@@ -1112,8 +1146,9 @@ def gdoc_group():
               help="Markdown file to render into a Google Doc.")
 @click.option("--name", help="Doc title (required for a new doc).")
 @click.option("--parent", help="Destination Drive folder id (bypasses --project/--area resolution).")
-@click.option("--project", help="File into <agent root>/Projects/<project> (find-or-create) — "
-              "the fleet norm: one stable subfolder per project/task, re-used across turns.")
+@click.option("--project", help="The agent's canopy-web project (P<N> or its name): file into the "
+              "Drive folder it links, creating <agent root>/Projects/<name> and linking it "
+              "when it has none. A name with no project files into Projects/<name>.")
 @click.option("--area", help="Top-level area under the agent root when resolving a destination: "
               "'Projects' (deliverables, default) or 'Process State' (durable trackers).")
 @click.option("--replace", help="File id of an existing Doc to update IN PLACE (keeps the link).")
@@ -1136,8 +1171,7 @@ def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, a
         trace: list = []
         if not replace and not parent:
             if project or area:
-                parent = resolve_subfolder(ident, area=(area or "Projects"), project=project,
-                                           trace=trace)
+                parent = _destination(ident, area, project, trace, dry_run)
             else:
                 parent = ident.root_folder or None
         share = share or ident.share_default
@@ -1291,8 +1325,9 @@ def gsheet_group():
                    'after the file stem. .csv is comma-delimited; anything else is tab-delimited.')
 @click.option("--name", required=True, help="Spreadsheet title.")
 @click.option("--parent", help="Destination Drive folder id (bypasses --project/--area resolution).")
-@click.option("--project", help="File into <agent root>/Projects/<project> (find-or-create) — "
-              "the fleet norm: one stable subfolder per project/task, re-used across turns.")
+@click.option("--project", help="The agent's canopy-web project (P<N> or its name): file into the "
+              "Drive folder it links, creating <agent root>/Projects/<name> and linking it "
+              "when it has none. A name with no project files into Projects/<name>.")
 @click.option("--area", help="Top-level area under the agent root when resolving a destination: "
               "'Projects' (deliverables, default) or 'Process State' (durable trackers).")
 @click.option("--share", type=click.Choice(["domain", "anyone", "user", "none"]), default=None,
@@ -1313,8 +1348,7 @@ def gsheet_publish(repo, agent, account, client, tabs, name, parent, project, ar
         trace: list = []
         if not parent:
             if project or area:
-                parent = resolve_subfolder(ident, area=(area or "Projects"), project=project,
-                                           trace=trace)
+                parent = _destination(ident, area, project, trace, dry_run)
             else:
                 raise AgentGdocError(
                     "no destination: pass --project \"<Project>\" (or --area / --parent). "

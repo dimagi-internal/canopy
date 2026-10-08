@@ -731,7 +731,7 @@ description: >
 
 ## Identity
 - Name: **{{AGENT_NAME}}** · slug: `{{AGENT_SLUG}}` · mailbox: `{{MAILBOX}}`
-- Board: `/agents/{{AGENT_SLUG}}` · Drive folder id env: `{{AGENT_SLUG}}_DRIVE_FOLDER_ID`
+- Board: `/agents/{{AGENT_SLUG}}` · Drive root env: `GDRIVE_ROOT_FOLDER` (from `~/.{{AGENT_SLUG}}/.env`)
 
 ## {{AGENT_NAME}}-local notes (the ONLY hand-edited section — fleet-process changes go to canopy)
 - (none yet)
