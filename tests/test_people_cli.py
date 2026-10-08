@@ -145,6 +145,19 @@ def test_conversations_passes_agent_and_since(serve):
     assert json.loads(r.output)[0]["id"] == "t1"
 
 
+def test_conversations_reads_the_servers_envelope(serve):
+    # The live route's shape (canopy-web /api/people/<id>/conversations/), not a bare list.
+    path = "/api/people/7/conversations/?agent=ace"
+    serve(Server({("GET", path): {"person": 7, "agent": "ace", "conversations": [
+        {"id": "t9", "created_at": "2026-10-08", "via": "mcp:enqueue_turn",
+         "prompt": "re-attach the cuts", "result_note": "blocked"}]}}))
+    r = _run("conversations", "--person", "7", "--agent", "ace", "--json-output")
+    assert r.exit_code == 0, r.output
+    assert [c["id"] for c in json.loads(r.output)] == ["t9"]
+    r = _run("conversations", "--person", "7", "--agent", "ace")
+    assert "turn t9" in r.output and "no conversations" not in r.output
+
+
 def test_conversations_rejects_a_bad_since(serve):
     srv = serve(Server())
     r = _run("conversations", "--person", "12", "--agent", "ace", "--since", "last week")
