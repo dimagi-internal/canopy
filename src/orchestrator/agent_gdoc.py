@@ -179,9 +179,10 @@ def _gdoc_identity_from_opts(repo, agent, account, client) -> GdocIdentity:
     try:
         base: EmailIdentity = _identity_from_opts(repo, agent, account, client)
     except AgentEmailError as e:
+        hint = "" if "--agent" in str(e) else (
+            ". To write as an agent from outside its repo, pass --agent <slug>")
         raise AgentGdocError(
-            f"{e}. To write as an agent from outside its repo, pass --agent <slug> "
-            "(e.g. `canopy gdoc publish --agent hal --project P1 …`).") from e
+            f"{e}{hint} (e.g. `canopy gdoc publish --agent hal --project P1 …`)") from e
     own_root = agent_env_value(base.slug, GDRIVE_ROOT_ENV)
     env_root = (os.environ.get(GDRIVE_ROOT_ENV) or "").strip()
     ident = GdocIdentity(slug=base.slug, account=base.account, client=base.client,
@@ -611,12 +612,14 @@ def folder_contents(identity: GdocIdentity, folder_id: str, runner=subprocess.ru
 
 
 def _find_or_create_folder(identity: GdocIdentity, parent: str, name: str, runner,
-                           trace: list | None = None) -> str:
-    fid = find_child_folder(identity, parent, name, runner)
+                           trace: list | None = None, create: bool = True) -> str:
+    fid = find_child_folder(identity, parent, name, runner) if parent else ""
     if fid:
         if trace is not None:
             trace.append({"name": name, "id": fid, "created": False})
         return fid
+    if not create:
+        return ""
     r = _run_gog(build_mkdir_command(identity, name, parent), runner)
     if r.returncode != 0:
         raise AgentGdocError(
@@ -633,7 +636,7 @@ def _find_or_create_folder(identity: GdocIdentity, parent: str, name: str, runne
 
 def resolve_subfolder(identity: GdocIdentity, *, area: str = "Projects",
                       project: str | None = None, runner=subprocess.run,
-                      trace: list | None = None) -> str:
+                      trace: list | None = None, create: bool = True) -> str:
     """Find-or-create `<agent root>/<area>[/<project>]` and return its folder id.
 
     Implements the fleet filing layout (agent-core/deliverables.md): every agent's
@@ -653,10 +656,10 @@ def resolve_subfolder(identity: GdocIdentity, *, area: str = "Projects",
             "op://Agent-<Slug>/gdrive-root-folder; run `canopy provision` and re-source "
             "~/.<agent>/.env, or pass --parent explicitly")
     area_id = _find_or_create_folder(identity, identity.root_folder, (area or "Projects").strip(),
-                                     runner, trace)
+                                     runner, trace, create)
     if not project or not project.strip():
         return area_id
-    return _find_or_create_folder(identity, area_id, project.strip(), runner, trace)
+    return _find_or_create_folder(identity, area_id, project.strip(), runner, trace, create)
 
 
 def build_share_command(identity: GdocIdentity, file_id: str, *, share: str,
@@ -1126,12 +1129,14 @@ def _destination(ident: GdocIdentity, area: str | None, project: str | None, tra
     A project deliverable resolves THROUGH the agent's canopy-web project (`--project P1` or
     its name): the folder the project links, linked on first use when it has none — so the
     folder is a property of the project rather than a name two systems must keep agreeing
-    on. A dry run never writes the board, so it resolves by name only."""
+    on. A dry run reads the board and Drive but never writes either: a folder it would
+    create comes back as a "(would create …)" placeholder."""
     area = (area or "Projects").strip()
-    if project and area == "Projects" and not dry_run:
+    if project and area == "Projects":
         from orchestrator.project_folder import resolve_project_destination
-        return resolve_project_destination(ident, project, trace=trace)
-    return resolve_subfolder(ident, area=area, project=project, trace=trace)
+        return resolve_project_destination(ident, project, trace=trace, dry_run=dry_run)
+    found = resolve_subfolder(ident, area=area, project=project, trace=trace, create=not dry_run)
+    return found or f"(would create {'/'.join(x for x in (area, project) if x)})"
 
 
 @click.group("gdoc")

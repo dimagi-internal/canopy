@@ -88,7 +88,7 @@ def ensure_project_folder(client, ident: GdocIdentity, project: dict, *,
 
 def resolve_project_destination(ident: GdocIdentity, project_ref: str, *, client=None,
                                 runner=subprocess.run, trace: list | None = None,
-                                warn=sys.stderr.write) -> str:
+                                warn=sys.stderr.write, dry_run: bool = False) -> str:
     """The folder id a `--project` publish files into, resolved THROUGH the project record.
 
     A ref that names a project on the agent's board (P<N> or its name) uses the folder it
@@ -107,10 +107,20 @@ def resolve_project_destination(ident: GdocIdentity, project_ref: str, *, client
         warn(f"NOTE: {why} — filing into Projects/{project_ref} by name, linked to no "
              f"project. Register it: canopy agent project-add --slug {ident.slug} "
              f"--name \"{project_ref}\"\n")
-        return resolve_subfolder(ident, project=project_ref, runner=runner, trace=trace)
+        return _by_name(ident, project_ref, runner, trace, dry_run)
+    if dry_run:  # never write: a linked folder, else what a real run would find or make
+        return folder_id_from(project) or _by_name(ident, str(project.get("name") or project_ref),
+                                                   runner, trace, dry_run)
     got = ensure_project_folder(client, ident, project, runner=runner, trace=trace, strict=False)
     if got["link_error"]:
         warn(f"NOTE: filed into {got['folder_url']} but could not link it to "
              f"{got['ext_id']} ({got['link_error']}). Link it: canopy agent project-folder "
              f"--slug {ident.slug} --project {got['ext_id']}\n")
     return got["folder_id"]
+
+
+def _by_name(ident: GdocIdentity, name: str, runner, trace, dry_run: bool) -> str:
+    """`Projects/<name>`, found or created; a dry run only finds (2026-10-08: a dry run of
+    `--project P3` created an empty `Projects/P3` folder in Hal's Drive)."""
+    return (resolve_subfolder(ident, project=name, runner=runner, trace=trace, create=not dry_run)
+            or f"(would create Projects/{name.strip()})")

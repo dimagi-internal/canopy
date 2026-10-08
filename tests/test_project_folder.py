@@ -283,3 +283,32 @@ def test_project_folder_all_backfills_only_active_unlinked(board):
     assert r.exit_code == 0, r.output
     assert made == ["Empty"]
     assert [c[1] for c in calls if c[0] == "PATCH"] == ["agents/hal/projects/P2/"]
+
+
+# -- a dry run never writes -------------------------------------------------------------
+
+def test_a_dry_run_of_a_P_ref_never_creates_a_folder_named_after_it():
+    """2026-10-08: `gdoc publish --agent hal --project P3 --dry-run` created `Projects/P3`."""
+    drive, client = _drive_with_projects(), FakeClient([_p("P3", "Reliability")])
+
+    got = resolve_project_destination(_ident(), "P3", client=client, runner=drive, dry_run=True)
+
+    assert drive.created == [] and client.patches == []
+    assert got == "(would create Projects/Reliability)"
+
+
+def test_a_dry_run_uses_the_linked_folder():
+    client = FakeClient([_p("P3", "Reliability", fid="LINKED")])
+    assert resolve_project_destination(_ident(), "P3", client=client, runner=FakeDrive(),
+                                      dry_run=True) == "LINKED"
+
+
+def test_resolve_subfolder_create_false_finds_but_never_creates():
+    drive = _drive_with_projects(Existing="EX")
+    assert agent_gdoc.resolve_subfolder(_ident(), project="Existing", runner=drive,
+                                        create=False) == "EX"
+    assert agent_gdoc.resolve_subfolder(_ident(), project="Missing", runner=drive,
+                                        create=False) == ""
+    assert agent_gdoc.resolve_subfolder(_ident(), area="Process State", runner=drive,
+                                        create=False) == ""
+    assert drive.created == []
