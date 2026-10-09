@@ -138,6 +138,20 @@ def test_prompt_says_any_message_may_be_the_last():
     assert 'never promise something "in my next message"' in text
 
 
+def test_prompt_files_the_block_quietly_and_ends_with_one_line():
+    # A person opened a thread session in emdash and saw a wall of raw JSON. canopy-web reads
+    # the block from the close-out first, so the reply only needs a one-line confirmation.
+    text = T.render_message_prompt(thread(), "eva", 2, NOW)
+    assert "Put the block LAST" not in text
+    assert "Write the block to a FILE and file it as your close-out" in text
+    assert "Do NOT print the block or its JSON in your reply" in text
+    assert "exits 0 and returns status `done`" in text
+    assert f'Sent my reply to thread {TID} (message 2): <position>. Proposal: "<title>"' in text
+    assert "drop the Proposal part when `proposal` is `{}`" in text
+    # the fallback keeps canopy-web's transcript read working when filing fails
+    assert "fails after one retry, print\nthe block LAST in your reply" in text
+
+
 def test_prompt_shows_a_message_that_never_arrived():
     th = thread([msg(1, "eva", None, status="failed")])
     th["messages"][0]["reply_error"] = "runner lost"

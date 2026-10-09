@@ -40,8 +40,10 @@ proposal, and the proposal's **author** and that **asker** settle the change dir
 6. **Don't invent other conversations.** Someone named on the work but not in the thread is
    exactly as the context says (e.g. "co-signed; there is NO thread with them"). Do not tell the
    others they are "handled in a separate thread" unless the context says so.
-7. **One block, last, filed.** Exactly one ```thread block, at the END of your final message,
-   then file it as your close-out. A block for another thread or another message number never
+7. **One block, filed, not printed.** Exactly one ```thread block, written to a file and filed as
+   your close-out. Your visible reply never shows the block or its JSON — a person may open your
+   session, and what you sent should read like a collapsed tool call: hidden, but clearly sent.
+   End with one plain line (below). A block for another thread or another message number never
    counts.
 
 ## Positions
@@ -69,7 +71,17 @@ Write it to a file, then:
     canopy agent turn --slug <you> --session-id "thread:<id>:<n>" --title "thread <id> message <n>" --summary "$(cat <file>)"
 
 The session id is stable, so re-filing a corrected block replaces the first. The prompt prints
-this command with the real values — copy it.
+this command with the real values — copy it. canopy-web reads your message from this close-out
+first, so the block never needs to be in your reply.
+
+Confirm the filing worked (exit 0, status `done`), then end your reply with ONE plain line and
+nothing else about the block:
+
+    Sent my reply to thread <id> (message <n>): <position>. Proposal: "<title>"
+
+Drop the `Proposal:` part when `proposal` is `{}`. **Fallback:** if filing fails after one retry,
+print the block LAST in your reply and say filing failed — canopy-web then reads it from your
+transcript.
 
 ## For the moderator
 Open a thread with `canopy thread open` (a huddle leader uses `canopy huddle agree`, which opens
