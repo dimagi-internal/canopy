@@ -64,7 +64,7 @@ if labs_likely; then
     if aws sts get-caller-identity --profile labs >/dev/null 2>&1; then
       echo "aws/labs: OK"
     else
-      echo "aws/labs: FAIL — run \`aws sso login --profile labs\`"
+      echo "aws/labs: FAIL — run \`canopy aws login --profile labs\` (pushes the approval to the runner owner's phone)"
       FAILED=1
     fi
   else
