@@ -4,7 +4,11 @@ An agent turn that hits an expired AWS SSO session used to stop and ask a person
 to run `aws sso login --profile labs` in a terminal on the box. This runs the
 real CLI in its device-code form instead:
 
-    canopy aws login --profile labs
+    canopy aws login --profile labs --reason "confirm the 5xx cause in /ecs/labs-jj-canopy-web"
+
+`--reason` is required. The alert reads "<Agent> needs AWS sign-in (labs)" /
+"On <runner>: <reason>", so the owner can decide from the lock screen without
+opening the session to find out what the approval is for.
 
 `aws sso login --use-device-code --no-browser` prints a URL with the code
 already filled in and then waits. This command sends that URL to canopy-web
@@ -68,11 +72,12 @@ def load_runner_config(path: Optional[Path] = None) -> Optional[dict]:
         return None
 
 
-def push_sign_in_request(cfg: dict, *, url: str, label: str, requested_by: str,
+def push_sign_in_request(cfg: dict, *, url: str, label: str, requested_by: str, reason: str,
                          call: Callable = canopy_web.call) -> int:
     """Devices reached. Raises CanopyError when canopy-web refused or was unreachable."""
     out = call("POST", f"/api/harness/runners/{cfg['runner_id']}/sign-in-request",
-               {"provider": "aws", "url": url, "label": label, "requested_by": requested_by},
+               {"provider": "aws", "url": url, "label": label, "requested_by": requested_by,
+                "reason": reason},
                base_url=cfg["base_url"], token=cfg["token"])
     return int(out.get("sent", 0))
 
@@ -112,13 +117,18 @@ def aws_group():
 
 @aws_group.command("login")
 @click.option("--profile", default="labs", show_default=True, help="AWS profile to sign in.")
+@click.option("--reason", required=True,
+              help="Why AWS is needed, in one specific line. Shown on the owner's lock screen.")
 @click.option("--requested-by", default="",
-              help="Who is waiting on it, shown in the notification. Default: this agent's slug.")
+              help="Who is waiting on it, shown in the notification. Default: this agent's name.")
 @click.option("--timeout", default=600, show_default=True, type=int,
               help="Seconds to wait for the approval.")
 @click.option("--force", is_flag=True, help="Sign in again even if the session is live.")
-def login_cmd(profile: str, requested_by: str, timeout: int, force: bool):
+def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force: bool):
     """Push an AWS SSO approval to the runner owner's phone and wait for it."""
+    reason = " ".join(reason.split())
+    if not reason:
+        raise click.UsageError("--reason must say what AWS is needed for; the owner reads it to decide.")
     if not force:
         arn = caller_identity(profile)
         if arn:
@@ -138,14 +148,15 @@ def login_cmd(profile: str, requested_by: str, timeout: int, force: bool):
             "an IAM Identity Center (SSO) profile, and is the AWS CLI v2.22 or newer?")
     url = box[0]
 
-    who = requested_by or canopy_web.agent_context_slug() or "An agent"
+    who = requested_by or canopy_web.agent_context_slug().capitalize() or "An agent"
     cfg = load_runner_config()
     sent, why = 0, ""
     if cfg is None:
         why = "no runner config on this box"
     else:
         try:
-            sent = push_sign_in_request(cfg, url=url, label=profile, requested_by=who)
+            sent = push_sign_in_request(cfg, url=url, label=profile, requested_by=who,
+                                        reason=reason)
         except canopy_web.CanopyError as exc:
             why = str(exc)
     if sent:

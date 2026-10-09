@@ -132,6 +132,13 @@ Confirm the channels and config a turn needs are reachable (auth, `.env`, any bo
 surface is blocked, run the turn for the surfaces that passed and tell the human exactly what is
 blocked and how to fix it. Do not abort the whole turn for one blocker.
 
+**Expired AWS SSO is not a "tell the human" blocker. Fix it yourself:** run
+`canopy aws login --profile <p> --reason "<what you need AWS for>"` in the background (or with a
+10-minute timeout). It pushes a tap-to-approve alert to the runner owner's phone that says you
+are asking, on which runner, and why, and it finishes by itself once they approve. Raw
+`aws sso login` is deny-railed (`gating-baseline.json`) because it waits for a human nobody has
+told.
+
 ## Step 2 — Process inbound, one counterpart at a time
 
 ### Step 2.0 — The owed-reply sweep (EVERY turn, BEFORE any early return)
