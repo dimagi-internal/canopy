@@ -212,6 +212,50 @@ def provenance_headers(client: str = DEFAULT_CLIENT, *, cwd: Optional[str] = Non
     return headers
 
 
+_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+_PROJECT_REF = re.compile(r"^(?:[A-Za-z0-9_.-]{1,100}[/:])?[A-Za-z0-9_.-]{1,64}$")
+
+
+def _repo_from_remote(url: str) -> str:
+    """`git@github.com:org/connect-labs.git` / `https://…/connect-labs` → `connect-labs`."""
+    tail = (url or "").strip().rstrip("/").replace(":", "/").rsplit("/", 1)[-1]
+    return tail[:-4] if tail.endswith(".git") else tail
+
+
+def artifact_project_fields(cwd: Optional[str] = None) -> dict:
+    """The project an uploaded ARTIFACT belongs to, as canopy-web upload fields.
+
+    `project_slug` — the repo the work is in: `$CANOPY_PROJECT_SLUG`, else the name
+    of the cwd's `origin` remote. Never the directory name: inside an emdash
+    worktree that is `emdash-<task>-<suffix>`, which names nothing (the reason
+    0 of 63 supply walkthroughs carried a project — canopy-web T76).
+    `agent_project` — the agent's board project (`hal/P5`), only from
+    `$CANOPY_AGENT_PROJECT`; when unset canopy-web infers it from the parent
+    turn's board task or the DDD run doc, so most callers need not send it.
+
+    Only known, well-formed values are returned; never raises.
+    """
+    out: dict = {}
+    try:
+        slug = os.environ.get("CANOPY_PROJECT_SLUG", "").strip()
+        if not slug:
+            import subprocess
+
+            res = subprocess.run(
+                ["git", "-C", str(cwd or os.getcwd()), "remote", "get-url", "origin"],
+                capture_output=True, text=True, timeout=5,
+            )
+            slug = _repo_from_remote(res.stdout) if res.returncode == 0 else ""
+        if slug and _SLUG.match(slug):
+            out["project_slug"] = slug
+        ref = os.environ.get("CANOPY_AGENT_PROJECT", "").strip()
+        if ref and _PROJECT_REF.match(ref):
+            out["agent_project"] = ref
+    except Exception:  # noqa: BLE001 — a label must never fail an upload
+        pass
+    return out
+
+
 def with_provenance(headers: Optional[dict], client: str = DEFAULT_CLIENT) -> dict:
     """`headers` plus provenance; the caller's own keys win (e.g. a custom UA)."""
     return {**provenance_headers(client), **(headers or {})}

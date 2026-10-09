@@ -13,7 +13,7 @@ from typing import Callable, Optional
 
 # Every request says what made it and which turn/session it came from (see
 # provenance.py). Imported by name so tests can monkeypatch it here.
-from orchestrator.provenance import provenance_headers
+from orchestrator.provenance import artifact_project_fields, provenance_headers  # noqa: F401
 
 DEFAULT_API = "https://canopy.dimagi.com"
 TOKEN_FILE = Path.home() / ".claude" / "canopy" / "workbench-token"

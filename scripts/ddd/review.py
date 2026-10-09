@@ -19,7 +19,7 @@ import time
 import urllib.error
 import urllib.request
 
-from orchestrator.provenance import provenance_headers
+from orchestrator.provenance import artifact_project_fields, provenance_headers
 from scripts.ddd.schemas.models import ReviewRequest
 from scripts.ddd.auth import (
     DEFAULT_API,
@@ -123,8 +123,15 @@ def post_review_request(
     api = _resolve_base_url(base_url)
     tok = _resolve_token(token)
     ws = _require_write_ws()
+    request_json = review_request.model_dump(by_alias=True)
+    # The repo this narrative is about (canopy-web T76). Inside request_json, not
+    # beside it: request_json is an open dict on every server version, while a new
+    # top-level key would 422 on a server that predates it.
+    slug = artifact_project_fields().get("project_slug")
+    if slug and not request_json.get("project_slug"):
+        request_json["project_slug"] = slug
     payload = {
-        "request_json": review_request.model_dump(by_alias=True),
+        "request_json": request_json,
         "visibility": visibility,
     }
     result = _json_request("POST", _url(api, "/api/reviews/", ws), tok, payload)

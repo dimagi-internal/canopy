@@ -46,7 +46,7 @@ from typing import Callable
 
 import yaml
 
-from orchestrator.provenance import provenance_headers
+from orchestrator.provenance import artifact_project_fields, provenance_headers
 from scripts.ddd.schemas.models import Decision, Gate, ReviewRequest, RunState, UnifiedSpec, WhyBrief
 from scripts.ddd.spec_io import load_spec
 from scripts.ddd.runstate import load as load_state
@@ -945,6 +945,10 @@ def publish_artifact(
         "description": "",
         "visibility": "link",
     }
+    # Which project the artifact belongs to (canopy-web T76): the repo slug and,
+    # when the env names one, the agent's board project. The session/turn it came
+    # from ride the provenance headers; canopy-web stamps them server-side.
+    fields.update(artifact_project_fields())
     # DDD-run grouping so the run's artifacts package together under their run.
     if run_id:
         fields["run_id"] = run_id
