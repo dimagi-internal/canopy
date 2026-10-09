@@ -459,6 +459,40 @@ def test_a_revoked_client_is_told_nothing_and_not_to_look():
                      "to be told what canopy knows about them. Do not look it up another way."]
 
 
+def test_memory_off_is_one_line_with_no_recording_hint():
+    # canopy-web sends `hcp: {record: false, use: false}` (grant/recall null) for a person
+    # who has turned neither switch on: it wins over the revoked-client wording.
+    lines = cc.person_lines({**PERSON, "hcp": {"record": False, "use": False}, "facts": [],
+                             "grant": None, "recall": None, "record": None})
+    assert lines == ["[canopy] Lilianna Bagnoli (person 12) has not turned on agent memory — "
+                     "don't record or look up facts about them."]
+
+
+def test_record_only_says_add_without_searching_and_shows_no_facts():
+    lines = cc.person_lines({**PERSON, "hcp": {"record": True, "use": False}, "facts": [],
+                             "grant": {"id": "g"}, "recall": None,
+                             "record": {"tool": "hcp_addPreference", "turn": "t-1"}})
+    assert len(lines) == 1
+    assert "lets agents learn about them but not use it" in lines[0]
+    assert "`hcp_addPreference` (turn=t-1;" in lines[0] and "without searching first" in lines[0]
+    assert "hcp_searchPreferences" not in lines[0]
+
+
+def test_use_only_shows_facts_and_says_not_to_record():
+    lines = cc.person_lines({**PERSON, "hcp": {"record": False, "use": True},
+                             "grant": {"id": "g"}, "recall": RECALL, "record": None})
+    text = "\n".join(lines)
+    assert "`hcp_searchPreferences`" in lines[-1]
+    assert "hcp_addPreference" not in text and "don't." in lines[-1]
+
+
+def test_both_on_or_no_marker_reads_as_before():
+    on = cc.person_lines({**PERSON, "hcp": {"record": True, "use": True}, "grant": {"id": "g"},
+                          "recall": RECALL})
+    absent = cc.person_lines({**PERSON, "grant": {"id": "g"}, "recall": RECALL})
+    assert on == absent and "`hcp_addPreference`" in on[-1]
+
+
 # --- MCP Apps: what a site's View recorded (canopy-web spec 2026-10-08) -----------------
 
 

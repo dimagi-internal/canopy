@@ -386,6 +386,27 @@ def person_lines(person) -> list:
     hidden = len(facts) - len(shown_c) - len(shown_o)
     has_digest = bool(str(person.get("digest") or "").strip())
 
+    # The person's own agent-memory switches (canopy-web `Person.hcp_record` /
+    # `hcp_use`): `hcp: {record, use}`. record = agents may learn about them (write);
+    # use = agents may be told it (read). Absent (an older canopy-web) = the
+    # behaviour below, unchanged.
+    switches = person.get("hcp") if isinstance(person.get("hcp"), dict) else None
+    if switches is not None:
+        may_record, may_use = bool(switches.get("record")), bool(switches.get("use"))
+        if not may_record and not may_use:
+            return [f"[canopy] {name} (person {pid}) has not turned on agent memory — don't "
+                    "record or look up facts about them."]
+        if may_record and not may_use:
+            # Record-only: nothing is served and search is refused, so the agent adds
+            # without searching first; HCP's conflict quarantine handles a duplicate or
+            # a contradiction (judgment call, 2026-10-09).
+            rec = person.get("record") if isinstance(person.get("record"), dict) else {}
+            turn = _one_line(rec.get("turn"), 40) or "<this turn id>"
+            return [f"[canopy] {name} (person {pid}) lets agents learn about them but not use "
+                    "it: you are told nothing about them and cannot look them up. Record what "
+                    f"they tell you: `hcp_addPreference` (turn={turn}; for an inference pass "
+                    "model=<your model id>) — add without searching first; HCP quarantines "
+                    "a contradiction."]
     # HCP (canopy-web apps/contacts/hcp.py): `grant` present but null = the person revoked
     # this client (this agent over this channel). Nothing about them is served, and the
     # agent must not go and find it another way.
@@ -414,8 +435,12 @@ def person_lines(person) -> list:
         tail = ("Only facts relevant to this message are shown. Recall more (when the question "
                 "is ambiguous — \"the coach\", \"the app\" — or you need their history): "
                 f"`hcp_searchPreferences` with turn={turn}, categories=[{cats}], a query and a "
-                f"purpose. Record what they tell you: `hcp_addPreference` (turn={turn}; "
-                "for an inference pass model=<your model id>).")
+                "purpose.")
+        if switches is None or switches.get("record"):
+            tail += (f" Record what they tell you: `hcp_addPreference` (turn={turn}; "
+                     "for an inference pass model=<your model id>).")
+        else:
+            tail += " They have not let agents record anything new about them: don't."
     else:
         more = []
         if hidden > 0:
