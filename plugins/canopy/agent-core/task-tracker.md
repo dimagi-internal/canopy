@@ -72,20 +72,24 @@ The board at `/agents/<slug>` is a **control surface**: a person acts on a task 
 - **nudge** ("Nudge <Agent>") enqueues the same card turn on an in-progress task, status
   unchanged — someone wants you to look at it again now. It replaced `dispatch`
   ("do this now"), which is gone: it only queued a row and woke nobody.
+- **reply** that ANSWERS your open question enqueues a turn carrying the answer
+  (`ANSWERED BY …`) — the question's own `on_approve` specs, or, with none, one turn canopy-web
+  writes from the card. Whoever answers (viewer included) wakes you: you asked for it. Act on
+  the answer and update the task.
 - **reply** from an editor on a live task enqueues a short turn carrying the note — answer it on
-  the task (`set --append-notes`) and fold it into the work. A **viewer's** reply, and an answer
-  to a question with no `on_approve`, still land on your queue as a pending row.
+  the task (`set --append-notes`) and fold it into the work. A **viewer's** note still lands on
+  your queue as a pending row.
 - **decline** closed the task; read the comment, record anything worth keeping.
 
-**At the start of every turn, drain what is still queued** — viewer notes, answers, anything a
-turn did not already carry:
+**At the start of every turn, drain what is still queued** — viewer notes, anything a turn did
+not already carry:
 ```
 canopy agent actions --slug <slug>      # pending actions, oldest first: #<id> <action> -> T<N>
 # ... do the work (under the normal guardrails — outbound actions still need approval) ...
 canopy agent applied --slug <slug> --id <N> --note "what I did"   # mark it carried out
 ```
-A reply you post on your OWN card never wakes you (canopy-web skips it, so a turn that replies
-cannot loop) — record your own progress with `set --append-notes`.
+A reply you post on your OWN card — a note, or an answer to your own question — never wakes you
+(canopy-web skips it, so a turn that replies cannot loop) — record your own progress with `set --append-notes`.
 
 When you *suggest* a task, store the context immediately (`set` — rationale, plan,
 source url) so it is never re-derived later.
