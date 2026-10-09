@@ -473,7 +473,7 @@ def test_record_only_says_add_without_searching_and_shows_no_facts():
                              "grant": {"id": "g"}, "recall": None,
                              "record": {"tool": "hcp_addPreference", "turn": "t-1"}})
     assert len(lines) == 1
-    assert "lets agents learn about them but not use it" in lines[0]
+    assert "lets agents learn about them here, but using it is not turned on" in lines[0]
     assert "`hcp_addPreference` (turn=t-1;" in lines[0] and "without searching first" in lines[0]
     assert "hcp_searchPreferences" not in lines[0]
 
@@ -483,7 +483,26 @@ def test_use_only_shows_facts_and_says_not_to_record():
                              "grant": {"id": "g"}, "recall": RECALL, "record": None})
     text = "\n".join(lines)
     assert "`hcp_searchPreferences`" in lines[-1]
-    assert "hcp_addPreference" not in text and "don't." in lines[-1]
+    assert "hcp_addPreference" not in text
+    assert "Recording what you learn about them is not turned on: don't record" in lines[-1]
+
+
+def test_available_but_off_in_this_session_says_so():
+    avail = {"record": True, "use": True}
+    off = cc.person_lines({**PERSON, "hcp": {"record": False, "use": False, "available": avail,
+                                             "session": True},
+                           "facts": [], "grant": None, "recall": None, "record": None})
+    assert off == ["[canopy] Agent memory for Lilianna Bagnoli (person 12) is off in this "
+                   "session — don't record or look up facts about them."]
+    rec = cc.person_lines({**PERSON, "hcp": {"record": True, "use": False, "available": avail,
+                                             "session": True},
+                           "facts": [], "grant": {"id": "g"}, "recall": None,
+                           "record": {"tool": "hcp_addPreference", "turn": "t-1"}})
+    assert "but using it is off in this session" in rec[0]
+    use = cc.person_lines({**PERSON, "hcp": {"record": False, "use": True, "available": avail,
+                                             "session": True},
+                           "grant": {"id": "g"}, "recall": RECALL, "record": None})
+    assert "Recording what you learn about them is off in this session" in use[-1]
 
 
 def test_both_on_or_no_marker_reads_as_before():

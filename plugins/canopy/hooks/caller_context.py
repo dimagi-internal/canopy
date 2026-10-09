@@ -386,14 +386,25 @@ def person_lines(person) -> list:
     hidden = len(facts) - len(shown_c) - len(shown_o)
     has_digest = bool(str(person.get("digest") or "").strip())
 
-    # The person's own agent-memory switches (canopy-web `Person.hcp_record` /
-    # `hcp_use`): `hcp: {record, use}`. record = agents may learn about them (write);
-    # use = agents may be told it (read). Absent (an older canopy-web) = the
-    # behaviour below, unchanged.
+    # The person's agent memory as it applies in THIS turn's session (canopy-web
+    # `hcp.effective`): `hcp: {record, use, available: {record, use}, session}`.
+    # record = agents may learn about them (write); use = agents may be told it
+    # (read); `available` = what the person allows at all, so "off in this session"
+    # and "not turned on" read differently. Absent (an older canopy-web) = the
+    # behaviour below, unchanged; no `available` (canopy-web #1380) = not per session.
     switches = person.get("hcp") if isinstance(person.get("hcp"), dict) else None
+
+    def _off(feature: str) -> str:
+        avail = switches.get("available") if isinstance(switches.get("available"), dict) else {}
+        return "is off in this session" if avail.get(feature) else "is not turned on"
+
     if switches is not None:
         may_record, may_use = bool(switches.get("record")), bool(switches.get("use"))
         if not may_record and not may_use:
+            avail = switches.get("available") if isinstance(switches.get("available"), dict) else {}
+            if avail.get("record") or avail.get("use"):
+                return [f"[canopy] Agent memory for {name} (person {pid}) is off in this "
+                        "session — don't record or look up facts about them."]
             return [f"[canopy] {name} (person {pid}) has not turned on agent memory — don't "
                     "record or look up facts about them."]
         if may_record and not may_use:
@@ -402,11 +413,11 @@ def person_lines(person) -> list:
             # a contradiction (judgment call, 2026-10-09).
             rec = person.get("record") if isinstance(person.get("record"), dict) else {}
             turn = _one_line(rec.get("turn"), 40) or "<this turn id>"
-            return [f"[canopy] {name} (person {pid}) lets agents learn about them but not use "
-                    "it: you are told nothing about them and cannot look them up. Record what "
-                    f"they tell you: `hcp_addPreference` (turn={turn}; for an inference pass "
-                    "model=<your model id>) — add without searching first; HCP quarantines "
-                    "a contradiction."]
+            return [f"[canopy] {name} (person {pid}) lets agents learn about them here, but "
+                    f"using it {_off('use')}: you are told nothing about them and cannot look "
+                    "them up. Record what they tell you: `hcp_addPreference` "
+                    f"(turn={turn}; for an inference pass model=<your model id>) — add without "
+                    "searching first; HCP quarantines a contradiction."]
     # HCP (canopy-web apps/contacts/hcp.py): `grant` present but null = the person revoked
     # this client (this agent over this channel). Nothing about them is served, and the
     # agent must not go and find it another way.
@@ -440,7 +451,8 @@ def person_lines(person) -> list:
             tail += (f" Record what they tell you: `hcp_addPreference` (turn={turn}; "
                      "for an inference pass model=<your model id>).")
         else:
-            tail += " They have not let agents record anything new about them: don't."
+            tail += (f" Recording what you learn about them {_off('record')}: "
+                     "don't record anything.")
     else:
         more = []
         if hidden > 0:
