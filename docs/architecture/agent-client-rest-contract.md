@@ -67,7 +67,7 @@ its parent is whatever was knowable at connect time.
 | GET | `/api/agents/{slug}/tasks/` | — | list tasks; filters `project=P2\|none`, `status=a,b`, `waiting=me`, `ask=open\|closed`, `batch=` |
 | GET | `/api/agents/{slug}/tasks/{ext_id}/` | — | one task with its actions |
 | PATCH | `/api/agents/{slug}/tasks/{ext_id}/` | partial task fields | store context (rationale/plan/status/links/…). Tasks are addressed by `ext_id` only |
-| POST | `/api/agents/{slug}/tasks/{ext_id}/actions` | `{action: approve\|decline\|reply\|dispatch\|done, comment}` | what a person does to a task |
+| POST | `/api/agents/{slug}/tasks/{ext_id}/actions` | `{action: approve\|decline\|reply\|nudge\|done, comment}` | what a person does to a task. approve always starts a turn (`on_approve`, or one written from the card); nudge (editor, in-progress only) starts one without a status change; an editor's reply starts one carrying the note. `turn_ids` names them. `dispatch` was removed 2026-10-08 (no alias) |
 | GET | `/api/agents/{slug}/actions/?status=pending` | — | the agent's queue: `[{id,task_ext_id,action,comment,by,status,…}]`, oldest first |
 | POST | `/api/agents/{slug}/actions/{id}/applied` | `{result_note}` | mark an action carried out |
 | GET/POST | `/api/agents/{slug}/projects/` | `{name,outcome,drive_folder_url,links,…}` | list (`?status=`) / create (auto `P<n>`) |
