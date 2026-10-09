@@ -61,20 +61,6 @@ def _spec():
     )
 
 
-def _hook_env(**extra):
-    """Env for spawning a generated hooks/gating_guard.py subprocess in these tests.
-
-    Every test that uses this in this package's suite deliberately points
-    CANOPY_PLUGIN_DIR at a directory that doesn't resolve a real canopy plugin — these
-    tests exercise the generated LOADER's degrade-safely behavior, which is self-contained
-    in the stamped repo. (Tests that need the REAL canopy plugin engine at
-    plugins/canopy/agent-core stay in the orchestrator repo's own test suite, since that
-    fixture lives there, not in this standalone package.)
-    """
-    import os as _os
-    return {**_os.environ, **extra}
-
-
 def test_create_agent_writes_full_layout(tmp_path):
     written = create_agent(_spec(), tmp_path / "echo")
     names = {p.relative_to(tmp_path / "echo").as_posix() for p in written}
@@ -86,7 +72,6 @@ def test_create_agent_writes_full_layout(tmp_path):
         "config/gating.json",
         "config/agent.json",
         ".claude/settings.json",
-        "hooks/gating_guard.py",
         "bin/echo-email",
         "skills/turn/SKILL.md",
         "skills/agent-turn-review/SKILL.md",
@@ -164,16 +149,6 @@ def test_generated_json_is_valid(tmp_path):
     assert plugin["version"] == "0.1.0"
 
 
-def test_hook_is_executable_and_stdlib_only(tmp_path):
-    create_agent(_spec(), tmp_path / "echo")
-    hook = tmp_path / "echo" / "hooks" / "gating_guard.py"
-    assert hook.stat().st_mode & 0o111, "hook should be executable"
-    src = hook.read_text()
-    # Hooks run under system python3 which may lack PyYAML — must not import it.
-    assert "import yaml" not in src
-    assert "import pyyaml" not in src.lower()
-
-
 def test_create_agent_refuses_nonempty_dir(tmp_path):
     target = tmp_path / "echo"
     target.mkdir()
@@ -237,44 +212,17 @@ def test_stub_skills_reference_agent_core(tmp_path):
         assert len(text) < 3000, f"{name} looks like a full copy, not a stub"
 
 
-def test_gating_hook_fails_closed_when_baseline_unreadable(tmp_path):
-    """channels mounted + baseline unresolvable → deny (exit 2) with the /canopy:update fix.
-    A stale/absent canopy install must never silently run an agent without its fleet rails."""
-    import os as _os
-    create_agent(_spec(), tmp_path / "echo")
-    hook = tmp_path / "echo" / "hooks" / "gating_guard.py"
-    env = {**_os.environ, "CANOPY_PLUGIN_DIR": str(tmp_path / "nonexistent")}
-    r = subprocess.run(
-        [sys.executable, str(hook)],
-        input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"}}),
-        capture_output=True, text=True, env=env,
-    )
-    assert r.returncode == 2
-    assert "canopy:update" in r.stderr
-
-
-def test_gating_hook_legacy_config_stays_local_only(tmp_path):
-    """A config WITHOUT `channels` (legacy full-copy style, e.g. ACE's plugin-level setup)
-    keeps local-rails-only behavior — no baseline lookup, no fail-closed brick."""
-    import os as _os
+def test_factory_stamps_no_gating_hook(tmp_path):
+    """canopy#849: canopy's plugin registers the ONE gating hook and applies the session's
+    agent's config/gating.json. An agent registering its own made its rails fire in every
+    sibling's session once plugins were installed user-scope (ACE's rail blocked Ada's PR)."""
     create_agent(_spec(), tmp_path / "echo")
     root = tmp_path / "echo"
-    gating = root / "config" / "gating.json"
-    gating.write_text(json.dumps({
-        "deny": [{"tool": "Bash", "pattern": "forbidden_local_thing", "message": "BLOCKED: local rail."}],
-        "approve": [],
-    }))
-    env = {**_os.environ, "CANOPY_PLUGIN_DIR": str(tmp_path / "nonexistent")}
-
-    def run(command):
-        return subprocess.run(
-            [sys.executable, str(root / "hooks" / "gating_guard.py")],
-            input=json.dumps({"tool_name": "Bash", "tool_input": {"command": command}}),
-            capture_output=True, text=True, env=env,
-        )
-
-    assert run("forbidden_local_thing now").returncode == 2
-    assert run("git status").returncode == 0        # no channels → no baseline → no brick
+    assert not (root / "hooks" / "gating_guard.py").exists()
+    settings = json.loads((root / ".claude" / "settings.json").read_text())
+    assert "PreToolUse" not in (settings.get("hooks") or {})
+    assert settings["env"]["CANOPY_AGENT"] == "echo"     # how canopy knows whose session it is
+    assert (root / "config" / "gating.json").exists()   # the rails themselves stay per-agent
 
 
 def test_internal_skills_are_not_user_launchable(tmp_path):
@@ -292,120 +240,6 @@ def test_internal_skills_are_not_user_launchable(tmp_path):
     assert "user-invocable: false" not in turn_fm, "turn must stay human-launchable"
     # the walk-back removed command wrappers entirely
     assert not (root / "commands").exists(), "factory no longer stamps commands/ wrappers"
-
-
-def test_gating_hook_is_a_loader_with_no_agent_specifics(tmp_path):
-    """The generated hook must carry NO agent-specific text and NO matching logic.
-
-    This is the property that makes it shared: if the file were templated per agent, or held
-    rules, we would be back to N forked copies — the state measured on 2026-08-13 (three of
-    four agents silently behind on rail features, a fourth holding one nobody else could use).
-    """
-    create_agent(_spec(), tmp_path / "echo")
-    body = (tmp_path / "echo" / "hooks" / "gating_guard.py").read_text()
-    assert "Echo" not in body and "echo" not in body.replace("echo's", "")
-    assert "runpy.run_path" in body
-    # the engine's real matching surface must NOT be duplicated here
-    assert "def matches(" not in body and "baseline_rails" not in body
-
-
-def test_gating_loader_degrades_without_bricking_or_weakening(tmp_path):
-    """Engine unresolvable. Availability may suffer; safety may not."""
-    create_agent(_spec(), tmp_path / "echo")
-    root = tmp_path / "echo"
-    hook = root / "hooks" / "gating_guard.py"
-    gating = root / "config" / "gating.json"
-    broken = _hook_env(CANOPY_PLUGIN_DIR=str(tmp_path / "nonexistent"))
-
-    def run(cmd, env):
-        return subprocess.run([sys.executable, str(hook)],
-                              input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
-                              capture_output=True, text=True, env=env)
-
-    # (a) legacy config, no channels -> local rails still enforced, reads still free
-    gating.write_text(json.dumps({"deny": [
-        {"tool": "Bash", "pattern": "forbidden_local_thing", "message": "BLOCKED: local rail."}]}))
-    assert run("forbidden_local_thing now", broken).returncode == 2
-    assert run("git status", broken).returncode == 0
-
-    # (b) a rule using an engine-only feature must be assumed to FIRE, never skipped
-    gating.write_text(json.dumps({"deny": [
-        {"tool": "Bash", "per_statement": True, "pattern": "nope", "message": "BLOCKED: rich rule."}]}))
-    assert run("anything at all", broken).returncode == 2
-
-    # (c) channels mounted -> depends on rails it cannot read -> fail closed, naming the fix
-    gating.write_text(json.dumps({"channels": ["email"], "deny": []}))
-    r = run("git status", broken)
-    assert r.returncode == 2 and "/canopy:update" in r.stderr
-
-
-def test_gating_loader_names_the_bootstrap_when_canopy_is_not_installed(tmp_path):
-    """Fresh account: no canopy plugin at all. Still fail closed, but /canopy:update does not
-    exist there and the hook blocks the agent's own shell, so the message must hand the human
-    the `!`-prefixed install (which bypasses hooks). Installed-but-stale keeps /canopy:update."""
-    create_agent(_spec(), tmp_path / "echo")
-    hook = tmp_path / "echo" / "hooks" / "gating_guard.py"
-    home = tmp_path / "home"
-    env = _hook_env(HOME=str(home))
-    env.pop("CANOPY_PLUGIN_DIR", None)
-
-    def run():
-        return subprocess.run([sys.executable, str(hook)],
-                              input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
-                              capture_output=True, text=True, env=env)
-
-    # (a) no registry file at all
-    r = run()
-    assert r.returncode == 2
-    assert "not installed" in r.stderr
-    assert "! claude plugin marketplace add dimagi-internal/canopy && claude plugin install canopy@canopy" in r.stderr
-    assert "/canopy:update" not in r.stderr
-
-    # (b) registry exists but has no canopy@canopy entry
-    reg = home / ".claude" / "plugins" / "installed_plugins.json"
-    reg.parent.mkdir(parents=True)
-    reg.write_text(json.dumps({"version": 2, "plugins": {"other@x": [{"installPath": "/x"}]}}))
-    r = run()
-    assert r.returncode == 2 and "claude plugin install canopy@canopy" in r.stderr
-
-    # (c) installed, but the engine file is missing -> /canopy:update is the right fix
-    reg.write_text(json.dumps({"version": 2, "plugins": {
-        "canopy@canopy": [{"installPath": str(tmp_path / "stale-install")}]}}))
-    r = run()
-    assert r.returncode == 2
-    assert "/canopy:update" in r.stderr and "claude plugin install" not in r.stderr
-
-
-def test_stamped_matcher_routes_every_shell_to_the_guard(tmp_path):
-    """On Windows the harness offers PowerShell beside Bash. A matcher without it never calls
-    the guard from that shell, so every rail is bypassed there (fizzy, 2026-09-22)."""
-    create_agent(_spec(), tmp_path / "echo")
-    settings = json.loads((tmp_path / "echo" / ".claude" / "settings.json").read_text())
-    matchers = [e["matcher"] for e in settings["hooks"]["PreToolUse"]
-                if any("gating_guard.py" in h["command"] for h in e["hooks"])]
-    assert any("PowerShell" in m.split("|") for m in matchers)
-    assert any("Bash" in m.split("|") for m in matchers)
-
-
-def test_degraded_loader_applies_local_shell_rails_to_powershell(tmp_path):
-    """Engine unreachable: the loader's fallback must treat PowerShell as a shell too, and
-    still honour `bash_only`."""
-    create_agent(_spec(), tmp_path / "echo")
-    root = tmp_path / "echo"
-    (root / "config" / "gating.json").write_text(json.dumps({"deny": [
-        {"tool": "Bash", "pattern": "forbidden_local_thing", "message": "BLOCKED: local rail."},
-        {"tool": "Bash", "bash_only": True, "pattern": "zsh_only_thing", "message": "BLOCKED."}]}))
-    broken = _hook_env(CANOPY_PLUGIN_DIR=str(tmp_path / "nonexistent"))
-
-    def run(tool, cmd):
-        return subprocess.run([sys.executable, str(root / "hooks" / "gating_guard.py")],
-                              input=json.dumps({"tool_name": tool, "tool_input": {"command": cmd}}),
-                              capture_output=True, text=True, env=broken).returncode
-
-    assert run("PowerShell", "forbidden_local_thing now") == 2
-    assert run("PowerShell", "Get-ChildItem") == 0
-    assert run("Bash", "zsh_only_thing") == 2
-    assert run("PowerShell", "zsh_only_thing") == 0
 
 
 def test_templates_carry_non_ascii_and_round_trip(tmp_path):

@@ -74,4 +74,34 @@ describe('canopy-web-mcp-headers', () => {
     expect(stdout.trim()).toBe(stdout);          // no stray newline/banner to confuse the client
     expect(() => JSON.parse(stdout)).not.toThrow();
   });
+
+  describe('--archive (marketplace + archive downloads, canopy#851)', () => {
+    async function archive(env: NodeJS.ProcessEnv, cwd = dir): Promise<{ stdout: string }> {
+      return run(process.execPath, [HELPER, '--archive'], {
+        env: { ...process.env, HOME: dir, CANOPY_WEB_PAT: '', ...env },
+        cwd,
+      });
+    }
+
+    it('emits only the person\'s bearer — no provenance, no chat key', async () => {
+      await writeFile(tokenPath, 'person-pat\n', 'utf8');
+      const { stdout } = await archive({ CANOPY_WORKBENCH_TOKEN: tokenPath });
+      expect(JSON.parse(stdout)).toEqual({ Authorization: 'Bearer person-pat' });
+    });
+
+    it('ignores a confined profile and an agent slug: a marketplace is the person\'s', async () => {
+      await writeFile(tokenPath, 'person-pat\n', 'utf8');
+      const { stdout } = await archive({
+        CANOPY_WORKBENCH_TOKEN: tokenPath,
+        CANOPY_PROFILE: join(dir, 'profile.json'),
+        CANOPY_AGENT: 'ace',
+      });
+      expect(JSON.parse(stdout)).toEqual({ Authorization: 'Bearer person-pat' });
+    });
+
+    it('emits {} with no token, and exits 0', async () => {
+      const { stdout } = await archive({ CANOPY_WORKBENCH_TOKEN: join(dir, 'nope') });
+      expect(JSON.parse(stdout)).toEqual({});
+    });
+  });
 });

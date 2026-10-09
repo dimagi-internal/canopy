@@ -98,7 +98,13 @@ Restart Claude Code (or `/reload-plugins`) so the new commands register.
 ```
 
 It is idempotent — safe to re-run — and provisions the state directory, the
-capture hook, your canopy-web token, and the `canopy` CLI in one pass.
+capture hook and the `canopy` CLI, signs you in to canopy-web in the browser, asks
+which workspace, and installs that workspace's agents (auto-updating). It also prints
+one line on the 1Password CLI without failing. As an operator you continue below —
+hosting an agent (runners, vault keys, `gog`) is not part of a user's setup.
+
+> Before any install, the quickest look is canopy-web as a claude.ai **custom
+> connector**: URL `https://canopy.dimagi.com/api/mcp/`.
 
 To update later: `/canopy:update`.
 
@@ -329,7 +335,7 @@ fixes it**. On a fresh scaffold you should expect roughly this:
 [OK  ] Identity              slug=scout mailbox=scout@dimagi-ai.com gog_client=canopy
 [FAIL] Plugin install        plugin 'scout' is NOT installed — ...
 [OK  ] Gating rails          2 effective deny rail(s)
-[OK  ] Hook wiring           gating_guard.py registered as a PreToolUse hook
+[OK  ] Hook wiring           rails enforced by canopy's session gating hook (agent-core/gating_guard.py --session); no agent-registered hook
 [OK  ] Secrets manifest      .env.tpl (1 var(s), 0 op:// ref(s))
 [OK  ] Rails enforced        guard blocked the raw-send probe (exit 2)
 [FAIL] Email auth (gog)      ... does not map scout@dimagi-ai.com -> canopy

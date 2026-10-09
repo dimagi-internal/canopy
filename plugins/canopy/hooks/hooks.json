@@ -46,6 +46,15 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "Bash|PowerShell|Edit|Write|NotebookEdit|Skill|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/agent-core/gating_guard.py\" --session"
+          }
+        ]
+      },
+      {
         "matcher": "*",
         "hooks": [
           {

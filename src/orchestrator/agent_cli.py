@@ -321,7 +321,7 @@ def agent_doctor(repo, slug, all_agents, do_fix, as_json):
     else:
         width = max(len(r.name) for r in results)
         for r in results:
-            status = "OK  " if r.ok else "FAIL"
+            status = "WARN" if (r.ok and r.warn) else ("OK  " if r.ok else "FAIL")
             click.echo(f"  [{status}] {r.name.ljust(width)}  {r.detail}")
         click.echo()
         for label, ok_, detail in actions:

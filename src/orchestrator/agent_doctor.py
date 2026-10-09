@@ -77,6 +77,16 @@ _PLACEHOLDER_DOMAINS = {"example.com", "example.org", "example.net"}
 CORE_SERVICES = ("gmail", "drive", "docs", "sheets", "forms")
 
 
+def _canopy_plugin_dir() -> str:
+    """The installed canopy plugin dir (CANOPY_PLUGIN_DIR overrides). Raises if unresolvable."""
+    plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
+    if not plugin_dir:
+        reg = json.loads(
+            (Path("~/.claude/plugins/installed_plugins.json").expanduser()).read_text(encoding="utf-8"))
+        plugin_dir = reg["plugins"]["canopy@canopy"][0]["installPath"]
+    return plugin_dir
+
+
 def _baseline_rails(cfg: dict) -> list | None:
     """The FLEET-BASELINE deny rails this agent mounts via `channels`, mirroring what
     hooks/gating_guard.py merges in at call time.
@@ -93,13 +103,8 @@ def _baseline_rails(cfg: dict) -> list | None:
     if not channels:
         return []
     try:
-        plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
-        if not plugin_dir:
-            reg = json.loads(
-                (Path("~/.claude/plugins/installed_plugins.json").expanduser()).read_text(encoding="utf-8"))
-            plugin_dir = reg["plugins"]["canopy@canopy"][0]["installPath"]
         base = json.loads(
-            (Path(plugin_dir) / "agent-core" / "gating-baseline.json").read_text(encoding="utf-8"))
+            (Path(_canopy_plugin_dir()) / "agent-core" / "gating-baseline.json").read_text(encoding="utf-8"))
     except Exception:
         return None
     rails: list = []
@@ -220,67 +225,53 @@ def _matcher_covers(matcher: str | None, tool: str) -> bool:
         return False
 
 
-def check_hook_wiring(repo: Path) -> CheckResult:
-    """The rails are only real if the PreToolUse hook is actually REGISTERED — for every shell.
+def legacy_gating_hooks(repo: Path) -> list[str]:
+    """Where this agent repo still registers its OWN PreToolUse gating hook (labels), if anywhere.
 
-    config/gating.json without .claude/settings.json wiring hooks/gating_guard.py is
-    decorative — the exact "set up somewhere, not on this repo" drift class this doctor
-    exists to catch. Checks: guard file exists + settings.json references it under a
-    PreToolUse matcher + that matcher routes EVERY shell tool to it.
-
-    The last clause was added 2026-09-22. Before it, this check passed on fizzy while
-    PowerShell was completely unguarded: the guard was registered, just never called for the
-    one shell a Windows operator's agent actually has (found by Shayoni Mazumdar). "Is it
-    wired" was the wrong question; "is it wired for each way in" is the right one.
-    """
-    name = "Hook wiring"
-    guard = Path(repo) / "hooks" / "gating_guard.py"
-    if not guard.exists():
-        return CheckResult(name, False, f"{guard} missing — rails have no enforcement")
-    # TWO valid registration paths. Repo-style agents wire the guard in .claude/settings.json;
-    # agents shipped AS a Claude Code plugin (ace) wire it in hooks/hooks.json, which the
-    # harness loads from the plugin root. Checking only the former reported ace's rails as
-    # decorative when its guard is registered and firing.
-    candidates = (
-        (Path(repo) / ".claude" / "settings.json", ".claude/settings.json"),
-        (Path(repo) / "hooks" / "hooks.json", "hooks/hooks.json"),
-    )
-    unreadable = []
-    for path, label in candidates:
-        if not path.exists():
-            continue
+    Two historical registration paths: `.claude/settings.json` (repo-style agents) and
+    `hooks/hooks.json` (agents shipped as a plugin — ace). Since canopy#849 neither is needed:
+    canopy's own plugin registers one session hook (`agent-core/gating_guard.py --session`)
+    that applies the session's agent's `config/gating.json`. A plugin-registered agent hook is
+    the harmful one — every plugin is installed user-scope, so it fires in every session."""
+    found = []
+    for rel in (".claude/settings.json", "hooks/hooks.json"):
+        path = Path(repo) / rel
         try:
             settings = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
-            unreadable.append(f"{label} unreadable: {e}")
+        except (json.JSONDecodeError, OSError):
             continue
-        pre = settings.get("hooks", {}).get("PreToolUse", [])
-        matchers = [entry.get("matcher") for entry in pre
-                    if any("gating_guard.py" in (h.get("command") or "")
-                           for h in entry.get("hooks", []))]
-        if matchers:
-            unrouted = [t for t in SHELL_TOOLS
-                        if not any(_matcher_covers(m, t) for m in matchers)]
-            if unrouted:
-                return CheckResult(
-                    name, False,
-                    f"gating_guard.py is registered via {label}, but its matcher "
-                    f"({' / '.join(repr(m) for m in matchers)}) never routes "
-                    f"{', '.join(unrouted)} to it — every rail is bypassed from that shell "
-                    f"(PowerShell is the Windows shell tool). Add "
-                    f"{'|'.join(unrouted)} to the matcher in {repo}/{label}",
-                )
-            return CheckResult(name, True,
-                               f"gating_guard.py registered as a PreToolUse hook via {label} "
-                               f"for every shell ({', '.join(SHELL_TOOLS)})")
-    if unreadable:
-        return CheckResult(name, False, "; ".join(unreadable))
-    return CheckResult(
-        name, False,
-        "no PreToolUse hook invokes gating_guard.py — the rails in config/gating.json are "
-        f"decorative until one does; wire it in {repo}/.claude/settings.json (repo-style) or "
-        f"{repo}/hooks/hooks.json (plugin-style)",
-    )
+        pre = (settings.get("hooks") or {}).get("PreToolUse") or []
+        if any("gating_guard.py" in (h.get("command") or "")
+               for entry in pre for h in (entry.get("hooks") or [])):
+            found.append(rel)
+    return found
+
+
+def check_hook_wiring(repo: Path) -> CheckResult:
+    """Who enforces this agent's rails — canopy's session hook, not the agent (canopy#849).
+
+    Until 2026-10-09 every agent registered its own PreToolUse hook running
+    hooks/gating_guard.py, and this check FAILED an agent that didn't. Agent plugins are
+    installed user-scope, so a hook registered by one fires in every session on the machine:
+    ACE's rails blocked a `gh pr create` in an Ada session. canopy now registers ONE hook that
+    resolves the session's agent and applies that agent's config/gating.json, so an agent that
+    still registers its own is a migration leftover: harmless while the engine makes a sibling's
+    loader stand down, but redundant — a WARNING, never a failure.
+    """
+    name = "Hook wiring"
+    legacy = legacy_gating_hooks(repo)
+    if legacy:
+        return CheckResult(
+            name, True,
+            f"still registers its own gating hook via {', '.join(legacy)} — canopy's session "
+            "hook (agent-core/gating_guard.py --session) now enforces config/gating.json for "
+            "this agent's sessions; remove the gating_guard.py PreToolUse entry and "
+            "hooks/gating_guard.py (canopy#849)",
+            warn=True,
+        )
+    return CheckResult(name, True,
+                       "rails enforced by canopy's session gating hook "
+                       "(agent-core/gating_guard.py --session); no agent-registered hook")
 
 
 def check_secrets_manifest(repo: Path) -> CheckResult:
@@ -421,9 +412,10 @@ def check_rails_fire(repo: Path, *, runner=subprocess.run) -> CheckResult:
     declared but not in force.
     """
     name = "Rails enforced"
-    guard = Path(repo) / "hooks" / "gating_guard.py"
-    if not guard.exists():
-        return CheckResult(name, True, "skipped — no hooks/gating_guard.py (see Hook wiring)")
+    try:
+        guard = Path(_canopy_plugin_dir()) / "agent-core" / "gating_guard.py"
+    except Exception:  # noqa: BLE001 — no canopy plugin is itself the finding
+        guard = None
     try:
         cfg = json.loads((Path(repo) / "config" / "gating.json").read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
@@ -438,20 +430,31 @@ def check_rails_fire(repo: Path, *, runner=subprocess.run) -> CheckResult:
             "skipped — no deny rail predicts a block for the raw-send probe, so there is "
             "nothing to assert",
         )
+    if guard is None or not guard.is_file():
+        return CheckResult(
+            name, False,
+            "the canopy gating engine (agent-core/gating_guard.py) is not installed — nothing "
+            "enforces config/gating.json. Install or update the canopy plugin (/canopy:update)",
+        )
+    # Probe the hook that actually runs: canopy's SESSION hook, as it would fire in this
+    # agent's own session (canopy#849). Probing an agent's legacy loader proved only the loader.
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CANOPY_AGENT", "CANOPY_AGENT_SLUG", "CANOPY_AGENT_REPO")}
+    env["CLAUDE_PROJECT_DIR"] = str(Path(repo).resolve())
     # Probe from EVERY shell, not just Bash. Until 2026-09-22 this sent one Bash payload, so it
     # reported "rails are in force" on an agent whose rails did nothing at all in PowerShell —
     # the guard answered the one question it was asked. Each shell is its own way in.
     for shell in SHELL_TOOLS:
         payload = json.dumps({"tool_name": shell, "tool_input": {"command": RAILS_PROBE}})
         try:
-            proc = runner([sys.executable, str(guard)], input=payload,
-                          capture_output=True, text=True, timeout=30)
+            proc = runner([sys.executable, str(guard), "--session"], input=payload,
+                          capture_output=True, text=True, timeout=30, env=env)
         except Exception as e:  # noqa: BLE001 — any launch failure is a real finding
             return CheckResult(name, False, f"could not execute {guard}: {e}")
         if proc.returncode != 2:
             return CheckResult(
                 name, False,
-                f"config denies the raw-send probe but gating_guard.py exited "
+                f"config denies the raw-send probe but canopy's session gating hook exited "
                 f"{proc.returncode} instead of 2 for a {shell} call — rails are DECLARED BUT "
                 f"NOT ENFORCED from {shell}"
                 + (f"; stderr: {proc.stderr.strip()[:200]}"

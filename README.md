@@ -37,6 +37,10 @@ browser UI for inspecting transcripts.
 > [plugins/canopy-web/README.md](plugins/canopy-web/README.md). Install that **or** the
 > full `canopy` plugin below, not both (the full plugin includes the same server).
 
+> **First step — try canopy-web with no install:** add it to claude.ai as a **custom
+> connector** (Settings → Connectors → Add custom connector) with the URL
+> `https://canopy.dimagi.com/api/mcp/`, and sign in with your canopy account.
+
 Canopy installs as a Claude Code plugin from its marketplace. The fastest path on
 a new machine is the bundled setup skill, which is idempotent:
 
@@ -44,8 +48,12 @@ a new machine is the bundled setup skill, which is idempotent:
 /canopy:setup
 ```
 
-This provisions the state directory, the main checkout, the capture hook, the
-canopy-web workbench token, and the `canopy` CLI. To update an existing install
+This provisions the state directory, the main checkout, the capture hook and the
+`canopy` CLI, signs you in to canopy-web in the browser, lets you pick a workspace, and
+installs that workspace's agents from its marketplace (`/w/<ws>/marketplace.json`, with
+auto-update on) — `canopy workspace connect <ws>`. It also says, without failing, whether
+the 1Password CLI is installed and signed in. Runners, vault keys and `gog` are not part of
+it (operators hosting agents: `canopy agent bootstrap`). To update an existing install
 to the latest version from GitHub:
 
 ```

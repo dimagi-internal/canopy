@@ -93,7 +93,7 @@ the command exits 2: `this session is not an agent … Pass --agent <slug>.`
 - **`check`** prints `ok: this session may act as 'X' — <reason>` on success. With `--json`, stdout
   is one JSON object: `{agent, allowed, identity: "agent-turn"|"human", source, via, reason,
   message, op_mode, vault, exit_code, notes}`. Refusal paragraphs:
-  - turn for another agent: *This is agent 'ada''s runner turn (…), so it may act only as 'ada' —
+  - turn for another agent: *This is agent 'ada's runner turn (…), so it may act only as 'ada' —
     not as 'ace'. To get work done as 'ace', dispatch it or ask it …*
   - `op` missing: *Acting as agent 'ace' needs its credentials from 1Password (vault 'Agent-Ace'),
     and the 1Password CLI is not installed. Install the 1Password CLI (…) and sign in

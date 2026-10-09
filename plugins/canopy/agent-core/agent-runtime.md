@@ -27,6 +27,18 @@ and it stayed in ada for three weeks, unusable by anyone else, while another age
 sibling of the same bug. The engine now ships with the plugin and each `hooks/gating_guard.py` is a
 loader with no agent-specific text in it at all.
 
+**And the hook registration moved too (canopy#849, 2026-10-09).** Agent plugins are installed at
+user scope, so a hook an agent plugin registers fires in EVERY session on the machine: ACE's
+body-file rail blocked a `gh pr create` in an Ada session. canopy's own plugin now registers the
+one gating hook (`agent-core/gating_guard.py --session`). It works out whose session it is —
+`$CANOPY_AGENT_SLUG`, then `$CANOPY_AGENT`, then the agent repo (`config/gating.json` or
+`config/agent.json`) at or above the project dir, else nobody — and applies the fleet baseline plus
+that agent's `deny` list. Nobody's session gets only the channel-independent `always` rails. An
+agent repo keeps `config/gating.json` and sets `CANOPY_AGENT` in `.claude/settings.json` `env`; it
+registers **no** PreToolUse gating hook and ships no `hooks/gating_guard.py`. A leftover loader is
+harmless (the engine makes it stand down outside its own agent's session) and `canopy agent
+doctor` / `canopy fleet-align` flag it as a warning to remove.
+
 ## The one rule
 
 **No environment-varying value is committed to git.** Not a password or API key — and *also not* a

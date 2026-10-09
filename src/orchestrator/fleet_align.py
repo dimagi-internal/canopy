@@ -497,8 +497,14 @@ def _channel_hits(name: str, text: str) -> int:
     return len(_SHARED_CHANNEL.findall(text))
 
 
+# Files the factory USED to stamp and no longer does. Not agent-unique work, so never a PROMOTE
+# candidate — a leftover is reported by `legacy_gating_hook_findings` instead (canopy#849).
+_RETIRED_STAMPS = frozenset({"hooks/gating_guard.py"})
+
+
 def _stamped_relpaths(agent: Agent) -> set[str]:
-    return {k.replace("{{AGENT_SLUG}}", agent.slug) for k in canopy_agent_factory.templates()}
+    return ({k.replace("{{AGENT_SLUG}}", agent.slug) for k in canopy_agent_factory.templates()}
+            | _RETIRED_STAMPS)
 
 
 def _artifact_key(name: str, slug: str) -> str:
@@ -656,6 +662,51 @@ def promotion_candidates(agents: list[Agent], *, min_bytes: int = PROMOTE_MIN_BY
     return findings
 
 
+_LEGACY_HOOK_FILES = (".claude/settings.json", "hooks/hooks.json")
+
+
+def legacy_gating_hooks(path: Path) -> list[str]:
+    """Where an agent repo still registers its OWN PreToolUse gating hook (repo-relative files).
+
+    Since canopy#849 canopy's plugin registers one session hook (`agent-core/gating_guard.py
+    --session`) that applies the session's agent's config/gating.json, so an agent-registered
+    hook is redundant — and a plugin-registered one (hooks/hooks.json) fires in EVERY session on
+    the machine, because agent plugins are installed user-scope."""
+    found = []
+    for rel in _LEGACY_HOOK_FILES:
+        try:
+            data = json.loads((Path(path) / rel).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        pre = ((data or {}).get("hooks") or {}).get("PreToolUse") or []
+        if any("gating_guard.py" in (h.get("command") or "")
+               for entry in pre if isinstance(entry, dict)
+               for h in (entry.get("hooks") or []) if isinstance(h, dict)):
+            found.append(rel)
+    return found
+
+
+def legacy_gating_hook_findings(agents: list[Agent]) -> list[Finding]:
+    """One DISTRIBUTE finding naming every agent that still registers its own gating hook.
+
+    A WARNING-grade finding: the engine already makes a sibling's loader stand down outside its
+    own agent's session, so nothing misfires today — the hook is dead weight to retire."""
+    hits = {a.slug: legacy_gating_hooks(a.path) for a in agents}
+    laggards = sorted(slug for slug, rels in hits.items() if rels)
+    if not laggards:
+        return []
+    return [Finding(
+        kind="distribute", artifact="gating-hook", reference="canopy-template", laggards=laggards,
+        summary=f"gating-hook: {len(laggards)} agent(s) still register their own PreToolUse "
+                "gating hook (canopy's session hook enforces config/gating.json now)",
+        detail=[f"{slug}: remove the gating_guard.py PreToolUse entry from {', '.join(hits[slug])}"
+                " and delete hooks/gating_guard.py" for slug in laggards],
+        note="Warning, not breakage (canopy#849): canopy's own plugin registers one hook that applies "
+             "the SESSION's agent's rails, and the engine makes an agent's legacy loader stand down "
+             "outside that agent's session. Keep config/gating.json — that is still the agent's rails.",
+    )]
+
+
 def analyze(agents: list[Agent], baseline: Optional[dict] = None, *,
             candidates: bool = True) -> list[Finding]:
     """Deterministic cross-agent comparison → typed findings. No network, no LLM.
@@ -692,6 +743,7 @@ def analyze(agents: list[Agent], baseline: Optional[dict] = None, *,
         elif kind == "gating":
             per_agent = {a.slug: extract_gating((a.path / relpath).read_text(encoding="utf-8")) for a in present}
             findings.extend(_compare_gating(name, present, baseline.get(name, {}), per_agent))
+    findings.extend(legacy_gating_hook_findings(agents))
     # rank: promote (convergence is the strongest signal) first, then by breadth of impact
     order = {"promote": 0, "distribute": 1, "reconcile": 2}
     findings.sort(key=lambda f: (order.get(f.kind, 9), -len(f.laggards)))
