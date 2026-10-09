@@ -327,7 +327,7 @@ class Verdict:
     allowed: bool
     identity: str               # "agent-turn" | "human"
     source: str = ""            # credential backend consulted ("" for a turn)
-    via: Optional[str] = None   # "runner" | "admin" | "1password" | "turn" | None
+    via: Optional[str] = None   # "runner" | "admin" | "1password" | "local-env" | "turn" | None
     reason: str = ""            # short machine-ish reason
     message: str = ""           # the one-paragraph human message (refusals)
     op_mode: str = ""           # which op identity read the vault (1password)
@@ -401,6 +401,15 @@ def decide(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
         return Verdict(slug, False, "agent-turn", via=None, reason="turn-is-another-agent",
                        message=msg, exit_code=EXIT_REFUSED)
 
+    # A human who already resolved X's env on this machine (the one-time `op inject` /
+    # `canopy cred env`) keeps acting as X without asking 1Password again — re-probing a
+    # locked desktop app on every server start is the "constant op prompt" Jonathan ruled
+    # out (2026-10-09). Only a private file counts; --refresh always re-proves access.
+    # Runner turns never reach this branch: they stay limited to their own agent above.
+    if not refresh and _private_env(env_path(slug)):
+        return Verdict(slug, True, "human", source="local-env", via="local-env",
+                       reason=f"{env_path(slug)} already resolved on this machine")
+
     access = fetch_access(slug, refresh=refresh)
     source = access.get("credential_source") or DEFAULT_SOURCE
     notes = []
@@ -448,6 +457,16 @@ def decide(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
 
 def env_path(slug: str) -> Path:
     return Path.home() / f".{slug}" / ".env"
+
+
+def _private_env(path: Path) -> bool:
+    """A non-empty env file this user owns that nobody else can read (mode 0600-ish)."""
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    return (path.is_file() and st.st_size > 0 and st.st_uid == os.getuid()
+            and not st.st_mode & 0o077)
 
 
 def _fresh(path: Path) -> bool:

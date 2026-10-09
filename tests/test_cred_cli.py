@@ -308,3 +308,42 @@ def test_non_member_404_says_get_invited(web):
     web["fail"] = True  # fake raises "-> 404"
     v = cred_cli.decide("ace", runner=FakeOp(), which=_which(False))
     assert not v.allowed and "not a member of its workspace" in v.message
+
+
+# ── check: humans, an env already resolved on this machine ────────────────────
+
+def _env_file(home, slug, mode=0o600, body="SETTING=x\n"):
+    path = home / f".{slug}" / ".env"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    path.chmod(mode)
+    return path
+
+
+def test_human_with_a_private_resolved_env_never_asks_1password(web, _isolated):
+    """The one-time resolve is enough: a locked 1Password app must not refuse the
+    human who already resolved this agent's env here (Jonathan, 2026-10-09)."""
+    _env_file(_isolated, "ace")
+    op = FakeOp(signed_in=False)
+    v = cred_cli.decide("ace", runner=op, which=_which())
+    assert v.allowed and v.via == "local-env" and op.calls == [] and web["calls"] == []
+
+
+def test_a_world_readable_or_empty_env_does_not_count(web, _isolated):
+    _env_file(_isolated, "ace", mode=0o644)
+    assert not cred_cli.decide("ace", runner=FakeOp(signed_in=False), which=_which()).allowed
+    _env_file(_isolated, "ace", body="")
+    assert not cred_cli.decide("ace", runner=FakeOp(signed_in=False), which=_which()).allowed
+
+
+def test_refresh_re_proves_access_despite_a_resolved_env(web, _isolated):
+    _env_file(_isolated, "ace")
+    v = cred_cli.decide("ace", refresh=True, runner=FakeOp(signed_in=False), which=_which())
+    assert not v.allowed and v.via is None
+
+
+def test_a_turn_is_never_let_in_by_another_agents_env(monkeypatch, web, _isolated):
+    _env_file(_isolated, "ace")
+    monkeypatch.setenv("CANOPY_TURN_ID", "t-1")
+    monkeypatch.setenv("CANOPY_AGENT_SLUG", "ada")
+    assert not cred_cli.decide("ace", runner=FakeOp(readable={"Agent-Ace"}), which=_which()).allowed

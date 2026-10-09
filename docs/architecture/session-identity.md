@@ -43,6 +43,11 @@ minutes in `~/.canopy/cred-cache.json` (verdicts only, never values).
   the envelope's `agent`). Any other `--agent` is refused. It resolves through the runner-provided
   `OP_SERVICE_ACCOUNT_TOKEN` (scoped to its own vault), never through a desktop-app session.
 - **A human session** may act as agent X when:
+  - **X's env is already resolved on this machine**: `~/.X/.env` exists, is non-empty, is owned
+    by this user and is private (no group/other bits). This is checked first and asks neither
+    1Password nor canopy-web, so the one-time resolve really is one-time: a locked 1Password
+    app does not refuse every new session (Jonathan, 2026-10-09). `--refresh` skips it and
+    re-proves access. Runner turns never take this path. Otherwise:
   - backend `1password`: the user's **own** `op` can read X's vault (`op vault get <vault>`; a
     service-account key a hook staged into the session is tried only after the user's own `op`,
     and only reads that agent's own vault), or
