@@ -1115,7 +1115,9 @@ queues work and approves outbound actions — independent of whether you publish
    record it NOW, through HCP: `hcp_addPreference(turn=<this turn's id, from the person block>,
    category="work_context"|"general_preferences", dimension="<kind>:<topic>", preference="…",
    declarationType="user-declared"|"model-inferred", confidence=<high|medium|low, inferred only>,
-   sourceContext="turn:<this turn's id>")`. Search first (`hcp_searchPreferences`, same turn) and
+   model=<your model id, e.g. claude-opus-5-5, inferred only>, sourceContext="turn:<this turn's id>")`.
+   HCP wants an inference to name the model that made it (§2.2.2), so pass `model` whenever you
+   write or update a `model-inferred` entry. Search first (`hcp_searchPreferences`, same turn) and
    `hcp_updatePreference` an entry that is now wrong instead of adding a second — a correction
    updates the entry it corrects. Kinds: role / project / instance → `work_context`; preference /
    correction / terminology → `general_preferences`. Work context only; never health, personal
