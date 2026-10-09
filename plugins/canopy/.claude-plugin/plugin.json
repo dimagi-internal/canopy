@@ -1,7 +1,7 @@
 {
   "name": "canopy",
-  "version": "0.2.655",
-  "description": "Self-improving AI workflow skills \u2014 session analysis, improvement cycles, PM supervision, and learning loops",
+  "version": "0.2.656",
+  "description": "Self-improving AI workflow skills — session analysis, improvement cycles, PM supervision, and learning loops",
   "author": {
     "name": "Jonathan Jackson",
     "email": "jjackson@github.com"
@@ -20,13 +20,6 @@
       "type": "http",
       "url": "https://canopy.dimagi.com/api/mcp/",
       "headersHelper": "node ${CLAUDE_PLUGIN_ROOT}/scripts/canopy-web-mcp-headers.js"
-    },
-    "canopy-gws": {
-      "command": "npx",
-      "args": [
-        "tsx",
-        "${CLAUDE_PLUGIN_ROOT}/mcp/gws-server.ts"
-      ]
     }
   }
 }

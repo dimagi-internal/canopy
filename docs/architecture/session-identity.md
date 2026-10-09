@@ -61,7 +61,7 @@ If `/access` can't be reached, `canopy cred` assumes the default backend (`1pass
 
 ## 4. Agent-identity MCP servers
 
-ace-gdrive, chrome-sales gdrive and canopy-gws call `canopy cred check --agent <their agent>`
+ace-gdrive, chrome-sales gdrive and canopy-gws (unregistered since 2026-10-09) call `canopy cred check --agent <their agent>`
 before acting. In a session that isn't allowed to be that agent they return a clear refusal that
 names the right path, and **never fall back to their bundled key**. A missing `canopy` CLI is a
 refusal too.
