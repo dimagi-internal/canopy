@@ -144,7 +144,7 @@ canopy cred refresh --agent <slug> # after a rotation or an auth failure
   operator / owner / admin (`canopy-web` backend, the agent record's `credential_source`).
 - `~/.<slug>/.env` is the same file `op inject` writes, so `bin/_env.py` and every `bin/` script
   keep working unchanged.
-- An MCP server that acts as an agent (ace-gdrive, chrome-sales gdrive, canopy-gws) calls
+- An MCP server that acts as an agent (ace-gdrive, chrome-sales gdrive; canopy-gws when registered) calls
   `canopy cred check --agent <its agent>` before acting and, on non-zero, returns the stderr as
   its refusal — **never** falls back to a bundled key.
 

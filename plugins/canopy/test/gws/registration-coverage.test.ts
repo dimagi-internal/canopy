@@ -98,7 +98,12 @@ describe('canopy-gws tool registration', () => {
 });
 
 describe('canopy-gws plugin.json wiring', () => {
-  it('mcp/gws-server.ts is registered in .claude-plugin/plugin.json mcpServers', () => {
+  // Unregistered on purpose (2026-10-09): no agent or session had ever called a
+  // canopy-gws tool — agents reach Google through gog and `canopy gdoc` — and no
+  // agent env carries the GWS_* identity it needs, so registering it only added a
+  // dead server to every session. The code and these tests stay; re-registering is
+  // the one plugin.json entry this test names. Flip it when an agent needs it.
+  it('mcp/gws-server.ts is NOT registered in .claude-plugin/plugin.json mcpServers', () => {
     const pluginJson = JSON.parse(
       fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin/plugin.json'), 'utf-8'),
     );
@@ -113,9 +118,10 @@ describe('canopy-gws plugin.json wiring', () => {
     }
     expect(
       registered.has('mcp/gws-server.ts'),
-      'mcp/gws-server.ts exists on disk but is not wired into plugin.json ' +
-        'mcpServers — agents would silently lack every gws atom.',
-    ).toBe(true);
+      'canopy-gws is deliberately unregistered — re-enable it with a ' +
+        '"canopy-gws": {"command": "npx", "args": ["tsx", "${CLAUDE_PLUGIN_ROOT}/mcp/gws-server.ts"]} ' +
+        'entry AND flip this test, once an agent env carries GWS_IDENTITY_MODE / GWS_SA_KEY_PATH.',
+    ).toBe(false);
   });
 });
 
