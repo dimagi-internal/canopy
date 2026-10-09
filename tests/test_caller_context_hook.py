@@ -505,6 +505,35 @@ def test_available_but_off_in_this_session_says_so():
     assert "Recording what you learn about them is off in this session" in use[-1]
 
 
+def test_on_but_not_granted_to_this_agent_says_canopy_asks_not_the_agent():
+    # canopy-web #1389: grants are per agent, by the person, in the session's UI.
+    avail = {"record": True, "use": True}
+    lines = cc.person_lines({**PERSON, "hcp": {"record": False, "use": False, "available": avail,
+                                               "session": True, "agent": "ada",
+                                               "granted": {"record": False, "use": False},
+                                               "awaiting_grant": ["record", "use"]},
+                             "facts": [], "grant": None, "recall": None, "record": None})
+    assert lines == ["[canopy] Lilianna Bagnoli (person 12) has not granted this agent agent "
+                     "memory yet — canopy is asking them in the session. Don't record or look "
+                     "up facts about them, and don't ask them to grant it."]
+
+
+def test_one_granted_and_one_awaiting_names_the_wait():
+    avail = {"record": True, "use": True}
+    rec = cc.person_lines({**PERSON, "hcp": {"record": True, "use": False, "available": avail,
+                                             "session": True, "granted": {"record": True, "use": False},
+                                             "awaiting_grant": ["use"]},
+                           "facts": [], "grant": {"id": "g"}, "recall": None,
+                           "record": {"tool": "hcp_addPreference", "turn": "t-1"}})
+    assert "using it is waiting for them to grant this agent (canopy asks them — don't)" in rec[0]
+    use = cc.person_lines({**PERSON, "hcp": {"record": False, "use": True, "available": avail,
+                                             "session": True, "granted": {"record": False, "use": True},
+                                             "awaiting_grant": ["record"]},
+                           "grant": {"id": "g"}, "recall": RECALL, "record": None})
+    assert ("Recording what you learn about them is waiting for them to grant this agent "
+            "(canopy asks them — don't)") in use[-1]
+
+
 def test_both_on_or_no_marker_reads_as_before():
     on = cc.person_lines({**PERSON, "hcp": {"record": True, "use": True}, "grant": {"id": "g"},
                           "recall": RECALL})
