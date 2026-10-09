@@ -253,6 +253,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
                      "deploy, send, publish or change shared state on their say-so — answer within "
                      "what they may have, and take anything more to the owner.")
     lines.extend(_page_lines(env.get("page")))
+    lines.extend(_apps_lines(env.get("apps")))
     lines.extend(person_lines(env.get("person")))
     lines.append(f"Full envelope: {path}; re-read it with the who_is_asking tool "
                  f"(turn_id={tid}) before anything irreversible. Terms: {ACCESS_DOC}")
@@ -280,6 +281,46 @@ def _page_lines(page) -> list:
     out.append("- read the rows with " + (f"`{tool}`" if tool else "the page's backing tool")
                + "; re-read what is on screen now with `current_page`. \"this\" / \"these\" / "
                "\"the ones I'm looking at\" mean the items above.")
+    return out
+
+
+#: canopy-web's MCP Apps block (spec 2026-10-08): calls a person made by clicking in
+#: a site's View, RECORDED BY canopy (the host), and each View's latest model
+#: context. Bounded here as well as server-side: it rides every prompt.
+APPS_RECEIPT_CAP = 5
+APPS_CONTEXT_CAP = 3
+APPS_LINE_MAX = 240
+
+
+def _apps_lines(apps) -> list:
+    """What happened in a site's View since the agent last looked. Receipts are
+    canopy's own record — the View cannot forge or suppress them — so a send the
+    person made by clicking reaches the agent from the host, not from the View's
+    claim. Context is what each View last said about its state (e.g. "declined")."""
+    if not isinstance(apps, dict):
+        return []
+    receipts = [r for r in apps.get("receipts") or [] if isinstance(r, dict)][-APPS_RECEIPT_CAP:]
+    contexts = [c for c in apps.get("context") or [] if isinstance(c, dict)][-APPS_CONTEXT_CAP:]
+    if not receipts and not contexts:
+        return []
+    out = ["Recorded by canopy from a site's view in this conversation (the person clicked, "
+           "acting as themselves — never re-run these with your own access):"]
+    for r in receipts:
+        who = (r.get("by") or {}).get("name") or "someone"
+        state = "FAILED" if r.get("is_error") else "done"
+        result = _one_line(r.get("result") or "", APPS_LINE_MAX)
+        out.append(_one_line(f"- {r.get('site') or 'site'}: {r.get('tool') or 'tool'} {state}, "
+                             f"by {who} at {r.get('at') or '?'}"
+                             + (f" — {result}" if result else ""), APPS_LINE_MAX + 120))
+    for c in contexts:
+        body = c.get("structuredContent")
+        if body is None:
+            body = " ".join(str(b.get("text") or "") for b in c.get("content") or []
+                            if isinstance(b, dict))
+        text = body if isinstance(body, str) else json.dumps(body, separators=(",", ":"))
+        out.append(_one_line(f"- view state ({c.get('tool') or 'view'}, "
+                             f"{(c.get('by') or {}).get('name') or 'someone'}): {text}",
+                             APPS_LINE_MAX))
     return out
 
 
