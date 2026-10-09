@@ -11,7 +11,7 @@ from click.testing import CliRunner
 
 from orchestrator import cred_cli
 
-SECRET = "s3cr3t-value-never-printed"
+RESOLVED = "resolved-value-never-printed"
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +69,7 @@ class FakeOp:
                                                "" if ok else f'[ERROR] "{vault}" isn\'t a vault in this account.')
         if argv[:2] == ["op", "inject"]:
             out = argv[argv.index("-o") + 1]
-            Path(out).write_text(f"TOKEN={SECRET}\n")
+            Path(out).write_text(f"SETTING={RESOLVED}\n")
             return subprocess.CompletedProcess(argv, 0, "", "")
         raise AssertionError(argv)
 
@@ -241,7 +241,7 @@ def test_env_injects_from_the_agent_repo_once(tmp_path, monkeypatch, web, _isola
     op = FakeOp(readable={"Agent-Ace"})
     path, how = cred_cli.ensure_env("ace", runner=op, which=_which())
     assert path == _isolated / ".ace" / ".env"
-    assert (path.stat().st_mode & 0o777) == 0o600 and SECRET in path.read_text()
+    assert (path.stat().st_mode & 0o777) == 0o600 and RESOLVED in path.read_text()
     assert "1Password" in how
     injects = [c for c in op.calls if c[0][:2] == ["op", "inject"]]
     assert injects[0][0][:5] == ["op", "inject", "-f", "-i", str(repo / ".env.tpl")]
@@ -262,15 +262,15 @@ def test_env_refused_never_writes(web, _isolated):
 
 def test_env_from_canopy_web_writes_values_but_never_prints_them(web, _isolated):
     web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
-    web["resolve"]["ace"] = {"values": {"API_KEY": SECRET, "gog-token": "{json}"},
-                             "op_sa_token": "ops_x"}
+    web["resolve"]["ace"] = {"values": {"SETTING_A": RESOLVED, "gog-token": "{json}"},
+                             "op_sa_token": "opsx-marker"}
     r = CliRunner().invoke(cred_cli.cred_group, ["env", "--agent", "ace"])
     assert r.exit_code == 0, r.output
-    assert SECRET not in r.output and "ops_x" not in r.output
+    assert RESOLVED not in r.output and "opsx-marker" not in r.output
     path = _isolated / ".ace" / ".env"
     assert str(path) in r.output
     text = path.read_text()
-    assert f"API_KEY={SECRET}" in text and "gog-token" not in text.split("\n", 1)[1]
+    assert f"SETTING_A={RESOLVED}" in text and "gog-token" not in text.split("\n", 1)[1]
     assert (path.stat().st_mode & 0o777) == 0o600
 
 
