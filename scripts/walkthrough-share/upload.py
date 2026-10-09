@@ -407,6 +407,10 @@ def main(argv: list[str] | None = None) -> int:
         "description": args.description,
         "visibility": visibility,
     }
+    # The project it belongs to (canopy-web T76): --project wins; else the repo
+    # (`$CANOPY_PROJECT_SLUG` or the cwd's origin remote) and, when the env names
+    # one, the agent's board project. Session/turn ride the provenance headers.
+    fields.update(canopy_web.artifact_project_fields())
     if args.project_slug:
         fields["project_slug"] = args.project_slug
     # DDD-run grouping (optional). The server fills the narrative slug from
