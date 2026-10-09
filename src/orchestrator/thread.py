@@ -300,9 +300,15 @@ Speak only to the purpose; quote nothing private outside its audience.
 
 (`proposal` is optional — leave it `{{}}` when you are not changing the idea.)
 
-Put the block LAST in your final message, then file it as your close-out (block in a file):
+Write the block to a FILE and file it as your close-out — canopy-web reads your message from it:
 
     canopy agent turn --slug {speaker} --session-id "{closeout_session_id(tid, n)}" --title "thread {tid} message {n}" --summary "$(cat <file>)"
+
+Do NOT print the block or its JSON in your reply — a person may be reading this session. Once
+the command exits 0 and returns status `done`, end with ONE plain line:
+Sent my reply to thread {tid} (message {n}): <position>. Proposal: "<title>"
+(drop the Proposal part when `proposal` is `{{}}`). If filing still fails after one retry, print
+the block LAST in your reply instead and say filing failed — canopy-web falls back to reading it there.
 """
 
 
