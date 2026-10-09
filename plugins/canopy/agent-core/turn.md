@@ -1134,11 +1134,15 @@ queues work and approves outbound actions — independent of whether you publish
    **Agent memory is each person's own, and set per session** — record (agents may learn about
    them) and use (agents may be told it). The person decides what is available at all and the
    default; each session can turn either on or off for itself. The person block says what applies
-   in THIS session. Neither (`… has not turned on agent memory` / `… is off in this session`):
-   record nothing, look nothing up — say `people: memory off`. Record only (`… lets agents learn
-   about them here, but using it …`): add without searching first (you can't); HCP quarantines a
+   in THIS session. Each AGENT is also granted separately, only by the person in the session's
+   UI ("allow for this session", then optionally "keep allowing"); a grant to another agent is
+   not yours. Neither (`… has not turned on agent memory` / `… is off in this session` /
+   `… has not granted this agent agent memory yet`): record nothing, look nothing up — say
+   `people: memory off` (or `people: awaiting grant`). Record only (`… lets agents learn about
+   them here, but using it …`): add without searching first (you can't); HCP quarantines a
    contradiction. Use only (`Recording what you learn about them …: don't record`): don't record.
-   Never ask them to change any of it. Nothing to record → say `people: nothing new`.
+   Never ask them to change, allow or grant any of it — canopy does the asking. Nothing to
+   record → say `people: nothing new`.
 
 **Shipping anything — the ship loop lives in `agent-core/shipping.md`.** Branch -> PR -> wait ->
 merge -> verify it landed -> state the merge state. Read that file (via your `shipping` stub)

@@ -392,9 +392,16 @@ def person_lines(person) -> list:
     # (read); `available` = what the person allows at all, so "off in this session"
     # and "not turned on" read differently. Absent (an older canopy-web) = the
     # behaviour below, unchanged; no `available` (canopy-web #1380) = not per session.
+    # Since canopy-web #1389 grants are per agent and only the person's act: `record` /
+    # `use` are the switch AND a grant to THIS agent, and `awaiting_grant` lists what is
+    # on in this session but not yet granted — canopy's UI asks the person; the agent
+    # never does. Absent `awaiting_grant` (older canopy-web) = nothing awaiting.
     switches = person.get("hcp") if isinstance(person.get("hcp"), dict) else None
+    awaiting = set(switches.get("awaiting_grant") or []) if switches is not None else set()
 
     def _off(feature: str) -> str:
+        if feature in awaiting:
+            return "is waiting for them to grant this agent (canopy asks them — don't)"
         avail = switches.get("available") if isinstance(switches.get("available"), dict) else {}
         return "is off in this session" if avail.get(feature) else "is not turned on"
 
@@ -402,6 +409,10 @@ def person_lines(person) -> list:
         may_record, may_use = bool(switches.get("record")), bool(switches.get("use"))
         if not may_record and not may_use:
             avail = switches.get("available") if isinstance(switches.get("available"), dict) else {}
+            if awaiting:
+                return [f"[canopy] {name} (person {pid}) has not granted this agent agent memory "
+                        "yet — canopy is asking them in the session. Don't record or look up facts "
+                        "about them, and don't ask them to grant it."]
             if avail.get("record") or avail.get("use"):
                 return [f"[canopy] Agent memory for {name} (person {pid}) is off in this "
                         "session — don't record or look up facts about them."]
