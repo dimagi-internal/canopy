@@ -31,7 +31,7 @@ FRAMEWORK = {
     "eval_cli", "eval_rubric", "turn_synthesis", "session_upload", "fleet_align",
     "decide_guard_prompt", "decide_guard_cli",
     "session_sources", "session_liveness", "work_cursor", "agent_dispatch", "llm_output",
-    "project_dispatch", "project_cli", "project_audit", "project_folder", "runner_cli", "secret_cli", "people_cli", "aws_cli", "cred_cli",
+    "project_dispatch", "project_cli", "project_audit", "project_folder", "runner_cli", "secret_cli", "people_cli", "aws_cli", "cred_cli", "workspace_cli",
     "provenance",
     "huddle", "huddle_store", "huddle_cli", "huddle_types", "thread", "thread_cli",
 }

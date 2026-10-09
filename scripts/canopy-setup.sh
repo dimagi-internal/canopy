@@ -121,13 +121,13 @@ if [ -s "$TOKEN_FILE" ]; then
   fi
   echo "[4/7] workbench token : OK ($TOKEN_FILE)"
 else
-  echo "[4/7] workbench token : MISSING — mint a PAT to enable workbench writes + walkthrough sharing"
+  # Not a failure: /canopy:setup signs you in right after this script (the browser
+  # PAT mint), then connects your workspace. Run standalone, this is the next step.
+  echo "[4/7] workbench token : NOT SIGNED IN — /canopy:setup signs you in to canopy-web next"
   NEXT_STEPS+=(
-    "Mint a per-human canopy-web Personal Access Token:"
-    "  /canopy:canopy-web-pat-mint"
-    "(opens your browser, one click, writes to $TOKEN_FILE chmod 600.)"
+    "Sign in to canopy-web (browser, one click; writes $TOKEN_FILE chmod 600):"
+    "  /canopy:canopy-web-pat-mint     (or re-run /canopy:setup, which does it for you)"
   )
-  FAILED=1
 fi
 
 # ---------- 5. canopy CLI ----------
@@ -265,8 +265,21 @@ else
   echo "After fixing the items above, re-run \`/canopy:setup\` — it's idempotent and skips completed steps."
 fi
 
+# ---------- 1Password CLI (informational; never fails setup) ----------
+# Using a workspace's agents needs no 1Password. Acting AS an agent that keeps its
+# credentials in 1Password does (`canopy cred check`, canopy#850) — so say the one
+# fix up front, and move on.
+if ! command -v op >/dev/null 2>&1; then
+  echo "[op]  1Password CLI : not installed — only needed to act as an agent whose credentials live in 1Password:"
+  echo "      install it (https://developer.1password.com/docs/cli/get-started/), then \`op signin\`"
+elif op account list --format json 2>/dev/null | grep -q '"url"'; then
+  echo "[op]  1Password CLI : OK (signed in)"
+else
+  echo "[op]  1Password CLI : installed, not signed in — run \`op signin\` (or enable CLI integration in the 1Password app)"
+fi
+
 echo
-echo "Running agents on this machine (e.g. a new laptop or macOS account)? After the above:"
+echo "Operators only — HOSTING agents on this machine (runners, vault keys, gog), not just using them:"
 echo "  canopy agent bootstrap --dry-run   # preview: plugins, ~/.<slug>/.env, gog token + client, per agent"
 echo "  canopy agent bootstrap             # do it (idempotent; same rules as the cloud runner's bootstrap)"
 

@@ -77,6 +77,33 @@ function confinedProfile() {
   return { confined: true, profile: null };
 }
 
+// ARCHIVE / MARKETPLACE MODE (`--archive`, canopy#851). `/canopy:setup` registers a
+// workspace's agent marketplace (`/w/<ws>/marketplace.json`, canopy-web#1376) in USER
+// settings with this helper as its `headersHelper`, so the catalog fetch and every
+// archive download carry the person's own canopy-web token. Claude Code runs it from
+// the config dir (~/.claude), in the background, for the PERSON — never for a confined
+// caller, an agent turn, or a chat. So this mode skips every session-scoped source
+// (confined profile, scoped caller token, agent PAT, chat key) and answers with the
+// person's token alone: $CANOPY_WEB_PAT, else the workbench-token file. No token →
+// `{}` (the fetch 401s and setup tells the person to sign in), never a crash.
+if (process.argv.includes("--archive")) {
+  let out = {};
+  try {
+    let token = (process.env.CANOPY_WEB_PAT || "").trim();
+    if (!token) {
+      const tokenFile =
+        process.env.CANOPY_WORKBENCH_TOKEN ||
+        path.join(os.homedir(), ".claude", "canopy", "workbench-token");
+      token = fs.readFileSync(tokenFile, "utf8").trim();
+    }
+    if (token) out = { Authorization: `Bearer ${token}` };
+  } catch {
+    out = {};
+  }
+  process.stdout.write(JSON.stringify(out));
+  process.exit(0);
+}
+
 const { confined, profile } = confinedProfile();
 if (confined) {
   const token = profile && typeof profile.mcp_token === "string" ? profile.mcp_token : "";

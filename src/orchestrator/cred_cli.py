@@ -133,7 +133,7 @@ def session_identity() -> Session:
     agent = canopy_web.agent_context_slug()
     why = "no turn id ($CANOPY_TURN_ID unset, no dispatched-turn record), so this is a person's session"
     if agent:
-        why += (f"; it is working in agent '{agent}''s context — whether it may act as "
+        why += (f"; it is working in agent '{agent}'s context — whether it may act as "
                 f"'{agent}' is `canopy cred check`'s call")
     return Session("human", agent, "", why)
 
@@ -392,8 +392,8 @@ def decide(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
             # through a desktop-app session on the box.
             mode = "service-account" if os.environ.get("OP_SERVICE_ACCOUNT_TOKEN") else "user"
             return Verdict(slug, True, "agent-turn", via="turn", op_mode=mode,
-                           reason=f"runner turn {sess.turn_id} is agent '{slug}''s own")
-        who = f"agent '{sess.agent}''s" if sess.agent else "a"
+                           reason=f"runner turn {sess.turn_id} is agent '{slug}'s own")
+        who = f"agent '{sess.agent}'s" if sess.agent else "a"
         msg = (f"This is {who} runner turn ({sess.turn_id}), so it may act only as "
                f"{repr(sess.agent) if sess.agent else 'no agent'} — not as '{slug}'. To get "
                f"work done as '{slug}', dispatch it or ask it (`canopy agent dispatch --slug "
@@ -462,7 +462,7 @@ def resolve_1password(slug: str, out: Path, verdict: Verdict, *,
             f"run from inside it. Its .env.tpl says what ~/.{slug}/.env holds.")
     tpl = repo / ".env.tpl"
     if not tpl.is_file():
-        raise CredError(f"agent '{slug}''s repo ({repo}) has no .env.tpl — nothing to resolve")
+        raise CredError(f"agent '{slug}'s repo ({repo}) has no .env.tpl — nothing to resolve")
     out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, tmp = tempfile.mkstemp(dir=str(out.parent), prefix=".tmp-", suffix=".env")
     os.close(fd)
@@ -491,7 +491,7 @@ def resolve_canopy_web(slug: str, out: Path) -> str:
         body = canopy_web.call("GET", f"/api/agents/{slug}/credentials/resolve",
                                token=_human_token()) or {}
     except Exception as e:  # noqa: BLE001 — report, don't traceback (never the body)
-        raise CredError(f"could not resolve '{slug}''s credentials from canopy-web: "
+        raise CredError(f"could not resolve '{slug}'s credentials from canopy-web: "
                         f"{str(e).splitlines()[0][:200] if str(e) else type(e).__name__}")
     values = body.get("values") or {}
     if not isinstance(values, dict):
