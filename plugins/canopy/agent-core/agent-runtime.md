@@ -116,6 +116,28 @@ value.**
 > - This applies to **any file `op inject` might ever be pointed at**, not just `.env.tpl` — treat
 >   it as a rule about writing `op://` strings in text at all, not a quirk of one filename.
 
+## Session identity — resolve through `canopy cred` (fleet baseline, canopy#850)
+
+**Recommendation for every agent and every agent-identity MCP server:** don't run `op inject`
+by hand and don't read a key bundled in plugin data. Ask the broker:
+
+```bash
+canopy cred check --agent <slug>   # exit 0 = this session may act as <slug>; 3 = refused (stderr says why)
+canopy cred env   --agent <slug>   # ensures ~/.<slug>/.env (0600), resolving only when missing; prints the path
+canopy cred refresh --agent <slug> # after a rotation or an auth failure
+```
+
+- A **runner turn** may act only as its own agent; a **human** session may act as an agent when
+  their own `op` can read its vault (`1password` backend) or canopy-web says they are its runner
+  operator / owner / admin (`canopy-web` backend, the agent record's `credential_source`).
+- `~/.<slug>/.env` is the same file `op inject` writes, so `bin/_env.py` and every `bin/` script
+  keep working unchanged.
+- An MCP server that acts as an agent (ace-gdrive, chrome-sales gdrive, canopy-gws) calls
+  `canopy cred check --agent <its agent>` before acting and, on non-zero, returns the stderr as
+  its refusal — **never** falls back to a bundled key.
+
+Contract, exit codes and a Node/TS snippet: `docs/architecture/session-identity.md` in the canopy repo.
+
 ## The legacy path — `config/secrets.yaml` + `canopy provision`
 
 Still supported (`canopy provision`, `--check` to dry-run, is fully functional), and some
