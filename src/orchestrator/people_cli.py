@@ -8,7 +8,7 @@ facts + digest, and the `caller_context` hook prints them into the prompt.
 
 This CLI is how a session WRITES that record and reads more of it than the envelope
 holds. The judgment — what is worth a fact, which basis is honest, what must never be
-recorded — lives in the `people-digest` skill and `agent-core/turn.md`; this module only
+recorded — lives in `agent-core/turn.md` (agents record in-session through HCP); this module only
 does what is easy to get silently wrong:
 
     canopy people show <id|email|me> [--workspace SLUG] [--json-output]
@@ -17,11 +17,10 @@ does what is easy to get silently wrong:
         [--instance-ref "…"] [--supersedes FACT_ID]
     canopy people retract <fact id> --person <id|email>
     canopy people conversations --person <id|email> --agent SLUG [--since ISO]
-    canopy people digest put --person <id|email> --workspace SLUG --text-file F [--turn ID …]
 
 **An older canopy-web has none of these routes.** A 404 is then probed against
 `/api/people/me/`; if that is missing too the command says so plainly and exits
-`EXIT_NO_PEOPLE_API` (3), so the digest skill can stop quietly instead of reporting a
+`EXIT_NO_PEOPLE_API` (3), so a caller can stop quietly instead of reporting a
 traceback as a finding.
 
 Identity follows `canopy_web.resolve_token()` — run from the agent's repo and the
@@ -44,7 +43,6 @@ from orchestrator import canopy_web
 KINDS = ("role", "project", "instance", "preference", "correction", "terminology")
 BASES = ("declared", "inferred")
 STATEMENT_MAX = 500
-DIGEST_MAX = 2000
 EXIT_NO_PEOPLE_API = 3
 
 #: Text shaped like an order to an agent is not a fact about a person. Facts are read
@@ -260,28 +258,3 @@ def conversations_cmd(person: str, agent: str, since: Optional[str], as_json: bo
         click.echo(f"prompt: {r.get('prompt') or ''}")
         if r.get("result_note"):
             click.echo(f"result: {r['result_note']}")
-
-
-@people_group.group("digest")
-def digest_group() -> None:
-    """The per-(person, workspace) digest — a cache, regenerated from facts + history."""
-
-
-@digest_group.command("put")
-@click.option("--person", "person", required=True, help="Person id or email.")
-@click.option("--workspace", default=None, help="Workspace slug (default: $CANOPY_WEB_WORKSPACE).")
-@click.option("--text-file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
-              required=True)
-@click.option("--turn", "turns", multiple=True, help="A turn the digest drew on (repeatable).")
-def digest_put_cmd(person: str, workspace: Optional[str], text_file: Path, turns) -> None:
-    """Replace the digest with the contents of TEXT_FILE."""
-    text = text_file.read_text(encoding="utf-8").strip()
-    if not text:
-        raise click.BadParameter("the digest file is empty", param_hint="--text-file")
-    if len(text) > DIGEST_MAX:
-        raise click.BadParameter(f"{len(text)} chars; a digest is ≤ {DIGEST_MAX} "
-                                 "(about 300 words) — cut it", param_hint="--text-file")
-    body = {"workspace": _workspace(workspace), "text": text, "source_turn_ids": list(turns)}
-    pid = resolve_person(person)
-    _call("PUT", f"/api/people/{pid}/digest/", body)
-    click.echo(f"digest updated for person {pid} ({len(text)} chars)")

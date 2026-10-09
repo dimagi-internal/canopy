@@ -165,27 +165,6 @@ def test_conversations_rejects_a_bad_since(serve):
     assert srv.calls == []
 
 
-def test_digest_put(serve, tmp_path):
-    f = tmp_path / "d.md"
-    f.write_text("Lilianna — PM on Kangaroo Care.\n")
-    srv = serve(Server({("PUT", "/api/people/12/digest/"): {}}))
-    r = _run("digest", "put", "--person", "12", "--workspace", "connect", "--text-file", str(f),
-             "--turn", "t1", "--turn", "t2")
-    assert r.exit_code == 0, r.output
-    assert srv.calls[-1] == ("PUT", "/api/people/12/digest/", {
-        "workspace": "connect", "text": "Lilianna — PM on Kangaroo Care.",
-        "source_turn_ids": ["t1", "t2"]})
-
-
-def test_digest_put_refuses_an_oversized_digest(serve, tmp_path):
-    f = tmp_path / "d.md"
-    f.write_text("x" * (people_cli.DIGEST_MAX + 1))
-    srv = serve(Server())
-    r = _run("digest", "put", "--person", "12", "--workspace", "w", "--text-file", str(f))
-    assert r.exit_code == 2 and "cut it" in r.output
-    assert srv.calls == []
-
-
 def test_retract(serve):
     srv = serve(Server({("POST", "/api/people/12/facts/3/retract/"): {}}))
     r = _run("retract", "3", "--person", "12")

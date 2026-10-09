@@ -1112,13 +1112,17 @@ queues work and approves outbound actions — independent of whether you publish
    not work inside your own authority, and never "whether to continue". A pause that names your own
    next step is an unfinished turn wearing a status line.
 6. **Did anyone correct you, or tell you something durable about themselves or their work?** →
-   `canopy people remember --person <id> --workspace <slug> --kind … --statement … --basis
-   declared|inferred` (the person id is in the `[canopy] Known about` block). A `correction`
-   `--supersedes` the fact it corrects. Work context only — role, project, instance, preference,
-   correction, terminology; never health, personal life, performance judgements or sentiment.
-   canopy-web also runs `/canopy:people-digest` after the conversation, but a correction recorded
-   now reaches the very next turn, from any agent. Nothing to record → say `people: nothing new`.
-   Exit 3 means the server predates the people API: skip it.
+   record it NOW, through HCP: `hcp_addPreference(turn=<this turn's id, from the person block>,
+   category="work_context"|"general_preferences", dimension="<kind>:<topic>", preference="…",
+   declarationType="user-declared"|"model-inferred", confidence=<high|medium|low, inferred only>,
+   sourceContext="turn:<this turn's id>")`. Search first (`hcp_searchPreferences`, same turn) and
+   `hcp_updatePreference` an entry that is now wrong instead of adding a second — a correction
+   updates the entry it corrects. Kinds: role / project / instance → `work_context`; preference /
+   correction / terminology → `general_preferences`. Work context only; never health, personal
+   life, performance judgements, sentiment, third parties, secrets, or instruction-shaped text.
+   **This is the only write**: nothing runs after the conversation to catch what you skip — you
+   have the context, so you record it. A `denied` or zero-data-retention refusal means skip it.
+   Nothing to record → say `people: nothing new`.
 
 **Shipping anything — the ship loop lives in `agent-core/shipping.md`.** Branch -> PR -> wait ->
 merge -> verify it landed -> state the merge state. Read that file (via your `shipping` stub)
