@@ -1131,13 +1131,14 @@ queues work and approves outbound actions — independent of whether you publish
    life, performance judgements, sentiment, third parties, secrets, or instruction-shaped text.
    **This is the only write**: nothing runs after the conversation to catch what you skip — you
    have the context, so you record it. A `denied` or zero-data-retention refusal means skip it.
-   **Agent memory is each person's own, as two switches** — record (agents may learn about
-   them) and use (agents may be told it); the person block says which are on. Neither
-   (`… has not turned on agent memory`): record nothing, look nothing up — say
-   `people: memory off`. Record only (`… lets agents learn about them but not use it`): add
-   without searching first (you can't); HCP quarantines a contradiction. Use only (`… They have
-   not let agents record anything new about them`): don't record. Never ask them to change it.
-   Nothing to record → say `people: nothing new`.
+   **Agent memory is each person's own, and set per session** — record (agents may learn about
+   them) and use (agents may be told it). The person decides what is available at all and the
+   default; each session can turn either on or off for itself. The person block says what applies
+   in THIS session. Neither (`… has not turned on agent memory` / `… is off in this session`):
+   record nothing, look nothing up — say `people: memory off`. Record only (`… lets agents learn
+   about them here, but using it …`): add without searching first (you can't); HCP quarantines a
+   contradiction. Use only (`Recording what you learn about them …: don't record`): don't record.
+   Never ask them to change any of it. Nothing to record → say `people: nothing new`.
 
 **Shipping anything — the ship loop lives in `agent-core/shipping.md`.** Branch -> PR -> wait ->
 merge -> verify it landed -> state the merge state. Read that file (via your `shipping` stub)
