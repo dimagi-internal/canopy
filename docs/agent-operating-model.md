@@ -178,10 +178,13 @@ was asking: a KC team member asked ACE about "the AI coach" and got the generic 
 above rather than reversing them. **Behaviors still go in skills and hooks**: the "there is no
 *the*" answering rule ships in `agent-core/turn.md` and the factory's `answer-caller` template,
 not in memory. **What is stored is narrow and per-person**: append-only `PersonFact`s of six
-work-context kinds plus a regenerable digest, kept server-side in canopy-web on `Person`. Two
-things are forced so they don't depend on the model choosing to do them. The **write** is a
-`/canopy:people-digest` turn that canopy-web enqueues after each conversation. The **read** is
-the `caller_context` hook printing the envelope's `person` block into every prompt.
+work-context kinds, kept server-side in canopy-web on `Person` and served as Human Context
+Protocol entries (canopy-web #1343). The **read** is forced: the `caller_context` hook prints the
+envelope's `person` block (an HCP search on the turn's message) into every prompt. The **write**
+happens in the session that has the context — the person block and `agent-core/turn.md` step 6
+prompt `hcp_addPreference` — not in a follow-up session: a per-conversation `people-digest` turn
+was tried and removed (2026-10-09, Jonathan) because the session doing the work already holds
+everything a later analysis would have to reconstruct.
 Mechanics: `canopy people …`. Design: `docs/proposals/2026-10-07-caller-context-brain.md` in
 dimagi-internal/hal; record: canopy#804.
 
