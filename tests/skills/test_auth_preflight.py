@@ -133,7 +133,7 @@ def test_labs_path_triggers_aws_check(tmp_path: Path) -> None:
     result = _run(f"{bin_dir}:/bin:/usr/bin", cwd)
     assert result.returncode == 1
     assert "aws/labs: FAIL" in result.stdout
-    assert "aws sso login --profile labs" in result.stdout
+    assert "canopy aws login --profile labs" in result.stdout
 
 
 def test_labs_path_aws_pass(tmp_path: Path) -> None:
