@@ -65,12 +65,12 @@ def test_a_new_agent_without_a_name_is_a_clear_error(fake_http):
 def test_agent_actions_lists_the_pending_queue(fake_http):
     calls, responses = fake_http
     responses[("GET", "agents/echo/actions/?status=pending")] = (
-        200, json.dumps([{"id": 7, "agent_slug": "echo", "task_ext_id": "T3", "action": "dispatch",
+        200, json.dumps([{"id": 7, "agent_slug": "echo", "task_ext_id": "T3", "action": "nudge",
                           "comment": "now please", "by": "jj", "status": "pending"}]))
     r = CliRunner().invoke(main, ["agent", "actions", "--slug", "echo"])
     assert r.exit_code == 0, r.output
     assert calls[0][:2] == ("GET", "https://x.test/api/agents/echo/actions/?status=pending")
-    assert "#7" in r.output and "dispatch" in r.output and "T3" in r.output
+    assert "#7" in r.output and "nudge" in r.output and "T3" in r.output
     assert "now please" in r.output
 
 

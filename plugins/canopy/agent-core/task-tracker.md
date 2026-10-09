@@ -62,17 +62,31 @@ Over MCP the same verbs are `list_tasks` / `create_tasks` / `patch_task` / `act_
 ## Acting on actions (the canopy-web DB is the source of truth)
 The board at `/agents/<slug>` is a **control surface**: a person acts on a task — **approve**,
 **decline** (the comment is the reason), **reply** (on a question, the reply is the answer),
-**dispatch** ("do this now") or **done** — and each action lands on your queue until you carry
-it out. **At the start of every turn, drain the queue:**
+**nudge** (editors, on a task already in progress) or **done**. An action that hands you work
+**starts your turn** — you do not wait to find it on the queue (canopy-web, 2026-10-08):
+
+- **approve** flips the task to in_progress, closes its ask, and enqueues a turn: the task's own
+  `on_approve` specs, or — with none — one turn canopy-web writes from the card
+  (`Work task T<N>: <title>` + next action, plan and the approver's note). That turn IS the
+  approval: the row is already `applied`, so just do the work and update the task.
+- **nudge** ("Nudge <Agent>") enqueues the same card turn on an in-progress task, status
+  unchanged — someone wants you to look at it again now. It replaced `dispatch`
+  ("do this now"), which is gone: it only queued a row and woke nobody.
+- **reply** from an editor on a live task enqueues a short turn carrying the note — answer it on
+  the task (`set --append-notes`) and fold it into the work. A **viewer's** reply, and an answer
+  to a question with no `on_approve`, still land on your queue as a pending row.
+- **decline** closed the task; read the comment, record anything worth keeping.
+
+**At the start of every turn, drain what is still queued** — viewer notes, answers, anything a
+turn did not already carry:
 ```
 canopy agent actions --slug <slug>      # pending actions, oldest first: #<id> <action> -> T<N>
 # ... do the work (under the normal guardrails — outbound actions still need approval) ...
 canopy agent applied --slug <slug> --id <N> --note "what I did"   # mark it carried out
 ```
-- **approve** already flipped the task to in_progress and closed its ask; the action
-  means "go do it." **dispatch** is the same — act, then mark it applied.
-- **decline** closed the task; read the comment, record anything worth keeping, mark applied.
-- **reply** is an answer or a note — fold it into the task (`set --append-notes`) and act on it.
+A reply you post on your OWN card never wakes you (canopy-web skips it, so a turn that replies
+cannot loop) — record your own progress with `set --append-notes`.
+
 When you *suggest* a task, store the context immediately (`set` — rationale, plan,
 source url) so it is never re-derived later.
 
