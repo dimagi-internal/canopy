@@ -441,6 +441,7 @@ def test_with_recall_every_relevant_fact_is_shown_and_more_is_a_tool_call():
     assert lines[1] == "- CORRECTION: Say KC (kangaroo care), not KMC."
     assert "`hcp_searchPreferences` with turn=7c0f3c5e-1111-2222-3333-444455556666" in lines[-1]
     assert "`hcp_addPreference`" in lines[-1]
+    assert "model=<your model id>" in lines[-1]                                # HCP 2.2.2
     assert "canopy people show" not in text                                  # agents recall via HCP
     assert len(text) <= cc.PERSON_BUDGET
 

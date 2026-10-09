@@ -414,7 +414,8 @@ def person_lines(person) -> list:
         tail = ("Only facts relevant to this message are shown. Recall more (when the question "
                 "is ambiguous — \"the coach\", \"the app\" — or you need their history): "
                 f"`hcp_searchPreferences` with turn={turn}, categories=[{cats}], a query and a "
-                f"purpose. Record what they tell you: `hcp_addPreference` (turn={turn}).")
+                f"purpose. Record what they tell you: `hcp_addPreference` (turn={turn}; "
+                "for an inference pass model=<your model id>).")
     else:
         more = []
         if hidden > 0:
