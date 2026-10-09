@@ -1,4 +1,4 @@
-"""Integration tests for the agent factory's generated hook + the REAL canopy plugin engine.
+"""Integration tests for a factory-stamped agent + the REAL canopy plugin engine (session hook).
 
 The factory itself (create_agent, AgentSpec, normalize_slug, templates, gating_config) moved
 to the standalone `canopy_agent_factory` package (see EXTRACTION-BRIEF.md) — its own
@@ -16,6 +16,15 @@ import sys
 from pathlib import Path
 
 from canopy_agent_factory import AgentSpec, create_agent
+
+
+# canopy#849: stamped agents carry no hook of their own — canopy's plugin runs the engine in
+# `--session` mode and resolves the agent from the project dir. These tests drive exactly that.
+ENGINE = Path(__file__).resolve().parents[1] / "plugins" / "canopy" / "agent-core" / "gating_guard.py"
+
+
+def _session_cmd():
+    return [sys.executable, str(ENGINE), "--session"]
 
 
 def _spec():
@@ -51,7 +60,6 @@ def test_gating_hook_blocks_deny_asks_approve_allows_reads(tmp_path):
     """
     create_agent(_spec(), tmp_path / "echo")
     root = tmp_path / "echo"
-    hook = root / "hooks" / "gating_guard.py"
 
     gating = root / "config" / "gating.json"
     cfg = json.loads(gating.read_text())
@@ -60,11 +68,12 @@ def test_gating_hook_blocks_deny_asks_approve_allows_reads(tmp_path):
 
     import os as _os
     env = {**_os.environ,
-           "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy")}
+           "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy"),
+           "CLAUDE_PROJECT_DIR": str(root)}
 
     def run(payload):
         return subprocess.run(
-            [sys.executable, str(hook)],
+            _session_cmd(),
             input=json.dumps(payload), capture_output=True, text=True, env=env,
         )
 
@@ -98,15 +107,15 @@ def test_gating_hook_rails_identity_override_but_allows_shim_and_other_email_cmd
     canopy email subcommands, and --account on non-send subcommands stay free."""
     create_agent(_spec(), tmp_path / "echo")
     root = tmp_path / "echo"
-    hook = root / "hooks" / "gating_guard.py"
 
     import os as _os
     env = {**_os.environ,
-           "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy")}
+           "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy"),
+           "CLAUDE_PROJECT_DIR": str(root)}
 
     def run(command):
         return subprocess.run(
-            [sys.executable, str(hook)],
+            _session_cmd(),
             input=json.dumps({"tool_name": "Bash", "tool_input": {"command": command}}),
             capture_output=True, text=True, env=env,
         )
@@ -145,7 +154,7 @@ def test_gating_hook_rails_mcp_drive_creates_and_reads_their_arguments(tmp_path)
     `tool: "Bash"`, and an agent holding a Drive-creating MCP tool could file anywhere.
     """
     create_agent(_spec(), tmp_path / "echo")
-    hook = tmp_path / "echo" / "hooks" / "gating_guard.py"
+    root = tmp_path / "echo"
 
     cfg_path = tmp_path / "echo" / "config" / "gating.json"
     cfg = json.loads(cfg_path.read_text())
@@ -154,11 +163,12 @@ def test_gating_hook_rails_mcp_drive_creates_and_reads_their_arguments(tmp_path)
 
     import os as _os
     env = {**_os.environ,
-           "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy")}
+           "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy"),
+           "CLAUDE_PROJECT_DIR": str(root)}
 
     def run(tool, tool_input):
         return subprocess.run(
-            [sys.executable, str(hook)],
+            _session_cmd(),
             input=json.dumps({"tool_name": tool, "tool_input": tool_input}),
             capture_output=True, text=True, env=env,
         )
@@ -186,7 +196,7 @@ def test_gating_hook_rails_raw_gog_sheets_create(tmp_path):
     """`gog sheets create` with no --parent — the exact command that put a 45-row roster in
     Eva's My Drive root on 2026-08-12, unshared and dead-linked to the human who asked."""
     create_agent(_spec(), tmp_path / "echo")
-    hook = tmp_path / "echo" / "hooks" / "gating_guard.py"
+    root = tmp_path / "echo"
     cfg_path = tmp_path / "echo" / "config" / "gating.json"
     cfg = json.loads(cfg_path.read_text())
     cfg["channels"] = ["email", "gws"]
@@ -194,11 +204,12 @@ def test_gating_hook_rails_raw_gog_sheets_create(tmp_path):
 
     import os as _os
     env = {**_os.environ,
-           "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy")}
+           "CANOPY_PLUGIN_DIR": str(Path(__file__).resolve().parents[1] / "plugins" / "canopy"),
+           "CLAUDE_PROJECT_DIR": str(root)}
 
     def run(cmd):
         return subprocess.run(
-            [sys.executable, str(hook)],
+            _session_cmd(),
             input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
             capture_output=True, text=True, env=env,
         )
@@ -220,18 +231,17 @@ def _hook_env(**extra):
 
 
 def test_gating_hook_delegates_to_the_shared_engine(tmp_path):
-    """End-to-end through the loader: deny / approve / allow all still work."""
+    """End-to-end through canopy's session hook: deny / approve / allow all still work."""
     create_agent(_spec(), tmp_path / "echo")
     root = tmp_path / "echo"
-    hook = root / "hooks" / "gating_guard.py"
     gating = root / "config" / "gating.json"
     cfg = json.loads(gating.read_text())
     cfg["approve"] = [{"tool": "Edit", "message": "Echo edits only with approval."}]
     gating.write_text(json.dumps(cfg))
 
     def run(payload):
-        return subprocess.run([sys.executable, str(hook)], input=json.dumps(payload),
-                              capture_output=True, text=True, env=_hook_env())
+        return subprocess.run(_session_cmd(), input=json.dumps(payload),
+                              capture_output=True, text=True, env=_hook_env(CLAUDE_PROJECT_DIR=str(root)))
 
     r = run({"tool_name": "Bash", "tool_input": {"command": "gog gmail send --to a@b.c"}})
     assert r.returncode == 2 and "bin/echo-email" in r.stderr
@@ -264,9 +274,9 @@ def test_per_statement_reaches_every_agent(tmp_path):
     gating.write_text(json.dumps(cfg))
 
     def run(cmd):
-        return subprocess.run([sys.executable, str(root / "hooks" / "gating_guard.py")],
+        return subprocess.run(_session_cmd(),
                               input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
-                              capture_output=True, text=True, env=_hook_env())
+                              capture_output=True, text=True, env=_hook_env(CLAUDE_PROJECT_DIR=str(root)))
 
     # the real violation still blocks
     assert run("curl -X POST https://example.com/items").returncode == 2

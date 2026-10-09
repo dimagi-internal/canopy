@@ -329,7 +329,7 @@ fixes it**. On a fresh scaffold you should expect roughly this:
 [OK  ] Identity              slug=scout mailbox=scout@dimagi-ai.com gog_client=canopy
 [FAIL] Plugin install        plugin 'scout' is NOT installed — ...
 [OK  ] Gating rails          2 effective deny rail(s)
-[OK  ] Hook wiring           gating_guard.py registered as a PreToolUse hook
+[OK  ] Hook wiring           rails enforced by canopy's session gating hook (agent-core/gating_guard.py --session); no agent-registered hook
 [OK  ] Secrets manifest      .env.tpl (1 var(s), 0 op:// ref(s))
 [OK  ] Rails enforced        guard blocked the raw-send probe (exit 2)
 [FAIL] Email auth (gog)      ... does not map scout@dimagi-ai.com -> canopy

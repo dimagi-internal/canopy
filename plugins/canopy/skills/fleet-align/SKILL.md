@@ -168,6 +168,12 @@ not a report.
 - **Gating is delicate.** `config/gating.json` carries agent-specific channel config. Drop the
   deprecated `approve` block; add a missing deny rail *only if the agent has that channel* (heed the
   `change_brief` applicability instruction).
+- **`gating-hook` findings are warnings (canopy#849).** canopy's plugin registers the one gating
+  hook and applies the session's agent's `config/gating.json`; an agent that still registers its
+  own PreToolUse `gating_guard.py` entry (`.claude/settings.json` or `hooks/hooks.json`) carries a
+  leftover. Nothing misfires today (the engine makes a sibling's loader stand down), so the fix is a
+  cleanup PR: remove the entry and `hooks/gating_guard.py`, keep `config/gating.json`, and make sure
+  `.claude/settings.json` sets `"env": {"CANOPY_AGENT": "<slug>"}`.
 - Legacy agents (no `config/agent.json`, e.g. echo) are never stale laggards — they're the ancestor.
   Harvest their good ideas via PROMOTE, don't "fix" them toward the template.
 - `canopy fleet-align` is read-only analysis; it emits `change_brief`s for the apply agent. Backed

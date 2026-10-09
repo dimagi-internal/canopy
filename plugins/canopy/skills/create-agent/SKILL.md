@@ -39,8 +39,10 @@ uv run --project "$CANOPY_ROOT" canopy create-agent <slug> \
   --into <path>            # default: ./<slug>
 ```
 This writes ~15 files: `persona.md`, `CLAUDE.md`, the `turn` + `self-review` skills,
-`config/gating.json` + `hooks/gating_guard.py` (the reads-free / writes-gated engine, shipped
-deny-rails-only with an empty `approve` list), `.claude/settings.json` (wires the hook),
+`config/gating.json` (the reads-free / writes-gated rails, shipped deny-rails-only with an empty
+`approve` list — enforced by canopy's own session gating hook, so the agent registers NO hook of its
+own; canopy#849), `.claude/settings.json` (sets `CANOPY_AGENT=<slug>`, which tells canopy whose
+session it is),
 `bin/<slug>-email` (thin shim over the shared `canopy email` engine; raw `gog gmail send` is
 deny-railed out of the box), `config/agent.json` (identity: mailbox + `gog_client`),
 `.env.tpl` (the fleet-standard secrets template — see agent-core/agent-runtime.md;
@@ -75,7 +77,10 @@ The scaffold is a skeleton. Walk the human through filling it in, in this order:
    `approve` empty — a PreToolUse "ask" is a blocking modal that stalls autonomous work;
    approval lives procedurally in the turn checklist. **This is how you "force" the
    guardrail** — do not rely on prose in `CLAUDE.md`. Test a rule by piping a PreToolUse
-   payload to `hooks/gating_guard.py` (see the generated hook's docstring).
+   payload to canopy's engine as the agent's session would:
+   `echo '{"tool_name":"Bash","tool_input":{"command":"gog gmail send --to x"}}' | CLAUDE_PROJECT_DIR=$PWD python3 "$CANOPY/agent-core/gating_guard.py" --session; echo $?`
+   (exit 2 = blocked). Never register a PreToolUse gating hook in the agent itself: plugins
+   install user-scope, so it would fire in every other agent's sessions too.
 4. **Channel + setup** — email is already wired: the agent gets its own MAILBOX, and signs it
    in under the fleet's shared gog client — never a per-agent one. Either door works: the
    agent's Settings → Credentials → "Connect Google mailbox" in canopy-web (mints under

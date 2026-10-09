@@ -275,72 +275,26 @@ def test_cli_agent_doctor_all_sweeps_fleet_and_gates_on_any_failure(tmp_path, mo
 # full remediation
 # --------------------------------------------------------------------------------------
 
-def test_hook_wiring_green_when_guard_registered(tmp_path):
+def test_hook_wiring_warns_when_agent_still_registers_its_own_guard(tmp_path):
+    """canopy#849: canopy's session hook enforces config/gating.json now. An agent hook is a
+    migration leftover — WARN (so fleet health names it), never FAIL."""
     result = check_hook_wiring(_agent_repo(tmp_path))
-    assert result.ok
+    assert result.ok and result.warn
+    assert ".claude/settings.json" in result.detail and "canopy#849" in result.detail
 
 
-def test_hook_wiring_fails_without_settings_json(tmp_path):
-    repo = _agent_repo(tmp_path)
-    (repo / ".claude" / "settings.json").unlink()
+def test_hook_wiring_green_without_any_agent_hook(tmp_path):
+    repo = _agent_repo(tmp_path, hooks=False)
     result = check_hook_wiring(repo)
-    assert not result.ok and "decorative" in result.detail
+    assert result.ok and not result.warn and "session gating hook" in result.detail
 
 
-def test_hook_wiring_fails_when_settings_dont_reference_guard(tmp_path):
+def test_hook_wiring_green_when_settings_dont_reference_guard(tmp_path):
     repo = _agent_repo(tmp_path)
-    (repo / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": []}}))
+    (repo / ".claude" / "settings.json").write_text(json.dumps(
+        {"env": {"CANOPY_AGENT": "hal"}, "hooks": {"PreToolUse": []}}))
     result = check_hook_wiring(repo)
-    assert not result.ok and "decorative" in result.detail
-
-
-def test_hook_wiring_fails_without_guard_file(tmp_path):
-    repo = _agent_repo(tmp_path)
-    (repo / "hooks" / "gating_guard.py").unlink()
-    result = check_hook_wiring(repo)
-    assert not result.ok and "no enforcement" in result.detail
-
-
-def _wire(repo, matcher):
-    (repo / ".claude" / "settings.json").write_text(json.dumps({
-        "hooks": {"PreToolUse": [{"matcher": matcher, "hooks": [
-            {"type": "command",
-             "command": 'python3 "$CLAUDE_PROJECT_DIR/hooks/gating_guard.py"'}]}]}}))
-
-
-def test_hook_wiring_fails_when_matcher_never_routes_powershell(tmp_path):
-    """The factory's pre-2026-09-22 matcher. The guard is registered, so the old check passed —
-    on fizzy, while every rail was bypassed from the Windows shell tool (Shayoni Mazumdar)."""
-    repo = _agent_repo(tmp_path)
-    _wire(repo, "Bash|Edit|Write|NotebookEdit|Skill")
-    result = check_hook_wiring(repo)
-    assert not result.ok
-    assert "PowerShell" in result.detail and "bypassed" in result.detail
-
-
-@pytest.mark.parametrize("matcher", [
-    "Bash|PowerShell|Edit|Write|NotebookEdit|Skill",   # the factory's matcher now
-    "*",
-    "",
-    "Bash|PowerShell|Edit|Write|NotebookEdit|Skill|^mcp__",   # eva's regex-bearing shape
-    "^(Bash|PowerShell)$",
-])
-def test_hook_wiring_accepts_every_matcher_that_covers_both_shells(tmp_path, matcher):
-    repo = _agent_repo(tmp_path)
-    _wire(repo, matcher)
-    assert check_hook_wiring(repo).ok
-
-
-def test_hook_wiring_counts_coverage_across_entries(tmp_path):
-    """Two PreToolUse entries that each route one shell to the guard cover both between them."""
-    repo = _agent_repo(tmp_path)
-    cmd = 'python3 "$CLAUDE_PROJECT_DIR/hooks/gating_guard.py"'
-    (repo / ".claude" / "settings.json").write_text(json.dumps({
-        "hooks": {"PreToolUse": [
-            {"matcher": "Bash|Edit", "hooks": [{"type": "command", "command": cmd}]},
-            {"matcher": "PowerShell", "hooks": [{"type": "command", "command": cmd}]},
-        ]}}))
-    assert check_hook_wiring(repo).ok
+    assert result.ok and not result.warn
 
 
 def test_gating_zero_rails_fails_for_outbound_capable_agent(tmp_path):
@@ -533,30 +487,21 @@ def test_gating_still_fails_when_no_channels_and_no_local_rails(tmp_path):
 
 
 # --------------------------------------------------------------------------------------
-# check_hook_wiring — plugin-style registration (hooks/hooks.json) is valid
+# check_hook_wiring — a plugin-registered agent hook is the one that fires everywhere
 # --------------------------------------------------------------------------------------
 
-def test_hook_wiring_accepts_plugin_style_hooks_json(tmp_path):
-    """ace ships AS a Claude Code plugin and registers the guard in hooks/hooks.json, not
-    .claude/settings.json. Checking only the latter called ace's live rails decorative."""
+def test_hook_wiring_warns_on_plugin_style_hooks_json(tmp_path):
+    """ace registers its guard in hooks/hooks.json — and because plugins are installed
+    user-scope, it fired in every session on the machine (canopy#849)."""
     repo = _agent_repo(tmp_path, hooks=False)
     (repo / "hooks").mkdir()
-    (repo / "hooks" / "gating_guard.py").write_text("# guard\n")
     (repo / "hooks" / "hooks.json").write_text(json.dumps({
         "hooks": {"PreToolUse": [{"matcher": "Bash|PowerShell", "hooks": [
             {"type": "command",
              "command": 'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/gating_guard.py"'}]}]}
     }))
     result = check_hook_wiring(repo)
-    assert result.ok and "hooks/hooks.json" in result.detail
-
-
-def test_hook_wiring_fails_when_neither_path_registers_the_guard(tmp_path):
-    repo = _agent_repo(tmp_path, hooks=False)
-    (repo / "hooks").mkdir()
-    (repo / "hooks" / "gating_guard.py").write_text("# guard\n")
-    result = check_hook_wiring(repo)
-    assert not result.ok and "decorative" in result.detail
+    assert result.ok and result.warn and "hooks/hooks.json" in result.detail
 
 
 # --------------------------------------------------------------------------------------
@@ -726,11 +671,13 @@ def test_secrets_materialized_skips_env_tpl_no_declared_target(tmp_path):
 # --------------------------------------------------------------------------------------
 
 def _railed_repo(tmp_path, monkeypatch, guard_body):
-    monkeypatch.setenv("CANOPY_PLUGIN_DIR", str(_fleet_baseline(tmp_path)))
-    repo = _agent_repo(tmp_path)
+    """The probe targets canopy's ENGINE (session mode), not the agent's legacy loader."""
+    plugin = _fleet_baseline(tmp_path)
+    (plugin / "agent-core" / "gating_guard.py").write_text(guard_body)
+    monkeypatch.setenv("CANOPY_PLUGIN_DIR", str(plugin))
+    repo = _agent_repo(tmp_path, hooks=False)
     (repo / "config" / "gating.json").write_text(
         json.dumps({"slug": "hal", "channels": ["email"], "deny": [], "approve": []}))
-    (repo / "hooks" / "gating_guard.py").write_text(guard_body)
     return repo
 
 
@@ -739,6 +686,37 @@ def test_rails_fire_passes_when_guard_blocks_the_probe(tmp_path, monkeypatch):
     repo = _railed_repo(tmp_path, monkeypatch, "import sys\nsys.exit(2)\n")
     r = check_rails_fire(repo)
     assert r.ok and "in force" in r.detail
+
+
+def test_rails_fire_probes_the_session_hook_from_the_agents_own_project(tmp_path, monkeypatch):
+    """The probe must look like the agent's own session — `--session`, project dir = repo."""
+    from orchestrator.agent_doctor import check_rails_fire
+    guard = ("import os, sys\n"
+             "ok = '--session' in sys.argv and os.environ.get('CLAUDE_PROJECT_DIR')\n"
+             "sys.exit(2 if ok and os.path.isdir(os.environ['CLAUDE_PROJECT_DIR']) else 0)\n")
+    repo = _railed_repo(tmp_path, monkeypatch, guard)
+    assert check_rails_fire(repo).ok
+
+
+def test_rails_fire_runs_the_real_engine(tmp_path, monkeypatch):
+    """End to end against the shipped engine + baseline: an email-mounting agent's raw send
+    is blocked by canopy's session hook with no agent hook registered at all."""
+    from orchestrator.agent_doctor import check_rails_fire
+    plugin = Path(__file__).resolve().parents[1] / "plugins" / "canopy"
+    monkeypatch.setenv("CANOPY_PLUGIN_DIR", str(plugin))
+    repo = _agent_repo(tmp_path, hooks=False)
+    (repo / "config" / "gating.json").write_text(
+        json.dumps({"slug": "hal", "channels": ["email"], "deny": [], "approve": []}))
+    r = check_rails_fire(repo)
+    assert r.ok and "in force" in r.detail, r.detail
+
+
+def test_rails_fire_fails_without_the_canopy_engine(tmp_path, monkeypatch):
+    from orchestrator.agent_doctor import check_rails_fire
+    repo = _railed_repo(tmp_path, monkeypatch, "import sys\nsys.exit(2)\n")
+    (tmp_path / "canopy-plugin" / "agent-core" / "gating_guard.py").unlink()
+    r = check_rails_fire(repo)
+    assert not r.ok and "not installed" in r.detail
 
 
 def test_rails_fire_catches_configured_but_unenforced(tmp_path, monkeypatch):

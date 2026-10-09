@@ -253,7 +253,7 @@ what goes in the agent's repo":
 
 | Stays **common** (canopy plugin + package) | Lives **in the agent's repo** |
 |---|---|
-| Gating *engine* (the hook logic) | Gating *rules* (`config/gating.json`) + the thin hook shim + `.claude/settings.json` wiring |
+| Gating *engine* (the hook logic) **and its registration** (canopy's plugin hook resolves the session's agent) | Gating *rules* (`config/gating.json`) + `CANOPY_AGENT` in `.claude/settings.json` `env` |
 | Channel *adapters* (email→slack→telegram) | Channel *mounts* (which channels this agent uses) |
 | canopy-web client; self-improvement loop; `create-agent`; cross-agent skills | Persona, domain skills, allowlist, `.env`, the `turn` checklist text |
 | The operating-model invariants (as enforced defaults) | This agent's identity, mandate, secrets |
@@ -263,10 +263,16 @@ and domain skills are the agent's.** Anything an operator must read or edit to u
 *this* agent stays in the repo (so it's "forced" per §1a and improvable by canopy's loop);
 anything that's pure infra you'd want to fix fleet-wide goes in canopy.
 
-*v1 vs. target:* the factory today **copies** a self-contained gating hook into the agent
-(robust even before canopy is installed as a dependency). The target is a **thin shim** that
-calls canopy's installed engine, leaving only `gating.json` in the repo — so engine fixes
-propagate by bumping canopy. Same pattern for the canopy-web client and channel adapters: copied
+*Where gating landed (canopy#849, 2026-10-09):* the factory first **copied** a self-contained
+gating hook into each agent, then a thin loader that ran canopy's installed engine. Both were
+registered BY THE AGENT, and since agent plugins install at user scope, every agent's rails fired
+in every session (ACE's rail blocked a PR in an Ada session). Now canopy's plugin registers ONE
+PreToolUse hook (`agent-core/gating_guard.py --session`) that resolves the session's agent —
+`$CANOPY_AGENT_SLUG` (runner turn) → `$CANOPY_AGENT` → the agent repo under the project dir →
+nobody — and applies the fleet baseline plus that agent's `config/gating.json` `deny` list. A
+human's session outside any agent repo gets only the channel-independent baseline rails. Agents
+keep `gating.json` and register no hook; `canopy agent doctor` and `canopy fleet-align` warn on
+any that still do. Same pattern for the canopy-web client and channel adapters: copied
 now, thinned to canopy-backed as the package boundary firms up.
 
 **Channels as a shared adapter interface.** Canopy defines an inbound (`reads-free`) / outbound
