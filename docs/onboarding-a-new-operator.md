@@ -536,21 +536,15 @@ session into a one-line fix. The logs live under
 `%LOCALAPPDATA%\claude-cli-nodejs\<project>\mcp-logs-<server>\` on Windows;
 the newest `.jsonl` there, last few lines.
 
-The one you are most likely to hit is **`canopy-gws`, and it is working as
-designed**:
-
-```
-[canopy-gws] FATAL: GWS_IDENTITY_MODE is not set. canopy-gws resolves its Google
-identity from per-agent session env. Set GWS_IDENTITY_MODE=sa and
-GWS_SA_KEY_PATH=/path/to/sa-key.json in the agent's environment (settings env
-block or `canopy provision`). There is no default identity fallback by design.
-```
-
-It refuses to start rather than silently borrowing someone else's Google identity.
-So a brand-new agent shows `canopy-gws` failing until you provision its service
-account — expected, not a broken install, and **not platform-specific** (it
-reproduces the same way on macOS). If your agent does not touch Google Workspace,
-you can leave it failing.
+`canopy-gws` no longer fails at startup (canopy#850): it always connects, and
+resolves its Google identity at the first tool call as the **session's agent**,
+through `canopy cred check` and `canopy cred env`. In a human session, or one the
+broker refuses, every canopy-gws tool returns the broker's refusal paragraph (what
+access to get) followed by "Use your own Drive path: gog as your own account /
+canopy gdoc". An agent whose `~/.<slug>/.env` carries no `GWS_IDENTITY_MODE` /
+`GWS_SA_KEY_PATH` gets a refusal naming that file. That is expected until you
+provision its service account, and you can ignore it if the agent does not touch
+Google Workspace.
 
 ---
 

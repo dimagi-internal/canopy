@@ -7,10 +7,14 @@
  * validation, YAML patching, manifest generation — stay in ACE; only the
  * domain-neutral Workspace surface lives here). See jjackson/canopy#262.
  *
- * Identity is per-agent, resolved from session env (GWS_IDENTITY_MODE,
- * GWS_SA_KEY_PATH, GWS_ROOT_FOLDER_ID, GWS_ALLOWED_DRIVE_IDS — see
- * ./gws/lib/identity.ts). The server FAILS LOUD at startup when no identity
- * env is present; it never falls back to a shared/default identity.
+ * Identity is the SESSION's agent, resolved through the `canopy cred` broker at
+ * the first tool call (canopy#850, ./gws/lib/session-identity.ts):
+ * `canopy cred check --agent <session agent>` must allow it, and the agent's
+ * GWS_* values (GWS_IDENTITY_MODE, GWS_SA_KEY_PATH, GWS_ROOT_FOLDER_ID,
+ * GWS_ALLOWED_DRIVE_IDS — see ./gws/lib/identity.ts) come from the env file
+ * `canopy cred env` resolves. Startup never blocks or fails on identity; every
+ * tool call in a session that may not act as an agent returns a refusal. There
+ * is never a fallback to a shared/default identity.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -30,8 +34,13 @@ import {
 import {
   resolveIdentityFromEnv,
   parseAllowedDriveIds,
-  GwsIdentityError,
 } from './gws/lib/identity.js';
+import {
+  GWS_KEYS,
+  createSessionGate,
+  installSessionGate,
+  type Resolution,
+} from './gws/lib/session-identity.js';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
@@ -71,11 +80,11 @@ try {
   // handlers (e.g. handleCreateFolder) and never touch the module-level
   // `drive`. Server startup (main) re-runs the check and fails loud.
 }
-const sheets = google.sheets({ version: 'v4', auth });
-const drive = google.drive({ version: 'v3', auth });
-const docs = google.docs({ version: 'v1', auth });
-const slides = google.slides({ version: 'v1', auth });
-const forms = google.forms({ version: 'v1', auth });
+let sheets = google.sheets({ version: 'v4', auth });
+let drive = google.drive({ version: 'v3', auth });
+let docs = google.docs({ version: 'v1', auth });
+let slides = google.slides({ version: 'v1', auth });
+let forms = google.forms({ version: 'v1', auth });
 
 /**
  * Optional write-scope allowlist (comma-separated Shared Drive IDs in
@@ -84,7 +93,26 @@ const forms = google.forms({ version: 'v1', auth });
  * is rejected. Null = no allowlist restriction (Shared-Drive requirement
  * still applies in sa mode — SAs have zero My-Drive quota).
  */
-const allowedDriveIds = parseAllowedDriveIds();
+let allowedDriveIds = parseAllowedDriveIds();
+
+/**
+ * Adopt the session agent's identity once the broker allows it: its GWS_*
+ * values go into process.env (read at call time by drive_diagnose and
+ * read_personal_drive_doc), and the Google clients are rebuilt on its key.
+ */
+function applySessionIdentity(r: Extract<Resolution, { ok: true }>): void {
+  for (const k of GWS_KEYS) {
+    if (r.env[k] !== undefined) process.env[k] = r.env[k];
+  }
+  auth = new google.auth.GoogleAuth({ keyFile: r.identity.saKeyPath, scopes: SCOPES });
+  sheets = google.sheets({ version: 'v4', auth });
+  drive = google.drive({ version: 'v3', auth });
+  docs = google.docs({ version: 'v1', auth });
+  slides = google.slides({ version: 'v1', auth });
+  forms = google.forms({ version: 'v1', auth });
+  allowedDriveIds = parseAllowedDriveIds();
+  console.error(`[canopy-gws] acting as agent '${r.agent}' (${r.identity.mode} mode)`);
+}
 
 
 // ============================================================================
@@ -227,6 +255,10 @@ const server = new McpServer({
   name: 'canopy-gws',
   version: '0.1.0',
 });
+// Session identity (canopy#850): every tool acts as the session's agent only
+// when `canopy cred check` allows it — resolved lazily at the first call, so
+// startup never blocks. Must run before the first registration.
+installSessionGate(server as never, createSessionGate(applySessionIdentity));
 
 // 1. List sheets (tabs) in a spreadsheet
 server.tool(
@@ -1817,17 +1849,9 @@ server.tool(
 // ============================================================================
 
 async function main() {
-  // FAIL LOUD: no identity env => no server. Never fall back to a shared or
-  // default identity — each agent session must export its own GWS_* vars.
-  try {
-    resolveIdentityFromEnv();
-  } catch (e: any) {
-    if (e instanceof GwsIdentityError) {
-      console.error(`[canopy-gws] FATAL: ${e.message}`);
-      process.exit(1);
-    }
-    throw e;
-  }
+  // Identity is NOT resolved here: the session gate resolves it through
+  // `canopy cred` at the first tool call and refuses every call it cannot
+  // resolve. Never fall back to a shared or default identity.
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

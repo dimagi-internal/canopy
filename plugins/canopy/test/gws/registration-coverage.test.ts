@@ -14,9 +14,9 @@
  *   4. The server file is actually wired into the canopy plugin's
  *      plugin.json `mcpServers` map (a server file that exists on disk but
  *      is not registered is silently unreachable by agents).
- *   5. Fail-loud identity: the startup path must call
- *      `resolveIdentityFromEnv()` so a missing GWS_* identity env is a
- *      fatal, named error — never a silent fallback to a default identity.
+ *   5. Session identity (canopy#850): the session gate is installed before
+ *      the first tool, so every call acts as the session's agent only after
+ *      `canopy cred check` allows it — never a fallback to a default identity.
  *
  * Parses statically (never imports the server module) so no MCP transport
  * or Google auth is touched. Ported from ACE's registration-coverage gate.
@@ -119,13 +119,18 @@ describe('canopy-gws plugin.json wiring', () => {
   });
 });
 
-describe('canopy-gws fail-loud identity startup', () => {
-  it('main() runs the identity check (resolveIdentityFromEnv) before connecting', () => {
+describe('canopy-gws session identity', () => {
+  it('installs the session gate after the server is built and before any tool', () => {
     const src = fs.readFileSync(path.join(PLUGIN_ROOT, SERVER_FILE), 'utf-8');
-    // The startup path must resolve identity and exit non-zero on failure.
-    expect(src).toMatch(/async function main\(\)[\s\S]*?resolveIdentityFromEnv\(\)/);
-    expect(src).toMatch(/GwsIdentityError/);
-    expect(src).toMatch(/process\.exit\(1\)/);
+    const install = src.indexOf('installSessionGate(server as never, createSessionGate(applySessionIdentity));');
+    expect(install).toBeGreaterThan(src.indexOf('new McpServer('));
+    expect(install).toBeLessThan(src.search(/\bserver\.tool\s*\(/));
+  });
+
+  it('startup never resolves identity (the gate does it lazily at the first call)', () => {
+    const src = fs.readFileSync(path.join(PLUGIN_ROOT, SERVER_FILE), 'utf-8');
+    const main = src.slice(src.indexOf('async function main()'));
+    expect(main.slice(0, main.indexOf('\n}\n'))).not.toMatch(/resolveIdentityFromEnv|process\.exit/);
   });
 
   it('never reads a non-GWS credential env var (no ACE_/GOOGLE_APPLICATION_CREDENTIALS fallback)', () => {
