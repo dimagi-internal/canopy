@@ -38,10 +38,54 @@ class SessionRef:
     project: str
     mtime: float
     first_prompt: str = ""
+    start: str = ""   # first event timestamp (ISO-8601); "" when the file carries none
 
     @property
     def when(self) -> str:
-        return _dt.datetime.fromtimestamp(self.mtime).strftime("%Y-%m-%d %H:%M")
+        """When the session STARTED. A file's mtime is its last write — a long or
+        resumed session would otherwise sort and date by when it ended."""
+        return _fmt_when(self.start, self.mtime)
+
+    @property
+    def sort_key(self) -> float:
+        dt = _parse_iso(self.start)
+        return dt.timestamp() if dt else self.mtime
+
+
+def _parse_iso(ts: str):
+    if not ts:
+        return None
+    try:
+        dt = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
+
+
+def _fmt_when(start: str, mtime: float) -> str:
+    """Local-time ``YYYY-MM-DD HH:MM`` of the first event, else of the mtime."""
+    dt = _parse_iso(start)
+    if dt is not None:
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+    return _dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M") if mtime else ""
+
+
+def first_timestamp(path: str, max_lines: int = 200) -> str:
+    """The first event timestamp in a transcript, reading only its head."""
+    try:
+        with open(path, errors="replace", encoding="utf-8") as fh:
+            for i, line in enumerate(fh):
+                if i >= max_lines:
+                    break
+                try:
+                    ts = json.loads(line).get("timestamp")
+                except (ValueError, AttributeError):
+                    continue
+                if isinstance(ts, str) and ts:
+                    return ts
+    except OSError:
+        pass
+    return ""
 
 
 def user_session_roots(users_root: str = "/Users") -> list[dict]:
@@ -133,8 +177,9 @@ def find_initiative_sessions(
                     mt = os.path.getmtime(f)
                 except OSError:
                     continue
-                refs.append(SessionRef(user=root["user"], path=f, project=proj, mtime=mt))
-    refs.sort(key=lambda r: r.mtime)
+                refs.append(SessionRef(user=root["user"], path=f, project=proj, mtime=mt,
+                                       start=first_timestamp(f)))
+    refs.sort(key=lambda r: r.sort_key)
     return refs
 
 
@@ -166,14 +211,14 @@ def strip_session(path: str, mode: str = "final") -> str:
 
 
 def session_digest(path: str, user: str = "", mtime: float = 0.0, inputs_k: int = 6,
-                   full: bool = False) -> dict:
+                   full: bool = False, start: str = "") -> dict:
     """A per-session digest for the whole-arc map. Default = tiny (first input + a few sampled
     inputs + the final output, truncated). `full=True` = RICH: ALL your inputs untruncated (the
     highest-signal part, and short) + the full final output. Use full when quality > token-cost."""
     seq = _ordered_texts(path)
     inputs = [t for r, t in seq if r == "U"]
     finals = [t for r, t in seq if r == "A"]
-    when = _dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M") if mtime else ""
+    when = _fmt_when(start, mtime)
     base = {
         "path": str(path), "user": user, "when": when,
         "project": "/".join([x for x in os.path.basename(os.path.dirname(path)).split("-") if x][-2:]),
@@ -210,7 +255,8 @@ def corpus_map(initiative: str, terms: list[str], *, inputs_k: int = 6, full: bo
         "total_sessions": len(refs),
         "by_user": {u: sum(1 for r in refs if r.user == u) for u in {r.user for r in refs}},
         "span": ({"from": refs[0].when, "to": refs[-1].when} if refs else None),
-        "digests": [session_digest(r.path, r.user, r.mtime, inputs_k=inputs_k, full=full) for r in refs],
+        "digests": [session_digest(r.path, r.user, r.mtime, inputs_k=inputs_k, full=full,
+                                   start=r.start) for r in refs],
     }
 
 

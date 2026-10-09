@@ -1862,6 +1862,169 @@ def harvest_corpus(initiative, match, origin_k, recent_k, as_json):
                 click.echo(f"       · {m[:150]}")
 
 
+@main.group("project-history")
+def project_history_group():
+    """Reconstruct ONE project's history from what a person and canopy agents did
+    on it, as one analysis rendered into a standard project package.
+
+    select → collect → (the agent judges) → render. Deterministic only: the
+    judgment lives in the `project-history` skill. Backed by
+    `orchestrator.project_history`.
+    """
+
+
+def _ph_write(obj, out: str | None) -> None:
+    import json as json_mod
+    text = json_mod.dumps(obj, indent=1, ensure_ascii=False, default=str)
+    if out:
+        Path(out).write_text(text, encoding="utf-8")
+    else:
+        click.echo(text)
+
+
+@project_history_group.command("select")
+@click.option("--spec", "spec_path", required=True, type=click.Path(exists=True),
+              help="Project spec (YAML/JSON): name, since, repo, paths, exclude_paths, "
+                   "mcp_prefixes, name_terms, artifact_terms, agent_project, overrides")
+@click.option("--checkout", type=click.Path(exists=True), default=None,
+              help="Local checkout of the spec's repo (default: resolved by repo name)")
+@click.option("--no-local", is_flag=True, help="Canopy only — never read local transcripts")
+@click.option("--local-scan", is_flag=True,
+              help="Also scan local transcripts canopy never indexed (strong signals only)")
+@click.option("--base-url", default=None, help="canopy-web base URL (default: runner.json)")
+@click.option("-o", "--out", default=None, help="Write the selection JSON here")
+def project_history_select(spec_path, checkout, no_local, local_scan, base_url, out):
+    """Choose the project's conversations: canopy is the index; a session is IN when
+    it owns a project PR, edits project paths or calls the project's MCP tools.
+    A name match alone makes it a CANDIDATE for the agent to decide."""
+    import re
+    from orchestrator import project_history as ph
+
+    spec = ph.ProjectSpec.from_file(spec_path)
+    call = ph.default_caller(base_url)
+    prs = ph.project_prs(spec, Path(checkout) if checkout else None)
+    slug = spec.remote
+    if not slug and prs:
+        first = next(iter(prs.values()))
+        m = re.search(r"github\.com/([^/]+/[^/]+)/pull/", first.get("url", ""))
+        slug = m.group(1) if m else ""
+    sel = ph.select(spec, call=call, prs=prs, slug=slug, use_local=not no_local,
+                    local_only_scan=local_scan)
+    if out:
+        _ph_write(sel, out)
+    convs = sel["conversations"]
+    tiers = {t: sum(1 for c in convs if c["tier"] == t)
+             for t in ("core", "adjacent", "candidate", "excluded")}
+    click.echo(f"# {spec.name}: {len(prs)} project PRs, "
+               f"{sel['coverage']['canopy_sessions_walked']} canopy sessions walked → {tiers}")
+    if sel["coverage"]["split_sessions"]:
+        click.echo(f"# split back into conversations (canopy merged them): "
+                   f"{len(sel['coverage']['split_sessions'])} session record(s)")
+    for c in convs:
+        click.echo(f"{c['tier']:<9} {c['start'][:10]}  {c['source']:<10} {c['title'][:44]:<44} "
+                   f"{'; '.join(c['reasons'][:3])}")
+        click.echo(f"{'':<9} id={c['id']}")
+
+
+@project_history_group.command("collect")
+@click.option("--selection", "sel_path", required=True, type=click.Path(exists=True))
+@click.option("--tiers", default="core,adjacent", help="Which tiers to collect")
+@click.option("--base-url", default=None)
+@click.option("-o", "--out", required=True, help="Write the bundle JSON here")
+def project_history_collect(sel_path, tiers, base_url, out):
+    """Build the ONE analysis substrate: per conversation the person's prompts
+    verbatim + condensed turns + PRs; the input documents; every project artifact
+    with the evidence for whether it was useful."""
+    import json as json_mod
+    from orchestrator import project_history as ph
+
+    sel = json_mod.loads(Path(sel_path).read_text(encoding="utf-8"))
+    bundle = ph.collect(sel, call=ph.default_caller(base_url),
+                        tiers=[t.strip() for t in tiers.split(",") if t.strip()])
+    _ph_write(bundle, out)
+    arts = bundle["artifacts"]
+    click.echo(f"{len(bundle['conversations'])} conversations, "
+               f"{sum(len(c['prompts']) for c in bundle['conversations'])} prompts, "
+               f"{len(bundle['input_documents'])} input documents, {len(arts)} artifacts "
+               f"({sum(1 for a in arts if a['evidence'])} with evidence) → {out}")
+
+
+@project_history_group.command("read")
+@click.option("--bundle", "bundle_path", required=True, type=click.Path(exists=True))
+@click.option("--conversation", "conv_id", default="", help="One conversation (default: all)")
+@click.option("--turns", is_flag=True, help="Condensed turns (prompt + final reply), not just prompts")
+@click.option("--artifacts", "show_artifacts", is_flag=True,
+              help="Print the artifacts and their numbered evidence instead")
+def project_history_read(bundle_path, conv_id, turns, show_artifacts):
+    """Print a bundle for reading: prompts (or condensed turns) per conversation, or
+    the artifacts with their evidence numbered for a judgments file."""
+    import json as json_mod
+
+    b = json_mod.loads(Path(bundle_path).read_text(encoding="utf-8"))
+    if show_artifacts:
+        for a in b["artifacts"]:
+            click.echo(f"── {a['id']}  [{a['kind']}] {a['title']}  ({a['created_at'][:10]}) "
+                       f"{a['url']}")
+            for i, ev in enumerate(a["evidence"]):
+                click.echo(f"   [{i}] {ev['side']}/{ev['source']}: {ev['detail'][:240]}")
+        return
+    for c in b["conversations"]:
+        if conv_id and c["id"] != conv_id:
+            continue
+        click.echo(f"══ {c['id']}  {c['start'][:10]}→{c['end'][:10]}  {c['title']}  "
+                   f"({c['tier']}, {len(c['prompts'])} prompts, {len(c['prs'])} PRs, "
+                   f"text from {c['text_source']})")
+        rows = c["turns"] if turns else [{"at": p["at"], "prompt": p["text"]} for p in c["prompts"]]
+        for t in rows:
+            click.echo(f"  {t['at'][:16]} USER: {t['prompt']}")
+            if turns and t.get("reply"):
+                click.echo(f"  {'':16} AGENT: {t['reply']}")
+        click.echo("")
+
+
+@project_history_group.command("render")
+@click.option("--bundle", "bundle_path", required=True, type=click.Path(exists=True))
+@click.option("--judgments", "judg_path", required=True, type=click.Path(exists=True),
+              help="The agent's judgments JSON (summaries, phases, useful artifacts)")
+@click.option("--reading", "reading_path", default=None, type=click.Path(exists=True),
+              help="Markdown: how the agent reads the person (the AI package's optional part)")
+@click.option("--out-dir", required=True)
+def project_history_render(bundle_path, judg_path, reading_path, out_dir):
+    """Render the project package from one bundle + one judgments file: the session
+    timeline, the useful-artifacts list, and the AI-facing package (evidence first;
+    the agent's reading last and optional). Refuses an artifact judged useful
+    without evidence."""
+    import json as json_mod
+    from orchestrator import project_history as ph
+
+    bundle = json_mod.loads(Path(bundle_path).read_text(encoding="utf-8"))
+    judgments = json_mod.loads(Path(judg_path).read_text(encoding="utf-8"))
+    reading = Path(reading_path).read_text(encoding="utf-8") if reading_path else ""
+    try:
+        files = ph.render_package(bundle, judgments, out_dir, reading=reading)
+    except ph.JudgmentError as e:
+        raise click.ClickException(f"judgments rejected: {e}")
+    for name, path in files.items():
+        click.echo(f"{name}: {path}")
+
+
+@project_history_group.command("compare")
+@click.option("--selection", "sel_path", required=True, type=click.Path(exists=True))
+@click.option("--truth", "truth_path", required=True, type=click.Path(exists=True),
+              help="JSON list; each item an id or a list of equivalent ids "
+                   "(transcript stem, canopy session id)")
+@click.option("--tiers", default="core,adjacent")
+def project_history_compare(sel_path, truth_path, tiers):
+    """Recall/precision of a selection against a hand-checked set — how a new
+    project spec earns trust before its package is published."""
+    import json as json_mod
+    from orchestrator import project_history as ph
+
+    sel = json_mod.loads(Path(sel_path).read_text(encoding="utf-8"))
+    truth = json_mod.loads(Path(truth_path).read_text(encoding="utf-8"))
+    _ph_write(ph.compare_selection(sel, truth, [t for t in tiers.split(",") if t]), None)
+
+
 @main.group("issue")
 def issue():
     """Architect-routed GitHub issues with canopy.origin provenance.
