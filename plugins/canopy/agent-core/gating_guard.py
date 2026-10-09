@@ -53,6 +53,34 @@ A rule is `{"tool": ..., "tool_pattern": ..., "pattern": ..., "per_statement": .
                  review-wrapper rail applies only where `skills/agent-turn-review/SKILL.md` is
                  present. The alternative is a per-agent copy of the rail, which is the drift
                  this file's whole history is about.
+  agent_only     skip this `always` rail in a session that belongs to no agent. For rails that
+                 translate an AGENT's own rails (e.g. PowerShell HTTP writes -> the agent's curl
+                 rails): a human's session has no such rails, so the translation only blocks.
+
+## Whose rails: the SESSION's agent (canopy#849, 2026-10-09)
+
+Every agent plugin is installed at user scope, so a gating hook an agent plugin registers
+fires in EVERY session on the machine — ACE's body-file rail blocked a `gh pr create` in an
+Ada session on 2026-10-09. The fix is that canopy registers ONE PreToolUse hook (this file,
+run with `--session`) and that hook works out whose session it is:
+
+  1. `$CANOPY_AGENT_SLUG`, then `$CANOPY_AGENT` — a runner turn, or an agent repo's own
+     .claude/settings.json `env`. The env wins over the directory because a turn may work in
+     another repo's checkout and is still that agent's turn.
+  2. else the agent repo at or above `$CLAUDE_PROJECT_DIR` (else the payload's `cwd`): the
+     first directory carrying `config/gating.json` or `config/agent.json`.
+  3. else nobody — a human's own session.
+
+It then applies the fleet baseline plus THAT agent's `deny` list, read from that agent's
+repo (or, when the slug is known but the repo isn't under the session — a turn working in a
+sibling repo — from the agent's installed plugin in ~/.claude/plugins/cache). With nobody,
+only the channel-independent `always` baseline rails apply, minus those marked `agent_only`:
+channel rails name an agent's own send path, which a human's session doesn't have.
+
+The per-agent LOADERS (`hooks/gating_guard.py` in each agent repo) still run this file
+without `--session`, during the migration away from them. They now enforce only when the
+session's agent IS their agent and exit 0 otherwise — so a sibling's rails never fire in
+your session, whether or not that sibling has dropped its hook yet.
 
 STDLIB ONLY by design: a PreToolUse hook runs under whatever python3 is on PATH, which may not
 have PyYAML. That is why the gating config is JSON, not YAML.
@@ -119,7 +147,34 @@ def _substituted(rule, slug):
     return {k: (v.replace("{slug}", slug) if isinstance(v, str) else v) for k, v in rule.items()}
 
 
-def baseline_rails(cfg, slug):
+def load_baseline():
+    """The fleet baseline (agent-core/gating-baseline.json) as a dict, or None if unreadable.
+
+    CANOPY_PLUGIN_DIR overrides the plugin dir (tests / unusual installs). Otherwise the file
+    next to THIS engine wins: the session hook runs this file out of the plugin it ships in, so
+    its sibling is the baseline that plugin version was built with. The installed-plugins
+    registry is the last resort (an engine copy run from somewhere unusual)."""
+    candidates = []
+    plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
+    if plugin_dir:
+        candidates.append(os.path.join(plugin_dir, "agent-core", "gating-baseline.json"))
+    else:
+        candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gating-baseline.json"))
+        try:
+            reg = json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json"), encoding="utf-8"))
+            candidates.append(os.path.join(reg["plugins"]["canopy@canopy"][0]["installPath"],
+                                           "agent-core", "gating-baseline.json"))
+        except Exception:
+            pass
+    for path in candidates:
+        try:
+            return json.load(open(path, encoding="utf-8"))
+        except Exception:
+            continue
+    return None
+
+
+def baseline_rails(cfg, slug, agent=True):
     """Fleet-baseline deny rails from the INSTALLED canopy plugin (agent-core/gating-baseline.json)
     — so a rail fix ships once and reaches every agent via /canopy:update.
 
@@ -135,17 +190,18 @@ def baseline_rails(cfg, slug):
                   the failure mode being fixed. These are nudges, not safety, so an agent with
                   nothing mounted still runs when the baseline cannot be read.
 
-    CANOPY_PLUGIN_DIR overrides the plugin dir (tests / unusual installs)."""
+    `agent=False` is a session that belongs to no agent: `always` rails only, minus the ones
+    marked `agent_only` (they translate an agent's own rails, which a human session lacks).
+    `cfg["channels"] == "*"` mounts every channel — used when the session's agent is known
+    but its config cannot be found, so the safe assumption is that it mounts everything."""
     channels = cfg.get("channels") or []
-    try:
-        plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
-        if not plugin_dir:
-            reg = json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json"), encoding="utf-8"))
-            plugin_dir = reg["plugins"]["canopy@canopy"][0]["installPath"]
-        base = json.load(open(os.path.join(plugin_dir, "agent-core", "gating-baseline.json"), encoding="utf-8"))
-    except Exception:
+    base = load_baseline()
+    if base is None:
         return None if channels else []
-    rails = [_substituted(rule, slug) for rule in base.get("always", [])]
+    if channels == "*":
+        channels = list((base.get("channels") or {}).keys())
+    rails = [_substituted(rule, slug) for rule in base.get("always", [])
+             if agent or not rule.get("agent_only")]
     for ch in channels:
         for rule in base.get("channels", {}).get(ch, []):
             rails.append(_substituted(rule, slug))
@@ -266,18 +322,23 @@ def matches(rule, tool_name, subject):
 
 
 def run(repo_dir, payload):
-    """Evaluate one PreToolUse payload. Returns (exit_code, stdout, stderr)."""
+    """Evaluate one PreToolUse payload against the agent repo at `repo_dir`.
+    Returns (exit_code, stdout, stderr)."""
     try:
         cfg = json.load(open(config_path(repo_dir), encoding="utf-8"))
     except Exception:
         return 0, "", ""          # no/broken config = no extra gating
 
     slug, name = agent_labels(repo_dir, cfg)
+    return _evaluate(cfg, repo_dir, payload, slug, name)
+
+
+def _evaluate(cfg, repo_dir, payload, slug, name, agent=True):
     tool_name = payload.get("tool_name", "")
     subject = subject_for(tool_name, payload.get("tool_input"))
     cwd = payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR", "")
 
-    rails = baseline_rails(cfg, slug)
+    rails = baseline_rails(cfg, slug, agent=agent)
     if rails is None and tool_name not in FAIL_OPEN_TOOLS:
         # channels are mounted but the fleet baseline is unreadable — fail CLOSED, with the fix.
         return 2, "", (
@@ -287,9 +348,9 @@ def run(repo_dir, payload):
             "~/.claude/plugins/installed_plugins.json), then retry.\n")
 
     for rule in (rails or []) + cfg.get("deny", []):
-        if rule.get("requires_path") and not os.path.exists(
+        if rule.get("requires_path") and not (repo_dir and os.path.exists(
             os.path.join(repo_dir, rule["requires_path"])
-        ):
+        )):
             continue
         if matches(rule, tool_name, subject):
             msg = rule.get("message") or ("BLOCKED by " + slug + " gating policy (deny rule).")
@@ -308,13 +369,164 @@ def run(repo_dir, payload):
     return 0, "", ""
 
 
-def main(repo_dir=None):
+# ── whose session is this? ────────────────────────────────────────────────────────────
+
+# Strongest first. CANOPY_AGENT_SLUG is what a runner turn carries; CANOPY_AGENT is what an
+# agent repo's .claude/settings.json `env` sets (and the cloud runner too).
+AGENT_ENV_VARS = ("CANOPY_AGENT_SLUG", "CANOPY_AGENT")
+# Repos that carry agent-ish markers but are not agents (mirrors canopy_web._NON_AGENT_SLUGS).
+NON_AGENT_SLUGS = frozenset({"canopy"})
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$", re.I)
+# When no agent owns the session, `{slug}` in a baseline message reads as this.
+NO_AGENT_LABEL = "canopy"
+
+
+def _read_json(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def is_agent_repo(path):
+    return (os.path.isfile(os.path.join(path, "config", "gating.json"))
+            or os.path.isfile(os.path.join(path, "config", "agent.json")))
+
+
+def repo_slug(repo_dir):
+    """An agent repo's slug: gating.json `slug`, agent.json `slug`, plugin.json `name`, then the
+    directory name. The directory is last because a worktree's name is the TASK, not the agent
+    (emdash names them `emdash-<task>`)."""
+    for rel, key in ((("config", "gating.json"), "slug"),
+                     (("config", "agent.json"), "slug"),
+                     ((".claude-plugin", "plugin.json"), "name")):
+        val = _read_json(os.path.join(repo_dir, *rel)).get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip().lower()
+    return os.path.basename(repo_dir.rstrip("/")).lower()
+
+
+def find_agent_repo(start):
+    """The nearest directory at or above `start` that is an agent repo, or None."""
+    if not start:
+        return None
+    d = os.path.abspath(os.path.expanduser(start))
+    while True:
+        if is_agent_repo(d):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+
+
+def _version_key(v):
+    return tuple((0, int(p)) if p.isdigit() else (1, p) for p in re.split(r"[.\-+]", v))
+
+
+def installed_agent_repo(slug, home=None):
+    """The installed plugin dir of agent `slug` that ships config/gating.json, or None.
+
+    The registry's own record first (`<slug>@<marketplace>`), then the highest version under
+    ~/.claude/plugins/cache/<marketplace>/<slug>/<version>/."""
+    home = home or os.path.expanduser("~")
+    plugins = os.path.join(home, ".claude", "plugins")
+    reg = _read_json(os.path.join(plugins, "installed_plugins.json")).get("plugins") or {}
+    for key, entries in reg.items():
+        if key.split("@", 1)[0] != slug or not isinstance(entries, list):
+            continue
+        for entry in entries:
+            path = (entry or {}).get("installPath") if isinstance(entry, dict) else None
+            if path and os.path.isfile(config_path(path)):
+                return path
+    found = []
+    cache = os.path.join(plugins, "cache")
+    try:
+        for mkt in os.listdir(cache):
+            base = os.path.join(cache, mkt, slug)
+            if not os.path.isdir(base):
+                continue
+            for ver in os.listdir(base):
+                if os.path.isfile(config_path(os.path.join(base, ver))):
+                    found.append((_version_key(ver), os.path.join(base, ver)))
+    except OSError:
+        pass
+    return max(found)[1] if found else None
+
+
+def env_agent_slug(env=None):
+    env = os.environ if env is None else env
+    for var in AGENT_ENV_VARS:
+        slug = (env.get(var) or "").strip().lower()
+        if slug and slug not in NON_AGENT_SLUGS and _SLUG_RE.match(slug):
+            return slug
+    return ""
+
+
+def session_agent(payload, env=None):
+    """(slug, repo_dir) of the agent whose session this is; ("", None) for nobody's.
+
+    repo_dir is None when the slug is known (env) but its config cannot be found."""
+    env = os.environ if env is None else env
+    start = env.get("CLAUDE_PROJECT_DIR") or (payload or {}).get("cwd") or ""
+    repo = find_agent_repo(start)
+    slug = env_agent_slug(env)
+    if slug:
+        if repo and repo_slug(repo) == slug:
+            return slug, repo
+        return slug, installed_agent_repo(slug)
+    if repo:
+        rs = repo_slug(repo)
+        if rs and rs not in NON_AGENT_SLUGS:
+            return rs, repo
+    return "", None
+
+
+def run_session(payload, env=None):
+    """The canopy session hook: apply the SESSION's agent's rails (see the module doc)."""
+    slug, repo = session_agent(payload, env)
+    if slug and repo:
+        return run(repo, payload)
+    if slug:
+        # Known agent, config nowhere to be found. Assume it mounts every channel rather than
+        # none: an unknown config must cost a blocked raw send, never let one through.
+        return _evaluate({"slug": slug, "channels": "*"}, None, payload, slug, slug.title())
+    return _evaluate({}, None, payload, NO_AGENT_LABEL, NO_AGENT_LABEL, agent=False)
+
+
+def run_loader(repo_dir, payload, env=None):
+    """A per-agent LOADER's call (no `--session`). Enforce only in that agent's own session.
+
+    During the migration both this and the session hook fire. The session hook already applies
+    the session's agent's rails, so a sibling agent's loader must stand down — that is the
+    whole bug (canopy#849). In the agent's OWN session it still enforces, which keeps its
+    fail-closed contract even if the session hook were somehow absent."""
+    try:
+        cfg = json.load(open(config_path(repo_dir), encoding="utf-8"))
+    except Exception:
+        return 0, "", ""
+    own = repo_slug(repo_dir)
+    session_slug, _ = session_agent(payload, env)
+    if session_slug != own:
+        return 0, "", ""
+    return run(repo_dir, payload)
+
+
+def main(repo_dir=None, argv=None):
+    argv = sys.argv[1:] if argv is None else argv
     try:
         payload = json.load(sys.stdin)
     except Exception:
         sys.exit(0)               # never block on a parse failure
-    repo_dir = repo_dir or os.environ.get("CANOPY_AGENT_REPO") or os.getcwd()
-    code, out, err = run(repo_dir, payload)
+    if not isinstance(payload, dict):
+        sys.exit(0)
+    if "--session" in argv:
+        code, out, err = run_session(payload)
+    else:
+        repo_dir = repo_dir or os.environ.get("CANOPY_AGENT_REPO") or os.getcwd()
+        code, out, err = run_loader(repo_dir, payload)
     if out:
         print(out)
     if err:

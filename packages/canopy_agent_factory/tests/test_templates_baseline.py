@@ -22,7 +22,9 @@ def test_templates_is_non_empty_with_expected_count():
     # skills/answer-caller. The declared interface itself is NOT a template: it is live
     # state on canopy-web, never a file in the agent's repo — a change to this number
     # should be a deliberate template addition/removal, not a silent regression.
-    assert len(t) == 21
+    # -1 on 2026-10-09 (canopy#849): hooks/gating_guard.py — canopy's plugin owns the hook.
+    assert len(t) == 20
+    assert "hooks/gating_guard.py" not in t
     assert "config/interface.yaml" not in t
     assert "skills/answer-caller/SKILL.md" in t
     assert "CLAUDE.md" in t

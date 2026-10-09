@@ -653,3 +653,34 @@ def test_agent_copy_that_does_not_load_canopy_is_still_flagged(tmp_path, monkeyp
     _add(d, "hooks/gdoc_gate.py", _GENERIC_GDOC_CHECKER)
     (f,) = fa.promotion_candidates(fa.discover_agents(bases=[base]))
     assert "stale fork" in f.note
+
+
+# ── canopy#849: agents no longer register their own gating hook ─────────────────
+
+def _register_gating_hook(d, rel):
+    path = d / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash|PowerShell", "hooks": [
+        {"type": "command", "command": 'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/gating_guard.py"'}]}]}}))
+
+
+def test_agent_still_registering_its_own_gating_hook_is_flagged(tmp_path):
+    ace = _write_agent(tmp_path, "ace", gating={"deny": [], "approve": []})
+    ada = _write_agent(tmp_path, "ada", gating={"deny": [], "approve": []})
+    _write_agent(tmp_path, "eva", gating={"deny": [], "approve": []})
+    _register_gating_hook(ace, "hooks/hooks.json")
+    _register_gating_hook(ada, ".claude/settings.json")
+    agents = fa.discover_agents(bases=[tmp_path])
+    [f] = [f for f in fa.analyze(agents, baseline=BASELINE, candidates=False)
+           if f.artifact == "gating-hook"]
+    assert f.kind == "distribute" and f.laggards == ["ace", "ada"]
+    assert any("hooks/hooks.json" in d for d in f.detail)
+    assert "canopy#849" in f.note
+
+
+def test_settings_without_a_gating_hook_is_not_flagged(tmp_path):
+    eva = _write_agent(tmp_path, "eva", gating={"deny": [], "approve": []})
+    (eva / ".claude").mkdir()
+    (eva / ".claude" / "settings.json").write_text(json.dumps({"env": {"CANOPY_AGENT": "eva"}}))
+    agents = fa.discover_agents(bases=[tmp_path])
+    assert fa.legacy_gating_hook_findings(agents) == []

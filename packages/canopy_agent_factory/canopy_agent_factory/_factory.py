@@ -156,132 +156,8 @@ def _rollback(target: Path, written: list[Path], *, remove_target: bool) -> None
 # agent inherits, so correctness matters more than richness. Kit extraction is follow-up.
 # --------------------------------------------------------------------------------------
 
-_GATING_GUARD = r'''#!/usr/bin/env python3
-"""PreToolUse gating hook — a LOADER. The engine lives in canopy, not here.
-
-Do not add rules or matching logic to this file. It resolves the installed canopy plugin and
-runs `agent-core/gating_guard.py`, so one implementation serves the whole fleet and an engine
-fix arrives via /canopy:update — exactly like the deny rails in agent-core/gating-baseline.json
-already do.
-
-WHY (2026-08-13): this file used to BE the engine, copied into every agent repo at scaffold
-time and never updated. Config was centralized; code was forked. Measured across four agents:
-three had drifted behind and were silently missing rail features, while one had invented a
-genuinely useful one (`per_statement`) that no other agent could use. A one-line fix cost N
-pull requests. Now it costs one.
-
-What stays yours: `config/gating.json` — this agent's own deny/approve rails and its
-`channels` mounts. That is config, and config is per-agent by design.
-
-DEGRADED MODE. If the engine cannot be resolved this file still enforces the agent's LOCAL
-deny rails, using a deliberately minimal matcher (`tool` + `pattern` only). It never silently
-weakens anything: a rule using a feature this fallback does not implement is treated as
-MATCHING, and an agent that mounts `channels` fails closed outright, because it is depending
-on baseline rails it cannot read. Losing the engine must cost availability, never safety.
-"""
-import json
-import os
-import re
-import runpy
-import sys
-
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG = os.path.join(REPO, "config", "gating.json")
-_RICH = ("tool_pattern", "per_statement")   # engine-only rule features
-
-
-class _NotInstalled(Exception):
-    """The canopy plugin is not installed at all, so /canopy:update does not exist yet."""
-
-
-def _engine():
-    plugin_dir = os.environ.get("CANOPY_PLUGIN_DIR")
-    if not plugin_dir:
-        reg_path = os.path.expanduser("~/.claude/plugins/installed_plugins.json")
-        if not os.path.isfile(reg_path):
-            raise _NotInstalled(reg_path + " does not exist")
-        reg = json.load(open(reg_path, encoding="utf-8"))
-        entries = (reg.get("plugins") or {}).get("canopy@canopy")
-        if not entries:
-            raise _NotInstalled("no canopy@canopy entry in " + reg_path)
-        plugin_dir = entries[0]["installPath"]
-    path = os.path.join(plugin_dir, "agent-core", "gating_guard.py")
-    if not os.path.isfile(path):
-        raise FileNotFoundError(path)
-    return path
-
-
-def _degraded(exc):
-    """Engine unreachable: enforce local deny rails only, or fail closed if we cannot."""
-    try:
-        payload = json.load(sys.stdin)
-    except Exception:
-        sys.exit(0)
-    try:
-        cfg = json.load(open(CONFIG, encoding="utf-8"))
-    except Exception:
-        sys.exit(0)                       # no/broken config = no extra gating (engine parity)
-
-    slug = cfg.get("slug") or os.path.basename(REPO) or "the agent"
-    if cfg.get("channels"):
-        # Depends on baseline rails it cannot read — same fail-closed contract as the engine.
-        if isinstance(exc, _NotInstalled):
-            # Fresh account: /canopy:update does not exist yet, and this hook blocks the
-            # agent's own shell, so only a human-typed `!` command (which skips hooks) can fix it.
-            sys.stderr.write(
-                "BLOCKED (fail closed): " + slug + " mounts gating channels but the canopy "
-                "plugin is not installed (" + str(exc) + ").\n"
-                "Fix: the human types this in the prompt (the leading ! runs it outside "
-                "this hook, which blocks the agent's own shell):\n"
-                "  ! claude plugin marketplace add dimagi-internal/canopy && "
-                "claude plugin install canopy@canopy\n"
-                "No restart needed: this hook re-resolves the engine on every call.\n")
-            sys.exit(2)
-        sys.stderr.write(
-            "BLOCKED (fail closed): " + slug + " mounts gating channels but the canopy gating "
-            "engine (agent-core/gating_guard.py) is unresolvable - "
-            + type(exc).__name__ + ": " + str(exc) + "\n"
-            "Fix: run /canopy:update, then retry.\n")
-        sys.exit(2)
-
-    tool = payload.get("tool_name", "")
-    inp = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
-    shell = tool in ("Bash", "PowerShell")    # engine parity: a "Bash" rail covers every shell
-    if shell:
-        subject = inp.get("command", "") or ""
-    elif tool in ("Edit", "Write", "NotebookEdit"):
-        subject = inp.get("file_path", "") or inp.get("notebook_path", "") or ""
-    else:
-        subject = ""
-    for rule in cfg.get("deny", []):
-        want = rule.get("tool")
-        if want and want != tool and not (want == "Bash" and shell and not rule.get("bash_only")):
-            continue
-        if any(rule.get(k) for k in _RICH):
-            pass                          # cannot evaluate it here -> assume it fires
-        elif rule.get("pattern"):
-            try:
-                if re.search(rule["pattern"], subject) is None:
-                    continue
-            except re.error:
-                continue
-        sys.stderr.write((rule.get("message")
-                          or ("BLOCKED by " + slug + " gating policy (deny rule).")).rstrip() + "\n")
-        sys.exit(2)
-    sys.exit(0)
-
-
-try:
-    ENGINE = _engine()
-except Exception as exc:
-    _degraded(exc)
-
-os.environ.setdefault("CANOPY_AGENT_REPO", REPO)
-runpy.run_path(ENGINE, run_name="__main__")
-'''
-
 _GATING_JSON = '''{
-  "_doc": "Rails, not gates (docs/agent-operating-model.md §1a revision, Jon 2026-07-01; canopy docs/architecture/shared-gog-gdrive.md §4): hooks carry DENY rails only — make the wrong path impossible and name the right one, so {{AGENT_NAME}} self-corrects and keeps going at zero autonomy cost. `channels` mounts the FLEET-BASELINE deny rails shipped in the installed canopy plugin (agent-core/gating-baseline.json) — hooks/gating_guard.py merges them in front of this file's own `deny` list at call time, so a baseline rail fix reaches every agent via /canopy:update. ADD-ONLY: this file can add rails; it can never remove a baseline one. `approve` stays EMPTY by default: a PreToolUse 'ask' is a blocking modal that stalls autonomous work; approval semantics live in the procedural layer (skills/turn Step 2's 'present for approval'). Patterns are regex tested against the Bash command, or the file_path for Edit/Write.",
+  "_doc": "Rails, not gates (docs/agent-operating-model.md §1a revision, Jon 2026-07-01; canopy docs/architecture/shared-gog-gdrive.md §4): hooks carry DENY rails only — make the wrong path impossible and name the right one, so {{AGENT_NAME}} self-corrects and keeps going at zero autonomy cost. `channels` mounts the FLEET-BASELINE deny rails shipped in the installed canopy plugin (agent-core/gating-baseline.json) — canopy's session gating hook (agent-core/gating_guard.py --session, registered by the canopy plugin, not by this agent) merges them in front of this file's own `deny` list at call time, so a baseline rail fix reaches every agent via /canopy:update. ADD-ONLY: this file can add rails; it can never remove a baseline one. `approve` stays EMPTY by default: a PreToolUse 'ask' is a blocking modal that stalls autonomous work; approval semantics live in the procedural layer (skills/turn Step 2's 'present for approval'). Patterns are regex tested against the Bash command, or the file_path for Edit/Write.",
   "slug": "{{AGENT_SLUG}}",
   "channels": ["email"],
   "deny": [],
@@ -289,19 +165,13 @@ _GATING_JSON = '''{
 }
 '''
 
+# No PreToolUse gating hook here (canopy#849). The canopy plugin registers ONE hook that works
+# out whose session it is and applies that agent's config/gating.json. An agent registering its
+# own hook made its rails fire in sibling agents' sessions once plugins went user-scope.
+# `CANOPY_AGENT` is what tells canopy (gating, canopy-web identity) that this is the agent's session.
 _SETTINGS_JSON = '''{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell|Edit|Write|NotebookEdit|Skill",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \\"$CLAUDE_PROJECT_DIR/hooks/gating_guard.py\\""
-          }
-        ]
-      }
-    ]
+  "env": {
+    "CANOPY_AGENT": "{{AGENT_SLUG}}"
   }
 }
 '''
@@ -340,7 +210,7 @@ explicit human approval.** {{AGENT_NAME}} drafts; the human disposes.
 ## Invariants are hooks, not memory — and rails, not approval gates
 Hard behavioral rules do NOT belong in prose alone — prose relies on the model choosing to
 comply, which fails under load. Encode each as **enforcement**: a `deny` rule in
-`config/gating.json` that `hooks/gating_guard.py` turns into a hard block naming the right
+`config/gating.json` that canopy's session gating hook turns into a hard block naming the right
 path (e.g. raw `gog gmail send` → `bin/{{AGENT_SLUG}}-email`). Keep the `approve` list EMPTY:
 a PreToolUse "ask" is a blocking modal that stalls autonomous work — approval semantics live
 in the turn checklist (Step 2's "present for approval"), not in hooks. See the operating
@@ -397,7 +267,7 @@ exercise it and report — don't ask which.
 ## Guardrails (enforced, not just stated)
 - **Reads free, writes gated.** Outbound actions wait for explicit human approval.
 - **One counterpart per turn.** Never reason about two counterparts' threads together.
-- Hard rules live in `config/gating.json` + `hooks/gating_guard.py`, not in this prose.
+- Hard rules live in `config/gating.json` (enforced by canopy's session gating hook), not in this prose.
 
 ## Memory scope (fill in when a memory backend is wired)
 Per-counterpart facts (who they are, history, commitments) and per-campaign/topic state are the
@@ -661,7 +531,7 @@ A Claude Code agent built on the **canopy agent operating model** (see canopy
 ## How it works
 - **Persona** in `persona.md`; the operating contract in `CLAUDE.md`.
 - **A turn** is the unit of work: `skills/turn/SKILL.md` is the re-read-every-time checklist.
-- **Reads free, writes gated — rails, not gates:** `hooks/gating_guard.py` reads
+- **Reads free, writes gated — rails, not gates:** canopy's session gating hook reads
   `config/gating.json` and hard-blocks wrong paths (`deny` rails that name the right path) at
   the tool-call boundary. Approval is procedural — the turn checklist's explicit
   draft-then-ask step — never a blocking hook modal (`approve` stays empty by default).
@@ -923,7 +793,6 @@ _TEMPLATES: dict[str, str] = {
     "skills/answer-caller/SKILL.md": _ASK_SKILL,
     "config/agent.json": _AGENT_JSON,
     ".claude/settings.json": _SETTINGS_JSON,
-    "hooks/gating_guard.py": _GATING_GUARD,
     "skills/turn/SKILL.md": _TURN_SKILL,
     "skills/agent-turn-review/SKILL.md": _AGENT_TURN_REVIEW_SKILL,
     "skills/task-tracker/SKILL.md": _TASK_TRACKER_SKILL,
