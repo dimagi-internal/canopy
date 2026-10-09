@@ -1376,9 +1376,12 @@ def render_ai_package(bundle: dict, judgments: dict, reading: str = "") -> str:
                      f"{', '.join(spec['exclude_paths'])}.")
     if judgments.get("scope_notes"):
         lines += [f"- {n}" for n in judgments["scope_notes"]]
-    lines.append(f"- Sources: {sum(1 for c in convs if c['text_source'] == 'canopy')} sessions "
-                 f"read from Canopy, {sum(1 for c in convs if c['text_source'] == 'local')} from "
-                 "local transcripts (Canopy had merged or lost their earlier messages).")
+    n_local = sum(1 for c in convs if c["text_source"] == "local")
+    lines.append("- Sources: Canopy is the index (which sessions, their PRs and edits, and the "
+                 f"artifacts). Prompt text came from local transcripts for {n_local} of "
+                 f"{len(convs)} sessions, and from Canopy for the rest. Where both exist, the "
+                 "transcript can tell what the person typed apart from subagent prompts and "
+                 "injected skill text, so it is used.")
     if cov.get("split_sessions"):
         lines.append(f"- {len(cov['split_sessions'])} Canopy session record(s) held several "
                      "conversations under one task name; they were split back apart.")
