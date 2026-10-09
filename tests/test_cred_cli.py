@@ -302,3 +302,9 @@ def test_whoami_human_and_turn(monkeypatch):
     monkeypatch.setenv("CANOPY_AGENT", "eva")
     r = CliRunner().invoke(cred_cli.cred_group, ["whoami", "--json"])
     assert json.loads(r.output)["agent"] == "eva"
+
+
+def test_non_member_404_says_get_invited(web):
+    web["fail"] = True  # fake raises "-> 404"
+    v = cred_cli.decide("ace", runner=FakeOp(), which=_which(False))
+    assert not v.allowed and "not a member of its workspace" in v.message

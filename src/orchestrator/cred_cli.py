@@ -431,10 +431,15 @@ def decide(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
         return Verdict(slug, True, "human", source=source, via="1password",
                        reason=f"1Password ({probe.mode}) can read vault '{vault}'",
                        op_mode=probe.mode, vault=vault, notes=notes)
+    message = _refusal_1password(slug, vault, probe)
+    if " 404" in (access.get("error") or "") or "-> 404" in (access.get("error") or ""):
+        # canopy-web answers /access with 404 to a non-member of the agent's workspace.
+        message += (f" canopy-web also does not show you agent '{slug}' (not a member of its "
+                    f"workspace) — if '{slug}' keeps its credentials on canopy-web, ask a "
+                    f"workspace admin to invite you first.")
     return Verdict(slug, False, "human", source=source, via=None,
                    reason=f"1password: {probe.problem}", vault=vault,
-                   message=_refusal_1password(slug, vault, probe), exit_code=EXIT_REFUSED,
-                   notes=notes)
+                   message=message, exit_code=EXIT_REFUSED, notes=notes)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
