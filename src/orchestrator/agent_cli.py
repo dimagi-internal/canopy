@@ -914,7 +914,10 @@ def _no_such_task(ref):
 @click.option("--project", "project", default=None, metavar="EXT_ID_OR_NAME",
               help="File this task into a project (P<N> ext_id or its exact name). Pass \"\" "
                    "to take it out of one; omitting it leaves the filing alone.")
-def agent_set(slug, task_id, links, append_link, append_notes, project, **fields):
+@click.option("--parent", "parent", default=None, metavar="T<N>",
+              help="Make this a subtask of T<N> (same project; at most three levels). Pass \"\" "
+                   "to make it top-level again; omitting it leaves it alone.")
+def agent_set(slug, task_id, links, append_link, append_notes, project, parent, **fields):
     """Patch a task (store rationale/source/plan/status/score/review/links/…).
 
     Score a task WHEN you mark it done (--status done --score --review) so a manager
@@ -938,6 +941,8 @@ def agent_set(slug, task_id, links, append_link, append_notes, project, **fields
             # "" is a deliberate un-filing, so it skips resolution; anything else
             # has to name a project that exists.
             fields["project"] = resolve_project_ref(client, project) if project.strip() else ""
+        if parent is not None:
+            fields["parent"] = parent.strip()
         if links is not None:
             fields["links"] = parse_task_links(links)
         elif append_link is not None:
@@ -1237,8 +1242,11 @@ def next_task_ext_id(tasks):
               help="File the task into a project (P<N> ext_id or its exact name) — the "
                    "same work its `Projects/<name>` Drive folder holds. Leave it off for "
                    "a genuine one-off.")
+@click.option("--parent", default="", metavar="T<N>",
+              help="Create it as a subtask of T<N>: it joins T<N>'s project (subtasks, not "
+                   "subprojects — one board per product area). At most three levels deep.")
 def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confidence, due,
-              links, notes, project):
+              links, notes, project, parent):
     """Create ONE task on the board (auto-assigns the next T<N>).
 
     Safe to repeat: the create is keyed `<slug>:<ext_id>`, so re-running it hands back
@@ -1274,6 +1282,8 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
             "notes": notes.strip(),
             "origin": "task-tracker",
         }
+        if parent.strip():
+            task["parent"] = parent.strip()
         created = client.create_tasks([task])
         _emit({"added": (created[0].get("ext_id") if created else None) or task["ext_id"],
                "result": created})

@@ -1139,6 +1139,16 @@ def _destination(ident: GdocIdentity, area: str | None, project: str | None, tra
     return found or f"(would create {'/'.join(x for x in (area, project) if x)})"
 
 
+def _task_destination(ident: GdocIdentity, task_ref: str, project: str | None, area: str | None,
+                      trace: list, dry_run: bool) -> str:
+    """The folder a --task publish files into (orchestrator.task_folder). A task already
+    names its project, so --project/--area beside it could only disagree with it."""
+    if project or area:
+        raise AgentGdocError("--task already names its project and folder; drop --project/--area")
+    from orchestrator.task_folder import resolve_task_destination
+    return resolve_task_destination(ident, task_ref, trace=trace, dry_run=dry_run)
+
+
 @click.group("gdoc")
 def gdoc_group():
     """Author Google Docs as the agent — shared engine, per-agent identity
@@ -1156,12 +1166,15 @@ def gdoc_group():
               "when it has none. A name with no project files into Projects/<name>.")
 @click.option("--area", help="Top-level area under the agent root when resolving a destination: "
               "'Projects' (deliverables, default) or 'Process State' (durable trackers).")
+@click.option("--task", "task_ref", help="The agent's canopy-web task (T<N>): file into the Drive "
+              "folder it links, else find-or-create Projects/<project>/<ext_id title> (inside its "
+              "parent task's folder, for a subtask) and record it on the task.")
 @click.option("--replace", help="File id of an existing Doc to update IN PLACE (keeps the link).")
 @click.option("--share", type=click.Choice(["domain", "anyone", "user", "none"]), default=None,
               help="Share posture (default: agent.json `gdrive_share_default`, else domain).")
 @click.option("--share-email", help="Recipient for --share user.")
 @click.option("--dry-run", is_flag=True, help="Render + print the commands without touching Drive.")
-def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, area,
+def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, area, task_ref,
                  replace, share, share_email, dry_run):
     """Publish MD as a rendered Google Doc authored as the agent, filed + shared + verified.
 
@@ -1175,7 +1188,9 @@ def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, a
         ident = _gdoc_identity_from_opts(repo, agent, account, client)
         trace: list = []
         if not replace and not parent:
-            if project or area:
+            if task_ref:
+                parent = _task_destination(ident, task_ref, project, area, trace, dry_run)
+            elif project or area:
                 parent = _destination(ident, area, project, trace, dry_run)
             else:
                 parent = ident.root_folder or None
@@ -1335,11 +1350,14 @@ def gsheet_group():
               "when it has none. A name with no project files into Projects/<name>.")
 @click.option("--area", help="Top-level area under the agent root when resolving a destination: "
               "'Projects' (deliverables, default) or 'Process State' (durable trackers).")
+@click.option("--task", "task_ref", help="The agent's canopy-web task (T<N>): file into the Drive "
+              "folder it links, else find-or-create Projects/<project>/<ext_id title> (inside its "
+              "parent task's folder, for a subtask) and record it on the task.")
 @click.option("--share", type=click.Choice(["domain", "anyone", "user", "none"]), default=None,
               help="Share posture (default: agent.json `gdrive_share_default`, else domain).")
 @click.option("--share-email", help="Recipient for --share user.")
 @click.option("--dry-run", is_flag=True, help="Print the commands without touching Drive.")
-def gsheet_publish(repo, agent, account, client, tabs, name, parent, project, area,
+def gsheet_publish(repo, agent, account, client, tabs, name, parent, project, area, task_ref,
                    share, share_email, dry_run):
     """Publish TSV/CSV as a Google Sheet authored as the agent, filed + shared + verified.
 
@@ -1352,7 +1370,9 @@ def gsheet_publish(repo, agent, account, client, tabs, name, parent, project, ar
         ident = _gdoc_identity_from_opts(repo, agent, account, client)
         trace: list = []
         if not parent:
-            if project or area:
+            if task_ref:
+                parent = _task_destination(ident, task_ref, project, area, trace, dry_run)
+            elif project or area:
                 parent = _destination(ident, area, project, trace, dry_run)
             else:
                 raise AgentGdocError(
