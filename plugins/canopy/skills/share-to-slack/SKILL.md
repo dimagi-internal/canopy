@@ -8,7 +8,8 @@ description: |
   we're doing", "post an update to #channel", or "start a slack thread from
   this session". Argument: a channel (`#dev` or an id), plus `bind` for a
   connected thread. Run it again on a bound session to post an update into
-  its thread.
+  its thread, or with `unbind` to disconnect it — use for "detach / disconnect
+  / unbind this session from slack", "stop posting to slack".
 ---
 
 # Share to Slack
@@ -22,7 +23,10 @@ thread to this session.
 ## Step 1 — channel and mode
 
 Parse the arguments: a channel (`#name`, `name`, or an id like `C0123ABCD`) and
-an optional `bind`.
+an optional `bind` — or `unbind`.
+
+- **`unbind`** (also "detach", "disconnect", "stop posting to Slack") → skip to
+  [Unbind](#unbind) below. No channel or summary is needed.
 
 - **This session was already shared with `bind`** (earlier in this conversation,
   or the user says "post an update" / "update the thread") → no channel needed:
@@ -89,3 +93,28 @@ them:
 
 If the `canopy-web` MCP tools aren't available at all, say so. Don't fall back
 to posting any other way.
+
+## Unbind
+
+Disconnects this session from the Slack thread it was bound to: its replies stop
+posting there, and replies in the thread stop reaching it (they are ignored).
+The thread gets one short note saying it is no longer connected; nothing already
+posted is deleted. Use it when the user asks to detach, disconnect or unbind
+this session from Slack.
+
+Read the identifiers as in Step 3, then call canopy-web's
+`detach_session_from_slack` tool with `claude_session_id` (and
+`emdash_task` / `emdash_project` as the fallback). No summary, no channel.
+
+Report what it returned:
+
+- `status: detached` → "Disconnected from <#channel>; replies there no longer
+  reach this session." If `notice_posted` is false, add that the note to the
+  thread could not be posted (the disconnect still happened).
+- `status: not_bound` → this session wasn't connected to a Slack thread; nothing
+  to do.
+- A 403 means the caller can read the session but not act in it (owners and
+  editors may disconnect); a 404 means canopy can't find this session. Relay it;
+  don't retry another way.
+
+To connect it again later, share it with `bind`: that starts a fresh thread.
