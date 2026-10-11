@@ -812,6 +812,9 @@ def _read_within_home_tree(method: str, path: str, refusal: str, send, *, base: 
                            parse):
     """Answer a 422 `workspace-required` by reading within the home tree.
 
+    A ``workspace`` the caller passed for this call is read alone (they named it);
+    a home that came from config or the agent record spans its tree.
+
     GET with a JSON body (``parse`` set) fans out over the tree and merges; a GET
     that cannot be merged, a text read, or a non-GET goes to the home workspace
     alone (a narrower answer, never a wider one)."""
@@ -829,6 +832,14 @@ def _read_within_home_tree(method: str, path: str, refusal: str, send, *, base: 
             f"{' (' + detail + ')' if detail else ''}. Set CANOPY_WEB_WORKSPACE=<slug> "
             f"(or pass --workspace) to read within that workspace's organisation; "
             f"`canopy workspace list` shows yours.")
+    explicit = (workspace or "").strip()
+    if explicit:
+        # The caller named this workspace for THIS call: read exactly it, not its tree.
+        pinned = pinned_api_path(path, explicit)
+        status, text = send(pinned)
+        if not (200 <= status < 300):
+            raise CanopyError(f"{method} {pinned} -> {status}: {text[:400]}")
+        return parse(text) if parse is not None else text
     tree = home_tree(home, base=base, token=token, transport=transport)
     if (base, token, home) not in _ANNOUNCED_TREES:
         _ANNOUNCED_TREES.add((base, token, home))

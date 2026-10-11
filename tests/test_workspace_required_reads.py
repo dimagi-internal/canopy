@@ -215,3 +215,12 @@ def test_an_agent_with_no_workspace_configured_reads_in_its_records_organisation
     assert sorted(a["slug"] for a in out["items"]) == ["ada", "echo", "eva", "hal"]
     assert ("GET", "/api/agents/ada/") in seen
     assert ("GET", "/api/w/marshellis/agents/") not in seen
+
+
+def test_a_workspace_named_for_the_call_is_read_alone(monkeypatch):
+    monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "dimagi")
+    seen = []
+    out = cw.call("GET", "/api/agents/", workspace="connect", base_url="https://x.test",
+                  token="t", transport=multi_tree_server(seen))
+    assert [a["slug"] for a in out["items"]] == ["echo", "hal"]
+    assert seen == [("GET", "/api/agents/"), ("GET", "/api/w/connect/agents/")]
