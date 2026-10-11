@@ -94,6 +94,36 @@ A reply you post on your OWN card — a note, or an answer to your own question 
 When you *suggest* a task, store the context immediately (`set` — rationale, plan,
 source url) so it is never re-derived later.
 
+## The human why — their words, not your reading of them
+
+`rationale` is YOUR inference. It does not say who wanted the work, and a reader cannot tell a
+person's ask from your guess at one. So a task has a second, separate field, **`human_why`**: what
+a person actually said that the task answers. The board shows it above your rationale and draws
+it heavier, because when a person's view is a good one it outweighs your inference (the Supply
+brief, Part 3, 2026-10-09).
+
+**Whenever a task comes from a person, record their words**, one entry per quote:
+- **`quote`** — their words **verbatim**: copied from the email, the doc comment, the prompt, the
+  Slack message. Trim to the part that carries the ask; never reword, summarise or fix typos.
+- **`who`** — `{email, name}` (or `person_id`). canopy links the real Person when it knows them in
+  your workspace; someone it has never met still gets their name and address on the card.
+- **`source_url`** — where they said it: the thread, the doc (a `#heading=` anchor beats the bare
+  doc), the session. **`said_at`** — when, if you know it.
+
+**Leave it EMPTY rather than paraphrase.** No quote you can point at means no `human_why` — your
+reading of what they meant belongs in `rationale`, labelled as yours. A paraphrase in
+`human_why` is worse than nothing: it puts your words in a person's mouth on the one field built
+to keep the two apart. Work you proposed yourself has no human why until someone says something
+about it; when they do, add it.
+```
+canopy agent add --slug <slug> --title "…" --quote "<their exact words>" \
+    --quote-by "Jonathan Jackson <jj@dimagi.com>" --quote-url <where> [--quote-at 2026-10-09]
+canopy agent set --slug <slug> --task-id T<N> --append-quote "<their exact words>" \
+    --quote-by "…" --quote-url <where>          # keeps the quotes already on the card
+```
+Over MCP: `create_tasks` / `patch_task` take `human_why: [{quote, who: {email, name}, source_url,
+said_at}]` — a PATCH **replaces** the list, so send the ones to keep.
+
 ## Projects — one name, two halves
 
 A **project** is a real piece of work that outlives a turn: the conference you are planning,
@@ -210,7 +240,9 @@ its notes. The procedure (files, grants, thread) is `agent-core/handoff.md`.
   in-repo half had been shippable the whole week. The two `gh`/`aws` calls that proved it took
   under a minute; the card had been wrong for eight days, and its human read it as still blocked.)
 - **Taking on multi-turn work:** create the task (status `in_progress` if a human asked for it,
-  `suggested` if you are proposing it) and immediately `set` rationale + plan + links. If it
+  `suggested` if you are proposing it) and immediately `set` rationale + plan + links. If a
+  person asked for it, record their words too (`--quote` / `human_why`, verbatim — see "The
+  human why" above); if nobody did, leave it empty. If it
   belongs to a project, pass `--project "<name>"`; if it IS a new project, register it first
   (`project-add`, with its `Projects/<name>` folder link) so the folder and its state share
   one name.
