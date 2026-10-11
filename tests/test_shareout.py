@@ -255,23 +255,46 @@ class TestResolveDefaultRange:
 
 
 class TestFetchLatestPeriodEnd:
+    @staticmethod
+    def _serve(monkeypatch, status, body, seen=None):
+        from orchestrator import canopy_web
+
+        def transport(method, url, headers, data):
+            if seen is not None:
+                seen.append(url)
+            return status, body
+        monkeypatch.setattr(canopy_web, "urllib_transport", transport)
+
     def test_parses_period_end_from_items(self, monkeypatch):
-        import io
-        payload = json.dumps({"items": [{"period_end": "2026-06-03T17:30:00Z"}], "total": 1}).encode()
-        monkeypatch.setattr(shareout.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(payload))
+        payload = json.dumps({"items": [{"period_end": "2026-06-03T17:30:00Z"}], "total": 1})
+        self._serve(monkeypatch, 200, payload)
         assert shareout.fetch_latest_period_end("https://x", "tok") == _dt(2026, 6, 3, 17, 30, 0)
 
     def test_empty_feed_returns_none(self, monkeypatch):
-        import io
-        monkeypatch.setattr(shareout.urllib.request, "urlopen",
-                            lambda *a, **k: io.BytesIO(b'{"items": [], "total": 0}'))
+        self._serve(monkeypatch, 200, '{"items": [], "total": 0}')
         assert shareout.fetch_latest_period_end("https://x", "tok") is None
 
     def test_network_error_returns_none(self, monkeypatch):
+        from orchestrator import canopy_web
+
         def boom(*a, **k):
             raise OSError("unreachable")
-        monkeypatch.setattr(shareout.urllib.request, "urlopen", boom)
+        monkeypatch.setattr(canopy_web, "urllib_transport", boom)
         assert shareout.fetch_latest_period_end("https://x", "tok") is None
+
+    def test_the_feed_read_is_workspace_scoped(self, monkeypatch):
+        monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")
+        seen = []
+        self._serve(monkeypatch, 200, '{"items": []}', seen)
+        shareout.fetch_latest_period_end("https://x", "tok")
+        assert seen == ["https://x/api/w/connect/shareouts/?limit=1"]
+
+    def test_a_workspace_required_refusal_says_so(self, monkeypatch, capsys):
+        monkeypatch.delenv("CANOPY_WEB_WORKSPACE", raising=False)
+        self._serve(monkeypatch, 422, json.dumps(
+            {"type": "https://canopy-web.dimagi.com/problems/workspace-required", "detail": "x"}))
+        assert shareout.fetch_latest_period_end("https://x", "tok") is None
+        assert "CANOPY_WEB_WORKSPACE" in capsys.readouterr().err
 
 
 class TestFillAllPrsFromCorpus:

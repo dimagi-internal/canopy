@@ -38,6 +38,12 @@ def resolve_base_url(base_url: Optional[str]) -> str:
 # ``/api/walkthroughs/…`` is rewritten to ``/api/w/<ws>/walkthroughs/…`` when a
 # workspace is active; unscoped apps (sessions, system, me, …) are
 # left alone. Mirrors WS_SCOPED_API_PREFIXES on the canopy-web frontend.
+#
+# Deliberately NOT every app: a pinned path reaches exactly one workspace, so
+# pinning e.g. /api/agents/<slug>/ to dimagi would 404 an agent that lives in
+# connect. Lists canopy-web refuses unpinned (canopy-web#1411) are handled where
+# the refusal arrives — see "Lists a multi-organisation identity must pin" below
+# (`pinned_api_path`, `_read_within_home_tree`).
 SCOPED_APPS = ("projects", "walkthroughs", "reviews", "shareouts", "ddd", "timeline")
 
 
@@ -489,7 +495,15 @@ def call(method: str, path: str, body=None, *,
     headers = {**provenance_headers(), **(headers or {}), "Authorization": f"Bearer {tok}",
                "Content-Type": "application/json"}
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    status, text = transport(method, base + path, headers, data)
+
+    def send(p: str) -> "tuple[int, str]":
+        return transport(method, base + p, headers, data)
+
+    status, text = send(path)
+    if is_workspace_required(status, text) and not path.startswith(PINNED_PREFIX):
+        return _read_within_home_tree(method, path, text, send, base=base, token=tok,
+                                      workspace=workspace, transport=transport,
+                                      parse=lambda t: json.loads(t) if t.strip() else {})
     if not (200 <= status < 300):
         raise CanopyError(f"{method} {path} -> {status}: {text[:400]}")
     return json.loads(text) if text.strip() else {}
@@ -507,8 +521,17 @@ def call_text(method: str, path: str, *,
     tok = resolve_token(token)
     path = scoped_api_path(path, workspace)
     transport = transport or urllib_transport
-    status, text = transport(method, base + path,
-                             {**provenance_headers(), "Authorization": f"Bearer {tok}"}, None)
+    headers = {**provenance_headers(), "Authorization": f"Bearer {tok}"}
+
+    def send(p: str) -> "tuple[int, str]":
+        return transport(method, base + p, headers, None)
+
+    status, text = send(path)
+    if is_workspace_required(status, text) and not path.startswith(PINNED_PREFIX):
+        # Text has no shape to merge: read it in the home workspace alone.
+        return _read_within_home_tree(method, path, text, send, base=base, token=tok,
+                                      workspace=workspace, transport=transport,
+                                      parse=None)
     if not (200 <= status < 300):
         raise CanopyError(f"{method} {path} -> {status}: {text[:400]}")
     return text
@@ -586,3 +609,252 @@ def confirm_landed(app: str, obj_id: str, workspace: str, *, query: Optional[dic
         f"another workspace. Check which identity wrote it (CANOPY_WEB_PAT) and move or "
         f"delete it."
     )
+
+
+# --- Lists a multi-organisation identity must pin (canopy-web#1411) -----------
+#
+# canopy-web refuses an UNPINNED list or search (422, problem type
+# `…/workspace-required`) when the caller's workspaces sit in more than one tenant
+# tree — e.g. ada@ in dimagi + connect (one tree) AND the family root `marshellis`.
+# A by-id read is never refused, and a pinned list (`/api/w/<ws>/…`) holds exactly
+# that ONE workspace. So pinning every call to one slug would both 404 every
+# object living in a sibling workspace (Ada, home `dimagi`, reading `echo` in
+# `connect`) and drop the siblings from every list.
+#
+# The client therefore keeps sending flat, and only when the server says a pin is
+# required does it read within the HOME workspace's tree: the same GET pinned to
+# each of the caller's workspaces in that tree, merged — exactly what the flat
+# list returned before #1411, minus the other organisation. No home named → a
+# clear error naming how to set one, never a guess.
+
+PINNED_PREFIX = "/api/w/"
+WORKSPACE_REQUIRED_TYPE = "workspace-required"
+WORKSPACES_PATH = "/api/workspaces/"
+
+#: Flat-only routes: identity, the workspace switcher/admin, invites (accepted
+#: before membership), auth/contact/public surfaces, tokens and the runner plane.
+#: canopy-web never refuses these unpinned, and a pin means nothing to them (or
+#: 404s an invitee), so :func:`pinned_api_path` leaves them flat.
+FLAT_ONLY_PREFIXES = (
+    "/api/me/", "/api/workspaces/", "/api/invites/", "/api/auth/", "/api/contact/",
+    "/api/a2a/", "/api/oauth/", "/api/embed/", "/api/inbound/", "/api/public/",
+    "/api/tokens/", "/api/system/", "/api/harness/runners/",
+)
+
+
+class ReadWorkspaceRequiredError(CanopyError, WorkspaceRequiredError):
+    """canopy-web refused an unpinned list (the caller's workspaces span more than
+    one organisation) and no home workspace is configured to read it within.
+
+    A :class:`CanopyError`, so a caller that degrades on a failed read keeps doing
+    so — but its message says exactly what to set."""
+
+
+def is_workspace_required(status: int, text: str) -> bool:
+    """True for canopy-web's 422 `workspace-required` problem (canopy-web#1411)."""
+    if status != 422 or not text:
+        return False
+    try:
+        body = json.loads(text)
+    except ValueError:
+        return WORKSPACE_REQUIRED_TYPE in text
+    kind = str(body.get("type") or "") if isinstance(body, dict) else ""
+    return kind.rstrip("/").endswith(WORKSPACE_REQUIRED_TYPE)
+
+
+def pinned_api_path(path: str, workspace: str) -> str:
+    """``/api/<rest>`` → ``/api/w/<workspace>/<rest>`` for ANY tenant route.
+
+    canopy-web's tenancy middleware strips ``/w/<ws>`` from every ``/api/`` path,
+    so any app can be pinned; :data:`FLAT_ONLY_PREFIXES` (and an already-pinned
+    path, or one outside ``/api/``) are returned unchanged. Unlike
+    :func:`scoped_api_path` this always pins — use it where a pin is REQUIRED."""
+    ws = (workspace or "").strip()
+    if not ws or not path.startswith("/api/") or path.startswith(PINNED_PREFIX):
+        return path
+    bare = path.split("?", 1)[0]
+    if any((bare + "/").startswith(p) or bare == p.rstrip("/") for p in FLAT_ONLY_PREFIXES):
+        return path
+    return f"/api/w/{ws}{path[len('/api'):]}"
+
+
+def _slug_env_value(slug: str, key: str) -> str:
+    """``key`` out of agent ``slug``'s provisioned ``~/.<slug>/.env``, or ""."""
+    if not slug or slug in _NON_AGENT_SLUGS or not _SLUG_RE.match(slug):
+        return ""
+    try:
+        text = (Path.home() / f".{slug}" / ".env").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith(f"{key}="):
+            return line.partition("=")[2].strip().strip('"').strip("'")
+    return ""
+
+
+def resolve_home_workspace(workspace: Optional[str] = None) -> Optional[str]:
+    """The workspace whose ORGANISATION (tenant tree) a refused list is read in.
+
+    Precedence: explicit arg → env ``CANOPY_WEB_WORKSPACE`` → the agent's own
+    ``~/.<slug>/.env`` ``CANOPY_WEB_WORKSPACE`` (the same file its PAT comes
+    from, so an agent's identity and its organisation travel together) → None.
+    When this is None in an agent's session, :func:`_read_within_home_tree` falls
+    back to the workspace the agent's record lives in."""
+    ws = resolve_workspace(workspace)
+    if ws:
+        return ws
+    return _slug_env_value(agent_context_slug(), "CANOPY_WEB_WORKSPACE") or None
+
+
+def _agent_record_workspace(*, base: str, token: str, transport: "Transport") -> Optional[str]:
+    """In an agent's session with no workspace configured, the workspace its
+    canopy-web agent record lives in — a by-slug read, which is never refused.
+    The record is the one thing that knows where the agent lives (it moves when
+    the agent does), so an agent needs no extra provisioning to read its own
+    organisation's lists. "" / None outside an agent session or on any failure."""
+    slug = agent_context_slug()
+    if not slug:
+        return None
+    try:
+        status, text = transport("GET", f"{base}/api/agents/{slug}/",
+                                 {**provenance_headers(), "Authorization": f"Bearer {token}"}, None)
+        rec = json.loads(text) if 200 <= status < 300 and text.strip() else {}
+    except Exception:  # noqa: BLE001 — fall through to the clear error
+        return None
+    ws = rec.get("workspace") if isinstance(rec, dict) else None
+    return (str(ws).strip() or None) if ws else None
+
+
+_TREES: dict = {}
+
+
+def _reset_tree_cache() -> None:
+    """Test seam — forget the per-process home-tree lookups."""
+    _TREES.clear()
+
+
+def home_tree(home: str, *, base: str, token: str, transport: "Transport") -> list:
+    """The caller's workspaces in ``home``'s tenant tree, ``home`` first.
+
+    Read from ``GET /api/workspaces/`` (never refused): a row's ``root`` when the
+    server sends it, else its ``parent`` chain. Cached per (server, token, home).
+    Raises :class:`ReadWorkspaceRequiredError` when the caller is not in ``home``."""
+    key = (base, token, home)
+    if key in _TREES:
+        return _TREES[key]
+    status, text = transport("GET", base + WORKSPACES_PATH,
+                             {**provenance_headers(), "Authorization": f"Bearer {token}"}, None)
+    if not (200 <= status < 300):
+        raise CanopyError(f"GET {WORKSPACES_PATH} -> {status}: {text[:400]}")
+    data = json.loads(text) if text.strip() else []
+    if isinstance(data, dict):
+        data = data.get("items") or data.get("result") or data.get("results") or []
+    rows = {str(r.get("slug")): r for r in data if isinstance(r, dict) and r.get("slug")}
+    if home not in rows:
+        raise ReadWorkspaceRequiredError(
+            f"CANOPY_WEB_WORKSPACE={home!r} is not one of your canopy-web workspaces "
+            f"({', '.join(sorted(rows)) or 'none'}) — set it to one you belong to.")
+
+    def root(slug: str) -> str:
+        seen = set()
+        while slug in rows and slug not in seen:
+            seen.add(slug)
+            r = rows[slug]
+            if r.get("root"):
+                return str(r["root"])
+            parent = r.get("parent")
+            if not parent:
+                return slug
+            slug = str(parent)
+        return slug
+
+    home_root = root(home)
+    tree = [home] + sorted(s for s in rows if s != home and root(s) == home_root)
+    _TREES[key] = tree
+    return tree
+
+
+def _merge(results: list):
+    """One payload from per-workspace pages: lists concatenate, ``{"items": [...]}``
+    envelopes concatenate their items (``total`` summed). Rows with an ``id`` seen
+    twice are kept once. Anything else cannot be merged → None."""
+    def dedupe(items):
+        seen, out = set(), []
+        for it in items:
+            key = (it.get("id"), it.get("ext_id"), it.get("slug")) if isinstance(it, dict) else None
+            if key and any(key) and key in seen:
+                continue
+            if key and any(key):
+                seen.add(key)
+            out.append(it)
+        return out
+
+    if all(isinstance(r, list) for r in results):
+        return dedupe([it for r in results for it in r])
+    for env in ("items", "results"):
+        if all(isinstance(r, dict) and isinstance(r.get(env), list) for r in results):
+            merged = dict(results[0])
+            merged[env] = dedupe([it for r in results for it in r[env]])
+            if all(isinstance(r.get("total"), int) for r in results):
+                merged["total"] = sum(r["total"] for r in results)
+            if "count" in merged and all(isinstance(r.get("count"), int) for r in results):
+                merged["count"] = sum(r["count"] for r in results)
+            return merged
+    return None
+
+
+_ANNOUNCED_TREES: set = set()
+
+
+def _read_within_home_tree(method: str, path: str, refusal: str, send, *, base: str,
+                           token: str, workspace: Optional[str], transport: "Transport",
+                           parse):
+    """Answer a 422 `workspace-required` by reading within the home tree.
+
+    A ``workspace`` the caller passed for this call is read alone (they named it);
+    a home that came from config or the agent record spans its tree.
+
+    GET with a JSON body (``parse`` set) fans out over the tree and merges; a GET
+    that cannot be merged, a text read, or a non-GET goes to the home workspace
+    alone (a narrower answer, never a wider one)."""
+    home = resolve_home_workspace(workspace) or _agent_record_workspace(
+        base=base, token=token, transport=transport)
+    if not home:
+        detail = ""
+        try:
+            detail = str((json.loads(refusal) or {}).get("detail") or "")
+        except (ValueError, AttributeError):
+            pass
+        raise ReadWorkspaceRequiredError(
+            f"{method} {path} -> 422 workspace-required: your canopy-web workspaces span "
+            f"more than one organisation, so a list must name one"
+            f"{' (' + detail + ')' if detail else ''}. Set CANOPY_WEB_WORKSPACE=<slug> "
+            f"(or pass --workspace) to read within that workspace's organisation; "
+            f"`canopy workspace list` shows yours.")
+    explicit = (workspace or "").strip()
+    if explicit:
+        # The caller named this workspace for THIS call: read exactly it, not its tree.
+        pinned = pinned_api_path(path, explicit)
+        status, text = send(pinned)
+        if not (200 <= status < 300):
+            raise CanopyError(f"{method} {pinned} -> {status}: {text[:400]}")
+        return parse(text) if parse is not None else text
+    tree = home_tree(home, base=base, token=token, transport=transport)
+    if (base, token, home) not in _ANNOUNCED_TREES:
+        _ANNOUNCED_TREES.add((base, token, home))
+        print(f"[canopy] your workspaces span more than one organisation — reading lists "
+              f"within {home}'s organisation ({', '.join(tree)}) (canopy-web#1411)",
+              file=sys.stderr)
+    targets = tree if (method.upper() == "GET" and parse is not None) else [home]
+    results = []
+    for ws in targets:
+        pinned = pinned_api_path(path, ws)
+        status, text = send(pinned)
+        if not (200 <= status < 300):
+            raise CanopyError(f"{method} {pinned} -> {status}: {text[:400]}")
+        results.append(parse(text) if parse is not None else text)
+    if len(results) == 1:
+        return results[0]
+    merged = _merge(results)
+    return results[0] if merged is None else merged

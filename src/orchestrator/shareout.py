@@ -13,6 +13,7 @@ import datetime as dt
 import json
 import os
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -96,15 +97,22 @@ def resolve_range(
 
 def fetch_latest_period_end(api_url: str, token: str, timeout: int = 15) -> dt.date | None:
     """Return the most recent existing shareout's period_end (the feed is
-    ordered newest-period-first), or None when there are none / on any error."""
-    url = f"{api_url.rstrip('/')}/api/shareouts/?limit=1"
-    req = urllib.request.Request(url, headers=with_provenance({"Authorization": f"Bearer {token}"}))
+    ordered newest-period-first), or None when there are none / on any error.
+
+    Goes through `canopy_web.call` so the feed read is workspace-scoped like
+    every other canopy-web list: pinned when CANOPY_WEB_WORKSPACE is set, and
+    read within the home organisation when canopy-web refuses an unpinned list
+    (canopy-web#1411). A refusal with no workspace set says so on stderr rather
+    than silently defaulting the range."""
+    del timeout  # the shared transport has no per-call timeout
     try:
-        resp = urllib.request.urlopen(req, timeout=timeout)
-        data = json.loads(resp.read().decode("utf-8") or "{}")
-    except (urllib.error.HTTPError, urllib.error.URLError, OSError, json.JSONDecodeError):
+        data = canopy_web.call("GET", "/api/shareouts/?limit=1", base_url=api_url, token=token)
+    except canopy_web.ReadWorkspaceRequiredError as e:
+        print(f"[shareout] could not read the latest shareout: {e}", file=sys.stderr)
         return None
-    items = data.get("items") or []
+    except (canopy_web.CanopyError, urllib.error.URLError, OSError, ValueError):
+        return None
+    items = (data.get("items") if isinstance(data, dict) else data) or []
     if not items:
         return None
     return _parse_ts(items[0].get("period_end"))
