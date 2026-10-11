@@ -120,6 +120,8 @@ def test_prose_and_unrelated_commands_are_not_railed(cmd):
     ("canopy gdoc publish --md f.md --project 'Bay Area Trip'", False),
     ("canopy gsheet publish --tab r.tsv --project 'Bay Area Trip'", False),
     ("canopy gdoc publish --md f.md --area 'Process State'", False),
+    ("canopy gdoc publish --md f.md --task T71", False),             # the task's own folder (T72)
+    ("canopy gsheet publish --tab a.tsv --name N --task T71", False),
     ("canopy gdoc publish --md f.md --replace DOCID", False),     # keeps its existing home
     ("canopy gdoc publish --md f.md --parent FOLDER", False),
     ("canopy gslides publish --pptx d.pptx --name N", True),
