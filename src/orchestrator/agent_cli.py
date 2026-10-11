@@ -1205,7 +1205,9 @@ def human_why_entry(quote: str, by: str, url: str = "", at: str = "") -> dict:
                                    "(\"Name <email>\", an email, or a name)")
     entry = {"quote": quote, "who": who, "source_url": (url or "").strip()}
     if (at or "").strip():
-        entry["said_at"] = at.strip() if "T" in at else f"{at.strip()}T00:00:00Z"
+        # A bare date is a day, not a moment: noon UTC is that same date in every
+        # timezone the board renders in (midnight UTC showed as the day BEFORE in the US).
+        entry["said_at"] = at.strip() if "T" in at else f"{at.strip()}T12:00:00Z"
     return entry
 
 
