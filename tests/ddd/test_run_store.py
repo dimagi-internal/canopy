@@ -242,3 +242,39 @@ def test_holder_is_the_process_account_not_logname(monkeypatch):
     monkeypatch.setenv("LOGNAME", "root")
     monkeypatch.setenv("USER", "root")
     assert run_store.holder().split("@")[0] == pwd.getpwuid(os.getuid()).pw_name
+
+
+class TestWorkspaceRequired:
+    """canopy-web#1411: an unpinned list by a caller in two organisations is a 422."""
+
+    REFUSAL = b'{"type": "https://canopy-web.dimagi.com/problems/workspace-required", "detail": "x"}'
+
+    def _server(self, monkeypatch, seen):
+        import io
+        import urllib.error
+
+        from scripts.ddd import review
+
+        def fake(method, url, token, body=None):
+            seen.append(url)
+            if "/api/w/" in url:
+                return [{"slug": "ace"}]
+            raise urllib.error.HTTPError(url, 422, "Unprocessable", {}, io.BytesIO(self.REFUSAL))
+        monkeypatch.setattr(review, "_json_request", fake)
+        monkeypatch.setattr(run_store, "_token", lambda: "tok")
+
+    def test_a_refused_list_is_read_in_the_ddd_workspace(self, monkeypatch):
+        monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")
+        monkeypatch.setenv("CANOPY_WEB_API_URL", "https://x.test")
+        seen = []
+        self._server(monkeypatch, seen)
+        assert run_store._call("GET", "/api/agents/") == (200, [{"slug": "ace"}])
+        assert seen == ["https://x.test/api/agents/", "https://x.test/api/w/connect/agents/"]
+
+    def test_no_ddd_workspace_says_what_to_set(self, monkeypatch):
+        monkeypatch.delenv("CANOPY_WEB_WORKSPACE", raising=False)
+        from scripts.ddd import auth
+        monkeypatch.setattr(auth, "resolve_ddd_workspace", lambda *a, **k: None)
+        self._server(monkeypatch, [])
+        with pytest.raises(run_store.RunStoreError, match="CANOPY_WEB_WORKSPACE"):
+            run_store._call("GET", "/api/agents/")

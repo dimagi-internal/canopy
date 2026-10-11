@@ -53,6 +53,8 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
+from orchestrator.canopy_web import is_workspace_required, pinned_api_path
+
 KIND = "ddd"
 BASE = "/api/agent-runs/"
 
@@ -182,10 +184,24 @@ def _call(method: str, path: str, body: dict | None = None, query: dict | None =
     try:
         return 200, _json_request(method, url, token, body)
     except urllib.error.HTTPError as exc:
+        raw = ""
         try:
-            payload = json.loads(exc.read().decode("utf-8") or "{}")
+            raw = exc.read().decode("utf-8") or "{}"
+            payload = json.loads(raw)
         except Exception:
             payload = {}
+        if is_workspace_required(exc.code, raw) and not path.startswith("/api/w/"):
+            # canopy-web#1411: an unpinned list by a caller in two organisations.
+            # A DDD run lives in the DDD workspace, so read it there.
+            from scripts.ddd.auth import resolve_ddd_workspace
+
+            ws = resolve_ddd_workspace(None)
+            if not ws:
+                raise RunStoreError(
+                    f"{method} {path} -> 422 workspace-required: your canopy-web workspaces "
+                    f"span more than one organisation. Set CANOPY_WEB_WORKSPACE=<slug>, or "
+                    f"commit `workspace: <slug>` in .canopy/ddd/config.yaml.") from exc
+            return _call(method, pinned_api_path(path, ws), body, query)
         return exc.code, payload
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise RunStoreError(f"canopy-web unreachable: {exc}") from exc

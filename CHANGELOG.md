@@ -9,6 +9,21 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.665] - 2026-10-11
+
+### Fixed
+- **canopy-web lists keep working for an identity in two organisations (canopy-web#1411).**
+  canopy-web now refuses an unpinned list (422 `workspace-required`) when the caller's
+  workspaces span more than one tenant tree — ada@ and jjackson@ are in dimagi + connect AND
+  `marshellis`. `canopy_web.call`/`call_text` keep calling flat (by-id reads are never refused,
+  and a pin would 404 an object in a sibling workspace), and on that refusal re-read the list
+  pinned to each of the caller's workspaces in the HOME workspace's tree and merge — the
+  pre-#1411 answer minus the other organisation. Home: `--workspace` → `CANOPY_WEB_WORKSPACE`
+  → the agent's `~/.<slug>/.env` → the workspace its agent record lives in. No home → a
+  `ReadWorkspaceRequiredError` (a `CanopyError`) naming what to set, never a guess.
+  `pinned_api_path` pins any tenant route (flat-only: me, workspaces, invites, auth, runners…).
+  The shareout feed read and DDD `run_store` reads, which bypassed `call`, now handle it too.
+
 ## [0.2.633] - 2026-10-08
 
 ### Changed
