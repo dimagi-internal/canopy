@@ -206,3 +206,38 @@ def test_project_set_links_and_append_link_are_mutually_exclusive(fake_http):
                                   "--links", "a|https://a", "--append-link", "b|https://b"])
     assert r.exit_code != 0 and "not both" in r.output
     assert calls == []
+
+
+# -- subtasks, not subprojects (T72) --------------------------------------------------
+
+def test_add_with_a_parent_creates_a_subtask(fake_http):
+    calls, responses = fake_http
+    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([{"ext_id": "T66"}]))
+
+    r = CliRunner().invoke(main, ["agent", "add", "--slug", "hal", "--title", "Two-pager",
+                                  "--parent", "T66"])
+
+    assert r.exit_code == 0, r.output
+    posted = [c for c in calls if c[0] == "POST" and c[1].endswith("/tasks/")][0][2]
+    assert posted[0]["parent"] == "T66"
+
+
+def test_add_without_a_parent_sends_no_parent_key(fake_http):
+    calls, responses = fake_http
+    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([]))
+
+    CliRunner().invoke(main, ["agent", "add", "--slug", "hal", "--title", "Loose"])
+
+    posted = [c for c in calls if c[0] == "POST" and c[1].endswith("/tasks/")][0][2]
+    assert "parent" not in posted[0]
+
+
+@pytest.mark.parametrize("value", ["T66", ""])
+def test_set_parent_sets_or_clears_it(fake_http, value):
+    calls, _ = fake_http
+
+    r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal", "--task-id", "T73",
+                                  "--parent", value])
+
+    assert r.exit_code == 0, r.output
+    assert calls[-1][2] == {"parent": value}

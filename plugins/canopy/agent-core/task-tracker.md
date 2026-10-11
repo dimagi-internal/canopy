@@ -125,6 +125,7 @@ canopy agent project-add --slug <slug> --name "<Project>" \
 canopy agent project-folder --slug <slug> --project P<N>   # link a folder (idempotent)
 canopy agent project-folder --slug <slug> --all            # backfill every unlinked one
 canopy gdoc publish --agent <slug> --project P<N> --md x.md --name "…"   # from any repo
+canopy gdoc publish --agent <slug> --task T<N> --md x.md --name "…"      # into the TASK's folder
 canopy agent project-set --slug <slug> --project "<Project>" --status done
 canopy agent project-audit --slug <slug> [--json]      # what the board is missing (read-only)
 ```
@@ -144,6 +145,27 @@ projects, which tells you less than the task list already did — and it is the 
 Drive layout warns about. A genuine one-off needs no project: create the task without one.
 Conversely, once a thread has produced deliverables and more than one task, it is a project:
 register it, put the folder link on it, and file its tasks in.
+
+**Subtasks, not subprojects.** A big piece of work INSIDE a project — a tender, a study, a
+multi-PR feature — is a task with subtasks, not a project of its own: one board per product area
+(Jonathan, 2026-10-09). A subtask lives in its parent's project (it inherits it), never in a
+cycle, and at most three levels deep; canopy-web refuses anything else. The board nests subtasks
+inside their parent's card.
+```
+canopy agent add --slug <slug> --title "…" --parent T<N>            # a subtask of T<N>
+canopy agent set --slug <slug> --task-id T<M> --parent T<N>         # make an existing task one
+canopy agent set --slug <slug> --task-id T<M> --parent ""           # top-level again
+canopy agent tasks --slug <slug>   # rows carry parent_ext_id; REST/MCP list filter: parent=T<N>|none
+```
+Over MCP: `create_tasks` / `patch_task` take `parent`. Moving a parent to another project moves
+its subtasks with it.
+
+**A task with files gets its own folder, inside the project's.** `canopy gdoc|gsheet publish
+--task T<N>` files into the folder the task links — else it finds or creates
+`Projects/<project>/<T<N> title>/` (a subtask's inside its parent task's folder), records it on
+the task (`drive_folder_id` / `drive_folder_url`, shown as a folder link on the card), and
+publishes there. The folder is found by its `T<N>` prefix, so rewording the title never makes a
+second one. A task in no project is refused: file it into one first.
 
 **The board holds what is ACTIVE; Drive is the archive.** When work goes quiet, set the project
 `--status done` (or `archived`) and **leave its folder exactly where it is — never delete or move

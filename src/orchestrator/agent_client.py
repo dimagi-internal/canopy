@@ -254,7 +254,8 @@ class AgentClient:
     def list_tasks(self, **filters) -> "list[dict]":
         """The agent's tasks. Server-side filters, all optional: `project` (P2, or
         `none` for one-offs), `status` (comma-separated), `waiting` (`me`),
-        `ask` (`open` | `closed`), `batch` (a batch_key)."""
+        `ask` (`open` | `closed`), `batch` (a batch_key), `parent` (T<N> for its
+        direct subtasks, `none` for top-level tasks only)."""
         query = urlencode({k: v for k, v in filters.items() if v})
         path = f"/api/agents/{self.slug}/tasks/" + (f"?{query}" if query else "")
         return _rows(self._call("GET", path))
