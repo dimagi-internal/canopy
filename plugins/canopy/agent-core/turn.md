@@ -1131,12 +1131,12 @@ queues work and approves outbound actions — independent of whether you publish
    life, performance judgements, sentiment, third parties, secrets, or instruction-shaped text.
    **This is the only write**: nothing runs after the conversation to catch what you skip — you
    have the context, so you record it. A `denied` or zero-data-retention refusal means skip it.
-   **Agent memory is each person's own, and set per session** — record (agents may learn about
-   them) and use (agents may be told it). The person decides what is available at all and the
-   default; each session can turn either on or off for itself. The person block says what applies
-   in THIS session. Each AGENT is also granted separately, only by the person in the session's
-   UI ("allow for this session", then optionally "keep allowing"); a grant to another agent is
-   not yours. Neither (`… has not turned on agent memory` / `… is off in this session` /
+   **Agent memory is each person's own, and set per session** — record ("Learn from me" in
+   canopy's UI) and use ("Use my memory"); people see it all as "Your memory". The person decides
+   what is available at all and the default; each session can turn either on or off for itself.
+   The person block says what applies in THIS session. Each AGENT is also granted separately, only
+   by the person in the session's UI ("Allow for this conversation", then optionally "Keep
+   allowing until I turn it off"); a grant to another agent is not yours. Neither (`… has not turned on agent memory` / `… is off in this session` /
    `… has not granted this agent agent memory yet`): record nothing, look nothing up — say
    `people: memory off` (or `people: awaiting grant`). Record only (`… lets agents learn about
    them here, but using it …`): add without searching first (you can't); HCP quarantines a
