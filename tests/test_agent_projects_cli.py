@@ -241,3 +241,46 @@ def test_set_parent_sets_or_clears_it(fake_http, value):
 
     assert r.exit_code == 0, r.output
     assert calls[-1][2] == {"parent": value}
+
+
+# -- the human why (T68) ------------------------------------------------------------
+
+def test_add_records_the_quote_apart_from_the_rationale(fake_http):
+    calls, responses = fake_http
+    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps([]))
+
+    r = CliRunner().invoke(main, ["agent", "add", "--slug", "hal", "--title", "Human why",
+                                  "--quote", "overweight that (if its good)",
+                                  "--quote-by", "Jonathan Jackson <JJ@dimagi.com>",
+                                  "--quote-url", "https://docs.google.com/x", "--quote-at", "2026-10-09"])
+
+    assert r.exit_code == 0, r.output
+    posted = [c for c in calls if c[0] == "POST" and c[1].endswith("/tasks/")][0][2][0]
+    assert posted["human_why"] == [{
+        "quote": "overweight that (if its good)",
+        "who": {"name": "Jonathan Jackson", "email": "jj@dimagi.com"},
+        "source_url": "https://docs.google.com/x", "said_at": "2026-10-09T00:00:00Z"}]
+
+
+def test_a_quote_with_no_speaker_is_refused_before_any_write(fake_http):
+    calls, _ = fake_http
+
+    r = CliRunner().invoke(main, ["agent", "add", "--slug", "hal", "--title", "x", "--quote", "words"])
+
+    assert r.exit_code != 0
+    assert "--quote-by is required" in r.output
+    assert not [c for c in calls if c[0] == "POST"]
+
+
+def test_set_append_quote_keeps_the_quotes_already_there(fake_http):
+    calls, responses = fake_http
+    old = {"quote": "first", "who": {"person_id": 3, "email": "jj@dimagi.com", "name": "J"},
+           "source_url": "", "said_at": None}
+    responses[("GET", "agents/hal/tasks/T68/")] = (200, json.dumps({"ext_id": "T68", "human_why": [old]}))
+
+    r = CliRunner().invoke(main, ["agent", "set", "--slug", "hal", "--task-id", "T68",
+                                  "--append-quote", "second", "--quote-by", "sophie@example.org"])
+
+    assert r.exit_code == 0, r.output
+    assert calls[-1][2] == {"human_why": [old, {"quote": "second", "source_url": "",
+                                                "who": {"name": "", "email": "sophie@example.org"}}]}

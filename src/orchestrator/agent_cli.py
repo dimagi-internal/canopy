@@ -917,7 +917,15 @@ def _no_such_task(ref):
 @click.option("--parent", "parent", default=None, metavar="T<N>",
               help="Make this a subtask of T<N> (same project; at most three levels). Pass \"\" "
                    "to make it top-level again; omitting it leaves it alone.")
-def agent_set(slug, task_id, links, append_link, append_notes, project, parent, **fields):
+@click.option("--append-quote", default=None,
+              help="ADD a person's VERBATIM words to the task's human why (kept apart from "
+                   "--rationale, which is yours). Needs --quote-by. Never a paraphrase.")
+@click.option("--quote-by", default="", metavar='"Name <email>"',
+              help="Who said the --quote / --append-quote: \"Name <email>\", a bare email or a name.")
+@click.option("--quote-url", default="", help="Where they said it: the thread, doc comment or session.")
+@click.option("--quote-at", default="", help="When they said it (ISO date or datetime).")
+def agent_set(slug, task_id, links, append_link, append_notes, project, parent, append_quote,
+              quote_by, quote_url, quote_at, **fields):
     """Patch a task (store rationale/source/plan/status/score/review/links/…).
 
     Score a task WHEN you mark it done (--status done --score --review) so a manager
@@ -943,6 +951,10 @@ def agent_set(slug, task_id, links, append_link, append_notes, project, parent, 
             fields["project"] = resolve_project_ref(client, project) if project.strip() else ""
         if parent is not None:
             fields["parent"] = parent.strip()
+        if append_quote is not None:
+            entry = human_why_entry(append_quote, quote_by, quote_url, quote_at)
+            current = list(client.get_task(task_id).get("human_why") or [])
+            fields["human_why"] = current + [entry]
         if links is not None:
             fields["links"] = parse_task_links(links)
         elif append_link is not None:
@@ -1168,6 +1180,35 @@ def _split_task_links(cell):
     return parts
 
 
+def parse_quote_by(spec: str) -> dict:
+    """`"Jonathan Jackson <jj@dimagi.com>"` -> {name, email}; a bare address or a bare
+    name fills the one it is."""
+    import re
+
+    spec = (spec or "").strip()
+    m = re.fullmatch(r"(.*?)\s*<\s*([^<>\s]+@[^<>\s]+)\s*>", spec)
+    if m:
+        return {"name": m.group(1).strip().strip('"'), "email": m.group(2).lower()}
+    if re.fullmatch(r"[^\s@]+@[^\s@]+", spec):
+        return {"name": "", "email": spec.lower()}
+    return {"name": spec, "email": ""}
+
+
+def human_why_entry(quote: str, by: str, url: str = "", at: str = "") -> dict:
+    """One `human_why` entry for the API: the person's words, verbatim, and who/where/when."""
+    quote = (quote or "").strip()
+    if not quote:
+        raise click.ClickException("the quote is empty — record their words, or leave it off")
+    who = parse_quote_by(by)
+    if not who["name"] and not who["email"]:
+        raise click.ClickException("--quote-by is required: whose words are these? "
+                                   "(\"Name <email>\", an email, or a name)")
+    entry = {"quote": quote, "who": who, "source_url": (url or "").strip()}
+    if (at or "").strip():
+        entry["said_at"] = at.strip() if "T" in at else f"{at.strip()}T00:00:00Z"
+    return entry
+
+
 def parse_task_links(cell):
     """`"label|url, label2|url2"` → [{label, url}, …]; bare http urls get label "link".
 
@@ -1245,8 +1286,15 @@ def next_task_ext_id(tasks):
 @click.option("--parent", default="", metavar="T<N>",
               help="Create it as a subtask of T<N>: it joins T<N>'s project (subtasks, not "
                    "subprojects — one board per product area). At most three levels deep.")
+@click.option("--quote", default="",
+              help="The person's VERBATIM words this task answers — its human why, shown above "
+                   "your rationale. Needs --quote-by. Leave it off rather than paraphrase.")
+@click.option("--quote-by", default="", metavar='"Name <email>"',
+              help="Who said the --quote / --append-quote: \"Name <email>\", a bare email or a name.")
+@click.option("--quote-url", default="", help="Where they said it: the thread, doc comment or session.")
+@click.option("--quote-at", default="", help="When they said it (ISO date or datetime).")
 def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confidence, due,
-              links, notes, project, parent):
+              links, notes, project, parent, quote, quote_by, quote_url, quote_at):
     """Create ONE task on the board (auto-assigns the next T<N>).
 
     Safe to repeat: the create is keyed `<slug>:<ext_id>`, so re-running it hands back
@@ -1263,6 +1311,7 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
     ext_id = check_task_field("ext_id", ext_id) if ext_id else ext_id
     status = check_task_status(status)
     task_links = parse_task_links(links)
+    human_why = [human_why_entry(quote, quote_by, quote_url, quote_at)] if quote.strip() else []
     try:
         client = _client(slug)
         # Resolved BEFORE the task is built: an unknown project must cost nothing,
@@ -1284,6 +1333,8 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
         }
         if parent.strip():
             task["parent"] = parent.strip()
+        if human_why:
+            task["human_why"] = human_why
         created = client.create_tasks([task])
         _emit({"added": (created[0].get("ext_id") if created else None) or task["ext_id"],
                "result": created})
