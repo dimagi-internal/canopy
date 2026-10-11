@@ -259,7 +259,7 @@ def test_add_records_the_quote_apart_from_the_rationale(fake_http):
     assert posted["human_why"] == [{
         "quote": "overweight that (if its good)",
         "who": {"name": "Jonathan Jackson", "email": "jj@dimagi.com"},
-        "source_url": "https://docs.google.com/x", "said_at": "2026-10-09T00:00:00Z"}]
+        "source_url": "https://docs.google.com/x", "said_at": "2026-10-09T12:00:00Z"}]
 
 
 def test_a_quote_with_no_speaker_is_refused_before_any_write(fake_http):
