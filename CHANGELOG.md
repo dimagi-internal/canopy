@@ -9,6 +9,17 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.667] - 2026-10-12
+
+### Changed
+- **A refused canopy-web list is ONE call pinned to the home tree's root (canopy-web#1422).**
+  canopy-web now answers a pinned list with the pinned workspace plus the caller's workspaces
+  below it, and says so (`pinned_read_covers_descendants` on `GET /api/workspaces/`). When every
+  workspace in the home tree advertises it, `_read_within_home_tree` reads once, pinned to the
+  tree's root (`dimagi` covers `connect`) — or, for a caller not in the root, once per top
+  workspace — instead of once per workspace. Against a server that does not advertise it, the
+  per-workspace fan-out (0.2.665) is unchanged. No home still raises `ReadWorkspaceRequiredError`.
+
 ## [0.2.666] - 2026-10-12
 
 ### Changed

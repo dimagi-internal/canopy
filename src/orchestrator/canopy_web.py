@@ -622,10 +622,13 @@ def confirm_landed(app: str, obj_id: str, workspace: str, *, query: Optional[dic
 # `connect`) and drop the siblings from every list.
 #
 # The client therefore keeps sending flat, and only when the server says a pin is
-# required does it read within the HOME workspace's tree: the same GET pinned to
-# each of the caller's workspaces in that tree, merged — exactly what the flat
-# list returned before #1411, minus the other organisation. No home named → a
-# clear error naming how to set one, never a guess.
+# required does it read within the HOME workspace's tree — exactly what the flat
+# list returned before #1411, minus the other organisation. Since canopy-web#1422
+# a pinned read covers the caller's workspaces below the pin, and the server says
+# so (`pinned_read_covers_descendants` on `GET /api/workspaces/`): then it is ONE
+# GET pinned to the tree's root. Against a server that does not say so, the same
+# GET pinned to each of the caller's workspaces in the tree, merged. No home named
+# → a clear error naming how to set one, never a guess.
 
 PINNED_PREFIX = "/api/w/"
 WORKSPACE_REQUIRED_TYPE = "workspace-required"
@@ -734,12 +737,18 @@ def _reset_tree_cache() -> None:
     _TREES.clear()
 
 
-def home_tree(home: str, *, base: str, token: str, transport: "Transport") -> list:
-    """The caller's workspaces in ``home``'s tenant tree, ``home`` first.
+def _home_tree_info(home: str, *, base: str, token: str, transport: "Transport") -> dict:
+    """``{"tree": [...], "pins": [...], "subtree": bool}`` for ``home``'s tenant tree.
 
-    Read from ``GET /api/workspaces/`` (never refused): a row's ``root`` when the
-    server sends it, else its ``parent`` chain. Cached per (server, token, home).
-    Raises :class:`ReadWorkspaceRequiredError` when the caller is not in ``home``."""
+    ``tree``: the caller's workspaces in that tree, ``home`` first. ``subtree``:
+    the server advertises that a pinned read covers the workspaces below the pin
+    (``pinned_read_covers_descendants`` on every row, canopy-web#1422). ``pins``:
+    the fewest of ``tree`` whose pinned reads cover all of it — the tree's ROOT
+    alone when the caller is in it, else each workspace with no ancestor among
+    the caller's. Read from ``GET /api/workspaces/`` (never refused): a row's
+    ``root`` when the server sends it, else its ``parent`` chain. Cached per
+    (server, token, home). Raises :class:`ReadWorkspaceRequiredError` when the
+    caller is not in ``home``."""
     key = (base, token, home)
     if key in _TREES:
         return _TREES[key]
@@ -756,23 +765,40 @@ def home_tree(home: str, *, base: str, token: str, transport: "Transport") -> li
             f"CANOPY_WEB_WORKSPACE={home!r} is not one of your canopy-web workspaces "
             f"({', '.join(sorted(rows)) or 'none'}) — set it to one you belong to.")
 
+    def ancestors(slug: str) -> list:
+        out, seen = [], {slug}
+        parent = rows.get(slug, {}).get("parent")
+        while parent and str(parent) not in seen:
+            parent = str(parent)
+            out.append(parent)
+            seen.add(parent)
+            parent = rows.get(parent, {}).get("parent")
+        return out
+
     def root(slug: str) -> str:
-        seen = set()
-        while slug in rows and slug not in seen:
-            seen.add(slug)
-            r = rows[slug]
-            if r.get("root"):
-                return str(r["root"])
-            parent = r.get("parent")
-            if not parent:
-                return slug
-            slug = str(parent)
-        return slug
+        r = rows.get(slug, {})
+        if r.get("root"):
+            return str(r["root"])
+        chain = ancestors(slug)
+        return chain[-1] if chain else slug
 
     home_root = root(home)
     tree = [home] + sorted(s for s in rows if s != home and root(s) == home_root)
-    _TREES[key] = tree
-    return tree
+    subtree = all(rows[s].get("pinned_read_covers_descendants") is True for s in tree)
+    if home_root in rows:
+        pins = [home_root]
+    else:
+        members = set(tree)
+        pins = [s for s in tree if not (set(ancestors(s)) & members)]
+    info = {"tree": tree, "pins": pins if subtree else list(tree), "subtree": subtree}
+    _TREES[key] = info
+    return info
+
+
+def home_tree(home: str, *, base: str, token: str, transport: "Transport") -> list:
+    """The caller's workspaces in ``home``'s tenant tree, ``home`` first (see
+    :func:`_home_tree_info`)."""
+    return list(_home_tree_info(home, base=base, token=token, transport=transport)["tree"])
 
 
 def _merge(results: list):
@@ -815,9 +841,12 @@ def _read_within_home_tree(method: str, path: str, refusal: str, send, *, base: 
     A ``workspace`` the caller passed for this call is read alone (they named it);
     a home that came from config or the agent record spans its tree.
 
-    GET with a JSON body (``parse`` set) fans out over the tree and merges; a GET
-    that cannot be merged, a text read, or a non-GET goes to the home workspace
-    alone (a narrower answer, never a wider one)."""
+    GET with a JSON body (``parse`` set) reads the whole tree: ONE read pinned to
+    the tree's root when the server advertises that a pinned read covers the
+    workspaces below the pin (canopy-web#1422), else fanned out over each of the
+    caller's workspaces in the tree and merged. A GET that cannot be merged, a
+    text read, or a non-GET goes to the home workspace alone (a narrower answer,
+    never a wider one)."""
     home = resolve_home_workspace(workspace) or _agent_record_workspace(
         base=base, token=token, transport=transport)
     if not home:
@@ -840,13 +869,16 @@ def _read_within_home_tree(method: str, path: str, refusal: str, send, *, base: 
         if not (200 <= status < 300):
             raise CanopyError(f"{method} {pinned} -> {status}: {text[:400]}")
         return parse(text) if parse is not None else text
-    tree = home_tree(home, base=base, token=token, transport=transport)
+    info = _home_tree_info(home, base=base, token=token, transport=transport)
+    tree, pins = info["tree"], info["pins"]
     if (base, token, home) not in _ANNOUNCED_TREES:
         _ANNOUNCED_TREES.add((base, token, home))
+        how = (f"one read pinned to {', '.join(pins)}" if info["subtree"]
+               else "one read per workspace")
         print(f"[canopy] your workspaces span more than one organisation — reading lists "
-              f"within {home}'s organisation ({', '.join(tree)}) (canopy-web#1411)",
+              f"within {home}'s organisation ({', '.join(tree)}; {how}) (canopy-web#1411)",
               file=sys.stderr)
-    targets = tree if (method.upper() == "GET" and parse is not None) else [home]
+    targets = pins if (method.upper() == "GET" and parse is not None) else [home]
     results = []
     for ws in targets:
         pinned = pinned_api_path(path, ws)

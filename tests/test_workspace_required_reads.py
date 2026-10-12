@@ -82,7 +82,7 @@ def test_a_refused_list_reads_the_home_tree_and_never_the_other_org(monkeypatch,
     assert out["total"] == 4
     assert ("GET", "/api/w/marshellis/agents/") not in seen
     assert ("GET", "/api/w/dimagi/agents/") in seen and ("GET", "/api/w/connect/agents/") in seen
-    assert "reading lists within dimagi's organisation (dimagi, connect)" in capsys.readouterr().err
+    assert "reading lists within dimagi's organisation (dimagi, connect; one read per workspace)" in capsys.readouterr().err
 
 
 def test_bare_list_endpoints_merge_too(monkeypatch):
@@ -224,3 +224,77 @@ def test_a_workspace_named_for_the_call_is_read_alone(monkeypatch):
                   token="t", transport=multi_tree_server(seen))
     assert [a["slug"] for a in out["items"]] == ["echo", "hal"]
     assert seen == [("GET", "/api/agents/"), ("GET", "/api/w/connect/agents/")]
+
+
+# -- canopy-web#1422: a pinned read covers the workspaces below the pin ----------
+
+
+def subtree_server(seen, workspaces=None):
+    """A canopy-web that advertises subtree reads: a read pinned to dimagi returns
+    dimagi's and connect's rows; pinned to connect, connect's alone."""
+    rows = workspaces or [{**w, "pinned_read_covers_descendants": True} for w in WORKSPACES]
+    below = {"dimagi": ["dimagi", "connect"], "connect": ["connect"], "marshellis": ["marshellis"]}
+
+    def transport(method, url, headers, body):
+        path = url.split("https://x.test", 1)[1]
+        seen.append((method, path))
+        if path == "/api/workspaces/":
+            return 200, json.dumps(rows)
+        if path.startswith("/api/w/"):
+            ws, rest = path[len("/api/w/"):].split("/", 1)
+            if rest.startswith("agents/"):
+                items = [a for w in below[ws] for a in AGENTS[w]]
+                return 200, json.dumps({"items": items, "total": len(items)})
+            if rest.startswith("harness/turns/"):
+                return 200, json.dumps([{"id": f"t-{w}"} for w in below[ws]])
+            return 200, "{}"
+        if path in ("/api/agents/", "/api/harness/turns/?limit=200"):
+            return 422, REFUSAL
+        return 200, "{}"
+    return transport
+
+
+def test_an_advertised_subtree_read_is_one_call_pinned_to_the_root(monkeypatch, capsys):
+    monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "dimagi")
+    seen = []
+    out = cw.call("GET", "/api/agents/", base_url="https://x.test", token="t",
+                  transport=subtree_server(seen))
+    assert sorted(a["slug"] for a in out["items"]) == ["ada", "echo", "eva", "hal"]
+    assert out["total"] == 4  # nothing read twice
+    pinned = [p for _, p in seen if p.startswith("/api/w/")]
+    assert pinned == ["/api/w/dimagi/agents/"]
+    assert "one read pinned to dimagi" in capsys.readouterr().err
+
+
+def test_a_child_home_still_pins_the_root(monkeypatch):
+    monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")
+    seen = []
+    out = cw.call("GET", "/api/harness/turns/?limit=200", base_url="https://x.test", token="t",
+                  transport=subtree_server(seen))
+    assert sorted(r["id"] for r in out) == ["t-connect", "t-dimagi"]
+    assert [p for _, p in seen if p.startswith("/api/w/")] == [
+        "/api/w/dimagi/harness/turns/?limit=200"]
+
+
+def test_a_caller_outside_the_root_pins_each_top_workspace(monkeypatch):
+    """In connect and strategy (both under dimagi) but not dimagi itself: one read
+    per top workspace — still never per workspace below one of them."""
+    rows = [
+        {"slug": "connect", "parent": "dimagi", "root": "dimagi", "pinned_read_covers_descendants": True},
+        {"slug": "strategy", "parent": "dimagi", "root": "dimagi", "pinned_read_covers_descendants": True},
+        {"slug": "labs", "parent": "connect", "root": "dimagi", "pinned_read_covers_descendants": True},
+    ]
+    info = cw._home_tree_info("connect", base="https://x.test", token="t",
+                              transport=subtree_server([], rows))
+    assert info["subtree"] is True
+    assert info["pins"] == ["connect", "strategy"]
+    assert info["tree"] == ["connect", "labs", "strategy"]
+
+
+def test_a_server_that_does_not_advertise_subtree_reads_is_fanned_out(monkeypatch):
+    """canopy-web before #1422: a root-pinned read returns only the root, so the
+    client keeps reading each workspace."""
+    info = cw._home_tree_info("dimagi", base="https://x.test", token="t",
+                              transport=multi_tree_server([]))
+    assert info["subtree"] is False
+    assert info["pins"] == ["dimagi", "connect"]
