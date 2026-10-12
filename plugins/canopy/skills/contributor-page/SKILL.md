@@ -1,6 +1,6 @@
 ---
 name: contributor-page
-description: Write or refresh a person's contributor page on an agent's canopy-web project — what they are trying to achieve, in their own words with a link to where they said each thing, and which of the project's ideas (tasks) are theirs, built versus open. Use when asked to "write <person>'s contributor page", "refresh the contributor pages on <project>", "what is <person> after on <project>", or before building on (or against) someone's idea.
+description: Write or refresh a person's contributor page on an agent's canopy-web project — what they are trying to achieve, in their own words with a link to where they said each thing, and which of the project's ideas (tasks with kind "idea") are theirs, built versus open. Use when asked to "write <person>'s contributor page", "refresh the contributor pages on <project>", "what is <person> after on <project>", or before building on (or against) someone's idea.
 ---
 
 ## Preamble (run first)
@@ -18,9 +18,14 @@ When several people build one product with one shared agent, each idea has to
 say whose it was, and each person needs a page that says what they are after.
 canopy-web holds both:
 
-- **Ideas** are the project's board tasks. canopy-web derives each one's stage
-  (proposed / started / shipped) and who it came from. You do not maintain a
-  second list.
+- **Ideas** are board tasks with `kind: "idea"`. Every other task is
+  `kind: "work"`: agent work, never shown as an idea. An idea must carry at
+  least one `human_why` quote, a person's own words, and the server rejects one
+  without. Work toward an idea is that idea's subtasks (`parent`). canopy-web
+  derives each idea's stage (proposed / started / shipped) and who it came from.
+  You do not maintain a second list. (Jonathan, 2026-10-12: ideas and tasks must
+  not be conflated. Before this, every task showed as an idea, and an agent's
+  process work read as people's product ideas.)
 - **The contributor page** is the part that takes judgment: which of someone's
   hundreds of prompts say what they want. **You write it and canopy-web renders
   it** at `/w/<ws>/agents/<agent>/projects/<P>/people/<person>`.
@@ -93,13 +98,16 @@ Write a JSON body:
   the later view where they changed their mind.
 - **`goal` is the only place your words appear.** Keep it short, and keep it
   recognisably theirs. A goal they would not sign is a wrong page.
-- **`ideas` claims a task as theirs.** Do it only when their words asked for it,
+- **`ideas` claims an idea task as theirs** (`kind: "idea"`; the server refuses
+  a claim on a work task). Do it only when their words asked for it,
   shaped it, or decided it. Do not claim work the agent originated that they
   merely approved with "go". Each claim should carry the words that make it
   theirs. canopy-web derives the stage from the task, so don't restate it.
 - **`open` holds wants nobody has put on the board yet.** It is the useful
   list for a teammate looking for something to pick up. If one of them clearly
-  should be a task, file the task instead (or as well) and claim it in `ideas`.
+  should be on the board, file it as a `kind: "idea"` task carrying their quote
+  as `human_why`, and claim it in `ideas`. Never file your own process work
+  (reviews, docs, outreach) as an idea.
 - **Links.** Every quote links to where they said it. A canopy session link is
   `https://<canopy>/w/<ws>/chat/<session-id>`.
 - **Privacy.** Leave out anything personal, health-related or performance-related.
