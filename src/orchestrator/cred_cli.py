@@ -18,6 +18,7 @@ Commands::
     canopy cred check  [--agent X] [--json]   exit 0 allowed, 3 refused
     canopy cred env    [--agent X] [--refresh] prints ~/.X/.env (resolved if missing)
     canopy cred refresh [--agent X]           re-resolve ~/.X/.env
+    canopy cred sync   [--agent X] [--ttl S]  re-inject ~/.X/.env iff its vault changed
     canopy cred whoami [--json]               who this session is, and why
 
 Exit codes (stable — agent-identity MCP servers shell out to `check`):
@@ -563,6 +564,145 @@ def ensure_env(slug: str, *, refresh: bool = False, runner: Runner = subprocess.
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# keeping ~/.<slug>/.env current with the vault, cheaply
+# ──────────────────────────────────────────────────────────────────────────────
+
+#: Re-checked at most this often per agent. Shared across processes through the stamp,
+#: because the caller is a SessionStart hook: a new process every session.
+SYNC_TTL = 300
+_OP_REF_VAULT = re.compile(r"op://([^/\s]+)/")
+#: Only the agent's key decides whose vault is read — never a personal session.
+_OP_PERSONAL_ENV_PREFIXES = ("OP_SESSION_",)
+_OP_PERSONAL_ENV_KEYS = ("OP_ACCOUNT", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN")
+
+
+def stamp_path(slug: str) -> Path:
+    """Beside the env file: the fingerprint last injected. The cloud runner writes the
+    same file in the same format (`cloud_runner._refresh_agent_env`)."""
+    return env_path(slug).with_name(".env.stamp")
+
+
+def op_key_account(token: str) -> str:
+    """The 1Password account a service-account key signs in to, from the key's public
+    header — never a secret. A key minted in the wrong account fails every call with
+    "Signin credentials are not compatible…", which names nothing (ACE, 2026-10-12)."""
+    import base64
+    try:
+        raw = token.strip().removeprefix("ops_")
+        body = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        return str(body.get("signInAddress") or "").removeprefix("https://").rstrip("/")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _sync_op_err(r: subprocess.CompletedProcess, what: str, token: str) -> str:
+    # op names the reference or vault it could not read, never a value.
+    err = " ".join((r.stderr or "").split())[:300] or f"{what} exited {r.returncode}"
+    if "not compatible" in err or "signin" in err.lower().replace(" ", ""):
+        account = op_key_account(token)
+        if account:
+            err += f" — this key signs in to {account}; re-mint it in the account that holds the vault"
+    return err
+
+
+def vault_fingerprint(tpl: Path, env: dict, token: str, *, runner: Runner) -> str:
+    """The template's hash plus each vault's `content_version` — which moves on any item
+    change. One small `op vault get` per vault the template names; no secret is read."""
+    import hashlib
+    text = tpl.read_text(encoding="utf-8")
+    parts = [hashlib.sha256(text.encode()).hexdigest()]
+    for vault in sorted(set(_OP_REF_VAULT.findall(text))):
+        r = runner(["op", "vault", "get", vault, "--format", "json"], capture_output=True,
+                   text=True, timeout=45, env=env)
+        if r.returncode != 0:
+            raise CredError(_sync_op_err(r, f"op vault get {vault}", token))
+        try:
+            version = json.loads(r.stdout or "{}").get("content_version")
+        except ValueError:
+            version = None
+        if version is None:
+            raise CredError(f"op vault get {vault} returned no content_version")
+        parts.append(f"{vault}={version}")
+    return "|".join(parts)
+
+
+def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = None,
+             now: Optional[float] = None) -> str:
+    """Bring ~/.<slug>/.env up to date with the agent's vault, without waste. Returns
+    what happened: "skipped: …", "unchanged", or "re-injected".
+
+    Runs only with the agent's OWN service-account key in the environment (the
+    SessionStart hook stages it): that key never prompts, which is what makes checking on
+    every session safe — the user's desktop app is never asked (the "constant op prompt"
+    ruled out on 2026-10-09). Throttled to once per `ttl` per agent via the stamp; when
+    due, one `op vault get` per vault decides; the full `op inject` runs only when the
+    fingerprint moved or the file is missing. A failure keeps the existing file and raises
+    CredError with op's reason."""
+    runner = runner or subprocess.run
+    token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
+    if not token:
+        return "skipped: no agent 1Password key in this session"
+    repo = _agent_repo(slug)
+    tpl = repo / ".env.tpl" if repo else None
+    if tpl is None or not tpl.is_file():
+        return f"skipped: no .env.tpl for '{slug}' on this machine"
+    out, stamp = env_path(slug), stamp_path(slug)
+    now = time.time() if now is None else now
+    try:
+        prior = json.loads(stamp.read_text(encoding="utf-8"))
+        prior = prior if isinstance(prior, dict) else {}
+    except (OSError, ValueError):
+        prior = {}
+    if out.is_file() and now - float(prior.get("checked_at") or 0) < ttl:
+        return "skipped: checked recently"
+    env = {k: v for k, v in os.environ.items()
+           if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
+
+    def record(**fields) -> None:
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            _write_private(stamp, json.dumps({**prior, **fields, "checked_at": now}))
+        except OSError:
+            pass  # an unwritable stamp only costs a re-check
+
+    try:
+        fingerprint = vault_fingerprint(tpl, env, token, runner=runner)
+    except CredError:
+        record()  # throttle the retry too: an unreachable 1Password costs one probe per ttl
+        raise
+    except subprocess.TimeoutExpired:
+        record()
+        raise CredError("1Password did not answer within 45s")
+    except OSError as e:  # FileNotFoundError: no `op` on this machine
+        record()
+        raise CredError(f"could not run the 1Password CLI (`op`): {e.strerror or e} — {OP_INSTALL_URL}")
+    if out.is_file() and fingerprint == prior.get("fingerprint"):
+        record()
+        return "unchanged"
+    out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp = tempfile.mkstemp(dir=str(out.parent), prefix=".tmp-", suffix=".env")
+    os.close(fd)
+    os.chmod(tmp, 0o600)
+    try:
+        try:
+            r = runner(["op", "inject", "-f", "-i", str(tpl), "-o", tmp], capture_output=True,
+                       text=True, timeout=180, env=env)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            record()
+            raise CredError(f"op inject did not complete for '{slug}': {e}")
+        if r.returncode != 0:
+            record()
+            raise CredError(f"op inject failed for '{slug}': {_sync_op_err(r, 'op inject', token)}")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, out)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    record(fingerprint=fingerprint, injected_at=now)
+    return "re-injected"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -629,6 +769,21 @@ def refresh_cmd(agent):
     path, how = ensure_env(slug, refresh=True)
     click.echo(f"[canopy cred] {slug}: {how}", err=True)
     click.echo(str(path))
+
+
+@cred_group.command("sync")
+@AGENT_OPT
+@click.option("--ttl", type=float, default=SYNC_TTL, show_default=True,
+              help="Seconds between checks for this agent.")
+def sync_cmd(agent, ttl):
+    """Re-inject ~/.<agent>/.env from its vault IF the vault or .env.tpl changed.
+
+    Cheap enough for every session start: throttled per agent, one `op vault get` per
+    vault when due, the full `op inject` only on a change. Needs the agent's own
+    1Password key in $OP_SERVICE_ACCOUNT_TOKEN (never the desktop app). Never prints a
+    value; a failure keeps the existing file and exits 1 with op's reason."""
+    slug = _require_agent(agent)
+    click.echo(f"[canopy cred] {slug}: {sync_env(slug, ttl=ttl)}", err=True)
 
 
 @cred_group.command("whoami")

@@ -15,20 +15,23 @@ HOOK = ROOT / "plugins/canopy/hooks/agent_op_env.py"
 KEY = "ops_SECRET_key_value"
 
 
-def _fake_canopy(tmp_path, out=KEY, rc=0):
+def _fake_canopy(tmp_path, out=KEY, rc=0, sync="unchanged", sync_rc=0):
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     log = tmp_path / "canopy-args"
     script = bindir / "canopy"
     script.write_text(f"#!/bin/sh\necho \"$@\" >> {log}\n"
-                      f"[ \"$2\" = stage-delegated ] && exit 0\nprintf '%s\\n' '{out}'\n"
+                      f"[ \"$2\" = stage-delegated ] && exit 0\n"
+                      f"[ \"$1\" = cred ] && {{ echo \"key=$OP_SERVICE_ACCOUNT_TOKEN\" >> {log}; "
+                      f"echo \"[canopy cred] $4: {sync}\" >&2; exit {sync_rc}; }}\nprintf '%s\\n' '{out}'\n"
                       f"[ {rc} -ne 0 ] && echo 'no live runner you pair' >&2\nexit {rc}\n")
     script.chmod(0o755)
     return str(bindir), log
 
 
-def _run(tmp_path, *, slug="eva", have_key=False, out=KEY, rc=0, env_file=True):
-    bindir, log = _fake_canopy(tmp_path, out, rc)
+def _run(tmp_path, *, slug="eva", have_key=False, out=KEY, rc=0, env_file=True,
+         sync="unchanged", sync_rc=0):
+    bindir, log = _fake_canopy(tmp_path, out, rc, sync, sync_rc)
     env = {k: v for k, v in os.environ.items() if k not in ("CANOPY_AGENT", "OP_SERVICE_ACCOUNT_TOKEN", "CLAUDE_ENV_FILE")}
     env["PATH"] = bindir + os.pathsep + env["PATH"]
     if slug:
@@ -47,8 +50,10 @@ def test_exports_the_agents_own_key_into_the_session_env(tmp_path):
     assert r.returncode == 0
     assert ef.read_text() == f"export OP_SERVICE_ACCOUNT_TOKEN={KEY}\n"
     assert log.read_text().splitlines() == ["agent stage-delegated --slug eva",
-                                            "agent op-token --slug eva"]
+                                            "agent op-token --slug eva",
+                                            "cred sync --agent eva", f"key={KEY}"]
     assert KEY not in r.stdout + r.stderr          # never into the transcript
+    assert r.stdout == ""                          # an unchanged vault says nothing
 
 
 def test_inert_outside_an_agent_session(tmp_path):
@@ -60,13 +65,27 @@ def test_a_key_already_present_is_kept_but_borrowed_creds_are_still_staged(tmp_p
     # A cloud turn has its key; it still gets what it borrows staged (canopy-web#1291).
     r, ef, log = _run(tmp_path, have_key=True)
     assert r.returncode == 0 and not ef.exists()
-    assert log.read_text().splitlines() == ["agent stage-delegated --slug eva"]
+    assert log.read_text().splitlines() == ["agent stage-delegated --slug eva",
+                                            "cred sync --agent eva", "key=already"]
+
+
+def test_a_vault_change_is_reported_in_one_line(tmp_path):
+    r, _, _ = _run(tmp_path, sync="re-injected")
+    assert r.returncode == 0 and "vault changed" in r.stdout and KEY not in r.stdout
+
+
+def test_a_failed_sync_is_fail_open_and_says_why(tmp_path):
+    r, ef, _ = _run(tmp_path, sync="op vault get Agent-Eva: this key signs in to ACCOUNT-ELSEWHERE",
+                    sync_rc=1)
+    assert r.returncode == 0 and ef.exists()
+    assert "may be stale" in r.stdout and "ACCOUNT-ELSEWHERE" in r.stdout
 
 
 def test_a_callers_confined_turn_never_stages_borrowed_creds(tmp_path, monkeypatch):
     monkeypatch.setenv("CANOPY_PROFILE", "caller")
     r, _, log = _run(tmp_path)
-    assert "stage-delegated" not in (log.read_text() if log.exists() else "")
+    logged = log.read_text() if log.exists() else ""
+    assert "stage-delegated" not in logged and "cred sync" not in logged
 
 
 def test_failure_is_fail_open_and_says_so(tmp_path):

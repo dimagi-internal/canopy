@@ -347,3 +347,117 @@ def test_a_turn_is_never_let_in_by_another_agents_env(monkeypatch, web, _isolate
     monkeypatch.setenv("CANOPY_TURN_ID", "t-1")
     monkeypatch.setenv("CANOPY_AGENT_SLUG", "ada")
     assert not cred_cli.decide("ace", runner=FakeOp(readable={"Agent-Ace"}), which=_which()).allowed
+
+
+# ── cred sync: keep ~/.<slug>/.env current with the vault, cheaply ─────────────
+
+class VaultOp:
+    """`op vault get` answers a content_version; `op inject` writes the current value."""
+
+    def __init__(self, version=7, value="v1", probe_err=""):
+        self.version, self.value, self.probe_err, self.calls = version, value, probe_err, []
+
+    def __call__(self, argv, **kw):
+        self.calls.append((argv, dict(kw.get("env") or {})))
+        if argv[:3] == ["op", "vault", "get"]:
+            if self.probe_err:
+                return subprocess.CompletedProcess(argv, 1, "", self.probe_err)
+            return subprocess.CompletedProcess(
+                argv, 0, json.dumps({"name": argv[3], "content_version": self.version}), "")
+        if argv[:2] == ["op", "inject"]:
+            Path(argv[argv.index("-o") + 1]).write_text(f"SETTING={self.value}\n")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(argv)
+
+    def injects(self):
+        return [a for a, _ in self.calls if a[:2] == ["op", "inject"]]
+
+
+@pytest.fixture()
+def synced(tmp_path, monkeypatch, _isolated):
+    repo = _agent_repo(tmp_path, "ace")
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(cred_cli.canopy_web, "_agent_slug_for_cwd", lambda d: "ace")
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ACE-KEY")
+    return _isolated / ".ace" / ".env"
+
+
+def test_sync_injects_a_missing_env(synced):
+    op = VaultOp()
+    assert cred_cli.sync_env("ace", runner=op, now=1000) == "re-injected"
+    assert synced.read_text() == "SETTING=v1\n" and oct(synced.stat().st_mode)[-3:] == "600"
+    assert all(env["OP_SERVICE_ACCOUNT_TOKEN"] == "ACE-KEY" for _, env in op.calls)
+
+
+def test_sync_within_the_ttl_touches_nothing(synced):
+    op = VaultOp()
+    cred_cli.sync_env("ace", runner=op, now=1000)
+    assert cred_cli.sync_env("ace", runner=op, now=1100) == "skipped: checked recently"
+    assert len(op.calls) == 2
+
+
+def test_sync_unchanged_vault_costs_one_probe(synced):
+    op = VaultOp()
+    cred_cli.sync_env("ace", runner=op, now=1000)
+    assert cred_cli.sync_env("ace", runner=op, now=2000) == "unchanged"
+    assert len(op.injects()) == 1 and len(op.calls) == 3
+
+
+def test_sync_vault_edit_re_injects(synced):
+    op = VaultOp()
+    cred_cli.sync_env("ace", runner=op, now=1000)
+    op.version, op.value = 8, "v2"
+    assert cred_cli.sync_env("ace", runner=op, now=2000) == "re-injected"
+    assert synced.read_text() == "SETTING=v2\n"
+
+
+def test_sync_template_edit_re_injects(synced, tmp_path):
+    op = VaultOp()
+    cred_cli.sync_env("ace", runner=op, now=1000)
+    tpl = tmp_path / "repos" / "ace" / ".env.tpl"
+    tpl.write_text(tpl.read_text() + "MORE=op://Agent-X/other/credential\n")
+    assert cred_cli.sync_env("ace", runner=op, now=2000) == "re-injected"
+
+
+def test_sync_never_uses_the_desktop_app(synced, monkeypatch):
+    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN")
+    op = VaultOp()
+    assert cred_cli.sync_env("ace", runner=op).startswith("skipped: no agent 1Password key")
+    assert op.calls == []
+
+
+def test_sync_strips_a_personal_session(synced, monkeypatch):
+    monkeypatch.setenv("OP_SESSION_dimagi", "personal")
+    op = VaultOp()
+    cred_cli.sync_env("ace", runner=op, now=1000)
+    assert all("OP_SESSION_dimagi" not in env for _, env in op.calls)
+
+
+def test_sync_failure_keeps_the_file_names_the_account_and_throttles(synced, monkeypatch):
+    import base64
+    header = base64.urlsafe_b64encode(
+        json.dumps({"signInAddress": "someone-else.1password.com"}).encode()).decode().rstrip("=")
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_" + header)
+    synced.parent.mkdir(parents=True, exist_ok=True)
+    synced.write_text("SETTING=old\n")
+    op = VaultOp(probe_err="[ERROR] Signin credentials are not compatible with the provided user auth from server")
+    with pytest.raises(cred_cli.CredError, match="signs in to someone-else.1password.com"):
+        cred_cli.sync_env("ace", runner=op, now=1000)
+    assert synced.read_text() == "SETTING=old\n" and op.injects() == []
+    assert cred_cli.sync_env("ace", runner=op, now=1100) == "skipped: checked recently"
+
+
+def test_sync_without_op_installed_fails_cleanly(synced):
+    def no_op(argv, **kw):
+        raise FileNotFoundError(2, "No such file or directory", "op")
+    with pytest.raises(cred_cli.CredError, match="could not run the 1Password CLI"):
+        cred_cli.sync_env("ace", runner=no_op, now=1000)
+
+
+def test_sync_cli_never_prints_a_value(synced, monkeypatch):
+    op = VaultOp(value="hunter2")
+    monkeypatch.setattr(cred_cli.subprocess, "run", op)
+    res = CliRunner().invoke(cred_cli.cred_group, ["sync", "--agent", "ace"],
+                             obj=None, catch_exceptions=False,
+                             env={"OP_SERVICE_ACCOUNT_TOKEN": "ACE-KEY"})
+    assert res.exit_code == 0 and "re-injected" in res.output and "hunter2" not in res.output

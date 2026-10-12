@@ -31,6 +31,12 @@ The broker resolves once and writes the existing per-agent env file `~/.<slug>/.
 the same file `op inject` wrote before, so every `bin/` script and `_env.py` keeps working
 unchanged. It re-resolves only when the file is missing, on `canopy cred refresh`, or when a caller
 reports an auth failure (and then runs `canopy cred refresh`). Service-account reads never prompt.
+A value changed in the vault reaches the file without anyone re-running anything: the canopy
+SessionStart hook (`agent_op_env.py`) runs `canopy cred sync` with the agent's own service-account
+key, which re-injects `~/.<slug>/.env` only when the vault's `content_version` or `.env.tpl`
+changed. It checks at most every 5 minutes per agent (`~/.<slug>/.env.stamp`), with one
+`op vault get` per vault. The cloud runner applies the same rule when it claims a turn
+(canopy-web `cloud_runner._refresh_agent_env`), so laptops and cloud agree on what "changed" means.
 `canopy cred check` caches canopy-web's `/access` answer and a successful 1Password probe for 10
 minutes in `~/.canopy/cred-cache.json` (verdicts only, never values).
 
@@ -80,6 +86,7 @@ the operating system. Real isolation is on runner boxes, which stage only the tu
 canopy cred check   [--agent X] [--refresh] [--json]
 canopy cred env     [--agent X] [--refresh]
 canopy cred refresh [--agent X]
+canopy cred sync    [--agent X] [--ttl S]
 canopy cred whoami  [--json]
 ```
 
