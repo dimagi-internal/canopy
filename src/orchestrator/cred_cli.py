@@ -605,8 +605,7 @@ def _sync_op_err(r: subprocess.CompletedProcess, what: str, token: str) -> str:
     return err
 
 
-def vault_fingerprint(tpl: Path, env: dict, token: str, *,
-                      runner: Runner = subprocess.run) -> str:
+def vault_fingerprint(tpl: Path, env: dict, token: str, *, runner: Runner) -> str:
     """The template's hash plus each vault's `content_version` — which moves on any item
     change. One small `op vault get` per vault the template names; no secret is read."""
     import hashlib
@@ -627,7 +626,7 @@ def vault_fingerprint(tpl: Path, env: dict, token: str, *,
     return "|".join(parts)
 
 
-def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Runner = subprocess.run,
+def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = None,
              now: Optional[float] = None) -> str:
     """Bring ~/.<slug>/.env up to date with the agent's vault, without waste. Returns
     what happened: "skipped: …", "unchanged", or "re-injected".
@@ -639,6 +638,7 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Runner = subprocess.ru
     due, one `op vault get` per vault decides; the full `op inject` runs only when the
     fingerprint moved or the file is missing. A failure keeps the existing file and raises
     CredError with op's reason."""
+    runner = runner or subprocess.run
     token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
     if not token:
         return "skipped: no agent 1Password key in this session"
@@ -673,6 +673,9 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Runner = subprocess.ru
     except subprocess.TimeoutExpired:
         record()
         raise CredError("1Password did not answer within 45s")
+    except OSError as e:  # FileNotFoundError: no `op` on this machine
+        record()
+        raise CredError(f"could not run the 1Password CLI (`op`): {e.strerror or e} — {OP_INSTALL_URL}")
     if out.is_file() and fingerprint == prior.get("fingerprint"):
         record()
         return "unchanged"
@@ -681,8 +684,12 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Runner = subprocess.ru
     os.close(fd)
     os.chmod(tmp, 0o600)
     try:
-        r = runner(["op", "inject", "-f", "-i", str(tpl), "-o", tmp], capture_output=True,
-                   text=True, timeout=180, env=env)
+        try:
+            r = runner(["op", "inject", "-f", "-i", str(tpl), "-o", tmp], capture_output=True,
+                       text=True, timeout=180, env=env)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            record()
+            raise CredError(f"op inject did not complete for '{slug}': {e}")
         if r.returncode != 0:
             record()
             raise CredError(f"op inject failed for '{slug}': {_sync_op_err(r, 'op inject', token)}")

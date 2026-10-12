@@ -447,9 +447,17 @@ def test_sync_failure_keeps_the_file_names_the_account_and_throttles(synced, mon
     assert cred_cli.sync_env("ace", runner=op, now=1100) == "skipped: checked recently"
 
 
-def test_sync_cli_never_prints_a_value(synced):
+def test_sync_without_op_installed_fails_cleanly(synced):
+    def no_op(argv, **kw):
+        raise FileNotFoundError(2, "No such file or directory", "op")
+    with pytest.raises(cred_cli.CredError, match="could not run the 1Password CLI"):
+        cred_cli.sync_env("ace", runner=no_op, now=1000)
+
+
+def test_sync_cli_never_prints_a_value(synced, monkeypatch):
     op = VaultOp(value="hunter2")
+    monkeypatch.setattr(cred_cli.subprocess, "run", op)
     res = CliRunner().invoke(cred_cli.cred_group, ["sync", "--agent", "ace"],
                              obj=None, catch_exceptions=False,
                              env={"OP_SERVICE_ACCOUNT_TOKEN": "ACE-KEY"})
-    assert "hunter2" not in res.output
+    assert res.exit_code == 0 and "re-injected" in res.output and "hunter2" not in res.output

@@ -75,10 +75,10 @@ def test_a_vault_change_is_reported_in_one_line(tmp_path):
 
 
 def test_a_failed_sync_is_fail_open_and_says_why(tmp_path):
-    r, ef, _ = _run(tmp_path, sync="op vault get Agent-Eva: this key signs in to x.1password.com",
+    r, ef, _ = _run(tmp_path, sync="op vault get Agent-Eva: this key signs in to ACCOUNT-ELSEWHERE",
                     sync_rc=1)
     assert r.returncode == 0 and ef.exists()
-    assert "may be stale" in r.stdout and "x.1password.com" in r.stdout
+    assert "may be stale" in r.stdout and "ACCOUNT-ELSEWHERE" in r.stdout
 
 
 def test_a_callers_confined_turn_never_stages_borrowed_creds(tmp_path, monkeypatch):
