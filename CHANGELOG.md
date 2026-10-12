@@ -9,6 +9,19 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.666] - 2026-10-12
+
+### Changed
+- **doc-regeneration v3: CLAUDE.md is a current-state index, and history is GitHub's job.**
+  canopy-web's CLAUDE.md reached 153k chars, over Claude Code's 150k warning. Two-thirds of it
+  was design decisions explained through their own history, and v2 could not fix that: it had no
+  character budget, said to preserve structure and leave correct content alone, and kept every
+  decision still in force. v3 sets a budget in characters (target 40k, hard ceiling 60k),
+  restructures freely, moves subject detail into on-demand topic docs, drops history, checks that
+  every rule it removes lands somewhere, resolves `file::symbol` references, runs the tests that
+  pin doc content, and adds a CI size guard plus a "how to write this file" note so the file
+  cannot regrow. It no longer adds status banners to shipped specs.
+
 ## [0.2.665] - 2026-10-11
 
 ### Fixed
