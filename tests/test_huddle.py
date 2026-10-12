@@ -406,3 +406,22 @@ def test_gates_with_a_brief_take_brief_numbers():
     # no brief: the round-1 rule, unchanged
     filed, held = H.work_gates([text], {"Q4 funder pipeline (sheet)"}, [])
     assert [p["title"] for p in filed] == ["C"]
+
+
+@pytest.mark.parametrize("step,want", [
+    ("2026-10-13: draft the ask", "draft the ask"),
+    ("10/13 - read the thread", "read the thread"),
+    ("10/13/2026 — brief each meeting", "brief each meeting"),
+    ("read SF history for 2026-10-13 meetings", "read SF history for 2026-10-13 meetings"),
+    ("  ", ""),
+])
+def test_undated_strips_only_a_leading_date(step, want):
+    # Jonathan, 2026-10-12: "having dates next to work makes no sense, you can do infinite work"
+    assert H.undated(step) == want
+
+
+def test_round2_prompt_asks_for_undated_steps_and_self_improvement():
+    from pathlib import Path
+    text = (Path(H.__file__).parent / "huddle_types" / "work" / "round2.md").read_text()
+    assert "YYYY-MM-DD" not in text
+    assert "NO dates" in text and "SELF-IMPROVE" in text

@@ -279,6 +279,17 @@ def norm(s) -> str:
     return re.sub(r"\W+", " ", str(s or "").lower()).strip()
 
 
+_DATE_PREFIX = re.compile(r"^\s*(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*[:\-–—]\s*")
+
+
+def undated(step) -> str:
+    """A plan step with any leading date ("2026-10-13: …", "10/13 - …") removed. Plans are
+    ordered, never scheduled: agents can do unlimited work, so dates on agent steps told the
+    principal nothing (Jonathan, 2026-10-12). Round 2 asks for undated steps; this keeps an
+    older or disobedient reply from putting dates on a board task anyway."""
+    return _DATE_PREFIX.sub("", str(step or ""), count=1).strip()
+
+
 def partners_of(p: dict) -> list[str]:
     return [m for m in (p.get("with") or []) if m and m != p.get("lead")]
 

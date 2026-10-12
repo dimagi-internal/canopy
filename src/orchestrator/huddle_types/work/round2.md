@@ -22,9 +22,16 @@ turns to build. Each proposal:
 - is JOINT when a teammate's report shows they hold part of it: name them in `with` and say what
   you ask of each in `ask_of_partners`. If a teammate's lever is the same work, propose it WITH
   them — the leader merges duplicates before round 3;
-- has dated steps in `plan` ("YYYY-MM-DD: step", the first no earlier than {{today}}). If it
-  cannot land before a hard date in the brief, set `"too_late": true` and say so in `why` — or
-  drop it;
+- is NOT work its lead should already be doing as part of its standing job. When the gap is
+  that an agent lacks the skill for its own duties (a chief of staff that does not prep its
+  principal for trips, a reviewer that does not review on a cadence), the proposal is to
+  SELF-IMPROVE that agent — build or fix the skill so it happens every time, then run it once —
+  never a one-off run of the work. Title it as the improvement ("Teach eva to prep every trip"),
+  with that agent as lead;
+- has ordered steps in `plan`, with NO dates: say what gets done, in order. Agents can do
+  unlimited work, so a schedule of agent work tells {{principal}} nothing. Only a hard date in the
+  brief (an external event) matters: if the work cannot land before one, set `"too_late": true`
+  and say so in `why` — or drop it;
 - marks every claim in `why` "(checked)" (you verified it this turn) or "(unchecked)";
 - says what it costs {{principal}} in `cost_to_jonathan` — `none`, `yes` (one approval),
   `decision` (a choice only he can make — say which) or `time` (how many minutes) — and in `fails_if`
@@ -38,7 +45,7 @@ Answer {{leader}}'s questions in `critique_answers`.
                 "priority": 1, "kind": "new|unblock|existing", "why_huddle": "<only for kind existing>",
                 "project": {"name": "…", "new": false},
                 "why": "evidence (links, ids), each claim (checked) or (unchecked)",
-                "plan": ["YYYY-MM-DD: step"], "too_late": false, "effort": "S|M|L",
+                "plan": ["step, no date"], "too_late": false, "effort": "S|M|L",
                 "success_measure": "what we count, and the bar",
                 "cost_to_jonathan": {"kind": "none|yes|decision|time", "detail": "what exactly / how many minutes"},
                 "fails_if": "one line",
