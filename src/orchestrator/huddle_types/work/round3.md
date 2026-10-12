@@ -28,7 +28,7 @@ WHOLE proposal, same title — in `proposals`:
 For each joint proposal answer `co-sign` (you will do your part), `amend` (say the change in
 `note` — you and the lead then settle it directly in a short thread; if you both agree, that
 counts as your co-sign of the agreed version, otherwise the proposal is held), or `decline` (say
-why in `note`). Co-sign only what you can actually do, by the dates in its plan.
+why in `note`). Co-sign only what you can actually do.
 
 ```huddle
 {"huddle": "{{huddle}}", "round": {{round}}, "member": "{{member}}",

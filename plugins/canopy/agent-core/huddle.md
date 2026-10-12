@@ -90,7 +90,13 @@ claims without a link, levers that are an open task re-wrapped. `{"<member>": ["
 Then for every member that replied: `prompt --round 2 --critique crit.json`,
 `dispatch --round 2`, foreground `await --round 2`. A round-2 proposal names a brief priority by
 NUMBER, a `kind`, `cost_to_jonathan` (none / yes / decision / time + detail) and `fails_if`
-(no confidence %), with dated plan steps (`too_late` when a step misses a brief hard date).
+(no confidence %), with ordered, UNDATED plan steps (agents can do unlimited work, so a schedule of agent work tells
+the principal nothing — Jonathan, 2026-10-12; `too_late` only when the work misses a brief hard date).
+A proposal to do work an agent should own as part of its standing job is the wrong shape: the
+proposal is to self-improve that agent so it happens every time (Jonathan, 2026-10-12: "Eva should
+know as part of her chief of staff duties to make sure I'm prepped and ready for the trip … the
+huddle proposal should have been to self-improve Eva"). Crit questions in step 3 should name any
+such proposal.
 
 **4. Round 3 — merge duplicates, then co-sign.**
 

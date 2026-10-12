@@ -15,7 +15,9 @@ Propose AT MOST 3 pieces of work, best first — fewer is better; zero is fine. 
 alone or JOINT: name the teammates in `with` and say exactly what you ask of each in
 `ask_of_partners`. Every proposal must serve one of the priorities stated in round 1 (quote it
 verbatim in `priority`) and live in a project (an existing one of yours or a teammate's, or
-`"new": true`). The bar: {{principal}} would rather this happen than not, given it costs his
+`"new": true`). Work its lead should already do as part of its standing job is not a proposal:
+propose SELF-IMPROVING that agent (build or fix the skill so it happens every time) instead.
+Plan steps are ordered, with no dates — agents can do unlimited work. The bar: {{principal}} would rather this happen than not, given it costs his
 attention to approve and your turns to build. Answer {{leader}}'s questions in `critique_answers`.
 
 ```huddle

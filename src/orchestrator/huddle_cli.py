@@ -1012,7 +1012,7 @@ def _task_fields(p: dict, plan: dict, page: str) -> tuple[dict, list[dict]]:
     rejects an over-long field rather than truncating it, so the leader shortens it in
     outcomes.json and re-runs."""
     principal = plan.get("principal") or ""
-    steps = [str(s) for s in (p.get("plan") or []) if str(s).strip()]
+    steps = [H.undated(s) for s in (p.get("plan") or []) if H.undated(s)]
     partners = H.partners_of(p)
     try:
         conf = float(p.get("confidence") or 0)
