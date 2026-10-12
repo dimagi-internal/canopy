@@ -16,6 +16,11 @@ and appends `export OP_SERVICE_ACCOUNT_TOKEN=…` to `$CLAUDE_ENV_FILE`, which C
 sources before every Bash command in the session. Same key, same scope, same custodian as
 the cloud — only the delivery differs.
 
+Then it keeps the agent's `~/.<slug>/.env` current with its vault: `canopy cred sync`
+re-injects it only when the vault's `content_version` or the `.env.tpl` changed, checked at
+most every 5 minutes per agent — so a value changed in 1Password reaches the next session
+instead of waiting for someone to re-run `op inject` by hand (2026-10-12: ACE's Drive root).
+
 Inert everywhere else: no CANOPY_AGENT (a human's own project), a key already present (a
 cloud turn), or no CLAUDE_ENV_FILE → exits 0 silently. Fail-open: any failure prints ONE line
 of context and exits 0 — a session without the key falls back to the desktop app, exactly as
@@ -46,15 +51,39 @@ def stage_delegated(canopy: str, slug: str) -> None:
         print(f"canopy: could not stage {slug}'s delegated credentials ({why})")
 
 
+def sync_env(canopy: str, slug: str, token: str) -> None:
+    """`canopy cred sync` with the agent's key: re-inject ~/.<slug>/.env iff its vault
+    or .env.tpl changed (throttled, one cheap probe when due). Silent when nothing
+    changed; one line when it re-injected or failed."""
+    try:
+        r = subprocess.run([canopy, "cred", "sync", "--agent", slug], capture_output=True,
+                           text=True, timeout=25,
+                           env={**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": token})
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"canopy: could not check {slug}'s env against its vault ({type(e).__name__})")
+        return
+    last = ((r.stderr or "").strip().splitlines() or [""])[-1][:300]
+    if r.returncode != 0:
+        print(f"canopy: {slug}'s ~/.{slug}/.env may be stale — {last or 'cred sync failed'}")
+    elif "re-injected" in last:
+        print(f"canopy: {slug}'s vault changed — re-injected ~/.{slug}/.env")
+
+
 def main() -> int:
     slug = os.environ.get("CANOPY_AGENT", "").strip()
     env_file = os.environ.get("CLAUDE_ENV_FILE", "").strip()
     if not slug:
         return 0
     canopy = shutil.which("canopy")
-    if canopy and not os.environ.get("CANOPY_PROFILE"):   # never into a caller's confined turn
+    confined = bool(os.environ.get("CANOPY_PROFILE"))   # a caller's confined turn
+    if canopy and not confined:
         stage_delegated(canopy, slug)
-    if not env_file or os.environ.get("OP_SERVICE_ACCOUNT_TOKEN"):
+    present = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
+    if present:
+        if canopy and not confined:
+            sync_env(canopy, slug, present)
+        return 0
+    if not env_file:
         return 0
     if not canopy:
         print(f"canopy: no `canopy` CLI on PATH — {slug}'s `op` calls will use the 1Password app")
@@ -76,6 +105,8 @@ def main() -> int:
             fh.write(f"export OP_SERVICE_ACCOUNT_TOKEN={shlex.quote(token)}\n")
     except OSError as e:
         print(f"canopy: could not write {slug}'s 1Password key to the session env ({e})")
+    if not confined:
+        sync_env(canopy, slug, token)
     return 0
 
 

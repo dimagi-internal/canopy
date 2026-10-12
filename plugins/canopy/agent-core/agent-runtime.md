@@ -137,6 +137,7 @@ by hand and don't read a key bundled in plugin data. Ask the broker:
 canopy cred check --agent <slug>   # exit 0 = this session may act as <slug>; 3 = refused (stderr says why)
 canopy cred env   --agent <slug>   # ensures ~/.<slug>/.env (0600), resolving only when missing; prints the path
 canopy cred refresh --agent <slug> # after a rotation or an auth failure
+canopy cred sync  --agent <slug>   # re-inject only if the vault/.env.tpl changed (the SessionStart hook runs this)
 ```
 
 - A **runner turn** may act only as its own agent; a **human** session may act as an agent when
