@@ -72,6 +72,12 @@ before acting. In a session that isn't allowed to be that agent they return a cl
 names the right path, and **never fall back to their bundled key**. A missing `canopy` CLI is a
 refusal too.
 
+**Shared integration keys are for people, not agents.** A tool that signs in to Google with a shared
+service account (chrome-sales' Drive tools) acts as the session's agent instead when there is one:
+`canopy cred google-token` hands it a short-lived token for that agent's own Google login (the
+mailbox login the runner already keeps), and the service-account key stays a human-session path.
+An agent then reads and writes exactly what was shared with it, under its own name.
+
 ## 5. Honest limit
 
 On a single-user laptop every agent's `~/.<slug>/.env` sits under one Unix user, so isolation there
@@ -87,6 +93,7 @@ canopy cred check   [--agent X] [--refresh] [--json]
 canopy cred env     [--agent X] [--refresh]
 canopy cred refresh [--agent X]
 canopy cred sync    [--agent X] [--ttl S]
+canopy cred google-token [--agent X]
 canopy cred whoami  [--json]
 ```
 
@@ -118,9 +125,14 @@ the command exits 2: `this session is not an agent … Pass --agent <slug>.`
   written. The `canopy-web` backend writes each `values` entry whose name is an env identifier;
   others (e.g. `gog-token`) are staged by their own paths and listed, by name, on stderr.
 - **`refresh`** drops the cached verdicts and re-resolves `~/.X/.env`.
+- **`google-token`** writes `~/.canopy/google-token/X.json` (0600: `access_token`, `expires_at`
+  epoch seconds, `account`) for X's own Google login and prints **only its path**. It exchanges the
+  refresh token gog holds for X's mailbox (client per `canopy email client`) and reuses the file
+  while 5+ minutes remain. A runner turn may ask only for its own agent (exit 3); a missing login
+  exits 1 naming the `gog login` to run.
 - **`whoami`** prints `identity: agent 'X'` (runner turn) or `identity: human (you)`, plus `why:`.
 
-No command prints a secret value.
+No command prints a secret value; `env` and `google-token` print a path.
 
 ### Calling it from an MCP server (Node/TS)
 
