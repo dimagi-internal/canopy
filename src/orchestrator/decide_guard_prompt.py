@@ -59,6 +59,8 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[2] / "plugins" / "canopy"
 EXAMPLES_PATH = PLUGIN_ROOT / "agent-core" / "decide_guard_examples.jsonl"
 HOOKS_JSON_PATH = PLUGIN_ROOT / "hooks" / "hooks.json"
+# Where Claude Code keeps the plugin a uv-tool-installed CLI (which ships no plugin files) reads.
+MARKETPLACE_PLUGIN_ROOT = Path.home() / ".claude" / "plugins" / "marketplaces" / "canopy" / "plugins" / "canopy"
 
 # Chosen by the 2026-10-04 eval (see the PR that introduced this module): held-out
 # accuracy, the three live misses, and the flag rate on real closing messages.

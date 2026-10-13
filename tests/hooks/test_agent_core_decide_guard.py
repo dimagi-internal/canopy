@@ -294,3 +294,20 @@ def test_a_person_who_has_not_opted_in_gets_no_judge(tmp_path, monkeypatch):
 def test_stamp_needs_a_target():
     result = CliRunner().invoke(decide_guard_group, ["stamp"])
     assert result.exit_code != 0 and "--user" in result.output
+
+
+def test_the_installed_cli_reads_examples_from_the_marketplace_clone(tmp_path, monkeypatch):
+    """A uv-tool install ships no plugin files, so `stamp --user` from it died with
+    FileNotFoundError — and --user is the only opt-in. It falls back to the plugin's
+    marketplace clone."""
+    from orchestrator import decide_guard_cli as cli
+    market = tmp_path / "market" / "plugins" / "canopy"
+    (market / "agent-core").mkdir(parents=True)
+    (market / "agent-core" / dg.EXAMPLES_PATH.name).write_text(dg.EXAMPLES_PATH.read_text())
+    monkeypatch.setattr(dg, "PLUGIN_ROOT", tmp_path / "wheel" / "plugins" / "canopy")
+    monkeypatch.setattr(dg, "MARKETPLACE_PLUGIN_ROOT", market)
+    monkeypatch.chdir(tmp_path)
+    assert cli._root(None) == market
+    monkeypatch.setattr(dg, "MARKETPLACE_PLUGIN_ROOT", tmp_path / "nowhere")
+    with pytest.raises(Exception, match="install the canopy plugin"):
+        cli._root(None)
