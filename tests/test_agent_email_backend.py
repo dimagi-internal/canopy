@@ -91,12 +91,42 @@ def no_gog(monkeypatch):
     return spawned
 
 
+class _GogRecorder:
+    """Stands in for gog: records every argv, answers with `stdout` / `returncode`."""
+
+    def __init__(self):
+        self.calls = []
+        self.stdout = json.dumps({"id": "m", "threadId": "t"})
+        self.returncode = 0
+
+    def __call__(self, cmd, capture_output=True, text=True, timeout=None, **kw):
+        self.calls.append(list(cmd))
+        return SimpleNamespace(returncode=self.returncode, stdout=self.stdout, stderr="")
+
+
 @pytest.fixture
 def gog_guard(monkeypatch):
-    """Gmail-path tests inject their own runner; this makes any real gog spawn fail."""
+    """Gmail-path guard: a test can never reach a real gog binary (a real
+    `gog gmail send` from a test is a real outbound email).
+
+    The engine functions bind `runner=subprocess.run` at def time, so patching
+    subprocess.run alone is not enough. Every function on the Gmail path that shells
+    out is wrapped to inject the recorder as its runner, and subprocess.run itself
+    raises. Tests assert on `gog_guard.calls`.
+    """
+    rec = _GogRecorder()
+
     def boom(*a, **k):
         raise AssertionError(f"real subprocess spawned: {a}")
+
     monkeypatch.setattr(subprocess, "run", boom)
+    def wrap(real):
+        return lambda *a, **k: real(*a, **{**k, "runner": rec})
+
+    for name in ("send", "mark_read", "archive", "reconcile_client", "derive_reply_all",
+                 "dropped_participants", "forward", "collect_thread_attachments"):
+        monkeypatch.setattr(agent_email, name, wrap(getattr(agent_email, name)))
+    return rec
 
 
 def _body(tmp_path, text="Hello there"):
@@ -145,20 +175,10 @@ def test_gmail_argv_snapshots():
     ]
 
 
-def test_404_resolve_keeps_gmail_send_argv(monkeypatch, gog_guard, tmp_path):
+def test_404_resolve_keeps_gmail_send_argv(monkeypatch, tmp_path, gog_guard):
     monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=_not_found()))
     body = _body(tmp_path)
     _rr.record("hal", "Hello there", caught=[], verdict="clean")
-    seen = []
-
-    def fake_run(cmd, capture_output, text, timeout):
-        seen.append(cmd)
-        return SimpleNamespace(returncode=0, stdout=json.dumps({"id": "m", "threadId": "t"}),
-                               stderr="")
-
-    real_send = agent_email.send
-    monkeypatch.setattr(agent_email, "send",
-                        lambda *a, **k: real_send(*a, runner=fake_run, **k))
     r = _run("send", "--account", GMAIL_ADDR, "--agent", "hal", "--client", "canopy",
              "--to", "a@b.com", "--subject", "S", "--body-file", body)
     assert r.exit_code == 0, r.output
@@ -167,12 +187,22 @@ def test_404_resolve_keeps_gmail_send_argv(monkeypatch, gog_guard, tmp_path):
     expected = build_send_command(ident, to="a@b.com", subject="S", plain_path="X",
                                   html_body=agent_email.to_html(plain), cc=None,
                                   reply_to_message_id=None, attachments=[])
-    assert len(seen) == 1, (r.output, r.exception)
-    got = list(seen[0])
+    assert len(gog_guard.calls) == 1, (r.output, r.exception)
+    got = list(gog_guard.calls[0])
     # the temp body-file path is the only varying element
-    i = got.index("--body-file")
-    got[i + 1] = "X"
+    got[got.index("--body-file") + 1] = "X"
     assert got == expected
+
+
+def test_guard_routes_default_runner_calls_to_the_recorder(gog_guard):
+    """Proof the guard works: no runner injected, yet the recorder (not subprocess) is hit."""
+    ident = EmailIdentity(slug="hal", account=GMAIL_ADDR, client="canopy")
+    res = agent_email.mark_read(ident, ["t1"])
+    assert res == [{"thread_id": "t1", "ok": True, "error": ""}]
+    assert gog_guard.calls == [["gog", "gmail", "thread", "modify", "t1", "--remove", "UNREAD",
+                                "--account", GMAIL_ADDR, "--client", "canopy"]]
+    with pytest.raises(AssertionError, match="real subprocess"):
+        subprocess.run(["gog", "gmail", "send"])
 
 
 # ---- (b) SES routing ---------------------------------------------------------------
@@ -356,22 +386,12 @@ def test_ses_reply_to_message_id_without_thread_id_refused(web, no_gog, tmp_path
 
 
 @pytest.mark.parametrize("verb,label", [("mark-read", "UNREAD"), ("archive", "INBOX,UNREAD")])
-def test_404_resolve_keeps_gog_path_for_state_verbs(monkeypatch, gog_guard, verb, label):
+def test_404_resolve_keeps_gog_path_for_state_verbs(monkeypatch, verb, label, gog_guard):
     monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=_not_found()))
-    seen = []
-
-    def runner(cmd, capture_output, text, timeout):
-        seen.append(cmd)
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    for name in ("mark_read", "archive"):
-        real = getattr(agent_email, name)
-        monkeypatch.setattr(agent_email, name,
-                            lambda *a, _r=real, **k: _r(*a, runner=runner, **k))
     r = _run(verb, "--account", GMAIL_ADDR, "--agent", "hal", "--client", "canopy", "t1")
     assert r.exit_code == 0, r.output
-    assert seen == [["gog", "gmail", "thread", "modify", "t1", "--remove", label,
-                     "--account", GMAIL_ADDR, "--client", "canopy"]]
+    assert gog_guard.calls == [["gog", "gmail", "thread", "modify", "t1", "--remove", label,
+                                "--account", GMAIL_ADDR, "--client", "canopy"]]
 
 
 def test_gmail_failure_after_failed_lookup_mentions_it(monkeypatch, gog_guard):
@@ -417,3 +437,15 @@ def test_ses_state_verbs_never_touch_identity_resolution(web, no_gog, monkeypatc
         r = _run(verb, "--account", SES_ADDR, UUID)
         assert r.exit_code == 0, r.output
         assert f"{UUID} -> {word}" in r.output
+
+
+def test_ses_send_success_never_resolves_identity(web, no_gog, monkeypatch, tmp_path):
+    def boom(*a, **k):
+        raise AssertionError("resolve_email_identity called for an SES send")
+
+    monkeypatch.setattr(agent_email, "resolve_email_identity", boom)
+    _review()
+    r = _run("send", "--account", SES_ADDR, "--agent", "ada", "--to", "bob@example.com",
+             "--subject", "Hi", "--body-file", _body(tmp_path))
+    assert r.exit_code == 0, r.output
+    assert [c[1] for c in web.calls if c[0] == "POST"] == ["/api/mail/send/marshellis"]
