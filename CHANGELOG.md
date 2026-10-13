@@ -9,6 +9,17 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.673] - 2026-10-13
+
+### Changed
+- **decide-guard is a per-person opt-in only, never an agent repo's (failure investigation 1,
+  turn bb892462).** `canopy decide-guard stamp --agent-repo` is retired (refuses, naming the
+  path): an agent repo's `.claude/settings.json` runs the prompt Stop hook for EVERY person who
+  runs that agent, and on Sarvesh's runner (Claude Code 2.1.220) its evaluator 400'd on every
+  Stop and wedged ACE. A person opts in with `stamp --user`, which now refuses on Claude Code
+  older than `MIN_CLAUDE_CODE` (2.1.296, the known-good), and opts out with the new
+  `unstamp --user`; `unstamp --agent-repo DIR [--check]` removes or flags an agent copy.
+
 ## [0.2.667] - 2026-10-12
 
 ### Changed

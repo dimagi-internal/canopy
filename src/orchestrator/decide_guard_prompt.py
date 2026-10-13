@@ -12,18 +12,27 @@ The prompt can be wired at two scopes, and `PLUGIN_WIDE` picks between them:
 * **plugin-wide** (`PLUGIN_WIDE = True`): a `{"type": "prompt"}` Stop entry in the canopy
   plugin's `hooks/hooks.json`. It fires in EVERY session on every machine with canopy
   installed, which makes one person's working preference everyone's.
-* **opt-in** (`PLUGIN_WIDE = False`, the current setting): the plugin carries no entry. The
-  same entry is STAMPED by `canopy decide-guard stamp` into each place that wants it:
-  - an agent repo's `.claude/settings.json` (`--agent-repo DIR`): the agent's own rail,
-    shipped as part of that agent;
-  - a person's `~/.claude/settings.json` (`--user`): a personal preference for every
-    session on that macOS account.
-  Cost: a new example reaches a stamped place only when it is re-stamped (`stamp --check`
-  finds the stale ones).
+* **opt-in** (`PLUGIN_WIDE = False`, the current setting): the plugin carries no entry. A
+  PERSON opts in with `canopy decide-guard stamp --user`, which writes the same entry into
+  their own `~/.claude/settings.json` (every session on that macOS account), and opts out
+  with `unstamp --user`. Cost: a new example reaches a person only when they re-stamp
+  (`stamp --user --check` finds a stale one).
 
-History: plugin-wide from 2026-10-04 (Jonathan's choice at the time); moved to opt-in on
-2026-10-08, when Jonathan asked that it stop being imposed on every canopy user. It is now
-his own preference plus a rail in the agents that want it.
+Never an agent repo. Stamping `.claude/settings.json` in ace/ada/eva/echo/hal (2026-10-08 to
+2026-10-13) made one person's preference run for EVERY person who runs that agent — with no
+opt-out and no Claude Code version floor. On the first runner Jonathan does not own
+(stewari-mbp-cdp, Claude Code 2.1.220) the prompt-hook evaluator 400'd on every Stop ("send
+thinking between_tools instead of disabled"), and the session wedged with no composer
+(failure investigation 1, turn bb892462). `stamp --agent-repo` now refuses, and
+`unstamp --agent-repo DIR` removes a copy.
+
+The `--user` stamp also refuses on a Claude Code older than `MIN_CLAUDE_CODE`, the oldest
+version seen to run the prompt hook cleanly.
+
+History: plugin-wide from 2026-10-04 (Jonathan's choice at the time); opt-in on 2026-10-08,
+when Jonathan asked that it stop being imposed on every canopy user; per-person only on
+2026-10-13 (Jonathan: "making stop hooks configurable per person since people will have
+different preferences").
 
 THIS module is the only thing that writes the prompt:
 
@@ -31,7 +40,7 @@ THIS module is the only thing that writes the prompt:
   `{"closing", "handback", "why"}` per line. Add a case there (or with
   `canopy decide-guard add-example`) and re-render; never hand-edit the wired JSON.
 * `render_prompt()` turns the examples into the prompt; `sync_hooks_json()` makes the
-  plugin's hooks.json agree with `PLUGIN_WIDE`; `stamp_settings()` writes an agent repo's
+  plugin's hooks.json agree with `PLUGIN_WIDE`; `stamp_settings()` writes a person's
   settings. `tests/hooks/test_agent_core_decide_guard.py` fails if hooks.json drifts.
 
 Facts the prompt depends on (probed live 2026-10-04):
@@ -43,6 +52,8 @@ Facts the prompt depends on (probed live 2026-10-04):
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2] / "plugins" / "canopy"
@@ -54,8 +65,13 @@ HOOKS_JSON_PATH = PLUGIN_ROOT / "hooks" / "hooks.json"
 MODEL = "claude-sonnet-5-5"
 TIMEOUT_S = 30
 
-# The scope switch — see the module docstring. False = opt-in (stamped per agent repo / user).
+# The scope switch — see the module docstring. False = opt-in (stamped per person, --user).
 PLUGIN_WIDE = False
+
+# The oldest Claude Code seen to run a `{"type": "prompt"}` Stop hook on MODEL cleanly:
+# Jonathan's machines on 2.1.296 do; 2.1.220 400s on every Stop (failure investigation 1,
+# turn bb892462). The exact boundary between them is unknown, so the floor is the known-good.
+MIN_CLAUDE_CODE = (2, 1, 296)
 
 # The regex loader command hook that an agent-only stamp replaces.
 LOADER_MARKER = "hooks/decide_guard.py"
@@ -255,3 +271,57 @@ def add_example(closing: str, handback: bool, why: str,
     with open(examples_path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     return row
+
+
+class ClaudeCodeTooOld(RuntimeError):
+    """This machine's Claude Code cannot run the prompt hook — stamping it would wedge Stop."""
+
+
+def claude_code_version() -> tuple[int, int, int] | None:
+    """`claude --version` as a tuple, or None when it cannot be read."""
+    try:
+        out = subprocess.run(["claude", "--version"], capture_output=True, text=True,
+                             timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", out or "")
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def require_claude_code_floor() -> None:
+    """Refuse an opt-in this machine's Claude Code would fail on every Stop."""
+    floor = ".".join(map(str, MIN_CLAUDE_CODE))
+    have = claude_code_version()
+    if have is None:
+        raise ClaudeCodeTooOld(f"could not read `claude --version`; decide-guard needs Claude "
+                               f"Code {floor}+ (older ones 400 on every Stop, turn bb892462)")
+    if have < MIN_CLAUDE_CODE:
+        raise ClaudeCodeTooOld(
+            f"Claude Code {'.'.join(map(str, have))} is older than {floor}: its prompt-hook "
+            f"evaluator 400s on every Stop and wedges the session (failure investigation 1, "
+            f"turn bb892462). Upgrade Claude Code, then stamp again.")
+
+
+def _carrying(hooks: dict) -> bool:
+    return any(_is_ours(e) or any(LOADER_MARKER in h.get("command", "") for h in e.get("hooks", []))
+               for e in hooks.get("hooks", {}).get("Stop", []))
+
+
+def carries_decide_guard(settings_path: Path) -> bool:
+    """True if a settings.json wires decide-guard (the prompt hook or the regex loader)."""
+    return _carrying(json.loads(Path(settings_path).read_text(encoding="utf-8")))
+
+
+def unstamp_settings(settings_path: Path) -> bool:
+    """Remove decide-guard (prompt hook and regex loader) from a settings.json, keeping every
+    other hook. True if the file changed."""
+    settings_path = Path(settings_path)
+    current = settings_path.read_text(encoding="utf-8")
+    data = json.loads(current)
+    if not _carrying(data):
+        return False
+    out = rendered_hooks(data, [], wire=False, drop_loader=True)
+    if not out.get("hooks"):
+        out.pop("hooks", None)
+    settings_path.write_text(dumps(out), encoding="utf-8")
+    return True
