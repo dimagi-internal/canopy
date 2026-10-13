@@ -19,13 +19,14 @@ Commands::
     canopy cred env    [--agent X] [--refresh] prints ~/.X/.env (resolved if missing)
     canopy cred refresh [--agent X]           re-resolve ~/.X/.env
     canopy cred sync   [--agent X] [--ttl S]  re-inject ~/.X/.env iff its vault changed
+    canopy cred google-token [--agent X]      X's Google access token -> a 0600 file; prints its path
     canopy cred whoami [--json]               who this session is, and why
 
 Exit codes (stable — agent-identity MCP servers shell out to `check`):
     0 allowed · 1 error (resolve failed) · 2 usage (no agent named or detectable)
     3 refused (stderr: one actionable paragraph) · 4 undetermined (could not decide)
 
-No command ever prints a secret value.
+No command ever prints a secret value (google-token prints a path, not the token).
 """
 from __future__ import annotations
 
@@ -703,6 +704,120 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = Non
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# google-token: a short-lived access token for the agent's OWN Google login
+# ──────────────────────────────────────────────────────────────────────────────
+
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+#: A token with less life left than this is minted again, so a caller that reads the
+#: file never holds one that expires mid-call.
+GOOGLE_TOKEN_MIN_LIFE = 300
+
+
+def google_token_path(slug: str) -> Path:
+    return CACHE_DIR / "google-token" / f"{slug}.json"
+
+
+def _mint_google_token(account: str, client: str, *, runner: Runner) -> dict:
+    """Exchange the agent's stored gog refresh token for an access token. The refresh
+    token passes through a 0600 temp file that is deleted before this returns."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    from orchestrator.agent_email import GOG_CONFIG_DIR, gog_client_credentials
+
+    creds_path = gog_client_credentials(GOG_CONFIG_DIR, client)
+    if not creds_path:
+        raise CredError(f"gog holds no OAuth client '{client}' on this machine — "
+                        f"`canopy email preflight --account {account}` says how to set it up")
+    tmpdir = tempfile.mkdtemp(prefix="canopy-gtok-")
+    exported = os.path.join(tmpdir, "token.json")
+    try:
+        try:
+            r = runner(["gog", "auth", "tokens", "export", account, "--client", client,
+                        "--out", exported, "--overwrite", "--no-input"],
+                       capture_output=True, text=True, timeout=45)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise CredError(f"could not run gog to read {account}'s Google login: {e}")
+        if r.returncode != 0 or not os.path.isfile(exported):
+            err = " ".join((r.stderr or r.stdout or "").split())[:300]
+            raise CredError(f"{account} has no Google login under client '{client}' on this "
+                            f"machine ({err or f'gog exited {r.returncode}'}) — "
+                            f"sign it in: `gog login {account} --client {client}`")
+        with open(exported, encoding="utf-8") as fh:
+            refresh = (json.load(fh).get("refresh_token") or "").strip()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    if not refresh:
+        raise CredError(f"gog's stored login for {account} has no refresh token")
+    with open(creds_path, encoding="utf-8") as fh:
+        c = json.load(fh)
+    c = c.get("installed") or c.get("web") or c
+    body = urllib.parse.urlencode({
+        "client_id": c.get("client_id", ""), "client_secret": c.get("client_secret", ""),
+        "refresh_token": refresh, "grant_type": "refresh_token",
+    }).encode()
+    try:
+        with urllib.request.urlopen(GOOGLE_TOKEN_URL, body, timeout=30) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as e:
+        try:
+            reason = json.load(e).get("error_description") or ""
+        except Exception:  # noqa: BLE001
+            reason = ""
+        raise CredError(f"Google refused {account}'s login ({e.code} {reason}) — sign it in "
+                        f"again: `gog login {account} --client {client}`")
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise CredError(f"could not reach Google to refresh {account}'s login: {e}")
+    if not data.get("access_token"):
+        raise CredError(f"Google returned no access token for {account}")
+    return data
+
+
+def google_token(slug: str, *, runner: Optional[Runner] = None,
+                 now: Optional[float] = None) -> Path:
+    """Write a fresh access token for agent ``slug``'s own Google login to
+    ~/.canopy/google-token/<slug>.json (0600) and return the path.
+
+    For a tool that should act on Google AS the agent rather than as a shared service
+    account (chrome-sales' Drive tools). The login is the one the runner
+    already keeps for the agent's mailbox — `gog`, under the client `canopy email client`
+    picks — so there is no second credential to provision. A runner turn may only ask for
+    its own agent's token; a person's session may ask for any agent whose login this
+    machine holds, as it could already run gog as that agent. The token is reused while
+    it has more than GOOGLE_TOKEN_MIN_LIFE seconds left."""
+    from orchestrator.agent_email import (AgentEmailError, find_agent_repo,
+                                          reconcile_client, resolve_email_identity)
+
+    runner = runner or subprocess.run
+    now = time.time() if now is None else now
+    session = session_identity()
+    if session.kind == "agent-turn" and session.agent != slug:
+        raise CredError(f"refused: {session.why}", EXIT_REFUSED)
+    out = google_token_path(slug)
+    try:
+        cached = json.loads(out.read_text(encoding="utf-8"))
+        if float(cached.get("expires_at") or 0) - now > GOOGLE_TOKEN_MIN_LIFE:
+            return out
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        ident = resolve_email_identity(find_agent_repo(slug))
+    except AgentEmailError as e:
+        raise CredError(f"no Google login known for agent '{slug}': {e}")
+    rec = reconcile_client(ident, runner=runner, apply=False)
+    data = _mint_google_token(ident.account, rec.client, runner=runner)
+    out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _write_private(out, json.dumps({
+        "agent": slug, "account": ident.account,
+        "access_token": data["access_token"],
+        "expires_at": now + float(data.get("expires_in") or 3600),
+        "scope": data.get("scope", ""),
+    }))
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -784,6 +899,20 @@ def sync_cmd(agent, ttl):
     value; a failure keeps the existing file and exits 1 with op's reason."""
     slug = _require_agent(agent)
     click.echo(f"[canopy cred] {slug}: {sync_env(slug, ttl=ttl)}", err=True)
+
+
+@cred_group.command("google-token")
+@AGENT_OPT
+def google_token_cmd(agent):
+    """Write a short-lived access token for the agent's OWN Google login and print the
+    file's path (never the token): ~/.canopy/google-token/<agent>.json, mode 0600, with
+    `access_token`, `expires_at` (epoch seconds) and `account`.
+
+    For tools that should act on Google as the agent instead of a shared service account.
+    Reuses the file while it has 5+ minutes left. A runner turn may only ask for its own
+    agent."""
+    slug = _require_agent(agent)
+    click.echo(str(google_token(slug)))
 
 
 @cred_group.command("whoami")

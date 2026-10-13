@@ -461,3 +461,108 @@ def test_sync_cli_never_prints_a_value(synced, monkeypatch):
                              obj=None, catch_exceptions=False,
                              env={"OP_SERVICE_ACCOUNT_TOKEN": "ACE-KEY"})
     assert res.exit_code == 0 and "re-injected" in res.output and "hunter2" not in res.output
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# google-token: the agent's own Google login, as a short-lived token
+# ──────────────────────────────────────────────────────────────────────────────
+
+ACCESS = "ya29.access-never-printed"
+REFRESH = "1//refresh-never-printed"
+
+
+@pytest.fixture()
+def google(monkeypatch, tmp_path):
+    """Fake gog (token export), gog client credentials, agent identity and Google."""
+    from orchestrator import agent_email
+
+    creds = tmp_path / "credentials-canopy.json"
+    creds.write_text(json.dumps({"client_id": "cid", "client_secret": "csec"}))
+    monkeypatch.setattr(agent_email, "gog_client_credentials", lambda home, client: str(creds))
+    monkeypatch.setattr(agent_email, "find_agent_repo", lambda slug: tmp_path)
+    monkeypatch.setattr(agent_email, "resolve_email_identity",
+                        lambda repo: agent_email.EmailIdentity("eva", "eva@dimagi-ai.com", "canopy"))
+    monkeypatch.setattr(agent_email, "reconcile_client",
+                        lambda ident, **kw: agent_email.ClientReconciliation(
+                            account=ident.account, declared="canopy", client="canopy"))
+    for var in ("CANOPY_TURN_ID", "CANOPY_AGENT_SLUG", "CANOPY_AGENT"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(cred_cli, "_turn_id", lambda: ("", ""))
+    state = {"gog": [], "posts": [], "exported": [], "gog_rc": 0}
+
+    def gog(argv, **kw):
+        state["gog"].append(argv)
+        out = argv[argv.index("--out") + 1]
+        state["exported"].append(out)
+        if state["gog_rc"]:
+            return subprocess.CompletedProcess(argv, 1, "", "no token for eva@dimagi-ai.com")
+        Path(out).write_text(json.dumps({"refresh_token": REFRESH}))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    class Resp:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, *a):
+            return self.body
+
+    def urlopen(url, data=None, timeout=None):
+        state["posts"].append((url, data))
+        return Resp(json.dumps({"access_token": ACCESS, "expires_in": 3599,
+                                "scope": "drive"}).encode())
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    state["runner"] = gog
+    return state
+
+
+def test_google_token_mints_a_private_file_and_drops_the_refresh_token(google):
+    path = cred_cli.google_token("eva", runner=google["runner"], now=1000.0)
+    data = json.loads(path.read_text())
+    assert data["access_token"] == ACCESS and data["account"] == "eva@dimagi-ai.com"
+    assert data["expires_at"] == 1000.0 + 3599
+    assert REFRESH not in path.read_text()
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert not os.path.exists(google["exported"][0])  # the exported refresh token is gone
+    assert b"refresh_token=" in google["posts"][0][1]
+
+
+def test_google_token_reuses_a_token_with_life_left(google):
+    cred_cli.google_token("eva", runner=google["runner"], now=1000.0)
+    cred_cli.google_token("eva", runner=google["runner"], now=1000.0 + 3000)
+    assert len(google["posts"]) == 1
+    cred_cli.google_token("eva", runner=google["runner"], now=1000.0 + 3400)  # < 5 min left
+    assert len(google["posts"]) == 2
+
+
+def test_google_token_refuses_a_turn_for_another_agent(google, monkeypatch):
+    monkeypatch.setattr(cred_cli, "_turn_id", lambda: ("t-1", "$CANOPY_TURN_ID"))
+    monkeypatch.setenv("CANOPY_AGENT_SLUG", "ada")
+    with pytest.raises(cred_cli.CredError) as e:
+        cred_cli.google_token("eva", runner=google["runner"])
+    assert e.value.exit_code == cred_cli.EXIT_REFUSED
+    assert google["gog"] == [] and google["posts"] == []
+
+
+def test_google_token_names_the_login_to_fix_when_gog_has_none(google):
+    google["gog_rc"] = 1
+    with pytest.raises(cred_cli.CredError) as e:
+        cred_cli.google_token("eva", runner=google["runner"])
+    assert "gog login eva@dimagi-ai.com --client canopy" in str(e.value)
+    assert google["posts"] == []
+
+
+def test_google_token_cli_prints_the_path_never_the_token(google, monkeypatch):
+    real = cred_cli.google_token
+    monkeypatch.setattr(cred_cli, "google_token",
+                        lambda slug: real(slug, runner=google["runner"]))
+    res = CliRunner().invoke(cred_cli.cred_group, ["google-token", "--agent", "eva"])
+    assert res.exit_code == 0, res.output
+    assert ACCESS not in res.output and res.output.strip().endswith("google-token/eva.json")
