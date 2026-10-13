@@ -108,6 +108,14 @@ Write a JSON body:
   should be on the board, file it as a `kind: "idea"` task carrying their quote
   as `human_why`, and claim it in `ideas`. Never file your own process work
   (reviews, docs, outreach) as an idea.
+- **Before filing an idea, check whether it already shipped.** A quote's date is
+  not its status: people often ask for something in the same session that
+  builds it. Search the owning repo's merged PRs (`gh pr list --state merged
+  --search …`) and look at the live product. If it shipped, file it `done` with
+  the PR links; if part of it shipped, file it `in_progress` with the links and
+  ask the person whether the rest is still wanted. *(2026-10-12: hal P5's
+  "per-programme and per-organisation Labs pages" was filed as proposed. It had
+  shipped on 2026-10-09, the day it was said, and its owner had to ask why.)*
 - **Links.** Every quote links to where they said it. A canopy session link is
   `https://<canopy>/w/<ws>/chat/<session-id>`.
 - **Privacy.** Leave out anything personal, health-related or performance-related.
