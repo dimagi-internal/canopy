@@ -57,41 +57,73 @@ def check_cmd(repo):
 
 
 @decide_guard_group.command("stamp")
-@click.option("--agent-repo", "agent_repos", multiple=True,
-              type=click.Path(exists=True, file_okay=False),
-              help="agent repo whose .claude/settings.json gets the prompt hook (repeatable)")
+@click.option("--agent-repo", "agent_repos", multiple=True, hidden=True,
+              type=click.Path(file_okay=False),
+              help="RETIRED — an agent repo carries the hook to every runner owner")
 @click.option("--user", "user", is_flag=True,
-              help="your own ~/.claude/settings.json — a personal preference for every session "
-                   "on this macOS account")
-@click.option("--check", is_flag=True, help="exit 1 if any target is stale; write nothing")
+              help="your own ~/.claude/settings.json — opt in for every session on this "
+                   "macOS account")
+@click.option("--check", is_flag=True, help="exit 1 if your stamp is stale; write nothing")
 @click.option("--repo", default=None, help="canopy checkout to read examples from")
 def stamp_cmd(agent_repos, user, check, repo):
-    """Opt-in scope: stamp the rendered prompt hook into each agent repo's
-    .claude/settings.json and/or your own ~/.claude/settings.json (--user), replacing any
-    hooks/decide_guard.py loader hook. The plugin itself carries no decide-guard."""
+    """Opt in: stamp the rendered prompt hook into your own ~/.claude/settings.json.
+
+    decide-guard is a PER-PERSON preference. Nothing else carries it: not the plugin, and
+    not an agent repo — a repo's settings run for whoever runs the agent, and on the first
+    runner not owned by Jonathan (stewari-mbp-cdp, Claude Code 2.1.220) the judge 400'd on
+    every Stop and wedged the session (failure investigation 1, turn bb892462)."""
+    if agent_repos:
+        raise click.ClickException(
+            "decide-guard is a per-person preference, not an agent's: an agent repo's "
+            "settings run it for every person who runs that agent (failure investigation 1, "
+            "turn bb892462). Opt yourself in with `canopy decide-guard stamp --user`; remove "
+            "an agent repo's copy with `canopy decide-guard unstamp --agent-repo DIR`.")
+    if not user:
+        raise click.ClickException("opt in with --user (a per-person preference)")
+    _, examples = _paths(repo)
+    settings = dg.user_settings_path()
+    if check:
+        if not settings.exists() or not dg.settings_in_sync(settings, examples):
+            raise click.ClickException(f"stale (re-run without --check): {settings}")
+        click.echo(f"in sync: {settings}")
+        return
+    try:
+        dg.require_claude_code_floor()
+    except dg.ClaudeCodeTooOld as e:
+        raise click.ClickException(str(e))
+    changed = dg.stamp_settings(settings, examples)
+    click.echo(f"{'stamped' if changed else 'unchanged'}: {settings}")
+
+
+@decide_guard_group.command("unstamp")
+@click.option("--agent-repo", "agent_repos", multiple=True,
+              type=click.Path(exists=True, file_okay=False),
+              help="agent repo to remove a (retired) decide-guard copy from (repeatable)")
+@click.option("--user", "user", is_flag=True, help="opt out: your own ~/.claude/settings.json")
+@click.option("--check", is_flag=True,
+              help="exit 1 if any target still carries decide-guard; write nothing")
+def unstamp_cmd(agent_repos, user, check):
+    """Remove the decide-guard Stop hook (and any regex loader) — opt out, or retire an
+    agent repo's copy. Every other hook in the file is kept."""
     if not agent_repos and not user:
         raise click.ClickException("name at least one --agent-repo, or --user")
-    _, examples = _paths(repo)
-    targets = []
-    for agent in agent_repos:
-        settings = Path(agent) / ".claude" / "settings.json"
-        if not settings.exists():
-            raise click.ClickException(f"{settings} not found")
-        targets.append(settings)
+    targets = [Path(a) / ".claude" / "settings.json" for a in agent_repos]
     if user:
         targets.append(dg.user_settings_path())
-    stale = []
+    carrying = []
     for settings in targets:
-        if check:
-            if not settings.exists() or not dg.settings_in_sync(settings, examples):
-                stale.append(str(settings))
+        if not settings.exists():
             continue
-        changed = dg.stamp_settings(settings, examples)
-        click.echo(f"{'stamped' if changed else 'unchanged'}: {settings}")
-    if stale:
-        raise click.ClickException("stale (re-run without --check): " + ", ".join(stale))
+        if check:
+            if dg.carries_decide_guard(settings):
+                carrying.append(str(settings))
+            continue
+        changed = dg.unstamp_settings(settings)
+        click.echo(f"{'removed' if changed else 'absent'}: {settings}")
+    if carrying:
+        raise click.ClickException("still carries decide-guard: " + ", ".join(carrying))
     if check:
-        click.echo(f"in sync: {len(targets)} target(s)")
+        click.echo(f"clean: {len(targets)} target(s)")
 
 
 @decide_guard_group.command("show")
@@ -122,6 +154,5 @@ def add_example_cmd(closing, handback, why, in_prompt, repo):
     if dg.PLUGIN_WIDE:
         click.echo(f"re-rendered {hooks} — now `uv run canopy version bump`, add a CHANGELOG line, and ship")
     else:
-        click.echo("opt-in scope: ship this, then re-stamp — `canopy decide-guard stamp "
-                   "--agent-repo <repo>` in each agent repo that carries it (and ship those), "
-                   "and `--user` on each account that opted in")
+        click.echo("opt-in scope: ship this, then `canopy decide-guard stamp --user` on each "
+                   "account that opted in")

@@ -5,8 +5,8 @@ The regex engine this replaced was whack-a-mole (2026-10-04: three misses in one
 session). Its parametrized closings now live as labelled examples in
 `plugins/canopy/agent-core/decide_guard_examples.jsonl`; what is tested here is the
 plumbing that keeps the hook honest — the render agrees with the scope switch, the prompt
-keeps the rules the live probe showed it needs, and the agent-only stamp REPLACES the regex
-loader rather than adding a second judge, and the retired regex engine is a harmless no-op.
+keeps the rules the live probe showed it needs, the stamp REPLACES the regex loader rather
+than adding a second judge, only a person (never an agent repo) can opt in, and the retired regex engine is a harmless no-op.
 """
 from __future__ import annotations
 
@@ -174,14 +174,41 @@ def test_stamp_replaces_the_loader_and_keeps_every_other_hook(tmp_path):
     assert dg.stamp_settings(settings) is False and dg.settings_in_sync(settings)
 
 
-def test_stamp_cli_check_flags_stale_settings_then_stamps(tmp_path):
+def test_an_agent_repo_cannot_carry_it(tmp_path):
+    """Failure investigation 1 / turn bb892462: an agent repo's settings run decide-guard for
+    EVERY person who runs that agent, so on Sarvesh's runner (Claude Code 2.1.220) it 400'd on
+    every Stop and wedged ACE. Stamping an agent repo is refused, and writes nothing."""
     repo = _agent_repo(tmp_path)
-    stale = CliRunner().invoke(decide_guard_group, ["stamp", "--agent-repo", str(repo), "--check"])
-    assert stale.exit_code != 0 and "stale" in stale.output
-    ok = CliRunner().invoke(decide_guard_group, ["stamp", "--agent-repo", str(repo)])
-    assert ok.exit_code == 0 and "stamped" in ok.output
-    again = CliRunner().invoke(decide_guard_group, ["stamp", "--agent-repo", str(repo), "--check"])
-    assert again.exit_code == 0, again.output
+    before = (repo / ".claude" / "settings.json").read_text()
+    result = CliRunner().invoke(decide_guard_group, ["stamp", "--agent-repo", str(repo)])
+    assert result.exit_code != 0 and "per-person" in result.output and "--user" in result.output
+    assert (repo / ".claude" / "settings.json").read_text() == before
+
+
+def test_unstamp_retires_an_agent_copy_and_keeps_every_other_hook(tmp_path):
+    repo = _agent_repo(tmp_path)
+    settings = repo / ".claude" / "settings.json"
+    dg.stamp_settings(settings)  # the 2026-10-08..13 state: prompt hook in the agent repo
+    assert CliRunner().invoke(decide_guard_group,
+                              ["unstamp", "--agent-repo", str(repo), "--check"]).exit_code != 0
+    ok = CliRunner().invoke(decide_guard_group, ["unstamp", "--agent-repo", str(repo)])
+    assert ok.exit_code == 0 and "removed" in ok.output
+    data = json.loads(settings.read_text())
+    assert not dg.carries_decide_guard(settings) and not _our_stop_hooks(data)
+    stop_cmds = [h.get("command", "") for e in data["hooks"]["Stop"] for h in e["hooks"]]
+    assert stop_cmds == ["python3 \"$CLAUDE_PROJECT_DIR/hooks/gdoc_gate.py\" check"]
+    assert data["hooks"]["PreToolUse"] == _AGENT_SETTINGS["hooks"]["PreToolUse"]
+    assert CliRunner().invoke(decide_guard_group,
+                              ["unstamp", "--agent-repo", str(repo), "--check"]).exit_code == 0
+
+
+def test_unstamp_drops_an_emptied_stop_list(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"env": {"CANOPY_AGENT": "ada"}}) + "\n")
+    dg.stamp_settings(settings)
+    assert dg.unstamp_settings(settings) is True
+    assert json.loads(settings.read_text()) == {"env": {"CANOPY_AGENT": "ada"}}
+    assert dg.unstamp_settings(settings) is False
 
 
 def test_production_deploy_asks_are_fine():
@@ -224,17 +251,44 @@ def test_the_plugin_carries_no_decide_guard():
     assert not any(dg._is_ours(e) for e in hooks.get("hooks", {}).get("Stop", []))
 
 
-def test_stamp_user_writes_your_own_settings_creating_them(tmp_path, monkeypatch):
+def _home(tmp_path, monkeypatch, version):
     home = tmp_path / "home"
     monkeypatch.setattr(dg, "user_settings_path", lambda: home / ".claude" / "settings.json")
+    monkeypatch.setattr(dg, "claude_code_version", lambda: version)
+    return home / ".claude" / "settings.json"
 
+
+def test_stamp_user_writes_your_own_settings_creating_them(tmp_path, monkeypatch):
+    settings = _home(tmp_path, monkeypatch, dg.MIN_CLAUDE_CODE)
     stale = CliRunner().invoke(decide_guard_group, ["stamp", "--user", "--check"])
     assert stale.exit_code != 0
     ok = CliRunner().invoke(decide_guard_group, ["stamp", "--user"])
     assert ok.exit_code == 0 and "stamped" in ok.output
-    stop = json.loads((home / ".claude" / "settings.json").read_text())["hooks"]["Stop"]
+    stop = json.loads(settings.read_text())["hooks"]["Stop"]
     assert any(dg._is_ours(e) for e in stop)
     assert CliRunner().invoke(decide_guard_group, ["stamp", "--user", "--check"]).exit_code == 0
+    off = CliRunner().invoke(decide_guard_group, ["unstamp", "--user"])
+    assert off.exit_code == 0 and not dg.carries_decide_guard(settings)
+
+
+@pytest.mark.parametrize("version", [(2, 1, 220), None])
+def test_an_old_or_unreadable_claude_code_gets_no_judge(tmp_path, monkeypatch, version):
+    """Turn bb892462: Claude Code 2.1.220's prompt-hook evaluator 400s on every Stop. An
+    opt-in on such a machine is refused and writes nothing, so no judge call is ever made."""
+    settings = _home(tmp_path, monkeypatch, version)
+    result = CliRunner().invoke(decide_guard_group, ["stamp", "--user"])
+    assert result.exit_code != 0 and "bb892462" in result.output
+    assert not settings.exists()
+
+
+def test_a_person_who_has_not_opted_in_gets_no_judge(tmp_path, monkeypatch):
+    """Default OFF: with no --user stamp, neither the plugin nor any canopy-written file
+    carries decide-guard, so a non-opted person's Stop makes no judge call."""
+    settings = _home(tmp_path, monkeypatch, dg.MIN_CLAUDE_CODE)
+    hooks = json.loads(dg.HOOKS_JSON_PATH.read_text(encoding="utf-8"))
+    assert not dg._carrying(hooks)
+    assert not settings.exists()
+    assert CliRunner().invoke(decide_guard_group, ["unstamp", "--user", "--check"]).exit_code == 0
 
 
 def test_stamp_needs_a_target():

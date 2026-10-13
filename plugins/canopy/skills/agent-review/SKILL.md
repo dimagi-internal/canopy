@@ -52,7 +52,9 @@ For each, decide implement / defer / skip. Bias:
 reverse: a block on a legitimate outbound ask) is calibration data for the fleet's
 decide-don't-offer Stop prompt hook. Add the agent's verbatim closing as a labelled example in
 canopy — `canopy decide-guard add-example --closing "…" --handback true|false --why "…"` (it re-renders
-the plugin's `hooks/hooks.json`) — then bump the version and ship. Don't write a per-agent rule.
+the plugin's `hooks/hooks.json`) — then bump the version and ship; people who opted in re-stamp
+with `canopy decide-guard stamp --user`. Don't write a per-agent rule, and never wire it into an
+agent repo — it is a per-person preference (turn bb892462).
 
 **`↻ fix_kind coerced from '<x>'` on a finding.** An invariant finding (never/always phrasing, or
 one mined from a human `safety_override`) must ship structurally, so when the synthesis pass
