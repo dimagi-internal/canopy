@@ -2350,6 +2350,215 @@ def _identity_from_opts(repo: str | None, agent: str | None,
     return ident
 
 
+# --------------------------------------------------------------------------------------
+# Backend switch — Gmail (gog) vs canopy-web's SES mail backend, decided per mailbox
+# --------------------------------------------------------------------------------------
+
+#: address (lowercased) -> the resolve payload for an SES mailbox, or None for Gmail.
+#: Per process: one probe per address, and so at most one loud fallback line per address.
+_BACKEND_CACHE: dict[str, dict | None] = {}
+#: address -> why the (non-404) lookup failed, for the Gmail-path error message.
+_RESOLVE_FAILURES: dict[str, str] = {}
+
+
+def _ses_route(address: str) -> dict | None:
+    """canopy-web's routing for `address` if it is an SES mailbox, else None (use Gmail).
+
+    `GET /api/mail/resolve` answers 200 {backend:"ses", workspace, agent} for a workspace
+    email domain's mailbox and 404 for everything else (= Gmail, silently). Any OTHER
+    failure — network, 5xx, auth, no token — also lands on Gmail, but loudly: one stderr
+    line, the same "falls back, and says so" convention as the gog client helper. We never
+    send through SES on a guess; only an explicit 200 "ses" selects it.
+    """
+    key = address.strip().lower()
+    if key in _BACKEND_CACHE:
+        return _BACKEND_CACHE[key]
+    from urllib.parse import quote
+    from orchestrator import canopy_web
+    route: dict | None = None
+    problem = ""
+    try:
+        got = canopy_web.call("GET", f"/api/mail/resolve?address={quote(key, safe='')}")
+        if isinstance(got, dict) and got.get("backend") == "ses":
+            ws = got.get("workspace")
+            if isinstance(ws, str) and ws.strip():
+                route = got
+            else:
+                problem = f"malformed resolve response (no workspace): {str(got)[:200]}"
+        else:
+            problem = f"unexpected resolve response: {str(got)[:200]}"
+    except Exception as e:  # noqa: BLE001 — every failure mode degrades the same way
+        if not _is_not_found(e):
+            problem = str(e)
+    if problem:
+        _RESOLVE_FAILURES[key] = problem
+        sys.stderr.write(
+            f"WARNING: could not resolve the mail backend for {key} ({problem}); "
+            "falling back to gmail (gog).\n"
+        )
+    _BACKEND_CACHE[key] = route
+    return route
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """True when canopy-web answered 404. `CanopyError` carries no status attribute, only
+    "<METHOD> <path> -> <status>: <body>" in its message, so the check lives here, once."""
+    status = getattr(exc, "status", None)
+    if status is not None:
+        return status == 404
+    return " -> 404" in str(exc)
+
+
+def _fallback_note(address: str) -> str:
+    """Suffix for a Gmail-path failure when the backend lookup had failed earlier."""
+    why = _RESOLVE_FAILURES.get(address.strip().lower())
+    if not why:
+        return ""
+    return (f" (mail backend lookup failed earlier: {why}; if this is an SES mailbox, "
+            "canopy-web was unreachable)")
+
+
+def _backend(mailbox: str) -> str:
+    """`"ses"` or `"gmail"` for a mailbox (cached per process)."""
+    return "ses" if _ses_route(mailbox) else "gmail"
+
+
+def _ses_path(route: dict, thread_id: str, suffix: str = "") -> str:
+    import uuid
+    try:
+        thread_id = str(uuid.UUID(str(thread_id)))
+    except ValueError:
+        raise AgentEmailError(
+            f"not an SES thread id: {thread_id!r} (expected a UUID)") from None
+    return f"/api/mail/threads/{route['workspace']}/{thread_id}{suffix}"
+
+
+def _split_addrs(value: str | None) -> list[str]:
+    return [a.strip() for a in (value or "").split(",") if a.strip()]
+
+
+def ses_send(identity: EmailIdentity, route: dict, *, to: str | None, subject: str,
+             body_text: str, cc: str | None = None, thread_id: str | None = None,
+             attachments: Sequence[str] = (), dry_run: bool = False) -> dict:
+    """Send (new thread) or reply (`thread_id`) through canopy-web's SES backend.
+
+    Same rails as the Gmail send: attachments are refused (not silently dropped), flat
+    canopy-web links are refused, and the pre-send review receipt is required.
+    """
+    if attachments:
+        raise AgentEmailError(
+            "attachments are not supported for SES mailboxes yet — put the artifact in a "
+            "shared gdoc and link it, or send from a Gmail mailbox."
+        )
+    plain = normalize(body_text)
+    html_body = to_html(plain)
+    from orchestrator import canopy_web
+    flat = canopy_web.flat_canopy_links(body_text)
+    if flat:
+        raise AgentEmailError(
+            "refusing to send a flat canopy-web link — it 404s; links live under "
+            "/w/<workspace>/ (canopy-web#1337). Use the scoped URL the CLI printed "
+            "(or `canopy_web.scope_link`): " + ", ".join(flat)
+        )
+    if thread_id:
+        path = _ses_path(route, thread_id, "/reply")
+        payload: dict = {"text": plain, "html": html_body}
+        if to:
+            payload["to"] = _split_addrs(to)
+        if cc:
+            payload["cc"] = _split_addrs(cc)
+    else:
+        if not to:
+            raise AgentEmailError("--to is required for a new SES thread")
+        path = f"/api/mail/send/{route['workspace']}"
+        payload = {"agent": route.get("agent") or identity.slug, "to": _split_addrs(to),
+                   "cc": _split_addrs(cc), "subject": subject, "text": plain,
+                   "html": html_body}
+    if dry_run:
+        return {"dry_run": True, "backend": "ses", "message_id": "", "thread_id": thread_id or "",
+                "account": identity.account, "path": path, "request": payload}
+    from orchestrator import review_receipt
+    review_receipt.require(identity.slug, body_text)
+    try:
+        got = canopy_web.call("POST", path, payload)
+    except Exception as e:  # noqa: BLE001
+        raise AgentEmailError(f"SES send failed as {identity.account}: {e}") from e
+    return {"backend": "ses", "account": identity.account,
+            "thread_id": got.get("thread_id", thread_id or ""),
+            "message_id": got.get("message_id") or got.get("id", ""), "message": got}
+
+
+def ses_set_state(route: dict, thread_ids: list[str], state: dict) -> list[dict]:
+    """POST a thread-state change per thread; same result shape as `mark_read`/`archive`."""
+    from orchestrator import canopy_web
+    out = []
+    for tid in thread_ids:
+        try:
+            canopy_web.call("POST", _ses_path(route, tid, "/state"), dict(state))
+            out.append({"thread_id": tid, "ok": True, "error": ""})
+        except Exception as e:  # noqa: BLE001
+            out.append({"thread_id": tid, "ok": False, "error": str(e)[:400]})
+    return out
+
+
+def ses_read_thread(route: dict, thread_id: str) -> dict:
+    from orchestrator import canopy_web
+    path = _ses_path(route, thread_id)
+    try:
+        return canopy_web.call("GET", path)
+    except Exception as e:  # noqa: BLE001
+        raise AgentEmailError(f"cannot read SES thread {thread_id}: {e}") from e
+
+
+def format_ses_thread(thread: dict) -> str:
+    """A thread as readable plain text (headers, then each message's text body)."""
+    lines = [f"Thread {thread.get('thread_id', '')}  {thread.get('subject', '')!r}",
+             f"Mailbox: {thread.get('address', '')}  Agent: {thread.get('agent', '')}",
+             f"Messages: {thread.get('message_count', 0)}  Unread: {thread.get('unread')}  "
+             f"Archived: {thread.get('archived')}  Last: {thread.get('last_message_at', '')}"]
+    for m in thread.get("messages", []):
+        frm = m.get("from_addr", "")
+        if m.get("from_name"):
+            frm = f"{m['from_name']} <{frm}>"
+        lines += ["", "-" * 72,
+                  f"[{m.get('direction', '')}] {m.get('created_at', '')}  "
+                  f"{m.get('delivery_status', '')}".rstrip(),
+                  f"From: {frm}", f"To: {', '.join(m.get('to') or [])}"]
+        if m.get("cc"):
+            lines.append(f"Cc: {', '.join(m['cc'])}")
+        lines += [f"Subject: {m.get('subject', '')}", ""]
+        body = m.get("text") or _html_to_text(m.get("html") or "")
+        lines.append(body.rstrip())
+        for a in m.get("attachments") or []:
+            lines.append(f"[attachment] {a.get('filename')} ({a.get('content_type')}, "
+                         f"{a.get('size')} bytes) {a.get('url', '')}")
+    return "\n".join(lines) + "\n"
+
+
+def _acct(ident) -> str:
+    return ident.account if ident is not None else ""
+
+
+def _route_for(repo, agent, account, client) -> tuple[EmailIdentity, dict | None]:
+    """The identity to act as, plus the SES route if the mailbox is SES-served.
+
+    The backend is decided from the mailbox BEFORE any gog-side reconciliation, so an SES
+    mailbox never touches the gog token store. A Gmail mailbox goes through
+    `_identity_from_opts` exactly as it always did.
+    """
+    if account:
+        address = account
+        slug = agent or account.split("@")[0]
+    else:
+        repo_dir = Path(repo) if repo else (find_agent_repo(agent) if agent else Path.cwd())
+        resolved = resolve_email_identity(repo_dir)
+        address, slug = resolved.account, resolved.slug
+    route = _ses_route(address)
+    if route is None:
+        return _identity_from_opts(repo, agent, account, client), None
+    return EmailIdentity(slug=slug, account=address, client=client or "ses"), route
+
+
 def ident_with_client(ident: EmailIdentity, client: str) -> EmailIdentity:
     """An explicit `--client` is a human decision — honour it verbatim, no reconciliation."""
     ident.client = client
@@ -2424,8 +2633,23 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
         raise click.ClickException("--thread-id is only meaningful with --reply-all")
     if not reply_all and not to:
         raise click.ClickException("--to is required (or pass --reply-all)")
+    ident = None
     try:
-        ident = _identity_from_opts(repo, agent, account, client)
+        ident, ses = _route_for(repo, agent, account, client)
+        if ses is not None:
+            if reply_to_message_id and not thread_id:
+                raise click.ClickException(
+                    "SES mailboxes reply by thread: pass --reply-all --thread-id <uuid> "
+                    "(--reply-to-message-id is a Gmail message id).")
+            result = ses_send(
+                ident, ses, to=to, subject=subject,
+                body_text=Path(body_file).read_text(encoding="utf-8"), cc=cc,
+                thread_id=thread_id, attachments=list(attach) + (
+                    [attach_from_thread] if attach_from_thread else []),
+                dry_run=dry_run,
+            )
+            click.echo(json.dumps(result, indent=2))
+            return
         if reply_to_message_id and not reply_all and not narrow:
             dropped = dropped_participants(
                 ident, message_id=reply_to_message_id, to=to, cc=cc,
@@ -2459,7 +2683,7 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
             attachments=attachments, dry_run=dry_run,
         )
     except AgentEmailError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e) + _fallback_note(account or _acct(ident)))
     click.echo(json.dumps(result, indent=2))
 
 
@@ -2542,18 +2766,21 @@ def email_review_receipt(repo, agent, account, client, body_file, caught, verdic
 @click.argument("thread_ids", nargs=-1, required=True)
 def email_mark_read(repo, agent, account, client, thread_ids):
     """Remove the UNREAD label from THREAD_IDS (gog thread modify; API reads don't clear it)."""
+    ident = None
     try:
-        ident = _identity_from_opts(repo, agent, account, client)
-        results = mark_read(ident, list(thread_ids))
+        ident, ses = _route_for(repo, agent, account, client)
+        results = (ses_set_state(ses, list(thread_ids), {"unread": False}) if ses
+                   else mark_read(ident, list(thread_ids)))
     except AgentEmailError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e) + _fallback_note(account or _acct(ident)))
     failed = 0
     for res in results:
         if res["ok"]:
             click.echo(f"{res['thread_id']} -> read")
         else:
             failed += 1
-            click.echo(f"{res['thread_id']} -> ERROR {res['error']}")
+            click.echo(f"{res['thread_id']} -> ERROR {res['error']}"
+                       f"{_fallback_note(ident.account)}")
     if failed:
         sys.exit(1)
 
@@ -2567,18 +2794,22 @@ def email_archive(repo, agent, account, client, thread_ids):
     Turn housekeeping for a handled or not-actionable thread — own mailbox only,
     reversible, so it needs no approval gate. Name it in the turn closeout.
     """
+    ident = None
     try:
-        ident = _identity_from_opts(repo, agent, account, client)
-        results = archive(ident, list(thread_ids))
+        ident, ses = _route_for(repo, agent, account, client)
+        results = (ses_set_state(ses, list(thread_ids),
+                                 {"archived": True, "unread": False}) if ses
+                   else archive(ident, list(thread_ids)))
     except AgentEmailError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e) + _fallback_note(account or _acct(ident)))
     failed = 0
     for res in results:
         if res["ok"]:
             click.echo(f"{res['thread_id']} -> archived")
         else:
             failed += 1
-            click.echo(f"{res['thread_id']} -> ERROR {res['error']}")
+            click.echo(f"{res['thread_id']} -> ERROR {res['error']}"
+                       f"{_fallback_note(ident.account)}")
     if failed:
         sys.exit(1)
 
@@ -2754,6 +2985,24 @@ def email_read(repo, agent, account, client, thread_id):
     except AgentEmailError as e:
         raise click.ClickException(str(e))
     click.echo(json.dumps(result, indent=2))
+
+
+@email_group.command("thread")
+@_with_identity_options
+@click.argument("thread_id")
+def email_thread(repo, agent, account, client, thread_id):
+    """Print a THREAD's messages as readable plain text (SES mailboxes only for now).
+
+    For a Gmail mailbox use `canopy email read <thread-id>` (normalized JSON)."""
+    try:
+        ident, ses = _route_for(repo, agent, account, client)
+        if ses is None:
+            raise click.ClickException(
+                f"thread is SES-only for now ({ident.account} is a Gmail mailbox) — "
+                "use `canopy email read <thread-id>` for Gmail threads.")
+        click.echo(format_ses_thread(ses_read_thread(ses, thread_id)), nl=False)
+    except AgentEmailError as e:
+        raise click.ClickException(str(e))
 
 
 @email_group.command("why")
