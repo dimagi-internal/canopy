@@ -24,7 +24,16 @@ def _root(repo: str | None) -> Path:
             return plugin
     if repo:
         raise click.ClickException(f"{repo} is not a canopy checkout (no {dg.EXAMPLES_PATH.name})")
-    return dg.PLUGIN_ROOT
+    if (dg.PLUGIN_ROOT / "agent-core" / dg.EXAMPLES_PATH.name).exists():
+        return dg.PLUGIN_ROOT
+    # The installed CLI (a uv tool wheel) ships no plugin files; read the marketplace clone
+    # the plugin itself is installed from — or `stamp --user`, the only opt-in, can't run.
+    marketplace = dg.MARKETPLACE_PLUGIN_ROOT
+    if (marketplace / "agent-core" / dg.EXAMPLES_PATH.name).exists():
+        return marketplace
+    raise click.ClickException(
+        f"no {dg.EXAMPLES_PATH.name}: run from a canopy checkout, pass --repo, or install the "
+        f"canopy plugin (expected {marketplace})")
 
 
 def _paths(repo):

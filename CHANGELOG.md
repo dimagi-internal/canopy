@@ -9,6 +9,14 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.674] - 2026-10-13
+
+### Fixed
+- **`canopy decide-guard stamp --user` works from the installed CLI.** The uv-tool wheel ships
+  no plugin files, so the only opt-in path died with `FileNotFoundError` on
+  `decide_guard_examples.jsonl` outside a canopy checkout. It now falls back to the plugin's
+  marketplace clone (`~/.claude/plugins/marketplaces/canopy`), and names it when that is missing too.
+
 ## [0.2.673] - 2026-10-13
 
 ### Changed
