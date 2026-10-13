@@ -2483,7 +2483,8 @@ def ses_send(identity: EmailIdentity, route: dict, *, to: str | None, subject: s
         got = canopy_web.call("POST", path, payload)
     except Exception as e:  # noqa: BLE001
         raise AgentEmailError(f"SES send failed as {identity.account}: {e}") from e
-    return {"backend": "ses", "account": identity.account, "thread_id": got.get("thread_id", thread_id or ""),
+    return {"backend": "ses", "account": identity.account,
+            "thread_id": got.get("thread_id", thread_id or ""),
             "message_id": got.get("message_id") or got.get("id", ""), "message": got}
 
 
@@ -2534,13 +2535,8 @@ def format_ses_thread(thread: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _addr_of(repo, agent) -> str:
-    """The mailbox a repo/agent resolves to, or "" (only used to look up a stored note)."""
-    try:
-        repo_dir = Path(repo) if repo else (find_agent_repo(agent) if agent else Path.cwd())
-        return resolve_email_identity(repo_dir).account
-    except Exception:  # noqa: BLE001
-        return ""
+def _acct(ident) -> str:
+    return ident.account if ident is not None else ""
 
 
 def _route_for(repo, agent, account, client) -> tuple[EmailIdentity, dict | None]:
@@ -2637,6 +2633,7 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
         raise click.ClickException("--thread-id is only meaningful with --reply-all")
     if not reply_all and not to:
         raise click.ClickException("--to is required (or pass --reply-all)")
+    ident = None
     try:
         ident, ses = _route_for(repo, agent, account, client)
         if ses is not None:
@@ -2686,7 +2683,7 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
             attachments=attachments, dry_run=dry_run,
         )
     except AgentEmailError as e:
-        raise click.ClickException(str(e) + _fallback_note(account or _addr_of(repo, agent)))
+        raise click.ClickException(str(e) + _fallback_note(account or _acct(ident)))
     click.echo(json.dumps(result, indent=2))
 
 
@@ -2769,20 +2766,21 @@ def email_review_receipt(repo, agent, account, client, body_file, caught, verdic
 @click.argument("thread_ids", nargs=-1, required=True)
 def email_mark_read(repo, agent, account, client, thread_ids):
     """Remove the UNREAD label from THREAD_IDS (gog thread modify; API reads don't clear it)."""
+    ident = None
     try:
         ident, ses = _route_for(repo, agent, account, client)
         results = (ses_set_state(ses, list(thread_ids), {"unread": False}) if ses
                    else mark_read(ident, list(thread_ids)))
     except AgentEmailError as e:
-        raise click.ClickException(str(e) + _fallback_note(account or _addr_of(repo, agent)))
+        raise click.ClickException(str(e) + _fallback_note(account or _acct(ident)))
     failed = 0
-    note = _fallback_note(account or _addr_of(repo, agent))
     for res in results:
         if res["ok"]:
             click.echo(f"{res['thread_id']} -> read")
         else:
             failed += 1
-            click.echo(f"{res['thread_id']} -> ERROR {res['error']}{note}")
+            click.echo(f"{res['thread_id']} -> ERROR {res['error']}"
+                       f"{_fallback_note(ident.account)}")
     if failed:
         sys.exit(1)
 
@@ -2796,20 +2794,22 @@ def email_archive(repo, agent, account, client, thread_ids):
     Turn housekeeping for a handled or not-actionable thread — own mailbox only,
     reversible, so it needs no approval gate. Name it in the turn closeout.
     """
+    ident = None
     try:
         ident, ses = _route_for(repo, agent, account, client)
-        results = (ses_set_state(ses, list(thread_ids), {"archived": True, "unread": False}) if ses
+        results = (ses_set_state(ses, list(thread_ids),
+                                 {"archived": True, "unread": False}) if ses
                    else archive(ident, list(thread_ids)))
     except AgentEmailError as e:
-        raise click.ClickException(str(e) + _fallback_note(account or _addr_of(repo, agent)))
+        raise click.ClickException(str(e) + _fallback_note(account or _acct(ident)))
     failed = 0
-    note = _fallback_note(account or _addr_of(repo, agent))
     for res in results:
         if res["ok"]:
             click.echo(f"{res['thread_id']} -> archived")
         else:
             failed += 1
-            click.echo(f"{res['thread_id']} -> ERROR {res['error']}{note}")
+            click.echo(f"{res['thread_id']} -> ERROR {res['error']}"
+                       f"{_fallback_note(ident.account)}")
     if failed:
         sys.exit(1)
 

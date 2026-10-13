@@ -91,6 +91,14 @@ def no_gog(monkeypatch):
     return spawned
 
 
+@pytest.fixture
+def gog_guard(monkeypatch):
+    """Gmail-path tests inject their own runner; this makes any real gog spawn fail."""
+    def boom(*a, **k):
+        raise AssertionError(f"real subprocess spawned: {a}")
+    monkeypatch.setattr(subprocess, "run", boom)
+
+
 def _body(tmp_path, text="Hello there"):
     p = tmp_path / "body.txt"
     p.write_text(text)
@@ -137,7 +145,7 @@ def test_gmail_argv_snapshots():
     ]
 
 
-def test_404_resolve_keeps_gmail_send_argv(monkeypatch, tmp_path):
+def test_404_resolve_keeps_gmail_send_argv(monkeypatch, gog_guard, tmp_path):
     monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=_not_found()))
     body = _body(tmp_path)
     _rr.record("hal", "Hello there", caught=[], verdict="clean")
@@ -348,7 +356,7 @@ def test_ses_reply_to_message_id_without_thread_id_refused(web, no_gog, tmp_path
 
 
 @pytest.mark.parametrize("verb,label", [("mark-read", "UNREAD"), ("archive", "INBOX,UNREAD")])
-def test_404_resolve_keeps_gog_path_for_state_verbs(monkeypatch, verb, label):
+def test_404_resolve_keeps_gog_path_for_state_verbs(monkeypatch, gog_guard, verb, label):
     monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=_not_found()))
     seen = []
 
@@ -366,7 +374,7 @@ def test_404_resolve_keeps_gog_path_for_state_verbs(monkeypatch, verb, label):
                      "--account", GMAIL_ADDR, "--client", "canopy"]]
 
 
-def test_gmail_failure_after_failed_lookup_mentions_it(monkeypatch):
+def test_gmail_failure_after_failed_lookup_mentions_it(monkeypatch, gog_guard):
     monkeypatch.setattr(canopy_web, "call",
                         FakeWeb(resolve=OSError("network unreachable")))
     monkeypatch.setattr(agent_email, "mark_read", lambda ident, ids, **k: [
@@ -378,7 +386,7 @@ def test_gmail_failure_after_failed_lookup_mentions_it(monkeypatch):
     assert "canopy-web was unreachable" in r.output
 
 
-def test_gmail_failure_after_404_has_no_note(monkeypatch):
+def test_gmail_failure_after_404_has_no_note(monkeypatch, gog_guard):
     monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=_not_found()))
     monkeypatch.setattr(agent_email, "archive", lambda ident, ids, **k: [
         {"thread_id": i, "ok": False, "error": "gog: boom"} for i in ids])
@@ -386,7 +394,7 @@ def test_gmail_failure_after_404_has_no_note(monkeypatch):
     assert "gog: boom" in r.output and "lookup failed" not in r.output
 
 
-def test_send_error_after_failed_lookup_mentions_it(monkeypatch, tmp_path):
+def test_send_error_after_failed_lookup_mentions_it(monkeypatch, gog_guard, tmp_path):
     monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=OSError("dns down")))
     _rr.record("ada", "Hello there", caught=[], verdict="clean")
 
@@ -398,3 +406,14 @@ def test_send_error_after_failed_lookup_mentions_it(monkeypatch, tmp_path):
              "--to", "a@b.com", "--subject", "s", "--body-file", _body(tmp_path))
     assert r.exit_code != 0
     assert "send failed" in r.output and "lookup failed earlier: dns down" in r.output
+
+
+def test_ses_state_verbs_never_touch_identity_resolution(web, no_gog, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("resolve_email_identity called for an SES mailbox")
+
+    monkeypatch.setattr(agent_email, "resolve_email_identity", boom)
+    for verb, word in (("mark-read", "read"), ("archive", "archived")):
+        r = _run(verb, "--account", SES_ADDR, UUID)
+        assert r.exit_code == 0, r.output
+        assert f"{UUID} -> {word}" in r.output
