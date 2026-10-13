@@ -41,10 +41,12 @@ THREAD = {
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch, tmp_path):
     agent_email._BACKEND_CACHE.clear()
+    agent_email._RESOLVE_FAILURES.clear()
     monkeypatch.setattr(agent_email, "engine_staleness_error", lambda *a, **k: None)
     monkeypatch.setenv("CANOPY_REVIEW_RECEIPTS_DIR", str(tmp_path / "receipts"))
     yield
     agent_email._BACKEND_CACHE.clear()
+    agent_email._RESOLVE_FAILURES.clear()
 
 
 class FakeWeb:
@@ -223,7 +225,7 @@ def test_ses_mark_read_and_archive_post_state(web, no_gog):
     posts = [(c[1], c[2]) for c in web.calls if c[0] == "POST"]
     assert posts == [
         (f"/api/mail/threads/marshellis/{UUID}/state", {"unread": False}),
-        (f"/api/mail/threads/marshellis/{UUID}/state", {"archived": True}),
+        (f"/api/mail/threads/marshellis/{UUID}/state", {"archived": True, "unread": False}),
     ]
 
 
@@ -305,3 +307,94 @@ def test_backend_helper_returns_literal(monkeypatch):
     assert agent_email._backend(SES_ADDR) == "ses"
     monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=_not_found()))
     assert agent_email._backend(GMAIL_ADDR) == "gmail"
+
+
+# ---- fix round 1 ---------------------------------------------------------------------
+
+def test_ses_rejects_non_uuid_thread_id_without_http(web, no_gog):
+    n = len(web.calls)
+    for verb in ("mark-read", "archive"):
+        r = _run(verb, "--account", SES_ADDR, "../x")
+        assert r.exit_code == 1 and "not an SES thread id" in r.output
+    r = _run("thread", "../x", "--account", SES_ADDR)
+    assert r.exit_code != 0 and "not an SES thread id" in r.output
+    assert [c for c in web.calls[n:] if "threads" in c[1]] == []
+
+
+def test_ses_reply_rejects_non_uuid_thread_id(web, no_gog, tmp_path):
+    _review()
+    r = _run("send", "--account", SES_ADDR, "--agent", "ada", "--reply-all",
+             "--thread-id", "../x", "--subject", "s", "--body-file", _body(tmp_path))
+    assert r.exit_code != 0 and "not an SES thread id" in r.output
+    assert not [c for c in web.calls if c[0] == "POST"]
+
+
+@pytest.mark.parametrize("resp", [
+    {"backend": "ses"}, {"backend": "ses", "workspace": ""},
+    {"backend": "ses", "workspace": 7}, {"backend": "weird"}, ["x"],
+])
+def test_malformed_200_falls_back_loudly(monkeypatch, capsys, resp):
+    monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=resp))
+    assert agent_email._ses_route(SES_ADDR) is None
+    assert "falling back to gmail" in capsys.readouterr().err
+
+
+def test_ses_reply_to_message_id_without_thread_id_refused(web, no_gog, tmp_path):
+    _review()
+    r = _run("send", "--account", SES_ADDR, "--to", "bob@example.com", "--subject", "s",
+             "--reply-to-message-id", "<m@x>", "--body-file", _body(tmp_path))
+    assert r.exit_code != 0 and "--thread-id" in r.output
+    assert not [c for c in web.calls if c[0] == "POST"]
+
+
+@pytest.mark.parametrize("verb,label", [("mark-read", "UNREAD"), ("archive", "INBOX,UNREAD")])
+def test_404_resolve_keeps_gog_path_for_state_verbs(monkeypatch, verb, label):
+    monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=_not_found()))
+    seen = []
+
+    def runner(cmd, capture_output, text, timeout):
+        seen.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    for name in ("mark_read", "archive"):
+        real = getattr(agent_email, name)
+        monkeypatch.setattr(agent_email, name,
+                            lambda *a, _r=real, **k: _r(*a, runner=runner, **k))
+    r = _run(verb, "--account", GMAIL_ADDR, "--agent", "hal", "--client", "canopy", "t1")
+    assert r.exit_code == 0, r.output
+    assert seen == [["gog", "gmail", "thread", "modify", "t1", "--remove", label,
+                     "--account", GMAIL_ADDR, "--client", "canopy"]]
+
+
+def test_gmail_failure_after_failed_lookup_mentions_it(monkeypatch):
+    monkeypatch.setattr(canopy_web, "call",
+                        FakeWeb(resolve=OSError("network unreachable")))
+    monkeypatch.setattr(agent_email, "mark_read", lambda ident, ids, **k: [
+        {"thread_id": i, "ok": False, "error": "gog: not found"} for i in ids])
+    r = _run("mark-read", "--account", SES_ADDR, "--agent", "ada", "--client", "canopy", "t1")
+    assert r.exit_code == 1
+    assert "gog: not found" in r.output
+    assert "mail backend lookup failed earlier: network unreachable" in r.output
+    assert "canopy-web was unreachable" in r.output
+
+
+def test_gmail_failure_after_404_has_no_note(monkeypatch):
+    monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=_not_found()))
+    monkeypatch.setattr(agent_email, "archive", lambda ident, ids, **k: [
+        {"thread_id": i, "ok": False, "error": "gog: boom"} for i in ids])
+    r = _run("archive", "--account", GMAIL_ADDR, "--agent", "hal", "--client", "canopy", "t1")
+    assert "gog: boom" in r.output and "lookup failed" not in r.output
+
+
+def test_send_error_after_failed_lookup_mentions_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=OSError("dns down")))
+    _rr.record("ada", "Hello there", caught=[], verdict="clean")
+
+    def failing(*a, **k):
+        raise agent_email.AgentEmailError("gog gmail send failed (exit 1)")
+
+    monkeypatch.setattr(agent_email, "send", failing)
+    r = _run("send", "--account", SES_ADDR, "--agent", "ada", "--client", "canopy",
+             "--to", "a@b.com", "--subject", "s", "--body-file", _body(tmp_path))
+    assert r.exit_code != 0
+    assert "send failed" in r.output and "lookup failed earlier: dns down" in r.output

@@ -2357,6 +2357,8 @@ def _identity_from_opts(repo: str | None, agent: str | None,
 #: address (lowercased) -> the resolve payload for an SES mailbox, or None for Gmail.
 #: Per process: one probe per address, and so at most one loud fallback line per address.
 _BACKEND_CACHE: dict[str, dict | None] = {}
+#: address -> why the (non-404) lookup failed, for the Gmail-path error message.
+_RESOLVE_FAILURES: dict[str, str] = {}
 
 
 def _ses_route(address: str) -> dict | None:
@@ -2374,18 +2376,46 @@ def _ses_route(address: str) -> dict | None:
     from urllib.parse import quote
     from orchestrator import canopy_web
     route: dict | None = None
+    problem = ""
     try:
         got = canopy_web.call("GET", f"/api/mail/resolve?address={quote(key, safe='')}")
-        if isinstance(got, dict) and got.get("backend") == "ses" and got.get("workspace"):
-            route = got
+        if isinstance(got, dict) and got.get("backend") == "ses":
+            ws = got.get("workspace")
+            if isinstance(ws, str) and ws.strip():
+                route = got
+            else:
+                problem = f"malformed resolve response (no workspace): {str(got)[:200]}"
+        else:
+            problem = f"unexpected resolve response: {str(got)[:200]}"
     except Exception as e:  # noqa: BLE001 — every failure mode degrades the same way
-        if " -> 404" not in str(e):
-            sys.stderr.write(
-                f"WARNING: could not resolve the mail backend for {key} ({e}); "
-                "falling back to gmail (gog).\n"
-            )
+        if not _is_not_found(e):
+            problem = str(e)
+    if problem:
+        _RESOLVE_FAILURES[key] = problem
+        sys.stderr.write(
+            f"WARNING: could not resolve the mail backend for {key} ({problem}); "
+            "falling back to gmail (gog).\n"
+        )
     _BACKEND_CACHE[key] = route
     return route
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """True when canopy-web answered 404. `CanopyError` carries no status attribute, only
+    "<METHOD> <path> -> <status>: <body>" in its message, so the check lives here, once."""
+    status = getattr(exc, "status", None)
+    if status is not None:
+        return status == 404
+    return " -> 404" in str(exc)
+
+
+def _fallback_note(address: str) -> str:
+    """Suffix for a Gmail-path failure when the backend lookup had failed earlier."""
+    why = _RESOLVE_FAILURES.get(address.strip().lower())
+    if not why:
+        return ""
+    return (f" (mail backend lookup failed earlier: {why}; if this is an SES mailbox, "
+            "canopy-web was unreachable)")
 
 
 def _backend(mailbox: str) -> str:
@@ -2394,6 +2424,12 @@ def _backend(mailbox: str) -> str:
 
 
 def _ses_path(route: dict, thread_id: str, suffix: str = "") -> str:
+    import uuid
+    try:
+        thread_id = str(uuid.UUID(str(thread_id)))
+    except ValueError:
+        raise AgentEmailError(
+            f"not an SES thread id: {thread_id!r} (expected a UUID)") from None
     return f"/api/mail/threads/{route['workspace']}/{thread_id}{suffix}"
 
 
@@ -2466,8 +2502,9 @@ def ses_set_state(route: dict, thread_ids: list[str], state: dict) -> list[dict]
 
 def ses_read_thread(route: dict, thread_id: str) -> dict:
     from orchestrator import canopy_web
+    path = _ses_path(route, thread_id)
     try:
-        return canopy_web.call("GET", _ses_path(route, thread_id))
+        return canopy_web.call("GET", path)
     except Exception as e:  # noqa: BLE001
         raise AgentEmailError(f"cannot read SES thread {thread_id}: {e}") from e
 
@@ -2495,6 +2532,15 @@ def format_ses_thread(thread: dict) -> str:
             lines.append(f"[attachment] {a.get('filename')} ({a.get('content_type')}, "
                          f"{a.get('size')} bytes) {a.get('url', '')}")
     return "\n".join(lines) + "\n"
+
+
+def _addr_of(repo, agent) -> str:
+    """The mailbox a repo/agent resolves to, or "" (only used to look up a stored note)."""
+    try:
+        repo_dir = Path(repo) if repo else (find_agent_repo(agent) if agent else Path.cwd())
+        return resolve_email_identity(repo_dir).account
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _route_for(repo, agent, account, client) -> tuple[EmailIdentity, dict | None]:
@@ -2640,7 +2686,7 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
             attachments=attachments, dry_run=dry_run,
         )
     except AgentEmailError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e) + _fallback_note(account or _addr_of(repo, agent)))
     click.echo(json.dumps(result, indent=2))
 
 
@@ -2728,14 +2774,15 @@ def email_mark_read(repo, agent, account, client, thread_ids):
         results = (ses_set_state(ses, list(thread_ids), {"unread": False}) if ses
                    else mark_read(ident, list(thread_ids)))
     except AgentEmailError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e) + _fallback_note(account or _addr_of(repo, agent)))
     failed = 0
+    note = _fallback_note(account or _addr_of(repo, agent))
     for res in results:
         if res["ok"]:
             click.echo(f"{res['thread_id']} -> read")
         else:
             failed += 1
-            click.echo(f"{res['thread_id']} -> ERROR {res['error']}")
+            click.echo(f"{res['thread_id']} -> ERROR {res['error']}{note}")
     if failed:
         sys.exit(1)
 
@@ -2751,17 +2798,18 @@ def email_archive(repo, agent, account, client, thread_ids):
     """
     try:
         ident, ses = _route_for(repo, agent, account, client)
-        results = (ses_set_state(ses, list(thread_ids), {"archived": True}) if ses
+        results = (ses_set_state(ses, list(thread_ids), {"archived": True, "unread": False}) if ses
                    else archive(ident, list(thread_ids)))
     except AgentEmailError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e) + _fallback_note(account or _addr_of(repo, agent)))
     failed = 0
+    note = _fallback_note(account or _addr_of(repo, agent))
     for res in results:
         if res["ok"]:
             click.echo(f"{res['thread_id']} -> archived")
         else:
             failed += 1
-            click.echo(f"{res['thread_id']} -> ERROR {res['error']}")
+            click.echo(f"{res['thread_id']} -> ERROR {res['error']}{note}")
     if failed:
         sys.exit(1)
 
