@@ -68,8 +68,10 @@ def _registry(home, version, sha):
         json.dumps({"plugins": {"canopy@canopy": [entry]}}, indent=2))
 
 
-def _run(home, marketplace):
-    env = {**os.environ, "HOME": str(home), "CANOPY_MARKETPLACE": str(marketplace)}
+def _run(home, marketplace, cli_site=None):
+    env = {**os.environ, "HOME": str(home), "CANOPY_MARKETPLACE": str(marketplace),
+           # hermetic: never read the real machine's installed CLI
+           "CANOPY_CLI_SITE": str(cli_site or home / "no-cli")}
     proc = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, env=env)
     return proc.stdout.strip()
 
@@ -151,3 +153,68 @@ def test_reads_main_even_when_the_clone_is_parked_on_a_branch(tmp_path, home):
 
     _registry(home, "0.2.369", _head_sha(work))
     assert _run(home, clone).startswith("UP_TO_DATE")
+
+
+# ─── The CLI is a second artifact (canopy#615) ───────────────
+# The plugin can be at main while the global `canopy` CLI still runs an older
+# install: Step 3 (the CLI reinstall) only runs on an upgrade, so UP_TO_DATE kept
+# a stale CLI stale indefinitely. 2026-10-12, hal: plugin current, `canopy aws`
+# "No such command" in the middle of an alarm turn.
+
+def _origin_with_cli_source(tmp_path, code):
+    origin, work = _origin_with_version(tmp_path, "0.2.369")
+    (work / "src" / "orchestrator").mkdir(parents=True)
+    (work / "src" / "orchestrator" / "cli.py").write_text(code)
+    _git(work, "add", "src")
+    _git(work, "commit", "-m", "src")
+    _git(work, "push", "-q", "origin", "main")
+    return origin, work
+
+
+def _installed_cli(tmp_path, code):
+    site = tmp_path / "site-packages"
+    (site / "orchestrator" / "__pycache__").mkdir(parents=True)
+    (site / "orchestrator" / "cli.py").write_text(code)
+    (site / "orchestrator" / "__pycache__" / "cli.cpython-312.pyc").write_bytes(b"x")
+    return site
+
+
+def test_a_STALE_CLI_behind_a_current_plugin_is_an_upgrade(tmp_path, home):
+    origin, work = _origin_with_cli_source(tmp_path, "aws = True\n")
+    clone = _clone(tmp_path, origin)
+    _registry(home, "0.2.369", _head_sha(work))
+    site = _installed_cli(tmp_path, "aws = False\n")
+
+    out = _run(home, clone, site)
+    assert out.startswith("UPGRADE_AVAILABLE"), out
+
+
+def test_a_matching_CLI_stays_up_to_date(tmp_path, home):
+    origin, work = _origin_with_cli_source(tmp_path, "aws = True\n")
+    clone = _clone(tmp_path, origin)
+    _registry(home, "0.2.369", _head_sha(work))
+    site = _installed_cli(tmp_path, "aws = True\n")  # __pycache__ is ignored
+
+    assert _run(home, clone, site).startswith("UP_TO_DATE")
+
+
+def test_no_installed_CLI_is_not_drift(tmp_path, home):
+    origin, work = _origin_with_cli_source(tmp_path, "aws = True\n")
+    clone = _clone(tmp_path, origin)
+    _registry(home, "0.2.369", _head_sha(work))
+
+    assert _run(home, clone, tmp_path / "missing").startswith("UP_TO_DATE")
+
+
+def test_a_PARKED_clone_is_not_compared(tmp_path, home):
+    """Step 3 reinstalls from the clone's working tree. If that tree is not main,
+    a diff against it measures the wrong thing, and an upgrade would install it."""
+    origin, work = _origin_with_cli_source(tmp_path, "aws = True\n")
+    clone = _clone(tmp_path, origin)
+    _git(clone, "checkout", "-q", "-b", "parked")
+    (clone / "src" / "orchestrator" / "cli.py").write_text("branch code\n")
+    _git(clone, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "b")
+    _registry(home, "0.2.369", _head_sha(work))
+    site = _installed_cli(tmp_path, "aws = True\n")
+
+    assert _run(home, clone, site).startswith("UP_TO_DATE")

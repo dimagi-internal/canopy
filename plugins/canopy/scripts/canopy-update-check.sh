@@ -83,15 +83,43 @@ if ! echo "$REMOTE" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
   exit 0
 fi
 
-# ─── 3. Compare ──────────────────────────────────────────────
+# ─── 3. Is the global CLI the code the clone holds? ──────────
+# The plugin and the `canopy` CLI are two artifacts. The plugin is compared by SHA
+# above; the CLI is installed by Step 3 of /canopy:update, which only runs on an
+# upgrade — so a CLI that missed one deploy stays stale for as long as the plugin
+# stays current, and this script said UP_TO_DATE the whole time (canopy#615).
+# A CLI version compare can't catch it (labels collide, see above), so compare the
+# installed source to the clone's directly: stateless, and ~40ms.
+# Only when the clone's working tree IS origin/main and clean — a parked or dirty
+# clone would report drift that a reinstall from it would make worse, not fix.
+# No installed CLI at all → nothing to compare; that is not this script's problem.
+cli_drift() {
+  [ -d "$MARKETPLACE/src/orchestrator" ] || return 1
+  [ "$(git -C "$MARKETPLACE" rev-parse HEAD 2>/dev/null)" = "$REMOTE_SHA" ] || return 1
+  git -C "$MARKETPLACE" diff --quiet HEAD -- src 2>/dev/null || return 1
+  local site="${CANOPY_CLI_SITE:-}"
+  if [ -z "$site" ]; then
+    local tooldir
+    tooldir="$(uv tool dir 2>/dev/null)" || return 1
+    for site in "$tooldir"/canopy/lib/python*/site-packages "$tooldir"/canopy/Lib/site-packages; do
+      [ -d "$site/orchestrator" ] && break
+    done
+  fi
+  [ -d "$site/orchestrator" ] || return 1
+  ! diff -rq -x __pycache__ "$MARKETPLACE/src/orchestrator" "$site/orchestrator" >/dev/null 2>&1
+}
+
+# ─── 4. Compare ──────────────────────────────────────────────
 # SHA when we have both sides (authoritative); version otherwise (legacy entry).
+# A stale CLI behind a current plugin is reported as an upgrade: Step 2 is then a
+# no-op pull + resync, and Step 3 reinstalls the CLI — exactly the repair it needs.
 if [ -n "$LOCAL_SHA" ] && [ -n "$REMOTE_SHA" ]; then
-  if [ "$LOCAL_SHA" = "$REMOTE_SHA" ]; then
+  if [ "$LOCAL_SHA" = "$REMOTE_SHA" ] && ! cli_drift; then
     echo "UP_TO_DATE $LOCAL"
   else
     echo "UPGRADE_AVAILABLE $LOCAL $REMOTE"
   fi
-elif [ "$LOCAL" = "$REMOTE" ]; then
+elif [ "$LOCAL" = "$REMOTE" ] && ! cli_drift; then
   echo "UP_TO_DATE $LOCAL"
 else
   echo "UPGRADE_AVAILABLE $LOCAL $REMOTE"
