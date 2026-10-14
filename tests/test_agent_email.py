@@ -27,7 +27,9 @@ from orchestrator.agent_email import (
     unseen_quoted,
     resolve_email_identity,
     send,
+    ses_send,
     to_html,
+    undeliverable_recipients,
 )
 
 
@@ -370,6 +372,62 @@ def test_send_dry_run_shows_cc():
     result = send(IDENT, to="a@x.com", cc="boss@x.com", subject="s",
                   body_text="hi\n", dry_run=True)
     assert result["cc"] == "boss@x.com"
+
+
+# canopy#883: a reply derived from a Google Docs comment notification goes to
+# comments-noreply@docs.google.com; the reply after its bounce goes to mailer-daemon@.
+# Both "succeed" and reach nobody, so the engine refuses them.
+
+@pytest.mark.parametrize("addr", [
+    "comments-noreply@docs.google.com",
+    "noreply@github.com",
+    "no-reply@sns.amazonaws.com",
+    "Mail Delivery Subsystem <mailer-daemon@googlemail.com>",
+    "postmaster@example.org",
+    "DoNotReply@bank.example",
+    "calendar.do-not-reply@x.com",
+])
+def test_undeliverable_recipients_catches_noreply_and_bounce_addresses(addr):
+    assert len(undeliverable_recipients(addr)) == 1
+
+
+@pytest.mark.parametrize("addr", [
+    "noreen@x.com",              # a person whose name starts like "no…"
+    "replyto@x.com",
+    "noreply.team@x.com",        # the no-reply word is not the end of the local part
+    "Jonathan <jjackson@dimagi.com>",
+    "noreply-dept@x.com",
+])
+def test_undeliverable_recipients_leaves_real_people_alone(addr):
+    assert undeliverable_recipients(addr) == []
+
+
+def test_undeliverable_recipients_reads_to_and_cc_and_dedupes():
+    assert undeliverable_recipients(
+        "a@x.com, comments-noreply@docs.google.com",
+        "comments-noreply@docs.google.com, mailer-daemon@googlemail.com, b@x.com",
+    ) == ["comments-noreply@docs.google.com", "mailer-daemon@googlemail.com"]
+
+
+def test_send_refuses_noreply_recipient_on_dry_run_too():
+    # dry-run is where recipients are verified, so the refusal must show up there.
+    with pytest.raises(AgentEmailError, match="comments-noreply@docs.google.com"):
+        send(IDENT, to="comments-noreply@docs.google.com", subject="Re: comment",
+             body_text="hi\n", dry_run=True)
+
+
+def test_send_refuses_bounce_address_in_cc_without_invoking_gog():
+    def boom(*a, **k):
+        raise AssertionError("gog must not be called for an undeliverable recipient")
+    with pytest.raises(AgentEmailError, match="mailer-daemon@googlemail.com"):
+        send(IDENT, to="reviewer@x.com", cc="mailer-daemon@googlemail.com",
+             subject="Re: x", body_text="hi\n", runner=boom)
+
+
+def test_ses_send_refuses_noreply_recipient():
+    with pytest.raises(AgentEmailError, match="no-reply@sns.amazonaws.com"):
+        ses_send(IDENT, {"workspace": "w"}, to="no-reply@sns.amazonaws.com",
+                 subject="s", body_text="hi\n", dry_run=True)
 
 
 # --------------------------------------------------------------------------------------

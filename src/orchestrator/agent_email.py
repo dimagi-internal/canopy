@@ -854,6 +854,8 @@ def send(
         raise AgentEmailError(
             "cannot attach — file(s) not found: " + ", ".join(missing)
         )
+    # Before the dry run, so the recipient set an agent verifies there is one that can send.
+    _refuse_undeliverable(to, cc)
     # A flat canopy-web artifact link is a 404 (canopy-web#1337/#1338) — one copied out
     # of `narrative post` reached an external reviewer on 2026-10-08. Judged on the
     # agent's own words (a forwarded original is not theirs) and before the dry run,
@@ -1316,6 +1318,39 @@ _MACHINE_SENDER = re.compile(
 _NOREPLY_FROM = re.compile(
     r"(?:^|[<\s\"])(?:noreply|no-reply|donotreply|do-not-reply|mailer-daemon|postmaster)@",
     re.I)
+
+
+# A RECIPIENT no person reads (canopy#883). Matched on the whole local part, so it also
+# catches the prefixed forms `_NOREPLY_FROM` deliberately does not — above all
+# `comments-noreply@docs.google.com`, which is where a reply derived from a Google Docs
+# comment notification goes (those carry no Reply-To). Gmail accepts the send, the bounce
+# arrives later, and the next reply-all on that thread is addressed to the bounce's own
+# sender, `mailer-daemon@…`. Both sends report success and reach nobody.
+_UNDELIVERABLE_LOCAL = re.compile(
+    r"^(?:(?:.*[-_.+])?(?:noreply|no-reply|donotreply|do-not-reply)"
+    r"|mailer-daemon|postmaster)$", re.I)
+
+
+def undeliverable_recipients(*fields: str | None) -> list[str]:
+    """The addresses in the given To/Cc values that no person reads, in order, de-duplicated."""
+    from email.utils import getaddresses
+    found: list[str] = []
+    for _, addr in getaddresses([f or "" for f in fields]):
+        local = addr.rpartition("@")[0]
+        if local and _UNDELIVERABLE_LOCAL.match(local) and addr not in found:
+            found.append(addr)
+    return found
+
+
+def _refuse_undeliverable(to: str | None, cc: str | None) -> None:
+    bad = undeliverable_recipients(to, cc)
+    if bad:
+        raise AgentEmailError(
+            "refusing to send to an address no person reads: " + ", ".join(bad) + ". "
+            "It would report success and reach nobody (canopy#883). A Google Docs comment "
+            "is answered on its comment thread (`gog drive comments reply <fileId> "
+            "<commentId>`), not by email; otherwise address the person with --to."
+        )
 
 
 def _automation_of(h: dict) -> dict:
@@ -2443,13 +2478,16 @@ def ses_send(identity: EmailIdentity, route: dict, *, to: str | None, subject: s
     """Send (new thread) or reply (`thread_id`) through canopy-web's SES backend.
 
     Same rails as the Gmail send: attachments are refused (not silently dropped), flat
-    canopy-web links are refused, and the pre-send review receipt is required.
+    canopy-web links and no-reply recipients are refused, and the pre-send review receipt
+    is required.
     """
     if attachments:
         raise AgentEmailError(
             "attachments are not supported for SES mailboxes yet — put the artifact in a "
             "shared gdoc and link it, or send from a Gmail mailbox."
         )
+    # Only explicit addresses: a thread reply with no --to is addressed server-side.
+    _refuse_undeliverable(to, cc)
     plain = normalize(body_text)
     html_body = to_html(plain)
     from orchestrator import canopy_web
