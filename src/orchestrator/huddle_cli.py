@@ -12,7 +12,8 @@ Drive (`huddle_store`).
                 priorities brief (`--priorities-file`) every prompt opens with  (plan.json)
     prompt    → one member's round-N prompt from its type's template         (<m>-rN.md)
                 (round 3 refuses while two proposals overlap and `--merges` does not resolve it)
-    dispatch  → a tagged, parented, unpinned round turn
+    dispatch  → a tagged, parented round turn, pinned to the plan's runner (`plan --runner`:
+                default the leader's own runner — see `runner_pin`)
     await     → foreground; exit 0 when every dispatched member settled, 3 = run it again
     status    → per member per round, derived from canopy-web
     resume    → an unfinished huddle < 72 h old, and what to do next
@@ -521,9 +522,13 @@ def huddle_group():
 @click.option("--priorities-file", default=None, type=click.Path(exists=True, dir_okay=False),
               help="The principal's priorities brief (numbered lines). Every round prompt opens "
                    "with it, and proposals serve its numbers.")
+@click.option("--runner", "runner_ref", default="caller", show_default=True,
+              help="Where every round runs: `caller` = the runner this leader turn is on (a "
+                   "person's own session: this machine's runner), `none` = each member's own "
+                   "runner order, or a runner name/id to pin one box (e.g. to debug).")
 @click.option("--out", required=True, type=click.Path(dir_okay=False))
 def plan_cmd(leader, team, type_, members, days, principal, sharing_rule, repo, local,
-             priorities_file, out):
+             priorities_file, runner_ref, out):
     """Start a huddle: pick its id, tag the anchor turn, build one context pack per member."""
     leader = leader or _leader_default()
     if not leader:
@@ -542,6 +547,9 @@ def plan_cmd(leader, team, type_, members, days, principal, sharing_rule, repo, 
     roster = [m.strip() for m in members.split(",") if m.strip() and m.strip() != leader]
     if not roster:
         raise HuddleError("--members names nobody (the leader is not its own member)")
+    # Before the anchor: a pin that cannot carry every member is a refusal, not a huddle
+    # that half-runs.
+    pin = _resolve_pin(runner_ref, roster)
     now = _now()
     try:
         taken = {r.get("id") for r in list_huddles(agent=leader)}
@@ -573,11 +581,35 @@ def plan_cmd(leader, team, type_, members, days, principal, sharing_rule, repo, 
             "anchor_turn_id": str(anchor.get("id") or ""), "workspace": workspace,
             "base_url": base, "page": page_url(base, workspace, hid),
             "packs": packs, "prior_text": prior_text(records), "prior": records,
-            "priorities_brief": brief}
+            "priorities_brief": brief,
+            "runner": {k: pin[k] for k in ("id", "name", "basis")}}
     Path(out).write_text(json.dumps(plan, indent=2), encoding="utf-8")
     _emit({"huddle": hid, "anchor_turn_id": plan["anchor_turn_id"], "members": roster,
            "page": plan["page"], "plan": str(out),
-           "priorities": len(H.brief_items(brief)) or None})
+           "priorities": len(H.brief_items(brief)) or None, "runner": plan["runner"]})
+
+
+def _resolve_pin(ref: str, agents: list[str]) -> dict:
+    from orchestrator.runner_pin import PinError, resolve_pin
+    try:
+        pin = resolve_pin(ref, agents)
+    except PinError as e:
+        raise HuddleError(str(e))
+    for w in pin["warnings"]:
+        click.echo(f"[huddle] warning: {w}", err=True)
+    where = pin["name"] or "default routing"
+    click.echo(f"[huddle] rounds run on {where} ({pin['basis']})", err=True)
+    return pin
+
+
+def plan_runner(plan: dict) -> dict:
+    """The plan's pin. A plan without one predates pinning — refuse rather than scatter."""
+    pin = plan.get("runner")
+    if not isinstance(pin, dict) or "id" not in pin:
+        raise HuddleError(f"plan {plan.get('id')} has no `runner` — it was made before rounds "
+                          "were pinned. Re-run `canopy huddle plan` (add --runner none to keep "
+                          "default routing).")
+    return pin
 
 
 def _load_plan(path) -> dict:
@@ -726,15 +758,18 @@ def _is_mode_refusal(err: Exception) -> bool:
 @click.option("--mode", type=click.Choice(["auto", "manual", "none"]), default="auto",
               show_default=True, help="Requested turn mode; `none` lets canopy-web decide.")
 def dispatch_cmd(plan_path, member, round_no, prompt_file, attempt, mode):
-    """Send one member its round turn — tagged, parented on the anchor, never pinned."""
+    """Send one member its round turn — tagged, parented on the anchor, pinned to the plan's
+    runner (`plan --runner`; `none` there = default routing)."""
     from orchestrator.agent_dispatch import TURNS_PATH, build_turn_payload
     plan = _load_plan(plan_path)
     hid, leader = plan["id"], plan["leader"]
     text = Path(prompt_file).read_text(encoding="utf-8")
     if not text.strip():
         raise HuddleError(f"{prompt_file} is empty")
+    pin = plan_runner(plan)
     key = H.idempotency_key(hid, member, round_no, attempt)
     payload = build_turn_payload(member, prompt=text, idempotency_key=key, sender=leader,
+                                 runner_id=pin["id"] or None,
                                  turn_mode=None if mode == "none" else mode)
     payload["origin_ref"].update(H.round_origin_ref(hid, plan.get("type") or "work",
                                                     round_no, member, attempt))
@@ -757,7 +792,7 @@ def dispatch_cmd(plan_path, member, round_no, prompt_file, attempt, mode):
             raise HuddleError(f"dispatch to {member} failed: {e2}")
     _emit({"turn_id": turn.get("id"), "status": turn.get("status"), "member": member,
            "round": round_no, "attempt": attempt, "idempotency_key": key,
-           "mode_fallback": fallback})
+           "mode_fallback": fallback, "runner": pin["name"] or None})
 
 
 @huddle_group.command("await")
@@ -964,9 +999,12 @@ def agree_cmd(plan_path, max_messages, deadline_minutes, dry_run, merges_path):
     open thread for the same proposal and pair. Then run `canopy thread run --thread <id>` on
     each, in the foreground, until it exits 0."""
     from orchestrator import thread as T
+    from orchestrator.runner_pin import flag
     from orchestrator.thread_cli import open_thread
     plan = _load_plan(plan_path)
     hid, leader = plan["id"], plan["leader"]
+    # Agreement threads run where the rounds ran: the `run` line carries the plan's pin.
+    runner_flag = flag(plan_runner(plan))
     threads = huddle_threads(hid)
     props = merged_proposals(get_detail(hid), _merges(merges_path))
     refuse_unresolved(props, "agree")
@@ -998,7 +1036,8 @@ def agree_cmd(plan_path, max_messages, deadline_minutes, dry_run, merges_path):
                 raise HuddleError(f"could not open the agreement thread for {p['title']!r} "
                                   f"({author} ↔ {m}): {e}")
             rows.append({**row, "thread": th.get("id"), "status": th.get("status"),
-                         "run": f"canopy thread run --thread {th.get('id')}"})
+                         "run": f"canopy thread run --thread {th.get('id')} "
+                                f"--runner {runner_flag}"})
     _emit({"huddle": hid, "dry_run": dry_run, "threads": rows})
 
 

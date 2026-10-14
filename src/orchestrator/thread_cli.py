@@ -96,15 +96,29 @@ def _is_mode_refusal(err: Exception) -> bool:
     return ("-> 403" in msg or "-> 422" in msg) and "mode" in msg
 
 
-def send_message(thread: dict, to: str, n: int, mode: str, now: dt.datetime) -> dict:
-    """Dispatch message n to `to` through the fleet's one dispatch path — tagged, never pinned,
-    one isolated session per thread, stamped with who sent it. Re-sending the same n dedupes
-    (idempotency key `thread-<id>-n<n>`)."""
+def resolve_thread_pin(thread: dict, ref: str) -> dict:
+    """The pin for this thread's messages (`runner_pin`): default the moderator's own runner."""
+    from orchestrator.runner_pin import PinError, resolve_pin
+    try:
+        pin = resolve_pin(ref, T.agents_of(thread))
+    except PinError as e:
+        raise ThreadError(str(e))
+    for w in pin["warnings"]:
+        click.echo(f"[thread] warning: {w}", err=True)
+    return pin
+
+
+def send_message(thread: dict, to: str, n: int, mode: str, now: dt.datetime,
+                 pin: dict | None = None) -> dict:
+    """Dispatch message n to `to` through the fleet's one dispatch path — tagged, pinned to
+    `pin` (None / id None = default routing), one isolated session per thread, stamped with who
+    sent it. Re-sending the same n dedupes (idempotency key `thread-<id>-n<n>`)."""
     from orchestrator.agent_dispatch import TURNS_PATH, build_turn_payload
     tid = thread["id"]
     text = T.render_message_prompt(thread, to, n, now)
     payload = build_turn_payload(to, prompt=text, idempotency_key=T.idempotency_key(tid, n),
                                  sender=thread.get("moderator") or None,
+                                 runner_id=(pin or {}).get("id") or None,
                                  turn_mode=None if mode == "none" else mode)
     payload["origin_ref"].update(T.message_origin_ref(tid, n, to))
     fallback = False
@@ -121,7 +135,7 @@ def send_message(thread: dict, to: str, n: int, mode: str, now: dt.datetime) -> 
         turn = _call("POST", TURNS_PATH, payload)
     return {"thread": tid, "n": n, "to": to, "turn_id": turn.get("id"),
             "status": turn.get("status"), "idempotency_key": T.idempotency_key(tid, n),
-            "mode_fallback": fallback}
+            "mode_fallback": fallback, "runner": (pin or {}).get("name") or None}
 
 
 # ── commands ─────────────────────────────────────────────────────────────────────
@@ -183,7 +197,11 @@ def open_cmd(kind, purpose, participants, moderator, parents, context_file, max_
               show_default=True, help="Requested turn mode; `none` lets canopy-web decide.")
 @click.option("--prompt-out", default=None, type=click.Path(dir_okay=False),
               help="Also write the rendered prompt here.")
-def say_cmd(tid, to, mode, prompt_out):
+@click.option("--runner", "runner_ref", default="caller", show_default=True,
+              help="Where messages run: `caller` = the runner this moderator turn is on (a "
+                   "person's own session: this machine's runner), `none` = each participant's "
+                   "own runner order, or a runner name/id.")
+def say_cmd(tid, to, mode, prompt_out, runner_ref):
     """Send the next message of a thread to one participant (`run` does this for you)."""
     thread = get_thread(tid)
     now = _now()
@@ -197,10 +215,11 @@ def say_cmd(tid, to, mode, prompt_out):
         raise ThreadError(f"message {msgs[-1].get('n')} ({msgs[-1].get('speaker')}) is still "
                           f"out — wait for it (`canopy thread run --thread {tid}`)")
     n = T.messages_used(thread) + 1
+    pin = resolve_thread_pin(thread, runner_ref)
     if prompt_out:
         Path(prompt_out).write_text(T.render_message_prompt(thread, to, n, now), encoding="utf-8")
     try:
-        _emit(send_message(thread, to, n, mode, now))
+        _emit(send_message(thread, to, n, mode, now, pin))
     except CanopyError as e:
         raise ThreadError(f"message {n} to {to} refused: {e}")
 
@@ -212,12 +231,17 @@ def say_cmd(tid, to, mode, prompt_out):
 @click.option("--poll", default=30, show_default=True, type=int)
 @click.option("--mode", type=click.Choice(["auto", "manual", "none"]), default="auto",
               show_default=True, help="Requested turn mode for each message.")
-def run_cmd(tid, budget_seconds, poll, mode):
+@click.option("--runner", "runner_ref", default="caller", show_default=True,
+              help="Where messages run: `caller` = the runner this moderator turn is on (a "
+                   "person's own session: this machine's runner), `none` = each participant's "
+                   "own runner order, or a runner name/id.")
+def run_cmd(tid, budget_seconds, poll, mode, runner_ref):
     """MODERATE a thread in the FOREGROUND: send each next message, wait for it, close the
     thread when it settles. Exit 0 = closed (prints the outcome), 3 = still waiting on a
     message — run the SAME command again, 2 = refusal. Resumable from anywhere."""
     started = time.monotonic()
     refused_at = None
+    pin = None   # resolved once, on the first message this call sends
     while True:
         thread = get_thread(tid)
         now = _now()
@@ -236,8 +260,10 @@ def run_cmd(tid, budget_seconds, poll, mode):
             _emit(_summary(thread))
             return
         if act == "send":
+            if pin is None:
+                pin = resolve_thread_pin(thread, runner_ref)
             try:
-                sent = send_message(thread, step["to"], step["n"], mode, now)
+                sent = send_message(thread, step["to"], step["n"], mode, now, pin)
             except CanopyError as e:
                 # The server's guard said no (deadline / budget / order). Re-read once — the
                 # next decision closes it — but never loop on the same refusal.

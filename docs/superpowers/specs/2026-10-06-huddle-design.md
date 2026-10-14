@@ -26,8 +26,10 @@ should be able to use the same thing. So it is canopy infrastructure, named a **
 - **Huddle type** — data, not code: per-round prompt templates, the reply-block schema, the
   gates, and the outcome rule. canopy ships `work`; a team may register its own (`health` later).
 - **Round** — one fresh, one-shot, read-only turn per member. Same discipline `ada-sync` learned
-  the hard way: never pinned to a runner, never a continued session, never backgrounded by the
-  leader (foreground `await` loop, exit 3 = run it again).
+  the hard way: never a continued session, never backgrounded by the
+  leader (foreground `await` loop, exit 3 = run it again). Every round is pinned to ONE runner,
+  `plan --runner` (default: the leader's own runner; 2026-10-14 amendment — unpinned rounds
+  followed each member's own order and scattered onto a laptop).
 
 ## Principle: the conversation is not stored — it is derived
 
