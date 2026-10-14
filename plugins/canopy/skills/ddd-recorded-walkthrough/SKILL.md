@@ -68,8 +68,10 @@ there is better).
 
 Add to the narrative's **recipe** (`docs/walkthroughs/<slug>.recipe.yaml`, or
 the legacy single-file spec). `style` and `cuts` are recipe fields — render
-decisions, not story — so they never round-trip through canopy-web and a
-`narrative pull` leaves them alone. The spoken words stay where they always
+decisions, not story — so they are not part of the narration edited on
+canopy-web. The recipe FILE is still kept on canopy-web: every `narrative
+post` and `upload-video` pins it to the version, and `narrative pull` restores
+it (see § Iterating from any machine). The spoken words stay where they always
 were: each scene's `narrative` (lock-owned, edited on canopy-web).
 
 ```yaml
@@ -169,7 +171,11 @@ it or split the cut in two: a cut over 40 s is not shippable.
 - `/canopy:ddd-arc-eval` and `/canopy:ddd-concept-eval`: same note. Arc is
   judged **per cut**, with no cross-cut escalation expected.
 - Upload, once per cut: `snippets upload-video <slug> <cut output.mp4> --cut
-  <cut id> --spec <recipe>`. The narrative version keeps one video **per cut
+  <cut id> --spec <recipe> --master "$WORK/master.mp4" --report
+  "$WORK/report.json" --manifest "$WORK/manifest.json"`. The recipe, master
+  and report are pinned to the version first (identical bytes are not sent
+  twice, so repeating them per cut costs nothing), and the upload refuses a
+  cut without them. The narrative version keeps one video **per cut
   id** (re-uploading a cut replaces only that cut), and the review link's
   **Cuts** tab shows each video beside that cut's narration, for guests too
   (canopy-web#1288). `--spec` resolves the cut's title and scenes from the
@@ -179,10 +185,39 @@ it or split the cut in two: a cut over 40 s is not shippable.
   never upload cuts without it, or each one replaces the last. A run package
   still has one hero slot: publish it with the first cut as `--video`.
 
+## Iterating from any machine
+
+Nothing needed to keep iterating a recorded narrative may live only where it
+was made. A cloud runner, another agent, or you on another laptop starts from
+canopy-web alone:
+
+```bash
+( cd "$CANOPY" && uv run python -m scripts.ddd.narrative pull <slug> "$(pwd)/docs/walkthroughs" )
+```
+
+That writes the narrative lock and why-brief, restores `<slug>.recipe.yaml`
+(and the intent ledger) beside them, and puts the master recording and capture
+report in `~/.canopy/ddd/sources/<slug>/` (`master.mp4`, `report.json`,
+`manifest.json`). A local recipe that differs from canopy-web's is kept and
+canopy-web's is written beside it as `<slug>.recipe.yaml.web`.
+
+- **Narration edits only** (the screens are right): re-cut from the pulled
+  master with no re-recording — step 3 with `"$WORK"` pointed at
+  `~/.canopy/ddd/sources/<slug>/`.
+- **Screen, data or step changes**: re-record (steps 2–3), then upload. The
+  new master replaces the old one on the version.
+
+A narrative whose sources were never pushed (made before this existed) is
+backfilled with `narrative push-sources <recipe> --master … --report …`.
+
 ## Common mistakes
 
-- **Putting `style`/`cuts` in canopy-web**: they are recipe fields. Edit the
-  recipe; `narrative pull` will not touch them.
+- **Leaving the recipe or master only in `$WORK` or a scratchpad**: the upload
+  refuses without them for exactly this reason. A narrative that only one
+  machine can re-render is stranded the moment that machine's temp dir is
+  cleaned (the chlorine demo, 2026-10-14).
+- **Putting `style`/`cuts` into the narration on canopy-web**: they are recipe
+  fields. Edit the recipe and push it; `narrative pull` restores the file.
 - **Writing the opener into a cut's second scene**: the opener is checked
   on the cut's first spoken sentence, which is its first scene's narrative.
 - **Fixing an over-length cut by speeding the footage**: the warp is

@@ -1291,8 +1291,6 @@ def _cut_for_upload(args: argparse.Namespace) -> dict[str, Any] | None:
         raise SystemExit("--hero only applies to a cut; without --cut the video is already the hero")
     if not args.cut:
         return None
-    if not args.spec:
-        raise SystemExit("--cut needs --spec <recipe> to resolve the cut's title and scenes")
     spec = load_spec_raw(Path(args.spec)) or {}
     if not is_recorded(spec):
         raise SystemExit(f"{args.spec} is not a `style: recorded` spec — it has no cuts")
@@ -1356,8 +1354,21 @@ def main(argv: list[str] | None = None) -> None:
              "that cut's narration on the review link. Needs --spec.",
     )
     u.add_argument(
-        "--spec", default=None,
-        help="the narrative's spec/recipe — resolves --cut to its title and scenes",
+        "--spec", required=True,
+        help="the narrative's recipe (or legacy single-file spec). Pinned to the "
+             "version on canopy-web with the video, so any machine can re-render "
+             "it; also resolves --cut to its title and scenes",
+    )
+    u.add_argument(
+        "--master", default=None,
+        help="the master recording the video was rendered from (required with --cut)",
+    )
+    u.add_argument(
+        "--report", default=None,
+        help="the recorder's --report JSON for that master (required with --cut)",
+    )
+    u.add_argument(
+        "--manifest", default=None, help="the recorder's --manifest JSON, if written",
     )
     u.add_argument(
         "--hero", action="store_true",
@@ -1401,15 +1412,27 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "upload-video":
         from scripts.ddd.upload import upload_narrative_video
 
+        from scripts.ddd.sources import recipe_files
+
         cut = _cut_for_upload(args)
+        files = {
+            **recipe_files(args.spec, args.slug),
+            "master": args.master,
+            "capture_report": args.report,
+            "capture_manifest": args.manifest,
+        }
         result = upload_narrative_video(
             args.slug, args.video, base_url=args.base_url, title=args.title, cut=cut,
-            role="hero_video" if args.hero else None,
+            role="hero_video" if args.hero else None, sources=files,
         )
         what = f"cut {cut['id']!r}" if cut else "video"
+        kept = ", ".join(
+            f"{r}{' (unchanged)' if reused else ''}" for r, reused in result["sources"].items()
+        )
         print(
             f"attached {what} to {args.slug} v{result['version']} → {result['narrative_url']}\n"
-            f"  video: {result['video_url']}"
+            f"  video: {result['video_url']}\n"
+            f"  sources on canopy-web: {kept}"
         )
 
 

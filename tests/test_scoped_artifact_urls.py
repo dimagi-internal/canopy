@@ -169,7 +169,9 @@ def test_publish_artifact_and_upload_video(workspace, monkeypatch, tmp_path, cap
     )
     mp4 = tmp_path / "v.mp4"
     mp4.write_bytes(b"\0")
-    snippets.main(["upload-video", "chlorine", str(mp4)])
+    recipe = tmp_path / "chlorine.recipe.yaml"
+    recipe.write_text("name: chlorine\n")
+    snippets.main(["upload-video", "chlorine", str(mp4), "--spec", str(recipe)])
     cap = capsys.readouterr()
     assert f"{API}/w/connect/walkthrough/w1?t=s" in cap.out
     assert f"{API}/w/connect/ddd/chlorine" in cap.out

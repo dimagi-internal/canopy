@@ -31,6 +31,7 @@ scripts, record a fresh master clip, emit the explainer spec via
 `scripts.ddd.snippets explainer-from-capture`, invoke `/ace:video-render-local`
 (Mode A) with the emitted spec + clip, then — unless `--no-upload` — attach the
 rendered mp4 to the narrative's current version via
-`scripts.ddd.snippets upload-video`. Report the output MP4 path, the narrative
+`scripts.ddd.snippets upload-video` with `--spec`, `--master`, `--report` and
+`--manifest`, so the recipe and master are kept on canopy-web with it. Report the output MP4 path, the narrative
 URL, and the timing report; flag a large held-frame overrun so the user can
 trim the narration before shipping.

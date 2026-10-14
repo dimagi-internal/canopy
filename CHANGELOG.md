@@ -9,6 +9,24 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.682] - 2026-10-14
+
+### Fixed
+- **Nothing needed to keep iterating a DDD narrative is left only on the machine that made it.**
+  A version on canopy-web held its story and videos but not the recipe, master recording or
+  capture report. The chlorine demo shipped eight cuts while those sat in one account's temp dir,
+  and could not be re-recorded once it was cleaned. Now:
+  - `narrative post` pins the recipe (and intent ledger) to the version it creates.
+  - `snippets upload-video` requires `--spec`, and for a cut also `--master` and `--report`. It
+    pins them to the version before the video goes up, and refuses without them.
+  - `narrative pull` restores the recipe beside the lock and the master/report to
+    `~/.canopy/ddd/sources/<slug>/`. A differing local recipe is kept, with canopy-web's written
+    beside it as `.recipe.yaml.web`.
+  - `narrative push-sources <recipe> [--master --report --manifest]` backfills a narrative made
+    before this.
+  - `ddd-upload` pins the spec its run rendered.
+  Needs canopy-web#1485 (the `/api/ddd/narratives/<slug>/sources/` routes) deployed.
+
 ## [0.2.674] - 2026-10-13
 
 ### Fixed

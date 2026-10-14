@@ -1153,6 +1153,16 @@ def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
     )
     result = rv.post_review_request(request)
     _stamp_run_state(run_id, result)
+    # Pin the recipe (and intent ledger) to the version just posted, so the
+    # version on canopy-web carries everything it takes to render it — not just
+    # the story. Fails loud: a version whose recipe exists only on this machine
+    # is the stranded state this prevents.
+    from scripts.ddd import sources as narrative_sources
+
+    slug = narrative_slug or getattr(request, "narrative_slug", None) or spec.name
+    narrative_sources.push_sources(
+        slug, str(result["id"]), narrative_sources.recipe_files(spec_path, slug)
+    )
     return result
 
 
@@ -1384,6 +1394,74 @@ def _warn_if_replacing_local_story(base_dir, slug: str, parts: dict) -> list[str
     return differing + dropped
 
 
+def _restore_sources(slug: str, base_dir: Path, review_id: str) -> dict:
+    """Pull ``slug``'s iteration sources; print what was restored and what is missing."""
+    from scripts.ddd import sources as narrative_sources
+
+    recipe = base_dir / f"{slug}.recipe.yaml"
+    local = recipe.read_bytes() if recipe.exists() else None
+    try:
+        written = narrative_sources.pull_sources(slug, base_dir, review_id=review_id)
+    except narrative_sources.SourcesError as exc:
+        print(f"ERROR: could not restore {slug!r}'s sources: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if local is not None and "recipe" in written and written["recipe"].read_bytes() != local:
+        web_copy = recipe.with_name(recipe.name + ".web")
+        web_copy.write_bytes(written["recipe"].read_bytes())
+        recipe.write_bytes(local)
+        written["recipe"] = recipe
+        print(
+            f"WARNING: your local {recipe.name} differs from the one pinned on canopy-web; "
+            f"kept yours, wrote canopy-web's to {web_copy.name} to diff.",
+            file=sys.stderr,
+        )
+    for role, path in written.items():
+        print(f"restored {role} from canopy-web: {path}", file=sys.stderr)
+    if not recipe.exists():
+        print(
+            f"WARNING: no render recipe at {recipe}, and canopy-web holds none for "
+            f"{slug!r}. Nothing can render it until one is authored and pushed "
+            f"(`narrative push-sources <recipe>`).",
+            file=sys.stderr,
+        )
+    return written
+
+
+def _cmd_push_sources(argv: list[str]) -> None:
+    """Pin a narrative's iteration sources to its CURRENT version on canopy-web.
+
+    ``narrative post`` and ``snippets upload-video`` already do this; this is
+    for a narrative whose sources were never pushed (made before they were), or
+    to re-pin a master after re-recording without re-uploading videos."""
+    import argparse
+
+    from scripts.ddd import review as rv
+    from scripts.ddd import sources as narrative_sources
+
+    ap = argparse.ArgumentParser(prog="scripts.ddd.narrative push-sources")
+    ap.add_argument("spec", help="the recipe (or legacy single-file spec)")
+    ap.add_argument("--slug", default=None, help="narrative slug (default: the spec's name)")
+    ap.add_argument("--master", default=None)
+    ap.add_argument("--report", default=None)
+    ap.add_argument("--manifest", default=None)
+    a = ap.parse_args(argv)
+
+    slug = a.slug or Path(a.spec).name.split(".")[0]
+    cur = ((rv.get_narrative(slug) or {}).get("current_version")) or {}
+    if not cur.get("review_id"):
+        print(f"ERROR: canopy-web has no narrative version for {slug!r}.", file=sys.stderr)
+        sys.exit(1)
+    files = {
+        **narrative_sources.recipe_files(a.spec, slug),
+        "master": a.master, "capture_report": a.report, "capture_manifest": a.manifest,
+    }
+    files = {k: Path(v) for k, v in files.items() if v}
+    pushed = narrative_sources.push_sources(slug, str(cur["review_id"]), files)
+    for role, row in pushed.items():
+        print(f"{role}: {'unchanged' if row.get('reused') else 'pinned'} to {slug} v{cur.get('version')}")
+
+
 def _cmd_pull(slug: str, target: str) -> None:
     """Fetch the narrative from canopy-web into ``<slug>.narrative.lock.json``.
 
@@ -1426,21 +1504,13 @@ def _cmd_pull(slug: str, target: str) -> None:
     replaced = _warn_if_replacing_local_story(base_dir, slug, parts)
     lock = write_lock(base_dir, slug, web_version, parts)
 
-    # A narrative is a PAIR: canopy-web owns the story, git owns the render
-    # recipe. `pull` can only ever produce the first half, so a narrative
-    # authored on another machine — or by another agent — lands here with no
-    # recipe and nothing to render. Reporting "pulled" and exiting 0 makes that
-    # look like a complete fetch; the next person discovers it when the render
-    # has nothing to run.
+    # The story alone renders nothing: the recipe and the capture files are
+    # pinned to the version on canopy-web too (scripts/ddd/sources.py), so a
+    # narrative made on another machine or by another agent can be picked up
+    # here. A local recipe that differs is someone's work in progress, so it is
+    # kept, and canopy-web's copy is written beside it to diff.
+    _restore_sources(slug, base_dir, str(review_id))
     recipe = base_dir / f"{slug}.recipe.yaml"
-    if not recipe.exists():
-        print(
-            f"WARNING: no render recipe at {recipe}. `pull` fetches the STORY only — "
-            f"the recipe (base_url, auth, per-scene steps) is git-owned and cannot be "
-            f"recovered from canopy-web. This narrative cannot be rendered until one "
-            f"is authored.",
-            file=sys.stderr,
-        )
 
     # The why-brief is cloud-derived too — recovered from the same payload.
     wb = reconstruct_why_brief(request_json)
@@ -1520,7 +1590,8 @@ def main() -> None:
             "  python -m scripts.ddd.narrative post <spec_path> <run_id> [--force]   # refused while the run's review is pending\n"
             "  python -m scripts.ddd.narrative apply <spec_path> <response_json_file>\n"
             "  python -m scripts.ddd.narrative status <run_id>     # prints narrative status JSON; exit 1 if upload would refuse\n"
-            "  python -m scripts.ddd.narrative pull <slug> <dir>                   # fetch the narrative into <slug>.narrative.lock.json (one-way read)\n"
+            "  python -m scripts.ddd.narrative pull <slug> <dir>                   # fetch the narrative + its recipe; capture files to ~/.canopy/ddd/sources/<slug>/\n"
+            "  python -m scripts.ddd.narrative push-sources <recipe> [--master m.mp4 --report r.json --manifest m.json]\n"
             "  python -m scripts.ddd.narrative locked <spec_path>   # prints locked|unlocked\n"
             "  python -m scripts.ddd.narrative lock <spec_path>\n"
             "  python -m scripts.ddd.narrative unlock <spec_path>",
@@ -1574,6 +1645,9 @@ def main() -> None:
             )
             sys.exit(2)
         _cmd_pull(args[0], args[1])
+
+    elif subcmd == "push-sources":
+        _cmd_push_sources(sys.argv[2:])
 
     elif subcmd == "apply":
         if len(sys.argv) != 4:

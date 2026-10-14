@@ -1963,11 +1963,12 @@ def test_gap_resolved_defaults_to_open():
 
 
 def test_pull_reports_a_narrative_it_cannot_render(tmp_path, monkeypatch, capsys):
-    """A narrative is a PAIR, and pull can only fetch one half.
+    """A pull that ends with no recipe must say the narrative cannot render.
 
     Four narratives were authored on another machine and pulled here; all four
-    reported success and none could be rendered, because the git-owned recipe
-    does not exist on canopy-web and cannot be recovered from it.
+    reported success and none could be rendered. The recipe is now pinned to
+    the version on canopy-web and restored by pull (test_narrative_sources.py),
+    so this is the case where canopy-web holds none either.
     """
     import json as _json
 

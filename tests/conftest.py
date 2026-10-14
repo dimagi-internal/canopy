@@ -64,3 +64,28 @@ def real_identity_readback(monkeypatch):
     from orchestrator import canopy_web
 
     monkeypatch.setattr(canopy_web, "announce_identity", canopy_web._announce_identity_impl)
+
+
+@pytest.fixture(autouse=True)
+def _stub_narrative_source_push(request, monkeypatch):
+    """Every narrative post / video upload pins its iteration sources to
+    canopy-web, and every pull restores them (scripts/ddd/sources.py). Tests
+    about something else must not reach the network for that, so the push is a
+    recorder here (calls land in ``request.node.pushed_sources``) and the list a
+    pull reads is empty. Mark a test ``real_sources`` to exercise
+    the real push with its own injected transport."""
+    if request.node.get_closest_marker("real_sources"):
+        return
+    try:
+        from scripts.ddd import sources
+    except Exception:  # noqa: BLE001 — a suite that cannot import the DDD scripts
+        return
+    calls: list = []
+    request.node.pushed_sources = calls
+
+    def _record(slug, review_id, files, **_kw):
+        calls.append((slug, review_id, dict(files)))
+        return {role: {"reused": False} for role in files}
+
+    monkeypatch.setattr(sources, "push_sources", _record)
+    monkeypatch.setattr(sources, "list_sources", lambda *a, **k: [])

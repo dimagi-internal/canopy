@@ -19,6 +19,30 @@ from tests.ddd.test_recorded import _spec
 DETAIL = {"current_version": {"review_id": "rev-1", "version": 2}}
 
 
+def _sources(tmp_path, *, cut=True):
+    """The iteration sources an upload must carry: the recipe, and for a cut the
+    master and capture report it was cut from."""
+    out = {"recipe": tmp_path / "chlorine.recipe.yaml"}
+    out["recipe"].write_text("style: recorded\n")
+    if cut:
+        out["master"] = tmp_path / "master.mp4"
+        out["master"].write_bytes(b"\x00m")
+        out["capture_report"] = tmp_path / "report.json"
+        out["capture_report"].write_text("{}")
+    return out
+
+
+def _pushes():
+    calls: list = []
+
+    def push(slug, review_id, files, **kw):
+        calls.append((slug, review_id, dict(files)))
+        return {r: {"reused": False} for r in files}
+
+    push.calls = calls
+    return push
+
+
 @pytest.fixture(autouse=True)
 def _workspace(monkeypatch):
     """The narrative link is /w/<workspace>/ddd/<slug> — never flat (canopy-web#1337)."""
@@ -42,8 +66,10 @@ def test_a_cut_upload_names_its_cut_and_scenes(tmp_path):
     up = _capture()
     cut = {"id": "assign", "title": "Assigning a dispenser",
            "scene_ids": ["dispenser-list", "assign"], "scene_indexes": [1, 2]}
+    push = _pushes()
     result = upload_narrative_video(
-        "chlorine", str(mp4), cut=cut, _detail=lambda *a, **k: DETAIL, _upload=up,
+        "chlorine", str(mp4), cut=cut, sources=_sources(tmp_path),
+        _detail=lambda *a, **k: DETAIL, _upload=up, _push_sources=push,
     )
     kw = up.calls[0]
     assert kw["cut_id"] == "assign"
@@ -53,6 +79,9 @@ def test_a_cut_upload_names_its_cut_and_scenes(tmp_path):
     assert kw["role"] == "clip"
     assert kw["title"] == "Assigning a dispenser"
     assert result["cut_id"] == "assign"
+    # The sources were pinned to the SAME version, before the video went up.
+    assert push.calls[0][:2] == ("chlorine", "rev-1")
+    assert set(push.calls[0][2]) == {"recipe", "master", "capture_report"}
 
 
 def test_a_cut_can_be_chosen_as_the_hero(tmp_path):
@@ -61,7 +90,8 @@ def test_a_cut_can_be_chosen_as_the_hero(tmp_path):
     up = _capture()
     upload_narrative_video(
         "chlorine", str(mp4), cut={"id": "assign", "title": "", "scene_ids": ["a"]},
-        role="hero_video", _detail=lambda *a, **k: DETAIL, _upload=up,
+        role="hero_video", sources=_sources(tmp_path),
+        _detail=lambda *a, **k: DETAIL, _upload=up, _push_sources=_pushes(),
     )
     assert up.calls[0]["role"] == "hero_video"
     assert up.calls[0]["title"] == "assign"
@@ -71,11 +101,41 @@ def test_a_plain_upload_is_unchanged(tmp_path):
     mp4 = tmp_path / "v.mp4"
     mp4.write_bytes(b"\x00")
     up = _capture()
-    upload_narrative_video("chlorine", str(mp4), _detail=lambda *a, **k: DETAIL, _upload=up)
+    upload_narrative_video(
+        "chlorine", str(mp4), sources=_sources(tmp_path, cut=False),
+        _detail=lambda *a, **k: DETAIL, _upload=up, _push_sources=_pushes(),
+    )
     kw = up.calls[0]
     assert kw["role"] == "hero_video"
     assert kw["title"] == "chlorine v2"
     assert kw["cut_id"] is None
+
+
+@pytest.mark.parametrize(
+    "cut, given, missing",
+    [
+        (None, {}, "recipe"),
+        ({"id": "assign", "title": "", "scene_ids": ["a"]}, {"recipe"}, "master, capture_report"),
+        ({"id": "assign", "title": "", "scene_ids": ["a"]}, {"recipe", "master"}, "capture_report"),
+    ],
+)
+def test_a_video_is_refused_without_what_it_takes_to_rerender(tmp_path, cut, given, missing):
+    """The chlorine demo (2026-10-14): eight cuts were published to canopy-web
+    while the recipe and master lived only in one machine's temp dir, and the
+    next turn could not re-record. A video without its sources is refused, and
+    nothing is uploaded."""
+    mp4 = tmp_path / "v.mp4"
+    mp4.write_bytes(b"\x00")
+    up = _capture()
+    push = _pushes()
+    sources = {k: v for k, v in _sources(tmp_path).items() if k in given}
+    with pytest.raises(SystemExit) as exc:
+        upload_narrative_video(
+            "chlorine", str(mp4), cut=cut, sources=sources,
+            _detail=lambda *a, **k: DETAIL, _upload=up, _push_sources=push,
+        )
+    assert f"without its iteration sources ({missing})" in str(exc.value)
+    assert up.calls == [] and push.calls == []
 
 
 def test_publish_artifact_sends_the_cut_fields(monkeypatch, pinned_write_workspace):
@@ -113,7 +173,8 @@ def _run(monkeypatch, tmp_path, *extra, spec=None):
 
     def fake(slug, video, **kw):
         seen.update(kw, slug=slug)
-        return {"version": 2, "narrative_url": "u", "video_url": "v"}
+        return {"version": 2, "narrative_url": "u", "video_url": "v",
+                "sources": {r: False for r, p in kw["sources"].items() if p}}
 
     monkeypatch.setattr("scripts.ddd.upload.upload_narrative_video", fake)
     args = ["upload-video", "chlorine", str(mp4), *extra]
@@ -122,21 +183,29 @@ def _run(monkeypatch, tmp_path, *extra, spec=None):
     return seen
 
 
+CUT_SOURCES = ("--master", "m.mp4", "--report", "r.json")
+
+
 def test_cli_cut_resolves_title_and_scenes_from_the_recipe(monkeypatch, tmp_path):
-    seen = _run(monkeypatch, tmp_path, "--cut", "verify", "--spec", "{spec}")
+    seen = _run(monkeypatch, tmp_path, "--cut", "verify", "--spec", "{spec}", *CUT_SOURCES)
     assert seen["cut"]["id"] == "verify"
     assert seen["cut"]["title"] == "Verifying a refill"
     assert seen["cut"]["scene_ids"] == ["refill-check"]
     assert seen["role"] is None
+    # The CLI hands the recipe, master and report on, to be pinned with the video.
+    assert str(seen["sources"]["recipe"]).endswith("chlorine.yaml")
+    assert seen["sources"]["master"] == "m.mp4"
+    assert seen["sources"]["capture_report"] == "r.json"
 
 
 def test_cli_hero_cut(monkeypatch, tmp_path):
-    seen = _run(monkeypatch, tmp_path, "--cut", "assign", "--spec", "{spec}", "--hero")
+    seen = _run(monkeypatch, tmp_path, "--cut", "assign", "--spec", "{spec}", "--hero",
+                *CUT_SOURCES)
     assert seen["role"] == "hero_video"
 
 
 def test_cli_without_cut_uploads_the_hero_as_before(monkeypatch, tmp_path):
-    seen = _run(monkeypatch, tmp_path)
+    seen = _run(monkeypatch, tmp_path, "--spec", "{spec}")
     assert seen["cut"] is None and seen["role"] is None
 
 
@@ -144,14 +213,19 @@ def test_cli_without_cut_uploads_the_hero_as_before(monkeypatch, tmp_path):
     "extra, message",
     [
         (("--cut", "nope", "--spec", "{spec}"), "no cut 'nope'"),
-        (("--cut", "assign"), "--cut needs --spec"),
-        (("--hero",), "--hero only applies to a cut"),
+        (("--spec", "{spec}", "--hero"), "--hero only applies to a cut"),
     ],
 )
 def test_cli_refuses_a_cut_it_cannot_place(monkeypatch, tmp_path, extra, message):
     with pytest.raises(SystemExit) as exc:
         _run(monkeypatch, tmp_path, *extra)
     assert message in str(exc.value)
+
+
+def test_cli_requires_the_recipe(monkeypatch, tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, tmp_path, "--cut", "assign")
+    assert "the following arguments are required: --spec" in capsys.readouterr().err
 
 
 def test_cli_refuses_a_cut_of_an_explainer_spec(monkeypatch, tmp_path):
