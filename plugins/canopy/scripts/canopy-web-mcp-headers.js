@@ -78,7 +78,7 @@ function confinedProfile() {
 }
 
 // ARCHIVE / MARKETPLACE MODE (`--archive`, canopy#851). `/canopy:setup` registers the
-// person's agent catalog (`canopy-agents`, `/agents/marketplace.json`) in USER
+// person's agent catalog (`canopy-agents`, `/plugins/marketplace.json`) in USER
 // settings with this helper as its `headersHelper`, so the catalog fetch (and any
 // archive download on that origin) carries the person's own canopy-web token. Claude Code runs it from
 // the config dir (~/.claude), in the background, for the PERSON — never for a confined

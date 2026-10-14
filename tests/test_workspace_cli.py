@@ -10,7 +10,7 @@ from click.testing import CliRunner
 
 from orchestrator import workspace_cli as ws
 
-URL = "https://canopy.dimagi.com/agents/marketplace.json"
+URL = "https://canopy.dimagi.com/plugins/marketplace.json"
 CATALOG = {"name": "canopy-agents", "owner": {"name": "canopy"},
            "plugins": [{"name": "ace", "description": "Runs Connect opportunities",
                         "source": {"source": "github", "repo": "dimagi-internal/ace"}},
