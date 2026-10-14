@@ -11,7 +11,7 @@ from click.testing import CliRunner
 from orchestrator import workspace_cli as ws
 
 CATALOG = {"name": "canopy-family", "owner": {"name": "canopy"},
-           "plugins": [{"name": "eva", "source": {"source": "archive", "url": "https://x/eva.zip"}},
+           "plugins": [{"name": "eva", "description": "Chief of staff", "source": {"source": "archive", "url": "https://x/eva.zip"}},
                        {"name": "hal", "source": {"source": "archive", "url": "https://x/hal.zip"}}]}
 
 
@@ -59,7 +59,7 @@ class FakeClaude:
         raise AssertionError(argv)
 
 
-def test_connect_registers_with_autoupdate_and_the_archive_helper(_cfg):
+def test_connect_registers_with_autoupdate_and_the_archive_helper(_cfg, capsys):
     seen, claude = [], FakeClaude()
     ws._connect("family", runner=claude, transport=transport_for(seen=seen))
     assert seen == [("GET", "https://canopy.dimagi.com/w/family/marketplace.json", "Bearer pat_person")]
@@ -71,8 +71,82 @@ def test_connect_registers_with_autoupdate_and_the_archive_helper(_cfg):
     assert helper.startswith("node ") and helper.endswith(" --archive")
     assert "marketplaces/canopy/plugins/canopy/scripts" in helper  # stable, not a versioned cache
     assert len(helper) <= 500 and "    " not in helper
+    # Installs nothing by default — it lists each agent with its exact install line.
+    assert not [c for c in claude.calls if c[1:3] == ["plugin", "install"]]
+    out = capsys.readouterr().out
+    assert "/plugin install eva@canopy-family" in out and "Chief of staff" in out
+    assert "/plugin install hal@canopy-family" in out
+    assert "then /eva:setup" in out and "then /hal:setup" in out
+
+
+def test_install_all_installs_every_agent(_cfg):
+    claude = FakeClaude()
+    ws._connect("family", install_all=True, runner=claude, transport=transport_for())
     installs = [c for c in claude.calls if c[1:3] == ["plugin", "install"]]
     assert [c[3] for c in installs] == ["eva@canopy-family", "hal@canopy-family"]
+
+
+def test_cli_default_installs_nothing_and_install_all_opts_in(_cfg, monkeypatch):
+    got = []
+    monkeypatch.setattr(ws, "_connect", lambda w, **kw: got.append((w, kw)))
+    assert CliRunner().invoke(ws.workspace_group, ["connect", "family"]).exit_code == 0
+    assert CliRunner().invoke(ws.workspace_group, ["connect", "family", "--install-all"]).exit_code == 0
+    assert [kw["install_all"] for _, kw in got] == [False, True]
+    assert CliRunner().invoke(ws.workspace_group, ["connect"]).exit_code != 0
+
+
+def _two_workspaces(status_for):
+    cats = {"dimagi": {"name": "canopy-dimagi", "plugins": [{"name": "ada"}, {"name": "eva"}]},
+            "connect": {"name": "canopy-connect", "plugins": [{"name": "ace"}]}}
+
+    def t(method, url, headers, data):
+        slug = url.split("/w/")[1].split("/")[0]
+        st = status_for.get(slug, 200)
+        return st, json.dumps(cats[slug]) if st == 200 else "nope"
+    return t
+
+
+class MultiClaude(FakeClaude):
+    def __call__(self, argv, **kw):
+        if argv[1:4] == ["plugin", "marketplace", "list"]:
+            names = [{"name": n} for n in ("canopy-dimagi", "canopy-connect")] if self.synced else []
+            self.calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, json.dumps(names), "")
+        return super().__call__(argv, **kw)
+
+
+def test_connect_all_registers_every_workspace_and_lists_one_combined_offer(_cfg, capsys):
+    claude = MultiClaude()
+    ws._connect_all(runner=claude, transport=_two_workspaces({}),
+                    workspaces=[{"slug": "dimagi"}, {"slug": "connect"}])
+    known = json.loads((_cfg / "settings.json").read_text())["extraKnownMarketplaces"]
+    assert set(known) == {"canopy-dimagi", "canopy-connect"}
+    assert not [c for c in claude.calls if c[1:3] == ["plugin", "install"]]
+    out = capsys.readouterr().out
+    assert out.count("Agents you can install") == 1
+    for line in ("/plugin install ada@canopy-dimagi", "/plugin install ace@canopy-connect",
+                 "then /ace:setup"):
+        assert line in out
+
+
+def test_connect_all_reports_a_failed_workspace_and_continues(_cfg, capsys):
+    ws._connect_all(runner=MultiClaude(), transport=_two_workspaces({"dimagi": 404}),
+                    workspaces=[{"slug": "dimagi"}, {"slug": "connect"}])
+    out = capsys.readouterr().out
+    assert "workspace 'dimagi': skipped" in out and "/plugin install ace@canopy-connect" in out
+
+
+def test_connect_all_fails_only_when_every_workspace_fails(_cfg):
+    with pytest.raises(ws.WorkspaceSetupError):
+        ws._connect_all(runner=MultiClaude(),
+                        transport=_two_workspaces({"dimagi": 404, "connect": 500}),
+                        workspaces=[{"slug": "dimagi"}, {"slug": "connect"}])
+
+
+def test_empty_marketplace_says_so(_cfg, capsys):
+    ws._connect("family", runner=FakeClaude(),
+                transport=transport_for(body={"name": "canopy-family", "plugins": []}))
+    assert "No agents to install yet" in capsys.readouterr().out
 
 
 def test_connect_preserves_other_settings_and_is_idempotent(_cfg):
@@ -85,10 +159,11 @@ def test_connect_preserves_other_settings_and_is_idempotent(_cfg):
     assert ws.write_user_settings("canopy-family", entry) is False
 
 
-def test_dry_run_changes_nothing(_cfg):
+def test_dry_run_changes_nothing(_cfg, capsys):
     claude = FakeClaude()
     ws._connect("family", dry_run=True, runner=claude, transport=transport_for())
     assert not (_cfg / "settings.json").exists() and claude.calls == []
+    assert "/plugin install eva@canopy-family" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("status,needle", [(401, "pat-mint"), (404, "canopy-web#1376"), (500, "500")])
@@ -108,7 +183,8 @@ def test_no_token_points_at_the_sign_in(monkeypatch, tmp_path):
 
 def test_failed_install_is_reported(_cfg):
     with pytest.raises(ws.WorkspaceSetupError) as e:
-        ws._connect("family", runner=FakeClaude(fail_install={"hal"}), transport=transport_for())
+        ws._connect("family", install_all=True, runner=FakeClaude(fail_install={"hal"}),
+                    transport=transport_for())
     assert "hal" in e.value.message
 
 

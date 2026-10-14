@@ -4,7 +4,10 @@ The new-user half of `/canopy:setup`: after the browser sign-in (the PAT mint), 
 person picks a workspace and this registers that workspace's agent marketplace —
 `https://<canopy-web>/w/<ws>/marketplace.json` (canopy-web#1376) — in Claude Code's USER
 settings with `autoUpdate`, authenticated by the canopy plugin's headers helper in
-`--archive` mode, then installs every agent plugin it lists.
+`--archive` mode, then prints the agents it offers, each with its install line. It does
+NOT install them: you install only the agents you choose, the normal Claude Code way
+(`/plugin install <agent>@canopy-<ws>`), then run that agent's own setup command.
+`--install-all` is the explicit opt-in to install every listed agent.
 
 Why user settings and not `claude plugin marketplace add <url>`: `add` has no way to
 send a header, and the catalog is filtered by the caller's membership, so it must be
@@ -16,7 +19,7 @@ Runners, vault keys, `gog login` and `op inject` are deliberately NOT here: they
 the operator who hosts an agent (`canopy agent bootstrap`), not to someone who uses one.
 
     canopy workspace list [--json]
-    canopy workspace connect <ws> [--dry-run] [--no-install]
+    canopy workspace connect <ws> | --all [--dry-run] [--install-all]
     canopy workspace op-status          # one line; always exits 0
 """
 from __future__ import annotations
@@ -270,22 +273,57 @@ def list_cmd(as_json):
 
 
 @workspace_group.command("connect")
-@click.argument("workspace")
+@click.argument("workspace", required=False)
+@click.option("--all", "all_ws", is_flag=True,
+              help="Connect EVERY workspace you belong to (what /canopy:setup runs).")
 @click.option("--dry-run", is_flag=True, help="Fetch the catalog and show the plan; change nothing.")
-@click.option("--no-install", is_flag=True, help="Register the marketplace but install nothing.")
-def connect_cmd(workspace, dry_run, no_install):
-    """Register WORKSPACE's agent marketplace (autoUpdate on) and install its agents."""
-    _connect(workspace, dry_run=dry_run, no_install=no_install)
+@click.option("--install-all", is_flag=True,
+              help="Also install EVERY agent the marketplace lists (default: install none).")
+def connect_cmd(workspace, all_ws, dry_run, install_all):
+    """Register WORKSPACE's agent marketplace (autoUpdate on) and list its agents.
+
+    With --all instead of WORKSPACE, registers every workspace you belong to (each its own
+    `canopy-<ws>` marketplace) and prints one combined list. Installs nothing unless
+    --install-all: you pick the agents you want and install each with
+    `/plugin install <agent>@<marketplace>`, then run that agent's setup command."""
+    if bool(workspace) == bool(all_ws):
+        raise click.UsageError("give a WORKSPACE slug or --all (not both)")
+    if all_ws:
+        _connect_all(dry_run=dry_run, install_all=install_all)
+    else:
+        _connect(workspace, dry_run=dry_run, install_all=install_all)
 
 
-def _connect(workspace: str, *, dry_run: bool = False, no_install: bool = False,
+def _agents(catalog: dict) -> list[dict]:
+    return [p for p in catalog.get("plugins") or [] if isinstance(p, dict) and p.get("name")]
+
+
+def offer_lines(offers: list[tuple[str, dict]]) -> list[str]:
+    """One combined list: per agent, its exact install line and its own setup command.
+    `offers` is [(marketplace name, plugin entry)]."""
+    if not offers:
+        return ["No agents to install yet — ask a workspace admin to add one."]
+    rows = [(f"/plugin install {p['name']}@{m}", f"then /{p['name']}:setup",
+             " ".join(str(p.get("description") or "").split())[:100]) for m, p in offers]
+    w0, w1 = max(len(r[0]) for r in rows), max(len(r[1]) for r in rows)
+    out = ["Agents you can install (install only the ones you want):"]
+    out += [f"  {a.ljust(w0)}  {b.ljust(w1)}  {c}".rstrip() for a, b, c in rows]
+    out += ["Run each install line in Claude Code (or pick from the /plugin menu), then that "
+            "agent's own setup command — it tells you what else that agent needs."]
+    return out
+
+
+def _connect(workspace: str, *, dry_run: bool = False, install_all: bool = False,
              runner: Runner = subprocess.run,
-             transport: Optional[canopy_web.Transport] = None) -> None:
+             transport: Optional[canopy_web.Transport] = None,
+             show_offer: bool = True) -> list[tuple[str, dict]]:
+    """Register one workspace's marketplace; return its [(marketplace, agent)] offers."""
     token = _need_token()
     catalog = fetch_catalog(workspace, token, transport=transport)
     name = str(catalog["name"]).strip()
-    plugins = [str(p.get("name")) for p in catalog.get("plugins") or []
-               if isinstance(p, dict) and p.get("name")]
+    agents = _agents(catalog)
+    plugins = [str(p["name"]) for p in agents]
+    offers = [(name, p) for p in agents]
     url = marketplace_url(workspace)
     hp = helper_path()
     if hp is None:
@@ -299,7 +337,12 @@ def _connect(workspace: str, *, dry_run: bool = False, no_install: bool = False,
     if dry_run:
         click.echo("dry run — would add to user settings extraKnownMarketplaces:")
         click.echo(json.dumps({name: entry}, indent=2))
-        return
+        if install_all and plugins:
+            click.echo(f"dry run — would then install: "
+                       f"{', '.join(f'{p}@{name}' for p in plugins)}")
+        elif show_offer:
+            _echo_offer(offers)
+        return offers
     changed = write_user_settings(name, entry)
     click.echo(f"settings   : {'registered' if changed else 'already registered'} "
                f"'{name}' in {config_dir() / 'settings.json'} (autoUpdate on)")
@@ -307,8 +350,10 @@ def _connect(workspace: str, *, dry_run: bool = False, no_install: bool = False,
     click.echo(f"marketplace: {how}")
     if not ok:
         raise WorkspaceSetupError(how)
-    if no_install or not plugins:
-        return
+    if not install_all or not plugins:
+        if show_offer:
+            _echo_offer(offers)
+        return offers
     results = install_plugins(name, plugins, runner)
     for p, good, line in results:
         click.echo(f"install    : {p}@{name} {'OK' if good else 'FAIL — ' + line}")
@@ -316,7 +361,44 @@ def _connect(workspace: str, *, dry_run: bool = False, no_install: bool = False,
     if bad:
         raise WorkspaceSetupError(f"{len(bad)} plugin(s) did not install: {', '.join(bad)} — "
                                   f"retry with `claude plugin install <name>@{name}`")
-    click.echo("Restart Claude Code (or /reload-plugins) to load the new agents.")
+    click.echo("Restart Claude Code (or /reload-plugins) to load the new agents, then run each "
+               "agent's own setup command (e.g. /<agent>:setup).")
+    return offers
+
+
+def _echo_offer(offers: list[tuple[str, dict]]) -> None:
+    click.echo("")
+    for line in offer_lines(offers):
+        click.echo(line)
+
+
+def _connect_all(*, dry_run: bool = False, install_all: bool = False,
+                 runner: Runner = subprocess.run,
+                 transport: Optional[canopy_web.Transport] = None,
+                 workspaces: Optional[list[dict]] = None) -> list[tuple[str, dict]]:
+    """Connect every workspace the person belongs to — agents are split across workspaces
+    and each catalog lists only its own, so connecting one would hide the rest. A workspace
+    that fails (no catalog served, not reachable…) is reported and skipped."""
+    rows = list_workspaces() if workspaces is None else workspaces
+    if not rows:
+        click.echo("You are not a member of any canopy-web workspace yet — ask a workspace "
+                   "admin to invite you.")
+        return []
+    offers, failed = [], []
+    for r in rows:
+        try:
+            offers += _connect(r["slug"], dry_run=dry_run, install_all=install_all,
+                               runner=runner, transport=transport, show_offer=False)
+        except WorkspaceSetupError as e:
+            failed.append(r["slug"])
+            click.echo(f"workspace '{r['slug']}': skipped — {e.message}")
+    if failed:
+        click.echo(f"{len(failed)} of {len(rows)} workspace(s) not connected: {', '.join(failed)}")
+    if not install_all:
+        _echo_offer(offers)
+    if failed and len(failed) == len(rows):
+        raise WorkspaceSetupError("no workspace could be connected (see the lines above)")
+    return offers
 
 
 @workspace_group.command("op-status")

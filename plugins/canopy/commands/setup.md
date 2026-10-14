@@ -1,19 +1,26 @@
 ---
-description: One-shot idempotent setup — sign in to canopy-web in the browser, pick your workspace, and install that workspace's agents (auto-updating); plus the machine basics (state dir, CLI, hook)
+description: One-shot idempotent setup — sign in to canopy-web in the browser and register every workspace's private agent marketplace (auto-updating) so you can install the agents you choose; plus the machine basics (state dir, CLI, hook)
 allowed-tools: [Bash, AskUserQuestion]
 ---
 
 # Canopy Setup
 
-The new-user path (canopy#851): **sign in → pick a workspace → that workspace's agents are
-installed and keep themselves up to date.** Runners, vault keys, `gog login` and `op inject`
-are NOT part of it — they belong to the operator who *hosts* an agent (`canopy agent bootstrap`).
+Getting started with canopy is three steps, and this command is the first:
 
-> **First step worth trying — no install at all:** add canopy-web to claude.ai as a **custom
-> connector** (claude.ai → Settings → Connectors → Add custom connector) with the URL
-> `https://canopy.dimagi.com/api/mcp/`. You sign in with your canopy account in the browser and
-> can talk to your workspace's agents from claude.ai or the Claude app. Come back to this
-> command when you want the agents inside Claude Code.
+1. **Install canopy** — `/plugin marketplace add dimagi-internal/canopy`,
+   `/plugin install canopy@canopy`, then this command (`/canopy:setup`).
+2. **Install an agent** — the normal Claude Code way, `/plugin install <agent>@canopy-<ws>`
+   (or the `/plugin` menu). Only the agents you choose.
+3. **Set up the agent** — that agent's own setup command, e.g. `/ace:setup`.
+
+This command signs you in to canopy-web and registers the private agent marketplace
+`canopy-<ws>` of every workspace you belong to (agents are split across workspaces, and each
+catalog lists only its own). That registration is the only reason a
+canopy command is involved: `claude plugin marketplace add` can't send your sign-in token, so
+canopy writes the entry with a headers helper that does. It installs no agents. Runners, vault
+keys, `gog login` and `op inject` are NOT part of it either — they belong to the operator who
+*hosts* an agent (`canopy agent bootstrap`). The user-facing guide is
+https://canopy.dimagi.com/get-started.
 
 Run each step in order. Every step is idempotent — re-running `/canopy:setup` skips what's done.
 
@@ -45,39 +52,52 @@ npx --yes tsx "$SCRIPT"
 
 If the browser didn't open, give the user the URL the script printed in step `[2/3]`.
 
-## 3. Pick a workspace
+## 3. Your workspaces
 
 ```bash
-canopy workspace list --json
+canopy workspace list
 ```
 
 - **None:** tell the user they aren't a member of any workspace yet and should ask a workspace
   admin for an invite; stop here (setup is otherwise complete).
-- **Exactly one:** use it, and say which.
-- **Several:** ask with AskUserQuestion (one option per workspace, label = name, description =
-  slug).
+- **Otherwise:** don't ask them to pick — step 4 connects all of them. Agents are split across
+  workspaces (e.g. `dimagi` holds ada and eva, `connect` holds ace, echo, hal and jarvis), and
+  each catalog lists only its own agents, so connecting one would hide the rest.
 
-## 4. Connect it — register its marketplace (auto-update on) and install its agents
+## 4. Register every workspace's agent marketplace (auto-update on)
 
 ```bash
-canopy workspace connect <slug>
+canopy workspace connect --all
 ```
 
-This fetches `https://canopy.dimagi.com/w/<slug>/marketplace.json` as you, registers it in your
-user settings (`extraKnownMarketplaces`, `autoUpdate: true`, authenticated by canopy's headers
-helper in `--archive` mode so catalog and archive downloads carry your token), and runs
-`claude plugin install <agent>@<marketplace> --yes` for each agent. Report its output. On a
-failure it prints the exact cause (not signed in, not a member, no marketplace served yet) —
-surface that; don't improvise around it.
+For each workspace this fetches `https://canopy.dimagi.com/w/<ws>/marketplace.json` as you and
+registers it in your user settings as `canopy-<ws>` (`extraKnownMarketplaces`,
+`autoUpdate: true`, authenticated by canopy's headers helper in `--archive` mode so catalog and
+archive downloads carry your token). A workspace that can't be connected (no catalog served
+yet, not reachable) prints a `skipped — <reason>` line and the rest continue. It installs
+nothing: it ends with ONE combined list of the agents on offer, each with its exact install
+line (`/plugin install <agent>@canopy-<ws>`) and its own setup command (`/<agent>:setup`).
+Report its output, then tell the user:
+
+- install only the agents they want, by running those lines (or picking from the `/plugin`
+  menu) — don't run the installs for them unless they ask;
+- after installing an agent, run **that agent's own setup command** (e.g. `/ace:setup`); it
+  says what else that agent needs.
+
+Surface any `skipped` line as-is; don't improvise around it. (`canopy workspace connect <ws>`
+still connects a single workspace; `--install-all` exists for someone who explicitly wants
+every agent, and is not the default.)
 
 ## 5. 1Password check (never fails setup)
 
 Step 1 printed one `[op]` line. If it says not installed / not signed in, repeat that single fix
-to the user: it's only needed to **act as** an agent whose credentials live in 1Password
-(`canopy cred check --agent <slug>` says whether this session may). Using agents doesn't need it.
+to the user. Whether an agent needs 1Password is up to that agent — its own setup command tells
+you what it needs; canopy only needs it to **act as** an agent whose credentials live in
+1Password (`canopy cred check --agent <slug>` says whether this session may).
 
 ## Done
 
-Tell the user to restart Claude Code (or `/reload-plugins`) so the new agents and the capture
-hook load, then `/canopy:canopy-doctor` to verify. Operators who will *host* agents on this
+Tell the user to restart Claude Code (or `/reload-plugins`) so the capture hook (and any agent
+they install) loads, then `/canopy:canopy-doctor` to verify. Their next steps are the agent
+install lines from step 4, then each installed agent's own setup command. Operators who will *host* agents on this
 machine continue with `canopy agent bootstrap` (printed at the end of step 1).
