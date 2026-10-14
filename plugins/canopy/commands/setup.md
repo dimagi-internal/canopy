@@ -58,7 +58,7 @@ If the browser didn't open, give the user the URL the script printed in step `[2
 canopy agents connect
 ```
 
-No workspace picking: this fetches `https://canopy.dimagi.com/agents/marketplace.json` as you —
+No workspace picking: this fetches `https://canopy.dimagi.com/plugins/marketplace.json` as you —
 every agent in every workspace you belong to — and registers it in your user settings as
 `canopy-agents` (`extraKnownMarketplaces`, `autoUpdate: true`, authenticated by canopy's headers
 helper in `--archive` mode so the catalog fetch carries your token). It is idempotent, and it

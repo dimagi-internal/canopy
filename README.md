@@ -50,7 +50,7 @@ Getting started is three steps — the user-facing guide is
 
    `/canopy:setup` is idempotent. It provisions the state directory, the main checkout, the
    capture hook and the `canopy` CLI, signs you in to canopy-web in the browser, and
-   registers your ONE agent catalog, `canopy-agents` (`/agents/marketplace.json`: every
+   registers your ONE agent catalog, `canopy-agents` (`/plugins/marketplace.json`: every
    agent in every workspace you belong to, auto-update on), in `~/.claude/settings.json`
    with canopy's headers helper — `canopy agents connect`. That registration is the only
    reason a canopy command is involved: `claude plugin marketplace add` can't send a token.
