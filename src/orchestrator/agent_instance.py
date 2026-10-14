@@ -71,8 +71,8 @@ class Instance:
     plugin: str
     agent: str
     workspace: str = ""
-    #: None = canopy-web did not say (an older catalog); "" = it said there is none.
-    vault: Optional[str] = None
+    #: The instance's recorded `op_vault` ("" = none recorded).
+    vault: str = ""
 
     def label(self) -> str:
         return f"{self.agent} (workspace {self.workspace or '?'})"
@@ -106,9 +106,7 @@ def inject_env(base: dict, vault: str, slug: str) -> dict:
 # step 1: which instance
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _vault_field(d: dict, key: str) -> Optional[str]:
-    if key not in d:
-        return None
+def _vault_field(d: dict, key: str) -> str:
     return str(d.get(key) or "").strip()
 
 
@@ -210,30 +208,23 @@ def choose_instance(plugin: str, instances: list[Instance], *, agent: str = "",
 
 def fetch_agent_vault(slug: str, *, token: Optional[str] = None,
                       transport: Optional[canopy_web.Transport] = None) -> str:
-    """The `op_vault` canopy-web records for agent `slug` ("" when none): the agent
-    record's `op_vault`, or — from a canopy-web that does not put it on the record yet —
-    the agent's vault status (`GET /api/agents/<slug>/vault`, the name only, never the key).
-    Both are the instance's RECORDED vault; neither is derived."""
+    """The `op_vault` canopy-web records on agent `slug`'s record ("" when none) — readable
+    by any member who can see the agent. The RECORDED vault, never derived."""
     try:
         body = canopy_web.call("GET", f"{AGENTS_PATH}{slug}/", token=token,
                                transport=transport) or {}
-        if "op_vault" in body:
-            return str(body.get("op_vault") or "").strip()
-        status = canopy_web.call("GET", f"{AGENTS_PATH}{slug}/vault", token=token,
-                                 transport=transport) or {}
     except Exception as e:  # noqa: BLE001
         raise InstanceError(f"could not read agent '{slug}' from canopy-web: "
                             f"{str(e).splitlines()[0][:200]}")
-    return str(status.get("vault") or "").strip()
+    return _vault_field(body, "op_vault")
 
 
-def resolve_vault(inst: Instance, override: str = "", *,
-                  fetch: Callable[[str], str]) -> tuple[str, str]:
-    """(vault, where it came from). `--vault` wins, else the instance's op_vault (fetched
-    from the agent record when the catalog did not carry it). Never a convention."""
+def resolve_vault(inst: Instance, override: str = "") -> tuple[str, str]:
+    """(vault, where it came from). `--vault` wins, else the instance's op_vault (the
+    catalog's `vault` / the agents list's `op_vault`). Never a convention."""
     if (override or "").strip():
         return override.strip(), "--vault"
-    vault = inst.vault if inst.vault is not None else fetch(inst.agent)
+    vault = inst.vault
     if not vault:
         raise InstanceError(
             f"{NO_VAULT} (agent '{inst.agent}', workspace '{inst.workspace or '?'}'). "
@@ -388,7 +379,6 @@ class EnvResult:
 def run(plugin: str, *, template: Optional[Path], out: Path, agent: str = "", vault: str = "",
         force: bool = False, print_only: bool = False, token: str,
         list_instances: Optional[Callable[[str], list[Instance]]] = None,
-        fetch_vault: Optional[Callable[[str], str]] = None,
         runner: Optional[Runner] = None, base_env: Optional[dict] = None) -> EnvResult:
     out = Path(out).expanduser()
     bpath = binding_path(out)
@@ -398,8 +388,7 @@ def run(plugin: str, *, template: Optional[Path], out: Path, agent: str = "", va
     inst, why = choose_instance(plugin, instances, agent=agent,
                                 bound=(prior or {}).get("agent", "") if (prior or {}).get("plugin") == plugin else "",
                                 template=tpl_s, out=str(out))
-    chosen_vault, source = resolve_vault(
-        inst, vault, fetch=fetch_vault or (lambda s: fetch_agent_vault(s, token=token)))
+    chosen_vault, source = resolve_vault(inst, vault)
     notes: list[str] = []
     note = check_rebind(prior, inst, force=force, path=bpath)
     if note:
