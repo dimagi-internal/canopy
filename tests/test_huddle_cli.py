@@ -36,6 +36,15 @@ class FakeWeb:
         self.turn_posts = []
         self.closeouts = []
         self.refuse_mode = False
+        # The leader's own turn and the runners it can pin (runner_pin).
+        self.runners = [
+            {"id": "c10d0000-0000-0000-0000-000000000001", "name": "cloud-1", "kind": "cloud",
+             "status": "online", "ready": True, "capabilities": {}},
+            {"id": "1a900000-0000-0000-0000-000000000002", "name": "jj-laptop", "kind": "emdash",
+             "status": "online", "ready": True,
+             "capabilities": {"agents": ["ada", "eva", "echo", "hal"]}},
+        ]
+        self.harness_turns = {"lead-turn": {"id": "lead-turn", "claimed_by_name": "cloud-1"}}
 
     def transport(self, method, url, headers, data):
         body = json.loads(data) if data else None
@@ -96,6 +105,12 @@ class FakeWeb:
             row = {**body, "ext_id": f"P{len(rows) + 1}"}
             rows.append(row)
             return 201, json.dumps(row)
+        if path == "/api/harness/runners/" and method == "GET":
+            return 200, json.dumps(self.runners)
+        m = re.match(r"^/api/harness/turns/([^/]+)$", path)
+        if m and method == "GET":
+            t = self.harness_turns.get(m.group(1))
+            return (200, json.dumps(t)) if t else (404, '{"detail": "no turn"}')
         if path == "/api/harness/turns/" and method == "GET":
             return 200, json.dumps(self.turns.get(q.get("agent"), []))
         if path == "/api/harness/turns/" and method == "POST":
@@ -115,6 +130,10 @@ def web(monkeypatch):
     monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", w.transport)
     monkeypatch.setattr(huddle_cli, "_now", lambda: NOW)
     monkeypatch.setattr(huddle_cli, "_sleep", lambda s: None)
+    # The leader runs in a runner turn (`lead-turn`, claimed by cloud-1) unless a test says not.
+    monkeypatch.setattr("orchestrator.provenance.resolve_parent",
+                        lambda cwd=None: {"turn_id": "lead-turn"})
+    monkeypatch.setenv("CANOPY_RUNNER_CONFIG", "/nonexistent/runner.json")
     return w
 
 
@@ -152,6 +171,10 @@ def detail(cells, **kw):
             "deadline_at": None, "cells": cells, "outputs": [], **kw}
 
 
+CLOUD_PIN = {"id": "c10d0000-0000-0000-0000-000000000001", "name": "cloud-1",
+             "basis": "the runner of this session's turn lead-turn"}
+
+
 def write_plan(tmp_path, **kw):
     plan = {"id": H, "type": "work", "team": "fleet", "leader": "ada",
             "members": ["eva", "echo"], "principal": "Jonathan", "sharing_rule": "share",
@@ -159,7 +182,7 @@ def write_plan(tmp_path, **kw):
             "anchor_turn_id": "anchor-uuid", "workspace": "connect", "base_url": "https://cw",
             "page": f"https://cw/w/connect/huddles/{H}",
             "packs": {"eva": "EVA PACK", "echo": "ECHO PACK"}, "prior_text": "none yet",
-            "prior": [], **kw}
+            "prior": [], "runner": CLOUD_PIN, **kw}
     p = tmp_path / "plan.json"
     p.write_text(json.dumps(plan))
     return p
@@ -205,6 +228,56 @@ def test_plan_picks_a_free_id_tags_the_anchor_and_builds_packs(tmp_path, web):
     # the prior record's fate is refreshed from the live board: the principal declined it
     assert "Old idea (lead eva) — declined: not this quarter" in plan["prior_text"]
     assert plan["prior"][0]["outcomes"][0]["fate"] == "declined: not this quarter"
+
+
+def _plan(tmp_path, *extra):
+    out = tmp_path / "plan.json"
+    r = CliRunner().invoke(main, ["huddle", "plan", "--leader", "ada", "--team", "fleet",
+                                  "--members", "eva,echo", "--local", str(tmp_path / "rec"),
+                                  "--out", str(out), *extra])
+    return r, (json.loads(out.read_text()) if out.exists() else None)
+
+
+def test_plan_pins_rounds_to_the_leaders_own_runner_by_default(tmp_path, web):
+    r, plan = _plan(tmp_path)
+    assert r.exit_code == 0, r.output
+    assert plan["runner"] == CLOUD_PIN
+
+
+def test_plan_outside_a_runner_turn_pins_this_machines_runner(tmp_path, web, monkeypatch):
+    monkeypatch.setattr("orchestrator.provenance.resolve_parent", lambda cwd=None: {})
+    cfg = tmp_path / "runner.json"
+    cfg.write_text(json.dumps({"runner_id": web.runners[1]["id"]}))
+    monkeypatch.setenv("CANOPY_RUNNER_CONFIG", str(cfg))
+    r, plan = _plan(tmp_path)
+    assert r.exit_code == 0, r.output
+    assert plan["runner"]["name"] == "jj-laptop"
+    assert "this machine's runner" in plan["runner"]["basis"]
+
+
+def test_plan_refuses_when_it_cannot_tell_where_it_runs(tmp_path, web, monkeypatch):
+    monkeypatch.setattr("orchestrator.provenance.resolve_parent", lambda cwd=None: {})
+    r, plan = _plan(tmp_path)
+    assert r.exit_code == 2 and plan is None
+    assert "--runner <name>" in r.output and "--runner none" in r.output
+    assert not web.closeouts          # refused before the anchor is filed
+
+
+def test_plan_names_a_runner_or_none(tmp_path, web):
+    r, plan = _plan(tmp_path, "--runner", "jj-laptop")
+    assert r.exit_code == 0, r.output
+    assert plan["runner"]["name"] == "jj-laptop" and plan["runner"]["basis"] == "named with --runner"
+    r, plan = _plan(tmp_path, "--runner", "none")
+    assert r.exit_code == 0, r.output
+    assert plan["runner"]["id"] is None
+
+
+def test_plan_refuses_a_runner_that_cannot_carry_every_member(tmp_path, web):
+    web.runners[1]["capabilities"]["agents"] = ["eva"]          # no echo repo on the laptop
+    r, plan = _plan(tmp_path, "--runner", "jj-laptop")
+    assert r.exit_code == 2 and plan is None
+    assert "does not serve agent 'echo'" in r.output
+    assert not web.closeouts
 
 
 def test_plan_survives_a_member_it_cannot_read(tmp_path, web):
@@ -383,7 +456,7 @@ def test_file_reuses_a_pre_fix_task_with_an_empty_source_url(tmp_path, web):
 
 
 # ── dispatch ─────────────────────────────────────────────────────────────────────
-def test_dispatch_tags_the_round_parents_it_and_never_pins(tmp_path, web):
+def test_dispatch_tags_the_round_parents_it_and_pins_the_plans_runner(tmp_path, web):
     p = write_plan(tmp_path)
     f = tmp_path / "eva-r1.md"
     f.write_text("do round 1")
@@ -398,10 +471,34 @@ def test_dispatch_tags_the_round_parents_it_and_never_pins(tmp_path, web):
     assert ref["kind"] == "huddle_round" and ref["huddle"] == H and ref["round"] == 1
     assert ref["member"] == "eva" and ref["attempt"] == 1
     assert ref["thread_key"] == f"huddle-{H}-eva-r1-a1" and ref["dispatched_by"] == "ada"
-    assert "runner_id" not in body
+    assert body["runner_id"] == CLOUD_PIN["id"]
     assert body["turn_mode"] == "auto"
     assert body["prompt"].startswith("do round 1") and "canopy:dispatched-prompt" in body["prompt"]
     assert json.loads(r.stdout)["turn_id"] == "turn-1"
+    assert json.loads(r.stdout)["runner"] == "cloud-1"
+
+
+def test_dispatch_with_runner_none_sends_no_pin(tmp_path, web):
+    p = write_plan(tmp_path, runner={"id": None, "name": "", "basis": "none"})
+    f = tmp_path / "eva-r1.md"
+    f.write_text("do round 1")
+    r = run("dispatch", "--plan", str(p), "--member", "eva", "--round", "1",
+            "--prompt-file", str(f))
+    assert r.exit_code == 0, r.output
+    assert "runner_id" not in web.turn_posts[0]
+
+
+def test_dispatch_refuses_a_plan_made_before_pinning(tmp_path, web):
+    p = write_plan(tmp_path)
+    plan = json.loads(p.read_text())
+    del plan["runner"]
+    p.write_text(json.dumps(plan))
+    f = tmp_path / "eva-r1.md"
+    f.write_text("do round 1")
+    r = CliRunner().invoke(main, ["huddle", "dispatch", "--plan", str(p), "--member", "eva",
+                                  "--round", "1", "--prompt-file", str(f)])
+    assert r.exit_code == 2
+    assert "has no `runner`" in r.output and not web.turn_posts
 
 
 def test_dispatch_attempt_and_mode_fallback(tmp_path, web):

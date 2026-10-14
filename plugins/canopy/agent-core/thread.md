@@ -90,4 +90,7 @@ FOREGROUND until it exits 0 (closed). Exit 3 means a message is still being writ
 SAME command again; never background it, never end your turn with a thread open. Exit 2 is a
 refusal (read it). `canopy thread show --thread <id>` prints the transcript. The loop is
 stateless — everything comes from canopy-web — so it resumes from any turn, any box.
+Messages run on YOUR runner (`--runner caller`, the default — a person's own session: that
+machine's runner); `--runner <name>` pins another box, `--runner none` leaves each participant
+to its own routing.
 Contract: canopy `docs/architecture/agent-threads.md`.

@@ -14,7 +14,7 @@ from click.testing import CliRunner
 
 from orchestrator import thread_cli
 from orchestrator.cli import main
-from tests.test_huddle_cli import H, FakeWeb, _cell, detail, prop, r1, write_plan
+from tests.test_huddle_cli import CLOUD_PIN, H, FakeWeb, _cell, detail, prop, r1, write_plan
 
 NOW = dt.datetime(2026, 10, 7, 12, 0, tzinfo=dt.timezone.utc)
 
@@ -122,6 +122,10 @@ def web(monkeypatch):
     monkeypatch.setattr(thread_cli, "_sleep", lambda s: None)
     from orchestrator import huddle_cli
     monkeypatch.setattr(huddle_cli, "_now", lambda: NOW)
+    # The moderator runs in a runner turn (`lead-turn`, claimed by cloud-1).
+    monkeypatch.setattr("orchestrator.provenance.resolve_parent",
+                        lambda cwd=None: {"turn_id": "lead-turn"})
+    monkeypatch.setenv("CANOPY_RUNNER_CONFIG", "/nonexistent/runner.json")
     return w
 
 
@@ -175,7 +179,7 @@ def test_say_dispatches_a_tagged_isolated_stamped_turn(web, tmp_path):
     r = run("thread", "say", "--thread", th["id"], "--to", "eva", "--prompt-out", str(out))
     assert r.exit_code == 0, r.output
     [post] = web.turn_posts
-    assert post["agent_slug"] == "eva" and "runner_id" not in post
+    assert post["agent_slug"] == "eva" and post["runner_id"] == CLOUD_PIN["id"]
     assert post["idempotency_key"] == f"thread-{th['id']}-n1"
     assert post["turn_mode"] == "auto"
     ref = post["origin_ref"]
@@ -185,6 +189,30 @@ def test_say_dispatches_a_tagged_isolated_stamped_turn(web, tmp_path):
     assert "PROPOSAL\nAMEND NOTE" in post["prompt"]
     assert "canopy:dispatched-by=ada" in post["prompt"]          # the standard footer
     assert out.read_text() in post["prompt"]
+
+
+def test_run_pins_every_message_to_the_named_runner(web, tmp_path):
+    th = open_agreement(web, tmp_path)
+    web.script[(th["id"], 1)] = blk(th["id"], 1, "eva", "agree")
+    web.script[(th["id"], 2)] = blk(th["id"], 2, "echo", "agree")
+    assert run("thread", "run", "--thread", th["id"], "--runner", "jj-laptop").exit_code == 0
+    assert [p["runner_id"] for p in web.turn_posts] == [web.runners[1]["id"]] * 2
+
+
+def test_say_with_runner_none_sends_no_pin(web, tmp_path):
+    th = open_agreement(web, tmp_path)
+    assert run("thread", "say", "--thread", th["id"], "--to", "eva",
+               "--runner", "none").exit_code == 0
+    assert "runner_id" not in web.turn_posts[-1]
+
+
+def test_say_refuses_a_runner_that_cannot_carry_a_participant(web, tmp_path):
+    th = open_agreement(web, tmp_path)
+    web.runners[1]["capabilities"]["agents"] = ["eva"]
+    r = CliRunner().invoke(main, ["thread", "say", "--thread", th["id"], "--to", "eva",
+                                  "--runner", "jj-laptop"])
+    assert r.exit_code == 2 and "does not serve agent 'echo'" in r.output
+    assert not web.turn_posts
 
 
 def test_say_refuses_a_non_participant_and_an_outstanding_message(web, tmp_path):
@@ -338,7 +366,7 @@ def test_huddle_agree_opens_one_thread_per_open_amend(web, tmp_path):
     assert len(rows) == 1
     row = rows[0]
     assert (row["title"], row["author"], row["asker"]) == ("Joint Q4 brief", "eva", "echo")
-    assert row["run"] == f"canopy thread run --thread {row['thread']}"
+    assert row["run"] == f"canopy thread run --thread {row['thread']} --runner cloud-1"
     body = web.thread_posts[0]
     assert body["kind"] == "agreement" and body["moderator"] == "ada"
     assert body["participants"] == [{"agent": "eva", "role": "author"},

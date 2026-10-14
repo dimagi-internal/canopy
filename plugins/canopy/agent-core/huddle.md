@@ -38,9 +38,15 @@ Work in a scratch directory; `priorities.md`, `plan.json`, the prompts, `crit.js
 `merges.json`, `props.json`, `outcomes.json` and `digest.md` are working files, not deliverables.
 
 ## Rules that are not negotiable
-- **Every round turn is fresh, one-shot and read-only.** The engine never pins a runner and never
-  continues a session; members are told not to run their inbox or board steps. Their one write is
-  filing the reply block as their close-out.
+- **Every round turn is fresh, one-shot and read-only.** The engine never continues a session;
+  members are told not to run their inbox or board steps. Their one write is filing the reply
+  block as their close-out.
+- **The whole huddle runs where you run.** `plan --runner` (default `caller`) pins every round —
+  and, through `agree`'s printed `run` lines, every agreement thread — to the runner your turn is
+  on. Never leave it to each member's own routing: on 2026-10-14 ada led from the cloud and ace's
+  rounds landed on the principal's laptop, because ace follows its workspace's default order.
+  Pass `--runner <name>` only when asked to run a huddle somewhere else (e.g. to debug on a
+  laptop); `--runner none` = default routing, on request only.
 - **Never background a wait, never end your turn while a round is out.** `await` runs in the
   FOREGROUND and returns within ~9 minutes: exit 0 = the round settled, exit 3 = run the SAME
   command again. A one-shot cloud turn that backgrounds the wait and ends has abandoned the huddle.
@@ -138,11 +144,12 @@ uv run --project "$CANOPY_ROOT" canopy huddle agree --plan plan.json --merges me
 ```
 It opens ONE agreement thread per open amend — participants the proposal's lead (`author`) and
 the amender (`asker`), parent `{huddle, title, lead}`, context = the proposal verbatim + the amend
-note verbatim; default 4 messages / 90 minutes — and prints each thread's id and its `run` line.
+note verbatim; default 4 messages / 90 minutes — and prints each thread's id and its `run` line
+(run it as printed: it carries the plan's `--runner`).
 No amends → it opens nothing; go to step 5. It is idempotent (a re-run returns the open threads).
 Then for EACH thread, in the foreground:
 ```bash
-uv run --project "$CANOPY_ROOT" canopy thread run --thread <thr-id>   # exit 3 → run it again
+uv run --project "$CANOPY_ROOT" canopy thread run --thread <thr-id> --runner <plan's runner>   # exit 3 → run it again
 ```
 The moderator loop sends message 1 to the author (who sees the change request), alternates, and
 closes the thread itself: **agreed** when both latest positions are `agree` (the latest proposal
