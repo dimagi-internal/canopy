@@ -50,16 +50,17 @@ Getting started is three steps — the user-facing guide is
 
    `/canopy:setup` is idempotent. It provisions the state directory, the main checkout, the
    capture hook and the `canopy` CLI, signs you in to canopy-web in the browser, and
-   registers the private agent marketplace `canopy-<ws>` of EVERY workspace you belong to
-   (`/w/<ws>/marketplace.json`, auto-update on) in `~/.claude/settings.json` with canopy's
-   headers helper — `canopy workspace connect --all`. (Agents are split across workspaces
-   and each catalog lists only its own, so it connects them all rather than one you pick.)
-   That registration is the only reason a canopy command is involved: `claude plugin
-   marketplace add` can't send a token. It installs no agents; it ends with one combined
-   list of the agents on offer, each with its install line and its `/<agent>:setup`. It
-   also says, without failing, whether the 1Password CLI is installed and signed in.
-2. **Install an agent** — the normal Claude Code way, only the ones you choose:
-   `/plugin install <agent>@canopy-<ws>` (or the `/plugin` menu).
+   registers your ONE agent catalog, `canopy-agents` (`/agents/marketplace.json`: every
+   agent in every workspace you belong to, auto-update on), in `~/.claude/settings.json`
+   with canopy's headers helper — `canopy agents connect`. That registration is the only
+   reason a canopy command is involved: `claude plugin marketplace add` can't send a token.
+   It installs no agents; it ends by listing them, each with its install line and its
+   `/<agent>:setup`. It also says, without failing, whether the 1Password CLI is installed
+   and signed in.
+2. **Install an agent** — the normal Claude Code way, only the ones you choose, e.g.
+   `/plugin install ace@canopy-agents` (or the `/plugin` menu). Each agent installs from its
+   GitHub repo, so you need your own GitHub read access to that repo — ACE's is public; for
+   a private agent, ask its owner. canopy never lends access.
 3. **Set up the agent** — run that agent's own setup command, e.g. `/ace:setup`. It tells
    you what that agent needs (credentials, 1Password, …).
 

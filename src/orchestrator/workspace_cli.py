@@ -1,31 +1,35 @@
-"""`canopy workspace` — connect this machine to a canopy-web workspace's agents (canopy#851).
+"""`canopy agents connect` — register the person's ONE agent catalog (canopy#851, rev. 2026-10-14).
 
-The new-user half of `/canopy:setup`: after the browser sign-in (the PAT mint), the
-person picks a workspace and this registers that workspace's agent marketplace —
-`https://<canopy-web>/w/<ws>/marketplace.json` (canopy-web#1376) — in Claude Code's USER
+The new-user half of `/canopy:setup`: after the browser sign-in (the PAT mint), this
+registers `canopy-agents` — `https://<canopy-web>` + AGENTS_MARKETPLACE_PATH, which lists
+every agent in every workspace the signed-in person belongs to — in Claude Code's USER
 settings with `autoUpdate`, authenticated by the canopy plugin's headers helper in
-`--archive` mode, then prints the agents it offers, each with its install line. It does
-NOT install them: you install only the agents you choose, the normal Claude Code way
-(`/plugin install <agent>@canopy-<ws>`), then run that agent's own setup command.
-`--install-all` is the explicit opt-in to install every listed agent.
+`--archive` mode, then prints each agent's install line (`/plugin install
+<agent>@canopy-agents`) and its own setup command. It installs nothing unless
+`--install-all`. Each catalog entry is a `github` source, so installing an agent needs the
+person's OWN GitHub read access to that agent's repo; canopy never lends access.
+
+It also REMOVES the retired per-workspace `canopy-<ws>` entries (`/w/<ws>/marketplace.json`,
+which now answers 410) from user settings, and says so. `canopy workspace connect` is
+retired and errors, pointing here.
 
 Why user settings and not `claude plugin marketplace add <url>`: `add` has no way to
 send a header, and the catalog is filtered by the caller's membership, so it must be
 fetched as the person. A user-settings `extraKnownMarketplaces` entry carries a
-`headersHelper` that Claude Code runs without asking, for the catalog AND every archive
-download on that origin, including background auto-update.
+`headersHelper` that Claude Code runs without asking, including background auto-update.
 
 Runners, vault keys, `gog login` and `op inject` are deliberately NOT here: they belong to
 the operator who hosts an agent (`canopy agent bootstrap`), not to someone who uses one.
 
+    canopy agents connect [--dry-run] [--install-all]
     canopy workspace list [--json]
-    canopy workspace connect <ws> | --all [--dry-run] [--install-all]
     canopy workspace op-status          # one line; always exits 0
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -38,6 +42,11 @@ import click
 from orchestrator import canopy_web
 
 WORKSPACES_PATH = "/api/workspaces/"
+# The person's one agent catalog (canopy-web). Change the path HERE if it moves.
+AGENTS_MARKETPLACE_NAME = "canopy-agents"
+AGENTS_MARKETPLACE_PATH = "/agents/marketplace.json"
+# The retired per-workspace catalogs (canopy-web#1376; now 410) — removed from settings.
+LEGACY_MARKETPLACE_RE = re.compile(r"/w/[^/]+/marketplace\.json$")
 HELPER_REL = Path("plugins") / "canopy" / "scripts" / "canopy-web-mcp-headers.js"
 OP_INSTALL_URL = "https://developer.1password.com/docs/cli/get-started/"
 
@@ -54,8 +63,8 @@ def config_dir() -> Path:
     return Path(env).expanduser() if env else Path.home() / ".claude"
 
 
-def marketplace_url(workspace: str, base_url: Optional[str] = None) -> str:
-    return f"{canopy_web.resolve_base_url(base_url)}/w/{workspace}/marketplace.json"
+def marketplace_url(base_url: Optional[str] = None) -> str:
+    return f"{canopy_web.resolve_base_url(base_url)}{AGENTS_MARKETPLACE_PATH}"
 
 
 def person_token() -> str:
@@ -87,11 +96,10 @@ def list_workspaces() -> list[dict]:
             for r in rows if isinstance(r, dict) and r.get("slug")]
 
 
-def fetch_catalog(workspace: str, token: str, *,
-                  transport: Optional[canopy_web.Transport] = None) -> dict:
-    """GET the workspace's marketplace.json as the person — to learn its `name` and
-    plugins, and to fail HERE, with a readable reason, rather than inside Claude Code."""
-    url = marketplace_url(workspace)
+def fetch_catalog(token: str, *, transport: Optional[canopy_web.Transport] = None) -> dict:
+    """GET the person's agent catalog as the person — to learn its plugins, and to fail
+    HERE, with a readable reason, rather than inside Claude Code."""
+    url = marketplace_url()
     transport = transport or canopy_web.urllib_transport
     try:
         status, text = transport("GET", url, {"Authorization": f"Bearer {token}",
@@ -100,23 +108,21 @@ def fetch_catalog(workspace: str, token: str, *,
         raise WorkspaceSetupError(f"could not reach {url}: {e}")
     if status in (401, 403):
         raise WorkspaceSetupError(
-            f"{url} -> {status}: canopy-web did not accept your sign-in for workspace "
-            f"'{workspace}'. Re-run /canopy:canopy-web-pat-mint, and check you are a member "
-            f"of '{workspace}'.")
-    if status == 404:
+            f"{url} -> {status}: canopy-web did not accept your sign-in. Re-run "
+            f"/canopy:canopy-web-pat-mint.")
+    if status in (404, 410):
         raise WorkspaceSetupError(
-            f"{url} -> 404: no agent marketplace for workspace '{workspace}' (wrong slug, "
-            f"or this canopy-web does not serve workspace marketplaces yet — canopy-web#1376).")
+            f"{url} -> {status}: this canopy-web does not serve the agent catalog "
+            f"({AGENTS_MARKETPLACE_NAME}) yet.")
     if not (200 <= status < 300):
         raise WorkspaceSetupError(f"{url} -> {status}: {text[:200]}")
     try:
         catalog = json.loads(text)
     except ValueError:
-        # canopy-web's SPA answers unknown /w/<ws>/… paths with its HTML shell (200).
+        # canopy-web's SPA answers unknown paths with its HTML shell (200).
         raise WorkspaceSetupError(
             f"{url} did not return a marketplace (got HTML/non-JSON): this canopy-web does "
-            f"not serve workspace marketplaces yet (canopy-web#1376), or '{workspace}' is "
-            f"not a workspace slug.")
+            f"not serve the agent catalog yet.")
     if not isinstance(catalog, dict) or not str(catalog.get("name") or "").strip():
         raise WorkspaceSetupError(f"{url} is not a marketplace (no `name`)")
     return catalog
@@ -153,9 +159,22 @@ def marketplace_entry(url: str, helper_cmd: str) -> dict:
             "autoUpdate": True}
 
 
-def write_user_settings(name: str, entry: dict, settings: Optional[Path] = None) -> bool:
-    """Merge extraKnownMarketplaces[name] = entry into user settings, atomically,
-    preserving every other key. Returns True when the file changed."""
+def _legacy_names(known: dict) -> list[str]:
+    """Entries pointing at a retired per-workspace catalog (`/w/<ws>/marketplace.json`)."""
+    out = []
+    for name, entry in known.items():
+        src = entry.get("source") if isinstance(entry, dict) else None
+        url = str(src.get("url") or "") if isinstance(src, dict) else ""
+        if name != AGENTS_MARKETPLACE_NAME and LEGACY_MARKETPLACE_RE.search(url):
+            out.append(name)
+    return sorted(out)
+
+
+def write_user_settings(name: str, entry: dict,
+                        settings: Optional[Path] = None) -> tuple[bool, list[str]]:
+    """Merge extraKnownMarketplaces[name] = entry into user settings, drop retired
+    per-workspace entries, atomically, preserving every other key.
+    Returns (file changed, legacy names removed)."""
     path = settings or (config_dir() / "settings.json")
     try:
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -164,8 +183,13 @@ def write_user_settings(name: str, entry: dict, settings: Optional[Path] = None)
     if not isinstance(data, dict):
         raise WorkspaceSetupError(f"{path} is not a JSON object")
     known = data.setdefault("extraKnownMarketplaces", {})
-    if known.get(name) == entry:
-        return False
+    if not isinstance(known, dict):
+        raise WorkspaceSetupError(f"{path}: extraKnownMarketplaces is not a JSON object")
+    removed = _legacy_names(known)
+    if known.get(name) == entry and not removed:
+        return False, []
+    for old in removed:
+        del known[old]
     known[name] = entry
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".settings-", suffix=".json")
@@ -177,7 +201,7 @@ def write_user_settings(name: str, entry: dict, settings: Optional[Path] = None)
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
-    return True
+    return True, removed
 
 
 def _claude(runner: Runner, args: list[str], timeout: int = 300,
@@ -254,7 +278,7 @@ def op_status(which: Callable[[str], Optional[str]] = shutil.which,
 
 @click.group("workspace")
 def workspace_group():
-    """Connect this machine to a canopy-web workspace's agents (canopy#851)."""
+    """Your canopy-web workspaces (list) and the 1Password check (op-status)."""
 
 
 @workspace_group.command("list")
@@ -272,59 +296,74 @@ def list_cmd(as_json):
         click.echo(f"{r['slug']}\t{r['name']}")
 
 
-@workspace_group.command("connect")
-@click.argument("workspace", required=False)
-@click.option("--all", "all_ws", is_flag=True,
-              help="Connect EVERY workspace you belong to (what /canopy:setup runs).")
+@workspace_group.command("connect", hidden=True,
+                         context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+def workspace_connect_retired():
+    """Retired: use `canopy agents connect`."""
+    raise WorkspaceSetupError(
+        "`canopy workspace connect` is retired: there is one agent catalog per person now "
+        f"({AGENTS_MARKETPLACE_NAME}). Run `canopy agents connect` (or /canopy:setup).")
+
+
+@click.group("agents")
+def agents_group():
+    """Your agent catalog (canopy-agents): every agent in every workspace you belong to."""
+
+
+@agents_group.command("connect")
 @click.option("--dry-run", is_flag=True, help="Fetch the catalog and show the plan; change nothing.")
 @click.option("--install-all", is_flag=True,
-              help="Also install EVERY agent the marketplace lists (default: install none).")
-def connect_cmd(workspace, all_ws, dry_run, install_all):
-    """Register WORKSPACE's agent marketplace (autoUpdate on) and list its agents.
+              help="Also install EVERY agent the catalog lists (default: install none).")
+def agents_connect_cmd(dry_run, install_all):
+    """Register your agent catalog (canopy-agents, autoUpdate on) and list its agents.
 
-    With --all instead of WORKSPACE, registers every workspace you belong to (each its own
-    `canopy-<ws>` marketplace) and prints one combined list. Installs nothing unless
-    --install-all: you pick the agents you want and install each with
-    `/plugin install <agent>@<marketplace>`, then run that agent's setup command."""
-    if bool(workspace) == bool(all_ws):
-        raise click.UsageError("give a WORKSPACE slug or --all (not both)")
-    if all_ws:
-        _connect_all(dry_run=dry_run, install_all=install_all)
-    else:
-        _connect(workspace, dry_run=dry_run, install_all=install_all)
+    Idempotent. Removes retired per-workspace `canopy-<ws>` entries from your settings.
+    Installs nothing unless --install-all: install the agents you want with
+    `/plugin install <agent>@canopy-agents`, then run that agent's setup command."""
+    _connect(dry_run=dry_run, install_all=install_all)
 
 
 def _agents(catalog: dict) -> list[dict]:
     return [p for p in catalog.get("plugins") or [] if isinstance(p, dict) and p.get("name")]
 
 
-def offer_lines(offers: list[tuple[str, dict]]) -> list[str]:
-    """One combined list: per agent, its exact install line and its own setup command.
-    `offers` is [(marketplace name, plugin entry)]."""
-    if not offers:
+def _repo(p: dict) -> str:
+    src = p.get("source")
+    return str(src.get("repo") or "") if isinstance(src, dict) and src.get("source") == "github" else ""
+
+
+def offer_lines(name: str, agents: list[dict]) -> list[str]:
+    """Per agent: its exact install line, its own setup command, and its GitHub repo."""
+    if not agents:
         return ["No agents to install yet — ask a workspace admin to add one."]
-    rows = [(f"/plugin install {p['name']}@{m}", f"then /{p['name']}:setup",
-             " ".join(str(p.get("description") or "").split())[:100]) for m, p in offers]
+    rows = [(f"/plugin install {p['name']}@{name}", f"then /{p['name']}:setup",
+             (f"[github: {_repo(p)}] " if _repo(p) else "")
+             + " ".join(str(p.get("description") or "").split())[:100]) for p in agents]
     w0, w1 = max(len(r[0]) for r in rows), max(len(r[1]) for r in rows)
     out = ["Agents you can install (install only the ones you want):"]
     out += [f"  {a.ljust(w0)}  {b.ljust(w1)}  {c}".rstrip() for a, b, c in rows]
     out += ["Run each install line in Claude Code (or pick from the /plugin menu), then that "
-            "agent's own setup command — it tells you what else that agent needs."]
+            "agent's own setup command — it tells you what else that agent needs.",
+            "Installing an agent needs your own GitHub read access to its repo; a private "
+            "agent's install fails without it (ask its owner for access)."]
     return out
 
 
-def _connect(workspace: str, *, dry_run: bool = False, install_all: bool = False,
+def _connect(*, dry_run: bool = False, install_all: bool = False,
              runner: Runner = subprocess.run,
-             transport: Optional[canopy_web.Transport] = None,
-             show_offer: bool = True) -> list[tuple[str, dict]]:
-    """Register one workspace's marketplace; return its [(marketplace, agent)] offers."""
+             transport: Optional[canopy_web.Transport] = None) -> list[dict]:
+    """Register the person's agent catalog; return its agent entries."""
     token = _need_token()
-    catalog = fetch_catalog(workspace, token, transport=transport)
-    name = str(catalog["name"]).strip()
+    catalog = fetch_catalog(token, transport=transport)
+    name = AGENTS_MARKETPLACE_NAME
+    served = str(catalog["name"]).strip()
+    if served != name:
+        raise WorkspaceSetupError(
+            f"{marketplace_url()} names itself '{served}', expected '{name}' — canopy and "
+            f"canopy-web disagree; update canopy (/canopy:update) and re-run.")
     agents = _agents(catalog)
     plugins = [str(p["name"]) for p in agents]
-    offers = [(name, p) for p in agents]
-    url = marketplace_url(workspace)
+    url = marketplace_url()
     hp = helper_path()
     if hp is None:
         raise WorkspaceSetupError(
@@ -332,73 +371,54 @@ def _connect(workspace: str, *, dry_run: bool = False, install_all: bool = False
             "(`claude plugin marketplace add dimagi-internal/canopy && claude plugin install "
             "canopy@canopy`), then re-run /canopy:setup")
     entry = marketplace_entry(url, helper_command(hp))
-    click.echo(f"workspace '{workspace}': marketplace '{name}' ({url}), "
-               f"{len(plugins)} agent plugin(s): {', '.join(plugins) or '(none)'}")
+    click.echo(f"catalog    : '{name}' ({url}), {len(plugins)} agent(s): "
+               f"{', '.join(plugins) or '(none)'}")
     if dry_run:
         click.echo("dry run — would add to user settings extraKnownMarketplaces:")
         click.echo(json.dumps({name: entry}, indent=2))
+        path = config_dir() / "settings.json"
+        try:
+            known = json.loads(path.read_text(encoding="utf-8")).get("extraKnownMarketplaces") or {}
+        except (OSError, ValueError, AttributeError):
+            known = {}
+        for old in _legacy_names(known if isinstance(known, dict) else {}):
+            click.echo(f"dry run — would remove retired per-workspace marketplace '{old}'")
         if install_all and plugins:
-            click.echo(f"dry run — would then install: "
-                       f"{', '.join(f'{p}@{name}' for p in plugins)}")
-        elif show_offer:
-            _echo_offer(offers)
-        return offers
-    changed = write_user_settings(name, entry)
+            click.echo(f"dry run — would then install: {', '.join(f'{p}@{name}' for p in plugins)}")
+        else:
+            _echo_offer(name, agents)
+        return agents
+    changed, removed = write_user_settings(name, entry)
     click.echo(f"settings   : {'registered' if changed else 'already registered'} "
                f"'{name}' in {config_dir() / 'settings.json'} (autoUpdate on)")
+    for old in removed:
+        click.echo(f"settings   : removed retired per-workspace marketplace '{old}' — reinstall "
+                   f"any agent you had from it as <agent>@{name}; `claude plugin marketplace "
+                   f"remove {old}` clears its leftover copy")
     ok, how = materialize(name, runner)
     click.echo(f"marketplace: {how}")
     if not ok:
         raise WorkspaceSetupError(how)
     if not install_all or not plugins:
-        if show_offer:
-            _echo_offer(offers)
-        return offers
+        _echo_offer(name, agents)
+        return agents
     results = install_plugins(name, plugins, runner)
     for p, good, line in results:
         click.echo(f"install    : {p}@{name} {'OK' if good else 'FAIL — ' + line}")
     bad = [p for p, good, _ in results if not good]
     if bad:
         raise WorkspaceSetupError(f"{len(bad)} plugin(s) did not install: {', '.join(bad)} — "
-                                  f"retry with `claude plugin install <name>@{name}`")
+                                  f"check you have GitHub read access to their repos, then retry "
+                                  f"with `claude plugin install <name>@{name}`")
     click.echo("Restart Claude Code (or /reload-plugins) to load the new agents, then run each "
                "agent's own setup command (e.g. /<agent>:setup).")
-    return offers
+    return agents
 
 
-def _echo_offer(offers: list[tuple[str, dict]]) -> None:
+def _echo_offer(name: str, agents: list[dict]) -> None:
     click.echo("")
-    for line in offer_lines(offers):
+    for line in offer_lines(name, agents):
         click.echo(line)
-
-
-def _connect_all(*, dry_run: bool = False, install_all: bool = False,
-                 runner: Runner = subprocess.run,
-                 transport: Optional[canopy_web.Transport] = None,
-                 workspaces: Optional[list[dict]] = None) -> list[tuple[str, dict]]:
-    """Connect every workspace the person belongs to — agents are split across workspaces
-    and each catalog lists only its own, so connecting one would hide the rest. A workspace
-    that fails (no catalog served, not reachable…) is reported and skipped."""
-    rows = list_workspaces() if workspaces is None else workspaces
-    if not rows:
-        click.echo("You are not a member of any canopy-web workspace yet — ask a workspace "
-                   "admin to invite you.")
-        return []
-    offers, failed = [], []
-    for r in rows:
-        try:
-            offers += _connect(r["slug"], dry_run=dry_run, install_all=install_all,
-                               runner=runner, transport=transport, show_offer=False)
-        except WorkspaceSetupError as e:
-            failed.append(r["slug"])
-            click.echo(f"workspace '{r['slug']}': skipped — {e.message}")
-    if failed:
-        click.echo(f"{len(failed)} of {len(rows)} workspace(s) not connected: {', '.join(failed)}")
-    if not install_all:
-        _echo_offer(offers)
-    if failed and len(failed) == len(rows):
-        raise WorkspaceSetupError("no workspace could be connected (see the lines above)")
-    return offers
 
 
 @workspace_group.command("op-status")
