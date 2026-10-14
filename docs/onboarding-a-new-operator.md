@@ -99,10 +99,11 @@ Restart Claude Code (or `/reload-plugins`) so the new commands register.
 
 It is idempotent — safe to re-run — and provisions the state directory, the
 capture hook and the `canopy` CLI, signs you in to canopy-web in the browser, and
-registers the private agent marketplace `canopy-<ws>` of every workspace you belong to
-(auto-updating). It installs no agents: it lists them with their install
-lines (`/plugin install <agent>@canopy-<ws>`); install the ones you want, then run each
-agent's own setup command (e.g. `/ace:setup`). It also prints
+registers your one agent catalog `canopy-agents` (every agent in every workspace you
+belong to; auto-updating) — `canopy agents connect`. It installs no agents: it lists them
+with their install lines (e.g. `/plugin install ace@canopy-agents`); install the ones you
+want (each needs your own GitHub read access to its repo), then run each agent's own
+setup command (e.g. `/ace:setup`). It also prints
 one line on the 1Password CLI without failing. As an operator you continue below —
 hosting an agent (runners, vault keys, `gog`) is not part of a user's setup.
 
