@@ -370,6 +370,14 @@ agent the factory produces:
 > `.env.tpl`. The recipe below (`config/secrets.yaml` + `canopy provision`) still works and is
 > kept functional — it remains the path for non-agent PROVIDER repos (e.g. chrome-sales) and any
 > agent that hasn't migrated yet — but it is no longer what new agents should be built on.
+>
+> **Update (2026-10-14): the vault belongs to the INSTANCE, not the plugin.** A plugin is code;
+> an instance is canopy-web's Agent record (identity, workspace, `Agent.op_vault`). Templates
+> reference `op://${AGENT_VAULT}/<item>/<field>` and name no vault; each agent's
+> `/<agent>:setup` runs `canopy agent env --plugin <plugin>`, which binds the install to ONE
+> instance (recorded in `~/.<plugin>/canopy-instance.json`; switching needs `--force`) and runs
+> `op inject` with `AGENT_VAULT` set to that instance's recorded vault. No `Agent-<Slug>`
+> naming convention is derived anywhere. Full contract: `agent-core/agent-runtime.md`.
 
 Agents need credentials (service-account keys, OAuth creds, PATs) that must never be in git yet
 must be available wherever the agent runs — main checkout, any emdash worktree, every operator's

@@ -257,19 +257,25 @@ def fetch_access(slug: str, *, refresh: bool = False) -> dict:
 # 1Password: can the user's `op` read X's vault?
 # ──────────────────────────────────────────────────────────────────────────────
 
-def agent_vault_name(slug: str, repo: Optional[Path] = None) -> str:
-    """X's 1Password vault: config/agent.json ``op_vault`` when the repo declares one,
-    else the fleet convention ``Agent-<Slug>`` (agent_bootstrap.agent_vault)."""
-    if repo is not None:
-        try:
-            cfg = json.loads((Path(repo) / "config" / "agent.json").read_text(encoding="utf-8"))
-            vault = str((cfg or {}).get("op_vault") or "").strip()
-            if vault:
-                return vault
-        except (OSError, ValueError, AttributeError):
-            pass
-    from orchestrator.agent_bootstrap import agent_vault
-    return agent_vault(slug)
+def agent_vault_name(slug: str) -> str:
+    """X's 1Password vault: the instance this machine is bound to (`canopy agent env`'s
+    ~/.X/canopy-instance.json), else the ``op_vault`` canopy-web records for X. Raises
+    CredError when neither has one — no naming-convention fallback (a plugin is code; the
+    vault belongs to the instance)."""
+    from orchestrator.agent_instance import InstanceError, instance_vault
+    try:
+        return instance_vault(slug, token=_human_token())
+    except InstanceError as e:
+        raise CredError(e.message, EXIT_UNDETERMINED)
+
+
+def _template_env(slug: str, tpl: Path, env: dict, vault: str = "") -> dict:
+    """`env` plus AGENT_VAULT / AGENT_SLUG when the template references ${AGENT_VAULT}
+    (templates stopped naming the vault; the instance's recorded one fills it in)."""
+    from orchestrator.agent_instance import inject_env, uses_vault_var
+    if not uses_vault_var(tpl.read_text(encoding="utf-8")):
+        return env
+    return inject_env(env, vault or agent_vault_name(slug), slug)
 
 
 @dataclass
@@ -428,8 +434,16 @@ def decide(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
                        message=_refusal_canopy_web(slug, access), exit_code=EXIT_REFUSED,
                        notes=notes)
 
-    repo = _agent_repo(slug)
-    vault = agent_vault_name(slug, repo)
+    try:
+        vault = agent_vault_name(slug)
+    except CredError as e:
+        message = f"Cannot decide whether you may act as agent '{slug}': {e.message}"
+        if " 404" in e.message or "-> 404" in e.message:
+            # canopy-web answers 404 to a non-member of the agent's workspace.
+            message += (f" canopy-web does not show you agent '{slug}' (not a member of its "
+                        f"workspace) — ask a workspace admin to invite you first.")
+        return Verdict(slug, False, "human", source=source, via=None, reason="no-vault",
+                       message=message, exit_code=EXIT_UNDETERMINED, notes=notes)
     key = f"op|{vault}|{slug}"
     hit = None if refresh else _cache_get(key)
     if hit and hit.get("ok"):
@@ -494,8 +508,9 @@ def resolve_1password(slug: str, out: Path, verdict: Verdict, *,
     os.close(fd)
     os.chmod(tmp, 0o600)
     try:
+        env = _template_env(slug, tpl, _op_env(verdict.op_mode or "user"), verdict.vault)
         r = runner(["op", "inject", "-f", "-i", str(tpl), "-o", tmp], capture_output=True,
-                   text=True, timeout=180, env=_op_env(verdict.op_mode or "user"))
+                   text=True, timeout=180, env=env)
         if r.returncode != 0:
             # op names the reference it could not resolve, never a value.
             first = ((r.stderr or "").strip().splitlines() or ["no output"])[0][:300]
@@ -610,9 +625,12 @@ def vault_fingerprint(tpl: Path, env: dict, token: str, *, runner: Runner) -> st
     """The template's hash plus each vault's `content_version` — which moves on any item
     change. One small `op vault get` per vault the template names; no secret is read."""
     import hashlib
+
+    from orchestrator.agent_instance import expand_vars
     text = tpl.read_text(encoding="utf-8")
     parts = [hashlib.sha256(text.encode()).hexdigest()]
-    for vault in sorted(set(_OP_REF_VAULT.findall(text))):
+    # ${AGENT_VAULT} refs name the vault op inject will read once the variable is set.
+    for vault in sorted(set(_OP_REF_VAULT.findall(expand_vars(text, env)))):
         r = runner(["op", "vault", "get", vault, "--format", "json"], capture_output=True,
                    text=True, timeout=45, env=env)
         if r.returncode != 0:
@@ -658,6 +676,7 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = Non
         return "skipped: checked recently"
     env = {k: v for k, v in os.environ.items()
            if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
+    env = _template_env(slug, tpl, env)
 
     def record(**fields) -> None:
         try:

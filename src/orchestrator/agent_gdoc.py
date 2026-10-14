@@ -123,7 +123,7 @@ class GdocIdentity:
 
 
 # The agent's <Agent> Drive folder id. Resolved from the per-agent 1Password vault
-# (`op://Agent-<Slug>/gdrive-root-folder/credential`) via the agent's .env.tpl (the standard —
+# (`op://${AGENT_VAULT}/gdrive-root-folder/credential`, the instance's recorded vault) via the agent's .env.tpl (the standard —
 # `op inject`) or the legacy config/secrets.yaml (`canopy provision`), and resolved into
 # ~/.<agent>/.env either way. A Drive folder id is environment-specific — it differs per
 # Workspace/tenant — so it is referenced, never committed. See agent-core/agent-runtime.md.
@@ -653,7 +653,8 @@ def resolve_subfolder(identity: GdocIdentity, *, area: str = "Projects",
     if not identity.root_folder:
         raise AgentGdocError(
             f"no Drive root resolved (${GDRIVE_ROOT_ENV}) — it comes from "
-            "op://Agent-<Slug>/gdrive-root-folder; run `canopy provision` and re-source "
+            "op://${AGENT_VAULT}/gdrive-root-folder; run `canopy agent env` (the agent's setup) and "
+            "re-source "
             "~/.<agent>/.env, or pass --parent explicitly")
     area_id = _find_or_create_folder(identity, identity.root_folder, (area or "Projects").strip(),
                                      runner, trace, create)

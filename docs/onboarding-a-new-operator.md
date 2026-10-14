@@ -393,7 +393,7 @@ canopy; the fourth is PowerShell and stays your problem.
   `op://Canopy-Shared/gog-oauth-client/credential`. Every operator needs membership in the
   `Canopy-Shared` vault — if bootstrap says you are not a member, ask Jonathan (or Hal) to add
   you. There is deliberately no fallback to `AI-Agents`: that vault is for humans only, and an
-  agent's secrets live in its own `Agent-<Slug>` vault plus `Canopy-Shared`.
+  agent's secrets live in its own vault (the instance's `op_vault` on canopy-web) plus `Canopy-Shared`.
 - **Where gog keeps things.** gog on Windows defaults to `%APPDATA%\gogcli`. gog 0.40+ puts the
   client credentials in a `data\` subfolder (`<GOG_HOME>\data\credentials-canopy.json`) and
   `config.json` in `config\` when `GOG_HOME` is set. `agent doctor` now looks in all of these, so

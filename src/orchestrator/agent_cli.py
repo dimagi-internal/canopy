@@ -414,6 +414,57 @@ def agent_stage_delegated(slug):
     click.echo(f"salesforce: staged {slug}'s borrowed Salesforce identity at {target}")
 
 
+@agent.command("env")
+@click.option("--plugin", required=True,
+              help="The agent plugin's name, as installed (`<plugin>@canopy-agents`).")
+@click.option("--template", type=click.Path(dir_okay=False), default=".env.tpl",
+              show_default=True, help="The agent's .env.tpl (refs op://${AGENT_VAULT}/…).")
+@click.option("--out", default=None,
+              help="Where the filled env goes. Default: ~/.<plugin>/.env. The binding is "
+                   "recorded beside it (canopy-instance.json).")
+@click.option("--agent", "agent_slug", default="",
+              help="The instance (canopy-web agent slug) to bind to, when you can see several.")
+@click.option("--vault", default="",
+              help="1Password vault to use instead of the one canopy-web records.")
+@click.option("--force", is_flag=True,
+              help="Re-bind this install to a different instance than the one recorded.")
+@click.option("--print", "print_only", is_flag=True,
+              help="Print the resolved instance and vault as JSON; inject and record nothing.")
+def agent_env(plugin, template, out, agent_slug, vault, force, print_only):
+    """Bind this install to ONE agent instance and fill its .env from that instance's vault.
+
+    A plugin is code; an instance is canopy-web's Agent record (identity, workspace,
+    1Password vault). Resolves the instance of PLUGIN you can see (--agent picks one; the
+    one this install is already bound to is kept; several stop with a re-run line each),
+    takes its vault (--vault wins; none recorded is an error — no naming convention),
+    records the binding beside --out (switching instance needs --force), then runs
+    `op inject -i TEMPLATE -o OUT` with AGENT_VAULT and AGENT_SLUG set. Called by each
+    agent's /<agent>:setup. Never prompts; never prints a secret.
+    """
+    from orchestrator import agent_instance as ai
+    from orchestrator.workspace_cli import person_token
+
+    token = person_token()
+    if not token:
+        raise click.ClickException(
+            "not signed in to canopy-web — run /canopy:canopy-web-pat-mint, then re-run.")
+    out_path = Path(out).expanduser() if out else Path.home() / f".{plugin}" / ".env"
+    res = ai.run(plugin, template=Path(template) if template else None, out=out_path,
+                 agent=agent_slug, vault=vault, force=force, print_only=print_only, token=token)
+    inst = res.instance
+    if print_only:
+        _emit({"plugin": inst.plugin, "agent": inst.agent, "workspace": inst.workspace,
+               "vault": res.vault, "vault_source": res.vault_source, "why": res.why,
+               "binding": str(res.binding), "out": str(out_path), "notes": res.notes})
+        return
+    click.echo(f"instance: {inst.label()} — {res.why}")
+    click.echo(f"vault:    {res.vault} (from {res.vault_source})")
+    for n in res.notes:
+        click.echo(f"note:     {n}")
+    click.echo(f"env:      {out_path} ({res.lines} vars) from {template}, AGENT_VAULT={res.vault}")
+    click.echo(f"bound:    {res.binding}")
+
+
 @agent.command("bootstrap")
 @click.option("--slug", "slugs", multiple=True,
               help="Agent slug to bootstrap (repeatable). Default: every agent repo discovered "
@@ -431,7 +482,8 @@ def agent_bootstrap(slugs, repo, dry_run, op_account):
 
     Per agent: install its plugin + config/agent.json required_plugins; `op inject` its
     .env.tpl into ~/.<slug>/.env; take the NEWEST gog token (canopy-web vs
-    op://Agent-<Slug>/gog-token, by the token's own created_at); materialize the OAuth client
+    op://<vault>/gog-token, by the token's own created_at — <vault> is the instance's recorded
+    op_vault, never derived from the slug); materialize the OAuth client
     the TOKEN names; import it (skipped if gog already holds it) and map the account; verify
     with one real gmail call and check the client turns ask for against the token's.
     Idempotent — re-running on a ready machine changes nothing. One agent failing never

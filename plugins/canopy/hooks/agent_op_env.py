@@ -21,6 +21,11 @@ re-injects it only when the vault's `content_version` or the `.env.tpl` changed,
 most every 5 minutes per agent — so a value changed in 1Password reaches the next session
 instead of waiting for someone to re-run `op inject` by hand (2026-10-12: ACE's Drive root).
 
+It also exports the instance this install is bound to (`canopy agent env` records it in
+`~/.<slug>/canopy-instance.json`) as `AGENT_VAULT` / `AGENT_SLUG`, so a hand-run
+`op inject -i .env.tpl …` resolves the template's `op://${AGENT_VAULT}/…` refs to the right
+vault. Nothing is exported when there is no binding — no vault name is ever guessed.
+
 Inert everywhere else: no CANOPY_AGENT (a human's own project), a key already present (a
 cloud turn), or no CLAUDE_ENV_FILE → exits 0 silently. Fail-open: any failure prints ONE line
 of context and exits 0 — a session without the key falls back to the desktop app, exactly as
@@ -28,11 +33,35 @@ before this hook existed. The key is never printed.
 
 stdlib only — runs under the harness's python3, with no `orchestrator` on sys.path.
 """
+import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+
+
+def export_binding(slug: str, env_file: str) -> None:
+    """AGENT_VAULT / AGENT_SLUG from this install's binding, into the session env. Silent
+    when there is no binding or the session already has them."""
+    if os.environ.get("AGENT_VAULT", "").strip():
+        return
+    path = os.path.join(os.path.expanduser("~"), f".{slug}", "canopy-instance.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            b = json.load(fh)
+    except (OSError, ValueError):
+        return
+    vault = str((b or {}).get("vault") or "").strip() if isinstance(b, dict) else ""
+    agent = str((b or {}).get("agent") or "").strip() if isinstance(b, dict) else ""
+    if not vault or not agent:
+        return
+    try:
+        with open(env_file, "a", encoding="utf-8") as fh:
+            fh.write(f"export AGENT_VAULT={shlex.quote(vault)}\n"
+                     f"export AGENT_SLUG={shlex.quote(agent)}\n")
+    except OSError as e:
+        print(f"canopy: could not export {slug}'s bound vault to the session env ({e})")
 
 
 def stage_delegated(canopy: str, slug: str) -> None:
@@ -74,6 +103,8 @@ def main() -> int:
     env_file = os.environ.get("CLAUDE_ENV_FILE", "").strip()
     if not slug:
         return 0
+    if env_file:
+        export_binding(slug, env_file)
     canopy = shutil.which("canopy")
     confined = bool(os.environ.get("CANOPY_PROFILE"))   # a caller's confined turn
     if canopy and not confined:

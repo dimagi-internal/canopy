@@ -31,7 +31,9 @@ def _isolated(monkeypatch, tmp_path):
 @pytest.fixture()
 def web(monkeypatch):
     """Fake canopy-web: /access and /resolve per agent."""
-    state = {"access": {}, "resolve": {}, "calls": [], "fail": False}
+    # `vaults` = each agent's recorded Agent.op_vault on canopy-web (a table, not a rule).
+    state = {"access": {}, "resolve": {}, "calls": [], "fail": False,
+             "vaults": {"ace": "Agent-Ace", "hal": "Agent-Hal"}}
 
     def fake_call(method, path, body=None, **kw):
         state["calls"].append((method, path, kw.get("token")))
@@ -43,6 +45,8 @@ def web(monkeypatch):
                                               "may_resolve": False, "via": None, "reason": ""})
         if path.endswith("/credentials/resolve"):
             return state["resolve"].get(slug, {"values": {}})
+        if path == f"/api/agents/{slug}/":
+            return {"slug": slug, "op_vault": state["vaults"].get(slug, "")}
         raise AssertionError(path)
 
     monkeypatch.setattr(cred_cli.canopy_web, "call", fake_call)
@@ -136,11 +140,29 @@ def test_human_with_vault_access_may_act(web):
     assert op.calls[0][0] == ["op", "vault", "get", "Agent-Ace", "--format", "json"]
 
 
-def test_vault_name_comes_from_agent_json_when_declared(tmp_path, monkeypatch, web):
-    repo = _agent_repo(tmp_path, "ace", op_vault="ACE")
-    monkeypatch.chdir(repo)
+def test_vault_name_comes_from_the_instance_record_on_canopy_web(web):
+    web["vaults"]["ace"] = "ACE"
     v = cred_cli.decide("ace", runner=FakeOp(readable={"ACE"}), which=_which())
     assert v.allowed and v.vault == "ACE"
+    assert ("GET", "/api/agents/ace/", "pat_human") in web["calls"]
+
+
+def test_vault_name_comes_from_this_machines_binding_first(web, _isolated):
+    (_isolated / ".ace").mkdir()
+    (_isolated / ".ace" / "canopy-instance.json").write_text(json.dumps(
+        {"plugin": "ace", "agent": "ace", "workspace": "connect", "vault": "Bound-Vault"}))
+    v = cred_cli.decide("ace", runner=FakeOp(readable={"Bound-Vault"}), which=_which())
+    assert v.allowed and v.vault == "Bound-Vault"
+    assert not any(c[1] == "/api/agents/ace/" for c in web["calls"])
+
+
+def test_no_recorded_vault_is_undetermined_never_a_convention(web):
+    web["vaults"].pop("ace")
+    op = FakeOp(readable={"Agent-Ace"})
+    v = cred_cli.decide("ace", runner=op, which=_which())
+    assert not v.allowed and v.exit_code == cred_cli.EXIT_UNDETERMINED
+    assert "no 1Password vault recorded on canopy-web" in v.message
+    assert op.calls == []   # nothing probed a guessed vault name
 
 
 def test_op_missing_says_install_and_signin(web):
@@ -566,3 +588,38 @@ def test_google_token_cli_prints_the_path_never_the_token(google, monkeypatch):
     res = CliRunner().invoke(cred_cli.cred_group, ["google-token", "--agent", "eva"])
     assert res.exit_code == 0, res.output
     assert ACCESS not in res.output and res.output.strip().endswith("google-token/eva.json")
+
+
+# ── ${AGENT_VAULT} templates (2026-10-14) ─────────────────────────────────────
+
+def test_env_inject_sets_agent_vault_for_a_variable_template(tmp_path, monkeypatch, web):
+    repo = tmp_path / "ace"
+    (repo / "config").mkdir(parents=True)
+    (repo / ".env.tpl").write_text("TOKEN=op://${AGENT_VAULT}/item/credential\n")
+    monkeypatch.setattr(cred_cli, "_agent_repo", lambda slug: repo)
+    web["vaults"]["ace"] = "Ace-Instance-Vault"
+    op = FakeOp(readable={"Ace-Instance-Vault"})
+    seen = []
+    orig = op.__call__
+
+    def spy(argv, **kw):
+        if argv[:2] == ["op", "inject"]:
+            seen.append(kw.get("env") or {})
+        return orig(argv, **kw)
+    cred_cli.ensure_env("ace", runner=spy, which=_which())
+    assert seen and seen[0]["AGENT_VAULT"] == "Ace-Instance-Vault" and seen[0]["AGENT_SLUG"] == "ace"
+
+
+def test_fingerprint_reads_the_vault_the_variable_names():
+    calls = []
+
+    def runner(argv, **kw):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, json.dumps({"content_version": 7}), "")
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tpl = Path(d) / ".env.tpl"
+        tpl.write_text("A=op://${AGENT_VAULT}/x/credential\nB=op://Canopy-Shared/y/credential\n")
+        fp = cred_cli.vault_fingerprint(tpl, {"AGENT_VAULT": "V1"}, "ops_x", runner=runner)
+    assert "V1=7" in fp and "Canopy-Shared=7" in fp
+    assert ["op", "vault", "get", "V1", "--format", "json"] in calls

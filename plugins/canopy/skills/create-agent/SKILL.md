@@ -47,7 +47,10 @@ session it is),
 deny-railed out of the box), `config/agent.json` (identity: mailbox + `gog_client`),
 `.env.tpl` (the fleet-standard secrets template — see agent-core/agent-runtime.md;
 **never write a real `op://<vault>/<item>/<field>` in a comment**, `op inject` resolves those
-too — only the angle-bracket placeholder), `config/allowlist.txt`, and the plugin manifest.
+too — only the angle-bracket placeholder; refs read `op://${AGENT_VAULT}/<item>/<field>` and
+never name a vault), `skills/setup/SKILL.md` (`/<slug>:setup` — binds the install to ONE canopy-web
+instance and fills `~/.<slug>/.env` from that instance's recorded vault via `canopy agent env`),
+`config/allowlist.txt`, and the plugin manifest.
 `config/allowlist.txt` is a **legacy fallback**: `canopy caller tier` consults it only while the
 agent has no declared interface on canopy-web. Once an interface is published, canopy-web
 (interface + workspace membership) decides who may steer the agent and the file is not read —
@@ -91,9 +94,11 @@ The scaffold is a skeleton. Walk the human through filling it in, in this order:
    `bin/<slug>-email` (resolve `CANOPY_ROOT` with the same two-liner as Step 2 in each bash
    block). Then declare env-var secrets in `.env.tpl` (1Password `op://` refs — angle-bracket
    placeholders in any comment/example, never a real ref, or `op inject` will resolve and leak
-   it) and resolve with `op inject -i .env.tpl -o ~/.<slug>/.env --account
-   dimagi.1password.com`; a non-env credential FILE (e.g. the gog OAuth-client json) is resolved
-   directly with `op read "op://<vault>/<item>/<field>" > <file>`, not through `.env.tpl`. (An
+   it; refs read `op://${AGENT_VAULT}/<item>/<field>` — the vault belongs to the instance, so
+   the agent's owner records it on canopy-web, `/agents/<slug>`) and resolve with `/<slug>:setup`
+   (`canopy agent env --plugin <slug>`: binds this install to one instance and runs `op inject`
+   with `AGENT_VAULT` set); a non-env credential FILE (e.g. the gog OAuth-client json) is resolved
+   directly with `op read "op://$AGENT_VAULT/<item>/<field>" > <file>`, not through `.env.tpl`. (An
    agent still on the legacy path declares secrets in `config/secrets.yaml` and runs
    `uv run --project "$CANOPY_ROOT" canopy provision` instead — supported, but not for new
    agents.) Finish with `uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .` — one

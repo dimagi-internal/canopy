@@ -36,7 +36,7 @@ $GDRIVE_ROOT_FOLDER/             ← your own root folder — the one id you car
 
 **Don't reason about the parent.** Where your root physically sits — under the shared `AI-Agents`
 drive, under a division's drive like Connect Marketing, anywhere else — is an administrative choice
-recorded once in your 1Password vault (`op://Agent-<Slug>/gdrive-root-folder`). It differs per agent
+recorded once in your 1Password vault (`op://${AGENT_VAULT}/gdrive-root-folder`). It differs per agent
 and per environment, it can be moved without touching any code, and **nothing in a skill or repo
 should reference it or anything above it.** You resolve `$GDRIVE_ROOT_FOLDER` and file beneath it;
 that's the whole contract.
@@ -310,7 +310,7 @@ gog drive permissions <id> -a <acct> --client <client>    # confirm it landed
 ## What each agent's `gdoc-writer` stub declares
 
 - **Your Drive root** — the id of your own agent folder. It is **environment-specific, so it lives
-  in your agent's 1Password vault**, never in git: `op://Agent-<Slug>/gdrive-root-folder/credential`
+  in your agent's 1Password vault**, never in git: `op://${AGENT_VAULT}/gdrive-root-folder/credential`
   (use the angle-bracket placeholder in any doc/comment — a literal `op://…` gets resolved too),
   referenced from your `.env.tpl` (the standard) — or the legacy `config/secrets.yaml` — and
   resolved into `~/.<agent>/.env` as `$GDRIVE_ROOT_FOLDER` via `op inject` (or `canopy provision`

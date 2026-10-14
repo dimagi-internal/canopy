@@ -233,10 +233,14 @@ infra you'd want every agent to get, it belongs in canopy; raise it there, don't
 ## Conventions
 - Capability logic belongs in CLIs / MCP tools; skills (`SKILL.md`) orchestrate. That keeps the
   agent portable to the Claude Agent SDK later (MCP is the portability boundary).
-- Config/secrets live in a WORKTREE-CLEAN global home `~/.{{AGENT_SLUG}}/.env`, resolved by
-  `op inject -i .env.tpl -o ~/.{{AGENT_SLUG}}/.env` from `.env.tpl` (1Password `op://` refs +
-  non-secret literals — never a literal `op://…` in a comment, it gets resolved too). NOT a
-  per-worktree repo `.env` (that gets recreated every turn). Scripts read it via `bin/_env.py`.
+- Config/secrets live in a WORKTREE-CLEAN global home `~/.{{AGENT_SLUG}}/.env`, filled by
+  `/{{AGENT_SLUG}}:setup` (`canopy agent env --plugin {{AGENT_SLUG}}`) from `.env.tpl` (1Password
+  refs + non-secret literals — never a literal `op://…` in a comment, it gets resolved too). NOT
+  a per-worktree repo `.env` (that gets recreated every turn). Scripts read it via `bin/_env.py`.
+- **The vault is never named in this repo.** A plugin is code; an *instance* is canopy-web's
+  Agent record (identity, workspace, 1Password vault). `.env.tpl` refs read
+  `op://${AGENT_VAULT}/<item>/<field>`; setup binds this install to ONE instance and sets
+  `AGENT_VAULT` to the vault canopy-web records for it. Using another instance = run setup again.
 - Outputs that are deliverables live where the team can see them (a shared drive / the canopy-web
   workspace), not as loose local files.
 
@@ -347,34 +351,38 @@ _ENV_TPL = '''# {{AGENT_NAME}}'s env template — the fleet-standard `.env.tpl` 
 # .env. emdash runs each turn in a fresh worktree, so a repo-local .env would vanish; every
 # worktree instead reads the global home via bin/_env.py.
 #
-# Resolve with:
-#   op inject -i .env.tpl -o ~/.{{AGENT_SLUG}}/.env --account dimagi.1password.com
+# Resolve with /{{AGENT_SLUG}}:setup, i.e.:
+#   canopy agent env --plugin {{AGENT_SLUG}} --template .env.tpl --out ~/.{{AGENT_SLUG}}/.env
+# It binds this install to ONE agent instance on canopy-web and runs `op inject` with
+# AGENT_VAULT set to that instance's recorded 1Password vault. NEVER write a vault name here:
+# every ref is `op://${AGENT_VAULT}/<item>/<field>` — the vault belongs to the instance, not
+# to this repo (someone may run this agent with a different vault).
 #
 # CRITICAL: `op inject` resolves `op://` refs ANYWHERE IN THIS FILE, INCLUDING COMMENTS — a real
-# `op://<vault>/<item>/<field>` left in a comment/example gets resolved too and can leak that
-# secret to stdout on the next `op inject ... | cat` (or similar). NEVER paste a real vault/item
-# name in a comment. Every example below uses an angle-bracket PLACEHOLDER
-# (`op://<vault>/<item>/<field>`) for exactly this reason — keep doing that when you add a var.
+# reference left in a comment/example gets resolved too and can leak that secret to stdout on
+# the next `op inject ... | cat` (or similar). NEVER paste a real item name in a comment. Every
+# example below uses an angle-bracket PLACEHOLDER for the item (`<item>`) for exactly this
+# reason — keep doing that when you add a var.
 #
 # One line per var, `KEY=value`. A literal (not environment-varying) value is fine as-is;
 # anything that differs per environment — a key, an id, a folder — must be an `op://` reference,
 # never the literal value. For a non-env credential FILE (e.g. an OAuth-client json), don't put
-# it here — resolve it directly with `op read "op://<vault>/<item>/<field>" > <file>` instead.
+# it here — resolve it directly with `op read "op://$AGENT_VAULT/<item>/<field>" > <file>` instead.
 #
 # The gog OAuth client is the SHARED fleet app (`canopy`), not per-agent: a gog "client" is the
 # APP identity (client_id + client_secret), reused by every agent's mailbox. The per-agent,
 # never-shared identity is the mailbox ({{MAILBOX}}).
 
 {{AGENT_SLUG}}_PRIMARY_CHANNEL={{MAILBOX}}
-# {{AGENT_SLUG}}_SOME_SECRET=op://<vault>/<item>/<field>
-# CANOPY_WEB_PAT=op://<vault>/<item>/credential
+# {{AGENT_SLUG}}_SOME_SECRET=op://${AGENT_VAULT}/<item>/<field>
+# CANOPY_WEB_PAT=op://${AGENT_VAULT}/<item>/credential
 '''
 
 _ENV_LOADER = '''"""Canonical .env resolver for {{AGENT_NAME}}'s scripts — reads the WORKTREE-CLEAN global home.
 
 {{AGENT_NAME}} runs each turn in a fresh emdash worktree; a per-repo `.env` would be absent there and
-get recreated every turn. So secrets live ONCE at ~/.{{AGENT_SLUG}}/.env (resolved by
-`op inject -i .env.tpl -o ~/.{{AGENT_SLUG}}/.env` from .env.tpl; override the home with
+get recreated every turn. So secrets live ONCE at ~/.{{AGENT_SLUG}}/.env (filled from .env.tpl
+by /{{AGENT_SLUG}}:setup — `canopy agent env --plugin {{AGENT_SLUG}}`; override the home with
 ${{AGENT_SLUG}}_ENV, upper-cased). A repo-local `.env` still works as a per-KEY dev override (it wins).
 
     from _env import get, load
@@ -548,9 +556,11 @@ follows it: preflight → process inbound (one counterpart at a time) → skill 
 3. Add each outbound action as a `deny` rail in `config/gating.json` pointing at its one
    sanctioned path — not as prose, and not as an `approve` rule (approval is the turn
    checklist's job; hook modals stall autonomous work).
-4. Declare secrets in `.env.tpl` (1Password `op://` refs — never a literal `op://…` in a comment,
-   `op inject` resolves those too) and run `op inject -i .env.tpl -o ~/.{{AGENT_SLUG}}/.env` — they
-   land in the worktree-clean global home, read by `bin/_env.py`.
+4. Declare secrets in `.env.tpl` as `op://${AGENT_VAULT}/<item>/<field>` (never a vault name, and
+   never a literal `op://…` in a comment — `op inject` resolves those too) and run
+   `/{{AGENT_SLUG}}:setup`: it binds this install to one agent instance on canopy-web and fills
+   `~/.{{AGENT_SLUG}}/.env` from that instance's recorded vault (`canopy agent env`), read by
+   `bin/_env.py`. The instance's owner records its vault on canopy-web (/agents/<slug>).
 5. The agent's own thing is its MAILBOX ({{MAILBOX}}); the gog OAuth client is the SHARED fleet
    app — one Google app with two clients, `canopy` (a laptop's `gog login`) and `canopy-web`
    (canopy-web's "Connect Google mailbox" button), and a token under either serves every turn.
@@ -575,6 +585,45 @@ _AGENT_JSON = '''{
   "persona": "{{MANDATE}}",
   "avatar_url": ""
 }
+'''
+
+_SETUP_SKILL = '''---
+name: setup
+description: >
+  Set up this machine to run {{AGENT_NAME}}: bind this install to ONE agent instance on
+  canopy-web and fill ~/.{{AGENT_SLUG}}/.env from that instance's 1Password vault. Use on first
+  run, a new machine, or a missing/stale .env.
+argument-hint: "[--agent <instance>] [--vault <name>] [--force]"
+---
+
+# Setup — {{AGENT_NAME}}
+
+A plugin is code; an **instance** is canopy-web's Agent record — identity, workspace and
+1Password vault. This install is bound to exactly ONE instance, chosen here, once. Using a
+different instance means running this again (with `--force`).
+
+Run, from this repo's root (pass through any arguments the user gave — `$ARGUMENTS`):
+
+```bash
+canopy agent env --plugin {{AGENT_SLUG}} --template .env.tpl --out ~/.{{AGENT_SLUG}}/.env $ARGUMENTS
+```
+
+Read its output and act on it — never guess past it:
+
+- **one instance** → it says which one it bound to and how many vars it wrote. Done.
+- **several instances** → it lists each with the exact re-run line. Ask the user which one
+  this install is for, then run that line. Do not pick one yourself.
+- **no instance** → the user cannot see any {{AGENT_NAME}} instance on canopy-web; they need
+  its owner to add them to the agent's workspace.
+- **no vault recorded** → the instance's owner must set its 1Password vault on canopy-web
+  (`/agents/<slug>` → Settings). There is no default vault name.
+- **1Password errors** → it names the vault and `dimagi.1password.com`; the user signs in
+  (`op signin`) or asks the agent's owner for access to that vault.
+- **already bound to another instance** → only re-run with `--force` if the user means to
+  switch this install to a different instance.
+
+`canopy agent env --plugin {{AGENT_SLUG}} --print` shows the resolved instance and vault as
+JSON without changing anything.
 '''
 
 _TASK_TRACKER_SKILL = '''---
@@ -798,6 +847,7 @@ _TEMPLATES: dict[str, str] = {
     "skills/task-tracker/SKILL.md": _TASK_TRACKER_SKILL,
     "skills/shipping/SKILL.md": _SHIPPING_SKILL,
     "skills/manager-sync/SKILL.md": _MANAGER_SYNC_SKILL,
+    "skills/setup/SKILL.md": _SETUP_SKILL,
 }
 
 
