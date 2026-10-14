@@ -235,10 +235,12 @@ def pull_sources(
     lock), the capture files into :func:`capture_dir`. Verifies every file's
     sha256. Returns ``{role: written path}``; a role canopy-web has no file for
     is simply absent."""
+    get = _get or _default_get
+    picked = newest_per_role(list_sources(slug, base_url=base_url, token=token, _get=get), review_id)
+    if not picked:
+        return {}
     api = resolve_base_url(base_url)
     pat = resolve_token(token)
-    get = _get or _default_get
-    picked = newest_per_role(list_sources(slug, base_url=api, token=pat, _get=get), review_id)
     written: dict[str, Path] = {}
     for role in roles:
         row = picked.get(role)
