@@ -40,11 +40,10 @@ def tpl(tmp_path):
     return p
 
 
-def _run(tmp_path, tpl, instances, *, op=None, fetch=None, **kw):
+def _run(tmp_path, tpl, instances, *, op=None, **kw):
     op = op or FakeOp()
     res = ai.run("ace", template=tpl, out=tmp_path / "home" / ".ace" / ".env", token="pat",
                  list_instances=lambda p: instances,
-                 fetch_vault=fetch or (lambda s: pytest.fail("fetched without need")),
                  runner=op, base_env={"PATH": "/bin"}, **kw)
     return res, op
 
@@ -102,8 +101,8 @@ def test_catalog_and_agents_list_parsing():
     ]}
     assert ai.instances_from_catalog(catalog, "hal") == [
         ai.Instance("hal", "hal", "dimagi", "Hal-V")]
-    # an older catalog carries no vault → None (fetch the agent record), not ""
-    assert ai.instances_from_catalog(catalog, "ace")[0].vault is None
+    # an instance with no vault recorded reads as "" (resolve_vault then errors loudly)
+    assert ai.instances_from_catalog(catalog, "ace")[0].vault == ""
     assert ai.instances_from_catalog(catalog, "eva") is None
     rows = {"items": [{"slug": "eva", "workspace": "dimagi", "op_vault": "",
                        "plugin": {"repo": "dimagi-internal/eva", "name": "eva"}},
@@ -119,17 +118,10 @@ def test_vault_flag_wins_over_the_record(tmp_path, tpl):
     assert op.calls[0][1]["AGENT_VAULT"] == "Mine"
 
 
-def test_vault_fetched_from_the_agent_record_when_catalog_lacks_it(tmp_path, tpl):
-    res, _ = _run(tmp_path, tpl, [_inst("ace", vault=None)], fetch=lambda s: "From-Detail")
-    assert res.vault == "From-Detail"
-
-
 def test_missing_vault_errors_and_never_guesses(tmp_path, tpl):
     with pytest.raises(ai.InstanceError) as e:
         _run(tmp_path, tpl, [_inst("ace", vault="")])
     assert ai.NO_VAULT in e.value.message
-    with pytest.raises(ai.InstanceError, match="no 1Password vault recorded"):
-        _run(tmp_path, tpl, [_inst("ace", vault=None)], fetch=lambda s: "")
 
 
 # ── binding ──────────────────────────────────────────────────────────────────
@@ -191,22 +183,24 @@ def test_instance_vault_binding_then_record_then_error(tmp_path):
         ai.instance_vault("hal", home=home, fetch=lambda s: "")
 
 
-def test_fetch_agent_vault_reads_the_record_then_the_vault_status(monkeypatch):
+def test_fetch_agent_vault_reads_only_the_agent_record(monkeypatch):
+    """Members read `op_vault` off the agent record; the owner/admin-only
+    `/api/agents/<slug>/vault` route is never touched."""
     calls = []
 
     def fake(method, path, **kw):
         calls.append(path)
-        if path == "/api/agents/new/":
-            return {"slug": "new", "op_vault": "From-Record"}
-        if path == "/api/agents/old/":
-            return {"slug": "old"}                     # a canopy-web without op_vault yet
-        if path == "/api/agents/old/vault":
-            return {"vault": "From-Status", "key_set": True}
+        if path == "/api/agents/ace/":
+            return {"slug": "ace", "op_vault": " Agent-Ace "}
+        if path == "/api/agents/bare/":
+            return {"slug": "bare", "op_vault": ""}
         raise AssertionError(path)
     monkeypatch.setattr(ai.canopy_web, "call", fake)
-    assert ai.fetch_agent_vault("new") == "From-Record"
-    assert ai.fetch_agent_vault("old") == "From-Status"
-    assert "/api/agents/new/vault" not in calls
+    assert ai.fetch_agent_vault("ace") == "Agent-Ace"
+    assert ai.fetch_agent_vault("bare") == ""
+    assert calls == ["/api/agents/ace/", "/api/agents/bare/"]
+    with pytest.raises(ai.InstanceError, match="no 1Password vault recorded"):
+        ai.instance_vault("bare", home=Path("/nonexistent-home"))
 
 
 def test_expand_vars_like_op():
