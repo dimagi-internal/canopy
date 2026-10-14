@@ -75,7 +75,14 @@ Code calls the same rule directly: `agent_email.reconcile_client` (Python) or
 | Vault | Holds |
 |---|---|
 | `Canopy-Shared` | values **every** canopy agent resolves — `gog-oauth-client`, `github-token` |
-| `Agent-<Slug>` | one per agent — its identity + integration values: `canopy-pat`, `claude-oauth-token`, `gog-token`, `gdrive-root-folder`, … |
+| the instance's vault (`Agent.op_vault`) | one per agent instance — its identity + integration values: `canopy-pat`, `claude-oauth-token`, `gog-token`, `gdrive-root-folder`, … |
+
+**The vault belongs to the instance, never to the plugin** (Jonathan, 2026-10-14). A plugin is
+code; an *instance* is canopy-web's Agent record — identity, workspace and 1Password vault
+(`Agent.op_vault`, set by the instance's owner on `/agents/<slug>`). Nothing in canopy or an
+agent repo derives a vault name from the slug (today's fleet vaults happen to be called
+`Agent-Ace`, `Agent-Hal`, … — a name the owner recorded, not a rule), and nothing falls back to
+one: an instance with no recorded vault is an error that says so.
 
 One vault per agent (**not** the legacy flat `AI-Agents` dumping ground) so each agent is
 least-privilege and independently grantable. Every item is an **API Credential** whose value sits
@@ -93,18 +100,50 @@ each turn in a fresh worktree, so a repo-local `.env` would vanish; the global h
 every worktree via `bin/_env.py`. The fleet has already migrated onto this: ada, eva, hal, and
 echo all ship `.env.tpl`, with `config/secrets.yaml` deleted.
 
+Templates never name the vault — they reference **`${AGENT_VAULT}`**, which `op inject`
+substitutes from its environment (`op inject --help`: "Use variables in secret references"):
+
 ```bash
-GDRIVE_ROOT_FOLDER=op://Agent-<Slug>/gdrive-root-folder/credential
-# resolve:
-op inject -i .env.tpl -o ~/.<agent>/.env --account dimagi.1password.com
+GDRIVE_ROOT_FOLDER=op://${AGENT_VAULT}/gdrive-root-folder/credential
 ```
+
+### Setup: `canopy agent env` — bind ONE instance, fill the env
+
+Every agent's `/<agent>:setup` calls the one shared step:
+
+```bash
+canopy agent env --plugin <plugin> [--template .env.tpl] [--out ~/.<plugin>/.env] \
+                 [--agent <instance>] [--vault <name>] [--force] [--print]
+```
+
+1. **Instance.** The instances of `<plugin>` you can see on canopy-web (the catalog entry's
+   `metadata.instances`, else `GET /api/agents/` filtered by `plugin.name`). `--agent` picks one;
+   the instance this install is already bound to is kept; exactly one is used and named; several
+   stop with the exact re-run line for each (it never prompts — scripts and slash commands call
+   it); none stops.
+2. **Vault.** `--vault` wins, else the instance's `op_vault`. None recorded → error: *"this agent
+   instance has no 1Password vault recorded on canopy-web; its owner sets it"*.
+3. **Binding.** Recorded beside the output: `~/.<plugin>/canopy-instance.json`
+   (`{plugin, agent, workspace, vault, bound_at}`). Re-running for a DIFFERENT instance refuses
+   unless `--force` — an install never switches instance by accident; using another instance
+   means running setup again.
+4. **Fill.** `op inject -i <template> -o <out>` with `AGENT_VAULT=<vault>` and
+   `AGENT_SLUG=<instance>` in its environment. `op` missing / not signed in / vault unreadable
+   → one message naming the vault, `dimagi.1password.com`, and "ask the agent's owner for access".
+
+`--print` emits the resolved instance and vault as JSON and changes nothing. The rest of canopy
+asks the same question the same way (`agent_instance.instance_vault`: this machine's binding,
+else canopy-web's `op_vault`, else a loud error) — `canopy agent bootstrap`, `canopy cred
+env|sync|check` all set `AGENT_VAULT` before injecting, and the SessionStart hook exports the
+bound `AGENT_VAULT` / `AGENT_SLUG` into agent sessions so a hand-run `op inject` works too.
+Runners must set `AGENT_VAULT` (= `Agent.op_vault`) for every `op inject` of an agent template.
 
 **Non-env credential FILES** (something an SDK/CLI wants as a JSON file on disk, e.g. a gog
 OAuth-client json, a service-account key) are NOT env vars — resolve them directly with native
 `op read`, never through `.env.tpl`:
 
 ```bash
-op read "op://Agent-<Slug>/gog-oauth-client/credential" > ~/Library/Application\ Support/gogcli/credentials-<slug>.json
+op read "op://$AGENT_VAULT/gog-oauth-client/credential" > ~/Library/Application\ Support/gogcli/credentials-<slug>.json
 chmod 0600 ~/Library/Application\ Support/gogcli/credentials-<slug>.json
 ```
 
@@ -165,7 +204,7 @@ env:
     - key: SOME_LITERAL
       value: "not-environment-varying"                      # rare — see the rule above
     - key: GDRIVE_ROOT_FOLDER
-      op: "op://Agent-<Slug>/gdrive-root-folder/credential"  # resolved from the agent's vault
+      op: "op://<vault>/gdrive-root-folder/credential"  # the instance's vault, by name
 ```
 
 Migrating an agent off it: write the equivalent `.env.tpl` (one `KEY=value` / `KEY=op://…` line
@@ -175,26 +214,27 @@ delete `config/secrets.yaml`.
 
 ## Adding a new value — the recipe
 
-1. **Put it in the vault** (agent-specific → `Agent-<Slug>`; needed by all → `Canopy-Shared`):
+1. **Put it in the vault** (agent-specific → the instance's vault, `canopy agent env --plugin
+   <plugin> --print` names it; needed by all → `Canopy-Shared`):
    ```bash
    op item create --category "API Credential" --title "<name>" \
-     --vault "Agent-<Slug>" "credential[password]=<value>"
+     --vault "$AGENT_VAULT" "credential[password]=<value>"
    # exists already? edit instead:
-   op item edit "<name>" --vault "Agent-<Slug>" "credential=<value>"
+   op item edit "<name>" --vault "$AGENT_VAULT" "credential=<value>"
    ```
-2. **Reference it** in the agent's `.env.tpl` as `KEY=op://Agent-<Slug>/<name>/credential` (legacy
-   agents: `config/secrets.yaml`'s `env.vars`) — never the value, and never a real `op://…` in a
-   comment (see the security rule above).
-3. **Materialize** it: `op inject -i .env.tpl -o ~/.<agent>/.env` (legacy: `canopy provision`).
+2. **Reference it** in the agent's `.env.tpl` as `KEY=op://${AGENT_VAULT}/<name>/credential`
+   (legacy agents: `config/secrets.yaml`'s `env.vars`) — never the value, never a vault name, and
+   never a real `op://…` in a comment (see the security rule above).
+3. **Materialize** it: `/<agent>:setup` (`canopy agent env --plugin <plugin>`; legacy: `canopy provision`).
 4. **Read it** as the env var in code/skills — never re-hardcode the value.
-5. **Verify**: `op read "op://Agent-<Slug>/<name>/credential"` and confirm the key landed in
+5. **Verify**: `op read "op://$AGENT_VAULT/<name>/credential"` and confirm the key landed in
    `~/.<agent>/.env`.
 
 ## The other mechanism — `runtime.yaml` (know the difference)
 
 There is a **second, newer** path: the **Agent Runtime Registry** — an agent ships a repo-root
 `runtime.yaml` declaring plugins, tools, engine, preflight, and values **by reference name only**
-(no vault named); a *reconciler* resolves each name against `[Agent-<Slug>, Canopy-Shared]`, scans
+(no vault named); a *reconciler* resolves each name against `[<the instance's vault>, Canopy-Shared]`, scans
 the box, applies gaps, and injects env before the turn. Design + code:
 `canopy-web/docs/superpowers/specs/2026-07-20-agent-runtime-registry-design.md` and
 `canopy-web/packages/canopy_runtime/` (`python -m canopy_runtime.cli --agent <slug> --print-env`).
@@ -215,12 +255,16 @@ that migration is real but unfinished. So:
   `config/secrets.yaml` has been deleted from those repos. `canopy create-agent` scaffolds
   `.env.tpl` for new agents. Any agent still on `config/secrets.yaml` is on the legacy path and
   should migrate when convenient (see "Migrating an agent off it" above).
-- **Vaults:** `Canopy-Shared` + `Agent-{Ace,Ada,Echo,Eva,Hal}` exist, each with `canopy-pat` /
+- **Vaults:** `Canopy-Shared` + one vault per instance (today named `Agent-Ace`, `Agent-Hal`, …
+  — recorded on each Agent as `op_vault`) exist, each with `canopy-pat` /
   `claude-oauth-token` / `gog-token` + `gdrive-root-folder` (the agent's OWN root folder id — an
   agent never resolves anything about that root's parent).
 - **Legacy:** the flat `AI-Agents` vault is still populated and still referenced by some agents'
   `.env.tpl` (or a not-yet-migrated `secrets.yaml`). Migrating those refs onto per-agent vaults is
-  outstanding work — copy the value into `Agent-<Slug>` first, then repoint the ref.
+  outstanding work — copy the value into the instance's vault first, then repoint the ref.
+- **`${AGENT_VAULT}` migration (2026-10-14):** agent templates still naming their vault
+  (`op://Agent-Ace/…`) keep working — `canopy agent env` warns about each — and move to
+  `op://${AGENT_VAULT}/…` once every runner that injects them sets `AGENT_VAULT`.
 
 ## Related
 

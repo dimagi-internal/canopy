@@ -23,7 +23,10 @@ def test_templates_is_non_empty_with_expected_count():
     # state on canopy-web, never a file in the agent's repo — a change to this number
     # should be a deliberate template addition/removal, not a silent regression.
     # -1 on 2026-10-09 (canopy#849): hooks/gating_guard.py — canopy's plugin owns the hook.
-    assert len(t) == 20
+    # +1 on 2026-10-14: skills/setup/SKILL.md — the /<agent>:setup that binds an install to one
+    # instance (`canopy agent env`).
+    assert len(t) == 21
+    assert "skills/setup/SKILL.md" in t
     assert "hooks/gating_guard.py" not in t
     assert "config/interface.yaml" not in t
     assert "skills/answer-caller/SKILL.md" in t
@@ -65,3 +68,15 @@ def test_answer_caller_reads_the_person_block_and_resolves_the_instance():
     assert "Never describe a generic template as if it were theirs." in t
     # the confined session answers; it cannot write people facts (not in its allowlist)
     assert "canopy people remember" not in t
+
+
+def test_env_template_and_setup_never_name_a_vault():
+    """2026-10-14: the vault belongs to the instance (canopy-web Agent.op_vault), never to the
+    plugin's code — templates reference ${AGENT_VAULT} and setup binds via `canopy agent env`."""
+    t = templates()
+    tpl = t[".env.tpl"]
+    assert "op://${AGENT_VAULT}/<item>/" in tpl
+    assert "Agent-" not in tpl and "op://<vault>" not in tpl
+    setup = t["skills/setup/SKILL.md"]
+    assert "canopy agent env --plugin {{AGENT_SLUG}}" in setup
+    assert "--force" in setup and "$ARGUMENTS" in setup

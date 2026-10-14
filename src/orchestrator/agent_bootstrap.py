@@ -8,9 +8,12 @@ laptop has instead of per-agent service-account keys. Per agent:
                 config/agent.json `required_plugins`, parsed by the SAME function
                 `canopy agent doctor`'s check_required_plugins uses. Skipped when the
                 registry already has them.
-  2. env      — `op inject -f -i <repo>/.env.tpl -o ~/.<slug>/.env`, chmod 600.
+  2. env      — `op inject -f -i <repo>/.env.tpl -o ~/.<slug>/.env` with AGENT_VAULT /
+                AGENT_SLUG set (templates reference op://${AGENT_VAULT}/…), chmod 600.
   3. token    — the gog Gmail token, NEWEST WINS by the token's own `created_at`, between
-                canopy-web's `/credentials/resolve` copy and op://Agent-<Slug>/gog-token.
+                canopy-web's `/credentials/resolve` copy and op://<vault>/gog-token, <vault>
+                being the instance's recorded `op_vault` (agent_instance.instance_vault —
+                never a name derived from the slug).
   4. client   — the OAuth client the TOKEN names (never config/agent.json — that inference
                 broke echo's working mailbox on 2026-09-05, canopy-web#661), materialized to
                 <gog dir>/credentials-<client>.json.
@@ -41,9 +44,10 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from orchestrator import canopy_web
+from orchestrator.agent_instance import inject_env
 from orchestrator.agent_doctor import (
     PLUGIN_REGISTRY,
     _plugin_source,
@@ -75,7 +79,7 @@ SHARED_CLIENT_REFS = {
 
 #: Deliberately NO fallback vault. An operator who cannot read Canopy-Shared is granted
 #: membership in it — the fix is access, not a second copy. AI-Agents is a humans-only
-#: vault now that every agent has its own Agent-<Slug> vault plus Canopy-Shared (Jonathan,
+#: vault now that every agent has its own vault plus Canopy-Shared (Jonathan,
 #: 2026-09-29, reverting #707's AI-Agents fallback: "Don't have anything fall back to
 #: ai-agents").
 SHARED_VAULT_HINT = ("you are not a member of the Canopy-Shared vault — ask a vault owner "
@@ -98,15 +102,19 @@ Runner = Callable[..., subprocess.CompletedProcess]
 # pure decision logic
 # ──────────────────────────────────────────────────────────────────────────────
 
-def agent_vault(slug: str) -> str:
-    return f"Agent-{slug[:1].upper()}{slug[1:]}"
-
-
-def client_op_ref(client: str, slug: str) -> str:
+def client_op_ref(client: str, vault: str) -> str:
     """The 1Password ref holding <client>'s OAuth id+secret. Decided by the CLIENT (which
     the token names), not by the agent: a shared client is read from the shared vault no
-    matter which agent's token needs it."""
-    return SHARED_CLIENT_REFS.get(client) or f"op://{agent_vault(slug)}/gog-oauth-client/credential"
+    matter which agent's token needs it; any other is the agent's own, in `vault` (the
+    instance's recorded op_vault)."""
+    return SHARED_CLIENT_REFS.get(client) or f"op://{vault}/gog-oauth-client/credential"
+
+
+def operator_instance_vault(slug: str) -> str:
+    """The instance's vault, read as the operator (this machine's binding, else canopy-web's
+    `op_vault`). Raises agent_instance.InstanceError when none is recorded."""
+    from orchestrator.agent_instance import instance_vault
+    return instance_vault(slug, token=_operator_token())
 
 
 def parse_created_at(value) -> int:
@@ -337,7 +345,8 @@ class Bootstrapper:
                  gog_dir: str | None = None, registry_path: str | None = None,
                  marketplaces_path: str | None = None, home: Path | None = None,
                  verify: Callable = preflight, echo: Callable[[str], None] = print,
-                 platform: str = sys.platform):
+                 platform: str = sys.platform,
+                 vault_for: Optional[Callable[[str], str]] = None):
         self.dry_run = dry_run
         self.op_account = op_account
         self.run = runner
@@ -353,6 +362,8 @@ class Bootstrapper:
         self._accounts_read = False
         self._warned_keychain = False
         self._op_blocked = ""
+        self.vault_for = vault_for or operator_instance_vault
+        self._vaults: dict[str, tuple[str, str]] = {}
 
     # ── helpers ───────────────────────────────────────────────────────────────
     def _keychain_heads_up(self) -> None:
@@ -360,7 +371,8 @@ class Bootstrapper:
             self._warned_keychain = True
             self.echo(KEYCHAIN_HEADS_UP)
 
-    def _op(self, argv: list[str], timeout: int) -> tuple[subprocess.CompletedProcess | None, str]:
+    def _op(self, argv: list[str], timeout: int,
+            env: Optional[dict] = None) -> tuple[subprocess.CompletedProcess | None, str]:
         """Run `op …`, short-circuiting once 1Password has refused to authorize.
 
         A locked 1Password makes every `op` call wait out its own ~60s authorization timeout;
@@ -368,7 +380,8 @@ class Bootstrapper:
         if self._op_blocked:
             return None, self._op_blocked
         try:
-            r = self.run(argv, capture_output=True, text=True, timeout=timeout)
+            kw = {"env": env} if env is not None else {}
+            r = self.run(argv, capture_output=True, text=True, timeout=timeout, **kw)
         except FileNotFoundError:
             self._op_blocked = "op CLI not installed"
             return None, self._op_blocked
@@ -421,6 +434,17 @@ class Bootstrapper:
         except (ValueError, OSError, TypeError):
             return set()
 
+    def vault(self, slug: str) -> tuple[str, str]:
+        """(vault, error) for `slug`, asked once per run. No convention fallback: an
+        instance with no recorded vault is an error the report names."""
+        if slug not in self._vaults:
+            try:
+                self._vaults[slug] = (self.vault_for(slug), "")
+            except Exception as e:  # noqa: BLE001 — InstanceError, or canopy-web unreachable
+                msg = getattr(e, "message", None) or str(e)
+                self._vaults[slug] = ("", _first_line(msg, 300))
+        return self._vaults[slug]
+
     # ── steps ─────────────────────────────────────────────────────────────────
     def step_plugins(self, repo: Path, rep: AgentReport) -> None:
         actions, problems, n_ok = plugin_plan(
@@ -467,9 +491,15 @@ class Bootstrapper:
         if self.dry_run:
             rep.env = "would inject"
             return
+        vault, verr = self.vault(slug)
+        if not vault:
+            rep.env = "FAIL"
+            rep.fail(f"env: {verr}")
+            return
         out.parent.mkdir(parents=True, exist_ok=True)
         r, err = self._op(["op", "inject", "-f", "-i", str(tpl), "-o", str(out),
-                           "--account", self.op_account], timeout=180)
+                           "--account", self.op_account], timeout=180,
+                          env=inject_env(dict(os.environ), vault, slug))
         if r is None or r.returncode != 0:
             rep.env = "FAIL"
             # op names the reference it could not resolve, never a value.
@@ -522,13 +552,17 @@ class Bootstrapper:
 
     def step_token(self, slug: str, repo: Path, rep: AgentReport) -> Token | None:
         """Pick the newest token, materialize its client, import it, map the account."""
-        vault_raw, vault_err = self._op_read(f"op://{agent_vault(slug)}/gog-token/credential")
+        vault, verr = self.vault(slug)
+        if vault:
+            vault_raw, vault_err = self._op_read(f"op://{vault}/gog-token/credential")
+        else:
+            vault_raw, vault_err = None, verr
         web_raw, web_err = self.web_token(slug)
         # Vault FIRST: a tie degrades toward the vault (see pick_newest).
         tok = pick_newest([parse_token("vault", vault_raw), parse_token("canopy-web", web_raw)])
         if tok is None:
             rep.token = "NONE"
-            rep.fail(f"token: no gog token in op://{agent_vault(slug)}/gog-token "
+            rep.fail(f"token: no gog token in op://{vault or '<no vault>'}/gog-token "
                      f"({vault_err or 'unparseable'}) nor canopy-web "
                      f"({web_err or 'none stored'})")
             return None
@@ -556,7 +590,10 @@ class Bootstrapper:
         # Client creds for the client the TOKEN names.
         creds = self.gog_dir / f"credentials-{tok.client}.json"
         if not gog_client_credentials(str(self.gog_dir), tok.client):
-            ref = client_op_ref(tok.client, slug)
+            ref = client_op_ref(tok.client, vault)
+            if not vault and tok.client not in SHARED_CLIENT_REFS:
+                rep.fail(f"token: cannot read OAuth client '{tok.client}': {verr}")
+                return tok
             if self.dry_run:
                 rep.notes.append(f"token: would materialize credentials-{tok.client}.json "
                                  f"from {ref}")

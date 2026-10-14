@@ -30,9 +30,17 @@ def _fake_canopy(tmp_path, out=KEY, rc=0, sync="unchanged", sync_rc=0):
 
 
 def _run(tmp_path, *, slug="eva", have_key=False, out=KEY, rc=0, env_file=True,
-         sync="unchanged", sync_rc=0):
+         sync="unchanged", sync_rc=0, binding=None):
     bindir, log = _fake_canopy(tmp_path, out, rc, sync, sync_rc)
-    env = {k: v for k, v in os.environ.items() if k not in ("CANOPY_AGENT", "OP_SERVICE_ACCOUNT_TOKEN", "CLAUDE_ENV_FILE")}
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CANOPY_AGENT", "OP_SERVICE_ACCOUNT_TOKEN", "CLAUDE_ENV_FILE",
+                        "AGENT_VAULT", "AGENT_SLUG")}
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    env["HOME"] = str(home)   # never the real ~/.<slug>/canopy-instance.json
+    if binding is not None:
+        (home / f".{slug}").mkdir(exist_ok=True)
+        (home / f".{slug}" / "canopy-instance.json").write_text(json.dumps(binding))
     env["PATH"] = bindir + os.pathsep + env["PATH"]
     if slug:
         env["CANOPY_AGENT"] = slug
@@ -100,3 +108,16 @@ def test_registered_on_session_start():
     assert any("agent_op_env.py" in c for c in cmds)
     entry = next(h for m in hooks for h in m["hooks"] if "agent_op_env.py" in h["command"])
     assert not entry.get("async"), "must finish before the first Bash command reads CLAUDE_ENV_FILE"
+
+
+def test_exports_the_bound_instance_vault_and_never_guesses_one(tmp_path):
+    """2026-10-14: the vault belongs to the instance `canopy agent env` bound this install to;
+    the hook exports it so a hand-run `op inject` of an op://${AGENT_VAULT}/… template works."""
+    r, ef, _ = _run(tmp_path, have_key=True,
+                    binding={"plugin": "eva", "agent": "eva-2", "vault": "Eva Vault"})
+    assert r.returncode == 0
+    assert ef.read_text() == "export AGENT_VAULT='Eva Vault'\nexport AGENT_SLUG=eva-2\n"
+
+    r, ef2, _ = _run(tmp_path / "nobind" if (tmp_path / "nobind").mkdir() is None else tmp_path,
+                     have_key=True)
+    assert "AGENT_VAULT" not in (ef2.read_text() if ef2.exists() else "")

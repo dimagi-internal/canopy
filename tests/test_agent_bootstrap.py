@@ -38,6 +38,11 @@ def _repo(tmp_path, slug="ace", *, gog_client="canopy", required=None, tpl=True,
     return repo
 
 
+#: The vaults canopy-web records for these test agents (Agent.op_vault) — a table, the way
+#: canopy-web holds them; nothing derives a vault from a slug.
+RECORDED_VAULTS = {"ace": "Agent-Ace", "eva": "Agent-Eva", "echo": "Agent-Echo"}
+
+
 class FakeRunner:
     """Records argv; answers op/gog/claude from a table."""
 
@@ -47,9 +52,11 @@ class FakeRunner:
         self.gog_accounts = gog_accounts if gog_accounts is not None else []
         self.fail = set(fail)
         self.imported: list[str] = []
+        self.envs: list[dict | None] = []
 
     def __call__(self, argv, **kw):
         self.calls.append(list(argv))
+        self.envs.append(kw.get("env"))
         ok = lambda out="": subprocess.CompletedProcess(argv, 0, out, "")  # noqa: E731
         bad = lambda err: subprocess.CompletedProcess(argv, 1, "", err)  # noqa: E731
         head = argv[0]
@@ -74,7 +81,7 @@ class FakeRunner:
 
 
 def _boot(tmp_path, runner, *, web=None, verify_ok=True, dry_run=False, installed=(),
-          marketplaces=()):
+          marketplaces=(), vaults=None):
     reg = tmp_path / "installed_plugins.json"
     reg.write_text(json.dumps({"plugins": {f"{p}@{p}": [{}] for p in installed}}))
     mk = tmp_path / "known_marketplaces.json"
@@ -89,9 +96,19 @@ def _boot(tmp_path, runner, *, web=None, verify_ok=True, dry_run=False, installe
                         web_token=lambda slug: ((web or {}).get(slug), ""),
                         gog_dir=str(tmp_path / "gog"), registry_path=str(reg),
                         marketplaces_path=str(mk), home=tmp_path / "home",
-                        verify=verify, echo=lambda s: None, platform="darwin")
+                        verify=verify, echo=lambda s: None, platform="darwin",
+                        vault_for=_vault_for(RECORDED_VAULTS if vaults is None else vaults))
     b.verified = verified
     return b
+
+
+def _vault_for(table):
+    def lookup(slug):
+        if not table.get(slug):
+            from orchestrator.agent_instance import NO_VAULT, InstanceError
+            raise InstanceError(f"agent '{slug}': {NO_VAULT}")
+        return table[slug]
+    return lookup
 
 
 # ── newest wins ─────────────────────────────────────────────────────────────
@@ -119,8 +136,9 @@ def test_client_op_ref_mapping():
     assert ab.client_op_ref("canopy", "ace") == "op://Canopy-Shared/gog-oauth-client/credential"
     assert ab.client_op_ref("canopy-web", "ace") == \
         "op://Canopy-Shared/gog-oauth-client-web/credential"
-    assert ab.client_op_ref("echo", "echo") == "op://Agent-Echo/gog-oauth-client/credential"
-    assert ab.agent_vault("hal") == "Agent-Hal"
+    # An agent's own client lives in the vault its instance records — passed in, not derived.
+    assert ab.client_op_ref("echo", "Echo-Vault") == "op://Echo-Vault/gog-oauth-client/credential"
+    assert not hasattr(ab, "agent_vault")
 
 
 def test_client_is_taken_from_token_not_agent_json(tmp_path):
@@ -411,3 +429,31 @@ def test_client_creds_in_gogs_data_dir_count_as_present(tmp_path):
     runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok()}, gog_accounts=[])
     _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
     assert not any("gog-oauth-client" in " ".join(c) for c in runner.calls)
+
+
+# ── the vault comes from the instance (2026-10-14) ───────────────────────────
+
+def test_env_inject_sets_agent_vault_from_the_recorded_instance(tmp_path):
+    repo = _repo(tmp_path, "ace")
+    runner = FakeRunner(op={"op://Some-Vault/gog-token/credential": _tok()})
+    b = _boot(tmp_path, runner, vaults={"ace": "Some-Vault"})
+    rep = ab.AgentReport(slug="ace")
+    b.step_env("ace", repo, rep)
+    i = next(n for n, c in enumerate(runner.calls) if c[:2] == ["op", "inject"])
+    assert runner.envs[i]["AGENT_VAULT"] == "Some-Vault"
+    assert runner.envs[i]["AGENT_SLUG"] == "ace"
+    assert rep.env.startswith("OK")
+    b.step_token("ace", repo, rep)
+    assert ["op", "read", "op://Some-Vault/gog-token/credential",
+            "--account", "dimagi.1password.com"] in runner.calls
+
+
+def test_no_recorded_vault_fails_loudly_and_injects_nothing(tmp_path):
+    repo = _repo(tmp_path, "ace")
+    runner = FakeRunner()
+    b = _boot(tmp_path, runner, vaults={})
+    rep = b.bootstrap_one("ace", repo)
+    assert not rep.ok and rep.env == "FAIL"
+    assert any("no 1Password vault recorded on canopy-web" in n for n in rep.notes)
+    assert not any(c[:2] == ["op", "inject"] for c in runner.calls)
+    assert not any("Agent-Ace" in " ".join(c) for c in runner.calls)

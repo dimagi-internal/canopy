@@ -15,9 +15,11 @@ has to come from the **session**, not from whichever plugin happens to be loaded
 
 Per agent, a field on the canopy-web agent record: `credential_source: "1password" | "canopy-web"`.
 
-- **`1password`** — the agent's values live in its vault (`Agent-<Slug>` by convention, or
-  `config/agent.json` `op_vault`). `~/.<slug>/.env` is resolved with
-  `op inject -f -i <agent repo>/.env.tpl -o ~/.<slug>/.env`.
+- **`1password`** — the agent's values live in its vault: the instance this machine is bound to
+  (`~/.<slug>/canopy-instance.json`, written by `canopy agent env`), else the `op_vault`
+  canopy-web records for the agent — never a name derived from the slug, and a missing one is
+  an error. `~/.<slug>/.env` is resolved with
+  `op inject -f -i <agent repo>/.env.tpl -o ~/.<slug>/.env`, `AGENT_VAULT` set to that vault.
 - **`canopy-web`** — the values live in canopy-web's `AgentCredential` table and come back from
   `GET /api/agents/{slug}/credentials/resolve`.
 

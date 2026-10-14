@@ -97,7 +97,7 @@ identity, rules, secrets, and domain skills are the agent's"*):
   workspace's SHARED vault (`op://Canopy-Shared/gog-oauth-client/credential` for `canopy`,
   `…/gog-oauth-client-web/credential` for `canopy-web`), read with the workspace's key; each
   mailbox's refresh token is the agent's `gog-token` — in its own vault
-  (`op://Agent-<Slug>/gog-token/credential`, minted at a terminal) and/or in canopy-web (minted
+  (`op://<the instance's op_vault>/gog-token/credential`, minted at a terminal) and/or in canopy-web (minted
   by the "Connect Google mailbox" button). A box imports the NEWER of the two by the token's own
   `created_at` (cloud: `runner/ec2/bootstrap_agents.sh`; laptop: `canopy agent bootstrap`) and
   materializes the client the token names as `credentials-<client>.json`. Every agent and the

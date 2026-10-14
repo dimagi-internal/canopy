@@ -37,12 +37,12 @@ Restart Claude Code, then run `/canopy:setup`. Details and Windows notes are in
 
 ## The prompt
 
-Replace the four values in angle brackets, then paste the whole thing:
+Replace the values in angle brackets (`<vault>` is the 1Password vault you are giving this agent instance — its name is yours to choose; nothing derives it from the slug), then paste the whole thing:
 
 ```text
 Set up <Agent>, our canopy agent, on this machine and on canopy-web.
 Workspace: <workspace>. Repo: dimagi-internal/<slug>. Mailbox: <slug>@dimagi-ai.com.
-1Password vault: Agent-<Agent>.
+1Password vault: <vault>.
 
 Use the canopy-web MCP tools for anything on canopy-web (pass workspace "<workspace>"),
 and the canopy CLI for this machine. Skip any step that is already done, and show me
@@ -52,7 +52,7 @@ each result before moving on.
    dimagi-internal/<slug> and /plugin install <slug>@<slug> (slash commands are mine
    to type), and wait until I have.
 2. Run `canopy agent bootstrap --slug <slug> --dry-run`, show me the plan, then run it.
-3. Attach the agent's vault on canopy-web: vault Agent-<Agent>, with the token in the
+3. Attach the agent's vault on canopy-web: vault <vault>, with the token in the
    1Password item "canopy-web-service-account" in that vault. Read it with `op` and pass
    it straight to the tool, and never print it. Then read the vault status back and
    confirm key_set is true.
@@ -62,7 +62,7 @@ each result before moving on.
    Stop and walk me through any step that needs a person: signing in to Google as
    <slug>@dimagi-ai.com, accepting that invite as the agent, and minting the agent's own
    canopy-web token (do it in a private browser window signed in as the agent, and save
-   the token to 1Password at Agent-<Agent>/canopy-pat, never to my own
+   the token to 1Password at <vault>/canopy-pat, never to my own
    ~/.claude/canopy/workbench-token).
 6. When doctor is all green, mark the matching setup cards done on the agent's board,
    then run /<slug>:turn.
