@@ -37,23 +37,36 @@ browser UI for inspecting transcripts.
 > [plugins/canopy-web/README.md](plugins/canopy-web/README.md). Install that **or** the
 > full `canopy` plugin below, not both (the full plugin includes the same server).
 
-> **First step — try canopy-web with no install:** add it to claude.ai as a **custom
-> connector** (Settings → Connectors → Add custom connector) with the URL
-> `https://canopy.dimagi.com/api/mcp/`, and sign in with your canopy account.
+Getting started is three steps — the user-facing guide is
+**[canopy.dimagi.com/get-started](https://canopy.dimagi.com/get-started)**:
 
-Canopy installs as a Claude Code plugin from its marketplace. The fastest path on
-a new machine is the bundled setup skill, which is idempotent:
+1. **Install canopy.** The repo is public:
 
-```
-/canopy:setup
-```
+   ```
+   /plugin marketplace add dimagi-internal/canopy
+   /plugin install canopy@canopy
+   /canopy:setup
+   ```
 
-This provisions the state directory, the main checkout, the capture hook and the
-`canopy` CLI, signs you in to canopy-web in the browser, lets you pick a workspace, and
-installs that workspace's agents from its marketplace (`/w/<ws>/marketplace.json`, with
-auto-update on) — `canopy workspace connect <ws>`. It also says, without failing, whether
-the 1Password CLI is installed and signed in. Runners, vault keys and `gog` are not part of
-it (operators hosting agents: `canopy agent bootstrap`). To update an existing install
+   `/canopy:setup` is idempotent. It provisions the state directory, the main checkout, the
+   capture hook and the `canopy` CLI, signs you in to canopy-web in the browser, and
+   registers the private agent marketplace `canopy-<ws>` of EVERY workspace you belong to
+   (`/w/<ws>/marketplace.json`, auto-update on) in `~/.claude/settings.json` with canopy's
+   headers helper — `canopy workspace connect --all`. (Agents are split across workspaces
+   and each catalog lists only its own, so it connects them all rather than one you pick.)
+   That registration is the only reason a canopy command is involved: `claude plugin
+   marketplace add` can't send a token. It installs no agents; it ends with one combined
+   list of the agents on offer, each with its install line and its `/<agent>:setup`. It
+   also says, without failing, whether the 1Password CLI is installed and signed in.
+2. **Install an agent** — the normal Claude Code way, only the ones you choose:
+   `/plugin install <agent>@canopy-<ws>` (or the `/plugin` menu).
+3. **Set up the agent** — run that agent's own setup command, e.g. `/ace:setup`. It tells
+   you what that agent needs (credentials, 1Password, …).
+
+Agents are used by installing their plugin, not remotely. The claude.ai custom connector
+(`https://canopy.dimagi.com/api/mcp/`) is for canopy-web the product — board, sessions,
+settings — not for running agents. Runners, vault keys and `gog` are not part of any of
+this (operators hosting agents: `canopy agent bootstrap`). To update an existing install
 to the latest version from GitHub:
 
 ```

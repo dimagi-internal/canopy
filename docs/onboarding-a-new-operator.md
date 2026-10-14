@@ -98,13 +98,17 @@ Restart Claude Code (or `/reload-plugins`) so the new commands register.
 ```
 
 It is idempotent — safe to re-run — and provisions the state directory, the
-capture hook and the `canopy` CLI, signs you in to canopy-web in the browser, asks
-which workspace, and installs that workspace's agents (auto-updating). It also prints
+capture hook and the `canopy` CLI, signs you in to canopy-web in the browser, and
+registers the private agent marketplace `canopy-<ws>` of every workspace you belong to
+(auto-updating). It installs no agents: it lists them with their install
+lines (`/plugin install <agent>@canopy-<ws>`); install the ones you want, then run each
+agent's own setup command (e.g. `/ace:setup`). It also prints
 one line on the 1Password CLI without failing. As an operator you continue below —
 hosting an agent (runners, vault keys, `gog`) is not part of a user's setup.
 
-> Before any install, the quickest look is canopy-web as a claude.ai **custom
-> connector**: URL `https://canopy.dimagi.com/api/mcp/`.
+> To use canopy-web the product (board, sessions, settings) from claude.ai, add it as a
+> **custom connector**: URL `https://canopy.dimagi.com/api/mcp/`. Agents are not used that
+> way — you use an agent by installing its plugin.
 
 To update later: `/canopy:update`.
 
