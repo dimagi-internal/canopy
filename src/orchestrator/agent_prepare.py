@@ -75,6 +75,7 @@ class RunnerCredentials:
     github_token: str = field(default="", repr=False)
     mailbox: str = ""
     web_gog_token: Optional[str] = field(default=None, repr=False)
+    repo_url: str = ""
     error: str = ""
 
 
@@ -89,7 +90,16 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
     except Exception as e:  # noqa: BLE001
         return RunnerCredentials(error=f"could not reach canopy-web for {slug}'s credentials: "
                                        f"{_first_line(str(e), 200)}")
+    # Where the agent's code lives — canopy-web's record (`/runtime`), never a convention: an
+    # agent in another org or under another name would otherwise clone the wrong repo.
+    try:
+        rt = canopy_web.call("GET", f"/api/agents/{slug}/runtime", base_url=base_url,
+                             token=token, transport=transport) or {}
+        repo_url = str(rt.get("repo_url") or "").strip()
+    except Exception:  # noqa: BLE001 — the report says "no repo" if it matters
+        repo_url = ""
     return RunnerCredentials(
+        repo_url=repo_url,
         vault=str(body.get("op_vault") or ""), key=str(body.get("op_sa_token") or ""),
         shared_vault=str(body.get("shared_op_vault") or ""),
         shared_key=str(body.get("shared_op_sa_token") or ""),
@@ -229,7 +239,15 @@ class RunnerPreparer(Bootstrapper):
 
     def step_repo(self, slug: str, repo_url: str, rep: RunnerReport) -> Optional[Path]:
         dest = self.agent_root / slug
-        url = repo_url or f"https://github.com/dimagi-internal/{slug}"
+        url = repo_url or self.creds(slug).repo_url
+        if not url:
+            if (dest / ".git").is_dir():
+                rep.notes.append("repo not updated: canopy-web records no repository for "
+                                 f"{slug} — provisioning the clone as it is")
+                return dest
+            rep.fail(f"repo: canopy-web records no repository for {slug} — set it on the "
+                     "agent's settings")
+            return None
         if self.dry_run:
             rep.notes.append(f"repo: would {'pull' if (dest / '.git').is_dir() else 'clone'} {url}")
             return dest if (dest / ".git").is_dir() else None

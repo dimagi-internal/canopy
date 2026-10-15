@@ -136,7 +136,7 @@ def _repo(root: Path, slug="ace", *, gog_client="canopy", required=None, setup=F
 
 
 def _creds(**over):
-    base = dict(vault="Agent-Ace", key=AGENT_KEY, shared_vault="Canopy-Shared",
+    base = dict(repo_url="https://github.com/dimagi-internal/ace", vault="Agent-Ace", key=AGENT_KEY, shared_vault="Canopy-Shared",
                 shared_key=SHARED_KEY, github_token=GH, mailbox="ace@dimagi-ai.com",
                 web_gog_token=None)
     return RunnerCredentials(**{**base, **over})
@@ -302,3 +302,26 @@ def test_turn_readiness_names_a_real_mismatch(tmp_path):
     tok = SimpleNamespace(client="ace-legacy")
     assert turn_readiness(repo, tok, True) == ("canopy", False)
     assert turn_readiness(repo, None, False) == ("canopy", None)
+
+
+def test_the_repo_is_canopy_webs_record_never_a_naming_convention(tmp_path):
+    box = Box(tmp_path)
+    _prep(tmp_path, box, creds=_creds(repo_url="https://github.com/other-org/ace-fork")).prepare("ace")
+    (clone,) = [c for c in box.ran(["git"]) if "clone" in c[0]]
+    assert "https://github.com/other-org/ace-fork.git" in clone[0]
+    rep = _prep(tmp_path / "x", Box(tmp_path / "x"), creds=_creds(repo_url="")).prepare("ace")
+    assert any("records no repository" in n for n in rep.notes) and not rep.ok
+
+
+def test_runner_credentials_read_the_repo_from_runtime():
+    calls = []
+
+    def transport(method, url, headers, data):
+        calls.append(url)
+        if url.endswith("/runtime"):
+            return 200, '{"repo_url": "https://github.com/o/r"}'
+        return 200, '{"op_vault": "V", "op_sa_token": "k", "mailbox": "a@b"}'
+
+    c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
+                                    transport=transport)
+    assert (c.repo_url, c.vault, c.mailbox) == ("https://github.com/o/r", "V", "a@b")
