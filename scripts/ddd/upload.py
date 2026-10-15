@@ -205,6 +205,12 @@ def upload_narrative_video(
         narrative_slug, str(review_id), files, base_url=base_url, token=token,
     )
 
+    links = cut_product_links(
+        spec=_read_spec_quietly(files.get("recipe")),
+        manifest=_read_json_quietly(files.get("capture_manifest")),
+        cut=cut,
+    )
+
     data = Path(video_path).read_bytes()
     if cut:
         default_title = cut.get("title") or cut["id"]
@@ -221,6 +227,9 @@ def upload_narrative_video(
         narrative_review_id=str(review_id),
         cut_id=cut["id"] if cut else None,
         cut_scene_ids=list(cut.get("scene_ids") or []) if cut else None,
+        # The product screens this video films, so a reviewer can open them
+        # from the review link and the storyboard (canopy-web#1512).
+        links=links or None,
         base_url=base_url,
         token=token,
     )
@@ -232,6 +241,79 @@ def upload_narrative_video(
         "narrative_url": narrative_landing_url(narrative_slug, base_url),
         "sources": {role: bool(row.get("reused")) for role, row in pushed.items()},
     }
+
+
+def _read_spec_quietly(path: Path | None) -> dict:
+    """The recipe as a raw dict, or ``{}``: links are a courtesy, never a
+    reason to refuse an upload the sources check already allowed.
+
+    Composed with its narrative lock when one is beside it; otherwise the
+    recipe file alone, which is the half that holds ``base_url`` and each
+    scene's ``url`` anyway."""
+    if not path:
+        return {}
+    try:
+        from scripts.ddd.spec_io import load_spec_raw
+
+        return load_spec_raw(Path(path)) or {}
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
+    try:
+        import yaml
+
+        data = yaml.safe_load(Path(path).read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 - see docstring
+        return {}
+
+
+def _read_json_quietly(path: Path | None) -> dict:
+    if not path:
+        return {}
+    try:
+        data = json.loads(Path(path).read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 - a missing/garbled manifest just means no links
+        return {}
+
+
+def cut_product_links(*, spec: dict, manifest: dict, cut: dict | None) -> list[dict]:
+    """The live product screens a video films, as ``reference`` links.
+
+    For a cut, only that cut's scenes (``cut["scene_indexes"]``, 1-based, as the
+    recorder numbers them); for a whole-narrative video, every scene. The
+    recorder's manifest wins (its URLs are resolved and include pages the scene
+    navigated to); without one, the recipe's own scene ``url``. Relative URLs
+    are joined to the spec's ``base_url``; an unresolved ``${var}`` or a bare
+    origin is dropped, since neither is somewhere a reviewer can go.
+    """
+    wanted = set(cut.get("scene_indexes") or []) if cut else None
+    base = (manifest.get("base_url") or spec.get("base_url") or "").rstrip("/")
+    candidates: list[tuple[str, str]] = []
+    for s in manifest.get("slides") or []:
+        if s.get("type") != "scene" or (wanted is not None and s.get("scene_index") not in wanted):
+            continue
+        label = s.get("title") or "Scene"
+        candidates += [(label, u) for u in [s.get("url"), *(s.get("urls_visited") or [])] if u]
+    if not candidates:
+        for i, sc in enumerate(spec.get("scenes") or [], start=1):
+            if not isinstance(sc, dict) or (wanted is not None and i not in wanted):
+                continue
+            if sc.get("url"):
+                candidates.append((sc.get("title") or sc.get("id") or "Scene", sc["url"]))
+    out: list[dict] = []
+    seen: set[str] = set()
+    for label, url in candidates:
+        url = str(url).strip()
+        if url.startswith("/") and base:
+            url = base + url
+        if "${" in url or not url.startswith(("http://", "https://")):
+            continue
+        if url.split("://", 1)[1].rstrip("/").count("/") == 0 or url in seen:
+            continue
+        seen.add(url)
+        out.append({"label": str(label), "url": url, "kind": "reference"})
+    return out
 
 
 def _authored_path_candidates(run_dir: Path, narrative_slug: str, filename: str) -> list[Path]:
