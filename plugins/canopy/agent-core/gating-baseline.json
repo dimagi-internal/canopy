@@ -40,6 +40,19 @@
       "message": "BLOCKED: `Invoke-RestMethod` / `Invoke-WebRequest` with a write method. {slug}'s HTTP rails are written against `curl`, so this cmdlet would reach the same endpoint past every one of them. Send it as `curl.exe -X <METHOD> …` (or through the Bash tool) so the rails can see it. Reads — no -Method, or -Method Get — are not affected.",
       "agent_only": true,
       "_agent_only_doc": "Not applied in a session that belongs to no agent (canopy#849). It exists to route an AGENT's PowerShell HTTP writes into that agent's curl-form rails; a human's own session has no such rails, so here it would only block a legitimate write."
+    },
+    {
+      "tool": "Bash",
+      "per_statement": true,
+      "_pattern_doc": "1Password's LOCAL credential store. ~/.config/op/config holds the account's Secret Key (`accountKey`, the 2nd factor of the whole 1Password account) plus device secrets; the app's Group Container holds its settings and state. Anything an agent reads lands in the transcript, which is uploaded and reviewed. 2026-10-15: Ada `cat`-ed ~/.config/op/config through a sed meant to redact long tokens; the Secret Key is shorter and printed in full, and Jonathan had to rotate it. A redaction filter is prose in code form: the rail removes the read. Nothing legitimate needs these files: `op whoami` / `op account list` say who is signed in, and every secret is read through `op` itself (`op inject`, `op read` into a pipe). Matches the path anchored at a home directory (~, $HOME, /Users/<u>, /home/<u>), so grepping a repo for the string '.config/op' stays free.",
+      "pattern": "(?:~|\\$HOME|\\$\\{HOME\\}|/(?:Users|home)/[^/\\s\"\\']+)(?:/\\.config/op\\b|/\\.op/config\\b|/Library/Group(?:\\\\? |%20)Containers/2BUA8C4S2C\\.com\\.1password)",
+      "message": "BLOCKED: this touches 1Password's local credential store (~/.config/op or the 1Password app's Group Container). ~/.config/op/config contains the account's SECRET KEY, and whatever {slug} reads is written into the transcript (this exact leak happened 2026-10-15). There is no need to read it: `op whoami --account <acct>` / `op account list` show who is signed in. To act as the HUMAN's 1Password account (create a vault, mint a key via the agent's provisioning bin), use the unlocked desktop app: `unset OP_SERVICE_ACCOUNT_TOKEN; export OP_BIOMETRIC_UNLOCK_ENABLED=true` in the same command, with the Bash sandbox disabled (the sandbox blocks the app's IPC, which surfaces as 'not signed in' / 'operation not supported by device')."
+    },
+    {
+      "tool_pattern": "^(?:Read|Grep|Glob|Edit|Write|NotebookEdit|NotebookRead)$",
+      "_pattern_doc": "The same store, through the file tools (their input JSON / file_path). See the Bash rail above.",
+      "pattern": "(?:/\\.config/op\\b|/\\.op/config\\b|/Library/Group(?:\\\\? |%20)Containers/2BUA8C4S2C\\.com\\.1password)",
+      "message": "BLOCKED: this touches 1Password's local credential store (~/.config/op or the 1Password app's Group Container). ~/.config/op/config contains the account's SECRET KEY, and whatever {slug} reads is written into the transcript (this exact leak happened 2026-10-15). There is no need to read it: `op whoami --account <acct>` / `op account list` show who is signed in. To act as the HUMAN's 1Password account (create a vault, mint a key via the agent's provisioning bin), use the unlocked desktop app: `unset OP_SERVICE_ACCOUNT_TOKEN; export OP_BIOMETRIC_UNLOCK_ENABLED=true` in the same command, with the Bash sandbox disabled (the sandbox blocks the app's IPC, which surfaces as 'not signed in' / 'operation not supported by device')."
     }
   ],
   "channels": {
