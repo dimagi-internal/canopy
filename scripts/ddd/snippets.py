@@ -327,6 +327,119 @@ def _mark_words(action: dict[str, Any]) -> list[str]:
     return out
 
 
+class SayAnchorDriftError(ValueError):
+    """The spec's ``say:`` anchors differ from the recording's and can't be re-paired.
+
+    Raised at emit when a scene's CURRENT spec actions no longer line up 1:1 with
+    the actions the recorder filmed, so the edited ``say:`` words cannot be
+    attached to the right footage moments. The only correct fix is a re-record."""
+
+
+_VAR_RE = re.compile(r"\$\{[^}]*\}")
+
+
+def _say_of(action: dict[str, Any]) -> str | None:
+    v = action.get("say") or action.get("word")
+    v = str(v).strip().lower() if v else ""
+    return v or None
+
+
+def _targets_match(spec_target: Any, report_target: Any) -> bool:
+    """The report carries the ``${var}``-RESOLVED target (the recorder late-binds
+    it), so a templated spec target matches any resolution of its placeholders."""
+    st, rt = str(spec_target or ""), str(report_target or "")
+    if st == rt:
+        return True
+    if "${" not in st:
+        return False
+    pattern = "^" + ".*".join(re.escape(part) for part in _VAR_RE.split(st)) + "$"
+    return re.match(pattern, rt, re.DOTALL) is not None
+
+
+def reconcile_say_anchors(
+    spec: dict[str, Any], report: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Make the marks honour the CURRENT spec's ``say:`` words, not the frozen report's.
+
+    The recorder copies ``say:`` onto each action result, and the marks are built
+    from those report actions — so a ``say:`` added to (or changed in) the recipe
+    AFTER recording silently never reached the render (canopy#911). ``say:`` has
+    no effect on what the recorder does (it is only carried onto the result), so
+    re-anchoring is safe whenever the scene's spec actions still pair 1:1 with
+    the filmed ones: same count, same kinds, same targets (``${var}`` matching
+    any resolution). Those scenes get the spec's words copied onto a COPY of the
+    report actions — added, changed, and removed alike.
+
+    A scene whose actions no longer pair (an action added, dropped or reordered
+    since recording) cannot be re-anchored without guessing which footage moment
+    a word belongs to. If its ``say:`` anchors differ from the recording's, this
+    raises :class:`SayAnchorDriftError` naming them — re-record. Scenes whose
+    spec declares no actions (a lock-only spec) are left as recorded.
+
+    Returns ``(report, notes)``: the report (a shallow copy whose ``actions`` are
+    copies, when anything changed) and one human line per re-anchored scene. PURE.
+    """
+    spec_scenes = spec.get("scenes") or []
+    actions = report.get("actions") or []
+    by_scene: dict[int, list[int]] = {}
+    for i, a in enumerate(actions):
+        idx = a.get("scene_index")
+        if idx is not None:
+            by_scene.setdefault(int(idx), []).append(i)
+
+    new_actions = list(actions)
+    notes: list[str] = []
+    problems: list[str] = []
+    for idx, positions in sorted(by_scene.items()):
+        if not 0 < idx <= len(spec_scenes):
+            continue
+        spec_actions = [a for a in (spec_scenes[idx - 1].get("actions") or []) if isinstance(a, dict)]
+        if not spec_actions:
+            continue
+        rec = [actions[i] for i in positions]
+        spec_says = [_say_of(a) for a in spec_actions]
+        rec_says = [_say_of(a) for a in rec]
+        paired = len(spec_actions) == len(rec) and all(
+            sa.get("kind") == ra.get("kind") and _targets_match(sa.get("target"), ra.get("target"))
+            for sa, ra in zip(spec_actions, rec)
+        )
+        if paired:
+            if spec_says == rec_says:
+                continue
+            changed = []
+            for pos, sa, ra, new_say, old_say in zip(positions, spec_actions, rec, spec_says, rec_says):
+                if new_say == old_say:
+                    continue
+                fixed = {k: v for k, v in ra.items() if k not in ("say", "word")}
+                if new_say:
+                    fixed["say"] = new_say
+                new_actions[pos] = fixed
+                changed.append(f"{old_say or '∅'}→{new_say or '∅'}")
+            notes.append(
+                f"  · scene {idx}: re-anchored {len(changed)} say: word(s) from the "
+                f"current spec (recorded with different ones): {', '.join(changed)}"
+            )
+            continue
+        spec_set = [w for w in spec_says if w]
+        rec_set = [w for w in rec_says if w]
+        if spec_set != rec_set:
+            problems.append(
+                f"scene {idx}: spec say: anchors {spec_set} differ from the recorded "
+                f"{rec_set}, and the scene's actions changed since recording "
+                f"({len(spec_actions)} in the spec vs {len(rec)} filmed, or a kind/"
+                f"target differs) so the words cannot be re-paired with footage"
+            )
+    if problems:
+        raise SayAnchorDriftError(
+            "say: anchors in the spec no longer match the recording — re-record "
+            "the walkthrough so the marks carry them (canopy#911):\n  "
+            + "\n  ".join(problems)
+        )
+    if new_actions == list(actions):
+        return report, notes
+    return {**report, "actions": new_actions}, notes
+
+
 def _within(segs: list[tuple[float, float]], t: float | None) -> bool:
     """True when absolute time ``t`` falls inside one of ``segs``. PURE."""
     if t is None:
@@ -629,6 +742,12 @@ def build_snippets(
     snippets: list[dict[str, Any]] = []
 
     for line in lint_capture_health(report):
+        print(line)
+
+    # The report froze the spec's say: words at recording time; honour edits made
+    # since (or refuse, naming them) before any mark is built — canopy#911.
+    report, _say_notes = reconcile_say_anchors(spec, report)
+    for line in _say_notes:
         print(line)
 
     for rs in report_scenes:

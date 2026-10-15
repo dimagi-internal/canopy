@@ -108,6 +108,15 @@ Writing the narration:
 - A scene in no cut is recorded but not rendered (useful as a reset step).
 - `role: overview` is allowed but not required. In recorded mode it plays as
   an ordinary screen, never as a title card.
+- Put a `say: <word>` on every action the narration names (the word it
+  should land on). Recorded cuts depend on it for voice-to-screen sync: a
+  hover on a css target with no note has no other word to bind, so without
+  `say:` it gets no mark and plays wherever it falls. Adding or changing
+  `say:` after recording is fine. The emitter takes the words from the
+  current spec as long as the scene's actions still match the recording
+  (same count, kinds and targets). If you also added, removed or reordered
+  actions, it refuses with `SayAnchorDriftError` naming the anchors, and you
+  must re-record.
 
 ## 2. Lint before recording
 
