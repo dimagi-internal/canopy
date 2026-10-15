@@ -17,7 +17,7 @@ does.
 | What's left to do | canopy-web `apps/agents/setup.py` (`GET /api/agents/<slug>/setup`) | Settings page, create wizard, `/canopy:create-agent` (MCP `agent_setup`) |
 | Vault + its values + key | `canopy agent vault` (`src/orchestrator/agent_vault.py`) | the checklist's Vault step; `/canopy:create-agent`; Ada's `bin/ada-vault-provision` (a shim) |
 | The agent's canopy identity | canopy-web `POST /api/agents/<slug>/canopy-token` | `canopy agent vault` only (MCP twin deny-railed) |
-| Make a machine ready | `canopy agent bootstrap` (laptop) · `runner/ec2/bootstrap_agents.sh` (box) | — **phase 2 makes the box call the canopy one** |
+| Make an agent runnable here | `canopy agent prepare` (`agent_prepare.py`; person mode = `canopy agent bootstrap`) | cloud box bootstrap + each claim, laptop runner at claim — **phase 2 switches them over** |
 | Is it working | fleet facts: canopy-web `agent_setup` (+ `readiness`); this machine: `canopy agent doctor` | the doctor's `canopy-web setup` check reads `agent_setup` |
 
 ## What a person types vs what the system produces
@@ -36,9 +36,14 @@ means adding it to `KINDS`, so no one is ever asked for it.
    `deploy/secrets/bootstrap_1password.sh` deleted. canopy: `canopy agent vault`, the scaffold's
    live `CANOPY_WEB_PAT` line, baseline rails for the raw paths. ada: `bin/ada-vault-provision`
    → shim.
-2. **One machine bootstrap.** `bootstrap_agents.sh` keeps box-level setup (packages, gog's file
-   keyring) and calls `canopy agent bootstrap --service-account` per agent, which reads the
-   agent's key from canopy-web instead of a person's 1Password. Drilled on a standby box first.
+2. **One agent preparation (in progress).** Not "port the bash": the batch-at-boot shape is
+   itself wrong — the cloud runner had already grown per-claim patches (env refresh, lazy
+   clone, pull) because a boot-time pass goes stale, and the laptop runner prepared nothing.
+   So: `canopy agent prepare --slug <s> --runner` is the one per-agent, idempotent
+   implementation (shipped first, unused); runners call it — the cloud box behind a per-box
+   switch, drilled on a standby box, then the laptop runner at claim; then
+   `bootstrap_agents.sh` shrinks to box provisioning (packages, gog's file keyring, the
+   canopy plugin and CLI) and the unwired `canopy_runtime` reconciler is retired.
 3. **One validation story (shipped 2026-10-15).** `canopy agent doctor`'s `canopy-web setup`
    check reads `agent_setup` for every fleet fact (repo, GitHub, mailbox, vault, runner, job,
    first turn) instead of pinging the board; the doctor keeps only what is true of THIS
