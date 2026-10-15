@@ -290,8 +290,15 @@ class Report:
 
 def _web(token, transport, workspace):
     def call(method: str, path: str, body=None):
-        return canopy_web.call(method, path, body, token=token, workspace=workspace,
-                               transport=transport)
+        try:
+            return canopy_web.call(method, path, body, token=token, workspace=workspace,
+                                   transport=transport)
+        except canopy_web.CanopyError as e:
+            text = str(e)
+            if " -> 404:" in text and "<html" in text.lower():
+                raise VaultError(f"canopy-web has no {method} {path} — it is running an older "
+                                 "version than this canopy; deploy it, then re-run") from None
+            raise VaultError(f"canopy-web refused {method} {path}: {text[:300]}") from None
     return call
 
 
@@ -306,10 +313,7 @@ def run(slug: str, *, token: str, workspace: str = "", vault: str = "",
     rep = Report(slug=slug)
 
     # 1. canopy-web
-    try:
-        agent = web("GET", f"/api/agents/{slug}/")
-    except canopy_web.CanopyError as e:
-        raise VaultError(f"cannot read agent {slug} on canopy-web: {str(e)[:200]}")
+    agent = web("GET", f"/api/agents/{slug}/")
     ws = workspace or str(agent.get("workspace") or "")
     web = _web(token, transport, ws or None)
     if not agent.get("is_admin") and not check:
@@ -415,7 +419,7 @@ def run(slug: str, *, token: str, workspace: str = "", vault: str = "",
         try:
             after = web("PUT", f"/api/agents/{slug}/vault",
                         {"vault": rep.vault, "service_key": key})
-        except canopy_web.CanopyError as e:
+        except VaultError as e:
             raise VaultError(f"minted {name} but canopy-web refused it ({str(e)[:200]}). The "
                              f"service account is live and stored NOWHERE: delete {name} in "
                              "1Password (Developer → Service accounts), fix the cause, re-run.")
@@ -446,8 +450,11 @@ def render(rep: Report) -> str:
         lines.append(f"  {r.item:<{width}}  {r.kind:<7} {r.state:<13} {r.note}")
     lines.append(f"  key: {rep.key}")
     lines += [f"  note: {n}" for n in rep.notes]
-    if rep.missing:
-        names = ", ".join(r.item for r in rep.missing)
-        lines.append(f"  STILL EMPTY: {names} — re-run to be asked, or fill them in 1Password "
-                     f"({rep.vault})")
+    minted = [r.item for r in rep.missing if r.kind == MINTED]
+    asked = [r.item for r in rep.missing if r.kind != MINTED]
+    if minted:
+        lines.append(f"  STILL EMPTY: {', '.join(minted)} — re-run without --check to mint")
+    if asked:
+        lines.append(f"  STILL EMPTY: {', '.join(asked)} — re-run in a terminal to be asked, or "
+                     f"fill them in 1Password ({rep.vault})")
     return "\n".join(lines)

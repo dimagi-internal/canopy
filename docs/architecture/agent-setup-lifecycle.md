@@ -18,7 +18,7 @@ does.
 | Vault + its values + key | `canopy agent vault` (`src/orchestrator/agent_vault.py`) | the checklist's Vault step; `/canopy:create-agent`; Ada's `bin/ada-vault-provision` (a shim) |
 | The agent's canopy identity | canopy-web `POST /api/agents/<slug>/canopy-token` | `canopy agent vault` only (MCP twin deny-railed) |
 | Make a machine ready | `canopy agent bootstrap` (laptop) · `runner/ec2/bootstrap_agents.sh` (box) | — **phase 2 makes the box call the canopy one** |
-| Is it working | `canopy agent doctor` (repo) · canopy-web `readiness` (box) | — **phase 3 makes doctor read the server's checks** |
+| Is it working | fleet facts: canopy-web `agent_setup` (+ `readiness`); this machine: `canopy agent doctor` | the doctor's `canopy-web setup` check reads `agent_setup` |
 
 ## What a person types vs what the system produces
 
@@ -39,6 +39,11 @@ means adding it to `KINDS`, so no one is ever asked for it.
 2. **One machine bootstrap.** `bootstrap_agents.sh` keeps box-level setup (packages, gog's file
    keyring) and calls `canopy agent bootstrap --service-account` per agent, which reads the
    agent's key from canopy-web instead of a person's 1Password. Drilled on a standby box first.
-3. **One validation story.** `canopy agent doctor` reads `agent_setup` + `readiness` for every
-   server-side fact and keeps only repo-local checks (rails fire, hooks, plugins), so the
-   checklist and the doctor cannot disagree.
+3. **One validation story (shipped 2026-10-15).** `canopy agent doctor`'s `canopy-web setup`
+   check reads `agent_setup` for every fleet fact (repo, GitHub, mailbox, vault, runner, job,
+   first turn) instead of pinging the board; the doctor keeps only what is true of THIS
+   machine (local auth, plugins, rails firing, the materialized `~/.<slug>/.env` — now
+   actually checked for `.env.tpl` agents, every key present with a value). Its `.env.tpl`
+   manifest check uses `agent_vault`'s parser and `KINDS`. Making the checklist trustworthy
+   enough to read came first: its mailbox step now also accepts a box's `turn_ready`
+   (canopy-web#1502) — it had read "todo" for four agents whose mail worked.

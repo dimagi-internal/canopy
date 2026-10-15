@@ -234,6 +234,26 @@ def test_a_refused_key_upload_says_the_minted_account_must_be_deleted(repo):
     assert SECRET_KEY not in str(e.value)
 
 
+def test_a_canopy_web_without_the_route_says_deploy_it_not_a_traceback(repo):
+    class Old(FakeWeb):
+        def __call__(self, method, url, headers, data):
+            if "canopy-token" in url:
+                self.calls.append((method, url, None))
+                return 404, "<!doctype html><html><title>Not Found</title></html>"
+            return super().__call__(method, url, headers, data)
+
+    with pytest.raises(av.VaultError, match="older version than this canopy; deploy it"):
+        _run(Old(vault="Agent-Lex", key_set=True), FakeOp({"Agent-Lex": {}}), repo)
+
+
+def test_the_report_says_how_each_empty_value_gets_filled(repo):
+    rep = _run(FakeWeb(vault="Agent-Lex", key_set=True), FakeOp({"Agent-Lex": {}}), repo,
+               check=True)
+    printed = av.render(rep)
+    assert "canopy-pat — re-run without --check to mint" in printed
+    assert "kc-api-key, gdrive-root-folder — re-run in a terminal to be asked" in printed
+
+
 def test_values_are_written_through_stdin_never_argv():
     """argv is visible to every process on the box (`ps`); stdin is not."""
     seen = []

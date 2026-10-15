@@ -287,15 +287,25 @@ def check_secrets_manifest(repo: Path) -> CheckResult:
     secrets_yaml = repo / "config" / "secrets.yaml"
 
     if env_tpl.exists():
-        var_lines = [
-            l for l in env_tpl.read_text(encoding="utf-8").splitlines()
-            if l.strip() and not l.strip().startswith("#") and "=" in l
-        ]
-        op_refs = sum(1 for l in var_lines if "op://" in l)
+        # The same parser and table `canopy agent vault` fills the vault from, so what the
+        # doctor says a template needs is exactly what that command will produce.
+        from orchestrator.agent_vault import PAT_ITEM, kind_of, parse_refs
+
+        text = env_tpl.read_text(encoding="utf-8")
+        keys = _template_keys(text)
+        refs, literal = parse_refs(text)
+        kinds = ", ".join(f"{item} ({kind_of(item).kind})" for item, _ in refs) or "none"
+        notes = []
+        if literal:
+            notes.append(f"names vault(s) {', '.join(literal)} literally — use "
+                         "op://${AGENT_VAULT}/… so the instance's vault is used")
+        if PAT_ITEM not in {i for i, _ in refs}:
+            notes.append("no CANOPY_WEB_PAT line, so its turns use a person's canopy token")
         return CheckResult(
             name, True,
-            f".env.tpl ({len(var_lines)} var(s), {op_refs} op:// ref(s)) — primary manifest; "
-            "resolve with `op inject -i .env.tpl -o ~/.<agent>/.env`",
+            f".env.tpl ({len(keys)} var(s); vault refs: {kinds}) — filled by "
+            "`canopy agent vault`, materialized by `/<agent>:setup`"
+            + ("; note: " + "; ".join(notes) if notes else ""),
         )
 
     if secrets_yaml.exists():
@@ -335,7 +345,24 @@ def check_secrets_manifest(repo: Path) -> CheckResult:
     )
 
 
-def check_secrets_materialized(repo: Path) -> CheckResult:
+def _template_keys(text: str) -> list[str]:
+    """The KEY of every `KEY=value` line in an .env.tpl (comments skipped)."""
+    return [l.split("=", 1)[0].strip() for l in text.splitlines()
+            if l.strip() and not l.strip().startswith("#") and "=" in l]
+
+
+def env_home(repo: Path, home: Path | None = None) -> Path:
+    """Where `canopy agent env` writes this agent's env: ~/.<plugin>/.env (its default)."""
+    from orchestrator.agent_web import AgentWebError, resolve_identity
+
+    try:
+        slug = resolve_identity(Path(repo))["slug"]
+    except (AgentWebError, OSError, ValueError):
+        slug = Path(repo).name
+    return (home or Path.home()) / f".{slug}" / ".env"
+
+
+def check_secrets_materialized(repo: Path, *, home: Path | None = None) -> CheckResult:
     """The manifest's targets actually EXIST on this machine.
 
     `check_secrets_manifest` proves the repo *declares* what it needs; it says nothing about
@@ -344,18 +371,36 @@ def check_secrets_materialized(repo: Path) -> CheckResult:
     resolved files (`~/.<slug>/.env`, `credentials-<client>.json`). Fixable non-interactively,
     so `--fix` heals it.
 
-    `.env.tpl` has no declared-target field (unlike `secrets.yaml`'s `env.target`), so there is
-    no structural way to know where `op inject` was told to write — this check SKIPS for
-    `.env.tpl`-primary agents rather than guessing a path.
+    For `.env.tpl` the target is `canopy agent env`'s default, `~/.<slug>/.env`: every KEY the
+    template declares must be there with a value. An empty one is a vault item nobody filled
+    — `canopy agent vault --slug <slug>` fills it. (Until 2026-10-15 this check skipped
+    `.env.tpl` agents entirely, so a half-filled vault passed.) Values are read, never shown.
     """
     name = "Secrets materialized"
     repo = Path(repo)
     if (repo / ".env.tpl").exists():
-        return CheckResult(
-            name, True,
-            "skipped — .env.tpl declares no target field to check; verify manually with "
-            "`op inject -i .env.tpl -o ~/.<agent>/.env` (or `op inject --check`)",
-        )
+        target = env_home(repo, home)
+        slug = target.parent.name.lstrip(".")
+        if not target.exists():
+            return CheckResult(
+                name, False,
+                f"{target} does not exist on this machine — run `/{slug}:setup` "
+                f"(`canopy agent env --plugin {slug}`)",
+            )
+        have = {}
+        for line in target.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                k, v = line.split("=", 1)
+                have[k.strip()] = bool(v.strip())
+        want = _template_keys((repo / ".env.tpl").read_text(encoding="utf-8"))
+        missing = [k for k in want if k not in have]
+        empty = [k for k in want if have.get(k) is False]
+        if missing or empty:
+            bits = ([f"missing {', '.join(missing)} (re-run `/{slug}:setup`)"] if missing else []) + (
+                [f"empty {', '.join(empty)} (`canopy agent vault --slug {slug}` fills the vault, "
+                 f"then `/{slug}:setup`)"] if empty else [])
+            return CheckResult(name, False, f"{target}: " + "; ".join(bits))
+        return CheckResult(name, True, f"{target} has all {len(want)} var(s) with values")
     if not (repo / "config" / "secrets.yaml").exists():
         return CheckResult(name, True, "skipped — no canopy provision manifest (see Secrets manifest)")
     try:
@@ -845,17 +890,25 @@ def check_required_plugins(repo: Path, *, registry_path: str | None = None) -> C
     return CheckResult(name, True, f"all {len(declared)} declared plugin(s) installed ({names})")
 
 
-def check_registration(
+SETUP_CHECK = "canopy-web setup"
+
+
+def check_setup(
     identity: EmailIdentity | None,
     *,
     client_factory=AgentClient,
 ) -> CheckResult:
-    """Agent registered on canopy-web and its board reachable (one live GET)."""
-    name = "canopy-web board"
+    """Everything about the agent that is FLEET state — repo, GitHub identity, mailbox, vault,
+    runner, job, first turn — read from canopy-web's own setup checklist (one live GET), not
+    re-derived here. The doctor keeps only what is true of THIS machine (local auth, plugins,
+    rails firing, the materialized env); canopy-web answers the rest, so the doctor and the
+    Settings page can never disagree (docs/architecture/agent-setup-lifecycle.md, phase 3).
+    It replaced a board-reachability ping that said nothing about what was left to do."""
+    name = SETUP_CHECK
     if identity is None:
         return CheckResult(name, False, "skipped — identity unresolved")
     try:
-        pending = client_factory({"slug": identity.slug}).pending_actions()
+        steps = client_factory({"slug": identity.slug}).setup_steps()
     except CanopyError as e:
         msg = str(e)
         if "404" in msg or "not found" in msg.lower():
@@ -867,7 +920,16 @@ def check_registration(
         return CheckResult(name, False, msg)
     except RuntimeError as e:  # missing PAT / transport config
         return CheckResult(name, False, str(e))
-    return CheckResult(name, True, f"registered; board reachable ({len(pending)} pending action(s))")
+    left = [s for s in steps if s.get("status") not in ("done", "optional")]
+    if not left:
+        return CheckResult(name, True, f"registered; all {len(steps)} setup step(s) done")
+    parts = []
+    for s in left:
+        how = (f" — run `{s['command']}`" if s.get("where") == "terminal" and s.get("command")
+               else "")
+        parts.append(f"{s.get('title', s.get('key'))} ({s.get('status')}){how}")
+    return CheckResult(name, False, f"{len(left)} of {len(steps)} setup step(s) left on "
+                                    f"canopy-web: " + "; ".join(parts))
 
 
 def _default_provisioner(repo: Path) -> str:
@@ -891,7 +953,7 @@ def _default_registrar(repo: Path) -> str:
 # a doctor that half-performs an interactive step leaves a worse mess than one that asks.
 FIXERS = {
     "Secrets materialized": ("canopy provision", _default_provisioner),
-    "canopy-web board": ("canopy agent-publish register", _default_registrar),
+    SETUP_CHECK: ("canopy agent-publish register", _default_registrar),
 }
 
 
@@ -901,6 +963,10 @@ def heal_agent(repo: Path, results: list[CheckResult], *, fixers=None) -> list[t
     actions: list[tuple[str, bool, str]] = []
     for r in results:
         if r.ok or r.name not in fixers:
+            continue
+        # Registering fixes "not registered" — not a setup step left on canopy-web (a vault,
+        # a mailbox): those are a person's to do, and the check names how.
+        if r.name == SETUP_CHECK and "not registered" not in r.detail:
             continue
         label, fn = fixers[r.name]
         try:
@@ -937,7 +1003,7 @@ def run_agent_doctor(
         email_result := check_email_auth(identity, gog_dir=gog_dir, runner=runner),
         check_auth_client(identity, runner=runner),
         check_auth_services(identity, runner=runner),
-        check_registration(identity, client_factory=client_factory),
+        check_setup(identity, client_factory=client_factory),
         check_dependency_upgrades(runner=runner),
         # The live gog call above is the "gog was used" evidence that lets a
         # prompt-free keychain log confirm (or clear) the date heuristic.
