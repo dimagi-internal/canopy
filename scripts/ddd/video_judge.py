@@ -70,21 +70,53 @@ def word_start(align: dict, stem: str) -> float | None:
     return st[idx] if 0 <= idx < len(st) else None
 
 
+class AmbiguousAlignmentError(ValueError):
+    """More than one VO sidecar matches a narration with DIFFERENT timings."""
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.split())
+
+
 def find_alignment(audio_dir: str, narration: str) -> dict | None:
-    for f in os.listdir(audio_dir):
+    """Return the alignment of the clip synthesized from exactly ``narration``.
+
+    The voiceover engine synthesizes ``narration.strip()`` per beat and writes a
+    sidecar recording that ``text`` (video-engine/src/lib/voiceover.ts), so the key
+    is the FULL text, whitespace-normalized. A prefix match is wrong: recorded cuts
+    share a required opener ("This is a quick overview of how we ..."), and a
+    25-char prefix handed every cut whichever sidecar ``os.listdir`` listed first
+    (canopy#910). Several sidecars of the same text with identical timings are
+    harmless; with different timings (e.g. another voice) the right one cannot be
+    told apart, so this raises rather than pick one.
+    """
+    want = _norm(narration)
+    if not want:
+        return None
+    hits: list[tuple[str, dict]] = []
+    for f in sorted(os.listdir(audio_dir)):
         if not f.endswith(".json"):
             continue
         try:
             d = json.load(open(os.path.join(audio_dir, f)))
         except (json.JSONDecodeError, OSError):
             continue
-        a = d.get("alignment")
+        a = d.get("alignment") if isinstance(d, dict) else None
         if not a or not a.get("characters"):
             continue
-        text = "".join(a["characters"]).strip()
-        if text and narration.startswith(text[:25]):
-            return a
-    return None
+        text = d.get("text") or "".join(a["characters"])
+        if _norm(text) == want:
+            hits.append((f, a))
+    if not hits:
+        return None
+    first = hits[0][1]
+    if any(a != first for _, a in hits[1:]):
+        names = ", ".join(f for f, _ in hits)
+        raise AmbiguousAlignmentError(
+            f"{len(hits)} VO sidecars in {audio_dir} match this narration with different "
+            f"timings ({names}); point the judge at the run's own audio dir"
+        )
+    return first
 
 
 def resolve_anchors(marks: list[dict], align: dict, vo_sec: float) -> list[dict]:
