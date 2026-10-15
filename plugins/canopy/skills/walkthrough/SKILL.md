@@ -1037,6 +1037,19 @@ actions:
   - { kind: wait_for, target: "Resolved wards" }   # bare text — heuristic routes correctly
 ```
 
+A bare text target that is only PART of a larger node ("Rijiyar Kwara" inside
+"Rijiyar Kwara (Kano)") resolves as fast as `text:` — the resolver waits once
+on the substring match and prefers an exact match only through a non-blocking
+probe. (Before canopy#912 it waited out a ~3 s exact-match timeout first, which
+pushed every later beat of a `style: recorded` cut off its spoken word.)
+
+**`--snapshots` stays out of the film.** A full-page per-scene capture resizes
+the live viewport, so the master clip shows the page shrunk onto grey for ~1.5 s.
+The recorder logs each such span in the run report's `capture_spans`, and the
+emitter (`scripts.ddd.snippets`) cuts it out of every segment — explainer and
+recorded cuts alike. Viewport captures (`full_page: false`) resize nothing and
+log no span. Never hand-edit segments to hide it.
+
 Anti-pattern: don't write a fragile `:nth-of-type` CSS path when a `testid:`
 would survive a sidebar refactor. Same for `nth-child` chains pointing at
 unstable structural positions — those targets silently break the day someone
