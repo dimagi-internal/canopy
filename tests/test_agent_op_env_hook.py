@@ -121,3 +121,65 @@ def test_exports_the_bound_instance_vault_and_never_guesses_one(tmp_path):
     r, ef2, _ = _run(tmp_path / "nobind" if (tmp_path / "nobind").mkdir() is None else tmp_path,
                      have_key=True)
     assert "AGENT_VAULT" not in (ef2.read_text() if ef2.exists() else "")
+
+
+def _plugin_binding(home, dirname, binding):
+    d = home / ".claude" / "plugins" / "data" / dirname
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "canopy-instance.json").write_text(json.dumps(binding))
+
+
+def _installed(home, *keys):
+    p = home / ".claude" / "plugins" / "installed_plugins.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"version": 2, "plugins": {k: [{}] for k in keys}}))
+
+
+ACE = {"plugin": "ace", "agent": "ace", "vault": "Agent-ACE"}
+
+
+def test_ada_style_binding_in_the_home_dot_dir(tmp_path):
+    r, ef, _ = _run(tmp_path, slug="ada", have_key=True,
+                    binding={"plugin": "ada", "agent": "ada", "vault": "Agent-Ada"})
+    assert r.returncode == 0 and r.stdout == ""
+    assert ef.read_text() == "export AGENT_VAULT=Agent-Ada\nexport AGENT_SLUG=ada\n"
+
+
+def test_ace_style_binding_in_the_plugin_data_dir(tmp_path):
+    """ACE's setup writes its env + binding to $CLAUDE_PLUGIN_DATA (ace-<marketplace>)."""
+    home = tmp_path / "home"
+    _plugin_binding(home, "ace-ace", ACE)
+    # another plugin whose name merely starts with "ace-" is not ACE's binding
+    _plugin_binding(home, "ace-tools-x", {"plugin": "ace-tools", "agent": "t", "vault": "T"})
+    r, ef, _ = _run(tmp_path, slug="ace", have_key=True)
+    assert r.returncode == 0 and r.stdout == ""
+    assert ef.read_text() == "export AGENT_VAULT=Agent-ACE\nexport AGENT_SLUG=ace\n"
+
+
+def test_several_plugin_data_bindings_prefer_the_installed_plugin(tmp_path):
+    home = tmp_path / "home"
+    _plugin_binding(home, "ace-ace", {**ACE, "vault": "Stale"})
+    _plugin_binding(home, "ace-canopy-agents", ACE)
+    _installed(home, "ace@canopy-agents", "canopy@canopy")
+    r, ef, _ = _run(tmp_path, slug="ace", have_key=True)
+    assert r.returncode == 0 and r.stdout == ""
+    assert ef.read_text() == "export AGENT_VAULT=Agent-ACE\nexport AGENT_SLUG=ace\n"
+
+
+def test_ambiguous_bindings_export_nothing_and_say_so_once(tmp_path):
+    home = tmp_path / "home"
+    _plugin_binding(home, "ace-ace", {**ACE, "vault": "One"})
+    _plugin_binding(home, "ace-inline", {**ACE, "vault": "Two"})
+    _installed(home, "canopy@canopy")       # neither ace dir is an installed plugin
+    r, ef, _ = _run(tmp_path, slug="ace", have_key=True)
+    assert r.returncode == 0
+    assert "AGENT_VAULT" not in (ef.read_text() if ef.exists() else "")
+    lines = [ln for ln in r.stdout.splitlines() if "AGENT_VAULT" in ln]
+    assert len(lines) == 1 and "ace-ace" in lines[0] and "ace-inline" in lines[0]
+
+
+def test_the_home_dot_dir_binding_wins_over_plugin_data(tmp_path):
+    home = tmp_path / "home"
+    _plugin_binding(home, "ace-ace", {**ACE, "vault": "FromPluginData"})
+    r, ef, _ = _run(tmp_path, slug="ace", have_key=True, binding=ACE)
+    assert ef.read_text() == "export AGENT_VAULT=Agent-ACE\nexport AGENT_SLUG=ace\n"

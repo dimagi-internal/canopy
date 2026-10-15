@@ -126,7 +126,10 @@ canopy agent env --plugin <plugin> [--template .env.tpl] [--out ~/.<plugin>/.env
 3. **Binding.** Recorded beside the output: `~/.<plugin>/canopy-instance.json`
    (`{plugin, agent, workspace, vault, bound_at}`). Re-running for a DIFFERENT instance refuses
    unless `--force` — an install never switches instance by accident; using another instance
-   means running setup again.
+   means running setup again. The `agent_op_env` SessionStart hook exports the binding's
+   `AGENT_VAULT`/`AGENT_SLUG` into agent sessions, finding it in `~/.<slug>/` or, for an agent
+   whose setup writes to its plugin data dir (ACE), `~/.claude/plugins/data/<slug>-<marketplace>/`
+   (several there → the installed one; still ambiguous → nothing exported, one line).
 4. **Fill.** `op inject -i <template> -o <out>` with `AGENT_VAULT=<vault>` and
    `AGENT_SLUG=<instance>` in its environment. `op` missing / not signed in / vault unreadable
    → one message naming the vault, `dimagi.1password.com`, and "ask the agent's owner for access".
