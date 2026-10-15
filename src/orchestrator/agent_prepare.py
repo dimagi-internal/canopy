@@ -431,7 +431,7 @@ class RunnerPreparer(Bootstrapper):
                              f"{slug} — `canopy agent vault --slug {slug}`")
         repo = self.agent_root / slug
         if env_only:
-            self._env(slug, repo, rep)
+            self._env_sync(slug, repo, rep)
             return rep
         if not credentials_only:
             repo = self.step_repo(slug, repo_url, rep)
@@ -466,6 +466,32 @@ class RunnerPreparer(Bootstrapper):
         if report:
             self.report(slug, rep)
         return rep
+
+    def _env_sync(self, slug: str, repo: Path, rep: RunnerReport) -> None:
+        """The claim-time refresh: canopy's `cred sync` (the function every agent session's
+        start hook runs) — re-inject only when the vault or template changed, keep the last
+        good file on failure. ONE implementation; cloud_runner used to carry its own."""
+        from orchestrator.cred_cli import CredError, sync_env
+
+        c = self.creds(slug)
+        if not (c.vault and c.key):
+            rep.env, rep.env_ok = "skipped", None
+            return
+        saved = {k: os.environ.get(k) for k in ("OP_SERVICE_ACCOUNT_TOKEN", "AGENT_VAULT",
+                                                  "AGENT_SLUG")}
+        os.environ.update(OP_SERVICE_ACCOUNT_TOKEN=c.key, AGENT_VAULT=c.vault, AGENT_SLUG=slug)
+        try:
+            rep.env = sync_env(slug, ttl=0, runner=self.run, repo=repo)
+            rep.env_ok = True
+        except CredError as e:
+            rep.env, rep.env_ok = "FAIL", False
+            rep.fail(f"env: {e}")
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
     def _env(self, slug: str, repo: Path, rep: RunnerReport) -> None:
         try:
