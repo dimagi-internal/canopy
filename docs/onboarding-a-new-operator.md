@@ -250,6 +250,12 @@ This opens a browser, and writes the token to `~/.claude/canopy/workbench-token`
 > and falls back to yours **with a loud warning**. If you see
 > *"falling back to the operator's workbench-token"*, that is canopy telling you
 > the agent has no identity of its own yet — expected before §5, a problem after.
+>
+> **Giving the agent its token** (once its Google mailbox exists): sign in to canopy-web
+> **as the agent** (its own mailbox, in a private browser window so your own session is
+> untouched), mint a token on `/settings`, and put it in `~/.<slug>/.env` as
+> `CANOPY_WEB_PAT=<token>`. Re-run a canopy command from the agent's repo; the fallback
+> warning should be gone. (Path proven on a Windows operator's first agent, 2026-10-15.)
 
 ---
 
