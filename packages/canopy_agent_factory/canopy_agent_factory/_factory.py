@@ -235,7 +235,8 @@ infra you'd want every agent to get, it belongs in canopy; raise it there, don't
   agent portable to the Claude Agent SDK later (MCP is the portability boundary).
 - Config/secrets live in a WORKTREE-CLEAN global home `~/.{{AGENT_SLUG}}/.env`, filled by
   `/{{AGENT_SLUG}}:setup` (`canopy agent env --plugin {{AGENT_SLUG}}`) from `.env.tpl` (1Password
-  refs + non-secret literals — never a literal `op://…` in a comment, it gets resolved too). NOT
+  refs + non-secret literals — never ANY secret reference in a comment, not even a placeholder:
+  `op inject` parses comments, and one breaks the whole file). NOT
   a per-worktree repo `.env` (that gets recreated every turn). Scripts read it via `bin/_env.py`.
 - **The vault is never named in this repo.** A plugin is code; an *instance* is canopy-web's
   Agent record (identity, workspace, 1Password vault). `.env.tpl` refs read
@@ -346,28 +347,30 @@ skill's body for the full text and apply it in full. In summary:
 '''
 
 _ENV_TPL = '''# {{AGENT_NAME}}'s env template — the fleet-standard `.env.tpl` + `op inject` provisioning
-# path (canopy agent-core/agent-runtime.md). `op inject` resolves this file's `op://` refs into
-# the WORKTREE-CLEAN global env home ~/.{{AGENT_SLUG}}/.env (mode 0600) — NOT a per-worktree repo
-# .env. emdash runs each turn in a fresh worktree, so a repo-local .env would vanish; every
-# worktree instead reads the global home via bin/_env.py.
+# path (canopy agent-core/agent-runtime.md). `op inject` resolves this file's 1Password secret
+# references into the WORKTREE-CLEAN global env home ~/.{{AGENT_SLUG}}/.env (mode 0600) — NOT a
+# per-worktree repo .env. emdash runs each turn in a fresh worktree, so a repo-local .env would
+# vanish; every worktree instead reads the global home via bin/_env.py.
 #
 # Resolve with /{{AGENT_SLUG}}:setup, i.e.:
 #   canopy agent env --plugin {{AGENT_SLUG}} --template .env.tpl --out ~/.{{AGENT_SLUG}}/.env
 # It binds this install to ONE agent instance on canopy-web and runs `op inject` with
 # AGENT_VAULT set to that instance's recorded 1Password vault. NEVER write a vault name here:
-# every ref is `op://${AGENT_VAULT}/<item>/<field>` — the vault belongs to the instance, not
-# to this repo (someone may run this agent with a different vault).
+# every reference names the vault as ${AGENT_VAULT} (see the live line below) — the vault
+# belongs to the instance, not to this repo (someone may run this agent with a different vault).
 #
-# CRITICAL: `op inject` resolves `op://` refs ANYWHERE IN THIS FILE, INCLUDING COMMENTS — a real
-# reference left in a comment/example gets resolved too and can leak that secret to stdout on
-# the next `op inject ... | cat` (or similar). NEVER paste a real item name in a comment. Every
-# example below uses an angle-bracket PLACEHOLDER for the item (`<item>`) for exactly this
-# reason — keep doing that when you add a var.
+# CRITICAL: NEVER write a secret reference (the op-colon-slash-slash form) in a COMMENT, not even
+# with <placeholders>. `op inject` parses references ANYWHERE in this file, comments included:
+# a real one leaks its secret on the next `op inject ... | cat`, and a placeholder one fails the
+# WHOLE inject once ${AGENT_VAULT} is filled in ("invalid secret reference ... too few '/'") —
+# which is how every factory-made agent's env failed to materialize (lex, 2026-10-15). Copy the
+# live CANOPY_WEB_PAT line below to add one; `canopy agent doctor` fails a template that breaks
+# this rule.
 #
 # One line per var, `KEY=value`. A literal (not environment-varying) value is fine as-is;
-# anything that differs per environment — a key, an id, a folder — must be an `op://` reference,
+# anything that differs per environment — a key, an id, a folder — must be a secret reference,
 # never the literal value. For a non-env credential FILE (e.g. an OAuth-client json), don't put
-# it here — resolve it directly with `op read "op://$AGENT_VAULT/<item>/<field>" > <file>` instead.
+# it here — `op read` it directly into the file instead.
 #
 # The gog OAuth client is the SHARED fleet app (`canopy`), not per-agent: a gog "client" is the
 # APP identity (client_id + client_secret), reused by every agent's mailbox. The per-agent,
@@ -382,7 +385,6 @@ _ENV_TPL = '''# {{AGENT_NAME}}'s env template — the fleet-standard `.env.tpl` 
 
 {{AGENT_SLUG}}_PRIMARY_CHANNEL={{MAILBOX}}
 CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential
-# {{AGENT_SLUG}}_SOME_SECRET=op://${AGENT_VAULT}/<item>/<field>
 '''
 
 _ENV_LOADER = '''"""Canonical .env resolver for {{AGENT_NAME}}'s scripts — reads the WORKTREE-CLEAN global home.
@@ -564,7 +566,8 @@ follows it: preflight → process inbound (one counterpart at a time) → skill 
    sanctioned path — not as prose, and not as an `approve` rule (approval is the turn
    checklist's job; hook modals stall autonomous work).
 4. Declare secrets in `.env.tpl` as `op://${AGENT_VAULT}/<item>/<field>` (never a vault name, and
-   never a literal `op://…` in a comment — `op inject` resolves those too) and run
+   never any secret reference in a comment, even a placeholder — `op inject` parses comments and
+   one breaks the whole file) and run
    `/{{AGENT_SLUG}}:setup`: it binds this install to one agent instance on canopy-web and fills
    `~/.{{AGENT_SLUG}}/.env` from that instance's recorded vault (`canopy agent env`), read by
    `bin/_env.py`. The instance's owner records its vault on canopy-web (/agents/<slug>).

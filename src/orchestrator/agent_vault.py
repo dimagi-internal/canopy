@@ -99,6 +99,15 @@ class VaultError(Exception):
     """Stops the run; the message says what to do."""
 
 
+def commented_refs(template: str) -> list[int]:
+    """Line numbers of comments carrying a secret reference. `op inject` parses comments: a
+    real reference leaks, a placeholder one (`op://${AGENT_VAULT}/<item>/…`) fails the WHOLE
+    inject once the vault is filled in — every factory-made agent shipped one (lex,
+    2026-10-15)."""
+    return [n for n, line in enumerate(template.splitlines(), 1)
+            if line.lstrip().startswith("#") and "op://" in line]
+
+
 def kind_of(item: str) -> Kind:
     return KINDS.get(item, Kind(ASKED, DEFAULT_ASKED))
 

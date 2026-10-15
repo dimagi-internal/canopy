@@ -181,6 +181,17 @@ def test_secrets_manifest_env_tpl_is_primary_no_secrets_yaml_needed(tmp_path):
     assert "canopy-pat (minted), gog-token (linked)" in detail and "note:" not in detail
 
 
+def test_secrets_manifest_fails_a_secret_reference_in_a_comment(tmp_path):
+    """A placeholder in a comment breaks the whole `op inject` once ${AGENT_VAULT} is set
+    (lex, 2026-10-15) — so it is a failure, not a style note."""
+    repo = _agent_repo(tmp_path, secrets=False)
+    (repo / ".env.tpl").write_text(
+        "# every ref is `op://${AGENT_VAULT}/<item>/<field>`\n"
+        "CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential\n")
+    result = check_secrets_manifest(repo)
+    assert not result.ok and "line(s) 1" in result.detail
+
+
 def test_secrets_manifest_prefers_env_tpl_over_legacy_yaml(tmp_path):
     """When BOTH exist (mid-migration), `.env.tpl` wins — it's the primary manifest now."""
     repo = _agent_repo(tmp_path, secrets=True)
