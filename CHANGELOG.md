@@ -9,7 +9,7 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
-## [0.2.682] - 2026-10-14
+## [0.2.684] - 2026-10-14
 
 ### Fixed
 - **Nothing needed to keep iterating a DDD narrative is left only on the machine that made it.**
