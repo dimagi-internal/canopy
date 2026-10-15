@@ -82,6 +82,12 @@ is not done, in the order returned, using each step's own `detail` and `href`/`a
 restate or second-guess those steps here — the checklist is computed from canopy-web's own checks,
 so re-call `agent_setup` after each fix to confirm it turned done, rather than judging it yourself.
 
+A step with **`where: terminal`** (the vault: `canopy agent vault --slug <slug>`) needs the
+human's OWN access — 1Password rights to create a vault and mint its key. Hand them its `command`
+to run themselves (in this session, `! <command>`): it asks, with hidden input, for the few values
+only they know, and that prompt needs their terminal. It mints the agent's canopy token and vault
+key itself and prints neither.
+
 The one step that happens in Claude Code is **`job`** (`where: claude-code`): the agent's first
 real work. Its `command` starts that session; in it, apply the judgment below.
 

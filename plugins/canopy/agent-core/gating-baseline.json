@@ -53,6 +53,25 @@
       "_pattern_doc": "The same store, through the file tools (their input JSON / file_path). See the Bash rail above.",
       "pattern": "(?:/\\.config/op\\b|/\\.op/config\\b|/Library/Group(?:\\\\? |%20)Containers/2BUA8C4S2C\\.com\\.1password)",
       "message": "BLOCKED: this touches 1Password's local credential store (~/.config/op or the 1Password app's Group Container). ~/.config/op/config contains the account's SECRET KEY, and whatever {slug} reads is written into the transcript (this exact leak happened 2026-10-15). There is no need to read it: `op whoami --account <acct>` / `op account list` show who is signed in. To act as the HUMAN's 1Password account (create a vault, mint a key via the agent's provisioning bin), use the unlocked desktop app: `unset OP_SERVICE_ACCOUNT_TOKEN; export OP_BIOMETRIC_UNLOCK_ENABLED=true` in the same command, with the Bash sandbox disabled (the sandbox blocks the app's IPC, which surfaces as 'not signed in' / 'operation not supported by device')."
+    },
+    {
+      "tool": "Bash",
+      "per_statement": true,
+      "_pattern_doc": "Raw `op service-account create` prints the new key to stdout — into the transcript. An agent's vault key is minted by `canopy agent vault`, which pipes it from op straight into canopy-web and never prints it (moved here from Ada's config/gating.json on 2026-10-15 so every agent has it).",
+      "pattern": "(?:^|\\b(?:then|do|else)\\s+)(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*op\\s+service-account\\s+create\\b",
+      "message": "BLOCKED: a raw `op service-account create` prints the new key into this transcript. `canopy agent vault --slug <slug>` mints an agent's read-only vault key, stores it on canopy-web and never prints it. Run by a PERSON with 1Password rights."
+    },
+    {
+      "tool": "Bash",
+      "per_statement": true,
+      "_pattern_doc": "A raw curl WRITE to an agent's /vault (carries a service-account key) or /canopy-token (returns the agent's token) puts a secret on the command line or in this transcript. GET reads of /vault are masked and stay free.",
+      "pattern": "(?s)(?=.*curl)(?=.*/api/(?:w/[^/\\s]+/)?agents/[^\\s/]+/(?:vault|canopy-token)\\b)(?=.*(?:-X\\s*(?:POST|PUT|PATCH|DELETE)|--data|--json\\b|\\s-d[\\s@]))",
+      "message": "BLOCKED: a raw write to an agent's /vault or /canopy-token puts a key or token in the transcript. `canopy agent vault --slug <slug>` does both without printing either. Masked GET reads of /vault stay free."
+    },
+    {
+      "tool_pattern": "__(?:set_agent_vault|set_shared_vault|mint_agent_canopy_token)$",
+      "_pattern_doc": "canopy-web MCP tools whose ARGUMENTS (set_*_vault: a service-account key) or RESULT (mint_agent_canopy_token: the agent's token) are a secret, recorded verbatim in the transcript.",
+      "message": "BLOCKED: this MCP tool's key argument or token result would be recorded in the transcript. An agent's vault, key and canopy token: `canopy agent vault --slug <slug>`. The shared vault key: its owner sets it in the browser (/w/<ws>/settings/secrets). Read state with get_agent_vault."
     }
   ],
   "channels": {

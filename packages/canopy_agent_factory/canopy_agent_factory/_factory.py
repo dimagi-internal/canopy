@@ -372,10 +372,17 @@ _ENV_TPL = '''# {{AGENT_NAME}}'s env template — the fleet-standard `.env.tpl` 
 # The gog OAuth client is the SHARED fleet app (`canopy`), not per-agent: a gog "client" is the
 # APP identity (client_id + client_secret), reused by every agent's mailbox. The per-agent,
 # never-shared identity is the mailbox ({{MAILBOX}}).
+#
+# FILLING THE VAULT: `canopy agent vault --slug {{AGENT_SLUG}}` (run once by a person with
+# 1Password rights; the canopy-web setup checklist's "Give it a vault" step). It creates
+# every item referenced below and fills it: it MINTS what the system can (CANOPY_WEB_PAT,
+# this agent's own canopy-web identity), points at the control for what another flow makes
+# (the Gmail token: Connect Google mailbox), and ASKS only for what a person alone has (an
+# outside service's key). Add a line here, re-run it, and it asks for the new value.
 
 {{AGENT_SLUG}}_PRIMARY_CHANNEL={{MAILBOX}}
+CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential
 # {{AGENT_SLUG}}_SOME_SECRET=op://${AGENT_VAULT}/<item>/<field>
-# CANOPY_WEB_PAT=op://${AGENT_VAULT}/<item>/credential
 '''
 
 _ENV_LOADER = '''"""Canonical .env resolver for {{AGENT_NAME}}'s scripts — reads the WORKTREE-CLEAN global home.

@@ -77,6 +77,11 @@ def test_env_template_and_setup_never_name_a_vault():
     tpl = t[".env.tpl"]
     assert "op://${AGENT_VAULT}/<item>/" in tpl
     assert "Agent-" not in tpl and "op://<vault>" not in tpl
+    # Every agent signs in to canopy-web as ITSELF — `canopy agent vault` mints the value —
+    # so the line is live, not a commented example (2026-10-15: Lex's turns would otherwise
+    # run on a person's token).
+    assert "\nCANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential\n" in tpl
+    assert "canopy agent vault --slug {{AGENT_SLUG}}" in tpl
     setup = t["skills/setup/SKILL.md"]
     assert "canopy agent env --plugin {{AGENT_SLUG}}" in setup
     assert "--force" in setup and "$ARGUMENTS" in setup
