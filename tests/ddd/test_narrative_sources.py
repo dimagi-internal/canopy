@@ -48,11 +48,21 @@ class FakeCanopyWeb:
         return json.dumps(self.rows).encode()
 
 
+# The story of every version these tests pin to: one scene, ``s1``.
+STORY = {
+    "narration": [{"id": "s1", "title": "T", "persona": "p", "provenance": "S0", "text": "x"}],
+    "personas": {}, "narrative": "x", "why_brief": {},
+}
+RECIPE = "style: recorded\ncuts: []\nscenes:\n- id: s1\n  show: {url: /}\n"
+
+
 @pytest.fixture
 def web(monkeypatch):
     monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")
     monkeypatch.setenv("CANOPY_WEB_PAT", "pat")
     monkeypatch.setenv("CANOPY_WEB_API_URL", API)
+    # A recipe push reads its version's story to compose against (canopy#908).
+    monkeypatch.setattr(rv, "get_review", lambda rid, **_k: {"request_json": STORY})
     return FakeCanopyWeb()
 
 
@@ -65,7 +75,7 @@ def capture_root(tmp_path, monkeypatch):
 
 def _files(d):
     d.mkdir(parents=True, exist_ok=True)
-    (d / "chlorine.recipe.yaml").write_text("style: recorded\ncuts: []\n")
+    (d / "chlorine.recipe.yaml").write_text(RECIPE)
     (d / "chlorine.intent.yaml").write_text("intent: []\n")
     (d / "master.mp4").write_bytes(b"\x00master")
     (d / "report.json").write_text('{"scenes": []}')
@@ -100,7 +110,7 @@ def test_pull_prefers_the_versions_own_files_else_the_newest(web, tmp_path, capt
     sources.push_sources("chlorine", "rev-3", old, _post=web.post)
     newer_recipe = tmp_path / "v4" / "chlorine.recipe.yaml"
     newer_recipe.parent.mkdir()
-    newer_recipe.write_text("style: recorded\n# v4\n")
+    newer_recipe.write_text(RECIPE + "# v4\n")
     # A new version re-pins its recipe on post; its master is still v3's.
     sources.push_sources("chlorine", "rev-4", {"recipe": newer_recipe}, _post=web.post)
 
@@ -149,13 +159,8 @@ def test_pull_restores_the_recipe_and_keeps_a_differing_local_one(
 ):
     sources.push_sources("chlorine", "rev-4", _files(tmp_path / "laptop"), _post=web.post)
     monkeypatch.setattr(sources, "_default_get", web.get)
-    payload = {
-        "narration": [{"id": "s1", "title": "T", "persona": "p", "provenance": "S0", "text": "x"}],
-        "personas": {}, "narrative": "x", "why_brief": {},
-    }
     monkeypatch.setattr(rv, "get_narrative",
                         lambda slug: {"current_version": {"version": 4, "review_id": "rev-4"}})
-    monkeypatch.setattr(rv, "get_review", lambda rid: {"request_json": payload})
 
     fresh = tmp_path / "fresh"
     fresh.mkdir()
@@ -183,10 +188,22 @@ def test_posting_a_version_pins_its_recipe(tmp_path, monkeypatch, request):
     spec = tmp_path / "chlorine.recipe.yaml"
     monkeypatch.setattr(nar, "load_spec", lambda p: type("S", (), {"name": "chlorine"})())
     monkeypatch.setattr(nar, "load_why_brief", lambda p, s: None)
-    monkeypatch.setattr(nar, "build_narrative_review_request",
-                        lambda *a, **k: type("R", (), {"narrative_slug": "chlorine"})())
+    monkeypatch.setattr(
+        nar, "build_narrative_review_request",
+        lambda *a, **k: type("R", (), {
+            "narrative_slug": "chlorine",
+            "model_dump": lambda self, **_k: STORY,
+        })(),
+    )
     monkeypatch.setattr(nar, "_stamp_run_state", lambda *a: None)
     spec.write_text("style: recorded\n")
+    locks = []
+    real_record = sources.push_sources
+    monkeypatch.setattr(
+        sources, "push_sources",
+        lambda slug, rid, files, **kw: (locks.append(kw.get("lock")),
+                                        real_record(slug, rid, files))[1],
+    )
 
     class FakeRv:
         @staticmethod
@@ -197,3 +214,95 @@ def test_posting_a_version_pins_its_recipe(tmp_path, monkeypatch, request):
     assert request.node.pushed_sources == [
         ("chlorine", "rev-9", {"recipe": spec}),
     ]
+    # ... checked against the story it just posted, not refetched (canopy#908).
+    assert [s["id"] for s in locks[0]["scenes"]] == ["s1"]
+
+
+# ---------------------------------------------------------------------------
+# canopy#908 — a pinned recipe must compose with its version's story. The
+# chlorine v4 recipe carried two off-camera priming scenes the story did not
+# have; it was pinned anyway, `pull` reported it renderable, and `recorded
+# lint` failed on the next machine with "recipe has scene(s) absent from the
+# narrative: cut1-prime, cut5b-prime".
+# ---------------------------------------------------------------------------
+
+_ORPHANED = RECIPE + "- id: cut1-prime\n  show: {url: /}\n- id: cut5b-prime\n  show: {url: /}\n"
+
+
+@pytest.mark.real_sources
+def test_push_refuses_a_recipe_with_scenes_the_versions_story_lacks(web, tmp_path):
+    recipe = tmp_path / "chlorine.recipe.yaml"
+    recipe.write_text(_ORPHANED)
+    with pytest.raises(sources.RecipeLockMismatch) as exc:
+        sources.push_sources("chlorine", "rev-4", {"recipe": recipe}, _post=web.post)
+    assert "cut1-prime" in str(exc.value) and "cut5b-prime" in str(exc.value)
+    assert "absent from the narrative" in exc.value.reason
+    assert web.posts == []  # nothing pinned — not even the master beside it
+
+
+@pytest.mark.real_sources
+def test_push_refuses_a_recipe_missing_a_scene_the_story_has(web, tmp_path):
+    recipe = tmp_path / "chlorine.recipe.yaml"
+    recipe.write_text("style: recorded\nscenes:\n- id: other\n")
+    lock = {"scenes": [{"id": "s1"}, {"id": "other"}]}
+    with pytest.raises(sources.RecipeLockMismatch, match="no recipe: s1"):
+        sources.push_sources("chlorine", "rev-4", {"recipe": recipe}, lock=lock,
+                             _post=web.post)
+    assert web.posts == []
+
+
+@pytest.mark.real_sources
+def test_push_composes_against_the_given_lock_without_fetching(web, tmp_path):
+    recipe = tmp_path / "chlorine.recipe.yaml"
+    recipe.write_text(_ORPHANED)
+    lock = {"scenes": [{"id": "s1"}, {"id": "cut1-prime"}, {"id": "cut5b-prime"}]}
+
+    def no_fetch(*a, **k):
+        raise AssertionError("the caller's lock must be used, not refetched")
+
+    pushed = sources.push_sources("chlorine", "rev-5", {"recipe": recipe}, lock=lock,
+                                  _post=web.post, _fetch_lock=no_fetch)
+    assert set(pushed) == {"recipe"}
+
+
+@pytest.mark.real_sources
+def test_pushing_only_capture_files_does_not_need_the_story(web, tmp_path):
+    (tmp_path / "master.mp4").write_bytes(b"m")
+
+    def no_fetch(*a, **k):
+        raise AssertionError("no recipe, nothing to compose")
+
+    sources.push_sources("chlorine", "rev-4", {"master": tmp_path / "master.mp4"},
+                         _post=web.post, _fetch_lock=no_fetch)
+
+
+@pytest.mark.real_sources
+def test_pull_is_not_renderable_when_the_pinned_recipe_does_not_compose(
+    web, tmp_path, capture_root, monkeypatch, capsys
+):
+    # Pinned before this check existed (or edited on canopy-web since): pull
+    # must report the truth rather than "renderable": true.
+    recipe = tmp_path / "laptop" / "chlorine.recipe.yaml"
+    recipe.parent.mkdir()
+    recipe.write_text(_ORPHANED)
+    lock = {"scenes": [{"id": "s1"}, {"id": "cut1-prime"}, {"id": "cut5b-prime"}]}
+    sources.push_sources("chlorine", "rev-4", {"recipe": recipe}, lock=lock, _post=web.post)
+    monkeypatch.setattr(sources, "_default_get", web.get)
+    monkeypatch.setattr(rv, "get_narrative",
+                        lambda slug: {"current_version": {"version": 4, "review_id": "rev-4"}})
+
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    nar._cmd_pull("chlorine", str(fresh))
+    out = capsys.readouterr()
+    result = json.loads(out.out)
+    assert result["recipe"]  # the file is there ...
+    assert result["renderable"] is False  # ... but it cannot render
+    assert "cut1-prime" in result["recipe_error"]
+    assert "does not compose" in out.err
+
+
+def test_compose_error_names_nothing_for_a_matching_recipe(tmp_path):
+    recipe = tmp_path / "r.recipe.yaml"
+    recipe.write_text(RECIPE)
+    assert sources.compose_error(recipe, {"scenes": [{"id": "s1"}]}) is None
