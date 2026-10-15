@@ -646,7 +646,7 @@ def vault_fingerprint(tpl: Path, env: dict, token: str, *, runner: Runner) -> st
 
 
 def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = None,
-             now: Optional[float] = None) -> str:
+             now: Optional[float] = None, repo: Optional[Path] = None) -> str:
     """Bring ~/.<slug>/.env up to date with the agent's vault, without waste. Returns
     what happened: "skipped: …", "unchanged", or "re-injected".
 
@@ -661,7 +661,7 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = Non
     token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
     if not token:
         return "skipped: no agent 1Password key in this session"
-    repo = _agent_repo(slug)
+    repo = repo or _agent_repo(slug)
     tpl = repo / ".env.tpl" if repo else None
     if tpl is None or not tpl.is_file():
         return f"skipped: no .env.tpl for '{slug}' on this machine"
@@ -676,7 +676,12 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = Non
         return "skipped: checked recently"
     env = {k: v for k, v in os.environ.items()
            if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
-    env = _template_env(slug, tpl, env)
+    # The vault a RUNNER already knows (it staged this agent's key with it, from canopy-web)
+    # is the answer — asking canopy-web again needs a person's token, which a box has none
+    # of. That is what let cloud_runner keep its own copy of this function; it calls this
+    # one now (agent-setup-lifecycle.md phase 2).
+    staged = env.get("AGENT_VAULT", "").strip() if env.get("AGENT_SLUG", "") == slug else ""
+    env = _template_env(slug, tpl, env, staged)
 
     def record(**fields) -> None:
         try:
@@ -917,7 +922,13 @@ def sync_cmd(agent, ttl):
     1Password key in $OP_SERVICE_ACCOUNT_TOKEN (never the desktop app). Never prints a
     value; a failure keeps the existing file and exits 1 with op's reason."""
     slug = _require_agent(agent)
-    click.echo(f"[canopy cred] {slug}: {sync_env(slug, ttl=ttl)}", err=True)
+    try:
+        click.echo(f"[canopy cred] {slug}: {sync_env(slug, ttl=ttl)}", err=True)
+    except CredError as e:
+        # The reason on stderr and a non-zero exit, so a caller (a runner's claim) can say
+        # why its turns run on the last good file.
+        click.echo(f"[canopy cred] {slug}: {e}", err=True)
+        raise SystemExit(1)
 
 
 @cred_group.command("google-token")

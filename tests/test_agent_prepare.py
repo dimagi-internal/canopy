@@ -28,6 +28,15 @@ from orchestrator.agent_prepare import RunnerCredentials, RunnerPreparer, turn_r
 AGENT_KEY, SHARED_KEY, GH = "ops_AGENT", "ops_SHARED", "ghp_OWNER"
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path, monkeypatch):
+    """Every path under ~ (~/.<slug>/.env, its stamp, gog, plugins) lands in tmp — a test
+    must never touch the real machine's agent state (2026-10-15: one did, a stamp)."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    for k in ("OP_SERVICE_ACCOUNT_TOKEN", "AGENT_VAULT", "AGENT_SLUG"):
+        monkeypatch.delenv(k, raising=False)
+
+
 def _token(client="canopy", email="ace@dimagi-ai.com", created="2026-10-01T00:00:00Z"):
     return json.dumps({"client": client, "email": email, "created_at": created,
                        "refresh_token": "r"})
@@ -58,6 +67,10 @@ class Box:
                 return bad(f'"{ref.split("/")[0]}" isn\'t a vault in this account')
             v = self.items.get(ref) or self.items.get(ref + "/credential")
             return SimpleNamespace(returncode=0, stdout=v, stderr="") if v else bad("isn't an item")
+        if cmd == "op" and argv[1:3] == ["vault", "get"]:
+            if env.get("OP_SERVICE_ACCOUNT_TOKEN") != AGENT_KEY:
+                return bad("isn't a vault in this account")
+            return SimpleNamespace(returncode=0, stdout='{"content_version": 7}', stderr="")
         if cmd == "op" and argv[1] == "inject":
             if env.get("OP_SERVICE_ACCOUNT_TOKEN") != AGENT_KEY or env.get("AGENT_VAULT") != "Agent-Ace":
                 return bad("could not resolve op://${AGENT_VAULT}/canopy-pat/credential")
@@ -258,12 +271,22 @@ def test_credentials_only_never_clones_or_reprovisions_a_live_agent(tmp_path):
     assert not box.ran(["op", "inject"])
 
 
-def test_env_only_reinjects_and_does_nothing_else(tmp_path):
+def test_env_only_is_cred_sync_reinject_only_on_a_change(tmp_path):
+    """The claim-time refresh is canopy's `cred sync` — the function every session start
+    runs — so a runner keeps no copy of its own: one `op vault get`, `op inject` only
+    when the fingerprint moved, with the agent's key and its vault."""
     _repo(tmp_path / "agents")
     box = Box(tmp_path)
     rep = _prep(tmp_path, box).prepare("ace", env_only=True)
-    assert rep.env_ok is True
-    assert [c[0][:2] for c in box.calls] == [["op", "inject"]]
+    assert rep.env_ok is True and rep.env == "re-injected"
+    assert [c[0][:3] for c in box.calls] == [["op", "vault", "get"], ["op", "inject", "-f"]]
+    assert all(c[1] == AGENT_KEY for c in box.calls)
+    assert (tmp_path / "home" / ".ace" / ".env").is_file()
+    box.calls.clear()
+    rep = _prep(tmp_path, box).prepare("ace", env_only=True)
+    assert rep.env == "unchanged" and [c[0][1] for c in box.calls] == ["vault"]
+    import os
+    assert "OP_SERVICE_ACCOUNT_TOKEN" not in os.environ   # staged for the call, then removed
 
 
 def test_the_provisioner_gets_only_this_agents_key(tmp_path):
