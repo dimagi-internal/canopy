@@ -465,6 +465,57 @@ def agent_env(plugin, template, out, agent_slug, vault, force, print_only):
     click.echo(f"bound:    {res.binding}")
 
 
+@agent.command("vault")
+@click.option("--slug", required=True, help="The agent (canopy-web slug).")
+@click.option("--workspace", default="",
+              help="Its canopy-web workspace (default: the one canopy-web records for it).")
+@click.option("--vault", default="",
+              help="The vault to create or use, for an agent with none recorded (required then).")
+@click.option("--repo", type=click.Path(exists=True, file_okay=False), default=None,
+              help="The agent's checkout, to read .env.tpl from (default: its repo on GitHub).")
+@click.option("--check", is_flag=True,
+              help="Report what is missing; create, mint, prompt and write nothing.")
+@click.option("--rotate-key", is_flag=True,
+              help="Mint and store a NEW read-only key even if one is stored.")
+@click.option("--rotate-pat", is_flag=True,
+              help="Mint a NEW canopy token for the agent even if its vault holds one.")
+@click.option("--no-prompt", is_flag=True,
+              help="Never ask for values (they are reported as still empty).")
+@click.option("--op-account", default="dimagi.1password.com", show_default=True)
+def agent_vault(slug, workspace, vault, repo, check, rotate_key, rotate_pat, no_prompt,
+                op_account):
+    """Give an agent its 1Password vault, filled, and the read-only key its runners use.
+
+    Run by a PERSON with 1Password rights who is the agent's owner or admin on canopy-web.
+    Creates the vault if missing and makes the agent's owner its admin; for each
+    op://${AGENT_VAULT}/… reference in the agent's .env.tpl, creates the item and fills it —
+    MINTS what the system can (its own canopy-web token), points at the control for what
+    another flow produces (its Gmail token: Connect Google mailbox), and ASKS, with hidden
+    input, only for what a person alone knows (an outside service's key). Then mints a
+    read-only, non-expiring service account for the vault and stores it on canopy-web.
+    Safe to re-run; prints no secret. See orchestrator/agent_vault.py.
+    """
+    import sys
+
+    from orchestrator import agent_vault as av
+    from orchestrator.workspace_cli import person_token
+
+    token = person_token()
+    if not token:
+        raise click.ClickException(
+            "not signed in to canopy-web — run /canopy:canopy-web-pat-mint, then re-run.")
+    ask = None if (check or no_prompt or not sys.stdin.isatty()) else av.hidden_prompt
+    try:
+        rep = av.run(slug, token=token, workspace=workspace, vault=vault,
+                     repo=Path(repo) if repo else None, check=check, rotate_key=rotate_key,
+                     rotate_pat=rotate_pat, op=av.Op(op_account), ask=ask)
+    except av.VaultError as e:
+        raise click.ClickException(str(e))
+    click.echo(av.render(rep))
+    if rep.missing or (check and rep.key != "stored"):
+        sys.exit(1)
+
+
 @agent.command("bootstrap")
 @click.option("--slug", "slugs", multiple=True,
               help="Agent slug to bootstrap (repeatable). Default: every agent repo discovered "

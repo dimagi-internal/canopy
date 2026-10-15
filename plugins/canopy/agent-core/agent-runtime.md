@@ -88,8 +88,11 @@ One vault per agent (**not** the legacy flat `AI-Agents` dumping ground) so each
 least-privilege and independently grantable. Every item is an **API Credential** whose value sits
 in a single `credential` field, so a reference resolves as `op://<vault>/<item>/credential`.
 
-New agent? `canopy-web/deploy/secrets/bootstrap_1password.sh <slug…>` idempotently creates the
-vaults + placeholder items. `migrate_echo.sh` is the worked example of copying values out of the
+New agent? `canopy agent vault --slug <slug>` (the canopy-web setup checklist's "Give it a
+vault" step) creates the vault, makes the owner its admin, creates and FILLS every item the
+agent's `.env.tpl` references — minting what the system can, asking only for what a person
+alone knows — and stores the read-only key on canopy-web. Safe to re-run; `--check` reports.
+`canopy-web/deploy/secrets/migrate_echo.sh` is the worked example of copying values out of the
 legacy `AI-Agents` vault.
 
 ## How a value reaches a turn (use this today)
@@ -217,21 +220,18 @@ delete `config/secrets.yaml`.
 
 ## Adding a new value — the recipe
 
-1. **Put it in the vault** (agent-specific → the instance's vault, `canopy agent env --plugin
-   <plugin> --print` names it; needed by all → `Canopy-Shared`):
-   ```bash
-   op item create --category "API Credential" --title "<name>" \
-     --vault "$AGENT_VAULT" "credential[password]=<value>"
-   # exists already? edit instead:
-   op item edit "<name>" --vault "$AGENT_VAULT" "credential=<value>"
-   ```
-2. **Reference it** in the agent's `.env.tpl` as `KEY=op://${AGENT_VAULT}/<name>/credential`
+1. **Reference it** in the agent's `.env.tpl` as `KEY=op://${AGENT_VAULT}/<name>/credential`
    (legacy agents: `config/secrets.yaml`'s `env.vars`) — never the value, never a vault name, and
    never a real `op://…` in a comment (see the security rule above).
+2. **Put it in the vault**: `canopy agent vault --slug <slug>` creates the item and asks for the
+   value with hidden input — never `op item create … "credential[password]=<value>"`, which puts
+   the value in argv, visible to every process on the machine. A value the fleet can PRODUCE
+   (minted, or made by another control) belongs in `KINDS` in `src/orchestrator/agent_vault.py`,
+   so no person is ever asked for it. Needed by every agent → `Canopy-Shared` instead.
 3. **Materialize** it: `/<agent>:setup` (`canopy agent env --plugin <plugin>`; legacy: `canopy provision`).
 4. **Read it** as the env var in code/skills — never re-hardcode the value.
-5. **Verify**: `op read "op://$AGENT_VAULT/<name>/credential"` and confirm the key landed in
-   `~/.<agent>/.env`.
+5. **Verify**: `canopy agent vault --slug <slug> --check` (every reference filled, key stored)
+   and confirm the key landed in `~/.<agent>/.env`.
 
 ## The other mechanism — `runtime.yaml` (know the difference)
 
