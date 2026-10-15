@@ -262,6 +262,26 @@ def excise_load_waits(
     return out
 
 
+def excise_capture_spans(
+    segs: list[tuple[float, float]],
+    capture_spans: list[dict[str, Any]],
+) -> list[tuple[float, float]]:
+    """Cut every full-page snapshot span out of the segments — whole, no lead-in.
+
+    A full-page per-scene snapshot (``record_video --snapshots``) resizes the live
+    viewport, so the master shows the page shrunk onto grey for the span
+    (``RunReport.capture_spans``, canopy#912). Unlike a loading wait there is no
+    threshold and no lead-in: no part of it is something a viewer should see.
+    PURE."""
+    out = list(segs)
+    for cs in capture_spans:
+        cs_start = float(cs.get("start_seconds") or 0.0)
+        cs_end = cs_start + float(cs.get("duration_seconds") or 0.0)
+        if cs_end - cs_start > 1e-6:
+            out = _excise_span_from_segs(out, cs_start, cs_end)
+    return out
+
+
 # --- Action↔word marks ----------------------------------------------------
 # Each action's raw master-clip timestamp (ActionResult.start_seconds) is mapped
 # through the SAME de-dwell + load-wait excision the footage gets, into ON-SCREEN
@@ -790,6 +810,19 @@ def build_snippets(
             _after = round(sum(d for _, d in segs), 3)
             if _after < _before - 0.05:
                 print(f"  · scene {idx}: excised {round(_before - _after, 2)}s loading-wait(s) (ground-truth)")
+        # Full-page snapshot spans: the capture resized the filmed viewport, so
+        # the master shows a shrunken page on grey there. Cut them out whole.
+        # Matched by TIME, not scene index — a span at a scene's tail must not
+        # leak into a neighbour whose segment happens to cover it.
+        capture_spans = report.get("capture_spans") or []
+        if capture_spans:
+            _before = round(sum(d for _, d in segs), 3)
+            # A scene that is nothing BUT capture keeps its footage: dropping the
+            # scene would desync every snippet after it from its narration.
+            segs = excise_capture_spans(segs, capture_spans) or segs
+            _after = round(sum(d for _, d in segs), 3)
+            if _after < _before - 0.05:
+                print(f"  · scene {idx}: excised {round(_before - _after, 2)}s of snapshot capture")
         segments = [{"start_seconds": s, "duration_seconds": d} for s, d in segs]
         # Action↔word marks: each field action's raw timestamp mapped through the
         # SAME kept segments into on-screen time + tagged with narration words, so

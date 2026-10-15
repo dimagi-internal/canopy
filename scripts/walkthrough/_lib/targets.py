@@ -191,6 +191,21 @@ def _locator_for_prefix(page: Page, kind: str, value: str) -> Locator | None:
     return None
 
 
+def _visible_now(locator: Locator) -> Locator | None:
+    """``locator.first`` if it is on the page and visible RIGHT NOW, else ``None``.
+
+    Never waits: ``count()`` and ``is_visible()`` both answer from the current
+    DOM. Used to prefer an exact text match without paying a timeout when there
+    is none (canopy#912).
+    """
+    try:
+        if locator.count() > 0 and locator.first.is_visible():
+            return locator.first
+    except Exception:  # noqa: BLE001 — a probe; the caller has a fallback
+        pass
+    return None
+
+
 def _resolve_via_text(page: Page, value: str, *, timeout_ms: int) -> Locator | None:
     """Find an element by visible text.
 
@@ -206,19 +221,29 @@ def _resolve_via_text(page: Page, value: str, *, timeout_ms: int) -> Locator | N
     ~80 s of overhead on the microplans-10-wards recording for no
     reliability win on these UIs.
     """
-    # Half the budget on the cheap path. Exact first — Playwright's text
-    # engine ranks by smallest match, which beats a hand-rolled scan.
+    # Half the budget on the cheap path. ONE blocking wait, on the substring
+    # locator — every exact match is also a substring match, so it appears as
+    # soon as either would. The exact preference is then a NON-blocking probe
+    # (``count()`` + ``is_visible()`` return immediately). The old order waited
+    # on the exact locator first, so whenever the visible text was only PART of
+    # a larger node ("Rijiyar Kwara" inside "Rijiyar Kwara (Kano)") the exact
+    # wait burned its whole half-budget (~3 s at the default) before the
+    # substring fallback ran — 3.83 s per hover vs 0.83 s with ``text:``, which
+    # pushed every later beat of a ``style: recorded`` cut off its spoken word
+    # (canopy#912).
     text_budget = max(500, timeout_ms // 2)
-    for getter in (
-        lambda: page.get_by_text(value, exact=True).first,
-        lambda: page.get_by_text(value).first,
-    ):
-        try:
-            loc = getter()
-            loc.wait_for(state="visible", timeout=text_budget)
-            return loc
-        except Exception:
-            continue
+    substring = page.get_by_text(value)
+    exact = page.get_by_text(value, exact=True)
+    substring_ok = True
+    try:
+        substring.first.wait_for(state="visible", timeout=text_budget)
+    except Exception:
+        substring_ok = False
+    exact_now = _visible_now(exact)
+    if exact_now is not None:
+        return exact_now
+    if substring_ok:
+        return substring.first
 
     # Role + accessible-name fallback. Each probe is short (we've already
     # spent half the budget); we're covering the icon-only / aria-labeled

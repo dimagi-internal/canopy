@@ -411,6 +411,10 @@ class Recorder:
         # e.g. an AI-result panel — not the scene's end frame). ``take_snapshot``
         # skips the end-frame for these so the explicit capture stays canonical.
         self._explicit_snapshot_scenes: set[int] = set()
+        # Full-page screenshots attempted so far. ``_film_capture`` diffs it
+        # around a capture call to learn whether a full-page paint (which the
+        # video films as a shrunken page on grey) actually happened.
+        self._full_page_captures = 0
         # Spec-level viewport — restored after any per-scene viewport override.
         # None → no restore (tests / callers that don't track viewport at all).
         self.default_viewport: dict[str, int] | None = (
@@ -526,6 +530,32 @@ class Recorder:
 
     def after_action(self, scene: dict, action: dict, result: ActionResult) -> None:
         """Hook fired after each action runs (success or failure)."""
+
+    def _film_capture(self, scene_index: int, kind: str, capture) -> None:
+        """Run a per-scene ``capture()`` and record its footage span if it filmed
+        a full-page screenshot.
+
+        A full-page ``page.screenshot`` resizes the live viewport for the
+        beyond-viewport paint (after a scroll-to-top), and the video recorder
+        films it: the page shrinks onto a grey canvas for ~1.5 s at the scene
+        boundary (canopy#912 — ddd-video-judge flagged it critical, in cut after
+        cut). The capture cannot be taken off the filmed page (the frame must be
+        THIS page's state), so instead its span lands in
+        ``RunReport.capture_spans`` and the emitter cuts it out of the footage.
+        Viewport captures don't resize anything and record no span.
+        """
+        before = self._full_page_captures
+        start = time.monotonic()
+        try:
+            capture()
+        finally:
+            if self._full_page_captures != before and self.recording_epoch is not None:
+                self.report.record_capture_span(
+                    scene_index=scene_index,
+                    start_seconds=start - self.recording_epoch,
+                    duration_seconds=time.monotonic() - start,
+                    kind=kind,
+                )
 
     def take_before_frame(self, page: Page, scene: dict, scene_index: int) -> None:
         """Capture a BEFORE frame for an action scene, pre-action-loop.
@@ -783,6 +813,8 @@ class Recorder:
 
         One settle + one retry is enough — never retry forever.
         """
+        if full_page:
+            self._full_page_captures += 1
         try:
             page.screenshot(path=str(png_path), full_page=full_page, timeout=10000)
             return True
@@ -1094,7 +1126,9 @@ class Recorder:
         # see the CHANGE the scene's effecting actions produce. No-op unless
         # capture_action_frames is on and the scene has an effecting action.
         if idx is not None:
-            self.take_before_frame(page, scene, int(idx))
+            self._film_capture(
+                int(idx), "before", lambda: self.take_before_frame(page, scene, int(idx))
+            )
 
         start = time.monotonic()
         scene_results: list[ActionResult] = []
@@ -1125,7 +1159,10 @@ class Recorder:
             # page-only and has no snapshot context). idx None (ad-hoc test call)
             # ⇒ no scene to snapshot, fall through to the no-op execute_action.
             if resolved.get("kind") == "snapshot" and idx is not None:
-                self.take_explicit_snapshot(page, scene, int(idx))
+                self._film_capture(
+                    int(idx), "snapshot",
+                    lambda: self.take_explicit_snapshot(page, scene, int(idx)),
+                )
                 snap_result = ActionResult(
                     kind="snapshot",
                     ok=True,
@@ -1201,7 +1238,9 @@ class Recorder:
         # (see take_snapshot) lands at the scene cut, where the crossfade to
         # the next scene masks it, instead of mid-scene on film.
         if idx is not None:
-            self.take_snapshot(page, scene, int(idx))
+            self._film_capture(
+                int(idx), "snapshot", lambda: self.take_snapshot(page, scene, int(idx))
+            )
 
         self.after_scene(scene, scene_results)
 
