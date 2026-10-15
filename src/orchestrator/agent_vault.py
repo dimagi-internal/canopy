@@ -198,12 +198,20 @@ class Op:
                       "--vault", vault, f"{field_name}[password]=", "--format", "json")
         if p.returncode != 0:
             raise VaultError(f"could not create {vault}/{title}: {self._why(p)}")
-        return json.loads(p.stdout)
+        item = json.loads(p.stdout)
+        if _zero_dates(item):
+            # Created empty, so the edit carries no value: it only drops the dates.
+            doc = _without_zero_dates(item)
+            p = self._run("item", "edit", str(doc.get("id") or title), "--vault", vault,
+                          stdin=json.dumps(doc))
+            if p.returncode == 0 and p.stdout.strip():
+                item = json.loads(p.stdout)
+        return item
 
     def set_field(self, vault: str, item: dict, field_name: str, value: str) -> None:
         """Write `value` into the item's field by piping the item's JSON to `op item edit`
         (op's documented way to set a sensitive value without an assignment in argv)."""
-        doc = json.loads(json.dumps(item))
+        doc = _without_zero_dates(item)
         target = _find_field(doc, field_name)
         if target is None:
             doc.setdefault("fields", []).append(
@@ -223,6 +231,22 @@ class Op:
         if p.returncode != 0 or not token:
             raise VaultError(f"could not mint service account {name}: {self._why(p)}")
         return token
+
+
+def _zero_dates(item: dict) -> list:
+    """An "API Credential" item made by `op item create` carries the category's
+    `expires` and `valid from` DATE fields set to 0 (1970). The 1Password app then
+    shows the item as "Expired item" (Agent-Lex, 2026-10-15). An agent's credentials
+    have no expiry, so the dates are dropped rather than set."""
+    return [f for f in item.get("fields") or []
+            if f.get("type") == "DATE" and str(f.get("value") or "0") == "0"]
+
+
+def _without_zero_dates(item: dict) -> dict:
+    doc = json.loads(json.dumps(item))
+    zero = {id(f) for f in _zero_dates(doc)}
+    doc["fields"] = [f for f in doc.get("fields") or [] if id(f) not in zero]
+    return doc
 
 
 def _find_field(item: dict, name: str) -> Optional[dict]:

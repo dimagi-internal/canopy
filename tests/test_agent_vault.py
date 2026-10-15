@@ -284,3 +284,35 @@ def test_values_are_written_through_stdin_never_argv():
     assert SECRET_TYPED not in " ".join(argv)
     assert json.loads(stdin)["fields"][0]["value"] == SECRET_TYPED
     assert "OP_SERVICE_ACCOUNT_TOKEN" not in op.env
+
+
+ZERO_DATES = [{"id": "expires", "label": "expires", "type": "DATE", "value": "0"},
+              {"id": "validFrom", "label": "valid from", "type": "DATE", "value": "0"}]
+
+
+def test_items_never_carry_the_categorys_zero_dates():
+    """op item create gives an API Credential item `expires` = 0, which the 1Password
+    app shows as "Expired item" (Agent-Lex, 2026-10-15). Both the create and every
+    write drop those dates; nothing else about the item changes."""
+    seen = []
+
+    def runner(argv, **kw):
+        seen.append((argv, kw.get("input")))
+        class P:  # noqa: D401
+            returncode, stderr = 0, ""
+            stdout = json.dumps({"id": "abc", "title": "kc-api-key", "fields": [
+                {"id": "credential", "type": "CONCEALED", "value": ""}, *ZERO_DATES]})
+        return P()
+
+    op = av.Op(runner=runner, env={})
+    op.create_item("Agent-Lex", "kc-api-key", "credential")
+    assert "create" in seen[0][0]
+    edit = json.loads(seen[1][1])
+    assert [f["id"] for f in edit["fields"]] == ["credential"]
+
+    seen.clear()
+    op.set_field("Agent-Lex", {"id": "abc", "title": "kc-api-key", "fields": [
+        {"id": "credential", "type": "CONCEALED", "value": ""}, *ZERO_DATES,
+        {"id": "kept", "type": "DATE", "value": "1792000000"}]}, "credential", SECRET_TYPED)
+    fields = json.loads(seen[0][1])["fields"]
+    assert [f["id"] for f in fields] == ["credential", "kept"]
