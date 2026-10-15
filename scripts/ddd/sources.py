@@ -67,6 +67,58 @@ class SourcesError(RuntimeError):
         self.status = status
 
 
+class RecipeLockMismatch(SourcesError):
+    """A recipe that does not compose with the narrative version it would be
+    pinned to (canopy#908). ``reason`` is :func:`spec_io.compose`'s own message,
+    which names the orphan / missing scene ids."""
+
+    def __init__(self, message: str, reason: str):
+        super().__init__(message)
+        self.reason = reason
+
+
+def compose_error(recipe_path: str | Path, lock: dict) -> str | None:
+    """Why the recipe at ``recipe_path`` does not compose with ``lock`` — the
+    :class:`spec_io.SpecCompositionError` message naming the scenes that do not
+    match — or ``None`` when it composes. Pure apart from reading the file.
+
+    This is the real test of "renderable": the loop renders ``compose(recipe,
+    lock)``, so a recipe and lock that disagree on the scene list render nothing
+    no matter that both files exist."""
+    import yaml
+
+    from scripts.ddd.spec_io import SpecCompositionError, compose
+
+    try:
+        recipe = yaml.safe_load(Path(recipe_path).read_text()) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return f"recipe {Path(recipe_path).name} could not be read: {exc}"
+    if not isinstance(recipe, dict):
+        return f"recipe {Path(recipe_path).name} is not a mapping"
+    try:
+        compose(recipe, lock)
+    except SpecCompositionError as exc:
+        return str(exc)
+    return None
+
+
+def version_lock(review_id: str, *, base_url: str | None = None,
+                 token: str | None = None) -> dict:
+    """The story of narrative version ``review_id`` in lock shape (the same
+    ``scenes`` ``narrative pull`` writes to ``<slug>.narrative.lock.json``)."""
+    from scripts.ddd import review as rv
+    from scripts.ddd.narrative import web_narrative_to_spec_parts
+
+    full = rv.get_review(review_id, base_url=base_url, token=token)
+    request_json = full.get("request_json") if isinstance(full, dict) else None
+    if not isinstance(request_json, dict):
+        raise SourcesError(
+            f"could not read narrative version {review_id} from canopy-web to check "
+            f"the recipe against its story"
+        )
+    return web_narrative_to_spec_parts(request_json)
+
+
 def capture_dir(slug: str) -> Path:
     """Where a pull puts a narrative's capture files (master, report, manifest)."""
     root = os.environ.get("CANOPY_DDD_SOURCES_DIR") or str(Path.home() / ".canopy" / "ddd" / "sources")
@@ -157,10 +209,20 @@ def push_sources(
     *,
     base_url: str | None = None,
     token: str | None = None,
+    lock: dict | None = None,
     _post=None,
+    _fetch_lock=None,
 ) -> dict[str, dict]:
     """Pin each ``{role: path}`` to narrative version ``review_id``. Returns the
     server's row per role (``reused`` = identical bytes were already there).
+
+    A ``recipe`` is composed against that version's story first — ``lock``
+    when the caller already has it (``narrative post`` does: it just posted
+    it), else fetched from canopy-web — and refused with the mismatching scene
+    ids (:class:`RecipeLockMismatch`) before anything is posted. A recipe that
+    does not compose with its own version renders nothing, and pinning it hands
+    the mismatch to the next machine that pulls (canopy#908: a recipe with two
+    priming scenes the story lacked, pinned to chlorine v4).
 
     Raises on the first failure: a version whose sources did not all land is
     exactly the state this exists to prevent, so the caller must not go on to
@@ -168,6 +230,16 @@ def push_sources(
     unknown = set(files) - set(ROLES)
     if unknown:
         raise SourcesError(f"unknown source role(s): {', '.join(sorted(unknown))}")
+    if files.get("recipe") is not None:
+        if lock is None:
+            lock = (_fetch_lock or version_lock)(review_id, base_url=base_url, token=token)
+        reason = compose_error(files["recipe"], lock)
+        if reason:
+            raise RecipeLockMismatch(
+                f"refusing to pin {Path(files['recipe']).name} to {slug!r} version "
+                f"{review_id}: it does not compose with that version's story — {reason}",
+                reason,
+            )
     api = resolve_base_url(base_url)
     pat = resolve_token(token)
     ws = require_write_workspace()

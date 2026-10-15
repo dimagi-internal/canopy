@@ -1996,11 +1996,23 @@ def test_pull_reports_a_narrative_it_cannot_render(tmp_path, monkeypatch, capsys
     assert "no render recipe" in out.err
 
     # And once a recipe exists beside it, pull stops warning.
-    (tmp_path / "demo.recipe.yaml").write_text("base_url: https://example.test\n")
+    (tmp_path / "demo.recipe.yaml").write_text(
+        "base_url: https://example.test\nscenes:\n- id: s1\n  show: {url: /}\n"
+    )
     nar._cmd_pull("demo", str(tmp_path))
     out = capsys.readouterr()
     assert _json.loads(out.out)["renderable"] is True
     assert "no render recipe" not in out.err
+
+    # A recipe that exists but does not compose with the story is NOT
+    # renderable (canopy#908): the loop renders compose(recipe, lock).
+    (tmp_path / "demo.recipe.yaml").write_text(
+        "base_url: https://example.test\nscenes:\n- id: s1\n- id: prime\n"
+    )
+    nar._cmd_pull("demo", str(tmp_path))
+    result = _json.loads(capsys.readouterr().out)
+    assert result["renderable"] is False
+    assert "prime" in result["recipe_error"]
 
 
 # ---------------------------------------------------------------------------

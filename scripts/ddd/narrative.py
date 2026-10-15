@@ -1160,8 +1160,10 @@ def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
     from scripts.ddd import sources as narrative_sources
 
     slug = narrative_slug or getattr(request, "narrative_slug", None) or spec.name
+    # The lock it is checked against is the story just posted — no round trip.
     narrative_sources.push_sources(
-        slug, str(result["id"]), narrative_sources.recipe_files(spec_path, slug)
+        slug, str(result["id"]), narrative_sources.recipe_files(spec_path, slug),
+        lock=web_narrative_to_spec_parts(request.model_dump(by_alias=True)),
     )
     return result
 
@@ -1512,6 +1514,21 @@ def _cmd_pull(slug: str, target: str) -> None:
     _restore_sources(slug, base_dir, str(review_id))
     recipe = base_dir / f"{slug}.recipe.yaml"
 
+    # "renderable" means the loop can actually render it: the recipe COMPOSES
+    # with the lock just written (canopy#908 — a recipe with two scenes the
+    # story lacked was reported renderable, and `recorded lint` then failed).
+    recipe_error = None
+    if recipe.exists():
+        from scripts.ddd import sources as narrative_sources
+
+        recipe_error = narrative_sources.compose_error(recipe, json.loads(lock.read_text()))
+        if recipe_error:
+            print(
+                f"WARNING: {recipe.name} does not compose with {slug!r} v{web_version}, "
+                f"so it cannot render: {recipe_error}",
+                file=sys.stderr,
+            )
+
     # The why-brief is cloud-derived too — recovered from the same payload.
     wb = reconstruct_why_brief(request_json)
     wb_name = f"{slug}.why_brief.yaml"
@@ -1531,7 +1548,8 @@ def _cmd_pull(slug: str, target: str) -> None:
                 "why_brief": wb_name if wb else None,
                 "scenes": len(parts.get("scenes") or []),
                 "recipe": str(recipe) if recipe.exists() else None,
-                "renderable": recipe.exists(),
+                "renderable": recipe.exists() and recipe_error is None,
+                "recipe_error": recipe_error,
             }
         )
     )
