@@ -57,8 +57,35 @@ agent has no declared interface on canopy-web. Once an interface is published, c
 grant people on canopy-web, not there.
 Report the path and file count back.
 
-## Step 3 — Make it real (the part the factory can't do)
-The scaffold is a skeleton. Walk the human through filling it in, in this order:
+**Or start it in the browser.** `https://canopy.dimagi.com/w/<workspace>/agents/new` does all of
+Step 2 *and* registration in one go: it renders the same `canopy-agent-factory` scaffold, pushes it
+with the owner's fine-grained GitHub token, registers the agent (the creator becomes its owner) and
+saves that token as the agent's GitHub delegation. Pointed at a repo that already holds an earlier
+attempt at this agent (its `plugin.json` names the slug) or only GitHub starter files, it adds the
+missing template files and overwrites nothing. A repo started there is continued here: clone it and
+pick up at Step 3.
+
+## Step 3 — Register (once)
+Look the agent up first with the canopy-web MCP tool `get_agent` (`slug`):
+- **It exists and its `repo_url` is this repo** (created in the browser, or registered on an earlier
+  run) → do NOT re-register. Go to Step 4.
+- **It exists with a different `repo_url`** → the slug is taken by another agent. Stop and ask the
+  human; never overwrite it.
+- **It does not exist** → push the repo to GitHub, then register from the repo root with
+  `uv run --project "$CANOPY_ROOT" canopy agent-publish register` (resolve `CANOPY_ROOT` with the
+  same two-liner as Step 2).
+
+## Step 4 — Walk the setup checklist
+canopy-web owns what is left to do. Call the MCP tool **`agent_setup`** (`slug`, plus `workspace`
+if you belong to more than one organisation) and walk the human through every step whose `status`
+is not done, in the order returned, using each step's own `detail` and `href`/`action`. Do not
+restate or second-guess those steps here — the checklist is computed from canopy-web's own checks,
+so re-call `agent_setup` after each fix to confirm it turned done, rather than judging it yourself.
+
+The one step that happens in Claude Code is **`job`** (`where: claude-code`): the agent's first
+real work. Its `command` starts that session; in it, apply the judgment below.
+
+### The `job` step — what the factory and the checklist can't do
 1. **`persona.md`** — voice, mandate detail, and what (if anything) is worth persisting as memory
    (per-counterpart facts only — behaviors become skills, not memories).
 2. **First domain skill** — add `skills/<name>/SKILL.md` for the agent's actual job. Capability
@@ -84,34 +111,13 @@ The scaffold is a skeleton. Walk the human through filling it in, in this order:
    `echo '{"tool_name":"Bash","tool_input":{"command":"gog gmail send --to x"}}' | CLAUDE_PROJECT_DIR=$PWD python3 "$CANOPY/agent-core/gating_guard.py" --session; echo $?`
    (exit 2 = blocked). Never register a PreToolUse gating hook in the agent itself: plugins
    install user-scope, so it would fire in every other agent's sessions too.
-4. **Channel + setup** — email is already wired: the agent gets its own MAILBOX, and signs it
-   in under the fleet's shared gog client — never a per-agent one. Either door works: the
-   agent's Settings → Credentials → "Connect Google mailbox" in canopy-web (mints under
-   `canopy-web`), or `gog login <mailbox> --client canopy --services gmail,drive,docs,sheets,forms,appscript`
-   on a laptop (mints under `canopy`). The two are one app; every gog caller uses whichever the
-   machine holds (`agent_email.reconcile_client`, `FLEET_CLIENTS`).
-   verify with `uv run --project "$CANOPY_ROOT" canopy email preflight --repo .`, send via
-   `bin/<slug>-email` (resolve `CANOPY_ROOT` with the same two-liner as Step 2 in each bash
-   block). Then declare env-var secrets in `.env.tpl` (1Password `op://` refs — angle-bracket
-   placeholders in any comment/example, never a real ref, or `op inject` will resolve and leak
-   it; refs read `op://${AGENT_VAULT}/<item>/<field>` — the vault belongs to the instance, so
-   the agent's owner records it on canopy-web, `/agents/<slug>`) and resolve with `/<slug>:setup`
-   (`canopy agent env --plugin <slug>`: binds this install to one instance and runs `op inject`
-   with `AGENT_VAULT` set); a non-env credential FILE (e.g. the gog OAuth-client json) is resolved
-   directly with `op read "op://$AGENT_VAULT/<item>/<field>" > <file>`, not through `.env.tpl`. (An
-   agent still on the legacy path declares secrets in `config/secrets.yaml` and runs
-   `uv run --project "$CANOPY_ROOT" canopy provision` instead — supported, but not for new
-   agents.) Finish with `uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .` — one
-   command verifying identity, rails, manifest, gog
-   auth, and canopy-web registration; it must be all-green before the agent's first turn
-   (and re-run it on any NEW machine — it catches setup that only ever lived on the old one).
 
-## Step 4 — Register & ship
-- It's a Claude Code plugin: register it so the Skill tool can dispatch its skills (stronger than
-  re-reading files — pair with the gating hook for real enforcement).
-- Ship per the agent repo's own convention (branch → PR → merge yourself; the PR is a CI/record
-  checkpoint, not a review gate). The runtime guardrail still stands: outbound actions need
-  human approval at run time.
+Secrets the domain skill needs go in `.env.tpl` (see the warnings in Step 2) and resolve with
+`/<slug>:setup`. canopy-web can't see this machine, so before the first turn on a laptop also run
+`uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .` (and again on any new machine).
+
+Ship repo changes per the agent repo's own convention (branch → PR → merge yourself; the PR is a
+CI/record checkpoint, not a review gate). Outbound actions still need human approval at run time.
 
 ## Notes
 - **Why its own repo:** independently shippable, team-runnable (a teammate clones one repo + runs
