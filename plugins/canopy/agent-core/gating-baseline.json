@@ -79,6 +79,13 @@
       "tool_pattern": "__(?:set_agent_vault|set_shared_vault|mint_agent_canopy_token)$",
       "_pattern_doc": "canopy-web MCP tools whose ARGUMENTS (set_*_vault: a service-account key) or RESULT (mint_agent_canopy_token: the agent's token) are a secret, recorded verbatim in the transcript.",
       "message": "BLOCKED: this MCP tool's key argument or token result would be recorded in the transcript. An agent's vault, key and canopy token: `canopy agent vault --slug <slug>`. The shared vault key: its owner sets it in the browser (/w/<ws>/settings/secrets). Read state with get_agent_vault."
+    },
+    {
+      "tool": "Bash",
+      "per_statement": true,
+      "_pattern_doc": "Listing other processes' FULL command lines or environments. The shell this tool runs in is started with its environment exported INLINE on its command line — an agent's OP_SERVICE_ACCOUNT_TOKEN among it — so `pgrep -fl`, `ps aux`, `ps -ef` print that key into the transcript. 2026-10-15: a `pgrep -fl wire.sh` printed Ada's 1Password key and it had to be rotated. Matches ps with a/x/-e/-f style selectors or an args/command column, pgrep/pidof listing args (-l/-a), and /proc/<pid>/cmdline|environ reads. `pgrep -f <pattern>` alone prints PIDs and stays free.",
+      "pattern": "(?:^|\\b(?:then|do|else)\\s+)(?:sudo\\s+)?(?:ps\\s+(?:[^\\n|;&]*\\s)?(?:-?[a-zA-Z]*(?:ax|xa|aux|e[fF]|[fF]e)[a-zA-Z]*|-[a-zA-Z]*[fF][a-zA-Z]*)(?:\\s|$)|ps\\b[^\\n|;&]*-o\\s*\\S*(?:args|command|cmd)|pgrep\\s+(?:[^\\n|;&]*\\s)?-[a-zA-Z]*[la][a-zA-Z]*(?:\\s|$))|/proc/[^/\\s]+/(?:cmdline|environ)\\b",
+      "message": "BLOCKED: this lists other processes' full command lines (or environments). This session's shell exports its environment INLINE on its command line — including a 1Password service-account key — so the listing prints secrets into the transcript (it happened 2026-10-15; the key was rotated). Instead: `pgrep -f <pattern>` (PIDs only), `ps -o pid,etime,comm -p <pid>` (no arguments), or `pgrep -x <name>`."
     }
   ],
   "channels": {
