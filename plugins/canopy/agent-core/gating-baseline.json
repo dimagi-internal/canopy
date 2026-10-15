@@ -64,6 +64,13 @@
     {
       "tool": "Bash",
       "per_statement": true,
+      "_pattern_doc": "A sending domain is added on canopy-web (workspace › Mail › Add domain, or the add_mail_domain tool): that one path creates the SES identity with Easy DKIM, the bounce.<domain> MAIL FROM and the tenant configuration set, records it against a workspace, and shows the exact DNS records with live status. canopy-web refuses to adopt an identity that already exists in SES, so a hand-made one (aws sesv2 create-email-identity / aws ses verify-domain-identity|verify-domain-dkim) both skips the standard setup and blocks the domain from ever being added properly (this happened with dimagi.ai on 2026-10-15).",
+      "pattern": "(?:^|\\b(?:then|do|else)\\s+)(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*aws\\s+(?:sesv2\\s+create-email-identity|ses\\s+verify-domain-(?:identity|dkim))\\b",
+      "message": "BLOCKED: don't create an SES domain identity by hand. Add the domain on canopy-web instead: the add_mail_domain MCP tool (workspace, name) or workspace › Mail › Add domain. It creates the identity the standard way (Easy DKIM 2048, bounce.<domain> MAIL FROM, tenant configuration set) and lists the DNS records to publish. canopy-web will not adopt an identity that already exists in SES, so a hand-made one blocks the domain from being added there."
+    },
+    {
+      "tool": "Bash",
+      "per_statement": true,
       "_pattern_doc": "A raw curl WRITE to an agent's /vault (carries a service-account key) or /canopy-token (returns the agent's token) puts a secret on the command line or in this transcript. GET reads of /vault are masked and stay free.",
       "pattern": "(?s)(?=.*curl)(?=.*/api/(?:w/[^/\\s]+/)?agents/[^\\s/]+/(?:vault|canopy-token)\\b)(?=.*(?:-X\\s*(?:POST|PUT|PATCH|DELETE)|--data|--json\\b|\\s-d[\\s@]))",
       "message": "BLOCKED: a raw write to an agent's /vault or /canopy-token puts a key or token in the transcript. `canopy agent vault --slug <slug>` does both without printing either. Masked GET reads of /vault stay free."
