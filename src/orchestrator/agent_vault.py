@@ -241,24 +241,47 @@ def repo_slug(agent: dict) -> tuple[str, str]:
     return name, str(definition.get("repo_ref") or "")
 
 
-def load_template(agent: dict, repo: Optional[Path], runner: Runner = subprocess.run
-                  ) -> tuple[str, str]:
-    """(.env.tpl text, where it came from): the local checkout when given, else the agent's
-    repo on GitHub (its recorded ref) via `gh`."""
+def read_repo_file(agent: dict, repo: Optional[Path], rel: str,
+                   runner: Runner = subprocess.run) -> tuple[Optional[str], str]:
+    """(text or None when absent, where it came from): the local checkout when given, else
+    the agent's repo on GitHub (its recorded ref) via `gh`."""
     if repo is not None:
-        path = Path(repo) / ".env.tpl"
-        if not path.is_file():
-            raise VaultError(f"{path} does not exist — is --repo the agent's checkout?")
-        return path.read_text(encoding="utf-8"), str(path)
+        path = Path(repo) / rel
+        return (path.read_text(encoding="utf-8") if path.is_file() else None), str(path)
     name, ref = repo_slug(agent)
     if not name:
         raise VaultError("canopy-web records no repository for this agent — pass --repo DIR")
-    api = f"repos/{name}/contents/.env.tpl" + (f"?ref={ref}" if ref else "")
+    api = f"repos/{name}/contents/{rel}" + (f"?ref={ref}" if ref else "")
     p = runner(["gh", "api", api, "--jq", ".content"], capture_output=True, text=True)
+    where = f"github.com/{name}/{rel}"
     if p.returncode != 0:
-        raise VaultError(f"could not read .env.tpl from {name}: "
+        if "404" in (p.stderr or "") or "Not Found" in (p.stderr or ""):
+            return None, where
+        raise VaultError(f"could not read {rel} from {name}: "
                          f"{(p.stderr or '').strip()[:200]} — pass --repo DIR")
-    return base64.b64decode(p.stdout).decode("utf-8"), f"github.com/{name}/.env.tpl"
+    return base64.b64decode(p.stdout).decode("utf-8"), where
+
+
+def load_template(agent: dict, repo: Optional[Path], runner: Runner = subprocess.run
+                  ) -> tuple[str, str]:
+    """(.env.tpl text, where it came from)."""
+    text, where = read_repo_file(agent, repo, ".env.tpl", runner)
+    if text is None:
+        raise VaultError(f"{where} does not exist — is this the agent's repo?")
+    return text, where
+
+
+def mailbox_address(agent: dict, repo: Optional[Path], runner: Runner = subprocess.run) -> str:
+    """The agent's mailbox: canopy-web's record, else the repo's config/agent.json `email`
+    — the identity source `agent-publish register` reads. A browser-created agent's record
+    can be blank while its repo names the address (lex, 2026-10-15)."""
+    if agent.get("email"):
+        return str(agent["email"])
+    text, _ = read_repo_file(agent, repo, "config/agent.json", runner)
+    try:
+        return str(json.loads(text or "{}").get("email") or "")
+    except ValueError:
+        return ""
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -391,7 +414,7 @@ def run(slug: str, *, token: str, workspace: str = "", vault: str = "",
             rep.actions.append(f"created {rep.vault}/{item}")
         if k.kind == MINTED:
             body = web("POST", f"/api/agents/{slug}/canopy-token",
-                       {"email": str(agent.get("email") or ""),
+                       {"email": mailbox_address(agent, repo, gh_runner),
                         "label": f"{slug} agent (canopy agent vault)"})
             raw = str(body.pop("raw", ""))
             op.set_field(rep.vault, doc, fld, raw)

@@ -254,6 +254,18 @@ def test_the_report_says_how_each_empty_value_gets_filled(repo):
     assert "kc-api-key, gdrive-root-folder — re-run in a terminal to be asked" in printed
 
 
+def test_a_blank_canopy_web_email_falls_back_to_the_repos_identity(repo):
+    """lex, 2026-10-15: created in the browser, its record had no email while its repo's
+    config/agent.json named lex@dimagi-ai.com — the mint 422'd for want of an address."""
+    (repo / "config").mkdir()
+    (repo / "config" / "agent.json").write_text('{"email": "lex@dimagi-ai.com"}')
+    web = FakeWeb()
+    web.agent["email"] = ""
+    _run(web, FakeOp(), repo)
+    body = next(b for m, p, b in web.calls if p.endswith("canopy-token"))
+    assert body["email"] == "lex@dimagi-ai.com"
+
+
 def test_values_are_written_through_stdin_never_argv():
     """argv is visible to every process on the box (`ps`); stdin is not."""
     seen = []
