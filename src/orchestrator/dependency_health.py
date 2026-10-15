@@ -134,11 +134,51 @@ def _item_created_at(account: str, client: str, *, runner=subprocess.run) -> dat
     return None
 
 
+#: The phrase securityd logs each time it raises a keychain dialog. The doctor
+#: counts it rather than reading any ACL, so confirming costs no prompt either.
+KEYCHAIN_PROMPT_PHRASE = "displaying keychain prompt"
+
+#: `/usr/bin/log`, never bare `log` — zsh shadows `log` with a builtin.
+LOG_BINARY = "/usr/bin/log"
+
+
+def _keychain_prompt_count(*, runner=subprocess.run, window: str = "1h") -> int | None:
+    """How many keychain dialogs macOS raised in the last ``window``, or None if unreadable.
+
+    The ground truth the date heuristic only guesses at: if gog's ACL were really
+    broken, every gog read would show up here as a prompt. The predicate keeps the
+    scan cheap (~7s for an hour vs ~12s unfiltered) and excludes the `log` process
+    itself, whose own invocation line quotes the phrase.
+    """
+    predicate = (f'eventMessage CONTAINS "{KEYCHAIN_PROMPT_PHRASE}" '
+                 f'AND process != "log"')
+    try:
+        r = runner(
+            [LOG_BINARY, "show", "--last", window, "--style", "compact",
+             "--predicate", predicate],
+            capture_output=True, text=True, timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    count = 0
+    for line in (r.stdout or "").splitlines():
+        if KEYCHAIN_PROMPT_PHRASE not in line:
+            continue
+        fields = line.split()
+        if len(fields) >= 4 and fields[3].startswith("log["):
+            continue  # belt and braces: the `log` invocation echoing its own args
+        count += 1
+    return count
+
+
 def check_gog_keychain_trust(
     identity,
     *,
     runner=subprocess.run,
     binary_resolver=_gog_binary,
+    gog_used: bool | None = None,
 ) -> CheckResult:
     """The gog keychain token must be NEWER than the gog binary that reads it.
 
@@ -153,6 +193,12 @@ def check_gog_keychain_trust(
     installed Aug 28) and clears the moment the items are re-minted against the
     current binary — no version string to keep in sync, and it works for any
     future upgrade without being taught about it.
+
+    It is not sufficient on its own, though: a box can hold an old item that gog
+    still reads silently (2026-10-14). So when the dates trip, the verdict is
+    confirmed against securityd's prompt log. ``gog_used`` says whether gog was
+    seen working in this same doctor run (the live `Email auth (gog)` call) —
+    zero prompts only proves trust if gog actually read the keychain meanwhile.
     """
     name = "Gog keychain trust"
     if identity is None:
@@ -172,9 +218,27 @@ def check_gog_keychain_trust(
             name, True,
             f"token for {identity.account} was minted "
             f"{minted:%Y-%m-%d} against the current gog ({binary})")
+    # 2026-10-14: false FAIL on jjackson's Mac — 0 prompts/24h while gog polled 5
+    # mailboxes; cdat heuristic alone over-fires. Confirm against the prompt log.
+    prompts = _keychain_prompt_count(runner=runner)
+    if prompts == 0 and gog_used:
+        return CheckResult(
+            name, True,
+            f"dates suggest the keychain ACL predates this gog (binary {binary} dates "
+            f"{installed:%Y-%m-%d}, token for {identity.account} dates "
+            f"{minted:%Y-%m-%d}), but macOS shows no keychain prompts in the last "
+            f"hour — gog is trusted; re-mint only if prompts appear",
+            warn=True)
+    if prompts is None:
+        caveat = " (could not confirm against the keychain prompt log)"
+    elif prompts == 0:
+        caveat = (" (no keychain prompts in the last hour, but gog was not seen "
+                  "working in this run, so that does not confirm trust)")
+    else:
+        caveat = f" (confirmed: {prompts} keychain prompt(s) in the last hour)"
     return CheckResult(
         name, False,
-        f"gog was upgraded after this token was minted — binary {binary} dates "
+        f"gog was upgraded after this token was minted{caveat} — binary {binary} dates "
         f"{installed:%Y-%m-%d}, token dates {minted:%Y-%m-%d}, so the keychain ACL "
         f"pins a gog that no longer exists and EVERY gog call will block on a "
         f"keychain dialog ({KEYCHAIN_QUIRK}). Do NOT try 'Always Allow' — it "

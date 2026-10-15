@@ -934,12 +934,14 @@ def run_agent_doctor(
         check_secrets_manifest(repo),
         check_secrets_materialized(repo),
         check_rails_fire(repo),
-        check_email_auth(identity, gog_dir=gog_dir, runner=runner),
+        email_result := check_email_auth(identity, gog_dir=gog_dir, runner=runner),
         check_auth_client(identity, runner=runner),
         check_auth_services(identity, runner=runner),
         check_registration(identity, client_factory=client_factory),
         check_dependency_upgrades(runner=runner),
-        check_gog_keychain_trust(identity, runner=runner),
+        # The live gog call above is the "gog was used" evidence that lets a
+        # prompt-free keychain log confirm (or clear) the date heuristic.
+        check_gog_keychain_trust(identity, runner=runner, gog_used=email_result.ok),
     ]
     overall_ok = all(r.ok for r in results)
     return results, overall_ok

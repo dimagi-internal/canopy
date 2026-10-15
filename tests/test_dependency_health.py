@@ -132,3 +132,101 @@ def test_skips_when_gog_absent(tmp_path):
     res = dh.check_gog_keychain_trust(
         _ident(), runner=_runner_for({}), binary_resolver=lambda: None)
     assert res.ok and "not installed" in res.detail
+
+
+# ------------------------------------- keychain trust: prompt-log confirmation
+#
+# 2026-10-14: the date heuristic fired on jjackson's Mac while gog polled five
+# mailboxes with zero keychain prompts. The prompt log is the ground truth.
+
+_LOG_HEADER = "Timestamp               Ty Process[PID:TID]\n"
+_PROMPT_LINE = ("2026-10-14 16:50:01.000 Df securityd[123:abc] [com.apple.securityd:] "
+                "displaying keychain prompt for /opt/homebrew/Cellar/gogcli/0.43.0/bin/gog\n")
+_LOG_SELF_LINE = ("2026-10-14 16:54:22.361 Df log[4533:26e6fb3] [com.apple.log:] log run "
+                  "noninteractively, args: '/usr/bin/log' 'show' '--predicate' "
+                  "'eventMessage CONTAINS \"displaying keychain prompt\"'\n")
+
+
+def _tripped(tmp_path, log_result):
+    """Binary newer than the token (heuristic trips), with the given `log show` result."""
+    binary = _bin(tmp_path, datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp())
+    calls = []
+    kc = _kc("20260907140441Z")
+
+    def run(cmd, **kw):
+        calls.append(list(cmd))
+        if cmd[0] == "security":
+            return kc
+        if cmd[0] == "/usr/bin/log":
+            if isinstance(log_result, Exception):
+                raise log_result
+            return log_result
+        return SimpleNamespace(returncode=1, stdout="", stderr="no match")
+    return binary, run, calls
+
+
+def _log(stdout, rc=0):
+    return SimpleNamespace(returncode=rc, stdout=stdout, stderr="")
+
+
+def test_prompts_seen_keeps_the_fail(tmp_path):
+    binary, run, _ = _tripped(tmp_path, _log(_LOG_HEADER + _PROMPT_LINE * 3))
+    res = dh.check_gog_keychain_trust(
+        _ident(), runner=run, binary_resolver=lambda: binary, gog_used=True)
+    assert res.ok is False and not res.warn
+    assert "3 keychain prompt" in res.detail
+    assert "gog auth import" in res.detail          # re-mint instructions kept
+
+
+def test_zero_prompts_while_gog_worked_is_a_warn(tmp_path):
+    binary, run, calls = _tripped(tmp_path, _log(_LOG_HEADER))
+    res = dh.check_gog_keychain_trust(
+        _ident(), runner=run, binary_resolver=lambda: binary, gog_used=True)
+    assert res.ok is True and res.warn is True
+    assert "no keychain prompts in the last hour" in res.detail
+    assert "gog is trusted" in res.detail
+    log_cmd = next(c for c in calls if c[0] == "/usr/bin/log")
+    assert log_cmd[:5] == ["/usr/bin/log", "show", "--last", "1h", "--style"]
+
+
+def test_log_echoing_its_own_args_is_not_a_prompt(tmp_path):
+    binary, run, _ = _tripped(tmp_path, _log(_LOG_HEADER + _LOG_SELF_LINE))
+    res = dh.check_gog_keychain_trust(
+        _ident(), runner=run, binary_resolver=lambda: binary, gog_used=True)
+    assert res.ok is True and res.warn is True
+
+
+def test_zero_prompts_without_gog_use_proves_nothing(tmp_path):
+    binary, run, _ = _tripped(tmp_path, _log(_LOG_HEADER))
+    res = dh.check_gog_keychain_trust(
+        _ident(), runner=run, binary_resolver=lambda: binary, gog_used=False)
+    assert res.ok is False
+    assert "does not confirm trust" in res.detail
+
+
+@pytest.mark.parametrize("log_result", [
+    _log("", rc=1),                                           # unpermitted / failed
+    subprocess.TimeoutExpired(cmd="log", timeout=20),         # hung
+    FileNotFoundError("/usr/bin/log"),                        # unavailable
+])
+def test_unreadable_log_keeps_the_fail_with_a_caveat(tmp_path, log_result):
+    binary, run, _ = _tripped(tmp_path, log_result)
+    res = dh.check_gog_keychain_trust(
+        _ident(), runner=run, binary_resolver=lambda: binary, gog_used=True)
+    assert res.ok is False
+    assert "(could not confirm against the keychain prompt log)" in res.detail
+    assert "gog auth import" in res.detail
+
+
+def test_heuristic_not_tripped_never_reads_the_log(tmp_path):
+    binary = _bin(tmp_path, datetime(2026, 8, 28, tzinfo=timezone.utc).timestamp())
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(list(cmd))
+        return _kc("20260907140441Z")
+
+    res = dh.check_gog_keychain_trust(
+        _ident(), runner=run, binary_resolver=lambda: binary, gog_used=True)
+    assert res.ok is True and not res.warn
+    assert not any(c[0] == "/usr/bin/log" for c in calls)
