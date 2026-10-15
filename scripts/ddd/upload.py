@@ -146,10 +146,19 @@ def upload_narrative_video(
     role: str | None = None,
     title: str | None = None,
     cut: dict | None = None,
+    sources: dict | None = None,
     _detail=None,
     _upload=None,
+    _push_sources=None,
 ) -> dict:
     """Upload a rendered mp4 and pin it to the narrative's CURRENT version.
+
+    ``sources`` (``{role: path}``, see :mod:`scripts.ddd.sources`) are the files
+    it takes to iterate this narrative again — the recipe always, and for a cut
+    the master recording and capture report it was cut from. They are pinned to
+    the same version FIRST, and the video is refused without them: a video
+    canopy-web holds but no other machine can re-render is how a narrative gets
+    stranded on the box that made it.
 
     ``cut`` (one entry of :func:`scripts.ddd.recorded.resolve_cuts`) uploads the
     video as THAT cut of a ``style: recorded`` narrative: canopy-web keeps one
@@ -179,6 +188,23 @@ def upload_narrative_video(
             f"canopy-web has no narrative version for {narrative_slug!r} — post the "
             "narrative (run the narrative-review gate) before attaching a video."
         )
+    from scripts.ddd import sources as narrative_sources
+
+    files = {k: Path(v) for k, v in (sources or {}).items() if v}
+    missing = ["recipe"] if "recipe" not in files else []
+    if cut:
+        missing += [r for r in ("master", "capture_report") if r not in files]
+    if missing:
+        raise SystemExit(
+            f"refusing to upload {narrative_slug!r}'s video without its iteration "
+            f"sources ({', '.join(missing)}): canopy-web must hold everything needed "
+            "to re-render it, or no other machine can keep iterating this narrative. "
+            "Pass --spec (and for a cut --master and --report)."
+        )
+    pushed = (_push_sources or narrative_sources.push_sources)(
+        narrative_slug, str(review_id), files, base_url=base_url, token=token,
+    )
+
     data = Path(video_path).read_bytes()
     if cut:
         default_title = cut.get("title") or cut["id"]
@@ -204,6 +230,7 @@ def upload_narrative_video(
         "version": version,
         "review_id": str(review_id),
         "narrative_url": narrative_landing_url(narrative_slug, base_url),
+        "sources": {role: bool(row.get("reused")) for role, row in pushed.items()},
     }
 
 
@@ -1277,6 +1304,19 @@ def upload_run(
 
     raw_why = yaml.safe_load(why_brief_path.read_text())
     why_brief = WhyBrief.model_validate(raw_why)
+
+    # 2b. Pin the spec the run rendered to its narrative version, so the package
+    #     canopy-web shows can be re-rendered from anywhere, not just this box.
+    if narrative_review_id:
+        from scripts.ddd import sources as narrative_sources
+
+        narrative_sources.push_sources(
+            run_state.narrative_slug,
+            str(narrative_review_id),
+            narrative_sources.recipe_files(spec_path, run_state.narrative_slug),
+            base_url=base_url,
+            token=token,
+        )
 
     # 3. Upload the hero video
     video_bytes = Path(video_path).read_bytes()

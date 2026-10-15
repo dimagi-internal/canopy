@@ -178,11 +178,12 @@ Walkthrough specs live in `docs/walkthroughs/<name>.yaml`.
 > `.recipe.yaml`. Never hand-edit a lock — `scripts.ddd.check_locks` fails the
 > build if you do. Plain (non-DDD) walkthroughs stay single-file.
 >
-> **`pull` fetches the story half only.** canopy-web has no copy of the recipe
-> and cannot produce one, so a narrative authored on another machine (or by
-> another agent) lands here with a lock, a why-brief, and nothing to render.
-> `pull` reports `"renderable": false` and warns on stderr when no
-> `<slug>.recipe.yaml` sits beside the lock — write one before trying to render.
+> **`pull` restores the recipe too.** Every `narrative post` and `upload-video`
+> pins the recipe (and, for a recorded narrative, the master recording and
+> capture report) to the version on canopy-web, so a narrative authored on
+> another machine or by another agent lands here renderable. `pull` reports
+> `"renderable": false` and warns on stderr only when canopy-web holds no
+> recipe either — then author one and `narrative push-sources` it.
 
 
 ```yaml

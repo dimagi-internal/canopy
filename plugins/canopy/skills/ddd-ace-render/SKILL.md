@@ -134,11 +134,17 @@ the **rendered** mp4 (the ace renderer's `output.mp4`, not the silent master) to
 the narrative's **current version** on canopy-web. This runs by default; pass
 `--no-upload` to render locally without publishing:
 ```bash
-( cd "$CANOPY" && python3 -m scripts.ddd.snippets upload-video "$SLUG" "<output.mp4>" )
+( cd "$CANOPY" && python3 -m scripts.ddd.snippets upload-video "$SLUG" "<output.mp4>" \
+    --spec "$(cd "$OLDPWD" && pwd)/$SPEC" \
+    --master "$WORK/master.mp4" --report "$WORK/report.json" --manifest "$WORK/manifest.json" )
 ```
-It resolves the current narrative version, uploads the mp4 as a `kind=video`
-walkthrough stamped with that version's review id (`narrative_review_id`), and
-prints the narrative URL. Pinning to the version means a later narration edit
+It resolves the current narrative version, pins the recipe, master recording
+and capture report to that version on canopy-web, then uploads the mp4 as a
+`kind=video` walkthrough stamped with that version's review id
+(`narrative_review_id`), and prints the narrative URL. `$WORK` is a temp dir:
+once this upload returns, nothing needed to re-render the narrative is left
+only on this machine (`narrative pull` restores it anywhere). `--spec` is
+required and the upload refuses without it. Pinning to the version means a later narration edit
 can't leave a stale video on a newer version. Refuses if canopy-web has no
 narrative version for the slug — post the narrative through the narrative-review
 gate first.

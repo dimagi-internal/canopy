@@ -51,7 +51,7 @@ A narrative has **two owners**, so after it is agreed it lives in two files:
 
 | file | owner | what it holds |
 |---|---|---|
-| `<slug>.recipe.yaml` | **git** | how to film it — `show`, `url`, `viewport`, `actions`, `pace`, `concept_claim` |
+| `<slug>.recipe.yaml` | **git**, with a copy pinned to each version on canopy-web | how to film it — `show`, `url`, `viewport`, `actions`, `pace`, `concept_claim` |
 | canopy-web | **cloud** | the story — `narrative`, per-scene `title`/`persona`/`provenance`/`narrative`/`features` |
 | `<slug>.narrative.lock.json` | **generated** | a committed cache of the story at a pinned version |
 
@@ -66,6 +66,9 @@ git rm docs/walkthroughs/<narrative-slug>.yaml    # the draft is spent
 ```
 
 and from then on canopy-web owns the story; `narrative pull` refreshes the lock.
+The recipe is still edited in git, and every `narrative post` / `upload-video`
+also pins the file to the version on canopy-web, so `narrative pull` can
+restore it on a machine that never had the checkout.
 
 **Never hand-write or hand-edit a `.narrative.lock.json`.** It is generated, and
 `python -m scripts.ddd.check_locks docs/walkthroughs` fails the build if a recipe
