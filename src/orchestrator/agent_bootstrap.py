@@ -398,8 +398,28 @@ class Bootstrapper:
             return None, self._op_blocked
         return r, ""
 
+    # ── where credentials come from — overridden by a runner (agent_prepare.RunnerPreparer) ──
+    def op_argv(self, argv: list[str]) -> list[str]:
+        """A PERSON's op: their signed-in account."""
+        return [*argv, "--account", self.op_account]
+
+    def op_env(self, vault: str, base: Optional[dict] = None) -> Optional[dict]:
+        """op's environment for reading `vault` (None = inherit). A person needs nothing."""
+        return base
+
+    def client_ref(self, client: str, vault: str) -> str:
+        return client_op_ref(client, vault)
+
+    def expected_mailbox(self, slug: str, repo: Path) -> str:
+        """The mailbox this agent's token must be for: the repo's identity, on a laptop."""
+        try:
+            return resolve_email_identity(Path(repo)).account.lower()
+        except AgentEmailError:
+            return ""
+
     def _op_read(self, ref: str) -> tuple[str | None, str]:
-        r, err = self._op(["op", "read", ref, "--account", self.op_account], timeout=120)
+        vault = ref[len("op://"):].split("/", 1)[0] if ref.startswith("op://") else ""
+        r, err = self._op(self.op_argv(["op", "read", ref]), timeout=120, env=self.op_env(vault))
         if r is None:
             return None, err
         if r.returncode != 0 or not (r.stdout or "").strip():
@@ -497,9 +517,8 @@ class Bootstrapper:
             rep.fail(f"env: {verr}")
             return
         out.parent.mkdir(parents=True, exist_ok=True)
-        r, err = self._op(["op", "inject", "-f", "-i", str(tpl), "-o", str(out),
-                           "--account", self.op_account], timeout=180,
-                          env=inject_env(dict(os.environ), vault, slug))
+        r, err = self._op(self.op_argv(["op", "inject", "-f", "-i", str(tpl), "-o", str(out)]),
+                          timeout=180, env=self.op_env(vault, inject_env(dict(os.environ), vault, slug)))
         if r is None or r.returncode != 0:
             rep.env = "FAIL"
             # op names the reference it could not resolve, never a value.
@@ -574,10 +593,7 @@ class Bootstrapper:
             rep.fail("token: the token names no `client` — refusing to guess one "
                      "(the client is a property of the token, never of agent.json)")
             return None
-        try:
-            expected = resolve_email_identity(Path(repo)).account.lower()
-        except AgentEmailError:
-            expected = ""
+        expected = self.expected_mailbox(slug, repo)
         if expected and tok.email and tok.email != expected:
             rep.fail(f"token: the {tok.source} token is for {tok.email}, not {expected} — "
                      "NOT importing (one mailbox per agent)")
@@ -590,7 +606,7 @@ class Bootstrapper:
         # Client creds for the client the TOKEN names.
         creds = self.gog_dir / f"credentials-{tok.client}.json"
         if not gog_client_credentials(str(self.gog_dir), tok.client):
-            ref = client_op_ref(tok.client, vault)
+            ref = self.client_ref(tok.client, vault)
             if not vault and tok.client not in SHARED_CLIENT_REFS:
                 rep.fail(f"token: cannot read OAuth client '{tok.client}': {verr}")
                 return tok

@@ -1,5 +1,6 @@
 """`canopy agent …` — thin CLI over AgentClient for shell-driven agents."""
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -514,6 +515,62 @@ def agent_vault(slug, workspace, vault, repo, check, rotate_key, rotate_pat, no_
     click.echo(av.render(rep))
     if rep.missing or (check and rep.key != "stored"):
         sys.exit(1)
+
+
+@agent.command("prepare")
+@click.option("--slug", "slugs", multiple=True, required=True, help="Agent slug (repeatable).")
+@click.option("--runner", "runner_mode", is_flag=True,
+              help="Runner mode: every credential from canopy-web (the runner's token, "
+                   "CANOPY_TOKEN), the agent cloned under --agent-root. What a runner calls.")
+@click.option("--agent-root", default=lambda: os.environ.get("AGENT_ROOT", "/opt/agents"),
+              show_default="$AGENT_ROOT or /opt/agents", help="Where agents are cloned (runner).")
+@click.option("--repo-url", default="", help="Clone URL (default: canopy-web's record).")
+@click.option("--credentials-only", is_flag=True,
+              help="Gmail client + token + verify + report only — no clone or re-provision.")
+@click.option("--env-only", is_flag=True, help="Only re-inject ~/.<slug>/.env (a claim's refresh).")
+@click.option("--no-report", is_flag=True, help="Do not POST the readiness report.")
+@click.option("--dry-run", is_flag=True, help="Say what would happen; change nothing.")
+@click.option("--json", "as_json", is_flag=True, help="One JSON report per agent.")
+def agent_prepare(slugs, runner_mode, agent_root, repo_url, credentials_only, env_only,
+                  no_report, dry_run, as_json):
+    """Make agents runnable on THIS machine — the one implementation every runner calls.
+
+    Runner mode (`--runner`): credentials from canopy-web's /credentials/resolve with the
+    runner's token; clone/pull, .env via op inject with the agent's own key, its plugin and
+    required plugins (node deps, key files), bin/<slug>-setup, the Gmail token (its own
+    client, newest of vault and canopy-web), a real mailbox call, then a readiness report.
+    Without --runner it is `canopy agent bootstrap` (a person's laptop). See
+    orchestrator/agent_prepare.py.
+    """
+    import sys
+
+    if not runner_mode:
+        ctx = click.get_current_context()
+        return ctx.invoke(agent_bootstrap, slugs=slugs, repo=None, dry_run=dry_run,
+                          op_account="dimagi.1password.com")
+    from orchestrator import canopy_web
+    from orchestrator.agent_prepare import RunnerPreparer
+
+    base = os.environ.get("CANOPY_BASE_URL", "").strip() or canopy_web.resolve_base_url(None)
+    token = os.environ.get("CANOPY_TOKEN", "").strip() or canopy_web.resolve_token(None)
+    prep = RunnerPreparer(base_url=base, token=token, agent_root=Path(agent_root),
+                          runner_name=os.environ.get("RUNNER_NAME", ""), dry_run=dry_run,
+                          echo=(lambda _m: None) if as_json else click.echo)
+    bad = False
+    for slug in slugs:
+        rep = prep.prepare(slug, repo_url=repo_url, credentials_only=credentials_only,
+                           env_only=env_only, report=not (no_report or env_only))
+        bad = bad or not rep.ok
+        if as_json:
+            click.echo(json.dumps({"slug": slug, "ok": rep.ok, **rep.payload(prep.runner_name),
+                                   "env": rep.env, "plugins": rep.plugins, "token": rep.token,
+                                   "gmail": rep.gmail, "notes": rep.notes}))
+        else:
+            click.echo(f"{slug}: {'OK' if rep.ok else 'PROBLEMS'} — env {rep.env}, plugins "
+                       f"{rep.plugins}, token {rep.token}, gmail {rep.gmail}, turn {rep.turn}")
+            for n in rep.notes:
+                click.echo(f"  {n}")
+    sys.exit(1 if bad else 0)
 
 
 @agent.command("bootstrap")
