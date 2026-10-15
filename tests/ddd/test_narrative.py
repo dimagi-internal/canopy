@@ -1717,6 +1717,76 @@ class TestPostNarrativeVersion:
 
         assert result["id"] == "rev-1"
 
+    def test_refuses_unstamped_run_id_that_would_mint_a_new_narrative(
+        self, tmp_path, monkeypatch
+    ):
+        """canopy#907: `…-2026-10-14-rerecord` has no numeric stamp, so the run
+        id derived ITSELF as the slug and canopy-web made a new narrative while
+        the spec's narrative never moved. It must refuse, naming both."""
+        import scripts.ddd.runstate as rs
+        from scripts.ddd.narrative import UnstampedRunIdError, post_narrative_version
+
+        monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
+        spec_path = _write_spec(tmp_path, _make_spec())  # name: rooftop-surveys
+        fake = _FakeReview()
+        fake.narrative_version_exists = lambda slug, **k: False
+
+        with pytest.raises(UnstampedRunIdError) as exc:
+            post_narrative_version(
+                str(spec_path), "rooftop-surveys-2026-10-14-rerecord", rv=fake
+            )
+        msg = str(exc.value)
+        assert "rooftop-surveys-2026-10-14-rerecord" in msg
+        assert "'rooftop-surveys'" in msg
+        assert fake.posts == []  # nothing was posted
+
+    def test_unstamped_run_id_allowed_when_its_narrative_already_exists(
+        self, tmp_path, monkeypatch
+    ):
+        import scripts.ddd.runstate as rs
+        from scripts.ddd.narrative import post_narrative_version
+
+        monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
+        spec_path = _write_spec(tmp_path, _make_spec())
+        fake = _FakeReview()
+        seen = []
+        fake.narrative_version_exists = lambda slug, **k: seen.append(slug) or True
+
+        result = post_narrative_version(str(spec_path), "legacy-unstamped", rv=fake)
+
+        assert result["id"] == "rev-1"
+        assert seen == ["legacy-unstamped"]
+
+    def test_unstamped_run_id_equal_to_spec_name_is_allowed(self, tmp_path, monkeypatch):
+        import scripts.ddd.runstate as rs
+        from scripts.ddd.narrative import post_narrative_version
+
+        monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
+        spec_path = _write_spec(tmp_path, _make_spec())
+        fake = _FakeReview()  # no narrative_version_exists: must not be consulted
+
+        result = post_narrative_version(str(spec_path), "rooftop-surveys", rv=fake)
+
+        assert result["id"] == "rev-1"
+
+    def test_cmd_post_exits_3_on_unstamped_run_id(self, tmp_path, monkeypatch, capsys):
+        import scripts.ddd.review as review_mod
+        import scripts.ddd.runstate as rs
+        from scripts.ddd import narrative as nar
+
+        monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
+        monkeypatch.setattr(nar, "_pending_review_for_run", lambda *a, **k: None)
+        monkeypatch.setattr(review_mod, "narrative_version_exists", lambda slug, **k: False)
+        posted = []
+        monkeypatch.setattr(review_mod, "post_review_request", lambda r, **k: posted.append(r))
+        spec_path = _write_spec(tmp_path, _make_spec())
+
+        with pytest.raises(SystemExit) as exc:
+            nar._cmd_post(str(spec_path), "rooftop-surveys-2026-10-14-rerecord")
+        assert exc.value.code == 3
+        assert "REFUSED" in capsys.readouterr().err
+        assert posted == []
+
     def test_raises_when_spec_missing(self, tmp_path):
         from scripts.ddd.narrative import post_narrative_version
 
