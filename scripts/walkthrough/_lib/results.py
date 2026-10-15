@@ -183,6 +183,19 @@ class RunReport:
     what the recorder KNEW it waited for, not a pixel-based freeze guess (which
     an animated spinner defeats). Empty ⇒ key omitted from :meth:`as_dict`."""
 
+    capture_spans: list[dict] = field(default_factory=list)
+    """Footage spans spent taking a FULL-PAGE per-scene snapshot (``--snapshots``),
+    in recording-timeline seconds (same origin as :attr:`load_waits`)::
+
+        {"scene_index": int, "start_seconds": float,
+         "duration_seconds": float, "kind": "before" | "snapshot"}
+
+    A full-page capture resizes the live viewport for the beyond-viewport paint
+    (and scrolls to top first), and the video recorder films that: the page
+    shrinks onto a grey canvas for ~1.5 s. The emitter (``scripts.ddd.snippets``)
+    cuts these spans out of every segment UNCONDITIONALLY, so the film never
+    shows them (canopy#912). Empty ⇒ key omitted from :meth:`as_dict`."""
+
     scene_hooks: list[dict] = field(default_factory=list)
     """Provenance of each scene ``before:`` hook that ran —
     ``{"scene_index", "command", "exit_code", "duration_seconds"}``. Empty ⇒ key
@@ -238,6 +251,24 @@ class RunReport:
                 "start_seconds": round(float(start_seconds), 3),
                 "duration_seconds": round(float(duration_seconds), 3),
                 "target": target,
+            }
+        )
+
+    def record_capture_span(
+        self,
+        *,
+        scene_index: int | None,
+        start_seconds: float,
+        duration_seconds: float,
+        kind: str,
+    ) -> None:
+        """Record one full-page snapshot's footage span. See :attr:`capture_spans`."""
+        self.capture_spans.append(
+            {
+                "scene_index": int(scene_index) if scene_index is not None else None,
+                "start_seconds": round(float(start_seconds), 3),
+                "duration_seconds": round(float(duration_seconds), 3),
+                "kind": kind,
             }
         )
 
@@ -303,6 +334,8 @@ class RunReport:
             d["prewarm"] = self.prewarm
         if self.load_waits:
             d["load_waits"] = list(self.load_waits)
+        if self.capture_spans:
+            d["capture_spans"] = list(self.capture_spans)
         if self.scene_hooks:
             d["scene_hooks"] = list(self.scene_hooks)
         return d

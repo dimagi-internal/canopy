@@ -186,7 +186,7 @@ def merge_report(prior: dict | None, new: dict, targets: Iterable[int]) -> dict:
         fresh = [e for e in new.get(key) or [] if _scene_of(e) in want]
         return sorted(kept + fresh, key=lambda e: (_scene_of(e) or 0))
 
-    for key in ("actions", "scenes", "load_waits", "scene_hooks"):
+    for key in ("actions", "scenes", "load_waits", "capture_spans", "scene_hooks"):
         if prior.get(key) or new.get(key):
             merged[key] = pick(key)
     actions = merged.get("actions") or []
