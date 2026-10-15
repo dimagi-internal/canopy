@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/fleet_session_start_update.py\"",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/python.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/fleet_session_start_update.py\"",
             "async": true
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/agent_op_env.py\"",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/python.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/agent_op_env.py\"",
             "timeout": 30
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/caller_context.py\"",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/python.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/caller_context.py\"",
             "timeout": 5
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\""
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/python.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\""
           }
         ]
       }
@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/agent-core/gating_guard.py\" --session"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/python.sh\" --guard \"${CLAUDE_PLUGIN_ROOT}/agent-core/gating_guard.py\" --session"
           }
         ]
       },
@@ -59,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/profile_guard.py\""
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/python.sh\" --guard \"${CLAUDE_PLUGIN_ROOT}/hooks/profile_guard.py\""
           }
         ]
       },
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/one_shot_turn_guard.py\""
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/python.sh\" --guard \"${CLAUDE_PLUGIN_ROOT}/hooks/one_shot_turn_guard.py\""
           }
         ]
       }
