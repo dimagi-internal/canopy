@@ -61,6 +61,40 @@ def _narrative_slug_from_run_id(run_id: str) -> str:
     return base or run_id or "(untitled)"
 
 
+class UnstampedRunIdError(ValueError):
+    """A run id with no ``-YYYY-MM-DD-NNN`` stamp would mint a NEW narrative.
+
+    ``_narrative_slug_from_run_id`` only strips a numeric stamp, so a run id
+    like ``chlorine-2026-10-14-rerecord`` derives itself as the narrative slug
+    and canopy-web silently creates a fresh narrative for it while the spec's
+    real narrative never moves (canopy#907).
+    """
+
+
+def _check_run_id_targets_spec_narrative(run_id: str, spec_name: str | None, rv) -> None:
+    """Refuse a run id with no ``-NNN`` stamp that would create a new narrative.
+
+    Only consulted when no run_state names the slug. Passes when the run id is
+    stamped, when it derives exactly the spec's ``name``, or when canopy-web
+    already has a narrative under the derived slug (an existing narrative is
+    being versioned, not created). Otherwise raises ``UnstampedRunIdError``
+    naming both slugs and the run id to use instead.
+    """
+    if _RUN_ID_STAMP_RE.search(run_id or ""):
+        return
+    derived = _narrative_slug_from_run_id(run_id)
+    name = (spec_name or "").strip()
+    if not name or name == derived:
+        return
+    if rv.narrative_version_exists(derived):
+        return
+    raise UnstampedRunIdError(
+        f"run id {run_id!r} has no -YYYY-MM-DD-NNN stamp, so it would create a NEW "
+        f"narrative {derived!r} instead of a version of the spec's narrative {name!r}. "
+        f"Use a stamped run id such as '{name}-YYYY-MM-DD-001' (canopy#907)."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Narrative lock — an approved narrative is durable INPUT.
 #
@@ -1147,6 +1181,10 @@ def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
         narrative_slug = None
 
     spec = load_spec(spec_path)
+    if not narrative_slug:
+        # No run_state names the slug, so it comes from the run id — refuse an
+        # unstamped one that would silently mint a new narrative (canopy#907).
+        _check_run_id_targets_spec_narrative(run_id, getattr(spec, "name", None), rv)
     why_brief = load_why_brief(spec_path, spec)
     request = build_narrative_review_request(
         spec, run_id, why_brief=why_brief, narrative_slug=narrative_slug
@@ -1192,7 +1230,11 @@ def _cmd_post(spec_path_str: str, run_id: str, *, force: bool = False) -> None:
         )
         sys.exit(3)
 
-    result = post_narrative_version(spec_path_str, run_id, rv=rv)
+    try:
+        result = post_narrative_version(spec_path_str, run_id, rv=rv)
+    except UnstampedRunIdError as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        sys.exit(3)
     # Surface BOTH link forms explicitly so callers (and skills) never hand the
     # user the no-rail share link by mistake:
     #   internal_url — owner view, opens inside the workbench (LEFT RAIL). Default.
