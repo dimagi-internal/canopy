@@ -233,3 +233,81 @@ def test_cli_refuses_a_cut_of_an_explainer_spec(monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as exc:
         _run(monkeypatch, tmp_path, "--cut", "assign", "--spec", "{spec}", spec=explainer)
     assert "not a `style: recorded` spec" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# The product screens a cut films travel with it as `reference` links, so the
+# review link and the storyboard can send a reviewer to the live page
+# (canopy-web#1512). The RUTF cuts went up with none because this path never
+# built them.
+# ---------------------------------------------------------------------------
+
+RECIPE = """\
+name: rutf
+base_url: https://labs.example
+style: recorded
+scenes:
+  - {id: overview, title: Every procurement, url: "/supply/overview/?program_id=1"}
+  - {id: suppliers, title: Suppliers, url: "/supply/tenders/356/"}
+  - {id: compare, title: Compare, url: "/supply/tenders/356/compare/"}
+  - {id: made, title: Made on camera, url: "/supply/audits/${audit_id}/"}
+"""
+
+
+def _recipe_sources(tmp_path, manifest=None):
+    files = _sources(tmp_path)
+    files["recipe"].write_text(RECIPE)
+    if manifest is not None:
+        files["capture_manifest"] = tmp_path / "manifest.json"
+        files["capture_manifest"].write_text(__import__("json").dumps(manifest))
+    return files
+
+
+def _upload_cut(tmp_path, cut, files):
+    mp4 = tmp_path / "cut.mp4"
+    mp4.write_bytes(b"\x00")
+    up = _capture()
+    upload_narrative_video(
+        "rutf", str(mp4), cut=cut, sources=files,
+        _detail=lambda *a, **k: DETAIL, _upload=up, _push_sources=_pushes(),
+    )
+    return up.calls[0]["links"]
+
+
+def test_a_cut_carries_only_its_own_scenes_screens_from_the_recipe(tmp_path):
+    cut = {"id": "buying", "title": "Buying", "scene_ids": ["suppliers", "compare"],
+           "scene_indexes": [2, 3]}
+    assert _upload_cut(tmp_path, cut, _recipe_sources(tmp_path)) == [
+        {"label": "Suppliers", "url": "https://labs.example/supply/tenders/356/", "kind": "reference"},
+        {"label": "Compare", "url": "https://labs.example/supply/tenders/356/compare/", "kind": "reference"},
+    ]
+
+
+def test_the_recorders_manifest_wins_and_adds_pages_visited_mid_scene(tmp_path):
+    manifest = {"base_url": "https://labs.example", "slides": [
+        {"type": "scene", "scene_index": 4, "title": "Made on camera",
+         "url": "/supply/audits/77/", "urls_visited": ["https://labs.example/supply/audits/77/done/"]},
+        {"type": "scene", "scene_index": 1, "title": "Every procurement", "url": "/supply/overview/"},
+    ]}
+    cut = {"id": "audit", "title": "Audit", "scene_ids": ["made"], "scene_indexes": [4]}
+    links = _upload_cut(tmp_path, cut, _recipe_sources(tmp_path, manifest))
+    assert [l["url"] for l in links] == [
+        "https://labs.example/supply/audits/77/",
+        "https://labs.example/supply/audits/77/done/",
+    ]
+
+
+def test_an_unresolved_or_bare_url_is_never_sent(tmp_path):
+    from scripts.ddd.upload import cut_product_links
+
+    spec = {"base_url": "https://labs.example", "scenes": [
+        {"id": "a", "url": "/supply/audits/${audit_id}/"},
+        {"id": "b", "url": "https://labs.example/"},
+        {"id": "c", "url": "/"},
+    ]}
+    assert cut_product_links(spec=spec, manifest={}, cut=None) == []
+
+
+def test_a_recipe_without_urls_uploads_without_links(tmp_path):
+    cut = {"id": "assign", "title": "Assigning", "scene_ids": ["x"], "scene_indexes": [1]}
+    assert _upload_cut(tmp_path, cut, _sources(tmp_path)) is None
