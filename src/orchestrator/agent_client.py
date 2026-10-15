@@ -314,6 +314,13 @@ class AgentClient:
         the wrong period is otherwise unreachable. Returns {} on success (204)."""
         return self._call("DELETE", f"/api/agents/{self.slug}/syncs/{int(sync_id)}/")
 
+    def setup_steps(self) -> list[dict]:
+        """canopy-web's setup checklist for this agent (`GET /api/agents/<slug>/setup`) — THE
+        list of what is left, computed from the system's own checks. `canopy agent doctor`
+        reads it rather than keeping a second opinion (docs/architecture/agent-setup-lifecycle.md)."""
+        raw = self._call("GET", f"/api/agents/{self.slug}/setup")
+        return list(raw.get("result", []) if isinstance(raw, dict) else raw or [])
+
     def pending_actions(self) -> "list[TaskAction]":
         """The agent's queue: actions people took on its tasks that it has not yet
         carried out, oldest first — the order to carry them out in."""

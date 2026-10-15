@@ -11,7 +11,7 @@ from orchestrator.agent_doctor import (
     check_gating,
     check_hook_wiring,
     check_identity,
-    check_registration,
+    check_setup,
     check_secrets_manifest,
     run_agent_doctor,
 )
@@ -86,18 +86,25 @@ def _ok_runner(cmd, capture_output, text, timeout):
     return SimpleNamespace(returncode=0, stdout="", stderr="")
 
 
-class _FakeClient:
-    def __init__(self, identity, *, error=None, pending=()):
-        self._error, self._pending = error, list(pending)
+def _steps(**status):
+    keys = ("repo", "github", "mailbox", "vault", "runner", "job", "first_turn")
+    return [{"key": k, "title": k.replace("_", " ").title(), "status": status.get(k, "done"),
+             "where": "terminal" if k == "vault" else "web",
+             "command": "canopy agent vault --slug hal" if k == "vault" else ""} for k in keys]
 
-    def pending_actions(self):
+
+class _FakeClient:
+    def __init__(self, identity, *, error=None, steps=None):
+        self._error, self._steps = error, _steps() if steps is None else steps
+
+    def setup_steps(self):
         if self._error:
             raise self._error
-        return self._pending
+        return self._steps
 
 
-def _client_factory(*, error=None, pending=()):
-    return lambda identity: _FakeClient(identity, error=error, pending=pending)
+def _client_factory(*, error=None, steps=None):
+    return lambda identity: _FakeClient(identity, error=error, steps=steps)
 
 
 # --------------------------------------------------------------------------------------
@@ -162,8 +169,16 @@ def test_secrets_manifest_env_tpl_is_primary_no_secrets_yaml_needed(tmp_path):
     )
     result = check_secrets_manifest(repo)
     assert result.ok
-    assert ".env.tpl" in result.detail
-    assert "2 var(s), 1 op:// ref(s)" in result.detail
+    assert ".env.tpl (2 var(s)" in result.detail
+    # Same parser + table `canopy agent vault` fills from; a literal vault and a missing
+    # CANOPY_WEB_PAT are said, not failed (the agent may still run — on the wrong token).
+    assert "names vault(s) Agent-Hal literally" in result.detail
+    assert "no CANOPY_WEB_PAT line" in result.detail
+    (repo / ".env.tpl").write_text(
+        "CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential\n"
+        "GOG=op://${AGENT_VAULT}/gog-token/credential\n")
+    detail = check_secrets_manifest(repo).detail
+    assert "canopy-pat (minted), gog-token (linked)" in detail and "note:" not in detail
 
 
 def test_secrets_manifest_prefers_env_tpl_over_legacy_yaml(tmp_path):
@@ -182,21 +197,38 @@ def test_email_auth_skipped_without_identity():
     assert "skipped" in result.detail
 
 
-def test_registration_404_names_register_command(tmp_path):
+def test_setup_404_names_register_command(tmp_path):
     _, ident = check_identity(_agent_repo(tmp_path))
-    result = check_registration(
+    result = check_setup(
         ident, client_factory=_client_factory(
-            error=CanopyError("GET /api/agents/hal/actions/?status=pending -> 404: agent 'hal' not found")))
+            error=CanopyError("GET /api/agents/hal/setup -> 404: agent 'hal' not found")))
     assert not result.ok
     assert "agent-publish register" in result.detail
 
 
-def test_registration_ok_counts_pending(tmp_path):
+def test_setup_reads_canopy_webs_checklist_not_a_second_opinion(tmp_path):
     _, ident = check_identity(_agent_repo(tmp_path))
-    result = check_registration(
-        ident, client_factory=_client_factory(pending=[object(), object()]))
-    assert result.ok
-    assert "2 pending" in result.detail
+    assert check_setup(ident, client_factory=_client_factory()).ok
+    optional = _steps(mailbox="optional")
+    assert check_setup(ident, client_factory=_client_factory(steps=optional)).ok
+    result = check_setup(ident, client_factory=_client_factory(
+        steps=_steps(vault="todo", runner="waiting")))
+    assert not result.ok
+    assert "2 of 7 setup step(s) left" in result.detail
+    assert "Vault (todo) — run `canopy agent vault --slug hal`" in result.detail
+    assert "Runner (waiting)" in result.detail
+
+
+def test_fix_registers_only_an_unregistered_agent_not_a_step_left(tmp_path):
+    from orchestrator.agent_doctor import SETUP_CHECK, CheckResult, heal_agent
+    calls = []
+    fixers = {SETUP_CHECK: ("register", lambda repo: calls.append(repo) or "ok")}
+    heal_agent(tmp_path, [CheckResult(SETUP_CHECK, False, "1 of 7 setup step(s) left")],
+               fixers=fixers)
+    assert calls == []
+    heal_agent(tmp_path, [CheckResult(SETUP_CHECK, False, "agent 'hal' not registered — …")],
+               fixers=fixers)
+    assert calls == [tmp_path]
 
 
 # --------------------------------------------------------------------------------------
@@ -222,7 +254,7 @@ def test_run_agent_doctor_identity_failure_degrades_dependents(tmp_path):
     by_name = {r.name: r for r in results}
     assert not by_name["Identity"].ok
     assert "skipped" in by_name["Email auth (gog)"].detail
-    assert "skipped" in by_name["canopy-web board"].detail
+    assert "skipped" in by_name["canopy-web setup"].detail
     # non-identity checks still ran
     assert by_name["Gating rails"].ok
     assert by_name["Secrets manifest"].ok
@@ -243,7 +275,7 @@ def test_cli_agent_doctor_json_and_exit_code(tmp_path, monkeypatch):
     assert names == ["Identity", "Plugin install", "Required plugins", "Gating rails",
                      "Hook wiring", "Secrets manifest", "Secrets materialized",
                      "Rails enforced", "Email auth (gog)", "Auth client", "Auth services",
-                     "canopy-web board", "Dependency upgrades", "Gog keychain trust"]
+                     "canopy-web setup", "Dependency upgrades", "Gog keychain trust"]
 
 
 def test_cli_agent_doctor_all_sweeps_fleet_and_gates_on_any_failure(tmp_path, monkeypatch):
@@ -656,14 +688,22 @@ def test_secrets_materialized_skipped_without_manifest(tmp_path):
     assert r.ok and "skipped" in r.detail
 
 
-def test_secrets_materialized_skips_env_tpl_no_declared_target(tmp_path):
-    """`.env.tpl` declares no target field (unlike `secrets.yaml`'s `env.target`) — this check
-    can't guess where `op inject -o` was told to write, so it skips rather than false-failing."""
+def test_secrets_materialized_checks_the_env_tpl_agents_own_env_home(tmp_path):
+    """`canopy agent env` writes ~/.<slug>/.env; every KEY the template declares must be there
+    WITH a value. Until 2026-10-15 this skipped .env.tpl agents, so a half-filled vault passed."""
     from orchestrator.agent_doctor import check_secrets_materialized
     repo = _agent_repo(tmp_path, secrets=False)
-    (repo / ".env.tpl").write_text("KEY=op://Agent-Hal/some-item/credential\n")
-    r = check_secrets_materialized(repo)
-    assert r.ok and "skipped" in r.detail and "op inject" in r.detail
+    (repo / ".env.tpl").write_text("A=lit\nCANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential\n")
+    home = tmp_path / "home"
+    r = check_secrets_materialized(repo, home=home)
+    assert not r.ok and "does not exist" in r.detail and "/hal:setup" in r.detail
+    (home / ".hal").mkdir(parents=True)
+    (home / ".hal" / ".env").write_text("A=lit\nCANOPY_WEB_PAT=\n")
+    r = check_secrets_materialized(repo, home=home)
+    assert not r.ok and "empty CANOPY_WEB_PAT" in r.detail and "canopy agent vault --slug hal" in r.detail
+    (home / ".hal" / ".env").write_text("A=lit\nCANOPY_WEB_PAT=secret-value\n")
+    r = check_secrets_materialized(repo, home=home)
+    assert r.ok and "all 2 var(s)" in r.detail and "secret-value" not in r.detail
 
 
 # --------------------------------------------------------------------------------------
