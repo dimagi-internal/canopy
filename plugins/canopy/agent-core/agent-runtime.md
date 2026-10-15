@@ -167,9 +167,14 @@ value.**
 >   A "just for illustration" `op://` in a comment resolves exactly like a real line does; the
 >   resolved secret then prints to stdout the next time someone does `op inject -i .env.tpl | cat`
 >   (or anything else that reads the output), leaking it.
-> - **Use an angle-bracket placeholder in every example, in `.env.tpl` and in any doc**:
->   `op://<vault>/<item>/<field>` — never a real vault/item name, even a plausible-looking one,
->   even one that doesn't currently resolve to anything live.
+> - **In `.env.tpl` itself, no `op://` in a comment AT ALL — not even a placeholder.** A
+>   placeholder does not leak, but it BREAKS the inject: `op://${AGENT_VAULT}/<item>/<field>` in
+>   a comment expands to `op://Agent-X/<item>/…`, which op rejects ("invalid secret reference …
+>   too few '/'") and fails the whole file. Every factory-made agent shipped such a comment
+>   until 2026-10-15 (lex's env never materialized). Point at a live line instead;
+>   `canopy agent doctor` fails a template that breaks this.
+> - **In any other doc, use an angle-bracket placeholder**: `op://<vault>/<item>/<field>` —
+>   never a real vault/item name, even a plausible-looking one.
 > - This applies to **any file `op inject` might ever be pointed at**, not just `.env.tpl` — treat
 >   it as a rule about writing `op://` strings in text at all, not a quirk of one filename.
 

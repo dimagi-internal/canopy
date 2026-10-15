@@ -75,7 +75,10 @@ def test_env_template_and_setup_never_name_a_vault():
     plugin's code — templates reference ${AGENT_VAULT} and setup binds via `canopy agent env`."""
     t = templates()
     tpl = t[".env.tpl"]
-    assert "op://${AGENT_VAULT}/<item>/" in tpl
+    # No secret reference in a comment, placeholder or not: `op inject` parses comments, and
+    # `op://${AGENT_VAULT}/<item>/…` fails the whole inject once the vault is filled in
+    # (lex, 2026-10-15).
+    assert not [l for l in tpl.splitlines() if l.lstrip().startswith("#") and "op://" in l]
     assert "Agent-" not in tpl and "op://<vault>" not in tpl
     # Every agent signs in to canopy-web as ITSELF — `canopy agent vault` mints the value —
     # so the line is live, not a commented example (2026-10-15: Lex's turns would otherwise

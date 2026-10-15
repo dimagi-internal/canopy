@@ -289,9 +289,17 @@ def check_secrets_manifest(repo: Path) -> CheckResult:
     if env_tpl.exists():
         # The same parser and table `canopy agent vault` fills the vault from, so what the
         # doctor says a template needs is exactly what that command will produce.
-        from orchestrator.agent_vault import PAT_ITEM, kind_of, parse_refs
+        from orchestrator.agent_vault import PAT_ITEM, commented_refs, kind_of, parse_refs
 
         text = env_tpl.read_text(encoding="utf-8")
+        bad = commented_refs(text)
+        if bad:
+            return CheckResult(
+                name, False,
+                f".env.tpl has a secret reference (op://…) in a comment on line(s) "
+                f"{', '.join(map(str, bad))} — `op inject` parses comments, so this fails the "
+                "whole inject (or leaks a real one). Reword those comments without op://.",
+            )
         keys = _template_keys(text)
         refs, literal = parse_refs(text)
         kinds = ", ".join(f"{item} ({kind_of(item).kind})" for item, _ in refs) or "none"
