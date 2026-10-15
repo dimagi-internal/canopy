@@ -147,7 +147,15 @@ _DEV_STRING = re.compile(
 # --- demo-named test files ------------------------------------------------------
 _DEMO_TEST_TOKENS = re.compile(
     r"(?:^|_)(?:ddd\d*|batch_?\d+|b\d+|scene_?\d+|iter(?:ation)?_?\d+|pass_?\d+|v\d+|\d{3,4}"
-    r"|walkthrough|narrative|demo_fix(?:es)?)(?=_|$)",
+    r"|walkthrough|narrative|demo_fix(?:es)?"
+    # Review-round words: a file named for the list of things a judge asked for,
+    # not for the behaviour it pins (test_iptsc_render_fixes, test_screens_polish,
+    # test_small_gaps). Plural/qualified on purpose: "followup" and "gaps" alone are
+    # domain words (SAM follow-up visits, mop-up planning gaps), and so is "findings"
+    # (audit findings), which is why it is not here.
+    r"|fixes|polish|nits|followups|(?:small|minor)_gaps"
+    # A numbered sibling of an earlier file: test_iptsc_render_fixes_3.
+    r"|(?<=_)\d{1,2}$)(?=_|$)",
     re.IGNORECASE,
 )
 

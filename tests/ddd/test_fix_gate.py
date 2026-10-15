@@ -150,6 +150,23 @@ def test_demo_named_test_files():
         assert _checks(r) == ["demo_test"], name
 
 
+def test_review_round_named_test_files():
+    for name in ("test_iptsc_render_fixes.py", "test_iptsc_render_fixes_3.py", "test_screens_polish.py",
+                 "test_small_gaps.py", "test_review_nits.py", "test_v1_loop_followups.py",
+                 "test_tender_page_2.py"):
+        r = gate(_diff(f"connect_labs/supply_chain/tests/{name}", ["def test_x():", "    assert True"], new=True))
+        assert _checks(r) == ["demo_test"], name
+
+
+def test_domain_words_in_test_file_names_pass():
+    # "round" is procurement vocabulary, "gaps"/"followup"/"findings" are features,
+    # and a number inside a name (oauth2, a version) is not a sibling counter.
+    for name in ("test_round_is_a_tender.py", "test_gaps.py", "test_sam_followup_workflow.py",
+                 "test_audit_findings.py", "test_fix_gate.py", "test_oauth2_flow.py", "test_sha256.py"):
+        r = gate(_diff(f"connect_labs/supply_chain/tests/{name}", ["def test_x():", "    assert True"], new=True))
+        assert "demo_test" not in _checks(r), name
+
+
 # --- what the gate must leave alone ---------------------------------------------
 
 
