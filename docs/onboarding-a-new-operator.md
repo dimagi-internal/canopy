@@ -405,7 +405,10 @@ canopy; the fourth is PowerShell and stays your problem.
   client credentials in a `data\` subfolder (`<GOG_HOME>\data\credentials-canopy.json`) and
   `config.json` in `config\` when `GOG_HOME` is set. `agent doctor` now looks in all of these, so
   a working mailbox no longer shows as failing.
-- **Moving an agent between workspaces.** `canopy agent register --slug <x> --workspace <ws>` now
+- **Moving an agent between workspaces.** Use `canopy agent move --slug <x> --to <ws> --dry-run`
+  first: it lists what moves (turns, chats, mail, grants), what stays, and what will stop working
+  (e.g. a mail address on a domain the new workspace cannot use). Drop `--dry-run` to move it,
+  history and all. `canopy agent register --slug <x> --workspace <ws>` runs the same move, and
   keeps the agent's existing name, email, description and persona. Before, it failed with a 422
   without `--name`, and passing `--name` blanked the rest. If you moved an agent that way, check
   its page on canopy-web and re-register with the missing fields.

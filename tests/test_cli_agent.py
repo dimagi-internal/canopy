@@ -316,3 +316,32 @@ def test_agent_tasks_open_and_status_together_is_an_error(fake_http):
         main, ["agent", "tasks", "--slug", "echo", "--open", "--status", "done"])
     assert r.exit_code != 0
     assert "alternatives" in r.output
+
+
+def test_agent_move_posts_to_the_move_route(fake_http):
+    """canopy-web#1532: a move carries the agent's history; the CLI is a thin verb over it."""
+    calls, responses = fake_http
+    report = {"agent": "fizzy", "source": "shayoni", "destination": "dimagi", "dry_run": False,
+              "moved": True, "tables": [], "left_behind": [], "stops_working": []}
+    responses[("POST", "agents/fizzy/move")] = (200, json.dumps(report))
+    r = CliRunner().invoke(main, ["agent", "move", "--slug", "fizzy", "--to", "dimagi"])
+    assert r.exit_code == 0, r.output
+    assert calls[-1] == ("POST", "https://x.test/api/agents/fizzy/move", {"workspace": "dimagi"})
+    assert json.loads(r.output)["moved"] is True
+
+
+def test_agent_move_dry_run_changes_nothing_server_side(fake_http):
+    calls, responses = fake_http
+    responses[("POST", "agents/fizzy/move?dry_run=1")] = (200, json.dumps({"dry_run": True}))
+    r = CliRunner().invoke(main, ["agent", "move", "--slug", "fizzy", "--to", "dimagi", "--dry-run"])
+    assert r.exit_code == 0, r.output
+    assert calls[-1][:2] == ("POST", "https://x.test/api/agents/fizzy/move?dry_run=1")
+
+
+def test_agent_move_refusal_is_a_clean_error(fake_http):
+    calls, responses = fake_http
+    responses[("POST", "agents/fizzy/move")] = (
+        403, json.dumps({"detail": "moving an agent requires being its owner or one of its admins"}))
+    r = CliRunner().invoke(main, ["agent", "move", "--slug", "fizzy", "--to", "dimagi"])
+    assert r.exit_code != 0
+    assert "owner or one of its admins" in r.output
