@@ -30,6 +30,10 @@ class UnansweredNotes(ValueError):
     pass
 
 
+class UnknownRun(ValueError):
+    pass
+
+
 def _request(method: str, path: str, body: dict | None = None, *, workspace=None, base_url=None, token=None):
     # Writes must name a workspace (auth convention); reads fall back to the active one.
     ws = _require_write_ws(workspace) if method != "GET" else _resolve_ws(workspace)
@@ -65,15 +69,18 @@ def missing_or_raise(round_doc: dict, dispositions: dict[str, dict]) -> None:
 
 
 def _record_on_run_doc(run_id: str, *, slug: str, number: int, feedback_ids: list[int]) -> None:
+    """Record the round on the run doc, idempotently (one entry per (storyboard, round))."""
     from scripts.ddd import run_store
 
     doc = run_store.pull(run_id)
     if doc is None:
-        return
+        raise UnknownRun(f"run {run_id!r} not found; nothing was written")
     state = dict(doc.get("state") or {})
     state.setdefault("run_id", run_id)
-    state.setdefault("feedback_rounds", []).append(
-        {"storyboard": slug, "round": number, "feedback_ids": feedback_ids})
+    entry = {"storyboard": slug, "round": number, "feedback_ids": feedback_ids}
+    rounds = [r for r in state.get("feedback_rounds") or []
+              if not (r.get("storyboard") == slug and r.get("round") == number)]
+    state["feedback_rounds"] = rounds + [entry]
     run_store.push(state, base_version=doc.get("state_version"))
 
 
@@ -81,13 +88,15 @@ def apply(slug: str, number: int, dispositions: dict[str, dict], *, version: int
     round_doc = read(slug, number, **kw)
     missing_or_raise(round_doc, dispositions)
     ids = [n["id"] for n in round_doc["notes"]]
+    # Record first (validates the run exists, idempotent): a failure after this point
+    # leaves a retry-safe state, since resolve and the record are both re-runnable.
+    _record_on_run_doc(run_id, slug=slug, number=number, feedback_ids=ids)
     for nid in ids:
         d = dispositions[str(nid)]
         body = {"state": d["state"], "note": d["note"].strip()}
         if d["state"] == "answered":
             body["resolved_in_version"] = version
         _request("POST", f"/api/feedback/{nid}/resolve", body, **kw)
-    _record_on_run_doc(run_id, slug=slug, number=number, feedback_ids=ids)
     nxt = _request("POST", f"/api/storyboards/{slug}/rounds/{number}/consume", {"run_id": run_id}, **kw)
     return {"resolved": len(ids), "next_round": nxt.get("number")}
 
@@ -110,12 +119,15 @@ def _main(argv: list[str] | None = None) -> int:
         doc = read(args.slug, args.number)
         doc["clusters"] = cluster(doc.get("notes") or [])
         text = json.dumps(doc, indent=2)
-        Path(args.out).write_text(text) if args.out else print(text)
+        if args.out:
+            Path(args.out).write_text(text)
+        else:
+            print(text)
         return 0
     try:
         out = apply(args.slug, args.number, json.loads(Path(args.dispositions).read_text()),
                     version=args.version, run_id=args.run_id)
-    except UnansweredNotes as e:
+    except (UnansweredNotes, UnknownRun) as e:
         print(f"feedback_round: {e}", file=sys.stderr)
         return 2
     print(json.dumps(out))

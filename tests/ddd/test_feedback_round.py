@@ -55,3 +55,47 @@ def test_apply_resolves_records_and_consumes_in_order():
     assert calls[-1][1] == "/api/storyboards/supply/rounds/1/consume"
     rec.assert_called_once_with("r1", slug="supply", number=1, feedback_ids=[11, 12, 13])
     assert out["next_round"] == 2
+
+
+def _all_answered(state="answered"):
+    return {str(n["id"]): {"state": state, "note": "done"} for n in ROUND["notes"]}
+
+
+def test_apply_makes_no_http_writes_for_an_unknown_run():
+    calls = []
+    with patch.object(fr, "read", return_value=ROUND), \
+         patch.object(fr, "_request", side_effect=lambda *a, **k: calls.append(a)), \
+         patch("scripts.ddd.run_store.pull", return_value=None):
+        with pytest.raises(fr.UnknownRun, match="r-typo"):
+            fr.apply("supply", 1, _all_answered(), version=4, run_id="r-typo")
+    assert calls == []
+
+
+def test_recording_is_idempotent_per_storyboard_and_round():
+    pushed = []
+    doc = {"state_version": 3, "state": {"run_id": "r1", "feedback_rounds": [
+        {"storyboard": "supply", "round": 1, "feedback_ids": [11]},
+        {"storyboard": "supply", "round": 2, "feedback_ids": [99]}]}}
+    with patch("scripts.ddd.run_store.pull", return_value=doc), \
+         patch("scripts.ddd.run_store.push", side_effect=lambda s, base_version: pushed.append(s)):
+        fr._record_on_run_doc("r1", slug="supply", number=1, feedback_ids=[11, 12, 13])
+    rounds = pushed[0]["feedback_rounds"]
+    assert [(r["round"], r["feedback_ids"]) for r in rounds] == [(2, [99]), (1, [11, 12, 13])]
+
+
+def test_record_happens_before_the_first_resolve():
+    order = []
+    with patch.object(fr, "read", return_value=ROUND), \
+         patch.object(fr, "_request", side_effect=lambda m, p, b=None, **k: order.append(p) or {"number": 2}), \
+         patch.object(fr, "_record_on_run_doc", side_effect=lambda *a, **k: order.append("record")):
+        fr.apply("supply", 1, _all_answered(), version=4, run_id="r1")
+    assert order[0] == "record"
+
+
+def test_declined_omits_resolved_in_version():
+    calls = []
+    with patch.object(fr, "read", return_value=ROUND), \
+         patch.object(fr, "_request", side_effect=lambda m, p, b=None, **k: calls.append(b) or {"number": 2}), \
+         patch.object(fr, "_record_on_run_doc"):
+        fr.apply("supply", 1, _all_answered("declined"), version=4, run_id="r1")
+    assert calls[0] == {"state": "declined", "note": "done"}
