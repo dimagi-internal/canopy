@@ -102,3 +102,46 @@ def test_revoke_and_list(serve):
     r = _run("list", "--agent", "hal")
     assert "ready" in r.output and "6 msg" in r.output
     assert ("GET", "/api/slack-ingests/?agent=hal", None) in srv.calls
+
+
+def test_an_allow_listed_request_says_it_is_reading_now(serve):
+    serve(Server({("POST", "/api/slack-ingests/"): _ingest(status="reading")}))
+    r = _run("request", "--agent", "hal", "--channel", "#canopy-support", "--purpose", "digest")
+    assert r.exit_code == 0, r.output
+    assert "allow-listed for hal: canopy is reading it now" in r.output
+
+
+ENTRY = {"id": "a1", "agent": "hal", "channel": "C1", "channel_name": "canopy-support", "follow": False,
+         "note": "champions", "added_by_email": "jj@dimagi.com", "added_at": ""}
+CFG = {"channel_ingest": {"enabled": False, "allowed": [ENTRY]}}
+
+
+def test_allow_posts_to_the_workspace_allow_list(serve):
+    srv = serve(Server({("POST", "/api/slack-config/dimagi/channel-ingest/allowed"): CFG}))
+    r = _run("allow", "--workspace", "dimagi", "--agent", "hal", "--channel", "#canopy-support",
+             "--note", " champions ")
+    assert r.exit_code == 0, r.output
+    assert srv.calls == [("POST", "/api/slack-config/dimagi/channel-ingest/allowed",
+                          {"agent": "hal", "channel": "#canopy-support", "follow": False, "note": "champions"})]
+    assert "hal <- #canopy-support  read once  by jj@dimagi.com — champions" in r.output
+
+
+def test_allowed_lists_the_entries(serve):
+    serve(Server({("GET", "/api/slack-config/dimagi"): CFG}))
+    r = _run("allowed", "--workspace", "dimagi")
+    assert r.exit_code == 0 and "a1  hal <- #canopy-support" in r.output
+
+
+def test_disallow_by_agent_and_channel_name_finds_the_entry(serve):
+    srv = serve(Server({("GET", "/api/slack-config/dimagi"): CFG,
+                        ("DELETE", "/api/slack-config/dimagi/channel-ingest/allowed/a1"):
+                            {"channel_ingest": {"enabled": False, "allowed": []}}}))
+    r = _run("disallow", "--workspace", "dimagi", "--agent", "hal", "--channel", "#canopy-support")
+    assert r.exit_code == 0, r.output
+    assert srv.calls[-1][:2] == ("DELETE", "/api/slack-config/dimagi/channel-ingest/allowed/a1")
+    assert "no allow-listed channels" in r.output
+
+
+def test_disallow_needs_an_id_or_agent_and_channel(serve):
+    serve(Server({}))
+    assert _run("disallow", "--workspace", "dimagi", "--agent", "hal").exit_code != 0
