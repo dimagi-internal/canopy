@@ -169,7 +169,11 @@ def main() -> int:
         export_binding(slug, env_file)
     canopy = shutil.which("canopy")
     confined = bool(os.environ.get("CANOPY_PROFILE"))   # a caller's confined turn
-    if canopy and not confined:
+    # A runner turn (it has a turn id) already had its borrowed credentials staged by the
+    # runner with the runner's own identity (cloud_runner._stage_salesforce). Asking again
+    # here would use the agent's PAT, which /credentials/resolve refuses (lex, 2026-10-16).
+    on_runner = bool(os.environ.get("CANOPY_TURN_ID", "").strip())
+    if canopy and not confined and not on_runner:
         stage_delegated(canopy, slug)
     present = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
     if present:
