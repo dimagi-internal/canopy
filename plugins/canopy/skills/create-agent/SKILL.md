@@ -73,7 +73,8 @@ Look the agent up first with the canopy-web MCP tool `get_agent` (`slug`):
   human; never overwrite it.
 - **It does not exist** → push the repo to GitHub, then register from the repo root with
   `uv run --project "$CANOPY_ROOT" canopy agent-publish register` (resolve `CANOPY_ROOT` with the
-  same two-liner as Step 2).
+  same two-liner as Step 2). If the human belongs to more than one workspace, add
+  `--workspace <slug>` naming the agent's home — canopy-web will not guess it.
 
 ## Step 4 — Walk the setup checklist
 canopy-web owns what is left to do. Call the MCP tool **`agent_setup`** (`slug`, plus `workspace`

@@ -361,8 +361,9 @@ factory cannot do for you. Work them in this order:
    `/plugin marketplace add dimagi-internal/scout` then `/plugin install scout@scout`.
 2. **canopy-web board** — registers the agent so it has a board:
    `canopy agent-publish register --repo .`
-   The agent lands in the workspace your token defaults to; override with
-   `CANOPY_WEB_WORKSPACE=<slug>` if that is not what you want.
+   In more than one workspace? Name the agent's home with `--workspace <slug>`
+   (or `"workspace"` in `config/agent.json`, or `CANOPY_WEB_WORKSPACE=<slug>`) —
+   canopy-web refuses to guess, and the register fails until you do.
    Made a typo in the slug, or just trying one out? Registration is reversible:
    `curl -X DELETE .../api/agents/<slug>/ -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)"`
    (editor or owner; takes the agent's projects, tasks, turns and skills
