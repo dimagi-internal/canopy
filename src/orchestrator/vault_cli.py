@@ -8,7 +8,8 @@ changes an agent that has not been switched.
     canopy vault export  --agent X [--check]                 canopy-web -> 1Password (rollback)
     canopy vault switch  --agent X --to canopy-web|1password
     canopy vault status  --agent X [--no-drift] [--json]
-    canopy vault device  [--enroll | --reenroll | --refresh] [--runner ID] [--software]
+    canopy vault device  [--enroll | --reenroll | --refresh] [--runner ID] [--kind K | --software]
+    canopy vault binding --agent X on|off                    require an approved device key
 
 WHAT IS AN AGENT'S SET OF REFS. Every `NAME=…` line of the agent's `.env.tpl` (the one
 source of truth for what `~/.X/.env` holds): an `op://` reference is read from 1Password,
@@ -446,8 +447,10 @@ def render_device(dev: dict) -> str:
         return "device key: none on this machine — `canopy vault device --enroll`"
     line = (f"device key: {dev.get('kind', '?')} {dev['jkt'][:16]}… for runner "
             f"{dev.get('runner') or '?'} — {dev.get('status') or 'unknown'}")
+    if dev.get("role_arn"):
+        line += f"\n  instance role: {dev['role_arn']}"
     if dev.get("status") == "pending" and dev.get("approve_url"):
-        line += f"\n  approve it (Touch ID passkey): {dev['approve_url']}"
+        line += f"\n  approve it (passkey step-up): {dev['approve_url']}"
     return line
 
 
@@ -553,15 +556,24 @@ def status_cmd(slug, repo, op_account, no_drift, as_json):
 @click.option("--runner", "runner_id", default="",
               help="Runner id to register for (default: ~/.canopy/runner.json's).")
 @click.option("--software", is_flag=True,
-              help="Use a software key even on a Mac (no Secure Enclave helper).")
+              help="Use a software key even where a stronger kind exists (= --kind software).")
+@click.option("--kind", type=click.Choice(device_key.KINDS), default=None,
+              help="Insist on one kind (default: the strongest this machine has — "
+                   "secure-enclave on a Mac, tpm on Windows, aws-iam on an EC2 box with an "
+                   "instance role, else software).")
 @click.option("--label", default="", help="Shown on canopy-web (default: host name).")
 @click.option("--json", "as_json", is_flag=True)
-def device_cmd(enroll, reenroll, refresh, runner_id, software, label, as_json):
+def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, as_json):
     """This machine's device key: show it, enroll it, or re-enroll it.
 
     canopy-web hands a `require_device_binding` agent's credentials only to a request
-    signed by an APPROVED device key. Enrolling registers the key as pending; a person
-    approves it in canopy-web with a passkey (Touch ID)."""
+    carrying a proof from an APPROVED device key: a DPoP JWS (secure-enclave, tpm,
+    software) or, on an EC2 cloud runner, a signed STS GetCallerIdentity for the
+    instance role (aws-iam). Enrolling registers it as pending; a person approves it in
+    canopy-web with a passkey step-up."""
+    if software and kind not in (None, device_key.KIND_SOFTWARE):
+        raise VaultCliError("--software and --kind disagree")
+    kind = kind or (device_key.KIND_SOFTWARE if software else None)
     runner_id = runner_id or device_key.runner_id_from_config()
     web = _web(_token()) if (enroll or reenroll or refresh) else None
     try:
@@ -575,8 +587,7 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, label, as_json):
                                "revoke it in canopy-web", err=True)
             device_key.remove_local()
         if enroll or reenroll:
-            st = device_key.enroll(runner_id=runner_id, call=web, label=label,
-                                   allow_software=True if software else None)
+            st = device_key.enroll(runner_id=runner_id, call=web, label=label, kind=kind)
         elif refresh:
             st = device_key.refresh(runner_id=runner_id or device_key.read_status().get("runner", ""),
                                     call=web)
@@ -591,3 +602,29 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, label, as_json):
         click.echo(json.dumps(st, sort_keys=True, default=str))
     else:
         click.echo(render_device(st))
+
+
+@vault_group.command("binding")
+@AGENT_OPT
+@click.argument("state", type=click.Choice(["on", "off"]))
+@click.option("--json", "as_json", is_flag=True)
+def binding_cmd(slug, state, as_json):
+    """Turn device binding on or off for an agent (`require_device_binding`).
+
+    On: canopy-web resolves the agent's credentials only for a request carrying a proof
+    from an APPROVED device key of a runner the agent routes to — enroll and approve every
+    such runner's key first (`canopy vault device`), or its turns lose their credentials.
+    Owner/admin only; canopy-web may ask for a passkey step-up."""
+    res = run_binding(slug, state == "on", token=_token())
+    click.echo(json.dumps(res, sort_keys=True) if as_json else
+               f"agent {slug}: require_device_binding={'on' if res['require_device_binding'] else 'off'}")
+
+
+def run_binding(slug: str, on: bool, *, token: str, transport=None) -> dict:
+    web = _web(token, transport)
+    body = web("PATCH", f"/api/agents/{slug}/device-binding",
+               {"require_device_binding": bool(on)}) or {}
+    got = body.get("require_device_binding")
+    if got is not None and bool(got) != bool(on):
+        raise VaultCliError(f"canopy-web answered require_device_binding={got!r}, expected {on!r}")
+    return {"agent": slug, "require_device_binding": bool(on if got is None else got)}
