@@ -172,6 +172,13 @@ class Finding(BaseModel):
     severity: str
     detail: str
     fix_recommendation: str = ""
+    # Set when the judge could not tell what the PRODUCT does from the product
+    # itself (or the narrative had to invent the behaviour): a short statement
+    # of what was ambiguous, or ``true``. At the run's end such findings become a
+    # documentation / UI-copy issue in the product repo
+    # (scripts.ddd.owner_routing) — product lessons belong in the product, not in
+    # a DDD notes file. Unset = not a product-clarity finding.
+    product_clarity: str | bool | None = None
 
 
 # Action verbs the recorder understands. Single source of truth — the recorder

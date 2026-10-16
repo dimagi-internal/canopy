@@ -6,7 +6,8 @@
 #
 # With --runs: print the RUNS root instead. Run artifacts are deliberately kept
 # OUT of the project repo (they accumulate multi-MB generated files and were
-# silently bloating checkouts); context.md / learnings.md stay repo-local.
+# silently bloating checkouts); context.md stays repo-local. (No learnings.md:
+# a finished run's summary is part of the run — scripts/ddd/run_summary.py.)
 #   Inside a git repo: $HOME/.canopy/ddd/runs/<repo-name>
 #   Outside a git repo: <ddd-dir>/runs
 #   $CANOPY_DDD_RUNS_DIR overrides both.

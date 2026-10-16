@@ -112,6 +112,13 @@ tour rather than a story:
 `scene` names where it shows (`"all"` is fine); `dimension` is one of the seven
 above; `fix_kind` is `options` only when there is a genuine design choice.
 
+Optional `product_clarity: "<what was ambiguous>"` — set it only when you could
+not tell what the product DOES from the product itself (a status, count or
+action whose meaning the screens never settle). At the run's end each tagged
+finding becomes a documentation / UI-copy issue in the product repo
+(`scripts.ddd.owner_routing`), because a product lesson belongs in the product,
+not in a DDD notes file. Omit it for everything else.
+
 `<run_dir>/verdict-product.yaml` (advisory — the score never gates; the
 findings do):
 

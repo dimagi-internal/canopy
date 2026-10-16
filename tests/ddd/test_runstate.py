@@ -98,26 +98,15 @@ def test_save_load_round_trips(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# SP0.4 — append_learning writes to learnings.md
+# learnings.md is retired (2026-10-16): a run's summary travels with the run
 # ---------------------------------------------------------------------------
 
-def test_append_learning_creates_and_appends(tmp_path, monkeypatch):
-    ddd_dir = _patch_ddd_dir(monkeypatch, tmp_path)
+def test_runstate_no_longer_writes_learnings():
+    import scripts.ddd.runstate as rs
 
-    from scripts.ddd.runstate import append_learning
-
-    learnings_file = ddd_dir / "learnings.md"
-    assert not learnings_file.exists()
-
-    append_learning("First learning: always validate early.")
-    assert learnings_file.exists()
-    content = learnings_file.read_text()
-    assert "First learning" in content
-
-    append_learning("Second learning: test everything.")
-    content2 = learnings_file.read_text()
-    assert "First learning" in content2
-    assert "Second learning" in content2
+    assert not hasattr(rs, "append_learning"), (
+        "learnings.md is retired — a finished run's summary is scripts.ddd.run_summary"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -284,17 +273,18 @@ def test_new_run_does_not_write_inside_the_repo(tmp_path, monkeypatch):
     assert rs.load(run_id, ddd_dir=ddd).run_id == run_id
 
 
-def test_context_and_learnings_stay_repo_local(tmp_path, monkeypatch):
-    """Only runs/ moves out — the durable per-project notes belong in the repo."""
+def test_a_run_writes_nothing_into_the_repo_ddd_dir(tmp_path, monkeypatch):
+    """Only context.md is repo-local; a run (and its summary) lives outside the repo."""
     import scripts.ddd.runstate as rs
     repo, ddd = _fake_repo(tmp_path)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
-    monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda *a, **k: ddd)
+    monkeypatch.delenv("CANOPY_DDD_RUNS_DIR", raising=False)
 
-    rs.append_learning("something worth keeping")
+    run_id = rs.new_run("feat", ddd_dir=ddd)
+    rs.save(rs.load(run_id, ddd_dir=ddd), ddd_dir=ddd)
 
-    assert (ddd / "learnings.md").exists()
-    assert "something worth keeping" in (ddd / "learnings.md").read_text()
+    assert not (ddd / "learnings.md").exists()
+    assert not (ddd / "runs").exists()
 
 
 def test_legacy_in_repo_run_is_still_read_and_written_in_place(tmp_path, monkeypatch):

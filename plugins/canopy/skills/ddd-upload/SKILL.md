@@ -46,6 +46,14 @@ every upload, and assembles them into a run package:
   so the package's narrative slot is never empty — a run reaches publish only
   after its narrative gate has run.
 - **links** ← companion links unioned across the run's artifacts.
+- **run summary** ← `state.run_summary` (`scripts.ddd.run_summary`: how the run
+  ended, never-cleared cells, out-of-scope floor + owners, calibration, what
+  was filed where). It is part of the run DOCUMENT, so the upload's final
+  `save_state` pushes it and its compact digest rides in the package's run
+  record (`record.summary.learned`). A run that ended before summaries existed
+  gets one built here (unrouted). No canopy-web run record (local-only run, or
+  canopy-web unreachable) → the summary stays in `<run_dir>/run-summary.json` +
+  `.md` and the upload says so on stderr; the upload never fails over it.
 
 The package + previous-runs navigation live at `/ddd/<narrative-slug>` (narrative
 landing) and `/ddd/<narrative-slug>/<run_id>` (the run package).

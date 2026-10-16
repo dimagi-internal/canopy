@@ -261,7 +261,7 @@ The `implement` list is the set downstream applies.
 
 | Outcome | Effect |
 |---------|--------|
-| `overall` is `"proceed with selected"` or absent | Apply ONLY the `implement` clusters (their `suggested_fix`), log `skip` to the digest, append `defer` clusters to learnings/backlog. Then re-fire `/canopy:ddd-run` on the same scope. |
+| `overall` is `"proceed with selected"` or absent | Apply ONLY the `implement` clusters (their `suggested_fix`), log `skip` to the digest, list `defer` clusters in the digest (they stay `route: DEFER` findings on the run, so the run summary carries them — there is no learnings file). Then re-fire `/canopy:ddd-run` on the same scope. |
 | `overall == "discuss"` | Do NOT apply anything. Surface the clusters inline and have the conversation; re-post after it resolves. |
 
 A finding the reviewer did not touch (absent from `decisions`) or left at `null`

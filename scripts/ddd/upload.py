@@ -1499,9 +1499,23 @@ def upload_run(
     # 7. Update run state. A release marks the run terminal (uploaded); a stuck
     #    review upload leaves phase unchanged so the run can keep iterating toward
     #    convergence — the package is just an inspection view, not a publish.
+    #    Either way the run SUMMARY rides in the package: it is part of the run
+    #    document (state.run_summary), and this save pushes it with the run's
+    #    record, whose summary the package page shows (scripts.ddd.run_summary).
+    #    A run that ended before summaries existed gets one built here, unrouted.
+    from scripts.ddd import run_summary as _run_summary
+
+    _run_summary.ensure(run_state, run_dir)
     if release:
         run_state.phase = "uploaded"
-        save_state(run_state)
+    save_state(run_state)
+    try:
+        _run_summary.write(run_state, run_dir)
+        delivered = _run_summary.delivery(run_state)
+        if not delivered.get("uploaded"):
+            print(f"ddd-upload: run summary {delivered['canopy_web']}", file=sys.stderr)
+    except OSError as exc:  # pragma: no cover - defensive; the package is already up
+        print(f"ddd-upload: could not write the run summary locally ({exc})", file=sys.stderr)
 
     # 8. Return the run PACKAGE URL — the navigable /ddd/<narrative_slug>/<run_id> view
     #    that canopy-web assembles from the run's video + deck + narrative +

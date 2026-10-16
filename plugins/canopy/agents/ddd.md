@@ -2,7 +2,7 @@
 name: ddd
 description: >
   Orchestrate the full demo-driven-development (DDD) v3 loop. Bootstraps from
-  .canopy/ddd/context.md + learnings.md, runs Phase 0 (evidence → why-brief →
+  .canopy/ddd/context.md + earlier runs' summaries on canopy-web, runs Phase 0 (evidence → why-brief →
   qa → eval), drafts and QA-gates a unified spec, machine-gates it for
   buildability (ddd-narrative-actionability-eval), then takes the story to the
   user for explicit sign-off (ddd-narrative-review) before anything gets built,
@@ -363,8 +363,12 @@ bootstrap pattern exactly.
 
 - **`.canopy/ddd/context.md`** — project context: what is being built, current phase,
   key decisions already made.
-- **`.canopy/ddd/learnings.md`** — accumulated learnings: resolved findings, rejected
-  gap proposals, pattern observations. Read first so you never re-raise a closed issue.
+- **Earlier runs of this narrative** — not a notes file. There is NO
+  `.canopy/ddd/learnings.md` any more (retired 2026-10-16: it never reached the
+  next run across machines or ACE's per-run DDD dirs, and product lessons in it
+  went stale). Each finished run's summary is part of that run on canopy-web;
+  bootstrap step 4b reads the last few (`scripts.ddd.prior_runs`). Never create,
+  read, append to or commit a `learnings.md` for DDD.
 
 ---
 
@@ -398,7 +402,8 @@ bootstrap pattern exactly.
    - Write a brief context.md (project purpose, active feature, current phase)
    - Never ask the user whether to bootstrap — do it silently.
 
-3. Read `$DDD_DIR/learnings.md` (may not exist yet — that is fine).
+3. (No `learnings.md` — what earlier runs found is read in step 4b, once the
+   narrative is known.)
 
 4. **Resolve which narrative to run.** If the invocation passed an explicit
    `<narrative-slug>` or `--resume <run_id>`, use it. Otherwise — the common case when
@@ -427,6 +432,23 @@ bootstrap pattern exactly.
      what to build. Only here do you prompt for setup.
 
    Carry the resolved `decision`, `narrative_slug`, and `run_id` into the next step.
+
+4b. **Read what earlier runs of this narrative found** — best-effort, from
+   canopy-web (each finished run's compact summary rides in its run record):
+
+   ```bash
+   (cd "$DDD_REPO" && DDD_DIR="$DDD_DIR" uv run python -m scripts.ddd.prior_runs <narrative-slug> --exclude <run_id-if-resuming>)
+   ```
+
+   It prints the actionable bits of the last 3 finished runs (falling back to
+   the same repo's runs): cells that NEVER cleared (brief the fixers a
+   different approach, not the same fix again), out-of-scope blockers with
+   their owner/issue (park them up front — they are already filed with their
+   owner), prediction calibration (predict conservatively when it over-shot),
+   and what was already filed (do not re-raise it). Hand these lines to the
+   loop: put them in the first batch brief and the digest. "none to learn
+   from" (local store, no token, unreachable, first run) is fine — the run is
+   self-contained; never block on it.
 
 5. Start or resume the run (run from `$DDD_REPO` so `scripts.ddd` is importable):
    - **New run** (`decision: new`) — a run is work on an **agent's project**
@@ -1550,23 +1572,40 @@ A PRODUCT/NARRATION fix that changes the product or spec means re-firing `ddd-ru
 
 After every complete iteration:
 
-1. **Append learnings** via `runstate.append_learning(text)` for each resolved
-   finding (so it is not re-raised in future runs). The run's own summary is
-   written for you: every `assemble` that ends the run (`stop_*`) writes a
-   `<!-- ddd-run:<run_id> -->` block to `.canopy/ddd/learnings.md` —
-   how it ended, the score trajectory, cells that never cleared, floor findings
-   outside the edit scope, time and reuse, a dropped inner loop
-   (`scripts.ddd.run_learnings`, canopy#788). Commit that file with the run.
+1. **The run summary is written for you — part of the run, not a file to
+   commit.** Every `assemble` that ends the run (`stop_*`) builds
+   `state.run_summary` (`scripts.ddd.run_summary`): how it ended, the score
+   trajectory, cells that never cleared, out-of-scope floor findings and their
+   owners, product-clarity findings, time and reuse, a dropped inner loop,
+   predicted-vs-actual calibration, and DDD-tooling problems
+   (`canopy_tooling`: inner loop dropped, decision overrides, judge timeouts,
+   version skew — listed, never auto-filed). It is pushed with the run document
+   to canopy-web and written to `<run_dir>/run-summary.json` + `.md`; when
+   canopy-web does not have it, assemble says so — put that line in the digest.
+   `/canopy:ddd-upload` carries it in the run package. Rebuild by hand with
+   `python -m scripts.ddd.run_summary <run_id>` (`--no-route` to skip filing).
+   **Never write a `learnings.md`.**
 
-2. **Track gate escalation:** Record accept-vs-redirect per decision class in
-   `.canopy/ddd/learnings.md`. If a particular decision class is accepted
-   rubber-stamp style ≥3 times in a row with no redirects, **propose** downgrading
-   that class to digest-only reporting. Always suggest-then-confirm — never
-   auto-apply a class demotion without explicit user approval.
+2. **Findings with an owner go to the owner — assemble does it.** At the same
+   run-ending assemble, `scripts.ddd.owner_routing`:
+   - out-of-scope floor findings whose `loop.fixed_surfaces` entry names an
+     `issue` → this run's evidence is commented there; else (entry has `repo:`)
+     an open issue carrying `<!-- ddd-finding:<narrative>/<finding_id> -->` is
+     commented, or one is opened (≤ `loop.max_new_issues`, default 3, per run);
+     an owner with no repo is listed in the summary only;
+   - findings a judge tagged `product_clarity` → a `documentation` issue in the
+     product repo (`loop.product_repo`, else the target repo's origin) asking
+     for the product doc / UI copy to make it unambiguous — a product lesson
+     belongs in the product, not in DDD notes.
+   No `gh` / unauthenticated / `CANOPY_DDD_ROUTE=off` → every filing is recorded
+   as `intended` in the summary and nothing is sent. Report what was filed (or
+   intended) in the digest. Never file DDD-tooling problems as issues.
 
-   The escalation tracking module lives in SP6. Until it lands, write raw counts
-   to `.canopy/ddd/learnings.md` in the format:
-   `[gate-tracking] class=<class> decision=<accept|redirect> run=<run_id>`
+   **Gate escalation:** accept-vs-redirect per decision class is already on
+   canopy-web as the gates' resolved ReviewRequests. If a class is accepted
+   rubber-stamp style ≥3 times in a row with no redirects, **propose**
+   downgrading it to digest-only reporting — suggest-then-confirm, never
+   auto-apply.
 
 3. **Save run state** (run from `$DDD_REPO` so `scripts.ddd` is importable):
 
@@ -1589,7 +1628,7 @@ no gates fired).
   each with a direct link. If no gates fired, this section says "Nothing — all
   work ran autonomously."
 - **Ran autonomously:** collapsed summary of findings routed and fixed, specs
-  updated, iterations completed, learnings appended.
+  updated, iterations completed, issues filed (or intended) from the run summary.
 - **Loop health:** parked scenes and the review each waits on; any `timed_out`
   step (`state.steps`); an auth-preflight failure (named credential); every
   `state.version_warnings` entry, verbatim.
@@ -1605,7 +1644,7 @@ proceeding with autonomous work.
 ## Rules
 
 - Know the run's objective (`state.objective`): both converge on the run's target rubric (`state.target`); `product` defaults to product dimensions at 3 and lets polish ride every batch without blocking, `demo` defaults to every gating dimension at 4 (median, majority of draws) and also needs no open `prose_density` lint. Every fixer, in every objective, carries the fix-direction rules, and every product batch passes `scripts.ddd.fix_gate` before it merges.
-- Always read `.canopy/ddd/context.md` and `.canopy/ddd/learnings.md` first.
+- Always read `.canopy/ddd/context.md` first, and earlier runs' summaries via `scripts.ddd.prior_runs` once the narrative is known. There is no `learnings.md` — never create, read, append to or commit one.
 - Bootstrap context.md if it does not exist — never prompt the user for this.
 - The 8 skills do the actual work — you chain and route.
 - Only two gates ever pause execution: `concept_change` and `external_release`.
@@ -1616,7 +1655,7 @@ proceeding with autonomous work.
   the ARTIFACT is wrong, not the words — may open `concept_change`. Enforced by
   `scripts/ddd/finding_class.py`, not by remembering to do it.
 - Never auto-apply a self-tuning class demotion — always suggest-then-confirm.
-- Save learnings after every completed cycle via `runstate.append_learning`.
+- What a run learned goes WITH the run (`state.run_summary`, written by the run-ending assemble) and to the owners of the fixes (`scripts.ddd.owner_routing`) — never into a notes file.
 - Loop is **progress-aware, not count-capped**: keep auto-iterating while findings are mechanical AND the run is still progressing; stop on a real gate, an options/redesign finding, a **stall** (none of score / open findings / mean cell / confirmed caps improved across 2 iterations, each through its noise band — an open-findings trickle within 15% of the best count is not progress), a **finding plateau** (identical fingerprints, no progress), or the `HARD_CAP` of 10 as a runaway backstop. Never invent your own stop — `compute_auto_iterate` owns it and `state.terminal_status` names the ending.
 - When dispatching PRODUCT fixers, route by dimension: `design_soundness`/`motion_friction` → `/design-review`; `concept_clarity` → `/review`; broken flows → `/qa`.
 - Render in full every iteration; scope the JUDGING (backlog mode) instead. A `--scene` partial render cannot converge.
