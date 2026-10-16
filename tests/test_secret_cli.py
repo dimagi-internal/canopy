@@ -27,6 +27,9 @@ def served(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SID)
     # The cloud runner's form by default; the file forms have their own tests.
     monkeypatch.setenv("CANOPY_CHAT_KEY", KEY)
+    # A cloud runner exports its own GH_TOKEN; the child would inherit it, which is not
+    # the secret being tested.
+    monkeypatch.delenv("GH_TOKEN", raising=False)
     monkeypatch.setattr(secret_cli, "KEY_ROOT", secret_cli.pathlib.Path("/nonexistent-canopy-chat"))
     return calls
 

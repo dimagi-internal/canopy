@@ -88,9 +88,9 @@ def test_human_messages_filters_noise(tmp_path):
     assert msgs == ["real intent here", "more steering"]
 
 
-@pytest.mark.skipif(os.environ.get("CI") == "true",
+@pytest.mark.skipif(not os.path.isdir("/Users/acedimagi"),
                     reason="walks the real /Users/* of THIS machine (asserts the "
-                           "acedimagi account exists) — meaningless on a CI runner")
+                           "acedimagi account exists) — meaningless on CI or a cloud box")
 def test_user_session_roots_real_machine():
     # smoke: on the real machine this should at least find acedimagi
     roots = user_session_roots()

@@ -16,6 +16,7 @@ named `connect-labs`.
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -99,20 +100,20 @@ def test_op_fail_recovery_hint(tmp_path: Path) -> None:
     assert "op signin --account dimagi.1password.com" in result.stdout
 
 
-@pytest.mark.skipif(os.environ.get("CI") == "true",
-                    reason="probes the REAL gh/op/aws on this machine; CI has an "
-                           "unauthenticated gh, which is a different (failing) path")
 def test_not_installed_is_not_a_failure(tmp_path: Path) -> None:
     """When tools are missing entirely, the script should report NOT INSTALLED
     and still exit 0 (we treat absence as best-effort, not failure)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    # No shims at all — gh and op are absent.
+    # No shims at all — gh and op are absent. PATH is bash ALONE, not /bin:/usr/bin:
+    # CI and the cloud runners install gh (and op) in /usr/bin, so inheriting it made
+    # "absent" mean "present and unauthenticated" there. The script needs only builtins.
+    (bin_dir / "bash").symlink_to(shutil.which("bash"))
 
     cwd = tmp_path / "neutral"
     cwd.mkdir()
 
-    result = _run(f"{bin_dir}:/bin:/usr/bin", cwd)
+    result = _run(str(bin_dir), cwd)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "gh: NOT INSTALLED" in result.stdout
     assert "op: NOT INSTALLED" in result.stdout
