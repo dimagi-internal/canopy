@@ -227,6 +227,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         f"- channel: {trigger.get('origin') or 'unknown'}"
         + (f", runner {trigger['runner']}" if trigger.get("runner") else ""),
     ]
+    lines.extend(_slack_lines(env.get("conversation"), tid))
     um = env.get("unproven_member")
     if isinstance(um, dict) and um:
         # canopy-web#1265: informational, grants nothing — but without it a member
@@ -258,6 +259,31 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     lines.append(f"Full envelope: {path}; re-read it with the who_is_asking tool "
                  f"(turn_id={tid}) before anything irreversible. Terms: {ACCESS_DOC}")
     return "\n".join(lines)
+
+
+def _clean(value, limit: int = 200) -> str:
+    """One line of a value canopy relays from elsewhere (Slack names its channels)."""
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _slack_lines(conversation, tid: str) -> list:
+    """Where in Slack this conversation is (canopy-web `conversation.slack`), and the
+    one call that moves it to a fresh thread in the same channel. A Slack turn asked
+    to "post a new clean thread in the channel" used to have to ask which channel it
+    was in (2026-10-16)."""
+    slack = conversation.get("slack") if isinstance(conversation, dict) else None
+    if not isinstance(slack, dict) or not slack.get("channel_id"):
+        return []
+    cid = _clean(slack["channel_id"], 40)
+    name = _clean(slack.get("channel_name"), 80)
+    where = f"#{name} ({cid})" if name else f"<#{cid}>"
+    link = _clean(slack.get("permalink"), 300)
+    if slack.get("is_dm") or not slack.get("thread_ts"):
+        return [f"- slack: a direct message ({cid})" + (f", {link}" if link else "")
+                + " — one running conversation, no threads to move between."]
+    return [f"- slack: {where}, thread {_clean(slack['thread_ts'], 40)}" + (f" — {link}" if link else "")
+            + f". To continue in a NEW thread in this channel: start_new_slack_thread(turn_id={tid}, "
+            "summary=…); to post an update here: share_session_to_slack(turn_id=…, summary=…)."]
 
 
 def _page_lines(page) -> list:

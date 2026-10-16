@@ -24,6 +24,12 @@ def test_names_both_canopy_web_tools() -> None:
     assert "`detach_session_from_slack`" in body
 
 
+def test_names_the_move_tool_and_its_turn_id() -> None:
+    _front, body = _frontmatter_and_body()
+    assert "`start_new_slack_thread`" in body and "`turn_id`" in body
+    assert "conversation.slack" in body
+
+
 def test_description_triggers_on_detach() -> None:
     front, _body = _frontmatter_and_body()
     for word in ("unbind", "detach", "disconnect"):
