@@ -37,3 +37,19 @@ def test_a_withdrawn_loan_removes_the_staged_copy(monkeypatch, tmp_path):
     r = _run(monkeypatch, tmp_path, "")
     assert r.exit_code == 0 and not f.exists()
     assert "removed the stale staged copy" in r.output
+
+
+def test_skips_when_the_only_token_is_the_agents_own(monkeypatch, tmp_path):
+    """canopy#945: asking /credentials/resolve with the agent's own PAT can only 403 —
+    skip with a clear line, and leave a copy someone else staged alone."""
+    (tmp_path / ".hal").mkdir()
+    (tmp_path / ".hal" / ".env").write_text("CANOPY_WEB_PAT=hal-own\n")
+    f = tmp_path / ".canopy" / "delegated" / "hal" / "chrome-sales" / ".sf-creds.json"
+    f.parent.mkdir(parents=True)
+    f.write_text(CREDS)
+    monkeypatch.setattr(agent_cli.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(canopy_web, "call", lambda *a, **k: (_ for _ in ()).throw(AssertionError("called")))
+    monkeypatch.setattr("orchestrator.agent_bootstrap._operator_token", lambda: "hal-own")
+    r = CliRunner().invoke(agent_cli.agent, ["stage-delegated", "--slug", "hal"])
+    assert r.exit_code == 0, r.output
+    assert "skipped" in r.output and f.exists()
