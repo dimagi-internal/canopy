@@ -12,14 +12,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import urllib.error
 from pathlib import Path
 
+from orchestrator.canopy_web import pinned_api_path as _pinned
 from scripts.ddd.auth import (
     require_write_workspace as _require_write_ws,
     resolve_base_url as _resolve_base_url,
     resolve_ddd_workspace as _resolve_ws,
     resolve_token as _resolve_token,
-    scoped_api_path as _scoped,
 )
 from scripts.ddd.review import _json_request
 
@@ -37,8 +38,19 @@ class UnknownRun(ValueError):
 def _request(method: str, path: str, body: dict | None = None, *, workspace=None, base_url=None, token=None):
     # Writes must name a workspace (auth convention); reads fall back to the active one.
     ws = _require_write_ws(workspace) if method != "GET" else _resolve_ws(workspace)
-    url = f"{_resolve_base_url(base_url)}{_scoped(path, ws)}"
+    url = f"{_resolve_base_url(base_url)}{_pinned(path, ws or '')}"
     return _json_request(method, url, _resolve_token(token), body)
+
+
+def http_error_message(e: urllib.error.HTTPError) -> str:
+    """``<code> <detail>`` from a problem+json body (falls back to the reason)."""
+    detail = ""
+    try:
+        body = json.loads(e.read().decode("utf-8"))
+        detail = body.get("detail") or body.get("title") or json.dumps(body)
+    except Exception:
+        detail = str(e.reason or "")
+    return f"{e.code} {detail}".strip()
 
 
 def read(slug: str, number: int, **kw) -> dict:
@@ -116,7 +128,11 @@ def _main(argv: list[str] | None = None) -> int:
     a.add_argument("--run-id", required=True)
     args = ap.parse_args(argv)
     if args.cmd == "read":
-        doc = read(args.slug, args.number)
+        try:
+            doc = read(args.slug, args.number)
+        except urllib.error.HTTPError as e:
+            print(f"feedback_round: {http_error_message(e)}", file=sys.stderr)
+            return 1
         doc["clusters"] = cluster(doc.get("notes") or [])
         text = json.dumps(doc, indent=2)
         if args.out:
@@ -130,6 +146,9 @@ def _main(argv: list[str] | None = None) -> int:
     except (UnansweredNotes, UnknownRun) as e:
         print(f"feedback_round: {e}", file=sys.stderr)
         return 2
+    except urllib.error.HTTPError as e:
+        print(f"feedback_round: {http_error_message(e)}", file=sys.stderr)
+        return 1
     print(json.dumps(out))
     return 0
 

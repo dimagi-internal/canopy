@@ -99,3 +99,29 @@ def test_declined_omits_resolved_in_version():
          patch.object(fr, "_record_on_run_doc"):
         fr.apply("supply", 1, _all_answered("declined"), version=4, run_id="r1")
     assert calls[0] == {"state": "declined", "note": "done"}
+
+
+def _capture_urls(monkeypatch):
+    urls = []
+    monkeypatch.setattr(fr, "_json_request", lambda m, u, t, b=None: urls.append((m, u)) or {})
+    monkeypatch.setattr(fr, "_resolve_base_url", lambda b: "http://x")
+    monkeypatch.setattr(fr, "_resolve_token", lambda t: "tok")
+    return urls
+
+
+def test_requests_are_pinned_to_the_workspace(monkeypatch):
+    urls = _capture_urls(monkeypatch)
+    for m, p in [("POST", "/api/storyboards/"), ("GET", "/api/storyboards/supply/rounds/1"),
+                 ("POST", "/api/feedback/11/resolve"), ("POST", "/api/storyboards/supply/rounds/1/consume")]:
+        fr._request(m, p, {} if m == "POST" else None, workspace="connect")
+    assert [u for _, u in urls] == [
+        "http://x/api/w/connect/storyboards/", "http://x/api/w/connect/storyboards/supply/rounds/1",
+        "http://x/api/w/connect/feedback/11/resolve", "http://x/api/w/connect/storyboards/supply/rounds/1/consume"]
+
+
+def test_cli_prints_http_error_detail_without_traceback(capsys):
+    import io, urllib.error
+    err = urllib.error.HTTPError("u", 422, "Unprocessable", {}, io.BytesIO(b'{"detail": "no workspace"}'))
+    with patch.object(fr, "read", side_effect=err):
+        assert fr._main(["read", "supply", "1"]) == 1
+    assert "422 no workspace" in capsys.readouterr().err

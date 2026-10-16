@@ -15,7 +15,7 @@ import sys
 import urllib.error
 from pathlib import Path
 
-from scripts.ddd.feedback_round import _request
+from scripts.ddd.feedback_round import _request, http_error_message
 
 _LEGACY = ("assumptions", "divergences", "open_questions")
 
@@ -39,7 +39,11 @@ def _main(argv=None) -> int:
     p = sub.add_parser("publish")
     p.add_argument("path")
     args = ap.parse_args(argv)
-    out = publish(json.loads(Path(args.path).read_text()))
+    try:
+        out = publish(json.loads(Path(args.path).read_text()))
+    except urllib.error.HTTPError as e:
+        print(f"demo_set: {http_error_message(e)}", file=sys.stderr)
+        return 1
     print(json.dumps({"slug": out.get("slug"), "decisions": len(out.get("decisions") or [])}))
     return 0
 
