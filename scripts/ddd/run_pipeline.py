@@ -287,6 +287,7 @@ def compute_auto_iterate(
     edit_scope: dict | None = None,
     target_rubric: object | None = None,
     run_dir: object | None = None,
+    pass_scope: dict | None = None,
 ) -> tuple[str, str]:
     """Decide the next loop action from the SCORE TRAJECTORY, not an iteration count.
 
@@ -418,6 +419,22 @@ def compute_auto_iterate(
     failing criterion become advisory (``route: DEFER``, ``deferred_by:
     target_rubric``) unless their severity is in ``block_severities``. Without
     it (callers that predate it) nothing changes.
+
+    Per-cell floor + predicted gain (DDD-1, :mod:`scripts.ddd.floor`,
+    :mod:`scripts.ddd.predict`): every finding gets a stable ``finding_id`` and
+    an ``edit_scope``; out-of-scope findings are reported, never counted as
+    pending work. A cell below the bar whose findings are all out of scope is
+    PINNED — parked out of the workable objective, reported in
+    ``state.cell_floor`` (and ``blocked_report.json`` via ``assemble``) — and
+    the loop keeps optimizing the workable cells. It stops with
+    ``stop_out_of_scope`` only when a cell is pinned AND no workable cell below
+    the bar has in-scope work left; with ``stop_prediction_failed`` when every
+    re-judged cell the last declared batch predicted to move stayed in the noise
+    band. A ``continue`` with workable work sets ``state.predictions_required``:
+    the next pass refuses to start until ``predict declare`` records the batch,
+    and that call stops the run (``stop_no_predicted_gain``) when no workable
+    cell is predicted to improve. ``pass_scope`` is this pass's
+    ``judge-scope.json`` (which cells were re-judged).
     """
     import copy
 
@@ -439,6 +456,7 @@ def compute_auto_iterate(
         state.recipe_rejudge = {**rr, "status": "done"}
 
     state.batch_plan = None  # re-stamped by a `continue` below
+    state.predictions_required = False  # re-stamped by a `continue` with workable work
     if converged is None:
         converged = compute_convergence(concept_verdict, user_verdict)
     if unattended is None:
@@ -497,12 +515,67 @@ def compute_auto_iterate(
         target_why = product_why = tr["why"]
 
     from scripts.ddd import floor as floor_mod
+    from scripts.ddd import predict as predict_mod
 
     scope_ctx = {
         "narrative_locked": bool((edit_scope or {}).get("narrative_locked")),
         "fixed_surfaces": tuple((edit_scope or {}).get("fixed_surfaces") or ()),
         "declined": list((edit_scope or {}).get("declined") or []),
+        "surfaces": tuple((edit_scope or {}).get("surfaces") or ()),
+        "sticky": dict(state.out_of_scope_ids or {}),
     }
+    # Stable ids first (a decline or a fixed surface follows the finding across
+    # re-wordings), then every finding's edit scope, stamped once.
+    state.finding_ledger = floor_mod.assign_ids(findings, state.finding_ledger, iteration=state.iteration)
+    sticky = dict(state.out_of_scope_ids or {})
+    for f in findings:
+        d = floor_mod.scope_detail(f, **scope_ctx)
+        f["edit_scope"] = d["edit_scope"]
+        f["edit_scope_reason"] = d["reason"]
+        if d["edit_scope"] == floor_mod.OUT:
+            f["edit_scope_via"] = d["via"]
+            for k in ("surface", "owner", "issue"):
+                if d.get(k):
+                    f[k] = d[k]
+            if d["via"] in ("surface", "decline") and f.get("finding_id") not in sticky:
+                sticky[f["finding_id"]] = {
+                    "reason": d["reason"],
+                    "via": d["via"],
+                    "surface": d.get("surface"),
+                    "owner": d.get("owner"),
+                    "issue": d.get("issue"),
+                    "since": state.iteration,
+                }
+        else:
+            f.pop("edit_scope_via", None)
+    state.out_of_scope_ids = sticky
+
+    # The per-cell floor: PINNED cells (every finding out of scope) are reported
+    # and parked; the WORKABLE objective is everything else (scripts.ddd.floor).
+    cell_bar = float(product_config.floor) if product_objective else floor_mod.CELL_BAR
+    cells = floor_mod.cell_table(all_verdicts, run_dir=run_dir, distribution=distribution)
+    cell_cls = None
+    if cells:
+        from scripts.ddd.objective import PRODUCT_DIMENSIONS
+
+        cell_cls = floor_mod.classify_cells(
+            cells, findings, bar=cell_bar, dimensions=set(PRODUCT_DIMENSIONS) if product_objective else None
+        )
+        pinned_keys = set(cell_cls["pinned"])
+        since = {k: v for k, v in (state.pinned_since or {}).items() if k in pinned_keys}
+        for k in pinned_keys:
+            since.setdefault(k, state.iteration)
+        state.pinned_since = since
+        base = dict(state.cell_baseline or {})
+        for c in cell_cls["cells"]:
+            base.setdefault(c["key"], c["score"])
+        state.cell_baseline = base
+        pinned_ids = {fid for c in cell_cls["cells"] if c["status"] == floor_mod.PINNED for fid in c["findings"]}
+        for f in findings:
+            if f.get("finding_id") in pinned_ids:
+                f["pinned"] = True
+            else:
+                f.pop("pinned", None)
     floor_cls = (
         floor_mod.classify_floor(floor, findings, verdicts=all_verdicts, **scope_ctx)
         if floor
@@ -513,6 +586,14 @@ def compute_auto_iterate(
         for f in floor_mod.floor_findings(floor, findings):
             if floor_mod.edit_scope(f, **scope_ctx)[0] == floor_mod.IN:
                 floor_first.append(f)
+        if not floor_first and cell_cls is not None and cell_cls["workable_score"] is not None:
+            # The true floor is pinned: aim the batch at the WORKABLE floor instead.
+            low = [
+                c for c in cell_cls["cells"]
+                if c["status"] == floor_mod.WORKABLE and c["score"] == cell_cls["workable_score"]
+            ]
+            ids = {fid for c in low for fid in c["findings"]}
+            floor_first = [f for f in findings if f.get("finding_id") in ids and f.get("edit_scope") != floor_mod.OUT]
         if floor_first and loop_config.floor_first:
             ids = {id(f) for f in floor_first}
             for f in findings:
@@ -543,6 +624,27 @@ def compute_auto_iterate(
     if product_objective:
         ps = objective_mod.product_score(all_verdicts)
         score = ps if ps is not None else score
+    if cell_cls is not None:
+        state.cell_floor = {
+            "iteration": state.iteration,
+            "bar": cell_cls["bar"],
+            "true_score": float(score),
+            "workable_score": cell_cls["workable_score"],
+            "cells": cell_cls["cells"],
+            "pinned": cell_cls["pinned"],
+            "workable": cell_cls["workable"],
+            "unattached": cell_cls["unattached"],
+        }
+    else:
+        state.cell_floor = None
+    # Did the batch the last assemble planned do what it said it would?
+    prediction = None
+    if cell_cls is not None:
+        prediction = predict_mod.evaluate(
+            state,
+            state.cell_floor,
+            judged=predict_mod.judged_predicate({**(pass_scope or {}), "full": judge_full}, judges),
+        )
     state.score_history = (state.score_history or []) + [float(score)]
     hist = state.score_history
 
@@ -561,7 +663,21 @@ def compute_auto_iterate(
         ]
         state.findings = findings
 
-    point = progress.measure(findings, distribution, score, full=judge_full)
+    pinned_caps = {
+        (str(c["scene"]), str(c["dimension"]))
+        for c in (cell_cls or {}).get("cells") or []
+        if c["status"] == floor_mod.PINNED and c["judge"] == "concept" and c["scene"] is not None
+    }
+    point = progress.measure(
+        findings,
+        distribution,
+        score,
+        full=judge_full,
+        workable_score=(cell_cls or {}).get("workable_score"),
+        pinned_caps=pinned_caps,
+    )
+    if cell_cls is not None:
+        point["pinned"] = sorted(cell_cls["pinned"])
     point["target"] = target or "deploy"
     # Which judges produced this point's findings: a concept-only pass reports
     # fewer than a full one, so open_findings is only compared like for like
@@ -624,6 +740,7 @@ def compute_auto_iterate(
             "finding_class": f.get("finding_class", finding_class.UNCLASSIFIED),
             "scene": f.get("scene"),
             "parked": bool(f.get("parked")),
+            "out": f.get("edit_scope") == floor_mod.OUT,
         }
         for f in findings
     ]
@@ -637,10 +754,13 @@ def compute_auto_iterate(
                 }
             )
     non_defer = [f for f in all_findings if f["route"] != "DEFER"]
-    mechanical_all = [f for f in non_defer if f["fix_kind"] == "mechanical"]
+    # A finding outside the edit scope is reported, never batched: counting it as
+    # "mechanical work remains" kept noora's loop on `continue` for six passes on
+    # ~40 declined findings (DDD-1).
+    mechanical_all = [f for f in non_defer if f["fix_kind"] == "mechanical" and not f.get("out")]
     # Only mechanical work on UNPARKED scenes is actionable this pass.
     mechanical = [f for f in mechanical_all if not f.get("parked")]
-    unclear = [f for f in non_defer if f["fix_kind"] in ("options", "redesign")]
+    unclear = [f for f in non_defer if f["fix_kind"] in ("options", "redesign") and not f.get("out")]
     # Only a STRATEGY finding can open the concept gate. An accuracy finding was
     # already forced mechanical above, so this can no longer fire on "the wrong
     # word is on screen" — which is what escalated two fixable defects to a human.
@@ -655,15 +775,19 @@ def compute_auto_iterate(
     # decision; only a NEW one can ask for a gate.
     strategy_redesign = [f for f in strategy_all if not f.get("parked")]
 
-    def _finish(action: str, reason: str) -> tuple[str, str]:
+    def _finish(action: str, reason: str, *, direct: bool = False) -> tuple[str, str]:
         # Fidelity: an inner-loop or concept-only pass may not decide anything.
         from scripts.ddd import target as target_mod
 
         # An uneditable floor stops NOW (canopy#788): no checkpoint can move a
         # cell the loop may not edit, and floor-first already re-judged the
         # floor's scenes if they changed. Only a held scene (changed, not
-        # re-judged) could still be hiding a different floor.
-        exempt = action == "stop_out_of_scope" and not held
+        # re-judged) could still be hiding a different floor. The same holds for
+        # a failed prediction (the re-judged targets did not move) and for a
+        # stall read on a partial pass (``direct``): a checkpoint full pass on
+        # top of a stall cost noora/smallholder one more ~10-minute pass each
+        # and decided nothing new.
+        exempt = (action in ("stop_out_of_scope", predict_mod.STOP_FAILED) or direct) and not held
         if (
             action in _CHECKPOINT_BEFORE
             and not exempt
@@ -671,6 +795,7 @@ def compute_auto_iterate(
         ):
             state.next_judge_full = True
             state.terminal_status = "running"
+            state.predictions_required = False
             if (target or "deploy") != "deploy":
                 where = "the local inner-loop build"
             elif held:
@@ -724,6 +849,8 @@ def compute_auto_iterate(
             unattended=bool(unattended),
             progress_history=prog,
         )["status"]
+        if action not in ("continue", "park_and_continue"):
+            state.predictions_required = False
         return action, reason
 
     def _continue(reason: str, action: str = "continue") -> tuple[str, str]:
@@ -771,6 +898,24 @@ def compute_auto_iterate(
                 f" Scene(s) {sorted(parked)} are PARKED on a pending decision — withhold "
                 "their findings from the batch; they are still rendered and judged."
             )
+        if cell_cls is not None:
+            if cell_cls["pinned"]:
+                reason += (
+                    f" PINNED: {len(cell_cls['pinned'])} cell(s) are held only by out-of-scope "
+                    f"findings ({', '.join(cell_cls['pinned'][:6])}"
+                    + (" …" if len(cell_cls["pinned"]) > 6 else "")
+                    + ") — reported in blocked_report.json, excluded from the batch; true score "
+                    f"{score}, workable score {cell_cls['workable_score']}."
+                )
+            if cell_cls["workable"] or cell_cls["unattached"]:
+                state.predictions_required = True
+                reason += (
+                    " PREDICT FIRST: before the fixers run, declare every batch item's "
+                    "{finding_id, scene, dimension, in_scope, from, expected_to} with "
+                    f"`python -m scripts.ddd.predict declare {state.run_id} --batch <items.json>` "
+                    "(the next pass refuses to start without it; it stops the run when no workable "
+                    "cell is predicted to improve)."
+                )
         if state.loop_mode == "backlog" and (inner_loop_policy or {}).get("status") in ("missing", "dropped"):
             # Everything above is already scheduled, so once the config is fixed a
             # logged `decision override` resumes exactly the pass this would have been.
@@ -842,7 +987,62 @@ def compute_auto_iterate(
         return _finish(
             "stop_partial", "Both judges passed the filtered scope — drop --scene and re-fire."
         )
-    if floor_cls is not None and floor_cls["all_out"] and not converged:
+    if prediction and prediction["outcome"] == "miss" and not converged:
+        # The batch said which cells it would move; every one that was re-judged
+        # stayed inside the noise band. The loop's model of its own fixes is
+        # wrong, and another pass on the same model is waste.
+        rows = [r for r in prediction["rows"] if r["judged"]]
+        cells_txt = "; ".join(
+            f"{r['cell']} predicted {r['from']} -> {r['expected_to']}, judged {r['actual']}" for r in rows
+        )
+        return _finish(
+            predict_mod.STOP_FAILED,
+            f"Prediction failed: the batch planned at iteration {prediction['planned_iteration']} "
+            f"targeted {len(rows)} re-judged cell(s) and none improved beyond the "
+            f"+/-{denoise.NOISE_BAND} noise band — {cells_txt}. The fixes are not doing what the "
+            "loop expected; see blocked_report.json (predicted vs actual) before another pass "
+            f"(history={hist}).",
+        )
+    if cell_cls is not None and cell_cls["cells"] and not converged:
+        pinned_any = bool(cell_cls["pinned"]) or bool(floor_cls and floor_cls["all_out"])
+        workable_ids = {
+            fid
+            for c in cell_cls["cells"]
+            if c["status"] == floor_mod.WORKABLE
+            for fid in c["findings"]
+        } | set(cell_cls["unattached"])
+        actionable = [
+            f for f in findings
+            if f.get("finding_id") in workable_ids
+            and f.get("edit_scope") != floor_mod.OUT
+            and f.get("route", "PRODUCT") != "DEFER"
+            and not f.get("parked")
+        ]
+        if pinned_any and not actionable:
+            # Every cell below the bar that the loop may touch is either passing
+            # or has nothing in scope to fix: what remains is blocked elsewhere.
+            def _who(c: dict) -> str:
+                owners = sorted({str(o["owner"]) for o in c.get("owners") or [] if o.get("owner")})
+                issues = sorted({str(o["issue"]) for o in c.get("owners") or [] if o.get("issue")})
+                if owners or issues:
+                    return ", ".join(owners + issues)
+                first = (c.get("blocked_by") or [{}])[0]
+                return str(first.get("reason") or "out of scope")[:160]
+
+            pinned_txt = "; ".join(
+                f"{c['key']}={c['score']} ({_who(c)})"
+                for c in cell_cls["cells"]
+                if c["status"] == floor_mod.PINNED
+            )
+            return _finish(
+                "stop_out_of_scope",
+                f"Nothing left in the loop's edit scope can move a cell below the bar: true score "
+                f"{score}, workable score {cell_cls['workable_score']}. Pinned (held only by "
+                f"out-of-scope findings): {pinned_txt[:900]}. Fix them at their source (or widen the "
+                f"edit scope), then re-run; blocked_report.json names each owner (history={hist}).",
+            )
+    elif floor_cls is not None and floor_cls["all_out"] and not converged:
+        # No per-cell table (verdicts without dimension scores): the floor rule.
         # The gate is a minimum: while its floor cell is held only by findings
         # this loop may not touch, no batch can move the score. Iterating to the
         # stall rule (run -004: three more passes) only re-confirms that.
@@ -974,6 +1174,7 @@ def compute_auto_iterate(
             f"(score, open findings, mean cell, confirmed caps; history={hist}, "
             f"progress={[_short(p) for p in prog[-3:]]}, score noise band "
             f"+/-{denoise.NOISE_BAND}) — fixes aren't converging; needs a human look.",
+            direct=True,
         )
     # A plateau means re-applying the mechanical fixes is not producing change.
     # The hard cap applies here too — a backstop that a `continue` can step over
@@ -1101,6 +1302,7 @@ _CHECKPOINT_BEFORE = frozenset(
     {
         "stop_done",
         "stop_out_of_scope",
+        "stop_prediction_failed",
         "stop_concept_change",
         "stop_max_iter",
         "stop_unclear",
@@ -1167,6 +1369,8 @@ TERMINAL_ACTIONS = frozenset(
         "stop_unclear",
         "stop_max_iter",
         "stop_inner_loop_required",
+        "stop_no_predicted_gain",
+        "stop_prediction_failed",
     }
 )
 
@@ -1230,6 +1434,10 @@ def classify_termination(
         status = "needs_config"
     elif action == "stop_out_of_scope":
         status = "blocked_out_of_scope"
+    elif action == "stop_no_predicted_gain":
+        status = "stopped_no_predicted_gain"
+    elif action == "stop_prediction_failed":
+        status = "stopped_prediction_failed"
     elif action in ("stop_done", "stop_partial") or converged:
         status = "converged_with_open_questions" if open_strategy else "converged_clean"
     elif is_diverging:
@@ -1271,6 +1479,15 @@ _TERMINATION_SUMMARY = {
         "Stopped on an out-of-scope floor — the cell holding the gating score down is held only "
         "by findings this loop may not fix (data, registry, a locked narration, a deferred or "
         "declined finding). Fix them at their source, then re-run."
+    ),
+    "stopped_no_predicted_gain": (
+        "Stopped before a pass that could not help — no workable cell's predicted best beat its "
+        "current value. blocked_report.json names what is blocked, by whom, and what improved."
+    ),
+    "stopped_prediction_failed": (
+        "Stopped on a failed prediction — every re-judged cell the last batch targeted stayed "
+        "inside the noise band. The loop's model of its own fixes is wrong; see the predicted-vs-"
+        "actual calibration in blocked_report.json."
     ),
     "running": "Still iterating.",
 }

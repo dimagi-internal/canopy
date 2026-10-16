@@ -1,0 +1,25 @@
+schema_version: 1
+gate: gating
+overall_rule: lowest
+ran_at: '2026-10-16T00:00:00Z'
+live_state_verified: true
+kind: arc
+rubric_name: ddd-arc-eval
+dimensions:
+  arc_shape:
+    score: 4.0
+    weight: 0.3
+  escalation:
+    score: 4.0
+    weight: 0.25
+  visual_variety:
+    score: 4.0
+    weight: 0.2
+  persona_coherence:
+    score: 4.0
+    weight: 0.15
+  opening_and_close:
+    score: 4.0
+    weight: 0.1
+overall_score: 4.0
+verdict: pass

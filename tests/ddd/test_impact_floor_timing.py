@@ -572,8 +572,28 @@ class TestAssembleEndToEnd:
         ))
 
         out = assemble.assemble(rid, spec=str(spec), ddd_dir=ddd)
-        assert out["auto_iterate_next_action"] == "stop_out_of_scope"
-        assert out["terminal_status"] == "blocked_out_of_scope"
+        # DDD-1: the declined floor cell is PINNED and parked, and the loop keeps
+        # optimizing the workable cells (concept visual_polish 3 has an in-scope
+        # fix) instead of stopping the whole run.
+        assert out["auto_iterate_next_action"] == "continue", out["auto_iterate_reason"]
+        assert out["cell_floor"]["pinned"] == ["user:2:clarity"]
+        assert out["cell_floor"]["true_score"] == 2.0 and out["cell_floor"]["workable_score"] == 3.0
+        assert out["predictions_required"] is True
+        assert "PINNED" in out["auto_iterate_reason"] and "PREDICT FIRST" in out["auto_iterate_reason"]
+        assert Path(out["blocked_report"]["path"]).exists()
         state = load(rid, ddd_dir=ddd)
         assert state.gating_floor["scenes"] == [2] and state.gating_floor["judges"] == ["user"]
         assert len(state.pass_timings) == 1
+
+        # With the in-scope polish fix gone, nothing workable is left: stop, blocked.
+        (run / "design_findings.json").write_text("[]")
+        from scripts.ddd import decision
+
+        decision.override(state, "test: re-assess the same pass without the polish finding")
+        from scripts.ddd.runstate import save
+
+        save(state, ddd_dir=ddd)
+        out = assemble.assemble(rid, spec=str(spec), ddd_dir=ddd)
+        assert out["auto_iterate_next_action"] == "stop_out_of_scope", out["auto_iterate_reason"]
+        assert out["terminal_status"] == "blocked_out_of_scope"
+        assert "registry display.targets_note" in out["auto_iterate_reason"]

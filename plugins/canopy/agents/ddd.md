@@ -1033,10 +1033,12 @@ digest will carry it. `compute_auto_iterate` stops on these conditions, and
 | condition | detector | action |
 |-----------|----------|--------|
 | converged | both gating judges ≥ threshold | `stop_done` / `stop_partial` |
-| stalled | NONE of the four progress signals improved over the last 2 iterations (score through `denoise.NOISE_BAND` ±0.5, mean cell through `progress.MEAN_BAND` ±0.15, confirmed caps must fall, open findings must fall by more than `progress.TRICKLE_FRACTION` = 15% of the best count). Checked BEFORE pending mechanical work — it used to sit behind `mechanical → continue` and could never fire on a v1 run. The trickle band exists because judges re-find new nits as old ones are fixed: 42 → 39 → 36 → 35 → 34 with a flat mean and no cap fixed ran ~4.6 hours without stalling. | `stop_max_iter` |
+| stalled | NONE of the progress signals improved over the last 2 iterations (score and workable score through `denoise.NOISE_BAND` ±0.5, mean cell through `progress.MEAN_BAND` ±0.15, confirmed caps must fall by more than `progress.CAPS_BAND` = 1 cell and caps on pinned cells do not count, open findings must fall by more than `progress.TRICKLE_FRACTION` = 15% of the best count). Checked BEFORE pending mechanical work — it used to sit behind `mechanical → continue` and could never fire on a v1 run. The trickle band exists because judges re-find new nits as old ones are fixed: 42 → 39 → 36 → 35 → 34 with a flat mean and no cap fixed ran ~4.6 hours without stalling. A stall read on a partial pass stops DIRECTLY (no checkpoint full pass) unless scenes were held. | `stop_max_iter` |
 | **finding plateau** | two consecutive iterations produced an **identical finding-fingerprint set** with no real score move — the loop is re-deriving, not progressing. Unlike the score this signal does not wobble: an LLM's score for a cell moves ±1 on the same frame; the defect it names does not. | `stop_max_iter` |
 | runaway | `HARD_CAP` (10) iterations | `stop_max_iter` |
-| **out-of-scope floor** | the gating floor (`state.gating_floor`, `scripts.ddd.floor`) HAS findings and every one is outside the loop's edit scope: `route: DEFER`, a `[DATA]`/`[REGISTRY]`/`[EXTERNAL]`/`[UPSTREAM]`/`[SEED]` fix, a narration edit under a locked narrative, a `loop.fixed_surfaces` match, or a fix a fixer declined. No batch can move a minimum held by a cell the loop may not touch; ACE Spark `-004` iterated to its stall rule on a registry string instead. | `stop_out_of_scope` |
+| **nothing workable left** | some cell is PINNED (`state.cell_floor`, `scripts.ddd.floor.classify_cells`: below the bar, has findings, every one outside the loop's edit scope — `route: DEFER`, a `[DATA]`/`[REGISTRY]`/`[EXTERNAL]`/`[UPSTREAM]`/`[SEED]` fix, a narration edit under a locked narrative, a `loop.fixed_surfaces` match, a declined fix, or a finding id declined on an earlier pass) AND no workable cell below the bar has an in-scope finding left. Pinned cells alone never stop the run: they are reported and parked, and the loop keeps optimizing the workable cells (smallholder ended `blocked_out_of_scope` with arc work still open; noora iterated six passes on a pinned floor). | `stop_out_of_scope` |
+| **no predicted gain** | `predict declare` (before the fixers run): no workable cell's predicted best beats its current value. | `stop_no_predicted_gain` |
+| **prediction failed** | after the pass: every predicted cell that was re-judged stayed inside the noise band (`denoise.improved`). | `stop_prediction_failed` |
 
 `state.terminal_status` distinguishes the endings that must never print the same:
 
@@ -1049,9 +1051,17 @@ digest will carry it. `compute_auto_iterate` stops on these conditions, and
   open-findings count, each beyond its noise band (`progress.declined`). A
   single capped cell pins the floor and is NOT a decline (M17). Fixes are
   fighting each other; more iterations will make it worse.
-- **`blocked_out_of_scope`** — the floor is held only by findings this loop
-  may not fix. Report each with where its fix lives (the reason lists them);
-  the run resumes after that source is fixed.
+- **`blocked_out_of_scope`** — every cell the loop could still move is done;
+  what holds the score down is pinned by findings this loop may not fix.
+- **`stopped_no_predicted_gain`** — the next batch could not move any workable
+  cell, so the pass was not run.
+- **`stopped_prediction_failed`** — the last batch's predictions all missed.
+
+Every stop, and every pass with a pinned cell, writes `<run_dir>/blocked_report.json`
+(`scripts.ddd.predict`) and `assemble` prints its short summary: what is
+blocked and by whom (owner / issue, from `loop.fixed_surfaces` or the decline),
+the true and workable scores, which cells improved, and predicted vs actual.
+Lead the digest with that summary — it is the one thing the user must act on.
 
 **In an unattended run every STUCK stop is TERMINAL.** Upload the `--stuck`
 package, report the terminal status and the open findings, and finish. Do not
@@ -1061,7 +1071,8 @@ from `gates.is_unattended()`) stamps the reason so the digest can say it plainly
 **Always leave the user with a navigable package — converged OR stuck.** Whenever
 the loop reaches a TERMINAL stop that hands control back to the user — `stop_done`
 (release), and every STUCK stop (`stop_unclear`, `stop_concept_change`,
-`stop_max_iter`, `stop_out_of_scope`, `stop_partial`) — invoke `/canopy:ddd-upload <run_id>` so the run
+`stop_max_iter`, `stop_out_of_scope`, `stop_no_predicted_gain`, `stop_prediction_failed`,
+`stop_partial`) — invoke `/canopy:ddd-upload <run_id>` so the run
 publishes its `/ddd/<slug>/<run_id>` package and you surface THAT package URL (not a
 loose `/w/` artifact, and never a hand-made `walkthrough-share` upload). For the
 stuck stops use **`--stuck`** (review package: skips the external_release gate, leaves
@@ -1179,14 +1190,30 @@ ready, and offer to drop `--scene` and re-fire on the full spec when
 they're ready to upload. Do **not** auto-launch the full-spec
 run — render budget is much larger and the user should opt in.
 
-### `stop_out_of_scope` (the floor is outside the loop's edit scope)
+### `stop_out_of_scope` (nothing workable is left)
 
-Every finding on the gating floor routes outside what this loop may edit, so no
-fix batch can move the score. Terminal (`terminal_status:
-blocked_out_of_scope`), unattended or not: upload the `--stuck` package and
-report each floor finding with where its fix lives and who owns it (the reason
-lists them, `state.gating_floor.findings` has the detail). Once the source is
-fixed, `decision override --reason "<what was fixed>"` and re-fire.
+The pinned cells hold the score and no workable cell below the bar has an
+in-scope finding, so no fix batch can move anything that matters. Terminal
+(`terminal_status: blocked_out_of_scope`), unattended or not: upload the
+`--stuck` package and report `blocked_report.json`'s summary — each pinned
+cell, its finding, and its owner / issue. Once the source is fixed,
+`decision override --reason "<what was fixed>"` and re-fire.
+
+### `stop_no_predicted_gain` (the next batch could not move a workable cell)
+
+Set by `predict declare`, not by `assemble`: the batch you declared predicts no
+workable cell above its current value (an in-scope fix on a cell an
+out-of-scope defect still caps is clamped to that defect's score). Do NOT run
+the fixers. Terminal: upload `--stuck`, report the blocked summary. If you
+believe the prediction was too pessimistic, say why in an override and re-declare.
+
+### `stop_prediction_failed` (the last batch did not do what it predicted)
+
+Every predicted cell that was re-judged stayed inside the noise band. The loop's
+model of its own fixes is wrong; another pass on it is waste. Terminal: upload
+`--stuck` and report the predicted-vs-actual rows (`blocked_report.json`
+`calibration_rows`) — which fix was expected to move which cell, and what the
+judge said instead.
 
 ### `continue` (apply the confident fixes)
 
@@ -1205,7 +1232,28 @@ sit in a human review waiting on a decision you didn't need. The loop keeps
 applying mechanical fixes across iterations until none remain; only THEN does
 `stop_unclear` surface whatever uncertain findings are left. (Apply only the
 `mechanical` findings here — leave `options`/`redesign` untouched for that later
-surface.)
+surface.) Findings stamped `edit_scope: out` (and every finding on a `pinned`
+cell) are reported, never batched — `assemble` already excludes them.
+
+**Predict before the fixers run** (DDD-1). When the reason says `PREDICT FIRST`,
+write one item per batch finding — what you expect the fix to do to the cell the
+judge scores — and declare it BEFORE dispatching any fixer:
+
+```bash
+# items.json: [{"finding_id": "s2.clarity.2", "scene": 2, "dimension": "clarity",
+#               "in_scope": true, "from": 3, "expected_to": 4}, ...]
+(cd "$DDD_REPO" && uv run python -m scripts.ddd.predict declare <run_id> --batch items.json)
+```
+
+`finding_id` is on every `state.findings` row; `from` is the cell's value in
+`state.cell_floor`. Predict honestly: a recipe/framing fix on a cell that a
+pinned labs-template defect also holds does not lift it (the code clamps
+`expected_to` to that defect's score). Exit 0 = proceed; exit 3 = the batch
+cannot move any workable cell — the decision is now `stop_no_predicted_gain`;
+do not run the fixers, report the printed summary. The next pass refuses to
+start until predictions are declared (or an override says why not), and the
+next `assemble` scores them: if every re-judged target missed it stops with
+`stop_prediction_failed`.
 
 **Fixer brief — every fixer subagent, every batch** (the B3 fixer sat 4 h on a
 shared test DB another session held; nothing timed it out):
@@ -1245,13 +1293,18 @@ of iterating:
 
 ```bash
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.floor decline "$RUN_DIR" \
-  --match "<text from the finding>" --reason "<where the fix lives, who owns it>" \
-  [--scene N] [--dimension D])
+  --finding-id <state.findings[].finding_id> --reason "<where the fix lives>" \
+  --owner "<who can make the fix>" [--issue owner/repo#N])
 ```
 
-Declare the surfaces a repo's loop may never edit once, in
-`.canopy/ddd/config.yaml` `loop.fixed_surfaces` (regexes), instead of a
-free-text constraints note: findings naming one are out of scope by
+Decline by `--finding-id`, not `--match`: the id survives the judge re-wording
+the finding next pass (noora's text-matched `out_of_scope.json` grew to 145
+entries for a handful of defects); `--match "<text>"` remains the fallback.
+
+Better still, declare the surfaces a repo's loop may never edit ONCE, in
+`.canopy/ddd/config.yaml` `loop.fixed_surfaces` — a regex, or
+`{match, name, owner, issue}` so the blocked report names who to ask — instead
+of declining finding by finding: findings naming one are out of scope by
 construction.
 
 **Fixer-diff gate — after every fixer batch, before its PR merges, every

@@ -25,8 +25,10 @@ The contract
 state it rests on. Before a pass proceeds, :func:`check` refuses when
 
 * the state was rewritten after the seal (the digest no longer matches), or
-* the sealed action was a STOP (``stop_max_iter``, ``stop_unclear``,
-  ``stop_concept_change``, ``stop_done``) and nothing overrode it,
+* the sealed action was a STOP (:data:`BLOCKING_STOPS`) and nothing overrode it,
+* the sealed action was a ``continue`` with workable work and the batch has no
+  declared predictions (``python -m scripts.ddd.predict declare``) — the loop
+  must say what a batch is expected to move before it spends a pass on it,
 
 unless :func:`override` logged a reason. An override is cheap and always
 allowed — it only has to be SAID: ``state.decision_overrides`` records it, the
@@ -69,8 +71,14 @@ BLOCKING_STOPS = frozenset(
         "stop_done",
         "stop_inner_loop_required",
         "stop_out_of_scope",
+        "stop_no_predicted_gain",
+        "stop_prediction_failed",
     }
 )
+
+#: Sealed actions whose batch must have its predictions declared
+#: (``python -m scripts.ddd.predict declare``) before the next pass may start.
+PREDICTED_ACTIONS = frozenset({"continue", "park_and_continue"})
 
 
 def _now() -> str:
@@ -85,12 +93,17 @@ def digest(state: Any) -> str:
 
 def seal(state: Any, *, overridden: bool = False) -> dict:
     """Seal the decision currently on ``state`` (called by ``assemble``)."""
+    action = state.auto_iterate_next_action
     state.decision_seal = {
         "iteration": state.iteration,
-        "action": state.auto_iterate_next_action,
+        "action": action,
         "digest": digest(state),
         "sealed_at": _now(),
         "overridden": bool(overridden),
+        # compute_auto_iterate sets predictions_required on a `continue` that has
+        # workable work: the batch must say what it expects before it runs.
+        "predictions_required": bool(getattr(state, "predictions_required", False))
+        and action in PREDICTED_ACTIONS,
     }
     return state.decision_seal
 
@@ -122,6 +135,20 @@ def check(state: Any) -> dict[str, Any]:
                 "anyway, log why first: " + cmd
             ),
         }
+    if s.get("predictions_required") and not s.get("overridden"):
+        preds = getattr(state, "predictions", None) or {}
+        if str(s.get("iteration")) not in preds:
+            return {
+                "ok": False,
+                "action": action,
+                "problem": (
+                    f"assemble decided {action!r} at iteration {s.get('iteration')}, but the batch "
+                    "has no declared predictions. Before the fixers run, declare what each batch "
+                    "item is expected to move: python -m scripts.ddd.predict declare "
+                    f"{state.run_id} --batch <items.json> (items: finding_id, scene, dimension, "
+                    "in_scope, from, expected_to). To skip it, log why: " + cmd
+                ),
+            }
     return {"ok": True, "problem": None, "action": action}
 
 

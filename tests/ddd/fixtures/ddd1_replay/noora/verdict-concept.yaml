@@ -1,0 +1,51 @@
+schema_version: 1
+gate: gating
+overall_rule: lowest
+ran_at: '2026-10-16T00:00:00Z'
+live_state_verified: true
+kind: concept
+rubric_name: ddd-concept-eval
+dimensions:
+  concept_clarity:
+    score: 3.0
+    weight: 0.15
+  use_case_soundness:
+    score: 3.0
+    weight: 0.15
+  design_soundness:
+    score: 3.0
+    weight: 0.2
+  visual_polish:
+    score: 2.0
+    weight: 0.12
+  why_groundedness:
+    score: 3.0
+    weight: 0.15
+  claim_reality_coherence:
+    score: 4.0
+    weight: 0.1
+  motion_friction:
+    score: 3.0
+    weight: 0.13
+overall_score: 2.0
+verdict: fail
+distribution:
+  n_cells: 30
+  floor: 2.0
+  mean: 3.2
+  cells_at_or_above_3: 28
+  capping_cells:
+  - scene: '1'
+    dimension: visual_polish
+    draws:
+    - 2.0
+    - 2.0
+    - 2.0
+    confirmed: 2.0
+  - scene: '1'
+    dimension: motion_friction
+    draws:
+    - 2.0
+    - 3.0
+    - 3.0
+    confirmed: 3.0

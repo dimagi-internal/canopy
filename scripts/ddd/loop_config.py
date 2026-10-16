@@ -30,10 +30,17 @@ module reads the two blocks the v1/backlog loop adds::
                               # guarded autonomously, nothing waits on a human;
                               # polish: the first version blocks on the human gate.
                               # auto -> polish for the demo objective, else build.
-      fixed_surfaces:         # regexes naming what this loop may NOT edit; a floor
-        - registry            # finding whose fix names one is out of edit scope,
-        - seed data           # and a floor made only of those stops the run
-                              # (stop_out_of_scope) instead of iterating to a stall
+      fixed_surfaces:         # what this loop may NOT edit. A finding whose detail/fix
+        - registry            # names one is OUT of edit scope; a cell whose findings
+        - seed data           # are all out is PINNED (reported, parked) and the loop
+                              # keeps optimizing the rest (scripts.ddd.floor). A
+                              # plain string is a regex; the mapping form names the
+                              # surface's owner and tracking issue, which the
+                              # blocked report (scripts.ddd.predict) prints:
+        - match: "Ask an agent|floating .*button|labs template"
+          name: labs-report-template
+          owner: ACE (labs report template)
+          issue: dimagi/ace#2337
       recurring_after: 2      # a cell with an open finding this many passes running is
                               # stamped `recurring` and briefed first (canopy#788)
       plateau_rounds: 3       # this many full judges with neither the score nor the
@@ -70,6 +77,10 @@ module reads the two blocks the v1/backlog loop adds::
       heartbeat_minutes: 15   # no heartbeat for this long -> timed_out
       fixer_minutes: 45       # <step>_minutes overrides default_minutes per step
       render_minutes: 20
+      judge_minutes: 20       # every judge:<name> step (built-in default 20 — judges
+                              # take 2-10 min; one hung 98 min under the old 45-min
+                              # default). A timed-out judge's cells are carried from
+                              # the last pass and the pass cannot decide (assemble).
 
     product:                  # the product objective (scripts.ddd.objective) — all optional
       floor: 3                # every PRODUCT dimension's weakest cell must reach this
@@ -128,6 +139,27 @@ NARRATIVE_MODES = ("auto", "build", "polish")
 
 
 @dataclass(frozen=True)
+class FixedSurface:
+    """A surface the loop may not edit, and who can (``loop.fixed_surfaces``).
+
+    Configuration, not text-matching after the fact, is the primary way a finding
+    becomes out of scope: on ``noora-health/20261015-1129`` the loop never had a
+    ``fixed_surfaces`` entry, so every reworded finding about the same labs
+    template needed its own text-matched decline (``out_of_scope.json`` grew to
+    145 entries) and none of them said who owned the fix.
+    """
+
+    match: str
+    name: str = ""
+    owner: str | None = None
+    issue: str | None = None
+
+    @property
+    def label(self) -> str:
+        return self.name or self.match
+
+
+@dataclass(frozen=True)
 class LoopConfig:
     objective: str = "demo"
     mode: str = "auto"
@@ -136,7 +168,9 @@ class LoopConfig:
     judge_tiering: str = "auto"
     inner_loop_hint_minutes: float = 15.0
     floor_first: bool = True
+    # The regexes of every fixed surface (back-compat view of ``surfaces``).
     fixed_surfaces: tuple[str, ...] = ()
+    surfaces: tuple[FixedSurface, ...] = ()
     narrative_mode: str = "auto"
     scoped_capture: bool = True
     recurring_after: int = 2
@@ -183,6 +217,13 @@ class DeployGateConfig:
         return bool(self.health_url)
 
 
+#: Built-in per-step budgets (minutes), under any configured ``<step>_minutes``.
+#: Judges: measured 2-10 min per judge on the 2026-10-15 ACE runs; a user judge on
+#: ``noora-health/20261015-1129`` iteration 2 ran 98 min under the 45-min default
+#: and the whole pass waited on it. 20 is twice the slowest healthy judge.
+STEP_DEFAULT_MINUTES: dict[str, float] = {"judge": 20.0}
+
+
 @dataclass(frozen=True)
 class TimeoutsConfig:
     default_minutes: float = 45.0
@@ -190,9 +231,14 @@ class TimeoutsConfig:
     per_step: dict[str, float] = field(default_factory=dict)
 
     def for_step(self, step: str) -> float:
-        """Total budget (minutes) for ``step`` — ``<step>_minutes`` or the default."""
+        """Total budget (minutes) for ``step``: ``<step>_minutes``, else the built-in
+        step default (:data:`STEP_DEFAULT_MINUTES`), else ``default_minutes``."""
         base = str(step).split(":", 1)[0]
-        return self.per_step.get(step, self.per_step.get(base, self.default_minutes))
+        if step in self.per_step:
+            return self.per_step[step]
+        if base in self.per_step:
+            return self.per_step[base]
+        return STEP_DEFAULT_MINUTES.get(base, self.default_minutes)
 
 
 @dataclass(frozen=True)
@@ -287,6 +333,35 @@ def _patterns(raw: Any) -> tuple[str, ...]:
         except re.error:
             continue
         out.append(pat)
+    return tuple(out)
+
+
+def _surfaces(raw: Any) -> tuple[FixedSurface, ...]:
+    """``loop.fixed_surfaces`` — strings (regexes) or ``{match, name, owner, issue}``.
+
+    An invalid regex or an entry without ``match`` is dropped: a config typo must
+    not stop a run.
+    """
+    import re
+
+    if isinstance(raw, (str, dict)):
+        raw = [raw]
+    out: list[FixedSurface] = []
+    for item in raw or []:
+        if isinstance(item, dict):
+            pat = str(item.get("match") or item.get("pattern") or "").strip()
+            name = str(item.get("name") or "").strip()
+            owner = str(item.get("owner") or "").strip() or None
+            issue = str(item.get("issue") or "").strip() or None
+        else:
+            pat, name, owner, issue = str(item or "").strip(), "", None, None
+        if not pat:
+            continue
+        try:
+            re.compile(pat)
+        except re.error:
+            continue
+        out.append(FixedSurface(match=pat, name=name, owner=owner, issue=issue))
     return tuple(out)
 
 
@@ -417,6 +492,7 @@ def parse(data: dict | None) -> DDDConfig:
     mode = str(loop_raw.get("mode") or "auto").strip().lower()
     objective = str(loop_raw.get("objective") or "demo").strip().lower()
     narrative_mode = str(loop_raw.get("narrative_mode") or "auto").strip().lower()
+    surfaces = _surfaces(loop_raw.get("fixed_surfaces"))
     loop = LoopConfig(
         objective=objective if objective in OBJECTIVES else "demo",
         mode=mode if mode in MODES else "auto",
@@ -425,7 +501,8 @@ def parse(data: dict | None) -> DDDConfig:
         judge_tiering=_tiering(loop_raw.get("judge_tiering")),
         inner_loop_hint_minutes=max(_float(loop_raw.get("inner_loop_hint_minutes"), 15.0), 0.0),
         floor_first=loop_raw.get("floor_first") is not False,
-        fixed_surfaces=_patterns(loop_raw.get("fixed_surfaces")),
+        fixed_surfaces=tuple(s.match for s in surfaces),
+        surfaces=surfaces,
         narrative_mode=narrative_mode if narrative_mode in NARRATIVE_MODES else "auto",
         scoped_capture=loop_raw.get("scoped_capture") is not False,
         recurring_after=_int(loop_raw.get("recurring_after"), 2),

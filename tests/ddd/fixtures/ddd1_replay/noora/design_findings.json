@@ -1,0 +1,222 @@
+[
+ {
+  "scene": "1",
+  "dimension": "concept_clarity",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "The 5-second read lands: the programme is on target and one partner is red. The screen leans on helper hints, a four-item legend and a footer definitions paragraph to explain itself, which caps this at 3 (deduction: expl",
+  "fix_recommendation": "PRODUCT: remove the 'click a row\u2026' and 'Click a column name\u2026' hints and the footer target list. Carry targets in the table structure (a target value under each column header), matching the tiles."
+ },
+ {
+  "scene": "1",
+  "dimension": "use_case_soundness",
+  "route": "CONCEPT",
+  "fix_kind": "redesign",
+  "fix_scope": "narrative",
+  "severity": "low",
+  "detail": "Grading a 40-facility, 2,899-visit programme against its design targets and finding the lagging partner is real work. The sort itself runs over five rows where the red cell already identifies Partner A, so a skeptic coul",
+  "fix_recommendation": "NARRATION: frame the scene around the report grading every partner against the design's targets in one view, rather than around a sort of five rows. The sort is a minor gesture, not the payoff."
+ },
+ {
+  "scene": "1",
+  "dimension": "design_soundness",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "The sort works and is legible (\u25bc on the active header, the row highlights on hover). The grading model is inconsistent: tiles are binary On/Off target, while the table adds a 'Watch' band with an unstated cut-off, so bel",
+  "fix_recommendation": "PRODUCT: one grading rule for tiles and table: below the design target means Off target. Remove the 'Watch' band, or turn it into a numeric 'points below target' value instead of a colour tier."
+ },
+ {
+  "scene": "1",
+  "dimension": "visual_polish",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "medium",
+  "detail": "The floating 'Ask an agent' button occludes footer text (deduction: frame element overlaps content, max 2). The table also overflows the viewport ('Attent\u2026' clipped), the fifth tile title is truncated ('AT PAYMENT FLO\u2026')",
+  "fix_recommendation": "PRODUCT: give the page a bottom inset so the floating button cannot overlap content. Drop the derived 'Attention' column so the table fits 1440px. Move 'lower is better' into the tile's target line so the title is not tr"
+ },
+ {
+  "scene": "1",
+  "dimension": "why_groundedness",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "The claim that targets come from the design is backed on screen ('Targets come from the pilot design\u2026', 'no target' on payment floor). The 'Watch' tier is a threshold with no stated design source, which partly undercuts ",
+  "fix_recommendation": "PRODUCT: remove any grading threshold the design does not state (the 'Watch' tier), so every colour traces to a design target."
+ },
+ {
+  "scene": "1",
+  "dimension": "motion_friction",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "recipe",
+  "severity": "low",
+  "detail": "The before-frame is a blank, unpainted page (fallback serif fonts, no report), so the scene and its voiceover open over an empty screen (deduction: scene opens on a blank/still-painting frame, max 2). The hold then parks",
+  "fix_recommendation": "RECIPE: pre-warm the report and start the clip only after the KPI tiles have rendered. Hover the partner-name cell rather than the row centre, and sort ascending so Partner A rises to the top row as the sort lands."
+ },
+ {
+  "scene": "2",
+  "dimension": "concept_clarity",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "The one-educator-against-40-peers review is understandable at a glance and the red cell lands on the narrated gap, but the screen relies on info bubbles on every indicator, a two-tier colour legend and a 'click a facilit",
+  "fix_recommendation": "PRODUCT: rename indicators to labels that state the measure with counts ('Classes held / planned: 45 / 90'), remove the bubbles, legend and hint. NARRATION: say what 'plan' means in this programme when the scene opens."
+ },
+ {
+  "scene": "2",
+  "dimension": "design_soundness",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "The table model holds (educator / peer median / target per indicator, grouped by domain), but the below-target colour encoding uses two tiers with no visible rule, the 'higher/lower is better' chips move between group he",
+  "fix_recommendation": "PRODUCT: one below-target rule applied the same way to every row (or a signed gap column), direction chips placed consistently per row, and facility rows styled as obvious links so the hint can be removed."
+ },
+ {
+  "scene": "2",
+  "dimension": "visual_polish",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "Clean type hierarchy (H1 name, card titles, aligned numeric columns) and real product chrome, but info bubbles on every label plus a legend count as explanatory copy (max 3), and the table leaves an empty band across the",
+  "fix_recommendation": "PRODUCT: remove the info bubbles and legend via clearer labels and a single colour rule; make the indicators table span its card and drop the duplicated 'against 40 peer educators' caption."
+ },
+ {
+  "scene": "2",
+  "dimension": "why_groundedness",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "narrative",
+  "severity": "low",
+  "detail": "The scene's claim matches its narrative anchors (pace gap larger than quality gap; educator against peers), but no why-brief provenance was available to this judge to confirm the chain, so it stays at the default.",
+  "fix_recommendation": "NARRATION: make sure the scene's concept_claim cites the why-brief spine item about distinguishing low pace from poor teaching, and that its evidence is grounded rather than assumed."
+ },
+ {
+  "scene": "3",
+  "dimension": "concept_clarity",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "The screen says 'dated list of this facility's classes, with gaps shaded' in a glance, but the visits/class-records naming drift and a legend explaining the gap bands keep it at default (deduction: leans on a legend).",
+  "fix_recommendation": "PRODUCT: rename the panel title/count/gap marker to the same 'classes' noun used in the Facilities table, and delete the 'no visit for over 7 days' legend."
+ },
+ {
+  "scene": "3",
+  "dimension": "design_soundness",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "Click-row-to-expand is coherent and the gap bands are a sound model, but the table repeats the same fact three times (Status / Payable / Sent to review) and duplicates the caregivers count, which would confuse a first-ti",
+  "fix_recommendation": "PRODUCT: collapse Status, Payable and Sent to review into one status chip and remove the duplicate 'Caregivers' column."
+ },
+ {
+  "scene": "3",
+  "dimension": "visual_polish",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "Clean table and readable chart, but colliding axis labels ('22 Jun27 Jun'), Yes/yes casing drift, a self-repeating chart subtitle, and an explanatory legend (deduction: explanatory copy, max 3).",
+  "fix_recommendation": "PRODUCT: thin x-axis ticks, draw classes as dots instead of a connected line, label the y-axis once, delete the legend."
+ },
+ {
+  "scene": "3",
+  "dimension": "why_groundedness",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "narrative",
+  "severity": "low",
+  "detail": "The scene's claims (dated class list, three gaps over a week, review-not-paid records) match the narrative anchors exactly, but provenance to a why-brief spine is not visible to this judge, so it holds at default.",
+  "fix_recommendation": "NARRATION: none on screen; keep the scene's claim tied to the 'dated list is the evidence' spine item."
+ },
+ {
+  "scene": "4",
+  "dimension": "concept_clarity",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "The 5-second read lands (last of five, anonymous peers, target line), but the chart leans on a legend to explain encodings its row labels already carry (deduction: explanatory copy, max 3).",
+  "fix_recommendation": "PRODUCT: remove the Yours/Another partner/Target legend and label the own row 'You' directly."
+ },
+ {
+  "scene": "4",
+  "dimension": "visual_polish",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "Clean table and chart, but the highlighted own-row label is truncated, the value column header wraps to four lines, the H1 wraps on a raw opportunity identifier, and a legend carries redundant encoding (deduction: explan",
+  "fix_recommendation": "PRODUCT: shorten own-row label and column header to 'You', title the page by org + programme, delete the legend."
+ },
+ {
+  "scene": "4",
+  "dimension": "why_groundedness",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "narrative",
+  "severity": "low",
+  "detail": "The scene matches its anchor 'partner-sees-its-own-report' and the stated rationale (see standing, trace to people, no named peer figures), but the provenance chain to evidence cannot be verified from this frame alone.",
+  "fix_recommendation": "NARRATION: no change required; ensure the spine item's evidence is cited in the spec rather than asserted."
+ },
+ {
+  "scene": "5",
+  "dimension": "concept_clarity",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "The drill-down from partner rank to its named educators, with an action on each row, is clear to someone in the space. But the table leans on a legend row and a 'Click a column name for its definition' hint to make itsel",
+  "fix_recommendation": "PRODUCT: remove the legend and hint lines and carry status on the cells themselves (chips like the KPI cards). Replace the numeric 'Attention' badge with the named worst indicator, or drop it."
+ },
+ {
+  "scene": "5",
+  "dimension": "use_case_soundness",
+  "route": "CONCEPT",
+  "fix_kind": "redesign",
+  "fix_scope": "narrative",
+  "severity": "low",
+  "detail": "Going from 'this partner ranks 5th of 5' to the partner's own eight educators is a real, useful step. But when all eight are flagged, the per-educator coaching action stops prioritising anyone, and the coaching itself is",
+  "fix_recommendation": "NARRATION: carry the scene through to the consequence by opening coaching for the worst educator (a click, not a hover). Alternatively, reframe the scene around the partner-wide pattern the data shows."
+ },
+ {
+  "scene": "5",
+  "dimension": "design_soundness",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "The 'See educators' click lands coherently on a worst-first educator table. However, the 'Attention' count contradicts the cell flags (the best educator scores the highest attention), the Off target/Watch band is undecla",
+  "fix_recommendation": "PRODUCT: make 'Attention' name the flagged indicator (or remove it), put the watch band into the column header, and drop the per-row coaching links when the header action already covers every educator."
+ },
+ {
+  "scene": "5",
+  "dimension": "visual_polish",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "product",
+  "severity": "low",
+  "detail": "The table is cleanly grouped (Delivery / Teaching / Reach / Data quality) with tidy right-aligned numbers and calm tinted cells. Against that, explanatory legend and hint lines sit above the header, the 'AT PAYMENT FLO\u2026'",
+  "fix_recommendation": "PRODUCT: delete the legend and hint row, move 'lower is better' to the target line so the KPI label fits, and pad the page bottom so the floating button clears the charts."
+ },
+ {
+  "scene": "5",
+  "dimension": "why_groundedness",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "narrative",
+  "severity": "low",
+  "detail": "The narration's claim (a finding is only useful where it can be acted on) matches the anchors, but no why-brief provenance is visible to this judge, so it stays at the default.",
+  "fix_recommendation": "NARRATION: tie the scene's claim explicitly to its why-brief spine item ('coaching-on-the-report') in the spec provenance. No screen change is needed."
+ }
+]

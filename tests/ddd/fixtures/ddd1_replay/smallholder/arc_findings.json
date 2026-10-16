@@ -1,0 +1,29 @@
+[
+ {
+  "scene": "partner-benchmarks",
+  "scenes": [
+   2,
+   3,
+   4
+  ],
+  "dimension": "arc_shape",
+  "route": "CONCEPT",
+  "fix_kind": "options",
+  "severity": "medium",
+  "detail": "Scene 4's close restates rather than pays off: '5th of 5 on accounts confirmed' and 46.7% graduated repeat scene 2's partner table, and the end frame's Delu 66.7% repeats scene 3. The scene-4-unique view (four 'Another p",
+  "fix_recommendation": "Options: (a) [NARRATION] (shorter, figures unchanged) replace 'and ends on a link to his field workers, Delu among them, whose women's transfers wait on those accounts.' with 'and one click opens his field workers on Del"
+ },
+ {
+  "scene": "partner-benchmarks",
+  "scenes": [
+   2,
+   4
+  ],
+  "dimension": "visual_variety",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "severity": "low",
+  "detail": "Scene 4's end frame (Partner C's field-worker table) shares scene 2's report layout: same column groups, legend row, five sparkline cards and footnote; only partner rows become worker rows. The narrative chose to end on ",
+  "fix_recommendation": "[SCRIPTING] (fix_scope: recipe) after the 'See field workers' click, scroll so the worker table fills the viewport with the tiles/sparklines and footnote out of frame, then hover Worker B's row; pairs with arc_shape opti"
+ }
+]

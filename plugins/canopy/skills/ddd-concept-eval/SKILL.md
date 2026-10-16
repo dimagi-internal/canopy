@@ -409,8 +409,12 @@ So: **a cap must be confirmed before it blocks.**
 
 1. Identify the capping cells — every (scene, dimension) at or below 2. Only
    these can set the floor.
-2. Re-judge **those cells only**, twice more (k=3 total draws), with fresh
-   independent dispatches. Cost is `2 x len(capping_cells)` extra dispatches —
+2. Re-judge **those cells only** — and of those, only the ones
+   `(cd "$DDD_REPO" && uv run python -m scripts.ddd.denoise plan-confirm <run_dir> --caps '<json>')` lists
+   under `confirm` (a cap on a pinned cell, or one no median could move past
+   another judge's carried floor, cannot change the loop's decision; if it skips
+   all of them write `distribution.confirmation: skipped`) — twice more (k=3
+   total draws), with fresh independent dispatches. Cost is `2 x len(capping_cells)` extra dispatches —
    eight in the measured run — not the ~144 a k=3 over every cell would cost.
 3. The cell's confirmed score is the **median** of its draws.
 4. `overall_score` = the minimum over confirmed cells. A cap that does not

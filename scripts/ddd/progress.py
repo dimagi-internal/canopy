@@ -24,7 +24,10 @@ them improved across the last two iterations:
                         by :data:`MEAN_BAND` — the mean of ~70 cells with a
                         per-cell sigma of ~1 moves ~0.12 on noise alone)
 * ``confirmed_caps`` — concept cells whose CONFIRMED score is <= 2 (lower is
-                        better)
+                        better; a fall counts only beyond :data:`CAPS_BAND`,
+                        and caps on PINNED cells are not counted)
+* ``workable_score`` — the floor over cells NOT pinned by out-of-scope findings
+                        (:mod:`scripts.ddd.floor`; noise-banded like ``score``)
 
 The convergence bar is untouched (every gating judge >= 4). This only changes
 how the loop decides it has stopped making progress.
@@ -56,7 +59,14 @@ FINDINGS_BAND: int = 2
 # a small backlog every fixed finding still counts.
 TRICKLE_FRACTION: float = 0.15
 
-SIGNALS = ("score", "open_findings", "mean_cell", "confirmed_caps")
+# A fall in confirmed caps is progress only when it exceeds this many cells.
+# Median-of-3 still flips a cell on noise (p ~ 0.1-0.2 per cap), so one cap
+# dissolving is not evidence of a fix: on noora-health/20261015-1129 the count
+# read 2, 3, 1, 2, 1, 1 over six passes at a flat 2.0 score, and each 2 -> 1
+# "fall" reset the stall detector (iterations 2 and 3), buying two more passes.
+CAPS_BAND: int = 1
+
+SIGNALS = ("score", "open_findings", "mean_cell", "confirmed_caps", "workable_score")
 # The three signals a DIVERGING verdict needs to see fall together (M17).
 DECLINE_SIGNALS = ("score", "mean_cell", "open_findings")
 _LOWER_IS_BETTER = {"open_findings", "confirmed_caps"}
@@ -72,8 +82,16 @@ def load_distribution(verdict_path: str | Path) -> dict | None:
     return dist if isinstance(dist, dict) else None
 
 
-def _confirmed_caps(distribution: dict | None) -> int | None:
+def _confirmed_caps(distribution: dict | None, exclude: set[tuple[str, str]] | None = None) -> int | None:
+    """Capping cells whose confirmed score is <= 2, minus ``exclude``d (scene, dim) cells.
+
+    ``None`` (not comparable) when the judge skipped confirmation this pass
+    (``distribution.confirmation: skipped`` — :func:`scripts.ddd.denoise.plan_confirmations`):
+    an unconfirmed draw count is a different instrument.
+    """
     if not distribution:
+        return None
+    if str(distribution.get("confirmation") or "").lower() == "skipped":
         return None
     cells = distribution.get("capping_cells")
     if not isinstance(cells, list):
@@ -81,6 +99,8 @@ def _confirmed_caps(distribution: dict | None) -> int | None:
     n = 0
     for cell in cells:
         if not isinstance(cell, dict):
+            continue
+        if exclude and (str(cell.get("scene")), str(cell.get("dimension"))) in exclude:
             continue
         score = cell.get("confirmed", cell.get("score"))
         try:
@@ -97,8 +117,14 @@ def measure(
     score: float,
     *,
     full: bool = True,
+    workable_score: float | None = None,
+    pinned_caps: set[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """One iteration's progress point."""
+    """One iteration's progress point.
+
+    ``workable_score`` is the floor over non-pinned cells; ``pinned_caps`` the
+    concept (scene, dimension) cells that are pinned — their caps are not counted.
+    """
     open_findings = sum(1 for f in findings or [] if f.get("route", "PRODUCT") != "DEFER")
     mean = None
     if distribution and distribution.get("mean") is not None:
@@ -110,7 +136,8 @@ def measure(
         "score": float(score),
         "open_findings": open_findings,
         "mean_cell": mean,
-        "confirmed_caps": _confirmed_caps(distribution),
+        "confirmed_caps": _confirmed_caps(distribution, pinned_caps),
+        "workable_score": None if workable_score is None else float(workable_score),
         "full": bool(full),
     }
 
@@ -118,13 +145,13 @@ def measure(
 def _better(signal: str, best: float, value: float) -> bool:
     from scripts.ddd import denoise
 
-    if signal == "score":
+    if signal in ("score", "workable_score"):
         return denoise.improved(best, value) is True
     if signal == "mean_cell":
         return value > best + MEAN_BAND
     if signal == "open_findings":
         return value < best - trickle_band(best)
-    return value < best  # confirmed caps: any fall is a real fix
+    return value < best - CAPS_BAND  # confirmed caps: more than one cell must clear
 
 
 def trickle_band(best: float) -> int:
@@ -138,6 +165,11 @@ def trickle_band(best: float) -> int:
 #: count read 9 -> 8 -> 7 -> 11, and the 7 -> 11 was a different instrument, not a
 #: regression. Such a signal is compared only between points judged the same way.
 JUDGE_SENSITIVE = frozenset({"open_findings"})
+
+#: Signals whose value depends on WHICH cells are pinned: pinning one more cell
+#: lifts the workable floor without any fix. Compared only between points whose
+#: ``pinned`` cell set (the sorted keys :func:`measure`'s caller stamps) is equal.
+PINNED_SENSITIVE = frozenset({"workable_score"})
 
 
 def _comparable(a: dict, b: dict) -> bool:
@@ -155,7 +187,12 @@ def improved_signals(before: list[dict], point: dict) -> list[str]:
         value = point.get(signal)
         if value is None:
             continue
-        pool = [p for p in before if _comparable(p, point)] if signal in JUDGE_SENSITIVE else before
+        if signal in JUDGE_SENSITIVE:
+            pool = [p for p in before if _comparable(p, point)]
+        elif signal in PINNED_SENSITIVE:
+            pool = [p for p in before if p.get("pinned") == point.get("pinned")]
+        else:
+            pool = before
         prior = [p.get(signal) for p in pool if p.get(signal) is not None]
         if not prior:
             continue

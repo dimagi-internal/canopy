@@ -1,0 +1,12 @@
+[
+ {
+  "scene": 4,
+  "dimension": "prose_density",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "severity": "high",
+  "source": "product_lint",
+  "detail": "This run ADDED 1 explanatory line(s) to scene 4 since its first render: 'Activity is counted in the week it happened, to 11 Oct. Each indicator point is the figure'",
+  "fix_recommendation": "Remove the added sentences and express what they explain as structure. The loop must not answer a clarity finding by adding copy."
+ }
+]
