@@ -40,7 +40,11 @@ module reads the two blocks the v1/backlog loop adds::
         - match: "Ask an agent|floating .*button|labs template"
           name: labs-report-template
           owner: ACE (labs report template)
-          issue: dimagi/ace#2337
+          issue: dimagi/ace#2337  # the run comments its evidence here at the end
+          repo: dimagi/ace        # no issue -> find/open one here (owner_routing)
+      product_repo: dimagi/connect-labs  # product-clarity findings -> doc/UI-copy
+                              # issue here (default: the target repo's origin)
+      max_new_issues: 3       # new issues one run may open across all owners
       recurring_after: 2      # a cell with an open finding this many passes running is
                               # stamped `recurring` and briefed first (canopy#788)
       plateau_rounds: 3       # this many full judges with neither the score nor the
@@ -156,6 +160,10 @@ class FixedSurface:
     name: str = ""
     owner: str | None = None
     issue: str | None = None
+    # ``owner/repo`` the owner tracks work in: where the run-ending router
+    # (scripts.ddd.owner_routing) comments on / opens an issue for a finding on
+    # this surface when ``issue`` is not set. No repo -> listed, never guessed.
+    repo: str | None = None
 
     @property
     def label(self) -> str:
@@ -178,6 +186,11 @@ class LoopConfig:
     scoped_capture: bool = True
     recurring_after: int = 2
     plateau_rounds: int = 3
+    # Run-end routing (scripts.ddd.owner_routing): where product-clarity
+    # findings are filed (``owner/repo``; default: the target repo's GitHub
+    # origin), and how many NEW issues one run may open across all owners.
+    product_repo: str | None = None
+    max_new_issues: int = 3
 
     def tiered(self, loop_mode: str | None) -> bool:
         """Concept-only judging between checkpoints? ``auto`` = on in backlog mode."""
@@ -401,15 +414,16 @@ def _surfaces(raw: Any) -> tuple[FixedSurface, ...]:
             name = str(item.get("name") or "").strip()
             owner = str(item.get("owner") or "").strip() or None
             issue = str(item.get("issue") or "").strip() or None
+            repo = str(item.get("repo") or "").strip() or None
         else:
-            pat, name, owner, issue = str(item or "").strip(), "", None, None
+            pat, name, owner, issue, repo = str(item or "").strip(), "", None, None, None
         if not pat:
             continue
         try:
             re.compile(pat)
         except re.error:
             continue
-        out.append(FixedSurface(match=pat, name=name, owner=owner, issue=issue))
+        out.append(FixedSurface(match=pat, name=name, owner=owner, issue=issue, repo=repo))
     return tuple(out)
 
 
@@ -556,6 +570,8 @@ def parse(data: dict | None) -> DDDConfig:
         scoped_capture=loop_raw.get("scoped_capture") is not False,
         recurring_after=_int(loop_raw.get("recurring_after"), 2),
         plateau_rounds=_int(loop_raw.get("plateau_rounds"), 3),
+        product_repo=str(loop_raw.get("product_repo") or "").strip() or None,
+        max_new_issues=_int(loop_raw.get("max_new_issues"), 3, minimum=0),
     )
     gate_raw = data.get("deploy_gate") if isinstance(data.get("deploy_gate"), dict) else {}
     url = str(gate_raw.get("health_url") or "").strip() or None

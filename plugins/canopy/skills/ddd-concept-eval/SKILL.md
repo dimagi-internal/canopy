@@ -290,7 +290,18 @@ finding_class: accuracy | strategy | unclassified
 fix_kind: mechanical | options | redesign
 detail: <copy the justification from the visual-judge dimension output>
 fix_recommendation: <copy the fix_recommendation from visual-judge, or synthesize>
+product_clarity: <optional — see below>
 ```
+
+**`product_clarity` — optional; set it only when you could not tell what the
+product does from the product itself.** If a screen leaves its own behaviour
+ambiguous (does "active" include paused workers? what does this status mean?),
+or the narration had to assert product behaviour the product never shows, write
+one short line saying WHAT was ambiguous: `product_clarity: "whether 'active'
+counts paused workers"`. Leave it unset otherwise — never for a narration-only
+defect or a visual one. At the run's end each tagged finding becomes a
+documentation / UI-copy issue in the product repo (`scripts.ddd.owner_routing`):
+a product lesson belongs in the product's docs, not in a DDD notes file.
 
 **`finding_class` — the one field that decides whether a human is needed.**
 Every finding is a mismatch between an ASSERTION (narration, scene title,
@@ -528,7 +539,8 @@ fix_recommendation: |
     "finding_class": "accuracy | strategy | unclassified",
     "fix_kind": "mechanical | options | redesign",
     "detail": "<verbatim from visual-judge dimension justification>",
-    "fix_recommendation": "<actionable fix>"
+    "fix_recommendation": "<actionable fix>",
+    "product_clarity": "<optional: what the product left ambiguous — omit unless Step 3 says so>"
   }
 ]
 ```

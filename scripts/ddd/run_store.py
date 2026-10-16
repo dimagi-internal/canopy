@@ -265,10 +265,16 @@ def create_project(agent: str, name: str, *, repo: str, outcome: str = "") -> st
 
 def summary(state: dict) -> dict:
     """The small digest canopy-web lists and shows on the package page."""
+    from scripts.ddd.run_summary import actionable
+
     prog = state.get("progress_history") or []
     decks = state.get("iteration_decks") or {}
     it = state.get("iteration")
     return {
+        # A finished run's compact summary (scripts.ddd.run_summary): the run
+        # package shows it and the next run's bootstrap reads it back from the
+        # run list (scripts.ddd.prior_runs) — it replaced .canopy/ddd/learnings.md.
+        "learned": actionable(state.get("run_summary")),
         "phase": state.get("phase"),
         "iteration": it,
         "objective": state.get("objective"),

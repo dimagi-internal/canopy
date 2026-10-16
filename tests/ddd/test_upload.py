@@ -672,6 +672,32 @@ class TestUploadRun:
         import scripts.ddd.runstate as rs
         assert rs.load(tmp_run["run_id"]).phase == "converged", "stuck upload must not set phase=uploaded"
 
+    def test_the_run_summary_rides_in_the_package(self, tmp_run, monkeypatch, capsys):
+        """The upload's final save pushes state.run_summary with the run document
+        (the package's run record); with no canopy-web record it stays in the run
+        dir and the upload says so — it never fails over it."""
+        import json as _json
+
+        import scripts.ddd.runstate as rs
+        from scripts.ddd import run_store, run_summary
+
+        monkeypatch.setenv("CANOPY_WEB_PAT", "test-pat")
+        upload_run(
+            tmp_run["run_id"],
+            video_path=tmp_run["video_path"],
+            base_url="https://canopy.test",
+            _upload=self._make_uploader([]),
+            _gate=self._make_gate("hold"),
+            release=False,
+        )
+        state = rs.load(tmp_run["run_id"])
+        assert state.run_summary["run_id"] == tmp_run["run_id"]
+        assert state.run_summary["routing"]["mode"] == "not_run"  # routing belongs to the run's end
+        assert run_store.summary(state.model_dump(mode="json"))["learned"] is not None
+        f = rs.run_dir_for(tmp_run["run_id"]) / run_summary.SUMMARY_JSON
+        assert _json.loads(f.read_text())["delivery"]["uploaded"] is False
+        assert "run summary NOT uploaded" in capsys.readouterr().err
+
     def test_hold_does_not_upload_html(self, tmp_run, monkeypatch):
         monkeypatch.setenv("CANOPY_WEB_PAT", "test-pat")
         upload_calls: list[dict] = []

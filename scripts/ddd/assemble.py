@@ -338,6 +338,16 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
     pin.ensure(state)  # backfills runs started before pinning existed
     for msg in pin.skew(state):
         pin.warn(state, msg)
+    from scripts.ddd import run_summary
+
+    ends = run_summary.ends_run(action)
+    if ends:
+        # The run's summary is part of the RUN (pushed with this save to its
+        # canopy-web run document) and its owned findings go to their owners —
+        # not to a learnings file nobody else reads. Best-effort: never raises.
+        from scripts.ddd.runstate import _enclosing_repo
+
+        run_summary.finalize(state, run_dir, cfg=cfg, repo_root=_enclosing_repo(Path(ddd_dir).resolve()))
     save(state, ddd_dir=ddd_dir)
     # What is blocked, by whom, what improved, predicted vs actual — written on
     # every stop and whenever a cell is pinned, so a run never ends (or keeps
@@ -352,16 +362,19 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
             blocked = {"path": str(path), "summary": lines}
         except OSError as exc:  # pragma: no cover - defensive
             print(f"assemble: could not write the blocked report ({exc})", file=sys.stderr)
-    learnings_path = None
-    from scripts.ddd import run_learnings
-
-    if run_learnings.ends_run(action):
-        # The next run's bootstrap reads this file; a run that ends without
-        # writing it hands the next one nothing (canopy#788).
+    summary_out = None
+    if ends:
+        # After the save, so the file can say whether canopy-web has it. A run
+        # whose summary could not be uploaded keeps it here and says so.
         try:
-            learnings_path = str(run_learnings.record(state, ddd_dir))
+            jp, mp = run_summary.write(state, run_dir)
+            delivered = run_summary.delivery(state)
+            summary_out = {"path": str(jp), "markdown": str(mp), **delivered,
+                           "routing": (state.run_summary or {}).get("routing")}
+            if not delivered.get("uploaded"):
+                print(f"assemble: run summary {delivered['canopy_web']} ({jp})", file=sys.stderr)
         except OSError as exc:
-            print(f"assemble: could not write learnings ({exc})", file=sys.stderr)
+            print(f"assemble: could not write the run summary ({exc})", file=sys.stderr)
 
     ledger = None
     if spec:
@@ -409,7 +422,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "pass_timing": timing,
         "changed_components": scope.get("changed_components"),
         "ledger": ledger,
-        "learnings": learnings_path,
+        "run_summary": summary_out,
     }
 
 
@@ -539,6 +552,16 @@ def _main(argv: list[str] | None = None) -> int:
         for line in br.get("summary") or []:
             print(line)
         print(f"  ({br.get('path')})")
+    rs = out.get("run_summary") or {}
+    if rs:
+        print("")
+        print(f"  Run summary:  {rs.get('path')} — {rs.get('canopy_web')}")
+        routing = rs.get("routing") or {}
+        for r in routing.get("results") or []:
+            print(f"    routed {r.get('finding_id')} ({r.get('kind')}): {r.get('status')} -> "
+                  f"{r.get('url') or r.get('issue') or r.get('repo')}" + (f"  [{r['why']}]" if r.get("why") else ""))
+        for u in routing.get("unrouted") or []:
+            print(f"    not routed {u.get('finding_id')} ({u.get('kind')}): {u.get('why')}")
     return 0
 
 

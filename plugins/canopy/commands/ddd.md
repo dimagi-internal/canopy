@@ -1,5 +1,5 @@
 ---
-description: Full demo-driven-development (DDD) v2 orchestrator — bootstraps from .canopy/ddd/context.md + learnings.md, runs Phase 0 (evidence-audit → why-brief → why-qa → why-eval), drafts + QA-gates a unified spec (ddd-spec → ddd-spec-qa), renders and dual-judges it (ddd-run → ddd-concept-eval + visual-judge), routes PRODUCT / CONCEPT / RESEARCH / CAPABILITY findings to fixers, and converges toward promotion. Two pause gates only: concept_change and external_release.
+description: Full demo-driven-development (DDD) v2 orchestrator — bootstraps from .canopy/ddd/context.md + earlier runs' summaries on canopy-web, runs Phase 0 (evidence-audit → why-brief → why-qa → why-eval), drafts + QA-gates a unified spec (ddd-spec → ddd-spec-qa), renders and dual-judges it (ddd-run → ddd-concept-eval + visual-judge), routes PRODUCT / CONCEPT / RESEARCH / CAPABILITY findings to fixers, and converges toward promotion. Two pause gates only: concept_change and external_release.
 argument-hint: [<narrative-slug>] [--resume <run_id>]
 allowed-tools: [Read, Write, Edit, Bash, Glob, Grep, Skill, Agent, AskUserQuestion]
 ---

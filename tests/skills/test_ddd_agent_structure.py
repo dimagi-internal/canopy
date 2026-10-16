@@ -22,7 +22,7 @@ Checked invariants:
          DECISION → concept_change pause
   8.  compute_convergence referenced.
   9.  MAX_ITERATIONS referenced.
- 10.  Reads .canopy/ddd/context and .canopy/ddd/learnings.
+ 10.  Reads .canopy/ddd/context and earlier runs' summaries (no learnings.md).
  11.  Suggest-then-confirm self-tuning mentioned (never auto-apply).
  12.  Digest email referenced (PM-loop autonomous digest style).
  13.  Command file has description + allowed-tools including Skill or Agent.
@@ -376,11 +376,15 @@ def test_agent_reads_ddd_context() -> None:
     )
 
 
-def test_agent_reads_ddd_learnings() -> None:
+def test_agent_reads_prior_run_summaries_not_learnings() -> None:
+    """learnings.md is retired (2026-10-16): the bootstrap reads earlier runs'
+    summaries from canopy-web, and nothing tells the agent to read, append to or
+    commit a learnings file."""
     content = AGENT_FILE.read_text()
-    assert "learnings" in content.lower(), (
-        "Agent must read learnings.md from .canopy/ddd/"
-    )
+    assert "scripts.ddd.prior_runs" in content
+    assert "append_learning" not in content
+    assert "Read `$DDD_DIR/learnings.md`" not in content
+    assert "Commit that file with the run" not in content
 
 
 def test_agent_bootstraps_context_if_missing() -> None:

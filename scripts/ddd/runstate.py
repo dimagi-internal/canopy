@@ -13,9 +13,6 @@ save(state: RunState, ddd_dir: Path | None = None) -> None
 
 When ``ddd_dir`` is passed it is used directly, bypassing _resolve_ddd_dir().
 
-append_learning(text: str) -> None
-    Appends a learning entry to <ddd_dir>/learnings.md.
-
 The DDD directory is resolved by _resolve_ddd_dir() in this precedence order:
   1. explicit ``ddd_dir`` arg on load/save/new_run — used directly, no resolution
   2. ``repo_root`` arg to _resolve_ddd_dir → <repo_root>/.canopy/ddd/
@@ -26,7 +23,8 @@ The DDD directory is resolved by _resolve_ddd_dir() in this precedence order:
 Per-RUN artifacts do NOT live under that directory. _resolve_runs_dir() puts them
 outside the project repo ($HOME/.canopy/ddd/runs/<project>/) because run dirs
 accumulate large generated files and were silently bloating project repos. Only
-context.md / learnings.md remain repo-local. Runs created before this change are
+context.md remains repo-local (there is no learnings.md any more: a finished
+run's summary is part of its run — scripts.ddd.run_summary). Runs created before this change are
 still read (and kept) in the legacy in-repo location — see _run_dir_for().
 """
 
@@ -106,8 +104,9 @@ def _resolve_runs_dir(ddd_dir: Path) -> Path:
     precedent, and .gitignore covered mp4/webm/png while the two biggest
     offenders were a .html and a .json.
 
-    ``context.md`` / ``learnings.md`` deliberately STAY repo-local — they are
-    small, durable, and belong in the project's history. Only ``runs/`` moves.
+    ``context.md`` deliberately STAYS repo-local — small, durable, and part of
+    the project's history. Only ``runs/`` moves. (``learnings.md`` is retired: a
+    finished run's summary travels with the run — scripts.ddd.run_summary.)
 
     Precedence:
       1. ``CANOPY_DDD_RUNS_DIR`` env var → used directly (operator override).
@@ -553,20 +552,6 @@ def _push(state: RunState, run_dir: Path, *, force: bool = False) -> None:
             f"could not write {state.run_id} to canopy-web ({exc}); saved locally, will retry on the next save.",
         )
     _write_state(run_dir, state)
-
-
-def append_learning(text: str) -> None:
-    """Append *text* as a new bullet to <ddd_dir>/learnings.md."""
-    ddd_dir = _resolve_ddd_dir()
-    learnings_file = ddd_dir / "learnings.md"
-
-    from datetime import datetime, timezone
-
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    entry = f"- [{timestamp}] {text}\n"
-
-    with learnings_file.open("a", encoding="utf-8") as fh:
-        fh.write(entry)
 
 
 # ---------------------------------------------------------------------------

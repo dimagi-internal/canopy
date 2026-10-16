@@ -660,6 +660,19 @@
       },
       "title": "Judge Timeouts",
       "type": "array"
+    },
+    "run_summary": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run Summary"
     }
   },
   "required": [

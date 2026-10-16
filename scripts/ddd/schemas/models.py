@@ -370,6 +370,12 @@ class RunState(BaseModel):
     # Judges that timed out on a pass: [{iteration, judge, minutes, reason}].
     # Their cells were carried from the last pass; the pass could not decide.
     judge_timeouts: list[dict] = []
+    # What the finished run found (scripts.ddd.run_summary): ending, trajectory,
+    # never-cleared cells, out-of-scope floor + owners, product-clarity findings,
+    # timings, calibration, DDD-tooling problems, and what was filed where. Set
+    # by the run-ending assemble; travels with the run document to canopy-web
+    # (it replaced .canopy/ddd/learnings.md). None until the run ends.
+    run_summary: dict | None = None
 
 
 __all__ = [

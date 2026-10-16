@@ -892,6 +892,12 @@ dimensions:
 For dimensions that scored ≥ 4 (no finding emitted), `fix_recommendation` and
 `fix_kind` are omitted.
 
+An entry of the verdict's `findings:` list may also carry
+`product_clarity: "<what was ambiguous>"` when the feature user could not tell
+what the product does from the product itself — same meaning as in
+`ddd-concept-eval` Step 3; at the run's end it becomes a documentation / UI-copy
+issue in the product repo (`scripts.ddd.owner_routing`). Omit it otherwise.
+
 **Gate the verdict before Step 4 loads it (canopy#547).** `verdict-user.yaml` is
 written here and not checked until `load_verdict` in Step 4, so a contract
 mismatch surfaces as an assembly `ValidationError` — after both judge dispatches
