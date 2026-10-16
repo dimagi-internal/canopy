@@ -273,14 +273,9 @@ def can_manage(runner: dict) -> bool:
 
 
 def owner_email(runner: dict) -> str:
-    """The runner's owner — the human whose token it authenticates with.
-
-    canopy-web renamed `paired_by_email` to `owner_email` (canopy-web#1078) and keeps
-    the old key as a deprecated alias for a release; read the new one, falling back
-    to the old for servers deployed before the rename.
-    """
+    """The runner's owner — the human whose token it authenticates with."""
     r = runner or {}
-    return str(r.get("owner_email") or r.get("paired_by_email") or "").strip()
+    return str(r.get("owner_email") or "").strip()
 
 
 def classify_runners(runners: list[dict], project: str, *,

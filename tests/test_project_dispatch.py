@@ -779,14 +779,12 @@ def test_an_older_server_omitting_can_manage_is_not_blocked():
     assert _refuse_if_not_ours({"name": "mine"}, "pause") is None
 
 
-def test_owner_email_reads_the_new_key_and_falls_back_to_the_old_one():
-    """canopy-web#1078 renamed paired_by_email -> owner_email; a server deployed
-    before it still sends only the old key."""
+def test_owner_email_reads_owner_email():
     from orchestrator.project_dispatch import owner_email
 
-    assert owner_email({"owner_email": "a@x.org", "paired_by_email": "b@x.org"}) == "a@x.org"
-    assert owner_email({"paired_by_email": "b@x.org"}) == "b@x.org"
+    assert owner_email({"owner_email": " a@x.org "}) == "a@x.org"
     assert owner_email({}) == ""
+    assert owner_email(None) == ""
 
 
 # --- --runner: pin a project turn to one box (#663) ---------------------------
