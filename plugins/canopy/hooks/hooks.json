@@ -71,6 +71,15 @@
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/python.sh\" --guard \"${CLAUDE_PLUGIN_ROOT}/hooks/one_shot_turn_guard.py\""
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/python.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/sleep_cap_guard.py\""
+          }
+        ]
       }
     ]
   }
