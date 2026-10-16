@@ -33,7 +33,9 @@ def _isolated_home(tmp_path, monkeypatch):
     """Every path under ~ (~/.<slug>/.env, its stamp, gog, plugins) lands in tmp — a test
     must never touch the real machine's agent state (2026-10-15: one did, a stamp)."""
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    for k in ("OP_SERVICE_ACCOUNT_TOKEN", "AGENT_VAULT", "AGENT_SLUG"):
+    # GH_TOKEN too: a cloud runner exports its own, and op_env inherits os.environ, so the
+    # box's token would read as the preparer leaking the agent's into a non-git call.
+    for k in ("OP_SERVICE_ACCOUNT_TOKEN", "AGENT_VAULT", "AGENT_SLUG", "GH_TOKEN"):
         monkeypatch.delenv(k, raising=False)
 
 

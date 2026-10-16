@@ -33,6 +33,13 @@ from orchestrator.agent_gdoc import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_box_drive_root(monkeypatch):
+    """A provisioned box exports GDRIVE_ROOT_FOLDER, and the env wins over agent.json —
+    so an inherited one would answer every identity test. Tests that want it set it."""
+    monkeypatch.delenv("GDRIVE_ROOT_FOLDER", raising=False)
+
+
 # --------------------------------------------------------------------------------------
 # identity resolution
 # --------------------------------------------------------------------------------------
