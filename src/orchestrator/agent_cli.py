@@ -373,13 +373,12 @@ def agent_op_token(slug):
     Prints the key alone on stdout, for `OP_SERVICE_ACCOUNT_TOKEN="$(canopy agent op-token)"`.
     Exit 1 with the reason on stderr when there is none — never an empty success.
     """
-    from orchestrator import canopy_web
+    from orchestrator import cred_resolve
     from orchestrator.agent_bootstrap import _operator_token
     try:
-        body = canopy_web.call("GET", f"/api/agents/{slug}/credentials/resolve",
-                               token=_operator_token()) or {}
+        body = cred_resolve.resolve(slug, token=_operator_token()) or {}
     except Exception as e:  # noqa: BLE001 — report, don't traceback
-        raise click.ClickException(f"could not resolve {slug}'s 1Password key: {str(e).splitlines()[0][:200]}")
+        raise click.ClickException(f"could not resolve {slug}'s 1Password key: {str(e).splitlines()[0][:300]}")
     token = str(body.get("op_sa_token") or "")
     if not token:
         raise click.ClickException(
@@ -410,14 +409,13 @@ def agent_stage_delegated(slug):
     """
     import os
 
-    from orchestrator import canopy_web
+    from orchestrator import cred_resolve
     from orchestrator.agent_bootstrap import _operator_token
     try:
-        body = canopy_web.call("GET", f"/api/agents/{slug}/credentials/resolve",
-                               token=_operator_token()) or {}
+        body = cred_resolve.resolve(slug, token=_operator_token()) or {}
     except Exception as e:  # noqa: BLE001 — report, don't traceback
         raise click.ClickException(
-            f"could not resolve {slug}'s delegated credentials: {str(e).splitlines()[0][:200]}")
+            f"could not resolve {slug}'s delegated credentials: {str(e).splitlines()[0][:300]}")
     home = delegated_chrome_sales_home(slug)
     target = home / ".sf-creds.json"
     creds = str(body.get("salesforce_creds") or "")
@@ -504,8 +502,11 @@ def agent_env(plugin, template, out, agent_slug, vault, force, print_only):
 @click.option("--no-prompt", is_flag=True,
               help="Never ask for values (they are reported as still empty).")
 @click.option("--op-account", default="dimagi.1password.com", show_default=True)
+@click.option("--key-expires-in", default="90d", show_default=True,
+              help="Lifetime of a newly minted runner key (op duration: 90d, 12w, 720h), "
+                   "or `never`. Rotate before it lapses with --rotate-key.")
 def agent_vault(slug, workspace, vault, repo, check, rotate_key, rotate_pat, no_prompt,
-                op_account):
+                op_account, key_expires_in):
     """Give an agent its 1Password vault, filled, and the read-only key its runners use.
 
     Run by a PERSON with 1Password rights who is the agent's owner or admin on canopy-web.
@@ -514,7 +515,8 @@ def agent_vault(slug, workspace, vault, repo, check, rotate_key, rotate_pat, no_
     MINTS what the system can (its own canopy-web token), points at the control for what
     another flow produces (its Gmail token: Connect Google mailbox), and ASKS, with hidden
     input, only for what a person alone knows (an outside service's key). Then mints a
-    read-only, non-expiring service account for the vault and stores it on canopy-web.
+    read-only service account for the vault (expiring after --key-expires-in, default 90
+    days) and stores it on canopy-web.
     Safe to re-run; prints no secret. See orchestrator/agent_vault.py.
     """
     import sys
@@ -530,7 +532,8 @@ def agent_vault(slug, workspace, vault, repo, check, rotate_key, rotate_pat, no_
     try:
         rep = av.run(slug, token=token, workspace=workspace, vault=vault,
                      repo=Path(repo) if repo else None, check=check, rotate_key=rotate_key,
-                     rotate_pat=rotate_pat, op=av.Op(op_account), ask=ask)
+                     rotate_pat=rotate_pat, op=av.Op(op_account), ask=ask,
+                     key_expires_in=key_expires_in)
     except av.VaultError as e:
         raise click.ClickException(str(e))
     click.echo(av.render(rep))

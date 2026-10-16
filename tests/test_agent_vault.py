@@ -76,8 +76,9 @@ class FakeOp:
         self.writes.append(f"set {item['title']}")
         self.vaults[v][item["title"]][field] = value
 
-    def mint_service_account(self, name, v):
+    def mint_service_account(self, name, v, expires_in=av.DEFAULT_KEY_EXPIRY):
         self.writes.append(f"sa {name}")
+        self.expires_in = expires_in
         return SECRET_KEY
 
 
@@ -316,3 +317,47 @@ def test_items_never_carry_the_categorys_zero_dates():
         {"id": "kept", "type": "DATE", "value": "1792000000"}]}, "credential", SECRET_TYPED)
     fields = json.loads(seen[0][1])["fields"]
     assert [f["id"] for f in fields] == ["credential", "kept"]
+
+
+# ── the runner key expires (canopy#946) ───────────────────────────────────────
+
+class _OpArgv:
+    def __init__(self, fail_first_with=""):
+        self.argv, self.fail_first_with = [], fail_first_with
+
+    def __call__(self, argv, **kw):
+        self.argv.append(argv)
+        if self.fail_first_with and len(self.argv) == 1:
+            return __import__("subprocess").CompletedProcess(argv, 1, "", self.fail_first_with)
+        return __import__("subprocess").CompletedProcess(argv, 0, SECRET_KEY + "\n", "")
+
+
+def test_a_minted_key_expires_in_90_days_by_default():
+    runner = _OpArgv()
+    assert av.Op(runner=runner).mint_service_account("canopy-web-lex", "Agent-Lex") == SECRET_KEY
+    assert "--expires-in=90d" in runner.argv[0] and "--raw" in runner.argv[0]
+
+
+def test_never_mints_a_non_expiring_key_and_bad_values_are_refused_up_front():
+    runner = _OpArgv()
+    av.Op(runner=runner).mint_service_account("n", "V", av.key_expiry_arg("never"))
+    assert not any(a.startswith("--expires-in") for a in runner.argv[0])
+    with pytest.raises(av.VaultError, match="duration"):
+        av.key_expiry_arg("ninety days")
+    assert av.key_expiry_arg("12W") == "12w"
+
+
+def test_an_op_that_caps_below_90_days_is_retried_an_hour_short():
+    runner = _OpArgv(fail_first_with="[ERROR] '--expires-in' duration must be set to less "
+                                     "than 2160 hours (90 days)")
+    assert av.Op(runner=runner).mint_service_account("n", "V") == SECRET_KEY
+    assert "--expires-in=2159h" in runner.argv[1]
+
+
+def test_run_passes_the_expiry_and_says_when_to_rotate(repo):
+    web, op = FakeWeb(), FakeOp()
+    rep = _run(web, op, repo, key_expires_in="30d")
+    assert op.expires_in == "30d"
+    assert any("expires in 30d" in a and "--rotate-key" in a for a in rep.actions)
+    with pytest.raises(av.VaultError):
+        _run(FakeWeb(), FakeOp(), repo, key_expires_in="soon")

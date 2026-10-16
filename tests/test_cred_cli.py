@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -43,7 +44,7 @@ def web(monkeypatch):
         if path.endswith("/credentials/access"):
             return state["access"].get(slug, {"agent": slug, "credential_source": "1password",
                                               "may_resolve": False, "via": None, "reason": ""})
-        if path.endswith("/credentials/resolve"):
+        if path.split("?")[0].endswith("/credentials/resolve"):
             return state["resolve"].get(slug, {"values": {}})
         if path == f"/api/agents/{slug}/":
             return {"slug": slug, "op_vault": state["vaults"].get(slug, "")}
@@ -441,7 +442,7 @@ def test_sync_template_edit_re_injects(synced, tmp_path):
     assert cred_cli.sync_env("ace", runner=op, now=2000) == "re-injected"
 
 
-def test_sync_never_uses_the_desktop_app(synced, monkeypatch):
+def test_sync_never_uses_the_desktop_app(synced, monkeypatch, web):
     monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN")
     op = VaultOp()
     assert cred_cli.sync_env("ace", runner=op).startswith("skipped: no agent 1Password key")
@@ -623,3 +624,89 @@ def test_fingerprint_reads_the_vault_the_variable_names():
         fp = cred_cli.vault_fingerprint(tpl, {"AGENT_VAULT": "V1"}, "ops_x", runner=runner)
     assert "V1=7" in fp and "Canopy-Shared=7" in fp
     assert ["op", "vault", "get", "V1", "--format", "json"] in calls
+
+
+# ── exec: the agent's env in the CHILD only (canopy#946) ──────────────────────
+
+_CHILD = [sys.executable, "-c",
+          "import os,sys; v=os.environ.get('SETTING_A'); "
+          "sys.exit(0 if v == sys.argv[1] else 7)", RESOLVED]
+
+
+def test_exec_from_canopy_web_reaches_the_child_and_nothing_else(web, _isolated):
+    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
+    web["resolve"]["ace"] = {"values": {"SETTING_A": RESOLVED, "gog-token": "{json}"}}
+    r = CliRunner().invoke(cred_cli.cred_group, ["exec", "--agent", "ace", "--", *_CHILD])
+    assert r.exit_code == 0, r.output
+    assert RESOLVED not in r.output
+    assert not (_isolated / ".ace").exists()                 # no ~/.ace/.env written
+    assert "SETTING_A" not in os.environ                      # nor this process's env
+
+
+def test_exec_ignores_an_already_resolved_env_file_for_the_decision(web, _isolated):
+    _env_file(_isolated, "ace")   # a resolved file must not stand in for access
+    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": False,
+                            "reason": "not an admin"}
+    r = CliRunner().invoke(cred_cli.cred_group, ["exec", "--agent", "ace", "--", "true"])
+    assert r.exit_code == cred_cli.EXIT_REFUSED
+
+
+def test_exec_refuses_another_agent_in_a_runner_turn(monkeypatch, web):
+    monkeypatch.setenv("CANOPY_TURN_ID", "t-1")
+    monkeypatch.setenv("CANOPY_AGENT_SLUG", "ada")
+    r = CliRunner().invoke(cred_cli.cred_group, ["exec", "--agent", "ace", "--", "true"])
+    assert r.exit_code == cred_cli.EXIT_REFUSED
+    assert web["resolve"] == {} and not any("resolve" in c[1] for c in web["calls"])
+
+
+def test_exec_1password_injects_to_a_pipe_never_a_file(tmp_path, monkeypatch, web):
+    repo = _agent_repo(tmp_path, "ace")
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(cred_cli.canopy_web, "_agent_slug_for_cwd", lambda d: "ace")
+    calls = []
+
+    def op(argv, **kw):
+        calls.append(argv)
+        if argv[:3] == ["op", "vault", "get"]:
+            return subprocess.CompletedProcess(argv, 0, "{}", "")
+        if argv[:2] == ["op", "inject"]:
+            return subprocess.CompletedProcess(argv, 0, f"# c\nSETTING_A={RESOLVED}\nB='q'\n", "")
+        raise AssertionError(argv)
+
+    values, how = cred_cli.exec_env("ace", runner=op, which=_which())
+    assert values == {"SETTING_A": RESOLVED, "B": "q"} and how.startswith("1Password")
+    inject = [a for a in calls if a[:2] == ["op", "inject"]][0]
+    assert "-o" not in inject                                   # stdout, not a file
+    only, _ = cred_cli.exec_env("ace", refs=["B"], runner=op, which=_which())
+    assert only == {"B": "q"}
+    with pytest.raises(cred_cli.CredError, match="NOPE"):
+        cred_cli.exec_env("ace", refs=["NOPE"], runner=op, which=_which())
+
+
+def test_exec_canopy_web_refs_are_sent_to_the_server(web, _isolated):
+    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
+    web["resolve"]["ace"] = {"values": {"SETTING_A": RESOLVED}}
+    values, _ = cred_cli.exec_env("ace", refs=["SETTING_A"])
+    assert values == {"SETTING_A": RESOLVED}
+    assert any(c[1].endswith("/credentials/resolve?refs=SETTING_A") for c in web["calls"])
+
+
+# ── sync for an agent on the canopy-web backend (canopy#946) ──────────────────
+
+def test_sync_without_a_key_refreshes_a_canopy_web_agent(synced, monkeypatch, web):
+    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN")
+    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
+    web["resolve"]["ace"] = {"values": {"SETTING_A": "v1"}}
+    assert cred_cli.sync_env("ace", now=1000) == "re-injected from canopy-web"
+    assert "SETTING_A=v1" in synced.read_text() and oct(synced.stat().st_mode)[-3:] == "600"
+    assert cred_cli.sync_env("ace", now=1100) == "skipped: checked recently"
+    assert cred_cli.sync_env("ace", now=2000) == "unchanged"
+    web["resolve"]["ace"] = {"values": {"SETTING_A": "v2"}}
+    assert cred_cli.sync_env("ace", now=3000) == "re-injected from canopy-web"
+    assert "SETTING_A=v2" in synced.read_text()
+
+
+def test_sync_without_a_key_leaves_a_1password_agent_alone(synced, monkeypatch, web):
+    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN")
+    assert cred_cli.sync_env("ace", now=1000).startswith("skipped: no agent 1Password key")
+    assert not any("resolve" in c[1] for c in web["calls"]) and not synced.exists()

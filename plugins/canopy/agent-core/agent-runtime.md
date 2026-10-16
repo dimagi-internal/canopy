@@ -188,7 +188,14 @@ canopy cred check --agent <slug>   # exit 0 = this session may act as <slug>; 3 
 canopy cred env   --agent <slug>   # ensures ~/.<slug>/.env (0600), resolving only when missing; prints the path
 canopy cred refresh --agent <slug> # after a rotation or an auth failure
 canopy cred sync  --agent <slug>   # re-inject only if the vault/.env.tpl changed (the SessionStart hook runs this)
+canopy cred exec  --agent <slug> -- <cmd>   # the agent's env in <cmd>'s process ONLY — no file
 ```
+
+- **Canopy Vault** (canopy#946) is an **opt-in** second backend: an owner moves one agent's
+  values to canopy-web with `canopy vault import --agent <slug> --switch` (and back with
+  `canopy vault export` + `switch --to 1password`). Nothing above changes for the agent — `cred
+  env`/`sync` and the runners read the backend the agent record names. 1Password stays the
+  default. Details: `docs/architecture/session-identity.md` § Canopy Vault.
 
 - A **runner turn** may act only as its own agent; a **human** session may act as an agent when
   their own `op` can read its vault (`1password` backend) or canopy-web says they are its runner

@@ -49,6 +49,16 @@ def _no_ambient_dispatched_turn(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _no_ambient_device_key(monkeypatch, tmp_path_factory):
+    """A resolve attaches a DPoP proof when THIS machine holds a registered device key
+    (canopy#946). The suite must not sign with — or create — the real one in
+    ~/.canopy/device-key, so point the key dir at an empty temp dir and the Secure
+    Enclave helper at nothing."""
+    monkeypatch.setenv("CANOPY_DEVICE_KEY_DIR", str(tmp_path_factory.mktemp("device-key")))
+    monkeypatch.setenv("CANOPY_DEVICE_KEY_BIN", "/nonexistent/canopy-device-key")
+
+
+@pytest.fixture(autouse=True)
 def _write_identity_readback_off_by_default(monkeypatch):
     """Every write with a resolved token first reads `/api/me/` back (canopy#813).
     Tests that fake the transport and count its calls are about their own route, so

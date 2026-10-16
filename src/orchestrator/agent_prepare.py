@@ -77,6 +77,10 @@ class RunnerCredentials:
     web_gog_token: Optional[str] = field(default=None, repr=False)
     repo_url: str = ""
     error: str = ""
+    #: The agent's backend (canopy#850/#946): "canopy-web" means its env comes from
+    #: `values` below, not from `op inject` — canopy-web withholds the vault key then.
+    credential_source: str = ""
+    values: dict = field(default_factory=dict, repr=False)
 
 
 def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
@@ -85,8 +89,9 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
     """`/credentials/resolve` with the runner's token. Unreachable is not unregistered: it
     returns an `error` the report states, so a human retries instead of registering."""
     try:
-        body = canopy_web.call("GET", f"/api/agents/{slug}/credentials/resolve",
-                               base_url=base_url, token=token, transport=transport) or {}
+        from orchestrator import cred_resolve
+        body = cred_resolve.resolve(slug, base_url=base_url, token=token,
+                                    transport=transport) or {}
     except Exception as e:  # noqa: BLE001
         return RunnerCredentials(error=f"could not reach canopy-web for {slug}'s credentials: "
                                        f"{_first_line(str(e), 200)}")
@@ -98,7 +103,15 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         repo_url = str(rt.get("repo_url") or "").strip()
     except Exception:  # noqa: BLE001 — the report says "no repo" if it matters
         repo_url = ""
+    try:
+        acc = canopy_web.call("GET", f"/api/agents/{slug}/credentials/access",
+                              base_url=base_url, token=token, transport=transport) or {}
+        source = str(acc.get("credential_source") or "")
+    except Exception:  # noqa: BLE001 — unknown backend = the default path (op inject)
+        source = ""
+    values = body.get("values") if isinstance(body.get("values"), dict) else {}
     return RunnerCredentials(
+        credential_source=source, values=values,
         repo_url=repo_url,
         vault=str(body.get("op_vault") or ""), key=str(body.get("op_sa_token") or ""),
         shared_vault=str(body.get("shared_op_vault") or ""),
@@ -444,6 +457,8 @@ class RunnerPreparer(Bootstrapper):
         c = self.creds(slug)
         if c.error:
             rep.fail(c.error)
+        elif c.credential_source == "canopy-web":
+            pass  # no vault key on purpose: its env comes from canopy-web
         elif not (c.vault and c.key):
             rep.notes.append(f"canopy-web has {'no vault' if not c.vault else 'no key'} for "
                              f"{slug} — `canopy agent vault --slug {slug}`")
@@ -492,6 +507,9 @@ class RunnerPreparer(Bootstrapper):
         from orchestrator.cred_cli import CredError, sync_env
 
         c = self.creds(slug)
+        if c.credential_source == "canopy-web" and not c.error:
+            self._env_from_web(slug, c, rep)
+            return
         if not (c.vault and c.key):
             rep.env, rep.env_ok = "skipped", None
             return
@@ -511,7 +529,27 @@ class RunnerPreparer(Bootstrapper):
                 else:
                     os.environ[k] = v
 
+    def _env_from_web(self, slug: str, c: RunnerCredentials, rep: RunnerReport) -> None:
+        """An agent on the canopy-web backend: ~/.<slug>/.env from the values canopy-web
+        resolved for this runner — the same file `canopy cred env` writes."""
+        from orchestrator.cred_cli import write_env_from_values
+
+        if self.dry_run:
+            rep.env, rep.env_ok = "would write from canopy-web", None
+            return
+        try:
+            n, _ = write_env_from_values(slug, self.home / f".{slug}" / ".env", c.values)
+        except OSError as e:
+            rep.env, rep.env_ok = "FAIL", False
+            rep.fail(f"env: could not write from canopy-web: {e}")
+            return
+        rep.env, rep.env_ok = f"OK ({n} vars from canopy-web)", True
+
     def _env(self, slug: str, repo: Path, rep: RunnerReport) -> None:
+        c = self.creds(slug)
+        if c.credential_source == "canopy-web" and not c.error:
+            self._env_from_web(slug, c, rep)
+            return
         try:
             self.step_env(slug, repo, rep)
         except Exception as e:  # noqa: BLE001

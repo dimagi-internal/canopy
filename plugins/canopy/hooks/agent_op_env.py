@@ -146,16 +146,25 @@ def sync_env(canopy: str, slug: str, token: str) -> None:
     """`canopy cred sync` with the agent's key: re-inject ~/.<slug>/.env iff its vault
     or .env.tpl changed (throttled, one cheap probe when due). Silent when nothing
     changed; one line when it re-injected or failed."""
+    env = dict(os.environ)
+    if token:
+        env["OP_SERVICE_ACCOUNT_TOKEN"] = token
+    else:
+        # No key: an agent on the canopy-web backend (Canopy Vault, canopy#946) has none
+        # by design; `cred sync` then refreshes its env from canopy-web, and for any other
+        # agent it is a no-op ("skipped").
+        env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
     try:
         r = subprocess.run([canopy, "cred", "sync", "--agent", slug], capture_output=True,
-                           text=True, timeout=25,
-                           env={**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": token})
+                           text=True, timeout=25, env=env)
     except (OSError, subprocess.SubprocessError) as e:
         print(f"canopy: could not check {slug}'s env against its vault ({type(e).__name__})")
         return
     last = ((r.stderr or "").strip().splitlines() or [""])[-1][:300]
     if r.returncode != 0:
         print(f"canopy: {slug}'s ~/.{slug}/.env may be stale — {last or 'cred sync failed'}")
+    elif "re-injected from canopy-web" in last:
+        print(f"canopy: {slug}'s credentials changed on canopy-web — re-wrote ~/.{slug}/.env")
     elif "re-injected" in last:
         print(f"canopy: {slug}'s vault changed — re-injected ~/.{slug}/.env")
 
@@ -196,6 +205,8 @@ def main() -> int:
     if r.returncode != 0 or not token or "\n" in token:
         why = ((r.stderr or "").strip().splitlines() or ["no key returned"])[-1][:200]
         print(f"canopy: no 1Password key for {slug} ({why}) — `op` will use the 1Password app")
+        if not confined:
+            sync_env(canopy, slug, "")   # a canopy-web-backed agent refreshes from there
         return 0
     try:
         with open(env_file, "a", encoding="utf-8") as fh:

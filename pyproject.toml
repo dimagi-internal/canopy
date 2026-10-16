@@ -1,6 +1,6 @@
 [project]
 name = "canopy"
-version = "0.2.704"
+version = "0.2.707"
 description = "Self-improving MCP orchestration with autoresearch"
 requires-python = ">=3.11"
 dependencies = [
@@ -25,6 +25,10 @@ dependencies = [
     # runtime deps (Pillow, NumPy, for the DDD screenshot/video gates) must never leak into
     # a Django web image that only needs to render text templates.
     "canopy-agent-factory>=1.0.0",
+    # cryptography: the SOFTWARE device key (a P-256 key in a 0600 PEM) that signs the
+    # Canopy Vault DPoP proof where there is no Secure Enclave (canopy#946). Imported
+    # lazily — only `canopy vault device` on such a machine, and a resolve from it, load it.
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

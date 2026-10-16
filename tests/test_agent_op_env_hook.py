@@ -195,3 +195,14 @@ def test_the_home_dot_dir_binding_wins_over_plugin_data(tmp_path):
     _plugin_binding(home, "ace-ace", {**ACE, "vault": "FromPluginData"})
     r, ef, _ = _run(tmp_path, slug="ace", have_key=True, binding=ACE)
     assert ef.read_text() == "export AGENT_VAULT=Agent-ACE\nexport AGENT_SLUG=ace\n"
+
+
+def test_no_key_still_syncs_without_one_for_a_canopy_web_agent(tmp_path):
+    # Canopy Vault (canopy#946): an agent on the canopy-web backend has no 1Password key
+    # by design; `cred sync` without one refreshes its env from canopy-web (and is a
+    # no-op for a 1Password agent). Never with a key that is not the agent's own.
+    r, ef, log = _run(tmp_path, out="", rc=1, sync="re-injected from canopy-web")
+    assert r.returncode == 0
+    lines = log.read_text().splitlines()
+    assert lines[-2:] == ["cred sync --agent eva", "key="]
+    assert "credentials changed on canopy-web" in r.stdout
