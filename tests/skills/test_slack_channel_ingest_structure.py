@@ -23,7 +23,7 @@ def _parts() -> tuple[str, str]:
 
 def test_names_every_cli_verb_it_runs() -> None:
     _front, body = _parts()
-    for verb in ("request", "wait", "status", "transcript", "revoke", "list"):
+    for verb in ("request", "wait", "status", "transcript", "revoke", "list", "allow", "allowed", "disallow"):
         assert f"canopy slack ingest {verb}" in body, verb
         assert verb in slack_ingest_cli.ingest_group.commands, verb
 

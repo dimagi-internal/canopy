@@ -6,12 +6,20 @@ administers the agent's workspace (or created the channel) approves does canopy
 page the channel's history into a transcript. The agent never holds a Slack token
 and never calls Slack — the fleet baseline denies that (`gating-baseline.json`).
 
-    canopy slack ingest request --agent SLUG --channel C0123ABCD --purpose "…" [--follow]
+    canopy slack ingest request --agent SLUG --channel C0123ABCD|#name --purpose "…" [--follow]
     canopy slack ingest status ID
     canopy slack ingest wait ID [--timeout 3600] [--interval 30]
     canopy slack ingest transcript ID [--out FILE]
     canopy slack ingest revoke ID
     canopy slack ingest list [--agent SLUG] [--status STATUS]
+    canopy slack ingest allow --workspace WS --agent SLUG --channel C…|#name [--follow] [--note "…"]
+    canopy slack ingest allowed --workspace WS
+    canopy slack ingest disallow --workspace WS (--id ID | --agent SLUG --channel C…|#name)
+
+`allow` is a workspace OWNER's explicit, standing permission for one agent to
+read one channel: that agent's `request` then reads at once (approved by the
+owner) and canopy posts a notice with Revoke in the channel instead of asking.
+An owner runs it as themselves — the agent's own login can never allow itself.
 
 The judgment — when to ask, what to say the read is for, what to do with a
 decline, how to digest — is the `slack-channel-ingest` skill. This module only
@@ -79,7 +87,7 @@ def ingest_group():
 
 @ingest_group.command("request")
 @click.option("--agent", "agent", required=True, help="The agent's slug (the one that will read it).")
-@click.option("--channel", required=True, help="The channel ID (C…/G…), not its #name.")
+@click.option("--channel", required=True, help="The channel: its ID (C…/G…) or #name.")
 @click.option("--purpose", required=True, help="Why — shown to the people asked to approve.")
 @click.option("--follow", is_flag=True, help="Keep reading new messages until revoked.")
 def request_cmd(agent: str, channel: str, purpose: str, follow: bool):
@@ -87,7 +95,12 @@ def request_cmd(agent: str, channel: str, purpose: str, follow: bool):
     i = _call("POST", BASE, {"agent": agent, "channel": channel.strip(), "purpose": purpose.strip(),
                              "follow": follow})
     click.echo(_line(i))
-    click.echo(f"asked in {i.get('channel_name') or i['channel']}: nothing is read until someone there "
+    where = i.get("channel_name") or i["channel"]
+    if i["status"] == "reading":
+        click.echo(f"#{where} is allow-listed for {agent}: canopy is reading it now and posted a notice there. "
+                   f"Next: canopy slack ingest wait {i['id']}")
+        return
+    click.echo(f"asked in {where}: nothing is read until someone there "
                f"approves. Next: canopy slack ingest wait {i['id']}")
 
 
@@ -152,3 +165,63 @@ def list_cmd(agent: str, status: str):
         click.echo(_line(i))
     if not rows:
         click.echo("no channel ingests")
+
+
+# --- the allow-list: an owner's explicit, standing permission -------------------
+
+def _config_path(workspace: str) -> str:
+    return f"/api/slack-config/{workspace}"
+
+
+def _allowed_line(a: dict) -> str:
+    chan = f"#{a['channel_name']}" if a.get("channel_name") else a["channel"]
+    note = f" — {a['note']}" if a.get("note") else ""
+    return (f"{a['id']}  {a['agent']} <- {chan}  {'read+follow' if a.get('follow') else 'read once'}  "
+            f"by {a.get('added_by_email') or '?'}{note}")
+
+
+def _print_allowed(cfg: dict) -> None:
+    rows = (cfg.get("channel_ingest") or {}).get("allowed") or []
+    for a in rows:
+        click.echo(_allowed_line(a))
+    if not rows:
+        click.echo("no allow-listed channels")
+
+
+@ingest_group.command("allow")
+@click.option("--workspace", required=True, help="The agent's canopy workspace (you must own it).")
+@click.option("--agent", "agent", required=True, help="The agent allowed to read the channel.")
+@click.option("--channel", required=True, help="The channel: its ID (C…/G…) or #name.")
+@click.option("--follow", is_flag=True, help="Also allow following new messages, not only one read.")
+@click.option("--note", default="", help="Why — shown on the settings page and in the log.")
+def allow_cmd(workspace: str, agent: str, channel: str, follow: bool, note: str):
+    """Allow-list one channel for one agent (workspace owner). Reads nothing by itself."""
+    cfg = _call("POST", f"{_config_path(workspace)}/channel-ingest/allowed",
+                {"agent": agent, "channel": channel.strip(), "follow": follow, "note": note.strip()})
+    _print_allowed(cfg)
+
+
+@ingest_group.command("allowed")
+@click.option("--workspace", required=True, help="The canopy workspace.")
+def allowed_cmd(workspace: str):
+    """The channels allow-listed in a workspace, per agent."""
+    _print_allowed(_call("GET", _config_path(workspace)))
+
+
+@ingest_group.command("disallow")
+@click.option("--workspace", required=True, help="The canopy workspace (you must own it).")
+@click.option("--id", "allow_id", default="", help="The entry's id (from `allowed`).")
+@click.option("--agent", "agent", default="", help="Or: the agent …")
+@click.option("--channel", default="", help="… and the channel (ID or #name).")
+def disallow_cmd(workspace: str, allow_id: str, agent: str, channel: str):
+    """Remove an allow-list entry. Revokes the reads it allowed and deletes their transcripts."""
+    if not allow_id:
+        if not (agent and channel):
+            raise click.UsageError("give --id, or both --agent and --channel")
+        want = channel.strip().lstrip("#").lower()
+        rows = (_call("GET", _config_path(workspace)).get("channel_ingest") or {}).get("allowed") or []
+        match = [a for a in rows if a["agent"] == agent and want in (a["channel"].lower(), a.get("channel_name", ""))]
+        if not match:
+            raise click.ClickException(f"{channel} is not allow-listed for {agent} in {workspace}")
+        allow_id = match[0]["id"]
+    _print_allowed(_call("DELETE", f"{_config_path(workspace)}/channel-ingest/allowed/{allow_id}"))

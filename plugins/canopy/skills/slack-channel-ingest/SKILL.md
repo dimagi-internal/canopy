@@ -24,6 +24,12 @@ for permission, and never without it.** canopy-web enforces that, not this page 
   Markdown transcript that only your own login can read.
 - The workspace must have opted in (`channel_ingest_enabled`, set by an owner on its Slack
   settings page). Every step is in the workspace's event log.
+- **Or an owner allow-listed the channel for you, explicitly.** A workspace owner can grant ONE
+  channel to ONE agent ahead of time (Slack settings page → Allow-listed channels, or
+  `canopy slack ingest allow`). Then your request reads at once, approved by that owner, and canopy
+  posts a notice with Revoke in the channel instead of asking. It works even with asking switched
+  off. A read-once entry refuses `--follow`. **You never allow-list for yourself.** Your login is
+  refused, and asking a human to do it is their call, not a step in your work.
 
 The fleet baseline **denies** any other route to Slack history: a `slack.com/api` history call, an
 SDK `conversations_history`, or a Slack MCP connector's read-channel/thread tools. If you hit that
@@ -39,16 +45,22 @@ which is correct.
 canopy slack ingest request --agent <your-slug> --channel <C-id> --purpose "<why, in one line>" [--follow]
 ```
 
-- **Use the channel ID** (`C…`/`G…`), not `#name`. If you only have the name, ask the person who
-  pointed you at it, or use the id from the Slack link they gave you.
+- **The channel ID** (`C…`/`G…`) or **`#name`** both work. canopy resolves a name among the
+  channels its app can see (a private channel must have the app in it).
+- **Status `reading` straight away** means the channel was allow-listed for you. canopy is already
+  reading it, so go to step 2.
 - **The purpose is read by the people deciding.** Write it as a sentence that answers "why does an
   agent need all of this?" Example: *"Digest the AI Learning Champions channel for Jonathan's weekly
   brief"*. Don't write "context".
 - `--follow` keeps adding new messages until someone revokes it. Ask for it only when the work
   really is ongoing (a weekly digest, a running FAQ). The approval message tells people that
   following is part of the ask.
-- **`409 … channel ingest is off`**: the workspace hasn't opted in. Tell whoever asked you. Don't
-  look for another way in.
+- **`409 … channel ingest is off … not allow-listed`**: the workspace hasn't opted in, and no owner
+  has allow-listed this channel for you. Tell whoever asked you. A workspace owner can fix it with
+  `canopy slack ingest allow --workspace <ws> --agent <you> --channel <#name>`. Don't look for
+  another way in.
+- **`403 … allow-listed … to read once`**: ask again without `--follow`, or ask an owner to allow
+  following.
 - **`409 … invite the canopy app`**: the bot isn't in the channel. Ask a channel member to
   `/invite @canopy`.
 - **`409 … already has a pending or live ingest`**: use that one (`canopy slack ingest list --agent
@@ -91,6 +103,8 @@ canopy slack ingest revoke <id>
 ```
 
 Revoke when the work is finished, and always revoke a `--follow` ingest you no longer need.
+Removing an allow-list entry (`canopy slack ingest disallow`, owners only; list them with
+`canopy slack ingest allowed --workspace <ws>`) also revokes the reads it allowed.
 Revoking stops reading and deletes the transcript. An approver, your owner or a workspace admin
 can also revoke, from the Revoke button on the approval message or from canopy-web.
 
