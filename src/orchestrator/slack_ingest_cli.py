@@ -16,10 +16,10 @@ and never calls Slack — the fleet baseline denies that (`gating-baseline.json`
     canopy slack ingest allowed --workspace WS
     canopy slack ingest disallow --workspace WS (--id ID | --agent SLUG --channel C…|#name)
 
-`allow` is a workspace OWNER's explicit, standing permission for one agent to
-read one channel: that agent's `request` then reads at once (approved by the
-owner) and canopy posts a notice with Revoke in the channel instead of asking.
-An owner runs it as themselves — the agent's own login can never allow itself.
+`allow` is a workspace owner's or ADMIN's explicit, standing permission for one
+agent to read one channel: that agent's `request` then reads at once (approved
+by whoever added it) and canopy posts a notice with Revoke in the channel instead of asking.
+An admin runs it as themselves — the agent's own login can never allow itself.
 
 The judgment — when to ask, what to say the read is for, what to do with a
 decline, how to digest — is the `slack-channel-ingest` skill. This module only
@@ -167,7 +167,7 @@ def list_cmd(agent: str, status: str):
         click.echo("no channel ingests")
 
 
-# --- the allow-list: an owner's explicit, standing permission -------------------
+# --- the allow-list: an admin's explicit, standing permission -------------------
 
 def _config_path(workspace: str) -> str:
     return f"/api/slack-config/{workspace}"
@@ -189,13 +189,13 @@ def _print_allowed(cfg: dict) -> None:
 
 
 @ingest_group.command("allow")
-@click.option("--workspace", required=True, help="The agent's canopy workspace (you must own it).")
+@click.option("--workspace", required=True, help="The agent's canopy workspace (you must be an admin or owner).")
 @click.option("--agent", "agent", required=True, help="The agent allowed to read the channel.")
 @click.option("--channel", required=True, help="The channel: its ID (C…/G…) or #name.")
 @click.option("--follow", is_flag=True, help="Also allow following new messages, not only one read.")
 @click.option("--note", default="", help="Why — shown on the settings page and in the log.")
 def allow_cmd(workspace: str, agent: str, channel: str, follow: bool, note: str):
-    """Allow-list one channel for one agent (workspace owner). Reads nothing by itself."""
+    """Allow-list one channel for one agent (workspace admin or owner). Reads nothing by itself."""
     cfg = _call("POST", f"{_config_path(workspace)}/channel-ingest/allowed",
                 {"agent": agent, "channel": channel.strip(), "follow": follow, "note": note.strip()})
     _print_allowed(cfg)
@@ -209,7 +209,7 @@ def allowed_cmd(workspace: str):
 
 
 @ingest_group.command("disallow")
-@click.option("--workspace", required=True, help="The canopy workspace (you must own it).")
+@click.option("--workspace", required=True, help="The canopy workspace (you must be an admin or owner).")
 @click.option("--id", "allow_id", default="", help="The entry's id (from `allowed`).")
 @click.option("--agent", "agent", default="", help="Or: the agent …")
 @click.option("--channel", default="", help="… and the channel (ID or #name).")
