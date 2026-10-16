@@ -9,7 +9,9 @@ description: |
   this session". Argument: a channel (`#dev` or an id), plus `bind` for a
   connected thread. Run it again on a bound session to post an update into
   its thread, or with `unbind` to disconnect it — use for "detach / disconnect
-  / unbind this session from slack", "stop posting to slack".
+  / unbind this session from slack", "stop posting to slack". Or `new-thread`
+  to move a Slack conversation to a fresh thread in its channel ("post a new
+  clean thread in the channel").
 ---
 
 # Share to Slack
@@ -118,3 +120,23 @@ Report what it returned:
   don't retry another way.
 
 To connect it again later, share it with `bind`: that starts a fresh thread.
+
+## New thread (a turn that came from Slack)
+
+When you are answering a Slack turn, you already know where you are: the caller
+envelope's `conversation.slack` (also on the "- slack:" line canopy adds beside
+the prompt) names the channel id and name, the thread ts and its permalink. Never
+ask the person which channel they are in.
+
+To move the conversation to a fresh thread in that same channel ("post a new
+clean thread in the channel"), call canopy-web's `start_new_slack_thread` with:
+
+- `turn_id`: the envelope's `turn_id` — your own login can act on the
+  conversation of the turn you are running, and on no other
+- `summary`: Markdown — what the new thread is for; it is the thread's first post
+
+It posts the summary top-level in the conversation's channel, binds the session
+to that thread, and tells the old thread where it went. Reply with the returned
+`permalink`. A 409 means there is no thread to move (unbound, or a direct
+message). `share_session_to_slack` and `detach_session_from_slack` take the same
+`turn_id`; as that, re-binding is allowed only in the conversation's own channel.
