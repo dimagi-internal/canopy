@@ -1,0 +1,152 @@
+[
+ {
+  "scene": "1",
+  "dimension": "concept_clarity",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "low",
+  "detail": "Narration names the user and the problem ('the manager's funder wants to know ... which partner and which field worker is behind'), and the frame lands the journey 'from 1,200 households surveyed' to '337 women \u00b7 56%'. B",
+  "fix_recommendation": "[UPSTREAM] labs template: replace the funnel's explanatory subtitle with a structural split \u2014 render steps 1-3 as a separate 'Before enrollment' block whose unit is carried in each row's count (communities / households /"
+ },
+ {
+  "scene": "1",
+  "dimension": "design_soundness",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "low",
+  "detail": "The view holds together, but the 'Journey funnel' is not monotonic and its encoding is inconsistent: '6. Baseline done 600 women \u00b7 100%' follows '5. Account confirmed 562 women \u00b7 94%', and '10. Harvest visit recorded 597",
+  "fix_recommendation": "[UPSTREAM] labs template: never round a share to 100% unless the count equals the denominator \u2014 render shares that round to 100% but fall short with one decimal (597 of 600 \u2192 '99.5%')."
+ },
+ {
+  "scene": "1",
+  "dimension": "visual_polish",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "low",
+  "detail": "Clean card layout, consistent KPI tiles ('WOMEN ENROLLED 600', 'GRADUATED 56%'), readable type and calm colour; but the funnel carries a small-grey footnote paragraph doing structure's job (max 3 rule), the 'ATTENDING GR",
+  "fix_recommendation": "[UPSTREAM] labs template: move the footnote's facts into the funnel as rows \u2014 add 'Extended support at endline 220 women' and 'Left the programme 43 women' as outcome rows beside '12. Graduated', and delete the footnote "
+ },
+ {
+  "scene": "1",
+  "dimension": "why_groundedness",
+  "route": "DEFER",
+  "fix_kind": "mechanical",
+  "fix_scope": "null",
+  "severity": "low",
+  "detail": "The claim 'Every step of the graduation journey, from community walk to graduation, is counted from the form that records it, on one page' matches its stated rationale ('the design defines each step as a worker form, so ",
+  "fix_recommendation": "No structural fix: provenance resolves to a grounded why_brief spine item; pass the spine evidence class into the judge context on the next pass."
+ },
+ {
+  "scene": "2",
+  "dimension": "concept_clarity",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "low",
+  "detail": "The tiles land the headline ('ACCOUNTS CONFIRMED 93.7% target 90.0% On target', 'HARVEST VISITS ON TIME 81.2% target 85.0% Watch') and the table shows 'Partner C Community Outreach (example) 81.7%' beside 95.8-97.5%. But",
+  "fix_recommendation": "[UPSTREAM] labs template: move what the footnote and legend say into the structure \u2014 each tile carries its target's status inline ('target 90.0%, proposed'), indicators reported from CommCare HQ appear as their own greye"
+ },
+ {
+  "scene": "2",
+  "dimension": "design_soundness",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "low",
+  "detail": "The interaction model (tiles \u2192 per-partner table on the same indicators \u2192 trend minis) holds together, but the grading rule is incoherent on screen: 81.7% against a 90% target and 72.8% against an 85% target are both col",
+  "fix_recommendation": "[UPSTREAM] labs template: grade every cell by one stated rule derived from the indicator's target (below target = Off target, within a declared band = Watch) and print that band in the column header, so Partner C's 81.7%"
+ },
+ {
+  "scene": "2",
+  "dimension": "visual_polish",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "medium",
+  "detail": "[confirmed 2/2/2 on k=3] The floating 'Ask an agent' launcher sits on top of the footnote and occludes its final lines ('\u2026no target for the other figures\u2026 Invented example data') \u2014 a frame element occluding content (cap ",
+  "fix_recommendation": "[UPSTREAM] labs template: dock the 'Ask an agent' launcher outside the report's content column (e.g. into the top bar beside the account avatar) so it can never overlay report content."
+ },
+ {
+  "scene": "2",
+  "dimension": "why_groundedness",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "narrative",
+  "severity": "low",
+  "detail": "The targets on screen trace to the design ('Two targets come from the pilot design and are still proposed: at least 90% of enrolled women with a confirmed account, and at least 85% of harvest visits within 14 days'), mat",
+  "fix_recommendation": "[NARRATION] Replace 'and under the design a woman's lean-season cash transfers wait until her account is confirmed' with a clause that cites the design target itself ('below the design's proposed 90%'), keeping length eq"
+ },
+ {
+  "scene": "3",
+  "dimension": "concept_clarity",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "low",
+  "detail": "The 5-second read lands: 'Worker B' with 'Accounts confirmed 66.7%' in red beside 'Same-month median (37) 93.3%' says 'this worker is behind her cohort'. But every indicator row carries an info bubble ('Accounts confirme",
+  "fix_recommendation": "[UPSTREAM] labs template: carry each indicator's unit and denominator in the label/column itself (e.g. 'Harvest per woman (kg), all cycles', 'Accounts confirmed (10 of 15)') and remove the per-row \u24d8 bubbles."
+ },
+ {
+  "scene": "3",
+  "dimension": "design_soundness",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "low",
+  "detail": "The comparison model holds together (worker / two peer medians / target, off-target cells flagged only where a 'Target' exists). But the two comparator columns are near-duplicates on this screen ('82.9% | 82.9%', '60.0% ",
+  "fix_recommendation": "[UPSTREAM] labs template: give every indicator group a direction chip from the registry (Coaching included) so no row's good direction is undefined."
+ },
+ {
+  "scene": "3",
+  "dimension": "visual_polish",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "low",
+  "detail": "Clean type hierarchy (H1 'Worker B', section 'Indicators', grouped rows) and calm semantic color \u2014 the pink cell fill only on values below a stated 'Target' (66.7% vs 90.0%, 66.7% vs 85.0%), which encodes an objective th",
+  "fix_recommendation": "[UPSTREAM] labs template: let the indicator table span the card width (or drop the redundant comparator column) so the right third is not empty, and remove the per-row \u24d8 bubbles."
+ },
+ {
+  "scene": "3",
+  "dimension": "why_groundedness",
+  "route": "DEFER",
+  "fix_kind": "mechanical",
+  "fix_scope": "null",
+  "severity": "low",
+  "detail": "The scene's anchors ('peer medians separate a worker problem from a programme problem') map directly onto what is shown ('against field workers who started the same month (37) and with a similar caseload (40)'), but no w",
+  "fix_recommendation": "No structural fix: provenance resolves to a grounded why_brief spine item; pass the spine evidence class into the judge context on the next pass."
+ },
+ {
+  "scene": "4",
+  "dimension": "concept_clarity",
+  "route": "CONCEPT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "low",
+  "detail": "The end frame lands where the narration closes: 'Field workers \u00b7 15 women each', sorted by 'Accounts confirmed \u25b2', with 'Worker B' first at '66.7%'. Per standing_context, the anonymised benchmark ('5th of 5', 'Another pa",
+  "fix_recommendation": "[UPSTREAM] labs template: make the footnote paragraph and the legend strip structural. Put each target's status ('proposed', 'placeholder') as a chip on its tile or column header, show 'n<3' as a cell state, and delete t"
+ },
+ {
+  "scene": "4",
+  "dimension": "visual_polish",
+  "route": "PRODUCT",
+  "fix_kind": "mechanical",
+  "fix_scope": "upstream",
+  "severity": "medium",
+  "detail": "[confirmed 2/2/2 on k=3] There are several visual issues in the product itself. (1) The floating 'Ask an agent' button occludes the right end of the 'Indicators and their definitions' row ('10 indicators \u00b7 click a name f",
+  "fix_recommendation": "[UPSTREAM] labs template: lay out the field-worker table so every column, including 'Attention', fits the content width. Reserve a bottom gutter so the floating 'Ask an agent' button never sits over page content."
+ },
+ {
+  "scene": "4",
+  "dimension": "why_groundedness",
+  "route": "DEFER",
+  "fix_kind": "mechanical",
+  "fix_scope": "null",
+  "severity": "low",
+  "detail": "The scene's claim ('ranks it against four partners shown only as Another partner\u2026 links its network manager to his own field workers') is consistent with its narrative anchors. No why_brief spine or provenance was suppli",
+  "fix_recommendation": "No structural fix: provenance resolves to a grounded why_brief spine item; pass the spine evidence class into the judge context on the next pass."
+ }
+]

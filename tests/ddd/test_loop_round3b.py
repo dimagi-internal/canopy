@@ -254,13 +254,27 @@ class TestOnlyACheckpointDecides:
         )
         assert action == "checkpoint"
 
-    def test_a_stop_on_a_concept_only_pass_is_a_checkpoint(self) -> None:
+    def test_a_stall_on_a_concept_only_pass_stops_directly(self) -> None:
+        # DDD-1: a stall read on a partial pass used to become a checkpoint (one
+        # more full pass on noora/smallholder that decided nothing new).
         st = _state()
-        for i in range(3):  # three flat passes -> would stall
+        for i in range(3):  # three flat passes -> stall
             action, _ = compute_auto_iterate(
                 st, _v(2.0), _v(2.0), [_mech(1, i)], unattended=True,
                 distribution={"mean": 3.3, "capping_cells": []}, judge_full=False,
                 target="deploy", judges=["concept"],
+            )
+        assert action == "stop_max_iter"
+        assert st.terminal_status == "stopped_not_converged"
+
+    def test_a_stall_with_held_scenes_still_checkpoints(self) -> None:
+        # A held scene changed and was not re-judged: it could hide progress.
+        st = _state()
+        for i in range(3):
+            action, _ = compute_auto_iterate(
+                st, _v(2.0), _v(2.0), [_mech(1, i)], unattended=True,
+                distribution={"mean": 3.3, "capping_cells": []}, judge_full=False,
+                target="deploy", judges=["concept"], held=[2],
             )
         assert action == "checkpoint"
 

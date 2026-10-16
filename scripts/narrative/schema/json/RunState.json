@@ -591,6 +591,75 @@
       ],
       "default": null,
       "title": "Target"
+    },
+    "cell_floor": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cell Floor"
+    },
+    "cell_baseline": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Cell Baseline",
+      "type": "object"
+    },
+    "pinned_since": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Pinned Since",
+      "type": "object"
+    },
+    "finding_ledger": {
+      "default": [],
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Finding Ledger",
+      "type": "array"
+    },
+    "out_of_scope_ids": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Out Of Scope Ids",
+      "type": "object"
+    },
+    "predictions": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Predictions",
+      "type": "object"
+    },
+    "prediction_calibration": {
+      "default": [],
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Prediction Calibration",
+      "type": "array"
+    },
+    "predictions_required": {
+      "default": false,
+      "title": "Predictions Required",
+      "type": "boolean"
+    },
+    "judge_timeouts": {
+      "default": [],
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Judge Timeouts",
+      "type": "array"
     }
   },
   "required": [

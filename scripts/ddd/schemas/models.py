@@ -338,6 +338,38 @@ class RunState(BaseModel):
     # The last assemble's reading: {source, iteration, converged, why,
     # criteria: [{id, kind, bar, passed, passing, window, why}]}.
     target: dict | None = None
+    # --- DDD-1 — per-cell floor, stable finding ids, predicted gain -----------
+    # The last assemble's per-cell floor (scripts.ddd.floor.classify_cells):
+    # {iteration, bar, true_score, workable_score, cells: [{key, judge, scene,
+    # dimension, score, status: pinned|workable|passing, findings, ceiling,
+    # owners, blocked_by}], pinned, workable, unattached}. PINNED cells (every
+    # finding out of scope) are reported and parked; the loop optimizes the rest.
+    cell_floor: dict | None = None
+    # First value seen per cell key — what "it improved" is measured against.
+    cell_baseline: dict = {}
+    # Iteration each currently-pinned cell was first pinned: {key: iteration}.
+    pinned_since: dict = {}
+    # Stable finding ids (scripts.ddd.floor.assign_ids): [{id, cell, tokens,
+    # first_iteration, last_iteration}]. A re-worded finding keeps its id.
+    finding_ledger: list[dict] = []
+    # Finding ids once out of scope by configuration or a decline:
+    # {id: {reason, via, surface, owner, issue, since}} — they stay out when the
+    # judge re-words them and the text no longer matches.
+    out_of_scope_ids: dict = {}
+    # Batch predictions (scripts.ddd.predict), keyed by the iteration whose
+    # assemble planned the batch: {"<n>": {iteration, declared_at, items: [{finding_id,
+    # cell, scene, dimension, in_scope, from, expected_to, note}], gain_cells,
+    # decision, evaluated_at_iteration, outcome}}.
+    predictions: dict = {}
+    # One row per (predicted cell, evaluation): {planned_iteration, iteration,
+    # cell, finding_ids, from, expected_to, actual, judged, hit, met}.
+    prediction_calibration: list[dict] = []
+    # Set by a `continue` that has workable work: the next pass refuses to start
+    # (scripts.ddd.decision.check) until `predict declare` recorded the batch.
+    predictions_required: bool = False
+    # Judges that timed out on a pass: [{iteration, judge, minutes, reason}].
+    # Their cells were carried from the last pass; the pass could not decide.
+    judge_timeouts: list[dict] = []
 
 
 __all__ = [

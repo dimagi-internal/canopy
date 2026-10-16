@@ -1,0 +1,114 @@
+schema_version: 1
+gate: gating
+overall_rule: lowest
+ran_at: '2026-10-16T00:00:00Z'
+live_state_verified: true
+kind: user_artifact
+rubric_name: user-artifact
+dimensions:
+  task_completion:
+    score: 4.0
+    weight: 0.4
+  clarity:
+    score: 3.0
+    weight: 0.35
+  trust:
+    score: 4.0
+    weight: 0.25
+overall_score: 3.0
+verdict: warn
+findings:
+- scene: '1'
+  dimension: clarity
+  score: 3
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: Journey panel reads as a funnel but bars grow after drops (6. Baseline 600/100%
+    after 5. Accounts 562/94%; 10. Harvest 597 after 9. Grant 577); 'PPI' unexpanded.
+  fix_recommendation: '[UPSTREAM] labs template: add ''each step is counted on its
+    own, not as a share of the step above'' to the panel subtitle and expand PPI to
+    ''poverty score (PPI)''.'
+- scene: '1'
+  dimension: trust
+  score: 4
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: low
+  detail: "'10. Harvest visit recorded 597 women \xB7 100%' rounds 99.5% up to 100%\
+    \ next to a bar that is visibly short of full."
+  fix_recommendation: '[UPSTREAM] labs template: never round a share below 100% up
+    to ''100%'' (floor at 99% or show one decimal).'
+- scene: '2'
+  dimension: clarity
+  score: 3
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: Partner table clipped at the right ('Last visit' reads '10 Oc', Attention
+    off-frame) and two KPI labels truncated.
+  fix_recommendation: '[UPSTREAM] labs template: drop or narrow the ''Last visit''
+    column so Attention fits at 1440px, and shorten the two KPI tile labels to fit
+    the card.'
+- scene: '2'
+  dimension: clarity
+  score: 3
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: low
+  detail: '''Ask an agent'' floating button covers the end of the footnote; ''n<3:
+    too few records'' notation in the legend; Watch/Off target band rule unstated.'
+  fix_recommendation: '[UPSTREAM] labs template: dock ''Ask an agent'' outside the
+    content column, render too-few cells as an em dash instead of an ''n<3'' legend
+    entry, and state the Watch / Off target thresholds in the legend.'
+- scene: '3'
+  dimension: clarity
+  score: 3
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: '''Triggered visits'' has no direction pill (Coaching group), so 86.7% vs
+    a 60.0% median cannot be read as good or bad; harvest per woman lacks its kg unit.'
+  fix_recommendation: '[UPSTREAM] labs template: give every indicator group a ''higher/lower
+    is better'' pill (or ''no direction'' for Triggered visits) and print the unit
+    (kg) on the harvest-per-woman row.'
+- scene: '3'
+  dimension: trust
+  score: 4
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: data
+  severity: low
+  detail: Peer groups are near-total (same-month 37 of 40; similar-caseload 40 of
+    40), unlabelled as such.
+  fix_recommendation: '[DATA] vary start months and caseloads across the 40 synthetic
+    field workers so the peer groups are genuinely narrower than the whole programme.'
+- scene: '4'
+  dimension: clarity
+  score: 3
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: Field-worker table clipped at the right (Attention badges half visible);
+    'Ask an agent' overlaps the definitions header; opp picker exposes internal id
+    and visit count.
+  fix_recommendation: '[UPSTREAM] labs template: narrow ''Last visit'' so Attention
+    fits at 1440px and dock ''Ask an agent'' outside the content column.'
+- scene: '4'
+  dimension: task_completion
+  score: 4
+  route: SCRIPTING
+  fix_kind: mechanical
+  fix_scope: recipe
+  severity: low
+  detail: After 'See field workers' the page lands mid-scroll with tabs/title off-frame,
+    losing the Benchmarks context.
+  fix_recommendation: "[SCRIPTING] after the click-through wait_for, scroll so the\
+    \ 'Field workers \xB7 15 women each' card header sits just below the top bar,\
+    \ keeping the tile stubs out of frame."

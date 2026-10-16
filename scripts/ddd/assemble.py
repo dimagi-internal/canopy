@@ -149,6 +149,38 @@ def _narrative_guard(state: Any, spec: str | None, run_dir: Path, cfg: Any) -> d
     return out
 
 
+def _judge_timeouts(state: Any, run_dir: Path) -> list[dict]:
+    """Judges whose watchdog step for THIS pass timed out (or is past its budget).
+
+    A judge that hung (one user judge ran 98 min on noora iteration 2) must not
+    hold the pass: the orchestrator stops waiting at its budget and keeps the
+    previous verdict file, and this pass treats that judge's cells as unchanged
+    from the last pass — it did not run, so the pass cannot decide (any stop or
+    convergence becomes a checkpoint) and no prediction is scored on its cells.
+    """
+    from scripts.ddd import watchdog
+
+    since = None
+    if state.pass_timings:
+        since = watchdog._parse_iso((state.pass_timings[-1] or {}).get("assembled_at"))
+    out: list[dict] = []
+    for step, entry in (state.steps or {}).items():
+        if not str(step).startswith("judge:") or not isinstance(entry, dict):
+            continue
+        started = watchdog._parse_iso(entry.get("started_at"))
+        if since is not None and (started is None or started < since):
+            continue
+        res = watchdog.check(state, step, run_dir=run_dir)
+        if res.get("status") == "timed_out":
+            out.append({
+                "iteration": state.iteration,
+                "judge": str(step).split(":", 1)[1],
+                "minutes": res.get("elapsed_minutes") or entry.get("timeout_minutes"),
+                "reason": res.get("reason") or entry.get("reason") or "timed out",
+            })
+    return out
+
+
 def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = None) -> dict[str, Any]:
     from scripts.ddd import judge_scope, loop_config, progress
     from scripts.ddd.run_pipeline import (
@@ -216,10 +248,19 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
     edit_scope = {
         "narrative_locked": narrative_locked,
         "fixed_surfaces": cfg.loop.fixed_surfaces,
+        "surfaces": cfg.loop.surfaces,
         "declined": floor_mod.load_declined(run_dir),
     }
     from scripts.ddd import target_rubric as target_rubric_mod
 
+    timeouts = _judge_timeouts(state, run_dir)
+    pass_judges = scope.get("judges")
+    if timeouts:
+        gone = {t["judge"] for t in timeouts}
+        pass_judges = [j for j in (pass_judges or ["concept", "user", "arc"]) if j not in gone]
+        state.judge_timeouts = [
+            t for t in state.judge_timeouts or [] if t.get("iteration") != state.iteration
+        ] + timeouts
     action, reason = compute_auto_iterate(
         state,
         concept,
@@ -230,7 +271,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         judge_full=judge_full,
         loop_config=cfg.loop,
         target=tgt.get("target"),
-        judges=scope.get("judges"),
+        judges=pass_judges,
         held=[*(scope.get("held") or []), *(scope.get("carried_unverified") or [])] or None,
         inner_loop_policy=state.inner_loop_policy,
         product_config=cfg.product,
@@ -243,7 +284,16 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
             "config": target_rubric_mod.config_rubric(ddd_dir),
         },
         run_dir=run_dir,
+        pass_scope=scope,
     )
+    if timeouts:
+        reason = (
+            "JUDGE TIMEOUT: "
+            + "; ".join(f"{t['judge']} ({t['reason']})" for t in timeouts)
+            + " — its cells were carried unchanged from the last pass, so this pass could not "
+            "decide. "
+            + reason
+        )
     from scripts.ddd import pass_timing
 
     timing = pass_timing.record(state, scope=scope, run_dir=run_dir)
@@ -279,6 +329,19 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
     for msg in pin.skew(state):
         pin.warn(state, msg)
     save(state, ddd_dir=ddd_dir)
+    # What is blocked, by whom, what improved, predicted vs actual — written on
+    # every stop and whenever a cell is pinned, so a run never ends (or keeps
+    # going around a blocked cell) without saying who has to act.
+    blocked = None
+    from scripts.ddd import predict as predict_mod
+
+    pinned_now = bool((state.cell_floor or {}).get("pinned"))
+    if pinned_now or str(action).startswith("stop_"):
+        try:
+            path, lines = predict_mod.write_report(state, run_dir)
+            blocked = {"path": str(path), "summary": lines}
+        except OSError as exc:  # pragma: no cover - defensive
+            print(f"assemble: could not write the blocked report ({exc})", file=sys.stderr)
     learnings_path = None
     from scripts.ddd import run_learnings
 
@@ -303,7 +366,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "converged": converged,
         "judge_full": judge_full,
         "target": tgt.get("target") or "deploy",
-        "judges": scope.get("judges") or ["concept", "user", "arc"],
+        "judges": pass_judges or ["concept", "user", "arc"],
         "loop_mode": state.loop_mode,
         "objective": state.objective,
         "objective_roles": objective_mod.summary(state.findings),
@@ -325,6 +388,12 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "decision_overrides": list(state.decision_overrides or []),
         "version_warnings": list(state.version_warnings or []),
         "gating_floor": state.gating_floor,
+        "cell_floor": {
+            k: (state.cell_floor or {}).get(k) for k in ("true_score", "workable_score", "pinned", "workable")
+        } if state.cell_floor else None,
+        "predictions_required": state.predictions_required,
+        "judge_timeouts": [t for t in state.judge_timeouts or [] if t.get("iteration") == state.iteration],
+        "blocked_report": blocked,
         "narrative_guard": state.narrative_guard,
         "target_rubric": state.target,
         "pass_timing": timing,
@@ -404,6 +473,17 @@ def _main(argv: list[str] | None = None) -> int:
             + (f" on scene(s) {gf.get('scenes')}" if gf.get("scenes") else "")
             + f"  ({len(gf.get('findings') or [])} finding(s), {n_out} outside the edit scope)"
         )
+    cf = out.get("cell_floor") or {}
+    if cf:
+        print(
+            f"  Cells:        true score {cf.get('true_score')}, workable score {cf.get('workable_score')} "
+            f"({len(cf.get('pinned') or [])} pinned, {len(cf.get('workable') or [])} workable below the bar)"
+        )
+    for t in out.get("judge_timeouts") or []:
+        print(f"  JUDGE TIMEOUT: {t['judge']} — {t['reason']} (cells carried from the last pass)")
+    if out.get("predictions_required"):
+        print("  Next batch:   declare predictions first — python -m scripts.ddd.predict declare "
+              f"{out['run_id']} --batch <items.json>")
     t = out.get("pass_timing") or {}
     if t:
         jm = t.get("judge_minutes") or {}
@@ -443,6 +523,12 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"  Parked:       scene(s) {out['parked_scenes']} wait on a pending decision")
     for msg in out["version_warnings"]:
         print(f"  WARNING:      {msg}")
+    br = out.get("blocked_report") or {}
+    if br:
+        print("")
+        for line in br.get("summary") or []:
+            print(line)
+        print(f"  ({br.get('path')})")
     return 0
 
 

@@ -671,6 +671,25 @@ without a `judge:` step is timed from its verdict file's mtime instead (marked
 `judge_timing_source: files`). `python -m scripts.ddd.pass_timing <run_dir>`
 prints the table.
 
+**Never wait on a hung judge.** Each judge has a budget (`timeouts.judge_minutes`,
+default 20 — healthy judges take 2–10 min; a user judge once ran 98 min and the
+whole pass waited). Dispatch judges in the background and poll
+`python -m scripts.ddd.watchdog check <run_id> judge:<name>`; on exit 3
+(`timed_out`) stop that judge, `watchdog finish <run_id> judge:<name> --status
+timed_out`, leave its PREVIOUS verdict file in place (do not delete or
+half-write it), and go on to Step 4. `assemble` treats that judge's cells as
+unchanged from the last pass, drops it from the pass's judges (so the pass
+cannot declare convergence), and says `JUDGE TIMEOUT` in the reason.
+
+**Confirm caps only when it can matter** (k=3, Step 4a of `ddd-concept-eval`):
+before the two extra draws per capping cell, ask
+`python -m scripts.ddd.denoise plan-confirm <run_dir> --caps '<json list of {scene, dimension, score}>'`
+and confirm only the cells it returns under `confirm`. It skips caps on pinned
+cells and, while another judge's carried workable cell holds the floor at <= 2,
+every cap (no median could change the score or a stop); it always confirms a
+cell the last batch predicted to move. If it skips all of them, write
+`distribution.confirmation: skipped` into the concept verdict.
+
 Dispatch **both judges simultaneously** — they are independent and can run in
 parallel:
 
@@ -920,18 +939,32 @@ re-implement the decision tree. What it does, in order:
 
 - **normalizes findings** (`finding_class`): an ACCURACY finding is forced
   `mechanical`; only STRATEGY findings can open the concept gate;
-- records a **progress point** — gating score, open (non-DEFER) findings, mean
-  concept cell, confirmed caps — in `state.progress_history`;
+- gives every finding a stable `finding_id` (a re-worded finding keeps its id)
+  and stamps its `edit_scope` (in/out, with the reason, owner and issue);
+- builds the **per-cell floor** (`state.cell_floor`, `scripts.ddd.floor`): a
+  cell below the bar whose findings are ALL out of scope is **PINNED** —
+  reported (owner, issue, finding) and parked out of the workable objective;
+  every other cell is workable. Both the true score and the workable score are
+  recorded; convergence still reads the true score;
+- scores the last batch's predictions (`scripts.ddd.predict`) against the cells
+  re-judged this pass, into `state.prediction_calibration`;
+- records a **progress point** — gating score, workable score, open (non-DEFER)
+  findings, mean concept cell, confirmed caps (pinned caps excluded) — in
+  `state.progress_history`;
 - decides:
 
 ```
 any decision from an inner-loop or
   concept-only pass                        -> checkpoint  (land the batches; full pass on the deploy target decides;
-                                              stop_out_of_scope is exempt unless scenes were held)
+                                              stop_out_of_scope, stop_prediction_failed and a STALL
+                                              are exempt unless scenes were held)
 converged on an INCREMENTAL pass           -> confirm_full  (full re-render + full judge, no fixes)
 converged on a full pass                   -> stop_done / stop_partial
-the gating floor HAS findings and every
-  one is outside the loop's edit scope     -> stop_out_of_scope  (terminal: blocked_out_of_scope)
+every re-judged cell the last batch
+  predicted to move stayed in the band     -> stop_prediction_failed  (terminal: stopped_prediction_failed)
+a cell is pinned and no workable cell
+  below the bar has in-scope work left     -> stop_out_of_scope  (terminal: blocked_out_of_scope)
+  (pinned cells alone do NOT stop the run: the loop keeps fixing the workable ones)
 STRATEGY redesign + mechanical pending,
   first deferral or last pass progressed   -> continue  (gate deferred)
 a STRATEGY finding + mechanical work on
@@ -952,6 +985,17 @@ identical findings + no progress           -> stop_max_iter  (plateau)
 hard-cap backstop                          -> stop_max_iter
 any options/redesign left                  -> stop_unclear
 ```
+
+A `continue` with workable work says `PREDICT FIRST`: before the fixers run,
+`python -m scripts.ddd.predict declare <run_id> --batch <items.json>` (one item
+per batch finding: `finding_id, scene, dimension, in_scope, from, expected_to`).
+Exit 3 means no workable cell is predicted to improve: the decision becomes
+`stop_no_predicted_gain` (sealed; terminal `stopped_no_predicted_gain`) and the
+fixers do not run. `target plan` / `judge_scope plan` / `judge_gate check` refuse
+the next pass until the batch is declared (or `decision override` says why not).
+Every stop, and every pass with a pinned cell, writes `blocked_report.json` and
+`assemble` prints its summary — what is blocked and by whom, what improved, and
+predicted vs actual (`python -m scripts.ddd.predict report <run_id>` reprints it).
 
 - **before any gate-opening or terminal action** (`stop_concept_change`,
   `stop_max_iter`, `stop_unclear`, `park_and_continue`): if a confirmed cap
@@ -1070,7 +1114,10 @@ can see at a glance which findings the orchestrator will auto-apply
 - `stop_concept_change` — "Strategy finding present (the artifact, not the wording, is wrong) — surface to user via canopy-web review surface." Deferred once if `mechanical` findings are still pending, so the user judges direction over a clean artifact rather than one with known defects.
 - `stop_unclear` — "Findings with `options`/`redesign` fix_kind block auto-iteration. List them and ask the user to pick or redesign."
 - `stop_max_iter` — "Loop stopped making progress (stall, plateau, flat score, or backstop). Stop and surface remaining findings." On a `FLAT:` reason, put its direction question to the owner with the open cells it lists: which matter for this narrative, which are non-blocking.
-- `stop_out_of_scope` — "The gating floor is held only by findings this loop may not fix (data, registry, a locked narration, a deferred or declined fix). No batch can move the gate. Report each floor finding with where its fix lives (the reason lists them)." Terminal; `terminal_status: blocked_out_of_scope`.
+- `stop_out_of_scope` — "Nothing in the loop's edit scope can move a cell below the bar; the pinned cells are held by findings this loop may not fix (data, registry, a configured fixed surface, a locked narration, a deferred or declined fix). Report the blocked summary: each pinned cell, its finding, owner and issue." Terminal; `terminal_status: blocked_out_of_scope`.
+- `stop_no_predicted_gain` — "The declared batch predicts no workable cell above its current value. The fixers were not run. Report the blocked summary." Terminal; set by `predict declare`.
+- `stop_prediction_failed` — "Every re-judged cell the last batch predicted to move stayed within the noise band. Report predicted vs actual (`blocked_report.json` `calibration_rows`)." Terminal.
+- `continue` with `PINNED:` — the listed cells are parked (reported, not batched); the batch works the workable cells. With `PREDICT FIRST:` — declare the batch (`predict declare`) before any fixer runs.
 - `stop_inner_loop_required` — "A backlog loop on a repo with a `deploy_gate` and no `inner_loop:`. Configure `inner_loop` (or `inner_loop: off` + `inner_loop_off_reason`) in `.canopy/ddd/config.yaml`, `decision override --reason`, then proceed as the quoted `continue`." See the agent's section of the same name.
 - `continue` — "Apply ALL mechanical findings as ONE batch (one PR, one deploy; parallel fixers fine), record the merge SHA (`judge_gate set-fix-sha`), `decision bump`, and re-fire `/canopy:ddd-run`." In backlog mode the next judge pass is incremental unless `next_judge_full`. If the reason says **RECIPE-ONLY**, there is no PR, CI, deploy or `set-fix-sha`: edit the recipe/spec locally and re-fire.
 - `confirm_full` — "An incremental pass would converge. Re-fire `/canopy:ddd-run` with no fixes; `next_judge_full` is set, so every scene and the arc are judged fresh. Only that pass can return `stop_done`."

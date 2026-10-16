@@ -1,0 +1,344 @@
+schema_version: 1
+gate: gating
+overall_rule: lowest
+ran_at: '2026-10-16T00:00:00Z'
+live_state_verified: true
+kind: user_artifact
+rubric_name: user-artifact
+dimensions:
+  task_completion:
+    score: 4.0
+    weight: 0.4
+  clarity:
+    score: 2.0
+    weight: 0.35
+  trust:
+    score: 3.0
+    weight: 0.25
+overall_score: 2.0
+verdict: fail
+scenes:
+  '1':
+    scene: '1'
+    dimensions:
+      task_completion:
+        score: 4
+      clarity:
+        score: 2
+      trust:
+        score: 4
+  '2':
+    scene: '2'
+    dimensions:
+      task_completion:
+        score: 4
+      clarity:
+        score: 3
+      trust:
+        score: 3
+  '3':
+    scene: '3'
+    dimensions:
+      task_completion:
+        score: 4
+      clarity:
+        score: 2
+      trust:
+        score: 3
+  '4':
+    scene: '4'
+    dimensions:
+      task_completion:
+        score: 4
+      clarity:
+        score: 2
+      trust:
+        score: 4
+  '5':
+    scene: '5'
+    dimensions:
+      task_completion:
+        score: 4
+      clarity:
+        score: 3
+      trust:
+        score: 3
+findings:
+- scene: '1'
+  dimension: clarity
+  score: 2
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: 'Jargon and truncated labels visible to a non-technical user: legend ''n<1:
+    too few records'', KPI ''AT PAYMENT FLO...'' (indicator ''At payment floor'' unexplained),
+    ''pt'' in deltas; hint copy (''click a row to open the partner'''
+  fix_recommendation: Drop the n<1 legend entry (show em dash in such cells), remove
+    the hint lines, and rename 'At payment floor' to a short plain label that fits
+    the card without the 'lower is better' chip.
+- scene: '1'
+  dimension: task_completion
+  score: 4
+  route: CONCEPT
+  fix_kind: mechanical
+  fix_scope: recipe
+  severity: medium
+  detail: Cursor hovers on Partner A's Doll demonstration cell, covering the 70.0%
+    value, and the descending sort places the laggard on the bottom row.
+  fix_recommendation: Hover the 'Partner A (example)' name cell instead of the row
+    centre; consider clicking the sort twice for ascending (worst first).
+- scene: '1'
+  dimension: trust
+  score: 4
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: "'Final report' chip conflicts with the narration's 'weekly review' and\
+    \ the 'since 4 Oct' deltas \u2014 reporting period is ambiguous."
+  fix_recommendation: Replace the 'Final report' chip with the report period (e.g.
+    'Week to 11 Oct') or remove it.
+- scene: '1'
+  dimension: clarity
+  score: 2
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: 'Partners table clipped at the right edge: ''Attention'' header reads ''Attent''
+    and its values are off-frame; ''Last visit'' column is identical (10 Oct) for
+    every row.'
+  fix_recommendation: Remove the uniform 'Last visit' column (or narrow columns) so
+    the full table, including Attention, fits the frame.
+- scene: '1'
+  dimension: clarity
+  score: 2
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: low
+  detail: 'Programme named two ways: picker ''Newborn Care Companion Classes'' vs
+    title ''Newborn care classes programme (synthetic)''.'
+  fix_recommendation: Use one programme name in picker and title.
+- scene: '2'
+  dimension: clarity
+  score: 3
+  route: PRODUCT
+  fix_kind: options
+  fix_scope: product
+  severity: medium
+  detail: '''At payment floor'' and ''Call consent'' are internal programme terms
+    that need a hover to decode. The Off target vs Watch threshold isn''t stated (Doll
+    demonstration at 70.0% below its 80% target is only ''Watch''), and the l'
+  fix_recommendation: Plain-language labels ('Classes paid at the minimum rate', 'Caregivers
+    agreeing to a follow-up call'), plus the threshold rule added to the legend line.
+- scene: '2'
+  dimension: trust
+  score: 3
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: The indicator percentages are clean fractions of 40 (33/40, 28/40, 5/40),
+    but Facilities reports 45 class records for the same educator, and the headline
+    'Classes against plan 50.0%' has no raw planned/held count. The re
+  fix_recommendation: "Render the count and denominator alongside each Educator percentage\
+    \ (e.g. '50.0% \xB7 20 of 40 planned')."
+- scene: '2'
+  dimension: task_completion
+  score: 4
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: low
+  detail: 'The gap can be found but not sized: there''s no count of classes held vs
+    planned and no weekly trend since the June start, so Rakiya can''t tell whether
+    the shortfall is recent or chronic.'
+  fix_recommendation: Add the held/planned count, and optionally a weekly class-count
+    sparkline, in the Classes against plan row.
+- scene: '2'
+  dimension: clarity
+  score: 3
+  route: CONCEPT
+  fix_kind: mechanical
+  fix_scope: recipe
+  severity: low
+  detail: 'The scroll leaves a clipped ''Opportunities: 5 selected / Edit'' line cut
+    off under the app header at the top of the frame, which looks like a rendering
+    glitch.'
+  fix_recommendation: Adjust the scroll so the frame starts at the breadcrumb / report
+    card top with nothing clipped.
+- scene: '3'
+  dimension: clarity
+  score: 2
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: high
+  detail: Per-record table shows 'Caregivers in the class' and 'Caregivers' as two
+    columns with identical values on all 45 rows.
+  fix_recommendation: Drop one of the two columns; keep a single 'Caregivers' column.
+- scene: '3'
+  dimension: clarity
+  score: 2
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: Status (pending/approved), Payable (yes/no) and Sent to review (Yes/blank)
+    encode one state three ways; 'pending' vs 'sent to review' unexplained.
+  fix_recommendation: Collapse into one status column with plain values ('Paid', 'Sent
+    to review').
+- scene: '3'
+  dimension: clarity
+  score: 2
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: Panel header '45 visits' and legend 'no visit for over 7 days' contradict
+    the Facilities table's 'Class records' and the narration's 'class records'.
+  fix_recommendation: Rename to '45 class records - 3 gaps over 7 days' and 'no class
+    for over 7 days'.
+- scene: '3'
+  dimension: trust
+  score: 3
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: 8 Jul and 15 Jul records show 0 caregivers in the class (doll demonstration
+    '-'), plotted as normal points that dive to 0 on the chart, with no explanation.
+  fix_recommendation: Mark zero-attendee records as flagged (distinct point style
+    + row label) rather than ordinary attendance.
+- scene: '3'
+  dimension: clarity
+  score: 2
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: low
+  detail: Chart caption 'Caregivers in the class (caregivers)' repeats the unit; left
+    x-axis labels '22 Jun27 Jun' overlap; gap legend renders as an empty checkbox.
+  fix_recommendation: Caption 'Caregivers per class', thin colliding tick labels,
+    use a grey filled swatch for the gap legend.
+- scene: '3'
+  dimension: task_completion
+  score: 4
+  route: CONCEPT
+  fix_kind: mechanical
+  fix_scope: recipe
+  severity: low
+  detail: During the hold the cursor rests on the panel heading and covers part of
+    'Partner C'.
+  fix_recommendation: Hover a neutral target (gap band or blank margin) instead of
+    the heading during the hold.
+- scene: '4'
+  dimension: clarity
+  score: 2
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: high
+  detail: The internal run identifier 'synthetic, ace <run>' is visible in the report
+    H1 and the opportunity picker. It is jargon to a partner manager, it wraps the
+    title to two lines, and it triggers the jargon cap.
+  fix_recommendation: Drop the 'ace <opp>/<run-id>' suffix from the synthetic opportunity's
+    display name (keep '(synthetic)' / '(example)'). If the run id is needed for traceability,
+    move it into a tooltip or the admin metadata.
+- scene: '4'
+  dimension: clarity
+  score: 2
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: The own-partner row label in the expanded benchmark chart is truncated ('Partner
+    A (examp'), and the value-column header wraps to four lines ('RAYUWA / CAREGIVERS
+    / ALLIANCE / (EXAMPLE)').
+  fix_recommendation: Render the own row as 'You' (matching the 'Yours' legend) and
+    the column header as 'YOU'.
+- scene: '4'
+  dimension: clarity
+  score: 2
+  route: CONCEPT
+  fix_kind: options
+  fix_scope: recipe
+  severity: low
+  detail: The collapsed-row mini chart is duplicated directly above the expanded chart,
+    and the cursor rests on it, covering the first bar. The 'Ask an agent' floating
+    button overlaps the table.
+  fix_recommendation: 'Options: (a) product: hide the inline mini chart when the row
+    is expanded; (b) recipe: move the cursor to a neutral area after expanding and
+    dismiss the agent button before the hold.'
+- scene: '4'
+  dimension: trust
+  score: 4
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: low
+  detail: '''Classes against plan'' shows a percentage and a target, but not the plan
+    it is measured against (planned class count, period).'
+  fix_recommendation: Add the numerator and denominator to the indicator subline (e.g.
+    'N of M planned classes').
+- scene: '5'
+  dimension: clarity
+  score: 3
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: medium
+  detail: 'Unexplained Attention column, ''n<1: too few records'' legend jargon, and
+    truncated ''AT PAYMENT FLO...'' tile label make the table need a second read.'
+  fix_recommendation: 'Drop the Attention column (or give it a click definition),
+    reword ''n<1'' to ''- : too few records'', move ''lower is better'' under the
+    KPI value so the label fits.'
+- scene: '5'
+  dimension: trust
+  score: 3
+  route: PRODUCT
+  fix_kind: options
+  fix_scope: product
+  severity: medium
+  detail: 'Attention counts contradict the visible flags (Firdausi: red + amber =
+    1; Worker B: red + 2 amber = 1; Kubra: 3 amber = 3), and Kubra Sadiq / Ladi Inuwa
+    at 61.3% vs an 80% target are coloured Watch while the 56.7% headli'
+  fix_recommendation: Either (a) define Attention as the count of coloured cells and
+    compute it that way, or (b) remove it; and state the Off target / Watch threshold
+    in the legend.
+- scene: '5'
+  dimension: trust
+  score: 3
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: low
+  detail: The opportunity picker shows the internal run id 'ace <run>' alongside the
+    synthetic marker.
+  fix_recommendation: Name the synthetic opportunity without the ACE run id, keeping
+    '(synthetic)' and '(example)'.
+- scene: '5'
+  dimension: task_completion
+  score: 4
+  route: PRODUCT
+  fix_kind: mechanical
+  fix_scope: product
+  severity: low
+  detail: The 'Start coaching - 8 educators off target or on watch' chip is ambiguous
+    between a summary label and a bulk action.
+  fix_recommendation: Render the count as plain text and keep Start coaching only
+    as per-row links (or a clearly styled bulk button).
+- scene: '5'
+  dimension: clarity
+  score: 3
+  route: CONCEPT
+  fix_kind: mechanical
+  fix_scope: recipe
+  severity: low
+  detail: Hover cursor covers Worker B's 'Start coaching' link, and the scroll position
+    clips the tab strip/header so the 'figures as of 11 Oct' freshness line is out
+    of frame.
+  fix_recommendation: Hover with the cursor offset to the right of the link and scroll
+    so the Report tab row sits at the top edge.

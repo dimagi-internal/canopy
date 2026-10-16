@@ -87,6 +87,7 @@ class TestProgressSignal:
             "open_findings": 1,
             "mean_cell": 3.1416,
             "confirmed_caps": 2,
+            "workable_score": None,
             "full": True,
         }
 
@@ -99,7 +100,10 @@ class TestProgressSignal:
 
     def test_fewer_caps_or_findings_is_progress(self) -> None:
         a = {"score": 2.0, "open_findings": 10, "mean_cell": 3.5, "confirmed_caps": 3}
-        assert progress.improved_signals([a], {**a, "confirmed_caps": 2}) == ["confirmed_caps"]
+        # One cap dissolving is inside CAPS_BAND (median-of-3 still flips on
+        # noise); more than one clearing is progress.
+        assert progress.improved_signals([a], {**a, "confirmed_caps": 2}) == []
+        assert progress.improved_signals([a], {**a, "confirmed_caps": 1}) == ["confirmed_caps"]
         assert progress.improved_signals([a], {**a, "open_findings": 8}) == ["open_findings"]
 
     def test_a_trickle_of_open_findings_alone_is_not_progress(self) -> None:

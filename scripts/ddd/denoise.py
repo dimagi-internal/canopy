@@ -229,6 +229,99 @@ def trend(history: list[float] | None, *, band: float = NOISE_BAND, window: int 
     return "flat"
 
 
+def plan_confirmations(
+    caps: list[dict],
+    *,
+    cell_floor: dict | None,
+    rejudged: dict[str, list[int] | None] | None = None,
+    threshold: float = CAP_THRESHOLD,
+    judge: str = "concept",
+    targeted: set[str] | None = None,
+) -> dict:
+    """Which first-draw capping cells are worth the k=3 re-judge THIS pass.
+
+    A confirmation is worth its ``CONFIRM_K - 1`` extra dispatches only when its
+    result could change what the loop does — the gate/convergence reading or a
+    stop decision. On noora-health/20261015-1129 ~32 of 96 judge agents were
+    confirmations and none changed a verdict: the score was held at 2 by the user
+    judge and by cells the loop may not edit, so whatever the median, the loop's
+    next move was the same. Skipped:
+
+    * a cap on a PINNED cell (``cell_floor``, :func:`scripts.ddd.floor.classify_cells`)
+      — every finding on it is out of scope; it is reported, never fixed, and it
+      is excluded from the workable score and the caps signal either way;
+    * every cap, when another judge's WORKABLE cell at or below ``threshold``
+      holds the workable floor and is NOT re-judged this pass (``rejudged``: judge
+      -> scenes re-judged, ``None`` = all, a missing judge = carried) — that cell
+      keeps its value, so no concept median can move the workable score, the gate,
+      or the stall/no-gain decisions that read them.
+
+    A cap on a cell the last batch PREDICTED to move (``targeted`` cell keys,
+    :mod:`scripts.ddd.predict`) is always confirmed: ``stop_prediction_failed``
+    reads it, so a single noisy draw must not decide that stop.
+
+    Otherwise confirm (the default, and always when there is no ``cell_floor``).
+    ``{confirm: [cap], skip: [{**cap, why}], reason}``. A judge that skips all of
+    them writes ``distribution.confirmation: skipped`` so the caps count is read
+    as not comparable (:func:`scripts.ddd.progress._confirmed_caps`).
+    """
+    caps = [c for c in caps or [] if isinstance(c, dict)]
+    if not cell_floor or not caps:
+        return {"confirm": caps, "skip": [], "reason": "no cell floor recorded — confirm every cap"}
+    cells = [c for c in cell_floor.get("cells") or [] if isinstance(c, dict)]
+    pinned = {c.get("key") for c in cells if c.get("status") == "pinned"}
+
+    def key(c: dict) -> str:
+        scene = str(c.get("scene")).strip()
+        return f"{judge}:{scene}:{c.get('dimension')}"
+
+    def residual(c: dict) -> str:
+        return f"{judge}:*:{c.get('dimension')}"
+
+    rejudged = rejudged if rejudged is not None else {}
+
+    def carried(cell: dict) -> bool:
+        j = cell.get("judge")
+        if j not in rejudged:
+            return True
+        scenes = rejudged[j]
+        if scenes is None:
+            return False
+        return cell.get("scene") is not None and int(cell["scene"]) not in {int(s) for s in scenes}
+
+    holders = [
+        c for c in cells
+        if c.get("judge") != judge
+        and c.get("status") != "pinned"
+        and float(c.get("score") or 0) <= threshold
+        and carried(c)
+    ]
+    confirm: list[dict] = []
+    skip: list[dict] = []
+    targeted = set(targeted or ())
+    for c in caps:
+        if key(c) in targeted or residual(c) in targeted:
+            confirm.append(c)
+        elif key(c) in pinned or (key(c) not in {x.get("key") for x in cells} and residual(c) in pinned):
+            skip.append({**c, "why": "pinned: every finding on this cell is out of the loop's edit scope"})
+        elif holders:
+            h = holders[0]
+            skip.append({
+                **c,
+                "why": (
+                    f"the workable floor is held at {h.get('score')} by {h.get('key')}, which is "
+                    "carried this pass — no median here can move the score or a stop decision"
+                ),
+            })
+        else:
+            confirm.append(c)
+    reason = (
+        f"confirm {len(confirm)} of {len(caps)} cap(s)"
+        + (f"; skip {len(skip)} whose result cannot change the loop's decision" if skip else "")
+    )
+    return {"confirm": confirm, "skip": skip, "reason": reason}
+
+
 def fingerprint_findings(findings: list[dict] | None) -> list[str]:
     """A stable, order-independent fingerprint set for one iteration's findings.
 
@@ -257,8 +350,76 @@ __all__ = [
     "confirmed_floor",
     "fingerprint_findings",
     "improved",
+    "plan_confirmations",
     "summarize",
     "to_cells",
     "trend",
     "unconfirmed_caps",
 ]
+
+
+def _main(argv: list[str] | None = None) -> int:
+    """``python -m scripts.ddd.denoise plan-confirm <run_id> --caps '<json list>'``.
+
+    Prints :func:`plan_confirmations` for this pass's first-draw capping cells,
+    reading the last assemble's ``cell_floor`` and this pass's ``judge-scope.json``.
+    """
+    import argparse
+    import json
+    import sys
+
+    ap = argparse.ArgumentParser(prog="python -m scripts.ddd.denoise")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("plan-confirm", help="which capping cells deserve the k=3 re-judge")
+    p.add_argument("run", help="run_id, or the run dir (holding run_state.yaml)")
+    p.add_argument("--caps", required=True, help="JSON list of {scene, dimension, score}, or @file")
+    args = ap.parse_args(argv)
+    from pathlib import Path
+
+    import yaml
+
+    from scripts.ddd.runstate import _resolve_ddd_dir, _run_dir_for, load
+    from scripts.ddd.schemas.models import RunState
+
+    raw = args.caps
+    if raw.startswith("@"):
+        raw = Path(raw[1:]).read_text()
+    try:
+        caps = json.loads(raw)
+        if (Path(args.run) / "run_state.yaml").exists():
+            run_dir = Path(args.run)
+            state = RunState.model_validate(yaml.safe_load((run_dir / "run_state.yaml").read_text()) or {})
+        else:
+            state = load(args.run)
+            run_dir = _run_dir_for(_resolve_ddd_dir(), args.run)
+    except (ValueError, OSError) as exc:
+        print(f"denoise plan-confirm: {exc}", file=sys.stderr)
+        return 2
+    scope_path = run_dir / "judge-scope.json"
+    rejudged: dict[str, list[int] | None] = {}
+    try:
+        scope = json.loads(scope_path.read_text()) if scope_path.exists() else {}
+    except (OSError, ValueError):
+        scope = {}
+    full = bool(scope.get("full", True))
+    for j in scope.get("judges") or ["concept", "user", "arc"]:
+        if full:
+            rejudged[j] = None
+        elif j == "user":
+            rejudged[j] = list(scope.get("user_scenes") or scope.get("rejudge") or [])
+        elif j == "arc":
+            rejudged[j] = None if scope.get("arc", True) else []
+        else:
+            rejudged[j] = list(scope.get("rejudge") or [])
+    from scripts.ddd import predict
+
+    targeted = predict.targeted_cells(state)
+    print(json.dumps(
+        plan_confirmations(caps, cell_floor=state.cell_floor, rejudged=rejudged, targeted=targeted),
+        indent=1,
+    ))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
