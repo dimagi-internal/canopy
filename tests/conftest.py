@@ -56,6 +56,11 @@ def _no_ambient_device_key(monkeypatch, tmp_path_factory):
     Enclave helper at nothing."""
     monkeypatch.setenv("CANOPY_DEVICE_KEY_DIR", str(tmp_path_factory.mktemp("device-key")))
     monkeypatch.setenv("CANOPY_DEVICE_KEY_BIN", "/nonexistent/canopy-device-key")
+    # Nor probe a real EC2 instance metadata service (aws-iam, canopy-web#1549): a closed
+    # local port refuses at once, so "not EC2" costs nothing and a CI VM's IMDS is never hit.
+    monkeypatch.setenv("CANOPY_AWS_IMDS_URL", "http://127.0.0.1:9")
+    from orchestrator import device_key_aws
+    device_key_aws._reset_cache()
 
 
 @pytest.fixture(autouse=True)

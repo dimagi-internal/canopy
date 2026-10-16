@@ -11,8 +11,16 @@ on this machine and nowhere else:
   ``dataRepresentation`` blob is on disk (``se.key``); it is useless off this Mac's
   enclave. It is created WITHOUT a user-presence requirement, because unattended turns
   must never prompt.
-* **software** — anywhere else (no enclave, Linux, Windows): a P-256 key in a 0600 PEM
-  (``sw.pem``), registered as ``kind=software`` so canopy-web can tell the two apart.
+* **tpm** — on Windows with a TPM, a non-exportable P-256 key named ``canopy-device-key`` in
+  the CNG "Microsoft Platform Crypto Provider", made and used through ctypes over
+  ``ncrypt.dll`` (no native dependency), with no UI policy so it never prompts. Only a
+  marker (``tpm.json``) is on disk. See :mod:`orchestrator.device_key_tpm`.
+* **aws-iam** — on an EC2 cloud runner, no key at all: the box's instance ROLE is its
+  identity (the HashiCorp Vault AWS-auth pattern, canopy-web#1549). A resolve carries an
+  ``X-Canopy-Aws-Proof`` header — a SigV4-signed, unsent ``sts:GetCallerIdentity`` that
+  canopy-web replays to STS. See :mod:`orchestrator.device_key_aws`. Marker: ``aws-iam.json``.
+* **software** — anywhere else (no enclave, no TPM, not EC2): a P-256 key in a 0600 PEM
+  (``sw.pem``), registered as ``kind=software`` so canopy-web can tell them apart.
 
 Enrollment: ``POST /api/runner-device-keys/`` registers the public JWK for a runner and
 answers ``{id, jkt, status: "pending", approve_url}``; a person approves it in canopy-web
@@ -43,6 +51,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 KIND_SE = "secure-enclave"
 KIND_SOFTWARE = "software"
+KIND_TPM = "tpm"
+KIND_AWS_IAM = "aws-iam"
+KINDS = (KIND_SE, KIND_TPM, KIND_AWS_IAM, KIND_SOFTWARE)
 
 #: The helper's location after the runner installer built it; overridable for tests.
 HELPER_ENV = "CANOPY_DEVICE_KEY_BIN"
@@ -82,6 +93,16 @@ def sw_path() -> Path:
 
 def status_path() -> Path:
     return key_dir() / "status.json"
+
+
+def tpm_path() -> Path:
+    """Marker for a TPM key: the key itself lives in the platform provider, by name."""
+    return key_dir() / "tpm.json"
+
+
+def aws_path() -> Path:
+    """Marker for an aws-iam identity: the instance role's ARN (not a secret)."""
+    return key_dir() / "aws-iam.json"
 
 
 def helper_path(which: Callable[[str], Optional[str]] = shutil.which) -> Optional[str]:
@@ -159,9 +180,15 @@ class DeviceKey:
     kind: str
     public_jwk: dict
     _sign: Callable[[bytes], bytes]
+    #: aws-iam only: the instance role this box proves it is (no JWK, no signing key).
+    role_arn: str = ""
 
     @property
     def jkt(self) -> str:
+        if self.kind == KIND_AWS_IAM:
+            # canopy-web keys an aws-iam row by the sha256 of its role ARN. It is the
+            # server's answer that is cached; this is only for showing an unregistered one.
+            return hashlib.sha256(self.role_arn.encode("utf-8")).hexdigest()
         return jwk_thumbprint(self.public_jwk)
 
     def sign(self, data: bytes) -> bytes:
@@ -241,9 +268,40 @@ def _create_software() -> DeviceKey:
     return _sw_key(pem)
 
 
+def _read_marker(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _tpm_key(marker: dict) -> DeviceKey:
+    from orchestrator import device_key_tpm as tpm
+    key = tpm.open_key(str(marker.get("name") or tpm.KEY_NAME))
+    return DeviceKey(KIND_TPM, key.public_jwk(), key.sign)
+
+
+def _aws_key(role_arn: str) -> DeviceKey:
+    def no_sign(_data: bytes) -> bytes:
+        raise DeviceKeyError("an aws-iam identity signs no JWS — it sends X-Canopy-Aws-Proof")
+    return DeviceKey(KIND_AWS_IAM, {}, no_sign, role_arn=role_arn)
+
+
 def load(*, runner: Runner = subprocess.run,
          which: Callable[[str], Optional[str]] = shutil.which) -> Optional[DeviceKey]:
     """The existing device key, or None when this machine has none. Never creates."""
+    if aws_path().is_file():
+        arn = str(_read_marker(aws_path()).get("role_arn") or "")
+        if not arn:
+            raise DeviceKeyError(f"{aws_path()} names no role ARN — re-enroll with "
+                                 "`canopy vault device --reenroll`")
+        return _aws_key(arn)
+    if tpm_path().is_file():
+        try:
+            return _tpm_key(_read_marker(tpm_path()))
+        except Exception as e:  # noqa: BLE001 — name it as a device-key problem
+            raise DeviceKeyError(f"the TPM key named in {tpm_path()} could not be opened ({e})")
     if se_path().is_file():
         helper = helper_path(which)
         if not helper:
@@ -256,44 +314,122 @@ def load(*, runner: Runner = subprocess.run,
     return None
 
 
-def ensure(*, allow_software: Optional[bool] = None, runner: Runner = subprocess.run,
+def _create_tpm() -> DeviceKey:
+    from orchestrator import device_key_tpm as tpm
+    key = tpm.create_key(tpm.KEY_NAME)
+    _write_private(tpm_path(), json.dumps({"provider": tpm.PROVIDER, "name": tpm.KEY_NAME},
+                                          indent=1).encode("utf-8"))
+    return DeviceKey(KIND_TPM, key.public_jwk(), key.sign)
+
+
+def _create_aws() -> DeviceKey:
+    from orchestrator import device_key_aws as aws
+    creds = aws.instance_credentials()
+    if creds is None:
+        raise DeviceKeyError("no EC2 instance role here (the instance metadata service did not "
+                             "answer with role credentials) — aws-iam is for cloud runners")
+    try:
+        arn = aws.caller_role_arn(creds)
+    except aws.AwsProofError as e:
+        raise DeviceKeyError(f"could not learn this box's role ARN from STS ({e})")
+    _write_private(aws_path(), json.dumps({"role_arn": arn}, indent=1).encode("utf-8"))
+    return _aws_key(arn)
+
+
+def _tpm_available() -> bool:
+    try:
+        from orchestrator import device_key_tpm as tpm
+        return tpm.available()
+    except Exception:  # noqa: BLE001 — no TPM is the common answer, not an error
+        return False
+
+
+def _on_ec2() -> bool:
+    try:
+        from orchestrator import device_key_aws as aws
+        return aws.instance_credentials() is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def ensure(*, allow_software: Optional[bool] = None, kind: Optional[str] = None,
+           runner: Runner = subprocess.run,
            which: Callable[[str], Optional[str]] = shutil.which,
-           system: Callable[[], str] = platform.system) -> tuple[DeviceKey, bool]:
+           system: Callable[[], str] = platform.system,
+           tpm_available: Callable[[], bool] = _tpm_available,
+           on_ec2: Callable[[], bool] = _on_ec2) -> tuple[DeviceKey, bool]:
     """(the device key, whether it was created now). Idempotent.
 
-    On a Mac the Secure Enclave is used whenever the helper says it is available. A Mac
-    WITHOUT the helper is an error, not a silent software key: a software key made there
-    would later sit beside the enclave key the installer meant to make. `allow_software`
-    forces the software kind (or, False, forbids it); the default allows it only where
-    there is no enclave to prefer."""
+    `kind` asks for one kind and fails loudly when this machine cannot make it. Without
+    it the strongest kind this machine has is used:
+
+    * a Mac: the Secure Enclave whenever the helper says it is available. A Mac WITHOUT
+      the helper is an error, not a silent software key: a software key made there would
+      later sit beside the enclave key the installer meant to make;
+    * Windows: the TPM (Microsoft Platform Crypto Provider), else software;
+    * an EC2 box with an instance role: aws-iam, else software.
+
+    `allow_software` forces the software kind (or, False, forbids it); the default allows
+    it only where there is nothing stronger to prefer. An existing key always wins — a
+    different kind needs `--reenroll`."""
+    if kind is not None and kind not in KINDS:
+        raise DeviceKeyError(f"unknown device key kind {kind!r} (one of {', '.join(KINDS)})")
+    if allow_software is True and kind is None:
+        kind = KIND_SOFTWARE
     existing = load(runner=runner, which=which)
     if existing is not None:
+        if kind is not None and existing.kind != kind:
+            raise DeviceKeyError(f"this machine already has a {existing.kind} device key — "
+                                 f"`canopy vault device --reenroll --kind {kind}` replaces it")
         return existing, False
-    is_mac = system() == "Darwin"
-    helper = helper_path(which) if is_mac else None
-    if helper and allow_software is not True:
-        info = helper_info(helper, runner=runner)
-        if info.get("secure_enclave_available"):
-            _ensure_dir()
-            p = _run_helper(helper, "create", runner=runner)
-            if p.returncode != 0:
-                raise _helper_fail("create", p)
-            return _se_key(helper, runner), True
+    os_name = system()
+    if kind == KIND_SOFTWARE:
+        return _create_software(), True
+    if kind == KIND_TPM or (kind is None and os_name == "Windows"):
+        if tpm_available():
+            return _create_tpm(), True
+        if kind == KIND_TPM:
+            raise DeviceKeyError("no TPM here: the Microsoft Platform Crypto Provider is not "
+                                 "available (no TPM 2.0, or not Windows)")
+    if kind == KIND_AWS_IAM or (kind is None and os_name == "Linux"):
+        if kind == KIND_AWS_IAM or on_ec2():
+            return _create_aws(), True
+    if kind == KIND_SE or (kind is None and os_name == "Darwin"):
+        helper = helper_path(which) if os_name == "Darwin" else None
+        if helper:
+            info = helper_info(helper, runner=runner)
+            if info.get("secure_enclave_available"):
+                _ensure_dir()
+                p = _run_helper(helper, "create", runner=runner)
+                if p.returncode != 0:
+                    raise _helper_fail("create", p)
+                return _se_key(helper, runner), True
+        if kind == KIND_SE:
+            raise DeviceKeyError("no Secure Enclave key could be made here (not a Mac with "
+                                 "the canopy-device-key helper and an enclave)")
+        if not helper and allow_software is None:
+            raise DeviceKeyError(
+                "this Mac has no canopy-device-key helper to make a Secure Enclave key — re-run "
+                "the runner installer (it builds ~/.canopy/bin/canopy-device-key), or pass "
+                "--software to register a software key instead")
     if allow_software is False:
-        raise DeviceKeyError("no Secure Enclave key could be made here and software keys "
+        raise DeviceKeyError("no hardware-bound key could be made here and software keys "
                              "were not allowed")
-    if is_mac and not helper and allow_software is None:
-        raise DeviceKeyError(
-            "this Mac has no canopy-device-key helper to make a Secure Enclave key — re-run "
-            "the runner installer (it builds ~/.canopy/bin/canopy-device-key), or pass "
-            "--software to register a software key instead")
     return _create_software(), True
 
 
 def remove_local() -> list[str]:
-    """Delete the local key files and the status cache; returns what was removed."""
+    """Delete the local key files and the status cache; returns what was removed. A TPM
+    key is also deleted from its provider (best effort — it is revoked server-side)."""
     gone = []
-    for p in (se_path(), sw_path(), status_path()):
+    if tpm_path().is_file():
+        try:
+            from orchestrator import device_key_tpm as tpm
+            tpm.delete_key(str(_read_marker(tpm_path()).get("name") or tpm.KEY_NAME))
+            gone.append("tpm:" + tpm.KEY_NAME)
+        except Exception:  # noqa: BLE001 — the marker still goes; a re-create overwrites
+            pass
+    for p in (se_path(), sw_path(), tpm_path(), aws_path(), status_path()):
         if p.exists():
             p.unlink()
             gone.append(str(p))
@@ -322,7 +458,9 @@ def dpop_proof(key: DeviceKey, method: str, url: str, *, now: Optional[float] = 
 
 def proof_headers(method: str, url: str, *, runner: Runner = subprocess.run,
                   which: Callable[[str], Optional[str]] = shutil.which) -> dict:
-    """``{"DPoP": proof}`` when this machine holds a REGISTERED device key, else ``{}``.
+    """The proof header for a request, when this machine holds a REGISTERED device key:
+    ``{"DPoP": jws}`` for a key that signs (secure-enclave, tpm, software), or
+    ``{"X-Canopy-Aws-Proof": …}`` for an EC2 box's aws-iam identity. Else ``{}``.
 
     Never raises: a resolve must behave exactly as before when there is no key, the
     helper is missing, or anything else goes wrong — the server decides whether a proof
@@ -332,7 +470,18 @@ def proof_headers(method: str, url: str, *, runner: Runner = subprocess.run,
         if st.get("status") not in PROOF_STATUSES:
             return {}
         key = load(runner=runner, which=which)
-        if key is None or (st.get("jkt") and st["jkt"] != key.jkt):
+        if key is None:
+            return {}
+        if key.kind == KIND_AWS_IAM:
+            if st.get("kind") != KIND_AWS_IAM or (st.get("role_arn") and
+                                                  st["role_arn"] != key.role_arn):
+                return {}
+            from orchestrator import device_key_aws as aws
+            creds = aws.instance_credentials()
+            if creds is None:
+                return {}
+            return {aws.PROOF_HEADER: aws.proof(creds, normalize_htu(url))}
+        if st.get("jkt") and st["jkt"] != key.jkt:
             return {}
         return {"DPoP": dpop_proof(key, method, url)}
     except Exception:  # noqa: BLE001 — a proof is an addition, never a new failure
@@ -376,26 +525,47 @@ Call = Callable[..., dict]
 
 
 def enroll(*, runner_id: str, call: Call, label: str = "", allow_software: Optional[bool] = None,
+           kind: Optional[str] = None, base_url: Optional[str] = None,
            runner: Runner = subprocess.run,
-           which: Callable[[str], Optional[str]] = shutil.which) -> dict:
+           which: Callable[[str], Optional[str]] = shutil.which, **ensure_kw) -> dict:
     """Ensure a key exists and is registered for `runner_id`; returns the cached status
-    (`id`, `jkt`, `status`, `approve_url`, `kind`, `runner`, `created`).
+    (`id`, `jkt`, `status`, `approve_url`, `kind`, `runner`, `created`; `role_arn` for
+    aws-iam).
 
     `call(method, path, body)` is canopy-web, already authenticated. Re-posting the same
-    jkt is idempotent on the server, so this is safe on every runner start."""
+    key is idempotent on the server, so this is safe on every runner start. An aws-iam
+    identity registers ``{runner, kind, role_arn, proof}`` instead of a JWK: canopy-web
+    replays the proof to STS and creates the pending key only if the ARN matches."""
     if not runner_id:
         raise DeviceKeyError("no runner id — pair this machine as a runner first "
                              "(~/.canopy/runner.json has none), or pass --runner")
-    key, created = ensure(allow_software=allow_software, runner=runner, which=which)
-    body = call("POST", REGISTER_PATH, {"runner": runner_id, "public_jwk": key.public_jwk,
-                                         "kind": key.kind, "label": label or default_label()})
-    jkt = str(body.get("jkt") or key.jkt)
-    if jkt != key.jkt:
-        raise DeviceKeyError(f"canopy-web registered thumbprint {jkt}, but this key's is "
-                             f"{key.jkt} — refusing to cache a mismatch")
+    key, created = ensure(allow_software=allow_software, kind=kind, runner=runner,
+                          which=which, **ensure_kw)
+    label = label or default_label()
+    if key.kind == KIND_AWS_IAM:
+        from orchestrator import canopy_web
+        from orchestrator import device_key_aws as aws
+        creds = aws.instance_credentials()
+        if creds is None:
+            raise DeviceKeyError("the instance role's credentials are not available from the "
+                                 "instance metadata service — cannot prove the role")
+        htu = normalize_htu(canopy_web.resolve_base_url(base_url) + REGISTER_PATH)
+        body = call("POST", REGISTER_PATH, {"runner": runner_id, "kind": key.kind,
+                                             "role_arn": key.role_arn, "label": label,
+                                             "proof": aws.proof(creds, htu)})
+        jkt = str(body.get("jkt") or key.jkt)    # the server's: sha256 of the role ARN
+    else:
+        body = call("POST", REGISTER_PATH, {"runner": runner_id, "public_jwk": key.public_jwk,
+                                             "kind": key.kind, "label": label})
+        jkt = str(body.get("jkt") or key.jkt)
+        if jkt != key.jkt:
+            raise DeviceKeyError(f"canopy-web registered thumbprint {jkt}, but this key's is "
+                                 f"{key.jkt} — refusing to cache a mismatch")
     status = {"id": body.get("id"), "jkt": jkt, "status": str(body.get("status") or "pending"),
               "approve_url": str(body.get("approve_url") or ""), "kind": key.kind,
               "runner": runner_id, "checked_at": time.time()}
+    if key.role_arn:
+        status["role_arn"] = key.role_arn
     write_status(status)
     return {**status, "created": created}
 

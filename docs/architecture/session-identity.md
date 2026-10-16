@@ -183,7 +183,8 @@ canopy vault import --agent X [--switch]       # 1Password -> canopy-web, as YOU
 canopy vault status --agent X [--no-drift]     # per ref: present, last read, drift (hash only)
 canopy vault switch --agent X --to canopy-web|1password
 canopy vault export --agent X [--check]        # canopy-web -> 1Password (the rollback)
-canopy vault device [--enroll|--reenroll|--refresh]
+canopy vault device [--enroll|--reenroll|--refresh] [--kind K]
+canopy vault binding --agent X on|off          # PATCH /device-binding {require_device_binding}
 ```
 
 - **Refs** = every `NAME=` line of the agent's `.env.tpl` (an `op://` ref is read; a literal is
@@ -202,6 +203,20 @@ canopy vault device [--enroll|--reenroll|--refresh]
   P-256 key in `~/.canopy/device-key/sw.pem` (0600). The laptop runner enrolls it at startup
   (`POST /api/runner-device-keys/`); a person approves the `approve_url` in canopy-web with a
   passkey. `canopy vault device` / `status` show it.
+- **Phase 1b kinds (canopy-web#1549).** `--kind` defaults to the strongest the machine has.
+  - **`tpm`** (Windows): a non-exportable P-256 key named `canopy-device-key` in the CNG
+    "Microsoft Platform Crypto Provider", ctypes over `ncrypt.dll`, no UI policy (never
+    prompts). Same DPoP proof. No TPM → `software`. Only `tpm.json` (a marker) is on disk.
+  - **`aws-iam`** (an EC2 box with an instance role): no key — the role IS the identity
+    (HashiCorp Vault AWS-auth). Each resolve carries `X-Canopy-Aws-Proof` = base64 JSON
+    `{method, url, headers, body}` of a SigV4-signed, **unsent** `sts:GetCallerIdentity`
+    (`POST https://sts.amazonaws.com/`, `Action=GetCallerIdentity&Version=2011-06-15`) whose
+    SIGNED headers include `X-Canopy-Proof-Htu` (the URL being called, no query) and
+    `X-Canopy-Proof-Iat` (unix seconds). canopy-web replays it to its own pinned STS endpoint.
+    Enrollment posts `{runner, kind: "aws-iam", role_arn, proof}` (the role ARN learned by
+    actually sending GetCallerIdentity once). Credentials come from IMDSv2 and stay in memory.
+    canopy-web's `runner/ec2/cloud_runner.py` carries the same stdlib signer for its own
+    resolves; both are pinned to a botocore `SigV4Auth` vector.
 
 **Pilot (Eva, Jonathan's Mac):** `canopy vault import --agent eva` → approve the runner's
 device key in canopy-web → `canopy vault switch --agent eva --to canopy-web`, then set

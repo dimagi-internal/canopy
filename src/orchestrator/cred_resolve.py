@@ -12,8 +12,9 @@ in one place:
   asked for that exist, whichever server answered.
 * ``X-Canopy-Turn-Id`` — when a runner turn is known, so the read log names the turn.
 * ``DPoP`` — a device proof (`device_key.proof_headers`) when this machine holds a
-  registered device key. Required by canopy-web only for an agent with
-  ``require_device_binding`` on; ignored otherwise.
+  registered device key; on an EC2 cloud runner enrolled as ``aws-iam``, an
+  ``X-Canopy-Aws-Proof`` instead (canopy-web#1549). Required by canopy-web only for an
+  agent with ``require_device_binding`` on; ignored otherwise.
 
 A 401 ``device_proof_required`` is turned into an error that says how to get this
 machine approved. Nothing here prints a value.
