@@ -130,13 +130,43 @@ def catalog_from_repo(repo_dir: Path) -> list[dict]:
 
 # ---- API operations -------------------------------------------------------------------
 
-def register(repo_dir: Path) -> dict:
+#: canopy-web's refusal of a NEW agent with no `workspace` from a caller in more than
+#: one workspace (apps/agents/api.py `upsert_agent`).
+_AMBIGUOUS_HOME = "no unambiguous workspace to home this agent in"
+
+
+def register(repo_dir: Path, workspace: str = "") -> dict:
+    """Upsert the agent. ``workspace`` is an explicit home: always sent, so it MOVES an
+    already-registered agent (same contract as ``canopy agent register --workspace``).
+
+    Without one, the body carries no workspace — an existing agent stays put, which is what
+    the skills/sync/tasks verbs need when they re-register on every call. Only when canopy-web
+    refuses a NEW agent as ambiguous (the caller is in two workspaces) does this retry with a
+    fallback home: ``workspace`` in config/agent.json, else ``CANOPY_WEB_WORKSPACE``. That
+    refusal happens on create only, so a fallback can never move an existing agent."""
     ident = resolve_identity(repo_dir)
-    return _call("/api/agents/", {
+    body = {
         "slug": ident["slug"], "name": ident["name"], "email": ident["email"],
         "description": ident["description"], "persona": ident["persona"],
         "avatar_url": ident["avatar_url"],
-    })
+    }
+    explicit = (workspace or "").strip()
+    if explicit:
+        return _call("/api/agents/", {**body, "workspace": explicit})
+    try:
+        return _call("/api/agents/", body)
+    except AgentWebError as e:
+        if _AMBIGUOUS_HOME not in str(e):
+            raise
+        fallback = (str(ident.get("workspace") or "").strip()
+                    or canopy_web.resolve_workspace(None) or "")
+        if not fallback:
+            raise AgentWebError(
+                f"{e}\n→ you belong to more than one canopy-web workspace, so name the one "
+                f"'{ident['slug']}' lives in: `canopy agent-publish register --workspace <slug>`, "
+                "or set \"workspace\" in config/agent.json, or CANOPY_WEB_WORKSPACE=<slug>."
+            ) from e
+        return _call("/api/agents/", {**body, "workspace": fallback})
 
 
 def put_skills(repo_dir: Path) -> dict:

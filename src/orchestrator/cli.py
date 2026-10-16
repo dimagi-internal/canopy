@@ -2153,24 +2153,34 @@ def _agent_repo(repo):
 
 @agent_publish.command("register")
 @click.option("--repo", default=None, type=click.Path(), help="Agent repo (default: cwd)")
-def agent_publish_register(repo):
+@click.option("--workspace", default="",
+              help="canopy-web workspace to home the agent in. Needed to CREATE an agent when "
+                   "you belong to more than one workspace; on an existing agent it MOVES it. "
+                   "Omitted: config/agent.json `workspace`, then CANOPY_WEB_WORKSPACE, are "
+                   "used only if canopy-web cannot place a new agent itself.")
+def agent_publish_register(repo, workspace):
     """Register (idempotent) the agent as a first-class canopy-web agent."""
     import json as json_mod
     from orchestrator.agent_web import register, AgentWebError
     try:
-        click.echo(json_mod.dumps(register(_agent_repo(repo))))
+        click.echo(json_mod.dumps(register(_agent_repo(repo), workspace)))
     except AgentWebError as e:
         raise click.ClickException(str(e))
 
 
 @agent_publish.command("skills")
 @click.option("--repo", default=None, type=click.Path(), help="Agent repo (default: cwd)")
-def agent_publish_skills(repo):
+@click.option("--workspace", default="",
+              help="canopy-web workspace to home the agent in. Needed to CREATE an agent when "
+                   "you belong to more than one workspace; on an existing agent it MOVES it. "
+                   "Omitted: config/agent.json `workspace`, then CANOPY_WEB_WORKSPACE, are "
+                   "used only if canopy-web cannot place a new agent itself.")
+def agent_publish_skills(repo, workspace):
     """Mirror the agent's skills/*/SKILL.md into its canopy-web skill catalog."""
     import json as json_mod
     from orchestrator.agent_web import put_skills, register, AgentWebError
     try:
-        register(_agent_repo(repo))            # ensure the agent exists first
+        register(_agent_repo(repo), workspace)  # ensure the agent exists first
         click.echo(json_mod.dumps(put_skills(_agent_repo(repo))))
     except AgentWebError as e:
         raise click.ClickException(str(e))
@@ -2178,6 +2188,11 @@ def agent_publish_skills(repo):
 
 @agent_publish.command("sync")
 @click.option("--repo", default=None, type=click.Path(), help="Agent repo (default: cwd)")
+@click.option("--workspace", default="",
+              help="canopy-web workspace to home the agent in. Needed to CREATE an agent when "
+                   "you belong to more than one workspace; on an existing agent it MOVES it. "
+                   "Omitted: config/agent.json `workspace`, then CANOPY_WEB_WORKSPACE, are "
+                   "used only if canopy-web cannot place a new agent itself.")
 @click.option("--doc-url", required=True)
 @click.option("--title", required=True)
 @click.option("--summary", default="")
@@ -2185,12 +2200,12 @@ def agent_publish_skills(repo):
 @click.option("--period-start", required=True)
 @click.option("--period-end", required=True)
 @click.option("--source", default="manager-sync")
-def agent_publish_sync(repo, doc_url, title, summary, grades, period_start, period_end, source):
+def agent_publish_sync(repo, workspace, doc_url, title, summary, grades, period_start, period_end, source):
     """Post a sync (the gdoc is the body; grades + summary land on the feed card)."""
     import json as json_mod
     from orchestrator.agent_web import post_sync, register, AgentWebError
     try:
-        register(_agent_repo(repo))
+        register(_agent_repo(repo), workspace)
         out = post_sync(
             _agent_repo(repo), doc_url=doc_url, title=title, summary=summary,
             grades=json_mod.loads(grades), period_start=period_start,
@@ -2203,14 +2218,19 @@ def agent_publish_sync(repo, doc_url, title, summary, grades, period_start, peri
 
 @agent_publish.command("tasks")
 @click.option("--repo", default=None, type=click.Path(), help="Agent repo (default: cwd)")
+@click.option("--workspace", default="",
+              help="canopy-web workspace to home the agent in. Needed to CREATE an agent when "
+                   "you belong to more than one workspace; on an existing agent it MOVES it. "
+                   "Omitted: config/agent.json `workspace`, then CANOPY_WEB_WORKSPACE, are "
+                   "used only if canopy-web cannot place a new agent itself.")
 @click.argument("tasks_json", type=click.Path(exists=True))
-def agent_publish_tasks(repo, tasks_json):
+def agent_publish_tasks(repo, workspace, tasks_json):
     """Create tasks (asks included) from a JSON file (must be a JSON list). Safe to re-run:
     a task naming an ext_id replays instead of duplicating."""
     import json as json_mod
     from orchestrator.agent_web import push_tasks, register, AgentWebError
     try:
-        register(_agent_repo(repo))
+        register(_agent_repo(repo), workspace)
         tasks = json_mod.load(open(tasks_json, encoding="utf-8"))
         if not isinstance(tasks, list):
             raise click.ClickException("tasks file must be a JSON list")
