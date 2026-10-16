@@ -30,11 +30,11 @@ def _fake_canopy(tmp_path, out=KEY, rc=0, sync="unchanged", sync_rc=0):
 
 
 def _run(tmp_path, *, slug="eva", have_key=False, out=KEY, rc=0, env_file=True,
-         sync="unchanged", sync_rc=0, binding=None):
+         sync="unchanged", sync_rc=0, binding=None, turn_id=None):
     bindir, log = _fake_canopy(tmp_path, out, rc, sync, sync_rc)
     env = {k: v for k, v in os.environ.items()
            if k not in ("CANOPY_AGENT", "OP_SERVICE_ACCOUNT_TOKEN", "CLAUDE_ENV_FILE",
-                        "AGENT_VAULT", "AGENT_SLUG")}
+                        "AGENT_VAULT", "AGENT_SLUG", "CANOPY_TURN_ID")}
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     env["HOME"] = str(home)   # never the real ~/.<slug>/canopy-instance.json
@@ -46,6 +46,8 @@ def _run(tmp_path, *, slug="eva", have_key=False, out=KEY, rc=0, env_file=True,
         env["CANOPY_AGENT"] = slug
     if have_key:
         env["OP_SERVICE_ACCOUNT_TOKEN"] = "already"
+    if turn_id:
+        env["CANOPY_TURN_ID"] = turn_id
     ef = tmp_path / "session.env"
     if env_file:
         env["CLAUDE_ENV_FILE"] = str(ef)
@@ -70,7 +72,8 @@ def test_inert_outside_an_agent_session(tmp_path):
 
 
 def test_a_key_already_present_is_kept_but_borrowed_creds_are_still_staged(tmp_path):
-    # A cloud turn has its key; it still gets what it borrows staged (canopy-web#1291).
+    # A laptop session with its key already exported still gets what it borrows staged
+    # (canopy-web#1291).
     r, ef, log = _run(tmp_path, have_key=True)
     assert r.returncode == 0 and not ef.exists()
     assert log.read_text().splitlines() == ["agent stage-delegated --slug eva",
@@ -94,6 +97,15 @@ def test_a_callers_confined_turn_never_stages_borrowed_creds(tmp_path, monkeypat
     r, _, log = _run(tmp_path)
     logged = log.read_text() if log.exists() else ""
     assert "stage-delegated" not in logged and "cred sync" not in logged
+
+
+def test_a_runner_turn_never_stages_borrowed_creds_itself(tmp_path):
+    # The cloud runner already staged them (cloud_runner._stage_salesforce) with ITS
+    # credentials; the hook would ask /credentials/resolve with the agent's own PAT, which
+    # 403s on every turn (lex, 2026-10-16) — or, on an empty answer, delete the runner's copy.
+    r, _, log = _run(tmp_path, have_key=True, turn_id="6f1c0000-0000-0000-0000-000000000001")
+    assert r.returncode == 0
+    assert log.read_text().splitlines() == ["cred sync --agent eva", "key=already"]
 
 
 def test_failure_is_fail_open_and_says_so(tmp_path):
