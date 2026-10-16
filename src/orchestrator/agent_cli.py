@@ -1882,6 +1882,43 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     click.echo(f"  verify:  canopy agent turns --slug {slug}")
 
 
+@agent.command("landscape")
+@click.option("--slug", required=True, help="The conductor agent reading its tree (decides 'may run').")
+@click.option("--workspace", default=None,
+              help="Workspace whose tree to read (default: the root of --slug's own organisation).")
+@click.option("--groups-file", type=click.Path(exists=True, dir_okay=False), default=None,
+              help='JSON {"work_groups": [{"name", "keywords": [...]}, …]} — adds who each group needs.')
+@click.option("--members", "members_only", is_flag=True, help="Print only the member list (needs --groups-file).")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+def agent_landscape(slug, workspace, groups_file, members_only, as_json):
+    """The agent landscape of ONE workspace tree: every agent in the workspace and its
+    sub-workspaces, its owner, whether --slug may run it, its skills and recent turns
+    (canopy-web agent-topology; admin and above). Any workspace's conductor agent uses the
+    same command for its own tree. With --groups-file, also who each work group needs: an
+    agent joins with >=2 skills NAMED for the group and only if --slug may run it."""
+    from orchestrator import canopy_web
+    from orchestrator import agent_landscape as L
+
+    try:
+        root = workspace or L.default_root(canopy_web.call, slug)
+        land = L.fetch(canopy_web.call, slug, root)
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+    sel = None
+    if groups_file:
+        groups = json.loads(Path(groups_file).read_text(encoding="utf-8")).get("work_groups") or []
+        sel = L.select_members(land["agents"], groups, slug)
+    if members_only:
+        if sel is None:
+            raise click.UsageError("--members needs --groups-file")
+        click.echo(",".join(sel["members"]))
+        return
+    if as_json:
+        _emit({**land, "selection": sel})
+        return
+    click.echo(L.render(land, slug, sel))
+
+
 @agent.command("turns")
 @click.option("--slug", required=True)
 @click.option("--limit", default=10, type=int)
