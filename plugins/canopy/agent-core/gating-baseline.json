@@ -86,6 +86,30 @@
       "_pattern_doc": "Listing other processes' FULL command lines or environments. The shell this tool runs in is started with its environment exported INLINE on its command line — an agent's OP_SERVICE_ACCOUNT_TOKEN among it — so `pgrep -fl`, `ps aux`, `ps -ef` print that key into the transcript. 2026-10-15: a `pgrep -fl wire.sh` printed Ada's 1Password key and it had to be rotated. Matches ps with a/x/-e/-f style selectors or an args/command column, pgrep/pidof listing args (-l/-a), and /proc/<pid>/cmdline|environ reads. `pgrep -f <pattern>` alone prints PIDs and stays free.",
       "pattern": "(?:^|\\b(?:then|do|else)\\s+)(?:sudo\\s+)?(?:ps\\s+(?:[^\\n|;&]*\\s)?(?:-?[a-zA-Z]*(?:ax|xa|aux|e[fF]|[fF]e)[a-zA-Z]*|-[a-zA-Z]*[fF][a-zA-Z]*)(?:\\s|$)|ps\\b[^\\n|;&]*-o\\s*\\S*(?:args|command|cmd)|pgrep\\s+(?:[^\\n|;&]*\\s)?-[a-zA-Z]*[la][a-zA-Z]*(?:\\s|$))|/proc/[^/\\s]+/(?:cmdline|environ)\\b",
       "message": "BLOCKED: this lists other processes' full command lines (or environments). This session's shell exports its environment INLINE on its command line — including a 1Password service-account key — so the listing prints secrets into the transcript (it happened 2026-10-15; the key was rotated). Instead: `pgrep -f <pattern>` (PIDs only), `ps -o pid,etime,comm -p <pid>` (no arguments), or `pgrep -x <name>`."
+    },
+    {
+      "tool": "Bash",
+      "per_statement": true,
+      "agent_only": true,
+      "_agent_only_doc": "A human's own session is not bound by the agent consent rule; this is about what an AGENT may read.",
+      "_pattern_doc": "Direct Slack HISTORY reads (canopy-web#1533, Jonathan 2026-10-16: an agent may go back through a Slack channel only 'by asking for permission (you are never allowed to do this without permission)'). The sanctioned path is canopy-web's channel ingest: the request posts an Approve/Decline in the channel, only a channel member who administers the agent's workspace (or the channel's creator) can approve, canopy reads with its own bot token and the agent gets a transcript. A raw history call is the one way around that, so it is a rail, not a remembered rule. Matches a history method (conversations.history/replies, the legacy *.history, search.messages) in the SAME statement as something that can actually call Slack (the slack.com/api URL, an xox* token or a SLACK_*TOKEN variable) -- so grepping canopy-web's own source for `conversations.history` stays free. The SDK spelling is the next rail.",
+      "pattern": "(?=.*(?:slack\\.com/api|xox[abpers]-|SLACK_[A-Z_]*TOKEN))(?=.*(?:conversations[._/](?:history|replies)|conversations_(?:history|replies)|(?:channels|groups|im|mpim)[._](?:history|replies)|search[._/]messages|search_messages))",
+      "message": "BLOCKED: {slug} reading Slack history directly. An agent never reads a Slack channel without permission, and never holds a Slack token to do it with. Ask through canopy instead -- it posts an Approve/Decline in the channel and reads only after someone there approves:\n  canopy slack ingest request --agent {slug} --channel <C-id> --purpose \"...\"\n  canopy slack ingest wait <id>   then   canopy slack ingest transcript <id>\nProcedure: the canopy:slack-channel-ingest skill. (For the recent past of a thread you were asked in, the asker can use `@canopy {slug} --history ...` in Slack.)"
+    },
+    {
+      "tool": "Bash",
+      "agent_only": true,
+      "_agent_only_doc": "As above.",
+      "_pattern_doc": "The same read through a Slack SDK (slack_sdk / bolt / @slack/web-api WebClient) -- which in practice is a python or node heredoc, so the import and the history call sit on different lines and a per-statement rail would split them apart. Whole-command, (?s): an SDK import plus a history method anywhere in the same command.",
+      "pattern": "(?s)(?=.*(?:slack_sdk|slack_bolt|@slack/web-api|@slack/bolt|\\bWebClient\\b))(?=.*(?:conversations[._/](?:history|replies)|conversations_(?:history|replies)|(?:channels|groups|im|mpim)[._](?:history|replies)|search[._/]messages|search_messages))",
+      "message": "BLOCKED: {slug} reading Slack history directly. An agent never reads a Slack channel without permission, and never holds a Slack token to do it with. Ask through canopy instead -- it posts an Approve/Decline in the channel and reads only after someone there approves:\n  canopy slack ingest request --agent {slug} --channel <C-id> --purpose \"...\"\n  canopy slack ingest wait <id>   then   canopy slack ingest transcript <id>\nProcedure: the canopy:slack-channel-ingest skill. (For the recent past of a thread you were asked in, the asker can use `@canopy {slug} --history ...` in Slack.)"
+    },
+    {
+      "tool_pattern": "(?i)^mcp__.*slack.*__\\w*(?:history|read_channel|read_thread|replies|search_messages|search_public|search_private|search_channels)",
+      "agent_only": true,
+      "_agent_only_doc": "As the Bash rail above: the consent rule binds agents, not a human's own session.",
+      "_pattern_doc": "The same consent rule for a Slack MCP connector (e.g. a claude.ai Slack connector's read-channel / read-thread / search tools). Keyed on a server name containing `slack` AND a reading tool, so canopy-web's own Slack tools (`share_session_to_slack`, `start_new_slack_thread`, the `*_channel_ingest` routes) -- whose server is canopy-web -- are untouched.",
+      "message": "BLOCKED: {slug} reading Slack history directly. An agent never reads a Slack channel without permission, and never holds a Slack token to do it with. Ask through canopy instead -- it posts an Approve/Decline in the channel and reads only after someone there approves:\n  canopy slack ingest request --agent {slug} --channel <C-id> --purpose \"...\"\n  canopy slack ingest wait <id>   then   canopy slack ingest transcript <id>\nProcedure: the canopy:slack-channel-ingest skill. (For the recent past of a thread you were asked in, the asker can use `@canopy {slug} --history ...` in Slack.)"
     }
   ],
   "channels": {
