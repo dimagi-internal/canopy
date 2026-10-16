@@ -1,0 +1,154 @@
+"""`canopy slack ingest` — read a whole Slack channel, with a person's permission.
+
+canopy-web does the reading (canopy-web#1533): an agent ASKS, canopy posts an
+Approve / Decline message in the channel, and only after a channel member who
+administers the agent's workspace (or created the channel) approves does canopy
+page the channel's history into a transcript. The agent never holds a Slack token
+and never calls Slack — the fleet baseline denies that (`gating-baseline.json`).
+
+    canopy slack ingest request --agent SLUG --channel C0123ABCD --purpose "…" [--follow]
+    canopy slack ingest status ID
+    canopy slack ingest wait ID [--timeout 3600] [--interval 30]
+    canopy slack ingest transcript ID [--out FILE]
+    canopy slack ingest revoke ID
+    canopy slack ingest list [--agent SLUG] [--status STATUS]
+
+The judgment — when to ask, what to say the read is for, what to do with a
+decline, how to digest — is the `slack-channel-ingest` skill. This module only
+does the parts that are easy to get silently wrong: the wait (a pending ingest is
+a person who has not answered yet, never a failure) and the exit codes that tell
+the skill which of those it is.
+
+Identity follows `canopy_web.resolve_token()` — run it from the agent's repo so the
+agent's own PAT is used: the transcript is readable by the agent's login ONLY.
+"""
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+import click
+
+from orchestrator import canopy_web
+
+BASE = "/api/slack-ingests/"
+#: Exit codes for `wait` (and `status`): what the skill branches on.
+EXIT_READY, EXIT_REFUSED, EXIT_FAILED, EXIT_WAITING = 0, 4, 5, 6
+#: Still moving: a person has not answered, or canopy is still reading.
+OPEN = ("pending", "reading")
+
+
+def _call(method: str, path: str, body=None):
+    try:
+        return canopy_web.call(method, path, body)
+    except RuntimeError as exc:                 # CanopyError, or no PAT at all
+        msg = str(exc)
+        if " -> 404" in msg and method == "POST" and path == BASE:
+            raise click.ClickException(
+                "canopy-web has no /api/slack-ingests/ route (canopy-web#1533 is not deployed "
+                "there yet), or the agent is not in a workspace you can see. Nothing was asked.") from None
+        raise click.ClickException(msg) from None
+
+
+def _line(i: dict) -> str:
+    chan = f"#{i['channel_name']}" if i.get("channel_name") else i.get("channel", "")
+    tail = f" — {i['error']}" if i.get("error") else ""
+    return (f"{i['id']}  {i['status']:<8}  {i['agent']} <- {chan}  "
+            f"{i.get('messages', 0)} msg{'  follow' if i.get('follow') else ''}{tail}")
+
+
+def _exit_for(status: str) -> int:
+    if status == "ready":
+        return EXIT_READY
+    if status in ("declined", "revoked"):
+        return EXIT_REFUSED
+    if status == "failed":
+        return EXIT_FAILED
+    return EXIT_WAITING
+
+
+@click.group("slack")
+def slack_group():
+    """Slack, through canopy-web — the agent never holds a Slack token."""
+
+
+@slack_group.group("ingest")
+def ingest_group():
+    """Read a whole channel — only after someone in it approves."""
+
+
+@ingest_group.command("request")
+@click.option("--agent", "agent", required=True, help="The agent's slug (the one that will read it).")
+@click.option("--channel", required=True, help="The channel ID (C…/G…), not its #name.")
+@click.option("--purpose", required=True, help="Why — shown to the people asked to approve.")
+@click.option("--follow", is_flag=True, help="Keep reading new messages until revoked.")
+def request_cmd(agent: str, channel: str, purpose: str, follow: bool):
+    """Ask. Posts ONE approval message in the channel; reads nothing."""
+    i = _call("POST", BASE, {"agent": agent, "channel": channel.strip(), "purpose": purpose.strip(),
+                             "follow": follow})
+    click.echo(_line(i))
+    click.echo(f"asked in {i.get('channel_name') or i['channel']}: nothing is read until someone there "
+               f"approves. Next: canopy slack ingest wait {i['id']}")
+
+
+@ingest_group.command("status")
+@click.argument("ingest_id")
+def status_cmd(ingest_id: str):
+    """One ingest's status. Exit 0 ready, 4 declined/revoked, 5 failed, 6 still open."""
+    i = _call("GET", f"{BASE}{ingest_id}")
+    click.echo(_line(i))
+    raise SystemExit(_exit_for(i["status"]))
+
+
+@ingest_group.command("wait")
+@click.argument("ingest_id")
+@click.option("--timeout", default=3600, show_default=True, help="Seconds to wait before giving up.")
+@click.option("--interval", default=30, show_default=True, help="Seconds between checks.")
+def wait_cmd(ingest_id: str, timeout: int, interval: int):
+    """Wait for a person to answer and canopy to finish reading.
+
+    Exit 0 ready, 4 declined/revoked (stop — do not ask again unasked), 5 failed,
+    6 timed out still pending/reading (not a refusal: check again later)."""
+    deadline = time.monotonic() + max(0, timeout)
+    while True:
+        i = _call("GET", f"{BASE}{ingest_id}")
+        if i["status"] not in OPEN or time.monotonic() >= deadline:
+            break
+        time.sleep(max(1, interval))
+    click.echo(_line(i))
+    raise SystemExit(_exit_for(i["status"]))
+
+
+@ingest_group.command("transcript")
+@click.argument("ingest_id")
+@click.option("--out", type=click.Path(dir_okay=False, path_type=Path), help="Write the Markdown here.")
+def transcript_cmd(ingest_id: str, out: Path | None):
+    """The channel as Markdown — readable by the requesting agent's own login only."""
+    t = _call("GET", f"{BASE}{ingest_id}/transcript")
+    if out is None:
+        click.echo(t["markdown"], nl=False)
+        return
+    out.write_text(t["markdown"], encoding="utf-8")
+    click.echo(f"wrote {t['messages']} message(s) ({t['status']}) to {out}")
+
+
+@ingest_group.command("revoke")
+@click.argument("ingest_id")
+def revoke_cmd(ingest_id: str):
+    """Stop reading and delete the transcript (or withdraw an unanswered request)."""
+    click.echo(_line(_call("POST", f"{BASE}{ingest_id}/revoke")))
+
+
+@ingest_group.command("list")
+@click.option("--agent", "agent", default="", help="Only this agent's.")
+@click.option("--status", default="", help="pending | reading | ready | declined | revoked | failed")
+def list_cmd(agent: str, status: str):
+    """The ingests you can see."""
+    import urllib.parse
+
+    q = urllib.parse.urlencode({k: v for k, v in (("agent", agent), ("status", status)) if v})
+    rows = _call("GET", BASE + (f"?{q}" if q else ""))
+    for i in rows or []:
+        click.echo(_line(i))
+    if not rows:
+        click.echo("no channel ingests")
