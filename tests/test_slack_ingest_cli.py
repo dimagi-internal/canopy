@@ -86,13 +86,83 @@ def test_wait_times_out_as_still_open_not_as_a_refusal(serve, monkeypatch):
     assert "pending" in r.output
 
 
-def test_transcript_writes_the_markdown(serve, tmp_path):
-    serve(Server({("GET", f"/api/slack-ingests/{ID}/transcript"):
-                  {"id": ID, "status": "ready", "messages": 2, "markdown": "# Slack #canopy-support\n"}}))
+T = f"/api/slack-ingests/{ID}/transcript"
+
+
+def _t(md="# Slack #canopy-support\n", **kw):
+    return {"id": ID, "status": "ready", "messages": 2, "markdown": md, "total": 2, "after": 0, "mark": 0,
+            "first_ts": "", "last_ts": "", **kw}
+
+
+def test_the_first_read_is_the_whole_channel_and_sets_the_mark(serve, tmp_path):
+    srv = serve(Server({("GET", f"/api/slack-ingests/{ID}"): _ingest("ready", read_mark=0),
+                        ("GET", T): _t(mark=17),
+                        ("POST", f"/api/slack-ingests/{ID}/read-mark"): _ingest("ready", read_mark=17)}))
     out = tmp_path / "c.md"
     r = _run("transcript", ID, "--out", str(out))
     assert r.exit_code == 0, r.output
-    assert out.read_text() == "# Slack #canopy-support\n" and "wrote 2 message(s)" in r.output
+    assert out.read_text() == "# Slack #canopy-support\n"
+    assert "wrote 2 message(s) (ready), the whole transcript" in r.output and "read mark -> 17" in r.output
+    assert srv.calls[1][:2] == ("GET", T)                    # no `after` on a first read
+    assert srv.calls[-1] == ("POST", f"/api/slack-ingests/{ID}/read-mark", {"mark": 17})
+
+
+def test_by_default_a_read_catches_up_from_the_last_one(serve, tmp_path):
+    srv = serve(Server({("GET", f"/api/slack-ingests/{ID}"): _ingest("ready", read_mark=17),
+                        ("GET", f"{T}?after=17"): _t("# new only\n", messages=3, total=9, after=17, mark=23,
+                                                     first_ts="1700000600.000000", last_ts="1700000650.000000"),
+                        ("POST", f"/api/slack-ingests/{ID}/read-mark"): _ingest("ready", read_mark=23)}))
+    out = tmp_path / "c.md"
+    r = _run("transcript", ID, "--out", str(out))
+    assert r.exit_code == 0, r.output
+    assert out.read_text() == "# new only\n"
+    assert "wrote 3 new message(s) since the last read, 2023-11-14 22:23 → 2023-11-14 22:24 UTC" in r.output
+    assert "9 in the whole transcript" in r.output
+    assert srv.calls[-1] == ("POST", f"/api/slack-ingests/{ID}/read-mark", {"mark": 23})
+
+
+def test_nothing_new_leaves_the_mark_alone(serve, tmp_path):
+    srv = serve(Server({("GET", f"/api/slack-ingests/{ID}"): _ingest("ready", read_mark=23),
+                        ("GET", f"{T}?after=23"): _t(messages=0, total=9, after=23, mark=23)}))
+    r = _run("transcript", ID, "--out", str(tmp_path / "c.md"))
+    assert r.exit_code == 0, r.output
+    assert "nothing new since the last read (9 in the whole transcript)" in r.output
+    assert not [c for c in srv.calls if c[0] == "POST"]
+
+
+def test_all_rereads_everything_and_no_mark_peeks(serve, tmp_path):
+    srv = serve(Server({("GET", T): _t(total=2, mark=23),
+                        ("POST", f"/api/slack-ingests/{ID}/read-mark"): _ingest("ready", read_mark=23)}))
+    r = _run("transcript", ID, "--all", "--no-mark", "--out", str(tmp_path / "c.md"))
+    assert r.exit_code == 0, r.output
+    assert srv.calls == [("GET", T, None)]                    # no status read, no mark
+
+
+def test_the_mark_does_not_move_when_the_write_fails(serve, tmp_path):
+    srv = serve(Server({("GET", f"/api/slack-ingests/{ID}"): _ingest("ready", read_mark=0),
+                        ("GET", T): _t(mark=17)}))
+    r = _run("transcript", ID, "--out", str(tmp_path / "missing-dir" / "c.md"))
+    assert r.exit_code != 0
+    assert not [c for c in srv.calls if c[0] == "POST"]
+
+
+def test_an_old_canopy_web_without_a_read_mark_gets_a_whole_read(serve, tmp_path):
+    srv = serve(Server({("GET", f"/api/slack-ingests/{ID}"): _ingest("ready"),
+                        ("GET", T): {"id": ID, "status": "ready", "messages": 2, "markdown": "# all\n"}}))
+    r = _run("transcript", ID, "--out", str(tmp_path / "c.md"))
+    assert r.exit_code == 0, r.output
+    assert "no read mark" in r.output and "the whole transcript" in r.output
+    assert not [c for c in srv.calls if c[0] == "POST"]
+
+
+def test_to_stdout_only_the_markdown_goes_to_stdout(serve):
+    serve(Server({("GET", f"/api/slack-ingests/{ID}"): _ingest("ready", read_mark=0),
+                  ("GET", T): _t(mark=17),
+                  ("POST", f"/api/slack-ingests/{ID}/read-mark"): _ingest("ready", read_mark=17)}))
+    r = _run("transcript", ID)                                # click >= 8.2 keeps stderr apart
+    assert r.exit_code == 0, r.output
+    assert r.stdout == "# Slack #canopy-support\n"
+    assert "read mark -> 17" in r.stderr
 
 
 def test_revoke_and_list(serve):

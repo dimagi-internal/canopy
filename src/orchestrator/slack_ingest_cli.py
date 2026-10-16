@@ -9,7 +9,7 @@ and never calls Slack — the fleet baseline denies that (`gating-baseline.json`
     canopy slack ingest request --agent SLUG --channel C0123ABCD|#name --purpose "…" [--follow]
     canopy slack ingest status ID
     canopy slack ingest wait ID [--timeout 3600] [--interval 30]
-    canopy slack ingest transcript ID [--out FILE]
+    canopy slack ingest transcript ID [--out FILE] [--all] [--no-mark]
     canopy slack ingest revoke ID
     canopy slack ingest list [--agent SLUG] [--status STATUS]
     canopy slack ingest allow --workspace WS --agent SLUG --channel C…|#name [--follow] [--note "…"]
@@ -26,6 +26,12 @@ decline, how to digest — is the `slack-channel-ingest` skill. This module only
 does the parts that are easy to get silently wrong: the wait (a pending ingest is
 a person who has not answered yet, never a failure) and the exit codes that tell
 the skill which of those it is.
+
+`transcript` reads only what is NEW since the agent's last read by default
+(canopy-web keeps the ingest's `read_mark`), and records the new mark only after
+the output was written — so a recurring turn on a `--follow` ingest catches up
+since the last turn instead of re-reading the channel. `--all` reads the whole
+transcript.
 
 Identity follows `canopy_web.resolve_token()` — run it from the agent's repo so the
 agent's own PAT is used: the transcript is readable by the agent's login ONLY.
@@ -132,17 +138,54 @@ def wait_cmd(ingest_id: str, timeout: int, interval: int):
     raise SystemExit(_exit_for(i["status"]))
 
 
+def _utc(ts: str) -> str:
+    return time.strftime("%Y-%m-%d %H:%M", time.gmtime(float(ts))) if ts else "?"
+
+
+def _read_summary(t: dict, where: str) -> str:
+    n = t.get("messages", 0)
+    if not t.get("after"):
+        return f"wrote {n} message(s) ({t['status']}), the whole transcript, to {where}"
+    if not n:
+        return f"nothing new since the last read ({t.get('total', '?')} in the whole transcript); wrote {where}"
+    return (f"wrote {n} new message(s) since the last read, {_utc(t.get('first_ts', ''))} → "
+            f"{_utc(t.get('last_ts', ''))} UTC ({t.get('total', '?')} in the whole transcript; "
+            f"{t['status']}), to {where}")
+
+
 @ingest_group.command("transcript")
 @click.argument("ingest_id")
 @click.option("--out", type=click.Path(dir_okay=False, path_type=Path), help="Write the Markdown here.")
-def transcript_cmd(ingest_id: str, out: Path | None):
-    """The channel as Markdown — readable by the requesting agent's own login only."""
-    t = _call("GET", f"{BASE}{ingest_id}/transcript")
+@click.option("--all", "read_all", is_flag=True,
+              help="The whole transcript, not only what is new since the last read.")
+@click.option("--no-mark", is_flag=True, help="Leave the read mark where it is (a peek).")
+def transcript_cmd(ingest_id: str, out: Path | None, read_all: bool, no_mark: bool):
+    """The channel as Markdown — readable by the requesting agent's own login only.
+
+    By default only the messages canopy stored since this agent's last read (a new
+    reply to an old thread included, under its parent); the first read is the whole
+    channel. The read mark moves only after the output is written. --all re-reads
+    everything (and still moves the mark to the end)."""
+    after = 0
+    if not read_all:
+        mark = _call("GET", f"{BASE}{ingest_id}").get("read_mark")
+        if mark is None:   # a canopy-web without the read mark (canopy-web#1557): a whole read
+            click.echo("canopy-web has no read mark for channel ingests yet: reading the whole transcript.",
+                       err=True)
+        after = int(mark or 0)
+    t = _call("GET", f"{BASE}{ingest_id}/transcript" + (f"?after={after}" if after else ""))
+    if "mark" not in t:    # the same old server: it ignored `after`, so this is everything
+        t = {**t, "after": 0}
     if out is None:
         click.echo(t["markdown"], nl=False)
+    else:
+        out.write_text(t["markdown"], encoding="utf-8")
+    click.echo(_read_summary(t, str(out) if out else "stdout"), err=out is None)
+    new_mark = t.get("mark")
+    if no_mark or new_mark is None or new_mark <= after:
         return
-    out.write_text(t["markdown"], encoding="utf-8")
-    click.echo(f"wrote {t['messages']} message(s) ({t['status']}) to {out}")
+    _call("POST", f"{BASE}{ingest_id}/read-mark", {"mark": new_mark})
+    click.echo(f"read mark -> {new_mark}: the next read starts after these messages", err=out is None)
 
 
 @ingest_group.command("revoke")
