@@ -113,3 +113,28 @@ def test_live_page_blind_spots_and_hidden_elements_stay_silent(capture_page):
     for silent in ("space-y-1", "list-disc", "mx-auto"):
         assert not any(silent in str(t) for t in touched), silent
     assert not any("modal" in f["selector"] for f in result["findings"])
+
+
+def test_capture_feeds_the_frame_lint(capture_page):
+    """DDD-2: the box, floating-layer and scroll-width fields the pre-judge lint
+    reads, measured by a real browser — a floating pill over a line of text, a
+    label cut with an ellipsis, a page wider than the viewport."""
+    from scripts.ddd.product_lint import geometry_findings
+
+    capture = capture_page("lint")
+    assert capture["viewport"][0] > 0 and capture["doc_scroll_w"] > capture["doc_client_w"]
+    pill = next(e for e in capture["elements"] if "pill" in e["classes"])
+    assert pill["position"] == "fixed" and pill["label"] == "Ask an agent"
+    assert next(e for e in capture["elements"] if "pill-label" in e["classes"])["in_floating"] is True
+    tile = next(e for e in capture["elements"] if "tile" in e["classes"])
+    assert tile["text_overflow"] == "ellipsis" and tile["scroll_w"] > tile["client_w"]
+
+    findings, status = geometry_findings({1: capture})
+    by = {f["dimension"]: f for f in findings}
+    assert status == "ran"
+    assert "Data refreshed nightly" in by["text_occlusion"]["detail"]
+    assert "Ask an agent" in by["text_occlusion"]["detail"]  # named as the floater, not as covered text
+    assert "AT PAYMENT FLOOR" in by["text_truncation"]["detail"]
+    assert "Attention column" in by["horizontal_overflow"]["detail"]
+    # the fixed bar covers nothing here: its own label is inside it
+    assert "Programme report" not in by["text_occlusion"]["detail"]

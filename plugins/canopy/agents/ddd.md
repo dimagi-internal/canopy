@@ -950,10 +950,17 @@ on every full judge pass; pin it with `loop.mode` in `.canopy/ddd/config.yaml`):
 - **backlog** (auto when a full pass has ≥ `loop.backlog_min_findings`, default
   8, open findings) — the first full render + judge HARVESTS a backlog. Each
   `continue` fixes ALL mechanical findings as one batch (one PR, one deploy),
-  re-films only the scenes the batch changed, as stills (nothing at all after a
-  words-only batch — `scripts.ddd.capture_scope`), and re-judges only scenes
-  whose frame / page text / spec changed; unchanged scenes reuse their sealed
-  cells. Every
+  re-films as stills (every scene after a product batch, since a shared
+  template reaches scenes it did not name; only the recipe-changed scenes after
+  a recipe batch; nothing at all after a words-only batch —
+  `scripts.ddd.capture_scope`), and re-judges only scenes whose frame / page
+  text / spec changed by the impact fingerprint; unchanged scenes reuse their
+  sealed cells. Video is recorded only on the first capture, a render-target or
+  spec-global change — never at a checkpoint (no per-pass judge reads it). A
+  finding with no readable scene never forces a full re-film: it is attributed
+  by spec id, or goes to the batch's `global` bucket (arc / narrative → the arc
+  judge re-runs). `python -m scripts.ddd.capture_scope report <run_dir>` shows
+  per pass what was filmed and re-judged, and why. Every
   `loop.full_rejudge_every`-th batch (default 3) is judged in full, and an
   incremental pass that would converge returns `confirm_full` — so convergence
   is always decided by a full render + full judge.

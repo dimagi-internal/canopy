@@ -182,6 +182,35 @@ def _trace_by_scene(run_dir: Path) -> dict[int, list]:
     }
 
 
+def resolve_context(
+    run_dir: str | Path, context: list[str | Path] | None, *, fallback: list[str] | None = None
+) -> list[str]:
+    """The judge-context files a plan / record hashes: the caller's, else
+    *fallback* (what the other half of the pair hashed), plus the run's
+    ``why_brief.yaml``. Sorted absolute paths.
+
+    Why this exists (DDD-2): ``ddd-run`` Step 2f calls ``plan --context
+    <rubric>`` and ``assemble`` calls ``record`` with no context at all, so the
+    ledger was salted with the why-brief alone and every plan with why-brief +
+    rubric. The ``context`` component therefore "changed" on EVERY scene of EVERY
+    pass, and no scene was ever reused — measured on ACE noora (0 of 30 scene
+    judgements reused over 6 passes) and smallholder (0 of 16 over 4); in each,
+    scenes whose only moved input was ``context`` were re-judged (7 and 5). The
+    files a judgement was hashed with now travel with it: ``plan`` writes them
+    to ``judge-scope.json`` and ``record`` reuses them; ``record`` writes them to
+    the ledger and a ``plan`` given no ``--context`` reuses those.
+    """
+    run = Path(run_dir)
+    if context:
+        paths = [str(Path(c).expanduser().resolve()) for c in context]
+    else:
+        paths = list(fallback or [])
+    wb = run / "why_brief.yaml"
+    if wb.exists():
+        paths.append(str(wb.resolve()))
+    return sorted(set(paths))
+
+
 def context_salt(paths: list[str | Path]) -> str:
     """Run-wide judge context (why-brief, rubric). A change re-judges every scene."""
     h = hashlib.sha256()
@@ -483,8 +512,13 @@ def plan(
     floor: dict | None = None,
     iteration: int | None = None,
     edited_scenes: list[int] | str | None = None,
+    global_judges: list[str] | None = None,
 ) -> dict[str, Any]:
     """Plan the judge scope.
+
+    ``global_judges`` — judges the last batch's scene-less findings belong to
+    (``state.batch_plan.global.judges``): on a tiered incremental pass they
+    re-run even when no scene moved.
 
     ``edited_scenes`` — the scenes the last fix batch touched
     (``state.batch_plan``): their crop changes are never explained away by a
@@ -503,13 +537,10 @@ def plan(
     ``would_reuse`` naming the scenes an incremental pass would have reused.
     """
     run = Path(run_dir)
-    ctx = list(context or [])
-    wb = run / "why_brief.yaml"
-    if wb.exists() and str(wb) not in {str(c) for c in ctx}:
-        ctx.append(wb)
+    ledger = load_ledger(run)
+    ctx = resolve_context(run, context, fallback=(ledger or {}).get("context_files"))
     components, signatures = scene_inputs(run, spec_scenes(spec_path), salt=context_salt(ctx))
     current = {s: _combine(c) for s, c in components.items()}
-    ledger = load_ledger(run)
     comparable = bool(
         ledger
         and set((ledger.get("fingerprints") or {})) == set(current)
@@ -560,7 +591,10 @@ def plan(
 
     cap = capture_scope.load_plan(run, iteration) if iteration is not None else None
     if cap:
-        scope["capture"] = {k: cap.get(k) for k in ("mode", "scenes", "carried")}
+        scope["capture"] = {
+            k: cap.get(k) for k in ("mode", "scenes", "carried", "video", "verify_by_impact")
+            if cap.get(k) is not None
+        }
         if cap.get("carried_unverified") and cap.get("carried") and not scope.get("full"):
             # A product batch re-filmed only the scenes it named; what it carried
             # may sit on a template it changed. Like a held scene, that is not a
@@ -570,10 +604,25 @@ def plan(
                 f" — scoped capture after a product batch: scene(s) {scope['carried_unverified']} "
                 "were not re-filmed, so this pass cannot decide (the next checkpoint re-films them)"
             )
+    scope["context_files"] = ctx
+    prior_ctx = (ledger or {}).get("context_files")
+    if prior_ctx is not None and sorted(prior_ctx) != ctx and any(
+        "context" in (v or []) for v in (changed or {}).values()
+    ):
+        scope["reason"] += (
+            f" — the judge-context FILE SET changed since the ledger ({len(prior_ctx)} -> "
+            f"{len(ctx)} file(s)), so every scene's context moved"
+        )
     if tiered and not scope.get("full"):
         extra, scenes_by, note = _floor_judges(
             floor, list(scope.get("rejudge") or []), all_scenes=[int(s) for s in current]
         )
+        if "arc" in (global_judges or []) and "arc" not in extra:
+            # A scene-less arc / narrative finding was fixed: the arc judge is the
+            # only one that reads the sequence, so it re-runs even when no scene's
+            # inputs moved (fix_scope.batch_plan ``global``).
+            extra.append("arc")
+            note = "; ".join(x for x in (note, "the batch fixed scene-less arc/narrative finding(s): arc re-runs") if x)
         scope["judges"] = ["concept", *extra]
         scope["arc"] = "arc" in extra
         if "user" in scenes_by:
@@ -845,15 +894,16 @@ def record(
     iteration: int,
     context: list[str | Path] | None = None,
 ) -> dict[str, Any]:
-    """Snapshot this judged iteration as the next iteration's ledger."""
+    """Snapshot this judged iteration as the next iteration's ledger.
+
+    Without *context*, hashes the files this pass's ``plan`` hashed
+    (``judge-scope.json`` ``context_files``) — see :func:`resolve_context`.
+    """
     run = Path(run_dir)
-    ctx = list(context or [])
-    wb = run / "why_brief.yaml"
-    if wb.exists() and str(wb) not in {str(c) for c in ctx}:
-        ctx.append(wb)
+    scope = load_scope(run) or {}
+    ctx = resolve_context(run, context, fallback=scope.get("context_files"))
     components, signatures = scene_inputs(run, spec_scenes(spec_path), salt=context_salt(ctx))
     fps = {sc: _combine(c) for sc, c in components.items()}
-    scope = load_scope(run) or {}
     # A HELD or REUSED scene was not re-judged: its cells are the ledger's, so its
     # ledger entry stays the one those cells were judged on. For a held scene the
     # next pass that is not recipe-scoped re-judges it if its inputs still differ;
@@ -899,6 +949,7 @@ def record(
         "fingerprint_version": FINGERPRINT_VERSION,
         "fingerprints": fps,
         "components": components,
+        "context_files": ctx,
     }
     (tmp / INDEX_FILE).write_text(json.dumps(index, indent=1) + "\n")
     (tmp / SIGNATURES_FILE).write_text(json.dumps(signatures) + "\n")
@@ -932,6 +983,16 @@ def _batch_scenes(state: Any) -> list[int] | str | None:
     if bp.get("unscoped"):
         return "all"
     return [int(s) for s in bp.get("scenes") or []]
+
+
+def _batch_global_judges(state: Any) -> list[str] | None:
+    """The judges this pass's batch's scene-less findings belong to
+    (``state.batch_plan.global.judges``, :func:`scripts.ddd.fix_scope.batch_plan`)."""
+    bp = getattr(state, "batch_plan", None)
+    if not isinstance(bp, dict) or bp.get("for_iteration") != getattr(state, "iteration", None):
+        return None
+    g = bp.get("global")
+    return list(g.get("judges") or []) if isinstance(g, dict) else None
 
 
 def resolve_plan_args(
@@ -981,6 +1042,7 @@ def resolve_plan_args(
         "floor": getattr(state, "gating_floor", None) if cfg.loop.floor_first else None,
         "iteration": getattr(state, "iteration", None),
         "edited_scenes": _batch_scenes(state),
+        "global_judges": _batch_global_judges(state),
     }
     if full and not exp["full"]:
         if not (reason or "").strip():
