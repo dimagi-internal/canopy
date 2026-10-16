@@ -43,7 +43,8 @@ means adding it to `KINDS`, so no one is ever asked for it.
    implementation (shipped first, unused); runners call it — the cloud box behind a per-box
    switch, drilled on a standby box, then the laptop runner at claim; then
    `bootstrap_agents.sh` shrinks to box provisioning (packages, gog's file keyring, the
-   canopy plugin and CLI) and the unwired `canopy_runtime` reconciler is retired.
+   canopy plugin and CLI) and the unwired `canopy_runtime` reconciler is retired
+   (canopy-web#1514).
 3. **One validation story (shipped 2026-10-15).** `canopy agent doctor`'s `canopy-web setup`
    check reads `agent_setup` for every fleet fact (repo, GitHub, mailbox, vault, runner, job,
    first turn) instead of pinging the board; the doctor keeps only what is true of THIS
