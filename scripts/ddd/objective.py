@@ -123,6 +123,28 @@ def blocks_every_objective(f: dict) -> bool:
     return str(f.get("source") or "") == "product_lint" and _dim(f) in ALWAYS_BLOCKING_LINT
 
 
+#: The pre-judge FRAME lint (DDD-2, :mod:`scripts.ddd.product_lint`): defects on
+#: the filmed frame itself — a run id in a title, a widget over the text, a
+#: table cut at the edge. A demo films them, so in the ``demo`` objective they
+#: are fixed like a judge's finding instead of deferred (on ACE noora the judges
+#: re-discovered every one of them, in prose, for six iterations). They do NOT
+#: hold ``stop_done`` the way prose density does — the judges' scores decide
+#: that. A floater from the shared page chrome stays deferred: it is not this
+#: run's page to change.
+FRAME_LINT = frozenset(
+    {"internal_id_leak", "jargon", "text_occlusion", "horizontal_overflow", "text_truncation"}
+)
+
+
+def feeds_every_objective(f: dict) -> bool:
+    """A frame-lint finding the ``demo`` loop fixes rather than defers."""
+    return (
+        str(f.get("source") or "") == "product_lint"
+        and _dim(f) in FRAME_LINT
+        and str(f.get("owner") or "") != "shared_chrome"
+    )
+
+
 def open_prose_blockers(findings: Iterable[dict], *, block_severities: Iterable[str]) -> list[dict]:
     """Open (not deferred, not parked) :func:`blocks_every_objective` findings at a
     blocking severity — what keeps a ``demo`` run from ``stop_done``."""

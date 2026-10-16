@@ -97,9 +97,116 @@ def classify(finding: dict) -> str:
 
 
 def scene_key(raw: object) -> str | None:
-    """``3``, ``"3"`` and ``"3: title"`` -> ``"3"``; unreadable -> ``None``."""
-    m = re.match(r"\s*(\d+)", str(raw if raw is not None else ""))
+    """``3``, ``"3"``, ``"3: title"`` and ``"scene 3"`` -> ``"3"``; unreadable -> ``None``."""
+    m = re.match(r"\s*(?:scene[_ ]?)?(\d+)", str(raw if raw is not None else ""), re.I)
     return m.group(1) if m else None
+
+
+# ---------------------------------------------------------------------------
+# Scene attribution (DDD-2)
+# ---------------------------------------------------------------------------
+#
+# A finding whose ``scene`` the loop cannot read used to make the whole next
+# batch "unscoped", and an unscoped batch re-filmed EVERY scene WITH VIDEO
+# (capture_scope). Measured on ACE smallholder-seasonal-programme-cascade-
+# 2026-10-16-001: iterations 1 and 2 were full video re-films of all four scenes
+# because the arc judge named its two findings ``scene: partner-benchmarks`` —
+# the scene's spec ``id`` — which the integer-only parser could not read. Both
+# were arc findings (arc_shape, visual_variety): neither could have changed a
+# pixel. So: resolve ids / titles / slugs to the 1-based index the rest of the
+# loop speaks, and put what is still unreadable in a GLOBAL bucket that decides
+# its capture by what the fix TOUCHES, not by the missing scene.
+
+
+def scene_index_map(scenes: list | dict | None) -> dict[str, int]:
+    """``{lowercased id / title / title-slug: 1-based index}`` for a spec's scenes.
+
+    Accepts the spec's ``scenes`` list or the ``{index: scene}`` mapping
+    :func:`scripts.ddd.judge_scope.spec_scenes` returns. A name two scenes share
+    maps to neither (an ambiguous name is not an attribution).
+    """
+    from scripts.ddd.identity import scene_id, slugify
+
+    if isinstance(scenes, dict):
+        items = sorted((int(k), v) for k, v in scenes.items())
+    else:
+        items = list(enumerate(scenes or [], start=1))
+    seen: dict[str, set[int]] = {}
+    for idx, sc in items:
+        if not isinstance(sc, dict):
+            continue
+        names = {scene_id(sc), str(sc.get("id") or ""), str(sc.get("title") or ""), slugify(str(sc.get("title") or ""))}
+        for n in names:
+            n = n.strip().lower()
+            if n:
+                seen.setdefault(n, set()).add(idx)
+    return {n: next(iter(ix)) for n, ix in seen.items() if len(ix) == 1}
+
+
+def resolve_scene(raw: object, index: dict[str, int] | None) -> int | None:
+    """The 1-based scene a finding's ``scene`` names: a number, a spec id, a title
+    or its slug (``"partner-benchmarks"``, ``"Partner benchmarks"``)."""
+    k = scene_key(raw)
+    if k is not None:
+        return int(k)
+    if not index or raw is None:
+        return None
+    from scripts.ddd.identity import slugify
+
+    text = str(raw).strip()
+    for cand in (text.lower(), slugify(text)):
+        if cand in index:
+            return index[cand]
+    return None
+
+
+def attribute_scenes(findings: list[dict] | None, scenes: list | dict | None) -> list[dict]:
+    """Findings with ``scene`` rewritten to its 1-based index where it resolves.
+
+    The original value is kept as ``scene_ref`` so a reader can see what the
+    judge wrote. Unresolvable scenes are left as they were (they go to the
+    global bucket of :func:`batch_plan`). Returns new dicts.
+    """
+    index = scene_index_map(scenes)
+    out: list[dict] = []
+    for f in findings or []:
+        if not isinstance(f, dict):
+            out.append(f)
+            continue
+        raw = f.get("scene")
+        if raw in (None, "") or scene_key(raw) is not None:
+            out.append(f)
+            continue
+        idx = resolve_scene(raw, index)
+        if idx is None:
+            out.append(f)
+            continue
+        g = dict(f)
+        g["scene_ref"] = raw
+        g["scene"] = idx
+        out.append(g)
+    return out
+
+
+#: Judges / sources whose scene-less findings are about the SEQUENCE or the
+#: words — the arc judge, the narrative guard, the why-brief. Their fix edits the
+#: spec or the why-brief, never a frame.
+_GLOBAL_WORD_SOURCES = frozenset({"arc", "arc_eval", "ddd-arc-eval", "narrative", "narrative_guard", "why"})
+_ARC_DIMENSIONS = frozenset({"arc_shape", "escalation", "visual_variety", "persona_coherence", "opening_and_close"})
+
+
+def global_kind(finding: dict) -> str:
+    """For a finding with no readable scene: ``words`` (arc / narrative / why-brief
+    — re-judge the arc and the scenes whose spec moved, film nothing) or
+    ``product`` (a shared-template change — stills of every scene, then the
+    impact fingerprint decides which actually changed)."""
+    dim = str(finding.get("dimension") or "").strip().lower()
+    src = str(finding.get("source") or finding.get("judge") or "").strip().lower()
+    if dim in _ARC_DIMENSIONS or src in _GLOBAL_WORD_SOURCES:
+        # An arc finding can still ask for a product change ("add a panel");
+        # only the words-side ones are free.
+        return "product" if classify(finding) == PRODUCT else "words"
+    return "product" if lands_in_product(finding) else "words"
 
 
 def recipe_caps(distribution: dict | None, findings: list[dict] | None) -> list[dict]:
@@ -171,10 +278,20 @@ def batch_plan(findings: list[dict] | None, *, for_iteration: int | None = None)
     need a fresh judge (``judge_scenes``). ``None`` when there is no actionable
     mechanical finding at all.
 
-    ``scenes`` is also what the next CAPTURE re-films after a product batch
-    (:mod:`scripts.ddd.capture_scope`): the recorder's ``--capture-scenes``
-    merges those scenes into the last render instead of overwriting it.
-    ``unscoped`` = a finding named no scene, so any scene may have changed.
+    ``scenes`` is every scene the batch names; ``product_scenes`` only those a
+    PRODUCT fix names (what :mod:`scripts.ddd.capture_scope` reports as edited
+    on screen).
+
+    Findings with no readable scene go to ``global``
+    (``{findings, words, product, judges}``) instead of poisoning the batch:
+
+    * ``words`` (arc / narrative / why-brief): film nothing for them; the arc
+      judge re-runs (``global.judges``) and the fingerprint re-judges whichever
+      scenes' spec moved.
+    * ``product`` (a shared template, a global stylesheet): ``unscoped`` is set —
+      any scene may have changed on screen — and the capture takes STILLS of
+      every scene so the impact fingerprint can tell which did. Never a video
+      re-film: a scene-less finding is not a reason to re-record the demo.
     """
     actionable = [
         f
@@ -190,21 +307,40 @@ def batch_plan(findings: list[dict] | None, *, for_iteration: int | None = None)
     research = [f for f in actionable if str(f.get("route") or "").upper() == "RESEARCH"]
     keys = [scene_key(f.get("scene")) for f in actionable]
     scenes = sorted({int(k) for k in keys if k is not None})
+    product_scenes = sorted(
+        {int(k) for f in product if (k := scene_key(f.get("scene"))) is not None}
+    )
+    scene_less = [f for f, k in zip(actionable, keys) if k is None]
+    kinds = [global_kind(f) for f in scene_less]
+    global_words = kinds.count("words")
+    global_product = kinds.count("product")
     plan: dict = {
         "for_iteration": for_iteration,
         "scope": PRODUCT if product else RECIPE,
         "findings": len(actionable),
         "product_findings": len(product),
         "scenes": scenes,
-        # A finding with no readable scene may have edited any of them.
-        "unscoped": None in keys,
+        "product_scenes": product_scenes,
+        # A PRODUCT finding with no readable scene may have changed any scene on
+        # screen. A scene-less arc / narrative finding cannot — it is in ``global``.
+        "unscoped": bool(global_product),
+        "global": {
+            "findings": len(scene_less),
+            "words": global_words,
+            "product": global_product,
+            # The arc judge reads the whole sequence: a scene-less finding about
+            # it (or about the words) is answered by re-running it.
+            "judges": ["arc"] if scene_less else [],
+        },
         "deploy": bool(product),
         # A recipe-only batch re-judges only the scenes it edits; every other
         # scene keeps its ledger cells even when a reseed moved its frame bytes.
-        # None = scope by fingerprint as usual (a why-brief edit is run-wide).
+        # None = scope by fingerprint as usual (a why-brief edit is run-wide, and
+        # a scene-less words fix may have edited any scene's spec — the
+        # fingerprint sees exactly which).
         "judge_scenes": (
             scenes
-            if not product and None not in keys and scenes and not research
+            if not product and not scene_less and scenes and not research
             else None
         ),
     }
@@ -216,9 +352,13 @@ __all__ = [
     "PRODUCT",
     "RECIPE",
     "UNKNOWN",
+    "attribute_scenes",
     "batch_plan",
     "classify",
+    "global_kind",
     "lands_in_product",
     "recipe_caps",
+    "resolve_scene",
+    "scene_index_map",
     "scene_key",
 ]

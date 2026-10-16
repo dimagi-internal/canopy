@@ -86,7 +86,7 @@ def _load_findings(run_dir: Path, *, demo: bool = False) -> list[dict]:
     (:data:`scripts.ddd.objective.ALWAYS_BLOCKING_LINT`, canopy#786): explanatory
     copy accreting on a screen blocks in every objective.
     """
-    from scripts.ddd.objective import blocks_every_objective
+    from scripts.ddd.objective import blocks_every_objective, feeds_every_objective
 
     out: list[dict] = []
     for name, source in PRODUCT_FINDING_FILES.items():
@@ -102,7 +102,7 @@ def _load_findings(run_dir: Path, *, demo: bool = False) -> list[dict]:
             g = dict(f)
             g.setdefault("source", source)
             g.setdefault("route", "PRODUCT")
-            if demo and not blocks_every_objective(g):
+            if demo and not (blocks_every_objective(g) or feeds_every_objective(g)):
                 g["route"] = "DEFER"
             out.append(g)
     for name in ("design_findings.json", "arc_findings.json"):
@@ -212,6 +212,16 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
     state = load(run_id, ddd_dir=ddd_dir)
     demo = cfg.loop.objective == "demo" or getattr(state, "objective", None) == "demo"
     findings = _load_findings(run_dir, demo=demo)
+    if spec and Path(spec).exists():
+        # A judge that names a scene by its spec id / title ("partner-benchmarks")
+        # gets the index the loop speaks, so the next batch is not "unscoped"
+        # and re-filmed in full (fix_scope.attribute_scenes, DDD-2).
+        from scripts.ddd import fix_scope
+
+        try:
+            findings = fix_scope.attribute_scenes(findings, judge_scope.spec_scenes(spec))
+        except Exception as exc:  # noqa: BLE001 — attribution is an optimisation, never a failure
+            print(f"assemble: scene attribution skipped ({exc})", file=sys.stderr)
     # The pass's target, if `target plan` stamped it for THIS iteration; a stale
     # or missing stamp means the render used the spec's own base_url (deploy).
     tgt = state.current_target or {}

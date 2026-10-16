@@ -205,24 +205,45 @@ iteration — reading an old run's render log to recover the command, adding
 **What gets filmed is decided for you** (`scripts.ddd.capture_scope`,
 canopy#785) and printed as `capture` in the JSON:
 
-- `full` — every scene, with video: every checkpoint / full-judge pass, the
-  first capture, a new render target, a spec change outside its scenes, or a
-  batch the planner can't scope.
-- `scenes` — stills only (`--capture-scenes N,M --no-video`) of the scenes whose
-  recipe changed (url, actions, viewport, persona, pace, `before:`) plus the
-  scenes a product batch edited. The recorder replays earlier scenes off the
-  record when a target needs their state (a reseeding `setup`, a scene with no
-  url, a `${var}` captured earlier) and MERGES the targets into the existing
-  snapshots / `run-report.json` / manifest; every other scene keeps its last
-  capture. After a product batch the carried scenes are "unverified": that pass
-  cannot decide anything and the next checkpoint re-films everything.
-- `none` — the batch changed only words (narration, why-brief): no recorder
-  runs; the judge scope re-judges the scenes whose spec changed against their
-  existing frames.
+- `full` — every scene. **With video** only where a video is the thing being
+  made: the first capture, a new render target, a spec change outside its
+  scenes, a changed scene set. Every checkpoint / full-judge pass is `full`
+  **as stills** (`--no-video`): no per-pass judge reads the clip
+  (`motion_friction` is scored from the still + the action trace).
+- `scenes` — stills only (`--capture-scenes N,M --no-video`). After a
+  recipe-only batch: the scenes whose recipe changed (url, actions, viewport,
+  persona, pace, `before:`). After a PRODUCT batch — named scenes or not —
+  **every** scene (`verify_by_impact: true`): a shared template reaches scenes
+  the batch did not name, so `judge_scope plan` decides per scene from the
+  impact fingerprint (region DOM, region crops, layout guard) which actually
+  changed, and the rest keep their verdicts. The recorder replays earlier
+  scenes off the record when a target needs their state (a reseeding `setup`, a
+  scene with no url, a `${var}` captured earlier) and MERGES the targets into
+  the existing snapshots / `run-report.json` / manifest.
+- `none` — the batch changed only words (narration, why-brief, scene-less arc
+  findings): no recorder runs; the judge scope re-judges the scenes whose spec
+  changed against their existing frames, and the arc judge re-runs.
+
+A finding the judges name by spec id or title (`scene: partner-benchmarks`) is
+attributed to its index at `assemble`; one with no scene at all goes to
+`batch_plan.global` and never forces a video re-film (ACE smallholder,
+2026-10-16: two such arc findings made iterations 1–2 full video re-films).
+
+After every successful capture, `iteration render` runs the pre-judge frame
+lint (`scripts.ddd.product_lint`: run ids / `ace <opp>/` on screen, jargon like
+`n<1`, a floating element over text, content past the frame edge, ellipsis
+truncation) and prints its counts as `lint`; the findings carry scene ids and
+an `owner` tag and reach the batch through `lint_findings.json` like a judge's.
+A scene with a lint finding is still judged on every other dimension.
+
+`python -m scripts.ddd.capture_scope report <run_dir>` prints, per pass, what
+was filmed (video / stills / nothing) and re-judged, and why — and flags scenes
+re-judged on the judge context alone. Read it when a run feels slow.
 
 The full narrated video is made once, by the Video phase, after convergence.
-`--full-capture` forces `full` (logged in `capture-plan.json`); don't pass it to
-"be safe" — the checkpoints already are the safety net.
+`--full-capture` forces `full` with video (logged in `capture-plan.json`); pass
+it only for a pass that judges motion / pacing off the clip itself — the
+checkpoints already are the safety net.
 
 What the render produces (the `canopy:walkthrough` engine underneath):
 

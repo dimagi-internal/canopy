@@ -190,6 +190,26 @@ _VISUAL_CAPTURE_JS = r"""
   const elements = [];
   let truncated = false;
   const all = document.body ? document.body.querySelectorAll('*') : [];
+
+  // --- floating layers (DDD-2 pre-judge lint) ------------------------------
+  // A fixed / sticky element paints over whatever scrolls beneath it: the labs
+  // "Ask an agent" pill covering footer text and a chart was a visual_polish=2
+  // floor on ACE noora for five iterations. Know which elements float, and which
+  // elements live INSIDE one (a floater's own label is not covered by itself).
+  const floating = new Set();
+  for (const el of Array.from(all)) {
+    const pos = getComputedStyle(el).position;
+    if (pos === 'fixed' || pos === 'sticky') floating.add(el);
+  }
+  function inFloating(el) {
+    let node = el.parentElement;
+    while (node && node !== document.body) {
+      if (floating.has(node)) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
   for (const el of Array.from(all)) {
     if (elements.length >= MAX_ELEMENTS) { truncated = true; break; }
     if (SKIP_TAGS.has(el.tagName)) continue;
@@ -222,7 +242,29 @@ _VISUAL_CAPTURE_JS = r"""
       opacity: cs.opacity,
       aria_hidden: el.getAttribute('aria-hidden') === 'true',
       color_is_inherited: colourIsInherited,
+      // Viewport coordinates of the box, the same frame as the PNG (DDD-2 lint:
+      // occlusion, text off the right edge).
+      x: Math.round(rect.left * 10) / 10,
+      y: Math.round(rect.top * 10) / 10,
     };
+    if (floating.has(el)) {
+      entry.position = cs.position;
+      entry.z_index = cs.zIndex;
+      entry.label = ((el.innerText || el.getAttribute('aria-label') || '') + '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    } else if (inFloating(el)) {
+      entry.in_floating = true;
+    }
+    // Content wider than its box: clipped (overflow hidden/clip), scrolled away
+    // (auto/scroll), or cut with an ellipsis. innerText still holds the whole
+    // string, so no text lens can see it — "AT PAYMENT FLO…" on noora.
+    if (el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0) {
+      entry.scroll_w = el.scrollWidth;
+      entry.client_w = el.clientWidth;
+      entry.overflow_x = cs.overflowX;
+      if (cs.textOverflow === 'ellipsis') entry.text_overflow = 'ellipsis';
+    }
+    const clamp = cs.webkitLineClamp || cs.getPropertyValue('-webkit-line-clamp');
+    if (clamp && clamp !== 'none' && el.scrollHeight > el.clientHeight + 1) entry.line_clamped = true;
     if (text) {
       const bg = effectiveBackground(el);
       entry.text = text.slice(0, 160);
@@ -247,6 +289,9 @@ _VISUAL_CAPTURE_JS = r"""
     unreadable_stylesheets: unreadable,
     elements_truncated: truncated,
     elements: elements,
+    viewport: [window.innerWidth, window.innerHeight],
+    doc_scroll_w: document.documentElement.scrollWidth,
+    doc_client_w: document.documentElement.clientWidth,
   };
 }
 """

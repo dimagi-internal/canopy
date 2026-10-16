@@ -60,25 +60,44 @@ class TestDecide:
         assert out["mode"] == "scenes" and out["scenes"] == [3] and out["video"] is False
         assert not out["carried_unverified"]
 
-    def test_a_product_batch_films_the_scenes_it_edited_and_flags_the_rest(self):
+    def test_a_product_batch_films_every_scene_as_stills_and_carries_nothing(self):
+        # DDD-2: a shared template reaches scenes the batch did not name, so every
+        # scene is re-filmed as a still and impact.py decides which changed.
         out = self._decide(batch={"scope": "product", "scenes": [1, 2]})
-        assert out["mode"] == "scenes" and out["scenes"] == [1, 2]
-        assert out["carried_unverified"] is True
+        assert out["mode"] == "scenes" and out["scenes"] == [1, 2, 3] and out["video"] is False
+        assert out["carried_unverified"] is False and out["verify_by_impact"] is True
+        assert out["product_scenes"] == [1, 2]
+
+    @pytest.mark.parametrize(
+        "kw, why",
+        [
+            ({"ledger": {}}, "no earlier capture"),
+            ({"base_url": "http://localhost:8000"}, "target changed"),
+            ({"enabled": False}, "off"),
+        ],
+    )
+    def test_full_with_video_only_where_a_video_is_needed(self, kw, why):
+        out = self._decide(**kw)
+        assert out["mode"] == "full" and out["video"] is True and why in out["reason"]
 
     @pytest.mark.parametrize(
         "kw, why",
         [
             ({"judge_full": True}, "in full"),
-            ({"ledger": {}}, "no earlier capture"),
-            ({"base_url": "http://localhost:8000"}, "target changed"),
-            ({"batch": {"scope": "product", "scenes": [], "unscoped": True}}, "no readable scene"),
             ({"batch": None}, "no batch plan"),
-            ({"enabled": False}, "off"),
         ],
     )
-    def test_full_whenever_it_cannot_tell(self, kw, why):
+    def test_full_as_stills_when_it_cannot_tell_or_judges_in_full(self, kw, why):
         out = self._decide(**kw)
-        assert out["mode"] == "full" and out["video"] is True and why in out["reason"]
+        assert out["mode"] == "full" and out["video"] is False and why in out["reason"]
+
+    def test_an_unscoped_product_batch_is_stills_of_every_scene_not_a_video_refilm(self):
+        out = self._decide(batch={"scope": "product", "scenes": [], "unscoped": True})
+        assert out["mode"] == "scenes" and out["scenes"] == [1, 2, 3] and out["video"] is False
+        assert "no readable scene" in out["reason"] and out["verify_by_impact"] is True
+
+    def test_video_requested_records_video(self):
+        assert self._decide(judge_full=True, video=True)["video"] is True
 
     def test_a_spec_level_change_films_everything(self):
         spec = {**SPEC, "video_viewport_width": 1440}
@@ -92,10 +111,11 @@ class TestDecide:
         assert out["mode"] == "scenes" and out["scenes"] == [2]
 
     def test_recorder_args(self):
-        assert capture_scope.recorder_args({"mode": "scenes", "scenes": [2, 3]}) == [
+        assert capture_scope.recorder_args({"mode": "scenes", "scenes": [2, 3], "video": False}) == [
             "--capture-scenes", "2,3", "--no-video",
         ]
-        assert capture_scope.recorder_args({"mode": "full"}) == []
+        assert capture_scope.recorder_args({"mode": "full", "video": True}) == []
+        assert capture_scope.recorder_args({"mode": "full", "video": False}) == ["--no-video"]
 
 
 class TestReplay:
@@ -242,8 +262,8 @@ class TestIteration:
         out = iteration.render(run.id, run.spec, popen=_popen(run.dir, calls))
         assert out["capture"]["mode"] == "scenes"
         cmd = calls[1]
-        assert cmd[cmd.index("--capture-scenes") + 1] == "2" and "--no-video" in cmd
-        assert capture_scope.load_plan(run.dir, 1)["carried"] == [1, 3]
+        assert cmd[cmd.index("--capture-scenes") + 1] == "1,2,3" and "--no-video" in cmd
+        assert capture_scope.load_plan(run.dir, 1)["carried"] == []
 
     def test_a_words_only_batch_runs_no_recorder(self, run):
         calls: list = []

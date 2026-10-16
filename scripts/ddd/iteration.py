@@ -26,6 +26,8 @@ render uploaded), which is the exact failure ``render_check`` exists to stop.
     batch — ``--full-capture`` forces every scene), runs the recorder with the
     DDD flag set under the watchdog (``render`` step budget from ``timeouts:``)
     into ``render-iter<N>.log``, and writes the exit code to ``.render_rc``.
+    After a successful capture it runs the pre-judge frame lint
+    (:mod:`scripts.ddd.product_lint` -> ``lint_findings.json``, seconds).
     Exit code = the recorder's (0 when nothing needed filming).
 
 ``publish``
@@ -135,6 +137,26 @@ def recorder_command(
     return _py(RECORDER, *args, *(extra or []), browser=True)
 
 
+def _prejudge_lint(run_dir: Path, spec: str | Path) -> dict[str, Any] | None:
+    """Run :mod:`scripts.ddd.product_lint` on the fresh capture (seconds, no LLM).
+
+    Every capture, before any judge: the frame defects it measures (a run id on
+    screen, a widget over the text, a table cut at the edge) reach the batch as
+    findings with scene ids instead of being rediscovered in prose by a judge
+    every pass. Best-effort — a lint error never fails the render.
+    """
+    try:
+        from scripts.ddd import product_lint
+
+        res = product_lint.lint(run_dir, spec=spec)
+    except Exception as exc:  # noqa: BLE001 — a lens input, never the take
+        return {"error": str(exc)}
+    by_dim: dict[str, int] = {}
+    for f in res.get("findings") or []:
+        by_dim[str(f.get("dimension"))] = by_dim.get(str(f.get("dimension")), 0) + 1
+    return {"findings": len(res.get("findings") or []), "by_dimension": by_dim, "checks": res.get("checks")}
+
+
 def render(
     run_id: str,
     spec: str | Path,
@@ -194,9 +216,12 @@ def render(
     watchdog.finish(state, "render", out["status"], reason=out["reason"])
     save(state)
     (run_dir / RC_FILE).write_text(f"{out['exit_code']}\n")
+    lint = None
     if out["exit_code"] == 0:
         capture_scope.record_capture(run_dir, spec, capture)
+        lint = _prejudge_lint(run_dir, spec)
     return {
+        "lint": lint,
         "run_id": run_id,
         "iteration": it,
         "status": out["status"],
