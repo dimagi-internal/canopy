@@ -10,6 +10,8 @@ changes an agent that has not been switched.
     canopy vault status  --agent X [--no-drift] [--json]
     canopy vault device  [--enroll | --reenroll | --refresh] [--runner ID] [--kind K | --software]
     canopy vault binding --agent X on|off                    require an approved device key
+    canopy vault zk status|enable|set|grant|rotate --agent X zero-knowledge (vault_zk_cli.py)
+    canopy vault import --agent X --zk                       ... encrypted here
 
 WHAT IS AN AGENT'S SET OF REFS. Every `NAME=…` line of the agent's `.env.tpl` (the one
 source of truth for what `~/.X/.env` holds): an `op://` reference is read from 1Password,
@@ -226,7 +228,8 @@ def credential_status(slug: str, web) -> dict:
 
 def run_import(slug: str, *, token: str, op: av.Op, switch: bool = False,
                repo: Optional[Path] = None, transport=None,
-               gh_runner: Runner = subprocess.run) -> Result:
+               gh_runner: Runner = subprocess.run, zk: bool = False,
+               zk_vault=None) -> Result:
     agent = load_agent(slug, token=token, repo=repo, gh_runner=gh_runner, transport=transport)
     _require_admin(agent, "store its credentials")
     web = _web(token, transport)
@@ -251,7 +254,17 @@ def run_import(slug: str, *, token: str, op: av.Op, switch: bool = False,
             continue
         values[r.name] = val
         res.rows.append(Row(r.name, "read", f"1Password item {r.item}"))
-    if values:
+    if values and zk:
+        # Zero-knowledge (canopy-web#1550): encrypted HERE under the vault key this device
+        # unwraps; canopy-web only ever sees zk1: ciphertext.
+        from orchestrator import vault_zk_cli
+        v = zk_vault or vault_zk_cli.ZkVault(slug, token=token, transport=transport)
+        try:
+            out = vault_zk_cli.run_set(v, values)
+        except click.ClickException as e:
+            raise VaultCliError(e.message) from None
+        res.actions += out.actions
+    elif values:
         web("PUT", f"/api/agents/{slug}/credentials", {"values": values})
         res.actions.append(f"wrote {len(values)} value(s) to canopy-web "
                            f"(1Password vault {agent.vault} untouched)")
@@ -496,12 +509,15 @@ def vault_group():
 @OP_OPT
 @click.option("--switch", "do_switch", is_flag=True,
               help="Then set credential_source=canopy-web — only if every ref is stored.")
-def import_cmd(slug, repo, op_account, do_switch):
+@click.option("--zk", "zk", is_flag=True,
+              help="The agent is zero-knowledge: encrypt each value here under its vault key "
+                   "(this device must hold a wrap) — canopy-web sees only ciphertext.")
+def import_cmd(slug, repo, op_account, do_switch, zk):
     """Copy the agent's declared refs from 1Password (your own `op`) to canopy-web.
 
     Leaves the 1Password vault untouched. With --switch, also moves the agent to the
     canopy-web backend once canopy-web reports every declared ref present."""
-    res = run_import(slug, token=_token(), op=av.Op(op_account), switch=do_switch,
+    res = run_import(slug, token=_token(), op=av.Op(op_account), switch=do_switch, zk=zk,
                      repo=Path(repo) if repo else None)
     click.echo(render(res))
     if not res.ok:
@@ -562,8 +578,12 @@ def status_cmd(slug, repo, op_account, no_drift, as_json):
                    "secure-enclave on a Mac, tpm on Windows, aws-iam on an EC2 box with an "
                    "instance role, else software).")
 @click.option("--label", default="", help="Shown on canopy-web (default: host name).")
+@click.option("--ecdh-jwk", "ecdh_jwk", is_flag=True,
+              help="Make this machine's ECDH key if needed (for --kind, else the existing "
+                   "key's kind) and print {kind, jkt, jwk} — its PUBLIC half. A cloud runner "
+                   "enrolling itself uses this (canopy-web#1550).")
 @click.option("--json", "as_json", is_flag=True)
-def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, as_json):
+def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh_jwk, as_json):
     """This machine's device key: show it, enroll it, or re-enroll it.
 
     canopy-web hands a `require_device_binding` agent's credentials only to a request
@@ -574,6 +594,9 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, as_j
     if software and kind not in (None, device_key.KIND_SOFTWARE):
         raise VaultCliError("--software and --kind disagree")
     kind = kind or (device_key.KIND_SOFTWARE if software else None)
+    if ecdh_jwk:
+        click.echo(json.dumps(run_ecdh_jwk(kind), sort_keys=True))
+        return
     runner_id = runner_id or device_key.runner_id_from_config()
     web = _web(_token()) if (enroll or reenroll or refresh) else None
     try:
@@ -628,3 +651,23 @@ def run_binding(slug: str, on: bool, *, token: str, transport=None) -> dict:
     if got is not None and bool(got) != bool(on):
         raise VaultCliError(f"canopy-web answered require_device_binding={got!r}, expected {on!r}")
     return {"agent": slug, "require_device_binding": bool(on if got is None else got)}
+
+
+def run_ecdh_jwk(kind: Optional[str] = None) -> dict:
+    """This machine's ECDH key (made if missing): {kind, jkt, jwk} — public only."""
+    try:
+        if kind is None:
+            existing = device_key.load()
+            if existing is None:
+                raise VaultCliError("no device key here yet — pass --kind, or "
+                                    "`canopy vault device --enroll` first")
+            kind = existing.kind
+        key, created = device_key.ensure_ecdh(kind)
+    except device_key.DeviceKeyError as e:
+        raise VaultCliError(str(e))
+    return {"kind": key.kind, "jkt": key.jkt, "jwk": key.public_jwk, "created": created}
+
+
+from orchestrator.vault_zk_cli import zk_group  # noqa: E402 — after vault_group exists
+
+vault_group.add_command(zk_group)
