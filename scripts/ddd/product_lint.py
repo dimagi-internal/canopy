@@ -35,7 +35,8 @@ the judges rediscovered them, in prose, every pass:
 * **internal_id_leak** — "synthetic, ace noora-health/20261015-1129" in the
   report H1 and the opportunity picker (``\\d{8}-\\d{4}``, ``ace <opp>/``). Owner
   ``demo_data``: the seeded names carry the run id.
-* **jargon** — the legend "n<1: too few records" (:data:`DEFAULT_JARGON`).
+* **jargon** — the legend "n<1: too few records" (:data:`DEFAULT_JARGON`; a repo
+  extends the list with ``product.lint.jargon``, merged onto the default).
 * **text_occlusion** — the floating "Ask an agent" pill over footer text and a
   chart; a line cut off under the fixed app header. A floater that sits at the
   same place on several scenes is page chrome: owner ``shared_chrome`` (it is
@@ -61,6 +62,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+from scripts.ddd.loop_config import DEFAULT_JARGON
 
 BASELINE_FILE = "lint-baseline.json"
 OUT_FILE = "lint_findings.json"
@@ -144,10 +147,9 @@ INTERNAL_ID_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\bace\s+[a-z0-9][\w.-]*/", "an internal ACE opportunity path ('ace <opp>/')"),
 )
 
-#: Shorthand a non-technical reader cannot parse. Pattern -> what to say instead.
-DEFAULT_JARGON: dict[str, str] = {
-    r"\bn\s*[<≤]\s*\d+": "statistical shorthand ('n<N') — say it in words, e.g. 'too few records to score'",
-}
+#: ``DEFAULT_JARGON`` (shorthand a non-technical reader cannot parse, pattern ->
+#: what to say instead) lives in :mod:`scripts.ddd.loop_config`, so
+#: ``product.lint.jargon`` can extend it; re-exported here.
 
 #: A floater wider or taller than this share of the viewport is a BAR (header,
 #: sidebar): content legitimately scrolls under it, so only a line it cuts in
@@ -487,7 +489,9 @@ def lint(run_dir: str | Path, *, spec: str | Path | None = None, cfg: Any = None
                 )
 
     jargon = getattr(cfg, "jargon", None)
-    findings.extend(text_leak_findings(texts, jargon=jargon if isinstance(jargon, dict) and jargon else None))
+    # A dict — even an empty one (a repo that dropped every default) — is the
+    # configured list; anything else (a hand-built cfg) falls back to the default.
+    findings.extend(text_leak_findings(texts, jargon=jargon if isinstance(jargon, dict) else None))
     geo, geo_status = geometry_findings(_visual_captures(snap), _narration_texts(Path(spec) if spec else None))
     findings.extend(geo)
 

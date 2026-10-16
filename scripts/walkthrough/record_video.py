@@ -836,6 +836,17 @@ def main() -> None:
             "does NOT persist the dual-judge verdict to run_state.yaml."
         ),
     )
+    ap.add_argument(
+        "--unplanned-capture",
+        metavar="REASON",
+        default=None,
+        help=(
+            "Record into a DDD run dir that has no capture plan for its current iteration "
+            "(normally refused: render through `python -m scripts.ddd.iteration render`, which "
+            "plans the capture first). Requires a reason; it is kept in the run's "
+            "capture-plan.json and flagged by `capture_scope report`."
+        ),
+    )
     ap.add_argument("--manifest", help="path to write the render manifest (walkthrough-run-data.json)")
     ap.add_argument(
         "--capture-scenes",
@@ -900,6 +911,26 @@ def main() -> None:
             "       unaffected. For a deliberate one-off, pass --force-hand-render.)\n"
             "════════════════════════════════════════════════════════════════════\n"
         )
+
+    # ---- Guardrail: no capture into a run dir without THIS pass's plan -------
+    # --ddd-orchestrated alone proves nothing: on ACE noora iterations 3–5 the
+    # command was copied out of an earlier render log, flag included, so the
+    # guard above stayed quiet and every pass skipped the incremental capture
+    # rules (stills only, carried scenes, video once). See
+    # scripts.ddd.capture_scope.recorder_guard.
+    if getattr(args, "unplanned_capture", None) is not None and not args.unplanned_capture.strip():
+        sys.exit("ERROR: --unplanned-capture needs a reason (it is recorded in capture-plan.json)")
+    from scripts.ddd import capture_scope
+
+    _guard = capture_scope.recorder_guard(
+        [args.snapshots, args.output, args.report, args.manifest],
+        override_reason=args.unplanned_capture,
+        argv=sys.argv[1:],
+    )
+    if not _guard["ok"]:
+        sys.exit("ERROR: " + _guard["message"])
+    if _guard["message"]:
+        print(f"WARNING: {_guard['message']}", file=sys.stderr)
 
     ffmpeg = check_ffmpeg()
     # Composes <slug>.recipe.yaml + <slug>.narrative.lock.json when that is the

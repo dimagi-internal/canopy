@@ -94,6 +94,9 @@ module reads the two blocks the v1/backlog loop adds::
         max_new_long_lines: 0          # explanatory lines a run may ADD over its baseline
         glossary: {round: tender}      # banned term -> the product's word for it
         fonts: [Inter]                 # allowed first font family of rendered text
+        jargon:                        # pre-judge frame lint: regex -> what to say instead.
+          DQA: "an acronym ('DQA') — spell it out"   # MERGED onto DEFAULT_JARGON
+                                       # (a default's regex mapped to null drops it)
 
     fix_gate:                 # scripts.ddd.fix_gate — every fix batch's diff, every objective
       prose_words: 7          # a new string / template text of this many words is a sentence
@@ -257,6 +260,16 @@ class AuthPreflightConfig:
         return bool(self.commands)
 
 
+#: The pre-judge frame lint's jargon list (:mod:`scripts.ddd.product_lint`):
+#: regex over captured page text -> what to say instead. Shorthand a
+#: non-technical reader cannot parse. ``product.lint.jargon`` is MERGED onto
+#: this (a repo — ACE — adds its own terms; ``null`` drops a default), so a repo
+#: that sets one term does not silently lose the built-in ones.
+DEFAULT_JARGON: dict[str, str] = {
+    r"\bn\s*[<≤]\s*\d+": "statistical shorthand ('n<N') — say it in words, e.g. 'too few records to score'",
+}
+
+
 @dataclass(frozen=True)
 class LintConfig:
     max_words_per_screen: int = 800
@@ -265,6 +278,41 @@ class LintConfig:
     max_new_long_lines: int = 0
     glossary: dict[str, str] = field(default_factory=dict)
     fonts: tuple[str, ...] = ()
+    jargon: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_JARGON))
+
+
+def _parse_jargon(raw: Any) -> dict[str, str]:
+    """``product.lint.jargon`` merged onto :data:`DEFAULT_JARGON`.
+
+    A mapping ``{regex: hint}`` (``null`` / ``false`` removes that default) or a
+    bare list of regexes (generic hint). A regex that does not compile is
+    dropped — a config problem must never stop a run.
+    """
+    import re
+
+    out = dict(DEFAULT_JARGON)
+    if isinstance(raw, list):
+        raw = {p: None for p in raw}
+        generic = True
+    else:
+        generic = False
+    if not isinstance(raw, dict):
+        return out
+    for pat, hint in raw.items():
+        pat = str(pat).strip()
+        if not pat:
+            continue
+        if not generic and (hint is None or hint is False):
+            out.pop(pat, None)
+            continue
+        try:
+            re.compile(pat)
+        except re.error:
+            continue
+        out[pat] = str(hint).strip() if hint not in (None, True, "") else (
+            f"jargon ('{pat}') — say it in plain words"
+        )
+    return out
 
 
 @dataclass(frozen=True)
@@ -461,6 +509,7 @@ def _parse_product(raw: Any) -> ProductConfig:
         max_new_long_lines=_int(lint_raw.get("max_new_long_lines"), 0, minimum=0),
         glossary=glossary,
         fonts=fonts,
+        jargon=_parse_jargon(lint_raw.get("jargon")),
     )
     return ProductConfig(
         floor=_positive(raw.get("floor"), 3.0),

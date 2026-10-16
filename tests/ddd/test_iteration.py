@@ -80,6 +80,22 @@ class TestRender:
         iteration.render(run.id, run.spec, popen=popen)
         assert "--base-url" not in popen.calls[0][0]
 
+    def test_the_recorder_it_starts_passes_the_capture_plan_guard(self, run):
+        """``render`` plans before it records, so its own recorder is never refused (DDD-3)."""
+        from scripts.ddd import capture_scope
+
+        seen = []
+        inner = _fake_recorder(run.dir)
+
+        def popen(cmd, **kw):
+            outs = [cmd[cmd.index(f) + 1] for f in ("--snapshots", "--output", "--report", "--manifest")]
+            seen.append(capture_scope.recorder_guard(outs, override_reason=None, argv=cmd))
+            return inner(cmd, **kw)
+
+        iteration.render(run.id, run.spec, popen=popen)
+        assert seen and seen[0]["ok"] and seen[0]["run_dir"] == str(run.dir.resolve())
+        assert not seen[0]["override"]
+
     def test_a_failed_recorder_keeps_its_exit_code(self, run):
         out = iteration.render(run.id, run.spec, popen=_fake_recorder(run.dir, rc=3))
         assert out["exit_code"] == 3 and out["status"] == "failed"
