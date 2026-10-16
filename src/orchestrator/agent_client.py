@@ -169,6 +169,12 @@ class AgentClient:
     def get_agent(self) -> dict:
         return self._call("GET", f"/api/agents/{self.slug}/")
 
+    def move(self, workspace: str, *, dry_run: bool = False) -> dict:
+        """Move the agent, with its history, to `workspace` (canopy-web#1532).
+        `dry_run` changes nothing and returns the same report."""
+        path = f"/api/agents/{self.slug}/move" + ("?dry_run=1" if dry_run else "")
+        return self._call("POST", path, {"workspace": workspace})
+
     def turn_mode(self) -> str:
         """The agent's runtime autonomy posture (manual | auto) — board-side
         STATE on canopy-web, flipped by a human from /agents/<slug>, never by

@@ -31,7 +31,8 @@ def agent():
 @click.option("--avatar-url", default="")
 @click.option("--workspace", default="",
               help="canopy-web workspace slug to home the agent in (e.g. 'connect'). "
-                   "Setting it on an already-registered agent MOVES it. Omit to leave "
+                   "Setting it on an already-registered agent MOVES it, history and all "
+                   "(see `canopy agent move --dry-run` to preview a move). Omit to leave "
                    "placement alone — which means a NEW agent lands in the default "
                    "workspace, which any @dimagi.com address may self-join as an "
                    "editor, and an editor can delete an agent.")
@@ -59,6 +60,26 @@ def agent_register(slug, name, email, description, persona, avatar_url, workspac
                                            "visible to you) — pass --name to create it")
         c = _client(slug, workspace=workspace, **given)
         _emit(c.register())
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
+@agent.command("move")
+@click.option("--slug", required=True)
+@click.option("--to", "workspace", required=True, help="The workspace slug to move the agent to.")
+@click.option("--dry-run", is_flag=True,
+              help="Change nothing; report what would move, stay, and stop working.")
+def agent_move(slug, workspace, dry_run):
+    """Move an agent to another workspace, with its history.
+
+    One operation on canopy-web (POST /api/agents/{slug}/move): turns, chat
+    sessions, mail, capability grants and agent-scoped rules move together in
+    one transaction, or nothing does. Prints the report — per-table `tables`,
+    `left_behind`, and `stops_working` (e.g. a mail address on a domain the
+    destination cannot use). Needs the agent's owner or an admin, with editor
+    or above in the destination. Run with --dry-run first."""
+    try:
+        _emit(_client(slug).move(workspace, dry_run=dry_run))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 
