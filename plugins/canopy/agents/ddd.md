@@ -211,6 +211,8 @@ enforced by `tests/ddd/test_gates.py`:
 | `concept_change` | **`defer`** | Never block. The review stays posted and resolvable; the run terminates and reports what it could not decide. Nothing is published, so deferring costs nothing. |
 | `external_release` | **`hold`** | Never publish to external humans without an approval. The asymmetry is deliberate: holding is the safe direction here, deferring is the safe direction there. |
 
+**A turn raised from a storyboard feedback-round task** (its next action says `Run ddd-feedback-round …`) does not poll a review. Run the `ddd-feedback-round` skill; it is the human input for this iteration.
+
 Resolve every gate through it rather than calling `review.await_resolution`
 directly — that raises `TimeoutError` after 30 minutes, which in an unattended run
 is a half-hour stall followed by a crash:
