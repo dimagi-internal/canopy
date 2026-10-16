@@ -145,8 +145,12 @@ def test_an_ec2_box_enrolls_its_role(on_ec2, monkeypatch):
                    on_ec2=lambda: True)
     method, path, body = calls[0]
     assert (method, path) == ("POST", "/api/runner-device-keys/")
-    assert set(body) == {"runner", "kind", "role_arn", "label", "proof"}
+    assert set(body) == {"runner", "kind", "role_arn", "label", "proof", "ecdh_public_jwk"}
     assert body["kind"] == "aws-iam" and body["role_arn"] == ROLE and body["runner"] == "r-ec2"
+    # aws-iam has no key of its own: its ECDH key (canopy-web#1550) is a 0600 software PEM
+    assert dk.ecdh_pem_path().stat().st_mode & 0o777 == 0o600
+    assert body["ecdh_public_jwk"] == dk.load_ecdh().public_jwk
+    assert dk.read_status()["ecdh_kind"] == "software"
     proof = json.loads(base64.b64decode(body["proof"]))
     assert proof["headers"]["X-Canopy-Proof-Htu"] == "https://canopy.example/api/runner-device-keys/"
     assert st["kind"] == "aws-iam" and st["role_arn"] == ROLE and st["jkt"] == "f" * 64

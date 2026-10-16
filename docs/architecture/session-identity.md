@@ -218,6 +218,29 @@ canopy vault binding --agent X on|off          # PATCH /device-binding {require_
     canopy-web's `runner/ec2/cloud_runner.py` carries the same stdlib signer for its own
     resolves; both are pinned to a botocore `SigV4Auth` vector.
 
+### Zero-knowledge (canopy-web#1550)
+
+For an agent with zero-knowledge on, canopy-web holds only `zk1:` ciphertext and wrapped keys.
+The formats are canopy-web's `docs/vault/zk-v1/zk_v1_reference.py`; `orchestrator/vault_zk.py`
+reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.json`, verbatim).
+
+- **ECDH device key.** Beside the signing key every machine holds a P-256 key-agreement key the
+  agent's vault key (VK) is wrapped to: `se-ecdh.key` via the helper's `ecdh-create` /
+  `ecdh-public-jwk` / `ecdh-derive <epk_b64u>` (Secure Enclave, no presence), the TPM key
+  `canopy-device-ecdh` (`NCryptSecretAgreement` + `NCryptDeriveKey(BCRYPT_KDF_RAW_SECRET)`, whose
+  little-endian output is reversed), or a 0600 `ecdh.pem` for `software` and `aws-iam`. It only
+  ever answers Z. Enrollment sends `ecdh_public_jwk`; an older helper or server is not an error.
+- **Resolve.** A ZK answer is `{zk: true, kv, values: {name: "zk1:…"}, wrap}`; `cred_resolve`
+  unwraps with `device_info(agent_id, kv, ecdh_jkt)` and decrypts, so `cred`, `agent prepare
+  --runner`, `cred exec` and `cred sync` see plaintext exactly as for a custodial agent.
+  `agent_id` = the answer's `agent_id` if sent, else `GET /api/agents/<slug>/`'s `id`. 409
+  `zk_wrap_missing` → "ask an admin to grant this device".
+- **CLI, as this device** (a member through its device wrap):
+  `canopy vault zk status|enable|set|grant|rotate --agent X` and `canopy vault import --zk`.
+  `enable` wraps for this device, your keyset (`GET /api/vault/keyset`) and every pending target,
+  plus recovery, and prints the recovery code once; `grant`/`rotate` list every public key they
+  will wrap to and ask first (`--yes` to skip).
+
 **Pilot (Eva, Jonathan's Mac):** `canopy vault import --agent eva` → approve the runner's
 device key in canopy-web → `canopy vault switch --agent eva --to canopy-web`, then set
 `require_device_binding` on Eva → run Eva as usual. Rollback: `canopy vault export --agent eva

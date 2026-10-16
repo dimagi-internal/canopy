@@ -28,6 +28,16 @@ with a passkey step-up, after which its status is ``active``. The answer is cach
 ``status.json`` beside the key, so a resolve can decide whether to attach a proof without
 a round trip.
 
+**The ECDH key (zero-knowledge vault, canopy-web#1550).** Beside the signing key, each
+machine holds a P-256 key-AGREEMENT key, which a ZK agent's vault key is wrapped to
+(ECDH-ES, `orchestrator.vault_zk`). It is a separate key because the Secure Enclave's keys
+are per-purpose: ``se-ecdh.key`` (the helper's ``ecdh-create`` / ``ecdh-public-jwk`` /
+``ecdh-derive``), the TPM key ``canopy-device-ecdh`` (marker ``tpm-ecdh.json``), or for
+``software`` and ``aws-iam`` a 0600 PEM (``ecdh.pem``). Whatever the kind, the private half
+only ever answers ECDH: it hands back Z for a wrap's ephemeral point, and the library does
+the rest. Enrollment sends its public JWK as ``ecdh_public_jwk``; an older helper or server
+that knows nothing of it is not an error — the key is simply enrolled without it.
+
 Nothing here ever prints or logs a credential; the key itself never leaves its file (the
 enclave key never leaves the enclave).
 """
@@ -103,6 +113,21 @@ def tpm_path() -> Path:
 def aws_path() -> Path:
     """Marker for an aws-iam identity: the instance role's ARN (not a secret)."""
     return key_dir() / "aws-iam.json"
+
+
+def se_ecdh_path() -> Path:
+    """The Secure Enclave ECDH key's dataRepresentation (written by the helper)."""
+    return key_dir() / "se-ecdh.key"
+
+
+def ecdh_pem_path() -> Path:
+    """The software / aws-iam ECDH key (0600 PEM)."""
+    return key_dir() / "ecdh.pem"
+
+
+def tpm_ecdh_path() -> Path:
+    """Marker for a TPM ECDH key (the key itself lives in the platform provider)."""
+    return key_dir() / "tpm-ecdh.json"
 
 
 def helper_path(which: Callable[[str], Optional[str]] = shutil.which) -> Optional[str]:
@@ -418,6 +443,153 @@ def ensure(*, allow_software: Optional[bool] = None, kind: Optional[str] = None,
     return _create_software(), True
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# the ECDH key (zero-knowledge vault, canopy-web#1550)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class EcdhUnsupported(DeviceKeyError):
+    """This machine's key backend cannot make an ECDH key (e.g. a helper built before
+    canopy-web#1550) — enrollment proceeds without one."""
+
+
+@dataclass
+class EcdhKey:
+    kind: str
+    public_jwk: dict
+    _derive: Callable[[bytes], bytes]
+
+    @property
+    def jkt(self) -> str:
+        """RFC 7638 thumbprint of the ECDH public JWK — the `ecdh_jkt` a device wrap's
+        HKDF info binds."""
+        return jwk_thumbprint(self.public_jwk)
+
+    @property
+    def point(self) -> bytes:
+        return b"\x04" + b64url_decode(self.public_jwk["x"]) + b64url_decode(self.public_jwk["y"])
+
+    def derive(self, peer_point: bytes) -> bytes:
+        """Z: the 32-byte big-endian x-coordinate of ECDH(this key, peer)."""
+        z = self._derive(peer_point)
+        if len(z) != 32:
+            raise DeviceKeyError(f"{self.kind} ECDH key returned a {len(z)}-byte secret, not 32")
+        return z
+
+
+def _ecdh_kind_for(signing_kind: str) -> str:
+    """The ECDH backend for a signing key's kind: the same hardware where there is
+    some; aws-iam has no key of its own, so its ECDH key is a software PEM."""
+    return signing_kind if signing_kind in (KIND_SE, KIND_TPM) else KIND_SOFTWARE
+
+
+def _sw_ecdh_key(pem: bytes) -> EcdhKey:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key = serialization.load_pem_private_key(pem, password=None)
+    if not isinstance(key, ec.EllipticCurvePrivateKey) or key.curve.name != "secp256r1":
+        raise DeviceKeyError(f"{ecdh_pem_path()} is not a P-256 private key")
+    nums = key.public_key().public_numbers()
+    jwk = public_jwk_from_point(nums.x.to_bytes(32, "big"), nums.y.to_bytes(32, "big"))
+
+    def derive(peer_point: bytes) -> bytes:
+        peer = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), peer_point)
+        return key.exchange(ec.ECDH(), peer)
+
+    return EcdhKey(KIND_SOFTWARE, jwk, derive)
+
+
+def _se_ecdh_key(helper: str, runner: Runner) -> EcdhKey:
+    p = _run_helper(helper, "ecdh-public-jwk", runner=runner)
+    if p.returncode == 2:
+        raise EcdhUnsupported("canopy-device-key predates ECDH (canopy-web#1550) — re-run the "
+                              "runner installer to rebuild it")
+    if p.returncode != 0:
+        raise _helper_fail("ecdh-public-jwk", p)
+    try:
+        jwk = json.loads(p.stdout)
+    except ValueError as e:
+        raise DeviceKeyError(f"canopy-device-key ecdh-public-jwk printed no JSON ({e})")
+
+    def derive(peer_point: bytes) -> bytes:
+        d = _run_helper(helper, "ecdh-derive", b64url(peer_point), runner=runner)
+        if d.returncode != 0:
+            raise _helper_fail("ecdh-derive", d)
+        return b64url_decode((d.stdout or "").strip())
+
+    return EcdhKey(KIND_SE, {k: jwk[k] for k in ("kty", "crv", "x", "y")}, derive)
+
+
+def _tpm_ecdh_key(marker: dict) -> EcdhKey:
+    from orchestrator import device_key_tpm as tpm
+    key = tpm.open_ecdh_key(str(marker.get("name") or tpm.ECDH_KEY_NAME))
+    return EcdhKey(KIND_TPM, key.public_jwk(), key.derive)
+
+
+def load_ecdh(*, runner: Runner = subprocess.run,
+              which: Callable[[str], Optional[str]] = shutil.which) -> Optional[EcdhKey]:
+    """This machine's ECDH key, or None when it has none. Never creates."""
+    if tpm_ecdh_path().is_file():
+        try:
+            return _tpm_ecdh_key(_read_marker(tpm_ecdh_path()))
+        except Exception as e:  # noqa: BLE001 — name it as a device-key problem
+            raise DeviceKeyError(f"the TPM ECDH key named in {tpm_ecdh_path()} could not be "
+                                 f"opened ({e})")
+    if se_ecdh_path().is_file():
+        helper = helper_path(which)
+        if not helper:
+            raise DeviceKeyError(
+                f"{se_ecdh_path()} is a Secure Enclave key but canopy-device-key is not "
+                "installed — re-run the runner installer")
+        return _se_ecdh_key(helper, runner)
+    if ecdh_pem_path().is_file():
+        return _sw_ecdh_key(ecdh_pem_path().read_bytes())
+    return None
+
+
+def ensure_ecdh(signing_kind: str, *, runner: Runner = subprocess.run,
+                which: Callable[[str], Optional[str]] = shutil.which,
+                tpm_lib=None) -> tuple[EcdhKey, bool]:
+    """(this machine's ECDH key, whether it was created now), on the backend that matches
+    the signing key's kind. Idempotent. Raises EcdhUnsupported where the backend cannot
+    make one (the caller enrolls without it)."""
+    existing = load_ecdh(runner=runner, which=which)
+    if existing is not None:
+        return existing, False
+    kind = _ecdh_kind_for(signing_kind)
+    if kind == KIND_SE:
+        helper = helper_path(which)
+        if not helper:
+            raise EcdhUnsupported("no canopy-device-key helper for a Secure Enclave ECDH key")
+        _ensure_dir()
+        p = _run_helper(helper, "ecdh-create", runner=runner)
+        if p.returncode == 2:
+            raise EcdhUnsupported("canopy-device-key predates ECDH (canopy-web#1550) — re-run "
+                                  "the runner installer to rebuild it")
+        if p.returncode != 0:
+            raise _helper_fail("ecdh-create", p)
+        return _se_ecdh_key(helper, runner), True
+    if kind == KIND_TPM:
+        from orchestrator import device_key_tpm as tpm
+        try:
+            key = tpm.create_ecdh_key(tpm.ECDH_KEY_NAME, tpm_lib)
+            jwk = key.public_jwk()
+        except Exception as e:  # noqa: BLE001 — a TPM that will not make one
+            raise EcdhUnsupported(f"the TPM would not make an ECDH key ({e})")
+        _write_private(tpm_ecdh_path(), json.dumps({"provider": tpm.PROVIDER,
+                                                    "name": tpm.ECDH_KEY_NAME},
+                                                   indent=1).encode("utf-8"))
+        return EcdhKey(KIND_TPM, jwk, key.derive), True
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                            serialization.NoEncryption())
+    _write_private(ecdh_pem_path(), pem)
+    return _sw_ecdh_key(pem), True
+
+
 def remove_local() -> list[str]:
     """Delete the local key files and the status cache; returns what was removed. A TPM
     key is also deleted from its provider (best effort — it is revoked server-side)."""
@@ -429,7 +601,16 @@ def remove_local() -> list[str]:
             gone.append("tpm:" + tpm.KEY_NAME)
         except Exception:  # noqa: BLE001 — the marker still goes; a re-create overwrites
             pass
-    for p in (se_path(), sw_path(), tpm_path(), aws_path(), status_path()):
+    if tpm_ecdh_path().is_file():
+        try:
+            from orchestrator import device_key_tpm as tpm
+            tpm.delete_ecdh_key(str(_read_marker(tpm_ecdh_path()).get("name")
+                                    or tpm.ECDH_KEY_NAME))
+            gone.append("tpm:" + tpm.ECDH_KEY_NAME)
+        except Exception:  # noqa: BLE001
+            pass
+    for p in (se_path(), sw_path(), tpm_path(), aws_path(), status_path(),
+              se_ecdh_path(), ecdh_pem_path(), tpm_ecdh_path()):
         if p.exists():
             p.unlink()
             gone.append(str(p))
@@ -542,6 +723,15 @@ def enroll(*, runner_id: str, call: Call, label: str = "", allow_software: Optio
     key, created = ensure(allow_software=allow_software, kind=kind, runner=runner,
                           which=which, **ensure_kw)
     label = label or default_label()
+    # The ECDH key a zero-knowledge vault key is wrapped to (canopy-web#1550). Best
+    # effort: a backend that cannot make one enrolls the signing key exactly as before.
+    ecdh: Optional[EcdhKey] = None
+    ecdh_note = ""
+    try:
+        ecdh, _ = ensure_ecdh(key.kind, runner=runner, which=which)
+    except DeviceKeyError as e:
+        ecdh_note = str(e)
+    extra = {"ecdh_public_jwk": ecdh.public_jwk} if ecdh is not None else {}
     if key.kind == KIND_AWS_IAM:
         from orchestrator import canopy_web
         from orchestrator import device_key_aws as aws
@@ -552,20 +742,27 @@ def enroll(*, runner_id: str, call: Call, label: str = "", allow_software: Optio
         htu = normalize_htu(canopy_web.resolve_base_url(base_url) + REGISTER_PATH)
         body = call("POST", REGISTER_PATH, {"runner": runner_id, "kind": key.kind,
                                              "role_arn": key.role_arn, "label": label,
-                                             "proof": aws.proof(creds, htu)})
+                                             "proof": aws.proof(creds, htu), **extra})
         jkt = str(body.get("jkt") or key.jkt)    # the server's: sha256 of the role ARN
     else:
         body = call("POST", REGISTER_PATH, {"runner": runner_id, "public_jwk": key.public_jwk,
-                                             "kind": key.kind, "label": label})
+                                             "kind": key.kind, "label": label, **extra})
         jkt = str(body.get("jkt") or key.jkt)
         if jkt != key.jkt:
             raise DeviceKeyError(f"canopy-web registered thumbprint {jkt}, but this key's is "
                                  f"{key.jkt} — refusing to cache a mismatch")
+    if ecdh is not None and body.get("ecdh_jkt") and body["ecdh_jkt"] != ecdh.jkt:
+        raise DeviceKeyError(f"canopy-web registered ECDH thumbprint {body['ecdh_jkt']}, but "
+                             f"this key's is {ecdh.jkt} — refusing to cache a mismatch")
     status = {"id": body.get("id"), "jkt": jkt, "status": str(body.get("status") or "pending"),
               "approve_url": str(body.get("approve_url") or ""), "kind": key.kind,
               "runner": runner_id, "checked_at": time.time()}
     if key.role_arn:
         status["role_arn"] = key.role_arn
+    if ecdh is not None:
+        status.update(ecdh_jkt=ecdh.jkt, ecdh_kind=ecdh.kind)
+    elif ecdh_note:
+        status["ecdh_note"] = ecdh_note[:300]
     write_status(status)
     return {**status, "created": created}
 

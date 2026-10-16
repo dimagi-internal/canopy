@@ -1,0 +1,565 @@
+"""`canopy vault zk` — run an agent's zero-knowledge vault from THIS device (canopy-web#1550).
+
+For an agent with zero-knowledge on, canopy-web stores only ciphertext and wrapped keys.
+This command acts as this machine's device, which is a member of the vault through its
+device wrap (the vault key VK wrapped to its ECDH key — `device_key.load_ecdh`):
+
+    canopy vault zk status --agent X              state, wraps, pending targets
+    canopy vault zk enable --agent X [--yes]      custodial -> zero-knowledge (prints the
+                                                  recovery code ONCE)
+    canopy vault zk set    --agent X NAME         one value, read from stdin / a hidden prompt
+    canopy vault zk grant  --agent X [--yes]      wrap VK for every pending target
+    canopy vault zk rotate --agent X [--drop K:T] new VK + kv, re-wrap the rest, re-encrypt,
+                                                  new recovery code
+    canopy vault import --agent X --zk            1Password -> canopy-web, encrypted here
+
+The endpoints (owner/admin only) are canopy-web's: ``GET /api/agents/<slug>/vault/zk``,
+``POST …/vault/zk/enable``, ``PUT …/vault/zk/values``, ``POST …/vault/zk/wraps``,
+``POST …/vault/zk/rotate`` and ``GET /api/vault/keyset`` (the caller's own keyset). The byte
+formats are `orchestrator.vault_zk`'s, which reproduce the normative vectors.
+
+What the server is trusted for: availability and the PUBLIC keys it lists as targets. A
+grant wraps VK to whatever public key canopy-web names, so ``grant``/``enable``/``rotate``
+list every target (label + thumbprint) and ask before wrapping; ``--yes`` skips the
+question for unattended use. Nothing here prints, logs or sends a value, the vault key or
+a recovery code — except the recovery code, printed exactly once on the terminal.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from dataclasses import dataclass, field
+from typing import Callable, Optional
+
+import click
+
+from orchestrator import canopy_web, cred_resolve, device_key
+from orchestrator import vault_zk as zk
+
+Confirm = Callable[[list], bool]
+
+
+class ZkCliError(click.ClickException):
+    pass
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# the server's rows, normalised (one place to adjust if the contract moves)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _ident(v) -> object:
+    """A target id that may arrive bare or as a nested object ``{"id": …}``."""
+    if isinstance(v, dict):
+        return v.get("id")
+    return v
+
+
+def _row_target(row: dict, kind: str) -> object:
+    keys = (("target", "device_key", "device_key_id", "id") if kind == "device"
+            else ("target", "user", "user_id", "id"))
+    for k in keys:
+        v = _ident(row.get(k))
+        if v not in (None, ""):
+            return v
+    return None
+
+
+@dataclass
+class Target:
+    kind: str                   # "device" | "member"
+    target: object              # device key id | user id
+    public_jwk: dict
+    label: str = ""
+    #: device: the ECDH key's RFC 7638 thumbprint; member: the user id — what HKDF binds
+    bind: str = ""
+
+    def info(self, agent_id: str, kv) -> str:
+        return (zk.device_info(agent_id, kv, self.bind) if self.kind == "device"
+                else zk.member_info(agent_id, kv, self.bind))
+
+    def key(self) -> tuple:
+        return (self.kind, str(self.target))
+
+    def describe(self) -> str:
+        what = f"device key {self.target}" if self.kind == "device" else f"user {self.target}"
+        thumb = zk.jwk_thumbprint(self.public_jwk)[:16]
+        return f"{what}{' (' + self.label + ')' if self.label else ''} — ECDH key {thumb}…"
+
+
+def target_from_row(row: dict) -> tuple[Optional[Target], str]:
+    """(target, "") or (None, why it cannot be wrapped for)."""
+    kind = str(row.get("kind") or "")
+    if kind not in ("device", "member"):
+        return None, f"unknown target kind {kind!r}"
+    tgt = _row_target(row, kind)
+    jwk = row.get("ecdh_public_jwk") if kind == "device" else None
+    jwk = jwk or row.get("public_jwk")
+    label = str(row.get("label") or row.get("name") or row.get("email") or "")
+    if tgt in (None, "") or not isinstance(jwk, dict):
+        return None, f"{kind} {tgt or '?'}: canopy-web sent no public key"
+    try:
+        zk.public_key_from_jwk(jwk)
+    except zk.ZkError as e:
+        return None, f"{kind} {tgt}: {e}"
+    if kind == "device":
+        bind = zk.jwk_thumbprint(jwk)
+        claimed = row.get("ecdh_jkt")
+        if claimed and claimed != bind:
+            return None, (f"device {tgt}: canopy-web's ecdh_jkt {claimed} is not its key's "
+                          f"thumbprint {bind} — not wrapping")
+    else:
+        bind = str(tgt)
+    return Target(kind, tgt, {k: jwk[k] for k in ("kty", "crv", "x", "y")}, label, bind), ""
+
+
+def _row_inactive(row: dict) -> bool:
+    if row.get("active") is False or row.get("revoked") or row.get("stale"):
+        return True
+    status = row.get("status")
+    return bool(status) and status not in ("active", "current")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# a session against one agent
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ZkVault:
+    def __init__(self, slug: str, *, token: str, transport=None,
+                 ecdh: Optional[device_key.EcdhKey] = None, status: Optional[dict] = None):
+        self.slug, self.token, self.transport = slug, token, transport
+        self._ecdh = ecdh
+        self._status = status
+        self._agent_id: Optional[str] = None
+        self._state: Optional[dict] = None
+
+    # -- transport --
+    def web(self, method: str, path: str, body=None):
+        try:
+            return canopy_web.call(method, path, body, token=self.token,
+                                   transport=self.transport)
+        except canopy_web.CanopyError as e:
+            raise ZkCliError(f"canopy-web refused {method} {path}: {str(e)[:300]}") from None
+
+    @property
+    def base(self) -> str:
+        return f"/api/agents/{self.slug}/vault/zk"
+
+    def state(self, refresh: bool = False) -> dict:
+        if self._state is None or refresh:
+            self._state = self.web("GET", self.base) or {}
+        return self._state
+
+    def agent_id(self) -> str:
+        if self._agent_id is None:
+            try:
+                self._agent_id = cred_resolve.zk_agent_id(self.slug, self.state(),
+                                                          token=self.token,
+                                                          transport=self.transport)
+            except canopy_web.CanopyError as e:
+                raise ZkCliError(str(e)) from None
+        return self._agent_id
+
+    # -- this device --
+    def ecdh(self) -> device_key.EcdhKey:
+        if self._ecdh is None:
+            try:
+                self._ecdh = device_key.load_ecdh()
+            except device_key.DeviceKeyError as e:
+                raise ZkCliError(str(e)) from None
+            if self._ecdh is None:
+                raise ZkCliError("this machine has no ECDH device key — `canopy vault device "
+                                 "--enroll` (then approve it in canopy-web)")
+        return self._ecdh
+
+    def device_status(self) -> dict:
+        if self._status is None:
+            self._status = device_key.read_status()
+        return self._status
+
+    def self_target(self) -> Target:
+        st = self.device_status()
+        if not st.get("id"):
+            raise ZkCliError("this machine's device key is not registered with canopy-web — "
+                             "`canopy vault device --enroll`")
+        if st.get("ecdh_jkt") and st["ecdh_jkt"] != self.ecdh().jkt:
+            raise ZkCliError("the enrolled ECDH key is not the one on disk — "
+                             "`canopy vault device --enroll` to re-register it")
+        return Target("device", st["id"], self.ecdh().public_jwk, "this device", self.ecdh().jkt)
+
+    def my_wrap(self) -> tuple[dict, object]:
+        """(this device's wrap at the current kv, kv)."""
+        st = self.state()
+        kv = st.get("kv")
+        mine_id = str(self.device_status().get("id") or "")
+        jkt = self.ecdh().jkt
+        for row in st.get("wraps") or []:
+            if not isinstance(row, dict) or row.get("kind") != "device":
+                continue
+            if row.get("kv") not in (None, kv) or not isinstance(row.get("wrap"), dict):
+                continue
+            if row.get("ecdh_jkt") == jkt or (mine_id and str(_row_target(row, "device")) == mine_id):
+                return row["wrap"], kv
+        raise ZkCliError(f"this device holds no wrap of '{self.slug}'s vault key at kv {kv} — "
+                         "it is not a member yet; ask an admin to grant it")
+
+    def vk(self) -> tuple[bytes, object]:
+        wrap, kv = self.my_wrap()
+        try:
+            return cred_resolve.unwrap_device_vk(wrap, agent_id=self.agent_id(), kv=kv,
+                                                 ecdh=self.ecdh()), kv
+        except canopy_web.CanopyError as e:
+            raise ZkCliError(str(e)) from None
+
+    # -- targets --
+    def pending(self) -> tuple[list[Target], list[str]]:
+        out, notes = [], []
+        for row in self.state().get("pending") or self.state().get("pending_targets") or []:
+            t, why = target_from_row(row) if isinstance(row, dict) else (None, "not an object")
+            (out.append(t) if t else notes.append(f"skipped: {why}"))
+        return out, notes
+
+    def current(self, drop: set) -> tuple[list[Target], list[str]]:
+        """The members at the current kv that keep access across a rotation."""
+        kv = self.state().get("kv")
+        out, notes = [], []
+        for row in self.state().get("wraps") or []:
+            if not isinstance(row, dict) or row.get("kind") not in ("device", "member"):
+                continue
+            if row.get("kv") not in (None, kv):
+                continue
+            t, why = target_from_row(row)
+            if t is None:
+                notes.append(f"NOT re-wrapped: {why}")
+                continue
+            if _row_inactive(row) or t.key() in drop:
+                notes.append(f"dropped: {t.describe()}")
+                continue
+            out.append(t)
+        return out, notes
+
+    def keyset_target(self) -> tuple[Optional[Target], str]:
+        try:
+            ks = canopy_web.call("GET", "/api/vault/keyset", token=self.token,
+                                 transport=self.transport) or {}
+        except canopy_web.CanopyError as e:
+            if "-> 404" in str(e):
+                return None, "you have no vault keyset (set one up in canopy-web with a passkey)"
+            return None, f"could not read your vault keyset ({str(e)[:160]})"
+        jwk = ks.get("public_jwk")
+        uid = _ident(ks.get("user_id") or ks.get("user") or ks.get("id"))
+        if not isinstance(jwk, dict) or uid in (None, ""):
+            return None, "you have no vault keyset (set one up in canopy-web with a passkey)"
+        t, why = target_from_row({"kind": "member", "target": uid, "public_jwk": jwk,
+                                  "label": "you"})
+        return t, why
+
+    def wrap_for(self, vk: bytes, kv, t: Target) -> dict:
+        return {"kind": t.kind, "target": t.target,
+                "wrap": zk.wrap_ecdh_es(vk, t.public_jwk, t.info(self.agent_id(), kv))}
+
+    def recovery(self, vk: bytes, kv) -> tuple[dict, str]:
+        r = zk.random_recovery_secret()
+        return ({"kind": "recovery", "target": None,
+                 "wrap": zk.wrap_recovery(vk, self.agent_id(), kv, r)}, zk.recovery_code(r))
+
+    def encrypt(self, vk: bytes, kv, values: dict) -> list[dict]:
+        aid = self.agent_id()
+        return [{"name": n, "value_zk": zk.encrypt_value(vk, aid, n, kv, str(v))}
+                for n, v in sorted(values.items())]
+
+
+def _dedupe(targets: list[Target]) -> list[Target]:
+    seen, out = set(), []
+    for t in targets:
+        if t.key() not in seen:
+            seen.add(t.key())
+            out.append(t)
+    return out
+
+
+def _confirmed(confirm: Optional[Confirm], targets: list[Target]) -> None:
+    if confirm is not None and not confirm(targets):
+        raise ZkCliError("nothing done — not confirmed")
+
+
+@dataclass
+class ZkResult:
+    slug: str
+    actions: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    wrapped: list[str] = field(default_factory=list)
+    #: shown once by the CLI, never logged or serialised
+    recovery_code: str = field(default="", repr=False)
+    kv: object = None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# the operations
+# ──────────────────────────────────────────────────────────────────────────────
+
+def run_status(v: ZkVault) -> dict:
+    st = v.state()
+    pending, notes = v.pending()
+    mine = ""
+    try:
+        v.my_wrap()
+        mine = "holds a wrap at the current kv"
+    except ZkCliError as e:
+        mine = str(e)
+    wraps = [{"kind": r.get("kind"), "target": _row_target(r, str(r.get("kind")))
+              if r.get("kind") in ("device", "member") else None,
+              "kv": r.get("kv"), "label": r.get("label") or ""}
+             for r in st.get("wraps") or [] if isinstance(r, dict)]
+    return {"agent": v.slug, "enabled": bool(st.get("enabled")), "kv": st.get("kv"),
+            "wraps": wraps, "pending": [t.describe() for t in pending], "notes": notes,
+            "this_device": mine}
+
+
+def run_enable(v: ZkVault, *, confirm: Optional[Confirm] = None) -> ZkResult:
+    st = v.state()
+    if st.get("enabled"):
+        raise ZkCliError(f"'{v.slug}' is already zero-knowledge (kv {st.get('kv')}) — "
+                         "use `grant`, `set` or `rotate`")
+    res = ZkResult(v.slug, kv=1)
+    targets = [v.self_target()]
+    me, why = v.keyset_target()
+    if me is not None:
+        targets.append(me)
+    else:
+        res.notes.append(f"no member wrap for you: {why}")
+    pending, notes = v.pending()
+    res.notes += notes
+    targets = _dedupe(targets + pending)
+    try:
+        body = cred_resolve.resolve(v.slug, token=v.token, transport=v.transport)
+    except canopy_web.CanopyError as e:
+        raise ZkCliError(f"could not read '{v.slug}'s current values: {str(e)[:300]}") from None
+    values = {n: val for n, val in (body.get("values") or {}).items()
+              if val is not None and str(val) != ""}
+    _confirmed(confirm, targets)
+    vk = zk.random_vk()
+    kv = 1
+    wraps = [v.wrap_for(vk, kv, t) for t in targets]
+    rwrap, code = v.recovery(vk, kv)
+    payload = {"kv": kv, "wraps": wraps + [rwrap], "values": v.encrypt(vk, kv, values)}
+    vk = b""  # noqa: F841
+    values = {}  # noqa: F841
+    v.web("POST", f"{v.base}/enable", payload)
+    res.actions.append(f"zero-knowledge ON for {v.slug}: {len(payload['values'])} value(s) "
+                       f"encrypted here, vault key wrapped for {len(targets)} target(s) + recovery")
+    res.wrapped = [t.describe() for t in targets]
+    res.recovery_code = code
+    return res
+
+
+def run_set(v: ZkVault, values: dict) -> ZkResult:
+    if not v.state().get("enabled"):
+        raise ZkCliError(f"'{v.slug}' is not zero-knowledge — `canopy vault zk enable` first")
+    vk, kv = v.vk()
+    payload = {"kv": kv, "values": v.encrypt(vk, kv, values)}
+    vk = b""  # noqa: F841
+    v.web("PUT", f"{v.base}/values", payload)
+    return ZkResult(v.slug, kv=kv, actions=[f"stored {len(payload['values'])} value(s) "
+                                            f"encrypted at kv {kv}: "
+                                            f"{', '.join(sorted(values))}"])
+
+
+def run_grant(v: ZkVault, *, confirm: Optional[Confirm] = None) -> ZkResult:
+    if not v.state().get("enabled"):
+        raise ZkCliError(f"'{v.slug}' is not zero-knowledge — nothing to grant")
+    pending, notes = v.pending()
+    res = ZkResult(v.slug, notes=notes)
+    if not pending:
+        res.actions.append("nothing pending — every target holds a wrap at the current kv")
+        return res
+    _confirmed(confirm, pending)
+    vk, kv = v.vk()
+    wraps = [v.wrap_for(vk, kv, t) for t in pending]
+    vk = b""  # noqa: F841
+    v.web("POST", f"{v.base}/wraps", {"kv": kv, "wraps": wraps})
+    res.kv = kv
+    res.wrapped = [t.describe() for t in pending]
+    res.actions.append(f"granted {len(wraps)} target(s) at kv {kv}")
+    return res
+
+
+def run_rotate(v: ZkVault, *, drop: Optional[set] = None,
+               confirm: Optional[Confirm] = None) -> ZkResult:
+    st = v.state()
+    if not st.get("enabled"):
+        raise ZkCliError(f"'{v.slug}' is not zero-knowledge — nothing to rotate")
+    kv = st.get("kv")
+    try:
+        new_kv = int(kv) + 1
+    except (TypeError, ValueError):
+        raise ZkCliError(f"canopy-web reports kv {kv!r} — cannot rotate") from None
+    v.vk()                                     # prove this device is a member first
+    current, notes = v.current(drop or set())
+    pending, pnotes = v.pending()
+    targets = _dedupe(current + pending)
+    res = ZkResult(v.slug, notes=notes + pnotes, kv=new_kv)
+    if v.self_target().key() not in {t.key() for t in targets}:
+        res.notes.append("this device is not among the remaining targets — after the "
+                         "rotation it can no longer read the vault")
+    if not targets:
+        raise ZkCliError("no remaining target to wrap the new key for — refusing to rotate "
+                         "into a vault only the recovery code opens")
+    try:
+        body = cred_resolve.resolve(v.slug, token=v.token, transport=v.transport)
+    except canopy_web.CanopyError as e:
+        raise ZkCliError(f"could not read '{v.slug}'s current values: {str(e)[:300]}") from None
+    values = {n: val for n, val in (body.get("values") or {}).items()
+              if val is not None and str(val) != ""}
+    _confirmed(confirm, targets)
+    vk = zk.random_vk()
+    wraps = [v.wrap_for(vk, new_kv, t) for t in targets]
+    rwrap, code = v.recovery(vk, new_kv)
+    payload = {"new_kv": new_kv, "wraps": wraps + [rwrap],
+               "values": v.encrypt(vk, new_kv, values)}
+    vk = b""  # noqa: F841
+    values = {}  # noqa: F841
+    v.web("POST", f"{v.base}/rotate", payload)
+    res.wrapped = [t.describe() for t in targets]
+    res.recovery_code = code
+    res.actions.append(f"rotated {v.slug} to kv {new_kv}: {len(payload['values'])} value(s) "
+                       f"re-encrypted, {len(targets)} target(s) re-wrapped + a new recovery code")
+    return res
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# rendering
+# ──────────────────────────────────────────────────────────────────────────────
+
+def render_status(st: dict) -> str:
+    lines = [f"agent {st['agent']}: zero-knowledge {'ON' if st['enabled'] else 'off'}"
+             + (f" (kv {st['kv']})" if st["enabled"] else "")]
+    for w in st["wraps"]:
+        lines.append(f"  wrap  {w['kind']:<8} {w['target'] if w['target'] is not None else '-'}"
+                     f"  kv {w['kv']}  {w['label']}")
+    for p in st["pending"]:
+        lines.append(f"  PENDING  {p}")
+    lines += [f"  note: {n}" for n in st["notes"]]
+    lines.append(f"  this device: {st['this_device']}")
+    return "\n".join(lines)
+
+
+def render(res: ZkResult) -> str:
+    lines = [f"agent {res.slug}"]
+    lines += [f"  wrapped for: {w}" for w in res.wrapped]
+    lines += [f"  done: {a}" for a in res.actions]
+    lines += [f"  note: {n}" for n in res.notes]
+    return "\n".join(lines)
+
+
+def show_recovery_code(res: ZkResult, echo=click.echo) -> None:
+    """The one place a recovery code is ever shown — on the terminal, once."""
+    if not res.recovery_code:
+        return
+    echo("")
+    echo(f"RECOVERY CODE for {res.slug} (kv {res.kv}) — shown ONCE; canopy keeps no copy.")
+    echo("Store it offline. It opens the vault if every device and passkey is lost.")
+    echo(f"    {res.recovery_code}")
+    echo("")
+
+
+def _ask(targets: list) -> bool:
+    click.echo("The vault key will be wrapped to these PUBLIC keys, as canopy-web lists them:")
+    for t in targets:
+        click.echo(f"  - {t.describe()}")
+    return click.confirm("Proceed?", default=False)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CLI
+# ──────────────────────────────────────────────────────────────────────────────
+
+AGENT_OPT = click.option("--agent", "slug", required=True, help="The agent's canopy-web slug.")
+YES_OPT = click.option("--yes", is_flag=True,
+                       help="Do not ask before wrapping to the listed targets.")
+
+
+def _vault(slug: str) -> ZkVault:
+    from orchestrator.vault_cli import _token
+    return ZkVault(slug, token=_token())
+
+
+@click.group("zk")
+def zk_group():
+    """Zero-knowledge vault (canopy-web#1550): this device as a member of an agent's vault.
+
+    canopy-web stores only ciphertext and wrapped keys; values are encrypted and the vault
+    key wrapped HERE. Never prints a value or a key (a recovery code is shown once)."""
+
+
+@zk_group.command("status")
+@AGENT_OPT
+@click.option("--json", "as_json", is_flag=True)
+def status_cmd(slug, as_json):
+    """Whether the agent is zero-knowledge, its kv, wraps, pending targets, and whether
+    this device holds a wrap."""
+    st = run_status(_vault(slug))
+    click.echo(json.dumps(st, indent=1, sort_keys=True, default=str) if as_json
+               else render_status(st))
+
+
+@zk_group.command("enable")
+@AGENT_OPT
+@YES_OPT
+def enable_cmd(slug, yes):
+    """Turn zero-knowledge on: a new vault key, every current value encrypted here, the
+    key wrapped for this device, your keyset, each pending target and a recovery code."""
+    res = run_enable(_vault(slug), confirm=None if yes else _ask)
+    click.echo(render(res))
+    show_recovery_code(res)
+
+
+@zk_group.command("set")
+@AGENT_OPT
+@click.argument("name")
+@click.option("--from-env", "from_env", default="",
+              help="Read the value from this environment variable instead of stdin.")
+def set_cmd(slug, name, from_env):
+    """Store one value, encrypted here. The value is read from stdin (or a hidden prompt
+    on a terminal, or --from-env) — never from argv."""
+    import os
+    if from_env:
+        if from_env not in os.environ:
+            raise ZkCliError(f"${from_env} is not set")
+        value = os.environ[from_env]
+    elif sys.stdin.isatty():
+        value = click.prompt(f"{name}", hide_input=True)
+    else:
+        value = sys.stdin.read().rstrip("\n")
+    if not value:
+        raise ZkCliError("refusing to store an empty value")
+    click.echo(render(run_set(_vault(slug), {name: value})))
+
+
+@zk_group.command("grant")
+@AGENT_OPT
+@YES_OPT
+def grant_cmd(slug, yes):
+    """Wrap the vault key for every pending target (approved devices of routed runners,
+    agent admins with a keyset) — unwrapped with this device's own wrap."""
+    click.echo(render(run_grant(_vault(slug), confirm=None if yes else _ask)))
+
+
+@zk_group.command("rotate")
+@AGENT_OPT
+@YES_OPT
+@click.option("--drop", "drops", multiple=True, metavar="KIND:ID",
+              help="Leave a member out of the new key, e.g. device:12 or member:7 "
+                   "(revoked devices and removed admins canopy-web marks inactive are "
+                   "left out already).")
+def rotate_cmd(slug, yes, drops):
+    """A new vault key and kv: re-wrap for every remaining member, re-encrypt every value,
+    and a new recovery code. How access is REMOVED."""
+    drop = set()
+    for d in drops:
+        kind, _, ident = d.partition(":")
+        if kind not in ("device", "member") or not ident:
+            raise ZkCliError(f"--drop {d!r}: use device:<key id> or member:<user id>")
+        drop.add((kind, ident))
+    res = run_rotate(_vault(slug), drop=drop, confirm=None if yes else _ask)
+    click.echo(render(res))
+    show_recovery_code(res)

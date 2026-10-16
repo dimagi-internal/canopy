@@ -211,6 +211,24 @@ def test_import_copies_to_canopy_web_and_leaves_1password_alone(fake_op, repo, w
     assert web.source == "1password"                              # no --switch, no switch
 
 
+def test_import_zk_encrypts_here_and_never_puts_plaintext(fake_op, repo, web, monkeypatch):
+    """`--zk` (canopy-web#1550): the values go to the ZK store through the device's vault
+    key — never to PUT /credentials, the custodial path."""
+    from orchestrator import vault_zk_cli
+    got = {}
+
+    def run_set(v, values):
+        got.update(values)
+        web.stored.update({n: "zk1:x" for n in values})   # what canopy-web would report set
+        return vault_zk_cli.ZkResult("eva", actions=["stored encrypted"])
+
+    monkeypatch.setattr(vault_zk_cli, "run_set", run_set)
+    res = vault_cli.run_import("eva", token="person-pat", op=av.Op(), zk=True)
+    assert res.ok and "stored encrypted" in res.actions
+    assert got["KINDORA_SERVICE_KEY"] == SECRETS["kindora-service-key"]
+    assert not [c for c in web.calls if c[0] == "PUT" and c[1].endswith("/credentials")]
+
+
 def test_import_switch_moves_the_backend_only_when_complete(fake_op, repo, web):
     res = vault_cli.run_import("eva", token="person-pat", op=av.Op(), switch=True)
     assert res.ok and web.source == "canopy-web"
