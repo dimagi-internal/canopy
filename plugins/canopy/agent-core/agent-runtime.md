@@ -238,24 +238,18 @@ delete `config/secrets.yaml`.
 5. **Verify**: `canopy agent vault --slug <slug> --check` (every reference filled, key stored)
    and confirm the key landed in `~/.<agent>/.env`.
 
-## The other mechanism — `runtime.yaml` (know the difference)
+## `runtime.yaml` — not a secrets path
 
-There is a **second, newer** path: the **Agent Runtime Registry** — an agent ships a repo-root
-`runtime.yaml` declaring plugins, tools, engine, preflight, and values **by reference name only**
-(no vault named); a *reconciler* resolves each name against `[<the instance's vault>, Canopy-Shared]`, scans
-the box, applies gaps, and injects env before the turn. Design + code:
-`canopy-web/docs/superpowers/specs/2026-07-20-agent-runtime-registry-design.md` and
-`canopy-web/packages/canopy_runtime/` (`python -m canopy_runtime.cli --agent <slug> --print-env`).
+Some agents (Ace, Echo) ship a repo-root `runtime.yaml` (canopy-web's Agent Runtime Registry
+schema, `canopy-web/packages/canopy_runtime/`). Today it does two things only: it declares the
+agent's **capabilities** (`canopy-runtime publish-capabilities`), and its declared secret names
+feed canopy-web's credentials screen. It never fills an env. A *reconciler* that would have
+resolved those names and provisioned a box was designed but never wired into any runner, and
+was retired on 2026-10-15 — an agent is prepared by `canopy agent prepare` and its env filled
+from `.env.tpl` (docs/architecture/agent-setup-lifecycle.md).
 
-**Status (2026-07-25): only Echo has a `runtime.yaml`, and the reconciler is not what drives
-laptop turns today.** Its own header says it supersedes `canopy provision` *for the runtime layer* —
-that migration is real but unfinished. So:
-
-- **Adding a value now → use `.env.tpl`** (above; legacy agents still on `config/secrets.yaml` can
-  keep declaring there until they migrate). It works on every box.
-- **Don't declare the same value in both places** — you get two sources of truth that drift.
-- When the reconciler does drive turns, the migration is mechanical: the vault items already exist
-  and are correctly named; only the *declaration* moves.
+- **Adding a value → use `.env.tpl`** (above). It is the only path that reaches an agent's env.
+- **Don't declare the same value in both places** expecting `runtime.yaml` to supply it.
 
 ## Rollout status (2026-07-25)
 
