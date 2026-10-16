@@ -338,6 +338,14 @@ leaves `run_state.yaml` with no assembled verdict, so the run looks stale/done,
 can't be resumed cleanly, and `ddd-upload` has nothing converged to publish.
 `/canopy:ddd-run` is the only path that should pass this flag.
 
+The flag alone is not enough: the recorder also refuses a run dir (any dir with
+`run_state.yaml`) that has no `capture-plan.json` entry for the run's current
+iteration — the plan `iteration render` writes just before it starts the
+recorder. On ACE noora iterations 3–5 this command was copied out of a render
+log, flag included, so no plan was made and every pass re-filmed every scene
+as video. A deliberate one-off passes `--unplanned-capture "<why>"`; the reason
+is kept in `capture-plan.json` `overrides` and `capture_scope report` flags it.
+
 **Data setup runs inside the recorder — don't pre-run it here.** When the spec
 declares a `setup:` block (the data-setup contract — see ddd-spec Step 5), the
 recorder itself runs the synthetic generator before opening any browser,

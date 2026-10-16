@@ -67,7 +67,9 @@ when the human just hand-edited the product.** The way to SEE a product edit's
 effect on the run is to re-fire `/canopy:ddd-run`, not to render by hand. The
 recorder enforces this: it **refuses** to write into a DDD `runs/` dir
 unless `ddd-run` passes `--ddd-orchestrated` (override only via an explicit
-`--force-hand-render` for a deliberate one-off).
+`--force-hand-render` for a deliberate one-off), and refuses any run dir with
+no capture plan for the current iteration unless `--unplanned-capture "<why>"`
+is passed (the reason is recorded and `capture_scope report` flags it).
 
 **Re-entry detection (you broke in mid-flow — now what):** before doing ANY
 render/judge/upload work, check whether the feature already has a run:

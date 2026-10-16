@@ -76,6 +76,11 @@ it was actually filmed with.
     python -m scripts.ddd.capture_scope plan <run_id> --spec <recipe>   # prints the plan
     python -m scripts.ddd.capture_scope report <run_dir|run_id> [--json]
         # per pass: what was filmed (video / stills / nothing) and re-judged, and why
+
+The recorder refuses to write into a run dir without a plan for the run's
+current iteration (:func:`recorder_guard`; ``--unplanned-capture "<why>"``
+overrides it, and the reason is kept in ``capture-plan.json`` ``overrides`` and
+flagged by ``report``).
 """
 from __future__ import annotations
 
@@ -332,7 +337,107 @@ def _write_plan(run: Path, current: dict[str, Any]) -> None:
     prior = _load_json(run / PLAN_FILE) or {}
     passes = [p for p in prior.get("passes") or [] if isinstance(p, dict)]
     passes = [p for p in passes if p.get("iteration") != current.get("iteration")] + [current]
-    (run / PLAN_FILE).write_text(json.dumps({"current": current, "passes": passes[-200:]}, indent=1) + "\n")
+    out: dict[str, Any] = {"current": current, "passes": passes[-200:]}
+    if prior.get("overrides"):
+        out["overrides"] = prior["overrides"]  # a later plan never erases a recorded bypass
+    (run / PLAN_FILE).write_text(json.dumps(out, indent=1) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# recorder guard — no capture into a run dir without this pass's plan (DDD-3)
+# ---------------------------------------------------------------------------
+#
+# ACE noora (``newborn-care-classes-programme-cascade-2026-10-15-001``)
+# iterations 3–5: the recorder was run by hand, its command copied out of an
+# earlier render log — ``--ddd-orchestrated`` included, so the hand-drive guard
+# was silent. No plan was written, so none of the incremental rules applied
+# (stills only, carry unchanged scenes, video once): each was a full video
+# re-film nobody watched, and ``report`` could only call them "unplanned". The
+# flag proves nothing about who is calling; a plan for THIS pass does — it is
+# what ``iteration render`` writes immediately before it starts the recorder.
+
+#: The recorder's escape hatch. Takes a reason, which is kept in capture-plan.json.
+OVERRIDE_FLAG = "--unplanned-capture"
+
+
+def ddd_run_dir(paths: list[str | Path | None]) -> Path | None:
+    """The DDD run dir a recorder's output paths land in, or ``None``.
+
+    A run dir is a directory holding ``run_state.yaml`` — wherever the runs root
+    is (the external root has no ``.canopy/ddd/runs/`` segment). Checked: each
+    path, its parent and grandparent (``<run>/snapshots/``, ``<run>/iter3_clip.mp4``).
+    """
+    for raw in paths:
+        if not raw:
+            continue
+        p = Path(raw).expanduser().resolve()
+        for cand in (p, *list(p.parents)[:2]):
+            if (cand / "run_state.yaml").is_file():
+                return cand
+    return None
+
+
+def _run_iteration(run: Path) -> int | None:
+    try:
+        import yaml
+
+        it = (yaml.safe_load((run / "run_state.yaml").read_text()) or {}).get("iteration")
+    except Exception:  # noqa: BLE001 — unreadable state: fall back to "any current plan"
+        return None
+    return it if isinstance(it, int) else None
+
+
+def record_override(run_dir: str | Path, *, iteration: int | None, reason: str, argv: list[str]) -> dict:
+    """Keep a recorder bypass in ``capture-plan.json`` ``overrides`` (never in ``passes``:
+    it is not a plan, and the next ``plan`` must not mistake it for one)."""
+    run = Path(run_dir)
+    data = _load_json(run / PLAN_FILE) or {}
+    entry = {
+        "iteration": iteration,
+        "reason": reason,
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "video": "--no-video" not in argv,
+        "argv": argv,
+    }
+    data["overrides"] = [*[o for o in data.get("overrides") or [] if isinstance(o, dict)], entry][-200:]
+    (run / PLAN_FILE).write_text(json.dumps(data, indent=1) + "\n")
+    return entry
+
+
+def recorder_guard(
+    out_paths: list[str | Path | None], *, override_reason: str | None, argv: list[str],
+) -> dict[str, Any]:
+    """May the recorder write these outputs? ``{ok, run_dir, iteration, message, override}``.
+
+    Outside a DDD run dir: always. Inside one: only with a capture plan for the
+    run's current iteration, or an explicit :data:`OVERRIDE_FLAG` reason (recorded).
+    """
+    run = ddd_run_dir(out_paths)
+    if run is None:
+        return {"ok": True, "run_dir": None, "iteration": None, "message": None, "override": None}
+    it = _run_iteration(run)
+    if load_plan(run, it) is not None:
+        return {"ok": True, "run_dir": str(run), "iteration": it, "message": None, "override": None}
+    reason = (override_reason or "").strip()
+    if reason:
+        entry = record_override(run, iteration=it, reason=reason, argv=argv)
+        return {
+            "ok": True, "run_dir": str(run), "iteration": it, "override": entry,
+            "message": f"capture-plan guard overridden for iteration {it}: {reason} "
+            f"(recorded in {run / PLAN_FILE}; `capture_scope report` flags it)",
+        }
+    return {
+        "ok": False, "run_dir": str(run), "iteration": it, "override": None,
+        "message": (
+            f"Refusing to record into DDD run dir {run}: there is no capture plan for "
+            f"iteration {it} ({PLAN_FILE}).\n"
+            "Without one the incremental rules are skipped — stills only, unchanged scenes "
+            "carried, video once — and every scene is re-filmed as video.\n"
+            f"Render through:  python -m scripts.ddd.iteration render {run.name} --spec <recipe>\n"
+            "(it plans the capture, then runs this recorder with the right flags).\n"
+            f"For a deliberate one-off:  {OVERRIDE_FLAG} \"<why>\"  (recorded in {PLAN_FILE})."
+        ),
+    }
 
 
 def record_capture(run_dir: str | Path, spec_path: str | Path, captured: dict[str, Any]) -> dict[str, Any]:
@@ -430,11 +535,16 @@ def _replay(row: dict[str, Any], *, first: bool = False) -> dict[str, Any]:
 def report(run_dir: str | Path) -> dict[str, Any]:
     """Per-pass capture + judge scope, joined by iteration, plus run totals."""
     run = Path(run_dir)
-    caps = _pass_by_iteration(_load_json(run / PLAN_FILE))
+    plan_data = _load_json(run / PLAN_FILE)
+    caps = _pass_by_iteration(plan_data)
+    overrides: dict[int | None, list[dict]] = {}
+    for o in (plan_data or {}).get("overrides") or []:
+        if isinstance(o, dict):
+            overrides.setdefault(o.get("iteration") if isinstance(o.get("iteration"), int) else None, []).append(o)
     from scripts.ddd import judge_scope
 
     judges = _pass_by_iteration(judge_scope.load_scope(run))
-    iterations = sorted(set(caps) | set(judges))
+    iterations = sorted(set(caps) | set(judges) | {i for i in overrides if i is not None})
     rows: list[dict[str, Any]] = []
     for it in iterations:
         cap = caps.get(it)
@@ -484,6 +594,12 @@ def report(run_dir: str | Path) -> dict[str, Any]:
                 ),
             } if js else None,
         }
+        # A recorder run past the plan guard (--unplanned-capture): the reason the
+        # operator gave, so a bypass is never mistaken for a planned pass.
+        row["overrides"] = [
+            {"reason": o.get("reason"), "at": o.get("at"), "video": bool(o.get("video"))}
+            for o in overrides.get(it) or []
+        ]
         row["replay"] = _replay(row, first=not rows)
         rows.append(row)
     totals = {
@@ -495,12 +611,17 @@ def report(run_dir: str | Path) -> dict[str, Any]:
         "scenes_rejudged": sum(len((r["judge"] or {}).get("rejudged") or []) for r in rows),
         "scenes_reused": sum(len((r["judge"] or {}).get("reused") or []) for r in rows),
         "context_only_rejudges": sum(len((r["judge"] or {}).get("context_only") or []) for r in rows),
+        "overrides": sum(len(v) for v in overrides.values()),
     }
     replay = {
         "video_refilms": sum(1 for r in rows if r["replay"]["capture"]["video"]),
         "scenes_rejudged": sum(len(r["replay"]["rejudged"] or []) for r in rows),
     }
-    return {"run_dir": str(run), "passes": rows, "totals": totals, "replay_totals": replay}
+    return {
+        "run_dir": str(run), "passes": rows, "totals": totals, "replay_totals": replay,
+        # Bypasses whose run_state could not be read (no iteration to join on).
+        "unattributed_overrides": overrides.get(None) or [],
+    }
 
 
 def format_report(rep: dict[str, Any]) -> str:
@@ -517,6 +638,11 @@ def format_report(rep: dict[str, Any]) -> str:
         )
         for s, comps in (j.get("why") or {}).items():
             lines.append(f"{'':>6}scene {s} re-judged: {', '.join(comps)}")
+        for o in r.get("overrides") or []:
+            lines.append(
+                f"{'':>6}!! recorder run past the capture-plan guard ({OVERRIDE_FLAG}"
+                f"{', with video' if o.get('video') else ''}): {o.get('reason')}"
+            )
         if j.get("context_only"):
             lines.append(
                 f"{'':>6}!! scene(s) {j['context_only']} re-judged ONLY because the judge context "
@@ -531,6 +657,10 @@ def format_report(rep: dict[str, Any]) -> str:
         f"scenes re-judged {t['scenes_rejudged']}, reused {t['scenes_reused']}, "
         f"re-judged on context alone {t['context_only_rejudges']}",
     ]
+    if t.get("overrides"):
+        lines.append(f"!! capture-plan guard overridden {t['overrides']} time(s) ({OVERRIDE_FLAG})")
+    for o in rep.get("unattributed_overrides") or []:
+        lines.append(f"!! override at {o.get('at')} (iteration unknown): {o.get('reason')}")
     rt = rep.get("replay_totals")
     if rt:
         lines.append(
