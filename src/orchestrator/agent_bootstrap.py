@@ -340,8 +340,8 @@ def is_agents_own_token(slug: str, token: str) -> bool:
 def fetch_web_token(slug: str) -> tuple[str | None, str]:
     """(gog-token JSON or None, error). canopy-web having none is the normal case."""
     try:
-        body = canopy_web.call("GET", f"/api/agents/{slug}/credentials/resolve",
-                               token=_operator_token())
+        from orchestrator import cred_resolve
+        body = cred_resolve.resolve(slug, token=_operator_token(), refs=["gog-token"])
     except Exception as e:  # noqa: BLE001 — any transport/auth failure is just "no copy"
         return None, _first_line(str(e), 160)
     return ((body or {}).get("values") or {}).get("gog-token"), ""

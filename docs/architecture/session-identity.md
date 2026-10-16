@@ -95,6 +95,7 @@ canopy cred check   [--agent X] [--refresh] [--json]
 canopy cred env     [--agent X] [--refresh]
 canopy cred refresh [--agent X]
 canopy cred sync    [--agent X] [--ttl S]
+canopy cred exec    [--agent X] [--ref NAME …] -- <cmd> [args…]
 canopy cred google-token [--agent X]
 canopy cred whoami  [--json]
 ```
@@ -127,6 +128,13 @@ the command exits 2: `this session is not an agent … Pass --agent <slug>.`
   written. The `canopy-web` backend writes each `values` entry whose name is an env identifier;
   others (e.g. `gog-token`) are staged by their own paths and listed, by name, on stderr.
 - **`refresh`** drops the cached verdicts and re-resolves `~/.X/.env`.
+- **`exec`** runs `<cmd>` with X's variables in **the child's environment only** — no
+  `~/.X/.env`, nothing exported into the session. Same decision as `check`, except that an
+  already-resolved `~/.X/.env` is not itself a reason to allow. 1Password: `op inject` to a pipe;
+  canopy-web: `/resolve` (with `?refs=` when `--ref` narrows it). Exits with `<cmd>`'s status.
+- **`sync`** without a 1Password key in the env refreshes a **canopy-web-backed** agent's
+  `~/.X/.env` from canopy-web (throttled, rewritten only when the values' fingerprint moved);
+  for a 1Password agent it is a no-op, as before.
 - **`google-token`** writes `~/.canopy/google-token/X.json` (0600: `access_token`, `expires_at`
   epoch seconds, `account`) for X's own Google login and prints **only its path**. It exchanges the
   refresh token gog holds for X's mailbox (client per `canopy email client`) and reuses the file
@@ -159,4 +167,43 @@ text=True)`; non-zero → return the stderr as the tool's error text.
   via: "runner"|"admin"|null, reason}` — no values.
 - `GET /api/agents/{slug}/credentials/resolve` (bearer) → `{values, op_vault, op_sa_token,
   shared_op_vault, shared_op_sa_token, github_token, salesforce_creds, mailbox}` — allowed for
-  runner pairs and agent owners/admins.
+  runner pairs and agent owners/admins. Every canopy caller goes through one client,
+  `orchestrator/cred_resolve.py`, which adds `?refs=` when it wants a subset (re-asking once
+  without it if the server dropped a ref, so an old server and an undeclared ref both behave as
+  before), `X-Canopy-Turn-Id` when a turn is known, and a `DPoP` device proof when this machine
+  holds a registered device key (below).
+
+## Canopy Vault — the canopy-web backend, opt in per agent (canopy#946)
+
+1Password stays the default and fully supported. An owner/admin can move ONE agent's values to
+canopy-web (`credential_source = "canopy-web"`); the server half is canopy-web#1538.
+
+```
+canopy vault import --agent X [--switch]       # 1Password -> canopy-web, as YOU (op, Touch ID ok)
+canopy vault status --agent X [--no-drift]     # per ref: present, last read, drift (hash only)
+canopy vault switch --agent X --to canopy-web|1password
+canopy vault export --agent X [--check]        # canopy-web -> 1Password (the rollback)
+canopy vault device [--enroll|--reenroll|--refresh]
+```
+
+- **Refs** = every `NAME=` line of the agent's `.env.tpl` (an `op://` ref is read; a literal is
+  carried as-is so the canopy-web env is complete) plus canopy-web's `runtime_sources`. Items
+  another flow owns (`gog-token`, the shared OAuth client) are left alone. `import` never edits
+  the vault; `--switch` / `switch --to canopy-web` refuse until canopy-web reports every ref set.
+- **Runners** for a canopy-web agent write `~/.X/.env` from `/resolve` values (`canopy agent
+  prepare --runner`), and the SessionStart hook's `cred sync` keeps it current — canopy-web
+  withholds the vault key from such an agent, so `op inject` cannot run.
+- **Device key.** `require_device_binding` on an agent makes `/resolve` answer 401
+  `device_proof_required` unless the request carries a DPoP proof (RFC 9449: `typ dpop+jwt`,
+  ES256, `jwk` header; `htm`, `htu` without query, `iat`, `jti`) from an **approved** key. On a
+  Mac the key is a Secure Enclave key made by `canopy-device-key` (canopy-web
+  `runner/device-key/`, built into `~/.canopy/bin/` by the runner installer) with no
+  user-presence requirement, so unattended turns never prompt; elsewhere it is a software
+  P-256 key in `~/.canopy/device-key/sw.pem` (0600). The laptop runner enrolls it at startup
+  (`POST /api/runner-device-keys/`); a person approves the `approve_url` in canopy-web with a
+  passkey. `canopy vault device` / `status` show it.
+
+**Pilot (Eva, Jonathan's Mac):** `canopy vault import --agent eva` → approve the runner's
+device key in canopy-web → `canopy vault switch --agent eva --to canopy-web`, then set
+`require_device_binding` on Eva → run Eva as usual. Rollback: `canopy vault export --agent eva
+&& canopy vault switch --agent eva --to 1password`.

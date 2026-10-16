@@ -39,9 +39,10 @@ WHAT IT DOES, in order — `--check` does the reads and reports, writing nothing
   3. the agent's owner is made a vault admin (they run the agent and rotate its secrets).
   4. each referenced item is created if missing and filled by its kind (above).
   5. the key: a 1Password service account `canopy-web-<slug>`, READ-ONLY on that vault and
-     non-expiring, uploaded to canopy-web — only when none is stored (or --rotate-key).
-     Runners only ever read an agent vault, and nothing watches a key's expiry date. Storing
-     it asks the agent's cloud boxes to re-bootstrap (canopy-web does that).
+     expiring after `--key-expires-in` (default 90d; `never` opts out — canopy#946), uploaded
+     to canopy-web — only when none is stored (or --rotate-key). Runners only ever read an
+     agent vault. Rotate before expiry with `--rotate-key`. Storing it asks the agent's
+     cloud boxes to re-bootstrap (canopy-web does that).
 """
 from __future__ import annotations
 
@@ -65,7 +66,24 @@ VAULT_ADMIN_PERMISSIONS = ("view_items,create_items,edit_items,archive_items,del
 PAT_ITEM, PAT_FIELD = "canopy-pat", "credential"
 PAT_ENV_LINE = "CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential"
 
+#: A runner's read-only key expires (canopy#946): a leaked key stops working on its own,
+#: and rotating it is one re-run with --rotate-key. `never` opts out.
+DEFAULT_KEY_EXPIRY = "90d"
+_DURATION = re.compile(r"^(\d+[smhdw])+$")
+
 MINTED, LINKED, SHARED, UNUSED, ASKED = "minted", "linked", "shared", "unused", "asked"
+
+
+def key_expiry_arg(expires_in: str) -> str:
+    """op's `--expires-in` value, or "" for a non-expiring key. Raises VaultError on a
+    value op would not take, before anything is minted."""
+    text = (expires_in or "").strip().lower()
+    if text in ("", "never", "none", "0"):
+        return ""
+    if not _DURATION.match(text):
+        raise VaultError(f"--key-expires-in {expires_in!r}: use a duration like 90d, 12w or "
+                         "720h, or `never`")
+    return text
 
 
 @dataclass(frozen=True)
@@ -223,10 +241,18 @@ class Op:
         if p.returncode != 0:
             raise VaultError(f"could not write {vault}/{doc.get('title')}: {self._why(p)}")
 
-    def mint_service_account(self, name: str, vault: str) -> str:
-        """The raw key, in memory only (`--raw` puts it on stdout, which is a pipe here)."""
-        p = self._run("service-account", "create", name, "--vault",
-                      f"{vault}:{KEY_PERMISSIONS}", "--raw")
+    def mint_service_account(self, name: str, vault: str,
+                             expires_in: str = DEFAULT_KEY_EXPIRY) -> str:
+        """The raw key, in memory only (`--raw` puts it on stdout, which is a pipe here).
+        `expires_in` is op's duration (`90d`, `12w`, `2160h`); "" or `never` mints a key
+        that does not expire."""
+        args = ["service-account", "create", name, "--vault", f"{vault}:{KEY_PERMISSIONS}"]
+        expiry = key_expiry_arg(expires_in)
+        p = self._run(*args, *([f"--expires-in={expiry}"] if expiry else []), "--raw")
+        if p.returncode != 0 and expiry and "2160" in (p.stderr or ""):
+            # op caps an expiry below 90 days on some versions ("must be set to less than
+            # 2160 hours"). A refused mint creates nothing, so retrying an hour short is safe.
+            p = self._run(*args, "--expires-in=2159h", "--raw")
         token = (p.stdout or "").strip()
         if p.returncode != 0 or not token:
             raise VaultError(f"could not mint service account {name}: {self._why(p)}")
@@ -362,8 +388,9 @@ def run(slug: str, *, token: str, workspace: str = "", vault: str = "",
         repo: Optional[Path] = None, check: bool = False, rotate_key: bool = False,
         rotate_pat: bool = False, op: Optional[Op] = None, ask: Optional[Ask] = None,
         transport: Optional[canopy_web.Transport] = None,
-        gh_runner: Runner = subprocess.run, log: Callable[[str], None] = lambda _: None
-        ) -> Report:
+        gh_runner: Runner = subprocess.run, log: Callable[[str], None] = lambda _: None,
+        key_expires_in: str = DEFAULT_KEY_EXPIRY) -> Report:
+    expiry = key_expiry_arg(key_expires_in)  # refuse a bad value before touching anything
     op = op or Op()
     web = _web(token, transport, workspace or None)
     rep = Report(slug=slug)
@@ -471,7 +498,7 @@ def run(slug: str, *, token: str, workspace: str = "", vault: str = "",
         rep.key = "not stored"
     else:
         name = f"canopy-web-{slug}"
-        key = op.mint_service_account(name, rep.vault)
+        key = op.mint_service_account(name, rep.vault, expiry)
         try:
             after = web("PUT", f"/api/agents/{slug}/vault",
                         {"vault": rep.vault, "service_key": key})
@@ -484,8 +511,10 @@ def run(slug: str, *, token: str, workspace: str = "", vault: str = "",
         if not (after.get("key_set") and after.get("vault") == rep.vault):
             raise VaultError(f"canopy-web answered {after}; expected {rep.vault} with a key set")
         rep.key = "minted and stored"
-        rep.actions.append(f"minted {name} ({rep.vault}:{KEY_PERMISSIONS}) and stored it on "
-                           "canopy-web — its cloud boxes re-bootstrap it")
+        lifetime = (f"expires in {expiry} — re-run with --rotate-key before then" if expiry
+                    else "does not expire")
+        rep.actions.append(f"minted {name} ({rep.vault}:{KEY_PERMISSIONS}; {lifetime}) and "
+                           "stored it on canopy-web — its cloud boxes re-bootstrap it")
         if state.get("key_set"):
             rep.notes.append(f"replaced a key: delete the OLD service account for {rep.vault} in "
                              f"1Password (Developer → Service accounts) once a runner reports "

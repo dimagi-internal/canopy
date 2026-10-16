@@ -327,3 +327,55 @@ def test_runner_credentials_read_the_repo_from_runtime():
     c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
                                     transport=transport)
     assert (c.repo_url, c.vault, c.mailbox) == ("https://github.com/o/r", "V", "a@b")
+
+
+# ── an agent on the canopy-web backend (Canopy Vault, canopy#946) ─────────────
+
+def test_a_canopy_web_agent_gets_its_env_from_canopy_web_not_op(tmp_path):
+    """canopy-web withholds the vault key from a canopy-web-backed agent, so `op inject`
+    cannot run: the env comes from the values canopy-web resolved for this runner."""
+    _repo(tmp_path / "agents")
+    box = Box(tmp_path)
+    creds = _creds(credential_source="canopy-web", key="", vault="",
+                   values={"CANOPY_WEB_PAT": "cpat_FROM_WEB", "gog-token": "{\n}"})
+    rep = _prep(tmp_path, box, creds=creds).prepare("ace", env_only=True)
+    assert rep.env_ok is True and rep.env == "OK (1 vars from canopy-web)"
+    env = (tmp_path / "home" / ".ace" / ".env")
+    assert "CANOPY_WEB_PAT=cpat_FROM_WEB" in env.read_text() and "gog-token" not in env.read_text()
+    assert oct(env.stat().st_mode)[-3:] == "600"
+    assert not [c for c in box.calls if c[0][:1] == ["op"]]
+    assert not any("no key" in n for n in rep.notes)
+
+
+def test_the_full_env_step_takes_the_same_branch(tmp_path):
+    repo = _repo(tmp_path / "agents")
+    box = Box(tmp_path)
+    p = _prep(tmp_path, box, creds=_creds(credential_source="canopy-web", key="",
+                                          values={"CANOPY_WEB_PAT": "x"}))
+    rep = ap.RunnerReport(slug="ace")
+    p._env("ace", repo, rep)
+    assert rep.env_ok is True and not [c for c in box.calls if c[0][:1] == ["op"]]
+
+
+def test_runner_credentials_carry_the_backend_and_values():
+    def transport(method, url, headers, data):
+        if url.endswith("/credentials/access"):
+            return 200, '{"credential_source": "canopy-web", "may_resolve": true}'
+        if url.endswith("/runtime"):
+            return 200, "{}"
+        return 200, '{"values": {"A": "1"}, "op_vault": "", "op_sa_token": ""}'
+
+    c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
+                                    transport=transport)
+    assert c.credential_source == "canopy-web" and c.values == {"A": "1"}
+
+
+def test_an_unreachable_access_route_means_the_default_path():
+    def transport(method, url, headers, data):
+        if url.endswith("/credentials/access"):
+            return 500, "boom"
+        return 200, '{"op_vault": "V", "op_sa_token": "k"}'
+
+    c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
+                                    transport=transport)
+    assert c.credential_source == "" and (c.vault, c.key) == ("V", "k")
