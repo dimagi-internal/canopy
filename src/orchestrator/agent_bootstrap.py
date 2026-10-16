@@ -317,15 +317,24 @@ def _operator_token() -> str:
     """The OPERATOR's canopy-web PAT. Bootstrapping is the human provisioning their machine,
     and `/credentials/resolve` authorizes the operator — so an agent PAT picked up from the
     cwd (canopy_web.resolve_token's second tier) is the wrong identity here. Explicit env
-    still wins; otherwise the workbench-token; otherwise whatever resolve_token finds."""
+    wins outside an agent's session; inside one the workbench-token comes first, because
+    there CANOPY_WEB_PAT is usually the agent's OWN PAT (its .env.tpl sets it) and
+    `/credentials/resolve` refuses an agent's login (canopy#945). Otherwise whatever
+    resolve_token finds."""
     env = os.environ.get("CANOPY_WEB_PAT", "").strip()
-    if env:
-        return env
     try:
         stored = canopy_web.TOKEN_FILE.read_text(encoding="utf-8").strip()
     except OSError:
         stored = ""
-    return stored or canopy_web.resolve_token(None)
+    if env and not (stored and canopy_web.agent_context_slug()):
+        return env
+    return stored or env or canopy_web.resolve_token(None)
+
+
+def is_agents_own_token(slug: str, token: str) -> bool:
+    """True when ``token`` is agent ``slug``'s own PAT (from ``~/.<slug>/.env``) — an
+    identity `/credentials/resolve` always refuses, so asking with it can only 403."""
+    return bool(token) and token == canopy_web._slug_env_pat(slug)
 
 
 def fetch_web_token(slug: str) -> tuple[str | None, str]:

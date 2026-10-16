@@ -411,10 +411,18 @@ def agent_stage_delegated(slug):
     import os
 
     from orchestrator import canopy_web
-    from orchestrator.agent_bootstrap import _operator_token
+    from orchestrator.agent_bootstrap import _operator_token, is_agents_own_token
+    token = _operator_token()
+    if is_agents_own_token(slug, token):
+        # No operator token on this machine — only the agent's own, which the route
+        # refuses (canopy#945). Skip without touching a copy staged by someone who could.
+        click.echo(f"salesforce: skipped — the only canopy-web token here is {slug}'s own, "
+                   f"and borrowed credentials are released to the operator; run "
+                   f"/canopy:canopy-web-pat-mint as the person who runs this machine")
+        return
     try:
         body = canopy_web.call("GET", f"/api/agents/{slug}/credentials/resolve",
-                               token=_operator_token()) or {}
+                               token=token) or {}
     except Exception as e:  # noqa: BLE001 — report, don't traceback
         raise click.ClickException(
             f"could not resolve {slug}'s delegated credentials: {str(e).splitlines()[0][:200]}")
