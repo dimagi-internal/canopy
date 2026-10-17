@@ -343,6 +343,63 @@ def test_runner_credentials_say_they_are_a_box_refresh():
     assert seen and seen[0]["X-Canopy-Read-Purpose"] == "runner-refresh"
 
 
+# ── the credentials-only pass asks for only what it uses (canopy-web#1563) ──────
+
+def _recording(secret_refs):
+    resolves = []
+
+    def transport(method, url, headers, data):
+        if url.endswith("/runtime"):
+            return 200, json.dumps({"repo_url": "u", "secret_refs": secret_refs})
+        if "/credentials/resolve" in url:
+            resolves.append(url)
+            # A scoped answer: the extras ride beside `values`, never inside it.
+            return 200, '{"values": {"gog-token": "{}"}, "op_vault": "V", "op_sa_token": "k"}'
+        return 200, "{}"
+    return transport, resolves
+
+
+def test_the_refresh_asks_only_for_the_gog_token_and_the_vault_keys():
+    """Not the agent's PAT, Salesforce, GitHub token or anything else: the timer pass
+    writes no env, so every other secret it read went on the wire every 30 minutes."""
+    transport, resolves = _recording(["CANOPY_WEB_PAT", "gog-token", "salesforce"])
+    c = ap.fetch_runner_credentials("hal", base_url="https://c.test", token="t",
+                                    transport=transport, minimal=True)
+    assert resolves == ["https://c.test/api/agents/hal/credentials/resolve"
+                        "?refs=gog-token,op_sa_token,shared_op_sa_token"], \
+        "exactly one scoped read, never the unscoped fallback"
+    assert (c.key, c.web_gog_token, c.values) == ("k", "{}", {"gog-token": "{}"})
+
+
+def test_a_refresh_of_an_agent_without_a_gog_token_names_none():
+    """Naming an undeclared ref raises an owner alert; a box must not cause one."""
+    transport, resolves = _recording(["CANOPY_WEB_PAT"])
+    ap.fetch_runner_credentials("eva", base_url="https://c.test", token="t",
+                                transport=transport, minimal=True)
+    assert resolves == ["https://c.test/api/agents/eva/credentials/resolve"
+                        "?refs=op_sa_token,shared_op_sa_token"]
+
+
+def test_a_full_prepare_still_resolves_everything():
+    transport, resolves = _recording(["CANOPY_WEB_PAT", "gog-token"])
+    ap.fetch_runner_credentials("hal", base_url="https://c.test", token="t", transport=transport)
+    assert resolves == ["https://c.test/api/agents/hal/credentials/resolve"]
+
+
+def test_prepare_scopes_only_the_credentials_only_pass(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(ap, "fetch_runner_credentials",
+                        lambda s, **kw: seen.append(kw["minimal"]) or ap.RunnerCredentials(
+                            error="stop here"))
+    for kwargs, want in (({"credentials_only": True}, True), ({"env_only": True}, False),
+                         ({}, False)):
+        p = ap.RunnerPreparer(base_url="https://c.test", token="t",
+                              agent_root=tmp_path / "agents", home=tmp_path / "home",
+                              dry_run=True)
+        p.prepare("hal", report=False, **kwargs)
+        assert seen[-1] is want, kwargs
+
+
 # ── an agent on the canopy-web backend (Canopy Vault, canopy#946) ─────────────
 
 def test_a_canopy_web_agent_gets_its_env_from_canopy_web_not_op(tmp_path):
