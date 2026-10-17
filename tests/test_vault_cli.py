@@ -2,7 +2,9 @@
 
 What is pinned:
 - the agent's refs come from its .env.tpl (op refs AND literals) plus runtime_sources, and
-  items another flow owns (gog-token, the shared OAuth client) are left alone;
+  items another flow owns (gog-token, the shared OAuth client) are left alone as refs — but
+  the vault's Gmail token itself is carried to canopy-web's `gog-token` when canopy-web has
+  none, and a switch refuses a mailbox agent without it (its Gmail would stop);
 - import reads with the PERSON's op (a fake `op` on PATH), writes canopy-web, never
   touches the vault, and `--switch` refuses while anything is missing;
 - export writes back only what differs; status reports drift by hash;
@@ -110,8 +112,9 @@ def fake_op(tmp_path, monkeypatch):
 
 
 class FakeWeb:
-    def __init__(self, *, is_admin=True, source="1password", stored=None, sources=None):
-        self.is_admin, self.source = is_admin, source
+    def __init__(self, *, is_admin=True, source="1password", stored=None, sources=None,
+                 email=""):
+        self.is_admin, self.source, self.email = is_admin, source, email
         self.stored = dict(stored or {})
         self.sources = sources or {}
         self.calls = []
@@ -123,7 +126,7 @@ class FakeWeb:
         self.calls.append((method, path, body))
         base = "/api/agents/eva"
         if method == "GET" and path == f"{base}/":
-            return 200, json.dumps({"slug": "eva", "is_admin": self.is_admin,
+            return 200, json.dumps({"slug": "eva", "is_admin": self.is_admin, "email": self.email,
                                     "op_vault": "Agent-Eva", "runtime_sources": self.sources})
         if method == "GET" and path == f"{base}/credentials/status":
             return 200, json.dumps([{"name": n, "declared": False, "set": True,
@@ -267,6 +270,59 @@ def test_import_cli_never_prints_a_value(fake_op, repo, web, monkeypatch):
     assert r.exit_code == 0, r.output
     _no_secret(r.output)
     assert "switched eva to canopy-web" in r.output
+
+
+# ── the Gmail token (found piloting Hal, 2026-10-17) ──────────────────────────
+
+GMAIL = '{"email":"eva@example.com","client":"canopy","refresh_token":"rt_SECRET_G"}'
+
+
+def _with_gmail_token(fake_op):
+    st = fake_op.read()
+    st["vaults"]["Agent-Eva"]["gog-token"] = {"credential": GMAIL}
+    fake_op.set(vaults=st["vaults"])
+
+
+def test_import_carries_the_gmail_token_the_runner_reads(fake_op, repo, web):
+    """The runner bootstrap reads op://<vault>/gog-token directly, not via .env.tpl; after a
+    switch its runners get no 1Password key, so the token must reach canopy-web."""
+    _with_gmail_token(fake_op)
+    res = vault_cli.run_import("eva", token="person-pat", op=av.Op())
+    assert res.ok and web.stored["gog-token"] == GMAIL
+    assert "GOG_TOKEN" not in web.stored                    # the .env.tpl ref stays left alone
+    assert "rt_SECRET_G" not in json.dumps(fake_op.read()["argv"])
+
+
+def test_import_never_overwrites_a_gmail_token_canopy_web_already_holds(fake_op, repo, web):
+    _with_gmail_token(fake_op)
+    web.stored["gog-token"] = "minted-by-connect-google-mailbox"
+    vault_cli.run_import("eva", token="person-pat", op=av.Op())
+    assert web.stored["gog-token"] == "minted-by-connect-google-mailbox"
+
+
+def test_import_zk_leaves_the_gmail_token_and_will_not_switch(fake_op, repo, web, monkeypatch):
+    from orchestrator import vault_zk_cli
+    monkeypatch.setattr(vault_zk_cli, "run_set", lambda v, values: (
+        web.stored.update({n: "zk1:x" for n in values}),
+        vault_zk_cli.ZkResult("eva", actions=["stored encrypted"]))[1])
+    _with_gmail_token(fake_op)
+    web.email = "eva@example.com"
+    res = vault_cli.run_import("eva", token="person-pat", op=av.Op(), zk=True, switch=True)
+    assert "gog-token" not in web.stored and web.source == "1password"
+    assert any("cannot be zero-knowledge" in n for n in res.notes)
+    assert any("NOT switched" in n and "mailbox" in n for n in res.notes)
+
+
+def test_switch_refuses_an_agent_whose_gmail_token_is_only_in_1password(repo, web):
+    web.email = "eva@example.com"
+    web.stored = {"eva_PRIMARY_CHANNEL": "x", "GDRIVE_ROOT_FOLDER": "x", "CANOPY_WEB_PAT": "x",
+                  "KINDORA_SERVICE_KEY": "x"}
+    with pytest.raises(vault_cli.VaultCliError, match="mailbox"):
+        vault_cli.run_switch("eva", "canopy-web", token="person-pat")
+    assert web.source == "1password"
+    web.stored["gog-token"] = GMAIL
+    vault_cli.run_switch("eva", "canopy-web", token="person-pat")
+    assert web.source == "canopy-web"
 
 
 # ── switch ────────────────────────────────────────────────────────────────────
