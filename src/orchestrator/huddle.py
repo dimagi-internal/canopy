@@ -532,16 +532,16 @@ def reactions_text(projects: list[dict]) -> str:
             head += f" — {_clip_line(p['notes'], 160)}"
         out.append(head)
         for b in p.get("backings") or []:
-            who = b.get("person") or b.get("user") or b.get("agent") or "someone"
-            if isinstance(who, dict):
-                who = who.get("name") or who.get("email") or who.get("slug") or "someone"
+            who = b.get("backer") or {}      # ProjectBackingOut.backer {kind, agent, name, email}
+            who = (who.get("agent") or who.get("email") or who.get("name") or "someone"
+                   if isinstance(who, dict) else str(who))
             line = f"    {who}: {b.get('stance')}" + (" (stale)" if b.get("stale") else "")
             if b.get("line"):
                 line += f" — \"{_clip_line(b['line'], 200)}\""
             out.append(line)
-        for r in p.get("replies") or []:
+        for r in p.get("comments") or []:      # the decision card's replies
             out.append(f"    reply from {r.get('by') or 'someone'}: \"{_clip_line(r.get('comment'), 200)}\"")
-        if not (p.get("backings") or p.get("replies")):
+        if not (p.get("backings") or p.get("comments")):
             out.append("    no reactions yet")
     return "\n".join(out)
 

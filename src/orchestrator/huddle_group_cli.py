@@ -52,8 +52,8 @@ def get_run(run_id) -> dict:
     if not isinstance(run, dict):
         raise GroupRunError(f"work-group run {rid}: canopy-web returned {type(run).__name__}")
     group = run.get("group")
-    if isinstance(group, (str, int)) and str(group):
-        slug = run.get("group_slug") or group
+    if isinstance(group, (str, int)) and str(group):   # HuddleGroupRunOut: `group` is the slug
+        slug = group
         try:
             group = canopy_web.call("GET", f"{GROUPS_PATH}{slug}")
         except CanopyError as e:
@@ -80,6 +80,8 @@ def finish_run(run_id, *, result_url: str, summary: str, huddle_id: str = "") ->
 
 
 def already_finished(err: Exception) -> bool:
+    """A 409 from `finished`: the run is not running (skipped, expired, failed). A run already
+    `done` is NOT a 409 — canopy-web answers that idempotently with 200."""
     return "-> 409" in str(err)
 
 
@@ -119,13 +121,14 @@ def material_cmd(run_id, as_json):
 @click.option("--huddle-id", default="", help="The huddle this run produced (multi-agent runs).")
 def finish_cmd(run_id, result_url, summary, huddle_id):
     """Mark the run done. canopy-web posts one pointer line in the channel thread — the output
-    itself lives in the UI. Re-running on a finished run is a no-op (exit 0)."""
+    itself lives in the UI. Re-running on a finished run is a no-op (canopy-web answers 200);
+    a run that is no longer running (skipped / expired / failed) is refused (exit 2)."""
     try:
         res = finish_run(run_id, result_url=result_url, summary=summary, huddle_id=huddle_id)
     except CanopyError as e:
         if already_finished(e):
-            click.echo(json.dumps({"run": run_id, "finished": True, "already": True}))
-            return
+            raise GroupRunError(f"work-group run {run_id} is no longer running (skipped, expired "
+                                f"or failed), so it cannot be finished: {e}")
         raise GroupRunError(f"could not finish work-group run {run_id}: {e}")
     click.echo(json.dumps({"run": run_id, "finished": True,
                            "status": (res or {}).get("status")}, default=str))

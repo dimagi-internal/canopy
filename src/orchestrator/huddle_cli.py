@@ -693,62 +693,27 @@ def _group_roster(group: dict, leader: str) -> list[str]:
     return list(dict.fromkeys(a for a in agents if a != leader))
 
 
-def _huddle_slug(source_url: str) -> str:
-    m = re.search(r"/huddles/([^/?#]+)/?(?:[?#].*)?$", str(source_url or ""))
-    return m.group(1) if m else ""
-
-
 def group_reactions(group: dict, run_id, leader: str, roster: list[str], limit: int = 10) -> str:
-    """People's reactions to the group's EARLIER proposed projects (layer 1): each project an
-    earlier run's huddle proposed, its status, its backings and the replies on its decision card.
-    Advisory: anything canopy-web cannot answer is a note in the text, never a refusal."""
+    """People's reactions to the group's EARLIER proposed projects (layer 1): every project an
+    earlier run's huddle proposed (`GET /api/huddles/<id>` → `projects`), its status, its
+    backings and the replies on its decision card. Advisory: anything canopy-web cannot answer
+    is a note in the text, never a refusal."""
     from orchestrator.huddle_group_cli import list_runs
-    notes = []
     try:
-        earlier = {str(r.get("huddle_id")) for r in list_runs(group["slug"])
-                   if r.get("huddle_id") and str(r.get("id")) != str(run_id)}
+        runs = [r for r in list_runs(group["slug"])
+                if r.get("huddle_id") and str(r.get("id")) != str(run_id)]
     except (CanopyError, RuntimeError) as e:
         return f"(could not read work group {group['slug']}'s earlier runs: {str(e)[:160]})"
-    if not earlier:
-        return ""
-    found = []
-    for agent in dict.fromkeys([leader, *roster]):
+    runs.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+    found, notes = [], []
+    for r in runs[:5]:
         try:
-            rows = _rows(_call("GET", f"/api/agents/{quote(agent)}/projects/"))
+            d = _call("GET", f"/api/huddles/{quote(str(r['huddle_id']), safe='')}")
         except (CanopyError, RuntimeError) as e:
-            notes.append(f"(could not read {agent}'s projects: {str(e)[:120]})")
+            notes.append(f"(could not read huddle {r['huddle_id']}: {str(e)[:120]})")
             continue
-        found += [{**p, "agent": agent} for p in rows if _huddle_slug(p.get("source_url")) in earlier]
-    found.sort(key=lambda p: str(p.get("updated_at") or p.get("created_at") or ""), reverse=True)
-    for p in found[:limit]:
-        base = f"/api/agents/{quote(p['agent'])}/projects/{quote(str(p.get('ext_id')), safe='')}"
-        try:
-            p["backings"] = _rows(_call("GET", f"{base}/backings/"))
-        except (CanopyError, RuntimeError) as e:
-            notes.append(f"(could not read backings on {p.get('name')}: {str(e)[:120]})")
-        p["replies"] = _card_replies(p["agent"], base)
-    text = H.reactions_text(found[:limit])
-    return "\n".join([text, *notes]).strip()
-
-
-def _card_replies(agent: str, project_path: str) -> list[dict]:
-    """The comments on a proposed project's decision card ("Start this project?"): every
-    action on it that carries a comment, oldest first."""
-    try:
-        detail = _call("GET", f"{project_path}/")
-        card = next((t for t in detail.get("tasks") or []
-                     if str(t.get("title") or "").startswith("Start this project")
-                     or t.get("ask_kind") == "review"), None)
-        if card is None:
-            return []
-        task = _call("GET", f"/api/agents/{quote(agent)}/tasks/"
-                            f"{quote(str(card.get('ext_id')), safe='')}/")
-    except (CanopyError, RuntimeError):
-        return []
-    acts = [a for a in task.get("actions") or [] if str(a.get("comment") or "").strip()]
-    acts.sort(key=lambda a: str(a.get("created_at") or ""))
-    return [{"by": a.get("by"), "action": a.get("action"), "comment": a.get("comment")}
-            for a in acts]
+        found += [p for p in d.get("projects") or [] if isinstance(p, dict)]
+    return "\n".join([H.reactions_text(found[:limit]), *notes]).strip()
 
 
 def _resolve_pin(ref: str, agents: list[str]) -> dict:
@@ -1525,8 +1490,10 @@ def _finish_group_run(plan: dict, hid: str, page: str, filed: list, held: list,
     try:
         finish_run(rid, result_url=page, summary=summary, huddle_id=hid)
     except CanopyError as e:
-        if already_finished(e):
-            return True
+        if already_finished(e):        # 409: the run is not running (skipped / expired / failed)
+            click.echo(f"[huddle] WARNING: work-group run {rid} was not marked finished — "
+                       f"canopy-web says it is no longer running: {str(e)[-200:]}", err=True)
+            return False
         raise click.ClickException(
             f"everything was filed and recorded, but work-group run {rid} could NOT be marked "
             f"finished ({e}). Re-run `canopy huddle file` (safe) or `canopy huddle-group finish "
@@ -1542,7 +1509,8 @@ def _proposal_body(p: dict, plan: dict, page: str) -> dict:
     """`POST /api/agents/{lead}/projects/propose/` (layer 1): the project IS the proposal —
     its name the title, its outcome the done-when, its plan steps (undated) the project's
     suggested tasks, its partners each getting a linked task on their own board."""
-    steps = [H.undated(s) for s in (p.get("plan") or []) if H.undated(s)]
+    # canopy-web's ProjectProposeIn: ≤20 steps of ≤300 characters each.
+    steps = [_clip_step(H.undated(s)) for s in (p.get("plan") or []) if H.undated(s)][:20]
     serves = H.priority_label(p.get("priority"), plan.get("priorities_brief") or "")
     why = [f"Serves: {serves}" if serves else "", str(p.get("why") or "").strip()]
     cost = p.get("cost_to_jonathan")
@@ -1554,16 +1522,24 @@ def _proposal_body(p: dict, plan: dict, page: str) -> dict:
     if p.get("absorbed"):
         why.append(f"Merged in: {'; '.join(p['absorbed'])}.")
     body = {"name": _check("title", str(p.get("title") or "")),
-            "outcome": str(p.get("success_measure") or p.get("outcome") or "").strip(),
-            "why": "\n\n".join(w for w in why if w),
+            # outcome and why are required (non-empty) — the done-when falls back to the title
+            "outcome": (str(p.get("success_measure") or p.get("outcome") or "").strip()
+                        or f"Done when: {p.get('title')}"),
+            "why": "\n\n".join(w for w in why if w) or str(p.get("title") or ""),
             "plan": steps, "partners": H.partners_of(p),
             "source_url": _check("source_url", page)}
     if p.get("new_evidence"):
         body["new_evidence"] = str(p["new_evidence"])
-    lead_email = (plan.get("group") or {}).get("lead_email")
-    if lead_email:
-        body["owner_email"] = lead_email
+    group = plan.get("group") or {}
+    if group.get("lead_email"):
+        body["owner_email"] = group["lead_email"]
+    if group.get("slug"):
+        body["group"] = group["slug"]
     return body
+
+
+def _clip_step(step: str, n: int = 300) -> str:
+    return step if len(step) <= n else step[: n - 1] + "…"
 
 
 def _file_proposed(p: dict, plan: dict, page: str, hid: str) -> None:
@@ -1576,6 +1552,9 @@ def _file_proposed(p: dict, plan: dict, page: str, hid: str) -> None:
         res = _call("POST", path, _proposal_body(p, plan, page))
     except CanopyError as e:
         if "-> 404" in str(e):
+            if f"agent '{lead}' not found" in str(e):
+                # the lead is gone or this login may not see it — not an older server
+                raise CanopyError(f"cannot propose on {lead}: {e}") from e
             raise _ProposeUnsupported(str(e)[:200])
         if "-> 409" in str(e):
             p["held"] = f"declined before (canopy-web refused it without new evidence): {str(e)[-160:]}"
@@ -1583,13 +1562,12 @@ def _file_proposed(p: dict, plan: dict, page: str, hid: str) -> None:
             return
         raise
     proj = (res.get("project") if isinstance(res.get("project"), dict) else res) or {}
-    ref = str(proj.get("ext_id") or proj.get("ref") or proj.get("id") or "")
+    ref = str(proj.get("ref") or proj.get("ext_id") or "")
     if not ref:
         raise RuntimeError(f"{lead}: propose {p.get('title')!r} returned no project ref")
-    card = res.get("decision_task") or res.get("card") or {}
     p["proposed"] = {"agent": lead, "project": ref, "status": proj.get("status") or "proposed",
-                     **({"decision_task": card.get("ext_id") or card.get("id")}
-                        if isinstance(card, dict) and card else {}),
+                     "created": bool(res.get("created", True)),
+                     **({"decision_task": proj["decision_task"]} if proj.get("decision_task") else {}),
                      **({"url": proj["url"]} if proj.get("url") else {})}
     p["task"] = {"agent": lead, "project": ref, "kind": "proposed_project"}
     p["partner_tasks"] = []

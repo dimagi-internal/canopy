@@ -16,22 +16,43 @@ from orchestrator.cli import main
 from tests.test_huddle_cli import (H, NOW, FakeWeb, _cell, _full_huddle, detail, r1,
                                    write_plan)
 
-RUN = {"id": 41, "status": "running",
-       "group": {"slug": "ai-champs", "name": "AI Learning Champions",
-                 "topic": "Help every team adopt one AI workflow\nthat sticks.",
-                 "lead_email": "neal@dimagi.com", "agents": ["ada", "eva", "echo"],
-                 "leader_agent": "ada", "channel_name": "ai-champions"},
+GROUP = {"slug": "ai-champs", "workspace": "connect", "name": "AI Learning Champions",
+         "topic": "Help every team adopt one AI workflow\nthat sticks.",
+         "lead_email": "neal@dimagi.com", "agents": ["ada", "eva", "echo"],
+         "leader_agent": "ada", "channel_id": "C1", "channel_name": "ai-champions",
+         "mode": "multi"}
+# canopy-web HuddleGroupRunOut: `group` is the slug, the read window is flat.
+RUN = {"id": 41, "group": "ai-champs", "group_name": "AI Learning Champions",
+       "workspace": "connect", "status": "running",
        "material": "neal: we need a shared prompt library\nmaria: +1, and office hours",
-       "read": {"messages": 2, "first_ts": "2026-10-15T09:00:00Z",
-                "last_ts": "2026-10-16T08:00:00Z", "since": "2026-10-09"}}
+       "read_messages": 2, "read_first_ts": "2026-10-15T09:00:00Z",
+       "read_last_ts": "2026-10-16T08:00:00Z", "read_since": "2026-10-09T00:00:00Z",
+       "huddle_id": "", "created_at": "2026-10-16T09:00:00Z"}
+READ = {"messages": 2, "first_ts": "2026-10-15T09:00:00Z", "last_ts": "2026-10-16T08:00:00Z",
+        "since": "2026-10-09T00:00:00Z"}
+EARLIER = "work-ai-champs-20261009"
 
 
 class GroupWeb(FakeWeb):
+    # canopy-web's ProjectProposeIn — a StrictModel, so any other key is a 422.
+    PROPOSE_IN = {"name", "outcome", "why", "plan", "partners", "source_url", "owner_email",
+                  "new_evidence", "group"}
+
     def __init__(self):
         super().__init__()
         self.run = json.loads(json.dumps(RUN))
-        self.group_runs = [{"id": 41, "huddle_id": None},
-                           {"id": 30, "huddle_id": "work-ai-champs-20261009"}]
+        self.group = json.loads(json.dumps(GROUP))
+        self.group_runs = [{"id": 41, "huddle_id": ""},
+                           {"id": 30, "huddle_id": EARLIER, "created_at": "2026-10-09T09:00:00Z"}]
+        # the earlier huddle's proposed projects (HuddleOut.projects → ProposedProjectOut)
+        self.detail[EARLIER] = {"id": EARLIER, "projects": [
+            {"agent": "eva", "ref": "P2", "name": "Prompt library", "status": "proposed",
+             "backings": [{"backer": {"kind": "person", "agent": "", "name": "Maria",
+                                      "email": "maria@dimagi.com"},
+                           "stance": "backs_with_changes", "line": "only if it covers Spanish",
+                           "stale": False}],
+             "comments": [{"by": "neal@dimagi.com", "comment": "Do the library first",
+                           "at": "2026-10-10T00:00:00Z"}]}]}
         self.proposed = {}          # (slug, name) -> project
         self.backings = []          # (slug, ref, member, body)
         self.finished = []          # (run id, body)
@@ -50,9 +71,14 @@ class GroupWeb(FakeWeb):
         if m and m.group(2) and method == "POST":
             self.calls.append((method, path, {}, body))
             if self.finish_status:
-                return self.finish_status, '{"detail": "already done"}'
+                return self.finish_status, '{"detail": "run 41 is expired, not running"}'
+            if self.run["status"] == "done":
+                return 200, json.dumps(self.run)          # idempotent once done
+            self.run["status"] = "done"
             self.finished.append((m.group(1), body))
             return 200, json.dumps({"id": int(m.group(1)), "status": "done"})
+        if path == "/api/huddle-groups/ai-champs" and method == "GET":
+            return 200, json.dumps(self.group)
         if path == "/api/huddle-groups/ai-champs/runs" and method == "GET":
             return 200, json.dumps(self.group_runs)
         m = re.match(r"^/api/agents/([^/]+)/projects/propose/$", path)
@@ -62,33 +88,30 @@ class GroupWeb(FakeWeb):
                 return self.propose_status, '{"detail": "Not Found"}'
             key = (m.group(1), body["name"])
             rows = self.projects.setdefault(m.group(1), [])
+            if set(body) - self.PROPOSE_IN:
+                return 422, json.dumps({"detail": f"extra {sorted(set(body) - self.PROPOSE_IN)}"})
+            if not body.get("outcome") or not body.get("why"):
+                return 422, '{"detail": "a proposal needs a name, an outcome and a why"}'
             proj = self.proposed.get(key)
-            if proj is None:
+            created = proj is None
+            if created:
                 proj = {"ext_id": f"P{len(rows) + 1}", "status": "proposed", "name": body["name"]}
                 rows.append(proj)
                 self.proposed[key] = proj
             proj.update({k: body[k] for k in ("outcome", "source_url")})
             proj["_body"] = body
-            return 201, json.dumps({"project": proj, "decision_task": {"ext_id": "T9"}})
+            out = {"id": 1, "agent": m.group(1), "workspace": "connect", "ref": proj["ext_id"],
+                   "name": proj["name"], "status": "proposed", "outcome": body["outcome"],
+                   "url": f"/agents/{m.group(1)}/projects/{proj['ext_id']}",
+                   "decision_task": "T9", "decision_task_id": 9}
+            return (201 if created else 200), json.dumps({"created": created, "project": out})
         m = re.match(r"^/api/agents/([^/]+)/projects/([^/]+)/backings/agents/([^/]+)/$", path)
         if m and method == "PUT":
             self.backings = [b for b in self.backings if b[:3] != m.groups()]
+            if set(body) - {"stance", "line", "huddle_id"} or len(body.get("line", "")) > 280:
+                return 422, '{"detail": "bad backing"}'
             self.backings.append((*m.groups(), body))
             return 200, json.dumps({"stance": body["stance"]})
-        m = re.match(r"^/api/agents/([^/]+)/projects/([^/]+)/backings/$", path)
-        if m and method == "GET":
-            return 200, json.dumps([{"person": "maria@dimagi.com", "stance": "backs_with_changes",
-                                     "line": "only if it covers Spanish"}])
-        m = re.match(r"^/api/agents/([^/]+)/projects/([^/]+)/$", path)
-        if m and method == "GET":
-            return 200, json.dumps({"ext_id": m.group(2), "tasks": [
-                {"ext_id": "T9", "title": "Start this project?", "ask_kind": "review"}]})
-        m = re.match(r"^/api/agents/([^/]+)/tasks/T9/$", path)
-        if m and method == "GET":
-            return 200, json.dumps({"ext_id": "T9", "actions": [
-                {"action": "reply", "by": "neal@dimagi.com", "comment": "Do the library first",
-                 "created_at": "2026-10-10T00:00:00Z"},
-                {"action": "view", "by": "x", "comment": ""}]})
         if path == "/api/harness/turns/" and method == "POST" and body.get("agent_slug", body.get("agent")) in self.refuse_dispatch:
             return 403, json.dumps({"detail": "ada may not run hal's turns"})
         return super().transport(method, url, headers, data)
@@ -114,7 +137,7 @@ def run(*args):
 
 # ── pure ─────────────────────────────────────────────────────────────────────────
 def test_group_brief_is_one_numbered_priority_the_brief_contract_reads():
-    brief = Hm.group_brief(RUN["group"])
+    brief = Hm.group_brief(GROUP)
     assert Hm.brief_items(brief) == {1: brief[3:]}
     assert brief.startswith("1. Help every team adopt one AI workflow that sticks. — hard dates")
     assert "#ai-champions" in brief and "neal@dimagi.com" in brief
@@ -127,7 +150,7 @@ def test_material_is_quoted_and_a_huge_read_keeps_the_newest_part():
     big = "\n".join(f"msg {i}" for i in range(5000))
     q, cut = Hm.quote_material(big, limit=1000)
     assert cut and q.endswith("> msg 4999") and "msg 0\n" not in q and len(q) < 1300
-    sec = Hm.group_section(RUN["group"], big, {"messages": 5000, "run": 41}, limit=1000)
+    sec = Hm.group_section(GROUP, big, {"messages": 5000, "run": 41}, limit=1000)
     assert "only the newest ~1k characters" in sec and "--run 41" in sec
 
 
@@ -148,11 +171,6 @@ def _plan(tmp_path, *extra):
 
 
 def test_plan_group_run_takes_members_brief_and_material_from_the_group(tmp_path, web):
-    web.projects = {"eva": [{"ext_id": "P2", "name": "Prompt library", "status": "proposed",
-                             "source_url": "https://cw/w/connect/huddles/work-ai-champs-20261009",
-                             "updated_at": "2026-10-10T00:00:00Z"},
-                            {"ext_id": "P1", "name": "Unrelated", "status": "active",
-                             "source_url": ""}]}
     r, plan = _plan(tmp_path)
     assert r.exit_code == 0, r.output
     assert plan["leader"] == "ada" and plan["team"] == "ai-champs"
@@ -166,7 +184,6 @@ def test_plan_group_run_takes_members_brief_and_material_from_the_group(tmp_path
     assert "Prompt library (lead eva, proposed)" in plan["group_reactions"]
     assert 'maria@dimagi.com: backs_with_changes — "only if it covers Spanish"' in plan["group_reactions"]
     assert 'reply from neal@dimagi.com: "Do the library first"' in plan["group_reactions"]
-    assert "Unrelated" not in plan["group_reactions"]
 
 
 def test_group_material_is_quoted_into_rounds_1_and_2_only(tmp_path, web):
@@ -200,7 +217,7 @@ def test_plan_refuses_an_ended_run_and_a_foreign_leader(tmp_path, web):
 
 
 def test_plan_refuses_a_one_agent_group(tmp_path, web):
-    web.run["group"]["agents"] = ["ada"]
+    web.group["agents"] = ["ada"]
     r, _ = _plan(tmp_path)
     assert r.exit_code == 2 and "single-agent turn" in r.output
 
@@ -222,7 +239,7 @@ def _group_plan(tmp_path):
     return write_plan(tmp_path, priorities_brief="", principal="neal@dimagi.com",
                       group_run={"id": 41, "group": "ai-champs", "name": "AI Learning Champions",
                                  "channel_name": "ai-champions", "lead_email": "neal@dimagi.com",
-                                 "read": RUN["read"]},
+                                 "read": READ},
                       group={"slug": "ai-champs", "lead_email": "neal@dimagi.com"})
 
 
@@ -239,7 +256,7 @@ def test_file_proposes_projects_records_backings_and_finishes_the_run(tmp_path, 
     body = web.proposed[("eva", "Joint Q4 brief")]["_body"]
     assert body["partners"] == ["echo"] and body["plan"] == ["start Joint Q4 brief", "then more"]
     assert body["outcome"] == "3 meetings" and body["owner_email"] == "neal@dimagi.com"
-    assert body["source_url"] == f"https://cw/w/connect/huddles/{H}"
+    assert body["source_url"] == f"https://cw/w/connect/huddles/{H}" and body["group"] == "ai-champs"
     assert web.tasks.get("eva", []) == [] and web.tasks.get("echo", []) == []   # no loose tasks
     assert web.backings == [("eva", "P1", "echo", {"stance": "backs", "line": "", "huddle_id": H})]
     [(rid, fin)] = web.finished
@@ -248,12 +265,25 @@ def test_file_proposes_projects_records_backings_and_finishes_the_run(tmp_path, 
     rec = json.loads((tmp_path / "rec" / f"{H}.json").read_text())
     assert rec["group_run"]["id"] == 41
     assert rec["outcomes"][0]["task"] == {"agent": "eva", "project": "P1", "kind": "proposed_project"}
-    # Re-run: revised in place, backings replaced, an already-finished run is fine.
-    web.finish_status = 409
+    assert out["filed"][0]["proposed"]["decision_task"] == "T9"
+    # Re-run: revised in place, backings replaced, an already-done run answers 200.
     r = run("huddle", "file", "--plan", str(p), "--outcomes", str(props),
             "--local", str(tmp_path / "rec"))
     assert r.exit_code == 0, r.output
     assert len(web.projects["eva"]) == 1 and len(web.backings) == 1
+    assert json.loads(r.stdout)["filed"][0]["proposed"]["created"] is False
+
+
+def test_file_warns_when_the_run_is_no_longer_running(tmp_path, web):
+    _full_huddle(web)
+    web.finish_status = 409
+    p = _group_plan(tmp_path)
+    props = tmp_path / "props.json"
+    run("huddle", "proposals", "--huddle", H, "--out", str(props))
+    r = run("huddle", "file", "--plan", str(p), "--outcomes", str(props),
+            "--local", str(tmp_path / "rec"))
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["group_run_finished"] is False and "no longer running" in r.stderr
 
 
 def test_file_falls_back_to_tasks_loudly_on_an_older_server(tmp_path, web):
@@ -302,14 +332,31 @@ def test_material_prints_the_runs_material_with_the_window_on_stderr(web):
     assert "AI Learning Champions" in r.stderr and "2 messages" in r.stderr
 
 
-def test_finish_posts_once_and_tolerates_an_already_finished_run(web):
+def test_finish_posts_and_is_idempotent_and_refuses_an_ended_run(web):
     r = run("huddle-group", "finish", "--run", "41", "--result-url", "https://cw/p",
             "--summary", "3 new tasks")
     assert r.exit_code == 0, r.output
     assert web.finished == [("41", {"result_url": "https://cw/p", "summary": "3 new tasks"})]
+    assert run("huddle-group", "finish", "--run", "41", "--result-url", "u",
+               "--summary", "s").exit_code == 0          # done already: 200, a no-op
     web.finish_status = 409
-    assert run("huddle-group", "finish", "--run", "41", "--result-url", "u",
-               "--summary", "s").exit_code == 0
-    web.finish_status = 403
-    assert run("huddle-group", "finish", "--run", "41", "--result-url", "u",
-               "--summary", "s").exit_code == 2
+    r = run("huddle-group", "finish", "--run", "41", "--result-url", "u", "--summary", "s")
+    assert r.exit_code == 2 and "no longer running" in r.output
+
+
+def test_file_does_not_fall_back_when_the_lead_agent_is_not_visible(tmp_path, web, monkeypatch):
+    _full_huddle(web)
+    orig = web.transport
+
+    def t(method, url, headers, data):
+        if "/projects/propose/" in url:
+            return 404, '{"detail": "agent \'eva\' not found"}'
+        return orig(method, url, headers, data)
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", t)
+    p = _group_plan(tmp_path)
+    props = tmp_path / "props.json"
+    run("huddle", "proposals", "--huddle", H, "--out", str(props))
+    r = CliRunner().invoke(main, ["huddle", "file", "--plan", str(p), "--outcomes", str(props),
+                                  "--local", str(tmp_path / "rec")])
+    assert r.exit_code == 1 and "cannot propose on eva" in r.output
+    assert not web.tasks.get("eva") and not web.finished
