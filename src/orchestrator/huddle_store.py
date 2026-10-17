@@ -81,6 +81,12 @@ class DriveHuddleStore:
         from orchestrator.agent_email import reconcile_client
         from orchestrator.agent_gdoc import resolve_gdoc_identity
         self.identity = resolve_gdoc_identity(Path(repo))
+        if not self.identity.root_folder:
+            # An agent with no team binding exporting its Drive root (Ada's `bin/ada-huddle`
+            # does) still leads a huddle: read the root from its OWN provisioned env file.
+            from orchestrator.agent_gdoc import GDRIVE_ROOT_ENV, agent_env_value
+            self.identity.root_folder = (agent_env_value(self.identity.slug, GDRIVE_ROOT_ENV)
+                                         or "").strip()
         # The client rule every gog caller follows (see work_cursor.DriveCursorStore).
         reconcile_client(self.identity, runner=runner, apply=True)
         self.runner = runner
