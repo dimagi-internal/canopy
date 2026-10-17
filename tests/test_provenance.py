@@ -69,6 +69,40 @@ def test_by_task_record_is_found_from_the_worktree_path(root):
     assert not any("Task" in k or "Host" in k for k in h)
 
 
+def _pointer(root, *, task=TASK, turn=TURN, age=5.0):
+    (root / "pending").mkdir(exist_ok=True)
+    path = root / "pending" / f"{task}.json"
+    path.write_text(json.dumps({"version": 1, "turn_id": turn, "task": task,
+                                "envelope": "/x.json", "written_at": time.time() - age}))
+    return path
+
+
+def test_session_start_finds_the_turn_from_the_runners_pointer(root):
+    """SessionStart runs before the first prompt, so before the hook writes by-task.
+    Its `cred sync` must still name the turn (canopy-web#1563)."""
+    path = _pointer(root)
+    assert pv.resolve_parent(cwd=CWD)["turn_id"] == TURN
+    assert path.exists(), "read, never consumed: the prompt hook still claims it"
+
+
+def test_a_stale_pointer_lends_no_turn(root):
+    _pointer(root, age=pv.PENDING_FRESH_SECONDS + 5)
+    assert pv.resolve_parent(cwd=CWD)["turn_id"] == ""
+
+
+def test_the_by_task_record_wins_over_a_pointer(root):
+    _pointer(root, turn="22222222-0000-4000-8000-000000000000")
+    (root / "by-task" / f"{TASK}.json").write_text(json.dumps({"turn_id": TURN}))
+    assert pv.resolve_parent(cwd=CWD)["turn_id"] == TURN
+
+
+def test_a_pointer_for_another_task_is_ignored(root):
+    path = _pointer(root)
+    path.write_text(json.dumps({"turn_id": TURN, "task": "c-someone-else",
+                                "written_at": time.time()}))
+    assert pv.resolve_parent(cwd=CWD)["turn_id"] == ""
+
+
 def test_unsafe_values_are_dropped_not_sent(root, monkeypatch, tmp_path):
     monkeypatch.setenv("CANOPY_TURN_ID", "not a uuid\r\nX-Evil: 1")
     assert pv.HEADER_TURN not in pv.provenance_headers(cwd=str(tmp_path))
