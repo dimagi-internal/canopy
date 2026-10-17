@@ -523,6 +523,7 @@ def compute_auto_iterate(
         "declined": list((edit_scope or {}).get("declined") or []),
         "surfaces": tuple((edit_scope or {}).get("surfaces") or ()),
         "sticky": dict(state.out_of_scope_ids or {}),
+        "writable_scopes": tuple((edit_scope or {}).get("writable_scopes") or ()),
     }
     # Stable ids first (a decline or a fixed surface follows the finding across
     # re-wordings), then every finding's edit scope, stamped once.

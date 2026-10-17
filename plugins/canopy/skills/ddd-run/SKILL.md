@@ -955,7 +955,8 @@ dimension(s) and scene(s) holding the score down), classifies each floor
 finding in or out of the loop's edit scope, stamps both on
 `state.gating_floor` (printed as `Floor:`), and appends this pass's timing to
 `state.pass_timings` (printed as `Pass timing:`). Out of scope = `route: DEFER`;
-a `[DATA]` / `[REGISTRY]` / `[EXTERNAL]` / `[UPSTREAM]` / `[SEED]` fix; a
+a `[DATA]` / `[REGISTRY]` / `[EXTERNAL]` / `[UPSTREAM]` / `[SEED]` fix (unless
+that scope is listed in `loop.writable_scopes`); a
 narration edit (`[NARRATION]`, `fix_scope: narrative`) while the spec is
 `narrative_locked`; a match on `loop.fixed_surfaces`; or a fix a fixer declined
 (`python -m scripts.ddd.floor decline <run_dir> --match "<text>" --reason

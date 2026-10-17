@@ -1338,6 +1338,13 @@ Better still, declare the surfaces a repo's loop may never edit ONCE, in
 of declining finding by finding: findings naming one are out of scope by
 construction.
 
+The reverse also matters: `[DATA]` / `[REGISTRY]` / `[SEED]` fixes are out by
+default, on the assumption that someone else's code owns them. When the loop CAN
+write them — the registry, pipelines and seed data are live data behind an API,
+as with ACE on Connect Labs — list them in `loop.writable_scopes` (e.g.
+`[data, registry, seed]`) so those findings stay in scope and get fixed instead
+of parked. Reserve out-of-scope for a real product bug or a missing feature.
+
 **Fixer-diff gate — after every fixer batch, before its PR merges, every
 objective** (canopy#786). Run it on the batch's branch in the target repo:
 
