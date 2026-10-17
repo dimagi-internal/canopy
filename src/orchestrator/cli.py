@@ -19,6 +19,7 @@ from orchestrator.runner_cli import runner as runner_group
 from orchestrator.secret_cli import secret_group
 from orchestrator.decide_guard_cli import decide_guard_group
 from orchestrator.huddle_cli import huddle_group
+from orchestrator.huddle_group_cli import huddle_group_group
 from orchestrator.thread_cli import thread_group
 from orchestrator.people_cli import people_group
 from orchestrator.slack_ingest_cli import slack_group
@@ -121,6 +122,7 @@ main.add_command(runner_group)
 main.add_command(secret_group)
 main.add_command(decide_guard_group)
 main.add_command(huddle_group)
+main.add_command(huddle_group_group)
 main.add_command(thread_group)
 main.add_command(people_group)
 main.add_command(slack_group)

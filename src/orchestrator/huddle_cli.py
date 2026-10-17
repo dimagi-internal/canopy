@@ -268,6 +268,9 @@ def refresh_fates(records: list[dict], task_cache: dict) -> list[dict]:
             task = o.get("task") or {}
             if not str(o.get("fate") or "").startswith("filed") or not task.get("agent"):
                 continue
+            if task.get("kind") == "proposed_project":
+                _refresh_proposed(o, task, task_cache)
+                continue
             agent = task["agent"]
             if agent not in task_cache:
                 try:
@@ -288,6 +291,30 @@ def refresh_fates(records: list[dict], task_cache: dict) -> list[dict]:
                 o["fate"] = "filed; awaiting decision"
         out.append(rec)
     return out
+
+
+def _refresh_proposed(o: dict, ref: dict, cache: dict) -> None:
+    """A proposed project's live fate: started (active), declined (archived — with the
+    reason from its notes), done, or still awaiting a decision."""
+    key = ("projects", ref["agent"])
+    if key not in cache:
+        try:
+            cache[key] = _client(ref["agent"]).list_projects()
+        except (CanopyError, RuntimeError):
+            cache[key] = None
+    live = next((p for p in cache.get(key) or [] if p.get("ext_id") == ref.get("project")), None)
+    if live is None:
+        return
+    status = str(live.get("status") or "")
+    if status == "archived":
+        o["fate"] = "declined: " + (str(live.get("notes") or "").strip()[-200:]
+                                    or "declined on the huddle page")
+    elif status == "active":
+        o["fate"] = "filed; started"
+    elif status == "done":
+        o["fate"] = "filed; done"
+    elif status == "proposed":
+        o["fate"] = "filed; awaiting decision"
 
 
 def prior_text(records: list[dict]) -> str:
@@ -511,31 +538,48 @@ def huddle_group():
 
 @huddle_group.command("plan")
 @click.option("--leader", default="", help="Leading agent's slug (default: this repo's agent).")
-@click.option("--team", required=True, help="Team name, e.g. fleet.")
+@click.option("--team", default="", help="Team name, e.g. fleet (a group run: the group's slug).")
 @click.option("--type", "type_", default="work", show_default=True, help="Huddle type.")
-@click.option("--members", required=True, help="Comma-separated member slugs.")
+@click.option("--members", default="", help="Comma-separated member slugs (a group run: the "
+                                            "group's agents).")
+@click.option("--group-run", "group_run_id", default="",
+              help="A work-group run id: members, brief and channel material all come from the "
+                   "group (canopy-web /api/huddle-groups/runs/<id>).")
 @click.option("--days", default=7, show_default=True, type=int, help="Review window.")
-@click.option("--principal", default="the principal", show_default=True)
+@click.option("--principal", default="the principal", show_default=True,
+              help="Whom the work is for (a group run: default the group's lead).")
 @click.option("--sharing-rule", default="Share freely within the team.", show_default=True)
 @click.option("--repo", default=".", show_default=True, help="Leader's repo (Drive identity).")
 @click.option("--local", default=None, help="Keep outcome records in this dir, not Drive.")
 @click.option("--priorities-file", default=None, type=click.Path(exists=True, dir_okay=False),
               help="The principal's priorities brief (numbered lines). Every round prompt opens "
-                   "with it, and proposals serve its numbers.")
+                   "with it, and proposals serve its numbers. Not with --group-run (the group's "
+                   "topic is the brief).")
 @click.option("--runner", "runner_ref", default="caller", show_default=True,
               help="Where every round runs: `caller` = the runner this leader turn is on (a "
                    "person's own session: this machine's runner), `none` = each member's own "
                    "runner order, or a runner name/id to pin one box (e.g. to debug).")
 @click.option("--out", required=True, type=click.Path(dir_okay=False))
-def plan_cmd(leader, team, type_, members, days, principal, sharing_rule, repo, local,
-             priorities_file, runner_ref, out):
+def plan_cmd(leader, team, type_, members, group_run_id, days, principal, sharing_rule, repo,
+             local, priorities_file, runner_ref, out):
     """Start a huddle: pick its id, tag the anchor turn, build one context pack per member."""
+    group_run = _group_run(group_run_id, leader, members, priorities_file) if group_run_id else None
+    if group_run:
+        g = group_run["group"]
+        leader = leader or g.get("leader_agent") or _leader_default()
+        team = team or g["slug"]
+        if principal == "the principal" and g.get("lead_email"):
+            principal = g["lead_email"]
     leader = leader or _leader_default()
     if not leader:
         raise HuddleError("no --leader and this is not an agent repo")
+    if not team:
+        raise HuddleError("--team is required (or --group-run, whose group names it)")
     ht = H.load_type(type_)
     brief = ""
-    if priorities_file:
+    if group_run:
+        brief = H.group_brief(group_run["group"])
+    elif priorities_file:
         brief = Path(priorities_file).read_text(encoding="utf-8").strip()
         if not H.brief_items(brief):
             raise HuddleError(f"{priorities_file} has no numbered priorities "
@@ -544,9 +588,18 @@ def plan_cmd(leader, team, type_, members, days, principal, sharing_rule, repo, 
         click.echo("[huddle] WARNING: no --priorities-file — members will each GUESS the "
                    f"priorities in round 1 (the pre-brief huddle). Pass {principal}'s brief.",
                    err=True)
-    roster = [m.strip() for m in members.split(",") if m.strip() and m.strip() != leader]
+    if group_run:
+        roster = _group_roster(group_run["group"], leader)
+    else:
+        if not members:
+            raise HuddleError("--members is required (or --group-run, whose group names them)")
+        roster = [m.strip() for m in members.split(",") if m.strip() and m.strip() != leader]
     if not roster:
-        raise HuddleError("--members names nobody (the leader is not its own member)")
+        raise HuddleError("--members names nobody (the leader is not its own member)"
+                          if not group_run else
+                          f"work group {group_run['group']['slug']} has no agent besides its "
+                          f"leader {leader} — a one-agent group is a single-agent turn "
+                          "(agent-core work-group.md), not a huddle")
     # Before the anchor: a pin that cannot carry every member is a refusal, not a huddle
     # that half-runs.
     pin = _resolve_pin(runner_ref, roster)
@@ -557,12 +610,15 @@ def plan_cmd(leader, team, type_, members, days, principal, sharing_rule, repo, 
         raise HuddleError(f"canopy-web huddle API unreachable — a huddle cannot run without it: {e}")
     hid = H.huddle_id(ht.name, team, now.date(), taken)
     leader_client = _client(leader)
+    gslug = group_run["group"]["slug"] if group_run else ""
     try:
         workspace = (leader_client.get_agent() or {}).get("workspace") or None
         anchor = leader_client.post_turn(
             cli_session_id=f"huddle:{hid}", title=f"Huddle {hid}", summary="", source="huddle",
             emdash_task_id="",
-            origin_ref=H.anchor_origin_ref(hid, ht.name, team, leader, roster, brief))
+            origin_ref=H.anchor_origin_ref(hid, ht.name, team, leader, roster, brief,
+                                           group=gslug,
+                                           run=group_run.get("id") if group_run else None))
     except (CanopyError, RuntimeError) as e:
         raise HuddleError(f"could not record the huddle's anchor turn: {e}")
     since = now - dt.timedelta(days=days)
@@ -583,10 +639,81 @@ def plan_cmd(leader, team, type_, members, days, principal, sharing_rule, repo, 
             "packs": packs, "prior_text": prior_text(records), "prior": records,
             "priorities_brief": brief,
             "runner": {k: pin[k] for k in ("id", "name", "basis")}}
+    if group_run:
+        g = group_run["group"]
+        plan["group_run"] = {"id": group_run.get("id", group_run_id), "group": g["slug"],
+                             **{k: g.get(k) for k in ("name", "channel_name", "lead_email")},
+                             "read": H.read_window(group_run)}
+        plan["group"] = {k: g.get(k) for k in ("slug", "name", "topic", "lead_email",
+                                               "channel_name", "leader_agent", "agents")}
+        plan["group_material"] = group_run.get("material") or ""
+        plan["group_reactions"] = group_reactions(g, plan["group_run"]["id"], leader, roster)
     Path(out).write_text(json.dumps(plan, indent=2), encoding="utf-8")
     _emit({"huddle": hid, "anchor_turn_id": plan["anchor_turn_id"], "members": roster,
            "page": plan["page"], "plan": str(out),
-           "priorities": len(H.brief_items(brief)) or None, "runner": plan["runner"]})
+           "priorities": len(H.brief_items(brief)) or None, "runner": plan["runner"],
+           **({"group_run": plan["group_run"]["id"], "group": gslug} if group_run else {})})
+
+
+def _group_run(run_id, leader: str, members: str, priorities_file) -> dict:
+    """The work-group run a huddle is planned from — refused when the run is over, when
+    flags the group decides were passed too, or when this leader is not the group's."""
+    from orchestrator.huddle_group_cli import ENDED, GroupRunError, get_run
+    if members:
+        raise HuddleError("--members with --group-run: the group's agents are the members")
+    if priorities_file:
+        raise HuddleError("--priorities-file with --group-run: the group's topic is the brief")
+    try:
+        run = get_run(run_id)
+    except GroupRunError as e:
+        raise HuddleError(e.message)
+    g = run["group"]
+    status = str(run.get("status") or "")
+    if status in ENDED:
+        raise HuddleError(f"work-group run {run_id} is {status} — nothing to huddle on")
+    if status and status != "running":
+        click.echo(f"[huddle] warning: work-group run {run_id} is {status!r}, not running — "
+                   "its material may be incomplete", err=True)
+    want = g.get("leader_agent") or ""
+    if leader and want and leader != want:
+        raise HuddleError(f"work group {g['slug']} is led by {want}, not {leader}")
+    return run
+
+
+def _group_roster(group: dict, leader: str) -> list[str]:
+    """The group's agents. The leader leads; it is a member only if listed — but the fleet runs
+    ONE turn per agent at a time (canopy-web's one_executing_turn_per_agent), so a round turn to
+    the leader would wait behind the leader's own turn forever. A listed leader takes part as
+    leader, not as a member, and that is said out loud."""
+    agents = [str(a).strip() for a in group.get("agents") or [] if str(a).strip()]
+    if leader in agents:
+        click.echo(f"[huddle] note: {leader} is listed in work group {group.get('slug')} and "
+                   "leads it; it takes part as leader (a round turn to itself could not run "
+                   "while its own turn does)", err=True)
+    return list(dict.fromkeys(a for a in agents if a != leader))
+
+
+def group_reactions(group: dict, run_id, leader: str, roster: list[str], limit: int = 10) -> str:
+    """People's reactions to the group's EARLIER proposed projects (layer 1): every project an
+    earlier run's huddle proposed (`GET /api/huddles/<id>` → `projects`), its status, its
+    backings and the replies on its decision card. Advisory: anything canopy-web cannot answer
+    is a note in the text, never a refusal."""
+    from orchestrator.huddle_group_cli import list_runs
+    try:
+        runs = [r for r in list_runs(group["slug"])
+                if r.get("huddle_id") and str(r.get("id")) != str(run_id)]
+    except (CanopyError, RuntimeError) as e:
+        return f"(could not read work group {group['slug']}'s earlier runs: {str(e)[:160]})"
+    runs.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+    found, notes = [], []
+    for r in runs[:5]:
+        try:
+            d = _call("GET", f"/api/huddles/{quote(str(r['huddle_id']), safe='')}")
+        except (CanopyError, RuntimeError) as e:
+            notes.append(f"(could not read huddle {r['huddle_id']}: {str(e)[:120]})")
+            continue
+        found += [p for p in d.get("projects") or [] if isinstance(p, dict)]
+    return "\n".join([H.reactions_text(found[:limit]), *notes]).strip()
 
 
 def _resolve_pin(ref: str, agents: list[str]) -> dict:
@@ -651,6 +778,11 @@ def prompt_cmd(plan_path, member, round_no, critique_path, merges_path, out):
            "principal_key": (H.norm(principal).split() or ["principal"])[0],
            "round": round_no, "today": f"{_now():%Y-%m-%d}",
            "brief": H.brief_section(brief, principal)}
+    if plan.get("group_run") and round_no in (1, 2):
+        ctx["brief"] += H.group_section(
+            plan.get("group") or {}, plan.get("group_material") or "",
+            {**(plan["group_run"].get("read") or {}), "run": plan["group_run"].get("id")},
+            plan.get("group_reactions") or "")
     if round_no == 1:
         ctx.update(days=plan.get("days", 7), since=plan.get("since", ""),
                    context=(plan.get("packs") or {}).get(member, "(no survey — review yourself)"),
@@ -780,7 +912,7 @@ def dispatch_cmd(plan_path, member, round_no, prompt_file, attempt, mode):
         turn = _call("POST", TURNS_PATH, payload)
     except CanopyError as e:
         if "turn_mode" not in payload or not _is_mode_refusal(e):
-            raise HuddleError(f"dispatch to {member} failed: {e}")
+            return _not_reached(member, round_no, leader, e)
         click.echo(f"[huddle] canopy-web refused turn_mode={payload['turn_mode']} for {member} "
                    f"({str(e)[:160]}); re-sending without a mode — its own rules decide.",
                    err=True)
@@ -789,10 +921,31 @@ def dispatch_cmd(plan_path, member, round_no, prompt_file, attempt, mode):
         try:
             turn = _call("POST", TURNS_PATH, payload)
         except CanopyError as e2:
-            raise HuddleError(f"dispatch to {member} failed: {e2}")
+            return _not_reached(member, round_no, leader, e2)
     _emit({"turn_id": turn.get("id"), "status": turn.get("status"), "member": member,
            "round": round_no, "attempt": attempt, "idempotency_key": key,
-           "mode_fallback": fallback, "runner": pin["name"] or None})
+           "dispatched": True, "mode_fallback": fallback, "runner": pin["name"] or None})
+
+
+_REFUSAL = re.compile(r"-> (40[0-9]|42[0-9]): ?(.*)$", re.S)
+
+
+def _not_reached(member: str, round_no: int, leader: str, err: Exception) -> None:
+    """canopy-web REFUSED the round turn (4xx: the leader may not run this member, the member
+    is unknown, …). That is not a crash: the member is not reached this round, said plainly,
+    and the huddle goes on without it. Anything else (5xx, network) is still a failure."""
+    m = _REFUSAL.search(str(err))
+    if not m:
+        raise HuddleError(f"dispatch to {member} failed: {err}")
+    detail = m.group(2).strip()
+    try:
+        detail = str((json.loads(detail) or {}).get("detail") or detail)
+    except (ValueError, AttributeError):
+        pass
+    why = f"canopy-web refused {leader}'s round-{round_no} turn for {member} ({m.group(1)}): {detail[:240]}"
+    click.echo(f"[huddle] {member} NOT REACHED — {why}", err=True)
+    _emit({"turn_id": None, "dispatched": False, "member": member, "round": round_no,
+           "not_reached": why})
 
 
 @huddle_group.command("await")
@@ -1260,34 +1413,35 @@ def file_cmd(plan_path, outcomes_path, repo, local, digest_out, dry_run, merges_
         return
     created: list[dict] = []
     projects_cache: dict = {}
+    legacy = False          # canopy-web without projects/propose/ → the old task path
     try:
         for p, lead_task, partner_tasks in prepared:
-            lead = _client(p["lead"])
-            project = p.get("project") or {}
-            name = project.get("name") if isinstance(project, dict) else str(project)
-            lead_project = _resolve_project(lead, name, hid, page, create=True, by_ext_id=True,
-                                            projects_cache=projects_cache)
-            lead_task["project"] = str(lead_project.get("ext_id") or "")
-            # partners look up the lead's REAL project name on their own boards
-            name = lead_project.get("name") or name
-            p["task"] = _find_or_add_task(lead, lead_task, page)
-            created.append(p["task"])
-            p["partner_tasks"] = []
-            for pt in partner_tasks:
-                agent = pt.pop("agent")
-                pc = _client(agent)
-                pt["project"] = str(_resolve_project(
-                    pc, name, hid, page, create=False, by_ext_id=False,
-                    projects_cache=projects_cache).get("ext_id") or "")
-                pt["links"] = pt["links"] + [{"label": f"Lead task ({p['lead']} {p['task']['ext_id']})",
-                                              "url": board_url(base, ws, p["lead"])}]
-                ref = _find_or_add_task(pc, pt, page)
-                p["partner_tasks"].append(ref)
-                created.append(ref)
+            if not legacy:
+                try:
+                    _file_proposed(p, plan, page, hid)
+                    if not p.get("held"):
+                        created.append(p["task"])
+                    continue
+                except _ProposeUnsupported as e:
+                    legacy = True
+                    click.echo("[huddle] WARNING: canopy-web has no projects/propose/ route "
+                               f"({e}) — FALLING BACK to filing suggested board tasks (the "
+                               "pre-multiplayer path). Outputs will not show as proposed "
+                               "projects on the huddle page.", err=True)
+            _file_tasks(p, lead_task, partner_tasks, hid, page, base, ws, projects_cache, created)
     except (CanopyError, RuntimeError) as e:
-        click.echo(json.dumps({"error": f"filing stopped: {e}", "tasks_so_far": created},
+        click.echo(json.dumps({"error": f"filing stopped: {e}", "filed_so_far": created},
                               indent=2), err=True)
-        raise click.ClickException(f"filing stopped (re-run is safe — tasks are reused): {e}")
+        raise click.ClickException(f"filing stopped (re-run is safe — nothing is duplicated): {e}")
+    # canopy-web refused a proposal it had declined before (409, no new evidence): held.
+    refused = [p for p, *_ in prepared if p.get("held")]
+    if refused:
+        filed = [p for p in filed if not p.get("held")]
+        held = held + refused
+        summary["held"] += [{"title": p.get("title"), "lead": p.get("lead"), "held": p["held"]}
+                            for p in refused]
+        digest = digest_text(hid, filed, held, page, base, ws, brief, asks)
+        summary["digest"] = digest
     meta = {**plan, "leader_turn": plan.get("anchor_turn_id")}
     record = H.outcome_record(meta, filed, held, missing)
     try:
@@ -1307,12 +1461,160 @@ def file_cmd(plan_path, outcomes_path, repo, local, digest_out, dry_run, merges_
     except (CanopyError, RuntimeError) as e:
         click.echo(f"[huddle] warning: could not mark the anchor finished: {e}", err=True)
         finished = False
+    group_finished = None
+    if plan.get("group_run"):
+        group_finished = _finish_group_run(plan, hid, page, filed, held, legacy)
     if digest_out:
         Path(digest_out).write_text(digest, encoding="utf-8")
     _emit({**summary, "record": where, "anchor_finished": finished,
+           "filed_as": "tasks" if legacy else "proposed_projects",
+           **({"group_run": plan["group_run"]["id"], "group_run_finished": group_finished}
+              if plan.get("group_run") else {}),
            "filed": [{"title": p.get("title"), "lead": p.get("lead"),
                       "partners": H.partners_of(p), "task": p["task"],
-                      "partner_tasks": p["partner_tasks"]} for p in filed]})
+                      "partner_tasks": p.get("partner_tasks") or [],
+                      **({"proposed": p["proposed"]} if p.get("proposed") else {})}
+                     for p in filed]})
+
+
+def _finish_group_run(plan: dict, hid: str, page: str, filed: list, held: list,
+                      legacy: bool) -> bool:
+    """Close the work-group run: canopy-web marks it done and posts ONE pointer line in the
+    channel thread. A run already finished (409) is fine — a re-run of `file` lands here."""
+    from orchestrator.huddle_group_cli import already_finished, finish_run
+    what = "new task" if legacy else "proposed project"
+    n = len(filed)
+    summary = (f"{n} {what}{'s' if n != 1 else ''}"
+               + (f", {len(held)} held" if held else "") + f" — huddle {hid}")
+    rid = plan["group_run"]["id"]
+    try:
+        finish_run(rid, result_url=page, summary=summary, huddle_id=hid)
+    except CanopyError as e:
+        if already_finished(e):        # 409: the run is not running (skipped / expired / failed)
+            click.echo(f"[huddle] WARNING: work-group run {rid} was not marked finished — "
+                       f"canopy-web says it is no longer running: {str(e)[-200:]}", err=True)
+            return False
+        raise click.ClickException(
+            f"everything was filed and recorded, but work-group run {rid} could NOT be marked "
+            f"finished ({e}). Re-run `canopy huddle file` (safe) or `canopy huddle-group finish "
+            f"--run {rid} --result-url {page} --summary \"{summary}\" --huddle-id {hid}`.")
+    return True
+
+
+class _ProposeUnsupported(Exception):
+    """canopy-web answered 404 for projects/propose/ — an older server."""
+
+
+def _proposal_body(p: dict, plan: dict, page: str) -> dict:
+    """`POST /api/agents/{lead}/projects/propose/` (layer 1): the project IS the proposal —
+    its name the title, its outcome the done-when, its plan steps (undated) the project's
+    suggested tasks, its partners each getting a linked task on their own board."""
+    # canopy-web's ProjectProposeIn: ≤20 steps of ≤300 characters each.
+    steps = [_clip_step(H.undated(s)) for s in (p.get("plan") or []) if H.undated(s)][:20]
+    serves = H.priority_label(p.get("priority"), plan.get("priorities_brief") or "")
+    why = [f"Serves: {serves}" if serves else "", str(p.get("why") or "").strip()]
+    cost = p.get("cost_to_jonathan")
+    if isinstance(cost, dict) and H.norm(cost.get("kind")) not in ("", "none"):
+        why.append(f"Needs from {plan.get('principal') or 'the principal'}: "
+                   f"{cost.get('detail') or cost.get('kind')}")
+    if p.get("fails_if"):
+        why.append(f"Would fail if: {p['fails_if']}")
+    if p.get("absorbed"):
+        why.append(f"Merged in: {'; '.join(p['absorbed'])}.")
+    body = {"name": _check("title", str(p.get("title") or "")),
+            # outcome and why are required (non-empty) — the done-when falls back to the title
+            "outcome": (str(p.get("success_measure") or p.get("outcome") or "").strip()
+                        or f"Done when: {p.get('title')}"),
+            "why": "\n\n".join(w for w in why if w) or str(p.get("title") or ""),
+            "plan": steps, "partners": H.partners_of(p),
+            "source_url": _check("source_url", page)}
+    if p.get("new_evidence"):
+        body["new_evidence"] = str(p["new_evidence"])
+    group = plan.get("group") or {}
+    if group.get("lead_email"):
+        body["owner_email"] = group["lead_email"]
+    if group.get("slug"):
+        body["group"] = group["slug"]
+    return body
+
+
+def _clip_step(step: str, n: int = 300) -> str:
+    return step if len(step) <= n else step[: n - 1] + "…"
+
+
+def _file_proposed(p: dict, plan: dict, page: str, hid: str) -> None:
+    """Propose the survivor as a project on its lead, then record each partner's round-3
+    answer as that agent's backing. Re-run safe: canopy-web revises an open proposal of the
+    same name (it never files a second decision card) and a backing PUT replaces the row."""
+    lead = p["lead"]
+    path = f"/api/agents/{quote(lead)}/projects/propose/"
+    try:
+        res = _call("POST", path, _proposal_body(p, plan, page))
+    except CanopyError as e:
+        if "-> 404" in str(e):
+            if f"agent '{lead}' not found" in str(e):
+                # the lead is gone or this login may not see it — not an older server
+                raise CanopyError(f"cannot propose on {lead}: {e}") from e
+            raise _ProposeUnsupported(str(e)[:200])
+        if "-> 409" in str(e):
+            p["held"] = f"declined before (canopy-web refused it without new evidence): {str(e)[-160:]}"
+            p["task"] = {}
+            return
+        raise
+    proj = (res.get("project") if isinstance(res.get("project"), dict) else res) or {}
+    ref = str(proj.get("ref") or proj.get("ext_id") or "")
+    if not ref:
+        raise RuntimeError(f"{lead}: propose {p.get('title')!r} returned no project ref")
+    p["proposed"] = {"agent": lead, "project": ref, "status": proj.get("status") or "proposed",
+                     "created": bool(res.get("created", True)),
+                     **({"decision_task": proj["decision_task"]} if proj.get("decision_task") else {}),
+                     **({"url": proj["url"]} if proj.get("url") else {})}
+    p["task"] = {"agent": lead, "project": ref, "kind": "proposed_project"}
+    p["partner_tasks"] = []
+    backed = []
+    notes = p.get("answer_notes") or {}
+    for m in H.cosigners_of(p):
+        b = H.backing_for((p.get("answers") or {}).get(m) or "", notes.get(m) or "")
+        if b is None:
+            continue
+        try:
+            _call("PUT", f"/api/agents/{quote(lead)}/projects/{quote(ref, safe='')}"
+                         f"/backings/agents/{quote(m)}/", {**b, "huddle_id": hid})
+        except CanopyError as e:
+            if "-> 404" in str(e):
+                click.echo(f"[huddle] warning: canopy-web has no backings route — {m}'s "
+                           f"{b['stance']} on {p.get('title')!r} was not recorded", err=True)
+                continue
+            raise
+        backed.append({"agent": m, **b})
+    p["proposed"]["backings"] = backed
+
+
+def _file_tasks(p, lead_task, partner_tasks, hid, page, base, ws, projects_cache, created):
+    """The pre-multiplayer path (fallback only): the survivor as a suggested task on the
+    lead's board plus a linked task on each partner's."""
+    lead = _client(p["lead"])
+    project = p.get("project") or {}
+    name = project.get("name") if isinstance(project, dict) else str(project)
+    lead_project = _resolve_project(lead, name, hid, page, create=True, by_ext_id=True,
+                                    projects_cache=projects_cache)
+    lead_task["project"] = str(lead_project.get("ext_id") or "")
+    # partners look up the lead's REAL project name on their own boards
+    name = lead_project.get("name") or name
+    p["task"] = _find_or_add_task(lead, lead_task, page)
+    created.append(p["task"])
+    p["partner_tasks"] = []
+    for pt in partner_tasks:
+        agent = pt.pop("agent")
+        pc = _client(agent)
+        pt["project"] = str(_resolve_project(
+            pc, name, hid, page, create=False, by_ext_id=False,
+            projects_cache=projects_cache).get("ext_id") or "")
+        pt["links"] = pt["links"] + [{"label": f"Lead task ({p['lead']} {p['task']['ext_id']})",
+                                      "url": board_url(base, ws, p["lead"])}]
+        ref = _find_or_add_task(pc, pt, page)
+        p["partner_tasks"].append(ref)
+        created.append(ref)
 
 
 @huddle_group.command("view")

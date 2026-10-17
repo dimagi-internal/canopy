@@ -107,3 +107,16 @@ def test_local_store_roundtrip_and_recent(tmp_path):
 def test_record_id_is_validated(tmp_path):
     with pytest.raises(hs.HuddleStoreError):
         hs.LocalHuddleStore(tmp_path).write({"id": "../escape"})
+
+
+def test_drive_root_falls_back_to_the_agents_own_env_file(tmp_path, monkeypatch, drive):
+    """An agent with no team binding exporting GDRIVE_ROOT_FOLDER still leads a huddle."""
+    class NoRoot:
+        account, client, root_folder, slug = "eva@dimagi-ai.com", "canopy", "", "eva"
+    monkeypatch.setattr("orchestrator.agent_gdoc.resolve_gdoc_identity", lambda r: NoRoot())
+    asked = []
+    monkeypatch.setattr("orchestrator.agent_gdoc.agent_env_value",
+                        lambda slug, key: asked.append((slug, key)) or "EVA-ROOT")
+    store = hs.DriveHuddleStore(tmp_path, runner=_runner([], []))
+    assert store.identity.root_folder == "EVA-ROOT"
+    assert asked == [("eva", "GDRIVE_ROOT_FOLDER")]
