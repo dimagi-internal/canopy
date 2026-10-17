@@ -671,6 +671,46 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh
         click.echo(render_device(st))
 
 
+RUNNER_SESSIONS_PATH = "/api/runner-sessions/"
+
+
+def run_runner_session(runner_id: str, base_url: str = "", *, transport=None) -> dict:
+    """Sign this runner in AS ITSELF: trade a proof of this machine's approved device
+    key for an hour-long runner token (canopy-web `POST /api/runner-sessions/`, #1594).
+    No person's PAT is sent — the proof is the whole authority, so a token tidied up
+    in Settings → Tokens can never strand a runner again (2026-10-17, cloud-ec2-2).
+
+    Returns `{access_token, expires_at, runner}`. Raises VaultCliError when there is
+    no runner id, no proof this machine can make (no key, or not registered), or
+    canopy-web refuses it (the key is not approved yet)."""
+    runner_id = runner_id or device_key.runner_id_from_config()
+    if not runner_id:
+        raise VaultCliError("no runner id (pass --runner, or pair: ~/.canopy/runner.json)")
+    url = canopy_web.resolve_base_url(base_url or None) + RUNNER_SESSIONS_PATH
+    proof = device_key.proof_headers("POST", url)
+    if not proof:
+        raise VaultCliError("this machine has no registered device key to prove itself with "
+                            "— canopy vault device --enroll")
+    headers = {**canopy_web.provenance_headers(), **proof, "Content-Type": "application/json"}
+    status, text = (transport or canopy_web.urllib_transport)(
+        "POST", url, headers, json.dumps({"runner": runner_id}).encode("utf-8"))
+    if status != 201:
+        raise VaultCliError(f"canopy-web refused the device proof ({status}) — is this "
+                            f"machine's device key approved? {text[:300]}")
+    return json.loads(text)
+
+
+@vault_group.command("runner-session")
+@click.option("--runner", "runner_id", default="",
+              help="Runner id (default: ~/.canopy/runner.json's).")
+@click.option("--base-url", default="", help="canopy-web (default: CANOPY_WEB_API_URL).")
+def runner_session_cmd(runner_id, base_url):
+    """Print a runner token for this machine, bought with its device key, as JSON
+    `{access_token, expires_at, runner}`. The canopy runner calls this instead of
+    sending its owner's PAT."""
+    click.echo(json.dumps(run_runner_session(runner_id, base_url), sort_keys=True))
+
+
 @vault_group.command("binding")
 @AGENT_OPT
 @click.argument("state", type=click.Choice(["on", "off"]))
