@@ -90,8 +90,12 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
     returns an `error` the report states, so a human retries instead of registering."""
     try:
         from orchestrator import cred_resolve
+        # A box staging an agent outside any turn (bootstrap, the runner-update timer)
+        # says so, or canopy-web emails the owner "read outside a turn" for routine
+        # maintenance every hour (canopy-web#1563).
         body = cred_resolve.resolve(slug, base_url=base_url, token=token,
-                                    transport=transport) or {}
+                                    transport=transport,
+                                    purpose=cred_resolve.RUNNER_REFRESH) or {}
     except Exception as e:  # noqa: BLE001
         return RunnerCredentials(error=f"could not reach canopy-web for {slug}'s credentials: "
                                        f"{_first_line(str(e), 200)}")
