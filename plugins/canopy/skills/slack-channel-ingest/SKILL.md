@@ -1,10 +1,11 @@
 ---
 name: slack-channel-ingest
 description: |
-  Read a whole Slack channel's history (optionally following it) ONLY with
-  permission from someone in it, then digest it. canopy-web posts an
-  Approve / Decline in the channel, reads it with its own token after an
-  approval, and hands the agent a transcript. Use for "go back through
+  Read a whole Slack channel's history ONLY with permission from someone in
+  it, then digest it. An allow-listed channel is read only when a person types
+  `/<agent> read-channel <ask>` in it, and the read arrives in the agent's turn;
+  otherwise canopy-web posts an Approve / Decline in the channel, reads it with
+  its own token after an approval, and hands the agent a transcript. Use for "go back through
   #channel", "ingest / catch up on everything in a Slack channel", "read the
   history of #x", or "follow #x". Never read Slack history any other way: a
   direct Slack API or Slack MCP history read is denied by the fleet baseline.
@@ -12,8 +13,15 @@ description: |
 
 # Slack channel ingest — ask, wait for a yes, read, digest
 
-**The rule (Jonathan, 2026-10-16): an agent may go back through a Slack channel only by asking
-for permission, and never without it.** canopy-web enforces that, not this page (canopy-web#1533):
+**The rule (Jonathan, 2026-10-16): an agent may go back through a Slack channel only with
+permission, and never without it — and an allow-listed channel only when a person asks for it in
+Slack.** canopy-web enforces that, not this page (canopy-web#1533, #1562):
+
+- **An allow-listed channel is read only by `/<you> read-channel <ask>`, typed by a person in that
+  channel.** canopy reads everything since your last read there (all of it the first time) and
+  sends it to you with their ask, as your turn, in that command's thread. You don't request it,
+  wait for it or fetch it: the channel is in your prompt, as quoted material, above the ask. Answer
+  the ask. `canopy slack ingest request` on an allow-listed channel is refused (409), on purpose.
 
 - The ask posts ONE message **in the channel**, naming you, your purpose and who asked, with
   Approve / Decline buttons.
@@ -24,12 +32,10 @@ for permission, and never without it.** canopy-web enforces that, not this page 
   Markdown transcript that only your own login can read.
 - The workspace must have opted in (`channel_ingest_enabled`, set by an owner on its Slack
   settings page). Every step is in the workspace's event log.
-- **Or an admin allow-listed the channel for you, explicitly.** A workspace owner or admin can grant ONE
-  channel to ONE agent ahead of time (Slack settings page → Allow-listed channels, or
-  `canopy slack ingest allow`). Then your request reads at once, approved by that person, and canopy
-  posts a notice with Revoke in the channel instead of asking. It works even with asking switched
-  off. A read-once entry refuses `--follow`. **You never allow-list for yourself.** Your login is
-  refused, and asking a human to do it is their call, not a step in your work.
+- **Allow-listing** is a workspace owner's or admin's act (Slack settings page → Channels agents may
+  read, or `canopy slack ingest allow`). It makes `read-channel` work in that channel; it does not
+  let you read it on your own. **You never allow-list for yourself.** Your login is refused, and
+  asking a human to do it is their call, not a step in your work.
 
 The fleet baseline **denies** any other route to Slack history: a `slack.com/api` history call, an
 SDK `conversations_history`, or a Slack MCP connector's read-channel/thread tools. If you hit that
@@ -47,20 +53,16 @@ canopy slack ingest request --agent <your-slug> --channel <C-id> --purpose "<why
 
 - **The channel ID** (`C…`/`G…`) or **`#name`** both work. canopy resolves a name among the
   channels its app can see (a private channel must have the app in it).
-- **Status `reading` straight away** means the channel was allow-listed for you. canopy is already
-  reading it, so go to step 2.
 - **The purpose is read by the people deciding.** Write it as a sentence that answers "why does an
   agent need all of this?" Example: *"Digest the AI Learning Champions channel for Jonathan's weekly
   brief"*. Don't write "context".
 - `--follow` keeps adding new messages until someone revokes it. Ask for it only when the work
   really is ongoing (a weekly digest, a running FAQ). The approval message tells people that
   following is part of the ask.
+- **`409 … allow-listed … read only when a person asks in Slack`**: tell whoever asked you to type
+  `/<you> read-channel <their ask>` in the channel. Don't look for another way in.
 - **`409 … channel ingest is off … not allow-listed`**: the workspace hasn't opted in, and no admin
-  has allow-listed this channel for you. Tell whoever asked you. A workspace owner or admin can fix it with
-  `canopy slack ingest allow --workspace <ws> --agent <you> --channel <#name>`. Don't look for
-  another way in.
-- **`403 … allow-listed … to read once`**: ask again without `--follow`, or ask an admin to allow
-  following.
+  has allow-listed this channel for you. Tell whoever asked you. Don't look for another way in.
 - **`409 … invite the canopy app`**: the bot isn't in the channel. Ask a channel member to
   `/invite @canopy`.
 - **`409 … already has a pending or live ingest`**: use that one (`canopy slack ingest list --agent
@@ -130,4 +132,5 @@ can also revoke, from the Revoke button on the approval message or from canopy-w
   `@canopy <you> --history --min 30 <ask>` in Slack, and canopy hands you that window.
 - **Posting to Slack**: `canopy:share-to-slack`.
 
-**Try it on `#canopy-support` first.** That is the test channel Jonathan named.
+**`#canopy-support` is the test channel Jonathan named** — and it is read only when someone types
+`/<agent> read-channel <ask>` there.
