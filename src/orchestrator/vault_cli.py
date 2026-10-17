@@ -254,7 +254,7 @@ def run_import(slug: str, *, token: str, op: av.Op, switch: bool = False,
             continue
         values[r.name] = val
         res.rows.append(Row(r.name, "read", f"1Password item {r.item}"))
-    _copy_gmail_token(agent, op, web, values, res, zk=zk)
+    _copy_gmail_token(agent, op, web, values, res)
     if values and zk:
         # Zero-knowledge (canopy-web#1550): encrypted HERE under the vault key this device
         # unwraps; canopy-web only ever sees zk1: ciphertext.
@@ -265,6 +265,7 @@ def run_import(slug: str, *, token: str, op: av.Op, switch: bool = False,
         except click.ClickException as e:
             raise VaultCliError(e.message) from None
         res.actions += out.actions
+        res.notes += vault_zk_cli.settle_quietly(slug, token=token, transport=transport, vault=v)
     elif values:
         web("PUT", f"/api/agents/{slug}/credentials", {"values": values})
         res.actions.append(f"wrote {len(values)} value(s) to canopy-web "
@@ -293,8 +294,7 @@ def run_import(slug: str, *, token: str, op: av.Op, switch: bool = False,
 GMAIL_ITEM = "gog-token"
 
 
-def _copy_gmail_token(agent: Agent, op: av.Op, web, values: dict, res: Result, *,
-                      zk: bool) -> None:
+def _copy_gmail_token(agent: Agent, op: av.Op, web, values: dict, res: Result) -> None:
     """Carry the agent's Gmail token over when canopy-web has none.
 
     The runner bootstrap reads it straight from ``op://<vault>/gog-token`` — never through
@@ -302,17 +302,14 @@ def _copy_gmail_token(agent: Agent, op: av.Op, web, values: dict, res: Result, *
     runners stop receiving its 1Password key, so without this copy its Gmail silently stops
     on the first turn after the switch (found piloting Hal, 2026-10-17). The token JSON names
     the OAuth client that minted it, so a copy pairs with the right client on any box.
-    Connect Google mailbox writes the same credential and stays the way to mint a new one."""
+    Connect Google mailbox writes the same credential and stays the way to mint a new one.
+    Under ``--zk`` it is encrypted here like every other value: the runner opens zero-
+    knowledge values on the device (`cred_resolve.open_zk`) before the bootstrap reads it."""
     if (credential_status(agent.slug, web).get(GMAIL_ITEM) or {}).get("set"):
         return
     val, _ = op_read(op, f"op://{agent.vault}/{GMAIL_ITEM}/credential")
     if not val or not val.strip():
         return                       # no Gmail token in the vault: nothing to carry
-    if zk:
-        res.notes.append(f"{GMAIL_ITEM}: left in 1Password — the runner bootstrap reads it as "
-                         "plaintext, so it cannot be zero-knowledge yet; switch this agent "
-                         "custodially, or use Connect Google mailbox")
-        return
     values[GMAIL_ITEM] = val
     res.rows.append(Row(GMAIL_ITEM, "read", "1Password item gog-token (the runner's Gmail token)"))
 
@@ -359,6 +356,8 @@ def run_switch(slug: str, to: str, *, token: str, repo: Optional[Path] = None,
         if gmail:
             raise VaultCliError(f"refusing to switch {slug} to canopy-web: {gmail}")
         res.notes.append(f"all {len(needed)} declared ref(s) are on canopy-web")
+        from orchestrator import vault_zk_cli
+        res.notes += vault_zk_cli.settle_quietly(slug, token=token, transport=transport)
     else:
         res.notes.append(f"values rotated on canopy-web during the pilot reach 1Password only "
                          f"through `canopy vault export --agent {slug}` — run it first")

@@ -11,6 +11,8 @@ device wrap (the vault key VK wrapped to its ECDH key — `device_key.load_ecdh`
     canopy vault zk grant  --agent X [--yes]      wrap VK for every pending target
     canopy vault zk rotate --agent X [--drop K:T] new VK + kv, re-wrap the rest, re-encrypt,
                                                   new recovery code
+    canopy vault zk settle --agent X              re-encrypt canopy-web's sealed (zks1) values
+                                                  under the vault key
     canopy vault import --agent X --zk            1Password -> canopy-web, encrypted here
 
 The endpoints (owner/admin only) are canopy-web's: ``GET /api/agents/<slug>/vault/zk``,
@@ -426,6 +428,61 @@ def run_rotate(v: ZkVault, *, drop: Optional[set] = None,
     return res
 
 
+def run_settle(v: ZkVault) -> ZkResult:
+    """Re-encrypt every ``zks1:`` value — sealed by canopy-web to the devices it knew when
+    it minted the value — as ``zk1:`` under the vault key, so every member can read it.
+    Opens each with THIS device's entry; a value not sealed to this device is reported,
+    not touched."""
+    if not v.state().get("enabled"):
+        raise ZkCliError(f"'{v.slug}' is not zero-knowledge — nothing to settle")
+    res = ZkResult(v.slug)
+    try:
+        body = cred_resolve.resolve(v.slug, token=v.token, transport=v.transport, raw=True)
+    except canopy_web.CanopyError as e:
+        raise ZkCliError(f"could not read '{v.slug}'s stored values: {str(e)[:300]}") from None
+    sealed = {str(n): str(s) for n, s in (body.get("values") or {}).items()
+              if zk.is_sealed_value(s)}
+    if not sealed:
+        res.actions.append("nothing to settle — no sealed (zks1) values")
+        return res
+    plain = {}
+    for name, stored in sorted(sealed.items()):
+        try:
+            plain[name] = cred_resolve.open_sealed_for_device(
+                stored, agent_id=v.agent_id(), name=name, ecdh=v.ecdh())
+        except canopy_web.CanopyError as e:
+            res.notes.append(f"{name}: left sealed — {str(e)[:200]}")
+    if not plain:
+        return res
+    vk, kv = v.vk()
+    payload = {"kv": kv, "values": v.encrypt(vk, kv, plain)}
+    vk = b""  # noqa: F841
+    plain = {}  # noqa: F841
+    v.web("PUT", f"{v.base}/values", payload)
+    res.kv = kv
+    names = ", ".join(p["name"] for p in payload["values"])
+    res.actions.append(f"settled {len(payload['values'])} sealed value(s) under the vault key "
+                       f"at kv {kv}: {names}")
+    return res
+
+
+def settle_quietly(slug: str, *, token: str, transport=None,
+                   vault: Optional[ZkVault] = None) -> list[str]:
+    """`run_settle` as a side step of import/switch: never raises, returns lines to report.
+    Silent when the agent is not zero-knowledge or has nothing sealed."""
+    v = vault or ZkVault(slug, token=token, transport=transport)
+    try:
+        if not v.state().get("enabled"):
+            return []
+    except Exception:  # noqa: BLE001 — cannot even tell whether it is ZK: nothing to say
+        return []
+    try:
+        res = run_settle(v)
+    except Exception as e:  # noqa: BLE001 — opportunistic: the caller's job already succeeded
+        return [f"settle skipped: {str(e)[:200]}"]
+    return [a for a in res.actions if not a.startswith("nothing to settle")] + res.notes
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # rendering
 # ──────────────────────────────────────────────────────────────────────────────
@@ -563,3 +620,12 @@ def rotate_cmd(slug, yes, drops):
     res = run_rotate(_vault(slug), drop=drop, confirm=None if yes else _ask)
     click.echo(render(res))
     show_recovery_code(res)
+
+
+@zk_group.command("settle")
+@AGENT_OPT
+def settle_cmd(slug):
+    """Re-encrypt values canopy-web sealed to this device (``zks1:`` — a Gmail token from
+    Connect Google mailbox, a rotated canopy-pat) under the vault key, so every member and
+    device can read them. Import and switch do this on their own."""
+    click.echo(render(run_settle(_vault(slug))))

@@ -4,7 +4,8 @@ What is pinned:
 - the agent's refs come from its .env.tpl (op refs AND literals) plus runtime_sources, and
   items another flow owns (gog-token, the shared OAuth client) are left alone as refs — but
   the vault's Gmail token itself is carried to canopy-web's `gog-token` when canopy-web has
-  none, and a switch refuses a mailbox agent without it (its Gmail would stop);
+  none (encrypted here under `--zk`), and a switch refuses a mailbox agent without it (its
+  Gmail would stop);
 - import reads with the PERSON's op (a fake `op` on PATH), writes canopy-web, never
   touches the vault, and `--switch` refuses while anything is missing;
 - export writes back only what differs; status reports drift by hash;
@@ -300,17 +301,24 @@ def test_import_never_overwrites_a_gmail_token_canopy_web_already_holds(fake_op,
     assert web.stored["gog-token"] == "minted-by-connect-google-mailbox"
 
 
-def test_import_zk_leaves_the_gmail_token_and_will_not_switch(fake_op, repo, web, monkeypatch):
+def test_import_zk_encrypts_the_gmail_token_too_and_switches(fake_op, repo, web, monkeypatch):
+    """The runner opens zero-knowledge values on the device before the bootstrap reads the
+    Gmail token, so `--zk` carries it like any other value — encrypted here."""
     from orchestrator import vault_zk_cli
-    monkeypatch.setattr(vault_zk_cli, "run_set", lambda v, values: (
-        web.stored.update({n: "zk1:x" for n in values}),
-        vault_zk_cli.ZkResult("eva", actions=["stored encrypted"]))[1])
+    got = {}
+
+    def run_set(v, values):
+        got.update(values)
+        web.stored.update({n: "zk1:x" for n in values})
+        return vault_zk_cli.ZkResult("eva", actions=["stored encrypted"])
+
+    monkeypatch.setattr(vault_zk_cli, "run_set", run_set)
     _with_gmail_token(fake_op)
     web.email = "eva@example.com"
     res = vault_cli.run_import("eva", token="person-pat", op=av.Op(), zk=True, switch=True)
-    assert "gog-token" not in web.stored and web.source == "1password"
-    assert any("cannot be zero-knowledge" in n for n in res.notes)
-    assert any("NOT switched" in n and "mailbox" in n for n in res.notes)
+    assert got["gog-token"] == GMAIL and web.stored["gog-token"] == "zk1:x"
+    assert res.ok and web.source == "canopy-web"
+    assert not [c for c in web.calls if c[0] == "PUT" and c[1].endswith("/credentials")]
 
 
 def test_switch_refuses_an_agent_whose_gmail_token_is_only_in_1password(repo, web):
