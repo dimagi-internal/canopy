@@ -386,3 +386,104 @@ def recovery_code(r: bytes) -> str:
 
 def parse_recovery_code(code: str) -> bytes:
     return _uncrockford(code, RECOVERY_BYTES, "recovery code")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 6. sealed values — "zks1:" (a value for named recipients, no vault key needed)
+# ──────────────────────────────────────────────────────────────────────────────
+# canopy-web mints some secrets itself (Connect Google mailbox's gog-token, a rotated
+# canopy-pat). On a zero-knowledge agent it holds no vault key, so it seals the new value
+# to each recipient's PUBLIC key instead:
+#
+#   "zks1:" + b64u(JSON {"kv": kv, "r": [{"kind": "device"|"member",
+#                                          "target": <ecdh jkt | user id>,
+#                                          "epk": <P-256 JWK>,
+#                                          "ct": b64u(nonce12 || AES-GCM ct+tag)}]})
+#   key  = HKDF-SHA256(ECDH(recipient, epk), salt=b"",
+#                      info="canopy-vault/v1/seal-value|{agent_id}|{name}|{kv}|{kind}:{target}")
+#   aad  = value_aad(agent_id, name, kv)
+#
+# A device opens its own entry (kind "device", target = its ECDH jkt). A holder of the
+# vault key later SETTLES the value — re-encrypts it as zk1 under VK — so it reaches every
+# member, not just the recipients the server knew at mint time.
+
+SEALED_PREFIX = "zks1:"
+
+
+def is_sealed_value(stored) -> bool:
+    return isinstance(stored, str) and stored.startswith(SEALED_PREFIX)
+
+
+def seal_info(agent_id, name, kv, kind: str, target) -> str:
+    return f"canopy-vault/v1/seal-value|{agent_id}|{name}|{kv}|{kind}:{target}"
+
+
+def seal_value(agent_id, name: str, kv, plaintext: str, recipients: list, *,
+               ephemerals: Optional[list] = None, nonces: Optional[list] = None) -> str:
+    """Seal one value to ``recipients`` — ``(kind, target, public key or JWK)`` each.
+    canopy-web does this server side; here for parity and the tests."""
+    if not recipients:
+        raise ZkError(f"{name}: a sealed value needs at least one recipient")
+    entries = []
+    for i, (kind, target, pub) in enumerate(recipients):
+        if kind not in ("device", "member"):
+            raise ZkError(f"{name}: recipient kind must be device or member, not {kind!r}")
+        q = _recipient_key(pub)
+        e_priv = ephemerals[i] if ephemerals else ec.generate_private_key(ec.SECP256R1())
+        nonce = nonces[i] if nonces else os.urandom(NONCE_BYTES)
+        key = hkdf(e_priv.exchange(ec.ECDH(), q), b"", seal_info(agent_id, name, kv, kind, target))
+        ct = AESGCM(key).encrypt(nonce, plaintext.encode("utf-8"), value_aad(agent_id, name, kv))
+        entries.append({"kind": kind, "target": target, "epk": jwk(e_priv.public_key()),
+                        "ct": b64u(nonce + ct)})
+    body = json.dumps({"kv": kv, "r": entries}, separators=(",", ":"))
+    return SEALED_PREFIX + b64u(body.encode("utf-8"))
+
+
+def parse_sealed(stored: str, name: str = "value") -> dict:
+    """The sealed JSON (``kv`` and ``r``), checked for shape. Holds no secret."""
+    if not is_sealed_value(stored):
+        raise ZkError(f"{name}: not a zks1 value")
+    try:
+        body = json.loads(unb64u(stored[len(SEALED_PREFIX):]).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        raise ZkError(f"{name}: zks1 value is not valid JSON") from None
+    if not isinstance(body, dict) or body.get("kv") in (None, "") \
+            or not isinstance(body.get("r"), list):
+        raise ZkError(f"{name}: zks1 value has no kv or recipient list")
+    return body
+
+
+def sealed_entry(stored: str, name: str, kind: str, target) -> tuple[dict, object]:
+    """(this recipient's entry, the value's kv). Raises when there is none."""
+    body = parse_sealed(stored, name)
+    for e in body["r"]:
+        if isinstance(e, dict) and e.get("kind") == kind and str(e.get("target")) == str(target):
+            return e, body["kv"]
+    raise ZkError(f"{name}: sealed for {len(body['r'])} recipient(s), none of them "
+                  f"{kind} {str(target)[:16]}")
+
+
+def sealed_epk_point(entry: dict) -> bytes:
+    """The entry's ephemeral public point, validated on P-256 — what a hardware key runs
+    ECDH against."""
+    return point_from_jwk(entry.get("epk") or {})
+
+
+def open_sealed_with_z(stored: str, agent_id, name: str, kind: str, target, z: bytes) -> str:
+    """For keys that only expose ECDH: ``z`` = ECDH(own key, the entry's epk)."""
+    entry, kv = sealed_entry(stored, name, kind, target)
+    if len(z) != 32:
+        raise ZkError("an ECDH shared secret is 32 bytes")
+    blob = unb64u(str(entry.get("ct") or ""))
+    if len(blob) < NONCE_BYTES + 16:
+        raise ZkError(f"{name}: sealed entry is too short")
+    key = hkdf(z, b"", seal_info(agent_id, name, kv, kind, target))
+    return _gcm_open(key, blob[:NONCE_BYTES], blob[NONCE_BYTES:],
+                     value_aad(agent_id, name, kv), f"sealed value {name}").decode("utf-8")
+
+
+def open_sealed(stored: str, agent_id, name: str, kind: str, target,
+                recipient_priv: ec.EllipticCurvePrivateKey) -> str:
+    entry, _ = sealed_entry(stored, name, kind, target)
+    z = recipient_priv.exchange(ec.ECDH(), public_key_from_point(sealed_epk_point(entry)))
+    return open_sealed_with_z(stored, agent_id, name, kind, target, z)

@@ -373,3 +373,109 @@ def test_cli_device_ecdh_jwk_prints_only_the_public_half(me):
     assert r.exit_code == 0, r.output
     out = json.loads(r.output)
     assert out["jwk"] == me.public_jwk and "d" not in out["jwk"] and out["jkt"] == me.jkt
+
+
+# ── sealed values (zks1): what canopy-web mints for a ZK agent ────────────────
+
+GMAIL = '{"email":"eva@example.com","client":"canopy","refresh_token":"rt_SECRET_sealed"}'
+
+
+def _seal_for(server, name, plaintext, recipients):
+    """What canopy-web stores when it mints a value for a ZK agent: sealed to PUBLIC keys
+    (device targets by ECDH jkt), no vault key involved."""
+    return zk.seal_value(AGENT_ID, name, server.kv, plaintext,
+                         [(kind, target, jwk) for kind, target, jwk in recipients])
+
+
+def test_a_sealed_value_opens_only_for_its_recipients():
+    a, a_jwk = _new_key()
+    b, b_jwk = _new_key()
+    stored = zk.seal_value(AGENT_ID, "gog-token", 1, GMAIL,
+                           [("device", zk.jkt(a.public_key()), a_jwk), ("member", 7, b_jwk)])
+    assert stored.startswith("zks1:") and "rt_SECRET" not in stored
+    assert zk.open_sealed(stored, AGENT_ID, "gog-token", "device", zk.jkt(a.public_key()), a) \
+        == GMAIL
+    assert zk.open_sealed(stored, AGENT_ID, "gog-token", "member", 7, b) == GMAIL
+    with pytest.raises(zk.ZkError, match="none of them"):                    # not a recipient
+        zk.open_sealed(stored, AGENT_ID, "gog-token", "device", zk.jkt(DEV9_KEY.public_key()),
+                       DEV9_KEY)
+    with pytest.raises(zk.ZkError, match="did not authenticate"):            # bound to name
+        zk.open_sealed(stored, AGENT_ID, "other", "member", 7, b)
+    with pytest.raises(zk.ZkError, match="did not authenticate"):            # key for b, not a
+        entry = zk.parse_sealed(stored)["r"]
+        forged = dict(zk.parse_sealed(stored), r=[dict(entry[1], kind="device",
+                                                       target=zk.jkt(a.public_key()))])
+        zk.open_sealed("zks1:" + zk.b64u(json.dumps(forged).encode()), AGENT_ID, "gog-token",
+                       "device", zk.jkt(a.public_key()), a)
+
+
+def test_resolve_opens_a_sealed_gmail_token_in_a_zk_answer(server, me, monkeypatch):
+    from orchestrator import agent_bootstrap
+    _enable(server)
+    server.zk_values["gog-token"] = _seal_for(server, "gog-token", GMAIL,
+                                              [("device", me.jkt, me.public_jwk)])
+    body = cred_resolve.resolve("eva", token="pat", turn_id="")
+    assert body["values"]["gog-token"] == GMAIL
+    assert body["values"]["KINDORA_SERVICE_KEY"] == SECRET
+    monkeypatch.setattr(agent_bootstrap, "_operator_token", lambda: "pat")
+    assert agent_bootstrap.fetch_web_token("eva") == (GMAIL, "")
+
+
+def test_the_bootstrap_reads_a_zk1_gmail_token_as_plaintext(server, monkeypatch):
+    """`import --zk` stores the Gmail token as zk1; the runner's token step must get the
+    JSON, not the ciphertext."""
+    from orchestrator import agent_bootstrap
+    server.custodial["gog-token"] = GMAIL
+    _enable(server)
+    assert server.zk_values["gog-token"].startswith("zk1:")
+    monkeypatch.setattr(agent_bootstrap, "_operator_token", lambda: "pat")
+    assert agent_bootstrap.fetch_web_token("eva") == (GMAIL, "")
+
+
+def test_a_custodial_answer_carrying_a_sealed_value_opens_it(server, me):
+    server.custodial["gog-token"] = zk.seal_value(AGENT_ID, "gog-token", 1, GMAIL,
+                                                  [("device", me.jkt, me.public_jwk)])
+    body = cred_resolve.resolve("eva", token="pat", turn_id="")
+    assert body["values"]["gog-token"] == GMAIL and body["values"]["CHANNEL"] == "eva@example.com"
+
+
+def test_raw_resolve_hands_back_the_ciphertext(server):
+    _enable(server)
+    body = cred_resolve.resolve("eva", token="pat", turn_id="", raw=True)
+    assert body["values"]["KINDORA_SERVICE_KEY"].startswith("zk1:") and "wrap" in body
+
+
+def test_settle_re_encrypts_sealed_values_under_the_vault_key(server, me):
+    _enable(server)
+    server.zk_values["gog-token"] = _seal_for(server, "gog-token", GMAIL,
+                                              [("device", me.jkt, me.public_jwk)])
+    res = vault_zk_cli.run_settle(_vault(server))
+    assert server.zk_values["gog-token"].startswith("zk1:")
+    assert "rt_SECRET" not in _sent(server)
+    # now every member reads it — the owner's keyset never was a seal recipient
+    assert server.plaintexts(server.vk_for("member", 7, USER_KEY))["gog-token"] == GMAIL
+    assert any("settled 1" in a for a in res.actions)
+    assert vault_zk_cli.run_settle(_vault(server)).actions == [
+        "nothing to settle — no sealed (zks1) values"]
+
+
+def test_settle_leaves_a_value_sealed_to_other_devices_alone(server):
+    _enable(server)
+    sealed = _seal_for(server, "gog-token", GMAIL,
+                       [("device", zk.jkt(DEV9_KEY.public_key()), DEV9_JWK)])
+    server.zk_values["gog-token"] = sealed
+    res = vault_zk_cli.run_settle(_vault(server))
+    assert server.zk_values["gog-token"] == sealed
+    assert any("gog-token: left sealed" in n for n in res.notes)
+    assert not [c for c in server.calls if c[0] == "PUT"]
+
+
+def test_switch_settles_on_the_way(server, me, monkeypatch):
+    _enable(server)
+    server.zk_values["gog-token"] = _seal_for(server, "gog-token", GMAIL,
+                                              [("device", me.jkt, me.public_jwk)])
+    notes = vault_zk_cli.settle_quietly("eva", token="person-pat", transport=server)
+    assert any("settled 1" in n for n in notes)
+    assert server.zk_values["gog-token"].startswith("zk1:")
+    server.enabled = False
+    assert vault_zk_cli.settle_quietly("eva", token="person-pat", transport=server) == []

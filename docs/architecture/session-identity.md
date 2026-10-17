@@ -235,8 +235,18 @@ reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.jso
   --runner`, `cred exec` and `cred sync` see plaintext exactly as for a custodial agent.
   `agent_id` = the answer's `agent_id` if sent, else `GET /api/agents/<slug>/`'s `id`. 409
   `zk_wrap_missing` → "ask an admin to grant this device".
+- **Sealed values (`zks1:`).** canopy-web mints some secrets itself (Connect Google mailbox's
+  `gog-token`, a rotated `canopy-pat`) and holds no VK, so it seals each to the recipients'
+  PUBLIC keys: `"zks1:" + b64u(JSON {kv, r: [{kind: device|member, target: ecdh jkt | user id,
+  epk, ct}]})`, key = HKDF(ECDH, salt="", info=`canopy-vault/v1/seal-value|{agent_id}|{name}|
+  {kv}|{kind}:{target}`), AAD = the value AAD. `cred_resolve.open_zk` opens this device's own
+  entry, in a ZK or a custodial answer. A VK holder **settles** them — re-encrypts as `zk1:`
+  under VK, so every member reads them: `canopy vault zk settle`, which `import --zk` and
+  `switch` also run. The runner's Gmail token therefore works on a ZK agent: the bootstrap's
+  `fetch_web_token` goes through `cred_resolve`, which hands it plaintext.
 - **CLI, as this device** (a member through its device wrap):
-  `canopy vault zk status|enable|set|grant|rotate --agent X` and `canopy vault import --zk`.
+  `canopy vault zk status|enable|set|grant|rotate|settle --agent X` and `canopy vault import
+  --zk` (which now carries the Gmail token too, encrypted here).
   `enable` wraps for this device, your keyset (`GET /api/vault/keyset`) and every pending target,
   plus recovery, and prints the recovery code once; `grant`/`rotate` list every public key they
   will wrap to and ask first (`--yes` to skip).

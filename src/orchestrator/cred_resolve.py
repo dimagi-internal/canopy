@@ -29,7 +29,9 @@ custodial one. ``agent_id`` is canopy-web's Agent primary key: the resolve body'
 ``agent_id`` when the server sends it, else ``id`` from ``GET /api/agents/<slug>/``. A 409
 ``zk_wrap_missing`` (this device was never granted the current key version) becomes an error
 that says to ask an admin to grant this device. A body without ``zk`` takes the old path,
-untouched.
+untouched — unless a value in it is ``zks1:`` (sealed by canopy-web to this device's ECDH
+key, before a vault-key holder settled it), which opens here too (:func:`open_zk`). Pass
+``raw=True`` to get the stored ciphertext instead (``canopy vault zk settle``).
 """
 from __future__ import annotations
 
@@ -112,7 +114,7 @@ def _explain_401(slug: str, err: Exception) -> Exception:
 
 def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[str]] = None,
             turn_id: Optional[str] = None, base_url: Optional[str] = None,
-            transport: Optional[canopy_web.Transport] = None) -> dict:
+            transport: Optional[canopy_web.Transport] = None, raw: bool = False) -> dict:
     """The resolve body (``values``, ``op_vault``, ``op_sa_token``, …). With ``refs``,
     ``values`` holds exactly those of them that exist. Raises canopy_web.CanopyError
     (DeviceProofRequired for a missing/unapproved device proof)."""
@@ -128,7 +130,7 @@ def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[s
                                    headers=_headers(path, base_url, turn)) or {}
         except canopy_web.CanopyError as e:
             raise _explain_401(slug, e) from None
-        if isinstance(body, dict) and body.get("zk"):
+        if not raw and isinstance(body, dict) and (body.get("zk") or has_sealed(body)):
             if "id" not in agent_ids:
                 agent_ids["id"] = zk_agent_id(slug, body, token=token, base_url=base_url,
                                               transport=transport)
@@ -174,9 +176,8 @@ def zk_agent_id(slug: str, body: Optional[dict] = None, *, token: Optional[str] 
     return str(rec["id"])
 
 
-def unwrap_device_vk(wrap: dict, *, agent_id: str, kv, ecdh=None) -> bytes:
-    """The vault key, from a wrap made to this device's ECDH key. Raises ZkUnlockError."""
-    from orchestrator import vault_zk as zk
+def _device_ecdh(ecdh=None):
+    """This machine's ECDH key, or ZkUnlockError saying how to get one."""
     try:
         ecdh = ecdh if ecdh is not None else device_key.load_ecdh()
     except device_key.DeviceKeyError as e:
@@ -185,6 +186,13 @@ def unwrap_device_vk(wrap: dict, *, agent_id: str, kv, ecdh=None) -> bytes:
         raise ZkUnlockError("this machine has no ECDH device key to open a zero-knowledge "
                             "vault — `canopy vault device --enroll`, have it approved, then "
                             "ask an admin to grant this device")
+    return ecdh
+
+
+def unwrap_device_vk(wrap: dict, *, agent_id: str, kv, ecdh=None) -> bytes:
+    """The vault key, from a wrap made to this device's ECDH key. Raises ZkUnlockError."""
+    from orchestrator import vault_zk as zk
+    ecdh = _device_ecdh(ecdh)
     try:
         z = ecdh.derive(zk.wrap_epk_point(wrap))
         return zk.unwrap_ecdh_es_with_z(wrap, z, ecdh.point,
@@ -194,27 +202,62 @@ def unwrap_device_vk(wrap: dict, *, agent_id: str, kv, ecdh=None) -> bytes:
                             "may be for another key; re-grant this device") from None
 
 
+def open_sealed_for_device(stored: str, *, agent_id: str, name: str, ecdh=None) -> str:
+    """A ``zks1:`` value canopy-web sealed to this device's ECDH key (its own entry,
+    ``kind=device``, ``target`` = the ECDH jkt). Raises ZkUnlockError."""
+    from orchestrator import vault_zk as zk
+    ecdh = _device_ecdh(ecdh)
+    try:
+        entry, _ = zk.sealed_entry(stored, name, "device", ecdh.jkt)
+        z = ecdh.derive(zk.sealed_epk_point(entry))
+        return zk.open_sealed_with_z(stored, agent_id, name, "device", ecdh.jkt, z)
+    except (zk.ZkError, device_key.DeviceKeyError) as e:
+        raise ZkUnlockError(f"this device could not open the sealed value ({e}) — ask an "
+                            "admin to settle it (`canopy vault zk settle`) or re-grant this "
+                            "device") from None
+
+
+def has_sealed(body) -> bool:
+    from orchestrator import vault_zk as zk
+    values = (body or {}).get("values") if isinstance(body, dict) else None
+    return isinstance(values, dict) and any(zk.is_sealed_value(v) for v in values.values())
+
+
 def open_zk(slug: str, body: dict, *, agent_id: str, ecdh=None) -> dict:
     """A ZK resolve answer → the same body with plaintext ``values`` (``wrap`` dropped).
-    Never logs or returns a key."""
+    ``zk1:`` values open under the vault key (unwrapped from this device's wrap);
+    ``zks1:`` values — sealed by canopy-web to named devices, before anyone settled them
+    under the vault key — open with this device's own ECDH key. A custodial answer that
+    carries a sealed value is opened the same way. Never logs or returns a key."""
     from orchestrator import vault_zk as zk
     kv = body.get("kv")
     wrap = body.get("wrap")
-    if kv in (None, "") or not isinstance(wrap, dict):
-        raise ZkUnlockError(f"canopy-web marked '{slug}' zero-knowledge but sent no kv/wrap")
-    vk = unwrap_device_vk(wrap, agent_id=agent_id, kv=kv, ecdh=ecdh)
     raw = body.get("values") or {}
     if not isinstance(raw, dict):
         raise ZkUnlockError(f"canopy-web sent '{slug}' zero-knowledge values that are not a map")
+    needs_vk = any(zk.is_zk_value(v) for v in raw.values())
+    if body.get("zk") and needs_vk and (kv in (None, "") or not isinstance(wrap, dict)):
+        raise ZkUnlockError(f"canopy-web marked '{slug}' zero-knowledge but sent no kv/wrap")
+    ecdh = _device_ecdh(ecdh)
+    vk = (unwrap_device_vk(wrap, agent_id=agent_id, kv=kv, ecdh=ecdh)
+          if needs_vk and isinstance(wrap, dict) else None)
     values = {}
     for name, stored in raw.items():
         if stored in (None, ""):
             values[name] = stored
-            continue
-        try:
-            values[name] = zk.decrypt_value(vk, agent_id, str(name), kv, str(stored))
-        except zk.ZkError as e:
-            raise ZkUnlockError(f"'{slug}': {e}") from None
+        elif zk.is_sealed_value(stored):
+            values[name] = open_sealed_for_device(str(stored), agent_id=agent_id,
+                                                  name=str(name), ecdh=ecdh)
+        elif zk.is_zk_value(stored) and vk is not None:
+            try:
+                values[name] = zk.decrypt_value(vk, agent_id, str(name), kv, str(stored))
+            except zk.ZkError as e:
+                raise ZkUnlockError(f"'{slug}': {e}") from None
+        elif zk.is_zk_value(stored):
+            raise ZkUnlockError(f"'{slug}': {name} is zero-knowledge but canopy-web sent no "
+                                "wrap of the vault key for this device")
+        else:
+            values[name] = stored
     vk = b""  # noqa: F841 — drop our only reference
     out = {k: v for k, v in body.items() if k != "wrap"}
     out["values"] = values
