@@ -121,10 +121,15 @@ def _explain_401(slug: str, err: Exception) -> Exception:
 def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[str]] = None,
             turn_id: Optional[str] = None, base_url: Optional[str] = None,
             transport: Optional[canopy_web.Transport] = None, raw: bool = False,
-            purpose: str = "") -> dict:
+            purpose: str = "", fallback: bool = True) -> dict:
     """The resolve body (``values``, ``op_vault``, ``op_sa_token``, …). With ``refs``,
     ``values`` holds exactly those of them that exist. Raises canopy_web.CanopyError
-    (DeviceProofRequired for a missing/unapproved device proof)."""
+    (DeviceProofRequired for a missing/unapproved device proof).
+
+    A scoped answer missing a named VALUE is re-asked unscoped (an older server, or a
+    name the runtime does not declare) — unless ``fallback=False``: a caller that names
+    only what it uses, extras included, must get exactly that and never everything
+    (the box's refresh, canopy-web#1563)."""
     wanted = [r for r in dict.fromkeys(refs or []) if r]
     turn = current_turn_id() if turn_id is None else turn_id
     agent_ids: dict = {}
@@ -150,7 +155,7 @@ def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[s
     values = body.get("values") or {}
     if not isinstance(values, dict):
         values = {}
-    if any(n not in values for n in wanted):
+    if fallback and any(n not in values for n in wanted):
         full = get([])
         values = full.get("values") or {}
         body = full if isinstance(values, dict) else body

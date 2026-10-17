@@ -83,22 +83,23 @@ class RunnerCredentials:
     values: dict = field(default_factory=dict, repr=False)
 
 
+#: What the credentials-only pass (the runner-update timer, every 30 minutes) actually
+#: uses: the vault keys `op` reads the gog token and OAuth client with, and canopy-web's
+#: copy of the gog token for newest-wins. Never the agent's other secrets — it writes no
+#: env (a turn's claim does, naming its turn), so reading them every 30 minutes outside a
+#: turn only put them on the wire (canopy-web#1563).
+REFRESH_EXTRAS = ("op_sa_token", "shared_op_sa_token")
+REFRESH_VALUES = ("gog-token",)
+
+
 def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
-                             transport: Optional[canopy_web.Transport] = None
-                             ) -> RunnerCredentials:
+                             transport: Optional[canopy_web.Transport] = None,
+                             minimal: bool = False) -> RunnerCredentials:
     """`/credentials/resolve` with the runner's token. Unreachable is not unregistered: it
-    returns an `error` the report states, so a human retries instead of registering."""
-    try:
-        from orchestrator import cred_resolve
-        # A box staging an agent outside any turn (bootstrap, the runner-update timer)
-        # says so, or canopy-web emails the owner "read outside a turn" for routine
-        # maintenance every hour (canopy-web#1563).
-        body = cred_resolve.resolve(slug, base_url=base_url, token=token,
-                                    transport=transport,
-                                    purpose=cred_resolve.RUNNER_REFRESH) or {}
-    except Exception as e:  # noqa: BLE001
-        return RunnerCredentials(error=f"could not reach canopy-web for {slug}'s credentials: "
-                                       f"{_first_line(str(e), 200)}")
+    returns an `error` the report states, so a human retries instead of registering.
+
+    `minimal`: the credentials-only pass — ask only for REFRESH_EXTRAS and those of
+    REFRESH_VALUES the agent declares (an undeclared name would raise an owner alert)."""
     # Where the agent's code lives — canopy-web's record (`/runtime`), never a convention: an
     # agent in another org or under another name would otherwise clone the wrong repo.
     try:
@@ -106,7 +107,22 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
                              token=token, transport=transport) or {}
         repo_url = str(rt.get("repo_url") or "").strip()
     except Exception:  # noqa: BLE001 — the report says "no repo" if it matters
-        repo_url = ""
+        rt, repo_url = {}, ""
+    refs = None
+    if minimal:
+        declared = set(rt.get("secret_refs") or [])
+        refs = [n for n in REFRESH_VALUES if n in declared] + list(REFRESH_EXTRAS)
+    try:
+        from orchestrator import cred_resolve
+        # A box staging an agent outside any turn (bootstrap, the runner-update timer)
+        # says so, or canopy-web emails the owner "read outside a turn" for routine
+        # maintenance every hour (canopy-web#1563).
+        body = cred_resolve.resolve(slug, base_url=base_url, token=token,
+                                    transport=transport, refs=refs, fallback=not minimal,
+                                    purpose=cred_resolve.RUNNER_REFRESH) or {}
+    except Exception as e:  # noqa: BLE001
+        return RunnerCredentials(error=f"could not reach canopy-web for {slug}'s credentials: "
+                                       f"{_first_line(str(e), 200)}")
     try:
         acc = canopy_web.call("GET", f"/api/agents/{slug}/credentials/access",
                               base_url=base_url, token=token, transport=transport) or {}
@@ -177,8 +193,9 @@ class RunnerPreparer(Bootstrapper):
         self.plugin_deps_root = Path(plugin_deps_root or
                                      Path.home() / ".claude" / "plugins" / "agent-deps")
         self.runner_name = runner_name or os.uname().nodename
+        self._minimal = False   # set by prepare(credentials_only=True)
         self._creds_for = creds_for or (lambda s: fetch_runner_credentials(
-            s, base_url=base_url, token=token, transport=transport))
+            s, base_url=base_url, token=token, transport=transport, minimal=self._minimal))
         self._creds: dict[str, RunnerCredentials] = {}
         self._slug = ""
         super().__init__(vault_for=self._vault_for, web_token=self._web_token, **kw)
@@ -457,6 +474,9 @@ class RunnerPreparer(Bootstrapper):
     def prepare(self, slug: str, *, repo_url: str = "", credentials_only: bool = False,
                 env_only: bool = False, report: bool = True) -> RunnerReport:
         self._slug = slug
+        # The credentials-only pass stages the gog token and reports readiness, nothing
+        # else, so it asks canopy-web for only what that uses (REFRESH_EXTRAS).
+        self._minimal = credentials_only and not env_only
         rep = RunnerReport(slug=slug)
         c = self.creds(slug)
         if c.error:
