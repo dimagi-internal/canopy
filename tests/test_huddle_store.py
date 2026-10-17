@@ -109,6 +109,17 @@ def test_record_id_is_validated(tmp_path):
         hs.LocalHuddleStore(tmp_path).write({"id": "../escape"})
 
 
+def test_work_group_id_with_hyphenated_team_is_accepted(tmp_path):
+    # A group run's team is the group slug: work-canopy-support-20261017 (group run 1).
+    store = hs.LocalHuddleStore(tmp_path)
+    store.write({"id": "work-canopy-support-20261017", "team": "canopy-support"})
+    assert store.read("work-canopy-support-20261017")["team"] == "canopy-support"
+    assert store.read("work-canopy-support-20261017-2") is None
+    for bad in ("work-canopy/x-20261017", "work--20261017", "work-canopy-support"):
+        with pytest.raises(hs.HuddleStoreError):
+            store.read(bad)
+
+
 def test_drive_root_falls_back_to_the_agents_own_env_file(tmp_path, monkeypatch, drive):
     """An agent with no team binding exporting GDRIVE_ROOT_FOLDER still leads a huddle."""
     class NoRoot:

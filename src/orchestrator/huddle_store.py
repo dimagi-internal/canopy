@@ -21,7 +21,8 @@ from typing import Any
 
 STATE_AREA = "Process State"
 HUDDLES_FOLDER = "Huddles"
-_ID = re.compile(r"^[a-z0-9][a-z0-9_]*-[a-z0-9_.]+-\d{8}(-\d+)?$")
+# The team may carry hyphens: a work group's team is its slug (e.g. `canopy-support`).
+_ID = re.compile(r"^[a-z0-9][a-z0-9_]*-[a-z0-9_.][a-z0-9_.-]*-\d{8}(-\d+)?$")
 
 
 class HuddleStoreError(Exception):
