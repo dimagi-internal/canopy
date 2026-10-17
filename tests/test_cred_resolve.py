@@ -82,6 +82,14 @@ def test_turn_id_header_when_a_turn_is_known(monkeypatch):
     assert s.requests[1][2][cred_resolve.TURN_HEADER] == "t-env"
 
 
+def test_purpose_header_only_when_asked():
+    s = FakeServer({})
+    _resolve(s, turn_id="")
+    assert cred_resolve.PURPOSE_HEADER not in s.requests[0][2]
+    _resolve(s, turn_id="", purpose=cred_resolve.RUNNER_REFRESH)
+    assert s.requests[1][2][cred_resolve.PURPOSE_HEADER] == "runner-refresh"
+
+
 def test_dpop_header_signed_for_this_url_without_query(tmp_path, monkeypatch):
     key, _ = device_key.ensure(allow_software=True, system=lambda: "Linux")
     device_key.write_status({"jkt": key.jkt, "status": "active"})

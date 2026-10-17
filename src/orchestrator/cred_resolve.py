@@ -42,6 +42,10 @@ from urllib.parse import quote
 from orchestrator import canopy_web, device_key
 
 TURN_HEADER = "X-Canopy-Turn-Id"
+#: Why a read outside a turn is happening (canopy-web#1563). canopy-web skips its
+#: "read outside a turn" alert for a named box that sends ``runner-refresh``.
+PURPOSE_HEADER = "X-Canopy-Read-Purpose"
+RUNNER_REFRESH = "runner-refresh"
 
 
 class DeviceProofRequired(canopy_web.CanopyError):
@@ -77,10 +81,12 @@ def resolve_path(slug: str, refs: Optional[Iterable[str]] = None) -> str:
     return path
 
 
-def _headers(path: str, base_url: Optional[str], turn_id: str) -> dict:
+def _headers(path: str, base_url: Optional[str], turn_id: str, purpose: str = "") -> dict:
     headers = {}
     if turn_id:
         headers[TURN_HEADER] = turn_id
+    if purpose:
+        headers[PURPOSE_HEADER] = purpose
     url = canopy_web.resolve_base_url(base_url) + path
     headers.update(device_key.proof_headers("GET", url))
     return headers
@@ -114,7 +120,8 @@ def _explain_401(slug: str, err: Exception) -> Exception:
 
 def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[str]] = None,
             turn_id: Optional[str] = None, base_url: Optional[str] = None,
-            transport: Optional[canopy_web.Transport] = None, raw: bool = False) -> dict:
+            transport: Optional[canopy_web.Transport] = None, raw: bool = False,
+            purpose: str = "") -> dict:
     """The resolve body (``values``, ``op_vault``, ``op_sa_token``, …). With ``refs``,
     ``values`` holds exactly those of them that exist. Raises canopy_web.CanopyError
     (DeviceProofRequired for a missing/unapproved device proof)."""
@@ -127,7 +134,7 @@ def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[s
         try:
             body = canopy_web.call("GET", path, token=token, base_url=base_url,
                                    transport=transport,
-                                   headers=_headers(path, base_url, turn)) or {}
+                                   headers=_headers(path, base_url, turn, purpose)) or {}
         except canopy_web.CanopyError as e:
             raise _explain_401(slug, e) from None
         if not raw and isinstance(body, dict) and (body.get("zk") or has_sealed(body)):

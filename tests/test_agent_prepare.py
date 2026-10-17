@@ -329,6 +329,20 @@ def test_runner_credentials_read_the_repo_from_runtime():
     assert (c.repo_url, c.vault, c.mailbox) == ("https://github.com/o/r", "V", "a@b")
 
 
+def test_runner_credentials_say_they_are_a_box_refresh():
+    """canopy-web#1563: the runner-update timer refreshes outside any turn; without the
+    purpose header canopy-web emailed the owner 'read outside a turn' every hour."""
+    seen = []
+
+    def transport(method, url, headers, data):
+        if "/credentials/resolve" in url:
+            seen.append(dict(headers))
+        return 200, '{"op_vault": "V"}'
+
+    ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t", transport=transport)
+    assert seen and seen[0]["X-Canopy-Read-Purpose"] == "runner-refresh"
+
+
 # ── an agent on the canopy-web backend (Canopy Vault, canopy#946) ─────────────
 
 def test_a_canopy_web_agent_gets_its_env_from_canopy_web_not_op(tmp_path):
