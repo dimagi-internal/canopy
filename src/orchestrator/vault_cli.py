@@ -254,6 +254,7 @@ def run_import(slug: str, *, token: str, op: av.Op, switch: bool = False,
             continue
         values[r.name] = val
         res.rows.append(Row(r.name, "read", f"1Password item {r.item}"))
+    _copy_gmail_token(agent, op, web, values, res, zk=zk)
     if values and zk:
         # Zero-knowledge (canopy-web#1550): encrypted HERE under the vault key this device
         # unwraps; canopy-web only ever sees zk1: ciphertext.
@@ -276,13 +277,54 @@ def run_import(slug: str, *, token: str, op: av.Op, switch: bool = False,
             row.state, row.note = "not-stored", "canopy-web does not report it set"
             res.ok = False
     if switch:
+        gmail = _gmail_blocker(agent, present)
         if missing:
             res.notes.append(f"NOT switched: {', '.join(missing)} not on canopy-web")
+            res.ok = False
+        elif gmail:
+            res.notes.append(f"NOT switched: {gmail}")
             res.ok = False
         else:
             _switch(slug, "canopy-web", web)
             res.actions.append(f"switched {slug} to canopy-web")
     return res
+
+
+GMAIL_ITEM = "gog-token"
+
+
+def _copy_gmail_token(agent: Agent, op: av.Op, web, values: dict, res: Result, *,
+                      zk: bool) -> None:
+    """Carry the agent's Gmail token over when canopy-web has none.
+
+    The runner bootstrap reads it straight from ``op://<vault>/gog-token`` — never through
+    .env.tpl — and falls back to canopy-web's ``gog-token`` credential. A switched agent's
+    runners stop receiving its 1Password key, so without this copy its Gmail silently stops
+    on the first turn after the switch (found piloting Hal, 2026-10-17). The token JSON names
+    the OAuth client that minted it, so a copy pairs with the right client on any box.
+    Connect Google mailbox writes the same credential and stays the way to mint a new one."""
+    if (credential_status(agent.slug, web).get(GMAIL_ITEM) or {}).get("set"):
+        return
+    val, _ = op_read(op, f"op://{agent.vault}/{GMAIL_ITEM}/credential")
+    if not val or not val.strip():
+        return                       # no Gmail token in the vault: nothing to carry
+    if zk:
+        res.notes.append(f"{GMAIL_ITEM}: left in 1Password — the runner bootstrap reads it as "
+                         "plaintext, so it cannot be zero-knowledge yet; switch this agent "
+                         "custodially, or use Connect Google mailbox")
+        return
+    values[GMAIL_ITEM] = val
+    res.rows.append(Row(GMAIL_ITEM, "read", "1Password item gog-token (the runner's Gmail token)"))
+
+
+def _gmail_blocker(agent: Agent, present: dict) -> str:
+    """Why a switch to canopy-web would cut off the agent's Gmail ("" when it would not)."""
+    email = (agent.record.get("email") or "").strip()
+    if not email or (present.get(GMAIL_ITEM) or {}).get("set"):
+        return ""
+    return (f"it has a mailbox ({email}) but canopy-web holds no {GMAIL_ITEM}, and after the "
+            f"switch its runners can no longer read 1Password — run `canopy vault import "
+            f"--agent {agent.slug}` (copies it) or Connect Google mailbox on its settings")
 
 
 def _switch(slug: str, to: str, web) -> None:
@@ -313,6 +355,9 @@ def run_switch(slug: str, to: str, *, token: str, repo: Optional[Path] = None,
         if missing:
             raise VaultCliError(f"refusing to switch {slug} to canopy-web: {', '.join(missing)} "
                                 f"not stored there — run `canopy vault import --agent {slug}`")
+        gmail = _gmail_blocker(agent, present)
+        if gmail:
+            raise VaultCliError(f"refusing to switch {slug} to canopy-web: {gmail}")
         res.notes.append(f"all {len(needed)} declared ref(s) are on canopy-web")
     else:
         res.notes.append(f"values rotated on canopy-web during the pilot reach 1Password only "
