@@ -1388,6 +1388,45 @@ def _split_quoted_tail(text: str) -> tuple[str, str]:
     return text.strip(), ""
 
 
+def inline_replies(tail: str, others: list[str]) -> str:
+    """Answers typed BETWEEN quoted lines (a reply written inline, under each question).
+
+    `_split_quoted_tail` cuts at the first boundary, so a reply that opens with
+    `On … wrote:` and answers inline has an empty body and every answer in its tail.
+    The `>` prefix cannot tell answer from quote: Gmail's plain part prefixes an inline
+    answer's first line with `> ` like the quote around it. Content can: a tail line
+    found in no sibling message (`others`) was typed in THIS one. Each run of such lines
+    comes back under the last few quoted lines above it (as `> `), so the answer keeps
+    its question. With no siblings to compare against, only unprefixed lines count.
+    "" when nothing in the tail is new."""
+    corpus = [_normalize_for_match(o) for o in others if o]
+    out: list[str] = []
+    context: list[str] = []
+    answer: list[str] = []
+
+    def flush() -> None:
+        text = "\n".join(answer).strip()
+        if text:
+            out.append("\n".join(f"> {c}" for c in context[-3:]) + "\n" + text)
+        answer.clear()
+
+    for ln in tail.splitlines():
+        s = _unquote(ln).strip()
+        if not s or _ATTRIBUTION.match(s):
+            continue
+        n = _normalize_for_match(s)
+        new = (not any(n in c for c in corpus)) if corpus else not ln.lstrip().startswith(">")
+        if new:
+            answer.append(s)
+        else:
+            if answer:
+                flush()
+                context = []
+            context.append(s)
+    flush()
+    return "\n\n".join(out)
+
+
 def _trim_quoted_tail(text: str) -> str:
     """Drop the quoted reply chain (echo_read.py._trim_quotes). Keeps the message's own
     prose, sheds the history."""
@@ -1577,6 +1616,7 @@ def read_thread(
             "date": h.get("date", ""),
             "snippet": m.get("snippet", ""),
             "body_text": body,
+            "inline_replies": "",
             "attachments": _attachments_of(m),
             **_automation_of(h),
             # The inbound-email table's row for this message (`canopy email why` explains it).
@@ -1587,6 +1627,17 @@ def read_thread(
     # Surface quoted history that no message in this thread accounts for — the off-list
     # exchange an agent was never sent. Computed after the loop because it needs every
     # sibling body as the corpus.
+    bodies = [msg["body_text"] for msg in messages]
+    # Nothing above the quote → maybe an inline reply, where the answers ARE the
+    # message. Without this the reader returned an empty body for a reply that answered
+    # seven questions (ada, 2026-10-17). Top-posted replies are untouched.
+    for i, (msg, tail) in enumerate(zip(messages, tails)):
+        if tail and not msg["body_text"]:
+            sibs = [b for j, b in enumerate(bodies) if j != i] + \
+                   [t for j, t in enumerate(tails) if j != i]
+            msg["inline_replies"] = inline_replies(tail, sibs)
+            if msg["inline_replies"]:
+                msg["body_text"] = msg["inline_replies"]
     bodies = [msg["body_text"] for msg in messages]
     for msg, tail in zip(messages, tails):
         others = [b for b in bodies if b is not msg["body_text"]]

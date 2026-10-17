@@ -1151,6 +1151,58 @@ def test_read_thread_decodes_and_trims_body_text():
     assert res["messages"][0]["body_text"] == "Hello team, please review."
 
 
+_ASK = ("Questions only you can answer:\n\n"
+        "   - May Echo close its three tasks for the IDM talk, which is done?\n"
+        "   - What are Connect's 'bucket 1 and 2' priorities? No agent can find a\n"
+        "   definition.\n\nAda\n")
+# Jonathan, 2026-10-17, as Gmail's plain part delivered it: the attribution line first,
+# each answer's FIRST line carrying the same "> " as the quote around it, wrapped lines
+# bare. The old reader returned body_text == "" for this.
+_INLINE = ("On Fri, Oct 16, 2026 at 8:38 AM <ada@dimagi-ai.com> wrote:\n\n"
+           "> Questions only you can answer:\n>\n"
+           ">    - May Echo close its three tasks for the IDM talk, which is done?\n>\n"
+           "> yes\n\n>\n"
+           ">    - What are Connect's 'bucket 1 and 2' priorities? No agent can find a\n"
+           ">    definition.\n>\n"
+           "> Bucket 1 is Capital EA (Givewell and Coeffiicient given, 100% aligned to\n"
+           "EA), bucket 2 is lower-case ea aligned.  bucket 3 is everyone else.\n\n"
+           "> Ada\n>\n")
+
+
+def _two_message_thread(first, second):
+    def msg(mid, frm, text):
+        return {"id": mid, "snippet": "", "payload": {"headers": [
+            {"name": "From", "value": frm}, {"name": "To", "value": "x@y.com"},
+            {"name": "Subject", "value": "huddle"}, {"name": "Date", "value": "d"}],
+            "parts": [{"mimeType": "text/plain", "body": {"size": 1, "data": _b64(text)}}]}}
+    return json.dumps({"thread": {"messages": [
+        msg("m1", "ada@dimagi-ai.com", first), msg("m2", "jj@dimagi.com", second)]}})
+
+
+def test_read_thread_surfaces_inline_replies_when_body_is_empty():
+    res = read_thread(_ACE, "t", runner=_runner_ok(_two_message_thread(_ASK, _INLINE)))
+    reply = res["messages"][1]
+    body = reply["body_text"]
+    assert reply["inline_replies"] == body
+    assert "yes" in body.splitlines()                      # a "> "-prefixed answer
+    assert "> May Echo close its three tasks" in body or "May Echo close" in body
+    assert "Bucket 1 is Capital EA" in body and "bucket 3 is everyone else." in body
+    assert "Questions only you can answer" not in body.split("yes")[1]  # no stray quote
+    assert res["messages"][0]["inline_replies"] == ""
+
+
+def test_inline_replies_ignores_a_pure_quote():
+    from orchestrator.agent_email import inline_replies
+    assert inline_replies("On Mon x wrote:\n> " + _ASK.replace("\n", "\n> "), [_ASK]) == ""
+
+
+def test_top_posted_reply_body_unchanged():
+    top = "Sounds good.\n\n" + _INLINE
+    res = read_thread(_ACE, "t", runner=_runner_ok(_two_message_thread(_ASK, top)))
+    assert res["messages"][1]["body_text"] == "Sounds good."
+    assert res["messages"][1]["inline_replies"] == ""
+
+
 def test_read_thread_computes_reply_all():
     parts = [{"mimeType": "text/plain", "body": {"size": 2, "data": "aGk="}}]
     res = read_thread(_ACE, "t", runner=_runner_ok(_inbound_thread_json(parts)))
