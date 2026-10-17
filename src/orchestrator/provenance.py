@@ -32,6 +32,11 @@ WHERE THE PARENT COMES FROM — first source with a value wins, per field:
      pointer and leaves this durable record keyed by emdash task. The task is read off
      the worktree path (`…/worktrees/<repo>/emdash-<task>-<suffix>/…`). The task name
      is only this machine's way of FINDING the turn id — it is never sent.
+  4. `~/.canopy/caller/pending/<task>.json` — the runner's pointer itself, read and
+     LEFT for the hook, only while fresh. The by-task record does not exist until the
+     first prompt is submitted, and SessionStart runs before that: its `canopy cred
+     sync` read the agent's vault with no turn, and canopy-web emailed the owner
+     "read outside a turn" for the turn's own start (hal, 2026-10-17, canopy-web#1563).
 The Claude session id is `CLAUDE_CODE_SESSION_ID` (what Claude Code exports to its
 tools), `CLAUDE_SESSION_ID`, then the by-task record's `claude_session_id` (the hook
 input's `session_id`).
@@ -47,6 +52,7 @@ import os
 import platform
 import re
 import sys
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -72,6 +78,16 @@ def caller_root() -> Path:
 
 def by_task_dir() -> Path:
     return caller_root() / "by-task"
+
+
+def pending_dir() -> Path:
+    return caller_root() / "pending"
+
+
+#: The runner's own freshness window for a pointer (canopy-web
+#: `runner/canopy_runner/canopy_runner/caller.py` PENDING_FRESH_SECONDS): a pointer
+#: the send never followed must not lend its turn to a later session.
+PENDING_FRESH_SECONDS = 120
 
 
 @lru_cache(maxsize=1)
@@ -150,6 +166,23 @@ def _from_by_task(names: list) -> "tuple[str, dict]":
     return "", {}
 
 
+def _from_pending(names: list, now: Optional[float] = None) -> dict:
+    """{turn_id} from a fresh runner pointer for the first candidate task, or {}.
+    Never consumes it: the UserPromptSubmit hook still claims it."""
+    root = pending_dir()
+    for name in names:
+        if not name or not _NAME.match(name):
+            continue
+        rec = _read_json(root / f"{name}.json")
+        try:
+            age = (now if now is not None else time.time()) - float(rec.get("written_at") or 0)
+        except (TypeError, ValueError):
+            continue
+        if rec and rec.get("task") == name and 0 <= age <= PENDING_FRESH_SECONDS:
+            return {"turn_id": rec.get("turn_id")}
+    return {}
+
+
 def _clean(value, pattern=None) -> str:
     s = str(value or "").strip()
     if not s or not _HEADER_SAFE.match(s):
@@ -179,6 +212,9 @@ def resolve_parent(cwd: Optional[str] = None) -> dict:
         turn = turn or _clean(rec.get("turn_id"), _UUID)
         session = session or _clean(rec.get("session_id"), _UUID)
         claude = claude or _clean(rec.get("claude_session_id"), _UUID)
+
+    if not turn:
+        turn = _clean(_from_pending(task_candidates(cwd)).get("turn_id"), _UUID)
     return {"turn_id": turn, "session_id": session, "claude_session_id": claude}
 
 
