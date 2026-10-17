@@ -472,3 +472,48 @@ def test_binding_refuses_a_contradicting_answer(monkeypatch):
                         lambda *a: (200, json.dumps({"require_device_binding": False})))
     with pytest.raises(vault_cli.VaultCliError, match="expected True"):
         vault_cli.run_binding("eva", True, token="t")
+
+
+# ── runner-session: a runner signs in with its device key, never a PAT ────────────
+
+def test_runner_session_sends_only_the_device_proof(monkeypatch):
+    """canopy-web #1594's contract: the runner id in the body, the proof for THIS
+    url, no Authorization header at all."""
+    from orchestrator import device_key
+
+    monkeypatch.setattr(device_key, "proof_headers",
+                        lambda method, url: {"DPoP": f"proof-for:{method}:{url}"})
+    sent = {}
+
+    def transport(method, url, headers, body):
+        sent.update(method=method, url=url, headers=headers, body=json.loads(body))
+        return 201, json.dumps({"access_token": "crt_x", "runner": "r1",
+                                "expires_at": "2099-01-01T00:00:00Z"})
+
+    out = vault_cli.run_runner_session("r1", "https://canopy.test", transport=transport)
+    assert out["access_token"] == "crt_x"
+    assert sent["url"] == "https://canopy.test/api/runner-sessions/"
+    assert sent["body"] == {"runner": "r1"}
+    assert sent["headers"]["DPoP"] == "proof-for:POST:https://canopy.test/api/runner-sessions/"
+    assert "Authorization" not in sent["headers"]
+
+
+def test_runner_session_without_a_key_or_approval_is_a_clear_error(monkeypatch):
+    from orchestrator import device_key
+
+    monkeypatch.setattr(device_key, "proof_headers", lambda method, url: {})
+    with pytest.raises(vault_cli.VaultCliError, match="no registered device key"):
+        vault_cli.run_runner_session("r1", "https://canopy.test")
+
+    monkeypatch.setattr(device_key, "proof_headers", lambda method, url: {"DPoP": "p"})
+    with pytest.raises(vault_cli.VaultCliError, match="approved"):
+        vault_cli.run_runner_session("r1", "https://canopy.test",
+                                     transport=lambda *a: (401, '{"title": "Device proof refused"}'))
+
+
+def test_runner_session_cli_prints_the_token_json(monkeypatch):
+    monkeypatch.setattr(vault_cli, "run_runner_session",
+                        lambda runner_id, base_url: {"access_token": "crt_x", "runner": runner_id})
+    res = CliRunner().invoke(vault_cli.vault_group, ["runner-session", "--runner", "r9"])
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output) == {"access_token": "crt_x", "runner": "r9"}
