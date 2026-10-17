@@ -361,8 +361,14 @@ exist, bootstrap it from the project's CLAUDE.md + git log summary — never pro
 the user for setup information that can be inferred. Mirror the PM supervisor
 bootstrap pattern exactly.
 
-- **`.canopy/ddd/context.md`** — project context: what is being built, current phase,
-  key decisions already made.
+- **`.canopy/ddd/context.md`** — POINTERS ONLY: `base_url`, how auth is seeded,
+  and where the product's own docs live (its product decisions, design specs, demo
+  data notes). Never write product context into it — what is being built, decisions
+  made, current phase, run history. That goes stale here and is invisible to anyone
+  not running DDD (connect-labs' copy grew to 123 lines naming a narrative two
+  generations old, 2026-10-17). A product decision belongs in the product repo's
+  docs (open an issue or PR there); run history is on canopy-web. Read the docs it
+  points to.
 - **Earlier runs of this narrative** — not a notes file. There is NO
   `.canopy/ddd/learnings.md` any more (retired 2026-10-16: it never reached the
   next run across machines or ACE's per-run DDD dirs, and product lessons in it
@@ -399,7 +405,9 @@ bootstrap pattern exactly.
 
 2. Read `$DDD_DIR/context.md`. If it does not exist or is empty, bootstrap it:
    - Read CLAUDE.md and the git log (`git log --oneline -20`)
-   - Write a brief context.md (project purpose, active feature, current phase)
+   - Write a brief context.md of POINTERS: `base_url`, how auth is seeded, and
+     paths to the product's own docs/specs/CLAUDE.md. No project narrative, no
+     decisions, no phase — those live in the product's docs.
    - Never ask the user whether to bootstrap — do it silently.
 
 3. (No `learnings.md` — what earlier runs found is read in step 4b, once the
@@ -428,7 +436,7 @@ bootstrap pattern exactly.
      user which one via `AskUserQuestion`, listing `candidates[]` with the top
      one pre-selected as `recommended`. This is the ONLY case that pauses here.
    - **`decision: ask` / `confidence: none`** (no runs or specs found) → fall
-     back to `context.md`'s active feature; if that is also empty, ask the user
+     back to the product's docs `context.md` points to; if nothing names one, ask the user
      what to build. Only here do you prompt for setup.
 
    Carry the resolved `decision`, `narrative_slug`, and `run_id` into the next step.
@@ -956,7 +964,7 @@ every run.
 | Gap type | Destination | Action |
 |----------|-------------|--------|
 | `RESEARCH` | Autonomous investigation | Spawn a subagent to ground the claim in evidence. Update `evidence.json` and re-run the relevant Phase 0 step. |
-| `CAPABILITY` | Create product-build task | Record a product-build task in context.md and the learning store. Tag for the upload step. Not a blocker — log and proceed. |
+| `CAPABILITY` | Create product-build task | Open (or comment on) an issue in the product repo (`loop.product_repo`, else the target repo) naming the missing capability, with the narrative's evidence. Tag for the upload step. Not a blocker — log and proceed. |
 | `DECISION` | `concept_change` pause | Surface to the user immediately (see Phase 0 Step 4). Do not proceed to the spec until all DECISION gaps are resolved. |
 
 ---
