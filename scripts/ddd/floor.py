@@ -67,6 +67,9 @@ OUT = "out"
 _TAG_OUT = re.compile(r"\[\s*(DATA|REGISTRY|EXTERNAL|UPSTREAM|SEED|THIRD[- ]PARTY)\b", re.I)
 _TAG_NARRATION = re.compile(r"\[\s*NARRATION\b", re.I)
 _OUT_SCOPES = frozenset({"data", "registry", "external", "upstream", "seed"})
+#: A fix tag's scope name (``[THIRD-PARTY]`` is an external system).
+_TAG_SCOPE = {"data": "data", "registry": "registry", "external": "external",
+              "upstream": "upstream", "seed": "seed", "third-party": "external", "third party": "external"}
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +391,7 @@ def scope_detail(
     surfaces: tuple | list = (),
     declined: list[dict] | None = None,
     sticky: dict[str, dict] | None = None,
+    writable_scopes: tuple[str, ...] | list[str] = (),
 ) -> dict:
     """``{edit_scope, reason, via, surface, owner, issue}`` — can THIS loop make the fix?
 
@@ -405,6 +409,12 @@ def scope_detail(
     ``via`` names the mechanism (``route``, ``marked``, ``fix_scope``, ``tag``,
     ``narration``, ``surface``, ``decline``, ``sticky``) so the blocked report can
     tell configuration from after-the-fact text matching.
+
+    ``writable_scopes`` (``loop.writable_scopes``) names the scopes THIS loop can
+    write after all — e.g. ``[data, registry, seed]`` when the registry,
+    pipelines and seed data are live data the loop edits through an API (ACE on
+    Connect Labs) rather than code another team ships. A fix_scope or tag in it
+    stays IN. Default empty: every such scope is out, as before.
     """
 
     def out(reason: str, via: str, surface: str | None = None, owner: Any = None, issue: Any = None) -> dict:
@@ -445,11 +455,12 @@ def scope_detail(
         except re.error:
             continue
     scope = str(f.get("fix_scope") or "").lower()
-    if scope in _OUT_SCOPES:
+    writable = {str(w).strip().lower() for w in writable_scopes or ()}
+    if scope in _OUT_SCOPES and scope not in writable:
         return out(f"fix_scope {scope}", "fix_scope")
-    m = _TAG_OUT.search(rec)
-    if m:
-        return out(f"fix tagged [{m.group(1).upper()}]", "tag")
+    for m in _TAG_OUT.finditer(rec):
+        if _TAG_SCOPE.get(m.group(1).lower(), m.group(1).lower()) not in writable:
+            return out(f"fix tagged [{m.group(1).upper()}]", "tag")
     narration = route == "NARRATION" or scope == "narrative" or bool(_TAG_NARRATION.search(rec))
     if narration and narrative_locked:
         return out("a narration edit, and the narrative is locked", "narration")
@@ -482,6 +493,7 @@ def edit_scope(
     declined: list[dict] | None = None,
     surfaces: tuple | list = (),
     sticky: dict[str, dict] | None = None,
+    writable_scopes: tuple[str, ...] | list[str] = (),
 ) -> tuple[str, str]:
     """``(IN | OUT, reason)`` — :func:`scope_detail` without the provenance."""
     d = scope_detail(
@@ -491,6 +503,7 @@ def edit_scope(
         surfaces=surfaces,
         declined=declined,
         sticky=sticky,
+        writable_scopes=writable_scopes,
     )
     return d["edit_scope"], d["reason"]
 
@@ -505,6 +518,7 @@ def classify_floor(
     declined: list[dict] | None = None,
     surfaces: tuple | list = (),
     sticky: dict[str, dict] | None = None,
+    writable_scopes: tuple[str, ...] | list[str] = (),
 ) -> dict:
     """``{findings: [...], in_scope, out_of_scope, all_out}`` for the floor cell(s).
 
@@ -520,6 +534,7 @@ def classify_floor(
             surfaces=surfaces,
             declined=declined,
             sticky=sticky,
+            writable_scopes=writable_scopes,
         )
         rows.append({**f, "edit_scope": d["edit_scope"], "edit_scope_reason": d["reason"]})
     out_rows = [r for r in rows if r["edit_scope"] == OUT]

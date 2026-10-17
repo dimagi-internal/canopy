@@ -259,6 +259,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
         "narrative_locked": narrative_locked,
         "fixed_surfaces": cfg.loop.fixed_surfaces,
         "surfaces": cfg.loop.surfaces,
+        "writable_scopes": cfg.loop.writable_scopes,
         "declined": floor_mod.load_declined(run_dir),
     }
     from scripts.ddd import target_rubric as target_rubric_mod

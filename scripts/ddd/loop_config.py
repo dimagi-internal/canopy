@@ -31,17 +31,20 @@ module reads the two blocks the v1/backlog loop adds::
                               # polish: the first version blocks on the human gate.
                               # auto -> polish for the demo objective, else build.
       fixed_surfaces:         # what this loop may NOT edit. A finding whose detail/fix
-        - registry            # names one is OUT of edit scope; a cell whose findings
-        - seed data           # are all out is PINNED (reported, parked) and the loop
+        - billing service     # names one is OUT of edit scope; a cell whose findings
+                              # are all out is PINNED (reported, parked) and the loop
                               # keeps optimizing the rest (scripts.ddd.floor). A
                               # plain string is a regex; the mapping form names the
                               # surface's owner and tracking issue, which the
                               # blocked report (scripts.ddd.predict) prints:
-        - match: "Ask an agent|floating .*button|labs template"
-          name: labs-report-template
-          owner: ACE (labs report template)
-          issue: dimagi/ace#2337  # the run comments its evidence here at the end
-          repo: dimagi/ace        # no issue -> find/open one here (owner_routing)
+        - match: "Ask an agent|floating .*launcher"
+          name: connect-labs-chrome
+          owner: Connect Labs
+          issue: dimagi/connect-labs#2578  # the run comments its evidence here
+          repo: dimagi/connect-labs        # no issue -> find/open one here (owner_routing)
+      writable_scopes: [data, registry, seed]  # [DATA]/[REGISTRY]/[SEED] fixes are
+                              # out by default; list the ones this loop CAN write
+                              # (live data behind an API, not another team's code)
       product_repo: dimagi/connect-labs  # product-clarity findings -> doc/UI-copy
                               # issue here (default: the target repo's origin)
       max_new_issues: 3       # new issues one run may open across all owners
@@ -191,6 +194,10 @@ class LoopConfig:
     # origin), and how many NEW issues one run may open across all owners.
     product_repo: str | None = None
     max_new_issues: int = 3
+    # Scopes canopy treats as out by default (data / registry / seed / external
+    # / upstream) that THIS target's loop can in fact write — e.g. a product
+    # whose registry, pipelines and seed data are live data behind an API.
+    writable_scopes: tuple[str, ...] = ()
 
     def tiered(self, loop_mode: str | None) -> bool:
         """Concept-only judging between checkpoints? ``auto`` = on in backlog mode."""
@@ -548,6 +555,15 @@ def _parse_fix_gate(raw: Any) -> FixGateConfig:
     )
 
 
+def _scopes(raw: Any) -> tuple[str, ...]:
+    """``loop.writable_scopes`` — a list (or comma string) of scope names, lowercased."""
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    return tuple(dict.fromkeys(str(x).strip().lower() for x in raw if str(x).strip()))
+
+
 def parse(data: dict | None) -> DDDConfig:
     """Build a config from an already-parsed ``config.yaml`` mapping."""
     data = data if isinstance(data, dict) else {}
@@ -572,6 +588,7 @@ def parse(data: dict | None) -> DDDConfig:
         plateau_rounds=_int(loop_raw.get("plateau_rounds"), 3),
         product_repo=str(loop_raw.get("product_repo") or "").strip() or None,
         max_new_issues=_int(loop_raw.get("max_new_issues"), 3, minimum=0),
+        writable_scopes=_scopes(loop_raw.get("writable_scopes")),
     )
     gate_raw = data.get("deploy_gate") if isinstance(data.get("deploy_gate"), dict) else {}
     url = str(gate_raw.get("health_url") or "").strip() or None
