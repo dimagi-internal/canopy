@@ -2,6 +2,7 @@
 
 Which KB: `--kb` (or $CANOPY_KB) is one of
   * a path to a kb.sqlite                       (local; nothing is fetched)
+  * `<workspace>/<handle>`, e.g. `dimagi/givewell-kb`  (a workspace project — the usual case)
   * `<agent>/<project ref>`, e.g. `eva/P12`     (the project's Drive folder, from canopy-web)
   * a Drive folder id                            (the folder holding kb.sqlite)
 A remote KB is cached at ~/.canopy/kb/<name>/kb.sqlite; `pull` refreshes it, and the
@@ -9,7 +10,7 @@ query commands pull on their own when the cache is older than --max-age-hours.
 Drive is read as the AGENT whose repo you run from (`--repo`, default: cwd), through the
 same identity and gog client rule every canopy Drive call uses.
 
-`canopy kb mcp --kb eva/P12` serves the same queries as MCP tools over stdio, so an agent
+`canopy kb mcp --kb dimagi/givewell-kb` serves the same queries as MCP tools over stdio, so an agent
 registers it once in its .mcp.json and gets search/get/tables/whats_new natively.
 """
 from __future__ import annotations
@@ -34,6 +35,9 @@ KB_FILE = "kb.sqlite"
 KB_REMOTE = "kb.sqlite.gz"  # what lives in Drive: SQLite text compresses ~3-4x, and every reader downloads it
 _DRIVE_ID = re.compile(r"^[A-Za-z0-9_-]{20,}$")
 _PROJECT_REF = re.compile(r"^([a-z0-9][a-z0-9-]*)/([A-Za-z]*\d+)$")
+# A workspace project's address: owned by the workspace, kept current by a steward
+# agent, so it survives a change of steward (canopy-web workspace projects).
+_WORKSPACE_REF = re.compile(r"^([a-z0-9][a-z0-9-]*)/([a-z0-9][a-z0-9-]{1,58}[a-z0-9])$")
 
 
 def _emit(obj) -> None:
@@ -47,9 +51,12 @@ def _kind(ref: str) -> str:
         return "local"
     if _PROJECT_REF.match(ref):
         return "project"
+    if _WORKSPACE_REF.match(ref):
+        return "workspace-project"
     if _DRIVE_ID.match(ref):
         return "folder"
-    raise KBError(f"--kb {ref!r}: expected a kb.sqlite path, <agent>/<project ref>, or a Drive folder id")
+    raise KBError(f"--kb {ref!r}: expected a kb.sqlite path, <workspace>/<handle>, "
+                  "<agent>/<project ref>, or a Drive folder id")
 
 
 def _cache_dir(ref: str) -> Path:
@@ -60,8 +67,12 @@ def _folder_for(ref: str) -> str:
     if _kind(ref) == "folder":
         return ref
     from orchestrator import canopy_web
-    agent, pref = _PROJECT_REF.match(ref).groups()
-    proj = canopy_web.call("GET", f"/api/agents/{agent}/projects/{pref}/") or {}
+    if _kind(ref) == "workspace-project":
+        ws, handle = _WORKSPACE_REF.match(ref).groups()
+        proj = canopy_web.call("GET", f"/api/workspace-projects/{ws}/{handle}/") or {}
+    else:
+        agent, pref = _PROJECT_REF.match(ref).groups()
+        proj = canopy_web.call("GET", f"/api/agents/{agent}/projects/{pref}/") or {}
     fid = proj.get("drive_folder_id") or ""
     if not fid:
         raise KBError(f"project {ref} has no Drive folder on canopy-web")

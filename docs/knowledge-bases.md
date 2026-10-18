@@ -9,14 +9,15 @@ copies, with the tables you compute with alongside. Code: `src/orchestrator/kb.p
 
 | | Owner | Where |
 |---|---|---|
-| The library | a **workspace project** (e.g. `eva/P12`) | its Drive folder holds `kb.sqlite.gz` |
+| The library | a **workspace project** (e.g. `dimagi/givewell-kb`), its curator as steward | its Drive folder holds `kb.sqlite.gz` |
 | Adapters (where the publisher puts things) | the **curator** agent | the curator's repo (e.g. Eva's `bin/eva-kb-givewell`) |
 | Build, diff, store, query, MCP | **canopy** | this module |
 | Readers | **every agent** in the workspace | `canopy kb …` / `canopy kb mcp` |
 
 A knowledge base is not an agent's project in the board sense: it has no end, and many
-agents use it. It is attached to a project because that is the unit canopy-web already
-gives a Drive folder, a team and a workspace. Public material only: what you know about
+agents use it. So it is a canopy-web **workspace project**: owned by the workspace,
+addressed `<workspace>/<handle>`, with the curator agent as its steward (the steward can
+change without the address changing, and any agent in the workspace files tasks into it). Public material only: what you know about
 the publisher from the relationship stays in your CRM and never merges in, so a KB is
 always safe to hand to any agent or teammate.
 
@@ -42,7 +43,7 @@ bundle/
 
 ```bash
 canopy kb build bundle/ --out kb.sqlite [--previous last.sqlite]   # diff → change history
-canopy kb push --kb eva/P12 kb.sqlite                              # → Drive, gzipped
+canopy kb push --kb dimagi/givewell-kb kb.sqlite             # → Drive, gzipped
 ```
 
 `build` stores each passage once (an external-content FTS5 index over ~1.8k-char
@@ -52,15 +53,16 @@ passages; `get` rejoins them), and carries the previous build's change rows forw
 ## Query (everyone)
 
 ```bash
-canopy kb search "oral cholera vaccine" --kb eva/P12 [--type grant_page] [--since 2024-01-01]
-canopy kb get <id-or-url> --kb eva/P12 [--passage N]
-canopy kb table grants --kb eva/P12 --match Recipient=Dimagi --sort -Amount
-canopy kb whats-new --kb eva/P12 --since 2026-10-01
-canopy kb info --kb eva/P12
+canopy kb search "oral cholera vaccine" --kb dimagi/givewell-kb [--type grant_page] [--since 2024-01-01]
+canopy kb get <id-or-url> --kb dimagi/givewell-kb [--passage N]
+canopy kb table grants --kb dimagi/givewell-kb --match Recipient=Dimagi --sort -Amount
+canopy kb whats-new --kb dimagi/givewell-kb --since 2026-10-01
+canopy kb info --kb dimagi/givewell-kb
 ```
 
-`--kb` is a project ref (`<agent>/<Pnn>`, resolved to its Drive folder through
-canopy-web), a Drive folder id, or a local `kb.sqlite`. Drive is read as the agent whose
+`--kb` is a workspace project address (`<workspace>/<handle>`), an agent project ref
+(`<agent>/<Pnn>`) — either resolved to its Drive folder through canopy-web — a Drive
+folder id, or a local `kb.sqlite`. Drive is read as the agent whose
 repo you run from (`--repo`, default cwd). The copy is cached at
 `~/.canopy/kb/<ref>/kb.sqlite` and re-checked after `--max-age-hours` (24); if Drive is
 unreachable the cache is served with a warning.
@@ -68,7 +70,7 @@ unreachable the cache is served with a warning.
 ## As MCP tools
 
 ```json
-{"mcpServers": {"givewell": {"command": "canopy", "args": ["kb", "mcp", "--kb", "eva/P12"]}}}
+{"mcpServers": {"givewell": {"command": "canopy", "args": ["kb", "mcp", "--kb", "dimagi/givewell-kb"]}}}
 ```
 
 Tools: `kb_info`, `search`, `get`, `list_items`, `whats_new`, `table`, plus one per
@@ -77,7 +79,7 @@ declared table (`grants`, …). Stdlib JSON-RPC over stdio, no SDK dependency.
 ## Where this is going
 
 Today an agent registers the MCP server in its own `.mcp.json`. The intended end state
-is that a **workspace project exposes its tools** — every agent in the workspace gets a
+is that the **workspace project exposes its tools** itself — every agent in the workspace gets a
 KB the moment it is attached to the project, with canopy-web serving the queries instead
 of each machine holding a copy. This module's read API is the contract that server would
 implement.
