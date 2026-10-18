@@ -93,6 +93,23 @@ uv run --project "$CANOPY_ROOT" canopy huddle dispatch --plan plan.json --member
 ```
 then `canopy huddle await --huddle <id> --round 1`, looped in the foreground until exit 0.
 
+**You report too — in every round, like a member.** You lead, but you also have work, levers
+and ideas of your own; a huddle that hears from everyone but its leader is missing one voice.
+You cannot `dispatch` to yourself (a round turn to you would wait behind this turn forever), so
+answer your own prompt here, in this turn, and file it with `report` — an already-finished
+round turn, tagged like a dispatched one, that teammates see in round 2 and whose proposals and
+co-signs count:
+```bash
+uv run --project "$CANOPY_ROOT" canopy huddle prompt --plan plan.json --member <you> --round 1 --out <you>-r1.md
+# answer it from your own survey (plan.json's packs.<you>) — write the ```huddle block to a file
+uv run --project "$CANOPY_ROOT" canopy huddle report --plan plan.json --round 1 --block-file <you>-r1.block
+```
+Its "file it as your close-out" line is for members — `report` is your filing. Write your
+round-1 block BEFORE you read the others' (it is your own read, not a summary of theirs). In
+round 2 you propose like anyone (the critique you write for others is not for yourself — hold
+your own proposals to the same bar); in round 3 file `report --round 3` whenever a teammate
+named you as partner or you proposed something. `--attempt 2` replaces a report.
+
 **3. Round 2 — roundtable.** Read every round-1 block (`canopy huddle status --huddle <id>`, and
 the page). Write `crit.json` — per member, pointed questions about ITS report: brief priorities
 it could move but has no lever for, levers that cannot land before a hard date, overlaps it missed with teammates' offers and needs,
@@ -221,7 +238,8 @@ and the run starts at once. You lead as yourself: your identity, repo, token and
 - **Plan from the run, not a brief.** `canopy huddle plan --checkin-run <id> --repo <your-repo>
   --out plan.json` (no `--team`, `--members` or `--priorities-file` — passing them is refused).
   The members are the check-in's agents; you lead and are not your own member (the fleet runs one
-  turn per agent at a time, so a round turn to yourself could never start). The brief is
+  turn per agent at a time, so a round turn to yourself could never start) — you still take
+  part with `report`, as in step 2. The brief is
   generated: ONE priority, the check-in's topic plus the project's outcome, so proposals name
   priority 1. The principal is the check-in's lead (a person). Step 1's brief fetch is skipped.
   The huddle id is `work-<project slug>-<date>`, suffixed `-2`… when a second run lands the same
