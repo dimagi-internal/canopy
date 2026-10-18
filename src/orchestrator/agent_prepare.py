@@ -202,6 +202,21 @@ def turn_readiness(repo: Path, tok, mailbox_ok: bool) -> tuple[str, Optional[boo
     return declared, False
 
 
+def _setup_failure(stdout: str, stderr: str, limit: int = 300) -> str:
+    """The line that says WHY an installer failed — not its first line, which is an INFO
+    banner (ACE's setup opens with `INFO plugin_root=…`, and that is all the report said
+    on every failed pass). The first FAIL / ERROR line, plus the next line when it ends
+    in a colon (the cause follows it); else the last non-empty line."""
+    lines = [ln.rstrip() for ln in f"{stdout or ''}\n{stderr or ''}".splitlines() if ln.strip()]
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith(("FAIL", "ERROR", "Error:", "error:", "fatal:")):
+            out = ln.strip()
+            if out.endswith(":") and i + 1 < len(lines):
+                out = f"{out} {lines[i + 1].strip()}"
+            return out[:limit]
+    return (lines[-1].strip() if lines else "(no output)")[:limit]
+
+
 class RunnerPreparer(Bootstrapper):
     """The runner mode. Same steps as a person's bootstrap; different keys, plus what only a
     machine that RUNS turns needs (the clone, directory plugins, the provisioner, a report)."""
@@ -466,14 +481,25 @@ class RunnerPreparer(Bootstrapper):
             return
         data_dir = self.home / ".claude" / "plugins" / "data" / f"{slug}-{slug}"
         data_dir.mkdir(parents=True, exist_ok=True)
-        env = self.op_env(self.creds(slug).vault,
-                          {**os.environ, "CLAUDE_PLUGIN_DATA": str(data_dir)})
+        c = self.creds(slug)
+        base = {**os.environ, "CLAUDE_PLUGIN_DATA": str(data_dir), "AGENT_SLUG": slug}
+        # What this pass already resolved, handed over so the installer need not resolve
+        # it again: the vault, and the .env the env step just filled from it. An agent's
+        # setup re-resolving them goes through `canopy agent env`, which needs a PERSON's
+        # canopy-web token — a runner has none, so ACE's setup died there on every pass
+        # (cloud-ec2-2, 2026-10-18). Names only; an installer that ignores them is unchanged.
+        if c.vault:
+            base["AGENT_VAULT"] = c.vault
+        env_file = self.home / f".{slug}" / ".env"
+        if rep.env_ok and env_file.is_file():
+            base["AGENT_ENV_FILE"] = str(env_file)
+        env = self.op_env(c.vault, base)
         try:
             r = self.run(["bash", str(setup), "--skip-doctor"], capture_output=True, text=True,
                          timeout=900, env=env, cwd=str(repo))
             if r.returncode != 0:
                 rep.notes.append(f"provisioner: bin/{slug}-setup failed: "
-                                 f"{_first_line(r.stderr or r.stdout)}")
+                                 f"{_setup_failure(r.stdout, r.stderr)}")
         except (OSError, subprocess.TimeoutExpired) as e:
             rep.notes.append(f"provisioner: bin/{slug}-setup: {e}")
         for name, dest in (("gws-sa-key.json", repo / ".gws-sa-key.json"),
