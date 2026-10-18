@@ -63,7 +63,9 @@ KIND_SE = "secure-enclave"
 KIND_SOFTWARE = "software"
 KIND_TPM = "tpm"
 KIND_AWS_IAM = "aws-iam"
-KINDS = (KIND_SE, KIND_TPM, KIND_AWS_IAM, KIND_SOFTWARE)
+#: An ECDH key held in AWS KMS (an EC2 box's; never a signing kind).
+KIND_AWS_KMS = "aws-kms"
+KINDS =(KIND_SE, KIND_TPM, KIND_AWS_IAM, KIND_SOFTWARE)
 
 #: The helper's location after the runner installer built it; overridable for tests.
 HELPER_ENV = "CANOPY_DEVICE_KEY_BIN"
@@ -131,6 +133,11 @@ def ecdh_pem_path() -> Path:
 def tpm_ecdh_path() -> Path:
     """Marker for a TPM ECDH key (the key itself lives in the platform provider)."""
     return key_dir() / "tpm-ecdh.json"
+
+
+def kms_ecdh_path() -> Path:
+    """Marker for an EC2 box's KMS ECDH key: its ARN and region (the key lives in KMS)."""
+    return key_dir() / "kms-ecdh.json"
 
 
 def helper_path(which: Callable[[str], Optional[str]] = shutil.which) -> Optional[str]:
@@ -529,9 +536,49 @@ def _tpm_ecdh_key(marker: dict) -> EcdhKey:
     return EcdhKey(KIND_TPM, key.public_jwk(), key.derive)
 
 
+def _kms_ecdh_key(kkey, opener=None) -> EcdhKey:
+    """An ECDH key whose private half is in AWS KMS (`device_key_kms`)."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from orchestrator import device_key_kms as kms
+
+    pub = serialization.load_der_public_key(kkey.public_der)
+    if not isinstance(pub, ec.EllipticCurvePublicKey) or pub.curve.name != "secp256r1":
+        raise DeviceKeyError(f"KMS key {kkey.key_arn} is not a P-256 key")
+    nums = pub.public_numbers()
+    jwk = public_jwk_from_point(nums.x.to_bytes(32, "big"), nums.y.to_bytes(32, "big"))
+    kw = {"opener": opener} if opener is not None else {}
+
+    def derive(peer_point: bytes) -> bytes:
+        peer = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), peer_point)
+        der = peer.public_bytes(serialization.Encoding.DER,
+                                serialization.PublicFormat.SubjectPublicKeyInfo)
+        try:
+            return kms.derive(kkey, der, **kw)
+        except kms.KmsError as e:
+            raise DeviceKeyError(f"the KMS ECDH key could not derive ({e})") from None
+
+    return EcdhKey(KIND_AWS_KMS, jwk, derive)
+
+
+def _load_kms_marker(opener=None) -> EcdhKey:
+    from orchestrator import device_key_kms as kms
+
+    # The marker carries the PUBLIC key too, so loading costs no KMS call — only a
+    # derive does (one per resolve of a zero-knowledge agent).
+    try:
+        kkey = kms.from_marker(_read_marker(kms_ecdh_path()))
+    except (KeyError, ValueError) as e:
+        raise DeviceKeyError(f"{kms_ecdh_path()} is not a KMS key marker ({e})") from None
+    return _kms_ecdh_key(kkey, opener)
+
+
 def load_ecdh(*, runner: Runner = subprocess.run,
-              which: Callable[[str], Optional[str]] = shutil.which) -> Optional[EcdhKey]:
+              which: Callable[[str], Optional[str]] = shutil.which,
+              kms_opener=None) -> Optional[EcdhKey]:
     """This machine's ECDH key, or None when it has none. Never creates."""
+    if kms_ecdh_path().is_file():
+        return _load_kms_marker(kms_opener)
     if tpm_ecdh_path().is_file():
         try:
             return _tpm_ecdh_key(_read_marker(tpm_ecdh_path()))
@@ -550,13 +597,40 @@ def load_ecdh(*, runner: Runner = subprocess.run,
     return None
 
 
+def _adopt_kms(opener=None) -> Optional[EcdhKey]:
+    """Switch this box to its KMS ECDH key if it has one: write the marker, delete any
+    software PEM. None (changing nothing) when there is no usable KMS key."""
+    from orchestrator import device_key_kms as kms
+
+    try:
+        kkey = kms.find(**({"opener": opener} if opener is not None else {}))
+        key = _kms_ecdh_key(kkey, opener)
+    except (kms.KmsError, DeviceKeyError):
+        return None
+    _ensure_dir()
+    _write_private(kms_ecdh_path(), json.dumps(kms.marker(kkey), indent=1).encode("utf-8"))
+    if ecdh_pem_path().exists():
+        ecdh_pem_path().unlink()
+    return key
+
+
 def ensure_ecdh(signing_kind: str, *, runner: Runner = subprocess.run,
                 which: Callable[[str], Optional[str]] = shutil.which,
-                tpm_lib=None) -> tuple[EcdhKey, bool]:
+                tpm_lib=None, kms_opener=None) -> tuple[EcdhKey, bool]:
     """(this machine's ECDH key, whether it was created now), on the backend that matches
     the signing key's kind. Idempotent. Raises EcdhUnsupported where the backend cannot
-    make one (the caller enrolls without it)."""
-    existing = load_ecdh(runner=runner, which=which)
+    make one (the caller enrolls without it).
+
+    An aws-iam box whose stack gives it a KMS key (`device_key_kms`) uses that, and an
+    existing software PEM is MIGRATED to it — the PEM is deleted, and the caller's next
+    enrollment posts the new public key, which sends the device key back to `pending`
+    until a person approves (and re-grants) it. Without a KMS key, it is the PEM as
+    before."""
+    existing = load_ecdh(runner=runner, which=which, kms_opener=kms_opener)
+    if signing_kind == KIND_AWS_IAM and (existing is None or existing.kind == KIND_SOFTWARE):
+        moved = _adopt_kms(kms_opener)
+        if moved is not None:
+            return moved, True
     if existing is not None:
         return existing, False
     kind = _ecdh_kind_for(signing_kind)
@@ -613,7 +687,7 @@ def remove_local() -> list[str]:
         except Exception:  # noqa: BLE001
             pass
     for p in (se_path(), sw_path(), tpm_path(), aws_path(), status_path(),
-              se_ecdh_path(), ecdh_pem_path(), tpm_ecdh_path()):
+              se_ecdh_path(), ecdh_pem_path(), tpm_ecdh_path(), kms_ecdh_path()):
         if p.exists():
             p.unlink()
             gone.append(str(p))
