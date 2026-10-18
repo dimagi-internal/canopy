@@ -28,7 +28,7 @@ ROLE = "arn:aws:iam::123456789012:role/canopy-runner-RunnerRole-ABC"
 def test_signature_is_byte_identical_to_botocore():
     # botocore.auth.SigV4Auth(creds, "sts", "us-east-1").add_auth() on the same request
     # (same headers, body, X-Amz-Date 20261016T201243Z) gave exactly this Authorization.
-    req = aws.signed_get_caller_identity(CREDS, htu=HTU, iat=1700000000, now=1792181563)
+    req = aws.signed_get_caller_identity(CREDS, htu=HTU, iat=1700000000, now=1792181563, jti="")
     h = req["headers"]
     assert h["X-Amz-Date"] == "20261016T201243Z"
     assert h["Authorization"] == (
@@ -49,6 +49,17 @@ def test_proof_header_shape_binds_htu_and_iat():
     assert h["Host"] == "sts.amazonaws.com" and h["X-Amz-Security-Token"] == CREDS.token
     signed = h["Authorization"].split("SignedHeaders=")[1].split(",")[0].split(";")
     assert {"x-canopy-proof-htu", "x-canopy-proof-iat", "host", "x-amz-date"} <= set(signed)
+
+
+def test_two_proofs_in_the_same_second_differ():
+    # canopy-web keeps each proof's signature single-use; `resolve` and
+    # `resolve?refs=` share an htu, so without a nonce two resolves in one second
+    # made one proof and the second was refused as a replay (cloud-ec2-2, 2026-10-17).
+    a = json.loads(base64.b64decode(aws.proof(CREDS, HTU, now=1792181563.1)))["headers"]
+    b = json.loads(base64.b64decode(aws.proof(CREDS, HTU, now=1792181563.9)))["headers"]
+    assert a["X-Canopy-Proof-Jti"] != b["X-Canopy-Proof-Jti"]
+    assert a["Authorization"] != b["Authorization"]
+    assert "x-canopy-proof-jti" in a["Authorization"].split("SignedHeaders=")[1].split(",")[0].split(";")
 
 
 def test_changing_the_htu_changes_the_signature():
