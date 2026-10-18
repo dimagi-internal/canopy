@@ -133,6 +133,7 @@ def test_history_ignores_specs_sections_and_present_tense(tmp_path):
         "Design: docs/superpowers/specs/2026-10-06-huddle-design.md\n"
         "Design: [the spec](docs/superpowers/specs/2026-10-06-huddle-design.md)\n"
         "Per section (4.1.5.1) of the contract.\n"
+        "Seam #2 is the one allowlisted exception.\n"
         "The token is used to sign requests.\n"
         "Send `Action=GetCallerIdentity&Version=2011-06-15`.\n"
         "## Heading\n"

@@ -31,7 +31,14 @@ from pathlib import Path
 DATE = re.compile(r"(?<![=\w])(?:19|20)\d{2}-\d{2}-\d{2}\b")
 MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*"
 SINCE = re.compile(rf"\bsince\s+(?:(?:19|20)\d{{2}}\b|{MONTH}\b|v?\d+\.\d+)", re.I)
-PR_REF = re.compile(r"(?<![\w&/#])(?:[A-Za-z][\w.-]*)?#\d{1,5}\b(?!\w)|\bPR\s+#?\d{1,5}\b")
+# A PR/issue ref: `repo#12`, `(#12)`, `PR 12` / `PR #12`, or a bare `#123` (3+ digits).
+# A bare one- or two-digit `#N` is usually a label ("Seam #2", "step #3"), not a PR.
+PR_REF = re.compile(
+    r"(?<![\w&/#])[A-Za-z][\w.-]*#\d{1,5}\b(?!\w)"
+    r"|\(#\d{1,5}\b"
+    r"|(?<![\w&/#])#\d{3,5}\b(?!\w)"
+    r"|\bPR\s+#?\d{1,5}\b"
+)
 PHRASES = re.compile(
     r"\bowner(?:'s)? decision\b"
     r"|(?<!\bis )(?<!\bare )(?<!\bbe )(?<!\bbeen )(?<!\bget )(?<!\bgets )(?<!\bbeing )\bused to\b"
