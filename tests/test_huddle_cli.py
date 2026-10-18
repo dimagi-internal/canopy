@@ -286,7 +286,7 @@ def test_plan_survives_a_member_it_cannot_read(tmp_path, web):
             "--local", str(tmp_path / "rec"), "--out", str(out))
     assert r.exit_code == 0, r.output
     plan = json.loads(out.read_text())
-    assert plan["id"] == H and set(plan["packs"]) == {"eva", "ghost"}
+    assert plan["id"] == H and set(plan["packs"]) == {"eva", "ghost", "ada"}
     assert "could not read ghost's board" in plan["packs"]["ghost"]
 
 
@@ -322,6 +322,71 @@ def test_prompt_refuses_a_member_with_no_round1_reply(tmp_path, web):
             "--out", str(tmp_path / "x.md"))
     assert r.exit_code == 2
     assert "no round-1 reply" in r.output
+
+
+# ── the leader's own report ──────────────────────────────────────────────────────
+def test_plan_surveys_the_leader_too(tmp_path, web):
+    r, plan = _plan(tmp_path)
+    assert r.exit_code == 0, r.output
+    assert set(plan["packs"]) == {"eva", "echo", "ada"} and plan["members"] == ["eva", "echo"]
+
+
+def test_report_files_the_leaders_reply_as_a_tagged_finished_round_turn(tmp_path, web):
+    p = write_plan(tmp_path)
+    f = tmp_path / "ada-r1.md"
+    f.write_text("my report\n```huddle\n" + json.dumps(r1("ada")) + "\n```\n")
+    r = run("report", "--plan", str(p), "--round", "1", "--block-file", str(f))
+    assert r.exit_code == 0, r.output
+    slug, body = web.closeouts[-1]
+    assert slug == "ada" and body["cli_session_id"] == f"huddle:{H}:ada:r1"
+    ref = body["origin_ref"]
+    assert ref["kind"] == "huddle_round" and ref["huddle"] == H and ref["round"] == 1
+    assert ref["member"] == "ada" and ref["leader_report"] is True
+    assert body["summary"].startswith("```huddle") and '"member": "ada"' in body["summary"]
+    assert not web.turn_posts                      # nothing dispatched: no turn to wait on
+    assert json.loads(r.stdout)["reported"] is True
+
+
+def test_report_refuses_a_block_for_someone_else_or_malformed(tmp_path, web):
+    p = write_plan(tmp_path)
+    f = tmp_path / "x.json"
+    f.write_text(json.dumps(r1("eva")))
+    r = run("report", "--plan", str(p), "--round", "1", "--block-file", str(f))
+    assert r.exit_code == 2 and "member must be 'ada'" in r.output
+    f.write_text(json.dumps({"huddle": H, "round": 1, "member": "ada"}))
+    r = run("report", "--plan", str(p), "--round", "1", "--block-file", str(f))
+    assert r.exit_code == 2 and "malformed" in r.output
+    f.write_text(json.dumps({**r1("ada"), "round": 2}))
+    r = run("report", "--plan", str(p), "--round", "1", "--block-file", str(f))
+    assert r.exit_code == 2
+    assert not [c for c in web.closeouts if "huddle_round" in str(c)]
+
+
+def test_prompt_round2_shows_teammates_the_leaders_report(tmp_path, web):
+    web.detail[H] = detail([_cell("ada", 1, r1("ada")), _cell("eva", 1, r1("eva")),
+                            _cell("echo", 1, r1("echo"))])
+    p = write_plan(tmp_path)
+    out = tmp_path / "eva-r2.md"
+    r = run("prompt", "--plan", str(p), "--member", "eva", "--round", "2", "--out", str(out))
+    assert r.exit_code == 0, r.output
+    assert "### ada" in out.read_text() and "ada did x" in out.read_text()
+
+
+def test_proposals_count_a_leaders_cosign(tmp_path, web):
+    r2 = {"huddle": H, "round": 2, "member": "eva", "proposals": [prop("Joint", "eva", ["ada"])]}
+    r3 = {"huddle": H, "round": 3, "member": "ada",
+          "answers": [{"title": "Joint", "lead": "eva", "answer": "co-sign"}]}
+    web.detail[H] = detail([_cell("ada", 1, r1("ada")), _cell("eva", 1, r1("eva")),
+                            _cell("eva", 2, r2), _cell("ada", 3, r3)])
+    props = huddle_cli.collect_proposals(web.detail[H])
+    assert props[0]["answers"] == {"ada": huddle_cli.H.COSIGN}
+
+
+def test_status_lists_the_leader_when_it_reported(web):
+    web.detail[H] = detail([_cell("ada", 1, r1("ada")), _cell("eva", 1, r1("eva"))])
+    r = run("status", "--huddle", H)
+    assert r.exit_code == 0, r.output
+    assert re.search(r"^  ada\s+r1 replied", r.output, re.M)
 
 
 def test_prompt_round3_shows_the_partner_the_joint_asks(tmp_path, web):

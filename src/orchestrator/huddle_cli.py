@@ -14,6 +14,8 @@ Drive (`huddle_store`).
                 (round 3 refuses while two proposals overlap and `--merges` does not resolve it)
     dispatch  → a tagged, parented round turn, pinned to the plan's runner (`plan --runner`:
                 default the leader's own runner — see `runner_pin`)
+    report    → the LEADER's own reply for a round, filed as an already-finished round turn
+                (it cannot dispatch itself: a round turn would wait behind its own turn)
     await     → foreground; exit 0 when every dispatched member settled, 3 = run it again
     status    → per member per round, derived from canopy-web
     resume    → an unfinished huddle < 72 h old, and what to do next
@@ -629,7 +631,8 @@ def plan_cmd(leader, team, type_, members, checkin_run_id, days, principal, shar
         raise HuddleError(f"could not record the huddle's anchor turn: {e}")
     since = now - dt.timedelta(days=days)
     task_cache: dict = {}
-    packs = {m: _member_pack(m, since, task_cache) for m in roster}
+    # The leader reports too (`report`), so it gets a survey of itself like every member.
+    packs = {m: _member_pack(m, since, task_cache) for m in [*roster, leader]}
     try:
         records = _store(repo, local).recent(team)
     except Exception as e:  # noqa: BLE001 — memory is advisory at plan time; file fails loud
@@ -865,7 +868,7 @@ def prompt_cmd(plan_path, member, round_no, critique_path, merges_path, out):
         ctx["critique"] = _bullets(crit.get(member))
         if round_no == 2:
             reports = []
-            for m in plan.get("members") or []:
+            for m in dict.fromkeys([plan["leader"], *(plan.get("members") or [])]):
                 if (m, 1) in blocks:
                     reports.append(f"### {m}\n```json\n{json.dumps(blocks[(m, 1)], indent=2)}\n```")
             ctx["reports"] = "\n\n".join(reports)
@@ -947,6 +950,56 @@ def round3_sections(props: list[dict], blocks: dict, member: str, per: dict) -> 
 def _is_mode_refusal(err: Exception) -> bool:
     msg = str(err).lower()
     return ("-> 403" in msg or "-> 422" in msg) and "mode" in msg
+
+
+@huddle_group.command("report")
+@click.option("--plan", "plan_path", required=True, type=click.Path(exists=True))
+@click.option("--round", "round_no", required=True, type=int)
+@click.option("--block-file", required=True, type=click.Path(exists=True),
+              help="The leader's reply: a ```huddle block (or bare JSON) naming this huddle, "
+                   "round and the leader as `member`.")
+@click.option("--attempt", default=1, show_default=True, type=int,
+              help="Bump to replace a report already filed for this round.")
+def report_cmd(plan_path, round_no, block_file, attempt):
+    """File the LEADER's own reply for a round. The leader takes part like any member — it
+    reports, proposes and co-signs — but it cannot `dispatch` to itself (the fleet runs one turn
+    per agent, so a round turn to the leader would wait behind the leader's own turn forever).
+    So its reply is filed as an already-finished round turn, tagged like a dispatched one:
+    canopy-web shows it as the leader's cell, teammates see it in round 2, and its proposals
+    and co-signs count. Render what to answer with `prompt --member <leader>` first."""
+    plan = _load_plan(plan_path)
+    hid, leader = plan["id"], plan["leader"]
+    ht = H.load_type(plan.get("type") or "work")
+    text = Path(block_file).read_text(encoding="utf-8")
+    block, err = H.extract_block(text, hid, round_no)
+    if block is None:
+        try:
+            block = json.loads(text)
+        except ValueError:
+            raise HuddleError(f"{block_file}: no ```huddle block for {hid} round {round_no}"
+                              + (f" ({err})" if err else ""))
+    if not isinstance(block, dict) or str(block.get("huddle")) != hid \
+            or int(block.get("round") or 0) != round_no:
+        raise HuddleError(f"{block_file}: the block must name huddle {hid} and round {round_no}")
+    if str(block.get("member") or "") != leader:
+        raise HuddleError(f"{block_file}: `report` files the leader's own reply — member must be "
+                          f"{leader!r}, not {block.get('member')!r} (members reply to `dispatch`)")
+    problems = H.validate_block(ht, round_no, block)
+    if problems:
+        raise HuddleError(f"{block_file}: block is malformed: " + "; ".join(problems))
+    fenced = "```huddle\n" + json.dumps(block, indent=1, ensure_ascii=False) + "\n```"
+    ref = {**H.round_origin_ref(hid, plan.get("type") or "work", round_no, leader, attempt),
+           "dispatched_by": leader, "leader_report": True}
+    try:
+        row = _client(leader).post_turn(
+            cli_session_id=f"huddle:{hid}:{leader}:r{round_no}"
+                           + (f":a{attempt}" if attempt > 1 else ""),
+            title=f"huddle {hid} round {round_no} (leader's own report)", summary=fenced,
+            source="huddle", emdash_task_id="", origin_ref=ref)
+    except (CanopyError, RuntimeError) as e:
+        raise HuddleError(f"could not file {leader}'s round-{round_no} report: {e}")
+    _emit({"huddle": hid, "member": leader, "round": round_no, "attempt": attempt,
+           "turn_id": (row or {}).get("id"), "reported": True})
 
 
 @huddle_group.command("dispatch")
@@ -1062,7 +1115,9 @@ def status_cmd(hid):
                 + (f" a{c.get('attempt')}" if int(c.get("attempt") or 1) > 1 else ""))
     click.echo(f"{hid} — {detail.get('type')} · team {detail.get('team')} · leader "
                f"{detail.get('leader')} · {'finished' if detail.get('finished') else 'in flight'}")
-    for m in detail.get("members") or sorted(per):
+    leader = detail.get("leader")
+    for m in [*(detail.get("members") or sorted(per)),
+              *([leader] if leader in per and leader not in (detail.get("members") or []) else [])]:
         click.echo(f"  {m:<10} " + ("  ".join(per.get(m, [])) or "not dispatched"))
 
 
