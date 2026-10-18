@@ -107,11 +107,11 @@ def pull(ref: str, repo: Path, force: bool = False) -> dict:
     cdir = _cache_dir(ref)
     cdir.mkdir(parents=True, exist_ok=True)
     stamp_path = cdir / "pulled.json"
-    stamp = json.loads(stamp_path.read_text()) if stamp_path.exists() else {}
+    stamp = json.loads(stamp_path.read_text(encoding="utf-8")) if stamp_path.exists() else {}
     remote_mod = f.get("modifiedTime") or f.get("modified") or ""
     if not force and (cdir / KB_FILE).exists() and stamp.get("file_id") == f["id"] and stamp.get("modified") == remote_mod:
         stamp.update(checked_at=_now())
-        stamp_path.write_text(json.dumps(stamp, indent=2))
+        stamp_path.write_text(json.dumps(stamp, indent=2), encoding="utf-8")
         return {"kb": ref, "path": str(cdir / KB_FILE), "pulled": False, "reason": "cache is current"}
     tmp = cdir / (KB_FILE + ".download")
     raw = cdir / (KB_FILE + ".raw")
@@ -127,7 +127,7 @@ def pull(ref: str, repo: Path, force: bool = False) -> dict:
     KB(tmp)  # refuse a file that is not a readable KB before replacing the cache
     tmp.replace(cdir / KB_FILE)
     stamp = {"file_id": f["id"], "folder": folder, "modified": remote_mod, "pulled_at": _now(), "checked_at": _now()}
-    stamp_path.write_text(json.dumps(stamp, indent=2))
+    stamp_path.write_text(json.dumps(stamp, indent=2), encoding="utf-8")
     return {"kb": ref, "path": str(cdir / KB_FILE), "pulled": True, "modified": remote_mod}
 
 
@@ -161,7 +161,7 @@ def open_kb(ref: str, repo: Path, max_age_hours: float = 24.0) -> tuple[KB, str]
     stamp_path = cdir / "pulled.json"
     stale = True
     if (cdir / KB_FILE).exists() and stamp_path.exists():
-        checked = json.loads(stamp_path.read_text()).get("checked_at", "")
+        checked = json.loads(stamp_path.read_text(encoding="utf-8")).get("checked_at", "")
         try:
             age = _dt.datetime.now(_dt.timezone.utc) - _dt.datetime.strptime(checked, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc)
             stale = age.total_seconds() > max_age_hours * 3600

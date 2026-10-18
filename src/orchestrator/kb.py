@@ -113,7 +113,7 @@ def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
     manifest_path = bundle / "manifest.json"
     if not manifest_path.exists():
         raise KBError(f"{bundle}: no manifest.json")
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     items_path = bundle / "items.jsonl"
     if not items_path.exists():
         raise KBError(f"{bundle}: no items.jsonl")
