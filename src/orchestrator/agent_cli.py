@@ -620,8 +620,9 @@ def agent_prepare(slugs, runner_mode, agent_root, repo_url, credentials_only, en
                                    "env": rep.env, "plugins": rep.plugins, "token": rep.token,
                                    "gmail": rep.gmail, "notes": rep.notes}))
         else:
+            mail = ("email canopy-hosted" if rep.gmail == "canopy-hosted" else f"gmail {rep.gmail}")
             click.echo(f"{slug}: {'OK' if rep.ok else 'PROBLEMS'} — env {rep.env}, plugins "
-                       f"{rep.plugins}, token {rep.token}, gmail {rep.gmail}, turn {rep.turn}")
+                       f"{rep.plugins}, token {rep.token}, {mail}, turn {rep.turn}")
             for n in rep.notes:
                 click.echo(f"  {n}")
     sys.exit(1 if bad else 0)

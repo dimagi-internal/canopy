@@ -530,3 +530,25 @@ def test_an_unreachable_access_route_means_the_default_path():
     c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
                                     transport=transport)
     assert c.credential_source == "" and (c.vault, c.key) == ("V", "k")
+
+
+def test_a_canopy_hosted_mailbox_needs_no_gmail_token_and_is_ready(tmp_path):
+    # An address on the workspace's own mail domain: canopy-web receives and sends it, so a
+    # missing gog token is not a broken mailbox (it used to fail "no gog token" forever).
+    _repo(tmp_path / "agents")
+    creds = _creds(mailbox="scout@marshellis.com", mailbox_backend="ses", vault="",
+                   key="", credential_source="canopy-web")
+    rep = _prep(tmp_path, Box(tmp_path), creds=creds).prepare("ace", credentials_only=True)
+    assert rep.ok, rep.notes
+    assert rep.gmail == "canopy-hosted" and rep.mailbox_ok and rep.turn_ready is True
+    assert any("canopy-hosted email" in n for n in rep.notes)
+
+
+def test_a_hosted_mailbox_stages_an_optional_google_sign_in_for_drive(tmp_path):
+    _repo(tmp_path / "agents")
+    box = Box(tmp_path, vault_items={
+        "Agent-Ace/gog-token/credential": _token(),
+        "Canopy-Shared/gog-oauth-client/credential": '{"installed": {}}'})
+    rep = _prep(tmp_path, box, creds=_creds(mailbox_backend="ses")).prepare("ace", credentials_only=True)
+    assert rep.ok and rep.gmail == "canopy-hosted" and rep.gog_client == "canopy"
+    assert any("Drive" in n for n in rep.notes)
