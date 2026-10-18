@@ -85,13 +85,17 @@ def forget() -> None:
 
 
 def token(base_url: str, transport=None) -> str:
-    """This machine's runner token for ``base_url``, or "" when it is no runner (no
-    ``~/.canopy/runner.json``), has no approved device key, or opted out. Never raises."""
+    """This machine's runner token for ``base_url``, or "" when it is no runner, has no
+    approved device key, or opted out. Never raises.
+
+    The runner id is a laptop's ``~/.canopy/runner.json``, else the runner its device key
+    is registered for — a cloud box keeps no runner.json, only the key's status."""
     if os.environ.get("CANOPY_DEVICE_KEY", "1").strip() == "0":
         return ""
     from orchestrator import device_key
 
-    runner_id = device_key.runner_id_from_config()
+    runner_id = (device_key.runner_id_from_config()
+                 or str(device_key.read_status().get("runner") or "").strip())
     if not runner_id:
         return ""
     cached = _cached(runner_id, base_url)

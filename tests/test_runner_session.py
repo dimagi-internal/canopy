@@ -115,4 +115,12 @@ def test_no_runner_or_opted_out_means_no_fallback(box, monkeypatch):
     assert runner_session.token(BASE) == ""
     monkeypatch.delenv("CANOPY_DEVICE_KEY")
     monkeypatch.setattr(device_key, "runner_id_from_config", lambda path=None: "")
+    monkeypatch.setattr(device_key, "read_status", lambda: {})
     assert runner_session.token(BASE) == "" and box == []
+
+
+def test_a_cloud_box_finds_its_runner_in_the_device_key_status(box, monkeypatch):
+    """No ~/.canopy/runner.json on an EC2 box — the key's status names the runner."""
+    monkeypatch.setattr(device_key, "runner_id_from_config", lambda path=None: "")
+    monkeypatch.setattr(device_key, "read_status", lambda: {"runner": "r-cloud", "status": "active"})
+    assert runner_session.token(BASE) == "crt_box" and box == ["r-cloud"]
