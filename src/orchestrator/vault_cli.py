@@ -642,7 +642,8 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh
         click.echo(json.dumps(run_ecdh_jwk(kind), sort_keys=True))
         return
     runner_id = runner_id or device_key.runner_id_from_config()
-    web = _web(_token()) if (enroll or reenroll or refresh) else None
+    token = _token() if (enroll or reenroll or refresh) else ""
+    web = _web(token) if token else None
     try:
         if reenroll:
             old = device_key.read_status()
@@ -654,7 +655,9 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh
                                "revoke it in canopy-web", err=True)
             device_key.remove_local()
         if enroll or reenroll:
-            st = device_key.enroll(runner_id=runner_id, call=web, label=label, kind=kind)
+            # A token revoked before this box had a key: ask through the stranded door.
+            st = device_key.enroll(runner_id=runner_id, call=web, label=label, kind=kind,
+                                   owner_token=token)
         elif refresh:
             st = device_key.refresh(runner_id=runner_id or device_key.read_status().get("runner", ""),
                                     call=web)
