@@ -54,11 +54,14 @@ class Box:
         self.pull_fails, self.clone_fails = pull_fails, clone_fails
         self.gog_live, self.accounts = gog_live, accounts or []
         self.markets, self.plugins = set(), set()
+        self.envs = []               # (argv, full env) per call
+        self.setup_result = None     # what `bash bin/<slug>-setup` returns (default: ok)
 
     def __call__(self, argv, **kw):
         env = kw.get("env") or {}
         self.calls.append((list(argv), env.get("OP_SERVICE_ACCOUNT_TOKEN"), env.get("GH_TOKEN"),
                            kw.get("cwd")))
+        self.envs.append((list(argv), dict(env)))
         ok = SimpleNamespace(returncode=0, stdout="", stderr="")
         bad = lambda e: SimpleNamespace(returncode=1, stdout="", stderr=e)  # noqa: E731
         cmd = argv[0]
@@ -112,7 +115,7 @@ class Box:
                                        stderr="")
             return ok
         if cmd == "bash":
-            return ok
+            return self.setup_result or ok
         return ok
 
     def ran(self, head):
@@ -297,6 +300,55 @@ def test_the_provisioner_gets_only_this_agents_key(tmp_path):
     _prep(tmp_path, box).prepare("ace")
     (setup,) = box.ran(["bash"])
     assert setup[1] == AGENT_KEY and setup[0][-1] == "--skip-doctor"
+
+
+def test_the_provisioner_is_handed_the_vault_and_the_env_this_pass_filled(tmp_path):
+    """bin/<slug>-setup must not re-resolve what prepare already did: re-resolving goes
+    through `canopy agent env`, which needs a person's token a runner never has
+    (cloud-ec2-2, 2026-10-18: ACE's setup failed every pass at exactly that step)."""
+    _repo(tmp_path / "agents", setup=True)
+    box = Box(tmp_path)
+    rep = _prep(tmp_path, box).prepare("ace")
+    assert rep.env_ok is True
+    ((argv, env),) = [e for e in box.envs if e[0][0] == "bash"]
+    assert env["AGENT_VAULT"] == "Agent-Ace" and env["AGENT_SLUG"] == "ace"
+    assert env["AGENT_ENV_FILE"] == str(tmp_path / "home" / ".ace" / ".env")
+    assert Path(env["AGENT_ENV_FILE"]).read_text() == "CANOPY_WEB_PAT=x\n"
+    assert env["CLAUDE_PLUGIN_DATA"].endswith("plugins/data/ace-ace")
+
+
+def test_a_failed_env_step_hands_the_provisioner_no_env_file(tmp_path):
+    _repo(tmp_path / "agents", setup=True)
+    box = Box(tmp_path)
+    # The wrong key: op inject fails, so there is no freshly filled env to hand over.
+    rep = _prep(tmp_path, box, creds=_creds(key="ops_WRONG")).prepare("ace")
+    assert rep.env_ok is False
+    ((argv, env),) = [e for e in box.envs if e[0][0] == "bash"]
+    assert "AGENT_ENV_FILE" not in env and env["AGENT_VAULT"] == "Agent-Ace"
+
+
+def test_a_failed_provisioner_reports_its_fail_line_not_its_info_banner(tmp_path):
+    _repo(tmp_path / "agents", setup=True)
+    box = Box(tmp_path)
+    box.setup_result = SimpleNamespace(returncode=1, stderr="", stdout=(
+        "INFO plugin_root=/home/ubuntu/.claude/plugins/cache/ace/ace/0.13.2041 (source=x)\n"
+        "PASS op: authenticated as service-account\n"
+        "FAIL instance: canopy could not resolve this install's ACE instance and vault. "
+        "canopy said:\n"
+        "Error: not signed in to canopy-web — run /canopy:canopy-web-pat-mint, then re-run.\n"
+        "  fix: several instances → re-run /ace:setup --agent <instance>\n"))
+    rep = _prep(tmp_path, box).prepare("ace")
+    (note,) = [n for n in rep.notes if n.startswith("provisioner:")]
+    assert "INFO plugin_root" not in note
+    assert "FAIL instance: canopy could not resolve" in note
+    assert "not signed in to canopy-web" in note
+
+
+def test_setup_failure_falls_back_to_the_last_line():
+    assert ap._setup_failure("INFO a\nsomething broke\n", "") == "something broke"
+    assert ap._setup_failure("", "") == "(no output)"
+    assert ap._setup_failure("INFO a\n", "fatal: repository not found\n") == \
+        "fatal: repository not found"
 
 
 def test_turn_readiness_names_a_real_mismatch(tmp_path):
