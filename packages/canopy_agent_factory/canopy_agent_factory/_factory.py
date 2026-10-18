@@ -372,16 +372,21 @@ _ENV_TPL = '''# {{AGENT_NAME}}'s env template — the fleet-standard `.env.tpl` 
 # never the literal value. For a non-env credential FILE (e.g. an OAuth-client json), don't put
 # it here — `op read` it directly into the file instead.
 #
-# The gog OAuth client is the SHARED fleet app (`canopy`), not per-agent: a gog "client" is the
-# APP identity (client_id + client_secret), reused by every agent's mailbox. The per-agent,
-# never-shared identity is the mailbox ({{MAILBOX}}).
+# TWO BACKENDS, ONE TEMPLATE. Where the values come from is the agent's `credential_source` on
+# canopy-web, not this file:
+#   * canopy-web (the Canopy vault — no 1Password needed): a runner writes ~/.{{AGENT_SLUG}}/.env
+#     straight from the values canopy-web holds for this agent, each named by the ITEM in its
+#     reference below (`canopy-pat` → CANOPY_WEB_PAT). Fill them in the agent's Credentials on
+#     canopy-web; its setup checklist names what is missing.
+#   * 1password: `op inject` resolves the references against the instance's vault. Fill it with
+#     `canopy agent vault --slug {{AGENT_SLUG}}` (a person with 1Password rights): it MINTS what
+#     the system can (CANOPY_WEB_PAT), and ASKS only for what a person alone has.
+# Add a line here and both paths pick it up.
 #
-# FILLING THE VAULT: `canopy agent vault --slug {{AGENT_SLUG}}` (run once by a person with
-# 1Password rights; the canopy-web setup checklist's "Give it a vault" step). It creates
-# every item referenced below and fills it: it MINTS what the system can (CANOPY_WEB_PAT,
-# this agent's own canopy-web identity), points at the control for what another flow makes
-# (the Gmail token: Connect Google mailbox), and ASKS only for what a person alone has (an
-# outside service's key). Add a line here, re-run it, and it asks for the new value.
+# EMAIL. A mailbox on the workspace's canopy-hosted domain needs NO secret at all: canopy-web
+# receives and sends it, and `canopy email` routes there by itself. Only a Google mailbox needs a
+# Gmail token (Connect Google mailbox) and the SHARED fleet gog OAuth client (`canopy`) — the APP
+# identity reused by every agent; the per-agent identity is the mailbox ({{MAILBOX}}).
 
 {{AGENT_SLUG}}_PRIMARY_CHANNEL={{MAILBOX}}
 CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential
@@ -567,18 +572,21 @@ follows it: preflight → process inbound (one counterpart at a time) → skill 
    checklist's job; hook modals stall autonomous work).
 4. Declare secrets in `.env.tpl` as `op://${AGENT_VAULT}/<item>/<field>` (never a vault name, and
    never any secret reference in a comment, even a placeholder — `op inject` parses comments and
-   one breaks the whole file) and run
-   `/{{AGENT_SLUG}}:setup`: it binds this install to one agent instance on canopy-web and fills
-   `~/.{{AGENT_SLUG}}/.env` from that instance's recorded vault (`canopy agent env`), read by
-   `bin/_env.py`. The instance's owner records its vault on canopy-web (/agents/<slug>).
-5. The agent's own thing is its MAILBOX ({{MAILBOX}}); the gog OAuth client is the SHARED fleet
-   app — one Google app with two clients, `canopy` (a laptop's `gog login`) and `canopy-web`
-   (canopy-web's "Connect Google mailbox" button), and a token under either serves every turn.
-   Sign the mailbox in once through either door: the agent's Settings → Credentials → **Connect
-   Google mailbox** in canopy-web, or `gog login {{MAILBOX}} --client canopy --services
-   gmail,drive,docs,sheets,forms,appscript` (its credentials json via `op read` — see `.env.tpl`'s
-   header). Never type a client in a gog command — use `"$(canopy email client --repo .)"`. Verify
-   with `canopy email preflight --repo .`; send via `bin/{{AGENT_SLUG}}-email`.
+   one breaks the whole file). On the **Canopy vault** (canopy-web, no 1Password) a runner writes
+   `~/.{{AGENT_SLUG}}/.env` from the values stored in the agent's Settings → Credentials, named by
+   each reference's item; on **1Password**, `/{{AGENT_SLUG}}:setup` fills it from the instance's
+   recorded vault (`canopy agent env`). Either way `bin/_env.py` reads it.
+5. The agent's own thing is its MAILBOX ({{MAILBOX}}).
+   - **Canopy-hosted** (an address on the workspace's own mail domain): nothing to sign in.
+     canopy-web routes mail to the agent when it is created and sends as it; `canopy email`
+     finds the route itself, and turns get a canopy-web thread UUID. A Google sign-in for the same
+     address is optional — only for Drive/Docs.
+   - **Google** (Gmail / Google Workspace mail): sign it in once — the agent's Settings →
+     Credentials → **Connect Google mailbox**, or `gog login {{MAILBOX}} --client canopy --services
+     gmail,drive,docs,sheets,forms,appscript`. The gog OAuth client is the SHARED fleet app (`canopy`
+     on a laptop, `canopy-web` from the button); never type a client in a gog command — use
+     `"$(canopy email client --repo .)"`.
+   Verify with `canopy email preflight --repo .`; send via `bin/{{AGENT_SLUG}}-email`.
 '''
 
 _GITIGNORE = '''.env

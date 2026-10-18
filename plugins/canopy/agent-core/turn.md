@@ -229,6 +229,17 @@ inbox scan (the harness runner passes the ref because it already resolved it —
 re-resolving). Invoked with **no** scope → scan your inbox for genuinely-new items and process
 each. Either way, the per-item rules below apply.
 
+**A `--thread` ref has two shapes — tell them apart before you read it.** On a **canopy-hosted**
+address (the workspace's own mail domain, run through canopy-web/SES — no Gmail, nothing signed in)
+the ref is a **UUID** (`8-4-4-4-12` hex), the canopy-web thread id. Read it with
+`canopy email thread <uuid>` (plain text, every message) and answer with
+`canopy email send --reply-all --thread-id <uuid> --subject … --body-file …`; mark it handled with
+`canopy email mark-read <uuid>` / `canopy email archive <uuid>`. These are the same commands as for
+Gmail — `canopy email` asks canopy-web which backend your mailbox is on (`/api/mail/resolve`) and
+routes itself — so never reach for `gog gmail` on a UUID, and never treat "no Gmail token" as a
+broken mailbox on a hosted address: `canopy agent prepare` reports it as `email canopy-hosted`.
+Any other ref is a **Gmail thread id** (hex, no dashes) and reads with `canopy email read <id>`.
+
 **But a scoped turn is not necessarily the ONLY turn on that ref — check before you work it.** The
 poller fires on **unread**, and a manual-mode turn leaves its thread unread for exactly as long as
 its reply sits at the approval gate. So a thread whose draft is waiting on a human is a thread the

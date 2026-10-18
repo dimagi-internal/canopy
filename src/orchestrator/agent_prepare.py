@@ -74,6 +74,9 @@ class RunnerCredentials:
     shared_key: str = field(default="", repr=False)
     github_token: str = field(default="", repr=False)
     mailbox: str = ""
+    #: Where `mailbox` lives (canopy-web): "ses" = canopy-hosted — mail goes through
+    #: canopy-web (`canopy email`), there is no Gmail to sign in; "google"/"" = Gmail via gog.
+    mailbox_backend: str = ""
     web_gog_token: Optional[str] = field(default=None, repr=False)
     repo_url: str = ""
     error: str = ""
@@ -160,6 +163,7 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         shared_vault=str(body.get("shared_op_vault") or ""),
         shared_key=str(body.get("shared_op_sa_token") or ""),
         github_token=str(body.get("github_token") or ""), mailbox=str(body.get("mailbox") or ""),
+        mailbox_backend=str(body.get("mailbox_backend") or ""),
         web_gog_token=((body.get("values") or {}).get("gog-token")) or None)
 
 
@@ -553,7 +557,9 @@ class RunnerPreparer(Bootstrapper):
                     step()
                 except Exception as e:  # noqa: BLE001 — one step must not sink the agent
                     rep.fail(f"unexpected error: {_first_line(str(e))}")
-        if c.mailbox:
+        if c.mailbox and c.mailbox_backend == "ses":
+            self._hosted_mailbox(slug, repo, c, rep)
+        elif c.mailbox:
             tok = None
             try:
                 tok = self.step_token(slug, repo, rep)
@@ -573,6 +579,32 @@ class RunnerPreparer(Bootstrapper):
         if report:
             self.report(slug, rep)
         return rep
+
+    def _hosted_mailbox(self, slug: str, repo: Path, c: RunnerCredentials, rep: RunnerReport) -> None:
+        """A canopy-hosted address: mail in is the agent's turn and `canopy email` sends
+        through canopy-web, so there is no Gmail token to check and nothing is broken
+        without one. A Google sign-in for the same address (Drive, Docs — e.g. a free Google
+        Workspace login) is optional: staged when one exists, never a failure when not."""
+        rep.gmail = "canopy-hosted"
+        rep.turn = "OK (canopy-hosted)"
+        rep.mailbox_ok = True
+        rep.turn_ready = True
+        rep.notes.append(f"ok: {c.mailbox} is canopy-hosted email — no Gmail sign-in needed")
+        if not (c.web_gog_token or c.vault):
+            return
+        side = RunnerReport(slug=slug)
+        try:
+            tok = self.step_token(slug, repo, side)
+        except Exception as e:  # noqa: BLE001 — optional: must never sink a hosted agent
+            tok, side.ok = None, False
+            side.notes.append(_first_line(str(e)))
+        if tok is not None and side.ok:
+            rep.token, rep.gog_client = side.token, tok.client
+            rep.client_creds_ok = (self.gog_dir / f"credentials-{tok.client}.json").is_file()
+            rep.notes.append("ok: Google sign-in staged (Drive/Docs)")
+        else:
+            rep.notes.append("google sign-in (optional, for Drive/Docs) not staged: "
+                             + "; ".join(n for n in side.notes if not n.startswith("ok: "))[:200])
 
     def _env_sync(self, slug: str, repo: Path, rep: RunnerReport) -> None:
         """The claim-time refresh: canopy's `cred sync` (the function every agent session's
