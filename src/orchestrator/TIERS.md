@@ -38,7 +38,7 @@ enforce it.
 `session_liveness` ·
 `work_cursor` · `agent_dispatch` · `project_dispatch` · `project_cli` · `project_audit` · `project_folder` · `task_folder` · `runner_cli` · `secret_cli` · `people_cli` · `slack_ingest_cli` · `aws_cli` · `cred_cli` · `cred_resolve` · `device_key` · `device_key_aws` · `device_key_tpm` · `runner_session` · `vault_cli` · `vault_zk` · `vault_zk_cli` · `workspace_cli` ·
 `llm_output` · `decide_guard_prompt` · `decide_guard_cli` · `provenance` ·
-`huddle` · `huddle_store` · `huddle_cli` · `huddle_group_cli` · `huddle_types` · `thread` · `thread_cli` · `runner_pin`
+`huddle` · `huddle_store` · `huddle_cli` · `huddle_group_cli` · `checkin_cli` · `huddle_types` · `thread` · `thread_cli` · `runner_pin`
 
 **HUBS** (orchestration / composition roots — wire product into the CLI, the
 improvement pipeline, and the web server; allowed to import product, like

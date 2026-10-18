@@ -1,8 +1,10 @@
-"""Work-group runs: `canopy huddle plan --group-run`, `file` → proposed projects + backings +
-run finished, and `canopy huddle-group material|finish` — against a fake canopy-web.
+"""Work-group runs on a canopy-web WITHOUT check-ins (the fallback path): `canopy huddle plan
+--group-run` (the old name of `--checkin-run`), `file` → proposed projects + backings + run
+finished through the /api/huddle-groups aliases, and `canopy huddle-group material|finish` (the
+old name of `canopy checkin`) — against a fake canopy-web that serves only the old routes.
 
-The routes follow the spec's contract (docs/superpowers/specs/2026-10-16-work-group-huddles-
-design.md, layers 1 and 3)."""
+The routes follow docs/superpowers/specs/2026-10-16-work-group-huddles-design.md (layers 1, 3);
+the check-in routes are tests/test_checkin.py."""
 import json
 import re
 from urllib.parse import urlparse
@@ -180,10 +182,10 @@ def test_plan_group_run_takes_members_brief_and_material_from_the_group(tmp_path
     assert Hm.brief_items(plan["priorities_brief"]) and "WARNING" not in r.stderr
     _, anchor = web.closeouts[0]
     assert anchor["origin_ref"]["group"] == "ai-champs" and anchor["origin_ref"]["run"] == 41
-    assert plan["group_run"]["read"]["messages"] == 2
-    assert "Prompt library (lead eva, proposed)" in plan["group_reactions"]
-    assert 'maria@dimagi.com: backs_with_changes — "only if it covers Spanish"' in plan["group_reactions"]
-    assert 'reply from neal@dimagi.com: "Do the library first"' in plan["group_reactions"]
+    assert plan["checkin_run"]["read"]["messages"] == 2 and plan["checkin_run"]["via"] == "huddle-groups"
+    assert "Prompt library (lead eva, proposed)" in plan["checkin_reactions"]
+    assert 'maria@dimagi.com: backs_with_changes — "only if it covers Spanish"' in plan["checkin_reactions"]
+    assert 'reply from neal@dimagi.com: "Do the library first"' in plan["checkin_reactions"]
 
 
 def test_group_material_is_quoted_into_rounds_1_and_2_only(tmp_path, web):
@@ -219,7 +221,7 @@ def test_plan_refuses_an_ended_run_and_a_foreign_leader(tmp_path, web):
 def test_plan_refuses_a_one_agent_group(tmp_path, web):
     web.group["agents"] = ["ada"]
     r, _ = _plan(tmp_path)
-    assert r.exit_code == 2 and "single-agent turn" in r.output
+    assert r.exit_code == 2 and "solo turn" in r.output
 
 
 def test_dispatch_refused_by_canopy_web_is_not_reached_not_a_crash(tmp_path, web):
