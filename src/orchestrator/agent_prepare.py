@@ -92,14 +92,37 @@ REFRESH_EXTRAS = ("op_sa_token", "shared_op_sa_token")
 REFRESH_VALUES = ("gog-token",)
 
 
+CHECK_PREFIX = "check: "
+
+
+def verification_purpose(why: str = "") -> str:
+    """The X-Canopy-Read-Purpose of a person's (or an agent's) verification run — not the
+    box's own refresh. canopy-web still raises its read-outside-a-turn alert for it (a
+    header proves nothing; a stolen token could send it too), only worded as the labelled
+    check it says it is, so an expected check reads as expected."""
+    import getpass
+    import socket
+
+    try:
+        who = f"{getpass.getuser()}@{socket.gethostname().split('.')[0]}"
+    except Exception:  # noqa: BLE001
+        who = "unknown"
+    label = " ".join((why or "verification run").split())[:120]
+    return f"{CHECK_PREFIX}{label} (by {who})"
+
+
 def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
                              transport: Optional[canopy_web.Transport] = None,
-                             minimal: bool = False) -> RunnerCredentials:
+                             minimal: bool = False, purpose: str = "") -> RunnerCredentials:
     """`/credentials/resolve` with the runner's token. Unreachable is not unregistered: it
     returns an `error` the report states, so a human retries instead of registering.
 
     `minimal`: the credentials-only pass — ask only for REFRESH_EXTRAS and those of
-    REFRESH_VALUES the agent declares (an undeclared name would raise an owner alert)."""
+    REFRESH_VALUES the agent declares (an undeclared name would raise an owner alert).
+
+    `purpose`: what the read says it is (X-Canopy-Read-Purpose). Default the box's own
+    refresh; a person's verification run says `check: …` (see `verification_purpose`),
+    which canopy-web still alerts on, labelled, rather than staying quiet."""
     # Where the agent's code lives — canopy-web's record (`/runtime`), never a convention: an
     # agent in another org or under another name would otherwise clone the wrong repo.
     try:
@@ -119,7 +142,7 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         # maintenance every hour (canopy-web#1563).
         body = cred_resolve.resolve(slug, base_url=base_url, token=token,
                                     transport=transport, refs=refs, fallback=not minimal,
-                                    purpose=cred_resolve.RUNNER_REFRESH) or {}
+                                    purpose=purpose or cred_resolve.RUNNER_REFRESH) or {}
     except Exception as e:  # noqa: BLE001
         return RunnerCredentials(error=f"could not reach canopy-web for {slug}'s credentials: "
                                        f"{_first_line(str(e), 200)}")
@@ -187,7 +210,7 @@ class RunnerPreparer(Bootstrapper):
                  plugin_deps_root: Optional[Path] = None,
                  transport: Optional[canopy_web.Transport] = None,
                  creds_for: Optional[Callable[[str], RunnerCredentials]] = None,
-                 runner_name: str = "", **kw):
+                 runner_name: str = "", purpose: str = "", **kw):
         self.base_url, self.token, self.transport = base_url, token, transport
         self.agent_root = Path(agent_root)
         self.plugin_deps_root = Path(plugin_deps_root or
@@ -195,7 +218,8 @@ class RunnerPreparer(Bootstrapper):
         self.runner_name = runner_name or os.uname().nodename
         self._minimal = False   # set by prepare(credentials_only=True)
         self._creds_for = creds_for or (lambda s: fetch_runner_credentials(
-            s, base_url=base_url, token=token, transport=transport, minimal=self._minimal))
+            s, base_url=base_url, token=token, transport=transport, minimal=self._minimal,
+            purpose=purpose))
         self._creds: dict[str, RunnerCredentials] = {}
         self._slug = ""
         super().__init__(vault_for=self._vault_for, web_token=self._web_token, **kw)

@@ -343,6 +343,34 @@ def test_runner_credentials_say_they_are_a_box_refresh():
     assert seen and seen[0]["X-Canopy-Read-Purpose"] == "runner-refresh"
 
 
+def test_a_verification_run_labels_its_reads_as_a_check():
+    """A person's (or agent's) `prepare --check WHY` is not the box's refresh: it says so,
+    and canopy-web alerts on it worded as that check (never silently)."""
+    seen = []
+
+    def transport(method, url, headers, data):
+        if "/credentials/resolve" in url:
+            seen.append(dict(headers))
+        return 200, '{"op_vault": "V"}'
+
+    purpose = ap.verification_purpose("vault laptop check")
+    ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t", transport=transport,
+                                purpose=purpose)
+    got = seen[0]["X-Canopy-Read-Purpose"]
+    assert got.startswith("check: vault laptop check (by ") and got.endswith(")")
+
+
+def test_prepare_purpose_from_the_cli(monkeypatch):
+    from orchestrator import agent_cli
+
+    assert agent_cli._prepare_purpose("why").startswith("check: why (by ")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    assert agent_cli._prepare_purpose(None) == ""                 # the box's own refresh
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.delenv("CANOPY_TURN_ID", raising=False)
+    assert agent_cli._prepare_purpose(None).startswith("check: interactive run (by ")
+
+
 # ── the credentials-only pass asks for only what it uses (canopy-web#1563) ──────
 
 def _recording(secret_refs):
