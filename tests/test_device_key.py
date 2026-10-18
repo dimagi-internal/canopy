@@ -206,6 +206,34 @@ def test_enroll_refuses_a_thumbprint_mismatch(keydir):
     assert dk.read_status() == {}
 
 
+def _refused(*_a):
+    raise RuntimeError("canopy-web refused POST /api/runner-device-keys/: -> 401: Authentication required")
+
+
+def test_a_revoked_token_asks_through_the_stranded_door(keydir):
+    """canopy-web#1611: a box whose PAT was revoked before it had a key still gets a
+    PENDING key — the token rides in the body, the key proves itself with DPoP."""
+    seen = {}
+
+    def transport(method, url, headers, data):
+        body = json.loads(data)
+        seen.update(url=url, headers=headers, body=body)
+        return 201, json.dumps({"id": 9, "jkt": dk.jwk_thumbprint(body["public_jwk"]),
+                                "status": "pending", "approve_url": "https://c.test/approve/9"})
+
+    st = dk.enroll(runner_id="r-1", call=_refused, allow_software=True, base_url="https://c.test",
+                   owner_token="old-pat", transport=transport)
+    assert seen["url"] == "https://c.test/api/runner-device-key-requests/"
+    assert "Authorization" not in seen["headers"] and seen["headers"]["DPoP"].count(".") == 2
+    assert seen["body"]["owner_token"] == "old-pat" and seen["body"]["runner"] == "r-1"
+    assert st["status"] == "pending" and st["approve_url"].endswith("/9")
+
+
+def test_without_a_token_a_refusal_stands(keydir):
+    with pytest.raises(RuntimeError, match="401"):
+        dk.enroll(runner_id="r-1", call=_refused, allow_software=True)
+
+
 def test_enroll_needs_a_runner(keydir):
     with pytest.raises(dk.DeviceKeyError, match="runner"):
         dk.enroll(runner_id="", call=lambda *a: {}, allow_software=True)

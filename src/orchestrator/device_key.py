@@ -76,6 +76,9 @@ DIR_ENV = "CANOPY_DEVICE_KEY_DIR"
 PROOF_STATUSES = ("active", "pending")
 
 REGISTER_PATH = "/api/runner-device-keys/"
+#: A runner whose token was revoked asks here instead (canopy-web#1611): anonymous,
+#: the owner's token in the body plus a proof of the key; lands pending only.
+REQUEST_PATH = "/api/runner-device-key-requests/"
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -707,6 +710,7 @@ Call = Callable[..., dict]
 
 def enroll(*, runner_id: str, call: Call, label: str = "", allow_software: Optional[bool] = None,
            kind: Optional[str] = None, base_url: Optional[str] = None,
+           owner_token: str = "", transport=None,
            runner: Runner = subprocess.run,
            which: Callable[[str], Optional[str]] = shutil.which, **ensure_kw) -> dict:
     """Ensure a key exists and is registered for `runner_id`; returns the cached status
@@ -716,7 +720,12 @@ def enroll(*, runner_id: str, call: Call, label: str = "", allow_software: Optio
     `call(method, path, body)` is canopy-web, already authenticated. Re-posting the same
     key is idempotent on the server, so this is safe on every runner start. An aws-iam
     identity registers ``{runner, kind, role_arn, proof}`` instead of a JWK: canopy-web
-    replays the proof to STS and creates the pending key only if the ARN matches."""
+    replays the proof to STS and creates the pending key only if the ARN matches.
+
+    ``owner_token``: when canopy-web refuses the token (401 — revoked in a cleanup
+    before this box ever had a key), ask through ``REQUEST_PATH`` instead with that same
+    token and a proof of the key: canopy-web makes a PENDING key and emails its owner the
+    approve link (canopy-web#1611)."""
     if not runner_id:
         raise DeviceKeyError("no runner id — pair this machine as a runner first "
                              "(~/.canopy/runner.json has none), or pass --runner")
@@ -732,22 +741,30 @@ def enroll(*, runner_id: str, call: Call, label: str = "", allow_software: Optio
     except DeviceKeyError as e:
         ecdh_note = str(e)
     extra = {"ecdh_public_jwk": ecdh.public_jwk} if ecdh is not None else {}
+    from orchestrator import canopy_web
+    base = canopy_web.resolve_base_url(base_url)
     if key.kind == KIND_AWS_IAM:
-        from orchestrator import canopy_web
         from orchestrator import device_key_aws as aws
         creds = aws.instance_credentials()
         if creds is None:
             raise DeviceKeyError("the instance role's credentials are not available from the "
                                  "instance metadata service — cannot prove the role")
-        htu = normalize_htu(canopy_web.resolve_base_url(base_url) + REGISTER_PATH)
-        body = call("POST", REGISTER_PATH, {"runner": runner_id, "kind": key.kind,
-                                             "role_arn": key.role_arn, "label": label,
-                                             "proof": aws.proof(creds, htu), **extra})
-        jkt = str(body.get("jkt") or key.jkt)    # the server's: sha256 of the role ARN
+
+        def payload(path: str) -> dict:
+            return {"runner": runner_id, "kind": key.kind, "role_arn": key.role_arn,
+                    "label": label, "proof": aws.proof(creds, normalize_htu(base + path)), **extra}
     else:
-        body = call("POST", REGISTER_PATH, {"runner": runner_id, "public_jwk": key.public_jwk,
-                                             "kind": key.kind, "label": label, **extra})
-        jkt = str(body.get("jkt") or key.jkt)
+        def payload(path: str) -> dict:
+            return {"runner": runner_id, "public_jwk": key.public_jwk, "kind": key.kind,
+                    "label": label, **extra}
+    try:
+        body = call("POST", REGISTER_PATH, payload(REGISTER_PATH))
+    except Exception as e:  # noqa: BLE001 — only a refused token is retried below
+        if not (owner_token and "-> 401" in str(e)):
+            raise
+        body = _request_as_stranded(key, payload(REQUEST_PATH), owner_token, base, transport)
+    jkt = str(body.get("jkt") or key.jkt)    # aws-iam: the server's sha256 of the role ARN
+    if key.kind != KIND_AWS_IAM:
         if jkt != key.jkt:
             raise DeviceKeyError(f"canopy-web registered thumbprint {jkt}, but this key's is "
                                  f"{key.jkt} — refusing to cache a mismatch")
@@ -765,6 +782,23 @@ def enroll(*, runner_id: str, call: Call, label: str = "", allow_software: Optio
         status["ecdh_note"] = ecdh_note[:300]
     write_status(status)
     return {**status, "created": created}
+
+
+def _request_as_stranded(key: DeviceKey, body: dict, owner_token: str, base: str,
+                         transport=None) -> dict:
+    """POST ``REQUEST_PATH`` with no Authorization: the owner's (revoked) token rides in
+    the body, and a key that signs proves itself with a DPoP proof for this URL."""
+    from orchestrator import canopy_web
+    url = base + REQUEST_PATH
+    headers = {**canopy_web.provenance_headers(), "Content-Type": "application/json"}
+    if key.kind != KIND_AWS_IAM:
+        headers["DPoP"] = dpop_proof(key, "POST", url)
+    status, text = (transport or canopy_web.urllib_transport)(
+        "POST", url, headers, json.dumps({**body, "owner_token": owner_token}).encode("utf-8"))
+    if status not in (200, 201):
+        raise DeviceKeyError(f"canopy-web refused this runner's device key request ({status}): "
+                             f"{text[:300]}")
+    return json.loads(text)
 
 
 def refresh(*, runner_id: str, call: Call) -> dict:
