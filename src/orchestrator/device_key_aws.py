@@ -20,7 +20,9 @@ Header (``X-Canopy-Aws-Proof``): standard base64 of compact JSON::
 
 ``X-Canopy-Proof-Htu`` and ``X-Canopy-Proof-Iat`` are among the SIGNED headers, so a
 captured proof cannot be replayed against another endpoint or later: changing either
-breaks the signature STS checks.
+breaks the signature STS checks. A signed random ``X-Canopy-Proof-Jti`` makes every
+proof distinct, so canopy-web's single-use check never mistakes two honest proofs made
+in the same second for a replay (``JTI_HEADER``).
 
 SigV4 is implemented here with the stdlib (hmac/hashlib) rather than botocore, because
 neither consumer has botocore: the canopy CLI does not depend on it, and canopy-web's
@@ -41,6 +43,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import threading
 import time
 import urllib.error
@@ -51,6 +54,13 @@ from typing import Callable, Optional
 PROOF_HEADER = "X-Canopy-Aws-Proof"
 HTU_HEADER = "X-Canopy-Proof-Htu"
 IAT_HEADER = "X-Canopy-Proof-Iat"
+#: A random nonce, signed with the rest. Without it a proof is a pure function of
+#: (credentials, htu, second), and canopy-web keeps each proof's signature as
+#: single-use — so two resolves of the same URL in the same second (`resolve` and
+#: `resolve?refs=…` share an htu; the query is ignored) made the SAME proof and the
+#: second was refused as replayed: a spurious 401 device_proof_required on an
+#: active aws-iam key (seen on cloud-ec2-2, 2026-10-17).
+JTI_HEADER = "X-Canopy-Proof-Jti"
 
 STS_URL = "https://sts.amazonaws.com/"
 STS_HOST = "sts.amazonaws.com"
@@ -118,14 +128,18 @@ def sigv4_headers(creds: Credentials, *, method: str, url_path: str, host: str, 
 
 
 def signed_get_caller_identity(creds: Credentials, *, htu: str = "", iat: Optional[int] = None,
-                               now: Optional[float] = None) -> dict:
+                               now: Optional[float] = None, jti: Optional[str] = None) -> dict:
     """The unsent request as ``{method, url, headers, body}``. With `htu`, the canopy
-    binding headers (X-Canopy-Proof-Htu, X-Canopy-Proof-Iat) are added and signed."""
+    binding headers (X-Canopy-Proof-Htu, X-Canopy-Proof-Iat, and a fresh
+    X-Canopy-Proof-Jti unless `jti` is given; ``""`` omits it) are added and signed."""
     t = time.time() if now is None else now
     headers = {"Content-Type": STS_CONTENT_TYPE, "Host": STS_HOST}
     if htu:
         headers[HTU_HEADER] = htu
         headers[IAT_HEADER] = str(int(t if iat is None else iat))
+        nonce = secrets.token_hex(16) if jti is None else jti
+        if nonce:
+            headers[JTI_HEADER] = nonce
     amz_date = _dt.datetime.fromtimestamp(t, _dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     signed = sigv4_headers(creds, method="POST", url_path="/", host=STS_HOST, region=STS_REGION,
                            service="sts", body=STS_BODY, headers=headers, amz_date=amz_date)
