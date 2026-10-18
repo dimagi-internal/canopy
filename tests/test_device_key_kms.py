@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import urllib.error
+import urllib.parse
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -45,8 +46,9 @@ class FakeAws:
 
     def __call__(self, req, timeout=None):
         url = req.full_url
-        if url.startswith("http://imds.test"):
-            path = url[len("http://imds.test"):]
+        parts = urllib.parse.urlsplit(url)
+        if parts.netloc == "imds.test":
+            path = parts.path
             if path == "/latest/api/token":
                 return _Resp(b"tok")
             if path == "/latest/meta-data/iam/security-credentials/":
