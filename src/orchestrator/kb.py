@@ -264,7 +264,8 @@ class KB:
         return out
 
     # -- items -----------------------------------------------------------------------
-    def get(self, ref: str, max_chars: int = 20000, passage: int | None = None) -> dict:
+    def get(self, ref: str, max_chars: int = 20000, passage: int | None = None,
+            grep: str = "", context: int = 1) -> dict:
         r = self.db.execute("SELECT * FROM items WHERE id = ? OR url = ? LIMIT 1", (ref, ref)).fetchone()
         if not r:
             raise KBError(f"no item {ref!r}")
@@ -277,6 +278,18 @@ class KB:
             d["text"] = "\n\n".join(b for (b,) in self.db.execute(
                 "SELECT body FROM chunks WHERE item_id = ? ORDER BY ord", (d["id"],)))
         d["passages"] = self.db.execute("SELECT COUNT(*) FROM chunks WHERE item_id = ?", (d["id"],)).fetchone()[0]
+        if grep:  # verify a quote or a number without pulling the whole item into context
+            try:
+                rx = re.compile(grep, re.I)
+            except re.error as e:
+                raise KBError(f"bad --grep pattern: {e}") from e
+            lines = (d["text"] or "").splitlines()
+            hits = [i for i, line in enumerate(lines) if rx.search(line)]
+            d["matches"] = [{"line": i + 1, "text": "\n".join(lines[max(0, i - context): i + context + 1])}
+                            for i in hits[:50]]
+            d["match_count"] = len(hits)
+            del d["text"]
+            return d
         full = len(d["text"] or "")
         if max_chars and full > max_chars:
             d["text"] = d["text"][:max_chars]
