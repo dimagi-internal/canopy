@@ -272,10 +272,12 @@ def search_cmd(kb_ref, repo, max_age_hours, query, types, since, until, limit):
 @click.argument("ref")
 @click.option("--max-chars", type=int, default=20000)
 @click.option("--passage", type=int, default=None)
+@click.option("--grep", default="", help="regex: return only matching lines (case-insensitive), not the text")
+@click.option("--context", type=int, default=1, help="lines of context around each --grep match")
 @_guard
-def get_cmd(kb_ref, repo, max_age_hours, ref, max_chars, passage):
+def get_cmd(kb_ref, repo, max_age_hours, ref, max_chars, passage, grep, context):
     """One item (by id or URL): full text, metadata, fetch date."""
-    _emit(_open(kb_ref, repo, max_age_hours).get(ref, max_chars, passage))
+    _emit(_open(kb_ref, repo, max_age_hours).get(ref, max_chars, passage, grep, context))
 
 
 @kb_group.command("list")
