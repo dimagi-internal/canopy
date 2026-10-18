@@ -194,3 +194,13 @@ def test_push_gzips_and_pull_caches(tmp_path, monkeypatch):
     assert kb_cli.pull(folder, tmp_path)["pulled"] is True       # newer copy in Drive
     kb, warning = kb_cli.open_kb(folder, tmp_path, max_age_hours=24)
     assert warning == "" and kb.summary["items"] == 2
+
+
+def test_get_grep_returns_matching_lines_only(tmp_path):
+    db = tmp_path / "kb.sqlite"
+    build(_bundle(tmp_path, ITEMS), db)
+    d = KB(db).get("p:1", grep="WASH\\w+", context=0)
+    assert d["match_count"] == 1 and "text" not in d
+    assert d["matches"][0]["text"].startswith("WASHmobile")
+    with pytest.raises(KBError):
+        KB(db).get("p:1", grep="(")

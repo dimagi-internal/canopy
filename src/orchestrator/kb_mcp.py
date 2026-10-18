@@ -34,7 +34,9 @@ def _base_tools() -> list[dict]:
              "limit": {**_INT, "default": 10}}}},
         {"name": "get", "description": "One item's full text and metadata, by id or URL (from search results). Long items are truncated; pass passage to read one passage.",
          "inputSchema": {"type": "object", "required": ["ref"], "properties": {
-             "ref": _STR, "max_chars": {**_INT, "default": 20000}, "passage": _INT}}},
+             "ref": _STR, "max_chars": {**_INT, "default": 20000}, "passage": _INT,
+             "grep": {**_STR, "description": "regex; return only matching lines with context (cheap way to verify a quote or number)"},
+             "context": {**_INT, "default": 1}}}},
         {"name": "list_items", "description": "Items newest first, optionally by type and date.",
          "inputSchema": {"type": "object", "properties": {
              "types": {"type": "array", "items": _STR}, "since": _STR, "limit": {**_INT, "default": 50}}}},
@@ -75,7 +77,8 @@ def call_tool(kb: KB, name: str, args: dict, tables: dict[str, dict]):
     if name == "search":
         return kb.search(args["query"], args.get("types"), args.get("since", ""), args.get("until", ""), int(args.get("limit", 10)))
     if name == "get":
-        return kb.get(args["ref"], int(args.get("max_chars", 20000)), args.get("passage"))
+        return kb.get(args["ref"], int(args.get("max_chars", 20000)), args.get("passage"),
+                      args.get("grep", ""), int(args.get("context", 1)))
     if name == "list_items":
         return kb.list_items(args.get("types"), args.get("since", ""), int(args.get("limit", 50)))
     if name == "whats_new":
