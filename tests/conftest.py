@@ -61,6 +61,9 @@ def _no_ambient_device_key(monkeypatch, tmp_path_factory):
     monkeypatch.setenv("CANOPY_AWS_IMDS_URL", "http://127.0.0.1:9")
     from orchestrator import device_key_aws
     device_key_aws._reset_cache()
+    # Nor reuse (or delete) a real runner token this machine cached (canopy-web#1604).
+    from orchestrator import runner_session
+    monkeypatch.setattr(runner_session, "CACHE", tmp_path_factory.mktemp("runner-session") / "t.json")
 
 
 @pytest.fixture(autouse=True)

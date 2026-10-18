@@ -484,9 +484,15 @@ def call(method: str, path: str, body=None, *,
          transport: Optional[Transport] = None,
          headers: Optional[dict] = None) -> dict:
     base = resolve_base_url(base_url)
-    tok = resolve_token(token)
-    path = scoped_api_path(path, workspace)  # → /api/w/<ws>/… when a workspace is active
     transport = transport or urllib_transport
+    try:
+        tok = resolve_token(token)
+    except RuntimeError:
+        # No PAT at all — on a runner, a credential read goes out as the box.
+        tok = _runner_token_for(method, path, base, transport)
+        if not tok:
+            raise
+    path = scoped_api_path(path, workspace)  # → /api/w/<ws>/… when a workspace is active
     # A token the caller handed in is its own statement of identity; one canopy
     # RESOLVED is what goes unexamined, so that is the one a write reads back.
     if not token and method.upper() in _WRITE_METHODS:
@@ -500,6 +506,19 @@ def call(method: str, path: str, body=None, *,
         return transport(method, base + p, headers, data)
 
     status, text = send(path)
+    if status in (401, 403) and not _proof_problem(text):
+        # Refused as whoever the token is (a revoked PAT, or an agent's own PAT, which
+        # /credentials/resolve never serves): a runner retries a credential read as
+        # itself, with a fresh proof — the first was single-use.
+        rtok = _runner_token_for(method, path, base, transport)
+        if rtok and rtok != tok:
+            headers = _with_fresh_proof({**headers, "Authorization": f"Bearer {rtok}"},
+                                        method, base + path)
+            status, text = send(path)
+            if status == 401:
+                from orchestrator import runner_session
+
+                runner_session.forget()
     if is_workspace_required(status, text) and not path.startswith(PINNED_PREFIX):
         return _read_within_home_tree(method, path, text, send, base=base, token=tok,
                                       workspace=workspace, transport=transport,
@@ -507,6 +526,35 @@ def call(method: str, path: str, body=None, *,
     if not (200 <= status < 300):
         raise CanopyError(f"{method} {path} -> {status}: {text[:400]}")
     return json.loads(text) if text.strip() else {}
+
+
+# A refusal ABOUT the device proof (none, or not approved; no ZK wrap for this box)
+# is the same whoever's token asks — retrying as the runner would only hide it.
+_PROOF_REFUSALS = ("device_proof_required", "zk_wrap_missing")
+_PROOF_HEADERS = ("DPoP", "X-Canopy-Aws-Proof")
+
+
+def _proof_problem(text: str) -> bool:
+    return any(k in (text or "") for k in _PROOF_REFUSALS)
+
+
+def _runner_token_for(method: str, path: str, base: str, transport) -> str:
+    """This machine's runner token, for a credential read a runner may make; else ""."""
+    from orchestrator import runner_session
+
+    if not runner_session.is_credential_read(method, path):
+        return ""
+    return runner_session.token(base, transport=transport)
+
+
+def _with_fresh_proof(headers: dict, method: str, url: str) -> dict:
+    """``headers`` with any device proof replaced by a new one (proofs are single-use)."""
+    if not any(h in headers for h in _PROOF_HEADERS):
+        return headers
+    from orchestrator import device_key
+
+    kept = {k: v for k, v in headers.items() if k not in _PROOF_HEADERS}
+    return {**kept, **device_key.proof_headers(method, url)}
 
 
 def call_text(method: str, path: str, *,
