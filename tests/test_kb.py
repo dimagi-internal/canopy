@@ -129,6 +129,7 @@ def test_kb_ref_kinds(tmp_path):
     f.write_text("")
     assert kb_cli._kind(str(f)) == "local"
     assert kb_cli._kind("eva/P12") == "project"
+    assert kb_cli._kind("dimagi/givewell-kb") == "workspace-project"
     assert kb_cli._kind("1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF") == "folder"
     with pytest.raises(KBError):
         kb_cli._kind("not a ref")
