@@ -549,6 +549,23 @@ def agent_vault(slug, workspace, vault, repo, check, rotate_key, rotate_pat, no_
         sys.exit(1)
 
 
+def _prepare_purpose(check) -> str:
+    """`--check WHY`, or a terminal (a person checking by hand) → a labelled verification
+    read; otherwise "" (the box's own refresh, which the runner and its timer run)."""
+    import sys
+
+    from orchestrator.agent_prepare import verification_purpose
+
+    if check is not None:
+        return verification_purpose(check)
+    try:
+        if sys.stdin.isatty() and not os.environ.get("CANOPY_TURN_ID"):
+            return verification_purpose("interactive run")
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
 @agent.command("prepare")
 @click.option("--slug", "slugs", multiple=True, required=True, help="Agent slug (repeatable).")
 @click.option("--runner", "runner_mode", is_flag=True,
@@ -563,8 +580,12 @@ def agent_vault(slug, workspace, vault, repo, check, rotate_key, rotate_pat, no_
 @click.option("--no-report", is_flag=True, help="Do not POST the readiness report.")
 @click.option("--dry-run", is_flag=True, help="Say what would happen; change nothing.")
 @click.option("--json", "as_json", is_flag=True, help="One JSON report per agent.")
+@click.option("--check", "check", default=None, metavar="WHY",
+              help="A verification run, not the box's refresh: reads say `check: WHY (by "
+                   "user@host)`, and the owner's read-outside-a-turn alert names it as that "
+                   "check. Implied (as 'interactive run') when run from a terminal.")
 def agent_prepare(slugs, runner_mode, agent_root, repo_url, credentials_only, env_only,
-                  no_report, dry_run, as_json):
+                  no_report, dry_run, as_json, check):
     """Make agents runnable on THIS machine — the one implementation every runner calls.
 
     Runner mode (`--runner`): credentials from canopy-web's /credentials/resolve with the
@@ -587,6 +608,7 @@ def agent_prepare(slugs, runner_mode, agent_root, repo_url, credentials_only, en
     token = os.environ.get("CANOPY_TOKEN", "").strip() or canopy_web.resolve_token(None)
     prep = RunnerPreparer(base_url=base, token=token, agent_root=Path(agent_root),
                           runner_name=os.environ.get("RUNNER_NAME", ""), dry_run=dry_run,
+                          purpose=_prepare_purpose(check),
                           echo=(lambda _m: None) if as_json else click.echo)
     bad = False
     for slug in slugs:
