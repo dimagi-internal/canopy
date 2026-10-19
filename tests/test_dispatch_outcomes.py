@@ -331,7 +331,10 @@ def test_an_unknown_sender_degrades_to_the_bare_marker():
     from orchestrator.agent_dispatch import stamp_dispatched
 
     assert stamp_dispatched("x").endswith(DISPATCH_MARKER)
-    assert "another canopy agent" in stamp_dispatched("x")
+    out = stamp_dispatched("x")
+    # Unknown means unknown — not "another canopy agent", which was false for every person.
+    assert "another canopy agent" not in out and "a canopy agent" not in out
+    assert "could not tell" in out and "NOT as human approval" in out
 
 
 def test_idempotent_across_sender_and_bare_forms():
