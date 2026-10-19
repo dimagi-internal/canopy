@@ -210,3 +210,45 @@ def test_runner_env_values_resolves_like_prepare(tmp_path, monkeypatch):
     assert seen["token"] == "rt" and seen["in_turn"] is True
     assert box.calls[0][1] == AGENT_KEY
     assert not (tmp_path / "home" / ".ace" / ".env").exists()
+
+
+def test_print_json_requires_runner(fake_values):
+    r = CliRunner().invoke(cred_cli.cred_group, ["env", "--slug", "ace", "--print-json"])
+    assert r.exit_code == cred_cli.EXIT_USAGE and "--runner" in r.output
+    assert "CANOPY_WEB_PAT" not in r.output
+
+
+def test_every_missing_parent_is_created_0700(tmp_path, turn_root, fake_values):
+    old = os.umask(0o022)
+    try:
+        out = turn_root / "a" / "b" / "env"
+        r = CliRunner().invoke(cred_cli.cred_group, ["env", "--slug", "ace", "--runner",
+                                                     "--out", str(out)])
+    finally:
+        os.umask(old)
+    assert r.exit_code == 0, r.output
+    for d in (tmp_path / "run", tmp_path / "run" / "canopy", turn_root, turn_root / "a",
+              turn_root / "a" / "b"):
+        assert stat.S_IMODE(d.stat().st_mode) == 0o700, d
+
+
+def test_an_existing_parent_is_left_alone(tmp_path, monkeypatch, fake_values):
+    monkeypatch.delenv("CANOPY_TURN_ENV_ROOT", raising=False)
+    (tmp_path / "shared").mkdir(mode=0o755)
+    os.chmod(tmp_path / "shared", 0o755)
+    r = CliRunner().invoke(cred_cli.cred_group, ["env", "--agent", "ace", "--out",
+                                                 str(tmp_path / "shared" / "t" / "env")])
+    assert r.exit_code == 0, r.output
+    assert stat.S_IMODE((tmp_path / "shared").stat().st_mode) == 0o755
+    assert stat.S_IMODE((tmp_path / "shared" / "t").stat().st_mode) == 0o700
+
+
+def test_the_transient_root_is_created_0700(tmp_path, turn_root):
+    _repo(tmp_path / "agents", setup=True)
+    old = os.umask(0o022)
+    try:
+        _prep(tmp_path, PipeBox(tmp_path)).prepare("ace")
+    finally:
+        os.umask(old)
+    for d in (tmp_path / "run", tmp_path / "run" / "canopy", turn_root):
+        assert stat.S_IMODE(d.stat().st_mode) == 0o700, d

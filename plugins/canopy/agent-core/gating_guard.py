@@ -254,8 +254,14 @@ def subject_for(tool_name, tool_input):
         return ""
     if tool_name in SHELL_TOOLS:
         return tool_input.get("command", "") or ""
-    if tool_name in ("Edit", "Write", "NotebookEdit"):
+    if tool_name in ("Edit", "Write", "NotebookEdit", "Read", "NotebookRead"):
         return tool_input.get("file_path", "") or tool_input.get("notebook_path", "") or ""
+    # A search tool is railed on WHERE it looks, never on what it searches FOR: a Grep for
+    # the text "~/.hal/.env" or "/etc/canopy-runner" is code search, not a read of the file.
+    if tool_name == "Grep":
+        return tool_input.get("path", "") or ""
+    if tool_name == "Glob":
+        return " ".join(str(tool_input.get(k) or "") for k in ("path", "pattern")).strip()
     try:
         return json.dumps(tool_input, sort_keys=True, default=str)
     except Exception:
@@ -354,8 +360,16 @@ def run(repo_dir, payload):
     return _evaluate(cfg, repo_dir, payload, slug, name)
 
 
+# Read-only file tools reach this hook since the agent credential read rails (2026-10-19).
+# A person's own session was never gated on them, and still is not: every rail that
+# applies to them is an agent rail, so in a session that belongs to no agent they pass.
+READ_TOOLS = frozenset({"Read", "Grep", "Glob", "NotebookRead"})
+
+
 def _evaluate(cfg, repo_dir, payload, slug, name, agent=True):
     tool_name = payload.get("tool_name", "")
+    if not agent and tool_name in READ_TOOLS:
+        return 0, "", ""
     subject = subject_for(tool_name, payload.get("tool_input"))
     cwd = payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR", "")
 

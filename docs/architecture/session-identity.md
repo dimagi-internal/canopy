@@ -88,30 +88,40 @@ Four things, and what each one actually enforces:
   resolves only for a runner the agent routes to, or for its owner/admin. This is enforced, but
   it governs *resolving*. It does nothing about a file another agent's resolve already left on
   disk.
-- **Unix users, on a box that runs units.** A cloud box can run several isolation units (a
+- **Unix users, on a box that runs units** — *pending (canopy-web units work)*: not shipped
+  yet; until it is, a cloud box runs every agent as one user. A cloud box will run several isolation units (a
   workspace tree, or one agent), each as its own Unix user with its own home, runner process,
-  `Runner` row and device key (canopy-web `docs/architecture/runners.md`). The operating system
-  keeps unit A's turns out of unit B's home, env files, gog keyrings, transcripts and worktrees.
-  This is the boundary. See the threat model below.
+  `Runner` row and device key. The operating system then keeps unit A's turns out of unit B's
+  home, env files, gog keyrings, transcripts and worktrees, and that is the boundary. See the
+  threat model below.
 - **Secrets off disk (opt-in per runner).** A runner that sets `$CANOPY_TURN_ENV_ROOT` keeps no
   persistent secret files: `canopy agent prepare --runner` resolves and checks the env in memory
   and writes no `~/.<slug>/.env`, `<clone>/.env` or `.gws-sa-key.json`; each turn's env is written
   by `canopy cred env --runner --out /run/canopy/<uid>/<turn>/env` (0600, refused outside the
   root), handed to the turn as `$CANOPY_AGENT_ENV_FILE`, and removed when the turn ends. Every
-  reader looks there first (`orchestrator/agent_env_file.py`, the MCP headersHelper), only for
-  the turn's own agent, and falls back to `~/.<slug>/.env`. A runner that does not opt in, and
+  reader looks there first (`orchestrator/agent_env_file.py`, the MCP headersHelper) and falls
+  back to `~/.<slug>/.env`. It is skipped for a slug other than the turn's agent
+  (`CANOPY_AGENT_SLUG` / `CANOPY_AGENT`); when the session names NO agent, the file is used for
+  whatever slug is asked — the runner always names the turn's agent, so that case is a process
+  started outside a turn. A runner that does not opt in, and
   every laptop, keeps `~/.<slug>/.env` as before.
 - **Per-agent mail keyrings (opt-in per runner).** A runner that sets `$CANOPY_GOG_SECRET_FILE`
   (its unit's 32 random bytes) gives each agent its own gog home `~/.gog/<slug>/` and its own
   `file`-keyring password, `HKDF-SHA256(secret, info = "gog:" + slug)` hex
   (`orchestrator/gog_home.py`). There is no box-wide keyring password, so a confined turn's mail
   capability (`gog_home.confined_mail_env`) carries only its own agent's pair and never the
-  secret's path. Without the variable, gog keeps one home and one keyring, as before.
+  secret's path — *the canopy side is shipped; the confined turn's env is built by canopy-web's
+  `cloud_runner`, which does not call it yet (pending, canopy-web units work)*. Without the
+  variable, gog keeps one home and one keyring, as before.
 - **Read rails (defence in depth, inside one Unix user).** The fleet gating baseline
   (`plugins/canopy/agent-core/gating-baseline.json`, `always`, `agent_only`) denies an agent's
   turn reading another agent's `~/.<other>/.env`, another turn's `/run/canopy/…/`, the box's
-  `~/.canopy/device-key/`, another agent's `~/.gog/<other>/`, the shared `~/.config/gogcli/`, and
-  `/etc/canopy-runner/`, through the shell and the file tools. The turn's own env stays readable.
+  `~/.canopy/device-key/`, another agent's `~/.gog/<other>/`, the credential files in the shared
+  `~/.config/gogcli/` (its `keyring/`, `*token*`/`*credentials*.json` — not gog's downloads or
+  exports), and `/etc/canopy-runner/`, through the shell and the file tools (Read on its path,
+  Grep on where it searches — never on its search text — Glob on its path and pattern), and
+  `canopy cred env --print-json`. A person's own session is not railed; it does not even run the
+  rails on Read/Grep/Glob. The turn's own env stays readable.
   `~/.claude/projects/` is not railed: transcript-review skills read other sessions by design.
   Rails match spelled-out paths; a turn that builds a path some other way is not stopped by them.
   They are not the boundary.
@@ -123,12 +133,12 @@ decision and the rails apply there.
 
 | | protected | how | where |
 |---|---|---|---|
-| Unit A's turn reading unit B's env files, keyrings, transcripts, worktrees | yes | Unix user per unit, homes 0700 | canopy-web `runner/ec2/runner.cfn.yaml` |
-| Unit A acting as unit B's runner to canopy-web | yes | each unit has its own device key and `RunnerAccessToken`; a runner resolves only agents routed to it | canopy-web `runner_auth`, `routing` |
-| Unit A unwrapping unit B's zero-knowledge vault keys | yes | wraps go to each unit's own ECDH key; the KMS broker answers a uid only with its own unit's key | canopy-web `runner/ec2/kms_broker.py`; `device_key` (`$CANOPY_ECDH_BROKER`) |
-| A turn using the box's instance role | yes | IMDS is root-only (iptables) | canopy-web `runner.cfn.yaml` |
-| A turn reading a secret after its turn ended | yes, when the runner opts in | per-turn tmpfs env, removed in `finally`, swept at start | `cred env --out`; canopy-web `cloud_runner` |
-| A confined turn reading other agents' mail | yes, when the runner opts in | per-agent gog home and derived password; the secret file is not readable to it | `gog_home.confined_mail_env`; `profile_guard` `read_paths` |
+| Unit A's turn reading unit B's env files, keyrings, transcripts, worktrees | pending (canopy-web units work) | Unix user per unit, homes 0700 | canopy-web `runner/ec2/runner.cfn.yaml` |
+| Unit A acting as unit B's runner to canopy-web | pending (canopy-web units work) | each unit has its own device key and `RunnerAccessToken`; a runner resolves only agents routed to it | canopy-web `runner_auth`, `routing`; canopy `vault device --kind software --public-jwk/--registered` (shipped) |
+| Unit A unwrapping unit B's zero-knowledge vault keys | pending (canopy-web units work) | wraps go to each unit's own ECDH key; the KMS broker answers a uid only with its own unit's key | canopy-web `kms_broker.py` (not shipped); canopy `device_key` `$CANOPY_ECDH_BROKER` client (shipped) |
+| A turn using the box's instance role | pending (canopy-web units work) | IMDS root-only (iptables) | canopy-web `runner.cfn.yaml` |
+| A turn reading a secret after its turn ended | canopy side shipped; runner pending (canopy-web units work) | per-turn tmpfs env, removed in `finally`, swept at start | canopy `cred env --out` (shipped); canopy-web `cloud_runner` (not yet) |
+| A confined turn reading other agents' mail | canopy side shipped; runner pending (canopy-web units work) | per-agent gog home and derived password; the secret file is not readable to it | canopy `gog_home.confined_mail_env` (shipped, not yet called by `cloud_runner`); `profile_guard` `read_paths` |
 | One agent's FULL turn reading another agent's secrets in the SAME unit | partly | rails only; it runs as the same user, and could derive another agent's gog password from the unit secret | gating baseline |
 | Root on the box | no | the operator who can `sudo` is trusted | — |
 | A laptop's agents, from each other | partly | one desktop user; rails only | gating baseline |
@@ -140,7 +150,8 @@ decision and the rails apply there.
 ```
 canopy cred check   [--agent X] [--refresh] [--json]
 canopy cred env     [--agent X] [--refresh]
-canopy cred env     --slug X [--runner [--agent-root DIR]] (--out PATH | --print-json)
+canopy cred env     --slug X [--runner [--agent-root DIR]] --out PATH
+canopy cred env     --slug X --runner [--agent-root DIR] --print-json
 canopy cred refresh [--agent X]
 canopy cred sync    [--agent X] [--ttl S]
 canopy cred exec    [--agent X] [--ref NAME …] -- <cmd> [args…]
@@ -178,10 +189,11 @@ the command exits 2: `this session is not an agent … Pass --agent <slug>.`
   In a turn whose runner set `$CANOPY_AGENT_ENV_FILE` (for X), it prints that path and writes
   nothing.
 - **`env --out PATH`** resolves X's env **in memory** and writes it to PATH only: parents 0700,
-  the file 0600, env-identifier names only. With `$CANOPY_TURN_ENV_ROOT` set, a PATH outside it
+  the file 0600 (each missing parent directory is created 0700), env-identifier names only. With `$CANOPY_TURN_ENV_ROOT` set, a PATH outside it
   (symlinks resolved) is refused with exit 2 before anything is resolved. Prints the path.
-  **`env --print-json`** prints `{"agent", "source", "values": {NAME: value}}` on stdout and writes
-  nothing — for a runner's in-memory cache. **`--runner`** resolves as the runner does (its token
+  **`env --runner --print-json`** (it requires `--runner`; exit 2 without, and a baseline rail
+  denies it in an agent's turn) prints `{"agent", "source", "values": {NAME: value}}` on stdout and
+  writes nothing — for a runner process's in-memory cache. **`--runner`** resolves as the runner does (its token
   in `CANOPY_TOKEN`; the clone under `--agent-root` for `.env.tpl`; `op inject` to a pipe with the
   agent's own key, or canopy-web's values), naming the turn when `$CANOPY_TURN_ID` is set.
 - **`refresh`** drops the cached verdicts and re-resolves `~/.X/.env`.

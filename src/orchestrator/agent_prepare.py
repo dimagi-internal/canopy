@@ -564,10 +564,10 @@ class RunnerPreparer(Bootstrapper):
         dir) holding ``values``; the caller removes the directory."""
         import tempfile
 
-        from orchestrator.cred_cli import env_values
+        from orchestrator.cred_cli import env_values, mkdirs_private
         root = (os.environ.get(TURN_ENV_ROOT_VAR) or "").strip() or None
         if root:
-            Path(root).mkdir(parents=True, exist_ok=True, mode=0o700)
+            mkdirs_private(Path(root))
         d = Path(tempfile.mkdtemp(prefix=f"prepare-{slug}-", dir=root))
         os.chmod(d, 0o700)
         usable, _ = env_values(values)

@@ -18,7 +18,7 @@ Commands::
     canopy cred check  [--agent X] [--json]   exit 0 allowed, 3 refused
     canopy cred env    [--agent X] [--refresh] prints ~/.X/.env (resolved if missing)
     canopy cred env    --slug X [--runner] --out PATH    X's env, resolved in memory, to PATH (0600)
-    canopy cred env    --slug X [--runner] --print-json  X's env as JSON on stdout (a runner's cache)
+    canopy cred env    --slug X --runner --print-json    X's env as JSON on stdout (a runner's cache)
     canopy cred refresh [--agent X]           re-resolve ~/.X/.env
     canopy cred sync   [--agent X] [--ttl S]  re-inject ~/.X/.env iff its vault changed
     canopy cred exec   [--agent X] -- <cmd>   run <cmd> with X's env in the CHILD only (no file)
@@ -659,12 +659,30 @@ def confine_out(out: Path) -> Path:
     return Path(out_real)
 
 
+def mkdirs_private(path: Path) -> None:
+    """Create ``path`` and every MISSING parent at 0700 (umask notwithstanding); existing
+    directories are left as they are."""
+    path = Path(path)
+    missing = []
+    while not path.exists():
+        missing.append(path)
+        if path.parent == path:
+            break
+        path = path.parent
+    for d in reversed(missing):
+        try:
+            d.mkdir(mode=0o700)
+        except FileExistsError:
+            continue
+        os.chmod(d, 0o700)
+
+
 def write_env_out(out: Path, values: dict, slug: str = "") -> int:
     """Write ``values`` (env-var-shaped ones) to ``out``: parents 0700, the file 0600 via an
     atomic rename. Returns how many variables it wrote."""
     usable, _ = env_values(values)
     out = confine_out(out)
-    out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    mkdirs_private(out.parent)
     header = f"# {slug} credentials for one turn, written by canopy — removed when it ends.\n"
     _write_private(out, header + "".join(f"{_env_line(n, v)}\n" for n, v in usable.items()))
     os.chmod(out, 0o600)
@@ -1124,8 +1142,8 @@ def check_cmd(agent, refresh, as_json):
                    "~/.<agent>/.env; refused outside $CANOPY_TURN_ENV_ROOT when that is set. "
                    "Prints the path.")
 @click.option("--print-json", "print_json", is_flag=True,
-              help="Resolve in memory and print {agent, source, values} as JSON on stdout — "
-                   "for a runner's in-memory cache. Writes nothing.")
+              help="With --runner: resolve in memory and print {agent, source, values} as "
+                   "JSON on stdout — for a runner's in-memory cache. Writes nothing.")
 @click.option("--runner", "runner_mode", is_flag=True,
               help="Resolve as a RUNNER (its token, CANOPY_TOKEN; the clone under "
                    "--agent-root), as `canopy agent prepare --runner` does.")
@@ -1151,6 +1169,10 @@ def env_cmd(agent, slug_opt, refresh, out, print_json, runner_mode, agent_root):
         click.echo(f"[canopy cred] {slug}: {how}", err=True)
         click.echo(str(path))
         return
+    if print_json and not runner_mode:
+        raise CredError("--print-json is for a runner's in-memory cache: it needs --runner "
+                        "(a session runs commands with its env through `canopy cred exec`)",
+                        EXIT_USAGE)
     if out:
         confine_out(Path(out))   # refuse before resolving anything
     if runner_mode:

@@ -909,6 +909,11 @@ def enroll(*, runner_id: str, call: Call, label: str = "", allow_software: Optio
     try:
         ecdh, _ = ensure_ecdh(key.kind, runner=runner, which=which)
     except DeviceKeyError as e:
+        if ecdh_broker_path():
+            # A unit whose ECDH key is the broker's must not enroll without it: its vault
+            # wraps would then go nowhere, silently.
+            raise DeviceKeyError(f"the ECDH broker ($CANOPY_ECDH_BROKER) could not give this "
+                                 f"unit its ECDH key, so it is not enrolled: {e}") from None
         ecdh_note = str(e)
     extra = {"ecdh_public_jwk": ecdh.public_jwk} if ecdh is not None else {}
     from orchestrator import canopy_web

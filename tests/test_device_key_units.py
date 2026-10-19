@@ -228,3 +228,33 @@ def test_registered_records_the_brokers_ecdh_thumbprint(broker):
     CliRunner().invoke(main, ["vault", "device", "--registered", "9", "--runner", "r-1"])
     st = dk.read_status()
     assert st["ecdh_jkt"] == I["device_jkt"] and st["ecdh_kind"] == "kms-broker"
+
+
+def test_enroll_with_a_broker_that_fails_is_fatal(monkeypatch):
+    monkeypatch.setenv(dk.ECDH_BROKER_ENV, "/tmp/no-such-canopy-broker.sock")
+    posted = []
+    with pytest.raises(dk.DeviceKeyError, match="not enrolled"):
+        dk.enroll(runner_id="r-1", kind="software",
+                  call=lambda *a: posted.append(a) or {"status": "pending"})
+    assert posted == []                      # never registered without its ECDH key
+
+
+def test_enroll_with_a_working_broker_sends_its_key(broker):
+    posted = []
+
+    def call(method, path, body):
+        posted.append(body)
+        return {"id": 3, "jkt": dk.jwk_thumbprint(body["public_jwk"]), "status": "pending",
+                "ecdh_jkt": I["device_jkt"]}
+    st = dk.enroll(runner_id="r-1", kind="software", call=call)
+    assert posted[0]["ecdh_public_jwk"] == I["device_pub_jwk"]
+    assert st["ecdh_kind"] == "kms-broker"
+
+
+def test_enroll_without_a_broker_still_tolerates_no_ecdh(monkeypatch):
+    def nope(*a, **k):
+        raise dk.EcdhUnsupported("old helper")
+    monkeypatch.setattr(dk, "ensure_ecdh", nope)
+    st = dk.enroll(runner_id="r-1", kind="software",
+                   call=lambda m, p, b: {"jkt": dk.jwk_thumbprint(b["public_jwk"])})
+    assert "ecdh_note" in st
