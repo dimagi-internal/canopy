@@ -143,8 +143,29 @@ def agent_labels(repo_dir, cfg):
 FAIL_OPEN_TOOLS = frozenset({"Skill"})
 
 
+# `{turn_run_dir}` in a rail's PATTERN: this turn's own per-turn env directory, relative to
+# /run/canopy/ (a runner that keeps secrets off disk writes /run/canopy/<uid>/<turn>/env and
+# names it in CANOPY_AGENT_ENV_FILE), regex-escaped — so a rail can deny every other turn's
+# directory and still let this turn read its own. No such file → a pattern that never
+# matches, so the rail denies all of /run/canopy/.
+RUN_CANOPY = "/run/canopy/"
+NEVER = "(?!)"
+
+
+def turn_run_dir(env=None):
+    env = os.environ if env is None else env
+    f = (env.get("CANOPY_AGENT_ENV_FILE") or "").strip()
+    d = os.path.dirname(os.path.normpath(f)) if f else ""
+    if not d.startswith(RUN_CANOPY) or ".." in d.split("/"):
+        return NEVER
+    return re.escape(d[len(RUN_CANOPY):])
+
+
 def _substituted(rule, slug):
-    return {k: (v.replace("{slug}", slug) if isinstance(v, str) else v) for k, v in rule.items()}
+    out = {k: (v.replace("{slug}", slug) if isinstance(v, str) else v) for k, v in rule.items()}
+    if isinstance(out.get("pattern"), str) and "{turn_run_dir}" in out["pattern"]:
+        out["pattern"] = out["pattern"].replace("{turn_run_dir}", turn_run_dir())
+    return out
 
 
 def load_baseline():

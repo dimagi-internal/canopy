@@ -46,7 +46,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Edit|Write|NotebookEdit|Skill|mcp__.*",
+        "matcher": "Bash|PowerShell|Read|Grep|Glob|NotebookRead|Edit|Write|NotebookEdit|Skill|mcp__.*",
         "hooks": [
           {
             "type": "command",
