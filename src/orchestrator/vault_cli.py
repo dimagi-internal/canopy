@@ -9,6 +9,8 @@ changes an agent that has not been switched.
     canopy vault switch  --agent X --to canopy-web|1password
     canopy vault status  --agent X [--no-drift] [--json]
     canopy vault device  [--enroll | --reenroll | --refresh] [--runner ID] [--kind K | --software]
+    canopy vault device  --public-jwk [--kind software]      this key's PUBLIC JWK (made if missing)
+    canopy vault device  --registered KEY_ID --runner ID     record a registration made elsewhere
     canopy vault binding --agent X on|off                    require an approved device key
     canopy vault zk status|enable|set|grant|rotate --agent X zero-knowledge (vault_zk_cli.py)
     canopy vault import --agent X --zk                       ... encrypted here
@@ -626,8 +628,19 @@ def status_cmd(slug, repo, op_account, no_drift, as_json):
               help="Make this machine's ECDH key if needed (for --kind, else the existing "
                    "key's kind) and print {kind, jkt, jwk} — its PUBLIC half. A cloud runner "
                    "enrolling itself uses this (canopy-web#1550).")
+@click.option("--public-jwk", "public_jwk", is_flag=True,
+              help="Make this machine's SIGNING key if needed (for --kind, else the "
+                   "strongest) and print {kind, jkt, jwk, created} — its PUBLIC half, with no "
+                   "canopy-web call. A box that pairs its units in one call (pair-by-role) "
+                   "collects these.")
+@click.option("--registered", "registered_id", default=None, metavar="KEY_ID",
+              help="Record that canopy-web registered THIS key as device key KEY_ID for "
+                   "--runner (as pair-by-role does), so its proofs are sent. Needs --runner.")
+@click.option("--status", "reg_status", default="active", show_default=True,
+              type=click.Choice(["active", "pending"]), help="With --registered.")
 @click.option("--json", "as_json", is_flag=True)
-def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh_jwk, as_json):
+def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh_jwk,
+               public_jwk, registered_id, reg_status, as_json):
     """This machine's device key: show it, enroll it, or re-enroll it.
 
     canopy-web hands a `require_device_binding` agent's credentials only to a request
@@ -640,6 +653,13 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh
     kind = kind or (device_key.KIND_SOFTWARE if software else None)
     if ecdh_jwk:
         click.echo(json.dumps(run_ecdh_jwk(kind), sort_keys=True))
+        return
+    if public_jwk:
+        click.echo(json.dumps(run_public_jwk(kind), sort_keys=True))
+        return
+    if registered_id is not None:
+        click.echo(json.dumps(run_registered(registered_id, runner_id, reg_status, kind),
+                              sort_keys=True))
         return
     runner_id = runner_id or device_key.runner_id_from_config()
     token = _token() if (enroll or reenroll or refresh) else ""
@@ -738,6 +758,53 @@ def run_binding(slug: str, on: bool, *, token: str, transport=None) -> dict:
     if got is not None and bool(got) != bool(on):
         raise VaultCliError(f"canopy-web answered require_device_binding={got!r}, expected {on!r}")
     return {"agent": slug, "require_device_binding": bool(on if got is None else got)}
+
+
+def run_public_jwk(kind: Optional[str] = None) -> dict:
+    """This machine's signing key (made if missing): {kind, jkt, jwk, created} — public
+    only. An aws-iam identity has no JWK, so it is refused: ask for `--kind software`."""
+    try:
+        key, created = device_key.ensure(kind=kind)
+    except device_key.DeviceKeyError as e:
+        raise VaultCliError(str(e))
+    if key.kind == device_key.KIND_AWS_IAM:
+        raise VaultCliError("this machine's device key is its aws-iam instance role, which has "
+                            "no public JWK — pass --kind software")
+    return {"kind": key.kind, "jkt": key.jkt, "jwk": key.public_jwk, "created": created}
+
+
+def run_registered(key_id: str, runner_id: str, status: str = "active",
+                   kind: Optional[str] = None) -> dict:
+    """Cache that canopy-web registered this machine's key as ``key_id`` for ``runner_id``
+    (written by whoever paired it — e.g. pair-by-role for every unit on a box), so
+    `proof_headers` attaches its proofs. Only the public thumbprints are recorded."""
+    import time
+
+    if not (key_id or "").strip():
+        raise VaultCliError("--registered needs the device key id canopy-web returned")
+    if not (runner_id or "").strip():
+        raise VaultCliError("--registered needs --runner (the runner this key signs in as)")
+    try:
+        key = device_key.load()
+        if key is None:
+            raise VaultCliError("no device key here to record — `canopy vault device "
+                                "--public-jwk --kind software` makes one")
+        if kind is not None and key.kind != kind:
+            raise VaultCliError(f"this machine's key is {key.kind}, not {kind}")
+        st = {"id": key_id.strip(), "jkt": key.jkt, "status": status, "kind": key.kind,
+              "runner": runner_id.strip(), "approve_url": "", "checked_at": time.time()}
+        if key.role_arn:
+            st["role_arn"] = key.role_arn
+        try:
+            ecdh = device_key.load_ecdh()
+        except device_key.DeviceKeyError:
+            ecdh = None
+        if ecdh is not None:
+            st.update(ecdh_jkt=ecdh.jkt, ecdh_kind=ecdh.kind)
+        device_key.write_status(st)
+    except device_key.DeviceKeyError as e:
+        raise VaultCliError(str(e))
+    return st
 
 
 def run_ecdh_jwk(kind: Optional[str] = None) -> dict:

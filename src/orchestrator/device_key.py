@@ -38,6 +38,21 @@ only ever answers ECDH: it hands back Z for a wrap's ephemeral point, and the li
 the rest. Enrollment sends its public JWK as ``ecdh_public_jwk``; an older helper or server
 that knows nothing of it is not an error — the key is simply enrolled without it.
 
+**An ECDH key behind a local broker (runner isolation units, spec §2).** On a box that runs
+several isolation units, each unit's ECDH key lives in KMS, but a unit cannot call KMS (the
+instance role is root-only). A root-owned broker answers for it on a Unix socket, checking
+the caller's uid. ``$CANOPY_ECDH_BROKER=<socket path>`` selects it (kind ``kms-broker``):
+the store is the broker, nothing is created or written here. Protocol — one newline-
+delimited JSON request per connection, one JSON line back::
+
+    {"op": "public_key"}                         → {"jwk": {"kty","crv","x","y"}}
+    {"op": "derive", "peer_jwk": {...}}          → {"secret_b64": "<Z, 32 bytes, base64>"}
+    any failure                                  → {"error": "<reason>"}
+
+**Forcing the signing kind.** ``$CANOPY_DEVICE_KEY_KIND`` (e.g. ``software``) is what
+``ensure()`` uses when no kind is passed — a unit on an EC2 box must make a software key,
+although ``ensure()`` otherwise picks ``aws-iam`` wherever an instance role answers.
+
 Nothing here ever prints or logs a credential; the key itself never leaves its file (the
 enclave key never leaves the enclave).
 """
@@ -65,6 +80,12 @@ KIND_TPM = "tpm"
 KIND_AWS_IAM = "aws-iam"
 #: An ECDH key held in AWS KMS (an EC2 box's; never a signing kind).
 KIND_AWS_KMS = "aws-kms"
+#: An ECDH key a local broker holds for this unit (`$CANOPY_ECDH_BROKER`; never signing).
+KIND_KMS_BROKER = "kms-broker"
+#: The broker's Unix socket; set → the ECDH store IS the broker.
+ECDH_BROKER_ENV = "CANOPY_ECDH_BROKER"
+#: The signing kind `ensure()` uses when none is passed (a unit forcing `software`).
+KIND_ENV = "CANOPY_DEVICE_KEY_KIND"
 KINDS =(KIND_SE, KIND_TPM, KIND_AWS_IAM, KIND_SOFTWARE)
 
 #: The helper's location after the runner installer built it; overridable for tests.
@@ -407,6 +428,8 @@ def ensure(*, allow_software: Optional[bool] = None, kind: Optional[str] = None,
     `allow_software` forces the software kind (or, False, forbids it); the default allows
     it only where there is nothing stronger to prefer. An existing key always wins — a
     different kind needs `--reenroll`."""
+    if kind is None and allow_software is None:
+        kind = os.environ.get(KIND_ENV, "").strip() or None
     if kind is not None and kind not in KINDS:
         raise DeviceKeyError(f"unknown device key kind {kind!r} (one of {', '.join(KINDS)})")
     if allow_software is True and kind is None:
@@ -573,10 +596,80 @@ def _load_kms_marker(opener=None) -> EcdhKey:
     return _kms_ecdh_key(kkey, opener)
 
 
+def ecdh_broker_path() -> str:
+    """``$CANOPY_ECDH_BROKER`` — the unit's ECDH broker socket — or ""."""
+    return os.environ.get(ECDH_BROKER_ENV, "").strip()
+
+
+def _broker_call(sock_path: str, request: dict, *, timeout: float = 10.0) -> dict:
+    """One request to the ECDH broker: a JSON line out, a JSON line back."""
+    import socket as _socket
+    s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(sock_path)
+        s.sendall(json.dumps(request, separators=(",", ":")).encode("utf-8") + b"\n")
+        buf = b""
+        while b"\n" not in buf:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+            if len(buf) > 1 << 20:
+                raise DeviceKeyError("the ECDH broker's answer is too long")
+    except OSError as e:
+        raise DeviceKeyError(f"the ECDH broker at {sock_path} did not answer "
+                             f"({e.strerror or e})") from None
+    finally:
+        s.close()
+    line = buf.split(b"\n", 1)[0].strip()
+    try:
+        body = json.loads(line)
+    except ValueError:
+        raise DeviceKeyError(f"the ECDH broker at {sock_path} answered no JSON") from None
+    if not isinstance(body, dict):
+        raise DeviceKeyError(f"the ECDH broker at {sock_path} answered no JSON object")
+    if body.get("error"):
+        raise DeviceKeyError(f"the ECDH broker refused: {str(body['error'])[:300]}")
+    return body
+
+
+def _b64_any(text: str) -> bytes:
+    """Standard or url-safe base64, padded or not."""
+    t = (text or "").strip().replace("-", "+").replace("_", "/")
+    return base64.b64decode(t + "=" * (-len(t) % 4), validate=True)
+
+
+def _broker_ecdh_key(sock_path: str) -> EcdhKey:
+    """The unit's ECDH key behind the broker: the public half asked once, every derive a
+    call. Nothing is cached on disk."""
+    jwk = _broker_call(sock_path, {"op": "public_key"}).get("jwk")
+    if not (isinstance(jwk, dict) and jwk.get("kty") == "EC" and jwk.get("crv") == "P-256"
+            and jwk.get("x") and jwk.get("y")):
+        raise DeviceKeyError(f"the ECDH broker at {sock_path} returned no P-256 public JWK")
+    pub = {k: jwk[k] for k in ("kty", "crv", "x", "y")}
+
+    def derive(peer_point: bytes) -> bytes:
+        if len(peer_point) != 65 or peer_point[:1] != b"\x04":
+            raise DeviceKeyError("not an uncompressed P-256 point")
+        peer = public_jwk_from_point(peer_point[1:33], peer_point[33:])
+        body = _broker_call(sock_path, {"op": "derive", "peer_jwk": peer})
+        try:
+            return _b64_any(str(body.get("secret_b64") or ""))
+        except (ValueError, TypeError):
+            raise DeviceKeyError("the ECDH broker's secret_b64 is not base64") from None
+
+    return EcdhKey(KIND_KMS_BROKER, pub, derive)
+
+
 def load_ecdh(*, runner: Runner = subprocess.run,
               which: Callable[[str], Optional[str]] = shutil.which,
               kms_opener=None) -> Optional[EcdhKey]:
-    """This machine's ECDH key, or None when it has none. Never creates."""
+    """This machine's ECDH key, or None when it has none. Never creates.
+
+    ``$CANOPY_ECDH_BROKER`` set → the broker's key, and nothing on disk is consulted."""
+    if ecdh_broker_path():
+        return _broker_ecdh_key(ecdh_broker_path())
     if kms_ecdh_path().is_file():
         return _load_kms_marker(kms_opener)
     if tpm_ecdh_path().is_file():
@@ -626,6 +719,9 @@ def ensure_ecdh(signing_kind: str, *, runner: Runner = subprocess.run,
     enrollment posts the new public key, which sends the device key back to `pending`
     until a person approves (and re-grants) it. Without a KMS key, it is the PEM as
     before."""
+    if ecdh_broker_path():
+        # A unit's ECDH key is the broker's: never a PEM here, never a KMS adoption.
+        return _broker_ecdh_key(ecdh_broker_path()), False
     existing = load_ecdh(runner=runner, which=which, kms_opener=kms_opener)
     if signing_kind == KIND_AWS_IAM and (existing is None or existing.kind == KIND_SOFTWARE):
         moved = _adopt_kms(kms_opener)
