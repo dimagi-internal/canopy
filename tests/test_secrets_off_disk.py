@@ -55,6 +55,24 @@ def _secret_files(*roots: Path) -> list[str]:
     return hits
 
 
+@pytest.fixture(autouse=True)
+def _hermetic(tmp_path, monkeypatch):
+    """No test here may read this machine's state: an empty HOME (so no workbench-token,
+    no ~/.<slug>/.env, no gog dir) and no canopy-web identity from the environment."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    from orchestrator import canopy_web
+    # Resolved at import from the REAL home; point it at the empty one.
+    monkeypatch.setattr(canopy_web, "TOKEN_FILE", home / ".claude" / "canopy" / "workbench-token")
+    for k in ("CANOPY_TOKEN", "CANOPY_WEB_PAT", "CANOPY_BASE_URL", "CANOPY_WEB_API_URL",
+              "CANOPY_TURN_ID", "CANOPY_AGENT", "CANOPY_AGENT_SLUG", "CANOPY_AGENT_ENV_FILE",
+              "OP_SERVICE_ACCOUNT_TOKEN", "AGENT_VAULT", "AGENT_SLUG", "GH_TOKEN",
+              "CANOPY_GOG_SECRET_FILE", "CANOPY_ECDH_BROKER"):
+        monkeypatch.delenv(k, raising=False)
+
+
 @pytest.fixture
 def turn_root(tmp_path, monkeypatch):
     root = tmp_path / "run" / "canopy" / "1001"
@@ -319,6 +337,7 @@ def test_out_never_writes_the_extras(tmp_path, turn_root, monkeypatch):
     monkeypatch.setattr(agent_prepare, "fetch_runner_credentials",
                         lambda slug, **kw: real(slug, **{**kw, "transport": transport}))
     monkeypatch.setenv("CANOPY_BASE_URL", "https://canopy.test")
+    monkeypatch.setenv("CANOPY_TOKEN", "runner-token")
     out = turn_root / "t" / "env"
     r = CliRunner().invoke(cred_cli.cred_group, ["env", "--slug", "ace", "--runner",
                                                  "--agent-root", str(tmp_path / "agents"),
