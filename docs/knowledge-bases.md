@@ -9,7 +9,7 @@ copies, with the tables you compute with alongside. Code: `src/orchestrator/kb.p
 
 | | Owner | Where |
 |---|---|---|
-| The library | a **workspace project** (e.g. `dimagi/givewell-kb`), its curator as steward | its Drive folder holds `kb.sqlite.gz` |
+| The library | a **workspace project** (e.g. `connect/givewell-kb`), its curator as steward | its Drive folder holds `kb.sqlite.gz` |
 | Adapters (where the publisher puts things) | the **curator** agent | the curator's repo (e.g. Eva's `bin/eva-kb-givewell`) |
 | Build, diff, store, query, MCP | **canopy** | this module |
 | Readers | **every agent** in the workspace | `canopy kb …` / `canopy kb mcp` |
@@ -17,7 +17,10 @@ copies, with the tables you compute with alongside. Code: `src/orchestrator/kb.p
 A knowledge base is not an agent's project in the board sense: it has no end, and many
 agents use it. So it is a canopy-web **workspace project**: owned by the workspace,
 addressed `<workspace>/<handle>`, with the curator agent as its steward (the steward can
-change without the address changing, and any agent in the workspace files tasks into it). Public material only: what you know about
+change without the address changing, and any agent in the workspace files tasks into it).
+Put it in the workspace whose agents use it, which need not be the curator's: the steward
+may be an agent of that workspace or of one above it (`connect/givewell-kb` belongs to
+Connect, where ACE reads it, and is kept by dimagi's Eva). Public material only: what you know about
 the publisher from the relationship stays in your CRM and never merges in, so a KB is
 always safe to hand to any agent or teammate.
 
@@ -43,7 +46,7 @@ bundle/
 
 ```bash
 canopy kb build bundle/ --out kb.sqlite [--previous last.sqlite]   # diff → change history
-canopy kb push --kb dimagi/givewell-kb kb.sqlite             # → Drive, gzipped
+canopy kb push --kb connect/givewell-kb kb.sqlite             # → Drive, gzipped
 ```
 
 `build` stores each passage once (an external-content FTS5 index over ~1.8k-char
@@ -53,11 +56,11 @@ passages; `get` rejoins them), and carries the previous build's change rows forw
 ## Query (everyone)
 
 ```bash
-canopy kb search "oral cholera vaccine" --kb dimagi/givewell-kb [--type grant_page] [--since 2024-01-01]
-canopy kb get <id-or-url> --kb dimagi/givewell-kb [--passage N]
-canopy kb table grants --kb dimagi/givewell-kb --match Recipient=Dimagi --sort -Amount
-canopy kb whats-new --kb dimagi/givewell-kb --since 2026-10-01
-canopy kb info --kb dimagi/givewell-kb
+canopy kb search "oral cholera vaccine" --kb connect/givewell-kb [--type grant_page] [--since 2024-01-01]
+canopy kb get <id-or-url> --kb connect/givewell-kb [--passage N]
+canopy kb table grants --kb connect/givewell-kb --match Recipient=Dimagi --sort -Amount
+canopy kb whats-new --kb connect/givewell-kb --since 2026-10-01
+canopy kb info --kb connect/givewell-kb
 ```
 
 `--kb` is a workspace project address (`<workspace>/<handle>`), an agent project ref
@@ -70,7 +73,7 @@ unreachable the cache is served with a warning.
 ## As MCP tools
 
 ```json
-{"mcpServers": {"givewell": {"command": "canopy", "args": ["kb", "mcp", "--kb", "dimagi/givewell-kb"]}}}
+{"mcpServers": {"givewell": {"command": "canopy", "args": ["kb", "mcp", "--kb", "connect/givewell-kb"]}}}
 ```
 
 Tools: `kb_info`, `search`, `get`, `list_items`, `whats_new`, `table`, plus one per
