@@ -9,6 +9,21 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.739] - 2026-10-19
+
+### Added
+- **`canopy vault zk set --sealed` / `--request ID`: give an agent a secret without its vault
+  key, sealed only to readers a person you trust vouched for** (canopy-web#1712). Reads the
+  agent's recipients and their zk-v1 §7 endorsements, recomputes every thumbprint locally,
+  and seals `zks1` only to recipients endorsed by a person pinned in
+  `~/.canopy/vault-pins.json`. A first-seen endorser is shown with email and fingerprint and
+  confirmed before pinning; a pinned person whose key changed stops the command; no endorsed
+  recipient is an error, never a fallback. `--request` answers the agent's open secret
+  request through `PUT …/secret-requests/ID/value`. Prints only `NAME stored for AGENT
+  (sealed to N readers)`.
+- `vault_zk.endorse_msg` / `verify_endorsement` (zk-v1 §7), with the §6 sealed-value and §7
+  endorsement vectors checked byte for byte (fixtures re-copied from canopy-web).
+
 ## [0.2.684] - 2026-10-14
 
 ### Fixed

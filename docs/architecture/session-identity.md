@@ -332,6 +332,20 @@ reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.jso
   `enable` wraps for this device, your keyset (`GET /api/vault/keyset`) and every pending target,
   plus recovery, and prints the recovery code once; `grant`/`rotate` list every public key they
   will wrap to and ask first (`--yes` to skip).
+- **Give an agent a secret, without its vault key** (canopy-web#1712):
+  `canopy vault zk set --sealed --agent X NAME [--yes]` and `canopy vault zk set --agent X
+  --request ID` (answer the agent's secret request). Reads `GET …/vault/zk/recipients[
+  ?secret_request=ID]` and seals `zks1` **only** to recipients carrying a valid zk-v1 §7
+  endorsement (ECDSA P-256 by a person's vault key over
+  `canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}`) from a person pinned in
+  `~/.canopy/vault-pins.json` (`{user_id: {jkt, email, pinned_at}}`, keyed by person like
+  `known_hosts`). Every thumbprint is recomputed locally (RFC 7638) — the recipient's and the
+  endorser's. A first-seen endorser is shown (email + fingerprint, and what they endorse) and
+  confirmed before pinning (`--yes` accepts; a value piped on stdin never answers the
+  question); a pinned person whose key changed stops the command, never re-pinned silently;
+  no endorsed recipient is an error, never a fallback to the server's list. Writes `PUT
+  …/vault/zk/values` (or `PUT …/secret-requests/ID/value`) and prints only `NAME stored for
+  AGENT (sealed to N readers)`. Skipped recipients get the value at the next settle.
 
 **Pilot (Eva, Jonathan's Mac):** `canopy vault import --agent eva` → approve the runner's
 device key in canopy-web → `canopy vault switch --agent eva --to canopy-web`, then set

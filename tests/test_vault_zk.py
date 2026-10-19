@@ -185,6 +185,57 @@ def test_2skd_bindings_are_enforced(bad):
         bad(bytes.fromhex(I["secret_key_hex"]))
 
 
+# ── 6. sealed values (zks1) ───────────────────────────────────────────────────
+
+def test_sealed_value_is_byte_exact_and_opens_for_each_recipient():
+    got = zk.seal_value(AGENT, I["sealed_name"], KV, I["sealed_plaintext"],
+                        [("device", I["device_jkt"], DEVICE.public_key()),
+                         ("member", USER_ID, USER.public_key())],
+                        ephemerals=[_priv(I["ephemeral_seal_device_scalar_hex"]),
+                                    _priv(I["ephemeral_seal_member_scalar_hex"])],
+                        nonces=[NONCE, bytes.fromhex(I["seal_member_nonce_hex"])])
+    assert got == O["sealed_value"]
+    assert zk.open_sealed(got, AGENT, I["sealed_name"], "device", I["device_jkt"],
+                          DEVICE) == I["sealed_plaintext"]
+    assert zk.open_sealed(got, AGENT, I["sealed_name"], "member", USER_ID,
+                          USER) == I["sealed_plaintext"]
+
+
+# ── 7. endorsements ───────────────────────────────────────────────────────────
+
+def test_endorse_msg_matches_the_vector():
+    e = O["endorsement"]
+    assert zk.endorse_msg(AGENT, e["kind"], e["target"], e["key_jkt"]) == O["endorse_msg"]
+
+
+def test_the_vector_endorsement_verifies():
+    e = O["endorsement"]
+    assert e["by"] == str(USER_ID) and e["by_jkt"] == zk.jkt(USER.public_key())
+    assert zk.verify_endorsement(e, AGENT, I["user_pub_jwk"])
+    assert zk.verify_endorsement(e, AGENT, USER.public_key())
+
+
+@pytest.mark.parametrize("tamper", [
+    lambda e: {**e, "key_jkt": zk.jkt(USER.public_key())},
+    lambda e: {**e, "target": "someone-else"},
+    lambda e: {**e, "kind": "member"},
+    lambda e: {**e, "by_jkt": I["device_jkt"]},
+    lambda e: {**e, "sig": e["sig"][:-2] + ("AA" if e["sig"][-2:] != "AA" else "BB")},
+    lambda e: {**e, "sig": e["sig"][:40]},
+    lambda e: {**e, "sig": "!!not-base64!!"},
+    lambda e: {k: v for k, v in e.items() if k != "sig"},
+])
+def test_a_tampered_endorsement_fails(tamper):
+    assert not zk.verify_endorsement(tamper(O["endorsement"]), AGENT, I["user_pub_jwk"])
+
+
+def test_an_endorsement_is_bound_to_its_agent_and_signer():
+    e = O["endorsement"]
+    assert not zk.verify_endorsement(e, "43", I["user_pub_jwk"])
+    assert not zk.verify_endorsement(e, AGENT, I["device_pub_jwk"])
+    assert not zk.verify_endorsement(e, AGENT, {"kty": "EC", "crv": "P-256", "x": "AA", "y": "AA"})
+
+
 def test_the_committed_reference_regenerates_the_committed_vectors():
     """Both fixture files are verbatim copies of canopy-web's normative pair; this pins
     that they belong together."""
