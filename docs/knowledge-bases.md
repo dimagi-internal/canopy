@@ -10,9 +10,9 @@ copies, with the tables you compute with alongside. Code: `src/orchestrator/kb.p
 | | Owner | Where |
 |---|---|---|
 | The library | a **workspace project** (e.g. `connect/givewell-kb`), its curator as steward | its Drive folder holds `kb.sqlite.gz` |
-| Adapters (where the publisher puts things) | the **curator** agent | the curator's repo (e.g. Eva's `bin/eva-kb-givewell`) |
-| Build, diff, store, query, MCP | **canopy** | this module |
-| Readers | **every agent** in the workspace | `canopy kb …` / `canopy kb mcp` |
+| Adapters (where the publisher puts things) + the library's skill | the **curator** agent | the curator's repo (e.g. Eva's `bin/eva-kb-givewell`, `skills/givewell-kb`) |
+| Build, diff, store, serve (MCP) | **canopy** | this module |
+| Readers | **every agent** in the workspace | the MCP tools (`canopy kb mcp`) |
 
 A knowledge base is not an agent's project in the board sense: it has no end, and many
 agents use it. So it is a canopy-web **workspace project**: owned by the workspace,
@@ -53,36 +53,40 @@ canopy kb push --kb connect/givewell-kb kb.sqlite             # → Drive, gzipp
 passages; `get` rejoins them), and carries the previous build's change rows forward, so
 `whats-new` is a dated history across refreshes. A build with no previous is a baseline.
 
-## Query (everyone)
-
-```bash
-canopy kb search "oral cholera vaccine" --kb connect/givewell-kb [--type grant_page] [--since 2024-01-01]
-canopy kb get <id-or-url> --kb connect/givewell-kb [--passage N]
-canopy kb table grants --kb connect/givewell-kb --match Recipient=Dimagi --sort -Amount
-canopy kb whats-new --kb connect/givewell-kb --since 2026-10-01
-canopy kb info --kb connect/givewell-kb
-```
-
-`--kb` is a workspace project address (`<workspace>/<handle>`), an agent project ref
-(`<agent>/<Pnn>`) — either resolved to its Drive folder through canopy-web — a Drive
-folder id, or a local `kb.sqlite`. Drive is read as the agent whose
-repo you run from (`--repo`, default cwd). The copy is cached at
-`~/.canopy/kb/<ref>/kb.sqlite` and re-checked after `--max-age-hours` (24); if Drive is
-unreachable the cache is served with a warning.
-
-## As MCP tools
+## Read (everyone): the MCP tools
 
 ```json
 {"mcpServers": {"givewell": {"command": "canopy", "args": ["kb", "mcp", "--kb", "connect/givewell-kb"]}}}
 ```
 
-Tools: `kb_info`, `search`, `get`, `list_items`, `whats_new`, `table`, plus one per
-declared table (`grants`, …). Stdlib JSON-RPC over stdio, no SDK dependency.
+Tools: `kb_info`, `search`, `get` (with `grep` to verify a quote or number), `list_items`,
+`whats_new`, `table`, plus one per declared table (`grants`, …). Stdlib JSON-RPC over
+stdio, no SDK dependency.
+
+`--kb` is a workspace project address (`<workspace>/<handle>`), an agent project ref
+(`<agent>/<Pnn>`) — either resolved to its Drive folder through canopy-web — a Drive
+folder id, or a local `kb.sqlite`. Drive is read as the agent whose repo you run from
+(`--repo`, default cwd). The copy is cached at `~/.canopy/kb/<ref>/kb.sqlite` and
+re-checked after `--max-age-hours` (24); if Drive is unreachable the cache is served with
+a warning.
+
+There are no read subcommands (`canopy kb search` …): they would only duplicate the tools.
+A script that needs a query imports `orchestrator.kb.KB`.
+
+## A skill per library
+
+The tools are generic; how to use ONE library well is not. Its curator ships a skill
+alongside the adapters (Eva's `givewell-kb`): what it covers and what it does not, which
+source wins when they disagree (a grants table beats a podcast's rounded figure), what to
+cite (the row's url, never the KB), and how the curator refreshes it.
 
 ## Where this is going
 
-Today an agent registers the MCP server in its own `.mcp.json`. The intended end state
-is that the **workspace project exposes its tools** itself — every agent in the workspace gets a
-KB the moment it is attached to the project, with canopy-web serving the queries instead
-of each machine holding a copy. This module's read API is the contract that server would
-implement.
+Today an agent registers the stdio server in its own `.mcp.json`, and each machine holds a
+copy. The intended end state: the **workspace project declares its server** (a typed field
+on the project, e.g. `{"kind": "kb"}`, with the tool list coming from the KB's own
+manifest), and **canopy-web serves it remotely** as a Streamable-HTTP MCP endpoint per
+project (`/api/workspace-projects/<ws>/<handle>/mcp/`), behind the same tokens and OAuth as
+canopy-web's own `/api/mcp/`. Then claude.ai, ACE on any runner and other people's Claude
+Code add one URL, with nothing to install or download. This module's read API is the
+contract that server implements.

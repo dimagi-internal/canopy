@@ -1,17 +1,24 @@
-"""`canopy kb …` — build, fetch and query a knowledge base (see `orchestrator.kb`).
+"""`canopy kb …` — build, store and serve a knowledge base (see `orchestrator.kb`).
+
+Four commands, because only these are work a prompt cannot do: `build` (index + dated
+diff), `push` / `pull` (the gzipped copy in the project's Drive folder) and `mcp`
+(serve it). Reading is the MCP tools' job, and HOW to read a given library — what to
+cite, which table beats prose — is a skill's (e.g. Eva's `givewell-kb`). There are
+deliberately no read subcommands duplicating the tools.
 
 Which KB: `--kb` (or $CANOPY_KB) is one of
   * a path to a kb.sqlite                       (local; nothing is fetched)
   * `<workspace>/<handle>`, e.g. `connect/givewell-kb`  (a workspace project — the usual case)
   * `<agent>/<project ref>`, e.g. `eva/P12`     (the project's Drive folder, from canopy-web)
   * a Drive folder id                            (the folder holding kb.sqlite)
-A remote KB is cached at ~/.canopy/kb/<name>/kb.sqlite; `pull` refreshes it, and the
-query commands pull on their own when the cache is older than --max-age-hours.
+A remote KB is cached at ~/.canopy/kb/<name>/kb.sqlite; `pull` refreshes it, and `mcp`
+pulls on its own when the cache is older than --max-age-hours.
 Drive is read as the AGENT whose repo you run from (`--repo`, default: cwd), through the
 same identity and gog client rule every canopy Drive call uses.
 
 `canopy kb mcp --kb connect/givewell-kb` serves the same queries as MCP tools over stdio, so an agent
-registers it once in its .mcp.json and gets search/get/tables/whats_new natively.
+registers it once in its .mcp.json and gets search/get/tables/whats_new natively. A script
+that wants a query uses `orchestrator.kb.KB` (or `open_kb` here) directly.
 """
 from __future__ import annotations
 
@@ -20,7 +27,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import gzip
 import shutil
 import tempfile
@@ -200,15 +206,6 @@ def _kb_option(f):
     return f
 
 
-def _open(kb_ref: str, repo: Path, max_age_hours: float) -> KB:
-    if not kb_ref:
-        raise click.UsageError("name a knowledge base with --kb (or $CANOPY_KB)")
-    kb, warning = open_kb(kb_ref, repo, max_age_hours)
-    if warning:
-        click.echo(f"warning: {warning}", err=True)
-    return kb
-
-
 def _guard(fn):
     import functools
 
@@ -223,7 +220,7 @@ def _guard(fn):
 
 @click.group("kb")
 def kb_group():
-    """Knowledge bases: build, fetch and query a shared, cited library."""
+    """Knowledge bases: build, store and serve a shared, cited library (read it through `mcp`)."""
 
 
 @kb_group.command("build")
@@ -255,87 +252,6 @@ def pull_cmd(kb_ref, repo, max_age_hours, force):
 def push_cmd(kb_ref, repo, max_age_hours, path):
     """Upload a built kb.sqlite to the KB's Drive folder (curators)."""
     _emit(push(kb_ref, repo, path))
-
-
-@kb_group.command("info")
-@_kb_option
-@_guard
-def info_cmd(kb_ref, repo, max_age_hours):
-    """What this KB holds: sources, counts, tables, build date."""
-    _emit(_open(kb_ref, repo, max_age_hours).info())
-
-
-@kb_group.command("search")
-@_kb_option
-@click.argument("query")
-@click.option("--type", "types", multiple=True, help="limit to item types (repeatable)")
-@click.option("--since", default="")
-@click.option("--until", default="")
-@click.option("--limit", type=int, default=10)
-@_guard
-def search_cmd(kb_ref, repo, max_age_hours, query, types, since, until, limit):
-    """Best passages for QUERY, each with its source URL. "Quote" exact phrases."""
-    _emit(_open(kb_ref, repo, max_age_hours).search(query, list(types) or None, since, until, limit))
-
-
-@kb_group.command("get")
-@_kb_option
-@click.argument("ref")
-@click.option("--max-chars", type=int, default=20000)
-@click.option("--passage", type=int, default=None)
-@click.option("--grep", default="", help="regex: return only matching lines (case-insensitive), not the text")
-@click.option("--context", type=int, default=1, help="lines of context around each --grep match")
-@_guard
-def get_cmd(kb_ref, repo, max_age_hours, ref, max_chars, passage, grep, context):
-    """One item (by id or URL): full text, metadata, fetch date."""
-    _emit(_open(kb_ref, repo, max_age_hours).get(ref, max_chars, passage, grep, context))
-
-
-@kb_group.command("list")
-@_kb_option
-@click.option("--type", "types", multiple=True)
-@click.option("--since", default="")
-@click.option("--limit", type=int, default=50)
-@_guard
-def list_cmd(kb_ref, repo, max_age_hours, types, since, limit):
-    """Items, newest first."""
-    _emit(_open(kb_ref, repo, max_age_hours).list_items(list(types) or None, since, limit))
-
-
-@kb_group.command("table")
-@_kb_option
-@click.argument("name", required=False)
-@click.option("--match", multiple=True, help="COLUMN=substring (repeatable)")
-@click.option("--text", default="", help="substring anywhere in the row")
-@click.option("--since", default="")
-@click.option("--until", default="")
-@click.option("--min-amount", type=float, default=None)
-@click.option("--sort", default="", help="column; prefix - for descending")
-@click.option("--limit", type=int, default=50)
-@_guard
-def table_cmd(kb_ref, repo, max_age_hours, name, match, text, since, until, min_amount, sort, limit):
-    """Query a structured table (no NAME: list the tables)."""
-    kb = _open(kb_ref, repo, max_age_hours)
-    if not name:
-        _emit(kb.tables())
-        return
-    m = {}
-    for kv in match:
-        if "=" not in kv:
-            raise click.UsageError(f"--match {kv!r}: expected COLUMN=substring")
-        k, v = kv.split("=", 1)
-        m[k] = v
-    _emit(kb.table(name, m, text, since, until, min_amount, sort, limit))
-
-
-@kb_group.command("whats-new")
-@_kb_option
-@click.option("--since", default="", help="ISO date/time")
-@click.option("--limit", type=int, default=100)
-@_guard
-def whats_new_cmd(kb_ref, repo, max_age_hours, since, limit):
-    """Items that appeared or changed since a date."""
-    _emit(_open(kb_ref, repo, max_age_hours).whats_new(since, limit))
 
 
 @kb_group.command("mcp")
