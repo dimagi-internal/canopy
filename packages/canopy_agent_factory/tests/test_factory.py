@@ -329,3 +329,21 @@ def test_email_shim_help_survives_a_non_utf8_console(tmp_path):
     env = {**os.environ, "PYTHONIOENCODING": "ascii"}
     r = subprocess.run([sys.executable, str(shim), "--help"], capture_output=True, env=env)
     assert r.returncode == 0, f"shim --help crashed on an ascii console: {r.stderr.decode()[-400:]}"
+
+
+def test_google_account_is_stamped_into_agent_json_after_email(tmp_path):
+    """A canopy-hosted mailbox signs in to Google as a different account; the factory
+    records it as `google_account`, right after `email`."""
+    spec = _spec()
+    spec.mailbox, spec.google_account = "echo@dimagi.ai", "echo@dimagi-ai.com"
+    create_agent(spec, tmp_path / "echo")
+    data = json.loads((tmp_path / "echo" / "config" / "agent.json").read_text())
+    assert (data["email"], data["google_account"]) == ("echo@dimagi.ai", "echo@dimagi-ai.com")
+    keys = list(data)
+    assert keys.index("google_account") == keys.index("email") + 1
+
+
+def test_no_google_account_leaves_agent_json_as_the_template(tmp_path):
+    create_agent(_spec(), tmp_path / "echo")
+    data = json.loads((tmp_path / "echo" / "config" / "agent.json").read_text())
+    assert "google_account" not in data and data["email"] == "echo@dimagi-ai.com"

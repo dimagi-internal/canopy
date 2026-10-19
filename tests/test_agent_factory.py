@@ -283,3 +283,16 @@ def test_per_statement_reaches_every_agent(tmp_path):
     # the false positive ada hit: a free GET plus an UNRELATED post in the next statement
     assert run("curl https://example.com/items && curl -X POST https://other.test/x").returncode == 0
 
+
+
+def test_create_agent_cli_stamps_google_account(tmp_path):
+    """`canopy create-agent --google-account` reaches config/agent.json."""
+    from click.testing import CliRunner
+    from orchestrator.cli import main
+    r = CliRunner().invoke(main, [
+        "create-agent", "scout", "--mandate", "find things.", "--mailbox", "scout@dimagi.ai",
+        "--google-account", "scout@dimagi-ai.com", "--into", str(tmp_path / "scout"),
+        "--no-git-init"])
+    assert r.exit_code == 0, r.output
+    data = json.loads((tmp_path / "scout" / "config" / "agent.json").read_text())
+    assert (data["email"], data["google_account"]) == ("scout@dimagi.ai", "scout@dimagi-ai.com")

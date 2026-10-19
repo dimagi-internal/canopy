@@ -150,6 +150,10 @@ something and you never answered.
 canopy email dangling --repo <your agent repo>
 ```
 
+It sweeps your **Gmail** mailbox (the Google account in `config/agent.json`: `google_account`,
+else `email`). A canopy-hosted address has no Gmail inbox to sweep — its threads reach you as
+`--thread <uuid>` turns — so an agent with only a hosted address skips this step and says so.
+
 A thread you owe a reply to **generates no new inbound by definition** — the counterpart is
 waiting on *you*. So it is invisible to an unread scan, invisible to the poller that triggers
 your turns, and invisible to your board (the asymmetry is total: *you asked them and they went
@@ -235,10 +239,26 @@ the ref is a **UUID** (`8-4-4-4-12` hex), the canopy-web thread id. Read it with
 `canopy email thread <uuid>` (plain text, every message) and answer with
 `canopy email send --reply-all --thread-id <uuid> --subject … --body-file …`; mark it handled with
 `canopy email mark-read <uuid>` / `canopy email archive <uuid>`. These are the same commands as for
-Gmail — `canopy email` asks canopy-web which backend your mailbox is on (`/api/mail/resolve`) and
+Gmail — `canopy email` asks canopy-web where the THREAD lives (`/api/mail/resolve?thread=`) and
 routes itself — so never reach for `gog gmail` on a UUID, and never treat "no Gmail token" as a
 broken mailbox on a hosted address: `canopy agent prepare` reports it as `email canopy-hosted`.
 Any other ref is a **Gmail thread id** (hex, no dashes) and reads with `canopy email read <id>`.
+
+**You may have more than one address.** An agent can keep a Gmail mailbox and a canopy-hosted
+address at once (`config/agent.json`: `email` is the primary, `addresses` the others, and
+`google_account` the Google account Drive/Docs/gog run as when it is not `email`). Three rules
+follow:
+- **A reply goes from the address the thread arrived at.** You never pick it: a UUID thread is
+  answered through canopy-web from the hosted address it came to, a Gmail thread from the Gmail
+  mailbox — whichever your primary is.
+- **A UUID thread works whatever your primary is.** A Gmail-primary agent handed
+  `--thread <uuid>` reads, answers and marks it exactly as above.
+- **A new thread goes from your primary** unless you name another of your own addresses:
+  `canopy email send --from <address> --to … --subject … --body-file …`. `--from` refuses any
+  address that is not yours (and any reply — see the first rule).
+Every address is *you*: a message from any of them is your own (the reply-all, the owed-reply sweep
+and "last message was mine" all count them all). One agent per mailbox still holds — never send as,
+or share, another agent's address.
 
 **But a scoped turn is not necessarily the ONLY turn on that ref — check before you work it.** The
 poller fires on **unread**, and a manual-mode turn leaves its thread unread for exactly as long as
@@ -552,7 +572,8 @@ different thread**, with reasons the agent would have agreed with. The reply was
 and one approval away from going out. It was caught only because the agent opened the sibling thread
 on an unrelated hunch. Nothing in the procedure had asked it to.)
 
-**If the NEWEST message on a thread is your OWN outbound reply, the thread is already handled —
+**If the NEWEST message on a thread is your OWN outbound reply (from any of your addresses), the
+thread is already handled —
 mark it read and move on. Never respond to your own message.** A thread can land back in `unread`
 for reasons that have nothing to do with a new inbound (label churn, a poller re-touch, a send that
 didn't clear the flag); an unread badge is a hint to *look*, not proof someone replied. So the first

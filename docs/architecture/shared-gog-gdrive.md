@@ -78,8 +78,12 @@ identity, rules, secrets, and domain skills are the agent's"*):
   `--client canopy-web` at a terminal — a Web client cannot run gog's loopback login).
 
 **Per-agent carve-outs:**
-- **Identity:** one mailbox per agent (`<slug>@dimagi-ai.com`), minted at agent-creation time and
-  never shared, over the ONE shared fleet OAuth app — two clients, `canopy` and `canopy-web`, one
+- **Identity:** one agent per mailbox — an address is minted at agent-creation time and never
+  shared. An agent may hold SEVERAL addresses (agent.json `email` = the primary, `addresses` = the
+  rest — e.g. a Gmail `ada@dimagi-ai.com` plus a canopy-hosted `ada@dimagi.ai`), and its Google
+  account (`google_account`, default `email`) is separate from its mail: an agent whose only mail
+  address is canopy-hosted still does Drive/Docs as `<slug>@dimagi-ai.com`. Every gog call runs as
+  that Google account (`EmailIdentity.account`), over the ONE shared fleet OAuth app — two clients, `canopy` and `canopy-web`, one
   GCP project (`canopy-494811`), interchangeable for every call. A gog "client" is the app identity
   (client_id + client_secret) — reusing it across agents is fine and reduces setup; the failure the
   fleet was built to avoid is acting as another agent's MAILBOX, governed by `--account`, not the

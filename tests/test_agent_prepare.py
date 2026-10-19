@@ -552,3 +552,46 @@ def test_a_hosted_mailbox_stages_an_optional_google_sign_in_for_drive(tmp_path):
     rep = _prep(tmp_path, box, creds=_creds(mailbox_backend="ses")).prepare("ace", credentials_only=True)
     assert rep.ok and rep.gmail == "canopy-hosted" and rep.gog_client == "canopy"
     assert any("Drive" in n for n in rep.notes)
+
+
+# ── an agent's Google account is not always its mailbox ─────────────────────────────────
+
+def test_an_ses_primary_agent_stages_its_separate_google_account_token(tmp_path):
+    """An SES-primary agent (ace@dimagi.ai, canopy-hosted) does Drive/Docs as a separate
+    Google account. canopy-web names it (`google_account`), and the token for THAT
+    account is the one to stage — not refused as "another mailbox"."""
+    _repo(tmp_path / "agents")
+    box = Box(tmp_path, vault_items={
+        "Agent-Ace/gog-token/credential": _token(email="ace@dimagi-ai.com"),
+        "Canopy-Shared/gog-oauth-client/credential": '{"installed": {}}'})
+    creds = _creds(mailbox="ace@dimagi.ai", mailbox_backend="ses",
+                   google_account="ace@dimagi-ai.com")
+    rep = _prep(tmp_path, box, creds=creds).prepare("ace", credentials_only=True)
+    assert rep.ok and rep.gog_client == "canopy", rep.notes
+    assert not any("NOT importing" in n for n in rep.notes)
+    assert any("Google sign-in staged" in n for n in rep.notes)
+
+
+def test_without_google_account_the_token_is_still_compared_to_the_mailbox(tmp_path):
+    """An older canopy-web sends no `google_account`: the mailbox stays the comparison,
+    so a token for any other address is still refused."""
+    _repo(tmp_path / "agents")
+    box = Box(tmp_path, vault_items={
+        "Agent-Ace/gog-token/credential": _token(email="ace@dimagi-ai.com")})
+    prep = _prep(tmp_path, box, creds=_creds(mailbox="ace@dimagi.ai", mailbox_backend="ses"))
+    assert prep.expected_mailbox("ace", tmp_path) == "ace@dimagi.ai"
+    rep = prep.prepare("ace", credentials_only=True)
+    assert not box.ran(["gog", "auth", "tokens", "import"])
+    assert any("not staged" in n for n in rep.notes)
+
+
+def test_runner_credentials_carry_google_account_when_canopy_web_sends_it():
+    def transport(method, url, headers, data):
+        if url.endswith("/runtime"):
+            return 200, "{}"
+        return 200, json.dumps({"mailbox": "ace@dimagi.ai", "mailbox_backend": "ses",
+                                "google_account": "ace@dimagi-ai.com"})
+
+    c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
+                                    transport=transport)
+    assert (c.mailbox, c.google_account) == ("ace@dimagi.ai", "ace@dimagi-ai.com")

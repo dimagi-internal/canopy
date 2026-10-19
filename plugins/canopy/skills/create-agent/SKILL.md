@@ -23,7 +23,11 @@ the human for any you don't have; infer sensible defaults for the rest:
   built-in name (`doctor`, `config`, `model`, `review`, …). The factory rejects bad/colliding slugs.
 - `--name` — display name (defaults to the slug, title-cased).
 - `--mandate` — the one-line mission. **Required.**
-- `--mailbox` — the agent's primary channel address (e.g. `sales@dimagi-ai.com`), if it has one.
+- `--mailbox` — the agent's primary channel address (e.g. `sales@dimagi-ai.com`, or a
+  canopy-hosted `sales@dimagi.ai`), if it has one.
+- `--google-account` — the agent's Google account for Drive/Docs/gog, only when it is NOT the
+  mailbox (a canopy-hosted `sales@dimagi.ai` signs in to Google as `sales@dimagi-ai.com`).
+  Stamped into `config/agent.json` as `google_account`; omit it when the mailbox is Gmail.
 - `--stakeholders` — who it serves.
 
 ## Step 2 — Generate
@@ -35,9 +39,11 @@ uv run --project "$CANOPY_ROOT" canopy create-agent <slug> \
   --name "<Display Name>" \
   --mandate "<one-line mission>" \
   --mailbox "<address>" \
+  --google-account "<google address>" \
   --stakeholders "<who it serves>" \
   --into <path>            # default: ./<slug>
 ```
+Drop `--google-account` when the mailbox is itself the Google account (a Gmail mailbox).
 This writes ~15 files: `persona.md`, `CLAUDE.md`, the `turn` + `self-review` skills,
 `config/gating.json` (the reads-free / writes-gated rails, shipped deny-rails-only with an empty
 `approve` list — enforced by canopy's own session gating hook, so the agent registers NO hook of its

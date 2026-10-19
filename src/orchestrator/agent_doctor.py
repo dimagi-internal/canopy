@@ -150,10 +150,15 @@ def check_identity(repo: Path) -> tuple[CheckResult, EmailIdentity | None]:
         ident = resolve_email_identity(repo)
     except AgentEmailError as e:
         return CheckResult(name, False, str(e)), None
-    detail = f"slug={ident.slug} mailbox={ident.account} gog_client={ident.client}"
+    detail = f"slug={ident.slug} mailbox={ident.email} gog_client={ident.client}"
+    if ident.account.lower() != ident.email.lower():
+        detail += f" google_account={ident.account}"
+    others = sorted(ident.addresses - {ident.email.lower(), ident.account.lower()})
+    if others:
+        detail += f" addresses={','.join(others)}"
     # A resolvable-but-placeholder mailbox passes the resolver but silently reads as "ready" — the
     # exact trap that let eva sit on `eva@example.com`. Flag it instead of rubber-stamping it.
-    if _is_placeholder_mailbox(ident.account):
+    if _is_placeholder_mailbox(ident.email):
         return CheckResult(
             name, False,
             f"{detail} — mailbox is the factory PLACEHOLDER; set a real address in "
