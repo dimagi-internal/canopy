@@ -2,7 +2,7 @@
 
 Which KB: `--kb` (or $CANOPY_KB) is one of
   * a path to a kb.sqlite                       (local; nothing is fetched)
-  * `<workspace>/<handle>`, e.g. `dimagi/givewell-kb`  (a workspace project — the usual case)
+  * `<workspace>/<handle>`, e.g. `connect/givewell-kb`  (a workspace project — the usual case)
   * `<agent>/<project ref>`, e.g. `eva/P12`     (the project's Drive folder, from canopy-web)
   * a Drive folder id                            (the folder holding kb.sqlite)
 A remote KB is cached at ~/.canopy/kb/<name>/kb.sqlite; `pull` refreshes it, and the
@@ -10,7 +10,7 @@ query commands pull on their own when the cache is older than --max-age-hours.
 Drive is read as the AGENT whose repo you run from (`--repo`, default: cwd), through the
 same identity and gog client rule every canopy Drive call uses.
 
-`canopy kb mcp --kb dimagi/givewell-kb` serves the same queries as MCP tools over stdio, so an agent
+`canopy kb mcp --kb connect/givewell-kb` serves the same queries as MCP tools over stdio, so an agent
 registers it once in its .mcp.json and gets search/get/tables/whats_new natively.
 """
 from __future__ import annotations
