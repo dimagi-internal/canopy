@@ -41,14 +41,18 @@ def main() -> int:
     transcript = str(data.get("transcript_path") or "")
     if transcript and os.path.isfile(transcript):
         cmd += ["--transcript", transcript]
+    # DETACHED, never waited on: Claude Code cancels a SessionEnd hook as it exits
+    # ("Hook cancelled" — measured on `claude -p`, 2026-10-19), so an upload run inline
+    # never finished. The child gets its own session and outlives this process; what it
+    # says goes to a log beside the session's state. A close that still never happens
+    # (power loss) is caught up by the next `canopy local open` on this machine.
+    log = os.path.join(LOCAL_ROOT, f"{session_id}.close.log")
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=50)
-    except (OSError, subprocess.SubprocessError) as e:
+        with os.fdopen(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab") as out:
+            subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                             start_new_session=True, close_fds=True)
+    except OSError as e:
         print(f"canopy: could not close this session's local turn ({type(e).__name__})", file=sys.stderr)
-        return 0
-    if r.returncode != 0:
-        why = ((r.stderr or "").strip().splitlines() or ["no output"])[-1][:300]
-        print(f"canopy: could not close this session's local turn — {why}", file=sys.stderr)
     return 0
 
 
