@@ -273,6 +273,7 @@ class RunnerPreparer(Bootstrapper):
             purpose=purpose, in_turn=in_turn))
         self._creds: dict[str, RunnerCredentials] = {}
         self._values: dict[str, dict] = {}   # off-disk: this pass's resolved env, in memory
+        self._gog_env: dict = {}              # this agent's gog home + password, if any
         self._slug = ""
         super().__init__(vault_for=self._vault_for, web_token=self._web_token, **kw)
 
@@ -587,9 +588,59 @@ class RunnerPreparer(Bootstrapper):
         except Exception as e:  # noqa: BLE001
             rep.notes.append(f"report: could not reach canopy-web ({_first_line(str(e))})")
 
+    # ── per-agent gog home (runner isolation units §6) ───────────────────────
+    def _gog(self, argv: list[str], **kw):
+        """gog with THIS agent's own home and keyring password when the box names a unit
+        gog secret (`orchestrator.gog_home`); else exactly the person's/box's gog."""
+        if self._gog_env:
+            kw["env"] = {**{k: v for k, v in os.environ.items() if k not in self._gog_env},
+                         **self._gog_env}
+            return self.run(argv, **kw)
+        return super()._gog(argv, **kw)
+
     # ── orchestration ────────────────────────────────────────────────────────
     def prepare(self, slug: str, *, repo_url: str = "", credentials_only: bool = False,
                 env_only: bool = False, report: bool = True) -> RunnerReport:
+        """`_prepare` for one agent, inside that agent's own gog home and keyring when the
+        box names a unit gog secret (`$CANOPY_GOG_SECRET_FILE`). The pair is set on this
+        process for the call (the mailbox check's gog inherits it) and restored after."""
+        from orchestrator.agent_email import _default_gog_config_dir
+        from orchestrator.gog_home import GogHomeError, agent_gog_env
+
+        try:
+            own = agent_gog_env(slug, strict=True)
+        except GogHomeError as e:
+            rep = RunnerReport(slug=slug)
+            rep.fail(f"gog: {e}")
+            if report:
+                self.report(slug, rep)
+            return rep
+        if not own:
+            return self._prepare(slug, repo_url=repo_url, credentials_only=credentials_only,
+                                 env_only=env_only, report=report)
+        saved = {k: os.environ.get(k) for k in own}
+        saved_dir, saved_accounts = self.gog_dir, (self._accounts, self._accounts_read)
+        Path(own["GOG_HOME"]).mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.environ.update(own)
+        self._gog_env = own
+        self.gog_dir = Path(_default_gog_config_dir())
+        self.gog_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._accounts, self._accounts_read = None, False   # another keyring: re-list
+        try:
+            return self._prepare(slug, repo_url=repo_url, credentials_only=credentials_only,
+                                 env_only=env_only, report=report)
+        finally:
+            self._gog_env = {}
+            self.gog_dir = saved_dir
+            self._accounts, self._accounts_read = saved_accounts
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def _prepare(self, slug: str, *, repo_url: str = "", credentials_only: bool = False,
+                 env_only: bool = False, report: bool = True) -> RunnerReport:
         self._slug = slug
         # The credentials-only pass stages the gog token and reports readiness, nothing
         # else, so it asks canopy-web for only what that uses (REFRESH_EXTRAS).

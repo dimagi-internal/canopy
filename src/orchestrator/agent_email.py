@@ -149,6 +149,13 @@ def gog_client_credentials(gog_home: str, client: str) -> str | None:
     return None
 
 
+# A box whose runner names a unit gog secret ($CANOPY_GOG_SECRET_FILE) gives every agent
+# its own gog home and keyring password (orchestrator.gog_home, runner isolation units §6).
+# Adopted BEFORE the config dir is resolved, so this process — and every gog it starts —
+# uses the session agent's own keyring. Unset (a laptop, older runner code): a no-op.
+from orchestrator.gog_home import adopt_session_agent_env as _adopt_gog_home  # noqa: E402
+
+_adopt_gog_home()
 GOG_CONFIG_DIR = _default_gog_config_dir()
 # Every Google surface a turn commonly touches — one login covers them all, so an
 # agent doesn't re-consent per service. gmail is the only one THIS engine needs;
