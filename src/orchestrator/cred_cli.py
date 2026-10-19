@@ -474,7 +474,22 @@ def decide(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
 # ──────────────────────────────────────────────────────────────────────────────
 
 def env_path(slug: str) -> Path:
-    return Path.home() / f".{slug}" / ".env"
+    """The agent's env file to read: this turn's ``$CANOPY_AGENT_ENV_FILE`` when the turn is
+    ``slug``'s and the file exists, else ``~/.<slug>/.env`` (`orchestrator.agent_env_file`)."""
+    from orchestrator.agent_env_file import agent_env_path
+    return agent_env_path(slug)
+
+
+def legacy_env_path(slug: str) -> Path:
+    """``~/.<slug>/.env`` — the only file the writers here ever write. A per-turn file
+    (``$CANOPY_AGENT_ENV_FILE``) is the runner's to write and remove, never canopy's."""
+    from orchestrator.agent_env_file import legacy_env_path as _legacy
+    return _legacy(slug)
+
+
+def turn_env_file(slug: str) -> Optional[Path]:
+    from orchestrator.agent_env_file import turn_env_file as _turn
+    return _turn(slug)
 
 
 def _private_env(path: Path) -> bool:
@@ -593,7 +608,12 @@ def ensure_env(slug: str, *, refresh: bool = False, runner: Runner = subprocess.
     verdict = decide(slug, refresh=refresh, runner=runner, which=which)
     if not verdict.allowed:
         raise CredError(verdict.message, EXIT_REFUSED)
-    out = env_path(slug)
+    turn_file = turn_env_file(slug)
+    if turn_file is not None:
+        # The runner wrote this turn's env and removes it when the turn ends; canopy never
+        # writes it, and never writes a second, persistent copy beside it.
+        return turn_file, "present ($CANOPY_AGENT_ENV_FILE, this turn's env)"
+    out = legacy_env_path(slug)
     if _fresh(out) and not refresh:
         try:
             os.chmod(out, 0o600)
@@ -692,7 +712,7 @@ _OP_PERSONAL_ENV_KEYS = ("OP_ACCOUNT", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN")
 def stamp_path(slug: str) -> Path:
     """Beside the env file: the fingerprint last injected. The cloud runner writes the
     same file in the same format (`cloud_runner._refresh_agent_env`)."""
-    return env_path(slug).with_name(".env.stamp")
+    return legacy_env_path(slug).with_name(".env.stamp")
 
 
 def op_key_account(token: str) -> str:
@@ -745,7 +765,7 @@ def vault_fingerprint(tpl: Path, env: dict, token: str, *, runner: Runner) -> st
 def _sync_from_canopy_web(slug: str, *, ttl: float, now: Optional[float]) -> str:
     """`sync_env` for an agent whose backend is canopy-web: throttled like the 1Password
     path (the same stamp), re-written only when the values' fingerprint moved."""
-    out, stamp = env_path(slug), stamp_path(slug)
+    out, stamp = legacy_env_path(slug), stamp_path(slug)
     now = time.time() if now is None else now
     try:
         prior = json.loads(stamp.read_text(encoding="utf-8"))
@@ -795,7 +815,12 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = Non
     ruled out on 2026-10-09). Throttled to once per `ttl` per agent via the stamp; when
     due, one `op vault get` per vault decides; the full `op inject` runs only when the
     fingerprint moved or the file is missing. A failure keeps the existing file and raises
-    CredError with op's reason."""
+    CredError with op's reason.
+
+    A turn whose runner handed it ``$CANOPY_AGENT_ENV_FILE`` is skipped: that file is the
+    turn's env, written fresh at claim, and there is no persistent copy to keep current."""
+    if turn_env_file(slug) is not None:
+        return "skipped: this turn's env is $CANOPY_AGENT_ENV_FILE (the runner's)"
     runner = runner or subprocess.run
     token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
     if not token:
@@ -807,7 +832,7 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = Non
     tpl = repo / ".env.tpl" if repo else None
     if tpl is None or not tpl.is_file():
         return f"skipped: no .env.tpl for '{slug}' on this machine"
-    out, stamp = env_path(slug), stamp_path(slug)
+    out, stamp = legacy_env_path(slug), stamp_path(slug)
     now = time.time() if now is None else now
     try:
         prior = json.loads(stamp.read_text(encoding="utf-8"))

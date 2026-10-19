@@ -2263,10 +2263,13 @@ def gog_keyring_backend(gog_dir: str | None = None) -> str:
 
 
 def agent_env_files(slug: str, home: Path | None = None) -> list[Path]:
-    """The .env files an agent's tooling loads: canopy's `~/.<slug>/.env` and the agent
-    plugin's data dir (`~/.claude/plugins/data/<slug>-*/.env`)."""
+    """The .env files an agent's tooling loads, first-wins: this turn's
+    `$CANOPY_AGENT_ENV_FILE` (a runner's per-turn file, when the turn is `slug`'s), canopy's
+    `~/.<slug>/.env`, and the agent plugin's data dir (`~/.claude/plugins/data/<slug>-*/.env`)."""
+    from orchestrator.agent_env_file import legacy_env_path, turn_env_file
     home = home or Path.home()
-    found = [home / f".{slug}" / ".env"]
+    turn = turn_env_file(slug)
+    found = ([turn] if turn else []) + [legacy_env_path(slug, home)]
     found += sorted((home / ".claude" / "plugins" / "data").glob(f"{slug}-*/.env"))
     return [p for p in found if p.is_file()]
 

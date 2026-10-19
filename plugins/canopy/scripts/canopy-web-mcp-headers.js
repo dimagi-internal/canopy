@@ -181,11 +181,33 @@ if (scoped.scoped && !scoped.token) {
 // secret, so it survives, and the PAT is then read from that agent's own file.
 // The cloud runner sets it for every agent turn. (The other two legs still serve
 // anything that runs this helper directly, as the canopy CLI's rules do.)
+//
+// WHICH FILE: a runner that keeps secrets off disk writes each turn's env to a
+// tmpfs file and names it in CANOPY_AGENT_ENV_FILE (a path, not a secret, so it
+// survives the stripping). It is read FIRST, when the turn is this slug's
+// (CANOPY_AGENT_SLUG / CANOPY_AGENT unset or equal) and the file exists; else the
+// legacy ~/.<slug>/.env. Same rule as src/orchestrator/agent_env_file.py.
+function agentEnvFile(slug) {
+  const turnFile = (process.env.CANOPY_AGENT_ENV_FILE || "").trim();
+  if (turnFile) {
+    const owner = (process.env.CANOPY_AGENT_SLUG || process.env.CANOPY_AGENT || "").trim().toLowerCase();
+    if (!owner || owner === slug.toLowerCase()) {
+      try {
+        if (fs.statSync(turnFile).isFile()) return turnFile;
+      } catch {
+        // missing: the legacy path below
+      }
+    }
+  }
+  return path.join(os.homedir(), `.${slug}`, ".env");
+}
+
 function slugEnvPat(slug) {
   if (!/^[a-z0-9][a-z0-9_-]*$/i.test(slug || "")) return "";
   try {
-    for (const raw of fs.readFileSync(path.join(os.homedir(), `.${slug}`, ".env"), "utf8").split("\n")) {
-      const line = raw.trim();
+    for (const raw of fs.readFileSync(agentEnvFile(slug), "utf8").split("\n")) {
+      let line = raw.trim();
+      if (line.startsWith("export ")) line = line.slice("export ".length).trim();
       if (line.startsWith("CANOPY_WEB_PAT=")) {
         return line.slice("CANOPY_WEB_PAT=".length).trim().replace(/^["']|["']$/g, "");
       }
@@ -209,18 +231,7 @@ function agentEnvPat() {
       } catch {
         return "";
       }
-      if (!/^[a-z0-9][a-z0-9_-]*$/i.test(slug)) return "";
-      try {
-        for (const raw of fs.readFileSync(path.join(os.homedir(), `.${slug}`, ".env"), "utf8").split("\n")) {
-          const line = raw.trim();
-          if (line.startsWith("CANOPY_WEB_PAT=")) {
-            return line.slice("CANOPY_WEB_PAT=".length).trim().replace(/^["']|["']$/g, "");
-          }
-        }
-      } catch {
-        return "";
-      }
-      return "";
+      return slugEnvPat(slug);
     }
     const parent = path.dirname(dir);
     if (parent === dir) return "";
