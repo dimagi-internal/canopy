@@ -1799,6 +1799,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
         build_turn_payload,
         check_runner_pin,
         derive_idempotency_key,
+        local_agent_slug,
         resolve_runner,
         summarize_turn,
     )
@@ -1865,10 +1866,13 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
                 "origin": "dispatch",
             }])
 
+        # No agent repo underfoot means a person is dispatching from their own Claude Code:
+        # name them, or the footer cannot say who sent the work.
+        person = "" if local_agent_slug() else _dispatching_person(canopy_web)
         payload = build_turn_payload(slug, prompt=prompt, idempotency_key=key,
                                      task_ext_id=task_ext_id,
                                      runner_id=str(pinned["id"]) if pinned else None,
-                                     turn_mode=turn_mode)
+                                     turn_mode=turn_mode, person=person)
         turn = canopy_web.call("POST", TURNS_PATH, payload)
     except DispatchError as e:
         raise click.ClickException(str(e))
@@ -1898,7 +1902,9 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
         click.echo(f"Runner: {pinned.get('name')}  (pinned — only it may claim this turn; "
                    f"now {pinned.get('status')})")
     else:
-        click.echo("Runner: (not pinned — any runner serving the agent may claim it)")
+        click.echo("Runner: (not pinned — the agent's runner order decides, which may be a "
+                   "teammate's laptop; `canopy agent turns --slug "
+                   f"{slug}` shows which one claimed it)")
     if turn_mode:
         rec = mode_out["recorded"]
         if rec == turn_mode:
@@ -1914,6 +1920,17 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     click.echo("")
     click.echo("This is a LAUNCH, not a result — the agent may not have read the brief yet.")
     click.echo(f"  verify:  canopy agent turns --slug {slug}")
+
+
+def _dispatching_person(canopy_web) -> str:
+    """The canopy identity a person dispatches as, '' if it cannot be read. Never blocks."""
+    try:
+        me = canopy_web.call("GET", canopy_web.ME_PATH) or {}
+    except Exception:  # noqa: BLE001 — a label is not worth failing a dispatch over
+        return ""
+    if not isinstance(me, dict):
+        return ""
+    return str(me.get("email") or me.get("username") or "").strip()
 
 
 @agent.command("landscape")

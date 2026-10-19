@@ -668,3 +668,52 @@ def test_cli_surfaces_a_403_for_auto(monkeypatch):
                                   "--prompt", "ping", "--mode", "auto"])
     assert r.exit_code != 0
     assert "owner or admins" in r.output or "403" in r.output
+
+
+# --- a PERSON dispatching from their own Claude Code ------------------------
+# 2026-10-19: a teammate's `canopy agent dispatch --slug ace` from outside any agent repo was
+# stamped "Dispatched by another canopy agent" — false, and the receiving session had to call
+# who_is_asking to find out a human sent it.
+
+def test_a_person_is_named_as_a_person_not_an_agent():
+    p = build_turn_payload("ace", prompt="read-only test", idempotency_key="k5",
+                           sender="", person="someone@dimagi.com")
+    assert "Sent by someone@dimagi.com" in p["prompt"]
+    assert "not by a canopy agent" in p["prompt"]
+    assert "NOT approval for any outbound action" in p["prompt"]
+    assert p["origin_ref"]["dispatched_by_person"] == "someone@dimagi.com"
+    assert "dispatched_by" not in p["origin_ref"]
+    assert dispatched_by(p["prompt"]) == ""   # the agent-slug marker stays agents-only
+
+
+def test_an_agent_sender_outranks_the_person_whose_token_it_uses():
+    p = build_turn_payload("hal", prompt="x", idempotency_key="k6",
+                           sender="ada", person="jj@dimagi.com")
+    assert "ada, a canopy agent" in p["prompt"]
+    assert "jj@dimagi.com" not in p["prompt"]
+    assert "dispatched_by_person" not in p["origin_ref"]
+
+
+def test_cli_dispatch_from_outside_an_agent_repo_names_the_person(monkeypatch):
+    """The 2026-10-19 path end to end: no agent repo underfoot, so the CLI reads /api/me/
+    and the receiving agent is told a person sent it, by name."""
+    calls = []
+    inner = _fake_transport(calls)
+
+    def transport(method, url, headers, data):
+        if url.endswith("/api/me/"):
+            calls.append((method, url, None))
+            return 200, json.dumps({"email": "someone@dimagi.com"})
+        return inner(method, url, headers, data)
+
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+    monkeypatch.setattr("orchestrator.agent_dispatch.local_agent_slug", lambda start=None: "")
+
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "ace", "--no-task",
+                                  "--prompt", "read-only test", "--json-output"])
+    assert r.exit_code == 0, r.output
+    post = [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]][0][2]
+    assert "Sent by someone@dimagi.com" in post["prompt"]
+    assert post["origin_ref"]["dispatched_by_person"] == "someone@dimagi.com"
