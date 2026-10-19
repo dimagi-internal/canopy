@@ -53,6 +53,9 @@ A rule is `{"tool": ..., "tool_pattern": ..., "pattern": ..., "per_statement": .
                  review-wrapper rail applies only where `skills/agent-turn-review/SKILL.md` is
                  present. The alternative is a per-agent copy of the rail, which is the drift
                  this file's whole history is about.
+  unquoted       match the shell subject with its quoted strings ('…', "…") blanked out first, so
+                 a rail about a COMMAND does not fire on a commit message or echo that only
+                 mentions it (and a `;` inside quotes does not split a statement).
   agent_only     skip this `always` rail in a session that belongs to no agent. For rails that
                  translate an AGENT's own rails (e.g. PowerShell HTTP writes -> the agent's curl
                  rails): a human's session has no such rails, so the translation only blocks.
@@ -316,10 +319,20 @@ def tool_applies(rule, tool_name):
     return want == "Bash" and tool_name in SHELL_TOOLS and not rule.get("bash_only")
 
 
+_QUOTED = re.compile(r"'[^']*'|" + r'"(?:[^"\\]|\\.)*"', re.S)
+
+
+def _unquoted(subject):
+    """`subject` with every quoted string replaced by a bare token (`Q`)."""
+    return _QUOTED.sub("Q", subject)
+
+
 def matches(rule, tool_name, subject):
     """Does this rule fire on this call?"""
     if not tool_applies(rule, tool_name):
         return False
+    if rule.get("unquoted") and tool_name in SHELL_TOOLS:
+        subject = _unquoted(subject)
     tpat = rule.get("tool_pattern")
     if tpat:
         try:

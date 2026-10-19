@@ -69,6 +69,16 @@ DENIED = [
     ("Bash", {"command": "xxd /etc/canopy-runner/dimagi.gog-secret"}),
     ("Grep", {"path": "/etc/canopy-runner", "pattern": "TOKEN"}),
     ("Glob", {"pattern": "/home/u/.gog/eva/**"}),
+    # the bare gog folder: a recursive copy, archive or search of it takes the keyring
+    ("Grep", {"path": "/home/ubuntu/.config/gogcli", "pattern": "refresh_token"}),
+    ("Grep", {"path": "~/.config/gogcli/", "pattern": "refresh_token"}),
+    ("Bash", {"command": "cp -r ~/.config/gogcli /tmp/x"}),
+    ("Bash", {"command": "tar czf /tmp/g.tgz ~/.config/gogcli"}),
+    ("Bash", {"command": "tar czf /tmp/g.tgz $HOME/.config/gogcli/"}),
+    # print-json, however it is launched
+    ("Bash", {"command": 'uv run --project "$CANOPY_ROOT" canopy cred env --slug hal --runner --print-json'}),
+    ("Bash", {"command": "uv run canopy cred env --slug hal --runner --print-json"}),
+    ("Bash", {"command": "CANOPY_TOKEN=x canopy cred env --slug hal --runner --print-json; echo done"}),
 ]
 
 
@@ -110,6 +120,14 @@ ALLOWED = [
     ("Grep", {"pattern": "/etc/canopy-runner", "path": "src/"}),
     ("Grep", {"pattern": "/run/canopy/", "path": "/home/u/work/canopy-web"}),
     ("Bash", {"command": "canopy cred env --slug hal --runner --out /run/canopy/1001/turn-A/env"}),
+    ("Bash", {"command": "cat ~/.config/gogcli/drive-downloads/notes.json"}),
+    ("Read", {"file_path": "/home/ubuntu/.config/gogcli/drive-downloads/tokens-report.jsonl"}),
+    ("Read", {"file_path": "/home/ubuntu/.config/gogcli/drive-downloads/credentials-sheet.json.bak"}),
+    ("Read", {"file_path": "/home/ubuntu/.config/gogcli-notes.md"}),
+    # mentioning the command inside quotes is not running it
+    ("Bash", {"command": 'git commit -m "docs; canopy cred env --print-json is runner-only"'}),
+    ("Bash", {"command": "grep -rn 'canopy cred env --slug x --runner --print-json' docs/"}),
+    ("Bash", {"command": 'echo "run: canopy cred env --runner --print-json" > /tmp/note'}),
 ]
 
 
