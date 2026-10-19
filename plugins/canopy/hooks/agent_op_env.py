@@ -178,11 +178,79 @@ def sync_env(canopy: str, slug: str, token: str) -> None:
         print(f"canopy: {slug}'s vault changed — re-injected ~/.{slug}/.env")
 
 
+def _hook_input() -> dict:
+    """SessionStart's stdin (`session_id`, `cwd`, `source`, …), or {}."""
+    try:
+        if sys.stdin is None or sys.stdin.isatty():
+            return {}
+        data = json.loads(sys.stdin.read() or "{}")
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def local_eligible(home: str) -> bool:
+    """Is this a person's own session on their registered private runner?
+
+    Yes when `~/.canopy/private-runner.json` exists (`canopy private-runner register`) and the
+    session is not a runner's: no `$CANOPY_TURN_ID` (a cloud turn), no confined profile,
+    and not an emdash task on a machine that runs the runner app (`~/.canopy/runner.json`
+    — emdash cannot pass a turn id, so on a runner box every emdash session is presumed
+    the runner's, whose turn already exists). canopy-web#1704."""
+    if not os.path.isfile(os.path.join(home, ".canopy", "private-runner.json")):
+        return False
+    if os.environ.get("CANOPY_TURN_ID", "").strip() or os.environ.get("CANOPY_PROFILE"):
+        return False
+    if (os.environ.get("EMDASH_TASK_ID", "").strip()
+            and os.path.isfile(os.path.join(home, ".canopy", "runner.json"))):
+        return False
+    return True
+
+
+def open_local_turn(canopy: str, slug: str, data: dict, env_file: str) -> str:
+    """Open this session's LOCAL turn (`canopy local open`) and export its id, so every
+    later canopy call in the session — a credential read above all — names it. Returns
+    the turn id, or "" (one line printed saying why). Never fails the session."""
+    session_id = str(data.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "").strip()
+    if not session_id:
+        return ""
+    try:
+        r = subprocess.run([canopy, "local", "open", "--slug", slug, "--session-id", session_id,
+                            "--cwd", str(data.get("cwd") or os.getcwd())],
+                           capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"canopy: could not open a local turn for {slug} ({type(e).__name__})")
+        return ""
+    if r.returncode != 0:
+        why = ((r.stderr or "").strip().splitlines() or ["no output"])[-1][:300]
+        print(f"canopy: this session is not a local turn of {slug} — {why}")
+        return ""
+    try:
+        state = json.loads((r.stdout or "").strip().splitlines()[-1])
+        turn_id = str(state["turn_id"])
+    except (ValueError, KeyError, IndexError):
+        print(f"canopy: `canopy local open` gave no turn for {slug}")
+        return ""
+    if env_file:
+        try:
+            with open(env_file, "a", encoding="utf-8") as fh:
+                fh.write(f"export CANOPY_TURN_ID={shlex.quote(turn_id)}\n"
+                         f"export CANOPY_AGENT_SLUG={shlex.quote(slug)}\n"
+                         "export CANOPY_LOCAL_TURN=1\n")
+        except OSError as e:
+            print(f"canopy: could not export the local turn to the session env ({e})")
+    print(f"canopy: local turn of {slug} on private runner {state.get('private_runner') or '?'} — "
+          f"{state.get('turn_mode') or '?'} ({state.get('turn_mode_basis') or ''}) — "
+          f"{state.get('url') or turn_id}")
+    return turn_id
+
+
 def main() -> int:
     slug = os.environ.get("CANOPY_AGENT", "").strip()
     env_file = os.environ.get("CLAUDE_ENV_FILE", "").strip()
     if not slug:
         return 0
+    data = _hook_input()
     if env_file:
         export_binding(slug, env_file)
     canopy = shutil.which("canopy")
@@ -191,6 +259,13 @@ def main() -> int:
     # runner with the runner's own identity (cloud_runner._stage_salesforce). Asking again
     # here would use the agent's PAT, which /credentials/resolve refuses (lex, 2026-10-16).
     on_runner = bool(os.environ.get("CANOPY_TURN_ID", "").strip())
+    # A person's own session on their private runner: record it as a local turn FIRST, and
+    # carry its id into every credential read below (canopy-web#1704) — that is what
+    # admits a license holder, and what the read log names.
+    if canopy and local_eligible(os.path.expanduser("~")):
+        turn_id = open_local_turn(canopy, slug, data, env_file)
+        if turn_id:
+            os.environ["CANOPY_TURN_ID"] = turn_id
     if canopy and not confined and not on_runner:
         stage_delegated(canopy, slug)
     present = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()

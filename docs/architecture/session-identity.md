@@ -351,3 +351,31 @@ reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.jso
 device key in canopy-web → `canopy vault switch --agent eva --to canopy-web`, then set
 `require_device_binding` on Eva → run Eva as usual. Rollback: `canopy vault export --agent eva
 && canopy vault switch --agent eva --to 1password`.
+
+## Local use: a private runner, a license, a local turn (canopy-web#1704)
+
+A person who is not an agent's admin may still run the agent in their **own** Claude Code,
+with its skills and logins, and canopy keeps the record:
+
+1. **`canopy private-runner register`** (once, as yourself — your own PAT from
+   `/canopy:canopy-web-pat-mint`) makes this machine one of your **private runners**:
+   plain Claude Code with the canopy plugin, no runner app, never claims a turn.
+   `~/.canopy/private-runner.json` records it.
+2. **`canopy local use <slug>`** (or an agent repo's own `.claude/settings.json`) sets
+   `$CANOPY_AGENT` for a project.
+3. Each session there is a **local turn**. `agent_op_env.py` (SessionStart) runs
+   `canopy local open` FIRST: canopy-web issues your **license** when the agent's caller
+   list gives you the whole agent (else 403, and the request is recorded for its admins),
+   opens a RUNNING `origin=local` turn, and the hook exports `CANOPY_TURN_ID` — so the
+   credential reads that follow (`canopy agent op-token`, `cred sync`) name the turn and
+   go out under the license (`via=license` in the read log). `caller_context.py` shows the
+   turn's envelope on the first prompt (an editor's says `manual`) and renews its lease;
+   `local_turn_close.py` (SessionEnd) runs `canopy local close`, which uploads the
+   transcript to the turn and finishes it.
+
+A license read never carries the agent's own canopy login, its owner's GitHub delegation,
+a lent credential or the shared vault key. It does carry the agent's 1Password key, so an
+agent that keeps its own canopy PAT in that vault exposes it to license holders — keep
+the PAT on canopy-web instead. Not eligible: a runner's turn (`$CANOPY_TURN_ID` already
+set), a confined `cx-` session, and an emdash session on a machine that runs the runner
+app (`~/.canopy/runner.json`) — those are the runner's turns already.
