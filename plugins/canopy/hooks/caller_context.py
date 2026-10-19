@@ -226,7 +226,9 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         + (f", capability={cap.get('name')}" if cap.get("name") else ""),
         f"- turn mode: {mode}" + (f" ({basis})" if basis else "") + mode_note,
         f"- channel: {trigger.get('origin') or 'unknown'}"
-        + (f", runner {trigger['runner']}" if trigger.get("runner") else ""),
+        + (f", runner {trigger['runner']}" if trigger.get("runner") else "")
+        + (f", private runner {trigger['private_runner']} (your own machine — a local turn)"
+           if trigger.get("private_runner") else ""),
     ]
     lines.extend(_slack_lines(env.get("conversation"), tid))
     um = env.get("unproven_member")
@@ -529,6 +531,56 @@ def person_lines(person) -> list:
     return [head, *body, tail]
 
 
+LOCAL_ROOT = os.path.expanduser("~/.canopy/local")
+
+
+def local_turn(session_id: str, *, root=None, renew=True):
+    """(envelope path, turn id) for THIS session's LOCAL turn (canopy-web#1704), the
+    first time a prompt asks; (None, None) otherwise.
+
+    A session on a person's private runner that uses an agent is a local turn, opened
+    by the SessionStart hook (`canopy local open`), which leaves
+    `~/.canopy/local/<session id>.json`. Its envelope is shown ONCE per opening (the
+    state's `envelope_shown`), not beside every prompt: a runner turn is one message,
+    a local session is many, and the envelope does not change inside it. Each prompt
+    also renews the turn's lease — `canopy local renew` throttles itself, and it runs
+    detached, so a prompt never waits on the network."""
+    if not session_id or not re.match(r"^[A-Za-z0-9._-]{1,100}$", session_id):
+        return None, None
+    state_path = os.path.join(root or LOCAL_ROOT, f"{session_id}.json")
+    try:
+        with open(state_path, encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(state, dict) or state.get("closed_at"):
+        return None, None
+    if renew:
+        try:
+            import subprocess
+
+            subprocess.Popen(["canopy", "local", "renew", "--session-id", session_id],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError:
+            pass
+    if state.get("envelope_shown"):
+        return None, None
+    env = str(state.get("envelope_path") or "")
+    if not env or not _inside(env, CALLER_ROOT):
+        return None, None
+    state["envelope_shown"] = True
+    tmp = f"{state_path}.{os.getpid()}.tmp"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+        os.replace(tmp, state_path)
+    except OSError:
+        pass
+    return env, str(state.get("turn_id") or "")
+
+
 def main() -> int:
     try:
         data = json.load(sys.stdin)
@@ -539,6 +591,10 @@ def main() -> int:
         else:
             path, tid, task = claim_pointer(task_candidates(data.get("transcript_path", ""),
                                                             data.get("cwd", "")))
+        if not path and not explicit:
+            # No runner delivered this prompt: a person's own session, which is a local
+            # turn when it was opened as one on their private runner.
+            path, tid = local_turn(str(data.get("session_id") or ""))
         if not path:
             return 0
         with open(path, encoding="utf-8") as fh:
