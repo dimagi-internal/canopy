@@ -96,6 +96,14 @@ class RunnerCredentials:
     #: `values` below, not from `op inject` — canopy-web withholds the vault key then.
     credential_source: str = ""
     values: dict = field(default_factory=dict, repr=False)
+    #: The resolve body's top-level secrets a runner hands a turn as-is (`cred env --runner
+    #: --print-json`), each only when the resolve returned it: RESOLVE_EXTRAS.
+    extras: dict = field(default_factory=dict, repr=False)
+
+
+#: Top-level fields of the /credentials/resolve body (its own names) that
+#: `cred env --runner --print-json` passes through beside `values`.
+RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "salesforce_creds")
 
 
 #: What the credentials-only pass (the runner-update timer, every 30 minutes) actually
@@ -184,8 +192,9 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
     except Exception:  # noqa: BLE001 — unknown backend = the default path (op inject)
         source = ""
     values = body.get("values") if isinstance(body.get("values"), dict) else {}
+    extras = {k: body[k] for k in RESOLVE_EXTRAS if body.get(k) not in (None, "")}
     return RunnerCredentials(
-        credential_source=source, values=values,
+        credential_source=source, values=values, extras=extras,
         repo_url=repo_url,
         vault=str(body.get("op_vault") or ""), key=str(body.get("op_sa_token") or ""),
         shared_vault=str(body.get("shared_op_vault") or ""),

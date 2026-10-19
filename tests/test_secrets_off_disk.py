@@ -132,6 +132,8 @@ def fake_values(monkeypatch):
         return {"CANOPY_WEB_PAT": "p", "OP_SERVICE_ACCOUNT_TOKEN": "k", "gog-token": "{\n}"}, "1Password"
 
     monkeypatch.setattr(cred_cli, "runner_env_values", runner_values)
+    monkeypatch.setattr(cred_cli, "runner_env_bundle",
+                        lambda slug, **kw: (*runner_values(slug, **kw), got.get("extras", {})))
     monkeypatch.setattr(cred_cli, "exec_env", lambda slug, **kw: ({"CANOPY_WEB_PAT": "h"}, "canopy-web"))
     return got
 
@@ -252,3 +254,74 @@ def test_the_transient_root_is_created_0700(tmp_path, turn_root):
         os.umask(old)
     for d in (tmp_path / "run", tmp_path / "run" / "canopy", turn_root):
         assert stat.S_IMODE(d.stat().st_mode) == 0o700, d
+
+
+# ── --print-json extras: the resolve's own op_sa_token / op_vault / salesforce_creds ──
+
+def _resolve_transport(body):
+    """canopy-web: /runtime, /credentials/resolve (answering `body`), /credentials/access."""
+    calls = []
+
+    def transport(method, url, headers, data):
+        calls.append(url)
+        if "/credentials/resolve" in url:
+            return 200, json.dumps(body)
+        if "/credentials/access" in url:
+            return 200, json.dumps({"credential_source": "canopy-web"})
+        return 200, json.dumps({"repo_url": ""})
+    return transport, calls
+
+
+@pytest.mark.parametrize("body,want", [
+    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_sa_token": "ops_K", "op_vault": "Agent-Ace",
+      "salesforce_creds": '{"u": 1}'},
+     {"op_sa_token": "ops_K", "op_vault": "Agent-Ace", "salesforce_creds": '{"u": 1}'}),
+    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_vault": "Agent-Ace"}, {"op_vault": "Agent-Ace"}),
+    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_sa_token": None, "salesforce_creds": ""}, {}),
+    ({"values": {"CANOPY_WEB_PAT": "w"}}, {}),
+])
+def test_print_json_passes_through_the_resolves_extras(tmp_path, turn_root, monkeypatch,
+                                                       body, want):
+    from orchestrator import agent_prepare
+    transport, calls = _resolve_transport(body)
+    real = agent_prepare.fetch_runner_credentials
+    monkeypatch.setattr(agent_prepare, "fetch_runner_credentials",
+                        lambda slug, **kw: real(slug, **{**kw, "transport": transport}))
+    monkeypatch.setenv("CANOPY_BASE_URL", "https://canopy.test")
+    monkeypatch.setenv("CANOPY_TOKEN", "runner-token")
+    r = CliRunner().invoke(cred_cli.cred_group, ["env", "--slug", "ace", "--runner",
+                                                 "--agent-root", str(tmp_path / "agents"),
+                                                 "--print-json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out == {"agent": "ace", "source": "canopy-web",
+                   "values": {"CANOPY_WEB_PAT": "w"}, **want}
+    assert all(v is not None for v in out.values())
+    # one resolve call carried all of it
+    assert sum("/credentials/resolve" in u for u in calls) == 1
+    # and nothing was written anywhere
+    assert not turn_root.exists()
+    assert _secret_files(tmp_path) == []
+    assert not (tmp_path / "home" / ".ace").exists()
+
+
+def test_print_json_extras_still_need_runner(fake_values):
+    fake_values["extras"] = {"op_sa_token": "ops_K"}
+    r = CliRunner().invoke(cred_cli.cred_group, ["env", "--slug", "ace", "--print-json"])
+    assert r.exit_code == cred_cli.EXIT_USAGE and "ops_K" not in r.output
+
+
+def test_out_never_writes_the_extras(tmp_path, turn_root, monkeypatch):
+    from orchestrator import agent_prepare
+    transport, _ = _resolve_transport({"values": {"CANOPY_WEB_PAT": "w"},
+                                       "op_sa_token": "ops_K", "salesforce_creds": "{}"})
+    real = agent_prepare.fetch_runner_credentials
+    monkeypatch.setattr(agent_prepare, "fetch_runner_credentials",
+                        lambda slug, **kw: real(slug, **{**kw, "transport": transport}))
+    monkeypatch.setenv("CANOPY_BASE_URL", "https://canopy.test")
+    out = turn_root / "t" / "env"
+    r = CliRunner().invoke(cred_cli.cred_group, ["env", "--slug", "ace", "--runner",
+                                                 "--agent-root", str(tmp_path / "agents"),
+                                                 "--out", str(out)])
+    assert r.exit_code == 0, r.output
+    assert "ops_K" not in out.read_text() and "CANOPY_WEB_PAT=w" in out.read_text()
