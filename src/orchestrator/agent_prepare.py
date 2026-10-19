@@ -38,6 +38,14 @@ RUNNER STEPS, in order (each says what it did; one failing never stops the rest)
   5. report — POST /api/agents/<slug>/bootstrap-report: what this box could actually do.
 `--credentials-only` does 4 + 5 only (no clone, no re-provision under a live agent);
 `--env-only` does 2 only (a claim's cheap refresh).
+
+SECRETS OFF DISK (opt-in; runner isolation units, spec §4). With `$CANOPY_TURN_ENV_ROOT`
+set (the runner's tmpfs root for per-turn env files) or `--no-secret-files`, step 2
+resolves the values IN MEMORY and checks them, and writes no `~/.<slug>/.env`, no
+`<clone>/.env` and no `.gws-sa-key.json` copy. `bin/<slug>-setup` gets its env through a
+0600 file under that root that is removed as soon as it exits. The runner writes each
+turn's env itself at claim (`canopy cred env --runner --out …`). Without either, nothing
+changes: the live fleet keeps its files until its runner opts in.
 """
 from __future__ import annotations
 
@@ -114,9 +122,22 @@ def verification_purpose(why: str = "") -> str:
     return f"{CHECK_PREFIX}{label} (by {who})"
 
 
+#: The runner's tmpfs root for per-turn env files. Set → secrets stay off disk (see above).
+TURN_ENV_ROOT_VAR = "CANOPY_TURN_ENV_ROOT"
+
+
+def secrets_off_disk(environ=None) -> bool:
+    """Whether this runner keeps decrypted secrets off persistent disk: opted in by
+    ``$CANOPY_TURN_ENV_ROOT`` (or ``$CANOPY_NO_SECRET_FILES=1``)."""
+    env = os.environ if environ is None else environ
+    return bool((env.get(TURN_ENV_ROOT_VAR) or "").strip()
+                or (env.get("CANOPY_NO_SECRET_FILES") or "").strip() in ("1", "true", "yes"))
+
+
 def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
                              transport: Optional[canopy_web.Transport] = None,
-                             minimal: bool = False, purpose: str = "") -> RunnerCredentials:
+                             minimal: bool = False, purpose: str = "",
+                             in_turn: bool = False) -> RunnerCredentials:
     """`/credentials/resolve` with the runner's token. Unreachable is not unregistered: it
     returns an `error` the report states, so a human retries instead of registering.
 
@@ -143,9 +164,12 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         # A box staging an agent outside any turn (bootstrap, the runner-update timer)
         # says so, or canopy-web emails the owner "read outside a turn" for routine
         # maintenance every hour (canopy-web#1563).
+        # A claim resolving the env FOR a turn (`in_turn`, the turn id rides
+        # X-Canopy-Turn-Id) is the read the alert is about — it carries no refresh label.
         body = cred_resolve.resolve(slug, base_url=base_url, token=token,
                                     transport=transport, refs=refs, fallback=not minimal,
-                                    purpose=purpose or cred_resolve.RUNNER_REFRESH) or {}
+                                    purpose=purpose or ("" if in_turn else
+                                                        cred_resolve.RUNNER_REFRESH)) or {}
     except Exception as e:  # noqa: BLE001
         return RunnerCredentials(error=f"could not reach canopy-web for {slug}'s credentials: "
                                        f"{_first_line(str(e), 200)}")
@@ -186,6 +210,11 @@ class RunnerReport(AgentReport):
                 "mailbox_ok": self.mailbox_ok, "gog_client": self.gog_client,
                 "turn_client": self.turn_client, "turn_ready": self.turn_ready,
                 "env_ok": self.env_ok, "detail": self.detail()}
+
+
+def _remove_tree(path: Path) -> None:
+    import shutil
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def turn_readiness(repo: Path, tok, mailbox_ok: bool) -> tuple[str, Optional[bool]]:
@@ -229,8 +258,11 @@ class RunnerPreparer(Bootstrapper):
                  plugin_deps_root: Optional[Path] = None,
                  transport: Optional[canopy_web.Transport] = None,
                  creds_for: Optional[Callable[[str], RunnerCredentials]] = None,
-                 runner_name: str = "", purpose: str = "", **kw):
+                 runner_name: str = "", purpose: str = "",
+                 no_secret_files: Optional[bool] = None, in_turn: bool = False, **kw):
         self.base_url, self.token, self.transport = base_url, token, transport
+        #: Secrets off disk (module doc): resolve and check, write no value to a file.
+        self.no_secret_files = secrets_off_disk() if no_secret_files is None else no_secret_files
         self.agent_root = Path(agent_root)
         self.plugin_deps_root = Path(plugin_deps_root or
                                      Path.home() / ".claude" / "plugins" / "agent-deps")
@@ -238,8 +270,10 @@ class RunnerPreparer(Bootstrapper):
         self._minimal = False   # set by prepare(credentials_only=True)
         self._creds_for = creds_for or (lambda s: fetch_runner_credentials(
             s, base_url=base_url, token=token, transport=transport, minimal=self._minimal,
-            purpose=purpose))
+            purpose=purpose, in_turn=in_turn))
         self._creds: dict[str, RunnerCredentials] = {}
+        self._values: dict[str, dict] = {}   # off-disk: this pass's resolved env, in memory
+        self._gog_env: dict = {}              # this agent's gog home + password, if any
         self._slug = ""
         super().__init__(vault_for=self._vault_for, web_token=self._web_token, **kw)
 
@@ -494,9 +528,17 @@ class RunnerPreparer(Bootstrapper):
         # (cloud-ec2-2, 2026-10-18). Names only; an installer that ignores them is unchanged.
         if c.vault:
             base["AGENT_VAULT"] = c.vault
-        env_file = self.home / f".{slug}" / ".env"
-        if rep.env_ok and env_file.is_file():
-            base["AGENT_ENV_FILE"] = str(env_file)
+        transient = None
+        if self.no_secret_files:
+            # Off disk: the values this pass resolved in memory, through a 0600 file under
+            # the runner's tmpfs root that is gone as soon as the installer exits.
+            if rep.env_ok and self._values.get(slug):
+                transient = self._transient_env(slug, self._values[slug])
+                base["AGENT_ENV_FILE"] = base["CANOPY_AGENT_ENV_FILE"] = str(transient)
+        else:
+            env_file = self.home / f".{slug}" / ".env"
+            if rep.env_ok and env_file.is_file():
+                base["AGENT_ENV_FILE"] = str(env_file)
         env = self.op_env(c.vault, base)
         try:
             r = self.run(["bash", str(setup), "--skip-doctor"], capture_output=True, text=True,
@@ -506,11 +548,33 @@ class RunnerPreparer(Bootstrapper):
                                  f"{_setup_failure(r.stdout, r.stderr)}")
         except (OSError, subprocess.TimeoutExpired) as e:
             rep.notes.append(f"provisioner: bin/{slug}-setup: {e}")
+        finally:
+            if transient is not None:
+                _remove_tree(transient.parent)
+        if self.no_secret_files:
+            return   # no `.gws-sa-key.json` / `.env` copy into the clone
         for name, dest in (("gws-sa-key.json", repo / ".gws-sa-key.json"),
                            (".env", repo / ".env")):
             src = data_dir / name
             if src.is_file() and (name != ".env" or not dest.exists()):
                 _write_private(dest, src.read_text(encoding="utf-8"))
+
+    def _transient_env(self, slug: str, values: dict) -> Path:
+        """A 0700 dir + 0600 env file under the runner's tmpfs root (else the system temp
+        dir) holding ``values``; the caller removes the directory."""
+        import tempfile
+
+        from orchestrator.cred_cli import env_values, mkdirs_private
+        root = (os.environ.get(TURN_ENV_ROOT_VAR) or "").strip() or None
+        if root:
+            mkdirs_private(Path(root))
+        d = Path(tempfile.mkdtemp(prefix=f"prepare-{slug}-", dir=root))
+        os.chmod(d, 0o700)
+        usable, _ = env_values(values)
+        f = d / "env"
+        _write_private(f, "".join(f"{k}={v}\n" for k, v in usable.items()))
+        os.chmod(f, 0o600)
+        return f
 
     def report(self, slug: str, rep: RunnerReport) -> None:
         """Tell canopy-web what this box could actually do. Best-effort: a box that cannot
@@ -524,9 +588,59 @@ class RunnerPreparer(Bootstrapper):
         except Exception as e:  # noqa: BLE001
             rep.notes.append(f"report: could not reach canopy-web ({_first_line(str(e))})")
 
+    # ── per-agent gog home (runner isolation units §6) ───────────────────────
+    def _gog(self, argv: list[str], **kw):
+        """gog with THIS agent's own home and keyring password when the box names a unit
+        gog secret (`orchestrator.gog_home`); else exactly the person's/box's gog."""
+        if self._gog_env:
+            kw["env"] = {**{k: v for k, v in os.environ.items() if k not in self._gog_env},
+                         **self._gog_env}
+            return self.run(argv, **kw)
+        return super()._gog(argv, **kw)
+
     # ── orchestration ────────────────────────────────────────────────────────
     def prepare(self, slug: str, *, repo_url: str = "", credentials_only: bool = False,
                 env_only: bool = False, report: bool = True) -> RunnerReport:
+        """`_prepare` for one agent, inside that agent's own gog home and keyring when the
+        box names a unit gog secret (`$CANOPY_GOG_SECRET_FILE`). The pair is set on this
+        process for the call (the mailbox check's gog inherits it) and restored after."""
+        from orchestrator.agent_email import _default_gog_config_dir
+        from orchestrator.gog_home import GogHomeError, agent_gog_env
+
+        try:
+            own = agent_gog_env(slug, strict=True)
+        except GogHomeError as e:
+            rep = RunnerReport(slug=slug)
+            rep.fail(f"gog: {e}")
+            if report:
+                self.report(slug, rep)
+            return rep
+        if not own:
+            return self._prepare(slug, repo_url=repo_url, credentials_only=credentials_only,
+                                 env_only=env_only, report=report)
+        saved = {k: os.environ.get(k) for k in own}
+        saved_dir, saved_accounts = self.gog_dir, (self._accounts, self._accounts_read)
+        Path(own["GOG_HOME"]).mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.environ.update(own)
+        self._gog_env = own
+        self.gog_dir = Path(_default_gog_config_dir())
+        self.gog_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._accounts, self._accounts_read = None, False   # another keyring: re-list
+        try:
+            return self._prepare(slug, repo_url=repo_url, credentials_only=credentials_only,
+                                 env_only=env_only, report=report)
+        finally:
+            self._gog_env = {}
+            self.gog_dir = saved_dir
+            self._accounts, self._accounts_read = saved_accounts
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def _prepare(self, slug: str, *, repo_url: str = "", credentials_only: bool = False,
+                 env_only: bool = False, report: bool = True) -> RunnerReport:
         self._slug = slug
         # The credentials-only pass stages the gog token and reports readiness, nothing
         # else, so it asks canopy-web for only what that uses (REFRESH_EXTRAS).
@@ -606,12 +720,63 @@ class RunnerPreparer(Bootstrapper):
             rep.notes.append("google sign-in (optional, for Drive/Docs) not staged: "
                              + "; ".join(n for n in side.notes if not n.startswith("ok: "))[:200])
 
+    # ── secrets off disk: resolve + check in memory ─────────────────────────────
+    def env_values(self, slug: str, repo: Path) -> tuple[dict, str]:
+        """({NAME: value}, which backend) for the agent's env, resolved IN MEMORY: canopy-web's
+        values, or `op inject` of the clone's .env.tpl to a pipe with the agent's own key.
+        Raises RuntimeError with the reason (never a value)."""
+        from orchestrator.agent_instance import inject_env, uses_vault_var
+        from orchestrator.cred_cli import env_values, parse_dotenv
+
+        c = self.creds(slug)
+        if c.error:
+            raise RuntimeError(c.error)
+        if c.credential_source == "canopy-web":
+            usable, _ = env_values(c.values)
+            return usable, "canopy-web"
+        tpl = Path(repo) / ".env.tpl"
+        if not tpl.is_file():
+            raise RuntimeError(f"no .env.tpl in {repo}")
+        if not (c.vault and c.key):
+            raise RuntimeError(f"canopy-web has {'no vault' if not c.vault else 'no key'} for "
+                               f"{slug} — `canopy agent vault --slug {slug}`")
+        base = dict(os.environ)
+        if uses_vault_var(tpl.read_text(encoding="utf-8")):
+            base = inject_env(base, c.vault, slug)
+        r, err = self._op(["op", "inject", "-i", str(tpl)], timeout=180,
+                          env=self.op_env(c.vault, base))
+        if r is None or r.returncode != 0:
+            raise RuntimeError(f"op inject failed: {err or _first_line(r.stderr, 300)}")
+        return parse_dotenv(r.stdout or ""), "1Password"
+
+    def _env_in_memory(self, slug: str, repo: Path, rep: RunnerReport) -> None:
+        """Step 2 with secrets off disk: resolve and check, keep the values in this process
+        only (for the provisioner's transient file), write nothing."""
+        if self.dry_run:
+            rep.env, rep.env_ok = "would resolve (in memory)", None
+            return
+        if not (repo and (Path(repo) / ".env.tpl").is_file()) and \
+                self.creds(slug).credential_source != "canopy-web":
+            rep.env, rep.env_ok = "n/a", None
+            return
+        try:
+            values, how = self.env_values(slug, repo)
+        except RuntimeError as e:
+            rep.env, rep.env_ok = "FAIL", False
+            rep.fail(f"env: {e}")
+            return
+        self._values[slug] = values
+        rep.env, rep.env_ok = f"OK ({len(values)} vars from {how}, not written)", True
+
     def _env_sync(self, slug: str, repo: Path, rep: RunnerReport) -> None:
         """The claim-time refresh: canopy's `cred sync` (the function every agent session's
         start hook runs) — re-inject only when the vault or template changed, keep the last
         good file on failure. ONE implementation; cloud_runner used to carry its own."""
         from orchestrator.cred_cli import CredError, sync_env
 
+        if self.no_secret_files:
+            self._env_in_memory(slug, repo, rep)
+            return
         c = self.creds(slug)
         if c.credential_source == "canopy-web" and not c.error:
             self._env_from_web(slug, c, rep)
@@ -652,6 +817,9 @@ class RunnerPreparer(Bootstrapper):
         rep.env, rep.env_ok = f"OK ({n} vars from canopy-web)", True
 
     def _env(self, slug: str, repo: Path, rep: RunnerReport) -> None:
+        if self.no_secret_files:
+            self._env_in_memory(slug, repo, rep)
+            return
         c = self.creds(slug)
         if c.credential_source == "canopy-web" and not c.error:
             self._env_from_web(slug, c, rep)

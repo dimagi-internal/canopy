@@ -149,6 +149,13 @@ def gog_client_credentials(gog_home: str, client: str) -> str | None:
     return None
 
 
+# A box whose runner names a unit gog secret ($CANOPY_GOG_SECRET_FILE) gives every agent
+# its own gog home and keyring password (orchestrator.gog_home, runner isolation units §6).
+# Adopted BEFORE the config dir is resolved, so this process — and every gog it starts —
+# uses the session agent's own keyring. Unset (a laptop, older runner code): a no-op.
+from orchestrator.gog_home import adopt_session_agent_env as _adopt_gog_home  # noqa: E402
+
+_adopt_gog_home()
 GOG_CONFIG_DIR = _default_gog_config_dir()
 # Every Google surface a turn commonly touches — one login covers them all, so an
 # agent doesn't re-consent per service. gmail is the only one THIS engine needs;
@@ -2263,10 +2270,13 @@ def gog_keyring_backend(gog_dir: str | None = None) -> str:
 
 
 def agent_env_files(slug: str, home: Path | None = None) -> list[Path]:
-    """The .env files an agent's tooling loads: canopy's `~/.<slug>/.env` and the agent
-    plugin's data dir (`~/.claude/plugins/data/<slug>-*/.env`)."""
+    """The .env files an agent's tooling loads, first-wins: this turn's
+    `$CANOPY_AGENT_ENV_FILE` (a runner's per-turn file, when the turn is `slug`'s), canopy's
+    `~/.<slug>/.env`, and the agent plugin's data dir (`~/.claude/plugins/data/<slug>-*/.env`)."""
+    from orchestrator.agent_env_file import legacy_env_path, turn_env_file
     home = home or Path.home()
-    found = [home / f".{slug}" / ".env"]
+    turn = turn_env_file(slug)
+    found = ([turn] if turn else []) + [legacy_env_path(slug, home)]
     found += sorted((home / ".claude" / "plugins" / "data").glob(f"{slug}-*/.env"))
     return [p for p in found if p.is_file()]
 

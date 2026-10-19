@@ -53,6 +53,9 @@ A rule is `{"tool": ..., "tool_pattern": ..., "pattern": ..., "per_statement": .
                  review-wrapper rail applies only where `skills/agent-turn-review/SKILL.md` is
                  present. The alternative is a per-agent copy of the rail, which is the drift
                  this file's whole history is about.
+  unquoted       match the shell subject with its quoted strings ('…', "…") blanked out first, so
+                 a rail about a COMMAND does not fire on a commit message or echo that only
+                 mentions it (and a `;` inside quotes does not split a statement).
   agent_only     skip this `always` rail in a session that belongs to no agent. For rails that
                  translate an AGENT's own rails (e.g. PowerShell HTTP writes -> the agent's curl
                  rails): a human's session has no such rails, so the translation only blocks.
@@ -143,8 +146,29 @@ def agent_labels(repo_dir, cfg):
 FAIL_OPEN_TOOLS = frozenset({"Skill"})
 
 
+# `{turn_run_dir}` in a rail's PATTERN: this turn's own per-turn env directory, relative to
+# /run/canopy/ (a runner that keeps secrets off disk writes /run/canopy/<uid>/<turn>/env and
+# names it in CANOPY_AGENT_ENV_FILE), regex-escaped — so a rail can deny every other turn's
+# directory and still let this turn read its own. No such file → a pattern that never
+# matches, so the rail denies all of /run/canopy/.
+RUN_CANOPY = "/run/canopy/"
+NEVER = "(?!)"
+
+
+def turn_run_dir(env=None):
+    env = os.environ if env is None else env
+    f = (env.get("CANOPY_AGENT_ENV_FILE") or "").strip()
+    d = os.path.dirname(os.path.normpath(f)) if f else ""
+    if not d.startswith(RUN_CANOPY) or ".." in d.split("/"):
+        return NEVER
+    return re.escape(d[len(RUN_CANOPY):])
+
+
 def _substituted(rule, slug):
-    return {k: (v.replace("{slug}", slug) if isinstance(v, str) else v) for k, v in rule.items()}
+    out = {k: (v.replace("{slug}", slug) if isinstance(v, str) else v) for k, v in rule.items()}
+    if isinstance(out.get("pattern"), str) and "{turn_run_dir}" in out["pattern"]:
+        out["pattern"] = out["pattern"].replace("{turn_run_dir}", turn_run_dir())
+    return out
 
 
 def load_baseline():
@@ -233,8 +257,14 @@ def subject_for(tool_name, tool_input):
         return ""
     if tool_name in SHELL_TOOLS:
         return tool_input.get("command", "") or ""
-    if tool_name in ("Edit", "Write", "NotebookEdit"):
+    if tool_name in ("Edit", "Write", "NotebookEdit", "Read", "NotebookRead"):
         return tool_input.get("file_path", "") or tool_input.get("notebook_path", "") or ""
+    # A search tool is railed on WHERE it looks, never on what it searches FOR: a Grep for
+    # the text "~/.hal/.env" or "/etc/canopy-runner" is code search, not a read of the file.
+    if tool_name == "Grep":
+        return tool_input.get("path", "") or ""
+    if tool_name == "Glob":
+        return " ".join(str(tool_input.get(k) or "") for k in ("path", "pattern")).strip()
     try:
         return json.dumps(tool_input, sort_keys=True, default=str)
     except Exception:
@@ -289,10 +319,20 @@ def tool_applies(rule, tool_name):
     return want == "Bash" and tool_name in SHELL_TOOLS and not rule.get("bash_only")
 
 
+_QUOTED = re.compile(r"'[^']*'|" + r'"(?:[^"\\]|\\.)*"', re.S)
+
+
+def _unquoted(subject):
+    """`subject` with every quoted string replaced by a bare token (`Q`)."""
+    return _QUOTED.sub("Q", subject)
+
+
 def matches(rule, tool_name, subject):
     """Does this rule fire on this call?"""
     if not tool_applies(rule, tool_name):
         return False
+    if rule.get("unquoted") and tool_name in SHELL_TOOLS:
+        subject = _unquoted(subject)
     tpat = rule.get("tool_pattern")
     if tpat:
         try:
@@ -333,8 +373,16 @@ def run(repo_dir, payload):
     return _evaluate(cfg, repo_dir, payload, slug, name)
 
 
+# Read-only file tools reach this hook since the agent credential read rails (2026-10-19).
+# A person's own session was never gated on them, and still is not: every rail that
+# applies to them is an agent rail, so in a session that belongs to no agent they pass.
+READ_TOOLS = frozenset({"Read", "Grep", "Glob", "NotebookRead"})
+
+
 def _evaluate(cfg, repo_dir, payload, slug, name, agent=True):
     tool_name = payload.get("tool_name", "")
+    if not agent and tool_name in READ_TOOLS:
+        return 0, "", ""
     subject = subject_for(tool_name, payload.get("tool_input"))
     cwd = payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR", "")
 

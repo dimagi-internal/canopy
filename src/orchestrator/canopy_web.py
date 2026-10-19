@@ -250,18 +250,9 @@ def _warn_borrowed_identity(slug: str) -> None:
 
 
 def _slug_env_pat(slug: str) -> str:
-    """CANOPY_WEB_PAT out of agent ``slug``'s provisioned ``~/.<slug>/.env``, or ""."""
-    if not slug or slug in _NON_AGENT_SLUGS or not _SLUG_RE.match(slug):
-        return ""
-    env_file = Path.home() / f".{slug}" / ".env"
-    try:
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("CANOPY_WEB_PAT="):
-                return line.partition("=")[2].strip().strip('"').strip("'")
-    except OSError:
-        return ""
-    return ""
+    """CANOPY_WEB_PAT out of agent ``slug``'s env file — this turn's
+    ``$CANOPY_AGENT_ENV_FILE`` when it is that agent's, else ``~/.<slug>/.env`` — or ""."""
+    return _slug_env_value(slug, "CANOPY_WEB_PAT")
 
 
 def _agent_env_pat(start: Optional[Path] = None) -> str:
@@ -730,18 +721,13 @@ def pinned_api_path(path: str, workspace: str) -> str:
 
 
 def _slug_env_value(slug: str, key: str) -> str:
-    """``key`` out of agent ``slug``'s provisioned ``~/.<slug>/.env``, or ""."""
+    """``key`` out of agent ``slug``'s env file, or "": ``$CANOPY_AGENT_ENV_FILE`` (a
+    runner's per-turn file, when this is that agent's turn) first, else the provisioned
+    ``~/.<slug>/.env`` (`orchestrator.agent_env_file`)."""
     if not slug or slug in _NON_AGENT_SLUGS or not _SLUG_RE.match(slug):
         return ""
-    try:
-        text = (Path.home() / f".{slug}" / ".env").read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith(f"{key}="):
-            return line.partition("=")[2].strip().strip('"').strip("'")
-    return ""
+    from orchestrator.agent_env_file import read_env_value
+    return read_env_value(slug, key)
 
 
 def resolve_home_workspace(workspace: Optional[str] = None) -> Optional[str]:

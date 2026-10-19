@@ -584,8 +584,13 @@ def _prepare_purpose(check) -> str:
               help="A verification run, not the box's refresh: reads say `check: WHY (by "
                    "user@host)`, and the owner's read-outside-a-turn alert names it as that "
                    "check. Implied (as 'interactive run') when run from a terminal.")
+@click.option("--no-secret-files", "no_secret_files", is_flag=True, default=None,
+              help="Runner mode: resolve and check credentials in memory and write no "
+                   "~/.<slug>/.env, <clone>/.env or .gws-sa-key.json copy. Implied by "
+                   "$CANOPY_TURN_ENV_ROOT (the runner then writes each turn's env with "
+                   "`canopy cred env --runner --out`).")
 def agent_prepare(slugs, runner_mode, agent_root, repo_url, credentials_only, env_only,
-                  no_report, dry_run, as_json, check):
+                  no_report, dry_run, as_json, check, no_secret_files):
     """Make agents runnable on THIS machine — the one implementation every runner calls.
 
     Runner mode (`--runner`): credentials from canopy-web's /credentials/resolve with the
@@ -609,6 +614,7 @@ def agent_prepare(slugs, runner_mode, agent_root, repo_url, credentials_only, en
     prep = RunnerPreparer(base_url=base, token=token, agent_root=Path(agent_root),
                           runner_name=os.environ.get("RUNNER_NAME", ""), dry_run=dry_run,
                           purpose=_prepare_purpose(check),
+                          no_secret_files=True if no_secret_files else None,
                           echo=(lambda _m: None) if as_json else click.echo)
     bad = False
     for slug in slugs:

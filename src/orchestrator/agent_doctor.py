@@ -367,7 +367,8 @@ def env_home(repo: Path, home: Path | None = None) -> Path:
         slug = resolve_identity(Path(repo))["slug"]
     except (AgentWebError, OSError, ValueError):
         slug = Path(repo).name
-    return (home or Path.home()) / f".{slug}" / ".env"
+    from orchestrator.agent_env_file import agent_env_path
+    return agent_env_path(slug, home or Path.home())
 
 
 def check_secrets_materialized(repo: Path, *, home: Path | None = None) -> CheckResult:

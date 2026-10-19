@@ -17,6 +17,8 @@ Commands::
 
     canopy cred check  [--agent X] [--json]   exit 0 allowed, 3 refused
     canopy cred env    [--agent X] [--refresh] prints ~/.X/.env (resolved if missing)
+    canopy cred env    --slug X [--runner] --out PATH    X's env, resolved in memory, to PATH (0600)
+    canopy cred env    --slug X --runner --print-json    X's env as JSON on stdout (a runner's cache)
     canopy cred refresh [--agent X]           re-resolve ~/.X/.env
     canopy cred sync   [--agent X] [--ttl S]  re-inject ~/.X/.env iff its vault changed
     canopy cred exec   [--agent X] -- <cmd>   run <cmd> with X's env in the CHILD only (no file)
@@ -27,7 +29,8 @@ Exit codes (stable — agent-identity MCP servers shell out to `check`):
     0 allowed · 1 error (resolve failed) · 2 usage (no agent named or detectable)
     3 refused (stderr: one actionable paragraph) · 4 undetermined (could not decide)
 
-No command ever prints a secret value (google-token prints a path, not the token).
+No command ever prints a secret value (google-token prints a path, not the token) — except
+`cred env --print-json`, whose caller is a runner process keeping the values in memory.
 """
 from __future__ import annotations
 
@@ -474,7 +477,22 @@ def decide(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
 # ──────────────────────────────────────────────────────────────────────────────
 
 def env_path(slug: str) -> Path:
-    return Path.home() / f".{slug}" / ".env"
+    """The agent's env file to read: this turn's ``$CANOPY_AGENT_ENV_FILE`` when the turn is
+    ``slug``'s and the file exists, else ``~/.<slug>/.env`` (`orchestrator.agent_env_file`)."""
+    from orchestrator.agent_env_file import agent_env_path
+    return agent_env_path(slug)
+
+
+def legacy_env_path(slug: str) -> Path:
+    """``~/.<slug>/.env`` — the only file the writers here ever write. A per-turn file
+    (``$CANOPY_AGENT_ENV_FILE``) is the runner's to write and remove, never canopy's."""
+    from orchestrator.agent_env_file import legacy_env_path as _legacy
+    return _legacy(slug)
+
+
+def turn_env_file(slug: str) -> Optional[Path]:
+    from orchestrator.agent_env_file import turn_env_file as _turn
+    return _turn(slug)
 
 
 def _private_env(path: Path) -> bool:
@@ -593,7 +611,12 @@ def ensure_env(slug: str, *, refresh: bool = False, runner: Runner = subprocess.
     verdict = decide(slug, refresh=refresh, runner=runner, which=which)
     if not verdict.allowed:
         raise CredError(verdict.message, EXIT_REFUSED)
-    out = env_path(slug)
+    turn_file = turn_env_file(slug)
+    if turn_file is not None:
+        # The runner wrote this turn's env and removes it when the turn ends; canopy never
+        # writes it, and never writes a second, persistent copy beside it.
+        return turn_file, "present ($CANOPY_AGENT_ENV_FILE, this turn's env)"
+    out = legacy_env_path(slug)
     if _fresh(out) and not refresh:
         try:
             os.chmod(out, 0o600)
@@ -609,6 +632,82 @@ def ensure_env(slug: str, *, refresh: bool = False, runner: Runner = subprocess.
     else:
         how = resolve_1password(slug, out, verdict, runner=runner)
     return out, f"resolved from {how}"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# env --out / --print-json: resolve in memory, hand over once (secrets off disk)
+# ──────────────────────────────────────────────────────────────────────────────
+
+#: The runner's tmpfs root for per-turn env files; `--out` must land inside it when set.
+TURN_ENV_ROOT_VAR = "CANOPY_TURN_ENV_ROOT"
+
+
+def confine_out(out: Path) -> Path:
+    """``out`` made absolute, refused (EXIT_USAGE) when ``$CANOPY_TURN_ENV_ROOT`` is set and
+    ``out`` (symlinks resolved) is not inside it — so a turn cannot aim the runner's write
+    at a persistent path."""
+    out = Path(out).expanduser()
+    out = out if out.is_absolute() else Path.cwd() / out
+    root = os.environ.get(TURN_ENV_ROOT_VAR, "").strip()
+    if not root:
+        return out
+    root_real = os.path.realpath(root)
+    out_real = os.path.realpath(out)
+    if out_real == root_real or os.path.commonpath([root_real, out_real]) != root_real:
+        raise CredError(f"refusing to write outside ${TURN_ENV_ROOT_VAR} ({root}): {out}",
+                        EXIT_USAGE)
+    return Path(out_real)
+
+
+def mkdirs_private(path: Path) -> None:
+    """Create ``path`` and every MISSING parent at 0700 (umask notwithstanding); existing
+    directories are left as they are."""
+    path = Path(path)
+    missing = []
+    while not path.exists():
+        missing.append(path)
+        if path.parent == path:
+            break
+        path = path.parent
+    for d in reversed(missing):
+        try:
+            d.mkdir(mode=0o700)
+        except FileExistsError:
+            continue
+        os.chmod(d, 0o700)
+
+
+def write_env_out(out: Path, values: dict, slug: str = "") -> int:
+    """Write ``values`` (env-var-shaped ones) to ``out``: parents 0700, the file 0600 via an
+    atomic rename. Returns how many variables it wrote."""
+    usable, _ = env_values(values)
+    out = confine_out(out)
+    mkdirs_private(out.parent)
+    header = f"# {slug} credentials for one turn, written by canopy — removed when it ends.\n"
+    _write_private(out, header + "".join(f"{_env_line(n, v)}\n" for n, v in usable.items()))
+    os.chmod(out, 0o600)
+    return len(usable)
+
+
+def runner_env_values(slug: str, *, agent_root: Path, base_url: str = "", token: str = "",
+                      runner: Runner = subprocess.run) -> tuple[dict, str]:
+    """({NAME: value}, backend) as a RUNNER resolves them for one turn — the same
+    credentials `canopy agent prepare --runner` uses (canopy-web `/credentials/resolve` with
+    the runner's token; `op inject` of the clone's .env.tpl to a pipe with the agent's own
+    key), held in memory."""
+    from orchestrator.agent_prepare import RunnerPreparer
+    base = base_url or os.environ.get("CANOPY_BASE_URL", "").strip() or \
+        canopy_web.resolve_base_url(None)
+    tok = token or os.environ.get("CANOPY_TOKEN", "").strip() or canopy_web.resolve_token(None)
+    prep = RunnerPreparer(base_url=base, token=tok, agent_root=Path(agent_root), runner=runner,
+                          no_secret_files=True, echo=lambda _m: None,
+                          in_turn=bool(os.environ.get("CANOPY_TURN_ID", "").strip()))
+    prep._slug = slug
+    try:
+        values, how = prep.env_values(slug, Path(agent_root) / slug)
+    except RuntimeError as e:
+        raise CredError(f"could not resolve '{slug}'s env: {e}")
+    return values, how
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -692,7 +791,7 @@ _OP_PERSONAL_ENV_KEYS = ("OP_ACCOUNT", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN")
 def stamp_path(slug: str) -> Path:
     """Beside the env file: the fingerprint last injected. The cloud runner writes the
     same file in the same format (`cloud_runner._refresh_agent_env`)."""
-    return env_path(slug).with_name(".env.stamp")
+    return legacy_env_path(slug).with_name(".env.stamp")
 
 
 def op_key_account(token: str) -> str:
@@ -745,7 +844,7 @@ def vault_fingerprint(tpl: Path, env: dict, token: str, *, runner: Runner) -> st
 def _sync_from_canopy_web(slug: str, *, ttl: float, now: Optional[float]) -> str:
     """`sync_env` for an agent whose backend is canopy-web: throttled like the 1Password
     path (the same stamp), re-written only when the values' fingerprint moved."""
-    out, stamp = env_path(slug), stamp_path(slug)
+    out, stamp = legacy_env_path(slug), stamp_path(slug)
     now = time.time() if now is None else now
     try:
         prior = json.loads(stamp.read_text(encoding="utf-8"))
@@ -795,7 +894,12 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = Non
     ruled out on 2026-10-09). Throttled to once per `ttl` per agent via the stamp; when
     due, one `op vault get` per vault decides; the full `op inject` runs only when the
     fingerprint moved or the file is missing. A failure keeps the existing file and raises
-    CredError with op's reason."""
+    CredError with op's reason.
+
+    A turn whose runner handed it ``$CANOPY_AGENT_ENV_FILE`` is skipped: that file is the
+    turn's env, written fresh at claim, and there is no persistent copy to keep current."""
+    if turn_env_file(slug) is not None:
+        return "skipped: this turn's env is $CANOPY_AGENT_ENV_FILE (the runner's)"
     runner = runner or subprocess.run
     token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
     if not token:
@@ -807,7 +911,7 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = Non
     tpl = repo / ".env.tpl" if repo else None
     if tpl is None or not tpl.is_file():
         return f"skipped: no .env.tpl for '{slug}' on this machine"
-    out, stamp = env_path(slug), stamp_path(slug)
+    out, stamp = legacy_env_path(slug), stamp_path(slug)
     now = time.time() if now is None else now
     try:
         prior = json.loads(stamp.read_text(encoding="utf-8"))
@@ -1031,14 +1135,58 @@ def check_cmd(agent, refresh, as_json):
 
 @cred_group.command("env")
 @AGENT_OPT
+@click.option("--slug", "slug_opt", default=None, help="Same as --agent.")
 @click.option("--refresh", is_flag=True, help="Re-resolve even if ~/.<agent>/.env exists.")
-def env_cmd(agent, refresh):
+@click.option("--out", "out", default=None, type=click.Path(dir_okay=False),
+              help="Resolve in memory and write the env to THIS file (0600) instead of "
+                   "~/.<agent>/.env; refused outside $CANOPY_TURN_ENV_ROOT when that is set. "
+                   "Prints the path.")
+@click.option("--print-json", "print_json", is_flag=True,
+              help="With --runner: resolve in memory and print {agent, source, values} as "
+                   "JSON on stdout — for a runner's in-memory cache. Writes nothing.")
+@click.option("--runner", "runner_mode", is_flag=True,
+              help="Resolve as a RUNNER (its token, CANOPY_TOKEN; the clone under "
+                   "--agent-root), as `canopy agent prepare --runner` does.")
+@click.option("--agent-root", default=lambda: os.environ.get("AGENT_ROOT", "/opt/agents"),
+              show_default="$AGENT_ROOT or /opt/agents",
+              help="Where agents are cloned (--runner).")
+def env_cmd(agent, slug_opt, refresh, out, print_json, runner_mode, agent_root):
     """Ensure ~/.<agent>/.env exists (resolving it only when missing or --refresh) and
-    print its path. Never prints a value."""
-    slug = _require_agent(agent)
-    path, how = ensure_env(slug, refresh=refresh)
-    click.echo(f"[canopy cred] {slug}: {how}", err=True)
-    click.echo(str(path))
+    print its path. Never prints a value.
+
+    With --out or --print-json nothing persistent is written: the values are resolved in
+    memory (a runner's per-turn env, `--runner`) and handed over once."""
+    if agent and slug_opt and agent != slug_opt:
+        raise CredError("--agent and --slug disagree", EXIT_USAGE)
+    slug = _require_agent(agent or slug_opt)
+    if out and print_json:
+        raise CredError("pass --out or --print-json, not both", EXIT_USAGE)
+    if not (out or print_json):
+        if runner_mode:
+            raise CredError("--runner needs --out or --print-json (a runner writes no "
+                            "~/.<agent>/.env)", EXIT_USAGE)
+        path, how = ensure_env(slug, refresh=refresh)
+        click.echo(f"[canopy cred] {slug}: {how}", err=True)
+        click.echo(str(path))
+        return
+    if print_json and not runner_mode:
+        raise CredError("--print-json is for a runner's in-memory cache: it needs --runner "
+                        "(a session runs commands with its env through `canopy cred exec`)",
+                        EXIT_USAGE)
+    if out:
+        confine_out(Path(out))   # refuse before resolving anything
+    if runner_mode:
+        values, how = runner_env_values(slug, agent_root=Path(agent_root))
+    else:
+        values, how = exec_env(slug)
+    if print_json:
+        usable, _ = env_values(values)
+        click.echo(json.dumps({"agent": slug, "source": how, "values": usable},
+                              sort_keys=True))
+        return
+    n = write_env_out(Path(out), values, slug)
+    click.echo(f"[canopy cred] {slug}: {n} var(s) from {how} → {out} (0600)", err=True)
+    click.echo(str(confine_out(Path(out))))
 
 
 @cred_group.command("refresh")

@@ -27,6 +27,9 @@ It also exports the instance this install is bound to (`canopy agent env` record
 `op inject -i .env.tpl …` resolves the template's `op://${AGENT_VAULT}/…` refs to the right
 vault. Nothing is exported when there is no binding — no vault name is ever guessed.
 
+It never writes on a runner that keeps secrets off disk (`$CANOPY_AGENT_ENV_FILE` set: the
+turn's env is that per-turn file, and the hook leaves it alone).
+
 Inert everywhere else: no CANOPY_AGENT (a human's own project), a key already present (a
 cloud turn), or no CLAUDE_ENV_FILE → exits 0 silently. Fail-open: any failure prints ONE line
 of context and exits 0 — a session without the key falls back to the desktop app, exactly as
@@ -145,7 +148,13 @@ def stage_delegated(canopy: str, slug: str) -> None:
 def sync_env(canopy: str, slug: str, token: str) -> None:
     """`canopy cred sync` with the agent's key: re-inject ~/.<slug>/.env iff its vault
     or .env.tpl changed (throttled, one cheap probe when due). Silent when nothing
-    changed; one line when it re-injected or failed."""
+    changed; one line when it re-injected or failed.
+
+    Never on a runner that handed this turn `$CANOPY_AGENT_ENV_FILE`: that file IS the
+    turn's env (written at claim, removed when the turn ends), and a sync would write a
+    persistent `~/.<slug>/.env` beside it — the copy the runner keeps off disk."""
+    if os.environ.get("CANOPY_AGENT_ENV_FILE", "").strip():
+        return
     env = dict(os.environ)
     if token:
         env["OP_SERVICE_ACCOUNT_TOKEN"] = token
