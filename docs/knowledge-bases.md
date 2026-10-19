@@ -53,22 +53,39 @@ canopy kb push --kb connect/givewell-kb kb.sqlite             # → Drive, gzipp
 passages; `get` rejoins them), and carries the previous build's change rows forward, so
 `whats-new` is a dated history across refreshes. A build with no previous is a baseline.
 
-## Read (everyone): the MCP tools
+## Read (everyone): the project's own MCP server
+
+A workspace project that publishes a KB serves it from canopy-web as its own remote MCP
+server, carrying only that KB's tools. Readers add one URL and download nothing:
+
+```bash
+claude mcp add --transport http givewell-kb https://canopy.dimagi.com/api/mcp/projects/connect/givewell-kb
+```
+
+(claude.ai / Claude Desktop: paste the same URL as a custom connector.) The first call
+signs in with your canopy account (OAuth). The project page on canopy-web shows both lines.
+An agent repo with no person at a browser adds it to `.mcp.json` with the agent's own
+identity:
 
 ```json
-{"mcpServers": {"givewell": {"command": "canopy", "args": ["kb", "mcp", "--kb", "connect/givewell-kb"]}}}
+{"mcpServers": {"givewell": {"type": "http",
+  "url": "https://canopy.dimagi.com/api/mcp/projects/connect/givewell-kb",
+  "headersHelper": "canopy mcp-headers"}}}
 ```
 
 Tools: `kb_info`, `search`, `get` (with `grep` to verify a quote or number), `list_items`,
-`whats_new`, `table`, plus one per declared table (`grants`, …). Stdlib JSON-RPC over
-stdio, no SDK dependency.
+`whats_new`, `table`, plus one per declared table (`grants`, …). Readable by members of
+the project's workspace and of its steward's.
 
-`--kb` is a workspace project address (`<workspace>/<handle>`), an agent project ref
-(`<agent>/<Pnn>`) — either resolved to its Drive folder through canopy-web — a Drive
-folder id, or a local `kb.sqlite`. Drive is read as the agent whose repo you run from
-(`--repo`, default cwd). The copy is cached at `~/.canopy/kb/<ref>/kb.sqlite` and
-re-checked after `--max-age-hours` (24); if Drive is unreachable the cache is served with
-a warning.
+**Publishing it** is part of `canopy kb push --kb <workspace>/<handle>`: after the Drive
+copy, it uploads the gzipped file straight to storage (a presigned PUT) and publishes it,
+and every canopy instance serves the new build from its next call. Drive keeps the copy
+people browse and the source for the offline path below.
+
+**Offline / local:** `canopy kb mcp --kb <ref>` serves the same tools over stdio from a
+copy cached at `~/.canopy/kb/<ref>/kb.sqlite` (pulled from the project's Drive folder,
+re-checked after `--max-age-hours`). `--kb` is a workspace project address, an agent
+project ref (`<agent>/<Pnn>`), a Drive folder id, or a local `kb.sqlite`.
 
 There are no read subcommands (`canopy kb search` …): they would only duplicate the tools.
 A script that needs a query imports `orchestrator.kb.KB`.
@@ -80,13 +97,11 @@ alongside the adapters (Eva's `givewell-kb`): what it covers and what it does no
 source wins when they disagree (a grants table beats a podcast's rounded figure), what to
 cite (the row's url, never the KB), and how the curator refreshes it.
 
-## Where this is going
+## How canopy-web serves it
 
-Today an agent registers the stdio server in its own `.mcp.json`, and each machine holds a
-copy. The intended end state: the **workspace project declares its server** (a typed field
-on the project, e.g. `{"kind": "kb"}`, with the tool list coming from the KB's own
-manifest), and **canopy-web serves it remotely** as a Streamable-HTTP MCP endpoint per
-project (`/api/workspace-projects/<ws>/<handle>/mcp/`), behind the same tokens and OAuth as
-canopy-web's own `/api/mcp/`. Then claude.ai, ACE on any runner and other people's Claude
-Code add one URL, with nothing to install or download. This module's read API is the
-contract that server implements.
+`/api/mcp/projects/<workspace>/<handle>/` (canopy-web `apps/mcp/projects.py`): one
+Streamable-HTTP server for every project, whose tool list is the named project's, behind
+the same sign-in as `/api/mcp/`. The engine there is `packages/canopy_kb` — the same
+engine as `orchestrator/kb.py`; keep them in step until this CLI depends on that package.
+Discovery is the workspace's project list and each project page; a generated marketplace
+entry per project is a possible later addition, for finding them from Claude Code.

@@ -205,3 +205,47 @@ def test_get_grep_returns_matching_lines_only(tmp_path):
     assert d["matches"][0]["text"].startswith("WASHmobile")
     with pytest.raises(KBError):
         KB(db).get("p:1", grep="(")
+
+
+def test_push_of_a_workspace_project_also_publishes_it_to_canopy(tmp_path, monkeypatch):
+    """canopy-web then serves it as the project's own remote MCP server."""
+    import hashlib
+
+    from orchestrator import canopy_web
+
+    db = tmp_path / "kb.sqlite"
+    build(_bundle(tmp_path, ITEMS), db)
+    _FakeDrive.files = {}
+    monkeypatch.setattr(kb_cli, "_Drive", _FakeDrive)
+    calls, stored = [], {}
+
+    def fake_call(method, path, body=None, **kw):
+        calls.append((method, path, body))
+        if path == "/api/workspace-projects/connect/givewell-kb/":
+            return {"drive_folder_id": "1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF"}
+        if path.endswith("/kb/upload"):
+            return {"key": "workspace-projects/connect/givewell-kb/kb/a.sqlite.gz", "url": "https://s3/put",
+                    "headers": {"Content-Type": "application/gzip"}}
+        if path.endswith("/kb/publish"):
+            return {"mcp_path": "/api/mcp/projects/connect/givewell-kb/"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(canopy_web, "call", fake_call)
+    monkeypatch.setattr(kb_cli, "_put", lambda url, path, headers: stored.update(data=path.read_bytes()))
+
+    out = kb_cli.push("connect/givewell-kb", tmp_path, db)
+
+    publish = calls[-1]
+    assert publish[1].endswith("/kb/publish")
+    assert publish[2]["sha256"] == hashlib.sha256(stored["data"]).hexdigest()
+    assert stored["data"][:2] == b"\x1f\x8b"
+    assert out["mcp_url"].endswith("/api/mcp/projects/connect/givewell-kb/")
+
+
+def test_a_drive_folder_push_publishes_nothing(tmp_path, monkeypatch):
+    db = tmp_path / "kb.sqlite"
+    build(_bundle(tmp_path, ITEMS), db)
+    _FakeDrive.files = {}
+    monkeypatch.setattr(kb_cli, "_Drive", _FakeDrive)
+    monkeypatch.setattr(kb_cli, "publish_to_canopy", lambda *a: (_ for _ in ()).throw(AssertionError("published")))
+    assert "mcp_url" not in kb_cli.push("1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF", tmp_path, db)

@@ -1,8 +1,9 @@
 """`canopy kb …` — build, store and serve a knowledge base (see `orchestrator.kb`).
 
 Four commands, because only these are work a prompt cannot do: `build` (index + dated
-diff), `push` / `pull` (the gzipped copy in the project's Drive folder) and `mcp`
-(serve it). Reading is the MCP tools' job, and HOW to read a given library — what to
+diff), `push` / `pull` (the gzipped copy in the project's Drive folder — and for a
+workspace project, `push` also publishes it to canopy-web, which then serves it as the
+project's own remote MCP server) and `mcp` (serve a local copy over stdio). Reading is the MCP tools' job, and HOW to read a given library — what to
 cite, which table beats prose — is a skill's (e.g. Eva's `givewell-kb`). There are
 deliberately no read subcommands duplicating the tools.
 
@@ -163,7 +164,44 @@ def push(ref: str, repo: Path, path: Path) -> dict:
         else:
             d.gog("drive", "upload", str(gzpath), "--name", KB_REMOTE, "--parent", folder)
         size = gzpath.stat().st_size
-    return {"kb": ref, "folder": folder, "replaced": bool(f), "bytes": size, "summary": KB(path).summary}
+        served = publish_to_canopy(ref, gzpath) if _kind(ref) == "workspace-project" else None
+    out = {"kb": ref, "folder": folder, "replaced": bool(f), "bytes": size, "summary": KB(path).summary}
+    if served:
+        out["mcp_url"] = served
+    return out
+
+
+def _put(url: str, path: Path, headers: dict) -> None:
+    import urllib.request
+
+    with open(path, "rb") as fh:
+        req = urllib.request.Request(url, data=fh, method="PUT",
+                                     headers={**headers, "Content-Length": str(path.stat().st_size)})
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            if resp.status >= 300:
+                raise KBError(f"upload to storage failed: HTTP {resp.status}")
+
+
+def publish_to_canopy(ref: str, gzpath: Path) -> str:
+    """Publish a workspace project's KB to canopy-web, which then serves it as the
+    project's own MCP server — readers call it remotely and download nothing.
+    The bytes go straight to storage on a presigned PUT. Returns the MCP URL."""
+    import hashlib
+
+    from orchestrator import canopy_web
+
+    ws, handle = _WORKSPACE_REF.match(ref).groups()
+    base = f"/api/workspace-projects/{ws}/{handle}/kb"
+    target = canopy_web.call("POST", f"{base}/upload") or {}
+    if not target.get("url"):
+        raise KBError(f"canopy-web gave no upload target for {ref}")
+    _put(target["url"], gzpath, target.get("headers") or {})
+    digest = hashlib.sha256()
+    with open(gzpath, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    proj = canopy_web.call("POST", f"{base}/publish", {"key": target["key"], "sha256": digest.hexdigest()}) or {}
+    return canopy_web.resolve_base_url(None).rstrip("/") + (proj.get("mcp_path") or "")
 
 
 def _now() -> str:
@@ -252,6 +290,29 @@ def pull_cmd(kb_ref, repo, max_age_hours, force):
 def push_cmd(kb_ref, repo, max_age_hours, path):
     """Upload a built kb.sqlite to the KB's Drive folder (curators)."""
     _emit(push(kb_ref, repo, path))
+
+
+@click.command("mcp-headers")
+def mcp_headers_cmd():
+    """Print the auth header for a canopy remote MCP server, as a `headersHelper`.
+
+    For an agent repo's `.mcp.json` entry pointing at a project's own server:
+    `{"type": "http", "url": "…/api/mcp/projects/<ws>/<handle>", "headersHelper":
+    "canopy mcp-headers"}`. It runs the canopy plugin's own helper, so who the call
+    acts as (the agent itself, a confined caller, else a browser sign-in) is decided
+    in ONE place, not restated here. No helper found → `{}`, and the client signs in."""
+    import glob
+
+    roots = sorted(glob.glob(str(Path.home() / ".claude/plugins/cache/canopy/canopy/*/scripts/canopy-web-mcp-headers.js")),
+                   key=lambda p: [int(x) if x.isdigit() else x for x in re.split(r"[./]", p)])
+    roots += [str(Path.home() / ".claude/plugins/marketplaces/canopy/plugins/canopy/scripts/canopy-web-mcp-headers.js")]
+    for helper in reversed(roots):
+        if Path(helper).is_file():
+            r = subprocess.run(["node", helper], capture_output=True, text=True, timeout=10)
+            if r.returncode == 0 and r.stdout.strip():
+                click.echo(r.stdout.strip())
+                return
+    click.echo("{}")
 
 
 @kb_group.command("mcp")
