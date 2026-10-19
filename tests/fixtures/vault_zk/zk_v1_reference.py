@@ -58,12 +58,56 @@ PUBLIC key — no secret of the newcomer is needed. Removing access = rotate VK.
             seal = {"alg":"2skd","kdf":"pbkdf2-sha256","i":650000,"s":b64u(salt),
                     "n":b64u(nonce12),"ct":b64u(AES-GCM(KEK, nonce, s, aad=info))}
 
+4c. User keyset seal by the person's RECOVERY CODE — ONE per person, opening
+   their key and so every agent they hold (the per-agent §5 recovery wrap is
+   then optional; existing ones stay valid). R = 32 random bytes, shown once in
+   the §5 recovery-code format.
+            info = "canopy-vault/v1/user-key|{user_id}|recovery"
+            KEK  = HKDF-SHA256(ikm=R, salt=salt16, info)
+            seal = {"alg":"recovery","s":b64u(salt),"n":b64u(nonce12),
+                    "ct":b64u(AES-GCM(KEK, nonce, s, aad=info))}
+
 5. Recovery wrap of VK:   R = 32 random bytes, shown once as Crockford base32 in
    groups of 4 ("recovery code");
             info = "canopy-vault/v1/wrap-recovery|{agent_id}|{kv}"
             KEK  = HKDF-SHA256(ikm=R, salt=salt16, info)
             wrap = {"alg":"recovery","s":b64u(salt),"n":b64u(nonce12),
                     "ct":b64u(AES-GCM(KEK, nonce, VK, aad=info))}
+
+6. Value SEALED TO RECIPIENTS ("zks1") — for a value canopy-web mints itself
+   (Gmail token, rotated canopy-pat) or that is written before a vault key
+   exists (kv 0: an agent born zero-knowledge). Sealed to every principal that
+   may read the agent, at the agent's current kv; no vault key involved.
+   For each recipient Q (kind "device": target = the device's ECDH jkt;
+                         kind "member": target = the user_id):
+            E    = fresh ephemeral P-256 key pair (one per recipient)
+            Z    = ECDH(E_priv, Q)
+            info = "canopy-vault/v1/seal-value|{agent_id}|{name}|{kv}|{kind}:{target}"
+            K    = HKDF-SHA256(ikm=Z, salt=b"" (empty), info)
+            r    = {"kind":kind,"target":target,"epk":JWK(E_pub) {"kty","crv","x","y"},
+                    "ct":b64u(nonce12 || AES-GCM(K, nonce, utf8(plaintext), aad=value aad §2))}
+            store = "zks1:" + b64u(utf8(JSON {"kv":kv,"r":[r, ...]}))
+   (JSON compact, keys in that order; readers must parse, not byte-compare.)
+   A reader finds its own entry by (kind, target), derives K the same way, and
+   opens ct. A vault-key holder "settles" a zks1 value by re-encrypting the
+   plaintext under VK as §2 zk1 at the current kv (enable/rotate require it).
+
+7. ENDORSEMENT of a recipient — a person's signed "this key may read this agent",
+   made in their browser when they wrap VK to it (or confirm it). The publicly
+   checkable twin of a wrap: a writer who holds no VK seals a §6 value only to
+   recipients endorsed by a key it already trusts, so a server cannot add its own.
+            msg  = "canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}"
+                   (kind/target as in §6; key_jkt = jkt of the recipient's public JWK —
+                    for a device, equal to target)
+            sig  = ECDSA-P256-SHA256(utf8(msg)) by the endorser's person key (the
+                   same P-256 scalar as their §4 keyset: the fixed prefix keeps the
+                   signed message out of every ECDH derivation), IEEE P1363 r||s
+                   (64 bytes) — WebCrypto's native encoding
+            endorsement = {"kind","target","key_jkt","by":endorser user_id,
+                           "by_jkt":jkt(endorser public key),"sig":b64u(sig)}
+   ECDSA is randomized: the vector pins the message and ONE valid signature
+   (RFC 6979 deterministic) that every verifier must accept, and a tampered field
+   it must refuse — not a signature every signer must reproduce.
 """
 from __future__ import annotations
 
@@ -222,6 +266,26 @@ def parse_secret_key_code(code: str) -> bytes:
     return v.to_bytes(16, "big")
 
 
+# --- 4c. person recovery-code seal -----------------------------------------------------
+def user_recovery_info(user_id) -> str:
+    return f"canopy-vault/v1/user-key|{user_id}|recovery"
+
+
+def seal_user_key_recovery(scalar32, user_id, r, salt, nonce) -> dict:
+    info = user_recovery_info(user_id)
+    kek = hkdf(r, salt, info)
+    return {"alg": "recovery", "s": b64u(salt), "n": b64u(nonce),
+            "ct": b64u(AESGCM(kek).encrypt(nonce, scalar32, info.encode()))}
+
+
+def open_user_key_recovery(seal, user_id, r) -> bytes:
+    if seal.get("alg") != "recovery":
+        raise ValueError("unsupported seal")
+    info = user_recovery_info(user_id)
+    kek = hkdf(r, unb64u(seal["s"]), info)
+    return AESGCM(kek).decrypt(unb64u(seal["n"]), unb64u(seal["ct"]), info.encode())
+
+
 # --- 5. recovery ---------------------------------------------------------------------------
 def recovery_info(agent_id, kv) -> str:
     return f"canopy-vault/v1/wrap-recovery|{agent_id}|{kv}"
@@ -260,6 +324,67 @@ def parse_recovery_code(code: str) -> bytes:
         v = (v << 5) | CROCKFORD.index(ch)
     v >>= (5 * len(s)) - 256
     return v.to_bytes(32, "big")
+
+
+# --- 6. sealed to recipients ----------------------------------------------------------------
+def seal_info(agent_id, name, kv, kind, target) -> str:
+    return f"canopy-vault/v1/seal-value|{agent_id}|{name}|{kv}|{kind}:{target}"
+
+
+def seal_value(plaintext, agent_id, name, kv, recipients, ephemerals, nonces) -> str:
+    """`recipients`: [(kind, target, public key)]; one ephemeral + nonce each."""
+    out = []
+    for (kind, target, q), e, nonce in zip(recipients, ephemerals, nonces):
+        k = hkdf(e.exchange(ec.ECDH(), q), b"", seal_info(agent_id, name, kv, kind, target))
+        out.append({"kind": kind, "target": target, "epk": jwk(e.public_key()),
+                    "ct": b64u(nonce + AESGCM(k).encrypt(nonce, plaintext.encode(),
+                                                         value_aad(agent_id, name, kv)))})
+    return "zks1:" + b64u(json.dumps({"kv": kv, "r": out}, separators=(",", ":")).encode())
+
+
+def open_sealed_value(stored, agent_id, name, kind, target, recipient_priv) -> str:
+    if not stored.startswith("zks1:"):
+        raise ValueError("not a zks1 value")
+    body = json.loads(unb64u(stored[5:]))
+    r = next(x for x in body["r"] if x["kind"] == kind and x["target"] == target)
+    epk = b"\x04" + unb64u(r["epk"]["x"]) + unb64u(r["epk"]["y"])
+    z = recipient_priv.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), epk))
+    k = hkdf(z, b"", seal_info(agent_id, name, body["kv"], kind, target))
+    blob = unb64u(r["ct"])
+    return AESGCM(k).decrypt(blob[:12], blob[12:], value_aad(agent_id, name, body["kv"])).decode()
+
+
+# --- 7. endorsements ------------------------------------------------------------------------
+def endorse_msg(agent_id, kind, target, key_jkt) -> str:
+    return f"canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}"
+
+
+def endorse(agent_id, kind, target, recipient_pub, endorser_priv, endorser_user_id) -> dict:
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+    key_jkt = jkt(recipient_pub)
+    der = endorser_priv.sign(endorse_msg(agent_id, kind, target, key_jkt).encode(),
+                             ec.ECDSA(hashes.SHA256(), deterministic_signing=True))
+    r, s = decode_dss_signature(der)
+    return {"kind": kind, "target": target, "key_jkt": key_jkt, "by": endorser_user_id,
+            "by_jkt": jkt(endorser_priv.public_key()),
+            "sig": b64u(r.to_bytes(32, "big") + s.to_bytes(32, "big"))}
+
+
+def verify_endorsement(e, agent_id, endorser_pub) -> bool:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+
+    raw = unb64u(e["sig"])
+    if len(raw) != 64 or e["by_jkt"] != jkt(endorser_pub):
+        return False
+    der = encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
+    try:
+        endorser_pub.verify(der, endorse_msg(agent_id, e["kind"], e["target"], e["key_jkt"]).encode(),
+                            ec.ECDSA(hashes.SHA256()))
+    except InvalidSignature:
+        return False
+    return True
 
 
 # --- vectors ----------------------------------------------------------------------------
@@ -301,6 +426,42 @@ def vectors() -> dict:
             continue
         raise AssertionError("2skd binding not enforced")
 
+    urseal = seal_user_key_recovery(user_scalar, user_id, r, salt, nonce)
+    assert open_user_key_recovery(urseal, user_id, parse_recovery_code(code)) == user_scalar
+    for bad in (lambda: open_user_key_recovery(urseal, "8", r),
+                lambda: open_user_key_recovery(urseal, user_id, bytes(32))):
+        try:
+            bad()
+        except Exception:
+            continue
+        raise AssertionError("recovery seal binding not enforced")
+
+    e3, e4 = _priv("5e" * 32), _priv("6f" * 32)
+    nonce2 = bytes.fromhex("0c0d0e0f1011121314151617")
+    sealed = seal_value("minted-token", agent_id, "gog-token", kv,
+                        [("device", djkt, device.public_key()), ("member", user_id, user.public_key())],
+                        [e3, e4], [nonce, nonce2])
+    assert open_sealed_value(sealed, agent_id, "gog-token", "device", djkt, device) == "minted-token"
+    assert open_sealed_value(sealed, agent_id, "gog-token", "member", user_id, user) == "minted-token"
+    for bad in (lambda: open_sealed_value(sealed, "43", "gog-token", "device", djkt, device),
+                lambda: open_sealed_value(sealed, agent_id, "other", "member", user_id, user),
+                lambda: open_sealed_value(sealed, agent_id, "gog-token", "member", user_id, device)):
+        try:
+            bad()
+        except Exception:
+            continue
+        raise AssertionError("seal binding not enforced")
+
+    # §7: the person (user) endorses the device for agent 42.
+    endorsement = endorse(agent_id, "device", djkt, device.public_key(), user, user_id)
+    assert verify_endorsement(endorsement, agent_id, user.public_key())
+    for bad in ({**endorsement, "key_jkt": jkt(user.public_key())},
+                {**endorsement, "target": "someone-else"},
+                {**endorsement, "kind": "member"}):
+        assert not verify_endorsement(bad, agent_id, user.public_key()), "endorsement binding not enforced"
+    assert not verify_endorsement(endorsement, "43", user.public_key())
+    assert not verify_endorsement(endorsement, agent_id, device.public_key())
+
     # Self-checks: every round trip, the person path end to end, and binding.
     assert decrypt_value(vk, agent_id, "kindora-service-key", kv, value) == "s3cr3t-value"
     assert unwrap_ecdh_es(dwrap, device, device_info(agent_id, kv, djkt)) == vk
@@ -333,6 +494,10 @@ def vectors() -> dict:
             "credential_id_b64u": cred, "prf_output_hex": prf_out.hex(),
             "recovery_secret_hex": r.hex(),
             "passphrase": passphrase, "secret_key_hex": sk.hex(),
+            "sealed_name": "gog-token", "sealed_plaintext": "minted-token",
+            "ephemeral_seal_device_scalar_hex": "5e" * 32,
+            "ephemeral_seal_member_scalar_hex": "6f" * 32,
+            "seal_member_nonce_hex": nonce2.hex(),
         },
         "outputs": {
             "value": value,
@@ -345,6 +510,10 @@ def vectors() -> dict:
             "recovery_code": code,
             "user_key_seal_2skd": pseal,
             "secret_key_code": sk_code,
+            "sealed_value": sealed,
+            "user_key_seal_recovery": urseal,
+            "endorse_msg": endorse_msg(agent_id, "device", djkt, djkt),
+            "endorsement": endorsement,
         },
     }
 

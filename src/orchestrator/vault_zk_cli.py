@@ -8,6 +8,9 @@ device wrap (the vault key VK wrapped to its ECDH key — `device_key.load_ecdh`
     canopy vault zk enable --agent X [--yes]      custodial -> zero-knowledge (prints the
                                                   recovery code ONCE)
     canopy vault zk set    --agent X NAME         one value, read from stdin / a hidden prompt
+    canopy vault zk set    --agent X NAME --sealed [--request ID] [--yes]
+                                                  seal it (zks1) to the recipients a PINNED
+                                                  person endorsed — no vault key needed
     canopy vault zk grant  --agent X [--yes]      wrap VK for every pending target
     canopy vault zk rotate --agent X [--drop K:T] new VK + kv, re-wrap the rest, re-encrypt,
                                                   new recovery code
@@ -25,12 +28,20 @@ grant wraps VK to whatever public key canopy-web names, so ``grant``/``enable``/
 list every target (label + thumbprint) and ask before wrapping; ``--yes`` skips the
 question for unattended use. Nothing here prints, logs or sends a value, the vault key or
 a recovery code — except the recovery code, printed exactly once on the terminal.
+
+``set --sealed`` (give an agent a secret, canopy-web#1712) trusts the server for even
+less: it seals only to recipients carrying a zk-v1 §7 endorsement by a person pinned in
+``~/.canopy/vault-pins.json`` (keyed by person, like ``known_hosts``). Every thumbprint
+is recomputed here; a first-seen endorser is shown (email + fingerprint) and confirmed
+before pinning, and a pinned person whose key CHANGED stops the command.
 """
 from __future__ import annotations
 
 import json
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable, Optional
 
 import click
@@ -484,6 +495,235 @@ def settle_quietly(slug: str, *, token: str, transport=None,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# set --sealed: give an agent a secret without its vault key (zk-v1 §6 + §7)
+# ──────────────────────────────────────────────────────────────────────────────
+# canopy-web lists the recipients; the ENDORSEMENTS are what is trusted, and only those by
+# a person pinned here. The server can still drop recipients (fails safe) but cannot add
+# one: a key needs a pinned person's signature over (agent, kind, target, key thumbprint).
+
+def pins_path() -> Path:
+    return Path.home() / ".canopy" / "vault-pins.json"
+
+
+def load_pins(path: Optional[Path] = None) -> dict:
+    """``{user_id: {jkt, email, pinned_at}}`` — endorsers this person has accepted."""
+    p = path or pins_path()
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        raise ZkCliError(f"{p} is unreadable ({e}) — fix or remove it; refusing to guess "
+                         "who you trust") from None
+    if not isinstance(data, dict):
+        raise ZkCliError(f"{p} is not a JSON object — refusing to guess who you trust")
+    return data
+
+
+def save_pins(pins: dict, path: Optional[Path] = None) -> None:
+    p = path or pins_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(pins, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.chmod(0o600)
+    tmp.replace(p)
+
+
+def fingerprint(jkt: str) -> str:
+    """A key thumbprint in groups of four, the way the card shows it."""
+    return " ".join(jkt[i:i + 4] for i in range(0, len(jkt), 4))
+
+
+@dataclass
+class Reader:
+    kind: str
+    target: str
+    public_jwk: dict
+    key_jkt: str          # recomputed here, never the server's
+    label: str = ""
+
+    def key(self) -> tuple:
+        return (self.kind, self.target, self.key_jkt)
+
+    def describe(self) -> str:
+        what = "device" if self.kind == "device" else f"member {self.target}"
+        return f"{what}{' (' + self.label + ')' if self.label else ''} — key {self.key_jkt[:16]}…"
+
+
+@dataclass
+class Endorser:
+    user_id: str
+    email: str
+    jkt: str              # thumbprint of by_public_jwk, recomputed here
+    endorses: list = field(default_factory=list)    # Reader keys
+
+    def describe(self) -> str:
+        return f"{self.email or 'user ' + self.user_id} — key fingerprint {fingerprint(self.jkt)}"
+
+
+@dataclass
+class SealPlan:
+    agent: str
+    agent_id: str
+    kv: object
+    readers: list = field(default_factory=list)     # Reader, verified-endorsed by an anchor
+    skipped: list = field(default_factory=list)     # why each other recipient is left out
+    pinned: list = field(default_factory=list)      # Endorser newly pinned by this run
+
+
+ConfirmEndorsers = Callable[[list, dict], bool]
+
+
+def _readers(rows) -> tuple[dict, list]:
+    """The recipients canopy-web listed whose key is a real P-256 key and whose thumbprint
+    (recomputed) is the one the server claims — keyed by (kind, target, key_jkt)."""
+    out, skipped = {}, []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        kind, target = str(row.get("kind") or ""), str(row.get("target") or "")
+        label = str(row.get("label") or "")
+        name = f"{kind} {label or target[:16]}"
+        if kind not in ("device", "member") or not target:
+            skipped.append(f"{name}: not a device or member recipient")
+            continue
+        jwk = row.get("public_jwk")
+        try:
+            zk.public_key_from_jwk(jwk)
+            real = zk.jwk_thumbprint(jwk)
+        except (zk.ZkError, KeyError, TypeError):
+            skipped.append(f"{name}: canopy-web sent no valid public key")
+            continue
+        if row.get("key_jkt") != real or (kind == "device" and target != real):
+            skipped.append(f"{name}: canopy-web's thumbprint does not match the key it sent")
+            continue
+        jwk = {k: jwk[k] for k in ("kty", "crv", "x", "y")}
+        out[(kind, target, real)] = Reader(kind, target, jwk, real, label)
+    return out, skipped
+
+
+def plan_sealed(body: dict, *, pins: dict,
+                confirm: Optional[ConfirmEndorsers] = None) -> SealPlan:
+    """Decide who a sealed value goes to. Pure apart from ``confirm`` (asked about every
+    endorser seen for the first time; None = refuse them). Raises when a pinned person's
+    key changed, and when no recipient is endorsed by anyone trusted — it never falls
+    back to an unverified key."""
+    agent_id = str(body.get("agent_id") or "")
+    kv = body.get("kv")
+    if not agent_id or kv in (None, ""):
+        raise ZkCliError("canopy-web's recipients answer has no agent_id or kv")
+    plan = SealPlan(str(body.get("agent") or ""), agent_id, kv)
+    readers, plan.skipped = _readers(body.get("recipients"))
+
+    # every endorser key that actually signed a current recipient's current key
+    seen: dict = {}                                    # (by, jkt) -> Endorser
+    for e in body.get("endorsements") or []:
+        if not isinstance(e, dict):
+            continue
+        rk = (str(e.get("kind") or ""), str(e.get("target") or ""), str(e.get("key_jkt") or ""))
+        if rk not in readers:
+            continue
+        bjwk = e.get("by_public_jwk")
+        try:
+            bjkt = zk.jwk_thumbprint(bjwk)
+        except (KeyError, TypeError):
+            continue
+        if e.get("by_jkt") != bjkt or not zk.verify_endorsement(e, agent_id, bjwk):
+            continue
+        by = str(e.get("by") or "")
+        if not by:
+            continue
+        en = seen.setdefault((by, bjkt), Endorser(by, str(e.get("by_email") or ""), bjkt))
+        if rk not in en.endorses:
+            en.endorses.append(rk)
+
+    anchors: set = set()                               # (by, jkt) trusted for this run
+    fresh: list = []
+    keys_of: dict = {}
+    for (by, bjkt) in seen:
+        keys_of.setdefault(by, set()).add(bjkt)
+    for (by, bjkt), en in seen.items():
+        pin = pins.get(by)
+        if isinstance(pin, dict) and pin.get("jkt"):
+            if pin["jkt"] != bjkt:
+                who = pin.get("email") or en.email or f"user {by}"
+                raise ZkCliError(
+                    f"{who}'s vault key changed since you pinned it (pinned "
+                    f"{fingerprint(pin['jkt'])}, now {fingerprint(bjkt)}) — confirm with them "
+                    f"before continuing. Nothing sealed. (Re-pin only once they confirm: remove "
+                    f"user {by} from {pins_path()}.)")
+            anchors.add((by, bjkt))
+        elif len(keys_of[by]) > 1:
+            raise ZkCliError(f"{en.email or 'user ' + by} appears with {len(keys_of[by])} "
+                             "different vault keys — refusing to pin either. Nothing sealed.")
+        else:
+            fresh.append(en)
+
+    if fresh:
+        if confirm is not None and confirm(fresh, readers):
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            for en in fresh:
+                pins[en.user_id] = {"jkt": en.jkt, "email": en.email, "pinned_at": now}
+                anchors.add((en.user_id, en.jkt))
+                plan.pinned.append(en)
+        else:
+            plan.skipped.append("not trusted (declined): "
+                                + ", ".join(en.describe() for en in fresh))
+
+    trusted = {rk for (by, bjkt), en in seen.items() if (by, bjkt) in anchors
+               for rk in en.endorses}
+    for rk, r in readers.items():
+        if rk in trusted:
+            plan.readers.append(r)
+        else:
+            plan.skipped.append(f"{r.describe()}: not confirmed by a person you trust yet — "
+                                "it gets the value when an admin next settles the vault")
+    if not plan.readers:
+        raise ZkCliError("no recipient is endorsed by a person you trust — nothing sealed "
+                         "(an admin can confirm who can read this agent in canopy-web, "
+                         "then run this again)")
+    return plan
+
+
+def run_set_sealed(v: ZkVault, name: str, read_value: Callable[[], str], *,
+                   request_id: str = "", confirm: Optional[ConfirmEndorsers] = None,
+                   pins_file: Optional[Path] = None) -> tuple[SealPlan, str]:
+    """Seal ``name``'s value (from ``read_value``, called only once the readers are
+    settled) to the endorsed recipients and store it — through the secret request when
+    ``request_id`` is given. Returns (plan, the one line to print). Never the value."""
+    agent_base = f"/api/agents/{v.slug}"
+    if request_id:
+        req = v.web("GET", f"{agent_base}/secret-requests/{request_id}") or {}
+        if name and req.get("name") and req["name"] != name:
+            raise ZkCliError(f"request {request_id} asks for {req['name']}, not {name}")
+        name = name or str(req.get("name") or "")
+        if req.get("status") not in (None, "open"):
+            raise ZkCliError(f"request {request_id} is {req.get('status')} — nothing to answer")
+    if not name:
+        raise ZkCliError("which secret? give NAME (or --request ID)")
+    path = f"{v.base}/recipients" + (f"?secret_request={request_id}" if request_id else "")
+    body = v.web("GET", path) or {}
+    pins = load_pins(pins_file)
+    plan = plan_sealed(body, pins=pins, confirm=confirm)
+    if plan.pinned:
+        save_pins(pins, pins_file)
+    value = read_value()
+    if not value:
+        raise ZkCliError("refusing to store an empty value")
+    sealed = zk.seal_value(plan.agent_id, name, plan.kv, value,
+                           [(r.kind, r.target, r.public_jwk) for r in plan.readers])
+    value = ""  # noqa: F841
+    if request_id:
+        v.web("PUT", f"{agent_base}/secret-requests/{request_id}/value",
+              {"kv": plan.kv, "value_zk": sealed})
+    else:
+        v.web("PUT", f"{v.base}/values", {"kv": plan.kv,
+                                          "values": [{"name": name, "value_zk": sealed}]})
+    n = len(plan.readers)
+    return plan, f"{name} stored for {plan.agent or v.slug} (sealed to {n} reader{'s' if n != 1 else ''})"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # rendering
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -570,23 +810,68 @@ def enable_cmd(slug, yes):
     show_recovery_code(res)
 
 
+def _ask_endorsers(fresh: list, readers: dict) -> bool:
+    click.echo("First contact: these people vouch for who can read this agent, and you have "
+               "not pinned them yet. Check each fingerprint with them out of band.", err=True)
+    for en in fresh:
+        click.echo(f"  - {en.describe()}", err=True)
+        for rk in en.endorses:
+            click.echo(f"      endorses {readers[rk].describe()}", err=True)
+    return click.confirm("Trust (pin) them and seal to what they endorse?", default=False,
+                         err=True)
+
+
 @zk_group.command("set")
 @AGENT_OPT
-@click.argument("name")
+@click.argument("name", required=False, default="")
 @click.option("--from-env", "from_env", default="",
               help="Read the value from this environment variable instead of stdin.")
-def set_cmd(slug, name, from_env):
-    """Store one value, encrypted here. The value is read from stdin (or a hidden prompt
-    on a terminal, or --from-env) — never from argv."""
+@click.option("--sealed", is_flag=True,
+              help="Seal the value (zks1) to the agent's readers that a person you trust "
+                   "endorsed — no vault key needed. Endorsers are pinned in "
+                   "~/.canopy/vault-pins.json.")
+@click.option("--request", "request_id", default="", metavar="ID",
+              help="Answer the agent's secret request ID (implies --sealed; NAME optional).")
+@click.option("--yes", is_flag=True,
+              help="With --sealed: pin first-seen endorsers without asking.")
+def set_cmd(slug, name, from_env, sealed, request_id, yes):
+    """Store one value. The value is read from stdin (or a hidden prompt on a terminal, or
+    --from-env) — never from argv. Default: encrypted here under the vault key (this
+    device must hold a wrap). --sealed / --request: sealed to endorsed readers instead."""
     import os
-    if from_env:
-        if from_env not in os.environ:
-            raise ZkCliError(f"${from_env} is not set")
-        value = os.environ[from_env]
-    elif sys.stdin.isatty():
-        value = click.prompt(f"{name}", hide_input=True)
-    else:
-        value = sys.stdin.read().rstrip("\n")
+
+    def read_value() -> str:
+        if from_env:
+            if from_env not in os.environ:
+                raise ZkCliError(f"${from_env} is not set")
+            return os.environ[from_env]
+        if sys.stdin.isatty():
+            return click.prompt(f"{name or 'value'}", hide_input=True)
+        return sys.stdin.read().rstrip("\n")
+
+    if sealed or request_id:
+        if yes:
+            confirm = lambda fresh, readers: True  # noqa: E731
+        elif from_env or sys.stdin.isatty():
+            confirm = _ask_endorsers
+        else:
+            def confirm(fresh, readers):     # the value is on stdin: never read it as a "y"
+                raise ZkCliError(
+                    "first contact with " + ", ".join(en.describe() for en in fresh)
+                    + " needs a confirmation, and stdin carries the value — run it on a "
+                      "terminal or with --from-env, or pass --yes once you have checked the "
+                      "fingerprint")
+        plan, line = run_set_sealed(_vault(slug), name, read_value, request_id=request_id,
+                                    confirm=confirm)
+        for en in plan.pinned:
+            click.echo(f"pinned {en.describe()}", err=True)
+        for s in plan.skipped:
+            click.echo(f"not sealed to: {s}", err=True)
+        click.echo(line)
+        return
+    if not name:
+        raise ZkCliError("which secret? give NAME")
+    value = read_value()
     if not value:
         raise ZkCliError("refusing to store an empty value")
     click.echo(render(run_set(_vault(slug), {name: value})))

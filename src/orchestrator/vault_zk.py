@@ -17,6 +17,9 @@ Encoding: base64url without padding. Points: X9.62 uncompressed (65 bytes).
   keyset key): ``{"alg":"ecdh-es","epk","n","ct"}``, KEK = HKDF(Z, salt=epk||Q, info).
 * recovery — ``{"alg":"recovery","s","n","ct"}`` under HKDF(R, salt, info); R is shown
   once as a Crockford base32 code.
+* sealed  — §6 ``"zks1:"``: a value sealed to recipients' public keys, no VK needed.
+* endorsement — §7: a person's ECDSA signature that a recipient key may read the agent;
+  what ``canopy vault zk set --sealed`` checks before sealing to anyone.
 
 Hardware device keys never expose their private scalar, so the device unwrap takes Z
 (the ECDH shared x-coordinate) from the key itself: :func:`unwrap_ecdh_es_with_z`.
@@ -487,3 +490,43 @@ def open_sealed(stored: str, agent_id, name: str, kind: str, target,
     entry, _ = sealed_entry(stored, name, kind, target)
     z = recipient_priv.exchange(ec.ECDH(), public_key_from_point(sealed_epk_point(entry)))
     return open_sealed_with_z(stored, agent_id, name, kind, target, z)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 7. endorsements — a person's signed "this key may read this agent"
+# ──────────────────────────────────────────────────────────────────────────────
+# Made in the person's browser when they wrap VK to a recipient (or confirm it): the
+# publicly checkable twin of a wrap. A writer who holds no VK seals a §6 value ONLY to
+# recipients endorsed by a key it already trusts, so a server cannot add its own.
+#
+#   msg = "canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}"
+#   sig = ECDSA-P256-SHA256(utf8(msg)) by the endorser's person key, IEEE P1363 r||s
+#         (64 bytes), b64u
+#   endorsement = {"kind","target","key_jkt","by","by_jkt","sig"}
+#
+# ECDSA is randomized: the vector pins one valid signature every verifier must accept,
+# not a signature every signer must reproduce. Canopy only VERIFIES.
+
+def endorse_msg(agent_id, kind: str, target, key_jkt: str) -> str:
+    return f"canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}"
+
+
+def verify_endorsement(e: dict, agent_id, endorser_public_jwk) -> bool:
+    """True iff ``e["sig"]`` is the endorser's §7 signature over ``e``'s (kind, target,
+    key_jkt) for ``agent_id`` AND ``e["by_jkt"]`` is the endorser key's thumbprint.
+    Never raises on a malformed endorsement or key — that is simply not a valid one."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+
+    try:
+        pub = (endorser_public_jwk if isinstance(endorser_public_jwk, ec.EllipticCurvePublicKey)
+               else public_key_from_jwk(endorser_public_jwk))
+        raw = unb64u(str(e["sig"]))
+        if len(raw) != 64 or e["by_jkt"] != jkt(pub):
+            return False
+        der = encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
+        pub.verify(der, endorse_msg(agent_id, e["kind"], e["target"], e["key_jkt"]).encode("utf-8"),
+                   ec.ECDSA(hashes.SHA256()))
+    except (InvalidSignature, ZkError, KeyError, TypeError, ValueError):
+        return False
+    return True

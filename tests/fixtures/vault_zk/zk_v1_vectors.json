@@ -30,7 +30,12 @@
     "prf_output_hex": "618e436cff4d565e3c8fa369b57962e01cbd43e71a4062c680a3800e19a6afa1",
     "recovery_secret_hex": "df8fa5a443a936129faf7616c6f0112ac288da92a1611633a40109608d6e4094",
     "passphrase": "correct horse battery staple \ufb01",
-    "secret_key_hex": "2ceac6f36363c6246a64cca805cd43ca"
+    "secret_key_hex": "2ceac6f36363c6246a64cca805cd43ca",
+    "sealed_name": "gog-token",
+    "sealed_plaintext": "minted-token",
+    "ephemeral_seal_device_scalar_hex": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+    "ephemeral_seal_member_scalar_hex": "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f",
+    "seal_member_nonce_hex": "0c0d0e0f1011121314151617"
   },
   "outputs": {
     "value": "zk1:AAECAwQFBgcICQoLNDG1afaR723sLeLuLduYmPbstVdYbiS-7vCBgw",
@@ -70,6 +75,22 @@
       "n": "AAECAwQFBgcICQoL",
       "ct": "wnIQwx_YzP1swxJZzzQJUT06SOA8mw5m3NHiRcqALfGYoq-psewNuDn25aTsvdEt"
     },
-    "secret_key_code": "CV1-5KNC-DWV3-CF32-8TK4-SJM0-BKA3-S8"
+    "secret_key_code": "CV1-5KNC-DWV3-CF32-8TK4-SJM0-BKA3-S8",
+    "sealed_value": "zks1:eyJrdiI6MSwiciI6W3sia2luZCI6ImRldmljZSIsInRhcmdldCI6IlB5cGliU2JGNW0xR2NjbjkzUzcwQVFvT0lUS1plRFhwUFR5ZlJZLWNBSGMiLCJlcGsiOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiJyaTlZWGlTM2RYRGpISkVJTGp4ejlBTmZILVN5bDBSTEdodVVhWlpvNlE4IiwieSI6Ik5pS0VENmFlY2wwNkstWVdpbWQ1cm9OTFBQa3ZobU53OEhVd1lFR0lBYTAifSwiY3QiOiJBQUVDQXdRRkJnY0lDUW9MclExT2NCQ0ZZbEZldk9wTzZxVEJucnl3RUtiYlpLckhTWTEtNWcifSx7ImtpbmQiOiJtZW1iZXIiLCJ0YXJnZXQiOiI3IiwiZXBrIjp7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiNjJYVlMtaDkzcVJsdmNBVlc5WG5WMUJZTjZKa2Rjb2l4VUtvRDF5eWgtRSIsInkiOiJjLU9QMnNORVBMVnRSc0VnaEhiWVJpVkFkYWdPSXgxNzkyYmxwRkFLU1prIn0sImN0IjoiREEwT0R4QVJFaE1VRlJZWE5QVWZ1bExXQ0dMVzdHOU90WC1Sd1F6UGQtRTlfM0tVNV9tUGZBIn1dfQ",
+    "user_key_seal_recovery": {
+      "alg": "recovery",
+      "s": "oKGio6SlpqeoqaqrrK2urw",
+      "n": "AAECAwQFBgcICQoL",
+      "ct": "l8AtIAL6HvUTyiCzD63ZsKZEhZKMP5gmCuk71lHhfsw6HePtyoki1vXy1ig5H4eV"
+    },
+    "endorse_msg": "canopy-vault/v1/endorse|42|device|PypibSbF5m1Gccn93S70AQoOITKZeDXpPTyfRY-cAHc|PypibSbF5m1Gccn93S70AQoOITKZeDXpPTyfRY-cAHc",
+    "endorsement": {
+      "kind": "device",
+      "target": "PypibSbF5m1Gccn93S70AQoOITKZeDXpPTyfRY-cAHc",
+      "key_jkt": "PypibSbF5m1Gccn93S70AQoOITKZeDXpPTyfRY-cAHc",
+      "by": "7",
+      "by_jkt": "Ny3BdCDPLVykMhfBcwXfqI5i95Spg32h-3X1HNCLdH4",
+      "sig": "ab5cp9TztG9n3f4PDuLUHGErHkhYlaumiO5xiwE7zd2yJfGCa84j3M2h5wjTfLGoALzN4n-lu6M46AsbfoEicQ"
+    }
   }
 }

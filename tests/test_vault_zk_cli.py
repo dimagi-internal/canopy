@@ -479,3 +479,242 @@ def test_switch_settles_on_the_way(server, me, monkeypatch):
     assert server.zk_values["gog-token"].startswith("zk1:")
     server.enabled = False
     assert vault_zk_cli.settle_quietly("eva", token="person-pat", transport=server) == []
+
+
+# ── set --sealed: give an agent a secret, sealed to ENDORSED readers (zk-v1 §6 + §7) ──
+# canopy-web#1712's `GET …/vault/zk/recipients` is the server's CLAIM; the endorsements
+# are a pinned person's signatures. These tests make the server lie in every way it can
+# and check the value only ever reaches keys a trusted person vouched for.
+
+from cryptography.hazmat.primitives import hashes  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature  # noqa: E402
+from urllib.parse import parse_qs  # noqa: E402
+
+REQ_ID = "0b7c2a7e-1d1e-4b6a-9a51-6f0f3c1d2e3f"
+SEALED_SECRET = "ghp_SEALED_never_printed"
+JON_KEY, JON_JWK = USER_KEY, USER_JWK          # the admin's person key (user 7)
+MALLORY_KEY, MALLORY_JWK = _new_key()          # a key the server would like to slip in
+
+
+def _endorse(signer, agent_id, kind, target, key_jkt, by="7", email="jon@dimagi.com"):
+    msg = zk.endorse_msg(agent_id, kind, target, key_jkt).encode()
+    r, s = decode_dss_signature(signer.sign(msg, ec.ECDSA(hashes.SHA256())))
+    return {"kind": kind, "target": target, "key_jkt": key_jkt, "by": by, "by_email": email,
+            "by_jkt": zk.jkt(signer.public_key()), "by_public_jwk": zk.jwk(signer.public_key()),
+            "sig": zk.b64u(r.to_bytes(32, "big") + s.to_bytes(32, "big"))}
+
+
+def _recipient(kind, target, jwk, label=""):
+    return {"kind": kind, "target": str(target), "label": label, "public_jwk": jwk,
+            "key_jkt": zk.jwk_thumbprint(jwk)}
+
+
+class FakeSealServer:
+    """Only what canopy-web#1712 serves: public keys, endorsements, ciphertext."""
+
+    def __init__(self, recipients, endorsements, *, request_name="GITHUB_TOKEN"):
+        self.recipients, self.endorsements = recipients, endorsements
+        self.request_name = request_name
+        self.calls: list = []
+        self.stored: dict = {}
+        self.fulfilled = None
+
+    def __call__(self, method, url, headers, data):
+        parts = urlsplit(url)
+        path, query = parts.path, parse_qs(parts.query)
+        body = json.loads(data) if data else None
+        self.calls.append((method, path, body, query))
+        base = "/api/agents/bailey"
+        if (method, path) == ("GET", f"{base}/vault/zk/recipients"):
+            return 200, json.dumps({"agent": "bailey", "agent_id": str(AGENT_ID), "kv": 0,
+                                    "recipients": self.recipients,
+                                    "endorsements": self.endorsements,
+                                    "declared": ["GITHUB_TOKEN"], "stored": []})
+        if (method, path) == ("GET", f"{base}/secret-requests/{REQ_ID}"):
+            return 200, json.dumps({"id": REQ_ID, "agent": "bailey", "name": self.request_name,
+                                    "status": "open", "has_value": False})
+        if (method, path) == ("PUT", f"{base}/vault/zk/values"):
+            assert body["kv"] == 0
+            self.stored.update({v["name"]: v["value_zk"] for v in body["values"]})
+            return 200, "{}"
+        if (method, path) == ("PUT", f"{base}/secret-requests/{REQ_ID}/value"):
+            assert set(body) == {"kv", "value_zk"} and zk.is_sealed_value(body["value_zk"])
+            self.fulfilled = body
+            self.stored[self.request_name] = body["value_zk"]
+            return 200, json.dumps({"id": REQ_ID, "status": "fulfilled"})
+        return 404, "{}"
+
+    def puts(self):
+        return [c for c in self.calls if c[0] == "PUT"]
+
+
+def _targets(sealed: str) -> set:
+    return {(e["kind"], e["target"]) for e in zk.parse_sealed(sealed)["r"]}
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    return tmp_path
+
+
+def _pin_jon(home):
+    (home / ".canopy").mkdir(exist_ok=True)
+    (home / ".canopy" / "vault-pins.json").write_text(json.dumps(
+        {"7": {"jkt": zk.jkt(JON_KEY.public_key()), "email": "jon@dimagi.com",
+               "pinned_at": "2026-10-19T00:00:00+00:00"}}))
+
+
+def _pins(home):
+    p = home / ".canopy" / "vault-pins.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def _seal_server(monkeypatch, recipients, endorsements, **kw):
+    s = FakeSealServer(recipients, endorsements, **kw)
+    monkeypatch.setattr(canopy_web, "urllib_transport", s)
+    monkeypatch.setattr(vault_cli, "_token", lambda: "person-pat")
+    return s
+
+
+def _sealed_cli(args, **kw):
+    return CliRunner().invoke(vault_cli.vault_group,
+                              ["zk", "set", "--agent", "bailey", "--sealed", *args], **kw)
+
+
+D9, D11 = zk.jwk_thumbprint(DEV9_JWK), zk.jwk_thumbprint(DEV11_JWK)
+
+
+def test_seals_only_to_recipients_a_pinned_person_endorsed(home, monkeypatch):
+    _pin_jon(home)
+    mallory_jkt = zk.jwk_thumbprint(MALLORY_JWK)
+    recipients = [_recipient("device", D9, DEV9_JWK, "cloud-ec2-1"),
+                  _recipient("device", D11, DEV11_JWK, "cloud-ec2-2"),
+                  _recipient("member", 7, JON_JWK, "jon@dimagi.com"),
+                  _recipient("device", mallory_jkt, MALLORY_JWK, "totally a runner")]
+    forged = dict(_endorse(JON_KEY, AGENT_ID, "device", D11, D11), sig=_endorse(
+        JON_KEY, AGENT_ID, "device", D9, D9)["sig"])             # a real sig, wrong message
+    endorsements = [_endorse(JON_KEY, AGENT_ID, "device", D9, D9),
+                    _endorse(JON_KEY, AGENT_ID, "member", "7", zk.jwk_thumbprint(JON_JWK)),
+                    forged,
+                    # mallory vouches for herself as an unpinned "person" — declined below
+                    _endorse(MALLORY_KEY, AGENT_ID, "device", mallory_jkt, mallory_jkt,
+                             by="66", email="mallory@evil.test")]
+    s = _seal_server(monkeypatch, recipients, endorsements)
+    monkeypatch.setenv("TOKEN_SRC", SEALED_SECRET)
+    r = _sealed_cli(["GITHUB_TOKEN", "--from-env", "TOKEN_SRC"], input="n\n")
+    assert r.exit_code == 0, r.output
+    assert "GITHUB_TOKEN stored for bailey (sealed to 2 readers)" in r.output
+    assert SEALED_SECRET not in r.output and SEALED_SECRET not in json.dumps(
+        [c[2] for c in s.calls])
+    sealed = s.stored["GITHUB_TOKEN"]
+    assert _targets(sealed) == {("device", D9), ("member", "7")}
+    assert zk.open_sealed(sealed, AGENT_ID, "GITHUB_TOKEN", "device", D9,
+                          DEV9_KEY) == SEALED_SECRET
+    assert zk.open_sealed(sealed, AGENT_ID, "GITHUB_TOKEN", "member", "7",
+                          JON_KEY) == SEALED_SECRET
+    with pytest.raises(zk.ZkError):
+        zk.open_sealed(sealed, AGENT_ID, "GITHUB_TOKEN", "device", D11, DEV11_KEY)
+    assert "cloud-ec2-2" in r.output and "not confirmed" in r.output    # skipped, listed
+    assert "66" not in _pins(home)
+
+
+def test_a_server_swapped_key_is_not_sealed_to(home, monkeypatch):
+    """The endorsement is for dev 9's real key; the server serves Mallory's key under
+    dev 9's name (with its own thumbprint claim, or a lying one)."""
+    _pin_jon(home)
+    swapped = dict(_recipient("device", D9, MALLORY_JWK), key_jkt=D9)        # lying claim
+    honest_claim = _recipient("device", D9, MALLORY_JWK)                      # true claim
+    for row in (swapped, honest_claim):
+        s = _seal_server(monkeypatch, [row, _recipient("member", 7, JON_JWK)],
+                         [_endorse(JON_KEY, AGENT_ID, "device", D9, D9),
+                          _endorse(JON_KEY, AGENT_ID, "member", "7", zk.jwk_thumbprint(JON_JWK))])
+        plan, line = vault_zk_cli.run_set_sealed(
+            vault_zk_cli.ZkVault("bailey", token="person-pat", transport=s), "GITHUB_TOKEN",
+            lambda: SEALED_SECRET)
+        assert _targets(s.stored["GITHUB_TOKEN"]) == {("member", "7")}
+        assert line == "GITHUB_TOKEN stored for bailey (sealed to 1 reader)"
+
+
+def test_an_unpinned_endorser_is_shown_then_pinned_on_yes(home, monkeypatch):
+    s = _seal_server(monkeypatch, [_recipient("device", D9, DEV9_JWK, "cloud-ec2-1")],
+                     [_endorse(JON_KEY, AGENT_ID, "device", D9, D9)])
+    monkeypatch.setenv("TOKEN_SRC", SEALED_SECRET)
+    r = _sealed_cli(["GITHUB_TOKEN", "--from-env", "TOKEN_SRC"], input="y\n")
+    assert r.exit_code == 0, r.output
+    jkt = zk.jkt(JON_KEY.public_key())
+    assert "jon@dimagi.com" in r.output and vault_zk_cli.fingerprint(jkt) in r.output
+    assert "cloud-ec2-1" in r.output and "First contact" in r.output
+    pins = _pins(home)
+    assert pins["7"]["jkt"] == jkt and pins["7"]["email"] == "jon@dimagi.com"
+    assert _targets(s.stored["GITHUB_TOKEN"]) == {("device", D9)}
+    # the second time, jon is pinned: no question asked
+    r2 = _sealed_cli(["GITHUB_TOKEN", "--from-env", "TOKEN_SRC"])
+    assert r2.exit_code == 0 and "First contact" not in r2.output
+
+
+def test_an_unpinned_endorser_declined_seals_nothing(home, monkeypatch):
+    s = _seal_server(monkeypatch, [_recipient("device", D9, DEV9_JWK)],
+                     [_endorse(JON_KEY, AGENT_ID, "device", D9, D9)])
+    monkeypatch.setenv("TOKEN_SRC", SEALED_SECRET)
+    r = _sealed_cli(["GITHUB_TOKEN", "--from-env", "TOKEN_SRC"], input="n\n")
+    assert r.exit_code != 0 and "no recipient is endorsed" in r.output
+    assert not s.puts() and _pins(home) == {}
+
+
+def test_yes_pins_without_asking_and_piped_stdin_never_answers_the_question(home, monkeypatch):
+    s = _seal_server(monkeypatch, [_recipient("device", D9, DEV9_JWK)],
+                     [_endorse(JON_KEY, AGENT_ID, "device", D9, D9)])
+    # the value on stdin must not be consumed as the confirmation
+    r = _sealed_cli(["GITHUB_TOKEN"], input=SEALED_SECRET + "\n")
+    assert r.exit_code != 0 and "needs a confirmation" in r.output
+    assert SEALED_SECRET not in r.output and not s.puts()
+    r = _sealed_cli(["GITHUB_TOKEN", "--yes"], input=SEALED_SECRET + "\n")
+    assert r.exit_code == 0, r.output
+    assert SEALED_SECRET not in r.output
+    assert zk.open_sealed(s.stored["GITHUB_TOKEN"], AGENT_ID, "GITHUB_TOKEN", "device", D9,
+                          DEV9_KEY) == SEALED_SECRET
+    assert "7" in _pins(home)
+
+
+def test_a_pinned_persons_changed_key_refuses(home, monkeypatch):
+    _pin_jon(home)
+    before = _pins(home)
+    # the server now says "user 7" signs with Mallory's key — a valid signature, wrong key
+    s = _seal_server(monkeypatch, [_recipient("device", D9, DEV9_JWK)],
+                     [_endorse(MALLORY_KEY, AGENT_ID, "device", D9, D9)])
+    r = _sealed_cli(["GITHUB_TOKEN", "--yes"], input=SEALED_SECRET + "\n")
+    assert r.exit_code != 0
+    assert "jon@dimagi.com's vault key changed" in r.output and "Nothing sealed" in r.output
+    assert not s.puts() and _pins(home) == before          # never silently re-pinned
+
+
+def test_no_endorsed_recipient_is_an_error_never_a_fallback(home, monkeypatch):
+    _pin_jon(home)
+    s = _seal_server(monkeypatch, [_recipient("device", D9, DEV9_JWK),
+                                   _recipient("member", 7, JON_JWK)], [])
+    r = _sealed_cli(["GITHUB_TOKEN", "--yes"], input=SEALED_SECRET + "\n")
+    assert r.exit_code != 0 and "no recipient is endorsed" in r.output
+    assert not s.puts()
+
+
+def test_request_answers_through_the_request_route(home, monkeypatch):
+    _pin_jon(home)
+    s = _seal_server(monkeypatch, [_recipient("device", D9, DEV9_JWK)],
+                     [_endorse(JON_KEY, AGENT_ID, "device", D9, D9)])
+    r = CliRunner().invoke(vault_cli.vault_group,
+                           ["zk", "set", "--agent", "bailey", "--request", REQ_ID],
+                           input=SEALED_SECRET + "\n")
+    assert r.exit_code == 0, r.output
+    assert "GITHUB_TOKEN stored for bailey (sealed to 1 reader)" in r.output
+    rec = [c for c in s.calls if c[1].endswith("/vault/zk/recipients")]
+    assert rec and rec[0][3] == {"secret_request": [REQ_ID]}
+    assert [c[1] for c in s.puts()] == [f"/api/agents/bailey/secret-requests/{REQ_ID}/value"]
+    assert s.fulfilled["kv"] == 0
+    assert zk.open_sealed(s.fulfilled["value_zk"], AGENT_ID, "GITHUB_TOKEN", "device", D9,
+                          DEV9_KEY) == SEALED_SECRET
+    # a NAME that is not what the request asks for is refused before anything is read
+    r = CliRunner().invoke(vault_cli.vault_group,
+                           ["zk", "set", "--agent", "bailey", "--request", REQ_ID, "OTHER"],
+                           input=SEALED_SECRET + "\n")
+    assert r.exit_code != 0 and "asks for GITHUB_TOKEN, not OTHER" in r.output
