@@ -297,8 +297,20 @@ function pluginVersion() {
   }
 }
 
+// WHERE THE TASK COMES FROM (measured in a real `claude -p --debug`, 2026-10-18,
+// canopy#994): the cwd here is ALWAYS the plugin root, so the worktree path below
+// never matches when Claude Code runs this. EMDASH_TASK_NAME does arrive (emdash
+// exports it into the session; not secret-looking, so not stripped), and so do
+// CANOPY_TURN_ID / CANOPY_SESSION_ID / CANOPY_CALLER. CLAUDE_CODE_SESSION_ID does
+// NOT: Claude Code runs this before it exports its own id (a nested run sees the
+// OUTER session's). This runs ONCE per connection, so whatever it finds is the
+// parent as of connect — the reason agents are also told to pass `parent` in the
+// payload (caller_context hook), which is per-call and wins over these headers.
 function taskCandidates() {
   const out = [];
+  // Already the bare task name (no worktree suffix), so it is used as given.
+  const named = (process.env.EMDASH_TASK_NAME || "").trim();
+  if (named && SAFE_NAME.test(named)) out.push(named);
   const parts = process.cwd().split(path.sep);
   for (let i = 0; i < parts.length; i++) {
     if (parts[i] !== "worktrees") continue;
@@ -336,6 +348,20 @@ function provenanceHeaders() {
         session = session || ok(rec.session_id, UUIDISH);
         claude = claude || ok(rec.claude_session_id, UUIDISH);
         break;
+      }
+    }
+    // The connect usually happens BEFORE the first prompt, so before the hook has
+    // written the by-task record. The runner's pending pointer (left for that hook,
+    // read here and never consumed) names the turn being delivered; canopy-web
+    // resolves the turn's chat session from it. Only while fresh, as provenance.py.
+    if (!turn) {
+      for (const n of taskCandidates()) {
+        const rec = readProfile(path.join(os.homedir(), ".canopy", "caller", "pending", `${n}.json`));
+        const age = Date.now() / 1000 - Number((rec && rec.written_at) || 0);
+        if (rec && rec.task === n && age >= 0 && age <= 120) {
+          turn = ok(rec.turn_id, UUIDISH);
+          if (turn) break;
+        }
       }
     }
     if (turn) h["X-Canopy-Parent-Turn"] = turn;

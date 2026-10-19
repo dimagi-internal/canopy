@@ -117,11 +117,18 @@ def task_candidates(cwd: Optional[str] = None) -> list:
     random `-<suffix>` makes the bare stem the likelier task name, so both are tried
     (the same rule `caller_context.task_candidates` applies to the transcript path).
     """
+    out: list = []
+    # emdash exports the task name into the session; it reaches a process whose cwd
+    # is not the worktree (canopy#994 measured the MCP headersHelper running from
+    # the plugin root). It is already the bare task name, so it is used as given.
+    # Ignored when the caller names a cwd explicitly.
+    named = "" if cwd else os.environ.get("EMDASH_TASK_NAME", "").strip()
+    if named and _NAME.match(named):
+        out.append(named)
     try:
         parts = Path(cwd or os.getcwd()).resolve().parts
     except Exception:  # noqa: BLE001
-        return []
-    out: list = []
+        return out
     for i, part in enumerate(parts):
         if part != "worktrees":
             continue
@@ -219,9 +226,12 @@ def resolve_parent(cwd: Optional[str] = None) -> dict:
 
 
 def provenance_parent(cwd: Optional[str] = None) -> dict:
-    """The optional `parent` payload object canopy-web accepts — only known fields."""
+    """The optional `parent` payload object canopy-web accepts (`ParentIn`: `turn`,
+    `session`, `claude_session`) — only known fields."""
     try:
-        return {k: v for k, v in resolve_parent(cwd).items() if v}
+        p = resolve_parent(cwd)
+        return {k: p[src] for k, src in (("turn", "turn_id"), ("session", "session_id"),
+                                         ("claude_session", "claude_session_id")) if p.get(src)}
     except Exception:  # noqa: BLE001
         return {}
 

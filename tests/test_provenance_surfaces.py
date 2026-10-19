@@ -9,6 +9,7 @@ canopy-web a session uses — the MCP server (remote, but canopy owns its
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +44,34 @@ def test_the_mcp_helper_sends_the_laptop_parent_beside_the_bearer(tmp_path):
     # the task only located the record; nothing runner-specific is sent
     assert "X-Canopy-Parent-Task" not in h and "X-Canopy-Parent-Host" not in h
     assert h["X-Canopy-Claude-Session"] == CLAUDE
+
+
+def test_the_mcp_helper_finds_the_record_from_emdash_task_name(tmp_path):
+    """canopy#994, measured in a real `claude -p`: Claude Code runs the helper from the
+    PLUGIN dir, so the worktree cwd never matches; EMDASH_TASK_NAME does arrive."""
+    home = tmp_path / "home"
+    d = home / ".canopy" / "caller" / "by-task"
+    d.mkdir(parents=True)
+    (d / f"{TASK}.json").write_text(json.dumps({"turn_id": TURN, "session_id": SESS}))
+    plugin_dir = tmp_path / "plugin"
+    plugin_dir.mkdir()
+    h = _helper(home, plugin_dir, {"CANOPY_WEB_PAT": "pat", "EMDASH_TASK_NAME": TASK})
+    assert h["X-Canopy-Parent-Turn"] == TURN and h["X-Canopy-Parent-Session"] == SESS
+
+
+def test_the_mcp_helper_takes_the_turn_from_a_fresh_pointer_at_connect(tmp_path):
+    """The connect precedes the first prompt, so no by-task record exists yet; the
+    runner's pending pointer names the turn being delivered (read, never consumed)."""
+    home = tmp_path / "home"
+    d = home / ".canopy" / "caller" / "pending"
+    d.mkdir(parents=True)
+    ptr = d / f"{TASK}.json"
+    ptr.write_text(json.dumps({"task": TASK, "turn_id": TURN, "written_at": time.time() - 5}))
+    h = _helper(home, tmp_path, {"CANOPY_WEB_PAT": "pat", "EMDASH_TASK_NAME": TASK})
+    assert h["X-Canopy-Parent-Turn"] == TURN and ptr.exists()
+    ptr.write_text(json.dumps({"task": TASK, "turn_id": TURN, "written_at": time.time() - 600}))
+    h = _helper(home, tmp_path, {"CANOPY_WEB_PAT": "pat", "EMDASH_TASK_NAME": TASK})
+    assert "X-Canopy-Parent-Turn" not in h
 
 
 def test_the_mcp_helper_prefers_the_cloud_runners_env(tmp_path):

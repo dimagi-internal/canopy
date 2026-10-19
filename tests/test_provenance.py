@@ -17,7 +17,7 @@ TASK = "c-please-deploy"
 CWD = f"/Users/a/emdash/worktrees/hal-0ceb29c5/emdash-{TASK}-x7o1w"
 
 _ENV_VARS = ("CANOPY_TURN_ID", "CANOPY_SESSION_ID", "CANOPY_CALLER",
-             "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")
+             "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "EMDASH_TASK_NAME")
 
 
 @pytest.fixture()
@@ -163,3 +163,13 @@ def test_hook_claim_writes_a_record_the_cli_then_reads(root, monkeypatch, capsys
     assert (rec["turn_id"], rec["session_id"], rec["claude_session_id"]) == (TURN, SESSION, CLAUDE)
     p = pv.resolve_parent(cwd=CWD)
     assert (p["turn_id"], p["session_id"], p["claude_session_id"]) == (TURN, SESSION, CLAUDE)
+
+
+def test_emdash_task_name_finds_the_record_when_the_cwd_is_elsewhere(root, monkeypatch, tmp_path):
+    """canopy#994: a process emdash started but whose cwd is not the worktree (the MCP
+    headersHelper runs from the plugin dir) still finds its by-task record."""
+    (root / "by-task" / f"{TASK}.json").write_text(json.dumps(
+        {"turn_id": TURN, "session_id": SESSION}))
+    monkeypatch.setenv("EMDASH_TASK_NAME", TASK)
+    monkeypatch.chdir(tmp_path)
+    assert pv.provenance_parent() == {"turn": TURN, "session": SESSION}

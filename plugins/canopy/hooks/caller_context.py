@@ -55,6 +55,7 @@ CALLER_ROOT = os.path.expanduser("~/.canopy/caller")
 FRESH_SECONDS = 120
 _ANCHOR = re.compile(r"-worktrees-.+?-emdash-(?P<leaf>.+)$")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+_UUIDISH = re.compile(r"^[0-9a-fA-F-]{8,64}$")
 
 ACCESS_DOC = "https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/access.md"
 
@@ -255,10 +256,29 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
                      "what they may have, and take anything more to the owner.")
     lines.extend(_page_lines(env.get("page")))
     lines.extend(_apps_lines(env.get("apps")))
+    lines.extend(_parent_lines(env, tid))
     lines.extend(person_lines(env.get("person")))
     lines.append(f"Full envelope: {path}; re-read it with the who_is_asking tool "
                  f"(turn_id={tid}) before anything irreversible. Terms: {ACCESS_DOC}")
     return "\n".join(lines)
+
+
+def _parent_lines(env: dict, tid: str) -> list:
+    """The ids to pass as `parent` when this turn starts canopy work (canopy#994).
+
+    A session created with a parent the creator can read takes that parent's
+    people (canopy-web#1658), so the person who asked sees what was started for
+    them. The MCP headersHelper cannot carry this reliably: Claude Code runs it
+    once per connection, from the plugin dir. The payload is per call, and it is
+    the one place a per-turn id is never stale."""
+    conv = env.get("conversation") if isinstance(env.get("conversation"), dict) else {}
+    parent = {k: v for k, v in (("turn", tid), ("session", (conv or {}).get("session_id")))
+              if isinstance(v, str) and _UUIDISH.match(v)}
+    if not parent:
+        return []
+    return [f"- parent: when this turn starts work in canopy-web (create_session, create_turn, "
+            f"enqueue_turn), pass parent={json.dumps(parent)} so the new session includes this "
+            "conversation's people. The canopy CLI sends it for you."]
 
 
 def _clean(value, limit: int = 200) -> str:
