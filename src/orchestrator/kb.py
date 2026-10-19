@@ -4,7 +4,7 @@ A knowledge base (KB) is everything one publisher has made public — a funder's
 reports, podcast transcripts, cost-effectiveness models — kept as dated copies, with
 the tables we compute with alongside. It belongs to a workspace PROJECT, not to any one
 agent: the curator agent builds it, and every agent in the workspace reads the same
-copy through the same tools (`canopy kb …` or `canopy kb mcp`).
+copy through the same tools (`canopy kb mcp`).
 
 Two artifacts, one direction:
 
