@@ -691,10 +691,20 @@ def write_env_out(out: Path, values: dict, slug: str = "") -> int:
 
 def runner_env_values(slug: str, *, agent_root: Path, base_url: str = "", token: str = "",
                       runner: Runner = subprocess.run) -> tuple[dict, str]:
+    """({NAME: value}, backend) — `runner_env_bundle` without the extras."""
+    values, how, _ = runner_env_bundle(slug, agent_root=agent_root, base_url=base_url,
+                                       token=token, runner=runner)
+    return values, how
+
+
+def runner_env_bundle(slug: str, *, agent_root: Path, base_url: str = "", token: str = "",
+                      runner: Runner = subprocess.run) -> tuple[dict, str, dict]:
     """({NAME: value}, backend) as a RUNNER resolves them for one turn — the same
     credentials `canopy agent prepare --runner` uses (canopy-web `/credentials/resolve` with
     the runner's token; `op inject` of the clone's .env.tpl to a pipe with the agent's own
-    key), held in memory."""
+    key), held in memory — plus the resolve's top-level `op_sa_token` / `op_vault` /
+    `salesforce_creds`, each only when it returned one (`agent_prepare.RESOLVE_EXTRAS`), from
+    the same resolve call (device proof and zero-knowledge unwrap included)."""
     from orchestrator.agent_prepare import RunnerPreparer
     base = base_url or os.environ.get("CANOPY_BASE_URL", "").strip() or \
         canopy_web.resolve_base_url(None)
@@ -707,7 +717,7 @@ def runner_env_values(slug: str, *, agent_root: Path, base_url: str = "", token:
         values, how = prep.env_values(slug, Path(agent_root) / slug)
     except RuntimeError as e:
         raise CredError(f"could not resolve '{slug}'s env: {e}")
-    return values, how
+    return values, how, dict(prep.creds(slug).extras)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1142,8 +1152,9 @@ def check_cmd(agent, refresh, as_json):
                    "~/.<agent>/.env; refused outside $CANOPY_TURN_ENV_ROOT when that is set. "
                    "Prints the path.")
 @click.option("--print-json", "print_json", is_flag=True,
-              help="With --runner: resolve in memory and print {agent, source, values} as "
-                   "JSON on stdout — for a runner's in-memory cache. Writes nothing.")
+              help="With --runner: resolve in memory and print {agent, source, values} — plus "
+                   "op_sa_token / op_vault / salesforce_creds when the resolve returned them — "
+                   "as JSON on stdout, for a runner's in-memory cache. Writes nothing.")
 @click.option("--runner", "runner_mode", is_flag=True,
               help="Resolve as a RUNNER (its token, CANOPY_TOKEN; the clone under "
                    "--agent-root), as `canopy agent prepare --runner` does.")
@@ -1175,15 +1186,16 @@ def env_cmd(agent, slug_opt, refresh, out, print_json, runner_mode, agent_root):
                         EXIT_USAGE)
     if out:
         confine_out(Path(out))   # refuse before resolving anything
+    if print_json:   # --runner is required above
+        values, how, extras = runner_env_bundle(slug, agent_root=Path(agent_root))
+        usable, _ = env_values(values)
+        click.echo(json.dumps({**extras, "agent": slug, "source": how, "values": usable},
+                              sort_keys=True))
+        return
     if runner_mode:
         values, how = runner_env_values(slug, agent_root=Path(agent_root))
     else:
         values, how = exec_env(slug)
-    if print_json:
-        usable, _ = env_values(values)
-        click.echo(json.dumps({"agent": slug, "source": how, "values": usable},
-                              sort_keys=True))
-        return
     n = write_env_out(Path(out), values, slug)
     click.echo(f"[canopy cred] {slug}: {n} var(s) from {how} → {out} (0600)", err=True)
     click.echo(str(confine_out(Path(out))))

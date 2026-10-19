@@ -192,8 +192,9 @@ the command exits 2: `this session is not an agent … Pass --agent <slug>.`
   the file 0600 (each missing parent directory is created 0700), env-identifier names only. With `$CANOPY_TURN_ENV_ROOT` set, a PATH outside it
   (symlinks resolved) is refused with exit 2 before anything is resolved. Prints the path.
   **`env --runner --print-json`** (it requires `--runner`; exit 2 without, and a baseline rail
-  denies it in an agent's turn) prints `{"agent", "source", "values": {NAME: value}}` on stdout and
-  writes nothing — for a runner process's in-memory cache. **`--runner`** resolves as the runner does (its token
+  denies it in an agent's turn) prints `{"agent", "source", "values": {NAME: value}}` — plus the resolve
+  body's own top-level `op_sa_token`, `op_vault` and `salesforce_creds`, each only when that same
+  resolve returned it (never `null`) — on stdout and writes nothing — for a runner process's in-memory cache. **`--runner`** resolves as the runner does (its token
   in `CANOPY_TOKEN`; the clone under `--agent-root` for `.env.tpl`; `op inject` to a pipe with the
   agent's own key, or canopy-web's values), naming the turn when `$CANOPY_TURN_ID` is set.
 - **`refresh`** drops the cached verdicts and re-resolves `~/.X/.env`.
