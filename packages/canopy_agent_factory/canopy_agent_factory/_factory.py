@@ -19,6 +19,7 @@ canopy's own hooks: a PreToolUse hook runs under system python3 which may lack P
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import sys
@@ -47,6 +48,11 @@ class AgentSpec:
     display_name: str              # human name, e.g. "Echo"
     mandate: str                   # one-line mission
     mailbox: str = ""              # primary channel address, e.g. echo@dimagi-ai.com
+    # The agent's Google account (Drive/Docs/gog), when it is NOT the mailbox — e.g. a
+    # canopy-hosted echo@dimagi.ai whose Google sign-in is echo@dimagi-ai.com. "" = the
+    # mailbox is itself the Google account (or there is none). Stamped into agent.json
+    # `google_account` only when given.
+    google_account: str = ""
     stakeholders: str = ""         # who the agent serves
     author_name: str = "Jonathan Jackson"
     author_email: str = "jjackson@dimagi.com"
@@ -116,7 +122,10 @@ def create_agent(spec: AgentSpec, target_dir: Path, *, force: bool = False) -> l
             rel = _render(rel_path, tokens)    # path itself may carry {{AGENT_SLUG}}
             dest = target / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(_render(template, tokens), encoding="utf-8")
+            body = _render(template, tokens)
+            if rel == "config/agent.json":
+                body = _stamp_agent_json(body, spec)
+            dest.write_text(body, encoding="utf-8")
             if dest.name.endswith(".py") or dest.parent.name == "bin":
                 dest.chmod(0o755)
             written.append(dest)
@@ -124,6 +133,22 @@ def create_agent(spec: AgentSpec, target_dir: Path, *, force: bool = False) -> l
         _rollback(target, written, remove_target=not pre_existing)
         raise
     return written
+
+
+def _stamp_agent_json(body: str, spec: AgentSpec) -> str:
+    """Add the identity keys that exist only when given (`google_account`), right after
+    `email` so the file reads mail address, then Google account. Absent → the file is
+    byte-for-byte the template's."""
+    google = (spec.google_account or "").strip()
+    if not google:
+        return body
+    data = json.loads(body)
+    out: dict = {}
+    for key, val in data.items():
+        out[key] = val
+        if key == "email":
+            out["google_account"] = google
+    return json.dumps(out, indent=2, ensure_ascii=False) + "\n"
 
 
 def _rollback(target: Path, written: list[Path], *, remove_target: bool) -> None:
@@ -579,8 +604,10 @@ follows it: preflight → process inbound (one counterpart at a time) → skill 
 5. The agent's own thing is its MAILBOX ({{MAILBOX}}).
    - **Canopy-hosted** (an address on the workspace's own mail domain): nothing to sign in.
      canopy-web routes mail to the agent when it is created and sends as it; `canopy email`
-     finds the route itself, and turns get a canopy-web thread UUID. A Google sign-in for the same
-     address is optional — only for Drive/Docs.
+     finds the route itself, and turns get a canopy-web thread UUID. A Google sign-in is optional
+     — only for Drive/Docs — and is for the agent's Google ACCOUNT, which is usually a different
+     address (e.g. `{{AGENT_SLUG}}@dimagi-ai.com`): name it in `config/agent.json`
+     `google_account` (`canopy create-agent --google-account`), or gog runs as the mail address.
    - **Google** (Gmail / Google Workspace mail): sign it in once — the agent's Settings →
      Credentials → **Connect Google mailbox**, or `gog login {{MAILBOX}} --client canopy --services
      gmail,drive,docs,sheets,forms,appscript`. The gog OAuth client is the SHARED fleet app (`canopy`

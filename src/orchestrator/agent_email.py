@@ -198,10 +198,28 @@ class AgentEmailError(Exception):
 
 @dataclass
 class EmailIdentity:
+    """Who the agent is on email and on Google — two things, kept apart.
+
+    `account` is the GOOGLE account every gog call runs as (Gmail, Drive, Docs): agent.json
+    `google_account`, else `email`. `email` is the primary MAIL address, which may be an
+    SES address canopy-web hosts (no Google account behind it at all). `addresses` is
+    every address that is the agent itself — `email`, `google_account` and agent.json
+    `addresses` — so "is this From: us?" holds whichever address a thread arrived at.
+    An identity built with only `account` (the older shape) fills the rest from it.
+    """
     slug: str        # agent slug, e.g. "hal"
-    account: str     # mailbox, e.g. hal@dimagi-ai.com
+    account: str     # Google account for gog, e.g. hal@dimagi-ai.com
     client: str      # gog client name (credentials-<client>.json): `canopy` or `canopy-web`
     repo: Path | None = None  # agent repo root — lets preflight read config/secrets.yaml
+    email: str = ""  # primary mail address; "" = `account`
+    addresses: frozenset = frozenset()  # every own address, lowercased (filled below)
+    google_account: str = ""  # agent.json `google_account` as declared; "" = not declared
+
+    def __post_init__(self):
+        self.email = (self.email or self.account or "").strip()
+        own = {a.strip().lower() for a in (*self.addresses, self.account, self.email,
+                                           self.google_account) if a and a.strip()}
+        self.addresses = frozenset(own)
 
 
 #: The fleet's own Google OAuth clients, in preference order — INTERCHANGEABLE.
@@ -437,23 +455,31 @@ def reconcile_client(
 def resolve_email_identity(repo_dir: Path) -> EmailIdentity:
     """Resolve the agent's email identity from its repo (plugin.json + config/agent.json).
 
-    Mailbox comes from agent.json `email`; the gog client from agent.json `gog_client`,
-    defaulting to the fleet's shared client (`DEFAULT_CLIENT`). This is the DECLARED
-    client; `reconcile_client` decides what this machine actually uses.
+    The primary mail address is agent.json `email`; the Google account gog runs as is
+    `google_account`, else that same `email` (every agent before the two were split);
+    `addresses` lists any further mail addresses the agent answers at. The gog client
+    comes from agent.json `gog_client`, defaulting to the fleet's shared client
+    (`DEFAULT_CLIENT`). This is the DECLARED client; `reconcile_client` decides what this
+    machine actually uses.
     """
     try:
         ident = resolve_identity(Path(repo_dir))
     except AgentWebError as e:
         raise AgentEmailError(str(e)) from e
-    account = (ident.get("email") or "").strip()
-    if not account:
+    email = (ident.get("email") or "").strip()
+    if not email:
         raise AgentEmailError(
             f"no mailbox for agent {ident['slug']!r} — add \"email\" to "
             f"{Path(repo_dir) / 'config' / 'agent.json'}"
         )
+    google = str(ident.get("google_account") or "").strip()
+    extra = ident.get("addresses") or []
+    if isinstance(extra, str):
+        extra = [extra]
     client = (ident.get("gog_client") or "").strip() or DEFAULT_CLIENT
-    return EmailIdentity(slug=ident["slug"], account=account, client=client,
-                         repo=Path(repo_dir))
+    return EmailIdentity(slug=ident["slug"], account=google or email, client=client,
+                         repo=Path(repo_dir), email=email, google_account=google,
+                         addresses=frozenset(str(a) for a in extra if str(a).strip()))
 
 
 def find_agent_repo(slug: str) -> Path:
@@ -973,11 +999,10 @@ def derive_reply_all(
     msgs = data.get("thread", {}).get("messages", [])
     if not msgs:
         raise AgentEmailError(f"reply-all: no messages in {read_id}")
-    self_lc = identity.account.lower()
     if thread_id:
         # Whole-thread participants, one implementation shared with `read` (see
         # _reply_all_of for why a reply-all must not shrink to the latest message).
-        ra = _reply_all_of(msgs, identity.account)
+        ra = _reply_all_of(msgs, identity)
         if not ra["to"]:
             raise AgentEmailError(f"reply-all: message in {read_id} has no From header")
         return ra["to"].lower(), ra["cc"], ra["reply_to_message_id"]
@@ -988,7 +1013,7 @@ def derive_reply_all(
     if not sender_email:
         raise AgentEmailError(f"reply-all: message in {read_id} has no From header")
     others = getaddresses([h.get("to", ""), h.get("cc", "")])
-    cc, seen = [], {sender_email, self_lc}
+    cc, seen = [], {sender_email, *identity.addresses}
     for _name, email in others:
         e = email.lower()
         if not e or e in seen:
@@ -1036,7 +1061,7 @@ def dropped_participants(
     except Exception:
         return []
     split = lambda s: {a.strip().lower() for a in (s or "").split(",") if a.strip()}
-    participants = (split(d_to) | split(d_cc)) - {identity.account.lower()}
+    participants = (split(d_to) | split(d_cc)) - identity.addresses
     return sorted(participants - split(to) - split(cc))
 
 
@@ -1521,7 +1546,7 @@ def unseen_quoted(tail: str, sibling_bodies: "list[str]") -> str:
     return "\n\n".join(unseen).strip()
 
 
-def _reply_all_of(raw_messages: list[dict], self_account: str) -> dict:
+def _reply_all_of(raw_messages: list[dict], selves) -> dict:
     """Compute reply-all recipients for a thread: To = the latest non-self sender, Cc =
     EVERY participant of the WHOLE thread (each message's From/To/Cc) minus self and the
     To, deduped — the latest message's recipients first, then the rest in thread order;
@@ -1533,17 +1558,21 @@ def _reply_all_of(raw_messages: list[dict], self_account: str) -> dict:
     hal cc'ing five colleagues; Gillian replied to hal + Amie only; reply-all then derived
     To=Gillian, Cc=Amie — dropping the person who asked AND four of his five cc's — and
     the refusal text ("a reply-all goes to the thread's own participants") promised the
-    opposite of what the code did. Narrowing stays possible, but explicit (`--narrow`)."""
+    opposite of what the code did. Narrowing stays possible, but explicit (`--narrow`).
+
+    `selves` is the identity (or its addresses): every one of the agent's own addresses
+    is "self", so its earlier reply from another of them is not the message replied to
+    and never lands on its own Cc."""
     from email.utils import getaddresses
     if not raw_messages:
         return {"to": "", "cc": "", "reply_to_message_id": ""}
-    me = self_account.lower()
+    mine = _own(selves)
     latest = next((m for m in reversed(raw_messages)
-                   if me not in _headers_of(m).get("from", "").lower()), raw_messages[-1])
+                   if not _is_self(_headers_of(m).get("from", ""), mine)), raw_messages[-1])
     h = _headers_of(latest)
     sender = [e for _, e in getaddresses([h.get("from", "")]) if e]
     to = sender[0] if sender else ""
-    cc, seen = [], {me, to.lower()}
+    cc, seen = [], {*mine, to.lower()}
 
     def add(values):
         for _, e in getaddresses(values):
@@ -1653,7 +1682,7 @@ def read_thread(
     return {
         "thread_id": thread_id,
         "messages": messages,
-        "reply_all": _reply_all_of(raw, identity.account),
+        "reply_all": _reply_all_of(raw, identity),
         "has_unseen_quoted": any(msg["quoted_unseen"] for msg in messages),
     }
 
@@ -1679,8 +1708,7 @@ def why_thread(identity: EmailIdentity, thread_id: str, *, runner=subprocess.run
     msgs = data.get("messages") or (data.get("thread") or {}).get("messages") or []
     if not msgs:
         raise AgentEmailError(f"why: thread {thread_id} has no messages")
-    me = identity.account.lower()
-    inbound = [m for m in msgs if me not in _headers_of(m).get("from", "").lower()]
+    inbound = [m for m in msgs if not _is_self(_headers_of(m).get("from", ""), identity)]
     newest = (inbound or msgs)[-1]
     msg = inbox_rules.message_from_gmail(newest, identity.account)
     verdict = inbox_rules.classify(msg)
@@ -2001,12 +2029,26 @@ def search_threads(
     return (data.get("threads") or [])[:limit]
 
 
-def _is_self(addr: str, account: str) -> bool:
+def _own(selves) -> frozenset:
+    """The agent's own addresses, lowercased, from an identity, one address, or several.
+
+    An agent may answer at more than one address (a Gmail mailbox and an SES one), so
+    every "is this us?" check takes the whole set — testing one address calls the
+    agent's own reply from its other address someone else's."""
+    if isinstance(selves, EmailIdentity):
+        return selves.addresses
+    if isinstance(selves, str):
+        selves = [selves]
+    return frozenset(a.strip().lower() for a in selves if a and a.strip())
+
+
+def _is_self(addr: str, selves) -> bool:
     """Is this From: header us? Matched on the ADDRESS inside the display name —
-    `Echo <echo@dimagi-ai.com>` is us and a raw string compare says otherwise."""
+    `Echo <echo@dimagi-ai.com>` is us and a raw string compare says otherwise. `selves`
+    is the identity (or its addresses): any of the agent's own addresses counts."""
     from email.utils import getaddresses
-    me = account.lower()
-    return any(e.lower() == me for _, e in getaddresses([addr or ""]))
+    mine = _own(selves)
+    return any(e.lower() in mine for _, e in getaddresses([addr or ""]))
 
 
 def _age_days(date_header: str, now: "dt.datetime") -> int | None:
@@ -2190,7 +2232,7 @@ def dangling_threads(
         if not msgs:
             continue
         last = msgs[-1]
-        if _is_self(last.get("from", ""), identity.account):
+        if _is_self(last.get("from", ""), identity):
             continue  # the ball is with them
         if last.get("is_automated") and not include_automated:
             continue  # nobody waits on a reply to a share notification
@@ -2209,7 +2251,7 @@ def dangling_threads(
             "last_date": last.get("date", ""),
             "age_days": age,
             "message_count": len(msgs),
-            "ever_replied": any(_is_self(m.get("from", ""), identity.account) for m in msgs),
+            "ever_replied": any(_is_self(m.get("from", ""), identity) for m in msgs),
             # From the thread-level `is:unread` query above, not the row's labels.
             # UNREAD is the proxy for "no turn has disposed of this yet"; anything else
             # means a turn looked and closed out.
@@ -2408,12 +2450,46 @@ def preflight(
     return True, [f"OK: gog Gmail ready (account {identity.account}, client {identity.client})."]
 
 
+#: The fleet's Google Workspace domain: an address here IS a Google account, so it needs
+#: no backend probe before gog runs as it.
+GOOGLE_WORKSPACE_DOMAIN = "dimagi-ai.com"
+
+
+def require_google_account(ident: EmailIdentity) -> None:
+    """Refuse a gog call that would run as an SES address — there is no Google account
+    behind one.
+
+    An agent whose primary `email` canopy-web hosts on SES does its Drive/Docs/Gmail work
+    as a separate Google account, named by agent.json `google_account`. Without one,
+    `account` falls back to the SES address and gog would fail on "No auth" far from the
+    cause, so this names the missing key instead. Only probes when it could matter: no
+    `google_account` declared and the address is outside the fleet's Workspace domain;
+    the probe is quiet (an unreachable canopy-web lets gog try, as before)."""
+    if ident.google_account:
+        return
+    address = (ident.account or "").strip().lower()
+    if not address or address.endswith("@" + GOOGLE_WORKSPACE_DOMAIN):
+        return
+    if _ses_route(address, quiet=True) is None:
+        return
+    raise AgentEmailError(
+        f"{ident.account} is an SES address canopy-web hosts — it has no Google account, so "
+        f"gog (Gmail, Drive, Docs) cannot run as it. Set \"google_account\" in "
+        f"{ident.repo / 'config' / 'agent.json' if ident.repo else 'config/agent.json'} to "
+        f"the agent's Google account (e.g. {ident.slug}@{GOOGLE_WORKSPACE_DOMAIN})."
+    )
+
+
 # --------------------------------------------------------------------------------------
 # CLI — `canopy email …`
 # --------------------------------------------------------------------------------------
 
 def _identity_from_opts(repo: str | None, agent: str | None,
-                        account: str | None, client: str | None) -> EmailIdentity:
+                        account: str | None, client: str | None, *,
+                        gog: bool = True) -> EmailIdentity:
+    """The identity a verb acts as. `gog=False` for a verb that never calls gog (the
+    review receipt needs only the slug), so an SES-only agent is not refused for lacking
+    a Google account it does not need there."""
     if account:  # fully explicit identity — no repo needed, but warn on identity bleed
         explicit = EmailIdentity(slug=agent or account.split("@")[0],
                                  account=account, client=client or agent or account.split("@")[0])
@@ -2423,16 +2499,19 @@ def _identity_from_opts(repo: str | None, agent: str | None,
             resolved = resolve_email_identity(repo_dir)
         except AgentEmailError:
             resolved = None
-        if resolved and resolved.account.lower() != explicit.account.lower():
+        if resolved and explicit.account.lower() not in resolved.addresses:
             sys.stderr.write(
                 f"WARNING: sending as {explicit.account} from {resolved.slug!r}'s repo "
-                f"(its identity is {resolved.account}). One mailbox per agent, never shared, "
-                "is the fleet's one hard rule — make sure this cross-identity send is "
-                "deliberate.\n"
+                f"(its identity is {resolved.account}). One agent per mailbox, never "
+                "shared, is the fleet's one hard rule — make sure this cross-identity send "
+                "is deliberate.\n"
             )
         return explicit
     repo_dir = Path(repo) if repo else (find_agent_repo(agent) if agent else Path.cwd())
     ident = resolve_email_identity(repo_dir)
+    if not gog:
+        return ident
+    require_google_account(ident)
     if client:
         return ident_with_client(ident, client)
     # No explicit override: let the client follow the token this machine actually holds for
@@ -2457,14 +2536,15 @@ _BACKEND_CACHE: dict[str, dict | None] = {}
 _RESOLVE_FAILURES: dict[str, str] = {}
 
 
-def _ses_route(address: str) -> dict | None:
+def _ses_route(address: str, *, quiet: bool = False) -> dict | None:
     """canopy-web's routing for `address` if it is an SES mailbox, else None (use Gmail).
 
-    `GET /api/mail/resolve` answers 200 {backend:"ses", workspace, agent} for a workspace
-    email domain's mailbox and 404 for everything else (= Gmail, silently). Any OTHER
-    failure — network, 5xx, auth, no token — also lands on Gmail, but loudly: one stderr
-    line, the same "falls back, and says so" convention as the gog client helper. We never
-    send through SES on a guess; only an explicit 200 "ses" selects it.
+    `GET /api/mail/resolve` answers 200 {backend:"ses", workspace, agent, address} for a
+    workspace email domain's mailbox and 404 for everything else (= Gmail, silently). Any
+    OTHER failure — network, 5xx, auth, no token — also lands on Gmail, but loudly: one
+    stderr line, the same "falls back, and says so" convention as the gog client helper.
+    We never send through SES on a guess; only an explicit 200 "ses" selects it. `quiet`
+    drops that line for a probe whose answer only sharpens an error message.
     """
     key = address.strip().lower()
     if key in _BACKEND_CACHE:
@@ -2488,11 +2568,60 @@ def _ses_route(address: str) -> dict | None:
             problem = str(e)
     if problem:
         _RESOLVE_FAILURES[key] = problem
-        sys.stderr.write(
-            f"WARNING: could not resolve the mail backend for {key} ({problem}); "
-            "falling back to gmail (gog).\n"
-        )
+        if not quiet:
+            sys.stderr.write(
+                f"WARNING: could not resolve the mail backend for {key} ({problem}); "
+                "falling back to gmail (gog).\n"
+            )
     _BACKEND_CACHE[key] = route
+    return route
+
+
+def _is_uuid(value: str | None) -> bool:
+    """An SES thread ref is a UUID; a Gmail thread id is 16 hex digits — never both."""
+    import uuid
+    try:
+        uuid.UUID(str(value or ""))
+    except ValueError:
+        return False
+    return "-" in str(value)
+
+
+#: thread UUID (lowercased) -> the resolve payload, or None when canopy-web did not
+#: claim it. Per process, like `_BACKEND_CACHE`.
+_THREAD_CACHE: dict[str, dict | None] = {}
+
+
+def _ses_thread_route(thread_id: str, own: Sequence[str]) -> dict | None:
+    """The SES route for a thread UUID, whatever the agent's PRIMARY address is.
+
+    An agent with a Gmail primary can still own SES threads (a second address canopy-web
+    hosts), so the thread, not the primary, picks the backend. Asks
+    `GET /api/mail/resolve?thread=<uuid>` first; a server without that query (older
+    canopy-web) or one that does not know the thread falls back to `?address=` for each
+    of the agent's own addresses, primary first, and takes the first SES answer.
+    """
+    key = str(thread_id).strip().lower()
+    if key in _THREAD_CACHE:
+        return _THREAD_CACHE[key]
+    from urllib.parse import quote
+    from orchestrator import canopy_web
+    route: dict | None = None
+    try:
+        got = canopy_web.call("GET", f"/api/mail/resolve?thread={quote(key, safe='')}")
+        ws = got.get("workspace") if isinstance(got, dict) else None
+        if (isinstance(got, dict) and got.get("backend") == "ses"
+                and isinstance(ws, str) and ws.strip()):
+            route = got
+    except Exception:  # noqa: BLE001 — older server / unknown thread: try the addresses
+        route = None
+    if route is None:
+        for address in own:
+            route = _ses_route(address)
+            if route is not None:
+                route = {**route, "address": route.get("address") or address}
+                break
+    _THREAD_CACHE[key] = route
     return route
 
 
@@ -2535,12 +2664,15 @@ def _split_addrs(value: str | None) -> list[str]:
 
 def ses_send(identity: EmailIdentity, route: dict, *, to: str | None, subject: str,
              body_text: str, cc: str | None = None, thread_id: str | None = None,
-             attachments: Sequence[str] = (), dry_run: bool = False) -> dict:
+             attachments: Sequence[str] = (), dry_run: bool = False,
+             from_address: str | None = None) -> dict:
     """Send (new thread) or reply (`thread_id`) through canopy-web's SES backend.
 
     Same rails as the Gmail send: attachments are refused (not silently dropped), flat
     canopy-web links and no-reply recipients are refused, and the pre-send review receipt
-    is required.
+    is required. `from_address` (new threads only) names which of the agent's own SES
+    addresses sends; without it canopy-web sends from the agent's primary. A reply needs
+    none — it goes from the address the thread arrived at.
     """
     if attachments:
         raise AgentEmailError(
@@ -2573,6 +2705,8 @@ def ses_send(identity: EmailIdentity, route: dict, *, to: str | None, subject: s
         payload = {"agent": route.get("agent") or identity.slug, "to": _split_addrs(to),
                    "cc": _split_addrs(cc), "subject": subject, "text": plain,
                    "html": html_body}
+        if from_address:
+            payload["from_address"] = from_address
     if dry_run:
         return {"dry_run": True, "backend": "ses", "message_id": "", "thread_id": thread_id or "",
                 "account": identity.account, "path": path, "request": payload}
@@ -2638,24 +2772,79 @@ def _acct(ident) -> str:
     return ident.account if ident is not None else ""
 
 
-def _route_for(repo, agent, account, client) -> tuple[EmailIdentity, dict | None]:
-    """The identity to act as, plus the SES route if the mailbox is SES-served.
+def _own_from_address(repo, agent, account, from_address: str) -> str:
+    """`send --from`, checked: it must be one of the agent's own addresses, never another's.
 
-    The backend is decided from the mailbox BEFORE any gog-side reconciliation, so an SES
-    mailbox never touches the gog token store. A Gmail mailbox goes through
-    `_identity_from_opts` exactly as it always did.
+    The address is matched case-insensitively against `EmailIdentity.addresses`; a miss is
+    refused naming the allowed set, so a typo or another agent's address never sends."""
+    wanted = from_address.strip()
+    if account:
+        allowed = frozenset({account.strip().lower()})
+    else:
+        repo_dir = Path(repo) if repo else (find_agent_repo(agent) if agent else Path.cwd())
+        allowed = resolve_email_identity(repo_dir).addresses
+    if wanted.lower() not in allowed:
+        raise AgentEmailError(
+            f"--from {wanted} is not one of this agent's own addresses "
+            f"({', '.join(sorted(allowed))}). Add it to config/agent.json `addresses` if "
+            "it is the agent's; an agent never sends as another's mailbox."
+        )
+    return wanted
+
+
+def _route_for(repo, agent, account, client, *, thread_id: str | None = None,
+               from_address: str | None = None) -> tuple[EmailIdentity, dict | None]:
+    """The identity to act as, plus the SES route if the mail goes through SES.
+
+    Three things can pick the backend, most specific first:
+    - a THREAD that is an SES ref (a UUID) is SES, whatever the agent's primary address —
+      an agent can own a Gmail mailbox and an SES address at once, and a turn replies
+      from the address the thread arrived at;
+    - an explicit `from_address` (`send --from`, new threads only) is routed as itself;
+    - otherwise the primary mail address (agent.json `email`) decides.
+
+    The backend is decided BEFORE any gog-side reconciliation, so an SES send never
+    touches the gog token store. A Gmail mailbox goes through `_identity_from_opts`
+    exactly as it always did.
     """
+    resolved: EmailIdentity | None = None
+    repo_dir = None
     if account:
         address = account
         slug = agent or account.split("@")[0]
+        own = [account]
     else:
         repo_dir = Path(repo) if repo else (find_agent_repo(agent) if agent else Path.cwd())
         resolved = resolve_email_identity(repo_dir)
-        address, slug = resolved.account, resolved.slug
-    route = _ses_route(address)
+        address, slug = resolved.email, resolved.slug
+        own = [address] + sorted(resolved.addresses - {address.lower()})
+    mine = resolved.addresses if resolved else frozenset(a.lower() for a in own)
+    route = None
+    if thread_id and _is_uuid(thread_id):
+        route = _ses_thread_route(thread_id, own)
+        if route is None:
+            raise AgentEmailError(
+                f"{thread_id} is an SES thread ref (a UUID), but canopy-web resolves none "
+                f"of this agent's addresses ({', '.join(own)}) to SES. Add the address the "
+                "thread arrived at to config/agent.json `addresses`, or pass a Gmail "
+                "thread id."
+            )
+        address = str(route.get("address") or "").strip() or address
+    else:
+        if from_address:
+            address = from_address
+        route = _ses_route(address)
     if route is None:
+        if from_address and resolved is not None and (
+                from_address.lower() != resolved.account.lower()):
+            raise AgentEmailError(
+                f"--from {from_address} is neither SES-hosted (canopy-web does not route "
+                f"it) nor this agent's Google account ({resolved.account}), so there is "
+                "no way to send as it."
+            )
         return _identity_from_opts(repo, agent, account, client), None
-    return EmailIdentity(slug=slug, account=address, client=client or "ses"), route
+    return EmailIdentity(slug=slug, account=address, client=client or "ses",
+                         repo=repo_dir, email=address, addresses=mine), route
 
 
 def ident_with_client(ident: EmailIdentity, client: str) -> EmailIdentity:
@@ -2714,10 +2903,15 @@ def email_group():
                    "forward path. Without it a forward silently degrades to a body-text "
                    "summary plus whatever links were in the original (canopy#462). "
                    "Combines with --attach.")
+@click.option("--from", "from_address",
+              help="Which of the agent's OWN addresses starts this NEW thread (agent.json "
+                   "`email`, `google_account` or `addresses`). An SES address sends through "
+                   "canopy-web; the Google account sends through Gmail. Replies need none: "
+                   "they go from the address the thread arrived at.")
 @click.option("--dry-run", is_flag=True, help="Render plain + HTML bodies without sending.")
 def email_send(repo, agent, account, client, to, cc, subject, body_file,
                reply_to_message_id, thread_id, reply_all, narrow,
-               attach, attach_from_thread, dry_run):
+               attach, attach_from_thread, from_address, dry_run):
     """Send an HTML multipart email as the agent (the fleet's ONLY send path).
 
     Emits JSON with message_id + thread_id — record thread_id into the agent's state
@@ -2732,9 +2926,16 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
         raise click.ClickException("--thread-id is only meaningful with --reply-all")
     if not reply_all and not to:
         raise click.ClickException("--to is required (or pass --reply-all)")
+    if from_address and (thread_id or reply_to_message_id):
+        raise click.ClickException(
+            "--from is for NEW threads — a reply goes from the address the thread arrived "
+            "at. Drop --from, or drop the thread to start a new one.")
     ident = None
     try:
-        ident, ses = _route_for(repo, agent, account, client)
+        if from_address:
+            from_address = _own_from_address(repo, agent, account, from_address)
+        ident, ses = _route_for(repo, agent, account, client, thread_id=thread_id,
+                                from_address=from_address)
         if ses is not None:
             if reply_to_message_id and not thread_id:
                 raise click.ClickException(
@@ -2745,7 +2946,7 @@ def email_send(repo, agent, account, client, to, cc, subject, body_file,
                 body_text=Path(body_file).read_text(encoding="utf-8"), cc=cc,
                 thread_id=thread_id, attachments=list(attach) + (
                     [attach_from_thread] if attach_from_thread else []),
-                dry_run=dry_run,
+                dry_run=dry_run, from_address=from_address,
             )
             click.echo(json.dumps(result, indent=2))
             return
@@ -2839,7 +3040,7 @@ def email_review_receipt(repo, agent, account, client, body_file, caught, verdic
     """
     from orchestrator import review_receipt
     try:
-        ident = _identity_from_opts(repo, agent, account, client)
+        ident = _identity_from_opts(repo, agent, account, client, gog=False)
     except AgentEmailError as e:
         raise click.ClickException(str(e))
     body = body_file.read()
@@ -2860,6 +3061,25 @@ def email_review_receipt(repo, agent, account, client, body_file, caught, verdic
     }, indent=2))
 
 
+def _set_state_by_thread(repo, agent, account, client, thread_ids: list[str], state: dict,
+                         gmail_fn) -> tuple[EmailIdentity, list[dict]]:
+    """mark-read / archive with each thread routed by its own ref: SES UUIDs through
+    canopy-web (whatever the primary address is), everything else through the primary's
+    backend. Results come back in the order the ids were given."""
+    by_tid: dict[str, dict] = {}
+    ident = None
+    uuids = [t for t in thread_ids if _is_uuid(t)]
+    others = [t for t in thread_ids if not _is_uuid(t)]
+    for tid in uuids:
+        ident, ses = _route_for(repo, agent, account, client, thread_id=tid)
+        by_tid.update({r["thread_id"]: r for r in ses_set_state(ses, [tid], state)})
+    if others:
+        ident, ses = _route_for(repo, agent, account, client)
+        got = ses_set_state(ses, others, state) if ses else gmail_fn(ident, others)
+        by_tid.update({r["thread_id"]: r for r in got})
+    return ident, [by_tid[t] for t in thread_ids if t in by_tid]
+
+
 @email_group.command("mark-read")
 @_with_identity_options
 @click.argument("thread_ids", nargs=-1, required=True)
@@ -2867,9 +3087,8 @@ def email_mark_read(repo, agent, account, client, thread_ids):
     """Remove the UNREAD label from THREAD_IDS (gog thread modify; API reads don't clear it)."""
     ident = None
     try:
-        ident, ses = _route_for(repo, agent, account, client)
-        results = (ses_set_state(ses, list(thread_ids), {"unread": False}) if ses
-                   else mark_read(ident, list(thread_ids)))
+        ident, results = _set_state_by_thread(
+            repo, agent, account, client, list(thread_ids), {"unread": False}, mark_read)
     except AgentEmailError as e:
         raise click.ClickException(str(e) + _fallback_note(account or _acct(ident)))
     failed = 0
@@ -2895,10 +3114,9 @@ def email_archive(repo, agent, account, client, thread_ids):
     """
     ident = None
     try:
-        ident, ses = _route_for(repo, agent, account, client)
-        results = (ses_set_state(ses, list(thread_ids),
-                                 {"archived": True, "unread": False}) if ses
-                   else archive(ident, list(thread_ids)))
+        ident, results = _set_state_by_thread(
+            repo, agent, account, client, list(thread_ids),
+            {"archived": True, "unread": False}, archive)
     except AgentEmailError as e:
         raise click.ClickException(str(e) + _fallback_note(account or _acct(ident)))
     failed = 0
@@ -3094,7 +3312,7 @@ def email_thread(repo, agent, account, client, thread_id):
 
     For a Gmail mailbox use `canopy email read <thread-id>` (normalized JSON)."""
     try:
-        ident, ses = _route_for(repo, agent, account, client)
+        ident, ses = _route_for(repo, agent, account, client, thread_id=thread_id)
         if ses is None:
             raise click.ClickException(
                 f"thread is SES-only for now ({ident.account} is a Gmail mailbox) — "
@@ -3176,7 +3394,8 @@ def email_apply_filters(all_agents, repo, agent, account, client, sweep, dry_run
             if not aj.is_file():
                 continue
             d = _json.loads(aj.read_text(encoding="utf-8"))
-            acct = d.get("email") or d.get("mailbox")
+            # The Gmail inbox is the Google account's (EmailIdentity.account).
+            acct = d.get("google_account") or d.get("email") or d.get("mailbox")
             if acct:
                 targets.append((a.slug, acct, d.get("gog_client") or "canopy"))
     else:

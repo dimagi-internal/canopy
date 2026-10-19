@@ -1357,13 +1357,18 @@ def _print_cycle_result(result: dict) -> None:
 @click.option("--name", default=None, help="Display name (default: derived from slug)")
 @click.option("--mandate", required=True, help="One-line mission for the agent")
 @click.option("--mailbox", default="", help="Primary channel address, e.g. name@dimagi-ai.com")
+@click.option("--google-account", default="",
+              help="The agent's Google account (Drive/Docs/gog) when it is NOT the mailbox — "
+                   "e.g. a canopy-hosted name@dimagi.ai signs in to Google as "
+                   "name@dimagi-ai.com. Stamped into config/agent.json `google_account`.")
 @click.option("--stakeholders", default="", help="Who the agent serves")
 @click.option("--into", "target", default=None, type=click.Path(),
               help="Target directory (default: ./<slug>)")
 @click.option("--force", is_flag=True, help="Scaffold into a non-empty directory")
 @click.option("--git-init/--no-git-init", default=True,
               help="git init + initial commit in the new repo (default: on)")
-def create_agent_cmd(slug, name, mandate, mailbox, stakeholders, target, force, git_init):
+def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders, target, force,
+                     git_init):
     """Scaffold a new Claude Code agent from the canopy operating model.
 
     Generates a self-contained agent repo (persona, the `turn` orchestrator, a reads-free /
@@ -1384,7 +1389,7 @@ def create_agent_cmd(slug, name, mandate, mailbox, stakeholders, target, force, 
     dest = Path(target).expanduser() if target else Path.cwd() / slug
     spec = AgentSpec(
         slug=slug, display_name=display, mandate=mandate.strip(),
-        mailbox=mailbox, stakeholders=stakeholders,
+        mailbox=mailbox, google_account=google_account.strip(), stakeholders=stakeholders,
     )
     try:
         written = create_agent(spec, dest, force=force)

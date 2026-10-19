@@ -150,11 +150,16 @@ def register(repo_dir: Path, workspace: str = "") -> dict:
         "description": ident["description"], "persona": ident["persona"],
         "avatar_url": ident["avatar_url"],
     }
+    # The agent's Google account, when it is not its mail address (an SES-primary agent).
+    # Sent only when declared, so every other agent's body is byte-for-byte what it was.
+    google = str(ident.get("google_account") or "").strip()
+    if google:
+        body["google_account"] = google
     explicit = (workspace or "").strip()
     if explicit:
-        return _call("/api/agents/", {**body, "workspace": explicit})
+        return _upsert({**body, "workspace": explicit})
     try:
-        return _call("/api/agents/", body)
+        return _upsert(body)
     except AgentWebError as e:
         if _AMBIGUOUS_HOME not in str(e):
             raise
@@ -166,7 +171,20 @@ def register(repo_dir: Path, workspace: str = "") -> dict:
                 f"'{ident['slug']}' lives in: `canopy agent-publish register --workspace <slug>`, "
                 "or set \"workspace\" in config/agent.json, or CANOPY_WEB_WORKSPACE=<slug>."
             ) from e
-        return _call("/api/agents/", {**body, "workspace": fallback})
+        return _upsert({**body, "workspace": fallback})
+
+
+def _upsert(body: dict) -> dict:
+    """POST the agent upsert; an older canopy-web whose strict schema rejects
+    `google_account` as an unknown field gets the body without it (the register still
+    lands, and the field follows once the server knows it)."""
+    try:
+        return _call("/api/agents/", body)
+    except AgentWebError as e:
+        if "google_account" not in body or " -> 422" not in str(e) \
+                or "google_account" not in str(e):
+            raise
+        return _call("/api/agents/", {k: v for k, v in body.items() if k != "google_account"})
 
 
 def put_skills(repo_dir: Path) -> dict:

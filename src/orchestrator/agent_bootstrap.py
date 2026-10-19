@@ -420,7 +420,8 @@ class Bootstrapper:
         return client_op_ref(client, vault)
 
     def expected_mailbox(self, slug: str, repo: Path) -> str:
-        """The mailbox this agent's token must be for: the repo's identity, on a laptop."""
+        """The Google account this agent's token must be for: the repo's identity, on a
+        laptop — agent.json `google_account`, else `email` (`EmailIdentity.account`)."""
         try:
             return resolve_email_identity(Path(repo)).account.lower()
         except AgentEmailError:
@@ -605,7 +606,7 @@ class Bootstrapper:
         expected = self.expected_mailbox(slug, repo)
         if expected and tok.email and tok.email != expected:
             rep.fail(f"token: the {tok.source} token is for {tok.email}, not {expected} — "
-                     "NOT importing (one mailbox per agent)")
+                     "NOT importing (one Google account per agent)")
             return None
         email = tok.email or expected
         if not email:

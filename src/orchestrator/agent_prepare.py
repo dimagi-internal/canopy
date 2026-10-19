@@ -85,6 +85,10 @@ class RunnerCredentials:
     #: Where `mailbox` lives (canopy-web): "ses" = canopy-hosted — mail goes through
     #: canopy-web (`canopy email`), there is no Gmail to sign in; "google"/"" = Gmail via gog.
     mailbox_backend: str = ""
+    #: The agent's Google account (Drive/Docs/gog), when it is not `mailbox` — an
+    #: SES-hosted primary has no Google account behind it. "" (or an older canopy-web
+    #: that does not send it) = the Google account IS `mailbox`.
+    google_account: str = ""
     web_gog_token: Optional[str] = field(default=None, repr=False)
     repo_url: str = ""
     error: str = ""
@@ -188,6 +192,7 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         shared_key=str(body.get("shared_op_sa_token") or ""),
         github_token=str(body.get("github_token") or ""), mailbox=str(body.get("mailbox") or ""),
         mailbox_backend=str(body.get("mailbox_backend") or ""),
+        google_account=str(body.get("google_account") or "").strip(),
         web_gog_token=((body.get("values") or {}).get("gog-token")) or None)
 
 
@@ -325,9 +330,12 @@ class RunnerPreparer(Bootstrapper):
         return f"op://{vault}/gog-oauth-client/credential"
 
     def expected_mailbox(self, slug: str, repo: Path) -> str:
-        """THIS instance's mailbox (canopy-web `Agent.email`), never the repo's or the
-        slug's: instances share a repo, so either would point two at one inbox (#984)."""
-        return self.creds(slug).mailbox.lower()
+        """The Google account THIS instance's token must be for — canopy-web's
+        `google_account` when it records one (an SES-primary agent keeps Drive/Docs under
+        a separate Google account), else its mailbox (`Agent.email`). Never the repo's or
+        the slug's: instances share a repo, so either would point two at one inbox (#984)."""
+        c = self.creds(slug)
+        return (c.google_account or c.mailbox).lower()
 
     # ── runner-only steps ────────────────────────────────────────────────────
     def _git(self, args: list[str], github_token: str, timeout: int = 300):
@@ -697,8 +705,9 @@ class RunnerPreparer(Bootstrapper):
     def _hosted_mailbox(self, slug: str, repo: Path, c: RunnerCredentials, rep: RunnerReport) -> None:
         """A canopy-hosted address: mail in is the agent's turn and `canopy email` sends
         through canopy-web, so there is no Gmail token to check and nothing is broken
-        without one. A Google sign-in for the same address (Drive, Docs — e.g. a free Google
-        Workspace login) is optional: staged when one exists, never a failure when not."""
+        without one. A Google sign-in (Drive, Docs) is optional: staged when one exists,
+        never a failure when not. It is for the agent's Google account — canopy-web's
+        `google_account` (e.g. <slug>@dimagi-ai.com), else the same address."""
         rep.gmail = "canopy-hosted"
         rep.turn = "OK (canopy-hosted)"
         rep.mailbox_ok = True

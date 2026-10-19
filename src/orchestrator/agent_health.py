@@ -32,7 +32,7 @@ DEFAULT_STALE_NEEDS_YOU_DAYS = 7.0
 DEFAULT_STALE_INBOX_DAYS = 3.0
 FAILED_TURN_WINDOW_HOURS = 48.0
 
-MAILBOX_DOMAIN = "dimagi-ai.com"  # fleet convention: <slug>@dimagi-ai.com
+MAILBOX_DOMAIN = "dimagi-ai.com"  # fallback only: <slug>@dimagi-ai.com when no config resolves
 
 _NOREPLY_RE = re.compile(r"\b(no-?reply|donotreply|do-not-reply|mailer-daemon|postmaster)\b", re.I)
 _CALENDAR_RE = re.compile(r"^(accepted|declined|tentative|updated invitation|invitation):", re.I)
@@ -96,9 +96,26 @@ def list_gog_accounts(*, runner=subprocess.run) -> list[dict]:
         return []
 
 
-def resolve_mailbox(slug: str, accounts: list[dict]) -> Optional[tuple[str, str]]:
-    """(mailbox, gog_client) for an agent slug, or None if not authed on this machine."""
-    want = f"{slug.lower()}@{MAILBOX_DOMAIN}"
+def google_account_for(slug: str) -> str:
+    """The Google account the agent's gog inbox lives under, from its own config.
+
+    agent.json `google_account`, else `email` (`EmailIdentity.account`), read from the
+    agent's local repo or installed plugin — an agent's mail address need not be
+    `<slug>@dimagi-ai.com` (an SES-primary agent's is not a Google account at all). Only
+    when no config resolves does the fleet convention stand in."""
+    from orchestrator.agent_email import (AgentEmailError, find_agent_repo,
+                                          resolve_email_identity)
+    try:
+        return resolve_email_identity(find_agent_repo(slug)).account
+    except (AgentEmailError, OSError, ValueError):
+        return f"{slug.lower()}@{MAILBOX_DOMAIN}"
+
+
+def resolve_mailbox(slug: str, accounts: list[dict],
+                    want: Optional[str] = None) -> Optional[tuple[str, str]]:
+    """(mailbox, gog_client) for an agent slug, or None if not authed on this machine.
+    `want` is the Google account to look for (default: `google_account_for(slug)`)."""
+    want = (want or google_account_for(slug)).lower()
     for a in accounts:
         if (a.get("email") or "").lower() == want:
             return a["email"], a.get("client") or ""
@@ -206,9 +223,10 @@ def health_report(slug: str, *, call: Callable = canopy_web.call,
     board = probe_board(slug, call=call, now=now,
                         stale_needs_you_days=stale_needs_you_days)
 
-    resolved = resolve_mailbox(slug, list_gog_accounts(runner=runner))
+    want = google_account_for(slug)
+    resolved = resolve_mailbox(slug, list_gog_accounts(runner=runner), want=want)
     if resolved is None:
-        inbox = {"unread": [], "error": f"no gog account for {slug}@{MAILBOX_DOMAIN} on this machine"}
+        inbox = {"unread": [], "error": f"no gog account for {want} on this machine"}
     else:
         # The client by the one rule every gog caller follows (agent_email.reconcile_client),
         # not the account listing's: that collapses to ONE row per mailbox, so it can name a

@@ -149,7 +149,7 @@
       {
         "tool": "Bash",
         "pattern": "canopy\\s+email\\s+send\\b(?=[^\\n]*--account)",
-        "message": "BLOCKED: `canopy email send --account` overrides {slug}'s repo identity — one mailbox per agent, never shared (identity bleed is the fleet's one hard rule). Send via bin/{slug}-email, which pins this repo's identity."
+        "message": "BLOCKED: `canopy email send --account` overrides {slug}'s repo identity — one agent per mailbox, never shared (identity bleed is the fleet's one hard rule). Send via bin/{slug}-email, which pins this repo's identity; to start a thread from another of {slug}'s OWN addresses, pass `--from <address>` (checked against config/agent.json)."
       }
     ],
     "gws": [
