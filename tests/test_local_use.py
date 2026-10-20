@@ -36,7 +36,10 @@ def calls(monkeypatch):
     def fake(method, path, body=None, **kw):
         seen.append((method, path, body, kw.get("token")))
         if path == "/api/private-runners/":
-            return {"id": "pr-1", "name": body["name"], "host": body["host"]}
+            return {"id": "pr-1", "name": body["name"], "host": body["host"],
+                    "runner_id": body.get("runner")}
+        if path.endswith("/private"):
+            return {"name": "jj-mbp-cdp", **body}
         if path == "/api/harness/local-turns/":
             return {"turn_id": "11111111-2222-3333-4444-555555555555", "created": True,
                     "turn_mode": "manual", "turn_mode_basis": "local turn: aath — manual",
@@ -245,3 +248,41 @@ def test_a_live_session_is_not_caught_up(home, calls):
     _cli("local", "open", "--slug", "ace", "--session-id", "one")
     _cli("local", "open", "--slug", "ace", "--session-id", "two")    # a second terminal
     assert not any(c[1].endswith("/finish") for c in calls)
+
+
+def _runner_json(home, runner_id="rid-1"):
+    (home / ".canopy").mkdir(exist_ok=True)
+    (home / ".canopy/runner.json").write_text(json.dumps({"runner_id": runner_id}))
+
+
+def test_register_links_this_machines_runner(home, calls, monkeypatch):
+    monkeypatch.delenv("CANOPY_RUNNER_CONFIG", raising=False)
+    monkeypatch.setattr("orchestrator.runner_pin.DEFAULT_RUNNER_CONFIG", home / ".canopy/runner.json")
+    _runner_json(home)
+    _cli("pr", "register", "--name", "jj-mbp")
+    assert calls[-1][2]["runner"] == "rid-1"
+    assert json.loads((home / ".canopy/private-runner.json").read_text())["runner_id"] == "rid-1"
+
+
+def test_register_without_a_runner_sends_no_link(home, calls, monkeypatch):
+    monkeypatch.setattr("orchestrator.runner_pin.DEFAULT_RUNNER_CONFIG", home / "nope.json")
+    _cli("pr", "register", "--name", "aath-mbp")
+    assert "runner" not in calls[-1][2]
+
+
+@pytest.mark.parametrize("role,private,acts_as", [
+    ("editor", True, "editor"), ("viewer", True, "viewer"), ("self", True, ""), ("shared", False, ""),
+])
+def test_act_as_sets_this_runner_private_at_a_role(home, calls, monkeypatch, role, private, acts_as):
+    monkeypatch.setattr("orchestrator.runner_pin.DEFAULT_RUNNER_CONFIG", home / ".canopy/runner.json")
+    _runner_json(home)
+    _cli("pr", "act-as", role)
+    method, path, body, token = calls[-1]
+    assert (method, path, token) == ("PUT", "/api/harness/runners/rid-1/private", "person-pat")
+    assert body == {"private": private, "acts_as": acts_as}
+
+
+def test_act_as_needs_a_runner(home, calls, monkeypatch):
+    monkeypatch.setattr("orchestrator.runner_pin.DEFAULT_RUNNER_CONFIG", home / "nope.json")
+    r = CliRunner().invoke(local_cli.private_runner_group, ["act-as", "editor"])
+    assert r.exit_code != 0 and "has no runner" in r.output
