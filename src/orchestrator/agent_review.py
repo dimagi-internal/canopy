@@ -650,7 +650,7 @@ def agent_slug(repo: Path) -> str:
     reported "No findings", which reads as a clean bill of health (2026-10-20, Ada).
     """
     try:
-        name = json.loads((repo / ".claude-plugin" / "plugin.json").read_text()).get("name")
+        name = json.loads((repo / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")).get("name")
     except (OSError, ValueError, AttributeError):
         name = None
     return name.strip() if isinstance(name, str) and name.strip() else repo.name

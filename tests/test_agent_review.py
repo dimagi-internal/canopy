@@ -407,7 +407,7 @@ def test_agent_slug_comes_from_plugin_json_not_the_dir_name(tmp_path):
     # is a turn id, and using it as the slug made canopy-web 404 and the review read clean.
     repo = tmp_path / "agents" / "hal" / "518e26c8"
     (repo / ".claude-plugin").mkdir(parents=True)
-    (repo / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "hal"}))
+    (repo / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "hal"}), encoding="utf-8")
     assert agent_slug(repo) == "hal"
 
 
@@ -416,7 +416,7 @@ def test_agent_slug_falls_back_to_the_dir_name(tmp_path):
     repo.mkdir()
     assert agent_slug(repo) == "echo"
     (repo / ".claude-plugin").mkdir()
-    (repo / ".claude-plugin" / "plugin.json").write_text("not json")
+    (repo / ".claude-plugin" / "plugin.json").write_text("not json", encoding="utf-8")
     assert agent_slug(repo) == "echo"
 
 
