@@ -216,7 +216,8 @@ def open_local_turn(canopy: str, slug: str, data: dict, env_file: str) -> str:
         return ""
     try:
         r = subprocess.run([canopy, "local", "open", "--slug", slug, "--session-id", session_id,
-                            "--cwd", str(data.get("cwd") or os.getcwd())],
+                            "--cwd", str(data.get("cwd") or os.getcwd()),
+                            "--transcript", str(data.get("transcript_path") or "")],
                            capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError) as e:
         print(f"canopy: could not open a local turn for {slug} ({type(e).__name__})")

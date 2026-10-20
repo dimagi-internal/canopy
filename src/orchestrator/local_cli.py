@@ -184,15 +184,23 @@ def local_use(slug, directory):
 @click.option("--slug", envvar="CANOPY_AGENT", required=True)
 @click.option("--session-id", required=True, help="The Claude Code session id.")
 @click.option("--cwd", default="")
+@click.option("--transcript", "transcript", default="",
+              help="The session's transcript JSONL (kept, so a missed close can be caught up).")
 @click.option("--auto", "want_auto", is_flag=True,
               help="Ask for auto mode (honoured only for an admin of the agent).")
-def local_open(slug, session_id, cwd, want_auto):
+def local_open(slug, session_id, cwd, transcript, want_auto):
     """Open (or re-open) this session's local turn. Prints JSON:
-    {turn_id, turn_mode, turn_mode_basis, url, envelope_path, created}."""
+    {turn_id, turn_mode, turn_mode_basis, url, envelope_path, created}.
+
+    First catches up any EARLIER session on this machine whose turn never closed (its
+    SessionEnd never ran: a killed terminal, a crash) and that has been silent past the
+    turn's lease — its transcript is uploaded and the turn finished, as its own close
+    would have."""
     ws = read_private_runner()
     if not ws:
         raise click.ClickException("this machine is not a private runner — `canopy private-runner register`")
     path = _session_file(session_id)
+    catch_up(exclude=session_id)
     body = canopy_web.call("POST", "/api/harness/local-turns/", {
         "agent": slug, "private_runner": ws["id"], "claude_session_id": session_id,
         "cwd": cwd[:300], "turn_mode": "auto" if want_auto else "",
@@ -207,6 +215,8 @@ def local_open(slug, session_id, cwd, want_auto):
              "private_runner": ws["name"], "turn_mode": body.get("turn_mode", ""),
              "turn_mode_basis": body.get("turn_mode_basis", ""), "url": body.get("url", ""),
              "envelope_path": str(env_path), "opened_at": time.time(), "renewed_at": time.time()}
+    if transcript:
+        state["transcript"] = transcript
     _write_private(path, state)
     click.echo(json.dumps({**state, "created": bool(body.get("created"))}))
 
@@ -259,10 +269,40 @@ def upload_transcript(turn_id: str, transcript: Path, token: str, *, start: int 
 @click.option("--status", "status", type=click.Choice(["done", "failed"]), default="done")
 def local_close(session_id, transcript, status):
     """Upload this session's transcript to its local turn, then finish the turn."""
+    click.echo(close_session(session_id, transcript=transcript, status=status))
+
+
+#: A session whose state was not renewed for this long is dead (the turn's own lease
+#: on canopy-web is 8 hours): `catch_up` closes it.
+STALE_AFTER = 8 * 3600
+
+
+def catch_up(*, exclude: str = "", now: float | None = None) -> list[str]:
+    """Close every earlier session on this machine that never closed and has been
+    silent past STALE_AFTER. Best-effort: a failure is reported and skipped."""
+    now = time.time() if now is None else now
+    done = []
+    for f in sorted(local_dir().glob("*.json")) if local_dir().is_dir() else []:
+        state = _read(f)
+        sid = state.get("session_id") or f.stem
+        if sid == exclude or not state.get("turn_id") or state.get("closed_at"):
+            continue
+        if now - float(state.get("renewed_at") or state.get("opened_at") or 0) < STALE_AFTER:
+            continue
+        try:
+            done.append(close_session(sid, status="done"))
+        except Exception as e:  # noqa: BLE001 — never block opening the new session
+            click.echo(f"could not catch up local session {sid}: {str(e).splitlines()[0][:200]}", err=True)
+    return done
+
+
+def close_session(session_id: str, *, transcript: str = "", status: str = "done") -> str:
+    """Upload a session's transcript (the one named, else the one recorded at open)
+    to its local turn, then finish the turn. Returns one line saying what happened."""
     state = read_session(session_id)
     if not state:
-        click.echo("no local turn for this session")
-        return
+        return "no local turn for this session"
+    transcript = transcript or str(state.get("transcript") or "")
     tok = person_token(state.get("slug", ""))
     turn_id = state["turn_id"]
     note = ""
@@ -275,5 +315,5 @@ def local_close(session_id, transcript, status):
                      "session_key": session_id}, token=tok)
     state["closed_at"] = time.time()
     _write_private(_session_file(session_id), state)
-    click.echo(f"local turn {turn_id} {status}" + (f" — {note}" if note else "") +
-               (f" — {state['url']}" if state.get("url") else ""))
+    return (f"local turn {turn_id} {status}" + (f" — {note}" if note else "") +
+            (f" — {state['url']}" if state.get("url") else ""))

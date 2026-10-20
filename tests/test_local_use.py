@@ -206,6 +206,13 @@ def test_session_end_closes_with_the_transcript(tmp_path):
                        input=json.dumps({"session_id": "s1", "transcript_path": str(t)}),
                        capture_output=True, text=True, env=env, timeout=10)
     assert r.returncode == 0
+    # Detached (Claude Code cancels a SessionEnd hook as it exits): the child finishes
+    # after the hook has returned.
+    import time
+    for _ in range(50):
+        if log.exists() and log.read_text().strip():
+            break
+        time.sleep(0.1)
     assert log.read_text().strip() == f"local close --session-id s1 --transcript {t}"
 
 
@@ -213,3 +220,28 @@ def test_session_end_is_registered():
     hooks = json.loads((HOOKS / "hooks.json").read_text())["hooks"]
     cmds = [h["command"] for entry in hooks["SessionEnd"] for h in entry["hooks"]]
     assert any("local_turn_close.py" in c for c in cmds)
+
+
+def test_open_catches_up_a_dead_session_that_never_closed(home, calls):
+    """A killed terminal never ran SessionEnd: the next session's open uploads the old
+    transcript (recorded at its open) and finishes its turn."""
+    _cli("pr", "register", "--name", "aath-mbp")
+    old = home / "old.jsonl"
+    old.write_text('{"a": 1}\n{"b": 2}\n')
+    _cli("local", "open", "--slug", "ace", "--session-id", "old", "--transcript", str(old))
+    state = json.loads((home / ".canopy/local/old.json").read_text())
+    state["renewed_at"] = state["opened_at"] = 0          # silent for a long time
+    (home / ".canopy/local/old.json").write_text(json.dumps(state))
+    _cli("local", "open", "--slug", "ace", "--session-id", "new")
+    up = [c for c in calls if c[1].endswith("/transcript")]
+    assert up and up[0][2]["lines"] == ['{"a": 1}', '{"b": 2}']
+    assert any(c[1].endswith("/finish") for c in calls)
+    assert json.loads((home / ".canopy/local/old.json").read_text())["closed_at"]
+    assert "closed_at" not in json.loads((home / ".canopy/local/new.json").read_text())
+
+
+def test_a_live_session_is_not_caught_up(home, calls):
+    _cli("pr", "register", "--name", "aath-mbp")
+    _cli("local", "open", "--slug", "ace", "--session-id", "one")
+    _cli("local", "open", "--slug", "ace", "--session-id", "two")    # a second terminal
+    assert not any(c[1].endswith("/finish") for c in calls)
