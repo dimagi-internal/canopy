@@ -9,6 +9,15 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.742] - 2026-10-20
+
+### Changed
+- **The fleet updater lets a plugin install its own deps.** When a freshly mirrored version
+  ships an executable `bin/<plugin>-install-deps`, the session-start hook runs it instead of a
+  full `npm install` in the version dir, and falls back to that install if it fails or there is
+  no bash. ACE's (ace#3259) links one runtime-only store per lockfile and prunes long-orphaned
+  versions; a full install per version had left one machine with 93 ACE versions, 16GB.
+
 ## [0.2.739] - 2026-10-19
 
 ### Added
