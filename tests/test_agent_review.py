@@ -3,6 +3,7 @@ import json
 
 from orchestrator.agent_review import (
     FRICTION_TYPES,
+    agent_slug,
     build_review_prompt,
     find_turn_transcripts,
     friction_signals,
@@ -399,6 +400,24 @@ def test_resolve_agent_repo_by_path(tmp_path):
     repo = tmp_path / "echo"
     create_agent(AgentSpec(slug="echo", display_name="Echo", mandate="x."), repo)
     assert resolve_agent_repo(str(repo)) == repo
+
+
+def test_agent_slug_comes_from_plugin_json_not_the_dir_name(tmp_path):
+    # A cloud runner checks each turn out as <work>/agents/<slug>/<turn-id>: the dir name
+    # is a turn id, and using it as the slug made canopy-web 404 and the review read clean.
+    repo = tmp_path / "agents" / "hal" / "518e26c8"
+    (repo / ".claude-plugin").mkdir(parents=True)
+    (repo / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "hal"}))
+    assert agent_slug(repo) == "hal"
+
+
+def test_agent_slug_falls_back_to_the_dir_name(tmp_path):
+    repo = tmp_path / "echo"
+    repo.mkdir()
+    assert agent_slug(repo) == "echo"
+    (repo / ".claude-plugin").mkdir()
+    (repo / ".claude-plugin" / "plugin.json").write_text("not json")
+    assert agent_slug(repo) == "echo"
 
 
 def test_build_review_prompt_and_parse_findings(tmp_path):

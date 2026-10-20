@@ -641,6 +641,21 @@ def resolve_agent_repo(slug_or_path: str) -> Path | None:
     return rp
 
 
+def agent_slug(repo: Path) -> str:
+    """The agent's slug: `.claude-plugin/plugin.json`'s `name`, else the repo dir's name.
+
+    The dir name is only the slug on a laptop checkout (`~/emdash-projects/hal`). A cloud
+    runner checks each turn out as `<work>/agents/<slug>/<turn-id>`, so the dir name there
+    is a turn id — and reviewing "518e26c8" fetched nothing from canopy-web (404) and
+    reported "No findings", which reads as a clean bill of health (2026-10-20, Ada).
+    """
+    try:
+        name = json.loads((repo / ".claude-plugin" / "plugin.json").read_text()).get("name")
+    except (OSError, ValueError, AttributeError):
+        name = None
+    return name.strip() if isinstance(name, str) and name.strip() else repo.name
+
+
 def _result_text(call: dict) -> str:
     r = call.get("result")
     if isinstance(r, list):
@@ -775,7 +790,7 @@ def scan_turn_transcripts(
     `dropped_roots` is what separates "the matcher dropped everything" from "the matcher
     dropped MOST things" — see `TranscriptScan`.
     """
-    slug = repo.name
+    slug = agent_slug(repo)
     if not projects_dir.exists():
         return TranscriptScan([], 0, {})
     cutoff = time.time() - hours * 3600
@@ -1665,7 +1680,7 @@ def run_review(
         # any session already read from local disk so a turn is never reviewed twice.
         # A listing/fetch failure flips that source unreadable -> half-blind below.
         web = collect_web_transcripts(
-            sources, repo.name, hours,
+            sources, agent_slug(repo), hours,
             local_session_ids={Path(t).stem for t in transcripts},
         )
         transcripts.extend(web.transcripts)
@@ -1723,7 +1738,7 @@ def run_review(
     corpus_meta["in_progress"] = running
     corpus_meta["liveness_degraded"] = liveness.degraded
     result = {
-        "agent": repo.name,
+        "agent": agent_slug(repo),
         "repo": str(repo),
         "turns": len(corpus),
         "signals": corpus,
@@ -1764,7 +1779,7 @@ def run_review(
         # ENFORCED evidence gate: drop findings whose evidence isn't a complete, valid
         # record (source_ref/was_read/already_fixed_check/confidence/confidence_basis)
         # BEFORE the source-verification gate below ever sees them.
-        findings = _qualify_and_log(findings, label=repo.name)
+        findings = _qualify_and_log(findings, label=agent_slug(repo))
         # ENFORCED source gate: drop findings a later commit already shipped, BEFORE
         # they're returned. Fails open (keeps everything) if it can't verify.
         if verify and findings:
