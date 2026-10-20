@@ -13,9 +13,11 @@ opening the session to find out what the approval is for.
 `aws sso login --use-device-code --no-browser` prints a URL with the code
 already filled in and then waits. This command sends that URL to canopy-web
 (`POST /api/harness/runners/<id>/sign-in-request`), which pushes it to the
-runner owner's phone. The owner taps it, approves on the AWS page, and the CLI
+runner owner's phone and lists it on their supervisor feed, for a phone that
+never shows the push. The owner taps it, approves on the AWS page, and the CLI
 here finishes by itself. This command then confirms the session with
-`aws sts get-caller-identity`.
+`aws sts get-caller-identity` and reports the outcome back
+(`.../sign-in-requests/<id>/result`), which takes it off the feed.
 
 It speaks AS THE RUNNER, using `~/.canopy/runner.json`, and not as the agent.
 That is the only identity canopy-web lets put an approval in front of the
@@ -73,13 +75,30 @@ def load_runner_config(path: Optional[Path] = None) -> Optional[dict]:
 
 
 def push_sign_in_request(cfg: dict, *, url: str, label: str, requested_by: str, reason: str,
-                         call: Callable = canopy_web.call) -> int:
-    """Devices reached. Raises CanopyError when canopy-web refused or was unreachable."""
+                         call: Callable = canopy_web.call) -> tuple[int, str]:
+    """(devices reached, the stored request's id). The id is "" from a
+    canopy-web that stores nothing. Raises CanopyError when canopy-web refused
+    or was unreachable."""
     out = call("POST", f"/api/harness/runners/{cfg['runner_id']}/sign-in-request",
                {"provider": "aws", "url": url, "label": label, "requested_by": requested_by,
                 "reason": reason},
                base_url=cfg["base_url"], token=cfg["token"])
-    return int(out.get("sent", 0))
+    return int(out.get("sent", 0)), str(out.get("id") or "")
+
+
+def report_sign_in_result(cfg: dict, request_id: str, outcome: str,
+                          call: Optional[Callable] = None) -> None:
+    """Tell canopy-web how the sign-in ended ("approved", "failed", "expired"),
+    so the owner's feed stops offering the link. Best effort: a report that
+    does not land leaves a row that expires with its code anyway."""
+    if not request_id:
+        return
+    call = call or canopy_web.call
+    try:
+        call("POST", f"/api/harness/runners/{cfg['runner_id']}/sign-in-requests/{request_id}/result",
+             {"outcome": outcome}, base_url=cfg["base_url"], token=cfg["token"])
+    except canopy_web.CanopyError as exc:
+        click.echo(f"(could not report the sign-in outcome to canopy-web: {exc})", err=True)
 
 
 def caller_identity(profile: str) -> str:
@@ -150,20 +169,22 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
 
     who = requested_by or canopy_web.agent_context_slug().capitalize() or "An agent"
     cfg = load_runner_config()
-    sent, why = 0, ""
+    sent, request_id, why = 0, "", ""
     if cfg is None:
         why = "no runner config on this box"
     else:
         try:
-            sent = push_sign_in_request(cfg, url=url, label=profile, requested_by=who,
-                                        reason=reason)
+            sent, request_id = push_sign_in_request(cfg, url=url, label=profile, requested_by=who,
+                                                    reason=reason)
         except canopy_web.CanopyError as exc:
             why = str(exc)
     if sent:
+        feed = " and listed on their supervisor feed" if request_id else ""
         click.echo(f"aws/{profile}: approval pushed to the runner owner's phone "
-                   f"({sent} device{'s' if sent != 1 else ''}). Waiting up to {timeout}s…")
+                   f"({sent} device{'s' if sent != 1 else ''}){feed}. Waiting up to {timeout}s…")
     else:
-        click.echo(f"aws/{profile}: could not push the approval ({why or 'no device has notifications on'}).\n"
+        feed = "; it is on the owner's supervisor feed" if request_id else ""
+        click.echo(f"aws/{profile}: could not push the approval ({why or 'no device has notifications on'}){feed}.\n"
                    f"Deliver this link to the person who signs in. It works from any browser:\n  {url}\n"
                    f"Waiting up to {timeout}s…")
 
@@ -171,8 +192,11 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
         rc = proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
+        report_sign_in_result(cfg, request_id, "expired")
         raise click.ClickException(f"aws/{profile}: not approved within {timeout}s. The link has expired.")
     arn = caller_identity(profile) if rc == 0 else ""
     if not arn:
+        report_sign_in_result(cfg, request_id, "failed")
         raise click.ClickException(f"aws/{profile}: sign-in did not complete (aws exited {rc}).")
+    report_sign_in_result(cfg, request_id, "approved")
     click.echo(f"aws/{profile}: signed in as {arn}")

@@ -134,8 +134,9 @@ blocked and how to fix it. Do not abort the whole turn for one blocker.
 
 **Expired AWS SSO is not a "tell the human" blocker. Fix it yourself:** run
 `canopy aws login --profile <p> --reason "<what you need AWS for>"` in the background (or with a
-10-minute timeout). It pushes a tap-to-approve alert to the runner owner's phone that says you
-are asking, on which runner, and why, and it finishes by itself once they approve. Raw
+10-minute timeout). It pushes a tap-to-approve alert to the runner owner's phone, and lists the
+same request on their canopy-web supervisor feed, saying you are asking, on which runner, and
+why. It finishes by itself once they approve. Raw
 `aws sso login` is deny-railed (`gating-baseline.json`) because it waits for a human nobody has
 told.
 
