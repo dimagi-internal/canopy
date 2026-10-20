@@ -532,3 +532,46 @@ def test_no_rsync_left_in_the_update_skill():
     body = skill.read_text(encoding="utf-8")
     code = "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith(("- ", "**", "(")))
     assert "rsync -a" not in code, "update/SKILL.md is shelling out to rsync again"
+
+
+# ── node deps: a plugin's own installer wins ────────────────────────────────
+
+
+def _cache_with_pkg(tmp_path, name="ace"):
+    cache = tmp_path / "cache" / name / name / "1.0.0"
+    (cache / "bin").mkdir(parents=True)
+    (cache / "package.json").write_text("{}")
+    return cache
+
+
+def test_install_node_deps_defers_to_the_plugins_own_installer(tmp_path, monkeypatch):
+    cache = _cache_with_pkg(tmp_path)
+    script = cache / "bin" / "ace-install-deps"
+    script.write_text("#!/usr/bin/env bash\n")
+    script.chmod(0o755)
+    calls = []
+    monkeypatch.setattr(flu, "run", lambda cmd, timeout, cwd=None: calls.append(cmd) or (0, "", ""))
+    monkeypatch.setattr(flu.shutil, "which", lambda n: f"/usr/bin/{n}")
+    flu.install_node_deps("ace", cache)
+    assert calls == [["bash", str(script), str(cache)]]
+
+
+def test_install_node_deps_falls_back_to_npm_when_the_installer_fails(tmp_path, monkeypatch):
+    cache = _cache_with_pkg(tmp_path)
+    script = cache / "bin" / "ace-install-deps"
+    script.write_text("#!/usr/bin/env bash\n")
+    script.chmod(0o755)
+    calls = []
+    monkeypatch.setattr(flu, "run", lambda cmd, timeout, cwd=None: calls.append(cmd) or (1 if cmd[0] == "bash" else 0, "", ""))
+    monkeypatch.setattr(flu.shutil, "which", lambda n: f"/usr/bin/{n}")
+    flu.install_node_deps("ace", cache)
+    assert calls[-1] == ["npm", "install", "--no-audit", "--no-fund"]
+
+
+def test_install_node_deps_without_an_installer_is_the_plain_npm_install(tmp_path, monkeypatch):
+    cache = _cache_with_pkg(tmp_path, name="eva")
+    calls = []
+    monkeypatch.setattr(flu, "run", lambda cmd, timeout, cwd=None: calls.append(cmd) or (0, "", ""))
+    monkeypatch.setattr(flu.shutil, "which", lambda n: f"/usr/bin/{n}")
+    flu.install_node_deps("eva", cache)
+    assert calls == [["npm", "install", "--no-audit", "--no-fund"]]
