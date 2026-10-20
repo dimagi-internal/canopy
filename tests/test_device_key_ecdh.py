@@ -139,7 +139,7 @@ def test_secure_enclave_backend_reproduces_the_vector(se_helper):
 
 def test_a_helper_from_before_ecdh_is_unsupported_not_fatal(se_helper):
     se_helper(ecdh=False)
-    with pytest.raises(dk.EcdhUnsupported, match="predates"):
+    with pytest.raises(dk.EcdhUnsupported, match="too old"):
         dk.ensure_ecdh("secure-enclave")
 
 
@@ -308,4 +308,4 @@ def test_a_helper_without_ecdh_still_enrolls_the_signing_key(se_helper, monkeypa
     seen = []
     st = dk.enroll(runner_id="r-1", call=_server(seen))
     assert "ecdh_public_jwk" not in seen[0]
-    assert "predates" in st["ecdh_note"] and "ecdh_jkt" not in st
+    assert "too old" in st["ecdh_note"] and "ecdh_jkt" not in st

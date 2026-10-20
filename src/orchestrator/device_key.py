@@ -88,6 +88,26 @@ ECDH_BROKER_ENV = "CANOPY_ECDH_BROKER"
 KIND_ENV = "CANOPY_DEVICE_KEY_KIND"
 KINDS =(KIND_SE, KIND_TPM, KIND_AWS_IAM, KIND_SOFTWARE)
 
+#: How a person gets the helper built or rebuilt — said the same way everywhere. The
+#: updater is the runner installer at a fixed path; the runner also enrolls again on
+#: its own once the helper changes (canopy-web#1727), so no runner restart is needed.
+REBUILD_HELPER = ("run `~/.canopy/canopy-runner-update` (the runner's own updater — it "
+                  "builds ~/.canopy/bin/canopy-device-key)")
+
+#: The ECDH (zero-knowledge vault, canopy-web#1550) key needs a newer helper than the
+#: signing key. Not an error for the signing key; the runner retries by itself.
+ECDH_HELPER_TOO_OLD = ("this Mac's canopy-device-key is too old to make the ECDH key the "
+                       "zero-knowledge vault needs (canopy-web#1550). The runner enrolls it by "
+                       "itself once the helper is rebuilt, which its next update does; to do it "
+                       f"now, {REBUILD_HELPER}")
+
+#: No ECDH key on this machine yet — the three steps between here and an open
+#: zero-knowledge vault, in order, and where each happens.
+NO_ECDH_KEY = ("this machine has no ECDH device key yet, so it cannot open a zero-knowledge "
+               "vault. 1) Make it: a runner box does this by itself; elsewhere run `canopy "
+               "vault device --enroll`. 2) Approve it in canopy-web → Settings → Device keys "
+               "(passkey). 3) An admin of the agent grants this device its vault.")
+
 #: The helper's location after the runner installer built it; overridable for tests.
 HELPER_ENV = "CANOPY_DEVICE_KEY_BIN"
 #: The key directory; overridable for tests and for a smoke test in a temp HOME.
@@ -363,7 +383,7 @@ def load(*, runner: Runner = subprocess.run,
         if not helper:
             raise DeviceKeyError(
                 f"{se_path()} is a Secure Enclave key but canopy-device-key is not installed "
-                "— re-run the runner installer (it builds ~/.canopy/bin/canopy-device-key)")
+                f"— {REBUILD_HELPER}")
         return _se_key(helper, runner)
     if sw_path().is_file():
         return _sw_key(sw_path().read_bytes())
@@ -467,9 +487,8 @@ def ensure(*, allow_software: Optional[bool] = None, kind: Optional[str] = None,
                                  "the canopy-device-key helper and an enclave)")
         if not helper and allow_software is None:
             raise DeviceKeyError(
-                "this Mac has no canopy-device-key helper to make a Secure Enclave key — re-run "
-                "the runner installer (it builds ~/.canopy/bin/canopy-device-key), or pass "
-                "--software to register a software key instead")
+                "this Mac has no canopy-device-key helper to make a Secure Enclave key — "
+                f"{REBUILD_HELPER}, or pass --software to register a software key instead")
     if allow_software is False:
         raise DeviceKeyError("no hardware-bound key could be made here and software keys "
                              "were not allowed")
@@ -535,8 +554,7 @@ def _sw_ecdh_key(pem: bytes) -> EcdhKey:
 def _se_ecdh_key(helper: str, runner: Runner) -> EcdhKey:
     p = _run_helper(helper, "ecdh-public-jwk", runner=runner)
     if p.returncode == 2:
-        raise EcdhUnsupported("canopy-device-key predates ECDH (canopy-web#1550) — re-run the "
-                              "runner installer to rebuild it")
+        raise EcdhUnsupported(ECDH_HELPER_TOO_OLD)
     if p.returncode != 0:
         raise _helper_fail("ecdh-public-jwk", p)
     try:
@@ -683,7 +701,7 @@ def load_ecdh(*, runner: Runner = subprocess.run,
         if not helper:
             raise DeviceKeyError(
                 f"{se_ecdh_path()} is a Secure Enclave key but canopy-device-key is not "
-                "installed — re-run the runner installer")
+                f"installed — {REBUILD_HELPER}")
         return _se_ecdh_key(helper, runner)
     if ecdh_pem_path().is_file():
         return _sw_ecdh_key(ecdh_pem_path().read_bytes())
@@ -737,8 +755,7 @@ def ensure_ecdh(signing_kind: str, *, runner: Runner = subprocess.run,
         _ensure_dir()
         p = _run_helper(helper, "ecdh-create", runner=runner)
         if p.returncode == 2:
-            raise EcdhUnsupported("canopy-device-key predates ECDH (canopy-web#1550) — re-run "
-                                  "the runner installer to rebuild it")
+            raise EcdhUnsupported(ECDH_HELPER_TOO_OLD)
         if p.returncode != 0:
             raise _helper_fail("ecdh-create", p)
         return _se_ecdh_key(helper, runner), True

@@ -195,9 +195,7 @@ def _device_ecdh(ecdh=None):
     except device_key.DeviceKeyError as e:
         raise ZkUnlockError(str(e)) from None
     if ecdh is None:
-        raise ZkUnlockError("this machine has no ECDH device key to open a zero-knowledge "
-                            "vault — `canopy vault device --enroll`, have it approved, then "
-                            "ask an admin to grant this device")
+        raise ZkUnlockError(device_key.NO_ECDH_KEY)
     return ecdh
 
 
