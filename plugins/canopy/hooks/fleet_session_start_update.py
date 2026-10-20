@@ -356,6 +356,28 @@ def sync_runtime(clone: str, manifest: dict, cache_dir: Path) -> str:
     return ""
 
 
+def install_node_deps(name: str, cache_dir: Path) -> None:
+    """Best-effort JS deps for a freshly mirrored version (canopy-gws MCP etc.). Never fatal.
+
+    A plugin that ships `bin/<name>-install-deps` owns how its deps are installed, and
+    this defers to it. ACE's links one runtime-only store per lockfile into each version
+    and prunes long-orphaned versions — a full `npm install` per version, here, had left
+    one machine holding 93 ACE versions, 16GB (2026-10-19). Anything else, or no bash to
+    run the script with, gets the plain in-place install it always had.
+    """
+    script = cache_dir / "bin" / f"{name}-install-deps"
+    if script.is_file() and os.access(script, os.X_OK) and shutil.which("bash"):
+        rc, _out, _err = run(["bash", str(script), str(cache_dir)], NPM_TIMEOUT, cwd=str(cache_dir))
+        if rc == 0:
+            return
+    if (cache_dir / "package.json").exists() and shutil.which("npm"):
+        run(
+            ["npm", "install", "--no-audit", "--no-fund"],
+            NPM_TIMEOUT,
+            cwd=str(cache_dir),
+        )
+
+
 def update_one(target: dict) -> dict:
     """Fetch → (if behind) pull + mirror into cache + npm + patch registry."""
     name = target["name"]
@@ -438,13 +460,7 @@ def update_one(target: dict) -> dict:
         result.update(status="error", error=f"sync: {err}")
         return result
 
-    # Best-effort JS deps (canopy-gws MCP etc.). Never fatal.
-    if (cache_dir / "package.json").exists() and shutil.which("npm"):
-        run(
-            ["npm", "install", "--no-audit", "--no-fund"],
-            NPM_TIMEOUT,
-            cwd=str(cache_dir),
-        )
+    install_node_deps(name, cache_dir)
 
     # Runtime bundle (repo-root code declared in .claude-plugin/runtime.json).
     # Fatal when declared: a cache without its runtime strands every skill that
