@@ -57,13 +57,13 @@ def test_the_push_speaks_as_the_runner_to_its_own_route():
 
     def call(method, path, body, **kw):
         seen.update(method=method, path=path, body=body, **kw)
-        return {"sent": 2}
+        return {"sent": 2, "id": "req-1"}
 
     cfg = {"base_url": "https://c", "token": "cpat_runner", "runner_id": "r-1"}
     sent = aws_cli.push_sign_in_request(cfg, url="https://x.awsapps.com/?user_code=A",
                                         label="labs", requested_by="hal",
                                         reason="read the 5xx logs", call=call)
-    assert sent == 2
+    assert sent == (2, "req-1")
     assert seen["path"] == "/api/harness/runners/r-1/sign-in-request"
     assert seen["token"] == "cpat_runner" and seen["base_url"] == "https://c"
     assert seen["body"] == {"provider": "aws", "url": "https://x.awsapps.com/?user_code=A",
@@ -85,9 +85,17 @@ class _FakeProc:
 
 
 LOGIN = ["login", "--reason", "read the canopy-web 5xx logs"]
+CFG = {"base_url": "https://c", "token": "t", "runner_id": "r"}
 
 
-def _patch(monkeypatch, *, identities, proc, cfg, sent=None, push_error=None):
+def test_a_canopy_web_that_stores_nothing_reads_as_no_id():
+    sent = aws_cli.push_sign_in_request({"base_url": "https://c", "token": "t", "runner_id": "r"},
+                                        url="u", label="l", requested_by="h", reason="r",
+                                        call=lambda *a, **k: {"sent": 1})
+    assert sent == (1, "")
+
+
+def _patch(monkeypatch, *, identities, proc, cfg, sent=None, push_error=None, request_id="req-1"):
     ids = iter(identities)
     monkeypatch.setattr(aws_cli, "caller_identity", lambda profile: next(ids))
     monkeypatch.setattr(aws_cli.subprocess, "Popen", lambda *a, **k: proc)
@@ -99,28 +107,35 @@ def _patch(monkeypatch, *, identities, proc, cfg, sent=None, push_error=None):
         pushed.append(kw)
         if push_error:
             raise canopy_web.CanopyError(push_error)
-        return sent
+        return sent, request_id
 
     monkeypatch.setattr(aws_cli, "push_sign_in_request", push)
-    return pushed
+    reported: list[tuple] = []
+
+    def call(method, path, body, **kw):
+        reported.append((path, body["outcome"]))
+        return {}
+
+    monkeypatch.setattr(canopy_web, "call", call)
+    return pushed, reported
 
 
 def test_a_reason_is_required(monkeypatch):
-    _patch(monkeypatch, identities=[""], proc=_FakeProc(AWS_OUTPUT), cfg={"runner_id": "r"}, sent=1)
+    _patch(monkeypatch, identities=[""], proc=_FakeProc(AWS_OUTPUT), cfg=CFG, sent=1)
     r = CliRunner().invoke(aws_cli.aws_group, ["login"])
     assert r.exit_code == 2 and "--reason" in r.output
 
 
 def test_a_blank_reason_is_refused_before_anything_starts(monkeypatch):
     proc = _FakeProc(AWS_OUTPUT)
-    _patch(monkeypatch, identities=[""], proc=proc, cfg={"runner_id": "r"}, sent=1)
+    _patch(monkeypatch, identities=[""], proc=proc, cfg=CFG, sent=1)
     r = CliRunner().invoke(aws_cli.aws_group, ["login", "--reason", "   "])
     assert r.exit_code == 2 and "--reason" in r.output
 
 
 def test_the_reason_and_agent_name_reach_the_alert(monkeypatch):
-    pushed = _patch(monkeypatch, identities=["", "arn:x"], proc=_FakeProc(AWS_OUTPUT),
-                    cfg={"runner_id": "r"}, sent=1)
+    pushed, _ = _patch(monkeypatch, identities=["", "arn:x"], proc=_FakeProc(AWS_OUTPUT),
+                    cfg=CFG, sent=1)
     r = CliRunner().invoke(aws_cli.aws_group, ["login", "--reason", "  read the\n5xx logs "])
     assert r.exit_code == 0, r.output
     assert pushed[0]["reason"] == "read the 5xx logs"
@@ -136,7 +151,7 @@ def test_a_live_session_is_left_alone(monkeypatch):
 
 def test_pushed_then_approved_reports_the_identity(monkeypatch):
     _patch(monkeypatch, identities=["", "arn:aws:sts::1:assumed-role/x/jj"],
-           proc=_FakeProc(AWS_OUTPUT), cfg={"runner_id": "r"}, sent=1)
+           proc=_FakeProc(AWS_OUTPUT), cfg=CFG, sent=1)
     r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
     assert r.exit_code == 0, r.output
     assert "pushed to the runner owner's phone (1 device)" in r.output
@@ -146,7 +161,7 @@ def test_pushed_then_approved_reports_the_identity(monkeypatch):
 
 def test_zero_devices_falls_back_to_printing_the_link(monkeypatch):
     _patch(monkeypatch, identities=["", "arn:x"], proc=_FakeProc(AWS_OUTPUT),
-           cfg={"runner_id": "r"}, sent=0)
+           cfg=CFG, sent=0)
     r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
     assert r.exit_code == 0, r.output
     assert "could not push" in r.output
@@ -155,7 +170,7 @@ def test_zero_devices_falls_back_to_printing_the_link(monkeypatch):
 
 def test_a_refused_push_falls_back_too(monkeypatch):
     _patch(monkeypatch, identities=["", "arn:x"], proc=_FakeProc(AWS_OUTPUT),
-           cfg={"runner_id": "r"}, push_error="POST … -> 404")
+           cfg=CFG, push_error="POST … -> 404")
     r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
     assert r.exit_code == 0, r.output
     assert "404" in r.output and "?user_code=ABCD-EFGH" in r.output
@@ -163,7 +178,7 @@ def test_a_refused_push_falls_back_too(monkeypatch):
 
 def test_an_unapproved_login_fails_loudly(monkeypatch):
     _patch(monkeypatch, identities=["", ""], proc=_FakeProc(AWS_OUTPUT, rc=1),
-           cfg={"runner_id": "r"}, sent=1)
+           cfg=CFG, sent=1)
     r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
     assert r.exit_code != 0
     assert "did not complete" in r.output
@@ -176,3 +191,53 @@ def test_no_device_url_is_an_error_not_a_hang(monkeypatch):
     assert r.exit_code != 0
     assert "printed no approval URL" in r.output
     assert proc.killed
+
+
+def test_each_outcome_is_reported_so_the_feed_stops_offering_the_link(monkeypatch):
+    _, reported = _patch(monkeypatch, identities=["", "arn:x"], proc=_FakeProc(AWS_OUTPUT),
+                         cfg=CFG, sent=1)
+    r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
+    assert r.exit_code == 0, r.output
+    assert "listed on their supervisor feed" in r.output
+    assert reported == [("/api/harness/runners/r/sign-in-requests/req-1/result", "approved")]
+
+
+def test_a_failed_login_is_reported_as_failed(monkeypatch):
+    _, reported = _patch(monkeypatch, identities=["", ""], proc=_FakeProc(AWS_OUTPUT, rc=1),
+                         cfg=CFG, sent=1)
+    CliRunner().invoke(aws_cli.aws_group, LOGIN)
+    assert [o for _, o in reported] == ["failed"]
+
+
+def test_a_timed_out_login_is_reported_as_expired(monkeypatch):
+    import subprocess
+
+    class Slow(_FakeProc):
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("aws", timeout)
+
+    _, reported = _patch(monkeypatch, identities=[""], proc=Slow(AWS_OUTPUT), cfg=CFG, sent=1)
+    r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
+    assert "has expired" in r.output
+    assert [o for _, o in reported] == ["expired"]
+
+
+def test_an_unreachable_canopy_web_does_not_fail_a_good_login(monkeypatch):
+    _patch(monkeypatch, identities=["", "arn:x"], proc=_FakeProc(AWS_OUTPUT), cfg=CFG, sent=1)
+
+    def down(*a, **k):
+        raise canopy_web.CanopyError("POST … -> 503")
+
+    monkeypatch.setattr(canopy_web, "call", down)
+    r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
+    assert r.exit_code == 0, r.output
+    assert "signed in as arn:x" in r.output
+
+
+def test_no_stored_request_reports_nothing(monkeypatch):
+    _, reported = _patch(monkeypatch, identities=["", "arn:x"], proc=_FakeProc(AWS_OUTPUT),
+                         cfg=CFG, sent=1, request_id="")
+    r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
+    assert r.exit_code == 0, r.output
+    assert "supervisor feed" not in r.output
+    assert reported == []
