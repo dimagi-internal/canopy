@@ -180,8 +180,7 @@ class ZkVault:
             except device_key.DeviceKeyError as e:
                 raise ZkCliError(str(e)) from None
             if self._ecdh is None:
-                raise ZkCliError("this machine has no ECDH device key — `canopy vault device "
-                                 "--enroll` (then approve it in canopy-web)")
+                raise ZkCliError(device_key.NO_ECDH_KEY)
         return self._ecdh
 
     def device_status(self) -> dict:
