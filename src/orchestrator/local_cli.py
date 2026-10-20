@@ -123,18 +123,26 @@ def private_runner_group():
 
 @private_runner_group.command("register")
 @click.option("--name", default=None, help="What to call this machine (default: its short hostname).")
+@click.option("--no-runner", is_flag=True,
+              help="Do not link the runner app on this machine (~/.canopy/runner.json), if any.")
 @click.option("--json", "as_json", is_flag=True)
-def private_runner_register(name, as_json):
+def private_runner_register(name, no_runner, as_json):
     """Register this machine as your private runner. Idempotent: re-running it is safe.
 
-    A private runner never claims turns. It lets a Claude Code session here that uses an
-    agent be recorded as a local turn — yours, with the agent's envelope, rails and
-    (when its caller list allows you) its credentials."""
+    It lets a Claude Code session here that uses an agent be recorded as a local turn —
+    yours, with the agent's envelope, rails and (when its caller list allows you) its
+    credentials. When this machine also runs the runner app, the two are linked into one
+    private runner (canopy-web#1705): sessions here prove themselves with the runner's
+    device key, and `canopy private-runner act-as` sets the role they are judged as."""
+    from orchestrator.runner_pin import _machine_runner_id
+
     host = socket.gethostname()
     name = (name or host.split(".")[0] or "laptop")[:100]
-    body = canopy_web.call("POST", "/api/private-runners/", {"name": name, "host": host},
-                           token=person_token())
+    runner_id = "" if no_runner else _machine_runner_id()
+    payload = {"name": name, "host": host, **({"runner": runner_id} if runner_id else {})}
+    body = canopy_web.call("POST", "/api/private-runners/", payload, token=person_token())
     doc = {"id": body["id"], "name": body["name"], "host": body.get("host", host),
+           "runner_id": str(body.get("runner_id") or ""),
            "base_url": canopy_web.resolve_base_url(None), "registered_at": time.time()}
     _write_private(private_runner_file(), doc)
     if as_json:
@@ -142,6 +150,49 @@ def private_runner_register(name, as_json):
     else:
         click.echo(f"private runner '{doc['name']}' registered ({doc['id']}). Sessions here that use an "
                    "agent ($CANOPY_AGENT, or `canopy local use <slug>`) are now recorded as local turns.")
+
+
+ACT_AS = ("self", "editor", "viewer")
+
+
+@private_runner_group.command("act-as")
+@click.argument("role", type=click.Choice(ACT_AS + ("shared",)))
+@click.option("--json", "as_json", is_flag=True)
+def private_runner_act_as(role, as_json):
+    """Make this machine's runner your PRIVATE runner, judged as ROLE.
+
+    \b
+    self    private, and you act as yourself (owner/admin where you are one)
+    editor  private, and everything from this box is judged as a workspace editor:
+            licenses, manual-only turns, credential reads under your license
+    viewer  private, judged as a viewer (most agents refuse a local turn)
+    shared  back to a shared fleet runner (routed work again; no role cap)
+
+    A private runner takes no fleet work — only what you pin or bind to it, and the
+    local sessions here. The cap only ever lowers what you may do (canopy-web#1705)."""
+    doc = read_private_runner()
+    rid = doc.get("runner_id") or ""
+    if not rid:
+        from orchestrator.runner_pin import _machine_runner_id
+
+        rid = _machine_runner_id()
+    if not rid:
+        raise click.ClickException("this machine has no runner (~/.canopy/runner.json) — pair the "
+                                   "runner app first, then `canopy private-runner register`")
+    private = role != "shared"
+    acts_as = role if role in ("editor", "viewer") else ""
+    body = canopy_web.call("PUT", f"/api/harness/runners/{rid}/private",
+                           {"private": private, "acts_as": acts_as}, token=person_token())
+    out = {"runner_id": rid, "name": body.get("name", ""), "private": body.get("private", private),
+           "acts_as": body.get("acts_as", acts_as)}
+    if as_json:
+        click.echo(json.dumps(out))
+    elif not out["private"]:
+        click.echo(f"runner '{out['name']}' is a shared fleet runner again (routed work; no role cap)")
+    else:
+        who = f"acting as {out['acts_as']}" if out["acts_as"] else "acting as yourself"
+        click.echo(f"runner '{out['name']}' is now your private runner, {who}. "
+                   "Start a NEW Claude Code session for local sessions to pick it up.")
 
 
 @private_runner_group.command("show")
