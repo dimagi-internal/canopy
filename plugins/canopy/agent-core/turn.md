@@ -1077,10 +1077,14 @@ stop."* Declining one action is not withdrawing the task.)
 `canopy agent project-audit --slug <slug>` (read-only, always exits 0; `--json` for the full
 result) and carry its last line into your summary verbatim. **An ABSENT line is the failure;
 `projects: clean` is a valid outcome** — same contract as the skill self-check: the line proves
-you looked, whatever you found. It reports the defects in one direction only — *active work the
-board cannot see*: (a) open tasks with no project that look like project work, (b) active
-projects with no Drive folder linked, (d) a project whose name differs from its linked folder,
-(e) tasks touched in the last 2 days with no `canopy agent turn` record. `Projects/` folders with
+you looked, whatever you found. It reports *active work the board cannot see*: (a) open tasks
+with no project that look like project work, (b) active projects with no Drive folder linked,
+(d) a project whose name differs from its linked folder, (e) tasks touched in the last 2 days
+with no `canopy agent turn` record — and the reverse, *finished work the board still shows as
+live*: (f) open tasks whose every referenced GitHub issue/PR is closed or merged (a dispatched
+card is shipped by a different session than the one that filed it, so nothing closes it;
+hal's board had eight on 2026-10-21). Confirm each (f) hit has nothing left, then close it with
+`agent set --status done`. `Projects/` folders with
 no active project are **dormant, not defects** — Drive is the archive and outlives the board, so
 the audit only counts them. **Fix what is cheap in-turn** — file a task into its project (`agent
 set --project`), register the project for a folder you are actively working in again (same

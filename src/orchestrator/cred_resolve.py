@@ -132,6 +132,12 @@ def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[s
     (the box's refresh, canopy-web#1563)."""
     wanted = [r for r in dict.fromkeys(refs or []) if r]
     turn = current_turn_id() if turn_id is None else turn_id
+    from orchestrator import private_runner_session
+
+    if private_runner_session.in_local_turn():
+        # A local session on your private runner reads with the box's own key, under your
+        # license, at the role the runner acts as — not with a PAT (canopy-web#1705).
+        token = private_runner_session.token() or token
     agent_ids: dict = {}
 
     def get(names) -> dict:

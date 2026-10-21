@@ -9,8 +9,8 @@ six-PR, multi-deliverable piece of work living as a loose task with no turn reco
 checked it. This is the check — read-only, and it never fails (an audit that can crash the
 close-out is an audit that gets skipped).
 
-Five checks, all pure functions over (tasks, projects, turns, Drive folders) so each is unit
-testable without a network:
+Six checks, all pure functions over (tasks, projects, turns, Drive folders, GitHub states)
+so each is unit testable without a network:
 
   a. LOOSE  — an open task with no project that looks like project work. A task "looks like
               a project" when ANY of: >= 2 links (it has produced artifacts), >= 1 turn record
@@ -25,8 +25,15 @@ testable without a network:
               linked folder is not under `Projects/` at all.
   e. UNRECORDED — an open task updated in the last N days with no turn record naming it in
               that same window.
+  f. SHIPPED — the opposite direction from (a)-(e): an open task the board still shows as
+              live whose GitHub work is finished — every issue/PR it references (full URLs
+              in its links, source_url or title) is CLOSED or MERGED. Free-text notes are NOT
+              read: they cite merged PRs as history, so they would flag live work. A
+              dispatched task is created by one session and shipped by another, and nothing
+              closes the card; on 2026-10-21 hal's board had eight such cards, the oldest
+              two weeks stale, all still saying "Work this dispatch".
 
-Tasks whose Next action carries the `[MANUAL — …]` marker are skipped by (a) and (e): the
+Tasks whose Next action carries the `[MANUAL — …]` marker are skipped by (a), (e) and (f): the
 human has taken them off the agent's queue (task-tracker.md vocabulary).
 """
 from __future__ import annotations
@@ -40,6 +47,10 @@ DEFAULT_RECENT_DAYS = 2
 DRIVE_LIST_MAX = 1000
 
 _FOLDER_ID_RE = re.compile(r"(?:/folders/|[?&]id=)([A-Za-z0-9_-]{10,})")
+_GITHUB_REF_RE = re.compile(r"https://github\.com/([\w.-]+)/([\w.-]+)/(?:issues|pull)/(\d+)")
+GITHUB_REFS_MAX = 100  # one GraphQL call; a board with more open refs than this is checked partially
+DONE_GITHUB_STATES = ("CLOSED", "MERGED")
+_NOT_FETCHED = object()  # audit(github_states=...) default — distinct from None ("unreachable")
 
 
 def folder_id_from(project: dict) -> str:
@@ -223,6 +234,80 @@ def check_unrecorded_tasks(tasks, turns, *, now: datetime, days: int = DEFAULT_R
     return out
 
 
+def github_refs(task: dict) -> list[str]:
+    """`owner/repo#N` for each GitHub issue/PR URL in the task's links, source_url or title."""
+    texts = [str((link or {}).get("url") or "") for link in task.get("links") or []]
+    texts += [str(task.get("source_url") or ""), str(task.get("title") or "")]
+    refs: list[str] = []
+    for text in texts:
+        for owner, repo, num in _GITHUB_REF_RE.findall(text):
+            ref = f"{owner}/{repo}#{num}"
+            if ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def open_task_github_refs(tasks) -> list[str]:
+    """Every ref check (f) needs a state for, de-duplicated, capped at GITHUB_REFS_MAX."""
+    refs: list[str] = []
+    for t in tasks or []:
+        if _is_open(t) and not _is_manual(t):
+            refs.extend(r for r in github_refs(t) if r not in refs)
+    return refs[:GITHUB_REFS_MAX]
+
+
+def fetch_github_states(refs, runner=None) -> "tuple[dict | None, str]":
+    """{ref: OPEN|CLOSED|MERGED} for `refs`, in ONE `gh api graphql` call.
+
+    A ref the caller cannot see (no access, deleted) is simply absent, which (f) reads as
+    "not known to be done". Returns (None, why) on any failure: the audit must never fail
+    on GitHub, exactly as it never fails on Drive."""
+    import json
+    import subprocess
+
+    if not refs:
+        return {}, ""
+    runner = runner or subprocess.run
+    fields = []
+    for i, ref in enumerate(refs):
+        owner_repo, num = ref.split("#")
+        owner, repo = owner_repo.split("/")
+        fields.append(f'r{i}: repository(owner: "{owner}", name: "{repo}") '
+                      f'{{ issueOrPullRequest(number: {num}) '
+                      f'{{ ... on Issue {{ state }} ... on PullRequest {{ state }} }} }}')
+    query = "query { " + " ".join(fields) + " }"
+    try:
+        r = runner(["gh", "api", "graphql", "-f", f"query={query}"],
+                   capture_output=True, text=True, timeout=60)
+        # gh exits non-zero when ANY alias errors (e.g. one private repo), but still prints
+        # the partial data — so parse stdout before deciding the call failed.
+        data = (json.loads(r.stdout or "{}") or {}).get("data")
+    except Exception as e:  # noqa: BLE001 — gh missing, timeout, bad JSON → skip, never fail
+        return None, f"GitHub unreachable: {str(e)[:160]}"
+    if not data:
+        return None, f"GitHub unreachable: {(r.stderr or r.stdout or '').strip()[:160]}"
+    states = {}
+    for i, ref in enumerate(refs):
+        item = ((data.get(f"r{i}") or {}).get("issueOrPullRequest") or {})
+        if item.get("state"):
+            states[ref] = item["state"]
+    return states, ""
+
+
+def check_shipped_tasks(tasks, github_states) -> list[dict]:
+    """(f) open tasks whose every referenced GitHub issue/PR is CLOSED or MERGED."""
+    out = []
+    for t in tasks or []:
+        if not _is_open(t) or _is_manual(t):
+            continue
+        refs = github_refs(t)
+        if refs and all(github_states.get(r) in DONE_GITHUB_STATES for r in refs):
+            out.append({"ext_id": str(t.get("ext_id") or t.get("id")),
+                        "title": t.get("title") or "",
+                        "refs": [f"{r} {github_states[r]}" for r in refs]})
+    return out
+
+
 def list_project_folders(repo, slug, runner=None) -> "tuple[list[dict] | None, str]":
     """The FOLDERS under `<agent root>/Projects/`, read-only.
 
@@ -260,11 +345,17 @@ def list_project_folders(repo, slug, runner=None) -> "tuple[list[dict] | None, s
 
 
 def audit(*, slug: str, tasks, projects, turns, folders, drive_note: str = "",
-          now: datetime | None = None, recent_days: int = DEFAULT_RECENT_DAYS) -> dict:
-    """Run all five checks. `folders=None` means Drive was not readable: (c) and (d) are
-    skipped and `drive_note` says why; (a)/(b) then run without folder matching."""
+          now: datetime | None = None, recent_days: int = DEFAULT_RECENT_DAYS,
+          github_states: "dict | None" = _NOT_FETCHED, github_note: str = "") -> dict:
+    """Run all six checks. `folders=None` means Drive was not readable: (c) and (d) are
+    skipped and `drive_note` says why; (a)/(b) then run without folder matching.
+    `github_states=None` means GitHub was not readable: (f) is skipped and `github_note`
+    says why. Pass `{}` when no open task references GitHub."""
     now = now or datetime.now(timezone.utc)
     drive_ok = folders is not None
+    if github_states is _NOT_FETCHED:  # caller did not ask for (f): nothing to report
+        github_states = {}
+    github_ok = github_states is not None
     result = {
         "slug": slug,
         "open_tasks": sum(1 for t in tasks or [] if _is_open(t)),
@@ -276,6 +367,8 @@ def audit(*, slug: str, tasks, projects, turns, folders, drive_note: str = "",
         "dormant_folders": dormant_folders(projects, folders) if drive_ok else None,
         "name_drift": check_name_drift(projects, folders) if drive_ok else None,
         "unrecorded_tasks": check_unrecorded_tasks(tasks, turns, now=now, days=recent_days),
+        "github": {"ok": github_ok, "note": github_note},
+        "shipped_tasks": check_shipped_tasks(tasks, github_states) if github_ok else None,
     }
     result["closeout"] = closeout_line(result)
     return result
@@ -286,6 +379,7 @@ _LABELS = (
     ("projects_without_folder", "project without folder", "projects without folder"),
     ("name_drift", "name drift", "name drifts"),
     ("unrecorded_tasks", "unrecorded task", "unrecorded tasks"),
+    ("shipped_tasks", "shipped task still open", "shipped tasks still open"),
 )
 
 
@@ -296,13 +390,16 @@ def closeout_line(result: dict) -> str:
         items = result.get(key)
         if items:
             parts.append(f"{len(items)} {one if len(items) == 1 else many}")
+    unchecked = []
     if not result.get("drive", {}).get("ok"):
-        parts.append("Drive unchecked")
-    if not parts:
+        unchecked.append("Drive unchecked")
+    if not result.get("github", {"ok": True}).get("ok"):
+        unchecked.append("GitHub unchecked")
+    if not parts and not unchecked:
         return "projects: clean"
-    if parts == ["Drive unchecked"]:
-        return "projects: clean (Drive unchecked)"
-    return "projects: " + ", ".join(parts)
+    if not parts:
+        return f"projects: clean ({', '.join(unchecked)})"
+    return "projects: " + ", ".join(parts + unchecked)
 
 
 def render(result: dict) -> str:
@@ -365,6 +462,16 @@ def render(result: dict) -> str:
             lambda it: [f"{it['ext_id']} {it['title'][:80]}  (updated {it['updated_at'][:16]})",
                         f"  → canopy agent turn --slug {s} --task {it['ext_id']} "
                         f"--session-id <id> --title \"…\""])
+    if result.get("shipped_tasks") is None and not result.get("github", {"ok": True}).get("ok"):
+        lines.append(f"\n(f) Open tasks whose GitHub work is finished: skipped "
+                     f"({result['github']['note']})")
+    else:
+        section("(f) Open tasks whose GitHub work is finished — every referenced issue/PR is "
+                "closed (confirm nothing is left, then close the card)",
+                result.get("shipped_tasks") or [],
+                lambda it: [f"{it['ext_id']} {it['title'][:80]}  [{', '.join(it['refs'])}]",
+                            f"  → canopy agent set --slug {s} --task-id {it['ext_id']} "
+                            f"--status done --review \"…\""])
     lines.append("")
     lines.append(result["closeout"])
     return "\n".join(lines)

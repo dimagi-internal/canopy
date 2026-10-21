@@ -146,8 +146,9 @@ long document, or across an entity's documents), `sql` (read-only over the table
 `table` and one tool per declared table. Served offline (`canopy kb mcp`), `original`
 describes the file and points at the publisher's copy; only canopy-web hands out the
 stored one. Measured on 70
-GiveWell questions with the same agent, this set answered 33-34 of 40 fact questions
-against 27-28 with one-shot passage search, and won 20.5 of 30 research questions.
+GiveWell questions with the same agent, this set answered 35.5 of 40 fact questions
+against 28.5 with one-shot passage search over embeddings, and won 18.5 of 30 research
+questions head to head.
 
 There are no read subcommands (`canopy kb search` …): they would only duplicate the tools.
 A script that needs a query imports `canopy_kb.KB`.
