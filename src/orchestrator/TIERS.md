@@ -36,7 +36,7 @@ enforce it.
 `version_bump` · `version` · `doctor` · `agent_review` · `structure_drift` · `eval_cli` ·
 `eval_rubric` · `turn_synthesis` · `session_upload` · `fleet_align` · `session_sources` ·
 `session_liveness` ·
-`work_cursor` · `kb` · `kb_cli` · `kb_mcp` · `agent_dispatch` · `project_dispatch` · `project_cli` · `project_audit` · `project_folder` · `task_folder` · `runner_cli` · `secret_cli` · `people_cli` · `slack_ingest_cli` · `aws_cli` · `cred_cli` · `cred_resolve` · `local_cli` · `device_key` · `device_key_aws` · `device_key_kms` · `device_key_tpm` · `runner_session` · `vault_cli` · `vault_zk` · `vault_zk_cli` · `workspace_cli` ·
+`work_cursor` · `kb_engine` · `kb_cli` · `kb_mcp` · `agent_dispatch` · `project_dispatch` · `project_cli` · `project_audit` · `project_folder` · `task_folder` · `runner_cli` · `secret_cli` · `people_cli` · `slack_ingest_cli` · `aws_cli` · `cred_cli` · `cred_resolve` · `local_cli` · `device_key` · `device_key_aws` · `device_key_kms` · `device_key_tpm` · `runner_session` · `vault_cli` · `vault_zk` · `vault_zk_cli` · `workspace_cli` ·
 `llm_output` · `decide_guard_prompt` · `decide_guard_cli` · `provenance` ·
 `huddle` · `huddle_store` · `huddle_cli` · `huddle_group_cli` · `checkin_cli` · `huddle_types` · `thread` · `thread_cli` · `runner_pin`
 

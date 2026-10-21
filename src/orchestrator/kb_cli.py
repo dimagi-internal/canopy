@@ -1,4 +1,5 @@
-"""`canopy kb …` — build, store and serve a knowledge base (see `orchestrator.kb`).
+"""`canopy kb …` — build, store and serve a knowledge base (engine: canopy-web's
+`canopy_kb`, loaded by `orchestrator.kb_engine`).
 
 Four commands, because only these are work a prompt cannot do: `build` (index + dated
 diff), `push` / `pull` (the gzipped copy in the project's Drive folder — and for a
@@ -17,9 +18,9 @@ pulls on its own when the cache is older than --max-age-hours.
 Drive is read as the AGENT whose repo you run from (`--repo`, default: cwd), through the
 same identity and gog client rule every canopy Drive call uses.
 
-`canopy kb mcp --kb connect/givewell-kb` serves the same queries as MCP tools over stdio, so an agent
-registers it once in its .mcp.json and gets search/get/tables/whats_new natively. A script
-that wants a query uses `orchestrator.kb.KB` (or `open_kb` here) directly.
+`canopy kb mcp --kb connect/givewell-kb` serves the same tools canopy-web serves, over stdio
+(offline use; readers normally add the project's remote MCP URL). A script that wants a
+query uses `canopy_kb.KB` (or `open_kb` here) directly.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ from pathlib import Path
 
 import click
 
-from orchestrator.kb import KB, KBError, build
+from orchestrator.kb_engine import KBError, build, open_file, summary
 
 CACHE_ROOT = Path(os.environ.get("CANOPY_KB_CACHE", Path.home() / ".canopy" / "kb"))
 KB_FILE = "kb.sqlite"
@@ -142,7 +143,7 @@ def pull(ref: str, repo: Path, force: bool = False) -> dict:
         raw.unlink()
     else:
         raw.replace(tmp)
-    KB(tmp)  # refuse a file that is not a readable KB before replacing the cache
+    summary(tmp)  # refuse a file that is not a knowledge base before replacing the cache
     tmp.replace(cdir / KB_FILE)
     stamp = {"file_id": f["id"], "folder": folder, "modified": remote_mod, "pulled_at": _now(), "checked_at": _now()}
     stamp_path.write_text(json.dumps(stamp, indent=2), encoding="utf-8")
@@ -151,7 +152,7 @@ def pull(ref: str, repo: Path, force: bool = False) -> dict:
 
 def push(ref: str, repo: Path, path: Path) -> dict:
     """Upload a built kb.sqlite into the KB's Drive folder (curator only)."""
-    KB(path)
+    built = summary(path)
     folder = _folder_for(ref)
     d = _Drive(repo)
     f = d.find(folder, KB_REMOTE)
@@ -165,7 +166,7 @@ def push(ref: str, repo: Path, path: Path) -> dict:
             d.gog("drive", "upload", str(gzpath), "--name", KB_REMOTE, "--parent", folder)
         size = gzpath.stat().st_size
         served = publish_to_canopy(ref, gzpath) if _kind(ref) == "workspace-project" else None
-    out = {"kb": ref, "folder": folder, "replaced": bool(f), "bytes": size, "summary": KB(path).summary}
+    out = {"kb": ref, "folder": folder, "replaced": bool(f), "bytes": size, "summary": built}
     if served:
         out["mcp_url"] = served
     return out
@@ -208,10 +209,10 @@ def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def open_kb(ref: str, repo: Path, max_age_hours: float = 24.0) -> tuple[KB, str]:
+def open_kb(ref: str, repo: Path, max_age_hours: float = 24.0):
     """Open a KB, pulling first when the cache is missing or stale. Returns (kb, warning)."""
     if _kind(ref) == "local":
-        return KB(Path(ref).expanduser()), ""
+        return open_file(Path(ref).expanduser()), ""
     cdir = _cache_dir(ref)
     stamp_path = cdir / "pulled.json"
     stale = True
@@ -230,7 +231,7 @@ def open_kb(ref: str, repo: Path, max_age_hours: float = 24.0) -> tuple[KB, str]
             if not (cdir / KB_FILE).exists():
                 raise
             warning = f"could not refresh from Drive ({e}); serving the cached copy"
-    return KB(cdir / KB_FILE), warning
+    return open_file(cdir / KB_FILE), warning
 
 
 # -- CLI -----------------------------------------------------------------------------
