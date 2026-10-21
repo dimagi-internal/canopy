@@ -168,5 +168,8 @@ the same sign-in as `/api/mcp/`. The engine there is `packages/canopy_kb`, the o
 CLI imports. `search` is words over passages and catalog cards, ordered by a reranker
 (Vertex AI ranking API); no embeddings are involved. canopy-web keeps a vector path
 dormant (`KB_VECTORS`, off) for a corpus that ever needs search by meaning.
-Discovery is the workspace's project list and each project page; a generated marketplace
-entry per project is a possible later addition, for finding them from Claude Code.
+**Finding one:** the MCP directory, a list you browse and choose from. It covers a
+workspace and the ones below it that you belong to: Projects ▸ MCP servers on
+canopy-web (`/w/<ws>/mcp`), or, for an agent, the `list_mcp_servers` tool on canopy's
+main MCP server. Each entry has what it is, its steward, when it was published, and the
+line that adds it. Nothing adds a project server to a session for you.
