@@ -233,3 +233,75 @@ def test_no_drive_root_is_reported(monkeypatch):
 def pa_folder():
     from orchestrator.agent_gdoc import FOLDER_MIME
     return FOLDER_MIME
+
+
+# (f) ------------------------------------------------------------------------------------
+
+GH = "https://github.com/dimagi-internal"
+
+
+def test_shipped_task_flagged_only_when_every_github_ref_is_done():
+    tasks = [
+        task("T1", link_urls=[f"{GH}/canopy-web/issues/1255", f"{GH}/canopy-web/pull/1256"]),
+        task("T2", link_urls=[f"{GH}/canopy-web/issues/1"], title=f"x {GH}/hal/pull/9"),
+        task("T3", links=2),                                    # no GitHub refs at all
+        task("T4", link_urls=[f"{GH}/hal/issues/5"]),           # state unknown (no access)
+    ]
+    states = {"dimagi-internal/canopy-web#1255": "CLOSED",
+              "dimagi-internal/canopy-web#1256": "MERGED",
+              "dimagi-internal/canopy-web#1": "CLOSED", "dimagi-internal/hal#9": "OPEN"}
+    [hit] = pa.check_shipped_tasks(tasks, states)
+    assert hit["ext_id"] == "T1"
+    assert hit["refs"] == ["dimagi-internal/canopy-web#1255 CLOSED",
+                           "dimagi-internal/canopy-web#1256 MERGED"]
+
+
+def test_shipped_check_ignores_notes_closed_and_manual_tasks():
+    tasks = [task("T1", notes=f"history: {GH}/canopy-web/pull/1751 merged"),
+             task("T2", status="done", link_urls=[f"{GH}/x/issues/1"]),
+             task("T3", next_action="[MANUAL — Jon] …", link_urls=[f"{GH}/x/issues/1"])]
+    assert pa.open_task_github_refs(tasks) == []
+    assert pa.check_shipped_tasks(tasks, {"dimagi-internal/x#1": "CLOSED"}) == []
+
+
+def _gh(stdout, rc=0, stderr=""):
+    calls = []
+
+    def runner(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, rc, stdout, stderr)
+    runner.calls = calls
+    return runner
+
+
+def test_fetch_github_states_one_call_and_partial_data_survives_errors():
+    out = json.dumps({"data": {"r0": {"issueOrPullRequest": {"state": "MERGED"}}, "r1": None},
+                      "errors": [{"message": "Could not resolve to a Repository"}]})
+    runner = _gh(out, rc=1)
+    states, note = pa.fetch_github_states(["o/a#1", "o/private#2"], runner=runner)
+    assert (states, note) == ({"o/a#1": "MERGED"}, "")
+    assert len(runner.calls) == 1 and runner.calls[0][:3] == ["gh", "api", "graphql"]
+
+
+def test_fetch_github_states_never_fails():
+    assert pa.fetch_github_states([], runner=_gh("")) == ({}, "")
+    states, note = pa.fetch_github_states(["o/a#1"], runner=_gh("", rc=1, stderr="auth"))
+    assert states is None and "GitHub unreachable" in note
+
+    def boom(cmd, **kw):
+        raise FileNotFoundError("gh")
+    states, note = pa.fetch_github_states(["o/a#1"], runner=boom)
+    assert states is None and "gh" in note
+
+
+def test_audit_reports_shipped_and_github_unchecked_in_closeout():
+    t = task("T1", link_urls=[f"{GH}/hal/pull/286"])
+    r = pa.audit(slug="hal", tasks=[t], projects=[], turns=[], folders=[], now=NOW,
+                 github_states={"dimagi-internal/hal#286": "MERGED"})
+    assert r["closeout"] == "projects: 1 shipped task still open"
+    assert "--task-id T1 --status done" in pa.render(r)
+    r = pa.audit(slug="hal", tasks=[t], projects=[], turns=[], folders=[], now=NOW,
+                 github_states=None, github_note="GitHub unreachable: auth")
+    assert r["shipped_tasks"] is None
+    assert r["closeout"] == "projects: clean (GitHub unchecked)"
+    assert "(f) Open tasks whose GitHub work is finished: skipped" in pa.render(r)

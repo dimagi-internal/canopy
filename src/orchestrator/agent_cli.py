@@ -949,7 +949,8 @@ def agent_project_audit(slug, repo, recent_days, as_json):
 
     Findings: (a) open tasks with no project that look like project work, (b) active
     projects with no Drive folder, (d) project/folder name drift, (e) open tasks touched in
-    the last --recent-days with no `canopy agent turn` record. (c) — Projects/ folders with
+    the last --recent-days with no `canopy agent turn` record, (f) open tasks whose every
+    referenced GitHub issue/PR is closed or merged. (c) — Projects/ folders with
     no active project — is informational only: Drive is the archive and outlives the board.
     Ends with the `projects: …` close-out line turn.md Step 4 requires. ALWAYS exits 0.
     """
@@ -965,9 +966,11 @@ def agent_project_audit(slug, repo, recent_days, as_json):
         _emit({"slug": slug, "error": str(e), "closeout": line}) if as_json else click.echo(line)
         return
     folders, note = pa.list_project_folders(repo, slug)
+    gh_states, gh_note = pa.fetch_github_states(pa.open_task_github_refs(tasks))
     result = pa.audit(slug=slug, tasks=tasks, projects=projects, turns=turns,
                       folders=folders, drive_note=note,
-                      now=datetime.now(timezone.utc), recent_days=recent_days)
+                      now=datetime.now(timezone.utc), recent_days=recent_days,
+                      github_states=gh_states, github_note=gh_note)
     if as_json:
         _emit(result)
     else:

@@ -206,7 +206,8 @@ than starting a new folder.
 
 **Checked every turn, not remembered:** `canopy agent project-audit --slug <slug>` reports the
 gaps in the active direction — open project-like tasks filed nowhere, active projects with no
-folder, project/folder name drift, tasks advanced with no turn record — and feeds the REQUIRED
+folder, project/folder name drift, tasks advanced with no turn record — plus open tasks whose
+GitHub issues/PRs are all closed or merged (finished, but the card was never closed) — and feeds the REQUIRED
 `projects:` close-out line (`turn.md` Step 4). A task counts as project-like when it has ≥2
 links, ≥1 turn record, or ≥2 appended note entries.
 
