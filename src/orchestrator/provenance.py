@@ -66,6 +66,7 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
 _HEADER_SAFE = re.compile(r"^[\x20-\x7e]{1,256}$")
 
 HEADER_CLIENT = "X-Canopy-Client"
+HEADER_ACTS_AS = "X-Canopy-Acts-As"
 HEADER_TURN = "X-Canopy-Parent-Turn"
 HEADER_SESSION = "X-Canopy-Parent-Session"
 HEADER_CLAUDE = "X-Canopy-Claude-Session"
@@ -239,7 +240,8 @@ def provenance_parent(cwd: Optional[str] = None) -> dict:
 def provenance_headers(client: str = DEFAULT_CLIENT, *, cwd: Optional[str] = None) -> dict:
     """Headers identifying this client and, when knowable, its originating session.
 
-    Always returns at least `X-Canopy-Client` and `User-Agent`; never raises.
+    Always returns at least `X-Canopy-Client` and `User-Agent`; never raises. Adds
+    `X-Canopy-Acts-As` when `CANOPY_ACTS_AS` puts this client in a lower mode.
     """
     headers: dict = {}
     try:
@@ -250,11 +252,20 @@ def provenance_headers(client: str = DEFAULT_CLIENT, *, cwd: Optional[str] = Non
     try:
         p = resolve_parent(cwd)
     except Exception:  # noqa: BLE001 — provenance is best-effort, the request is not
-        return headers
+        return _with_acts_as(headers)
     for key, header in (("turn_id", HEADER_TURN), ("session_id", HEADER_SESSION),
                         ("claude_session_id", HEADER_CLAUDE)):
         if p.get(key):
             headers[header] = p[key]
+    return _with_acts_as(headers)
+
+
+def _with_acts_as(headers: dict) -> dict:
+    """`CANOPY_ACTS_AS=editor|viewer` puts this client in a lower mode: every request
+    carries `X-Canopy-Acts-As`, and canopy-web judges it at that role (canopy-web#1705)."""
+    cap = os.environ.get("CANOPY_ACTS_AS", "").strip().lower()
+    if cap in ("editor", "viewer"):
+        headers[HEADER_ACTS_AS] = cap
     return headers
 
 

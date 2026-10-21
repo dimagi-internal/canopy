@@ -141,7 +141,7 @@ def private_runner_register(name, no_runner, as_json):
     yours, with the agent's envelope, rails and (when its caller list allows you) its
     credentials. When this machine also runs the runner app, the two are linked into one
     private runner (canopy-web#1705): sessions here prove themselves with the runner's
-    device key, and `canopy private-runner act-as` sets the role they are judged as."""
+    device key, and `canopy private-runner set private|shared` says which it is."""
     from orchestrator.runner_pin import _machine_runner_id
 
     host = socket.gethostname()
@@ -160,24 +160,19 @@ def private_runner_register(name, no_runner, as_json):
                    "agent ($CANOPY_AGENT, or `canopy local use <slug>`) are now recorded as local turns.")
 
 
-ACT_AS = ("self", "editor", "viewer")
-
-
-@private_runner_group.command("act-as")
-@click.argument("role", type=click.Choice(ACT_AS + ("shared",)))
+@private_runner_group.command("set")
+@click.argument("mode", type=click.Choice(["private", "shared"]))
 @click.option("--json", "as_json", is_flag=True)
-def private_runner_act_as(role, as_json):
-    """Make this machine's runner your PRIVATE runner, judged as ROLE.
+def private_runner_set(mode, as_json):
+    """Make this machine's runner your PRIVATE runner, or a SHARED one again.
 
     \b
-    self    private, and you act as yourself (owner/admin where you are one)
-    editor  private, and everything from this box is judged as a workspace editor:
-            licenses, manual-only turns, credential reads under your license
-    viewer  private, judged as a viewer (most agents refuse a local turn)
-    shared  back to a shared fleet runner (routed work again; no role cap)
+    private  no fleet work — only what you pin or bind to it, and the local sessions here
+    shared   back to a shared fleet runner (routed work again)
 
-    A private runner takes no fleet work — only what you pin or bind to it, and the
-    local sessions here. The cap only ever lowers what you may do (canopy-web#1705)."""
+    To run as a lower role, start the TURN that way (`canopy agent dispatch --as
+    editor`), or put a client in that mode with CANOPY_ACTS_AS=editor|viewer — a
+    property of a turn or a process, never a setting left on a machine (canopy-web#1705)."""
     doc = read_private_runner()
     rid = doc.get("runner_id") or ""
     if not rid:
@@ -187,19 +182,16 @@ def private_runner_act_as(role, as_json):
     if not rid:
         raise click.ClickException("this machine has no runner (~/.canopy/runner.json) — pair the "
                                    "runner app first, then `canopy private-runner register`")
-    private = role != "shared"
-    acts_as = role if role in ("editor", "viewer") else ""
-    body = canopy_web.call("PUT", f"/api/harness/runners/{rid}/private",
-                           {"private": private, "acts_as": acts_as}, token=person_token())
-    out = {"runner_id": rid, "name": body.get("name", ""), "private": body.get("private", private),
-           "acts_as": body.get("acts_as", acts_as)}
+    private = mode == "private"
+    body = canopy_web.call("PUT", f"/api/harness/runners/{rid}/private", {"private": private},
+                           token=person_token())
+    out = {"runner_id": rid, "name": body.get("name", ""), "private": body.get("private", private)}
     if as_json:
         click.echo(json.dumps(out))
     elif not out["private"]:
-        click.echo(f"runner '{out['name']}' is a shared fleet runner again (routed work; no role cap)")
+        click.echo(f"runner '{out['name']}' is a shared fleet runner again (routed work)")
     else:
-        who = f"acting as {out['acts_as']}" if out["acts_as"] else "acting as yourself"
-        click.echo(f"runner '{out['name']}' is now your private runner, {who}. "
+        click.echo(f"runner '{out['name']}' is now your private runner. "
                    "Start a NEW Claude Code session for local sessions to pick it up.")
 
 
