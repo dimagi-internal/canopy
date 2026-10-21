@@ -112,6 +112,14 @@ def person_token(slug: str = "") -> str:
     return tok
 
 
+def session_token(slug: str = "") -> str:
+    """The token a local session's own calls use: on your linked private runner the box's
+    key-bought runner token (no PAT needed, canopy-web#1705), else your PAT."""
+    from orchestrator import private_runner_session
+
+    return private_runner_session.token() or person_token(slug)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # canopy private-runner
 # ──────────────────────────────────────────────────────────────────────────────
@@ -255,7 +263,7 @@ def local_open(slug, session_id, cwd, transcript, want_auto):
     body = canopy_web.call("POST", "/api/harness/local-turns/", {
         "agent": slug, "private_runner": ws["id"], "claude_session_id": session_id,
         "cwd": cwd[:300], "turn_mode": "auto" if want_auto else "",
-    }, token=person_token(slug))
+    }, token=session_token(slug))
     turn_id = str(body["turn_id"])
     env_path = caller_dir() / f"{turn_id}.json"
     envelope = body.get("envelope") or {}
@@ -283,7 +291,7 @@ def local_renew(session_id, force):
     if not force and time.time() - float(state.get("renewed_at") or 0) < RENEW_EVERY:
         return
     canopy_web.call("POST", f"/api/harness/local-turns/{state['turn_id']}/renew",
-                    token=person_token(state.get("slug", "")))
+                    token=session_token(state.get("slug", "")))
     state["renewed_at"] = time.time()
     _write_private(_session_file(session_id), state)
 
@@ -354,7 +362,7 @@ def close_session(session_id: str, *, transcript: str = "", status: str = "done"
     if not state:
         return "no local turn for this session"
     transcript = transcript or str(state.get("transcript") or "")
-    tok = person_token(state.get("slug", ""))
+    tok = session_token(state.get("slug", ""))
     turn_id = state["turn_id"]
     note = ""
     if transcript and Path(transcript).is_file():

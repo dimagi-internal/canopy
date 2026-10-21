@@ -267,6 +267,9 @@ def main() -> int:
         turn_id = open_local_turn(canopy, slug, data, env_file)
         if turn_id:
             os.environ["CANOPY_TURN_ID"] = turn_id
+            # The reads below are this local turn's: on a private runner they sign in
+            # with the box's own key (orchestrator/private_runner_session.py).
+            os.environ["CANOPY_LOCAL_TURN"] = "1"
     if canopy and not confined and not on_runner:
         stage_delegated(canopy, slug)
     present = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
