@@ -29,8 +29,7 @@ always safe to hand to any agent or teammate.
 
 ```
 bundle/
-  manifest.json          {"name", "publisher", "license", "tables": {...}, "search_boost": {...},
-                          "guide": [...], "embed_skip_types": [...]}
+  manifest.json          {"name", "publisher", "license", "tables": {...}, "guide": [...]}
   items.jsonl            {"id", "type", "title", "url", "date", "text", "meta", "sha256", "fetched_at",
                           "card": {...}}
   tables/<name>.jsonl    one JSON object per row
@@ -53,10 +52,8 @@ bundle/
 - `tables.<name>`: `description`, and optionally `date_column`, `amount_column`,
   `filter_columns` — each declared table also becomes a named MCP tool whose arguments
   are its `filter_columns`.
-- `search_boost`: `{type: factor}`. A publisher's site usually hosts thousands of
-  third-party documents; boost its own analysis above them or they drown every search.
 - `guide`: publisher-specific notes `kb_info` shows (which source wins, whose view a
-  document type is). `embed_skip_types`: types kept out of the vector sync (raw data).
+  document type is, e.g. "charity-supplied PDFs are not the publisher's view").
 - `aliases.json`: names that are one organisation or program (renames, synonyms), so
   `entity` gathers them; normalised spellings and acronyms merge without it.
 
@@ -133,7 +130,8 @@ cite (the row's url, never the KB), and how the curator refreshes it.
 `/api/mcp/projects/<workspace>/<handle>/` (canopy-web `apps/mcp/projects.py`): one
 Streamable-HTTP server for every project, whose tool list is the named project's, behind
 the same sign-in as `/api/mcp/`. The engine there is `packages/canopy_kb`, the one this
-CLI imports. Where the project keeps vectors (pgvector, `kb_embed`), `search` pools its
-nearest passages with the word matches; a reranker orders the pool.
+CLI imports. `search` is words over passages and catalog cards, ordered by a reranker
+(Vertex AI ranking API); no embeddings are involved. canopy-web keeps a vector path
+dormant (`KB_VECTORS`, off) for a corpus that ever needs search by meaning.
 Discovery is the workspace's project list and each project page; a generated marketplace
 entry per project is a possible later addition, for finding them from Claude Code.
