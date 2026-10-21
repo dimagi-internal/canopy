@@ -254,3 +254,12 @@ def test_runner_id_comes_from_the_pairing_config(tmp_path):
     cfg.write_text(json.dumps({"runner_id": "abc", "token": "SECRET"}))
     assert dk.runner_id_from_config(cfg) == "abc"
     assert dk.runner_id_from_config(tmp_path / "missing.json") == ""
+
+
+def test_default_label_names_macos_not_its_kernel(monkeypatch):
+    """`platform.system()` is "Darwin" on a Mac; the label reaches people in approval
+    mail, where "DIM-SA-A126 (Darwin)" read as a machine they had never heard of."""
+    monkeypatch.setattr(dk.socket, "gethostname", lambda: "DIM-SA-A126.local")
+    assert dk.default_label(lambda: "Darwin") == "DIM-SA-A126 (macOS)"
+    assert dk.default_label(lambda: "Windows") == "DIM-SA-A126 (Windows)"
+    assert dk.default_label(lambda: "") == "DIM-SA-A126 (unknown)"
