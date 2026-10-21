@@ -594,6 +594,16 @@ def test_payload_carries_turn_mode_only_when_requested():
         build_turn_payload("hal", prompt="p", idempotency_key="k", turn_mode="yolo")
 
 
+def test_payload_carries_acts_as_only_when_asked():
+    plain = build_turn_payload("hal", prompt="p", idempotency_key="k")
+    assert "acts_as" not in plain
+    capped = build_turn_payload("hal", prompt="p", idempotency_key="k", acts_as="editor")
+    assert capped["acts_as"] == "editor"
+    assert {k: v for k, v in capped.items() if k != "acts_as"} == plain
+    with pytest.raises(DispatchError):
+        build_turn_payload("hal", prompt="p", idempotency_key="k", acts_as="admin")
+
+
 def test_a_moded_key_never_dedupes_onto_an_unmoded_one():
     base = derive_idempotency_key("hal", "Ping", "2026-10-04")
     assert derive_idempotency_key("hal", "Ping", "2026-10-04", mode="") == base

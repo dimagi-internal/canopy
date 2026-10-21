@@ -96,6 +96,8 @@ class DispatchError(Exception):
 
 
 TURN_MODES = ("auto", "manual")
+#: The lower roles a turn may be started as (canopy-web#1705) — only ever lowers.
+ACTS_AS = ("editor", "viewer")
 
 
 def untitled_work_basis(prompt: str) -> str:
@@ -232,7 +234,7 @@ def check_pin_liveness(runner: dict) -> tuple[list[str], list[str], list[str]]:
 def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
                        task_ext_id: str | None = None, sender: str | None = None,
                        runner_id: str | None = None, turn_mode: str | None = None,
-                       person: str | None = None) -> dict:
+                       person: str | None = None, acts_as: str | None = None) -> dict:
     """The `POST /api/harness/turns/` body for a one-shot dispatch.
 
     `sender` is the dispatching agent's slug, defaulting to whichever agent repo we are standing
@@ -294,6 +296,13 @@ def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
         if mode not in TURN_MODES:
             raise DispatchError(f"turn mode must be one of {', '.join(TURN_MODES)}, not {mode!r}")
         payload["turn_mode"] = mode
+    # Run this turn as a LOWER role (TurnIn.acts_as): judged as an editor or a viewer
+    # from start to finish. Omitted when unset: the caller acts as themselves.
+    cap = (acts_as or "").strip().lower()
+    if cap:
+        if cap not in ACTS_AS:
+            raise DispatchError(f"--as must be one of {', '.join(ACTS_AS)}, not {cap!r}")
+        payload["acts_as"] = cap
     return payload
 
 

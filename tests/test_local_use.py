@@ -270,19 +270,17 @@ def test_register_without_a_runner_sends_no_link(home, calls, monkeypatch):
     assert "runner" not in calls[-1][2]
 
 
-@pytest.mark.parametrize("role,private,acts_as", [
-    ("editor", True, "editor"), ("viewer", True, "viewer"), ("self", True, ""), ("shared", False, ""),
-])
-def test_act_as_sets_this_runner_private_at_a_role(home, calls, monkeypatch, role, private, acts_as):
+@pytest.mark.parametrize("mode,private", [("private", True), ("shared", False)])
+def test_set_makes_this_runner_private_or_shared(home, calls, monkeypatch, mode, private):
     monkeypatch.setattr("orchestrator.runner_pin.DEFAULT_RUNNER_CONFIG", home / ".canopy/runner.json")
     _runner_json(home)
-    _cli("pr", "act-as", role)
+    _cli("pr", "set", mode)
     method, path, body, token = calls[-1]
     assert (method, path, token) == ("PUT", "/api/harness/runners/rid-1/private", "person-pat")
-    assert body == {"private": private, "acts_as": acts_as}
+    assert body == {"private": private}
 
 
-def test_act_as_needs_a_runner(home, calls, monkeypatch):
+def test_set_needs_a_runner(home, calls, monkeypatch):
     monkeypatch.setattr("orchestrator.runner_pin.DEFAULT_RUNNER_CONFIG", home / "nope.json")
-    r = CliRunner().invoke(local_cli.private_runner_group, ["act-as", "editor"])
+    r = CliRunner().invoke(local_cli.private_runner_group, ["set", "private"])
     assert r.exit_code != 0 and "has no runner" in r.output

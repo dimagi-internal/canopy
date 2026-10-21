@@ -173,3 +173,11 @@ def test_emdash_task_name_finds_the_record_when_the_cwd_is_elsewhere(root, monke
     monkeypatch.setenv("EMDASH_TASK_NAME", TASK)
     monkeypatch.chdir(tmp_path)
     assert pv.provenance_parent() == {"turn": TURN, "session": SESSION}
+
+
+def test_canopy_acts_as_puts_the_client_in_a_lower_mode(root, monkeypatch, tmp_path):
+    monkeypatch.delenv("CANOPY_ACTS_AS", raising=False)
+    assert pv.HEADER_ACTS_AS not in pv.provenance_headers(cwd=str(tmp_path))
+    for raw, want in (("editor", "editor"), ("VIEWER", "viewer"), ("admin", None)):
+        monkeypatch.setenv("CANOPY_ACTS_AS", raw)
+        assert pv.provenance_headers(cwd=str(tmp_path)).get(pv.HEADER_ACTS_AS) == want

@@ -1775,10 +1775,15 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
                    "agent's owner or an admin (workspace owners included), on a session or "
                    "your own PAT — canopy-web refuses anyone else (403). Omit to let the "
                    "agent's rules decide.")
+@click.option("--as", "acts_as", type=click.Choice(["editor", "viewer"]), default=None,
+              help="Run THIS turn as a lower role than yours: whether it may start, its "
+                   "mode, its access and its credential reads are all judged as an editor "
+                   "or a viewer. Only lowers, so anyone may ask; it ends with the turn. How "
+                   "to run the non-admin path for real.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links,
                    next_action, idempotency_key, runner_ref, queue_if_not_ready, turn_mode,
-                   as_json):
+                   acts_as, as_json):
     """Record work on an agent's board, then trigger a runner session to do it.
 
     The one-shot counterpart to a schedule: schedules are for recurring work, this is
@@ -1854,7 +1859,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
     key = idempotency_key or derive_idempotency_key(
         slug, title, day, runner_id=str(pinned["id"]) if pinned else "",
-        mode=turn_mode or "", prompt=prompt)
+        mode=(turn_mode or "") + (f"+as-{acts_as}" if acts_as else ""), prompt=prompt)
 
     try:
         client = _client(slug)
@@ -1878,7 +1883,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
         payload = build_turn_payload(slug, prompt=prompt, idempotency_key=key,
                                      task_ext_id=task_ext_id,
                                      runner_id=str(pinned["id"]) if pinned else None,
-                                     turn_mode=turn_mode, person=person)
+                                     turn_mode=turn_mode, person=person, acts_as=acts_as)
         turn = canopy_web.call("POST", TURNS_PATH, payload)
     except DispatchError as e:
         raise click.ClickException(str(e))
