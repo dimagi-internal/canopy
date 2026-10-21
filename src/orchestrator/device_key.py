@@ -884,12 +884,18 @@ def runner_id_from_config(path: Optional[Path] = None) -> str:
         return ""
 
 
-def default_label() -> str:
+#: `platform.system()` reports the kernel; "Darwin" read to a Mac owner as a machine
+#: they had never heard of when it reached them in an approval email (2026-10-21).
+_OS_NAMES = {"Darwin": "macOS"}
+
+
+def default_label(system: Callable[[], str] = platform.system) -> str:
     try:
         host = socket.gethostname().split(".")[0]
     except OSError:
         host = "this machine"
-    return f"{host} ({platform.system() or 'unknown'})"
+    name = system() or "unknown"
+    return f"{host} ({_OS_NAMES.get(name, name)})"
 
 
 Call = Callable[..., dict]
