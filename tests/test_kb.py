@@ -219,6 +219,65 @@ def test_push_of_a_workspace_project_also_publishes_it_to_canopy(tmp_path, monke
     assert out["mcp_url"].endswith("/api/mcp/projects/connect/givewell-kb/")
 
 
+def _originals_bundle(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "a").write_bytes(b"%PDF-1.4 report")
+    (raw / "b").write_bytes(b"PK workbook")
+    b = tmp_path / "bundle"
+    b.mkdir()
+    items = [{"id": "pdf:1", "original": {"sha256": "a" * 64, "content_type": "application/pdf", "path": str(raw / "a")}},
+             {"id": "pdf:1-copy", "original": {"sha256": "a" * 64, "content_type": "application/pdf", "path": str(raw / "a")}},
+             {"id": "sheet:1", "original": {"sha256": "b" * 64, "content_type": "application/vnd.ms-excel",
+                                            "path": str(raw / "b")}},
+             {"id": "blog:1", "text": "no original"}]
+    (b / "items.jsonl").write_text("\n".join(json.dumps(i) for i in items))
+    return b
+
+
+def test_push_uploads_only_the_originals_canopy_lacks_before_publishing(tmp_path, monkeypatch):
+    from orchestrator import canopy_web
+
+    db = _kb_file(tmp_path / "kb.sqlite")
+    _FakeDrive.files = {}
+    monkeypatch.setattr(kb_cli, "_Drive", _FakeDrive)
+    calls, puts = [], []
+
+    def fake_call(method, path, body=None, **kw):
+        calls.append(path)
+        if path == "/api/workspace-projects/connect/givewell-kb/":
+            return {"drive_folder_id": "1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF"}
+        if path.endswith("/kb/originals"):
+            assert {f["sha256"] for f in body["files"]} == {"a" * 64, "b" * 64}  # once each
+            return {"have": 1, "uploads": [{"sha256": "b" * 64, "url": "https://s3/b",
+                                            "headers": {"x-amz-checksum-sha256": "x"}}]}
+        if path.endswith("/kb/upload"):
+            return {"key": "k", "url": "https://s3/put", "headers": {}}
+        if path.endswith("/kb/publish"):
+            return {"mcp_path": "/api/mcp/projects/connect/givewell-kb/"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(canopy_web, "call", fake_call)
+    monkeypatch.setattr(kb_cli, "_put", lambda url, path, headers: puts.append((url, path.read_bytes(), headers)))
+
+    out = kb_cli.push("connect/givewell-kb", tmp_path, db, originals=_originals_bundle(tmp_path))
+
+    assert puts[0] == ("https://s3/b", b"PK workbook", {"x-amz-checksum-sha256": "x"})
+    assert out["originals"] == {"files": 2, "already_stored": 1, "uploaded": 1, "bytes_uploaded": 11}
+    assert calls.index("/api/workspace-projects/connect/givewell-kb/kb/originals") < calls.index(
+        "/api/workspace-projects/connect/givewell-kb/kb/publish")
+
+
+def test_push_refuses_originals_that_are_not_on_disk_or_have_nowhere_to_go(tmp_path, monkeypatch):
+    db = _kb_file(tmp_path / "kb.sqlite")
+    b = _originals_bundle(tmp_path)
+    with pytest.raises(KBError, match="workspace project"):
+        kb_cli.push("1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF", tmp_path, db, originals=b)
+    (tmp_path / "raw" / "b").unlink()
+    with pytest.raises(KBError, match="1 originals named"):
+        kb_cli.collect_originals(b)
+
+
 def test_a_drive_folder_push_publishes_nothing(tmp_path, monkeypatch):
     db = _kb_file(tmp_path / "kb.sqlite")
     _FakeDrive.files = {}

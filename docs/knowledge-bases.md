@@ -11,7 +11,8 @@ copies, with the tables you compute with alongside. Engine: canopy-web's
 | | Owner | Where |
 |---|---|---|
 | The library | a **workspace project** (e.g. `connect/givewell-kb`), its curator as steward | its Drive folder holds `kb.sqlite.gz` |
-| Adapters (where the publisher puts things) + the library's skill | the **curator** agent | the curator's repo (e.g. Eva's `bin/eva-kb-givewell`, `skills/givewell-kb`) |
+| Adapters (where the publisher puts things, how its items are typed, its tables and guide) + the library's skill | the **curator** agent | the curator's repo (e.g. Eva's `bin/eva-kb-givewell`, `lib/kb_givewell`, `skills/givewell-kb`) |
+| Preprocessing every curator needs: raw cache, a reader per format (HTML, PDF, xlsx/xls, docx/doc), OCR of scans, dedupe, catalog cards, aliases, originals | **canopy** | `canopy_kb.prep` (canopy-web `packages/canopy_kb`, extra `[prep]`) |
 | Build, diff, store, serve (MCP) | **canopy** | this module |
 | Readers | **every agent** in the workspace | the MCP tools (`canopy kb mcp`) |
 
@@ -31,7 +32,7 @@ always safe to hand to any agent or teammate.
 bundle/
   manifest.json          {"name", "publisher", "license", "tables": {...}, "guide": [...]}
   items.jsonl            {"id", "type", "title", "url", "date", "text", "meta", "sha256", "fetched_at",
-                          "card": {...}}
+                          "card": {...}, "original": {...}}
   tables/<name>.jsonl    one JSON object per row
   aliases.json           optional: {"org"|"program"|"country": [{"canonical", "names": [...]}]}
 ```
@@ -43,6 +44,14 @@ bundle/
   document): `summary` (what it is, what it says, its headline figures), `kind`, `orgs`,
   `programs`, `countries`, `period`, `superseded`, `answers` (questions it answers).
   Cards are what an agent browses before it reads, and the source of the entity index.
+- `original` is the **file the text was read from**, as the publisher served it:
+  `sha256`, `filename`, `content_type`, `bytes`, `source_url`, `fetched_at`, and `path`
+  (where the curator's copy sits; it never leaves the curator's machine except as the
+  upload). The text is a reading copy, made so search, `read` and `grep` work; the original
+  stays the record: the workbook a reader recomputes, a PDF's charts and layout, a version
+  the publisher has since changed or taken down. `canopy_kb.prep.originals.record` makes
+  one from a raw fetch. Items with no file behind them (an API's posts, a table's rows)
+  leave it out.
 - `meta.linked_from` (ids or urls of the items that link to this one) and `meta.parent`
   become the link graph; `meta.also_at` lists other urls of the same document.
 
@@ -61,7 +70,7 @@ bundle/
 
 ```bash
 canopy kb build bundle/ --out kb.sqlite [--previous last.sqlite]   # diff → change history
-canopy kb push --kb connect/givewell-kb kb.sqlite             # → Drive, gzipped
+canopy kb push --kb connect/givewell-kb kb.sqlite --originals bundle/   # originals, Drive, publish
 ```
 
 `build` needs the engine in canopy's environment (`uv tool install … --with
@@ -70,7 +79,26 @@ the command prints this when it is missing). It splits each item into 3,200-char
 with 400 of overlap along its headings, indexes them (FTS5) with the cards, builds the
 entity index, outlines and links, stores each declared table as SQL, and carries the
 previous build's change rows forward, so `whats_new` is a dated history across
-refreshes. A build with no previous is a baseline. `push` needs no engine.
+refreshes. It carries originals forward the same way: a file no item points at any more
+stays listed as a superseded version. A build with no previous is a baseline. `push`
+needs no engine.
+
+`--originals bundle/` uploads each item's original to canopy-web's store before the build
+is published, only the ones it lacks: they are stored by sha256 (S3 checks each upload
+against it) and never deleted, so an unchanged file uploads once and every earlier version
+stays downloadable. A missing file on disk refuses the push rather than publish a build
+that points at it.
+
+**The curator's toolkit.** `canopy_kb.prep` (`pip install 'canopy-kb[prep] @
+git+ssh://git@github.com/dimagi-internal/canopy-web.git#subdirectory=packages/canopy_kb'`)
+is the preprocessing every library needs, so a curator writes only what is particular to
+its publisher: `raw` (an HTTP cache keeping every response's bytes), `extract` (a reader
+per format, cached by sha256: a page's whole content region, PDFs in reading order,
+spreadsheets row by row with headers, formulas and notes, Word files), `ocr` (scanned PDFs
+transcribed by Gemini), `dedupe` (identical documents once, a spreadsheet tab copied into
+many workbooks once), `cards` and `aliases` (Gemini), `originals`. Eva's
+`lib/kb_givewell` is the worked example: GiveWell's sources and crawl, how its items are
+typed, its tables and guide, and calls into `prep` for the rest.
 
 ## Read (everyone): the project's own MCP server
 
@@ -93,11 +121,14 @@ identity:
 ```
 
 Tools: `kb_info`, `search`, `get` (with `grep` to verify a quote or number), `list_items`,
-`whats_new`, `table`, plus one per declared table (`grants`, …). Readable by members of
+`whats_new`, `table`, plus one per declared table (`grants`, …), and `original` when the
+build carries originals (a 15-minute download link to the file, and its earlier
+versions). Readable by members of
 the project's workspace and of its steward's.
 
-**Publishing it** is part of `canopy kb push --kb <workspace>/<handle>`: after the Drive
-copy, it uploads the gzipped file straight to storage (a presigned PUT) and publishes it,
+**Publishing it** is part of `canopy kb push --kb <workspace>/<handle>`: after the
+originals (with `--originals`) and the Drive copy, it uploads the gzipped file straight
+to storage (a presigned PUT) and publishes it,
 and every canopy instance serves the new build from its next call. Drive keeps the copy
 people browse and the source for the offline path below.
 
@@ -110,8 +141,11 @@ Tools, for an agent doing research: `kb_info` (what the library holds, the SQL t
 how to work it), `search` (documents with their cards and best passages), `entity`
 (everything about an organisation or program, with its grants), `doc` (outline, links,
 other versions), `read` (a section, or from an offset), `grep` (a figure or quote in a
-long document, or across an entity's documents), `sql` (read-only over the tables), plus
-`get`, `list_items`, `whats_new`, `table` and one tool per declared table. Measured on 70
+long document, or across an entity's documents), `sql` (read-only over the tables),
+`original` (the file a document was read from), plus `get`, `list_items`, `whats_new`,
+`table` and one tool per declared table. Served offline (`canopy kb mcp`), `original`
+describes the file and points at the publisher's copy; only canopy-web hands out the
+stored one. Measured on 70
 GiveWell questions with the same agent, this set answered 33-34 of 40 fact questions
 against 27-28 with one-shot passage search, and won 20.5 of 30 research questions.
 
