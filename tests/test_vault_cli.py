@@ -142,6 +142,9 @@ class FakeWeb:
         if method == "PATCH" and path == f"{base}/credential-source":
             self.source = body["credential_source"]
             return 200, json.dumps({"slug": "eva", "credential_source": self.source})
+        if method == "POST" and path == "/api/agents/":
+            self.declared = body
+            return 201, json.dumps(body)
         if method == "GET" and path == f"{base}/credentials/access":
             return 200, json.dumps({"agent": "eva", "credential_source": self.source,
                                     "may_resolve": True, "via": "admin", "reason": ""})
@@ -252,6 +255,9 @@ def test_import_switch_moves_the_backend_only_when_complete(fake_op, repo, web):
     assert res.ok and web.source == "canopy-web"
     assert ("PATCH", "/api/agents/eva/credential-source",
             {"credential_source": "canopy-web"}) in web.calls
+    # the box's refresh asks only for declared names, so the switch declares what it stored
+    assert web.declared["slug"] == "eva"
+    assert web.declared["runtime_secrets"] == sorted(web.stored)
 
 
 def test_import_switch_refuses_when_a_ref_cannot_be_read(fake_op, repo, web):

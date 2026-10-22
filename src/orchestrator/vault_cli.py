@@ -293,6 +293,8 @@ def run_import(slug: str, *, token: str, op: av.Op, switch: bool = False,
         else:
             _switch(slug, "canopy-web", web)
             res.actions.append(f"switched {slug} to canopy-web")
+            res.actions.append(_declare(slug, sorted(n for n, r in present.items()
+                                                       if r.get("set", True)), web))
     return res
 
 
@@ -336,6 +338,20 @@ def _switch(slug: str, to: str, web) -> None:
     if got is not None and got != to:
         raise VaultCliError(f"canopy-web answered credential_source={got!r}, expected {to!r}")
     cred_cli._cache_drop(slug)  # the 10-minute /access cache still names the old backend
+
+
+def _declare(slug: str, names: list[str], web) -> str:
+    """Make the names now stored on canopy-web the agent's declared secrets
+    (`runtime_secrets`). On 1Password a runner read the Gmail token from the vault; on
+    canopy vault its refresh asks only for what the agent declares, so an agent that
+    declared nothing kept a box that could not find its mailbox (ada, 2026-10-22). The
+    upsert re-sends the agent's own fields: it writes every one it is given."""
+    agent = web("GET", f"/api/agents/{slug}/") or {}
+    body = {k: agent.get(k) or "" for k in ("slug", "name", "description", "persona",
+                                              "email", "avatar_url")}
+    body["runtime_secrets"] = names
+    web("POST", "/api/agents/", body)
+    return f"declared {len(names)} secret(s) for {slug}: {', '.join(names)}"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
