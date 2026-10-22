@@ -35,6 +35,7 @@
 // ESM, not CommonJS: plugins/canopy/scripts/package.json declares "type": "module",
 // so a `.js` here IS an ES module and `require` is not defined in it.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -402,11 +403,37 @@ function turnAgentToken() {
   }
 }
 
+// THIS SESSION'S OWN LOGIN, on a laptop (phase 2 of the same spec). An emdash turn
+// finishes as soon as its session exists, so a turn login would strand this connection;
+// canopy-web instead issues a login tied to the SESSION, held while it stays live on this
+// runner. Asked through the canopy CLI (`canopy agent session-token`), which finds the
+// session's turn (EMDASH_TASK_NAME / the caller record) and holds this box's runner token
+// — neither is something this helper should hold. Only for an agent session
+// (CANOPY_AGENT); "" on any miss, and the stored canopy-pat below stays the fallback.
+function sessionAgentToken() {
+  const slug = (process.env.CANOPY_AGENT || "").trim();
+  if (!/^[a-z0-9][a-z0-9_-]*$/i.test(slug) || process.env.CANOPY_TURN_AGENT_TOKEN === "0") return "";
+  const local = path.join(os.homedir(), ".local", "bin", "canopy");
+  for (const cli of [local, "canopy"]) {
+    try {
+      const r = spawnSync(cli, ["agent", "session-token", "--slug", slug],
+                          { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] });
+      const token = (r.status === 0 && r.stdout ? r.stdout : "").trim();
+      if (token) return token;
+      if (r.error === undefined) return "";   // it ran and had none: do not try another copy
+    } catch {
+      // try the next
+    }
+  }
+  return "";
+}
+
 let headers = {};
 try {
   const token =
     scoped.token ||
     turnAgentToken() ||
+    sessionAgentToken() ||
     (process.env.CANOPY_WEB_PAT || "").trim() ||
     slugEnvPat(process.env.CANOPY_AGENT) ||
     agentEnvPat() ||
