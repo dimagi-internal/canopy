@@ -32,7 +32,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from orchestrator.kb_engine import KBError
+from orchestrator.kb_engine import KBError, engine
 
 FOLDER = "application/vnd.google-apps.folder"
 _G = "application/vnd.google-apps."
@@ -106,6 +106,7 @@ class Gog:
         return list(got.get("changes") or []), str(got.get("newStartPageToken") or got.get("nextPageToken") or "")
 
     def download(self, file_id: str, out: Path, fmt: str = "") -> None:
+        out.unlink(missing_ok=True)  # gog refuses to overwrite: an edited file is read again
         args = ["drive", "download", file_id, "--out", str(out)]
         if fmt:
             args += ["--format", fmt]
@@ -228,6 +229,7 @@ def _now() -> str:
 def sync(ref: str, repo: Path, data: Path, source: str = "", push: bool = True, gog: Gog | None = None) -> dict:
     """Download the approved files that changed, hold spreadsheets with personal-data
     headers, write the bundle, build and push it. `data` is the working cache."""
+    engine()
     from canopy_kb.sensitive import header_flags, spreadsheet_headers
 
     from orchestrator import canopy_web

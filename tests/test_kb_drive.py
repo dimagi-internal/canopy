@@ -1,6 +1,7 @@
 """`canopy kb drive`: the inventory reads metadata only; sync reads only what the owner
 approved, holds spreadsheets with personal-data headers, and publishes the rest."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +38,22 @@ class FakeGog:
     def download(self, file_id, out, fmt=""):
         self.downloads.append((file_id, fmt))
         out.write_bytes(self.bodies[file_id])
+
+
+class RealishGog(kb_drive.Gog):
+    """The real wrapper's download over a `run` that, like gog, refuses an existing --out."""
+
+    def __init__(self, fake):
+        self.fake = fake
+
+    def __getattr__(self, name):
+        return getattr(self.fake, name)
+
+    def run(self, *args):
+        out = Path(args[args.index("--out") + 1])
+        if out.exists():
+            raise kb_drive.KBError(f"open {out}: file exists")
+        self.fake.download(args[2], out, args[args.index("--format") + 1] if "--format" in args else "")
 
 
 def _tree():
@@ -114,8 +131,9 @@ def test_sync_reads_only_approved_files_holds_personal_data_and_publishes_the_re
     calls = _calls(monkeypatch, [SOURCE], readable=_readable())
     pushed = []
     monkeypatch.setattr("orchestrator.kb_cli.push", lambda ref, repo, path, **kw: pushed.append(kw) or {"published": "delta"})
-    gog = FakeGog(_tree(), bodies={"doc": b"# Protocol\n\nSkin to skin for 20 hours a day.",
-                                   "sheet": b"Mother name,DOB,Weight\nA,2026-01-01,1800\n"})
+    fake = FakeGog(_tree(), bodies={"doc": b"# Protocol\n\nSkin to skin for 20 hours a day.",
+                                    "sheet": b"Mother name,DOB,Weight\nA,2026-01-01,1800\n"})
+    gog = RealishGog(fake)
     out = kb_drive.sync("connect/kmc-kb", None, tmp_path, gog=gog)
     assert gog.downloads == [("doc", "md"), ("sheet", "")]
     assert out["held"] == [{"file": "Patient list", "headers": ["Mother name", "DOB"]}]
@@ -154,3 +172,12 @@ def test_a_shared_drive_listing_without_sharing_asks_each_file(monkeypatch):
     gog = FakeGog(tree)
     kb_drive.inventory("connect/kmc-kb", None, gog=gog)
     assert gog.perm_calls == 3 and all(f["readers"] == ["user:hal@dimagi-ai.com"] for f in posted[0]["files"])
+
+
+def test_sync_without_the_engine_says_how_to_install_it(monkeypatch, tmp_path):
+    import builtins
+    real = builtins.__import__
+    monkeypatch.setattr(builtins, "__import__",
+                        lambda name, *a, **k: (_ for _ in ()).throw(ImportError(name)) if name.startswith("canopy_kb") else real(name, *a, **k))
+    with pytest.raises(kb_drive.KBError, match="uv tool install"):
+        kb_drive.sync("connect/kmc-kb", None, tmp_path, gog=FakeGog(_tree()))
