@@ -205,7 +205,7 @@ def run_reset(d: Directory, store: Store, *, email: str, ou: str,
 
 def load_key(key_file: str, key_agent: str, *, env=os.environ, resolve=None) -> dict:
     if key_file:
-        raw = Path(key_file).expanduser().read_text()
+        raw = Path(key_file).expanduser().read_text(encoding="utf-8")
     elif env.get(KEY_REF):
         raw = env[KEY_REF]
     else:

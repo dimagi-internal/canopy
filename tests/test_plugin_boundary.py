@@ -31,7 +31,7 @@ FRAMEWORK = {
     "eval_cli", "eval_rubric", "turn_synthesis", "session_upload", "fleet_align",
     "decide_guard_prompt", "decide_guard_cli",
     "session_sources", "session_liveness", "work_cursor", "kb_engine", "kb_cli", "kb_mcp", "agent_dispatch", "llm_output",
-    "project_dispatch", "project_cli", "project_audit", "project_folder", "task_folder", "runner_cli", "secret_cli", "people_cli", "slack_ingest_cli", "aws_cli", "cred_cli", "cred_resolve", "local_cli", "agent_use", "private_runner_session", "device_key", "device_key_aws", "device_key_kms", "device_key_tpm", "runner_session", "turn_agent_token", "vault_cli", "vault_zk", "vault_zk_cli", "workspace_cli",
+    "project_dispatch", "project_cli", "project_audit", "project_folder", "task_folder", "runner_cli", "secret_cli", "people_cli", "slack_ingest_cli", "aws_cli", "cred_cli", "cred_resolve", "local_cli", "agent_use", "private_runner_session", "device_key", "device_key_aws", "device_key_kms", "device_key_tpm", "runner_session", "turn_agent_token", "vault_cli", "vault_zk", "vault_zk_cli", "google_account", "workspace_cli",
     "provenance",
     "huddle", "huddle_store", "huddle_cli", "huddle_group_cli", "checkin_cli", "huddle_types", "thread", "thread_cli", "runner_pin",
 }
