@@ -394,6 +394,36 @@ def agent_doctor(repo, slug, all_agents, do_fix, as_json):
         raise SystemExit(1)
 
 
+@agent.command("use")
+@click.argument("slug")
+@click.option("--dir", "directory", default=".", type=click.Path(file_okay=False),
+              help="The project whose Claude Code sessions use the agent (default: here).")
+@click.option("--json", "as_json", is_flag=True, help="Print the steps as JSON.")
+def agent_use(slug, directory, as_json):
+    """Use agent SLUG yourself, in Claude Code on this computer — no runner needed.
+
+    \b
+    Two ways to run an agent:
+      1. Use it yourself in Claude Code: run this once on your computer.
+      2. Let it run on its own: a runner — your Mac's runner app (set it
+         Private: it does only your work) or a fleet cloud box.
+
+    \b
+    This sets up way 1 and is safe to re-run. It checks, and fixes where it can:
+    your canopy-web sign-in, this computer's registration for local use, its
+    device key, this device's access to the agent's canopy vault, your licence
+    to use the agent, the agent's plugin, $CANOPY_AGENT for --dir, and the
+    agent's env. Each step says ok / done / NEEDS YOU (with the exact URL or
+    person). It ends with the line to start the agent, or what is left for you.
+    Exits 1 while anything NEEDS YOU."""
+    from orchestrator import agent_use as au
+
+    rep = au.run(slug, directory, au.real_deps())
+    click.echo(json.dumps(rep.as_dict(), indent=1) if as_json else rep.render())
+    if rep.needs:
+        raise SystemExit(1)
+
+
 @agent.command("op-token")
 @click.option("--slug", envvar="CANOPY_AGENT", required=True,
               help="Agent slug. Default: $CANOPY_AGENT (set by every agent repo's settings.json).")
@@ -407,10 +437,18 @@ def agent_op_token(slug):
     canopy-web hands the key only to a caller who pairs a live runner this agent routes to.
 
     Prints the key alone on stdout, for `OP_SERVICE_ACCOUNT_TOKEN="$(canopy agent op-token)"`.
-    Exit 1 with the reason on stderr when there is none — never an empty success.
+    Exit 1 with the reason on stderr when there is none — never an empty success. Exit 3
+    when the agent keeps its secrets in canopy vault: it HAS no 1Password key, by design
+    (the SessionStart hook then just syncs its env from canopy vault).
     """
     from orchestrator import cred_resolve
     from orchestrator.agent_bootstrap import _operator_token
+    from orchestrator.cred_cli import fetch_access
+    access = fetch_access(slug)
+    if not access.get("error") and access.get("credential_source") == "canopy-web":
+        click.echo(f"{slug} keeps its secrets in canopy vault — there is no 1Password key "
+                   f"(`canopy cred sync --agent {slug}` keeps its env current)", err=True)
+        raise SystemExit(OP_TOKEN_CANOPY_VAULT)
     try:
         body = cred_resolve.resolve(slug, token=_operator_token()) or {}
     except Exception as e:  # noqa: BLE001 — report, don't traceback
@@ -418,8 +456,13 @@ def agent_op_token(slug):
     token = str(body.get("op_sa_token") or "")
     if not token:
         raise click.ClickException(
-            f"canopy-web has no 1Password key for {slug} (register it: PUT /api/agents/{slug}/vault)")
+            f"canopy-web has no 1Password key for {slug} — it is a LEGACY 1Password agent; an "
+            f"admin moves it to canopy vault with `canopy vault import --agent {slug} --zk --switch`")
     click.echo(token)
+
+
+#: `canopy agent op-token`'s exit code for an agent whose secrets live in canopy vault.
+OP_TOKEN_CANOPY_VAULT = 3
 
 
 def delegated_chrome_sales_home(slug: str) -> Path:
@@ -489,7 +532,7 @@ def agent_stage_delegated(slug):
 @click.option("--agent", "agent_slug", default="",
               help="The instance (canopy-web agent slug) to bind to, when you can see several.")
 @click.option("--vault", default="",
-              help="1Password vault to use instead of the one canopy-web records.")
+              help="LEGACY: a 1Password vault to fill from instead of the agent's own secrets.")
 @click.option("--force", is_flag=True,
               help="Re-bind this install to a different instance than the one recorded.")
 @click.option("--print", "print_only", is_flag=True,
@@ -498,12 +541,14 @@ def agent_env(plugin, template, out, agent_slug, vault, force, print_only):
     """Bind this install to ONE agent instance and fill its .env from that instance's vault.
 
     A plugin is code; an instance is canopy-web's Agent record (identity, workspace,
-    1Password vault). Resolves the instance of PLUGIN you can see (--agent picks one; the
-    one this install is already bound to is kept; several stop with a re-run line each),
-    takes its vault (--vault wins; none recorded is an error — no naming convention),
-    records the binding beside --out (switching instance needs --force), then runs
-    `op inject -i TEMPLATE -o OUT` with AGENT_VAULT and AGENT_SLUG set. Called by each
-    agent's /<agent>:setup. Never prompts; never prints a secret.
+    where its secrets live). Resolves the instance of PLUGIN you can see (--agent picks
+    one; the one this install is already bound to is kept; several stop with a re-run
+    line each) and records the binding beside --out (switching instance needs --force).
+
+    Secrets come from the instance's canopy vault (decrypted on this device). Only a
+    LEGACY 1Password agent (or --vault) runs `op inject -i TEMPLATE -o OUT` with
+    AGENT_VAULT and AGENT_SLUG set. Called by each agent's /<agent>:setup. Never
+    prompts; never prints a secret. To use an agent yourself: `canopy agent use <slug>`.
     """
     from orchestrator import agent_instance as ai
     from orchestrator.workspace_cli import person_token
@@ -522,7 +567,15 @@ def agent_env(plugin, template, out, agent_slug, vault, force, print_only):
                "binding": str(res.binding), "out": str(out_path), "notes": res.notes})
         return
     click.echo(f"instance: {inst.label()} — {res.why}")
-    click.echo(f"vault:    {res.vault} (from {res.vault_source})")
+    if res.vault_source == "canopy vault":
+        click.echo("secrets:  canopy vault")
+        for n in res.notes:
+            click.echo(f"note:     {n}")
+        click.echo(f"env:      {out_path} ({res.lines} vars) from canopy vault")
+        click.echo(f"bound:    {res.binding}")
+        return
+    click.echo(f"vault:    {res.vault} (from {res.vault_source}) — 1Password, LEGACY: an admin "
+               f"moves it with `canopy vault import --agent {inst.agent} --zk --switch`")
     for n in res.notes:
         click.echo(f"note:     {n}")
     click.echo(f"env:      {out_path} ({res.lines} vars) from {template}, AGENT_VAULT={res.vault}")

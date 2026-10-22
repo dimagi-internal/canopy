@@ -8,9 +8,10 @@ revision", 2026-10-09). In short:
   dispatched for (``$CANOPY_AGENT_SLUG`` / ``$CANOPY_AGENT`` / the envelope's
   ``agent``). Any other ``--agent`` is refused.
 * **A human session** may act as X when X's credential backend says so:
-  ``1password`` (the default) — the user's own ``op`` can read X's vault;
-  ``canopy-web`` — ``GET /api/agents/X/credentials/access`` says
-  ``may_resolve``. The backend is the agent record's ``credential_source``.
+  ``canopy-web`` (canopy vault, the default — every agent's secrets live there,
+  Jonathan 2026-10-21) — ``GET /api/agents/X/credentials/access`` says
+  ``may_resolve``; ``1password`` (LEGACY) — the user's own ``op`` can read X's
+  vault. The backend is the agent record's ``credential_source``.
 * Anything else acts as the human, and the refusal says what access to get.
 
 Commands::
@@ -57,7 +58,8 @@ EXIT_REFUSED = 3
 EXIT_UNDETERMINED = 4
 
 SOURCES = ("1password", "canopy-web")
-DEFAULT_SOURCE = "1password"
+#: canopy vault. 1Password is legacy: only an agent canopy-web SAYS is `1password` uses it.
+DEFAULT_SOURCE = "canopy-web"
 
 #: How long a canopy-web /access answer and a successful 1Password probe are
 #: trusted. An MCP server checks before every action; re-probing `op` each time
@@ -234,16 +236,23 @@ def fetch_access(slug: str, *, refresh: bool = False) -> dict:
     """canopy-web's verdict for this caller on agent ``slug`` — cached CACHE_TTL.
 
     Returns the /access body plus ``error`` ("" on success). On any failure the
-    backend falls back to the default (1password): the 1Password probe still
-    decides, so an unreachable canopy-web never grants anything by itself."""
-    key = f"access|{canopy_web.resolve_base_url(None)}|{slug}"
+    backend falls back to the default (canopy-web) with ``may_resolve`` False, so an
+    unreachable canopy-web never grants anything by itself.
+
+    Names the current turn (``X-Canopy-Turn-Id``) when there is one: a licence holder
+    may resolve only during their own local turn, and canopy-web can say so only when
+    it knows which turn is asking."""
+    from orchestrator.cred_resolve import TURN_HEADER, current_turn_id
+    turn = current_turn_id()
+    key = (f"access|{canopy_web.resolve_base_url(None)}|" + (f"{turn}|" if turn else "") + slug)
     if not refresh:
         hit = _cache_get(key)
         if hit is not None:
             return hit
     try:
         body = canopy_web.call("GET", f"/api/agents/{slug}/credentials/access",
-                               token=_human_token()) or {}
+                               token=_human_token(),
+                               headers={TURN_HEADER: turn} if turn else None) or {}
     except Exception as e:  # noqa: BLE001 — degrade, don't traceback
         return {"agent": slug, "credential_source": DEFAULT_SOURCE, "may_resolve": False,
                 "via": None, "reason": "",
@@ -387,11 +396,27 @@ def _refusal_1password(slug: str, vault: str, probe: OpProbe) -> str:
 
 
 def _refusal_canopy_web(slug: str, access: dict) -> str:
+    err = access.get("error") or ""
+    if " 404" in err or "-> 404" in err:
+        # canopy-web answers /access with 404 to a non-member of the agent's workspace.
+        return (f"Acting as agent '{slug}' needs canopy-web to hand this session its "
+                f"credentials, and canopy-web does not show you agent '{slug}' (not a member "
+                f"of its workspace) — ask a workspace admin to invite you first, then run "
+                f"`canopy agent use {slug}`. Until then this session acts as you, not as "
+                f"'{slug}'.")
+    if err:
+        return (f"Acting as agent '{slug}' needs canopy-web to hand this session its "
+                f"credentials from canopy vault, and canopy-web could not be asked "
+                f"({access['error']}). Check your connection and sign-in (`canopy agent use "
+                f"{slug}` checks both), then run `canopy cred refresh --agent {slug}`. Until "
+                f"then this session acts as you, not as '{slug}'.")
     why = access.get("reason") or "you are neither a runner operator for it nor its owner/admin"
     return (f"Acting as agent '{slug}' needs canopy-web to hand this session its credentials "
-            f"(agent '{slug}' keeps them on canopy-web), and canopy-web says you may not: "
-            f"{why}. Ask {slug}'s owner or an agent admin to make you an admin of '{slug}' "
-            f"on canopy-web (/agents/{slug} → Settings), then run `canopy cred refresh "
+            f"(agent '{slug}' keeps them in canopy vault), and canopy-web says you may not: "
+            f"{why}. To use '{slug}' yourself, run `canopy agent use {slug}` (it says what is "
+            f"missing: your licence, this device's grant) and work inside a Claude Code "
+            f"session of '{slug}'; to act as it from anywhere, ask {slug}'s owner to make you "
+            f"an admin of '{slug}' (/agents/{slug} → Settings), then run `canopy cred refresh "
             f"--agent {slug}`. Until then this session acts as you, not as '{slug}'.")
 
 
@@ -428,7 +453,7 @@ def decide(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
     notes = []
     if access.get("error"):
         notes.append(f"canopy-web /access unavailable ({access['error']}); "
-                     f"assuming the default backend '{DEFAULT_SOURCE}'")
+                     f"assuming the default backend, canopy vault")
 
     if source == "canopy-web":
         if access.get("may_resolve"):
@@ -1217,12 +1242,13 @@ def refresh_cmd(agent):
 @click.option("--ttl", type=float, default=SYNC_TTL, show_default=True,
               help="Seconds between checks for this agent.")
 def sync_cmd(agent, ttl):
-    """Re-inject ~/.<agent>/.env from its vault IF the vault or .env.tpl changed.
+    """Re-write ~/.<agent>/.env from its vault IF the values changed.
 
-    Cheap enough for every session start: throttled per agent, one `op vault get` per
-    vault when due, the full `op inject` only on a change. Needs the agent's own
-    1Password key in $OP_SERVICE_ACCOUNT_TOKEN (never the desktop app). Never prints a
-    value; a failure keeps the existing file and exits 1 with op's reason."""
+    Cheap enough for every session start: throttled per agent. canopy vault (every
+    agent): re-written from canopy-web when the values' fingerprint moved. LEGACY
+    1Password: needs the agent's own key in $OP_SERVICE_ACCOUNT_TOKEN (never the desktop
+    app) — one `op vault get` per vault when due, the full `op inject` only on a change.
+    Never prints a value; a failure keeps the existing file and exits 1 with the reason."""
     slug = _require_agent(agent)
     try:
         click.echo(f"[canopy cred] {slug}: {sync_env(slug, ttl=ttl)}", err=True)

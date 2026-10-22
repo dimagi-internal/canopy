@@ -11,21 +11,21 @@ data, so **any** session that loaded ACE's plugin acted as ACE. On 2026-10-09 an
 doc through ace-gdrive and got "not found", because it was signed in as the wrong account. Identity
 has to come from the **session**, not from whichever plugin happens to be loaded.
 
-## 1. Pluggable backend: `1password` (default) or `canopy-web`
+## 1. Two backends: canopy vault (the default) and `1password` (legacy)
 
-Per agent, a field on the canopy-web agent record: `credential_source: "1password" | "canopy-web"`.
+Per agent, a field on the canopy-web agent record: `credential_source: "canopy-web" | "1password"`.
+Every agent's secrets live in **canopy vault** (Jonathan, 2026-10-21); 1Password is legacy.
 
-- **`1password`** — the agent's values live in its vault: the instance this machine is bound to
-  (`~/.<slug>/canopy-instance.json`, written by `canopy agent env`), else the `op_vault`
-  canopy-web records for the agent — never a name derived from the slug, and a missing one is
-  an error. `~/.<slug>/.env` is resolved with
-  `op inject -f -i <agent repo>/.env.tpl -o ~/.<slug>/.env`, `AGENT_VAULT` set to that vault.
-- **`canopy-web`** — the values live in canopy-web's `AgentCredential` table and come back from
-  `GET /api/agents/{slug}/credentials/resolve`.
-
-canopy-web already holds each agent's 1Password service-account key, so compromising canopy-web
-yields the secrets either way. Keeping values off canopy-web buys no real security; both backends
-are first-class.
+- **`canopy-web`** (canopy vault) — the values live on canopy-web and come back from
+  `GET /api/agents/{slug}/credentials/resolve`. A zero-knowledge agent's values are ciphertext
+  there, opened only on a device that holds a grant (§ Zero-knowledge). ada, ace, echo, eva and
+  hal are zero-knowledge (kv 1); lex and fizzy were born zero-knowledge (kv 0). `canopy agent
+  env`, `canopy cred` and the SessionStart hook all take this path, and never touch `op`.
+- **`1password`** (legacy) — the values live in the agent's 1Password vault: the instance this
+  machine is bound to (`~/.<slug>/canopy-instance.json`), else the `op_vault` canopy-web records
+  — never a name derived from the slug. `~/.<slug>/.env` is resolved with `op inject` of the
+  agent's `.env.tpl`, `AGENT_VAULT` set to that vault. Muse is the last one; an admin with
+  1Password access moves an agent with `canopy vault import --agent X --zk --switch`.
 
 ## 2. No repeated 1Password prompts
 
@@ -64,8 +64,10 @@ minutes in `~/.canopy/cred-cache.json` (verdicts only, never values).
     `/resolve` route gains the admin-bearer path, audited like the runner path.
 - **Otherwise** the session acts as the human, and the refusal says exactly what access to get.
 
-If `/access` can't be reached, `canopy cred` assumes the default backend (`1password`): the
-1Password probe still decides, so an unreachable canopy-web never grants anything by itself.
+If `/access` can't be reached, `canopy cred` assumes the default backend (canopy vault) with
+`may_resolve` false, so an unreachable canopy-web never grants anything by itself. `/access` is
+asked with the current turn (`X-Canopy-Turn-Id`), since a licence holder may resolve only during
+their own local turn.
 
 ## 4. Agent-identity MCP servers
 
@@ -357,16 +359,21 @@ device key in canopy-web → `canopy vault switch --agent eva --to canopy-web`, 
 A person who is not an agent's admin may still run the agent in their **own** Claude Code,
 with its skills and logins, and canopy keeps the record:
 
-1. **`canopy private-runner register`** (once, as yourself — your own PAT from
-   `/canopy:canopy-web-pat-mint`) makes this machine one of your **private runners**:
-   Claude Code with the canopy plugin. It may also run the runner app: a runner set
-   private (`canopy private-runner set private`) takes no fleet work, only its owner's
-   pins and bound sessions, and its local sessions sign in with its device key instead of
-   a PAT (canopy-web#1705). Acting as a lower role is per turn or per client
-   (`acts_as`, `CANOPY_ACTS_AS`), never a setting on the machine (canopy-web#1756).
-   `~/.canopy/private-runner.json` records it.
-2. **`canopy local use <slug>`** (or an agent repo's own `.claude/settings.json`) sets
-   `$CANOPY_AGENT` for a project.
+`canopy agent use <slug>` (`agent_use.py`) sets all of this up in one idempotent command
+and says ok / done / NEEDS YOU for each step (sign-in, this computer, device key, the vault
+grant, licence, plugin, `$CANOPY_AGENT`, env). Underneath:
+
+1. **This computer is registered for local use** (`local_cli.register_this_computer`, as
+   yourself). canopy-web calls the record a **private runner**: Claude Code with the canopy
+   plugin. The machine may also run the runner app: a runner set private (`canopy
+   private-runner set private`) takes no fleet work, only its owner's pins and bound
+   sessions, and its local sessions sign in with its device key instead of a PAT
+   (canopy-web#1705). Acting as a lower role is per turn or per client (`acts_as`,
+   `CANOPY_ACTS_AS`), never a setting on the machine (canopy-web#1756).
+   `~/.canopy/private-runner.json` records it; `canopy private-runner register` is a hidden
+   alias.
+2. **`$CANOPY_AGENT`** is set for the project (`.claude/settings.local.json`; an agent repo's
+   own `.claude/settings.json` sets it too). `canopy local use` is an alias of `agent use`.
 3. Each session there is a **local turn**. `agent_op_env.py` (SessionStart) runs
    `canopy local open` FIRST: canopy-web issues your **license** when the agent's caller
    list gives you the whole agent (else 403, and the request is recorded for its admins),

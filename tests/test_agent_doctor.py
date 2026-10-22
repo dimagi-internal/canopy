@@ -23,6 +23,15 @@ from orchestrator.cli import main
 # fixtures
 # --------------------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _secrets_backend_offline(monkeypatch):
+    """The secrets-backend check asks canopy-web; keep every test offline with a canopy-vault
+    agent this device can open, unless a test is about that check."""
+    monkeypatch.setattr("orchestrator.agent_doctor.probe_secrets_backend",
+                        lambda slug: {"source": "canopy-web", "enabled": True, "kv": 1,
+                                      "this_device": True, "error": ""})
+
+
 def _agent_repo(tmp_path, *, email="hal@dimagi-ai.com", slug="hal",
                 gating=True, secrets=True, hooks=True, agent_json_extra=None,
                 materialize=False):
@@ -253,7 +262,7 @@ def test_run_agent_doctor_all_green(tmp_path):
         client_factory=_client_factory(),
         registry_path=str(_plugin_registry(tmp_path)))
     assert ok
-    assert [r.ok for r in results] == [True] * 14
+    assert [r.ok for r in results] == [True] * 15
 
 
 def test_run_agent_doctor_identity_failure_degrades_dependents(tmp_path):
@@ -285,7 +294,7 @@ def test_cli_agent_doctor_json_and_exit_code(tmp_path, monkeypatch):
     names = [c["name"] for c in payload["checks"]]
     assert names == ["Identity", "Plugin install", "Required plugins", "Gating rails",
                      "Hook wiring", "Secrets manifest", "Secrets materialized",
-                     "Rails enforced", "Email auth (gog)", "Auth client", "Auth services",
+                     "Secrets backend", "Rails enforced", "Email auth (gog)", "Auth client", "Auth services",
                      "canopy-web setup", "Dependency upgrades", "Gog keychain trust"]
 
 
@@ -711,7 +720,7 @@ def test_secrets_materialized_checks_the_env_tpl_agents_own_env_home(tmp_path):
     (home / ".hal").mkdir(parents=True)
     (home / ".hal" / ".env").write_text("A=lit\nCANOPY_WEB_PAT=\n")
     r = check_secrets_materialized(repo, home=home)
-    assert not r.ok and "empty CANOPY_WEB_PAT" in r.detail and "canopy agent vault --slug hal" in r.detail
+    assert not r.ok and "empty CANOPY_WEB_PAT" in r.detail and "canopy vault" in r.detail
     (home / ".hal" / ".env").write_text("A=lit\nCANOPY_WEB_PAT=secret-value\n")
     r = check_secrets_materialized(repo, home=home)
     assert r.ok and "all 2 var(s)" in r.detail and "secret-value" not in r.detail
@@ -1033,3 +1042,44 @@ def test_auth_services_skips_rather_than_failing_when_no_scopes_are_readable():
 
     r = check_auth_services(ident, runner=runner)
     assert r.ok and "skipped" in r.detail
+
+
+# --------------------------------------------------------------------------------------
+# secrets backend: canopy vault first, 1Password legacy
+# --------------------------------------------------------------------------------------
+
+def _ident(slug="hal"):
+    return SimpleNamespace(slug=slug)
+
+
+@pytest.mark.parametrize("probe,ok,warn,want", [
+    ({"source": "canopy-web", "enabled": True, "kv": 1, "this_device": True},
+     True, False, "secrets: canopy vault (zero-knowledge, kv 1), this device has access: yes"),
+    ({"source": "canopy-web", "enabled": True, "kv": 2, "this_device": False},
+     False, False, "this device has access: no — an admin presses Grant pending on /agents/hal"),
+    ({"source": "canopy-web", "enabled": True, "kv": 0, "this_device": False},
+     True, False, "kv 0"),
+    ({"source": "canopy-web", "enabled": None, "kv": None, "this_device": None},
+     True, False, "only an admin of hal can see"),
+    ({"source": "canopy-web", "enabled": False},
+     True, False, "canopy-web holds the values"),
+    ({"source": "1password"},
+     True, True, "1Password (LEGACY) — an admin with 1Password access moves it to canopy vault: "
+                 "`canopy vault import --agent hal --zk --switch`"),
+    ({"source": "canopy-web", "error": "GET … -> 503"}, True, True, "could not ask canopy-web"),
+])
+def test_secrets_backend_says_where_secrets_live(probe, ok, warn, want):
+    from orchestrator.agent_doctor import check_secrets_backend
+    r = check_secrets_backend(_ident(), probe=lambda slug: {"error": "", **probe})
+    assert (r.ok, r.warn) == (ok, warn) and want in r.detail
+
+
+def test_secrets_backend_skips_without_identity_and_survives_a_probe_crash():
+    from orchestrator.agent_doctor import check_secrets_backend
+
+    def boom(slug):
+        raise RuntimeError("down")
+
+    assert "skipped" in check_secrets_backend(None).detail
+    r = check_secrets_backend(_ident(), probe=boom)
+    assert r.ok and r.warn and "down" in r.detail

@@ -25,12 +25,14 @@ a CLI, a plugin, and a website. Here is the whole map:
 | **canopy** (this repo) | The framework: a Claude Code plugin + a `canopy` CLI. Holds the agent factory and the fleet-wide operating model. | Your machine | **Yes** |
 | **Your agent's repo** | One git repo per agent — its persona, skills, gating rails, secrets. Generated for you by the factory. | Your machine + GitHub | **Yes** |
 | **canopy-web** | The shared website: each agent's projects, tasks, turns. Lives at `canopy.dimagi.com`. | Already deployed — you just log in | **Yes** (read/write via CLI) |
-| **The runner** | A daemon that fires an agent's turns *unattended* (on a schedule, or when email arrives). Works on macOS and Windows. | Your machine, or a cloud box | **No — skip it at first**, unless you need email-triggered turns |
+| **A runner** | Runs an agent's turns *on its own*: the runner app on your Mac, or a fleet cloud box. | Your Mac, or a cloud box | **No** |
 
-**The runner is the piece to skip on day 1.** An agent is fully usable without
-it: you invoke `/<slug>:turn` in Claude Code yourself. The runner only removes
-*you* from the loop — which matters as soon as you want turns triggered by
-incoming email or by a schedule. See §6.
+**There are two ways to run an agent** ([running-an-agent.md](running-an-agent.md)):
+
+1. **Use it yourself in Claude Code** — no runner needed. `canopy agent use <slug>` once on
+   your computer, then `/<slug>:turn` in a new session.
+2. **Let it run on its own** — a runner starts its turns (schedules, email, dispatches): your
+   Mac's runner app set **Private** (it does only your work), or a fleet cloud box. See §6.
 
 ---
 
@@ -44,7 +46,7 @@ Install these first. Everything below assumes they exist.
 | [git](https://git-scm.com/downloads) | Your agent is a repo | `git --version` |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | Runs the `canopy` CLI | `uv --version` |
 | [GitHub CLI](https://cli.github.com/) | Creating the agent's repo | `gh auth status` |
-| [1Password CLI](https://developer.1password.com/docs/cli/get-started/) | Resolving the agent's secrets | `op whoami` |
+| [1Password CLI](https://developer.1password.com/docs/cli/get-started/) | Only for a LEGACY agent still on 1Password (Muse); every other agent's secrets are in canopy vault | `op whoami` |
 | [Node.js 20+](https://nodejs.org/en/download) | `npx` runs the token-mint script | `node --version` |
 | [gog](https://github.com/openclaw/gogcli) | Your agent's Gmail/Drive access — §5 uses it | `gog --version` |
 
@@ -103,9 +105,9 @@ registers your one agent catalog `canopy-agents` (every agent in every workspace
 belong to; auto-updating) — `canopy agents connect`. It installs no agents: it lists them
 with their install lines (e.g. `/plugin install ace@canopy-agents`); install the ones you
 want (each needs your own GitHub read access to its repo), then run each agent's own
-setup command (e.g. `/ace:setup`). It also prints
-one line on the 1Password CLI without failing. As an operator you continue below —
-hosting an agent (runners, vault keys, `gog`) is not part of a user's setup.
+setup command (e.g. `/ace:setup`) — or simply run `canopy agent use <slug>`, which installs
+the plugin and does the rest. As an operator you continue below — hosting an agent (runners,
+its canopy vault, `gog`) is not part of a user's setup.
 
 > To use canopy-web the product (board, sessions, settings) from claude.ai, add it as a
 > **custom connector**: URL `https://canopy.dimagi.com/api/mcp/`. Agents are not used that
@@ -251,11 +253,10 @@ This opens a browser, and writes the token to `~/.claude/canopy/workbench-token`
 > *"falling back to the operator's workbench-token"*, that is canopy telling you
 > the agent has no identity of its own yet — expected before §5, a problem after.
 >
-> **Giving the agent its token** (once its Google mailbox exists): sign in to canopy-web
-> **as the agent** (its own mailbox, in a private browser window so your own session is
-> untouched), mint a token on `/settings`, and put it in `~/.<slug>/.env` as
-> `CANOPY_WEB_PAT=<token>`. Re-run a canopy command from the agent's repo; the fallback
-> warning should be gone. (Path proven on a Windows operator's first agent, 2026-10-15.)
+> **Giving the agent its token:** on the agent's Settings → Credentials in canopy-web,
+> press **Give it its canopy login**. canopy-web mints the agent's own token and stores it in
+> the agent's canopy vault (sealed — it is never shown). The next `canopy cred env --agent
+> <slug>` (or session) puts it in `~/.<slug>/.env`; the fallback warning should be gone.
 
 ---
 
@@ -330,8 +331,8 @@ gh repo create dimagi-internal/<slug> --private --source=. --push
 
 > **Setting up an agent someone else created for you?** Paste the prompt in
 > [Setting up an agent from Claude](setting-up-an-agent-from-claude.md) instead. It runs this
-> section, and does the canopy-web side (vault key, invites) through the canopy-web MCP tools,
-> which `doctor` never touches.
+> section, and does the canopy-web side (vault, invites) through the canopy-web MCP tools,
+> which `doctor` never touches. **Just want to use it?** `canopy agent use <slug>`.
 
 This is the step that replaces guesswork. From inside the agent's repo:
 
@@ -377,16 +378,22 @@ factory cannot do for you. Work them in this order:
      next bootstrap — `canopy agent bootstrap` here, **Refresh** on a cloud runner);
    - terminal: `gog login <slug>@dimagi-ai.com --client canopy --services gmail,drive,docs,sheets,forms,appscript`
      (never `--client canopy-web` — that Web client cannot run gog's loopback login).
-4. **Secrets** — `op inject -i .env.tpl -o ~/.<slug>/.env --account dimagi.1password.com`.
+4. **Secrets** — they live in the agent's **canopy vault**. Set the values on its Settings →
+   Credentials page (or `canopy vault zk set --agent <slug> NAME`), turn zero-knowledge on
+   (`canopy vault zk enable --agent <slug>` — keep the recovery code it prints offline), and
+   press **Grant pending** for each device that needs them. Then `canopy cred env --agent
+   <slug>` writes `~/.<slug>/.env` here; `doctor`'s *Secrets backend* line says whether this
+   device has access. (A legacy 1Password agent: `canopy vault import --agent <slug> --zk
+   --switch` moves it.)
 
 Re-run `agent doctor` after each. **Do not move on until it is all green** — and
 re-run it on any new machine, since it catches setup that only ever existed on
 the old one.
 
-**Existing agents on a new machine or macOS account?** Steps 1–4 are automated for
-every agent at once — `canopy agent bootstrap --dry-run` to preview, then
+**Existing agents on a new machine or macOS account?** To use one yourself, `canopy agent
+use <slug>`. To host them all, `canopy agent bootstrap --dry-run` to preview, then
 `canopy agent bootstrap` (add `--slug <x>` to limit it). It installs each agent's
-plugin + `required_plugins`, injects `~/.<slug>/.env`, imports the newest gog token
+plugin + `required_plugins`, writes `~/.<slug>/.env`, imports the newest gog token
 (canopy-web vs 1Password, newest `created_at` wins) under the client the token names,
 and verifies Gmail. Either fleet client serves a fleet declaration; it flags loudly only
 when the token is under a NON-fleet client the agent's turns would not use.
@@ -426,24 +433,20 @@ Then fill in the two files that carry the actual judgment:
 
 ---
 
-## 6. The runner — including on Windows
+## 6. Letting it run on its own — a runner (macOS and Windows)
 
-The runner is what fires an agent's turns **without you**: it polls the agent's
-mailbox and enqueues a turn per new email thread, and it fires scheduled turns.
-Everything above works without it — you invoke `/<slug>:turn` yourself — so skip
-this section until turns-you-run-by-hand become the bottleneck.
+Everything above works without a runner: you use the agent yourself in Claude Code
+([the two ways](running-an-agent.md)). A runner is the second way: it runs the agent's turns
+**without you** — the turns canopy-web starts from email, from a schedule, or from a dispatch.
+Schedules fire from canopy-web, so any runner the agent routes to picks them up.
 
-But if **email-triggered or scheduled turns matter to you, you need a runner**,
-and specifically the *laptop* runner: the cloud runner claims turns that
-something else queued, and has no inbox polling or schedule firing of its own.
+- **Your own Mac** — install the Canopy runner app from canopy-web's Runners page and pair
+  it. Set it **Private** (`canopy private-runner set private`) and it does only your work: your
+  pinned turns and your own sessions, never fleet work.
+- **A fleet cloud box** — already running; an admin routes the agent to it.
 
-Two runners, and what each is for:
-
-| | **Laptop runner** | **Cloud runner** |
-|---|---|---|
-| Triggers turns from email / schedules | **yes** | no |
-| Executes turns | drives the emdash app over CDP | headless `claude -p` |
-| Runs on | macOS **and Windows** | a Linux server |
+Either way the runner opens the agent's canopy vault with its own device key, which an admin
+grants once (**Grant pending** on `/agents/<slug>`).
 
 ### Windows
 
@@ -517,6 +520,12 @@ session boundary — see `runner/canopy_runner/README.md` in canopy-web.
 
 ## 7. Your first turn
 
+```bash
+canopy agent use <slug>     # once, in the project you work from
+```
+
+then, in a new Claude Code session there:
+
 ```
 /<slug>:turn
 ```
@@ -540,6 +549,7 @@ Reach for these in order:
 | Anything at all, on any machine | `canopy agent doctor --repo .` |
 | canopy itself misbehaving | `/canopy:canopy-doctor` |
 | Email auth failing | `canopy email preflight --repo .` |
+| Using an agent on your own computer | `canopy agent use <slug>` — each step says ok / done / NEEDS YOU |
 | `/<slug>:...` commands missing | The plugin is not installed — see §5 step 1 |
 | "falling back to the operator's workbench-token" | The agent has no `CANOPY_WEB_PAT` — see §3b |
 | An MCP server shows `Connection closed` | Read the MCP log — the real error is in the server's **stderr**, which `/mcp` does not show you (below) |

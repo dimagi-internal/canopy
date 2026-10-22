@@ -1,5 +1,11 @@
 """`canopy agent env` — bind this install to ONE agent instance and fill its .env from
-that instance's 1Password vault.
+that instance's vault: canopy vault (canopy-web), or 1Password for a LEGACY agent.
+
+Every agent's secrets live in canopy vault (Jonathan, 2026-10-21). When the instance's
+`credential_source` is `canopy-web`, this delegates to the canopy-vault path (`canopy
+cred`'s resolve: values decrypted on this device, written 0600) and never touches `op` or
+`op_vault`. Only a `1password` agent (legacy; its owners move it with `canopy vault import
+--agent X --zk --switch`) takes the 1Password path below.
 
 A plugin is code. An **instance** is canopy-web's Agent record: identity, workspace and
 1Password vault (`Agent.op_vault`). A local install is bound to exactly ONE instance,
@@ -365,6 +371,27 @@ def instance_vault(slug: str, *, token: Optional[str] = None, home: Optional[Pat
 # the whole step
 # ──────────────────────────────────────────────────────────────────────────────
 
+def credential_source(slug: str) -> str:
+    """Where agent `slug`'s secrets live: "canopy-web" (canopy vault) or "1password"
+    (legacy). canopy-web's `/credentials/access` answer; canopy vault when it cannot say."""
+    from orchestrator.cred_cli import fetch_access
+    return str(fetch_access(slug).get("credential_source") or "canopy-web")
+
+
+def canopy_vault_env(slug: str, out: Path) -> int:
+    """Write agent `slug`'s env from canopy vault to `out` (0600). Returns the var count."""
+    from orchestrator.cred_cli import CredError, fetch_canopy_web_values, write_env_from_values
+    try:
+        n, _ = write_env_from_values(slug, Path(out), fetch_canopy_web_values(slug))
+    except CredError as e:
+        raise InstanceError(
+            f"could not fill the env from {slug}'s canopy vault: {e.message} — "
+            f"`canopy agent use {slug}` says what this computer still needs (sign-in, "
+            f"device key, a grant, your licence); a licence reads only inside your own "
+            f"Claude Code session of {slug}.")
+    return n
+
+
 @dataclass
 class EnvResult:
     instance: Instance
@@ -379,7 +406,9 @@ class EnvResult:
 def run(plugin: str, *, template: Optional[Path], out: Path, agent: str = "", vault: str = "",
         force: bool = False, print_only: bool = False, token: str,
         list_instances: Optional[Callable[[str], list[Instance]]] = None,
-        runner: Optional[Runner] = None, base_env: Optional[dict] = None) -> EnvResult:
+        runner: Optional[Runner] = None, base_env: Optional[dict] = None,
+        source_of: Optional[Callable[[str], str]] = None,
+        from_canopy_vault: Optional[Callable[[str, Path], int]] = None) -> EnvResult:
     out = Path(out).expanduser()
     bpath = binding_path(out)
     prior = read_binding(bpath)
@@ -388,6 +417,15 @@ def run(plugin: str, *, template: Optional[Path], out: Path, agent: str = "", va
     inst, why = choose_instance(plugin, instances, agent=agent,
                                 bound=(prior or {}).get("agent", "") if (prior or {}).get("plugin") == plugin else "",
                                 template=tpl_s, out=str(out))
+    if not (vault or "").strip() and (source_of or credential_source)(inst.agent) == "canopy-web":
+        notes = [n for n in [check_rebind(prior, inst, force=force, path=bpath)] if n]
+        res = EnvResult(instance=inst, vault="", vault_source="canopy vault", why=why,
+                        binding=bpath, notes=notes)
+        if print_only:
+            return res
+        res.lines = (from_canopy_vault or canopy_vault_env)(inst.agent, out)
+        write_binding(bpath, inst, "", prior)
+        return res
     chosen_vault, source = resolve_vault(inst, vault)
     notes: list[str] = []
     note = check_rebind(prior, inst, force=force, path=bpath)
