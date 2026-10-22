@@ -3,8 +3,10 @@
 canopy-web#1704. Three objects:
 
 * a **private runner** — this machine, registered once with YOUR canopy token
-  (`canopy private-runner register`). It belongs to you, serves every agent you use,
-  and never claims a turn. Recorded in ``~/.canopy/private-runner.json``.
+  (`canopy private-runner register`). It belongs to you and serves every agent you use.
+  When the machine also runs the runner app, the two are linked and the runner works
+  only for you (canopy-web#1705); otherwise it never claims a turn. Recorded in
+  ``~/.canopy/private-runner.json``.
 * a **local turn** — one Claude Code session here using one agent. The canopy
   plugin's SessionStart hook opens it (`canopy local open`), the prompt hook
   renews it and shows its caller envelope, and the SessionEnd hook uploads the
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import socket
 import time
 from pathlib import Path
@@ -247,14 +250,30 @@ def local_open(slug, session_id, cwd, transcript, want_auto):
     SessionEnd never ran: a killed terminal, a crash) and that has been silent past the
     turn's lease — its transcript is uploaded and the turn finished, as its own close
     would have."""
-    ws = read_private_runner()
-    if not ws:
+    if not read_private_runner():
         raise click.ClickException("this machine is not a private runner — `canopy private-runner register`")
     path = _session_file(session_id)
     catch_up(exclude=session_id)
+    state = open_turn(slug, session_id, cwd=cwd, transcript=transcript,
+                      requested_mode="auto" if want_auto else "",
+                      env_file=os.environ.get("CLAUDE_ENV_FILE", "").strip())
+    created = state.pop("created")
+    _write_private(path, state)
+    click.echo(json.dumps({**state, "created": created}))
+
+
+def open_turn(slug: str, session_id: str, *, cwd: str = "", transcript: str = "",
+              requested_mode: str = "", env_file: str = "") -> dict:
+    """Open (or re-open) a session's local turn on canopy-web and write its envelope.
+    Returns the session state to record, with `created`. Everything a later re-open
+    needs is kept in it: the cwd, the mode asked for, and the session's env file (the
+    `$CLAUDE_ENV_FILE` the SessionStart hook exports the turn id into)."""
+    ws = read_private_runner()
+    if not ws:
+        raise click.ClickException("this machine is not a private runner — `canopy private-runner register`")
     body = canopy_web.call("POST", "/api/harness/local-turns/", {
         "agent": slug, "private_runner": ws["id"], "claude_session_id": session_id,
-        "cwd": cwd[:300], "turn_mode": "auto" if want_auto else "",
+        "cwd": cwd[:300], "turn_mode": requested_mode,
     }, token=session_token(slug))
     turn_id = str(body["turn_id"])
     env_path = caller_dir() / f"{turn_id}.json"
@@ -265,27 +284,81 @@ def local_open(slug, session_id, cwd, transcript, want_auto):
     state = {"turn_id": turn_id, "slug": slug, "session_id": session_id,
              "private_runner": ws["name"], "turn_mode": body.get("turn_mode", ""),
              "turn_mode_basis": body.get("turn_mode_basis", ""), "url": body.get("url", ""),
-             "envelope_path": str(env_path), "opened_at": time.time(), "renewed_at": time.time()}
+             "envelope_path": str(env_path), "opened_at": time.time(), "renewed_at": time.time(),
+             "cwd": cwd[:300], "created": bool(body.get("created"))}
+    if requested_mode:
+        state["requested_mode"] = requested_mode
     if transcript:
         state["transcript"] = transcript
-    _write_private(path, state)
-    click.echo(json.dumps({**state, "created": bool(body.get("created"))}))
+    if env_file:
+        state["env_file"] = env_file
+    return state
 
 
 @local_group.command("renew")
 @click.option("--session-id", required=True)
 @click.option("--force", is_flag=True, help="Renew now, whatever the throttle says.")
 def local_renew(session_id, force):
-    """Keep this session's local turn alive (at most every 10 minutes unless --force)."""
+    """Keep this session's local turn alive (at most every 10 minutes unless --force).
+
+    When canopy-web says the turn is no longer running — swept `lost` after the session
+    sat idle past its 8-hour lease, or finished — the session would otherwise go on
+    naming a dead turn (credential reads refused, close a no-op). So a NEW local turn is
+    opened for the same session, its id appended to the session's env file (sourced
+    before every later command) and recorded in the session state, whose next prompt
+    shows the new envelope. When that cannot be done, one line on stderr says so."""
     state = read_session(session_id)
-    if not state:
+    if not state or state.get("closed_at"):
         return
     if not force and time.time() - float(state.get("renewed_at") or 0) < RENEW_EVERY:
         return
-    canopy_web.call("POST", f"/api/harness/local-turns/{state['turn_id']}/renew",
-                    token=session_token(state.get("slug", "")))
+    slug = state.get("slug", "")
+    try:
+        body = canopy_web.call("POST", f"/api/harness/local-turns/{state['turn_id']}/renew",
+                               token=session_token(slug)) or {}
+        status = str(body.get("status") or "running") if isinstance(body, dict) else "running"
+    except canopy_web.CanopyError as e:
+        if "-> 404:" not in str(e):
+            raise
+        status = "gone"   # not this person's local turn any more (or never was)
+    if status != "running":
+        state = reopen(state, status)
+        if not state:
+            return
     state["renewed_at"] = time.time()
     _write_private(_session_file(session_id), state)
+
+
+def reopen(state: dict, status: str) -> dict:
+    """Open a new local turn for a session whose turn ended (`status`) and point the
+    session at it. Returns the new state, or {} after a stderr warning."""
+    old, sid, slug = state.get("turn_id", ""), state.get("session_id", ""), state.get("slug", "")
+    try:
+        new = open_turn(slug, sid, cwd=str(state.get("cwd") or ""),
+                        transcript=str(state.get("transcript") or ""),
+                        requested_mode=str(state.get("requested_mode") or ""),
+                        env_file=str(state.get("env_file") or ""))
+    except Exception as e:  # noqa: BLE001 — a renew never fails the session
+        click.echo(f"canopy: local turn {old} of {slug} is {status} and a new one could not be "
+                   f"opened ({str(e).splitlines()[0][:200] if str(e) else type(e).__name__}) — "
+                   "this session's credential reads will fail; start a new session", err=True)
+        return {}
+    new.pop("created", None)
+    new["envelope_shown"] = False   # the next prompt shows the new turn's envelope
+    new["previous_turn_ids"] = [*state.get("previous_turn_ids", []), old]
+    env_file = new.get("env_file") or ""
+    if env_file:
+        try:
+            with open(env_file, "a", encoding="utf-8") as fh:
+                fh.write(f"export CANOPY_TURN_ID={shlex.quote(new['turn_id'])}\n")
+        except OSError as e:
+            click.echo(f"canopy: re-opened local turn {new['turn_id']} but could not export it "
+                       f"to the session env ({e}) — later commands still name {old}", err=True)
+    else:
+        click.echo(f"canopy: re-opened local turn {new['turn_id']} (the old one, {old}, is "
+                   f"{status}); this session has no env file, so later commands still name {old}",
+                   err=True)
+    return new
 
 
 def _batches(lines: list[str]):
@@ -330,7 +403,11 @@ STALE_AFTER = 8 * 3600
 
 def catch_up(*, exclude: str = "", now: float | None = None) -> list[str]:
     """Close every earlier session on this machine that never closed and has been
-    silent past STALE_AFTER. Best-effort: a failure is reported and skipped."""
+    silent past STALE_AFTER. Best-effort: a failure is reported and skipped.
+
+    Such a session died without its SessionEnd (a killed terminal, a crash), so its
+    turn is finished `failed`, not `done`: nothing says its work ended well. (By now
+    canopy-web has usually swept it `lost` already, and the finish is a no-op there.)"""
     now = time.time() if now is None else now
     done = []
     for f in sorted(local_dir().glob("*.json")) if local_dir().is_dir() else []:
@@ -341,7 +418,7 @@ def catch_up(*, exclude: str = "", now: float | None = None) -> list[str]:
         if now - float(state.get("renewed_at") or state.get("opened_at") or 0) < STALE_AFTER:
             continue
         try:
-            done.append(close_session(sid, status="done"))
+            done.append(close_session(sid, status="failed"))
         except Exception as e:  # noqa: BLE001 — never block opening the new session
             click.echo(f"could not catch up local session {sid}: {str(e).splitlines()[0][:200]}", err=True)
     return done

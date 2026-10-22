@@ -189,17 +189,36 @@ def _hook_input() -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def local_eligible(home: str) -> bool:
+#: Set by the runner app's headless engine (canopy-web runner/headless.py) on every
+#: Claude it starts for a turn — the emdash engine passes `$CANOPY_TURN_ID` instead.
+RUNNER_ENV_MARKERS = ("CANOPY_HEADLESS", "CANOPY_ONE_SHOT_TURN")
+#: The runner app's claude-desktop / claude-cli engines put every session they open in a
+#: worktree holding this channel directory (canopy-web runner/desktop.py `CHANNEL`).
+#: The Claude app, not the runner, starts that session's process, so no runner env can
+#: reach it: the worktree is the only mark a runner session carries there.
+RUNNER_DESKTOP_CHANNEL = ".canopy-desktop"
+
+
+def local_eligible(home: str, cwd: str = "") -> bool:
     """Is this a person's own session on their registered private runner?
 
     Yes when `~/.canopy/private-runner.json` exists (`canopy private-runner register`) and the
     session is not a runner's: no `$CANOPY_TURN_ID` (a cloud turn), no confined profile,
-    and not an emdash task on a machine that runs the runner app (`~/.canopy/runner.json`
-    — emdash cannot pass a turn id, so on a runner box every emdash session is presumed
-    the runner's, whose turn already exists). canopy-web#1704."""
+    no headless/one-shot marker (the runner app's headless engine starts claude with
+    `CANOPY_HEADLESS=1 CANOPY_ONE_SHOT_TURN=1` and no turn id), not inside a desktop-engine
+    worktree (`<cwd>/.canopy-desktop/`), and not an emdash task on a machine that runs the
+    runner app (`~/.canopy/runner.json` — emdash cannot pass a turn id, so on a runner box
+    every emdash session is presumed the runner's, whose turn already exists). A private
+    runner may itself be a runner app working only for its owner (canopy-web#1705): its
+    turns are already turns, and a second, local one would switch their credential reads
+    from the runner to the license. canopy-web#1704."""
     if not os.path.isfile(os.path.join(home, ".canopy", "private-runner.json")):
         return False
     if os.environ.get("CANOPY_TURN_ID", "").strip() or os.environ.get("CANOPY_PROFILE"):
+        return False
+    if any(os.environ.get(v, "").strip() for v in RUNNER_ENV_MARKERS):
+        return False
+    if cwd and os.path.isdir(os.path.join(cwd, RUNNER_DESKTOP_CHANNEL)):
         return False
     if (os.environ.get("EMDASH_TASK_ID", "").strip()
             and os.path.isfile(os.path.join(home, ".canopy", "runner.json"))):
@@ -263,7 +282,7 @@ def main() -> int:
     # A person's own session on their private runner: record it as a local turn FIRST, and
     # carry its id into every credential read below (canopy-web#1704) — that is what
     # admits a license holder, and what the read log names.
-    if canopy and local_eligible(os.path.expanduser("~")):
+    if canopy and local_eligible(os.path.expanduser("~"), str(data.get("cwd") or os.getcwd())):
         turn_id = open_local_turn(canopy, slug, data, env_file)
         if turn_id:
             os.environ["CANOPY_TURN_ID"] = turn_id

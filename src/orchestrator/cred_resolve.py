@@ -136,7 +136,8 @@ def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[s
 
     if private_runner_session.in_local_turn():
         # A local session on your private runner reads with the box's own key, under your
-        # license, at the role the runner acts as — not with a PAT (canopy-web#1705).
+        # license, as you (capped only by the turn's own `acts_as`) — not with a PAT
+        # (canopy-web#1705, #1756).
         token = private_runner_session.token() or token
     agent_ids: dict = {}
 
