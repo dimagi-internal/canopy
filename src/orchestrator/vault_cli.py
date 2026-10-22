@@ -47,7 +47,10 @@ from orchestrator import agent_vault as av
 
 SOURCES = ("1password", "canopy-web")
 _LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
-_WHOLE_REF = re.compile(r"^[\"']?(op://[^\s\"']+)[\"']?$")
+# The whole value is one reference. An item or section name may hold spaces
+# ("op://${AGENT_VAULT}/ACE - Open Chat Studio/Config/golden_template_id"), so the
+# reference runs to the end of the value; a second op:// means text around references.
+_WHOLE_REF = re.compile(r"^[\"']?(op://[^\"']+?)[\"']?$")
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -103,7 +106,7 @@ def parse_template(text: str, *, vault: str, slug: str) -> tuple[list[Ref], list
             continue
         seen.add(name)
         whole = _WHOLE_REF.match(raw)
-        if whole:
+        if whole and raw.count("op://") == 1:
             refs.append(Ref(name, op=expand_vars(whole.group(1), env)))
         elif "op://" in raw:
             notes.append(f"{name}: a reference inside other text — not imported")
