@@ -111,6 +111,17 @@ def google_account_for(slug: str) -> str:
         return f"{slug.lower()}@{MAILBOX_DOMAIN}"
 
 
+def mailbox_is_hosted(slug: str) -> bool:
+    """True when the agent's mail is wholly canopy-hosted (`agent_email.hosted_only`): no
+    gog inbox exists to probe, so its absence is not a health flag."""
+    from orchestrator.agent_email import (AgentEmailError, find_agent_repo, hosted_only,
+                                          resolve_email_identity)
+    try:
+        return hosted_only(resolve_email_identity(find_agent_repo(slug)))
+    except (AgentEmailError, OSError, ValueError):
+        return False
+
+
 def resolve_mailbox(slug: str, accounts: list[dict],
                     want: Optional[str] = None) -> Optional[tuple[str, str]]:
     """(mailbox, gog_client) for an agent slug, or None if not authed on this machine.
@@ -224,8 +235,14 @@ def health_report(slug: str, *, call: Callable = canopy_web.call,
                         stale_needs_you_days=stale_needs_you_days)
 
     want = google_account_for(slug)
-    resolved = resolve_mailbox(slug, list_gog_accounts(runner=runner), want=want)
-    if resolved is None:
+    hosted = mailbox_is_hosted(slug)
+    resolved = None if hosted else resolve_mailbox(slug, list_gog_accounts(runner=runner),
+                                                   want=want)
+    if hosted:
+        # canopy-web carries a hosted mailbox's mail and its threads arrive as turns, so
+        # there is no Gmail inbox to probe — not an unreachable one.
+        inbox = {"unread": [], "error": None, "hosted": True}
+    elif resolved is None:
         inbox = {"unread": [], "error": f"no gog account for {want} on this machine"}
     else:
         # The client by the one rule every gog caller follows (agent_email.reconcile_client),
@@ -254,7 +271,7 @@ def health_report(slug: str, *, call: Callable = canopy_web.call,
     # see the same keyring (macOS file backend, no TTY). Not ready if it can't.
     from orchestrator.agent_email import session_keyring_problems
 
-    keyring = session_keyring_problems(slug, runner=runner)
+    keyring = [] if hosted else session_keyring_problems(slug, runner=runner)
     if keyring:
         flags.append("keyring_unreachable_in_turns")
 

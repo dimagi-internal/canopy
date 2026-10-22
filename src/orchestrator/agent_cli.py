@@ -1768,7 +1768,8 @@ def agent_health(slug, stale_needs_you_days, stale_inbox_days, as_json):
             click.echo(f"        last turn: {last_turn}  •  "
                        f"needs-you: {len(a['board']['needs_you'])} "
                        f"({sum(1 for i in a['board']['needs_you'] if i['stale'])} stale)  •  "
-                       f"unread: {n_unread} ({n_junky} junk-signaled)"
+                       + ("inbox: hosted by canopy-web" if a["inbox"].get("hosted") else
+                          f"unread: {n_unread} ({n_junky} junk-signaled)")
                        + (f"  •  inbox error: {a['inbox']['error']}" if a["inbox"]["error"] else ""))
             for line in a.get("keyring") or []:
                 click.echo(f"        {line}")

@@ -2455,6 +2455,30 @@ def preflight(
 GOOGLE_WORKSPACE_DOMAIN = "dimagi-ai.com"
 
 
+def hosted_only(ident) -> bool:
+    """Is the agent's mail wholly canopy-hosted — an SES address and no Google account?
+
+    Such an agent is complete for mail: canopy-web receives, threads and sends it, and its
+    turns arrive as `--thread <uuid>`. It simply has no gog (Gmail, Drive, Docs) yet, which
+    is a capability not connected, not a misconfiguration — so readiness checks skip the
+    gog surface for it rather than fail. Declaring `google_account` turns gog back on.
+    Only probes when it could matter (same rule as `require_google_account`); an
+    unreachable canopy-web answers False, so the gog checks run as before."""
+    if getattr(ident, "google_account", ""):
+        return False
+    address = (getattr(ident, "account", "") or "").strip().lower()
+    if not address or address.endswith("@" + GOOGLE_WORKSPACE_DOMAIN):
+        return False
+    return _ses_route(address, quiet=True) is not None
+
+
+def hosted_only_note(ident) -> str:
+    """The one sentence every skipped gog check says about a hosted-only agent."""
+    return (f"{ident.account} is a mailbox canopy-web hosts, so mail needs no gog. Gmail, "
+            f"Drive and Docs are not connected — set \"google_account\" in config/agent.json "
+            f"when the agent needs them")
+
+
 def require_google_account(ident: EmailIdentity) -> None:
     """Refuse a gog call that would run as an SES address — there is no Google account
     behind one.
@@ -2465,12 +2489,7 @@ def require_google_account(ident: EmailIdentity) -> None:
     cause, so this names the missing key instead. Only probes when it could matter: no
     `google_account` declared and the address is outside the fleet's Workspace domain;
     the probe is quiet (an unreachable canopy-web lets gog try, as before)."""
-    if ident.google_account:
-        return
-    address = (ident.account or "").strip().lower()
-    if not address or address.endswith("@" + GOOGLE_WORKSPACE_DOMAIN):
-        return
-    if _ses_route(address, quiet=True) is None:
+    if not hosted_only(ident):
         return
     raise AgentEmailError(
         f"{ident.account} is an SES address canopy-web hosts — it has no Google account, so "
@@ -2483,6 +2502,16 @@ def require_google_account(ident: EmailIdentity) -> None:
 # --------------------------------------------------------------------------------------
 # CLI — `canopy email …`
 # --------------------------------------------------------------------------------------
+
+def _hosted_identity(repo: str | None, agent: str | None,
+                     account: str | None) -> EmailIdentity | None:
+    """The repo's identity when it is hosted-only (see `hosted_only`), else None. An explicit
+    `--account` is a deliberate gog identity, so it never reads as hosted."""
+    if account:
+        return None
+    ident = _identity_from_opts(repo, agent, None, None, gog=False)
+    return ident if hosted_only(ident) else None
+
 
 def _identity_from_opts(repo: str | None, agent: str | None,
                         account: str | None, client: str | None, *,
@@ -3157,6 +3186,13 @@ def _dangling_options(fn):
 def _run_dangling(repo, agent, account, client, days, limit, stale_after, older_than,
                   include_automated, as_json, no_owners=False, owner_lookup=None):
     try:
+        hosted = _hosted_identity(repo, agent, account)
+        if hosted is not None:
+            # Step 2.0 sweeps a Gmail inbox; a hosted mailbox has none — its threads reach
+            # the agent as `--thread <uuid>` turns. Say so (an instrumented absence), exit 0.
+            click.echo(f"Skipped: {hosted.account} is a mailbox canopy-web hosts — no Gmail "
+                       "inbox to sweep; its threads arrive as `--thread` turns.")
+            return
         ident = _identity_from_opts(repo, agent, account, client)
         owners = None
         if not no_owners:
@@ -3469,10 +3505,14 @@ def email_client(repo, agent, account, client, as_json):
 def email_preflight(repo, agent, account, client):
     """Check the agent's gog Gmail auth is alive; print the exact remediation if not."""
     try:
-        ident = _identity_from_opts(repo, agent, account, client)
+        hosted = _hosted_identity(repo, agent, account)
+        ident = hosted or _identity_from_opts(repo, agent, account, client)
     except AgentEmailError as e:
         raise click.ClickException(str(e))
-    ok, lines = preflight(ident)
+    if hosted:
+        ok, lines = True, [f"OK: {hosted_only_note(ident)}."]
+    else:
+        ok, lines = preflight(ident)
     for line in lines:
         click.echo(line)
     stale = engine_staleness_error()
