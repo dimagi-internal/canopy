@@ -32,6 +32,12 @@ so each is unit testable without a network:
               dispatched task is created by one session and shipped by another, and nothing
               closes the card; on 2026-10-21 hal's board had eight such cards, the oldest
               two weeks stale, all still saying "Work this dispatch".
+              A card UPDATED AFTER its last ref closed is not flagged: someone touched it
+              with the merged state in front of them and kept it open, because its refs
+              were prerequisites and its next step is off GitHub (waiting on a person,
+              parked, step 3 of 5). On 2026-10-22 all 9 of hal's (f) hits were that, and
+              every turn re-spent the same judgment to leave them open. A ref whose close
+              time is unknown keeps the old rule — over-report, never hide.
 
 Tasks whose Next action carries the `[MANUAL — …]` marker are skipped by (a), (e) and (f): the
 human has taken them off the agent's queue (task-tracker.md vocabulary).
@@ -257,7 +263,8 @@ def open_task_github_refs(tasks) -> list[str]:
 
 
 def fetch_github_states(refs, runner=None) -> "tuple[dict | None, str]":
-    """{ref: OPEN|CLOSED|MERGED} for `refs`, in ONE `gh api graphql` call.
+    """{ref: {"state": OPEN|CLOSED|MERGED, "closed_at": iso|None}} for `refs`, in ONE
+    `gh api graphql` call. (A merged PR's `closedAt` is its merge time.)
 
     A ref the caller cannot see (no access, deleted) is simply absent, which (f) reads as
     "not known to be done". Returns (None, why) on any failure: the audit must never fail
@@ -274,7 +281,8 @@ def fetch_github_states(refs, runner=None) -> "tuple[dict | None, str]":
         owner, repo = owner_repo.split("/")
         fields.append(f'r{i}: repository(owner: "{owner}", name: "{repo}") '
                       f'{{ issueOrPullRequest(number: {num}) '
-                      f'{{ ... on Issue {{ state }} ... on PullRequest {{ state }} }} }}')
+                      f'{{ ... on Issue {{ state closedAt }} '
+                      f'... on PullRequest {{ state closedAt }} }} }}')
     query = "query { " + " ".join(fields) + " }"
     try:
         r = runner(["gh", "api", "graphql", "-f", f"query={query}"],
@@ -290,21 +298,39 @@ def fetch_github_states(refs, runner=None) -> "tuple[dict | None, str]":
     for i, ref in enumerate(refs):
         item = ((data.get(f"r{i}") or {}).get("issueOrPullRequest") or {})
         if item.get("state"):
-            states[ref] = item["state"]
+            states[ref] = {"state": item["state"], "closed_at": item.get("closedAt")}
     return states, ""
 
 
+def _ref_state(value) -> str | None:
+    """A github_states value's state — a bare string (callers/tests) or fetch's dict."""
+    return value.get("state") if isinstance(value, dict) else value
+
+
+def _last_closed(refs, github_states) -> datetime | None:
+    """The latest close time across `refs`, or None if ANY of them is unknown."""
+    times = [_parse_ts(v.get("closed_at")) if isinstance(v, dict) else None
+             for v in (github_states.get(r) for r in refs)]
+    return None if not times or None in times else max(times)
+
+
 def check_shipped_tasks(tasks, github_states) -> list[dict]:
-    """(f) open tasks whose every referenced GitHub issue/PR is CLOSED or MERGED."""
+    """(f) open tasks whose every referenced GitHub issue/PR is CLOSED or MERGED, and
+    that nobody has touched since the last of them closed."""
     out = []
     for t in tasks or []:
         if not _is_open(t) or _is_manual(t):
             continue
         refs = github_refs(t)
-        if refs and all(github_states.get(r) in DONE_GITHUB_STATES for r in refs):
-            out.append({"ext_id": str(t.get("ext_id") or t.get("id")),
-                        "title": t.get("title") or "",
-                        "refs": [f"{r} {github_states[r]}" for r in refs]})
+        if not refs or not all(_ref_state(github_states.get(r)) in DONE_GITHUB_STATES
+                               for r in refs):
+            continue
+        last_closed, updated = _last_closed(refs, github_states), _parse_ts(t.get("updated_at"))
+        if last_closed and updated and updated > last_closed:
+            continue  # card was touched after its work closed and deliberately kept open
+        out.append({"ext_id": str(t.get("ext_id") or t.get("id")),
+                    "title": t.get("title") or "",
+                    "refs": [f"{r} {_ref_state(github_states[r])}" for r in refs]})
     return out
 
 

@@ -1002,13 +1002,14 @@ def agent_project_folder(slug, ref, all_active, dry_run):
 @click.option("--owner", "owner_note", default=None)
 @click.option("--notes", default=None)
 @click.option("--links", default=None, help='REPLACE the links: "label|url, …". "" clears them.')
-@click.option("--append-link", default=None,
-              help='ADD one link, keeping the existing ones: "label|url". This is where a '
-                   "deliverable goes — the doc, deck or PR the project produced. A url "
-                   "already on the project is not duplicated.")
+@click.option("--append-link", multiple=True,
+              help='ADD one link, keeping the existing ones: "label|url". Repeat it to add '
+                   "several. This is where a deliverable goes — the doc, deck or PR the "
+                   "project produced. A url already on the project is not duplicated.")
 def agent_project_set(slug, ref, links, append_link, **fields):
     """Patch a project — close it, point it at its Drive folder, restate the outcome,
     attach a deliverable (--append-link)."""
+    append_link = list(append_link or ()) or None  # multiple=True: () when not passed
     if links is not None and append_link is not None:
         raise click.ClickException("pass --links (replace) or --append-link (add), not both")
     try:
@@ -1220,10 +1221,10 @@ def _no_such_task(ref):
               help='REPLACE the card\'s links: "label|url, label2|url2" (bare urls OK). '
                    "Pass \"\" to clear them. To add one without restating the set, use "
                    "--append-link.")
-@click.option("--append-link", default=None,
-              help='ADD one link, keeping the existing ones: "label|url". The common case — '
-                   "a turn attaches the artifact it just produced. A url already on the card "
-                   "is not duplicated.")
+@click.option("--append-link", multiple=True,
+              help='ADD one link, keeping the existing ones: "label|url". Repeat it to add '
+                   "several. The common case — a turn attaches the artifact it just "
+                   "produced. A url already on the card is not duplicated.")
 @click.option("--project", "project", default=None, metavar="EXT_ID_OR_NAME",
               help="File this task into a project (P<N> ext_id or its exact name). Pass \"\" "
                    "to take it out of one; omitting it leaves the filing alone.")
@@ -1243,6 +1244,7 @@ def agent_set(slug, task_id, links, append_link, append_notes, project, parent, 
 
     Score a task WHEN you mark it done (--status done --score --review) so a manager
     sync reads the completion grade instead of re-grading later."""
+    append_link = list(append_link or ()) or None  # multiple=True: () when not passed
     if links is not None and append_link is not None:
         raise click.ClickException("pass --links (replace) or --append-link (add), not both")
     if fields.get("notes") is not None and append_notes is not None:
@@ -1301,10 +1303,16 @@ def _appended_links(client, task_id, spec):
 
 
 def _merge_links(current, spec):
-    """`current` links + the parsed `spec`, de-duplicated on url (first label wins).
-    Shared by a task's and a project's --append-link."""
+    """`current` links + the parsed `spec` (one string, or a list from a repeated
+    --append-link), de-duplicated on url (first label wins). Shared by a task's and a
+    project's --append-link.
+
+    `spec` became a list on 2026-10-22: the option took ONE value, so a turn passing
+    `--append-link A --append-link B` got exit 0 and only B — click keeps the last
+    value of a repeated single option, without a word."""
+    specs = [spec] if isinstance(spec, str) else list(spec)
     seen = {str(l.get("url") or "").strip() for l in current}
-    for link in parse_task_links(spec):
+    for link in (link for s in specs for link in parse_task_links(s)):
         if link["url"] not in seen:
             current.append(link)
             seen.add(link["url"])
