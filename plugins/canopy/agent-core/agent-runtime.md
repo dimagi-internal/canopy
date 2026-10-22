@@ -50,6 +50,30 @@ in a repo can't vary; a **1Password reference** can.
 > If yes → it's a reference. This is the rule that was being missed: ids kept getting written as
 > literals because "an id isn't a secret", which is true and irrelevant.
 
+## One declaration — the agent's Canopy vault
+
+**An agent's secrets are named in exactly one place: its Canopy vault on canopy-web** (the
+agent's Settings → Credentials). Every agent is on it (2026-10-22). Each stored name is one env
+var: `canopy cred env --agent <slug>` (laptop, `/<agent>:setup`) and a runner's prepare write
+`~/.<slug>/.env` straight from it — no template is read. The vault's names are also what
+canopy-web hands a runner and what its undeclared-read alert checks.
+
+A value **every agent in a workspace** uses — the fleet's gog OAuth clients `gog-oauth-client`
+and `gog-oauth-client-web` — lives ONCE in that workspace's vault (dimagi: `dimagi/Shared`),
+layered under each agent's own; no agent repeats it (Jonathan, 2026-10-22: "the oauth client
+ids should go into the workspace vaults for dimagi since they are the same across all agents").
+
+So an agent repo names **no secret and no vault**:
+- **No `.env.tpl`.** It was the 1Password path's template. A canopy-vault agent never reads it;
+  keeping it is a second list that drifts (ACE's went 40 names out of step). `canopy agent
+  doctor` passes a repo without one and flags one that remains. The factory stopped stamping it.
+- **No `secrets:` list in `runtime.yaml`.** runtime.yaml keeps what is not a secret — plugins,
+  tools, capabilities, engine, true literals (see § `runtime.yaml` below).
+- **`config/agent.json`** keeps identity (mailbox, `gog_client`) — facts, not secrets.
+
+The sections below on `.env.tpl`, `op inject`, `canopy agent vault` and `Canopy-Shared` describe
+the **1Password path**, kept only until the last 1Password code is removed.
+
 ## The gog client — never type one
 
 Every raw `gog` call names the mailbox (`-a <mailbox>`) and takes its client from
@@ -232,6 +256,15 @@ delete `config/secrets.yaml`.
 
 ## Adding a new value — the recipe
 
+**On the Canopy vault (every agent today):** store it in the agent's Settings → Credentials on
+canopy-web (or `canopy vault zk set --agent <slug> <NAME>`, value on stdin), named as the env var
+it becomes; a value every agent in the workspace needs goes in the workspace vault instead
+(`canopy vault zk set --vault <id> <NAME>`; ids from `canopy vault ws list`). Then
+`/<agent>:setup` or the next runner prepare materializes it, and code reads the env var. Nothing
+in the agent repo changes.
+
+**1Password path (legacy):**
+
 1. **Reference it** in the agent's `.env.tpl` as `KEY=op://${AGENT_VAULT}/<name>/credential`
    (legacy agents: `config/secrets.yaml`'s `env.vars`) — never the value, never a vault name, and
    never a real `op://…` in a comment (see the security rule above).
@@ -255,8 +288,10 @@ resolved those names and provisioned a box was designed but never wired into any
 was retired on 2026-10-15 — an agent is prepared by `canopy agent prepare` and its env filled
 from `.env.tpl` (docs/architecture/agent-setup-lifecycle.md).
 
-- **Adding a value → use `.env.tpl`** (above). It is the only path that reaches an agent's env.
-- **Don't declare the same value in both places** expecting `runtime.yaml` to supply it.
+- **Adding a value → store it in the agent's Canopy vault** (§ One declaration). Nothing in
+  runtime.yaml reaches an agent's env.
+- **runtime.yaml carries no `secrets:` list.** A secret named there is a second declaration of
+  what the vault already holds, and it drifts.
 
 ## Rollout status (2026-07-25)
 

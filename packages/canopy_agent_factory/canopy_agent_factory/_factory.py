@@ -305,14 +305,14 @@ infra you'd want every agent to get, it belongs in canopy; raise it there, don't
 - Capability logic belongs in CLIs / MCP tools; skills (`SKILL.md`) orchestrate. That keeps the
   agent portable to the Claude Agent SDK later (MCP is the portability boundary).
 - Config/secrets live in a WORKTREE-CLEAN global home `~/.{{AGENT_SLUG}}/.env`, filled by
-  `/{{AGENT_SLUG}}:setup` (`canopy cred env --agent {{AGENT_SLUG}}`) from `.env.tpl` (secret
-  refs + non-secret literals — never ANY secret reference in a comment, not even a placeholder:
-  `op inject` parses comments, and one breaks the whole file). NOT
-  a per-worktree repo `.env` (that gets recreated every turn). Scripts read it via `bin/_env.py`.
-- **The vault is never named in this repo.** A plugin is code; an *instance* is canopy-web's
-  Agent record (identity, workspace, credential source). `.env.tpl` refs read
-  `op://${AGENT_VAULT}/<item>/<field>`: on the Canopy vault (canopy-web) each item names a value
-  canopy-web holds; on 1Password `AGENT_VAULT` is the vault canopy-web records for the agent.
+  `/{{AGENT_SLUG}}:setup` (`canopy cred env --agent {{AGENT_SLUG}}`) from the agent's Canopy vault
+  on canopy-web. NOT a per-worktree repo `.env` (that gets recreated every turn). Scripts read it
+  via `bin/_env.py`.
+- **Secrets are declared in ONE place: the agent's Canopy vault** (canopy-web → the agent's
+  Settings → Credentials). Each stored name becomes one env var; values shared by every agent in
+  a workspace (the fleet's gog OAuth clients) live in that workspace's vault, layered under this
+  one. This repo names no secret and no vault — no `.env.tpl`, no secret list in a runtime spec
+  (canopy agent-core/agent-runtime.md § One declaration).
 - Outputs that are deliverables live where the team can see them (a shared drive / the canopy-web
   workspace), not as loose local files.
 
@@ -418,63 +418,12 @@ skill's body for the full text and apply it in full. In summary:
 - **Gated in:** `turn` (before shipping/replying, and the close checklist).
 '''
 
-_ENV_TPL = '''# {{AGENT_NAME}}'s env template — the fleet-standard `.env.tpl` + `op inject` provisioning
-# path (canopy agent-core/agent-runtime.md). `op inject` resolves this file's 1Password secret
-# references into the WORKTREE-CLEAN global env home ~/.{{AGENT_SLUG}}/.env (mode 0600) — NOT a
-# per-worktree repo .env. emdash runs each turn in a fresh worktree, so a repo-local .env would
-# vanish; every worktree instead reads the global home via bin/_env.py.
-#
-# Resolve with /{{AGENT_SLUG}}:setup, i.e.:
-#   canopy cred env --agent {{AGENT_SLUG}} --refresh
-# It asks canopy-web where this agent keeps its credentials and fills ~/.{{AGENT_SLUG}}/.env from
-# there — see TWO BACKENDS below. NEVER write a vault name here:
-# every reference names the vault as ${AGENT_VAULT} (see the live line below) — the vault
-# belongs to the instance, not to this repo (someone may run this agent with a different vault).
-#
-# CRITICAL: NEVER write a secret reference (the op-colon-slash-slash form) in a COMMENT, not even
-# with <placeholders>. `op inject` parses references ANYWHERE in this file, comments included:
-# a real one leaks its secret on the next `op inject ... | cat`, and a placeholder one fails the
-# WHOLE inject once ${AGENT_VAULT} is filled in ("invalid secret reference ... too few '/'") —
-# which is how every factory-made agent's env failed to materialize (lex, 2026-10-15). Copy the
-# live CANOPY_WEB_PAT line below to add one; `canopy agent doctor` fails a template that breaks
-# this rule.
-#
-# One line per var, `KEY=value`. A literal (not environment-varying) value is fine as-is;
-# anything that differs per environment — a key, an id, a folder — must be a secret reference,
-# never the literal value. For a non-env credential FILE (e.g. an OAuth-client json), don't put
-# it here — `op read` it directly into the file instead.
-#
-# TWO BACKENDS, ONE TEMPLATE. Where the values come from is the agent's `credential_source` on
-# canopy-web, not this file:
-#   * canopy-web (the Canopy vault — no 1Password needed): a runner writes ~/.{{AGENT_SLUG}}/.env
-#     straight from the values canopy-web holds for this agent, each named by the ITEM in its
-#     reference below (`canopy-pat` → CANOPY_WEB_PAT). Fill them in the agent's Credentials on
-#     canopy-web; its setup checklist names what is missing.
-#   * 1password: `op inject` resolves the references with AGENT_VAULT set to the vault canopy-web
-#     records for the agent. Fill it with
-#     `canopy agent vault --slug {{AGENT_SLUG}}` (a person with 1Password rights): it MINTS what
-#     the system can (CANOPY_WEB_PAT), and ASKS only for what a person alone has.
-# Add a line here and both paths pick it up.
-#
-# EMAIL. A mailbox on the workspace's canopy-hosted domain needs NO secret at all: canopy-web
-# receives and sends it, and `canopy email` routes there by itself. Only a Google mailbox needs a
-# Gmail token (Connect Google mailbox) and the SHARED fleet gog OAuth client (`canopy`) — the APP
-# identity reused by every agent; the per-agent identity is the mailbox ({{MAILBOX}}).
-
-{{AGENT_ENV}}_PRIMARY_CHANNEL={{MAILBOX}}
-CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential
-
-# Drive filing (canopy agent-core/deliverables.md; the task-tracker names it): when this agent
-# files deliverables to Drive, add a GDRIVE_ROOT_FOLDER line shaped like CANOPY_WEB_PAT's, item
-# gdrive-root-folder — the folder id differs per Workspace, so it is a reference, never a literal.
-# Left out until then: a reference to an item nobody filled fails the whole inject.
-'''
 
 _ENV_LOADER = '''"""Canonical .env resolver for {{AGENT_NAME}}'s scripts — reads the WORKTREE-CLEAN global home.
 
 {{AGENT_NAME}} runs each turn in a fresh emdash worktree; a per-repo `.env` would be absent there and
-get recreated every turn. So secrets live ONCE at ~/.{{AGENT_SLUG}}/.env (filled from .env.tpl
-by /{{AGENT_SLUG}}:setup — `canopy cred env --agent {{AGENT_SLUG}}`; override the home with
+get recreated every turn. So secrets live ONCE at ~/.{{AGENT_SLUG}}/.env (filled from its Canopy
+vault by /{{AGENT_SLUG}}:setup — `canopy cred env --agent {{AGENT_SLUG}}`; override the home with
 ${{AGENT_ENV}}_ENV). A repo-local `.env` still works as a per-KEY dev override (it wins).
 
     from _env import get, load
@@ -648,13 +597,10 @@ follows it: preflight → process inbound (one counterpart at a time) → skill 
 3. Add each outbound action as a `deny` rail in `config/gating.json` pointing at its one
    sanctioned path — not as prose, and not as an `approve` rule (approval is the turn
    checklist's job; hook modals stall autonomous work).
-4. Declare secrets in `.env.tpl` as `op://${AGENT_VAULT}/<item>/<field>` (never a vault name, and
-   never any secret reference in a comment, even a placeholder — `op inject` parses comments and
-   one breaks the whole file). On the **Canopy vault** (canopy-web, no 1Password) a runner writes
-   `~/.{{AGENT_SLUG}}/.env` from the values stored in the agent's Settings → Credentials, named by
-   each reference's item; on **1Password**, `/{{AGENT_SLUG}}:setup` fills it from the instance's
-   recorded vault. Either way `/{{AGENT_SLUG}}:setup` (`canopy cred env`) fills it on a laptop and
-   `bin/_env.py` reads it.
+4. Store each secret the agent needs in its Canopy vault (canopy-web → the agent's Settings →
+   Credentials), named as the env var it becomes (`CANOPY_WEB_PAT`, `GDRIVE_ROOT_FOLDER`). That
+   is the only declaration: a runner writes `~/.{{AGENT_SLUG}}/.env` from it, `/{{AGENT_SLUG}}:setup`
+   (`canopy cred env`) does the same on a laptop, and `bin/_env.py` reads it.
 5. The agent's own thing is its MAILBOX ({{MAILBOX}}).
    - **Canopy-hosted** (an address on the workspace's own mail domain): nothing to sign in.
      canopy-web routes mail to the agent when it is created and sends as it; `canopy email`
@@ -709,8 +655,8 @@ canopy cred env --agent {{AGENT_SLUG}} --refresh
 It prints the path it wrote (`~/.{{AGENT_SLUG}}/.env`, 0600 — the worktree-clean home every
 `bin/` script reads through `bin/_env.py`) and, on stderr, where the values came from. Relay a
 refusal **verbatim** and act on it — it names its own fix: not a member of the agent's workspace,
-not one of its admins, 1Password not signed in or no access to the vault, or no `.env.tpl`
-found (run from this repo's root, or install the plugin). Never guess past it. Missing values on
+not one of its admins, or (a legacy 1Password agent) 1Password not signed in or no access to
+the vault. Never guess past it. Missing values on
 the Canopy vault are filled in the agent's Settings → Credentials on canopy-web.
 
 **2. Check readiness.**
@@ -931,7 +877,6 @@ _TEMPLATES: dict[str, str] = {
     "persona.md": _PERSONA_MD,
     "README.md": _README,
     ".gitignore": _GITIGNORE,
-    ".env.tpl": _ENV_TPL,
     "bin/_env.py": _ENV_LOADER,
     "bin/{{AGENT_SLUG}}-email": _EMAIL_SHIM,
     "config/gating.json": _GATING_JSON,

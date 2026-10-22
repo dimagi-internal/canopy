@@ -155,10 +155,12 @@ def test_gating_counts_rules(tmp_path):
     assert "1 effective deny rail(s)" in result.detail and "0 fleet-baseline" in result.detail
 
 
-def test_secrets_manifest_missing_points_at_provision(tmp_path):
+def test_no_secrets_manifest_is_the_canopy_vault_target_state(tmp_path):
+    """The agent's Canopy vault is the one declaration (2026-10-22): a repo with no
+    .env.tpl and no config/secrets.yaml passes and says where its secrets are named."""
     result = check_secrets_manifest(_agent_repo(tmp_path, secrets=False))
-    assert not result.ok
-    assert "canopy provision" in result.detail
+    assert result.ok
+    assert "Canopy vault" in result.detail
 
 
 def test_secrets_manifest_counts_entries(tmp_path):
@@ -187,7 +189,10 @@ def test_secrets_manifest_env_tpl_is_primary_no_secrets_yaml_needed(tmp_path):
         "CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential\n"
         "GOG=op://${AGENT_VAULT}/gog-token/credential\n")
     detail = check_secrets_manifest(repo).detail
-    assert "canopy-pat (minted), gog-token (linked)" in detail and "note:" not in detail
+    assert "canopy-pat (minted), gog-token (linked)" in detail
+    assert "literally" not in detail and "no CANOPY_WEB_PAT" not in detail
+    # The vault is the one declaration (2026-10-22): a template is named as the copy it is.
+    assert "delete .env.tpl" in detail
 
 
 def test_secrets_manifest_fails_a_secret_reference_in_a_comment(tmp_path):
@@ -370,12 +375,6 @@ def test_secrets_self_managed_provisioning_declared_in_agent_json(tmp_path):
                        agent_json_extra={"provisioning": ".env.tpl + op inject"})
     result = check_secrets_manifest(repo)
     assert result.ok and "self-managed" in result.detail
-
-
-def test_secrets_missing_still_fails_without_declared_provisioning(tmp_path):
-    repo = _agent_repo(tmp_path, secrets=False)
-    result = check_secrets_manifest(repo)
-    assert not result.ok and "provisioning" in result.detail
 
 
 def test_email_auth_keeps_full_multiline_remediation():

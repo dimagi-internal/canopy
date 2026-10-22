@@ -52,10 +52,7 @@ own; canopy#849), `.claude/settings.json` (sets `CANOPY_AGENT=<slug>`, which tel
 session it is),
 `bin/<slug>-email` (thin shim over the shared `canopy email` engine; raw `gog gmail send` is
 deny-railed out of the box), `config/agent.json` (identity: mailbox + `gog_client`),
-`.env.tpl` (the fleet-standard secrets template — see agent-core/agent-runtime.md;
-**never write a real `op://<vault>/<item>/<field>` in a comment**, `op inject` resolves those
-too — only the angle-bracket placeholder; refs read `op://${AGENT_VAULT}/<item>/<field>` and
-never name a vault), `skills/setup/SKILL.md` (`/<slug>:setup` — fills `~/.<slug>/.env` with
+`skills/setup/SKILL.md` (`/<slug>:setup` — fills `~/.<slug>/.env` with
 `canopy cred env`, from the Canopy vault or 1Password, whichever canopy-web records for the agent),
 `config/allowlist.txt`, the plugin manifest, and `.claude-plugin/marketplace.json` — the manifest a
 runner installs the agent's plugin from (without it a box installs nothing).
@@ -133,8 +130,10 @@ real work. Its `command` starts that session; in it, apply the judgment below.
    (exit 2 = blocked). Never register a PreToolUse gating hook in the agent itself: plugins
    install user-scope, so it would fire in every other agent's sessions too.
 
-Secrets the domain skill needs go in `.env.tpl` (see the warnings in Step 2) and resolve with
-`/<slug>:setup`. canopy-web can't see this machine, so before the first turn on a laptop also run
+Secrets the domain skill needs are stored in the agent's Canopy vault (canopy-web → its
+Settings → Credentials), named as the env var each becomes — that vault is the ONE declaration;
+the repo holds no `.env.tpl` (agent-core/agent-runtime.md § One declaration). `/<slug>:setup`
+materializes them. canopy-web can't see this machine, so before the first turn on a laptop also run
 `uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .` (and again on any new machine).
 
 Ship repo changes per the agent repo's own convention (branch → PR → merge yourself; the PR is a
