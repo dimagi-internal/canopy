@@ -1,4 +1,5 @@
-"""`canopy kb …` — build, store and serve a knowledge base (see `orchestrator.kb`).
+"""`canopy kb …` — build, store and serve a knowledge base (engine: canopy-web's
+`canopy_kb`, loaded by `orchestrator.kb_engine`).
 
 Four commands, because only these are work a prompt cannot do: `build` (index + dated
 diff), `push` / `pull` (the gzipped copy in the project's Drive folder — and for a
@@ -17,9 +18,14 @@ pulls on its own when the cache is older than --max-age-hours.
 Drive is read as the AGENT whose repo you run from (`--repo`, default: cwd), through the
 same identity and gog client rule every canopy Drive call uses.
 
-`canopy kb mcp --kb connect/givewell-kb` serves the same queries as MCP tools over stdio, so an agent
-registers it once in its .mcp.json and gets search/get/tables/whats_new natively. A script
-that wants a query uses `orchestrator.kb.KB` (or `open_kb` here) directly.
+A workspace project's push can carry the bundle's ORIGINALS (`--originals <bundle>`): the
+files each item's text was read from (PDFs, spreadsheets, pages). They go to canopy-web's
+store by sha256 before the build is published, only those it lacks, and the project's
+`original` tool hands readers the files. The text is the index; the original is the record.
+
+`canopy kb mcp --kb connect/givewell-kb` serves the same tools canopy-web serves, over stdio
+(offline use; readers normally add the project's remote MCP URL). A script that wants a
+query uses `canopy_kb.KB` (or `open_kb` here) directly.
 """
 from __future__ import annotations
 
@@ -35,7 +41,7 @@ from pathlib import Path
 
 import click
 
-from orchestrator.kb import KB, KBError, build
+from orchestrator.kb_engine import KBError, build, open_file, summary
 
 CACHE_ROOT = Path(os.environ.get("CANOPY_KB_CACHE", Path.home() / ".canopy" / "kb"))
 KB_FILE = "kb.sqlite"
@@ -142,16 +148,20 @@ def pull(ref: str, repo: Path, force: bool = False) -> dict:
         raw.unlink()
     else:
         raw.replace(tmp)
-    KB(tmp)  # refuse a file that is not a readable KB before replacing the cache
+    summary(tmp)  # refuse a file that is not a knowledge base before replacing the cache
     tmp.replace(cdir / KB_FILE)
     stamp = {"file_id": f["id"], "folder": folder, "modified": remote_mod, "pulled_at": _now(), "checked_at": _now()}
     stamp_path.write_text(json.dumps(stamp, indent=2), encoding="utf-8")
     return {"kb": ref, "path": str(cdir / KB_FILE), "pulled": True, "modified": remote_mod}
 
 
-def push(ref: str, repo: Path, path: Path) -> dict:
-    """Upload a built kb.sqlite into the KB's Drive folder (curator only)."""
-    KB(path)
+def push(ref: str, repo: Path, path: Path, originals: Path | None = None) -> dict:
+    """Upload a built kb.sqlite into the KB's Drive folder (curator only); for a workspace
+    project, upload the bundle's originals (when given) and publish it to canopy-web."""
+    built = summary(path)
+    if originals is not None and _kind(ref) != "workspace-project":
+        raise KBError("--originals needs a workspace project (<workspace>/<handle>): canopy-web stores them")
+    stored = upload_originals(ref, originals) if originals is not None else None
     folder = _folder_for(ref)
     d = _Drive(repo)
     f = d.find(folder, KB_REMOTE)
@@ -165,10 +175,70 @@ def push(ref: str, repo: Path, path: Path) -> dict:
             d.gog("drive", "upload", str(gzpath), "--name", KB_REMOTE, "--parent", folder)
         size = gzpath.stat().st_size
         served = publish_to_canopy(ref, gzpath) if _kind(ref) == "workspace-project" else None
-    out = {"kb": ref, "folder": folder, "replaced": bool(f), "bytes": size, "summary": KB(path).summary}
+    out = {"kb": ref, "folder": folder, "replaced": bool(f), "bytes": size, "summary": built}
+    if stored:
+        out["originals"] = stored
     if served:
         out["mcp_url"] = served
     return out
+
+
+ORIGINALS_BATCH = 1000  # canopy-web's per-request limit
+ORIGINALS_WORKERS = 8
+
+
+def collect_originals(bundle: Path) -> dict[str, dict]:
+    """sha256 -> {path, bytes, content_type} for every item's `original` in a bundle. A
+    file that is missing on disk refuses the push: a published build would point at it."""
+    found: dict[str, dict] = {}
+    missing = []
+    with open(Path(bundle) / "items.jsonl", encoding="utf-8") as fh:
+        for line in fh:
+            if '"original"' not in line:
+                continue
+            o = json.loads(line).get("original")
+            if not isinstance(o, dict) or not o.get("sha256") or o["sha256"] in found:
+                continue
+            p = Path(o.get("path") or "")
+            if not o.get("path") or not p.is_file():
+                missing.append(o.get("path") or o["sha256"])
+                continue
+            found[o["sha256"]] = {"path": p, "bytes": p.stat().st_size,
+                                  "content_type": o.get("content_type") or "application/octet-stream"}
+    if missing:
+        raise KBError(f"{len(missing)} originals named in {bundle}/items.jsonl are not on disk "
+                      f"(first: {missing[0]}); re-run the curator's fetch, or push without --originals")
+    return found
+
+
+def upload_originals(ref: str, bundle: Path) -> dict:
+    """Upload the originals canopy-web's store lacks for this workspace project (by sha256,
+    so an unchanged file never uploads twice). Run before publishing the build."""
+    import concurrent.futures as cf
+
+    from orchestrator import canopy_web
+
+    ws, handle = _WORKSPACE_REF.match(ref).groups()
+    files = collect_originals(bundle)
+    shas = sorted(files)
+    have = uploaded = sent = 0
+    for i in range(0, len(shas), ORIGINALS_BATCH):
+        batch = [{"sha256": h, "bytes": files[h]["bytes"], "content_type": files[h]["content_type"]}
+                 for h in shas[i:i + ORIGINALS_BATCH]]
+        try:
+            got = canopy_web.call("POST", f"/api/workspace-projects/{ws}/{handle}/kb/originals", {"files": batch}) or {}
+        except canopy_web.CanopyError as e:
+            if "-> 404" in str(e) or "-> 405" in str(e):
+                raise KBError("this canopy-web does not take originals yet (it predates them); "
+                              "push without --originals until it is deployed") from e
+            raise
+        have += got.get("have", 0)
+        ups = got.get("uploads") or []
+        with cf.ThreadPoolExecutor(ORIGINALS_WORKERS) as ex:
+            list(ex.map(lambda u: _put(u["url"], files[u["sha256"]]["path"], u.get("headers") or {}), ups))
+        uploaded += len(ups)
+        sent += sum(files[u["sha256"]]["bytes"] for u in ups)
+    return {"files": len(shas), "already_stored": have, "uploaded": uploaded, "bytes_uploaded": sent}
 
 
 def _put(url: str, path: Path, headers: dict) -> None:
@@ -208,10 +278,10 @@ def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def open_kb(ref: str, repo: Path, max_age_hours: float = 24.0) -> tuple[KB, str]:
+def open_kb(ref: str, repo: Path, max_age_hours: float = 24.0):
     """Open a KB, pulling first when the cache is missing or stale. Returns (kb, warning)."""
     if _kind(ref) == "local":
-        return KB(Path(ref).expanduser()), ""
+        return open_file(Path(ref).expanduser()), ""
     cdir = _cache_dir(ref)
     stamp_path = cdir / "pulled.json"
     stale = True
@@ -230,7 +300,7 @@ def open_kb(ref: str, repo: Path, max_age_hours: float = 24.0) -> tuple[KB, str]
             if not (cdir / KB_FILE).exists():
                 raise
             warning = f"could not refresh from Drive ({e}); serving the cached copy"
-    return KB(cdir / KB_FILE), warning
+    return open_file(cdir / KB_FILE), warning
 
 
 # -- CLI -----------------------------------------------------------------------------
@@ -286,10 +356,13 @@ def pull_cmd(kb_ref, repo, max_age_hours, force):
 @kb_group.command("push")
 @_kb_option
 @click.argument("path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--originals", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None,
+              help="the bundle the build came from: upload each item's original file first (workspace projects)")
 @_guard
-def push_cmd(kb_ref, repo, max_age_hours, path):
-    """Upload a built kb.sqlite to the KB's Drive folder (curators)."""
-    _emit(push(kb_ref, repo, path))
+def push_cmd(kb_ref, repo, max_age_hours, path, originals):
+    """Upload a built kb.sqlite to the KB's Drive folder (curators); a workspace project's
+    is also published to canopy-web, with its originals when --originals names the bundle."""
+    _emit(push(kb_ref, repo, path, originals))
 
 
 @click.command("mcp-headers")

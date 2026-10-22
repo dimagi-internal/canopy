@@ -1,127 +1,128 @@
+"""canopy's `kb` commands: resolving refs, the Drive copy, publishing to canopy-web, and the
+stdio MCP server. The engine itself (canopy-web's `canopy_kb`) is tested where it lives;
+here a stand-in engine proves canopy only routes to it, and one test runs the real engine
+when it is installed."""
 import io
 import json
+import sqlite3
+import sys
+import types
 
 import pytest
 
-from orchestrator.kb import KB, KBError, build, chunk_text
+from orchestrator import kb_cli, kb_engine
+from orchestrator.kb_engine import KBError
 from orchestrator.kb_mcp import serve
-from orchestrator import kb_cli
 
 
-def _bundle(tmp_path, items, grants=None, name="acme"):
-    b = tmp_path / f"bundle-{len(items)}-{name}"
-    (b / "tables").mkdir(parents=True)
-    manifest = {"name": name, "publisher": "Acme Foundation", "license": "CC BY 4.0",
-                "tables": {"grants": {"description": "Every grant.", "date_column": "Date",
-                                      "amount_column": "Amount", "filter_columns": ["Recipient", "Countries"]}}}
-    (b / "manifest.json").write_text(json.dumps(manifest))
-    (b / "items.jsonl").write_text("\n".join(json.dumps(i) for i in items))
-    rows = grants if grants is not None else [
-        {"Grant": "Water pilot", "Recipient": "Dimagi Inc", "Amount": 1069324, "Date": "2025-12-03", "Countries": "Nigeria"},
-        {"Grant": "Cholera RCT", "Recipient": "Johns Hopkins", "Amount": 740851.8, "Date": "2025-03-14", "Countries": "Bangladesh"},
-        {"Grant": "Old grant", "Recipient": "Dimagi Inc", "Amount": 49721.62, "Date": "2023-11-14", "Countries": "Nigeria"},
-    ]
-    (b / "tables" / "grants.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
-    return b
+def _kb_file(path, items=2, name="acme"):
+    """A minimal built knowledge base: what push/pull check without the engine."""
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    db.execute("INSERT INTO meta VALUES ('summary', ?)", (json.dumps({"schema": 3, "name": name, "items": items}),))
+    db.commit()
+    db.close()
+    return path
 
 
-ITEMS = [
-    {"id": "p:1", "type": "podcast_episode", "title": "Tackling diarrheal disease", "url": "https://x/1", "date": "2026-07-23",
-     "text": "A key way that cholera is transmitted is through contaminated water.\n\nWASHmobile follows up households.", "sha256": "a"},
-    {"id": "b:1", "type": "blog_post", "title": "Safe water update", "url": "https://x/2", "date": "2025-10-29",
-     "text": "Chlorination pilots in six countries.", "sha256": "b"},
-]
+class _EngineError(Exception):
+    pass
 
 
-def test_chunk_text_splits_long_text_with_overlap():
-    text = "\n\n".join(f"para {i} " + "x" * 500 for i in range(10))
-    chunks = chunk_text(text, size=1200, overlap=100)
-    assert len(chunks) > 3
-    assert all(len(c) <= 1200 + 600 for c in chunks)
-    assert chunk_text("") == []
-    assert chunk_text("y" * 5000, size=1000, overlap=100)[1].startswith("y")
+_EngineError.__name__ = "KBError"
 
 
-def test_build_search_get(tmp_path):
-    db = tmp_path / "kb.sqlite"
-    s = build(_bundle(tmp_path, ITEMS), db)
-    assert s["items"] == 2 and s["tables"] == {"grants": 3} and s["baseline"]
-    kb = KB(db)
-    hits = kb.search("cholera water")
-    assert hits[0]["id"] == "p:1" and hits[0]["url"] == "https://x/1"
-    # AND finds nothing for these two together; OR fallback still answers
-    assert {h["id"] for h in kb.search("cholera chlorination")} == {"p:1", "b:1"}
-    assert kb.search("chlorination", types=["podcast_episode"]) == []
-    assert kb.search("water", since="2026-01-01")[0]["id"] == "p:1"
-    item = kb.get("https://x/1", max_chars=20)
-    assert item["id"] == "p:1" and "truncated" in item
+@pytest.fixture()
+def fake_engine(monkeypatch):
+    """A `canopy_kb` stand-in recording what canopy asks of it."""
+    calls = []
+
+    class FakeKB:
+        def __init__(self, path):
+            calls.append(("open", str(path)))
+            self.manifest = {"name": "acme"}
+
+    def run(kb, name, args, semantic=None, rerank=None):
+        calls.append(("run", name, args))
+        if name == "kb_info":
+            return "acme — 2 documents"
+        if name == "grants":
+            return {"matched": 1}
+        raise _EngineError(f"unknown tool {name!r}")
+
+    mod = types.ModuleType("canopy_kb")
+    mod.KB = FakeKB
+    mod.build = lambda bundle, out, previous=None: calls.append(("build", str(bundle), str(out), previous)) or {"items": 2}
+    mod.tools = types.ModuleType("canopy_kb.tools")
+    mod.tools.tool_specs = lambda kb: [{"name": "kb_info"}, {"name": "grants"}]
+    mod.tools.run = run
+    monkeypatch.setitem(sys.modules, "canopy_kb", mod)
+    monkeypatch.setitem(sys.modules, "canopy_kb.tools", mod.tools)
+    return calls
+
+
+def test_build_and_open_go_to_the_engine(fake_engine, tmp_path):
+    assert kb_engine.build(tmp_path / "bundle", tmp_path / "kb.sqlite") == {"items": 2}
+    kb, warning = kb_cli.open_kb(str(_kb_file(tmp_path / "kb.sqlite")), tmp_path)
+    assert warning == "" and kb.manifest["name"] == "acme"
+    assert [c[0] for c in fake_engine] == ["build", "open"]
+
+
+def test_without_the_engine_build_says_how_to_install_it(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "canopy_kb", None)  # import canopy_kb -> ImportError
+    with pytest.raises(KBError, match="packages/canopy_kb"):
+        kb_engine.build(tmp_path, tmp_path / "kb.sqlite")
+
+
+def test_an_engine_error_is_reported_as_canopys(monkeypatch, tmp_path):
+    mod = types.ModuleType("canopy_kb")
+
+    def boom(*a):
+        raise _EngineError("manifest declares table 'grants' but it is missing")
+    mod.build = boom
+    monkeypatch.setitem(sys.modules, "canopy_kb", mod)
+    with pytest.raises(KBError, match="grants"):
+        kb_engine.build(tmp_path, tmp_path / "kb.sqlite")
+
+
+def test_summary_reads_a_build_without_the_engine_and_refuses_anything_else(tmp_path):
+    assert kb_engine.summary(_kb_file(tmp_path / "kb.sqlite"))["items"] == 2
+    (tmp_path / "junk.sqlite").write_text("not sqlite at all " * 100)
     with pytest.raises(KBError):
-        kb.get("nope")
+        kb_engine.summary(tmp_path / "junk.sqlite")
+    sqlite3.connect(tmp_path / "empty.sqlite").execute("CREATE TABLE t (x)")
     with pytest.raises(KBError):
-        kb.search("   ")
+        kb_engine.summary(tmp_path / "empty.sqlite")
 
 
-def test_table_filters_and_totals(tmp_path):
-    db = tmp_path / "kb.sqlite"
-    build(_bundle(tmp_path, ITEMS), db)
-    kb = KB(db)
-    r = kb.table("grants", {"Recipient": "dimagi"}, since="2024-01-01")
-    assert r["matched"] == 1 and r["total_amount"] == 1069324
-    r = kb.table("grants", sort="-Amount", min_amount=100000)
-    assert [x["Grant"] for x in r["rows"]] == ["Water pilot", "Cholera RCT"]
-    with pytest.raises(KBError):
-        kb.table("missing")
-
-
-def test_whats_new_tracks_new_and_changed_across_builds(tmp_path):
-    db = tmp_path / "kb.sqlite"
-    build(_bundle(tmp_path, ITEMS), db)
-    assert KB(db).whats_new()["note"].startswith("baseline")
-    items2 = [dict(ITEMS[0], sha256="a2"), ITEMS[1],
-              {"id": "g:9", "type": "grant_page", "title": "New grant", "url": "https://x/9", "date": "2026-10-01", "text": "t", "sha256": "c"}]
-    s = build(_bundle(tmp_path, items2, name="acme2"), db, previous=db)
-    assert (s["new"], s["changed"]) == (1, 1)
-    changes = {c["item_id"]: c["change"] for c in KB(db).whats_new()["changes"]}
-    assert changes == {"g:9": "new", "p:1": "changed"}
-    # history survives a third, quiet rebuild
-    build(_bundle(tmp_path, items2, name="acme3"), db, previous=db)
-    assert len(KB(db).whats_new()["changes"]) == 2
-
-
-def test_build_refuses_missing_table(tmp_path):
-    b = _bundle(tmp_path, ITEMS)
-    (b / "tables" / "grants.jsonl").unlink()
-    with pytest.raises(KBError):
-        build(b, tmp_path / "kb.sqlite")
-
-
-def _rpc(kb_path, *msgs):
+def _rpc(*msgs, warning=""):
     stdin = io.StringIO("\n".join(json.dumps(m) for m in msgs) + "\n")
     stdout = io.StringIO()
-    serve(lambda: (KB(kb_path), ""), stdin=stdin, stdout=stdout)
-    return [json.loads(l) for l in stdout.getvalue().splitlines()]
+    serve(lambda: (sys.modules["canopy_kb"].KB("x"), warning), stdin=stdin, stdout=stdout)
+    return [json.loads(line) for line in stdout.getvalue().splitlines()]
 
 
-def test_mcp_lists_table_tools_and_answers_calls(tmp_path):
-    db = tmp_path / "kb.sqlite"
-    build(_bundle(tmp_path, ITEMS), db)
-    out = _rpc(db,
-               {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+def test_mcp_serves_the_engines_tools_text_as_text(fake_engine):
+    out = _rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
                {"jsonrpc": "2.0", "method": "notifications/initialized"},
                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-               {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "grants", "arguments": {"Recipient": "Dimagi"}}},
-               {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "search", "arguments": {"query": "cholera"}}},
-               {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "get", "arguments": {}}},
+               {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "kb_info", "arguments": {}}},
+               {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "grants", "arguments": {"Recipient": "D"}}},
+               {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "drop", "arguments": {}}},
                {"jsonrpc": "2.0", "id": 6, "method": "bogus"})
     assert [m["id"] for m in out] == [1, 2, 3, 4, 5, 6]
     assert out[0]["result"]["serverInfo"]["name"] == "canopy-kb-acme"
-    names = {t["name"] for t in out[1]["result"]["tools"]}
-    assert {"search", "get", "whats_new", "table", "grants"} <= names
-    grants = json.loads(out[2]["result"]["content"][0]["text"])
-    assert grants["matched"] == 2
-    assert json.loads(out[3]["result"]["content"][0]["text"])[0]["url"] == "https://x/1"
-    assert out[4]["result"]["isError"] is True
+    assert [t["name"] for t in out[1]["result"]["tools"]] == ["kb_info", "grants"]
+    assert out[2]["result"]["content"][0]["text"] == "acme — 2 documents"
+    assert json.loads(out[3]["result"]["content"][0]["text"]) == {"matched": 1}
+    assert out[4]["result"]["isError"] is True and "unknown tool" in out[4]["result"]["content"][0]["text"]
     assert out[5]["error"]["code"] == -32601
+
+
+def test_mcp_says_when_it_serves_a_stale_cache(fake_engine):
+    out = _rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "kb_info", "arguments": {}}},
+               warning="could not refresh from Drive")
+    assert out[0]["result"]["content"][0]["text"].startswith("warning: could not refresh from Drive")
 
 
 def test_kb_ref_kinds(tmp_path):
@@ -133,23 +134,6 @@ def test_kb_ref_kinds(tmp_path):
     assert kb_cli._kind("1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF") == "folder"
     with pytest.raises(KBError):
         kb_cli._kind("not a ref")
-
-
-def test_search_boost_reorders_by_type(tmp_path):
-    items = [{"id": "d:1", "type": "pdf_document", "title": "cholera cholera", "url": "https://x/d", "text": "cholera cholera cholera", "sha256": "d"},
-             {"id": "g:1", "type": "grant_page", "title": "A grant", "url": "https://x/g", "text": "a cholera trial", "sha256": "g"}]
-    b = _bundle(tmp_path, items, name="boost")
-    assert KB_first(b, tmp_path, None) == "d:1"
-    m = json.loads((b / "manifest.json").read_text())
-    m["search_boost"] = {"grant_page": 3.0, "pdf_document": 0.5}
-    (b / "manifest.json").write_text(json.dumps(m))
-    assert KB_first(b, tmp_path, "boosted") == "g:1"
-
-
-def KB_first(bundle, tmp_path, tag):
-    db = tmp_path / f"kb-{tag}.sqlite"
-    build(bundle, db)
-    return KB(db).search("cholera")[0]["id"]
 
 
 class _FakeDrive:
@@ -177,34 +161,28 @@ class _FakeDrive:
             open(args[4], "wb").write(self.files[(folder, name)]["data"])
 
 
-def test_push_gzips_and_pull_caches(tmp_path, monkeypatch):
-    db = tmp_path / "kb.sqlite"
-    build(_bundle(tmp_path, ITEMS), db)
+def test_push_gzips_and_pull_caches_without_the_engine(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "canopy_kb", None)
+    db = _kb_file(tmp_path / "kb.sqlite")
     _FakeDrive.files = {}
     monkeypatch.setattr(kb_cli, "_Drive", _FakeDrive)
     monkeypatch.setattr(kb_cli, "CACHE_ROOT", tmp_path / "cache")
     folder = "1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF"
     out = kb_cli.push(folder, tmp_path, db)
-    assert out["replaced"] is False
+    assert out["replaced"] is False and out["summary"]["items"] == 2
     assert _FakeDrive.files[(folder, kb_cli.KB_REMOTE)]["data"][:2] == b"\x1f\x8b"
     first = kb_cli.pull(folder, tmp_path)
-    assert first["pulled"] is True
-    assert KB(first["path"]).search("cholera")[0]["id"] == "p:1"
+    assert first["pulled"] is True and kb_engine.summary(first["path"])["name"] == "acme"
     assert kb_cli.pull(folder, tmp_path)["pulled"] is False      # unchanged in Drive
     assert kb_cli.push(folder, tmp_path, db)["replaced"] is True
     assert kb_cli.pull(folder, tmp_path)["pulled"] is True       # newer copy in Drive
-    kb, warning = kb_cli.open_kb(folder, tmp_path, max_age_hours=24)
-    assert warning == "" and kb.summary["items"] == 2
 
 
-def test_get_grep_returns_matching_lines_only(tmp_path):
-    db = tmp_path / "kb.sqlite"
-    build(_bundle(tmp_path, ITEMS), db)
-    d = KB(db).get("p:1", grep="WASH\\w+", context=0)
-    assert d["match_count"] == 1 and "text" not in d
-    assert d["matches"][0]["text"].startswith("WASHmobile")
+def test_push_refuses_a_file_that_is_not_a_knowledge_base(tmp_path, monkeypatch):
+    monkeypatch.setattr(kb_cli, "_Drive", _FakeDrive)
+    (tmp_path / "x.sqlite").write_text("nope")
     with pytest.raises(KBError):
-        KB(db).get("p:1", grep="(")
+        kb_cli.push("1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF", tmp_path, tmp_path / "x.sqlite")
 
 
 def test_push_of_a_workspace_project_also_publishes_it_to_canopy(tmp_path, monkeypatch):
@@ -213,8 +191,7 @@ def test_push_of_a_workspace_project_also_publishes_it_to_canopy(tmp_path, monke
 
     from orchestrator import canopy_web
 
-    db = tmp_path / "kb.sqlite"
-    build(_bundle(tmp_path, ITEMS), db)
+    db = _kb_file(tmp_path / "kb.sqlite")
     _FakeDrive.files = {}
     monkeypatch.setattr(kb_cli, "_Drive", _FakeDrive)
     calls, stored = [], {}
@@ -242,10 +219,92 @@ def test_push_of_a_workspace_project_also_publishes_it_to_canopy(tmp_path, monke
     assert out["mcp_url"].endswith("/api/mcp/projects/connect/givewell-kb/")
 
 
+def _originals_bundle(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "a").write_bytes(b"%PDF-1.4 report")
+    (raw / "b").write_bytes(b"PK workbook")
+    b = tmp_path / "bundle"
+    b.mkdir()
+    items = [{"id": "pdf:1", "original": {"sha256": "a" * 64, "content_type": "application/pdf", "path": str(raw / "a")}},
+             {"id": "pdf:1-copy", "original": {"sha256": "a" * 64, "content_type": "application/pdf", "path": str(raw / "a")}},
+             {"id": "sheet:1", "original": {"sha256": "b" * 64, "content_type": "application/vnd.ms-excel",
+                                            "path": str(raw / "b")}},
+             {"id": "blog:1", "text": "no original"}]
+    (b / "items.jsonl").write_text("\n".join(json.dumps(i) for i in items))
+    return b
+
+
+def test_push_uploads_only_the_originals_canopy_lacks_before_publishing(tmp_path, monkeypatch):
+    from orchestrator import canopy_web
+
+    db = _kb_file(tmp_path / "kb.sqlite")
+    _FakeDrive.files = {}
+    monkeypatch.setattr(kb_cli, "_Drive", _FakeDrive)
+    calls, puts = [], []
+
+    def fake_call(method, path, body=None, **kw):
+        calls.append(path)
+        if path == "/api/workspace-projects/connect/givewell-kb/":
+            return {"drive_folder_id": "1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF"}
+        if path.endswith("/kb/originals"):
+            assert {f["sha256"] for f in body["files"]} == {"a" * 64, "b" * 64}  # once each
+            return {"have": 1, "uploads": [{"sha256": "b" * 64, "url": "https://s3/b",
+                                            "headers": {"x-amz-checksum-sha256": "x"}}]}
+        if path.endswith("/kb/upload"):
+            return {"key": "k", "url": "https://s3/put", "headers": {}}
+        if path.endswith("/kb/publish"):
+            return {"mcp_path": "/api/mcp/projects/connect/givewell-kb/"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(canopy_web, "call", fake_call)
+    monkeypatch.setattr(kb_cli, "_put", lambda url, path, headers: puts.append((url, path.read_bytes(), headers)))
+
+    out = kb_cli.push("connect/givewell-kb", tmp_path, db, originals=_originals_bundle(tmp_path))
+
+    assert puts[0] == ("https://s3/b", b"PK workbook", {"x-amz-checksum-sha256": "x"})
+    assert out["originals"] == {"files": 2, "already_stored": 1, "uploaded": 1, "bytes_uploaded": 11}
+    assert calls.index("/api/workspace-projects/connect/givewell-kb/kb/originals") < calls.index(
+        "/api/workspace-projects/connect/givewell-kb/kb/publish")
+
+
+def test_push_refuses_originals_that_are_not_on_disk_or_have_nowhere_to_go(tmp_path, monkeypatch):
+    db = _kb_file(tmp_path / "kb.sqlite")
+    b = _originals_bundle(tmp_path)
+    with pytest.raises(KBError, match="workspace project"):
+        kb_cli.push("1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF", tmp_path, db, originals=b)
+    (tmp_path / "raw" / "b").unlink()
+    with pytest.raises(KBError, match="1 originals named"):
+        kb_cli.collect_originals(b)
+
+
 def test_a_drive_folder_push_publishes_nothing(tmp_path, monkeypatch):
-    db = tmp_path / "kb.sqlite"
-    build(_bundle(tmp_path, ITEMS), db)
+    db = _kb_file(tmp_path / "kb.sqlite")
     _FakeDrive.files = {}
     monkeypatch.setattr(kb_cli, "_Drive", _FakeDrive)
     monkeypatch.setattr(kb_cli, "publish_to_canopy", lambda *a: (_ for _ in ()).throw(AssertionError("published")))
     assert "mcp_url" not in kb_cli.push("1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF", tmp_path, db)
+
+
+def test_the_real_engine_builds_and_serves_through_canopy(tmp_path):
+    pytest.importorskip("canopy_kb", reason="canopy_kb (canopy-web packages/canopy_kb) not installed")
+    b = tmp_path / "bundle"
+    b.mkdir()
+    (b / "manifest.json").write_text(json.dumps({"name": "acme", "publisher": "Acme"}))
+    (b / "items.jsonl").write_text(json.dumps({
+        "id": "p:1", "type": "podcast_episode", "title": "Cholera", "url": "https://x/1", "date": "2026-07-23",
+        "text": "# Cholera\n\nCholera spreads through contaminated water.", "sha256": "a",
+        "card": {"summary": "A podcast on cholera.", "orgs": ["Acme"]}}))
+    s = kb_engine.build(b, tmp_path / "kb.sqlite")
+    assert s["items"] == 1 and kb_engine.summary(tmp_path / "kb.sqlite")["schema"] >= 3
+    out = _rpc_real(tmp_path / "kb.sqlite",
+                    {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                     "params": {"name": "search", "arguments": {"query": "cholera water"}}})
+    assert out[0]["result"]["content"][0]["text"].startswith("[1] p:1")
+
+
+def _rpc_real(path, *msgs):
+    stdin = io.StringIO("\n".join(json.dumps(m) for m in msgs) + "\n")
+    stdout = io.StringIO()
+    serve(lambda: (kb_engine.open_file(path), ""), stdin=stdin, stdout=stdout)
+    return [json.loads(line) for line in stdout.getvalue().splitlines()]
