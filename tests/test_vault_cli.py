@@ -189,6 +189,20 @@ def test_template_refs_literals_and_what_is_left_alone():
     assert not vault_cli.owned_elsewhere(by["KINDORA_SERVICE_KEY"])
 
 
+def test_a_reference_whose_item_name_has_spaces_is_still_one_reference():
+    text = textwrap.dedent("""\
+        OCS_USERNAME=op://${AGENT_VAULT}/ACE - Open Chat Studio/username
+        OCS_TEAM_SLUG="op://${AGENT_VAULT}/ACE - Open Chat Studio/Teams/team_slug"
+        TWO=op://${AGENT_VAULT}/a/b op://${AGENT_VAULT}/c/d
+    """)
+    refs, notes = vault_cli.parse_template(text, vault="Agent-Ace", slug="ace")
+    by = {r.name: r for r in refs}
+    assert by["OCS_USERNAME"].op == "op://Agent-Ace/ACE - Open Chat Studio/username"
+    assert by["OCS_USERNAME"].item == "ACE - Open Chat Studio"
+    assert by["OCS_TEAM_SLUG"].op == "op://Agent-Ace/ACE - Open Chat Studio/Teams/team_slug"
+    assert "TWO" not in by and any("TWO" in n for n in notes)
+
+
 def test_runtime_sources_add_what_the_template_does_not_name():
     refs = vault_cli.refs_from_sources(
         {"CANOPY_WEB_PAT": {"op": "op://Other/x/y"}, "API_BASE": {"value": "https://x"},
