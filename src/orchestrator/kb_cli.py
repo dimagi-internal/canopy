@@ -2,9 +2,11 @@
 `canopy_kb`, loaded by `orchestrator.kb_engine`).
 
 Four commands, because only these are work a prompt cannot do: `build` (index + dated
-diff), `push` / `pull` (the gzipped copy in the project's Drive folder — and for a
-workspace project, `push` also publishes it to canopy-web, which then serves it as the
-project's own remote MCP server) and `mcp` (serve a local copy over stdio). Reading is the MCP tools' job, and HOW to read a given library — what to
+diff), `push` / `pull` (a workspace project's KB goes to canopy-web, which serves it as
+the project's own remote MCP server — `push` sends only the documents that changed, as a
+new version, and the whole file only for a first build; any other KB's copy lives in its
+Drive folder) and `mcp` (serve a local copy over stdio). `drive inventory|sync` keep a
+KB made from Google Drive folders (`orchestrator/kb_drive.py`). Reading is the MCP tools' job, and HOW to read a given library — what to
 cite, which table beats prose — is a skill's (e.g. Eva's `givewell-kb`). There are
 deliberately no read subcommands duplicating the tools.
 
@@ -120,9 +122,12 @@ class _Drive:
 
 
 def pull(ref: str, repo: Path, force: bool = False) -> dict:
-    """Fetch the KB's kb.sqlite into the local cache if Drive has a newer one."""
+    """Fetch the KB's kb.sqlite into the local cache if a newer one is published: a
+    workspace project's from canopy-web (what its MCP serves), any other's from Drive."""
     if _kind(ref) == "local":
         return {"kb": ref, "path": str(Path(ref).expanduser()), "pulled": False, "reason": "local file"}
+    if _kind(ref) == "workspace-project":
+        return _pull_from_canopy(ref, force)
     folder = _folder_for(ref)
     d = _Drive(repo)
     f = d.find(folder, KB_REMOTE) or d.find(folder, KB_FILE)
@@ -155,32 +160,50 @@ def pull(ref: str, repo: Path, force: bool = False) -> dict:
     return {"kb": ref, "path": str(cdir / KB_FILE), "pulled": True, "modified": remote_mod}
 
 
-def push(ref: str, repo: Path, path: Path, originals: Path | None = None) -> dict:
-    """Upload a built kb.sqlite into the KB's Drive folder (curator only); for a workspace
-    project, upload the bundle's originals (when given) and publish it to canopy-web."""
+def push(ref: str, repo: Path, path: Path, originals: Path | None = None, bundle: Path | None = None,
+         full: bool = False, wait: bool = True) -> dict:
+    """Publish a built kb.sqlite (curator only).
+
+    A workspace project's goes to canopy-web, which serves it as the project's own
+    MCP: its originals first (when given), then only the DIFFERENCE from what is
+    published — the bundle's state (`canopy_kb.records`) is planned against the
+    project's head, only new and changed document records are uploaded, and
+    canopy-web applies them to its index as a new version. An unchanged bundle sends
+    nothing. The whole file goes only for the first build, or with `full`. Nothing is
+    written to Drive (a project that wants a Drive copy turns its replica on, and
+    canopy-web writes it). Any other KB's store is its Drive folder."""
     built = summary(path)
-    if originals is not None and _kind(ref) != "workspace-project":
+    kind = _kind(ref)
+    if originals is not None and kind != "workspace-project":
         raise KBError("--originals needs a workspace project (<workspace>/<handle>): canopy-web stores them")
-    stored = upload_originals(ref, originals) if originals is not None else None
+    if kind != "workspace-project":
+        return _push_to_drive(ref, repo, path, built)
+    bundle = bundle or originals
+    out = {"kb": ref, "summary": built}
+    if originals is not None:
+        out["originals"] = upload_originals(ref, originals)
+    out.update(publish_to_canopy(ref, path, bundle, full=full, wait=wait))
+    return out
+
+
+def _push_to_drive(ref: str, repo: Path, path: Path, built: dict) -> dict:
     folder = _folder_for(ref)
     d = _Drive(repo)
     f = d.find(folder, KB_REMOTE)
     with tempfile.TemporaryDirectory() as tdir:
         gzpath = Path(tdir) / KB_REMOTE
-        with open(path, "rb") as src, gzip.open(gzpath, "wb", compresslevel=6) as dst:
-            shutil.copyfileobj(src, dst, 1 << 20)
+        _gzip(path, gzpath)
         if f:
             d.gog("drive", "upload", str(gzpath), "--replace", f["id"])
         else:
             d.gog("drive", "upload", str(gzpath), "--name", KB_REMOTE, "--parent", folder)
         size = gzpath.stat().st_size
-        served = publish_to_canopy(ref, gzpath) if _kind(ref) == "workspace-project" else None
-    out = {"kb": ref, "folder": folder, "replaced": bool(f), "bytes": size, "summary": built}
-    if stored:
-        out["originals"] = stored
-    if served:
-        out["mcp_url"] = served
-    return out
+    return {"kb": ref, "folder": folder, "replaced": bool(f), "bytes": size, "summary": built}
+
+
+def _gzip(src: Path, dst: Path) -> None:
+    with open(src, "rb") as fh, gzip.open(dst, "wb", compresslevel=6) as out:
+        shutil.copyfileobj(fh, out, 1 << 20)
 
 
 ORIGINALS_BATCH = 1000  # canopy-web's per-request limit
@@ -241,6 +264,15 @@ def upload_originals(ref: str, bundle: Path) -> dict:
     return {"files": len(shas), "already_stored": have, "uploaded": uploaded, "bytes_uploaded": sent}
 
 
+def _put_bytes(url: str, data: bytes, headers: dict) -> None:
+    import urllib.request
+
+    req = urllib.request.Request(url, data=data, method="PUT", headers={**headers, "Content-Length": str(len(data))})
+    with urllib.request.urlopen(req, timeout=600) as resp:
+        if resp.status >= 300:
+            raise KBError(f"upload to storage failed: HTTP {resp.status}")
+
+
 def _put(url: str, path: Path, headers: dict) -> None:
     import urllib.request
 
@@ -252,26 +284,164 @@ def _put(url: str, path: Path, headers: dict) -> None:
                 raise KBError(f"upload to storage failed: HTTP {resp.status}")
 
 
-def publish_to_canopy(ref: str, gzpath: Path) -> str:
-    """Publish a workspace project's KB to canopy-web, which then serves it as the
-    project's own MCP server — readers call it remotely and download nothing.
-    The bytes go straight to storage on a presigned PUT. Returns the MCP URL."""
-    import hashlib
+BLOBS_BATCH = 1000  # canopy-web's per-request limit
+BLOB_WORKERS = 8
+#: How long `push` waits for canopy-web to index a delta before reporting it pending.
+WAIT_SECONDS = 1800
 
+
+def _records():
+    from orchestrator.kb_engine import engine
+    return engine().records
+
+
+def publish_to_canopy(ref: str, path: Path, bundle: Path | None = None, *, full: bool = False,
+                      wait: bool = True) -> dict:
+    """Publish a workspace project's KB to canopy-web: a delta when the bundle is given
+    and the project's head carries a state, else the whole file (with the state, so
+    the next publish can be a delta). Returns what was sent and the version."""
     from orchestrator import canopy_web
 
     ws, handle = _WORKSPACE_REF.match(ref).groups()
     base = f"/api/workspace-projects/{ws}/{handle}/kb"
-    target = canopy_web.call("POST", f"{base}/upload") or {}
-    if not target.get("url"):
-        raise KBError(f"canopy-web gave no upload target for {ref}")
-    _put(target["url"], gzpath, target.get("headers") or {})
-    digest = hashlib.sha256()
-    with open(gzpath, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            digest.update(chunk)
-    proj = canopy_web.call("POST", f"{base}/publish", {"key": target["key"], "sha256": digest.hexdigest()}) or {}
-    return canopy_web.resolve_base_url(None).rstrip("/") + (proj.get("mcp_path") or "")
+    mcp_url = canopy_web.resolve_base_url(None).rstrip("/") + f"/api/mcp/projects/{ws}/{handle}/"
+    state = _records().state(bundle) if bundle is not None else None
+    if state is not None and not full:
+        for _ in range(3):
+            try:
+                plan = canopy_web.call("POST", f"{base}/plan", {"state": state}) or {}
+            except canopy_web.CanopyError as e:
+                if "-> 404" in str(e) or "-> 405" in str(e):
+                    break  # a canopy-web that predates deltas: the whole file
+                raise
+            if plan.get("unchanged"):
+                return {"published": "unchanged", "version": plan.get("base"), "bytes_uploaded": 0,
+                        "mcp_url": mcp_url}
+            if plan.get("full_required"):
+                break
+            sent = _upload_blobs(base, bundle, plan)
+            try:
+                got = canopy_web.call("POST", f"{base}/versions",
+                                      {"state": state, "base": plan.get("base"), "uploaded_bytes": sent}) or {}
+            except canopy_web.CanopyError as e:
+                if "-> 409" in str(e):
+                    continue  # the log moved (another publish, a rollback): plan again
+                raise
+            v = got.get("version") or {}
+            if wait and v.get("status") in ("pending", "building"):
+                v = _wait_for(base, v["number"])
+            out = {"published": "delta", "version": v.get("number"), "status": v.get("status"),
+                   "added": plan.get("added"), "changed": plan.get("changed"), "removed": plan.get("removed"),
+                   "bytes_uploaded": sent, "mcp_url": mcp_url}
+            if v.get("status") == "failed":
+                raise KBError(f"canopy-web could not index version {v.get('number')}: {v.get('error')} "
+                              "(the published version is unchanged)")
+            return out
+        else:
+            raise KBError("the knowledge base kept moving while publishing; try again")
+    return _publish_full(base, path, state, mcp_url)
+
+
+def _publish_full(base: str, path: Path, state: dict | None, mcp_url: str) -> dict:
+    import hashlib
+
+    from orchestrator import canopy_web
+
+    with tempfile.TemporaryDirectory() as tdir:
+        gzpath = Path(tdir) / KB_REMOTE
+        _gzip(path, gzpath)
+        target = canopy_web.call("POST", f"{base}/upload") or {}
+        if not target.get("url"):
+            raise KBError(f"canopy-web gave no upload target for {base}")
+        _put(target["url"], gzpath, target.get("headers") or {})
+        digest = hashlib.sha256()
+        with open(gzpath, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+        body = {"key": target["key"], "sha256": digest.hexdigest()}
+        if state is not None:
+            body["state"] = state
+        proj = canopy_web.call("POST", f"{base}/publish", body) or {}
+        size = gzpath.stat().st_size
+    return {"published": "full", "version": proj.get("kb_version_number"), "bytes_uploaded": size,
+            "mcp_url": mcp_url if proj.get("mcp_path") is None else
+            canopy_web.resolve_base_url(None).rstrip("/") + (proj.get("mcp_path") or "")}
+
+
+def _upload_blobs(base: str, bundle: Path, plan: dict) -> int:
+    """Upload the records and parts a plan asks for that canopy-web's store lacks.
+    Returns the bytes sent."""
+    import concurrent.futures as cf
+    import hashlib
+
+    from orchestrator import canopy_web
+
+    rec = _records()
+    want = set(plan.get("upload_docs") or [])
+    objs = [r for iid, _, r in rec.records(bundle) if iid in want]
+    parts = rec.parts(bundle)
+    objs += [parts[n] for n in plan.get("upload_parts") or []]
+    encoded = {}
+    for o in objs:
+        data = rec.encode(o)
+        encoded[rec.sha(o)] = data
+    shas = sorted(encoded)
+    sent = 0
+    for i in range(0, len(shas), BLOBS_BATCH):
+        batch = [{"sha256": h, "gz_sha256": hashlib.sha256(encoded[h]).hexdigest(), "bytes": len(encoded[h])}
+                 for h in shas[i:i + BLOBS_BATCH]]
+        got = canopy_web.call("POST", f"{base}/blobs", {"blobs": batch}) or {}
+        ups = got.get("uploads") or []
+        with cf.ThreadPoolExecutor(BLOB_WORKERS) as ex:
+            list(ex.map(lambda u: _put_bytes(u["url"], encoded[u["sha256"]], u.get("headers") or {}), ups))
+        sent += sum(len(encoded[u["sha256"]]) for u in ups)
+    return sent
+
+
+def _wait_for(base: str, number: int) -> dict:
+    """Poll the version log until version `number` is ready or failed."""
+    import time
+
+    from orchestrator import canopy_web
+
+    deadline, delay = time.monotonic() + WAIT_SECONDS, 2.0
+    while True:
+        log = canopy_web.call("GET", f"{base}/versions?limit=10") or []
+        v = next((x for x in log if x.get("number") == number), {})
+        if v.get("status") in ("ready", "failed") or time.monotonic() > deadline:
+            return v or {"number": number, "status": "pending"}
+        time.sleep(delay)
+        delay = min(delay * 1.5, 15.0)
+
+
+def _pull_from_canopy(ref: str, force: bool) -> dict:
+    """The file a workspace project serves now, from canopy-web, cached by its sha256."""
+    import urllib.request
+
+    from orchestrator import canopy_web
+
+    ws, handle = _WORKSPACE_REF.match(ref).groups()
+    got = canopy_web.call("GET", f"/api/workspace-projects/{ws}/{handle}/kb/file") or {}
+    cdir = _cache_dir(ref)
+    cdir.mkdir(parents=True, exist_ok=True)
+    stamp_path = cdir / "pulled.json"
+    stamp = json.loads(stamp_path.read_text(encoding="utf-8")) if stamp_path.exists() else {}
+    if not force and (cdir / KB_FILE).exists() and stamp.get("sha256") == got.get("sha256"):
+        stamp.update(checked_at=_now())
+        stamp_path.write_text(json.dumps(stamp, indent=2), encoding="utf-8")
+        return {"kb": ref, "path": str(cdir / KB_FILE), "pulled": False, "reason": "cache is current",
+                "version": got.get("version")}
+    raw, tmp = cdir / (KB_FILE + ".gz.download"), cdir / (KB_FILE + ".download")
+    with urllib.request.urlopen(got["url"], timeout=600) as resp, open(raw, "wb") as out:
+        shutil.copyfileobj(resp, out, 1 << 20)
+    with gzip.open(raw, "rb") as src, open(tmp, "wb") as dst:
+        shutil.copyfileobj(src, dst, 1 << 20)
+    raw.unlink()
+    summary(tmp)
+    tmp.replace(cdir / KB_FILE)
+    stamp = {"sha256": got.get("sha256"), "version": got.get("version"), "pulled_at": _now(), "checked_at": _now()}
+    stamp_path.write_text(json.dumps(stamp, indent=2), encoding="utf-8")
+    return {"kb": ref, "path": str(cdir / KB_FILE), "pulled": True, "version": got.get("version")}
 
 
 def _now() -> str:
@@ -358,11 +528,48 @@ def pull_cmd(kb_ref, repo, max_age_hours, force):
 @click.argument("path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--originals", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None,
               help="the bundle the build came from: upload each item's original file first (workspace projects)")
+@click.option("--bundle", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None,
+              help="the bundle the build came from, to publish only what changed (default: --originals)")
+@click.option("--full", is_flag=True, help="publish the whole file even when a delta would do")
+@click.option("--no-wait", is_flag=True, help="do not wait for canopy-web to index a delta")
 @_guard
-def push_cmd(kb_ref, repo, max_age_hours, path, originals):
-    """Upload a built kb.sqlite to the KB's Drive folder (curators); a workspace project's
-    is also published to canopy-web, with its originals when --originals names the bundle."""
-    _emit(push(kb_ref, repo, path, originals))
+def push_cmd(kb_ref, repo, max_age_hours, path, originals, bundle, full, no_wait):
+    """Publish a built kb.sqlite (curators). A workspace project's goes to canopy-web, which
+    serves it as the project's MCP: originals first (--originals), then only the documents
+    that changed since the published version (--bundle; the whole file on a first build
+    or --full). Other KBs go to their Drive folder."""
+    _emit(push(kb_ref, repo, path, originals, bundle=bundle, full=full, wait=not no_wait))
+
+
+@kb_group.group("drive")
+def drive_group():
+    """A knowledge base made from Google Drive folders, read only as far as their owner
+    approves (canopy-web's review page, /w/<ws>/projects/<handle>/kb)."""
+
+
+@drive_group.command("inventory")
+@_kb_option
+@click.option("--source", default="", help="one drive_folders source by name (default: all)")
+@click.option("--force", is_flag=True, help="walk the folders even when Drive's changes feed shows nothing new")
+@_guard
+def drive_inventory_cmd(kb_ref, repo, max_age_hours, source, force):
+    """List the source folders' files as METADATA only (never contents) for the owner's review."""
+    from orchestrator.kb_drive import inventory
+    _emit(inventory(kb_ref, repo, source, force))
+
+
+@drive_group.command("sync")
+@_kb_option
+@click.option("--data", type=click.Path(file_okay=False, path_type=Path), required=True,
+              help="working cache: downloads, the bundle and the local build")
+@click.option("--source", default="", help="one drive_folders source by name (default: all)")
+@click.option("--no-push", is_flag=True, help="build locally and stop")
+@_guard
+def drive_sync_cmd(kb_ref, repo, max_age_hours, data, source, no_push):
+    """Read the approved files that changed, hold spreadsheets whose headers look like
+    personal data, build, and publish the difference."""
+    from orchestrator.kb_drive import sync
+    _emit(sync(kb_ref, repo, data, source, push=not no_push))
 
 
 @click.command("mcp-headers")
