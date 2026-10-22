@@ -64,6 +64,9 @@ def _no_ambient_device_key(monkeypatch, tmp_path_factory):
     # Nor reuse (or delete) a real runner token this machine cached (canopy-web#1604).
     from orchestrator import runner_session
     monkeypatch.setattr(runner_session, "CACHE", tmp_path_factory.mktemp("runner-session") / "t.json")
+    # Nor a turn-scoped agent login cached by a real turn (turn_agent_token).
+    from orchestrator import turn_agent_token
+    monkeypatch.setattr(turn_agent_token, "CACHE_DIR", tmp_path_factory.mktemp("agent-token"))
 
 
 @pytest.fixture(autouse=True)

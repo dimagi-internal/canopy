@@ -384,10 +384,29 @@ function provenanceHeaders() {
   return h;
 }
 
+// THIS TURN'S OWN LOGIN (turn-scoped agent token, phase 1 — canopy-web
+// docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md). The cloud
+// runner asks canopy-web for a short-lived login as the turn's agent, revoked when the
+// turn ends, and leaves it at ~/.canopy/agent-token/turn/<CANOPY_TURN_ID>.token — the
+// variable is a turn id, not a secret, so it survives the stripping. Preferred over the
+// agent's stored canopy-pat below, which stays the fallback. Only the cloud runner
+// writes it: its `claude -p` connects once per turn. A laptop session outlives its
+// turn, so a token revoked at turn end would strand its MCP connection.
+function turnAgentToken() {
+  const turn = (process.env.CANOPY_TURN_ID || "").trim();
+  if (!/^[0-9a-fA-F-]{8,64}$/.test(turn)) return "";
+  try {
+    return fs.readFileSync(path.join(os.homedir(), ".canopy", "agent-token", "turn", `${turn}.token`), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
 let headers = {};
 try {
   const token =
     scoped.token ||
+    turnAgentToken() ||
     (process.env.CANOPY_WEB_PAT || "").trim() ||
     slugEnvPat(process.env.CANOPY_AGENT) ||
     agentEnvPat() ||
