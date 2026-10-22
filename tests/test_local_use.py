@@ -126,6 +126,35 @@ def test_local_eligible_only_on_a_private_runner_and_never_for_a_runner_turn(tmp
     assert not hook.local_eligible(str(tmp_path))
 
 
+@pytest.mark.parametrize("marker", ["CANOPY_HEADLESS", "CANOPY_ONE_SHOT_TURN"])
+def test_a_runner_headless_session_is_not_a_local_turn(tmp_path, monkeypatch, marker):
+    """The runner app's headless engine starts claude with these and no turn id: its turn
+    already exists, and a second, local one would move its credential reads to the license."""
+    hook = _load("agent_op_env")
+    for var in ("CANOPY_TURN_ID", "CANOPY_PROFILE", "EMDASH_TASK_ID", *hook.RUNNER_ENV_MARKERS):
+        monkeypatch.delenv(var, raising=False)
+    (tmp_path / ".canopy").mkdir()
+    (tmp_path / ".canopy/private-runner.json").write_text("{}")
+    assert hook.local_eligible(str(tmp_path))
+    monkeypatch.setenv(marker, "1")
+    assert not hook.local_eligible(str(tmp_path))
+
+
+def test_a_desktop_engine_worktree_is_not_a_local_turn(tmp_path, monkeypatch):
+    """The Claude app (not the runner) starts a desktop-engine session, so no runner env
+    reaches it; its worktree's `.canopy-desktop/` channel is the mark."""
+    hook = _load("agent_op_env")
+    for var in ("CANOPY_TURN_ID", "CANOPY_PROFILE", "EMDASH_TASK_ID", *hook.RUNNER_ENV_MARKERS):
+        monkeypatch.delenv(var, raising=False)
+    (tmp_path / ".canopy").mkdir()
+    (tmp_path / ".canopy/private-runner.json").write_text("{}")
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    assert hook.local_eligible(str(tmp_path), str(wt))
+    (wt / ".canopy-desktop").mkdir()
+    assert not hook.local_eligible(str(tmp_path), str(wt))
+
+
 def test_session_start_opens_the_local_turn_before_reading_credentials(tmp_path):
     """The turn id reaches the env file AND every later canopy call (the credential read)."""
     home = tmp_path / "home"
@@ -238,7 +267,8 @@ def test_open_catches_up_a_dead_session_that_never_closed(home, calls):
     _cli("local", "open", "--slug", "ace", "--session-id", "new")
     up = [c for c in calls if c[1].endswith("/transcript")]
     assert up and up[0][2]["lines"] == ['{"a": 1}', '{"b": 2}']
-    assert any(c[1].endswith("/finish") for c in calls)
+    finish = [c for c in calls if c[1].endswith("/finish")]
+    assert finish and finish[0][2]["status"] == "failed"     # it died: not `done`
     assert json.loads((home / ".canopy/local/old.json").read_text())["closed_at"]
     assert "closed_at" not in json.loads((home / ".canopy/local/new.json").read_text())
 
@@ -284,3 +314,75 @@ def test_set_needs_a_runner(home, calls, monkeypatch):
     monkeypatch.setattr("orchestrator.runner_pin.DEFAULT_RUNNER_CONFIG", home / "nope.json")
     r = CliRunner().invoke(local_cli.private_runner_group, ["set", "private"])
     assert r.exit_code != 0 and "has no runner" in r.output
+
+
+# --- renew: a turn that ended is re-opened for the same session ----------------------
+
+def _renew_calls(monkeypatch, calls, status, new_turn="99999999-0000-0000-0000-000000000000"):
+    inner = canopy_web.call
+
+    def fake(method, path, body=None, **kw):
+        if path.endswith("/renew"):
+            calls.append((method, path, body, kw.get("token")))
+            if status == 404:
+                raise canopy_web.CanopyError(f"POST {path} -> 404: not found")
+            return {"turn_id": path.split("/")[-2], "status": status, "lease_expires_at": None}
+        out = inner(method, path, body, **kw)
+        if path == "/api/harness/local-turns/" and len([c for c in calls if c[1] == path]) > 1:
+            out = {**out, "turn_id": new_turn, "envelope": {"turn_mode": {"mode": "manual"}}}
+        return out
+
+    monkeypatch.setattr(canopy_web, "call", fake)
+    return new_turn
+
+
+def test_renew_of_a_live_turn_only_renews(home, calls, monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUDE_ENV_FILE", str(tmp_path / "session.env"))
+    _cli("pr", "register", "--name", "aath-mbp")
+    _cli("local", "open", "--slug", "ace", "--session-id", "s1", "--cwd", "/w")
+    _renew_calls(monkeypatch, calls, "running")
+    _cli("local", "renew", "--session-id", "s1", "--force")
+    assert [c[1] for c in calls].count("/api/harness/local-turns/") == 1
+    assert json.loads((home / ".canopy/local/s1.json").read_text())["turn_id"].startswith("1111")
+
+
+@pytest.mark.parametrize("status", ["lost", "done", 404])
+def test_renew_of_an_ended_turn_reopens_and_exports_the_new_id(home, calls, monkeypatch, tmp_path, status):
+    """Idle past the 8h lease, the turn was swept `lost`: the session must not go on naming it."""
+    env_file = tmp_path / "session.env"
+    monkeypatch.setenv("CLAUDE_ENV_FILE", str(env_file))
+    _cli("pr", "register", "--name", "aath-mbp")
+    _cli("local", "open", "--slug", "ace", "--session-id", "s1", "--cwd", "/w", "--auto")
+    state = json.loads((home / ".canopy/local/s1.json").read_text())
+    state["envelope_shown"] = True
+    (home / ".canopy/local/s1.json").write_text(json.dumps(state))
+    monkeypatch.delenv("CLAUDE_ENV_FILE")          # the prompt hook's renew has none
+    new_turn = _renew_calls(monkeypatch, calls, status)
+    _cli("local", "renew", "--session-id", "s1", "--force")
+    reopen = [c for c in calls if c[1] == "/api/harness/local-turns/"][-1]
+    assert reopen[2] == {"agent": "ace", "private_runner": "pr-1", "claude_session_id": "s1",
+                         "cwd": "/w", "turn_mode": "auto"}
+    state = json.loads((home / ".canopy/local/s1.json").read_text())
+    assert state["turn_id"] == new_turn and state["envelope_shown"] is False
+    assert state["previous_turn_ids"] == ["11111111-2222-3333-4444-555555555555"]
+    assert Path(state["envelope_path"]).name == f"{new_turn}.json"
+    assert env_file.read_text().splitlines()[-1] == f"export CANOPY_TURN_ID={new_turn}"
+
+
+def test_renew_warns_when_the_turn_cannot_be_reopened(home, calls, monkeypatch):
+    _cli("pr", "register", "--name", "aath-mbp")
+    _cli("local", "open", "--slug", "ace", "--session-id", "s1")
+    inner = canopy_web.call
+
+    def fake(method, path, body=None, **kw):
+        if path.endswith("/renew"):
+            return {"status": "lost"}
+        if path == "/api/harness/local-turns/":
+            raise canopy_web.CanopyError("POST /api/harness/local-turns/ -> 403: no license")
+        return inner(method, path, body, **kw)
+
+    monkeypatch.setattr(canopy_web, "call", fake)
+    r = CliRunner().invoke(local_cli.local_group, ["renew", "--session-id", "s1", "--force"])
+    assert r.exit_code == 0
+    assert "is lost and a new one could not be opened" in r.output
+    assert json.loads((home / ".canopy/local/s1.json").read_text())["turn_id"].startswith("1111")

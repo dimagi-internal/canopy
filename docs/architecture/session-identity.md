@@ -359,7 +359,11 @@ with its skills and logins, and canopy keeps the record:
 
 1. **`canopy private-runner register`** (once, as yourself — your own PAT from
    `/canopy:canopy-web-pat-mint`) makes this machine one of your **private runners**:
-   plain Claude Code with the canopy plugin, no runner app, never claims a turn.
+   Claude Code with the canopy plugin. It may also run the runner app: a runner set
+   private (`canopy private-runner set private`) takes no fleet work, only its owner's
+   pins and bound sessions, and its local sessions sign in with its device key instead of
+   a PAT (canopy-web#1705). Acting as a lower role is per turn or per client
+   (`acts_as`, `CANOPY_ACTS_AS`), never a setting on the machine (canopy-web#1756).
    `~/.canopy/private-runner.json` records it.
 2. **`canopy local use <slug>`** (or an agent repo's own `.claude/settings.json`) sets
    `$CANOPY_AGENT` for a project.
@@ -377,5 +381,13 @@ A license read never carries the agent's own canopy login, its owner's GitHub de
 a lent credential or the shared vault key. It does carry the agent's 1Password key, so an
 agent that keeps its own canopy PAT in that vault exposes it to license holders — keep
 the PAT on canopy-web instead. Not eligible: a runner's turn (`$CANOPY_TURN_ID` already
-set), a confined `cx-` session, and an emdash session on a machine that runs the runner
+set), a confined `cx-` session, a session the runner app's headless engine started
+(`CANOPY_HEADLESS` / `CANOPY_ONE_SHOT_TURN`), one in a desktop-engine worktree
+(`<cwd>/.canopy-desktop/`), and an emdash session on a machine that runs the runner
 app (`~/.canopy/runner.json`) — those are the runner's turns already.
+
+A session idle past the 8-hour lease finds its turn swept `lost`: the next prompt's
+`canopy local renew` sees the turn is no longer running, opens a new local turn for the
+same session, appends its `CANOPY_TURN_ID` to the session's env file and shows its
+envelope. A session that died without SessionEnd is finished `failed` by the next
+session's `canopy local open` (catch-up), not `done`.
