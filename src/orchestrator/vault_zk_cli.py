@@ -38,6 +38,7 @@ before pinning, and a pinned person whose key CHANGED stops the command.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -329,7 +330,8 @@ def run_status(v: ZkVault) -> dict:
 
 def run_enable(v: ZkVault, *, confirm: Optional[Confirm] = None) -> ZkResult:
     st = v.state()
-    if st.get("enabled"):
+    # kv 0 is "zero-knowledge from birth, no vault key yet": enabling creates its first key.
+    if st.get("enabled") and str(st.get("kv")) != "0":
         raise ZkCliError(f"'{v.slug}' is already zero-knowledge (kv {st.get('kv')}) — "
                          "use `grant`, `set` or `rotate`")
     res = ZkResult(v.slug, kv=1)
@@ -747,9 +749,19 @@ def render(res: ZkResult) -> str:
     return "\n".join(lines)
 
 
-def show_recovery_code(res: ZkResult, echo=click.echo) -> None:
-    """The one place a recovery code is ever shown — on the terminal, once."""
+def show_recovery_code(res: ZkResult, echo=click.echo, to_file: str = "") -> None:
+    """The one place a recovery code is ever shown — on the terminal, once. With
+    ``to_file`` it goes to a NEW 0600 file instead and only the path is shown, so an
+    unattended run never puts the code in a transcript or log."""
     if not res.recovery_code:
+        return
+    if to_file:
+        path = Path(to_file).expanduser()
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(res.recovery_code + "\n")
+        echo(f"RECOVERY CODE for {res.slug} (kv {res.kv}) written to {path} (0600) — "
+             "canopy keeps no copy. Move it somewhere offline, then delete the file.")
         return
     echo("")
     echo(f"RECOVERY CODE for {res.slug} (kv {res.kv}) — shown ONCE; canopy keeps no copy.")
@@ -772,6 +784,15 @@ def _ask(targets: list) -> bool:
 AGENT_OPT = click.option("--agent", "slug", required=True, help="The agent's canopy-web slug.")
 YES_OPT = click.option("--yes", is_flag=True,
                        help="Do not ask before wrapping to the listed targets.")
+RECOVERY_FILE_OPT = click.option(
+    "--recovery-file", "recovery_file", default="", metavar="PATH",
+    help="Write the recovery code to this NEW file (0600) instead of the terminal.")
+
+
+def _refuse_existing(recovery_file: str) -> None:
+    """Checked BEFORE the vault changes: a code that cannot be written is a code lost."""
+    if recovery_file and Path(recovery_file).expanduser().exists():
+        raise ZkCliError(f"--recovery-file {recovery_file} already exists — name a new file")
 
 
 def _vault(slug: str) -> ZkVault:
@@ -801,12 +822,14 @@ def status_cmd(slug, as_json):
 @zk_group.command("enable")
 @AGENT_OPT
 @YES_OPT
-def enable_cmd(slug, yes):
+@RECOVERY_FILE_OPT
+def enable_cmd(slug, yes, recovery_file):
     """Turn zero-knowledge on: a new vault key, every current value encrypted here, the
     key wrapped for this device, your keyset, each pending target and a recovery code."""
+    _refuse_existing(recovery_file)
     res = run_enable(_vault(slug), confirm=None if yes else _ask)
     click.echo(render(res))
-    show_recovery_code(res)
+    show_recovery_code(res, to_file=recovery_file)
 
 
 def _ask_endorsers(fresh: list, readers: dict) -> bool:
@@ -892,7 +915,8 @@ def grant_cmd(slug, yes):
               help="Leave a member out of the new key, e.g. device:12 or member:7 "
                    "(revoked devices and removed admins canopy-web marks inactive are "
                    "left out already).")
-def rotate_cmd(slug, yes, drops):
+@RECOVERY_FILE_OPT
+def rotate_cmd(slug, yes, drops, recovery_file):
     """A new vault key and kv: re-wrap for every remaining member, re-encrypt every value,
     and a new recovery code. How access is REMOVED."""
     drop = set()
@@ -901,9 +925,10 @@ def rotate_cmd(slug, yes, drops):
         if kind not in ("device", "member") or not ident:
             raise ZkCliError(f"--drop {d!r}: use device:<key id> or member:<user id>")
         drop.add((kind, ident))
+    _refuse_existing(recovery_file)
     res = run_rotate(_vault(slug), drop=drop, confirm=None if yes else _ask)
     click.echo(render(res))
-    show_recovery_code(res)
+    show_recovery_code(res, to_file=recovery_file)
 
 
 @zk_group.command("settle")

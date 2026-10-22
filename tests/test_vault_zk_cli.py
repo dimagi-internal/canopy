@@ -124,6 +124,8 @@ class FakeZkServer:
                 return 200, json.dumps({"values": self.custodial, "op_vault": ""})
             if "DPoP" not in headers:
                 return 401, '{"error": "device_proof_required"}'
+            if self.kv == 0:                         # born zero-knowledge, holding nothing
+                return 200, json.dumps({"values": {}, "op_vault": ""})
             mine = [w for w in self.wraps if w["kind"] == "device"
                     and str(w["target"]) == str(ME) and w["kv"] == self.kv]
             if not mine:
@@ -219,6 +221,14 @@ def test_enable_refuses_twice_and_does_nothing_unconfirmed(server):
     assert not server.enabled
     assert not [c for c in server.calls if c[0] == "POST"]
     _enable(server)
+    with pytest.raises(vault_zk_cli.ZkCliError, match="already zero-knowledge"):
+        _enable(server)
+
+
+def test_enable_creates_the_first_key_of_an_agent_born_zero_knowledge(server):
+    server.enabled, server.kv = True, 0          # born zero-knowledge: no vault key yet
+    _enable(server)
+    assert server.enabled and server.kv == 1
     with pytest.raises(vault_zk_cli.ZkCliError, match="already zero-knowledge"):
         _enable(server)
 
@@ -356,6 +366,25 @@ def test_cli_enable_shows_the_recovery_code_exactly_once(server):
     data = json.loads(st.output)
     assert data["enabled"] and data["kv"] == 1 and "holds a wrap" in data["this_device"]
     assert code[0] not in st.output
+
+
+def test_cli_enable_can_write_the_recovery_code_to_a_new_file_only(server, tmp_path):
+    out = tmp_path / "recovery.txt"
+    r = CliRunner().invoke(vault_cli.vault_group, ["zk", "enable", "--agent", "eva", "--yes",
+                                                   "--recovery-file", str(out)])
+    assert r.exit_code == 0, r.output
+    code = out.read_text().strip()
+    assert code.count("-") == 12 and code not in r.output and str(out) in r.output
+    assert out.stat().st_mode & 0o777 == 0o600
+
+
+def test_cli_refuses_an_existing_recovery_file_before_touching_the_vault(server, tmp_path):
+    out = tmp_path / "recovery.txt"
+    out.write_text("keep me\n")
+    r = CliRunner().invoke(vault_cli.vault_group, ["zk", "enable", "--agent", "eva", "--yes",
+                                                   "--recovery-file", str(out)])
+    assert r.exit_code != 0 and "already exists" in r.output
+    assert not server.enabled and out.read_text() == "keep me\n"
 
 
 def test_cli_set_reads_the_value_from_stdin_never_argv(server):
