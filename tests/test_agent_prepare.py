@@ -604,3 +604,16 @@ def test_runner_credentials_carry_google_account_when_canopy_web_sends_it():
     c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
                                     transport=transport)
     assert (c.mailbox, c.google_account) == ("ace@dimagi.ai", "ace@dimagi-ai.com")
+
+
+def test_a_workspace_vault_client_is_used_before_1password():
+    """A shared OAuth client a workspace vault holds arrives in the box's own resolve
+    (merged under the agent's values); the box writes it from there, no `op read`."""
+    from orchestrator.agent_prepare import RunnerCredentials, RunnerPreparer
+
+    p = RunnerPreparer.__new__(RunnerPreparer)
+    p._creds = {"ace": RunnerCredentials(values={"gog-oauth-client-web": '{"installed": {}}'})}
+    p.creds = lambda slug: p._creds[slug]
+    assert p.client_from_vault("ace", "canopy-web") == '{"installed": {}}'
+    assert p.client_from_vault("ace", "canopy") is None
+    assert p.client_from_vault("ace", "someone-elses-client") is None

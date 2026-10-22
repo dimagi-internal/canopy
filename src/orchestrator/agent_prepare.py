@@ -329,6 +329,12 @@ class RunnerPreparer(Bootstrapper):
             env["OP_SERVICE_ACCOUNT_TOKEN"] = key
         return env
 
+    def client_from_vault(self, slug: str, client: str):
+        """From this box's own resolve: a workspace vault layered under the agent's values."""
+        item = SHARED_CLIENT_ITEMS.get(client)
+        value = (self.creds(slug).values or {}).get(item) if item else None
+        return str(value) if value else None
+
     def client_ref(self, client: str, vault: str) -> str:
         """A shared client from the WORKSPACE's shared vault (read with its own key), any
         other from the agent's vault. Measured 2026-09-07: one pass read Agent-Ace fine and
