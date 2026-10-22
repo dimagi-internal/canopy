@@ -88,6 +88,15 @@ class Gog:
         """A source folder's own metadata (Files.Get, as `ls` gives its children)."""
         return self.run("drive", "raw", folder)
 
+    def permissions(self, file_id: str) -> list[dict]:
+        out, page = [], ""
+        while True:
+            got = self.run("drive", "permissions", file_id, "--max", "100", *(["--page", page] if page else []))
+            out += got.get("permissions") or []
+            page = got.get("nextPageToken") or ""
+            if not page:
+                return out
+
     def start_token(self) -> str:
         got = self.run("drive", "changes", "start-token")
         return str(got.get("startPageToken") or "")
@@ -141,6 +150,15 @@ def _sources(ref: str, name: str = "") -> list[dict]:
     return out
 
 
+def _with_readers(gog: Gog, f: dict) -> dict:
+    """A shared drive's listing leaves `permissions` out (Drive populates it only for My
+    Drive items), so ask for the file's own; without them the folder-vs-file sharing check
+    could never fire."""
+    if "permissions" not in f:
+        f = {**f, "permissions": gog.permissions(f["id"])}
+    return f
+
+
 def walk(gog: Gog, roots: list[str]) -> list[dict]:
     """Every file and folder under `roots`, the roots included, as listings."""
     seen: dict[str, dict] = {}
@@ -149,14 +167,14 @@ def walk(gog: Gog, roots: list[str]) -> list[dict]:
         meta = gog.root(r)
         if not meta or meta.get("mimeType") != FOLDER:
             raise KBError(f"{r} is not a Drive folder this identity can open")
-        seen[r] = _listing(meta)
+        seen[r] = _listing(_with_readers(gog, meta))
         todo.append(r)
     while todo:
         folder = todo.pop()
         for f in gog.children(folder):
             if f.get("trashed") or f["id"] in seen:
                 continue
-            row = _listing(f)
+            row = _listing(_with_readers(gog, f))
             row["parent"] = folder  # the parent we reached it through (a file can have several)
             seen[f["id"]] = row
             if f.get("mimeType") == FOLDER:
