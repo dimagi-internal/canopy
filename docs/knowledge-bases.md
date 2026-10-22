@@ -4,13 +4,14 @@ A **knowledge base** is everything one publisher has made public — a funder's 
 reports, blog, podcast transcripts, cost-effectiveness models — kept as dated, cited
 copies, with the tables you compute with alongside. Engine: canopy-web's
 `packages/canopy_kb` (stdlib-only; loaded here by `src/orchestrator/kb_engine.py`)
-(build + read), `kb_cli.py` (CLI, Drive pull/push), `kb_mcp.py` (stdio MCP server).
+(build + read), `kb_cli.py` (CLI: build, publish, pull), `kb_drive.py` (a KB made from Google
+Drive folders), `kb_mcp.py` (stdio MCP server).
 
 ## Who owns what
 
 | | Owner | Where |
 |---|---|---|
-| The library | a **workspace project** (e.g. `connect/givewell-kb`), its curator as steward | its Drive folder holds `kb.sqlite.gz` |
+| The library | a **workspace project** (e.g. `connect/givewell-kb`), its curator as steward | canopy-web: a version log of its kb.sqlite (a Drive copy only when the project turns its replica on) |
 | Adapters (where the publisher puts things, how its items are typed, its tables and guide) + the library's skill | the **curator** agent | the curator's repo (e.g. Eva's `bin/eva-kb-givewell`, `lib/kb_givewell`, `skills/givewell-kb`) |
 | Preprocessing every curator needs: raw cache, a reader per format (HTML, PDF, xlsx/xls, docx/doc), OCR of scans, dedupe, catalog cards, aliases, originals | **canopy** | `canopy_kb.prep` (canopy-web `packages/canopy_kb`, extra `[prep]`) |
 | Build, diff, store, serve (MCP) | **canopy** | this module |
@@ -70,8 +71,45 @@ bundle/
 
 ```bash
 canopy kb build bundle/ --out kb.sqlite [--previous last.sqlite]   # diff → change history
-canopy kb push --kb connect/givewell-kb kb.sqlite --originals bundle/   # originals, Drive, publish
+canopy kb push --kb connect/givewell-kb kb.sqlite --originals bundle/   # originals, then only what changed
 ```
+
+**Publishing sends only differences.** `push` computes the bundle's state — the sha256 of
+each document record (an items.jsonl line, without the curator's local paths) and of the
+manifest, aliases and each table (`canopy_kb.records`) — and asks canopy-web what changed
+since the version it serves (`…/kb/plan`). Nothing changed: nothing is sent and no version
+is made. Otherwise it uploads only the new and changed records (gzipped, content-addressed,
+only what the store lacks) and commits a delta (`…/kb/versions`); canopy-web applies it to
+its index (`canopy_kb.apply`, the same writer a full build uses, so the result is the full
+build of that content), and `push` waits until the version serves (`--no-wait` not to).
+The whole file goes only for a first build or with `--full`. Every publish is a version:
+`GET …/kb/versions`, `POST …/kb/versions/<n>/rollback`, and `whats_new` reads that log.
+Nothing goes to Drive: a project that wants a Drive copy turns its replica on
+(`PUT …/kb/settings {drive_replica: true}`, off by default) and canopy-web writes it. The
+bundle (`--bundle`, default `--originals`) is what makes the delta possible; without it
+`push` sends the whole file.
+
+**A KB made from Google Drive folders** has a `drive_folders` source
+(`POST …/kb/sources {kind: drive_folders, name, config: {folders: [ids]}}`), and nothing in
+it is read until the project's owner approves it:
+
+```bash
+canopy kb drive inventory --kb <ws>/<handle>            # metadata only: names, types, owners, sharing
+#   → the owner reviews on canopy-web: /w/<ws>/projects/<handle>/kb
+canopy kb drive sync --kb <ws>/<handle> --data <dir>    # read the approved files, build, push the difference
+```
+
+`inventory` never opens a file. canopy-web flags names that suggest records about people
+(raw data, consent, patient, line list, …) and owners outside the organisation, skips a
+file shared more narrowly than its folder, keeps every decision across refreshes, and puts
+a file that appears later under an approved folder in a "new since approval" queue unless
+that folder auto-approves. `sync` reads only what is approved (re-downloading a file only
+when its md5 or version moved; Docs as Markdown, Sheets as xlsx, Slides as PDF), checks
+every spreadsheet's column headers and holds one that names or identifies people until the
+owner releases it, and pushes the rest; a file removed, trashed, excluded or held leaves
+the next version. Originals are not copied: `original` gives the Drive link and the
+revision indexed. A Drive KB is queryable only by its owner, its steward and the readers
+the owner names. Run both on a runner with the steward's Google login.
 
 `build` needs the engine in canopy's environment (`uv tool install … --with
 'canopy-kb @ git+ssh://git@github.com/dimagi-internal/canopy-web.git#subdirectory=packages/canopy_kb'`;
@@ -81,7 +119,7 @@ entity index, outlines and links, stores each declared table as SQL, and carries
 previous build's change rows forward, so `whats_new` is a dated history across
 refreshes. It carries originals forward the same way: a file no item points at any more
 stays listed as a superseded version. A build with no previous is a baseline. `push`
-needs no engine.
+needs the engine for a delta (the bundle's state).
 
 `--originals bundle/` uploads each item's original to canopy-web's store before the build
 is published, only the ones it lacks: they are stored by sha256 (S3 checks each upload
@@ -126,15 +164,13 @@ build carries originals (a 15-minute download link to the file, and its earlier
 versions). Readable by members of
 the project's workspace and of its steward's.
 
-**Publishing it** is part of `canopy kb push --kb <workspace>/<handle>`: after the
-originals (with `--originals`) and the Drive copy, it uploads the gzipped file straight
-to storage (a presigned PUT) and publishes it,
-and every canopy instance serves the new build from its next call. Drive keeps the copy
-people browse and the source for the offline path below.
+**Publishing it** is `canopy kb push --kb <workspace>/<handle>` (above): every canopy
+instance serves the new version from its next call.
 
 **Offline / local:** `canopy kb mcp --kb <ref>` serves the same tools over stdio from a
-copy cached at `~/.canopy/kb/<ref>/kb.sqlite` (pulled from the project's Drive folder,
-re-checked after `--max-age-hours`). `--kb` is a workspace project address, an agent
+copy cached at `~/.canopy/kb/<ref>/kb.sqlite` (a workspace project's pulled from
+canopy-web, `…/kb/file`; other refs from their Drive folder; re-checked after
+`--max-age-hours`). `--kb` is a workspace project address, an agent
 project ref (`<agent>/<Pnn>`), a Drive folder id, or a local `kb.sqlite`.
 
 Tools, for an agent doing research: `kb_info` (what the library holds, the SQL tables,

@@ -185,26 +185,23 @@ def test_push_refuses_a_file_that_is_not_a_knowledge_base(tmp_path, monkeypatch)
         kb_cli.push("1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF", tmp_path, tmp_path / "x.sqlite")
 
 
-def test_push_of_a_workspace_project_also_publishes_it_to_canopy(tmp_path, monkeypatch):
-    """canopy-web then serves it as the project's own remote MCP server."""
+def test_a_workspace_projects_first_push_publishes_the_whole_file_to_canopy_and_not_drive(tmp_path, monkeypatch):
+    """canopy-web then serves it as the project's own remote MCP server; Drive is not written."""
     import hashlib
 
     from orchestrator import canopy_web
 
     db = _kb_file(tmp_path / "kb.sqlite")
-    _FakeDrive.files = {}
-    monkeypatch.setattr(kb_cli, "_Drive", _FakeDrive)
+    monkeypatch.setattr(kb_cli, "_Drive", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Drive")))
     calls, stored = [], {}
 
     def fake_call(method, path, body=None, **kw):
         calls.append((method, path, body))
-        if path == "/api/workspace-projects/connect/givewell-kb/":
-            return {"drive_folder_id": "1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF"}
         if path.endswith("/kb/upload"):
             return {"key": "workspace-projects/connect/givewell-kb/kb/a.sqlite.gz", "url": "https://s3/put",
                     "headers": {"Content-Type": "application/gzip"}}
         if path.endswith("/kb/publish"):
-            return {"mcp_path": "/api/mcp/projects/connect/givewell-kb/"}
+            return {"mcp_path": "/api/mcp/projects/connect/givewell-kb/", "kb_version_number": 1}
         raise AssertionError(path)
 
     monkeypatch.setattr(canopy_web, "call", fake_call)
@@ -213,10 +210,122 @@ def test_push_of_a_workspace_project_also_publishes_it_to_canopy(tmp_path, monke
     out = kb_cli.push("connect/givewell-kb", tmp_path, db)
 
     publish = calls[-1]
-    assert publish[1].endswith("/kb/publish")
+    assert publish[1].endswith("/kb/publish") and "state" not in publish[2]
     assert publish[2]["sha256"] == hashlib.sha256(stored["data"]).hexdigest()
     assert stored["data"][:2] == b"\x1f\x8b"
+    assert (out["published"], out["version"]) == ("full", 1)
     assert out["mcp_url"].endswith("/api/mcp/projects/connect/givewell-kb/")
+
+
+class _FakeRecords:
+    """`canopy_kb.records` over a bundle of {id, text} lines (the real one is tested in canopy-web)."""
+
+    TABLE = "table:"
+
+    @staticmethod
+    def _items(bundle):
+        return [json.loads(line) for line in open(bundle / "items.jsonl") if line.strip()]
+
+    def records(self, bundle):
+        return [(i["id"], self.sha(i), i) for i in self._items(bundle)]
+
+    def parts(self, bundle):
+        return {"manifest": {"name": "acme"}}
+
+    def state(self, bundle):
+        return {"docs": {i: s for i, s, _ in self.records(bundle)}, "parts": {"manifest": self.sha({"name": "acme"})}}
+
+    @staticmethod
+    def sha(obj):
+        import hashlib
+        return hashlib.sha256(json.dumps(obj, sort_keys=True).encode()).hexdigest()
+
+    @staticmethod
+    def encode(obj):
+        import gzip
+        return gzip.compress(json.dumps(obj, sort_keys=True).encode(), mtime=0)
+
+
+def _delta_world(tmp_path, monkeypatch, plans, versions=None):
+    from orchestrator import canopy_web
+
+    b = tmp_path / "bundle"
+    b.mkdir()
+    (b / "items.jsonl").write_text("\n".join(json.dumps(i) for i in [{"id": "a", "text": "A"}, {"id": "b", "text": "B2"}]))
+    monkeypatch.setattr(kb_cli, "_records", lambda: _FakeRecords())
+    monkeypatch.setattr(kb_cli, "_Drive", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Drive")))
+    calls, puts = [], []
+
+    def fake_call(method, path, body=None, **kw):
+        calls.append((method, path.rsplit("/kb/", 1)[-1], body))
+        if path.endswith("/kb/plan"):
+            return plans.pop(0)
+        if path.endswith("/kb/blobs"):
+            return {"have": 0, "uploads": [{"sha256": x["sha256"], "url": f"https://s3/{x['sha256']}", "headers": {}}
+                                           for x in body["blobs"]]}
+        if path.endswith("/kb/versions") and method == "POST":
+            if versions:
+                v = versions.pop(0)
+                if isinstance(v, Exception):
+                    raise v
+                return v
+            return {"created": True, "version": {"number": 2, "status": "pending"}}
+        if "/kb/versions?" in path:
+            return [{"number": 2, "status": "ready"}]
+        if path.endswith("/kb/upload"):
+            return {"key": "k", "url": "https://s3/put", "headers": {}}
+        if path.endswith("/kb/publish"):
+            return {"mcp_path": "/api/mcp/projects/connect/givewell-kb/", "kb_version_number": 1}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(canopy_web, "call", fake_call)
+    monkeypatch.setattr(kb_cli, "_put_bytes", lambda url, data, headers: puts.append((url, len(data))))
+    monkeypatch.setattr(kb_cli, "_put", lambda url, path, headers: puts.append((url, path.stat().st_size)))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    return b, calls, puts
+
+
+PLAN = {"base": 1, "full_required": False, "unchanged": False, "added": 0, "changed": 1, "removed": 0,
+        "upload_docs": ["b"], "upload_parts": []}
+
+
+def test_an_unchanged_bundle_sends_nothing(tmp_path, monkeypatch):
+    db = _kb_file(tmp_path / "kb.sqlite")
+    b, calls, puts = _delta_world(tmp_path, monkeypatch, [{**PLAN, "unchanged": True, "upload_docs": []}])
+    out = kb_cli.push("connect/givewell-kb", tmp_path, db, bundle=b)
+    assert (out["published"], out["bytes_uploaded"]) == ("unchanged", 0)
+    assert [c[1] for c in calls] == ["plan"] and puts == []
+
+
+def test_a_changed_bundle_uploads_only_the_records_the_plan_asks_for_and_waits(tmp_path, monkeypatch):
+    db = _kb_file(tmp_path / "kb.sqlite")
+    b, calls, puts = _delta_world(tmp_path, monkeypatch, [dict(PLAN)])
+    out = kb_cli.push("connect/givewell-kb", tmp_path, db, bundle=b)
+    assert [c[1] for c in calls[:3]] == ["plan", "blobs", "versions"]
+    assert len(calls[1][2]["blobs"]) == 1 and len(puts) == 1  # record "b" only, never the file
+    commit = calls[2][2]
+    assert commit["base"] == 1 and commit["uploaded_bytes"] == puts[0][1] and set(commit["state"]["docs"]) == {"a", "b"}
+    assert (out["published"], out["version"], out["status"], out["bytes_uploaded"]) == ("delta", 2, "ready", puts[0][1])
+
+
+def test_a_first_build_sends_the_whole_file_with_its_state(tmp_path, monkeypatch):
+    db = _kb_file(tmp_path / "kb.sqlite")
+    b, calls, _ = _delta_world(tmp_path, monkeypatch, [{**PLAN, "full_required": True, "base": None}])
+    out = kb_cli.push("connect/givewell-kb", tmp_path, db, bundle=b)
+    assert [c[1] for c in calls] == ["plan", "upload", "publish"] and calls[-1][2]["state"]["docs"]
+    assert out["published"] == "full"
+
+
+def test_a_log_that_moved_is_planned_again(tmp_path, monkeypatch):
+    from orchestrator import canopy_web
+
+    db = _kb_file(tmp_path / "kb.sqlite")
+    b, calls, _ = _delta_world(tmp_path, monkeypatch, [dict(PLAN), {**PLAN, "base": 3}],
+                               versions=[canopy_web.CanopyError("POST …/kb/versions -> 409 moved"), None])
+    out = kb_cli.push("connect/givewell-kb", tmp_path, db, bundle=b)
+    commits = [c[2] for c in calls if c[1] == "versions"]
+    assert [c[1] for c in calls if c[1] in ("plan", "versions")] == ["plan", "versions", "plan", "versions"]
+    assert [c["base"] for c in commits] == [1, 3] and out["published"] == "delta"
 
 
 def _originals_bundle(tmp_path):
@@ -245,8 +354,6 @@ def test_push_uploads_only_the_originals_canopy_lacks_before_publishing(tmp_path
 
     def fake_call(method, path, body=None, **kw):
         calls.append(path)
-        if path == "/api/workspace-projects/connect/givewell-kb/":
-            return {"drive_folder_id": "1-_WsXnvM2lTeRs3KLld2sgimQpz_otCF"}
         if path.endswith("/kb/originals"):
             assert {f["sha256"] for f in body["files"]} == {"a" * 64, "b" * 64}  # once each
             return {"have": 1, "uploads": [{"sha256": "b" * 64, "url": "https://s3/b",
@@ -260,7 +367,8 @@ def test_push_uploads_only_the_originals_canopy_lacks_before_publishing(tmp_path
     monkeypatch.setattr(canopy_web, "call", fake_call)
     monkeypatch.setattr(kb_cli, "_put", lambda url, path, headers: puts.append((url, path.read_bytes(), headers)))
 
-    out = kb_cli.push("connect/givewell-kb", tmp_path, db, originals=_originals_bundle(tmp_path))
+    monkeypatch.setattr(kb_cli, "_records", lambda: _FakeRecords())
+    out = kb_cli.push("connect/givewell-kb", tmp_path, db, originals=_originals_bundle(tmp_path), full=True)
 
     assert puts[0] == ("https://s3/b", b"PK workbook", {"x-amz-checksum-sha256": "x"})
     assert out["originals"] == {"files": 2, "already_stored": 1, "uploaded": 1, "bytes_uploaded": 11}
