@@ -143,3 +143,27 @@ def test_render_names_every_outcome():
     out = vault_keeper.render([r])
     assert "granted: user 9" in out and "waiting: machine" in out and "pinned on first sight" in out
     assert vault_keeper.render([]) == "nothing waiting for a vault key this runner holds"
+
+
+def test_a_workspace_vault_uses_its_grant_path_and_the_signers_agent(vk):
+    """A workspace vault's machine endorsements were signed for an agent it serves:
+    the keeper verifies each against the agent id the row names."""
+    box_jkt = zk.jwk_thumbprint(BOX_JWK)
+    other_agent = "99"
+    msg = zk.endorse_msg(other_agent, "device", box_jkt, box_jkt).encode()
+    r, s = decode_dss_signature(JJ_KEY.sign(msg, ec.ECDSA(hashes.SHA256())))
+    e = {"kind": "device", "target": box_jkt, "key_jkt": box_jkt, "by": "7", "by_email": "jj@dimagi.com",
+         "by_jkt": zk.jkt(JJ_KEY.public_key()), "by_public_jwk": zk.jwk(JJ_KEY.public_key()),
+         "sig": zk.b64u(r.to_bytes(32, "big") + s.to_bytes(32, "big")), "agent_id": other_agent}
+    binding = "vault:abc"
+    me = _ecdh(ME_KEY, ME_JWK)
+    work = {"agent": "Shared", "agent_id": binding, "kv": KV, "device_key": "dk-me",
+            "wrap": zk.wrap_ecdh_es(vk, ME_JWK, zk.device_info(binding, KV, me.jkt)),
+            "pending": [_machine()], "endorsements": [e],
+            "grant_path": "/api/harness/runners/r1/vault-keeper/vaults/abc/wraps", "_base": "ignored"}
+    call = Recorder()
+    res = vault_keeper.keep_one(work, pins={}, call=call, ecdh=me)
+    assert len(res.granted) == 1
+    method, path, body = call.posts[0]
+    assert path == "/api/harness/runners/r1/vault-keeper/vaults/abc/wraps"
+    assert _opens(body["wraps"][0]["wrap"], BOX_KEY, BOX_JWK, zk.device_info(binding, KV, box_jkt)) == vk

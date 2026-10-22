@@ -16,6 +16,7 @@ device wrap (the vault key VK wrapped to its ECDH key — `device_key.load_ecdh`
                                                   new recovery code
     canopy vault zk settle --agent X              re-encrypt canopy-web's sealed (zks1) values
                                                   under the vault key
+    canopy vault zk status|enable|set|grant --vault ID   the same, for a workspace vault
     canopy vault zk keep                          pass on every vault key this runner holds to
                                                   whoever waits and is trusted (`vault_keeper`)
     canopy vault import --agent X --zk            1Password -> canopy-web, encrypted here
@@ -140,9 +141,15 @@ def _row_inactive(row: dict) -> bool:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class ZkVault:
+    """One vault, as this device: an agent's (``slug``), or a workspace vault
+    (``vault_id``, canopy-web's ``/api/vaults/<id>/zk`` — the same shapes, its binding id
+    in ``agent_id``)."""
+
     def __init__(self, slug: str, *, token: str, transport=None,
-                 ecdh: Optional[device_key.EcdhKey] = None, status: Optional[dict] = None):
+                 ecdh: Optional[device_key.EcdhKey] = None, status: Optional[dict] = None,
+                 vault_id: str = ""):
         self.slug, self.token, self.transport = slug, token, transport
+        self.vault_id = vault_id
         self._ecdh = ecdh
         self._status = status
         self._agent_id: Optional[str] = None
@@ -158,6 +165,8 @@ class ZkVault:
 
     @property
     def base(self) -> str:
+        if self.vault_id:
+            return f"/api/vaults/{self.vault_id}/zk"
         return f"/api/agents/{self.slug}/vault/zk"
 
     def state(self, refresh: bool = False) -> dict:
@@ -346,12 +355,15 @@ def run_enable(v: ZkVault, *, confirm: Optional[Confirm] = None) -> ZkResult:
     pending, notes = v.pending()
     res.notes += notes
     targets = _dedupe(targets + pending)
-    try:
-        body = cred_resolve.resolve(v.slug, token=v.token, transport=v.transport)
-    except canopy_web.CanopyError as e:
-        raise ZkCliError(f"could not read '{v.slug}'s current values: {str(e)[:300]}") from None
-    values = {n: val for n, val in (body.get("values") or {}).items()
-              if val is not None and str(val) != ""}
+    if v.vault_id:
+        values = {}  # a workspace vault starts empty: nothing custodial to carry over
+    else:
+        try:
+            body = cred_resolve.resolve(v.slug, token=v.token, transport=v.transport)
+        except canopy_web.CanopyError as e:
+            raise ZkCliError(f"could not read '{v.slug}'s current values: {str(e)[:300]}") from None
+        values = {n: val for n, val in (body.get("values") or {}).items()
+                  if val is not None and str(val) != ""}
     _confirmed(confirm, targets)
     vk = zk.random_vk()
     kv = 1
@@ -783,7 +795,9 @@ def _ask(targets: list) -> bool:
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 
-AGENT_OPT = click.option("--agent", "slug", required=True, help="The agent's canopy-web slug.")
+AGENT_OPT = click.option("--agent", "slug", default="", help="The agent's canopy-web slug.")
+VAULT_OPT = click.option("--vault", "vault_id", default="",
+                         help="A workspace vault's id, instead of --agent (`canopy vault ws list`).")
 YES_OPT = click.option("--yes", is_flag=True,
                        help="Do not ask before wrapping to the listed targets.")
 RECOVERY_FILE_OPT = click.option(
@@ -797,9 +811,11 @@ def _refuse_existing(recovery_file: str) -> None:
         raise ZkCliError(f"--recovery-file {recovery_file} already exists — name a new file")
 
 
-def _vault(slug: str) -> ZkVault:
+def _vault(slug: str, vault_id: str = "") -> ZkVault:
     from orchestrator.vault_cli import _token
-    return ZkVault(slug, token=_token())
+    if bool(slug) == bool(vault_id):
+        raise ZkCliError("name exactly one of --agent or --vault")
+    return ZkVault(slug or f"vault {vault_id}", token=_token(), vault_id=vault_id)
 
 
 @click.group("zk")
@@ -812,24 +828,26 @@ def zk_group():
 
 @zk_group.command("status")
 @AGENT_OPT
+@VAULT_OPT
 @click.option("--json", "as_json", is_flag=True)
-def status_cmd(slug, as_json):
+def status_cmd(slug, vault_id, as_json):
     """Whether the agent is zero-knowledge, its kv, wraps, pending targets, and whether
     this device holds a wrap."""
-    st = run_status(_vault(slug))
+    st = run_status(_vault(slug, vault_id))
     click.echo(json.dumps(st, indent=1, sort_keys=True, default=str) if as_json
                else render_status(st))
 
 
 @zk_group.command("enable")
 @AGENT_OPT
+@VAULT_OPT
 @YES_OPT
 @RECOVERY_FILE_OPT
-def enable_cmd(slug, yes, recovery_file):
+def enable_cmd(slug, vault_id, yes, recovery_file):
     """Turn zero-knowledge on: a new vault key, every current value encrypted here, the
     key wrapped for this device, your keyset, each pending target and a recovery code."""
     _refuse_existing(recovery_file)
-    res = run_enable(_vault(slug), confirm=None if yes else _ask)
+    res = run_enable(_vault(slug, vault_id), confirm=None if yes else _ask)
     click.echo(render(res))
     show_recovery_code(res, to_file=recovery_file)
 
@@ -847,6 +865,7 @@ def _ask_endorsers(fresh: list, readers: dict) -> bool:
 
 @zk_group.command("set")
 @AGENT_OPT
+@VAULT_OPT
 @click.argument("name", required=False, default="")
 @click.option("--from-env", "from_env", default="",
               help="Read the value from this environment variable instead of stdin.")
@@ -858,7 +877,7 @@ def _ask_endorsers(fresh: list, readers: dict) -> bool:
               help="Answer the agent's secret request ID (implies --sealed; NAME optional).")
 @click.option("--yes", is_flag=True,
               help="With --sealed: pin first-seen endorsers without asking.")
-def set_cmd(slug, name, from_env, sealed, request_id, yes):
+def set_cmd(slug, vault_id, name, from_env, sealed, request_id, yes):
     """Store one value. The value is read from stdin (or a hidden prompt on a terminal, or
     --from-env) — never from argv. Default: encrypted here under the vault key (this
     device must hold a wrap). --sealed / --request: sealed to endorsed readers instead."""
@@ -885,6 +904,9 @@ def set_cmd(slug, name, from_env, sealed, request_id, yes):
                     + " needs a confirmation, and stdin carries the value — run it on a "
                       "terminal or with --from-env, or pass --yes once you have checked the "
                       "fingerprint")
+        if vault_id:
+            raise ZkCliError("--sealed is for an agent's secret requests; a workspace vault value is "
+                             "set encrypted (drop --sealed)")
         plan, line = run_set_sealed(_vault(slug), name, read_value, request_id=request_id,
                                     confirm=confirm)
         for en in plan.pinned:
@@ -898,16 +920,17 @@ def set_cmd(slug, name, from_env, sealed, request_id, yes):
     value = read_value()
     if not value:
         raise ZkCliError("refusing to store an empty value")
-    click.echo(render(run_set(_vault(slug), {name: value})))
+    click.echo(render(run_set(_vault(slug, vault_id), {name: value})))
 
 
 @zk_group.command("grant")
 @AGENT_OPT
+@VAULT_OPT
 @YES_OPT
-def grant_cmd(slug, yes):
+def grant_cmd(slug, vault_id, yes):
     """Wrap the vault key for every pending target (approved devices of routed runners,
     agent admins with a keyset) — unwrapped with this device's own wrap."""
-    click.echo(render(run_grant(_vault(slug), confirm=None if yes else _ask)))
+    click.echo(render(run_grant(_vault(slug, vault_id), confirm=None if yes else _ask)))
 
 
 @zk_group.command("rotate")
@@ -956,3 +979,72 @@ def keep_cmd(as_json):
         click.echo(json.dumps([r.__dict__ for r in results], indent=2))
     else:
         click.echo(vault_keeper.render(results))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# `canopy vault ws` — a workspace's vaults (canopy-web spec 2026-10-22-vault-access-follows-
+# canopy-access-design.md §4): make one, say what it serves, add people. Its values and key
+# copies go through `canopy vault zk … --vault <id>`, exactly as an agent's do.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _ws_call(method: str, path: str, body=None):
+    from orchestrator.vault_cli import _token
+    try:
+        return canopy_web.call(method, path, body, token=_token())
+    except canopy_web.CanopyError as e:
+        raise ZkCliError(f"canopy-web refused {method} {path}: {str(e)[:300]}") from None
+
+
+def render_ws_vault(v: dict) -> str:
+    lines = [f"{v.get('workspace')}/{v.get('name')}  (id {v.get('vault_id')}, kv {v.get('kv')})"]
+    for a in v.get("attachments") or []:
+        lines.append(f"  serves: {('agent ' + a['agent']) if a.get('agent') else a.get('workspace') + ' and below'}")
+    for m in v.get("members") or []:
+        lines.append(f"  member: {m.get('email')} ({m.get('role')}; {', '.join(m.get('sources') or [])})"
+                     + ("" if m.get("has_vault_key") else " — no vault key yet"))
+    if v.get("secrets"):
+        lines.append(f"  secrets: {', '.join(v['secrets'])}")
+    return "\n".join(lines)
+
+
+@click.group("ws")
+def ws_group():
+    """A workspace's vaults: shared secrets its agents read, layered under each agent's own."""
+
+
+@ws_group.command("list")
+@click.option("--workspace", required=True)
+@click.option("--json", "as_json", is_flag=True)
+def ws_list_cmd(workspace, as_json):
+    """Every vault in WORKSPACE: what it serves, who is in it and why, its secret names."""
+    rows = _ws_call("GET", f"/api/workspaces/{workspace}/vaults") or []
+    click.echo(json.dumps(rows, indent=1) if as_json
+               else ("\n".join(render_ws_vault(v) for v in rows) or f"{workspace} has no vaults"))
+
+
+@ws_group.command("create")
+@click.option("--workspace", required=True)
+@click.option("--name", required=True)
+def ws_create_cmd(workspace, name):
+    """Make a vault (workspace owners only). Then `attach` it and `canopy vault zk enable --vault`."""
+    click.echo(render_ws_vault(_ws_call("POST", f"/api/workspaces/{workspace}/vaults", {"name": name})))
+
+
+@ws_group.command("attach")
+@click.option("--vault", "vault_id", required=True)
+@click.option("--agent", default="", help="Serve this one agent.")
+@click.option("--workspace", default="", help="Serve every agent in this workspace and below.")
+def ws_attach_cmd(vault_id, agent, workspace):
+    if bool(agent) == bool(workspace):
+        raise ZkCliError("name exactly one of --agent or --workspace")
+    body = {"agent": agent} if agent else {"workspace": workspace}
+    click.echo(render_ws_vault(_ws_call("POST", f"/api/vaults/{vault_id}/attachments", body)))
+
+
+@ws_group.command("add-member")
+@click.option("--vault", "vault_id", required=True)
+@click.option("--email", required=True)
+@click.option("--role", type=click.Choice(["use", "manage"]), default="use")
+def ws_add_member_cmd(vault_id, email, role):
+    click.echo(render_ws_vault(_ws_call("POST", f"/api/vaults/{vault_id}/members",
+                                        {"email": email, "role": role})))
