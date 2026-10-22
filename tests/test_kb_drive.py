@@ -30,6 +30,10 @@ class FakeGog:
     def changes_since(self, token):
         return (self.changes if self.changes is not None else [{"fileId": "x"}]), "t3"
 
+    def permissions(self, file_id):
+        self.perm_calls = getattr(self, "perm_calls", 0) + 1
+        return [{"type": "user", "emailAddress": "hal@dimagi-ai.com"}]
+
     def download(self, file_id, out, fmt=""):
         self.downloads.append((file_id, fmt))
         out.write_bytes(self.bodies[file_id])
@@ -120,7 +124,8 @@ def test_sync_reads_only_approved_files_holds_personal_data_and_publishes_the_re
     assert [i["id"] for i in items] == ["drive:doc"]
     assert items[0]["meta"]["drive"] == {"file_id": "doc", "revision": "4",
                                           "mime_type": "application/vnd.google-apps.document"}
-    assert "path" not in items[0]["original"] and items[0]["original"]["source_url"].startswith("https://docs.google")
+    assert "path" not in items[0]["original"]
+    assert items[0]["original"]["source_url"] == "https://docs.google.com/document/d/doc"
     assert pushed[0]["bundle"] == tmp_path / "bundle"
 
     # unchanged files are not downloaded again; a released hold indexes the sheet
@@ -137,3 +142,15 @@ def test_sync_reads_only_approved_files_holds_personal_data_and_publishes_the_re
     assert gog.downloads == [("doc", "md")]
     items = [json.loads(line) for line in open(tmp_path / "bundle" / "items.jsonl")]
     assert [i["id"] for i in items] == ["drive:doc"] and "24 hours" in items[0]["text"]
+
+
+def test_a_shared_drive_listing_without_sharing_asks_each_file(monkeypatch):
+    """Drive leaves `permissions` out of listings in shared drives: each file is asked."""
+    posted = []
+    _calls(monkeypatch, [SOURCE], inventory=posted)
+    tree = _tree()
+    for f in tree.values():
+        f.pop("permissions", None)
+    gog = FakeGog(tree)
+    kb_drive.inventory("connect/kmc-kb", None, gog=gog)
+    assert gog.perm_calls == 3 and all(f["readers"] == ["user:hal@dimagi-ai.com"] for f in posted[0]["files"])
