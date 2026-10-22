@@ -187,6 +187,27 @@ def test_project_set_append_link_files_a_deliverable_on_the_project(fake_http):
                                       {"label": "Brief", "url": "https://doc/2"}]}
 
 
+def test_append_link_repeated_adds_every_link_on_project_and_task(fake_http):
+    """2026-10-22: `agent set --append-link A --append-link B` exited 0 and kept only B —
+    a single-valued click option silently takes the last repeat. Both verbs, every link."""
+    calls, responses = fake_http
+    _projects(responses, _project())
+    responses[("GET", "agents/hal/projects/P1/")] = (200, json.dumps(
+        {**_project(), "links": [{"label": "Folder", "url": "https://drive/x"}]}))
+    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps(
+        [{"ext_id": "T132", "links": [{"label": "Spec", "url": "https://spec"}]}]))
+
+    for argv, existing in ((["project-set", "--project", "P1"], "https://drive/x"),
+                           (["set", "--task-id", "T132"], "https://spec")):
+        r = CliRunner().invoke(main, ["agent", *argv, "--slug", "hal",
+                                      "--append-link", "PR 1712|https://pr/1712",
+                                      "--append-link", "PR 1724|https://pr/1724"])
+        assert r.exit_code == 0, r.output
+        assert calls[-1][0] == "PATCH"
+        assert [l["url"] for l in calls[-1][2]["links"]] == [
+            existing, "https://pr/1712", "https://pr/1724"]
+
+
 def test_project_set_append_link_does_not_duplicate_a_url(fake_http):
     calls, responses = fake_http
     _projects(responses, _project())

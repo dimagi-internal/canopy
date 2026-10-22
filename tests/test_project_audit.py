@@ -275,12 +275,32 @@ def _gh(stdout, rc=0, stderr=""):
 
 
 def test_fetch_github_states_one_call_and_partial_data_survives_errors():
-    out = json.dumps({"data": {"r0": {"issueOrPullRequest": {"state": "MERGED"}}, "r1": None},
+    out = json.dumps({"data": {"r0": {"issueOrPullRequest": {"state": "MERGED",
+                                                             "closedAt": "2026-10-19T23:51:31Z"}},
+                               "r1": None},
                       "errors": [{"message": "Could not resolve to a Repository"}]})
     runner = _gh(out, rc=1)
     states, note = pa.fetch_github_states(["o/a#1", "o/private#2"], runner=runner)
-    assert (states, note) == ({"o/a#1": "MERGED"}, "")
+    assert (states, note) == ({"o/a#1": {"state": "MERGED",
+                                         "closed_at": "2026-10-19T23:51:31Z"}}, "")
     assert len(runner.calls) == 1 and runner.calls[0][:3] == ["gh", "api", "graphql"]
+    assert "closedAt" in runner.calls[0][-1]
+
+
+def test_shipped_check_skips_a_card_touched_after_its_last_ref_closed():
+    # 2026-10-22: every one of hal's 9 (f) hits had been updated after its PRs merged —
+    # prerequisites shipped, the card's own next step off GitHub. T132 is the real hit:
+    # filed 22:19, both PRs merged after it, card never touched again.
+    refs = {"dimagi-internal/canopy-web#1712": {"state": "MERGED", "closed_at": "2026-10-19T22:57:15Z"},
+            "dimagi-internal/canopy-web#1724": {"state": "MERGED", "closed_at": "2026-10-19T23:51:31Z"}}
+    urls = [f"{GH}/canopy-web/pull/1712", f"{GH}/canopy-web/pull/1724"]
+    tasks = [task("T132", link_urls=urls, updated="2026-10-19T22:19:58Z"),   # before → flag
+             task("T22", link_urls=urls, updated="2026-10-20T10:00:00Z"),    # after → kept open
+             task("T5", link_urls=urls, updated="2026-10-19T23:00:00Z")]     # between → flag
+    assert [h["ext_id"] for h in pa.check_shipped_tasks(tasks, refs)] == ["T132", "T5"]
+    # an unknown close time on ANY ref falls back to flagging — over-report, never hide
+    refs["dimagi-internal/canopy-web#1712"] = {"state": "MERGED", "closed_at": None}
+    assert [h["ext_id"] for h in pa.check_shipped_tasks(tasks, refs)] == ["T132", "T22", "T5"]
 
 
 def test_fetch_github_states_never_fails():
