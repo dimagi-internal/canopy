@@ -16,6 +16,8 @@ device wrap (the vault key VK wrapped to its ECDH key — `device_key.load_ecdh`
                                                   new recovery code
     canopy vault zk settle --agent X              re-encrypt canopy-web's sealed (zks1) values
                                                   under the vault key
+    canopy vault zk keep                          pass on every vault key this runner holds to
+                                                  whoever waits and is trusted (`vault_keeper`)
     canopy vault import --agent X --zk            1Password -> canopy-web, encrypted here
 
 The endpoints (owner/admin only) are canopy-web's: ``GET /api/agents/<slug>/vault/zk``,
@@ -938,3 +940,19 @@ def settle_cmd(slug):
     Connect Google mailbox, a rotated canopy-pat) under the vault key, so every member and
     device can read them. Import and switch do this on their own."""
     click.echo(render(run_settle(_vault(slug))))
+
+
+@zk_group.command("keep")
+@click.option("--json", "as_json", is_flag=True)
+def keep_cmd(as_json):
+    """Pass on every vault key this runner holds to whoever is waiting and trusted: a
+    member of the agent's vault (pinned on first sight), or a machine a trusted person
+    endorsed. The runner runs this on its own clock; safe to run by hand any time."""
+    # vault_keeper imports this module's helpers, so it is imported here, at the call.
+    from orchestrator import vault_keeper
+
+    results = vault_keeper.run_keep()
+    if as_json:
+        click.echo(json.dumps([r.__dict__ for r in results], indent=2))
+    else:
+        click.echo(vault_keeper.render(results))
