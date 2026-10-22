@@ -15,6 +15,7 @@ from orchestrator import device_key, runner_session, turn_agent_token
 TID = "3f2b8c1e-0000-4000-8000-000000000009"
 BASE = "https://x.test"
 URL = f"{BASE}/api/harness/runners/r-1/turns/{TID}/agent-token"
+SESSION_URL = URL + "?scope=session"
 
 
 @pytest.fixture
@@ -28,10 +29,12 @@ def box(monkeypatch):
     monkeypatch.setattr(runner_session, "token", lambda base, transport=None: "crt_box")
     seen = []
 
-    def serve(status, body):
+    def serve(status, body, session=None):
+        """`session`: what a `?scope=session` ask gets instead (default: the same answer)."""
         def fake(method, url, headers, data):
             seen.append({"method": method, "url": url, "auth": headers.get("Authorization")})
-            return status, json.dumps(body) if body is not None else ""
+            st, b = session if (session is not None and url.endswith("?scope=session")) else (status, body)
+            return st, json.dumps(b) if b is not None else ""
         monkeypatch.setattr(cw, "urllib_transport", fake)
 
     serve(404, {"detail": "turn not found"})
@@ -44,26 +47,57 @@ GRANT = {"token": "turn-tok", "agent_slug": "hal", "turn_id": TID,
 
 def test_a_runner_turn_gets_its_own_login_asked_as_the_box(box):
     serve, seen = box
-    serve(200, GRANT)
+    serve(200, GRANT, session=(404, {"detail": "no live session"}))
     assert turn_agent_token.resolve("hal") == "turn-tok"
-    assert seen == [{"method": "POST", "url": URL, "auth": "Bearer crt_box"}]
+    # The session's login is asked first; with none, the turn's.
+    assert seen == [{"method": "POST", "url": SESSION_URL, "auth": "Bearer crt_box"},
+                    {"method": "POST", "url": URL, "auth": "Bearer crt_box"}]
     cached = turn_agent_token.CACHE_DIR / f"{TID}.json"
     assert stat.S_IMODE(cached.stat().st_mode) == 0o600
     assert turn_agent_token.resolve("hal") == "turn-tok"   # cached: no second ask
-    assert len(seen) == 1
+    assert len(seen) == 2
 
 
-@pytest.mark.parametrize("status,body", [
-    (404, {"detail": "turn not found"}),      # finished, another box's, or an older canopy-web
-    (409, {"detail": "confined"}),            # a caller's turn
-    (200, {**GRANT, "agent_slug": "eva"}),     # a login for some other agent
+@pytest.mark.parametrize("status,body,asks", [
+    (404, {"detail": "turn not found"}, 2),      # finished, another box's, or an older canopy-web
+    (409, {"detail": "confined"}, 2),            # a caller's turn
+    (200, {**GRANT, "agent_slug": "eva"}, 1),     # a login for some other agent: answered, refused
 ])
-def test_a_refusal_falls_back_and_is_remembered(box, status, body):
+def test_a_refusal_falls_back_and_is_remembered(box, status, body, asks):
     serve, seen = box
     serve(status, body)
     assert turn_agent_token.resolve("hal") == ""
     assert turn_agent_token.resolve("hal") == ""
+    assert len(seen) == asks   # session (then turn) — once; then remembered
+
+
+SESSION_GRANT = {**GRANT, "token": "session-tok", "session_id": "5e55-1"}
+
+
+def test_a_laptop_session_gets_the_login_that_lasts_it(box):
+    serve, seen = box
+    serve(200, GRANT, session=(200, SESSION_GRANT))
+    assert turn_agent_token.resolve("hal") == "session-tok"
+    assert [x["url"] for x in seen] == [SESSION_URL]          # never the turn login
+    assert turn_agent_token.resolve("hal") == "session-tok"   # cached for its lifetime
     assert len(seen) == 1
+
+
+def test_a_turn_login_is_kept_only_briefly(box):
+    serve, seen = box
+    serve(200, GRANT, session=(404, {}))
+    t0 = 1_000_000.0
+    assert turn_agent_token.resolve("hal", now=lambda: t0) == "turn-tok"
+    later = t0 + turn_agent_token.TURN_LOGIN_CACHE_SECONDS + 1
+    serve(200, GRANT, session=(200, SESSION_GRANT))
+    assert turn_agent_token.resolve("hal", now=lambda: later) == "session-tok"
+
+
+def test_session_only_never_takes_a_turn_login(box):
+    serve, seen = box
+    serve(200, GRANT, session=(404, {}))
+    assert turn_agent_token.resolve("hal", session_only=True) == ""
+    assert [x["url"] for x in seen] == [SESSION_URL]
 
 
 def test_no_turn_or_no_runner_means_no_ask(box, monkeypatch):
@@ -125,7 +159,18 @@ def test_a_human_session_never_asks(box, monkeypatch):
 SCRIPT = Path(__file__).resolve().parents[1] / "plugins/canopy/scripts/canopy-web-mcp-headers.js"
 
 
+def _fake_cli(home, prints=""):
+    """The canopy CLI the helper asks for a session login: this home's, never the real one."""
+    bin_ = home / ".local" / "bin"
+    bin_.mkdir(parents=True, exist_ok=True)
+    cli = bin_ / "canopy"
+    cli.write_text(f"#!/bin/sh\nprintf '%s' '{prints}'\n")
+    cli.chmod(0o755)
+
+
 def _helper(home, env):
+    if not (home / ".local" / "bin" / "canopy").exists():
+        _fake_cli(home)
     e = {"PATH": os.environ["PATH"], "HOME": str(home), **env}
     r = subprocess.run(["node", str(SCRIPT)], cwd=str(home), env=e, capture_output=True,
                        text=True, timeout=20)
@@ -144,3 +189,24 @@ def test_the_mcp_helper_prefers_the_cloud_runners_turn_file(tmp_path):
     (d / f"{TID}.token").write_text("turn-tok\n")
     assert _helper(home, env) == "Bearer turn-tok"
     assert _helper(home, {**env, "CANOPY_TURN_ID": "../x"}) == "Bearer stored-pat"
+
+
+def test_the_mcp_helper_asks_for_the_laptop_sessions_login(tmp_path):
+    home = tmp_path / "home"
+    (home / ".hal").mkdir(parents=True)
+    (home / ".hal" / ".env").write_text("CANOPY_WEB_PAT=stored-pat\n")
+    env = {"CANOPY_AGENT": "hal"}
+    assert _helper(home, env) == "Bearer stored-pat"         # the CLI had none: as before
+    _fake_cli(home, prints="session-tok")
+    assert _helper(home, env) == "Bearer session-tok"
+    assert _helper(home, {**env, "CANOPY_TURN_AGENT_TOKEN": "0"}) == "Bearer stored-pat"
+
+
+def test_session_token_refuses_to_print_to_a_terminal(monkeypatch):
+    from click.testing import CliRunner
+
+    from orchestrator.agent_cli import agent
+
+    monkeypatch.setattr(turn_agent_token, "resolve", lambda slug, session_only=False: "session-tok")
+    r = CliRunner().invoke(agent, ["session-token", "--slug", "hal"])
+    assert r.exit_code == 0 and r.output.strip() == "session-tok"   # piped (CliRunner is not a tty)

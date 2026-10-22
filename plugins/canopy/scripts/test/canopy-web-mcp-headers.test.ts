@@ -34,7 +34,7 @@ async function headers(env: NodeJS.ProcessEnv): Promise<{ stdout: string }> {
   // CANOPY_WEB_PAT and ~/.<slug>/.env before the token file, and either would
   // otherwise leak into a test about the file.
   return run(process.execPath, [HELPER], {
-    env: { ...process.env, HOME: dir, CANOPY_WEB_PAT: '', ...env },
+    env: { ...process.env, HOME: dir, CANOPY_WEB_PAT: '', CANOPY_TURN_AGENT_TOKEN: '0', ...env },
     cwd: dir,
   });
 }
@@ -78,7 +78,7 @@ describe('canopy-web-mcp-headers', () => {
   describe('--archive (marketplace + archive downloads, canopy#851)', () => {
     async function archive(env: NodeJS.ProcessEnv, cwd = dir): Promise<{ stdout: string }> {
       return run(process.execPath, [HELPER, '--archive'], {
-        env: { ...process.env, HOME: dir, CANOPY_WEB_PAT: '', ...env },
+        env: { ...process.env, HOME: dir, CANOPY_WEB_PAT: '', CANOPY_TURN_AGENT_TOKEN: '0', ...env },
         cwd,
       });
     }

@@ -2116,3 +2116,21 @@ def agent_turns(slug, limit, as_json):
         first = (str(t.get("prompt") or "").strip().splitlines() or [""])[0]
         if first:
             click.echo(f"    prompt: {first[:110]}")
+
+
+@agent.command("session-token", hidden=True)
+@click.option("--slug", required=True, help="The agent this session runs as.")
+def agent_session_token_cmd(slug):
+    """Print the login canopy-web issued for THIS laptop session as agent SLUG (tied to the
+    session its turn opened; canopy-web spec 2026-10-21-turn-scoped-agent-token-design.md),
+    or nothing. For the canopy-web MCP headers helper, which connects once per session and
+    so needs a login that lasts it. Refuses to print to a terminal: it is a credential."""
+    import sys
+
+    from orchestrator import turn_agent_token
+
+    if sys.stdout.isatty():
+        raise click.ClickException("this prints a credential: pipe it to the program that needs it")
+    token = turn_agent_token.resolve(slug, session_only=True)
+    if token:
+        click.echo(token)
