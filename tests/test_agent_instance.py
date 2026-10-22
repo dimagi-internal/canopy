@@ -15,6 +15,13 @@ from orchestrator import agent_instance as ai
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _legacy_1password_backend(monkeypatch):
+    """Most tests here are about the LEGACY 1Password path; the canopy-vault path has its
+    own tests below, which pass `source_of` explicitly."""
+    monkeypatch.setattr(ai, "credential_source", lambda slug: "1password")
+
+
 def _inst(agent, ws="connect", vault="V", plugin="ace"):
     return ai.Instance(plugin=plugin, agent=agent, workspace=ws, vault=vault)
 
@@ -239,3 +246,65 @@ def test_no_agent_slug_vault_derivation_left_in_canopy():
                 if pat.search(line):
                     hits.append(f"{p.relative_to(ROOT)}:{n}: {line.strip()}")
     assert not hits, "vault-name derivation found:\n" + "\n".join(hits)
+
+
+# ── canopy vault first (2026-10-21) ──────────────────────────────────────────
+
+def test_a_canopy_vault_agent_fills_from_canopy_vault_never_op(tmp_path, tpl):
+    op = FakeOp()
+    written = []
+
+    def from_vault(slug, out):
+        written.append((slug, out))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("A=1\n")
+        return 1
+
+    out = tmp_path / "home" / ".ace" / ".env"
+    res = ai.run("ace", template=tpl, out=out, token="pat",
+                 list_instances=lambda p: [_inst("ace", vault="")], runner=op,
+                 source_of=lambda slug: "canopy-web", from_canopy_vault=from_vault)
+    assert op.calls == []                      # no `op` at all
+    assert written == [("ace", out)] and res.lines == 1
+    assert res.vault_source == "canopy vault" and res.vault == ""
+    b = json.loads(ai.binding_path(out).read_text())
+    assert b["agent"] == "ace" and b["vault"] == ""
+
+
+def test_a_canopy_vault_agent_needs_no_op_vault_recorded(tmp_path, tpl):
+    # "no 1Password vault recorded" was the error every canopy-vault agent's setup hit.
+    res = ai.run("ace", template=tpl, out=tmp_path / ".ace" / ".env", token="pat",
+                 list_instances=lambda p: [_inst("ace", vault="")], print_only=True,
+                 source_of=lambda slug: "canopy-web")
+    assert res.vault_source == "canopy vault"
+
+
+def test_a_legacy_1password_agent_still_uses_op(tmp_path, tpl):
+    res, op = _run(tmp_path, tpl, [_inst("muse", vault="Agent-Muse")], agent="muse",
+                   source_of=lambda slug: "1password")
+    assert op.calls and res.vault == "Agent-Muse"
+
+
+def test_canopy_vault_refusal_points_at_agent_use(tmp_path, monkeypatch):
+    from orchestrator import cred_cli
+
+    def refuse(slug, refs=None):
+        raise cred_cli.CredError("could not resolve 'ace's credentials from canopy-web: 403")
+
+    monkeypatch.setattr(cred_cli, "fetch_canopy_web_values", refuse)
+    with pytest.raises(ai.InstanceError) as e:
+        ai.canopy_vault_env("ace", tmp_path / ".env")
+    assert "canopy agent use ace" in e.value.message
+
+
+def test_cli_canopy_vault_agent_prints_no_vault(tmp_path, tpl, monkeypatch):
+    from orchestrator import agent_cli, workspace_cli
+    monkeypatch.setattr(workspace_cli, "person_token", lambda: "pat")
+    monkeypatch.setattr(ai, "fetch_instances", lambda p, token: [_inst("ace", vault="")])
+    monkeypatch.setattr(ai, "credential_source", lambda slug: "canopy-web")
+    monkeypatch.setattr(ai, "canopy_vault_env", lambda slug, out: 3)
+    r = CliRunner().invoke(agent_cli.agent, ["env", "--plugin", "ace", "--template", str(tpl),
+                                             "--out", str(tmp_path / "h" / ".env")])
+    assert r.exit_code == 0, r.output
+    assert "secrets:  canopy vault" in r.output and "1Password" not in r.output
+    assert "(3 vars) from canopy vault" in r.output

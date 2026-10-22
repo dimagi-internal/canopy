@@ -244,7 +244,7 @@ def _warn_borrowed_identity(slug: str) -> None:
         f"[canopy] Calls will be attributed to the OPERATOR, not to '{slug}', and "
         f"will see the operator's workspaces.\n"
         f"[canopy] If you are {slug}: materialize its env "
-        f"(`op inject -i .env.tpl -o ~/.{slug}/.env`) or set CANOPY_WEB_PAT.",
+        f"(`canopy cred env --agent {slug}`, from its canopy vault) or set CANOPY_WEB_PAT.",
         file=sys.stderr,
     )
 
@@ -355,7 +355,7 @@ def _agent_identity_error(slug: str, why: str) -> "AgentIdentityError":
         f"(workbench-token {TOKEN_FILE}): canopy-web would attribute every call to the "
         f"human with the human's rights, and a write would land in the human's "
         f"workspaces (canopy#813, ace#2805). Set CANOPY_WEB_PAT to {slug}'s own PAT, or "
-        f"materialize its env (`op inject -i .env.tpl -o ~/.{slug}/.env`). A human "
+        f"materialize its env from its canopy vault (`canopy cred env --agent {slug}`). A human "
         f"deliberately working as themselves in this repo: {ALLOW_OPERATOR_ENV}=1."
     )
 

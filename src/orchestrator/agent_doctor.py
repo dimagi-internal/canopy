@@ -351,10 +351,11 @@ def check_secrets_manifest(repo: Path) -> CheckResult:
     return CheckResult(
         name, False,
         f"neither {env_tpl.name} nor {secrets_yaml} found — agent state won't survive a new "
-        "machine; add a .env.tpl and resolve it with `op inject -i .env.tpl -o "
-        "~/.<agent>/.env` (see create-agent § Channel + setup; config/secrets.yaml + "
-        "`canopy provision` is the legacy path), or declare \"provisioning\" in "
-        "config/agent.json if this agent provisions itself some other way",
+        "machine; add a .env.tpl naming the variables it needs, keep their values in the "
+        "agent's canopy vault and resolve them with `canopy cred env --agent <agent>` (see "
+        "create-agent § Channel + setup; config/secrets.yaml + `canopy provision` is the "
+        "legacy path), or declare \"provisioning\" in config/agent.json if this agent "
+        "provisions itself some other way",
     )
 
 
@@ -411,8 +412,8 @@ def check_secrets_materialized(repo: Path, *, home: Path | None = None) -> Check
         empty = [k for k in want if have.get(k) is False]
         if missing or empty:
             bits = ([f"missing {', '.join(missing)} (re-run `/{slug}:setup`)"] if missing else []) + (
-                [f"empty {', '.join(empty)} (`canopy agent vault --slug {slug}` fills the vault, "
-                 f"then `/{slug}:setup`)"] if empty else [])
+                [f"empty {', '.join(empty)} (set them in its canopy vault — /agents/{slug} → "
+                 f"Settings → Credentials — then `/{slug}:setup`)"] if empty else [])
             return CheckResult(name, False, f"{target}: " + "; ".join(bits))
         return CheckResult(name, True, f"{target} has all {len(want)} var(s) with values")
     if not (repo / "config" / "secrets.yaml").exists():
@@ -904,6 +905,68 @@ def check_required_plugins(repo: Path, *, registry_path: str | None = None) -> C
     return CheckResult(name, True, f"all {len(declared)} declared plugin(s) installed ({names})")
 
 
+SECRETS_BACKEND_CHECK = "Secrets backend"
+
+
+def probe_secrets_backend(slug: str) -> dict:
+    """Where agent `slug`'s secrets live and whether THIS device can open them:
+    {source, enabled, kv, this_device (True/False/None = cannot tell), error}."""
+    from orchestrator.cred_cli import fetch_access
+    access = fetch_access(slug)
+    out = {"source": access.get("credential_source") or "canopy-web", "enabled": None,
+           "kv": None, "this_device": None, "error": access.get("error") or ""}
+    if out["source"] != "canopy-web" or out["error"]:
+        return out
+    try:
+        from orchestrator import vault_zk_cli
+        from orchestrator.vault_cli import _token
+        st = vault_zk_cli.run_status(vault_zk_cli.ZkVault(slug, token=_token()))
+    except Exception as e:  # noqa: BLE001 — a non-admin may not read the vault state
+        out["zk_error"] = str(e).splitlines()[0][:200] if str(e) else type(e).__name__
+        return out
+    out.update(enabled=bool(st.get("enabled")), kv=st.get("kv"),
+               this_device=str(st.get("this_device") or "").startswith("holds a wrap"))
+    return out
+
+
+def check_secrets_backend(identity: EmailIdentity | None, *, probe=None) -> CheckResult:
+    """Say where the agent's secrets live — canopy vault, or 1Password (LEGACY) — and
+    whether this device can open them. Every agent's secrets live in canopy vault
+    (Jonathan, 2026-10-21); a 1Password agent passes with a WARN and the one line that
+    moves it."""
+    name = SECRETS_BACKEND_CHECK
+    if identity is None:
+        return CheckResult(name, False, "skipped — identity unresolved")
+    slug = identity.slug
+    try:
+        b = (probe or probe_secrets_backend)(slug)
+    except Exception as e:  # noqa: BLE001 — a probe failure is not a red agent
+        return CheckResult(name, True, f"could not tell ({str(e)[:200]})", warn=True)
+    if b.get("error"):
+        return CheckResult(name, True, f"could not ask canopy-web ({b['error']})", warn=True)
+    if b.get("source") == "1password":
+        return CheckResult(
+            name, True,
+            f"1Password (LEGACY) — an admin with 1Password access moves it to canopy vault: "
+            f"`canopy vault import --agent {slug} --zk --switch`", warn=True)
+    if b.get("enabled") is None:
+        return CheckResult(name, True, "secrets: canopy vault (only an admin of "
+                                       f"{slug} can see whether this device holds a grant)")
+    if not b.get("enabled"):
+        return CheckResult(name, True, "secrets: canopy vault (canopy-web holds the values)")
+    kv = b.get("kv")
+    if str(kv) == "0":
+        return CheckResult(name, True, "secrets: canopy vault (zero-knowledge, kv 0 — values "
+                                       "sealed to each approved device)")
+    access = "yes" if b.get("this_device") else "no"
+    detail = f"secrets: canopy vault (zero-knowledge, kv {kv}), this device has access: {access}"
+    if not b.get("this_device"):
+        return CheckResult(name, False, detail + f" — an admin presses Grant pending on "
+                                                 f"/agents/{slug} (`canopy agent use {slug}` "
+                                                 f"says what else is missing)")
+    return CheckResult(name, True, detail)
+
+
 SETUP_CHECK = "canopy-web setup"
 
 
@@ -997,6 +1060,7 @@ def run_agent_doctor(
     runner=subprocess.run,
     client_factory=AgentClient,
     registry_path: str | None = None,
+    secrets_probe=None,
 ) -> tuple[list[CheckResult], bool]:
     """Run every per-agent check and return (results, overall_ok).
 
@@ -1013,6 +1077,7 @@ def run_agent_doctor(
         check_hook_wiring(repo),
         check_secrets_manifest(repo),
         check_secrets_materialized(repo),
+        check_secrets_backend(identity, probe=secrets_probe),
         check_rails_fire(repo),
         email_result := check_email_auth(identity, gog_dir=gog_dir, runner=runner),
         check_auth_client(identity, runner=runner),

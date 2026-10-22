@@ -206,3 +206,14 @@ def test_no_key_still_syncs_without_one_for_a_canopy_web_agent(tmp_path):
     lines = log.read_text().splitlines()
     assert lines[-2:] == ["cred sync --agent eva", "key="]
     assert "credentials changed on canopy-web" in r.stdout
+
+
+def test_a_canopy_vault_agent_hears_nothing_about_1password(tmp_path):
+    # `canopy agent op-token` exits 3 for an agent whose secrets live in canopy vault:
+    # no 1Password key by design, so the hook just syncs — not "canopy-web has no
+    # 1Password key … op will use the 1Password app" (stale and misleading, 2026-10-21).
+    r, ef, log = _run(tmp_path, out="", rc=3, sync="unchanged")
+    assert r.returncode == 0
+    assert "1Password" not in r.stdout and r.stdout == ""
+    assert log.read_text().splitlines()[-2:] == ["cred sync --agent eva", "key="]
+    assert not ef.exists() or "OP_SERVICE_ACCOUNT_TOKEN" not in ef.read_text()

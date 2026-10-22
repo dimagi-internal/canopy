@@ -15,8 +15,10 @@ does.
 |---|---|---|
 | Create the repo | `canopy_agent_factory` (templates + push) | canopy-web New-agent page; `/canopy:create-agent` |
 | What's left to do | canopy-web `apps/agents/setup.py` (`GET /api/agents/<slug>/setup`) | Settings page, create wizard, `/canopy:create-agent` (MCP `agent_setup`) |
-| Vault + its values + key | `canopy agent vault` (`src/orchestrator/agent_vault.py`) | the checklist's Vault step; `/canopy:create-agent`; Ada's `bin/ada-vault-provision` (a shim) |
-| The agent's canopy identity | canopy-web `POST /api/agents/<slug>/canopy-token` | `canopy agent vault` only (MCP twin deny-railed) |
+| Vault + its values | **canopy vault** (canopy-web; zero-knowledge: `canopy vault zk`, `vault_zk_cli.py`) — every agent since 2026-10-21. LEGACY 1Password: `canopy agent vault` (`agent_vault.py`); an admin moves one with `canopy vault import --agent X --zk --switch` | the agent's Settings → Credentials; the checklist's Vault step; `/canopy:create-agent` |
+| A device's access to the vault | canopy-web's pending grants (`GET …/vault/zk`), granted with a holder's key | **Grant pending** on `/agents/<slug>`; `canopy vault zk grant --agent X`; `canopy agent use <slug>` says when one is missing |
+| The agent's canopy identity | canopy-web `POST /api/agents/<slug>/canopy-login` (sealed into canopy vault, never shown) | Settings → Credentials → **Give it its canopy login**; LEGACY `canopy-token` via `canopy agent vault` only (MCP twin deny-railed) |
+| Use an agent yourself, no runner | `canopy agent use <slug>` (`agent_use.py`) | a person on their own computer ([running-an-agent.md](../running-an-agent.md)) |
 | Make an agent runnable here | `canopy agent prepare` (`agent_prepare.py`; person mode = `canopy agent bootstrap`) | cloud box bootstrap + each claim, laptop runner at claim — **phase 2 switches them over** |
 | Is it working | fleet facts: canopy-web `agent_setup` (+ `readiness`); this machine: `canopy agent doctor` | the doctor's `canopy-web setup` check reads `agent_setup` |
 

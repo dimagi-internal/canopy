@@ -203,10 +203,14 @@ def test_positive_op_verdict_is_cached(web):
     assert len(op.calls) == 2
 
 
-def test_canopy_web_unreachable_falls_back_to_1password(web):
+def test_canopy_web_unreachable_falls_back_to_canopy_vault_and_refuses(web):
+    # canopy vault is the default backend (2026-10-21); an unreachable canopy-web never
+    # grants anything, and never sends a person to 1Password.
     web["fail"] = True
-    v = cred_cli.decide("ace", runner=FakeOp(), which=_which())
-    assert not v.allowed and v.source == "1password" and v.notes
+    op = FakeOp()
+    v = cred_cli.decide("ace", runner=op, which=_which())
+    assert not v.allowed and v.source == "canopy-web" and v.notes
+    assert "1Password" not in v.message
 
 
 # ── check: humans, canopy-web backend ─────────────────────────────────────────
@@ -710,3 +714,32 @@ def test_sync_without_a_key_leaves_a_1password_agent_alone(synced, monkeypatch, 
     monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN")
     assert cred_cli.sync_env("ace", now=1000).startswith("skipped: no agent 1Password key")
     assert not any("resolve" in c[1] for c in web["calls"]) and not synced.exists()
+
+
+def test_access_names_the_current_turn(web, monkeypatch):
+    # A licence holder may resolve only during their own local turn; /access can say so
+    # only when it is told which turn is asking (canopy-web#1704).
+    seen = []
+    real = cred_cli.canopy_web.call
+
+    def spy(method, path, body=None, **kw):
+        seen.append(kw.get("headers"))
+        return real(method, path, body, **kw)
+
+    monkeypatch.setattr(cred_cli.canopy_web, "call", spy)
+    monkeypatch.setenv("CANOPY_TURN_ID", "turn-123")
+    cred_cli.fetch_access("ace", refresh=True)
+    assert seen[-1] == {"X-Canopy-Turn-Id": "turn-123"}
+    monkeypatch.delenv("CANOPY_TURN_ID")
+    cred_cli.fetch_access("ace", refresh=True)
+    assert seen[-1] is None
+
+
+def test_op_token_exits_3_for_a_canopy_vault_agent(web):
+    from click.testing import CliRunner
+
+    from orchestrator import agent_cli
+    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True}
+    r = CliRunner().invoke(agent_cli.agent, ["op-token", "--slug", "ace"])
+    assert r.exit_code == agent_cli.OP_TOKEN_CANOPY_VAULT == 3
+    assert "canopy vault" in r.output and not [c for c in web["calls"] if "resolve" in c[1]]

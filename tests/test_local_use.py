@@ -74,7 +74,8 @@ def test_register_then_open_records_the_turn_as_the_person(home, calls):
 
 def test_open_refuses_on_a_machine_that_is_not_a_private_runner(home, calls):
     r = CliRunner().invoke(local_cli.local_group, ["open", "--slug", "ace", "--session-id", "s"])
-    assert r.exit_code != 0 and "not a private runner" in r.output
+    assert r.exit_code != 0 and "not registered for local use" in r.output
+    assert "canopy agent use ace" in r.output
     assert calls == []
 
 
@@ -97,8 +98,32 @@ def test_close_uploads_the_transcript_in_batches_then_finishes(home, calls, monk
 def test_use_sets_the_agent_for_a_project(home, tmp_path):
     proj = tmp_path / "proj"
     proj.mkdir()
-    _cli("local", "use", "ace", "--dir", str(proj))
+    assert local_cli.set_session_agent("ace", str(proj)) is True
     assert json.loads((proj / ".claude/settings.local.json").read_text())["env"]["CANOPY_AGENT"] == "ace"
+    assert local_cli.set_session_agent("ace", str(proj)) is False   # idempotent
+
+
+def test_local_use_is_an_alias_of_agent_use(home, monkeypatch):
+    from orchestrator import agent_use
+
+    seen = []
+
+    def fake_run(slug, directory, deps):
+        seen.append((slug, directory))
+        return agent_use.UseReport(slug=slug, directory=directory, plugin=slug)
+
+    monkeypatch.setattr(agent_use, "run", fake_run)
+    monkeypatch.setattr(agent_use, "real_deps", lambda: None)
+    out = _cli("local", "use", "ace", "--dir", str(home))
+    assert seen == [("ace", str(home))]
+    assert "run /ace:turn" in out
+
+
+def test_register_is_hidden_from_help_but_still_works(home, calls):
+    r = CliRunner().invoke(local_cli.private_runner_group, ["--help"])
+    assert "\n  register" not in r.output and "canopy agent use" in r.output
+    out = _cli("pr", "register", "--name", "aath-mbp")
+    assert "registered for local use as 'aath-mbp'" in out
 
 
 # --- the hooks ---------------------------------------------------------------------
@@ -386,3 +411,14 @@ def test_renew_warns_when_the_turn_cannot_be_reopened(home, calls, monkeypatch):
     assert r.exit_code == 0
     assert "is lost and a new one could not be opened" in r.output
     assert json.loads((home / ".canopy/local/s1.json").read_text())["turn_id"].startswith("1111")
+
+
+def test_vault_device_falls_back_to_this_computers_runner_id(home, monkeypatch):
+    # No runner app (no ~/.canopy/runner.json): the device key enrolls against the runner
+    # id canopy-web gave this computer when it was registered for local use.
+    from orchestrator import vault_cli
+    (home / ".canopy").mkdir(exist_ok=True)
+    (home / ".canopy/private-runner.json").write_text('{"id": "pr-1", "runner_id": "comp-9"}')
+    assert vault_cli._computer_runner_id() == "comp-9"
+    (home / ".canopy/private-runner.json").write_text('{"id": "pr-1"}')
+    assert vault_cli._computer_runner_id() == ""

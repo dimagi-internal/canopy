@@ -1,9 +1,13 @@
 """`canopy private-runner` / `canopy local` — use an agent in your OWN Claude Code, on the record.
 
+What a person runs is `canopy agent use <slug>` (agent_use.py), which does all of local use
+in one go; this module holds the pieces it calls and the hook-facing `canopy local` verbs.
+
 canopy-web#1704. Three objects:
 
-* a **private runner** — this machine, registered once with YOUR canopy token
-  (`canopy private-runner register`). It belongs to you and serves every agent you use.
+* **this computer** — registered once for local use with YOUR canopy token (canopy-web
+  calls the record a "private runner"; `register_this_computer`, run by `canopy agent use`).
+  It belongs to you and serves every agent you use.
   When the machine also runs the runner app, the two are linked and the runner works
   only for you (canopy-web#1705); otherwise it never claims a turn. Recorded in
   ``~/.canopy/private-runner.json``.
@@ -17,7 +21,7 @@ canopy-web#1704. Three objects:
   agent's caller list gives you the whole agent; credential reads go against it.
 
 Which agent a session uses is ``$CANOPY_AGENT`` — set by every agent repo's
-``.claude/settings.json``, and by `canopy local use <slug>` for any other project.
+``.claude/settings.json``, and by `canopy agent use <slug>` for any other project.
 
 Every call here acts as YOU (the PAT `/canopy:canopy-web-pat-mint` wrote), never as
 the agent: an agent's own login is refused, because a local turn's initiator is the
@@ -129,38 +133,49 @@ def session_token(slug: str = "") -> str:
 
 @click.group("private-runner")
 def private_runner_group():
-    """This machine as one of YOUR private runners (use agents locally, on the record)."""
+    """This computer: its registration for local use, and whether its runner app is private.
+
+    To use an agent here, run `canopy agent use <slug>` — it registers this computer too."""
 
 
-@private_runner_group.command("register")
-@click.option("--name", default=None, help="What to call this machine (default: its short hostname).")
-@click.option("--no-runner", is_flag=True,
-              help="Do not link the runner app on this machine (~/.canopy/runner.json), if any.")
-@click.option("--json", "as_json", is_flag=True)
-def private_runner_register(name, no_runner, as_json):
-    """Register this machine as your private runner. Idempotent: re-running it is safe.
-
-    It lets a Claude Code session here that uses an agent be recorded as a local turn —
-    yours, with the agent's envelope, rails and (when its caller list allows you) its
-    credentials. When this machine also runs the runner app, the two are linked into one
-    private runner (canopy-web#1705): sessions here prove themselves with the runner's
-    device key, and `canopy private-runner set private|shared` says which it is."""
+def register_this_computer(name: str | None = None, *, link_runner: bool = True) -> dict:
+    """Register this computer for local use (idempotent) and record it in
+    ``~/.canopy/private-runner.json``. Returns the recorded doc. When the runner app runs
+    here too (``~/.canopy/runner.json``), the two are linked (canopy-web#1705)."""
     from orchestrator.runner_pin import _machine_runner_id
 
     host = socket.gethostname()
     name = (name or host.split(".")[0] or "laptop")[:100]
-    runner_id = "" if no_runner else _machine_runner_id()
+    runner_id = _machine_runner_id() if link_runner else ""
     payload = {"name": name, "host": host, **({"runner": runner_id} if runner_id else {})}
     body = canopy_web.call("POST", "/api/private-runners/", payload, token=person_token())
     doc = {"id": body["id"], "name": body["name"], "host": body.get("host", host),
            "runner_id": str(body.get("runner_id") or ""),
            "base_url": canopy_web.resolve_base_url(None), "registered_at": time.time()}
     _write_private(private_runner_file(), doc)
+    return doc
+
+
+@private_runner_group.command("register", hidden=True)
+@click.option("--name", default=None, help="What to call this computer (default: its short hostname).")
+@click.option("--no-runner", is_flag=True,
+              help="Do not link the runner app on this computer (~/.canopy/runner.json), if any.")
+@click.option("--json", "as_json", is_flag=True)
+def private_runner_register(name, no_runner, as_json):
+    """Register this computer for local use (`canopy agent use <slug>` does this for you).
+
+    Idempotent. It lets a Claude Code session here that uses an agent be recorded as a
+    local turn — yours, with the agent's envelope, rails and (when its caller list allows
+    you) its credentials. When this computer also runs the runner app, the two are linked
+    (canopy-web#1705): sessions here prove themselves with the runner's device key, and
+    `canopy private-runner set private|shared` says which it is."""
+    doc = register_this_computer(name, link_runner=not no_runner)
     if as_json:
         click.echo(json.dumps(doc))
     else:
-        click.echo(f"private runner '{doc['name']}' registered ({doc['id']}). Sessions here that use an "
-                   "agent ($CANOPY_AGENT, or `canopy local use <slug>`) are now recorded as local turns.")
+        click.echo(f"this computer is registered for local use as '{doc['name']}' ({doc['id']}). "
+                   "Sessions here that use an agent are now recorded as local turns — "
+                   "`canopy agent use <slug>` sets the rest up.")
 
 
 @private_runner_group.command("set")
@@ -183,8 +198,8 @@ def private_runner_set(mode, as_json):
 
         rid = _machine_runner_id()
     if not rid:
-        raise click.ClickException("this machine has no runner (~/.canopy/runner.json) — pair the "
-                                   "runner app first, then `canopy private-runner register`")
+        raise click.ClickException("this computer has no runner app (~/.canopy/runner.json) — pair "
+                                   "the runner app first, then `canopy agent use <slug>`")
     private = mode == "private"
     body = canopy_web.call("PUT", f"/api/harness/runners/{rid}/private", {"private": private},
                            token=person_token())
@@ -204,8 +219,10 @@ def private_runner_show(as_json):
     """This machine's registration. Exit 1 when it is not a private runner."""
     doc = read_private_runner()
     if not doc:
-        raise click.ClickException("this machine is not a private runner — `canopy private-runner register`")
-    click.echo(json.dumps(doc) if as_json else f"private runner '{doc['name']}' ({doc['id']})")
+        raise click.ClickException("this computer is not registered for local use — "
+                                   "`canopy agent use <slug>`")
+    click.echo(json.dumps(doc) if as_json else
+               f"this computer is registered for local use as '{doc['name']}' ({doc['id']})")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -214,24 +231,36 @@ def private_runner_show(as_json):
 
 @click.group("local")
 def local_group():
-    """A Claude Code session on your private runner, recorded as a local turn (hook-facing)."""
+    """A Claude Code session on this computer, recorded as a local turn (hook-facing).
+
+    To set up an agent here, run `canopy agent use <slug>`."""
 
 
-@local_group.command("use")
-@click.argument("slug")
-@click.option("--dir", "directory", default=".", type=click.Path(file_okay=False),
-              help="The project whose sessions use the agent (default: here).")
-def local_use(slug, directory):
-    """Make sessions in this project use agent SLUG: sets $CANOPY_AGENT in
-    .claude/settings.local.json (personal, not committed)."""
+def set_session_agent(slug: str, directory: str = ".") -> bool:
+    """Make sessions in `directory` use agent `slug`: ``$CANOPY_AGENT`` in its
+    ``.claude/settings.local.json`` (personal, not committed). True when it changed."""
     path = Path(directory) / ".claude" / "settings.local.json"
     doc = _read(path)
     env = doc.get("env") if isinstance(doc.get("env"), dict) else {}
+    if env.get("CANOPY_AGENT") == slug and path.is_file():
+        return False
     env["CANOPY_AGENT"] = slug
     doc["env"] = env
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-    click.echo(f"sessions in {Path(directory).resolve()} now use {slug} — start a new Claude Code session")
+    return True
+
+
+@local_group.command("use", context_settings={"ignore_unknown_options": False})
+@click.argument("slug")
+@click.option("--dir", "directory", default=".", type=click.Path(file_okay=False),
+              help="The project whose sessions use the agent (default: here).")
+@click.pass_context
+def local_use(ctx, slug, directory):
+    """Same as `canopy agent use SLUG` (kept as an alias)."""
+    from orchestrator.agent_cli import agent_use
+
+    ctx.invoke(agent_use, slug=slug, directory=directory)
 
 
 @local_group.command("open")
@@ -251,7 +280,8 @@ def local_open(slug, session_id, cwd, transcript, want_auto):
     turn's lease — its transcript is uploaded and the turn finished, as its own close
     would have."""
     if not read_private_runner():
-        raise click.ClickException("this machine is not a private runner — `canopy private-runner register`")
+        raise click.ClickException(f"this computer is not registered for local use — "
+                                   f"`canopy agent use {slug}`")
     path = _session_file(session_id)
     catch_up(exclude=session_id)
     state = open_turn(slug, session_id, cwd=cwd, transcript=transcript,
@@ -270,7 +300,8 @@ def open_turn(slug: str, session_id: str, *, cwd: str = "", transcript: str = ""
     `$CLAUDE_ENV_FILE` the SessionStart hook exports the turn id into)."""
     ws = read_private_runner()
     if not ws:
-        raise click.ClickException("this machine is not a private runner — `canopy private-runner register`")
+        raise click.ClickException(f"this computer is not registered for local use — "
+                                   f"`canopy agent use {slug}`")
     body = canopy_web.call("POST", "/api/harness/local-turns/", {
         "agent": slug, "private_runner": ws["id"], "claude_session_id": session_id,
         "cwd": cwd[:300], "turn_mode": requested_mode,

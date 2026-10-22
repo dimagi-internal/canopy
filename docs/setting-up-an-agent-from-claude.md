@@ -11,10 +11,9 @@ No. `doctor` is half of it:
 | | What it covers | How Claude reaches it |
 |---|---|---|
 | **This laptop** | The agent's plugin, its `.env`, its mailbox login, its rails | `canopy agent bootstrap` sets it up and `canopy agent doctor` checks it and names each fix |
-| **canopy-web** | The agent's vault key, workspace invites, turn mode, runners, board | The **canopy-web MCP tools**. Every canopy-web route is one ([canopy-web #1032](https://github.com/dimagi-internal/canopy-web/pull/1032)), and each call runs **as you** |
+| **canopy-web** | The agent's canopy vault, workspace invites, turn mode, runners, board | The **canopy-web MCP tools**. Every canopy-web route is one ([canopy-web #1032](https://github.com/dimagi-internal/canopy-web/pull/1032)), and each call runs **as you** |
 
-`doctor` never changes canopy-web, which is why owners kept getting stuck on "paste this key into
-Settings". The MCP tools close that gap. They come with the canopy plugin and sign in with the
+`doctor` never changes canopy-web. The MCP tools close that gap. They come with the canopy plugin and sign in with the
 token `/canopy:setup` gives you, so there's nothing extra to connect. (Without that token, the
 first MCP call opens a canopy-web sign-in in your browser instead: approve it once.)
 
@@ -37,57 +36,66 @@ Restart Claude Code, then run `/canopy:setup`. Details and Windows notes are in
 
 ## The prompt
 
-Replace the values in angle brackets (`<vault>` is the 1Password vault you are giving this agent instance — its name is yours to choose; nothing derives it from the slug), then paste the whole thing:
+Every agent's secrets live in its **canopy vault** on canopy-web (see
+[running an agent](running-an-agent.md)). Replace the values in angle brackets, then paste the
+whole thing:
 
 ```text
 Set up <Agent>, our canopy agent, on this machine and on canopy-web.
 Workspace: <workspace>. Repo: dimagi-internal/<slug>. Mailbox: <slug>@dimagi-ai.com.
-1Password vault: <vault>.
 
 Use the canopy-web MCP tools for anything on canopy-web (pass workspace "<workspace>"),
-and the canopy CLI for this machine. Skip any step that is already done, and show me
-each result before moving on.
+and the canopy CLI for this machine. Never read a secret into a tool call or print one.
+Skip any step that is already done, and show me each result before moving on.
 
-1. Clone dimagi-internal/<slug>. Then tell me to type /plugin marketplace add
-   dimagi-internal/<slug> and /plugin install <slug>@<slug> (slash commands are mine
-   to type), and wait until I have.
-2. Run `canopy agent bootstrap --slug <slug> --dry-run`, show me the plan, then run it.
-3. Attach the agent's vault on canopy-web: vault <vault>, with the token in the
-   1Password item "canopy-web-service-account" in that vault. Read it with `op` and pass
-   it straight to the tool, and never print it. Then read the vault status back and
-   confirm key_set is true.
+1. Run `canopy agent use <slug>` and show me its output. It installs the agent's plugin,
+   registers this computer, enrolls its device key and sets up the env. Do what it can't
+   only where it names a command; for anything it says NEEDS YOU, tell me exactly what
+   to do and wait.
+2. Read the agent's setup checklist (agent_setup) and its vault state
+   (get_agent_zk_state). Tell me which credentials are still missing. I set values on
+   the agent's Settings → Credentials page, or with `canopy vault zk set --agent <slug>
+   NAME` in my own terminal.
+3. If the agent has no canopy login yet, tell me to press "Give it its canopy login" on
+   its Settings → Credentials page (it goes straight into the vault, never shown).
 4. Invite <slug>@dimagi-ai.com to the "<workspace>" workspace as an editor, so the
    agent's own login can see its own board.
-5. Run `canopy agent doctor --repo <the checkout>` and fix every failing check it names.
-   Stop and walk me through any step that needs a person: signing in to Google as
-   <slug>@dimagi-ai.com, accepting that invite as the agent, and minting the agent's own
-   canopy-web token (do it in a private browser window signed in as the agent, and save
-   the token to 1Password at <vault>/canopy-pat, never to my own
-   ~/.claude/canopy/workbench-token).
-6. When doctor is all green, mark the matching setup cards done on the agent's board,
-   then run /<slug>:turn.
+5. Run `canopy agent doctor --repo <the checkout>` (clone dimagi-internal/<slug> if there
+   is none) and fix every failing check it names. Stop and walk me through any step that
+   needs a person: signing in to Google as <slug>@dimagi-ai.com and accepting that
+   invite as the agent, and pressing Grant pending for a device that needs access.
+6. Run `canopy agent use <slug>` again. When it ends with "Start a new Claude Code
+   session …", mark the matching setup cards done on the agent's board and tell me to
+   start that session and run /<slug>:turn.
 ```
+
+**Legacy 1Password agent (Muse)?** Move it first: an admin with 1Password access runs
+`canopy vault import --agent <slug> --zk --switch` in their own terminal. Never paste a
+1Password key into Claude or into a tool.
 
 ## What stays with a person, and why
 
 Claude stops at these on purpose. None of them is a gap in the tools.
 
 - **Signing in as the agent.** One private browser window, signed in as `<slug>@dimagi-ai.com`,
-  covers three things: the mailbox login (the agent's Settings → Credentials → **Connect Google
+  covers two things: the mailbox login (the agent's Settings → Credentials → **Connect Google
   mailbox** in canopy-web, or `gog login <mailbox> --client canopy` at a terminal — either fleet
-  client serves the agent's turns), accepting the workspace invite, and
-  minting the agent's own canopy-web token. Whoever holds the agent's Google login does this.
+  client serves the agent's turns) and accepting the workspace invite. Whoever holds the
+  agent's Google login does this. (The agent's own canopy-web token is not minted by hand any
+  more: **Give it its canopy login** puts it in the vault.)
   If Google says it *"couldn't verify this account belongs to you"*, a dimagi-ai.com admin has to
   lift the login challenge for a few minutes first.
 - **Changing an agent's owner or admins.** This is browser-only by design: the owner is whose
-  GitHub access the agent borrows, so a person decides it in the canopy-web app. Attaching the
-  vault needs you to be the agent's owner or admin, or an owner of its workspace.
+  GitHub access the agent borrows, so a person decides it in the canopy-web app. Changing the
+  agent's credentials needs you to be its owner or admin, or an owner of its workspace.
+- **Granting a device.** Pressing **Grant pending** wraps the vault key for a new device with
+  your passkey; only someone who already holds a grant can.
 - **Inviting someone to a workspace.** Only that workspace's owner can do it.
 
 ## Where the agents are
 
-| Agent | Owner(s) | Workspace | Vault token item |
+| Agent | Owner(s) | Workspace | Secrets |
 |---|---|---|---|
-| Muse | Gillian Javetski, Amie Vaccaro | `commcare` | `Agent-Muse/canopy-web-service-account` |
-| Fizzy | Shayoni Mazumdar | `strategy` | `AI-Agents/Service Account Auth Token: canopy-web-fizzy` |
-| Jarvis | Andrea King | `connect` | `Agent-Jarvis/canopy-web-service-account` (repo not created yet, see [moving an OpenClaw](moving-an-openclaw-onto-canopy.md)) |
+| Muse | Gillian Javetski, Amie Vaccaro | `commcare` | 1Password (LEGACY) — its owners move it with `canopy vault import --agent muse --zk --switch` |
+| Fizzy | Shayoni Mazumdar | `strategy` | canopy vault |
+| Jarvis | Andrea King | `connect` | not created yet, see [moving an OpenClaw](moving-an-openclaw-onto-canopy.md) |

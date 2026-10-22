@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Give an agent session its OWN 1Password key, and stage what it BORROWS, the way the
-cloud runner does.
+"""Keep an agent session's env current from the agent's vault, and stage what it BORROWS,
+the way the cloud runner does.
 
-Cloud turns get `OP_SERVICE_ACCOUNT_TOKEN` from the runner (`cloud_runner._agent_op_token`):
-the agent's own service-account key, custodied by canopy-web, scoped to its own vault. An
+Every agent's secrets live in canopy vault (canopy-web, zero-knowledge) — Jonathan,
+2026-10-21. For such an agent this hook only syncs: `canopy cred sync` refreshes
+`~/.<slug>/.env` from canopy vault when the values changed, inside the session's local
+turn. It says nothing about 1Password: the agent has no 1Password key, by design
+(`canopy agent op-token` exits 3 for it).
+
+LEGACY 1Password agents: cloud turns get `OP_SERVICE_ACCOUNT_TOKEN` from the runner (the
+agent's own service-account key, custodied by canopy-web, scoped to its own vault). An
 emdash / laptop session got nothing, so every `op read` went through the 1Password DESKTOP
 app — which locks, and then `op` either fails ("account is not signed in") or hangs on an
 unlock prompt that an unattended turn has nobody to answer. Measured 2026-10-07 on an Eva
 emdash session: a credential mint stalled for 60s on exactly that.
 
-This SessionStart hook closes the gap. When the session is an agent's (`$CANOPY_AGENT`, set
+For those, this hook closes the gap. When the session is an agent's (`$CANOPY_AGENT`, set
 by every agent repo's .claude/settings.json) and has no key yet, it asks
 `canopy agent op-token` (operator-authorized `/credentials/resolve`, the runner's own route)
 and appends `export OP_SERVICE_ACCOUNT_TOKEN=…` to `$CLAUDE_ENV_FILE`, which Claude Code
@@ -189,6 +195,9 @@ def _hook_input() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+#: `canopy agent op-token` exits with this for an agent whose secrets live in canopy vault.
+OP_TOKEN_CANOPY_VAULT = 3
+
 #: Set by the runner app's headless engine (canopy-web runner/headless.py) on every
 #: Claude it starts for a turn — the emdash engine passes `$CANOPY_TURN_ID` instead.
 RUNNER_ENV_MARKERS = ("CANOPY_HEADLESS", "CANOPY_ONE_SHOT_TURN")
@@ -202,7 +211,8 @@ RUNNER_DESKTOP_CHANNEL = ".canopy-desktop"
 def local_eligible(home: str, cwd: str = "") -> bool:
     """Is this a person's own session on their registered private runner?
 
-    Yes when `~/.canopy/private-runner.json` exists (`canopy private-runner register`) and the
+    Yes when `~/.canopy/private-runner.json` exists (`canopy agent use <slug>` registered this
+    computer for local use) and the
     session is not a runner's: no `$CANOPY_TURN_ID` (a cloud turn), no confined profile,
     no headless/one-shot marker (the runner app's headless engine starts claude with
     `CANOPY_HEADLESS=1 CANOPY_ONE_SHOT_TURN=1` and no turn id), not inside a desktop-engine
@@ -309,6 +319,11 @@ def main() -> int:
               f"`op` will use the 1Password app")
         return 0
     token = (r.stdout or "").strip()
+    if r.returncode == OP_TOKEN_CANOPY_VAULT:
+        # canopy vault: no 1Password key by design — nothing to say about 1Password.
+        if not confined:
+            sync_env(canopy, slug, "")
+        return 0
     if r.returncode != 0 or not token or "\n" in token:
         why = ((r.stderr or "").strip().splitlines() or ["no key returned"])[-1][:200]
         print(f"canopy: no 1Password key for {slug} ({why}) — `op` will use the 1Password app")
