@@ -411,3 +411,14 @@ def test_renew_warns_when_the_turn_cannot_be_reopened(home, calls, monkeypatch):
     assert r.exit_code == 0
     assert "is lost and a new one could not be opened" in r.output
     assert json.loads((home / ".canopy/local/s1.json").read_text())["turn_id"].startswith("1111")
+
+
+def test_vault_device_falls_back_to_this_computers_runner_id(home, monkeypatch):
+    # No runner app (no ~/.canopy/runner.json): the device key enrolls against the runner
+    # id canopy-web gave this computer when it was registered for local use.
+    from orchestrator import vault_cli
+    (home / ".canopy").mkdir(exist_ok=True)
+    (home / ".canopy/private-runner.json").write_text('{"id": "pr-1", "runner_id": "comp-9"}')
+    assert vault_cli._computer_runner_id() == "comp-9"
+    (home / ".canopy/private-runner.json").write_text('{"id": "pr-1"}')
+    assert vault_cli._computer_runner_id() == ""

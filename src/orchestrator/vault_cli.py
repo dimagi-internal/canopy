@@ -664,7 +664,7 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh
         click.echo(json.dumps(run_registered(registered_id, runner_id, reg_status, kind),
                               sort_keys=True))
         return
-    runner_id = runner_id or device_key.runner_id_from_config()
+    runner_id = runner_id or device_key.runner_id_from_config() or _computer_runner_id()
     token = _token() if (enroll or reenroll or refresh) else ""
     web = _web(token) if token else None
     try:
@@ -695,6 +695,14 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh
         click.echo(json.dumps(st, sort_keys=True, default=str))
     else:
         click.echo(render_device(st))
+
+
+def _computer_runner_id() -> str:
+    """This computer's own runner id from its registration for local use
+    (~/.canopy/private-runner.json) — canopy-web gives a computer with no runner app a
+    "computer" runner to hold its device key. "" when there is none."""
+    from orchestrator.local_cli import read_private_runner
+    return str(read_private_runner().get("runner_id") or "")
 
 
 RUNNER_SESSIONS_PATH = "/api/runner-sessions/"

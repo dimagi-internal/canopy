@@ -161,6 +161,14 @@ def run(slug: str, directory: str, deps: Deps) -> UseReport:
 
     # 3. this computer ────────────────────────────────────────────────────────────
     reg = deps.read_registration()
+    if reg and not reg.get("runner_id") and not deps.machine_runner_id():
+        # Registering is idempotent; a newer canopy-web answers with the computer's own
+        # runner id (a "computer" runner: private, never claims), which its device key
+        # enrolls against. Ask again so an older registration picks it up.
+        try:
+            reg = deps.register_computer() or reg
+        except Exception:  # noqa: BLE001 — the old registration still stands
+            pass
     if reg:
         rep.add("this computer", OK, f"registered for local use as '{reg.get('name')}'")
     else:
@@ -239,7 +247,10 @@ def _canopy_vault_steps(rep: UseReport, slug: str, deps: Deps, access: dict, *, 
         return
     st = deps.device_status() or {}
     device_ok = False
-    runner_id = st.get("runner") or deps.machine_runner_id()
+    # The runner app's id (~/.canopy/runner.json), else this computer's own runner id from
+    # its registration (canopy-web gives a computer with no runner app one, for its key).
+    runner_id = (st.get("runner") or deps.machine_runner_id()
+                 or str(deps.read_registration().get("runner_id") or ""))
     if st.get("jkt") and st.get("status") == "pending" and runner_id:
         try:
             st = deps.refresh_device(runner_id) or st
@@ -248,10 +259,11 @@ def _canopy_vault_steps(rep: UseReport, slug: str, deps: Deps, access: dict, *, 
     if not st.get("jkt") or not st.get("id"):
         if not runner_id:
             rep.add("device key", NEEDS,
-                    "this computer has no device key, and canopy vault opens only on one; "
-                    "today a device key is enrolled through the Canopy runner app",
-                    f"install the Canopy runner app from {deps.base_url().rstrip('/')}/runners, "
-                    "pair it and set it Private (it then does only your work)")
+                    "this computer can't hold a vault key yet — canopy-web update pending "
+                    "(registering it for local use returned no runner id to enroll a "
+                    "device key against)",
+                    "this computer can't hold a vault key yet — canopy-web update pending; "
+                    "re-run `canopy agent use` after it ships")
         else:
             try:
                 st = deps.enroll_device(runner_id) or {}

@@ -56,6 +56,6 @@ ciphertext; values are opened on a device that holds a grant of the agent's vaul
 Muse still keeps its secrets in 1Password. That path still works but is **legacy**: an admin with
 1Password access moves an agent with `canopy vault import --agent <slug> --zk --switch`.
 
-One gap today: a device key is enrolled through the runner app, so a computer that opens a
-zero-knowledge vault needs the runner app installed and paired (set it Private and it runs
-nothing but your own work). `canopy agent use` says so when it applies.
+A computer with no runner app holds its device key too: registering it for local use gives it
+its own private "computer" runner on canopy-web, which never runs turns. Until that canopy-web
+change is live, `canopy agent use` says "this computer can't hold a vault key yet".

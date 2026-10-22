@@ -167,11 +167,40 @@ def test_no_device_key_and_a_runner_enrolls_and_points_at_approval(w, tmp_path):
     assert s.status == au.NEEDS and s.fix.endswith(f"{BASE}/runners/approve/dk-2")
 
 
-def test_no_device_key_and_no_runner_app_says_install_it_private(w, tmp_path):
+def test_no_runner_app_and_an_old_server_says_update_pending(w, tmp_path):
+    # canopy-web gives a computer with no runner app its own runner id at registration;
+    # until it does, there is nothing to enroll against — say so, no workaround.
     w.device, w.runner_id = {}, ""
-    s = _step(_run(w, tmp_path), "device key")
-    assert s.status == au.NEEDS and f"{BASE}/runners" in s.fix and "Private" in s.fix
-    assert w.enrolled == []
+    rep = _run(w, tmp_path)
+    s = _step(rep, "device key")
+    assert s.status == au.NEEDS and "can't hold a vault key yet — canopy-web update pending" in s.fix
+    assert w.enrolled == [] and w.registered == [True]     # asked once more for a runner id
+
+
+def test_no_runner_app_enrolls_against_the_computers_own_runner_id(w, tmp_path):
+    w.device, w.runner_id = {}, ""
+    w.registration = {"id": "pr-1", "name": "aath-mbp", "runner_id": "comp-9"}
+    rep = _run(w, tmp_path)
+    assert w.enrolled == ["comp-9"] and w.registered == []
+    assert _step(rep, "device key").fix.endswith(f"{BASE}/runners/approve/dk-2")
+
+
+def test_an_old_registration_picks_up_the_computers_runner_id(w, tmp_path):
+    w.device, w.runner_id = {}, ""
+    regs = iter([{"id": "pr-1", "name": "aath-mbp"},
+                 {"id": "pr-1", "name": "aath-mbp", "runner_id": "comp-9"}])
+    state = {"reg": next(regs)}
+
+    def register():
+        w.registered.append(True)
+        state["reg"] = next(regs)
+        return state["reg"]
+
+    d = w.deps()
+    d.read_registration = lambda: state["reg"]
+    d.register_computer = register
+    au.run("eva", str(tmp_path), d)
+    assert w.registered == [True] and w.enrolled == ["comp-9"]
 
 
 def test_a_pending_device_key_points_at_its_approve_url(w, tmp_path):
