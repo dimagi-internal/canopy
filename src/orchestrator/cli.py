@@ -27,6 +27,7 @@ from orchestrator.aws_cli import aws_group
 from orchestrator.cred_cli import cred_group
 from orchestrator.local_cli import local_group, private_runner_group
 from orchestrator.vault_cli import vault_group
+from orchestrator.google_account import google_account_group
 from orchestrator.workspace_cli import agents_group, workspace_group
 from orchestrator.kb_cli import kb_group, mcp_headers_cmd
 
@@ -134,6 +135,7 @@ main.add_command(cred_group)
 main.add_command(private_runner_group)
 main.add_command(local_group)
 main.add_command(vault_group)
+main.add_command(google_account_group)
 main.add_command(workspace_group)
 main.add_command(agents_group)
 main.add_command(kb_group)
