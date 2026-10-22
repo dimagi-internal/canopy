@@ -270,6 +270,25 @@ def test_run_agent_doctor_all_green(tmp_path):
     assert [r.ok for r in results] == [True] * 15
 
 
+def test_run_agent_doctor_hosted_only_agent_skips_gog_and_stays_green(tmp_path, monkeypatch):
+    # An SES mailbox with no google_account is complete for mail: the four gog checks skip
+    # (naming google_account as the way to turn Google on) instead of failing the agent.
+    monkeypatch.setattr("orchestrator.agent_doctor.hosted_only", lambda identity: True)
+    monkeypatch.setattr("orchestrator.agent_doctor.check_email_auth",
+                        lambda *a, **k: pytest.fail("a hosted mailbox needs no gog probe"))
+    repo = _agent_repo(tmp_path, email="hal@marshellis.com", materialize=True)
+    results, ok = run_agent_doctor(
+        repo, gog_dir=str(tmp_path / "no-gog"), runner=_ok_runner,
+        client_factory=_client_factory(),
+        registry_path=str(_plugin_registry(tmp_path)))
+    by_name = {r.name: r for r in results}
+    assert ok, [r for r in results if not r.ok]
+    assert len(results) == 15
+    assert "google_account" in by_name["Email auth (gog)"].detail
+    for name in ("Auth client", "Auth services", "Gog keychain trust"):
+        assert by_name[name].detail.startswith("skipped — hosted mailbox")
+
+
 def test_run_agent_doctor_identity_failure_degrades_dependents(tmp_path):
     repo = _agent_repo(tmp_path, email="")
     results, ok = run_agent_doctor(

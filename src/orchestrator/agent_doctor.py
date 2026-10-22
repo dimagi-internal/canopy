@@ -47,6 +47,8 @@ from orchestrator.agent_email import (
     EmailIdentity,
     clients_for_account,
     granted_services,
+    hosted_only,
+    hosted_only_note,
     preflight,
     reconcile_client,
     resolve_email_identity,
@@ -1051,6 +1053,27 @@ def heal_agent(repo: Path, results: list[CheckResult], *, fixers=None) -> list[t
     return actions
 
 
+def _gog_checks(identity, *, gog_dir, runner) -> tuple[CheckResult, ...]:
+    """(Email auth, Auth client, Auth services, Gog keychain trust).
+
+    A hosted-only agent (SES mailbox, no `google_account`) has no gog surface: canopy-web
+    carries its mail. All four skip for it — an agent that simply hasn't connected Google is
+    not misconfigured, and failing here made every hosted agent read red."""
+    if identity is not None and hosted_only(identity):
+        see = "skipped — hosted mailbox (see Email auth)"
+        return (CheckResult("Email auth (gog)", True, f"skipped — {hosted_only_note(identity)}"),
+                CheckResult("Auth client", True, see),
+                CheckResult("Auth services", True, see),
+                CheckResult("Gog keychain trust", True, see))
+    email_result = check_email_auth(identity, gog_dir=gog_dir, runner=runner)
+    return (email_result,
+            check_auth_client(identity, runner=runner),
+            check_auth_services(identity, runner=runner),
+            # The live gog call above is the "gog was used" evidence that lets a
+            # prompt-free keychain log confirm (or clear) the date heuristic.
+            check_gog_keychain_trust(identity, runner=runner, gog_used=email_result.ok))
+
+
 def run_agent_doctor(
     repo: Path,
     *,
@@ -1067,6 +1090,8 @@ def run_agent_doctor(
     """
     repo = Path(repo)
     ident_result, identity = check_identity(repo)
+    email_result, auth_client, auth_services, keychain_trust = _gog_checks(
+        identity, gog_dir=gog_dir, runner=runner)
     results = [
         ident_result,
         check_plugin_install(repo, registry_path=registry_path),
@@ -1077,14 +1102,12 @@ def run_agent_doctor(
         check_secrets_materialized(repo),
         check_secrets_backend(identity, probe=secrets_probe),
         check_rails_fire(repo),
-        email_result := check_email_auth(identity, gog_dir=gog_dir, runner=runner),
-        check_auth_client(identity, runner=runner),
-        check_auth_services(identity, runner=runner),
+        email_result,
+        auth_client,
+        auth_services,
         check_setup(identity, client_factory=client_factory),
         check_dependency_upgrades(runner=runner),
-        # The live gog call above is the "gog was used" evidence that lets a
-        # prompt-free keychain log confirm (or clear) the date heuristic.
-        check_gog_keychain_trust(identity, runner=runner, gog_used=email_result.ok),
+        keychain_trust,
     ]
     overall_ok = all(r.ok for r in results)
     return results, overall_ok

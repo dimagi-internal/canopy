@@ -367,6 +367,54 @@ def test_a_workspace_domain_address_is_never_probed(monkeypatch, tmp_path):
     assert not web.calls
 
 
+# ---- a hosted-only agent is complete for mail, not misconfigured -------------------------
+
+def test_hosted_only_is_an_ses_primary_with_no_google_account(monkeypatch):
+    monkeypatch.setattr(canopy_web, "call", Web(addresses={SES: SES_ROUTE}))
+    assert agent_email.hosted_only(EmailIdentity(slug="ada", account=SES, client="canopy"))
+    assert not agent_email.hosted_only(EmailIdentity(
+        slug="ada", account=GMAIL, client="canopy", email=SES, google_account=GMAIL))
+    assert not agent_email.hosted_only(EmailIdentity(slug="ada", account=GMAIL, client="canopy"))
+
+
+def test_hosted_only_is_false_when_canopy_web_cannot_say(monkeypatch):
+    def down(*a, **k):
+        raise canopy_web.CanopyError("GET /api/mail/resolve -> 503")
+    monkeypatch.setattr(canopy_web, "call", down)
+    # Unknown is not hosted: the gog checks run (and fail loudly) exactly as before.
+    assert not agent_email.hosted_only(EmailIdentity(slug="ada", account=SES, client="canopy"))
+
+
+def test_preflight_passes_a_hosted_only_agent(monkeypatch, tmp_path):
+    monkeypatch.setattr(canopy_web, "call", Web(addresses={SES: SES_ROUTE}))
+    monkeypatch.setattr(agent_email, "preflight",
+                        lambda *a, **k: pytest.fail("a hosted mailbox needs no gog probe"))
+    result = CliRunner().invoke(email_group, ["preflight", "--repo", str(_repo(tmp_path, email=SES))])
+    assert result.exit_code == 0, result.output
+    assert "canopy-web hosts" in result.output and "google_account" in result.output
+
+
+def test_dangling_skips_a_hosted_only_agent_and_says_so(monkeypatch, tmp_path):
+    monkeypatch.setattr(canopy_web, "call", Web(addresses={SES: SES_ROUTE}))
+    monkeypatch.setattr(agent_email, "dangling_threads",
+                        lambda *a, **k: pytest.fail("no Gmail inbox to sweep"))
+    result = CliRunner().invoke(email_group, ["dangling", "--repo", str(_repo(tmp_path, email=SES))])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("Skipped:")
+
+
+def test_health_does_not_flag_a_hosted_only_agent_inbox(monkeypatch):
+    monkeypatch.setattr(agent_health, "mailbox_is_hosted", lambda slug: True)
+    monkeypatch.setattr(agent_health, "list_gog_accounts",
+                        lambda **k: pytest.fail("a hosted mailbox has no gog inbox"))
+    monkeypatch.setattr(agent_health, "probe_board",
+                        lambda slug, **k: {"needs_you": [], "harness_turns": [],
+                                           "turn_age_days": None})
+    rep = agent_health.health_report("ada")
+    assert rep["flags"] == [] and rep["ready"] is True
+    assert rep["inbox"]["hosted"] is True
+
+
 # ---- gating: --from is not the --account rail ------------------------------------------
 
 @pytest.fixture
