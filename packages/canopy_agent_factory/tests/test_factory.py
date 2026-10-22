@@ -149,8 +149,7 @@ def test_hyphenated_slug_makes_valid_env_names(tmp_path):
     spec.slug, spec.display_name = "ops-desk", "Ops Desk"
     create_agent(spec, tmp_path / "ops-desk")
     root = tmp_path / "ops-desk"
-    tpl = (root / ".env.tpl").read_text()
-    assert "\nOPS_DESK_PRIMARY_CHANNEL=" in tpl and "ops-desk_PRIMARY" not in tpl
+    assert not (root / ".env.tpl").exists()
     env_py = (root / "bin" / "_env.py").read_text()
     assert 'replace("-", "_") + "_ENV"' in env_py and "$OPS_DESK_ENV" in env_py
 

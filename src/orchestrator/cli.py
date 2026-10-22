@@ -1417,7 +1417,8 @@ def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders,
     click.echo("  2. Add domain skills under skills/<name>/SKILL.md.")
     click.echo("  3. Add each outbound action as a deny rail in config/gating.json naming its one")
     click.echo("     sanctioned path; keep `approve` empty (approval is the turn checklist's job).")
-    click.echo("  4. Declare secrets in .env.tpl; /<slug>:setup (already stamped) fills ~/.<slug>/.env.")
+    click.echo("  4. Store secrets in its Canopy vault (canopy-web → Settings → Credentials); /<slug>:setup")
+    click.echo("     (already stamped) fills ~/.<slug>/.env from it. No .env.tpl — the vault is the one list.")
     click.echo("  5. Push to GitHub, then `canopy agent-publish register` from the repo — it records")
     click.echo("     the repo URL runners clone (from the git origin).")
 

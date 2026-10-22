@@ -280,12 +280,12 @@ def check_hook_wiring(repo: Path) -> CheckResult:
 
 
 def check_secrets_manifest(repo: Path) -> CheckResult:
-    """`.env.tpl` (PRIMARY — `op inject`) or `config/secrets.yaml` (LEGACY —
-    `canopy provision`) must exist and be structurally sound, so this machine's agent state
-    can be rebuilt. EITHER manifest satisfies the check — `.env.tpl` is preferred for new
-    agents (see agent-core/agent-runtime.md); `config/secrets.yaml` still works for agents
-    that haven't migrated. Structural only — op-ref resolution stays in a live `op inject` /
-    `canopy provision --check` (needs a 1Password session)."""
+    """Where this agent's secrets are declared. The agent's Canopy vault on canopy-web is the
+    ONE declaration (agent-core/agent-runtime.md § One declaration): an agent repo with no
+    manifest is the target state, not a gap. A repo that still carries `.env.tpl` or
+    `config/secrets.yaml` (the 1Password paths) is checked structurally — a broken one still
+    breaks a legacy `op inject` — and told the file is a second copy to delete once the agent
+    is on the Canopy vault."""
     name = "Secrets manifest"
     repo = Path(repo)
     env_tpl = repo / ".env.tpl"
@@ -314,6 +314,8 @@ def check_secrets_manifest(repo: Path) -> CheckResult:
                          "op://${AGENT_VAULT}/… so the instance's vault is used")
         if PAT_ITEM not in {i for i, _ in refs}:
             notes.append("no CANOPY_WEB_PAT line, so its turns use a person's canopy token")
+        notes.append("a second copy of the agent's secret names (the 1Password path) — on the "
+                     "Canopy vault the vault itself declares them; delete .env.tpl once switched")
         return CheckResult(
             name, True,
             f".env.tpl ({len(keys)} var(s); vault refs: {kinds}) — filled by "
@@ -349,13 +351,9 @@ def check_secrets_manifest(repo: Path) -> CheckResult:
             "no canopy provision manifest expected",
         )
     return CheckResult(
-        name, False,
-        f"neither {env_tpl.name} nor {secrets_yaml} found — agent state won't survive a new "
-        "machine; add a .env.tpl naming the variables it needs, keep their values in the "
-        "agent's canopy vault and resolve them with `canopy cred env --agent <agent>` (see "
-        "create-agent § Channel + setup; config/secrets.yaml + `canopy provision` is the "
-        "legacy path), or declare \"provisioning\" in config/agent.json if this agent "
-        "provisions itself some other way",
+        name, True,
+        "declared by the agent's Canopy vault (canopy-web → Settings → Credentials), the one "
+        "place its secrets are named; `canopy cred env --agent <agent>` materializes them",
     )
 
 
