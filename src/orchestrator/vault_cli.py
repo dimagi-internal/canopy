@@ -849,6 +849,7 @@ def run_ecdh_jwk(kind: Optional[str] = None) -> dict:
     return {"kind": key.kind, "jkt": key.jkt, "jwk": key.public_jwk, "created": created}
 
 
-from orchestrator.vault_zk_cli import zk_group  # noqa: E402 — after vault_group exists
+from orchestrator.vault_zk_cli import ws_group, zk_group  # noqa: E402 — after vault_group exists
 
 vault_group.add_command(zk_group)
+vault_group.add_command(ws_group)

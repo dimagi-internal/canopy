@@ -103,7 +103,10 @@ def _endorsed(t: Target, jkt: str, endorsements: list, agent_id: str, pins: dict
             bjkt = zk.jwk_thumbprint(bjwk)
         except (KeyError, TypeError):
             continue
-        if e.get("by_jkt") != bjkt or not zk.verify_endorsement(e, agent_id, bjwk):
+        # A workspace vault's work carries endorsements made for an agent it serves,
+        # each naming the agent id it was signed for.
+        signed_for = str(e.get("agent_id") or agent_id)
+        if e.get("by_jkt") != bjkt or not zk.verify_endorsement(e, signed_for, bjwk):
             continue
         by = str(e.get("by") or "")
         if by and _trust_person(pins, by, str(e.get("by_email") or ""), bjkt, res):
@@ -131,7 +134,8 @@ def keep_one(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
     wraps = [_wrap(vk, agent_id, kv, t) for t in targets]
     vk = b""  # noqa: F841
     try:
-        call("POST", f"{work['_base']}/{work['agent']}/wraps", {"kv": kv, "wraps": wraps})
+        call("POST", work.get("grant_path") or f"{work['_base']}/{work['agent']}/wraps",
+             {"kv": kv, "wraps": wraps})
     except canopy_web.CanopyError as e:
         res.error = f"canopy-web refused the copies: {str(e)[:300]}"
         return res

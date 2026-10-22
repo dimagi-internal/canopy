@@ -154,6 +154,8 @@ def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[s
                 agent_ids["id"] = zk_agent_id(slug, body, token=token, base_url=base_url,
                                               transport=transport)
             body = open_zk(slug, body, agent_id=agent_ids["id"])
+        if not raw and isinstance(body, dict) and body.get("vaults"):
+            body = merge_vault_layers(slug, body)
         return body
 
     body = get(wanted)
@@ -238,6 +240,47 @@ def has_sealed(body) -> bool:
     from orchestrator import vault_zk as zk
     values = (body or {}).get("values") if isinstance(body, dict) else None
     return isinstance(values, dict) and any(zk.is_sealed_value(v) for v in values.values())
+
+
+def merge_vault_layers(slug: str, body: dict, *, ecdh=None) -> dict:
+    """Layer the workspace vaults canopy-web lists under the agent's own values
+    (canopy-web spec 2026-10-22-vault-access-follows-canopy-access-design.md §4).
+
+    ``body["vaults"]`` is in order — root workspace first, vaults attached to the agent
+    last — and a later layer wins a name clash; the agent's own ``values`` win over all.
+    Each layer's ``zk1:`` values open under ITS key, unwrapped from this device's copy and
+    bound to its ``binding_id``. A layer this device may not open (``wrap: null``), or
+    cannot, is skipped and named in ``vault_layers`` — never a failed resolve: the
+    agent's own secrets still arrive. Never logs or returns a key."""
+    from orchestrator import vault_zk as zk
+    layered: dict = {}
+    report = []
+    ecdh_key = None
+    for layer in body.get("vaults") or []:
+        if not isinstance(layer, dict):
+            continue
+        name = str(layer.get("name") or layer.get("vault_id") or "?")
+        wrap, binding, kv = layer.get("wrap"), str(layer.get("binding_id") or ""), layer.get("kv")
+        raw = layer.get("values") or {}
+        if not isinstance(wrap, dict) or not binding or not isinstance(raw, dict):
+            report.append({"vault": name, "opened": False, "why": "this device holds no copy of its key"})
+            continue
+        try:
+            ecdh_key = ecdh_key or _device_ecdh(ecdh)
+            vk = unwrap_device_vk(wrap, agent_id=binding, kv=kv, ecdh=ecdh_key)
+            opened = {n: zk.decrypt_value(vk, binding, str(n), kv, str(v)) for n, v in raw.items()
+                      if zk.is_zk_value(v)}
+            vk = b""  # noqa: F841 — drop our only reference
+        except (ZkUnlockError, zk.ZkError, device_key.DeviceKeyError) as e:
+            report.append({"vault": name, "opened": False, "why": str(e)[:200]})
+            continue
+        layered.update(opened)
+        report.append({"vault": name, "opened": True, "names": sorted(opened)})
+    own = body.get("values") if isinstance(body.get("values"), dict) else {}
+    out = {k: v for k, v in body.items() if k != "vaults"}
+    out["values"] = {**layered, **own}
+    out["vault_layers"] = report
+    return out
 
 
 def open_zk(slug: str, body: dict, *, agent_id: str, ecdh=None) -> dict:
