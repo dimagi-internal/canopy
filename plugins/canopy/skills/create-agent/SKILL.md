@@ -2,7 +2,7 @@
 name: create-agent
 description: >
   Scaffold a new Claude Code agent from the canopy operating model — a turn-driven persona with
-  reads-free / writes-gated guarding (a config-driven PreToolUse hook), a `turn` orchestrator,
+  reads-free / writes-gated guarding (deny rails canopy's session hook enforces), a `turn` orchestrator,
   self-review, and a canopy-web-ready layout, grounded in the primitives proven by echo. Use when
   asked to "create an agent", "scaffold a new agent", "start a new agent like echo", or
   "spin up agent <name>". Generates the agent in its OWN git repo; you then fill in persona +
@@ -44,7 +44,8 @@ uv run --project "$CANOPY_ROOT" canopy create-agent <slug> \
   --into <path>            # default: ./<slug>
 ```
 Drop `--google-account` when the mailbox is itself the Google account (a Gmail mailbox).
-This writes ~15 files: `persona.md`, `CLAUDE.md`, the `turn` + `self-review` skills,
+This writes 22 files: `persona.md`, `CLAUDE.md`, the `turn`, `agent-turn-review`, `task-tracker`,
+`shipping`, `manager-sync`, `answer-caller` and `setup` skills,
 `config/gating.json` (the reads-free / writes-gated rails, shipped deny-rails-only with an empty
 `approve` list — enforced by canopy's own session gating hook, so the agent registers NO hook of its
 own; canopy#849), `.claude/settings.json` (sets `CANOPY_AGENT=<slug>`, which tells canopy whose
@@ -54,9 +55,10 @@ deny-railed out of the box), `config/agent.json` (identity: mailbox + `gog_clien
 `.env.tpl` (the fleet-standard secrets template — see agent-core/agent-runtime.md;
 **never write a real `op://<vault>/<item>/<field>` in a comment**, `op inject` resolves those
 too — only the angle-bracket placeholder; refs read `op://${AGENT_VAULT}/<item>/<field>` and
-never name a vault), `skills/setup/SKILL.md` (`/<slug>:setup` — binds the install to ONE canopy-web
-instance and fills `~/.<slug>/.env` from that instance's recorded vault via `canopy agent env`),
-`config/allowlist.txt`, and the plugin manifest.
+never name a vault), `skills/setup/SKILL.md` (`/<slug>:setup` — fills `~/.<slug>/.env` with
+`canopy cred env`, from the Canopy vault or 1Password, whichever canopy-web records for the agent),
+`config/allowlist.txt`, the plugin manifest, and `.claude-plugin/marketplace.json` — the manifest a
+runner installs the agent's plugin from (without it a box installs nothing).
 `config/allowlist.txt` is a **legacy fallback**: `canopy caller tier` consults it only while the
 agent has no declared interface on canopy-web. Once an interface is published, canopy-web
 (interface + workspace membership) decides who may steer the agent and the file is not read —
@@ -81,6 +83,12 @@ Look the agent up first with the canopy-web MCP tool `get_agent` (`slug`):
   `uv run --project "$CANOPY_ROOT" canopy agent-publish register` (resolve `CANOPY_ROOT` with the
   same two-liner as Step 2). If the human belongs to more than one workspace, add
   `--workspace <slug>` naming the agent's home — canopy-web will not guess it.
+
+Register records the agent's `repo_url` (`https://github.com/<owner>/<repo>`, from the git origin)
+whenever canopy-web holds none — so push before registering. That URL is what runners clone and
+what the setup checklist's `job` command uses; a runner then installs the agent's plugin from the
+stamped `.claude-plugin/marketplace.json`. `get_agent` showing an empty `repo_url` after register
+means it was not pushed yet or you are not the agent's owner/admin — push, then register again.
 
 ## Step 4 — Walk the setup checklist
 canopy-web owns what is left to do. Call the MCP tool **`agent_setup`** (`slug`, plus `workspace`
@@ -130,7 +138,8 @@ Secrets the domain skill needs go in `.env.tpl` (see the warnings in Step 2) and
 `uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .` (and again on any new machine).
 
 Ship repo changes per the agent repo's own convention (branch → PR → merge yourself; the PR is a
-CI/record checkpoint, not a review gate). Outbound actions still need human approval at run time.
+CI/record checkpoint, not a review gate). Outbound actions still follow the agent's turn mode
+(manual: a human approves first).
 
 ## Notes
 - **Why its own repo:** independently shippable, team-runnable (a teammate clones one repo + runs

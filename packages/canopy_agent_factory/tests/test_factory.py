@@ -92,17 +92,6 @@ def test_bump_script_bumps_all_version_fields(tmp_path):
     """The stamped bump script advances plugin.json + both marketplace.json fields."""
     root = tmp_path / "echo"
     create_agent(_spec(), root)
-    # The factory doesn't stamp marketplace.json, so add one the way live agents carry it.
-    (root / ".claude-plugin" / "marketplace.json").write_text(
-        json.dumps(
-            {
-                "name": "echo",
-                "metadata": {"version": "0.1.0"},
-                "plugins": [{"name": "echo", "source": "./", "version": "0.1.0"}],
-            },
-            indent=2,
-        )
-    )
     script = root / "scripts" / "bump-plugin-version.py"
     assert script.stat().st_mode & 0o111, "bump script should be executable"
     out = subprocess.run(
@@ -117,10 +106,10 @@ def test_bump_script_bumps_all_version_fields(tmp_path):
 
 
 def test_bump_script_tolerates_missing_marketplace(tmp_path):
-    """Bumping must not crash on an agent that has no marketplace.json yet."""
+    """Bumping must not crash on an older agent that has no marketplace.json."""
     root = tmp_path / "echo"
     create_agent(_spec(), root)
-    assert not (root / ".claude-plugin" / "marketplace.json").exists()
+    (root / ".claude-plugin" / "marketplace.json").unlink()
     subprocess.run(
         [sys.executable, str(root / "scripts" / "bump-plugin-version.py")],
         capture_output=True,
@@ -129,6 +118,60 @@ def test_bump_script_tolerates_missing_marketplace(tmp_path):
     )
     plugin = json.loads((root / ".claude-plugin" / "plugin.json").read_text())
     assert plugin["version"] == "0.1.1"
+
+
+def test_marketplace_json_is_stamped_like_the_live_agents(tmp_path):
+    """A runner installs the agent's plugin ONLY from this file (agent_prepare
+    `step_runner_plugins`); without it a box silently installed nothing."""
+    create_agent(_spec(), tmp_path / "echo")
+    market = json.loads((tmp_path / "echo" / ".claude-plugin" / "marketplace.json").read_text())
+    assert market["name"] == "echo"
+    assert market["owner"]["name"]
+    assert market["metadata"]["version"] == "0.1.0"
+    [plugin] = market["plugins"]
+    assert plugin["name"] == "echo" and plugin["source"] == "./"
+    assert plugin["version"] == "0.1.0"
+
+
+def test_json_files_survive_a_mandate_with_quotes(tmp_path):
+    spec = _spec()
+    spec.mandate = 'Run the "ops" desk \\ and more.'
+    create_agent(spec, tmp_path / "echo")
+    root = tmp_path / "echo"
+    for rel in (".claude-plugin/plugin.json", ".claude-plugin/marketplace.json",
+                "config/agent.json"):
+        json.loads((root / rel).read_text())
+    assert json.loads((root / "config/agent.json").read_text())["persona"] == spec.mandate
+
+
+def test_hyphenated_slug_makes_valid_env_names(tmp_path):
+    spec = _spec()
+    spec.slug, spec.display_name = "ops-desk", "Ops Desk"
+    create_agent(spec, tmp_path / "ops-desk")
+    root = tmp_path / "ops-desk"
+    tpl = (root / ".env.tpl").read_text()
+    assert "\nOPS_DESK_PRIMARY_CHANNEL=" in tpl and "ops-desk_PRIMARY" not in tpl
+    env_py = (root / "bin" / "_env.py").read_text()
+    assert 'replace("-", "_") + "_ENV"' in env_py and "$OPS_DESK_ENV" in env_py
+
+
+def test_setup_works_for_either_credential_backend(tmp_path):
+    """New agents are born on the Canopy vault; `canopy agent env` only knows 1Password."""
+    create_agent(_spec(), tmp_path / "echo")
+    setup = (tmp_path / "echo" / "skills" / "setup" / "SKILL.md").read_text()
+    assert "canopy cred env --agent echo" in setup
+    assert "canopy agent doctor --slug echo" in setup
+    assert "canopy agent env" not in setup
+
+
+def test_version_is_pyprojects():
+    """The release check imports the wheel and compares `__version__` with pyproject's."""
+    import tomllib
+
+    import canopy_agent_factory
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+    assert canopy_agent_factory.__version__ == declared
 
 
 def test_create_agent_substitutes_tokens(tmp_path):
@@ -142,7 +185,8 @@ def test_create_agent_substitutes_tokens(tmp_path):
 def test_generated_json_is_valid(tmp_path):
     create_agent(_spec(), tmp_path / "echo")
     root = tmp_path / "echo"
-    for rel in (".claude-plugin/plugin.json", "config/gating.json", ".claude/settings.json"):
+    for rel in (".claude-plugin/plugin.json", ".claude-plugin/marketplace.json",
+                "config/gating.json", ".claude/settings.json"):
         json.loads((root / rel).read_text())  # raises on malformed JSON
     plugin = json.loads((root / ".claude-plugin/plugin.json").read_text())
     assert plugin["name"] == "echo"

@@ -25,7 +25,10 @@ def test_templates_is_non_empty_with_expected_count():
     # -1 on 2026-10-09 (canopy#849): hooks/gating_guard.py — canopy's plugin owns the hook.
     # +1 on 2026-10-14: skills/setup/SKILL.md — the /<agent>:setup that binds an install to one
     # instance (`canopy agent env`).
-    assert len(t) == 21
+    # +1 on 2026-10-21: .claude-plugin/marketplace.json — a runner installs the agent's plugin
+    # only from it (canopy agent_prepare `step_runner_plugins`).
+    assert len(t) == 22
+    assert ".claude-plugin/marketplace.json" in t
     assert "skills/setup/SKILL.md" in t
     assert "hooks/gating_guard.py" not in t
     assert "config/interface.yaml" not in t
@@ -86,5 +89,7 @@ def test_env_template_and_setup_never_name_a_vault():
     assert "\nCANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential\n" in tpl
     assert "canopy agent vault --slug {{AGENT_SLUG}}" in tpl
     setup = t["skills/setup/SKILL.md"]
-    assert "canopy agent env --plugin {{AGENT_SLUG}}" in setup
-    assert "--force" in setup and "$ARGUMENTS" in setup
+    # `canopy cred env` resolves either backend (the Canopy vault or 1Password); `canopy agent
+    # env` only knows 1Password, and new agents are born on the Canopy vault.
+    assert "canopy cred env --agent {{AGENT_SLUG}}" in setup
+    assert "Agent-" not in setup

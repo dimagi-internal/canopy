@@ -9,7 +9,10 @@ from orchestrator.agent_web import (
     AgentWebError,
     catalog_from_repo,
     gh_blob_base,
+    normalize_repo_url,
     push_tasks,
+    register,
+    repo_url,
     resolve_identity,
 )
 
@@ -105,3 +108,75 @@ def test_push_tasks_posts_bare_list_to_tasks_endpoint(tmp_path, monkeypatch):
     assert body == [{"title": "x", "ask_kind": "review"},
                     {"ext_id": "T4", "title": "y", "ask_kind": "question",
                      "idempotency_key": "echo:T4"}]
+
+
+def _origin(repo, url):
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "remote", "add", "origin", url], cwd=repo, check=True)
+
+
+@pytest.mark.parametrize("raw", [
+    "dimagi-internal/echo", "https://github.com/dimagi-internal/echo",
+    "https://github.com/dimagi-internal/echo.git", "git@github.com:dimagi-internal/echo.git",
+])
+def test_normalize_repo_url(raw):
+    assert normalize_repo_url(raw) == "https://github.com/dimagi-internal/echo"
+
+
+def test_normalize_repo_url_refuses_non_github():
+    assert normalize_repo_url("https://gitlab.com/a/b") == ""
+    assert normalize_repo_url("") == ""
+
+
+def test_repo_url_from_the_origin(tmp_path):
+    repo = _agent(tmp_path)
+    assert repo_url(repo) == ""
+    _origin(repo, "git@github.com:dimagi-internal/echo.git")
+    assert repo_url(repo) == "https://github.com/dimagi-internal/echo"
+
+
+def _fake_server(monkeypatch, recorded=None, refuse_repo=False):
+    """`recorded` None = the agent does not exist (404)."""
+    from orchestrator import agent_web
+    posts = []
+
+    def call(path, body=None, method="POST"):
+        if method == "GET":
+            if recorded is None:
+                raise AgentWebError(f"GET {path} -> 404: not found")
+            return {"slug": "echo", "repo_url": recorded}
+        posts.append(body)
+        if refuse_repo and "repo_url" in body:
+            raise AgentWebError("POST /api/agents/ -> 403: changing repo_url on echo "
+                                "requires being its owner or one of its admins")
+        return {"slug": "echo"}
+
+    monkeypatch.setattr(agent_web, "_call", call)
+    return posts
+
+
+def test_register_records_the_repo_for_a_new_agent(tmp_path, monkeypatch):
+    repo = _agent(tmp_path)
+    _origin(repo, "https://github.com/dimagi-internal/echo.git")
+    posts = _fake_server(monkeypatch)
+    register(repo)
+    assert posts[-1]["repo_url"] == "https://github.com/dimagi-internal/echo"
+
+
+def test_register_fills_a_missing_repo_but_never_moves_one(tmp_path, monkeypatch):
+    repo = _agent(tmp_path)
+    _origin(repo, "git@github.com:someone/echo-fork.git")
+    posts = _fake_server(monkeypatch, recorded="")
+    register(repo)
+    assert posts[-1]["repo_url"] == "https://github.com/someone/echo-fork"
+    posts = _fake_server(monkeypatch, recorded="https://github.com/dimagi-internal/echo")
+    register(repo)
+    assert "repo_url" not in posts[-1]
+
+
+def test_register_without_rights_to_the_repo_still_registers(tmp_path, monkeypatch):
+    repo = _agent(tmp_path)
+    _origin(repo, "https://github.com/dimagi-internal/echo")
+    posts = _fake_server(monkeypatch, recorded="", refuse_repo=True)
+    assert register(repo) == {"slug": "echo"}
+    assert len(posts) == 2 and "repo_url" not in posts[-1]

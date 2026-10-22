@@ -494,6 +494,13 @@ class RunnerPreparer(Bootstrapper):
                 problems.append(err)
             else:
                 installed += 1
+        else:
+            # No manifest = the agent's own plugin is never installed, so its turns run
+            # without its skills. That used to pass as "0 ok"; it is a failure the box's
+            # report must show (the factory stamps this file since agent-factory 1.2.0).
+            problems.append(f"{slug}: no .claude-plugin/marketplace.json in {repo} — the "
+                            f"agent's own plugin cannot be installed; add one (name "
+                            f"'{slug}', plugins[0] source './')")
         specs, bad = declared_required_plugins(repo)
         problems += [f"required_plugins entry with no name: {b!r}" for b in bad]
         for s in specs:

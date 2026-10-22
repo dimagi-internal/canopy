@@ -8,7 +8,8 @@ client; the agent repo owns only its identity.
 Identity is resolved from the agent repo itself (no per-agent client copy needed):
   - `.claude-plugin/plugin.json` → slug (`name`) + description
   - `config/agent.json` (optional) → email / persona / avatar_url / display name overrides
-  - the git `origin` remote → the GitHub blob base for skill links
+  - the git `origin` remote → the GitHub blob base for skill links, and the agent's
+    `repo_url` (sent on register only while canopy-web records none for the agent)
 
 Auth: a canopy-web PAT via `CANOPY_WEB_PAT`, or `~/.claude/canopy/workbench-token`
 (mint once via `/canopy:canopy-web-pat-mint`). Content is attributed to the agent slug, not the
@@ -70,12 +71,9 @@ def _call(path: str, body=None, method: str = "POST") -> dict:
 
 # ---- identity resolution (pure; testable without network) -----------------------------
 
-def gh_blob_base(repo_dir: Path) -> str:
-    """`https://github.com/<owner>/<repo>/blob/main/skills/{name}/SKILL.md` from the origin remote.
-
-    Returns "" if there's no parseable GitHub origin. `{name}` is left as a literal placeholder
-    for catalog_from_repo to fill per skill.
-    """
+def _origin_owner_repo(repo_dir: Path) -> tuple[str, str] | None:
+    """(owner, repo) of the repo's GitHub `origin` remote — ssh or https, with or without
+    `.git` — or None when there is no parseable GitHub origin."""
     try:
         url = subprocess.run(
             ["git", "-C", str(repo_dir), "remote", "get-url", "origin"],
@@ -83,10 +81,40 @@ def gh_blob_base(repo_dir: Path) -> str:
         ).stdout.strip()
     except Exception:
         url = ""
-    m = re.search(r"github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?/?$", url)
-    if not m:
+    return _owner_repo(url)
+
+
+def _owner_repo(url: str) -> tuple[str, str] | None:
+    m = re.search(r"github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?/?$", url.strip())
+    return (m.group(1), m.group(2)) if m else None
+
+
+def normalize_repo_url(raw: str) -> str:
+    """`owner/name`, an https or ssh GitHub URL, with or without `.git` →
+    `https://github.com/<owner>/<name>`; "" when it is none of those."""
+    raw = (raw or "").strip()
+    m = re.fullmatch(r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?", raw)
+    o = (m.group(1), m.group(2)) if m and "github.com" not in raw else _owner_repo(raw)
+    return f"https://github.com/{o[0]}/{o[1]}" if o else ""
+
+
+def gh_blob_base(repo_dir: Path) -> str:
+    """`https://github.com/<owner>/<repo>/blob/main/skills/{name}/SKILL.md` from the origin remote.
+
+    Returns "" if there's no parseable GitHub origin. `{name}` is left as a literal placeholder
+    for catalog_from_repo to fill per skill.
+    """
+    o = _origin_owner_repo(repo_dir)
+    if not o:
         return ""
-    return f"https://github.com/{m.group(1)}/{m.group(2)}/blob/main/skills/{{name}}/SKILL.md"
+    return f"https://github.com/{o[0]}/{o[1]}/blob/main/skills/{{name}}/SKILL.md"
+
+
+def repo_url(repo_dir: Path) -> str:
+    """The agent repo as canopy-web records it — `https://github.com/<owner>/<repo>`, from the
+    git origin (an ssh or `.git` remote normalised) — or "" when there is no GitHub origin."""
+    o = _origin_owner_repo(repo_dir)
+    return f"https://github.com/{o[0]}/{o[1]}" if o else ""
 
 
 def resolve_identity(repo_dir: Path) -> dict:
@@ -155,6 +183,14 @@ def register(repo_dir: Path, workspace: str = "") -> dict:
     google = str(ident.get("google_account") or "").strip()
     if google:
         body["google_account"] = google
+    # The repo the agent's boxes clone. Without it a runner refuses the agent ("canopy-web
+    # records no repository"), the catalog omits it and the setup checklist's job command is
+    # blank. Sent only while canopy-web records NONE: register runs on every publish verb, so
+    # it must never move a recorded repo (a fork's clone, a mirror) — that is Settings'
+    # job, for the agent's admins.
+    url = repo_url(repo_dir)
+    if url and not _recorded_repo(ident["slug"]):
+        body["repo_url"] = url
     explicit = (workspace or "").strip()
     if explicit:
         return _upsert({**body, "workspace": explicit})
@@ -174,15 +210,30 @@ def register(repo_dir: Path, workspace: str = "") -> dict:
         return _upsert({**body, "workspace": fallback})
 
 
+def _recorded_repo(slug: str) -> str:
+    """The repo canopy-web records for ``slug``: "" for a new agent (404) or one with none.
+    Any other failure answers "unknown" as recorded, so register never sends a repo it
+    could not check."""
+    try:
+        return str(_call(f"/api/agents/{slug}/", method="GET").get("repo_url") or "")
+    except AgentWebError as e:
+        return "" if " -> 404" in str(e) else "?"
+
+
 def _upsert(body: dict) -> dict:
     """POST the agent upsert; an older canopy-web whose strict schema rejects
     `google_account` as an unknown field gets the body without it (the register still
-    lands, and the field follows once the server knows it)."""
+    lands, and the field follows once the server knows it). A caller who may not set the
+    agent's repo (an editor, not its owner/admin: 403 naming `repo_url`) registers without
+    it — recording the repo is then its admins' step."""
     try:
         return _call("/api/agents/", body)
     except AgentWebError as e:
-        if "google_account" not in body or " -> 422" not in str(e) \
-                or "google_account" not in str(e):
+        msg = str(e)
+        if "repo_url" in body and " -> 403" in msg and "repo_url" in msg:
+            return _upsert({k: v for k, v in body.items() if k != "repo_url"})
+        if "google_account" not in body or " -> 422" not in msg \
+                or "google_account" not in msg:
             raise
         return _call("/api/agents/", {k: v for k, v in body.items() if k != "google_account"})
 

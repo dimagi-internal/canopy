@@ -105,6 +105,9 @@ class AgentIdentity(BaseModel):
     # deleted by any employee who chooses to join it; a division or own
     # workspace limits that to people someone actually let in.
     workspace: str = ""
+    # The GitHub repo the agent's boxes clone (`https://github.com/<owner>/<name>`). None —
+    # the default — is left out of the upsert, so a re-register never blanks or moves it.
+    repo_url: Optional[str] = None
 
 
 class TaskAction(BaseModel):
@@ -164,7 +167,7 @@ class AgentClient:
                                token=self._token, transport=self._transport)
 
     def register(self) -> dict:
-        return self._call("POST", "/api/agents/", self.identity.model_dump())
+        return self._call("POST", "/api/agents/", self.identity.model_dump(exclude_none=True))
 
     def get_agent(self) -> dict:
         return self._call("GET", f"/api/agents/{self.slug}/")

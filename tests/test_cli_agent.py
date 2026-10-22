@@ -345,3 +345,48 @@ def test_agent_move_refusal_is_a_clean_error(fake_http):
     r = CliRunner().invoke(main, ["agent", "move", "--slug", "fizzy", "--to", "dimagi"])
     assert r.exit_code != 0
     assert "owner or one of its admins" in r.output
+
+
+def test_register_records_an_explicit_repo_normalised(fake_http):
+    calls, _ = fake_http
+    r = CliRunner().invoke(main, ["agent", "register", "--slug", "echo", "--name", "Echo",
+                                  "--email", "e@x", "--description", "d", "--persona", "p",
+                                  "--avatar-url", "a", "--repo",
+                                  "git@github.com:dimagi-internal/echo.git"])
+    assert r.exit_code == 0, r.output
+    assert calls[-1][2]["repo_url"] == "https://github.com/dimagi-internal/echo"
+
+
+def test_register_without_a_repo_sends_none(fake_http):
+    calls, _ = fake_http
+    r = CliRunner().invoke(main, ["agent", "register", "--slug", "echo", "--name", "Echo"])
+    assert r.exit_code == 0, r.output
+    assert "repo_url" not in calls[-1][2]
+
+
+def test_register_infers_the_repo_from_the_agents_own_checkout(fake_http, tmp_path,
+                                                                monkeypatch):
+    import subprocess
+    calls, responses = fake_http
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "echo"}))
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/o/echo.git"],
+                   cwd=tmp_path, check=True)
+    monkeypatch.chdir(tmp_path)
+    responses[("GET", "agents/echo/")] = (404, "not found")
+    r = CliRunner().invoke(main, ["agent", "register", "--slug", "echo", "--name", "Echo"])
+    assert r.exit_code == 0, r.output
+    assert calls[-1][2]["repo_url"] == "https://github.com/o/echo"
+    # canopy-web already records one: never moved from a checkout
+    responses[("GET", "agents/echo/")] = (200, json.dumps(
+        {"name": "Echo", "repo_url": "https://github.com/dimagi-internal/echo"}))
+    r = CliRunner().invoke(main, ["agent", "register", "--slug", "echo", "--name", "Echo"])
+    assert r.exit_code == 0, r.output
+    assert "repo_url" not in calls[-1][2]
+
+
+def test_register_refuses_a_repo_that_is_not_github(fake_http):
+    r = CliRunner().invoke(main, ["agent", "register", "--slug", "echo", "--name", "Echo",
+                                  "--repo", "https://gitlab.com/o/echo"])
+    assert r.exit_code != 0 and "not a GitHub repo" in r.output

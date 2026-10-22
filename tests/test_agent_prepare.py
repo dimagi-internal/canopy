@@ -224,6 +224,15 @@ def test_required_plugins_are_pulled_every_pass_get_deps_and_key_files(tmp_path)
     assert not [n for n in rep.notes if n.startswith("plugins:")], rep.notes
 
 
+def test_an_agent_repo_without_a_marketplace_manifest_fails_the_plugins_step(tmp_path):
+    repo = _repo(tmp_path / "agents")
+    (repo / ".claude-plugin" / "marketplace.json").unlink()
+    rep = _prep(tmp_path, Box(tmp_path)).prepare("ace")
+    assert not rep.ok
+    assert any("no .claude-plugin/marketplace.json" in n for n in rep.notes), rep.notes
+    assert rep.plugins == "0 ok FAIL"
+
+
 def test_the_mailbox_is_the_instances_and_a_token_for_another_is_refused(tmp_path):
     _repo(tmp_path / "agents")
     box = Box(tmp_path, vault_items={
