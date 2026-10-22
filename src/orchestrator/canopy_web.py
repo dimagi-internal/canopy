@@ -363,7 +363,9 @@ def _agent_identity_error(slug: str, why: str) -> "AgentIdentityError":
 def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
     """The canopy-web PAT this process acts with.
 
-    Precedence: explicit arg → env ``CANOPY_WEB_PAT`` → the agent's own PAT
+    Precedence: explicit arg → env ``CANOPY_WEB_PAT`` (a cloud runner's turn login) →
+    in a runner turn, the login canopy-web issues for that turn
+    (:mod:`orchestrator.turn_agent_token`) → the agent's own stored PAT
     (``~/.<slug>/.env``, slug from :func:`agent_context_slug`) → the operator's
     ``TOKEN_FILE``.
 
@@ -387,6 +389,15 @@ def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
             raise _agent_identity_error(
                 slug, "CANOPY_WEB_PAT holds the operator's workbench-token, not its own PAT")
         return from_env
+    # Then, in a runner turn, the login canopy-web issued for THAT turn, asked with
+    # this box's runner token — preferred over the agent's stored, never-expiring
+    # canopy-pat below, which stays the fallback (turn_agent_token, phase 1).
+    if slug:
+        from orchestrator import turn_agent_token
+
+        turn_tok = turn_agent_token.resolve(slug)
+        if turn_tok:
+            return turn_tok
     # Then the agent's own PAT, so an agent acts as ITSELF rather than as whoever
     # owns TOKEN_FILE. This must come BEFORE the global file — that file exists on
     # every operator laptop, so checking it first is exactly what masked the bug.
