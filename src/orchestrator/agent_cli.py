@@ -36,7 +36,11 @@ def agent():
                    "placement alone — which means a NEW agent lands in the default "
                    "workspace, which any @dimagi.com address may self-join as an "
                    "editor, and an editor can delete an agent.")
-def agent_register(slug, name, email, description, persona, avatar_url, workspace):
+@click.option("--repo", "repo", default="",
+              help="The agent's GitHub repo (owner/name or its URL) — what its runners "
+                   "clone. Omitted: inferred from the git origin when run inside the agent's "
+                   "own repo, and sent only while canopy-web records none (never moves one).")
+def agent_register(slug, name, email, description, persona, avatar_url, workspace, repo):
     """Upsert agent identity.
 
     canopy-web's upsert REPLACES every identity field and requires `name`, so on an agent
@@ -59,9 +63,41 @@ def agent_register(slug, name, email, description, persona, avatar_url, workspac
                 raise click.ClickException(f"agent '{slug}' is not registered yet (or not "
                                            "visible to you) — pass --name to create it")
         c = _client(slug, workspace=workspace, **given)
+        c.identity.repo_url = _repo_for(slug, repo, c) or None
         _emit(c.register())
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
+
+
+def _repo_for(slug: str, given: str, client) -> str:
+    """The repo to record: an explicit --repo (normalised; refused if it is not a GitHub
+    repo), else the cwd's git origin when the cwd is THIS agent's repo and canopy-web holds
+    no repo for the agent yet. "" = send nothing."""
+    from orchestrator import agent_web
+    if given:
+        url = agent_web.normalize_repo_url(given)
+        if not url:
+            raise click.ClickException(f"--repo {given!r} is not a GitHub repo "
+                                       "(owner/name or https://github.com/owner/name)")
+        return url
+    here = Path.cwd()
+    for d in (here, *here.parents):
+        pj = d / ".claude-plugin" / "plugin.json"
+        if pj.is_file():
+            try:
+                if json.loads(pj.read_text(encoding="utf-8")).get("name") != slug:
+                    return ""
+            except (OSError, ValueError):
+                return ""
+            url = agent_web.repo_url(d)
+            if not url:
+                return ""
+            try:
+                recorded = str(client.get_agent().get("repo_url") or "")
+            except CanopyError as e:
+                recorded = "" if "-> 404" in str(e) else "?"
+            return "" if recorded else url
+    return ""
 
 
 @agent.command("move")

@@ -1374,9 +1374,10 @@ def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders,
                      git_init):
     """Scaffold a new Claude Code agent from the canopy operating model.
 
-    Generates a self-contained agent repo (persona, the `turn` orchestrator, a reads-free /
-    writes-gated gating hook, canopy-web-ready layout) grounded in the primitives proven by
-    echo. See docs/agent-operating-model.md.
+    Generates an agent repo (persona, the `turn` orchestrator, reads-free / writes-gated
+    deny rails in config/gating.json that canopy's session hook enforces, the
+    marketplace.json a runner installs it from, a canopy-web-ready layout) grounded in the
+    primitives proven by echo. See docs/agent-operating-model.md.
     """
     import subprocess
     from canopy_agent_factory import (
@@ -1412,8 +1413,11 @@ def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders,
     click.echo("Next:")
     click.echo("  1. Fill in persona.md (voice, mandate detail, memory scope).")
     click.echo("  2. Add domain skills under skills/<name>/SKILL.md.")
-    click.echo("  3. Add outbound actions as approve/deny rules in config/gating.json.")
-    click.echo("  4. Wire a channel adapter + setup/preflight for your secrets.")
+    click.echo("  3. Add each outbound action as a deny rail in config/gating.json naming its one")
+    click.echo("     sanctioned path; keep `approve` empty (approval is the turn checklist's job).")
+    click.echo("  4. Declare secrets in .env.tpl; /<slug>:setup (already stamped) fills ~/.<slug>/.env.")
+    click.echo("  5. Push to GitHub, then `canopy agent-publish register` from the repo — it records")
+    click.echo("     the repo URL runners clone (from the git origin).")
 
 
 @main.command("agent-review")
