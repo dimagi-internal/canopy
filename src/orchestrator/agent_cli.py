@@ -1892,7 +1892,15 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
 def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links,
                    next_action, idempotency_key, runner_ref, queue_if_not_ready, turn_mode,
                    acts_as, on_behalf_of, as_json):
-    """Record work on an agent's board, then trigger a runner session to do it.
+    """Hand work to an agent to do UNATTENDED: record it on the agent's board, then a
+    runner session does it.
+
+    \b
+    To work with an agent yourself — ask it questions, follow up, review what it
+    says — do not dispatch: run `canopy agent use <slug>` once, then ask in your
+    own Claude Code session. Dispatch starts a fresh session on a runner each time,
+    with no memory of the last one; to follow up on one, use
+    `canopy agent reply <session> --prompt ...`.
 
     The one-shot counterpart to a schedule: schedules are for recurring work, this is
     "go do this now". The runner claims the turn and spawns a visible emdash session
@@ -2020,6 +2028,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     if as_json:
         _emit({"task_ext_id": task_ext_id, "idempotency_key": key, "turn": summary,
                "runner": runner_out, "mode": mode_out, "on_behalf_of": behalf_out})
+        _note_local_use(slug, canopy_web)  # stderr: stdout stays pure JSON
         return
 
     click.echo(f"Agent:  {slug}")
@@ -2050,6 +2059,20 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     click.echo("")
     click.echo("This is a LAUNCH, not a result — the agent may not have read the brief yet.")
     click.echo(f"  verify:  canopy agent turns --slug {slug}")
+    _note_local_use(slug, canopy_web)
+
+
+def _note_local_use(slug, canopy_web) -> None:
+    """One stderr line steering a PERSON without local use of `slug` to `canopy agent use`
+    (canopy-web#1955). Silent in an agent's turn; never fails or blocks the dispatch."""
+    from orchestrator.agent_dispatch import local_use_note_for
+
+    try:
+        note = local_use_note_for(slug, canopy_web.call)
+    except Exception:  # noqa: BLE001 — a hint is never worth failing a dispatch over
+        note = ""
+    if note:
+        click.echo(note, err=True)
 
 
 def _dispatching_person(canopy_web) -> str:
@@ -2061,6 +2084,50 @@ def _dispatching_person(canopy_web) -> str:
     if not isinstance(me, dict):
         return ""
     return str(me.get("email") or me.get("username") or "").strip()
+
+
+@agent.command("reply")
+@click.argument("session")
+@click.option("--prompt", default="", help="The follow-up to send into the session.")
+@click.option("--prompt-file", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Read the follow-up from a file.")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+def agent_reply(session, prompt, prompt_file, as_json):
+    """Send a follow-up into an EXISTING canopy session instead of starting a new one.
+
+    SESSION is the canopy session's id, or its canopy-web link (the id is the UUID in
+    the URL). The session keeps its memory of the earlier work, so a follow-up does not
+    redo it — unlike a second `canopy agent dispatch`, which starts from nothing.
+    Uses canopy-web's own send route (`POST /api/canopy-sessions/<id>/send`, the one
+    canopy's chat and `canopy_sessions_send` use); you need write access to the session.
+    """
+    from orchestrator import canopy_web
+    from orchestrator.agent_dispatch import DispatchError, session_send_path
+
+    if prompt_file:
+        prompt = Path(prompt_file).read_text(encoding="utf-8")
+    if not prompt.strip():
+        raise click.UsageError("nothing to send: pass --prompt or --prompt-file")
+    try:
+        path = session_send_path(session)
+        out = canopy_web.call("POST", path, {"text": prompt}) or {}
+    except DispatchError as e:
+        raise click.ClickException(str(e))
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+    out = out if isinstance(out, dict) else {}
+    session_id = path.split("/")[3]
+    turn_id = out.get("turn_id")
+    if as_json:
+        _emit({"session": session_id, "turn_id": turn_id,
+               "message_id": (out.get("message") or {}).get("id")})
+        return
+    click.echo(f"Session: {session_id}")
+    if turn_id:
+        click.echo(f"Turn:    {turn_id}  (queued into that session — it keeps its earlier context)")
+    else:
+        click.echo("Turn:    (no new turn reported — the message may ride one already running there)")
+    click.echo("This is a SEND, not a reply — read the answer on the session's canopy-web page.")
 
 
 @agent.command("landscape")

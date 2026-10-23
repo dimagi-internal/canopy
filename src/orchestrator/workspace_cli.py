@@ -42,6 +42,9 @@ import click
 from orchestrator import canopy_web
 
 WORKSPACES_PATH = "/api/workspaces/"
+# Every agent the person can see, in every workspace they are in (canopy-web fleet_api
+# `list_my_agents`) — the agents /canopy:setup offers `canopy agent use` for.
+MY_AGENTS_PATH = "/api/me/agents/"
 # The person's one agent catalog (canopy-web). Change the path HERE if it moves.
 AGENTS_MARKETPLACE_NAME = "canopy-agents"
 AGENTS_MARKETPLACE_PATH = "/plugins/marketplace.json"
@@ -315,11 +318,13 @@ def agents_group():
 @click.option("--install-all", is_flag=True,
               help="Also install EVERY agent the catalog lists (default: install none).")
 def agents_connect_cmd(dry_run, install_all):
-    """Register your agent catalog (canopy-agents, autoUpdate on) and list its agents.
+    """Register your agent catalog (canopy-agents, autoUpdate on) and list the agents
+    you can use.
 
     Idempotent. Removes retired per-workspace `canopy-<ws>` entries from your settings.
-    Installs nothing unless --install-all: install the agents you want with
-    `/plugin install <agent>@canopy-agents`, then run that agent's setup command."""
+    Installs nothing unless --install-all. Ends with one `canopy agent use <agent>` line
+    per agent canopy-web says you can use: that command sets the agent up for you in
+    Claude Code (plugin, licence, env), then you run the agent's own setup command."""
     _connect(dry_run=dry_run, install_all=install_all)
 
 
@@ -332,18 +337,56 @@ def _repo(p: dict) -> str:
     return str(src.get("repo") or "") if isinstance(src, dict) and src.get("source") == "github" else ""
 
 
-def offer_lines(name: str, agents: list[dict]) -> list[str]:
-    """Per agent: its exact install line, its own setup command, and its GitHub repo."""
-    if not agents:
-        return ["No agents to install yet — ask a workspace admin to add one."]
-    rows = [(f"/plugin install {p['name']}@{name}", f"then /{p['name']}:setup",
-             (f"[github: {_repo(p)}] " if _repo(p) else "")
-             + " ".join(str(p.get("description") or "").split())[:100]) for p in agents]
+def fetch_my_agents(token: str, *,
+                    transport: Optional[canopy_web.Transport] = None) -> Optional[list[dict]]:
+    """The agents canopy-web says this person can see (`GET /api/me/agents/`), as
+    `{slug, name, workspace}`; None when it cannot be read — setup then offers the
+    catalog's names instead, never fails over it."""
+    try:
+        body = canopy_web.call("GET", MY_AGENTS_PATH, token=token, transport=transport)
+    except Exception:  # noqa: BLE001 — an offer is never worth failing setup over
+        return None
+    rows = (body.get("items") or body.get("results") or []) if isinstance(body, dict) else body
+    if not isinstance(rows, list):
+        return None
+    out = []
+    for r in rows:
+        if isinstance(r, dict) and str(r.get("slug") or "").strip():
+            out.append({"slug": str(r["slug"]).strip(), "name": str(r.get("name") or ""),
+                        "workspace": str(r.get("workspace") or "")})
+    return out
+
+
+def offer_lines(name: str, agents: list[dict], mine: Optional[list[dict]] = None) -> list[str]:
+    """Per agent you can use: the one command that sets it up for you in Claude Code
+    (`canopy agent use <slug>`), its own setup command, and its GitHub repo.
+
+    `mine` is canopy-web's list of the agents you can see (slugs); without it the
+    catalog's plugin names stand in for the slugs."""
+    by_plugin = {str(p["name"]): p for p in agents}
+    if mine is None:
+        mine = [{"slug": str(p["name"]), "name": "", "workspace": ""} for p in agents]
+    if not mine:
+        return ["No agents for you to use yet — ask a workspace admin to add you to an "
+                "agent's workspace."]
+    rows = []
+    for a in mine:
+        p = by_plugin.get(a["slug"], {})
+        info = ((f"[github: {_repo(p)}] " if _repo(p) else "")
+                + (f"[{a['workspace']}] " if a.get("workspace") else "")
+                + " ".join(str(p.get("description") or a.get("name") or "").split())[:100])
+        rows.append((f"canopy agent use {a['slug']} --dir <folder>",
+                     f"then /{p.get('name') or a['slug']}:setup", info))
     w0, w1 = max(len(r[0]) for r in rows), max(len(r[1]) for r in rows)
-    out = ["Agents you can install (install only the ones you want):"]
+    out = ["Agents you can use yourself, in Claude Code (one folder per agent):"]
     out += [f"  {a.ljust(w0)}  {b.ljust(w1)}  {c}".rstrip() for a, b, c in rows]
-    out += ["Run each install line in Claude Code (or pick from the /plugin menu), then that "
-            "agent's own setup command — it tells you what else that agent needs.",
+    out += ["`canopy agent use <agent>` sets the agent up in that folder: it installs the "
+            f"agent's plugin (/plugin install <agent>@{name}), asks for your licence, points "
+            "the folder's Claude Code sessions at the agent and syncs its env. It is safe to "
+            "re-run and says exactly what, if anything, it needs from you. Then run that "
+            "agent's own setup command.",
+            "Work with an agent by asking it in your own Claude Code session. `canopy agent "
+            "dispatch` is only for handing work to a runner to do unattended.",
             "Installing an agent needs your own GitHub read access to its repo; a private "
             "agent's install fails without it (ask its owner for access)."]
     return out
@@ -363,6 +406,7 @@ def _connect(*, dry_run: bool = False, install_all: bool = False,
             f"canopy-web disagree; update canopy (/canopy:update) and re-run.")
     agents = _agents(catalog)
     plugins = [str(p["name"]) for p in agents]
+    mine = fetch_my_agents(token, transport=transport)
     url = marketplace_url()
     hp = helper_path()
     if hp is None:
@@ -386,7 +430,7 @@ def _connect(*, dry_run: bool = False, install_all: bool = False,
         if install_all and plugins:
             click.echo(f"dry run — would then install: {', '.join(f'{p}@{name}' for p in plugins)}")
         else:
-            _echo_offer(name, agents)
+            _echo_offer(name, agents, mine)
         return agents
     changed, removed = write_user_settings(name, entry)
     click.echo(f"settings   : {'registered' if changed else 'already registered'} "
@@ -400,7 +444,7 @@ def _connect(*, dry_run: bool = False, install_all: bool = False,
     if not ok:
         raise WorkspaceSetupError(how)
     if not install_all or not plugins:
-        _echo_offer(name, agents)
+        _echo_offer(name, agents, mine)
         return agents
     results = install_plugins(name, plugins, runner)
     for p, good, line in results:
@@ -415,9 +459,9 @@ def _connect(*, dry_run: bool = False, install_all: bool = False,
     return agents
 
 
-def _echo_offer(name: str, agents: list[dict]) -> None:
+def _echo_offer(name: str, agents: list[dict], mine: Optional[list[dict]] = None) -> None:
     click.echo("")
-    for line in offer_lines(name, agents):
+    for line in offer_lines(name, agents, mine):
         click.echo(line)
 
 

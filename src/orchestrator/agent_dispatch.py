@@ -504,3 +504,92 @@ def summarize_turn(turn: dict) -> dict:
         "result_note": note,
         "headline": headline,
     }
+
+
+# ── dispatch is for unattended work (canopy-web#1955) ──────────────────────────────────────
+# Two `connect` editors asked ACE 17 read-only questions as one-shot dispatches from their own
+# Claude Code (2026-10-23): neither had run `canopy agent use ace`, so `dispatch` was the only
+# agent command their Claude could find. Each question became a fresh cloud session, cut at
+# 2,000 chars, and every follow-up redid the work. A member who may use an agent never needs
+# to dispatch to reach it; dispatch hands work to a runner to do unattended. So a PERSON who
+# dispatches to an agent they do not use locally is told, once, on stderr. An agent's own
+# turn is never told: agents dispatching to each other is what dispatch is for.
+
+def local_use_note(slug: str) -> str:
+    """The one line that steers a person from `dispatch` to local use of agent `slug`."""
+    return (f"note: to work with {slug} yourself, run `canopy agent use {slug}` once and ask in "
+            f"your own Claude Code session; `canopy agent dispatch` hands work to a runner to "
+            f"do unattended.")
+
+
+def in_agent_context(start: str | Path | None = None) -> bool:
+    """True when this process runs FOR an agent: a runner turn ($CANOPY_TURN_ID, or the turn
+    canopy-web dispatched), $CANOPY_AGENT, or an agent repo underfoot. Never raises."""
+    if os.environ.get("CANOPY_TURN_ID", "").strip():
+        return True
+    try:
+        from orchestrator.canopy_web import agent_context_slug
+        if agent_context_slug(Path(start) if start else None):
+            return True
+    except Exception:  # noqa: BLE001 — a missing signal reads as "a person", which only adds a note
+        pass
+    return bool(local_agent_slug(start))
+
+
+def holds_local_use(licences, *, my_email: str = "", my_id: str = "") -> bool:
+    """Does the caller hold an ACTIVE licence to use the agent locally? Pure."""
+    if isinstance(licences, dict):
+        licences = licences.get("items") or licences.get("results") or []
+    for r in licences or []:
+        if not isinstance(r, dict):
+            continue
+        mine = ((my_id and str(r.get("user_id")) == str(my_id))
+                or (my_email and str(r.get("email") or "").lower() == my_email.lower()))
+        if mine and r.get("status") == "active":
+            return True
+    return False
+
+
+def local_use_note_for(slug: str, call) -> str:
+    """'' when the caller already uses `slug` in their own Claude Code (an active licence, or
+    an admin of it, who needs none) or this is an agent's turn; otherwise `local_use_note`.
+
+    `call(method, path)` is canopy_web.call. Never raises and never blocks a dispatch: an
+    unreadable answer counts as "no local use", which costs one informational line."""
+    if in_agent_context():
+        return ""
+    try:
+        me = call("GET", "/api/me/") or {}
+    except Exception:  # noqa: BLE001
+        me = {}
+    me = me if isinstance(me, dict) else {}
+    try:
+        lic = call("GET", f"/api/agents/{slug}/licenses") or []
+    except Exception:  # noqa: BLE001
+        lic = []
+    if holds_local_use(lic, my_email=str(me.get("email") or ""),
+                       my_id=str(me.get("id") or me.get("user_id") or "")):
+        return ""
+    try:
+        access = call("GET", f"/api/agents/{slug}/credentials/access") or {}
+    except Exception:  # noqa: BLE001
+        access = {}
+    if isinstance(access, dict) and access.get("via") in ("admin", "runner"):
+        return ""
+    return local_use_note(slug)
+
+
+# ── a follow-up reaches the session it follows (canopy-web#1955 point 2) ───────────────────
+_UUID_RX = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def session_send_path(session_ref: str) -> str:
+    """`POST /api/canopy-sessions/<id>/send` for a canopy session id or a canopy-web link to
+    one (the id is the UUID in its URL). Raises DispatchError for anything else — a guessed
+    id would send the follow-up into someone else's conversation or nowhere."""
+    m = _UUID_RX.search(session_ref or "")
+    if not m:
+        raise DispatchError(
+            f"{session_ref!r} is not a canopy session id — pass the session's id or its "
+            f"canopy-web link (the UUID in the URL)")
+    return f"/api/canopy-sessions/{m.group(0).lower()}/send"
