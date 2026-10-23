@@ -141,6 +141,57 @@ class RemoteStore:
             body["curation"] = curation
         return self.call("POST", f"{self.base}/versions", body) or {}
 
+    def served(self, out):
+        """The kb.sqlite the project serves now, downloaded and checked (None before its
+        first version). A refresh applies what changed to it and publishes the result."""
+        import gzip
+        import shutil
+        from pathlib import Path
+
+        from orchestrator import canopy_web
+        try:
+            f = self.call("GET", f"{self.base}/file") or {}
+        except canopy_web.CanopyError as e:
+            if "-> 404" in str(e) or "-> 422" in str(e):
+                return None
+            raise
+        if not f.get("url"):
+            return None
+        out = Path(out)
+        gz = out.with_suffix(".gz")
+        req = urllib.request.Request(f["url"])
+        digest = hashlib.sha256()
+        with urllib.request.urlopen(req, timeout=1800) as resp, open(gz, "wb") as fh:
+            for chunk in iter(lambda: resp.read(1 << 20), b""):
+                digest.update(chunk)
+                fh.write(chunk)
+        if digest.hexdigest() != f.get("sha256"):
+            raise KBError("the served knowledge base does not match its published hash")
+        with gzip.open(gz, "rb") as src, open(out, "wb") as dst:
+            shutil.copyfileobj(src, dst, 1 << 20)
+        gz.unlink(missing_ok=True)
+        return out
+
+    def publish_file(self, gz, sha256: str, state: dict) -> dict:
+        """Upload a built kb.sqlite.gz and publish it, with the state it was built from."""
+        from orchestrator import canopy_web
+        target = self.call("POST", f"{self.base}/upload") or {}
+        if not target.get("url"):
+            raise KBError(f"canopy-web gave no upload target for {self.base}")
+        with open(gz, "rb") as fh:
+            req = urllib.request.Request(target["url"], data=fh, method="PUT", headers={
+                **(target.get("headers") or {}), "Content-Length": str(__import__("os").path.getsize(gz))})
+            with urllib.request.urlopen(req, timeout=3600) as resp:
+                if resp.status >= 300:
+                    raise KBError(f"upload to storage failed: HTTP {resp.status}")
+        try:
+            proj = self.call("POST", f"{self.base}/publish", {"key": target["key"], "sha256": sha256, "state": state}) or {}
+        except canopy_web.CanopyError as e:
+            if "-> 409" in str(e):
+                raise KBError(f"canopy-web refused the publish: {e}") from e
+            raise
+        return {"version": proj.get("kb_version_number")}
+
     def wait(self, number: int, seconds: float = 1800) -> dict:
         """The version once canopy-web has indexed it (or failed to)."""
         deadline, delay = time.monotonic() + seconds, 2.0
