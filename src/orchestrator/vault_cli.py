@@ -772,24 +772,55 @@ def runner_credentials_cmd(runner_id, base_url, print_json):
     """A cloud runner's own Claude credentials, opened from the vault that holds them
     with this machine's device key. For the canopy runner, which runs it with its own
     runner token as CANOPY_TOKEN; it prints plaintext, so only with --print-json."""
-    from orchestrator import cred_resolve, runner_session
+    from orchestrator import cred_resolve
 
-    runner_id = runner_id or device_key.runner_id_from_config()
-    if not runner_id:
-        raise VaultCliError("no runner id (pass --runner, or pair: ~/.canopy/runner.json)")
-    # The box's OWN runner token: the one canopy hands out from (a person's is refused,
-    # `runner_only`). The runner passes it as CANOPY_TOKEN; else buy one with this
-    # machine's device key.
-    token = (os.environ.get("CANOPY_TOKEN", "").strip()
-             or runner_session.token(canopy_web.resolve_base_url(base_url or None)))
-    if not token:
-        raise VaultCliError("no runner token: run as the canopy runner (CANOPY_TOKEN), or on a "
-                            "machine whose approved device key can buy one")
+    runner_id, token = _runner_and_token(runner_id, base_url)
     try:
         out = cred_resolve.resolve_runner(runner_id, token=token, base_url=base_url or None)
     except canopy_web.CanopyError as e:
         raise VaultCliError(str(e)[:400]) from None
     click.echo(json.dumps(out, sort_keys=True))
+
+
+@vault_group.command("runner-seal")
+@click.option("--runner", "runner_id", default="",
+              help="Runner id (default: ~/.canopy/runner.json's).")
+@click.option("--base-url", default="", help="canopy-web (default: CANOPY_WEB_API_URL).")
+def runner_seal_cmd(runner_id, base_url):
+    """Seal a cloud runner's own credentials into its vault: reads `{name: plaintext}`
+    as JSON on stdin (names its credential list uses, `claude-token:<key>`), prints
+    `{names, vault_id}`. For the canopy runner, as itself (CANOPY_TOKEN)."""
+    from orchestrator import cred_resolve
+
+    runner_id, token = _runner_and_token(runner_id, base_url)
+    try:
+        values = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        raise VaultCliError("stdin is not JSON `{name: value}`") from None
+    if not isinstance(values, dict) or not values:
+        raise VaultCliError("nothing to seal: pass `{name: value}` on stdin")
+    try:
+        out = cred_resolve.seal_runner_values(runner_id, values, token=token, base_url=base_url or None)
+    except canopy_web.CanopyError as e:
+        raise VaultCliError(str(e)[:400]) from None
+    click.echo(json.dumps(out, sort_keys=True))
+
+
+def _runner_and_token(runner_id: str, base_url: str) -> tuple[str, str]:
+    """This runner's id and its OWN runner token: CANOPY_TOKEN (what the runner passes),
+    else one bought with this machine's device key — never a person's token, which
+    canopy-web refuses here (`runner_only`)."""
+    from orchestrator import runner_session
+
+    runner_id = runner_id or device_key.runner_id_from_config()
+    if not runner_id:
+        raise VaultCliError("no runner id (pass --runner, or pair: ~/.canopy/runner.json)")
+    token = (os.environ.get("CANOPY_TOKEN", "").strip()
+             or runner_session.token(canopy_web.resolve_base_url(base_url or None)))
+    if not token:
+        raise VaultCliError("no runner token: run as the canopy runner (CANOPY_TOKEN), or on a "
+                            "machine whose approved device key can buy one")
+    return runner_id, token
 
 
 @vault_group.command("binding")

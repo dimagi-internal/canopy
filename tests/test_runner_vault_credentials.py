@@ -107,3 +107,70 @@ def test_the_command_never_reads_with_a_persons_token(monkeypatch):
     res = CliRunner().invoke(vault_cli.vault_group, ["runner-credentials", "--runner", RUNNER, "--print-json"])
     assert res.exit_code != 0
     assert "no runner token" in res.output
+
+
+# ── sealing: the box writes its own credentials into its vault ────────────────
+
+class SealServer:
+    """Answers the resolve with one layer this device holds a copy of, and records the PUT."""
+
+    def __init__(self, *, mine=True):
+        self.vid = "11111111-2222-3333-4444-555555555555"
+        self.binding, self.vk, self.kv = f"vault:{self.vid}", os.urandom(32), 1
+        jkt = zk.jwk_thumbprint(ME_JWK)
+        self.layer = {"vault_id": self.vid, "name": "box vault", "workspace": "dimagi",
+                      "binding_id": self.binding, "kv": self.kv, "values": {},
+                      "wrap": zk.wrap_ecdh_es(self.vk, ME_JWK, zk.device_info(self.binding, self.kv, jkt))
+                      if mine else None}
+        self.calls = []
+
+    def __call__(self, method, url, headers, data):
+        self.calls.append((method, url, dict(headers), json.loads(data) if data else None))
+        if method == "GET":
+            return 200, json.dumps({"vaults": [self.layer]})
+        return 200, json.dumps({"names": [v["name"] for v in json.loads(data)["values"]]})
+
+
+def test_the_box_seals_values_canopy_web_cannot_read(monkeypatch):
+    monkeypatch.setattr(device_key, "proof_headers", lambda m, u: {"X-Canopy-Aws-Proof": f"proof-{m}"})
+    server = SealServer()
+    out = cred_resolve.seal_runner_values(RUNNER, {"claude-token:t1": "sk-ant-oat01-new"}, token="box",
+                                          base_url="https://c.example", transport=server, ecdh=_ecdh())
+    assert out == {"names": ["claude-token:t1"], "vault_id": server.vid}
+    method, url, headers, body = server.calls[-1]
+    assert (method, url) == ("PUT", f"https://c.example/api/harness/runners/{RUNNER}/vault/values")
+    assert headers["X-Canopy-Aws-Proof"] == "proof-PUT", "a proof made for the write itself"
+    [sent] = body["values"]
+    assert "sk-ant-oat01-new" not in json.dumps(body), "only ciphertext leaves the box"
+    # Bound to this vault, this name and this key version: it opens only as that.
+    assert zk.decrypt_value(server.vk, server.binding, "claude-token:t1", 1, sent["value_zk"]) == "sk-ant-oat01-new"
+
+
+def test_a_box_with_no_copy_of_the_key_cannot_seal(monkeypatch):
+    monkeypatch.setattr(device_key, "proof_headers", lambda m, u: {})
+    server = SealServer(mine=False)
+    try:
+        cred_resolve.seal_runner_values(RUNNER, {"claude-token:t1": "v"}, token="box",
+                                        base_url="https://c.example", transport=server, ecdh=_ecdh())
+    except cred_resolve.ZkUnlockError as e:
+        assert "no copy of a vault key" in str(e)
+    else:
+        raise AssertionError("no key copy must refuse")
+    assert [c[0] for c in server.calls] == ["GET"], "nothing is written"
+
+
+def test_the_seal_command_reads_values_from_stdin(monkeypatch):
+    seen = {}
+
+    def fake(runner_id, values, *, token, base_url):
+        seen.update(runner=runner_id, values=values, token=token)
+        return {"names": sorted(values), "vault_id": "v"}
+
+    monkeypatch.setattr(cred_resolve, "seal_runner_values", fake)
+    monkeypatch.setenv("CANOPY_TOKEN", "the-box-token")
+    res = CliRunner().invoke(vault_cli.vault_group, ["runner-seal", "--runner", RUNNER],
+                             input=json.dumps({"claude-token:t1": "secret"}))
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output.strip().splitlines()[-1]) == {"names": ["claude-token:t1"], "vault_id": "v"}
+    assert seen == {"runner": RUNNER, "values": {"claude-token:t1": "secret"}, "token": "the-box-token"}
+    assert "secret" not in res.output
