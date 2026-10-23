@@ -15,12 +15,20 @@ whom it trusts, so a server that lies can delay a grant but never add a reader:
   trusts — pinned, or pinned now on first sight under the same rule. Approving a machine
   makes that endorsement (canopy-web ``approveAndGrant``).
 
+**The keepers' record.** What this box pins is also kept in the vault itself (canopy-web
+``Vault.keeper_pins_zk``): a ``zk1`` value under the vault key, which canopy-web stores but
+can neither read nor forge. Every keeper reads it with its work and merges it with its own
+file, so a brand-new cloud box knows every key the fleet already trusted; where the record
+and this box's file disagree about a person, that person waits. People this box pins are
+written back over the version it read (a stale write is retried on the next pass).
+
 A target that fails is left waiting and named in the output; nothing is ever wrapped to an
 unverified key "to make it work". canopy-web accepts a keeper's wraps only for targets with
 no copy yet, so a keeper never replaces one. Nothing here prints a key or a value.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -50,9 +58,16 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+PINS_NAME = "~keeper-pins"
+
+
 def _trust_person(pins: dict, user_id: str, email: str, jkt: str, res: KeepResult) -> bool:
     """Trusted on first sight; a changed key is refused until an admin confirms it."""
     pin = pins.get(user_id)
+    if isinstance(pin, dict) and pin.get("conflict"):
+        res.skipped.append(f"{pin.get('email') or email or f'user {user_id}'}: this box and the vault's "
+                           "shared record pin different keys for them — an admin must confirm which is theirs")
+        return False
     if isinstance(pin, dict) and pin.get("jkt"):
         if pin["jkt"] == jkt:
             return True
@@ -119,20 +134,67 @@ def _wrap(vk: bytes, agent_id: str, kv, t: Target) -> dict:
             "wrap": zk.wrap_ecdh_es(vk, t.public_jwk, t.info(agent_id, kv))}
 
 
+def _read_shared(work: dict, vk: bytes) -> dict:
+    """The vault's shared record as ``{user_id: pin}``; empty when there is none yet, or
+    it was made under an older vault key. Raises ZkCliError when it does not open:
+    canopy-web cannot forge one, so an unreadable record means someone tried."""
+    rec = work.get("pins") or {}
+    value = rec.get("value") or ""
+    if not value or rec.get("kv") != work["kv"]:
+        return {}
+    try:
+        data = json.loads(zk.decrypt_value(vk, str(work["agent_id"]), PINS_NAME, work["kv"], value))
+    except Exception:  # noqa: BLE001 — any failure to open is the same answer
+        raise ZkCliError("the vault's shared keeper record does not open with the vault key — "
+                         "granting nothing until it is looked into") from None
+    people = data.get("people") if isinstance(data, dict) else None
+    return {str(k): v for k, v in (people or {}).items() if isinstance(v, dict) and v.get("jkt")}
+
+
+def _merged(local: dict, shared: dict) -> dict:
+    """What this pass trusts: both lists, with a person the two disagree on marked."""
+    out = {**shared, **local}
+    for uid, pin in shared.items():
+        mine = local.get(uid)
+        if isinstance(mine, dict) and mine.get("jkt") and mine["jkt"] != pin["jkt"]:
+            out[uid] = {"conflict": True, "email": pin.get("email") or mine.get("email") or ""}
+    return out
+
+
+def _write_shared(work: dict, vk: bytes, people: dict, call) -> None:
+    path = work.get("pins_path")
+    if not path:
+        return
+    body = json.dumps({"v": 1, "people": people}, sort_keys=True)
+    value = zk.encrypt_value(vk, str(work["agent_id"]), PINS_NAME, work["kv"], body)
+    try:
+        call("PUT", path, {"kv": work["kv"], "expected_version": int((work.get("pins") or {}).get("version") or 0),
+                           "value": value})
+    except canopy_web.CanopyError:
+        pass  # another keeper wrote first: the next pass reads theirs and merges
+
+
 def keep_one(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
     """Grant what ``work`` (one agent from the keeper read) allows. ``call(method, path,
-    body)`` reaches canopy-web as this runner."""
-    targets, res = plan(work, pins)
-    if not targets:
-        return res
+    body)`` reaches canopy-web as this runner. ``pins`` is this box's own file; it gains
+    every person pinned, and the vault's shared record gains them too."""
+    res = KeepResult(str(work.get("agent") or ""))
     agent_id, kv = str(work["agent_id"]), work["kv"]
     try:
         vk = cred_resolve.unwrap_device_vk(work["wrap"], agent_id=agent_id, kv=kv, ecdh=ecdh)
     except canopy_web.CanopyError as e:
         res.error = str(e)
         return res
+    try:
+        shared = _read_shared(work, vk)
+    except ZkCliError as e:
+        res.error = str(e)
+        return res
+    view = _merged(pins, shared)
+    targets, res = plan(work, view)
+    if not targets:
+        return res
     wraps = [_wrap(vk, agent_id, kv, t) for t in targets]
-    vk = b""  # noqa: F841
     try:
         call("POST", work.get("grant_path") or f"{work['_base']}/{work['agent']}/wraps",
              {"kv": kv, "wraps": wraps})
@@ -140,6 +202,17 @@ def keep_one(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
         res.error = f"canopy-web refused the copies: {str(e)[:300]}"
         return res
     res.granted = [t.describe() for t in targets]
+    # The people this vault's work involved (waiting members, endorsers), as this pass
+    # trusted them — not every person the box ever pinned for some other vault.
+    involved = {str(r.get("target")) for r in work.get("pending") or []
+                if isinstance(r, dict) and r.get("kind") == "member"}
+    involved |= {str(e.get("by")) for e in work.get("endorsements") or [] if isinstance(e, dict)}
+    learned = {uid: view[uid] for uid in involved
+               if uid in view and not view[uid].get("conflict") and uid not in shared}
+    pins.update({uid: p for uid, p in learned.items() if uid not in pins})
+    if learned:
+        _write_shared(work, vk, {**shared, **learned}, call)
+    vk = b""  # noqa: F841
     return res
 
 
