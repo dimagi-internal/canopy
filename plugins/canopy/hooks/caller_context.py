@@ -260,6 +260,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     lines.extend(_apps_lines(env.get("apps")))
     lines.extend(_parent_lines(env, tid))
     lines.extend(person_lines(env.get("person")))
+    lines.extend(_history_lines(env.get("conversation")))
     lines.append(f"Full envelope: {path}; re-read it with the who_is_asking tool "
                  f"(turn_id={tid}) before anything irreversible. Terms: {ACCESS_DOC}")
     return "\n".join(lines)
@@ -281,6 +282,26 @@ def _parent_lines(env: dict, tid: str) -> list:
     return [f"- parent: when this turn starts work in canopy-web (create_session, create_turn, "
             f"enqueue_turn), pass parent={json.dumps(parent)} so the new session includes this "
             "conversation's people. The canopy CLI sends it for you."]
+
+
+def _history_lines(conversation) -> list:
+    """A SENSITIVE conversation's earlier lines (canopy-web `conversation.history`).
+    Its turns run confined, are never resumed and are deleted on the box, so this is
+    the agent's only memory of what was already said. Absent for every other
+    conversation, which resumes its own session instead."""
+    history = conversation.get("history") if isinstance(conversation, dict) else None
+    if not isinstance(history, list) or not history:
+        return []
+    out = ["Earlier in this conversation (it holds a host's sensitive data, so this turn "
+           "starts fresh; this is what was already said, oldest first). Do not repeat it "
+           "back unasked, and keep it inside this conversation:"]
+    for h in history:
+        if not isinstance(h, dict) or not h.get("text"):
+            continue
+        who = "Agent" if h.get("role") == "agent" else (h.get("author") or "Person")
+        text = str(h["text"]).replace("\n", "\n  ")
+        out.append(f"- {_clean(who, 80)}: {text}")
+    return out if len(out) > 1 else []
 
 
 def _clean(value, limit: int = 200) -> str:
