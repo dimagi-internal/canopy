@@ -3,7 +3,7 @@
 `RemoteStore` is `canopy_kb.curate.Store` for a workspace project (`<workspace>/<handle>`):
 step results, records and originals by key (presigned, straight to storage, never
 through canopy-web's web task), the curation state and its lease, and the delta publish
-(plan, commit). A curator's refresh (`canopy kb drive sync`, eva's GiveWell refresh)
+(plan, whole-file publish). A curator's refresh (`canopy kb drive sync`, eva's GiveWell refresh)
 builds a `canopy_kb.curate.Curation` over it, and runs from an empty disk on any machine
 the agent's identity works on (canopy-web#1925).
 
@@ -92,9 +92,6 @@ class RemoteStore:
     def put_results(self, blobs: dict[str, bytes]) -> int:
         return self._put("results", blobs)
 
-    def put_records(self, blobs: dict[str, bytes]) -> int:
-        return self._put("blobs", blobs)
-
     def put_originals(self, files: dict[str, tuple[bytes, str]]) -> int:
         n = 0
         keys = sorted(files)
@@ -134,12 +131,6 @@ class RemoteStore:
     # publishing
     def plan(self, state: dict) -> dict:
         return self.call("POST", f"{self.base}/plan", {"state": state}) or {}
-
-    def commit(self, state: dict, base: int | None, curation: dict | None) -> dict:
-        body = {"state": state, "base": base}
-        if curation:
-            body["curation"] = curation
-        return self.call("POST", f"{self.base}/versions", body) or {}
 
     def served(self, out):
         """The kb.sqlite the project serves now, downloaded and checked (None before its
@@ -195,14 +186,3 @@ class RemoteStore:
                 raise KBError(f"canopy-web refused the publish: {e}") from e
             raise
         return {"version": proj.get("kb_version_number")}
-
-    def wait(self, number: int, seconds: float = 1800) -> dict:
-        """The version once canopy-web has indexed it (or failed to)."""
-        deadline, delay = time.monotonic() + seconds, 2.0
-        while True:
-            log = self.call("GET", f"{self.base}/versions?limit=10") or []
-            v = next((x for x in log if x.get("number") == number), {})
-            if v.get("status") in ("ready", "failed") or time.monotonic() > deadline:
-                return v or {"number": number, "status": "pending"}
-            time.sleep(delay)
-            delay = min(delay * 1.5, 15.0)
