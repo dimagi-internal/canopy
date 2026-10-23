@@ -1044,7 +1044,10 @@ def ws_attach_cmd(vault_id, agent, workspace):
 @ws_group.command("add-member")
 @click.option("--vault", "vault_id", required=True)
 @click.option("--email", required=True)
-@click.option("--role", type=click.Choice(["use", "manage"]), default="use")
+# A vault's roles are the agent's (canopy-web): admin or member; owner comes from owning
+# the agent or workspace. use / manage, the earlier words, are still accepted.
+@click.option("--role", type=click.Choice(["member", "admin", "use", "manage"]), default="member",
+              help="member (opens the values) or admin (also changes who is in the vault).")
 def ws_add_member_cmd(vault_id, email, role):
     click.echo(render_ws_vault(_ws_call("POST", f"/api/vaults/{vault_id}/members",
                                         {"email": email, "role": role})))
