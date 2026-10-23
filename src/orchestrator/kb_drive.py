@@ -216,12 +216,9 @@ def _reader_for(mime: str) -> tuple[str, str]:
     return "", READERS.get(mime, "")
 
 
-#: How each format's text is read from a Drive download: canopy_kb.prep's readers, or the
-#: bytes themselves for text formats. REVISION per reader: bump it (and relock,
-#: `python -m orchestrator.kb_drive --relock`) when a change can alter what it reads.
+#: Text formats read as their bytes; the rest by canopy_kb.prep's readers, whose
+#: REVISIONs and lock (`canopy_kb.prep.steps`) cover them here too.
 _PLAIN = ("md", "txt", "csv")
-_READ_REVISION = "1"
-LOCK = Path(__file__).with_name("kb_drive.lock")
 
 
 def read_step(kind: str):
@@ -229,15 +226,8 @@ def read_step(kind: str):
     from canopy_kb.curate import Step
     from canopy_kb.prep import steps as prep_steps
     if kind in _PLAIN:
-        return Step(f"drive:read:{kind}", _READ_REVISION, {"kind": kind})  # its bytes, as text
-    base = prep_steps.reader(kind)
-    return Step(f"drive:read:{kind}", f"{_READ_REVISION}.{base.revision}", {"kind": kind},
-                base.sources, base.libraries)
-
-
-def _steps():
-    return [read_step(k) for k in sorted(set(_PLAIN) | {v for v in READERS.values() if v not in _PLAIN}
-                                        | {v[1] for v in EXPORTS.values()})]
+        return Step(f"drive:read:{kind}", "1", {"kind": kind})  # its bytes, as text
+    return prep_steps.reader(kind)
 
 
 def _read(kind: str, path: Path) -> tuple[str, str]:
@@ -263,14 +253,13 @@ def sync(ref: str, repo: Path, source: str = "", push: bool = True, gog: Gog | N
     import tempfile
 
     engine()
-    from canopy_kb.curate import Curation, check_lock
+    from canopy_kb.curate import Curation
     from canopy_kb.prep import steps as prep_steps
     from canopy_kb.sensitive import header_flags, spreadsheet_headers
 
     from orchestrator import canopy_web
     from orchestrator.kb_remote import RemoteStore
 
-    check_lock(_steps(), LOCK)
     prep_steps.check()
     gog = gog or Gog(repo)
     store = store or RemoteStore(ref)
@@ -378,10 +367,3 @@ def _parts(ref: str) -> dict:
         "guide": ["Documents are files from approved Google Drive folders; `original` gives the Drive link."],
         "tables": {}}, "aliases": {}}
 
-
-if __name__ == "__main__":
-    import sys
-
-    if "--relock" in sys.argv:
-        from canopy_kb.curate import write_lock
-        print(write_lock(_steps(), LOCK))

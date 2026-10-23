@@ -1,6 +1,5 @@
 """`canopy kb drive`: the inventory reads metadata only; sync reads only what the owner
 approved, holds spreadsheets with personal-data headers, and publishes the rest."""
-import json
 from pathlib import Path
 
 import pytest
