@@ -322,13 +322,17 @@ def sync(ref: str, repo: Path, source: str = "", push: bool = True, gog: Gog | N
         if not push:
             return report
 
-        def text_of(iid: str) -> str:
-            if iid in texts:
-                return texts[iid]
-            got = cur.result(keys[iid])
-            if got is None:
-                raise KBError(f"{iid}: its text is not stored on canopy-web; sync again to re-read it")
-            return got["text"]
+        def text_of(ids: list[str]) -> dict[str, str]:
+            got = cur.results([keys[i] for i in ids if i not in texts])
+            out = {}
+            for i in ids:
+                if i in texts:
+                    out[i] = texts[i]
+                elif keys[i] in got:
+                    out[i] = got[keys[i]]["text"]
+                else:
+                    raise KBError(f"{i}: its text is not stored on canopy-web; sync again to re-read it")
+            return out
 
         report["push"] = cur.publish(docs, text_of, _parts(ref), allow_removals=True)
     return report
