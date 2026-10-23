@@ -343,3 +343,79 @@ def test_no_warning_when_the_env_pins_the_identity(monkeypatch, tmp_path, capsys
 
     assert cw.resolve_token(None) == "pinned"
     assert capsys.readouterr().err == ""
+
+
+# A project turn's or project chat's session is SCOPED to the person who asked
+# (canopy-web#1782): the runner leaves the conversation's caller token where
+# `canopy-web-mcp-headers.js` finds it, and the CLI must act with the same token —
+# never a PAT, which would act as the box's owner. An agent's session is unaffected.
+
+def _scoped_home(monkeypatch, tmp_path):
+    home = _home_with_operator_token(monkeypatch, tmp_path)
+    root = home / ".canopy" / "scoped"
+    monkeypatch.setattr(cw, "scoped_root", lambda: root)
+    return home, root
+
+
+def test_a_scoped_cloud_session_acts_with_its_caller_token(monkeypatch, tmp_path):
+    _, root = _scoped_home(monkeypatch, tmp_path)
+    (root / "turn").mkdir(parents=True)
+    (root / "turn" / "0a1b2c3d-1111.token").write_text("cct_asker\n")
+    monkeypatch.setenv("CANOPY_SCOPED_TURN", "0a1b2c3d-1111")
+    monkeypatch.setenv("CANOPY_WEB_PAT", "box-pat")          # outranked: the asker wins
+    monkeypatch.chdir(tmp_path)
+    assert cw.resolve_token(None) == "cct_asker"
+    assert cw.resolve_token("explicit") == "explicit"        # an explicit arg still wins
+
+
+def test_a_scoped_session_with_no_token_never_falls_back_to_a_pat(monkeypatch, tmp_path):
+    _scoped_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("CANOPY_SCOPED_TURN", "0a1b2c3d-1111")  # set, but no file
+    monkeypatch.setenv("CANOPY_WEB_PAT", "box-pat")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(cw.ScopedSessionError, match="caller token"):
+        cw.resolve_token(None)
+
+
+def test_a_malformed_scoped_turn_is_still_scoped(monkeypatch, tmp_path):
+    _scoped_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("CANOPY_SCOPED_TURN", "../../etc/passwd")
+    monkeypatch.chdir(tmp_path)
+    assert cw.scoped_caller_token() == (True, "")
+
+
+def test_a_file_that_is_not_a_caller_token_is_ignored(monkeypatch, tmp_path):
+    _, root = _scoped_home(monkeypatch, tmp_path)
+    (root / "turn").mkdir(parents=True)
+    (root / "turn" / "0a1b2c3d-1111.token").write_text("cpat_not_a_caller_token")
+    monkeypatch.setenv("CANOPY_SCOPED_TURN", "0a1b2c3d-1111")
+    assert cw.scoped_caller_token() == (True, "")
+
+
+def test_a_laptop_project_chat_finds_its_task_token_from_the_worktree(monkeypatch, tmp_path):
+    home, root = _scoped_home(monkeypatch, tmp_path)
+    (root / "task").mkdir(parents=True)
+    (root / "task" / "c-fix-the-ide-1a2b.token").write_text("cct_laptop_asker")
+    wt = home / "emdash" / "worktrees" / "canopy-web-5cdf" / "emdash-c-fix-the-ide-1a2b-x9yz"
+    wt.mkdir(parents=True)
+    monkeypatch.chdir(wt)
+    assert cw.scoped_caller_token() == (True, "cct_laptop_asker")
+    assert cw.resolve_token(None) == "cct_laptop_asker"
+
+
+def test_outside_a_scoped_session_nothing_changes(monkeypatch, tmp_path):
+    _scoped_home(monkeypatch, tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert cw.scoped_caller_token() == (False, "")
+    assert cw.resolve_token(None) == "operator-token"
+
+
+def test_an_agents_session_keeps_acting_as_the_agent(monkeypatch, tmp_path):
+    _, root = _scoped_home(monkeypatch, tmp_path)
+    (root / "turn").mkdir(parents=True)
+    (root / "turn" / "0a1b2c3d-1111.token").write_text("cct_colleague")
+    monkeypatch.setenv("CANOPY_SCOPED_TURN", "0a1b2c3d-1111")
+    monkeypatch.setenv("CANOPY_AGENT", "ace")
+    monkeypatch.setenv("CANOPY_WEB_PAT", "ace-own-pat")
+    monkeypatch.chdir(tmp_path)
+    assert cw.resolve_token(None) == "ace-own-pat"
