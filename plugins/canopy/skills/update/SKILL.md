@@ -99,9 +99,22 @@ bump` now keeps `pyproject.toml` in lockstep with VERSION, but this step is SHA-
 that reached main without a bump reuses the version, and only `--reinstall` rebuilds it from the
 freshly-pulled source.
 
+**Keep what was installed beside canopy.** `uv tool install --reinstall --force <clone>` installs
+exactly what it is told and drops every `--with` — the knowledge-base engine (`canopy-kb`) a
+curator's box needs for `canopy kb build|push` vanished that way on the next release (cloud-ec2-2,
+2026-10-23). When the CLI already comes from the clone, `uv tool upgrade --reinstall canopy` rebuilds
+it from that same source and keeps every requirement uv's receipt records; only a CLI from
+anywhere else (a VCS or dev install) is re-pointed with `install`.
+
 ```bash
+clone="$HOME/.claude/plugins/marketplaces/canopy"
+receipt="${UV_TOOL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools}/canopy/uv-receipt.toml"
 for attempt in 1 2 3; do
-  out=$(uv tool install --reinstall --force "$HOME/.claude/plugins/marketplaces/canopy" 2>&1); rc=$?
+  if grep -qF "directory = \"$clone\"" "$receipt" 2>/dev/null; then
+    out=$(uv tool upgrade --reinstall canopy 2>&1); rc=$?
+  else
+    out=$(uv tool install --reinstall --force "$clone" 2>&1); rc=$?
+  fi
   echo "$out" | tail -3
   [ $rc -eq 0 ] && break
   case "$out" in

@@ -161,6 +161,14 @@ CLI_SOURCE="$HOME/.claude/plugins/marketplaces/canopy"
 install_cli() {
   local target="$1"
   if ensure_uv; then
+    # Already installed from this source: `upgrade --reinstall` rebuilds it and keeps
+    # what was installed beside it (`--with canopy-kb`, readers); `install` drops those.
+    local receipt="${UV_TOOL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools}/canopy/uv-receipt.toml"
+    if grep -qF "directory = \"$target\"" "$receipt" 2>/dev/null \
+       && uv tool upgrade --reinstall canopy >/dev/null 2>&1; then
+      echo "uv tool"
+      return 0
+    fi
     if uv tool install --reinstall --force "$target" >/dev/null 2>&1; then
       echo "uv tool"
       return 0
