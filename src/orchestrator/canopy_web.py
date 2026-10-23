@@ -360,10 +360,68 @@ def _agent_identity_error(slug: str, why: str) -> "AgentIdentityError":
     )
 
 
+def scoped_root() -> Path:
+    """Where a runner leaves a scoped session's caller token (canopy-web access.md →
+    "A colleague's FULL turn reads as the colleague"; "Projects run as the person
+    who asked"). Read the same way `scripts/canopy-web-mcp-headers.js` reads it."""
+    return Path.home() / ".canopy" / "scoped"
+
+
+_SCOPED_TURN_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+_SCOPED_TASK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
+
+
+class ScopedSessionError(RuntimeError):
+    """A scoped session whose caller token cannot be read. Never answered with a PAT."""
+
+
+def _read_scoped(path: Path) -> str:
+    try:
+        tok = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return tok if tok.startswith("cct_") else ""
+
+
+def scoped_caller_token(cwd: Optional[Path] = None) -> tuple[bool, str]:
+    """``(scoped, token)`` for this session's conversation caller token.
+
+    Cloud: ``$CANOPY_SCOPED_TURN`` names the turn, and the variable alone makes the
+    session scoped — a missing file is ``(True, "")``, never a reason to use a PAT.
+    Laptop: ``~/.canopy/scoped/task/<emdash task>.token``, the task read off the
+    session's ``~/emdash/worktrees/…`` path. Mirrors ``scopedSession()`` in
+    ``canopy-web-mcp-headers.js`` so the CLI and the MCP agree on who a session is."""
+    turn = os.environ.get("CANOPY_SCOPED_TURN", "").strip()
+    if turn:
+        if not _SCOPED_TURN_RE.match(turn):
+            return True, ""
+        return True, _read_scoped(scoped_root() / "turn" / f"{turn}.token")
+    worktrees = Path.home() / "emdash" / "worktrees"
+    here = Path(cwd) if cwd is not None else Path.cwd()
+    try:
+        parts = here.relative_to(worktrees).parts
+    except ValueError:
+        return False, ""
+    for part in parts:
+        names = [part, part[len("emdash-"):] if part.startswith("emdash-") else ""]
+        for name in names:
+            for cand in (name, re.sub(r"-[0-9a-z]+$", "", name)):
+                if cand and _SCOPED_TASK_RE.match(cand):
+                    tok = _read_scoped(scoped_root() / "task" / f"{cand}.token")
+                    if tok:
+                        return True, tok
+    return False, ""
+
+
 def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
     """The canopy-web PAT this process acts with.
 
-    Precedence: explicit arg → env ``CANOPY_WEB_PAT`` (a cloud runner's turn login) →
+    A session with no agent identity that a runner SCOPED to its asker (a project
+    turn or project chat, canopy-web#1782) acts with that conversation's caller
+    token, ahead of every PAT, and never falls back to one
+    (:func:`scoped_caller_token`). An agent's own session keeps acting as the agent.
+
+    Precedence otherwise: explicit arg → env ``CANOPY_WEB_PAT`` (a cloud runner's turn login) →
     in a runner turn, the login canopy-web issues for that turn
     (:mod:`orchestrator.turn_agent_token`) → the agent's own stored PAT
     (``~/.<slug>/.env``, slug from :func:`agent_context_slug`) → the operator's
@@ -380,6 +438,15 @@ def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
     if token:
         return token
     slug = agent_context_slug()
+    if not slug:
+        scoped, caller = scoped_caller_token()
+        if scoped:
+            if not caller:
+                raise ScopedSessionError(
+                    "this session is scoped to the person who asked, but its caller token "
+                    f"is missing under {scoped_root()}. Refusing to fall back to a PAT, which "
+                    "would act as this box's owner instead (canopy-web#1782).")
+            return caller
     allow_operator = bool(slug) and not agent_strict and \
         os.environ.get(ALLOW_OPERATOR_ENV, "").strip() == "1"
     # Explicit env wins: it is how a runner pins the identity for a turn.

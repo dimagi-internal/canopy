@@ -42,9 +42,13 @@ def _no_ambient_dispatched_turn(monkeypatch, tmp_path_factory):
     the envelope root at an empty dir and clear the env that names a turn."""
     from orchestrator import canopy_web, provenance
 
-    for var in ("CANOPY_CALLER", "CANOPY_TURN_ID", "CANOPY_SESSION_ID"):
+    for var in ("CANOPY_CALLER", "CANOPY_TURN_ID", "CANOPY_SESSION_ID", "CANOPY_SCOPED_TURN"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(provenance, "CALLER_ROOT", tmp_path_factory.mktemp("caller"))
+    # Nor a runner-left scoped caller token (canopy-web#1782): it would make every
+    # resolve in a project-repo worktree act as that conversation's asker.
+    scoped = tmp_path_factory.mktemp("scoped")
+    monkeypatch.setattr(canopy_web, "scoped_root", lambda: scoped)
     canopy_web._reset_identity_announcements()
 
 
