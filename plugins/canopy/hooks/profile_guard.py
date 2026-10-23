@@ -309,10 +309,28 @@ def decide(tool: str, tool_input: dict, prof: dict, cwd: str, results_dir=None):
 
 
 def main() -> int:
+    """Fail closed throughout: a payload this hook cannot read, or an error while it
+    judges one, refuses the call (exit 2). An unhandled exception would exit 1, which
+    Claude Code treats as a non-blocking hook error — the call would run."""
+    try:
+        return _judge()
+    except Exception as exc:  # noqa: BLE001 — never let an error become an allow
+        print(f"canopy: profile_guard could not judge this call ({type(exc).__name__}), so it "
+              "is refused.", file=sys.stderr)
+        return 2
+
+
+def _judge() -> int:
     try:
         data = json.load(sys.stdin)
     except ValueError:
-        return 0                            # not a hook payload we understand; not ours to judge
+        data = None
+    if not isinstance(data, dict):
+        # Claude Code always sends a JSON object: anything else is not a payload this
+        # hook can place, and a caller's session must never get through on one.
+        print("canopy: profile_guard could not read this tool call's payload, so it is "
+              "refused.", file=sys.stderr)
+        return 2
     # A runner that spawns claude itself (the cloud runner) names the profile
     # outright; it is inherited by this hook and cannot be unset by the agent.
     explicit = os.environ.get("CANOPY_PROFILE", "")

@@ -428,3 +428,21 @@ def test_the_live_ask_commands_still_pass(monkeypatch, capsys, profiles, tmp_pat
     ]
     for cmd in bad:
         assert _run(monkeypatch, capsys, "Bash", {"command": cmd}, cwd=str(w))[0] == 2, cmd
+
+
+# --- fail closed on what the hook cannot read -----------------------------------------
+
+@pytest.mark.parametrize("raw", ["", "not json", "{\"tool_name\": ", "[1, 2]", "null", "\"Read\""])
+def test_a_payload_it_cannot_parse_is_refused(monkeypatch, capsys, raw):
+    monkeypatch.setattr("sys.stdin", io.StringIO(raw))
+    assert pg.main() == 2
+    assert "refused" in capsys.readouterr().err
+
+
+def test_an_error_while_judging_is_a_refusal_not_an_allow(monkeypatch, capsys, profiles):
+    def boom(*a, **k):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(pg, "decide", boom)
+    code, err = _run(monkeypatch, capsys, "Read", {"file_path": "/Users/a/w/x"})
+    assert code == 2 and "refused" in err
