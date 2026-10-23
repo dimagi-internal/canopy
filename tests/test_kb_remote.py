@@ -93,6 +93,8 @@ def test_a_refresh_downloads_the_served_file_checked_and_publishes_a_built_one(w
         s.served(tmp_path / "again.sqlite")
     gz = tmp_path / "built.gz"
     gz.write_bytes(b"built")
-    assert s.publish_file(gz, "f" * 64, {"docs": {}, "parts": {}}) == {"version": 2}
+    assert s.publish_file(gz, "f" * 64, {"docs": {}, "parts": {}}, {"added": ["x"], "changed": [], "removed": []}) \
+        == {"version": 2}
+    assert web.published["changes"]["added"] == ["x"]
     assert web.stored["upload"]["k1"] == b"built" and web.published["sha256"] == "f" * 64
 
