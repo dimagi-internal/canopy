@@ -626,3 +626,15 @@ def test_the_agent_is_told_which_parent_to_pass(tmp_path):
 def test_no_ids_no_parent_line(tmp_path):
     env = {k: v for k, v in ENV.items() if k != "turn_id"}
     assert "- parent:" not in cc.summarize(env, str(tmp_path / "env.json"), "")
+
+
+def test_a_sensitive_conversations_history_is_its_memory(tmp_path):
+    """canopy-web's `conversation.history`: a sensitive conversation's turns start
+    fresh, so the earlier lines are how the agent remembers them."""
+    env = {**ENV, "conversation": {"history": [
+        {"role": "person", "author": "Amy", "text": "how many visits?"},
+        {"role": "agent", "author": None, "text": "12 visits\nacross 3 workers"}]}}
+    text = cc.summarize(env, str(tmp_path / "env.json"), TID)
+    assert "Earlier in this conversation" in text
+    assert "- Amy: how many visits?" in text and "- Agent: 12 visits\n  across 3 workers" in text
+    assert "Earlier in this conversation" not in cc.summarize(ENV, str(tmp_path / "e"), TID)
