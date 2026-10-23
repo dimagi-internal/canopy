@@ -12,12 +12,15 @@ Two commands, run by the KB's steward as its own Google identity (`--repo`):
   kept on the source) says whether anything changed since the last listing; when
   nothing did, the walk is skipped.
 * `sync` reads ONLY the files canopy-web says are approved (`?readable=true`),
-  re-downloading one only when its md5 or version moved (Google Docs export as
+  downloading one only when its md5 or version moved (Google Docs export as
   Markdown, Sheets as xlsx, Slides as PDF), checks every spreadsheet's column headers
-  (`canopy_kb.sensitive`) and holds one that names or identifies people, turns the
-  rest into the bundle's items (shared readers: `canopy_kb.prep.extract`), builds,
-  and pushes the difference (`canopy kb push --bundle`). A file that was removed,
-  trashed, excluded or held is simply not in the bundle, so the next version drops it.
+  (`canopy_kb.sensitive`) and holds one that names or identifies people, reads the
+  rest (shared readers: `canopy_kb.prep.extract`) and publishes the difference;
+  canopy-web builds the index. It needs nothing on the machine: what it learnt last
+  time (each file's revision, what reading it found) is the curation state on
+  canopy-web, and each text a step result there (`canopy_kb.curate`), so any machine
+  syncs as incrementally as the last one did. A file that was removed, trashed,
+  excluded or held is simply not published, so the next version drops it.
 
 Originals are not copied: each item's `original` names the Drive file and the
 revision it was read at, and the `original` tool hands readers the Drive link (opened
@@ -213,89 +216,145 @@ def _reader_for(mime: str) -> tuple[str, str]:
     return "", READERS.get(mime, "")
 
 
-def _text_of(kind: str, path: Path) -> tuple[str, str]:
+#: Text formats read as their bytes; the rest by canopy_kb.prep's readers, whose
+#: REVISIONs and lock (`canopy_kb.prep.steps`) cover them here too.
+_PLAIN = ("md", "txt", "csv")
+
+
+def read_step(kind: str):
+    """The curation step that reads a Drive file of this kind (`canopy_kb.curate`)."""
+    from canopy_kb.curate import Step
+    from canopy_kb.prep import steps as prep_steps
+    if kind in _PLAIN:
+        return Step(f"drive:read:{kind}", "1", {"kind": kind})  # its bytes, as text
+    return prep_steps.reader(kind)
+
+
+def _read(kind: str, path: Path) -> tuple[str, str]:
     """(text, error) from a downloaded file."""
-    if kind in ("md", "txt", "csv"):
+    if kind in _PLAIN:
         return path.read_bytes().decode("utf-8", "replace"), ""
     from canopy_kb.prep.extract import extract_one
     res = extract_one(kind, str(path))
-    return res.get("text") or "", res.get("error") or ""
+    return res.get("text") or "", res.get("error") or res.get("unavailable") or ""
 
 
 def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def sync(ref: str, repo: Path, data: Path, source: str = "", push: bool = True, gog: Gog | None = None) -> dict:
-    """Download the approved files that changed, hold spreadsheets with personal-data
-    headers, write the bundle, build and push it. `data` is the working cache."""
+def sync(ref: str, repo: Path, source: str = "", push: bool = True, gog: Gog | None = None, store=None) -> dict:
+    """Read the approved files, hold spreadsheets with personal-data headers, and publish
+    the difference, from an empty disk (canopy-web#1925). What a sync needs from the last
+    one lives on canopy-web: the curation state remembers each file's revision and what
+    reading it found, and the text it read is a step result. So an unchanged file is not
+    downloaded at all, and canopy-web builds the index; no machine keeps a cache or a
+    kb.sqlite. A held spreadsheet's text is never stored: only the verdict is."""
+    import tempfile
+
     engine()
+    from canopy_kb.curate import Curation
+    from canopy_kb.prep import steps as prep_steps
     from canopy_kb.sensitive import header_flags, spreadsheet_headers
 
     from orchestrator import canopy_web
-    from orchestrator.kb_cli import push as kb_push
-    from orchestrator.kb_engine import build
+    from orchestrator.kb_remote import RemoteStore
 
+    prep_steps.check()
     gog = gog or Gog(repo)
-    data = Path(data)
-    raw = data / "drive"
-    raw.mkdir(parents=True, exist_ok=True)
-    cache_path = data / "drive.json"
-    cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
-    items, report = [], {"read": 0, "downloaded": 0, "held": [], "unreadable": [], "indexed": 0}
-    for s in _sources(ref, source):
-        files = canopy_web.call("GET", f"{_base(ref)}/sources/{s['id']}/files?readable=true") or []
-        for f in files:
-            fid, mime = f["file_id"], f.get("mime_type") or ""
-            fmt, kind = _reader_for(mime)
-            if not kind:
-                report["unreadable"].append(f.get("name"))
-                continue
-            report["read"] += 1
-            stamp = f.get("md5") or f.get("drive_version") or f.get("modified_time") or ""
-            entry = cache.get(fid) or {}
-            path = raw / f"{fid}.{fmt or kind}"
-            if entry.get("stamp") != stamp or not path.exists():
-                gog.download(fid, path, fmt)
-                body = path.read_bytes()
-                entry = {"stamp": stamp, "sha256": hashlib.sha256(body).hexdigest(), "bytes": len(body),
-                         "fetched_at": _now(), "kind": kind}
-                if kind in ("xlsx", "xls", "csv"):
-                    entry["headers"] = header_flags(spreadsheet_headers(path, kind))
-                cache[fid] = entry
-                report["downloaded"] += 1
-            held = entry.get("headers") or []
-            if held and not f.get("hold_released"):
-                if f.get("held_headers") != held:
-                    canopy_web.call("POST", f"{_base(ref)}/sources/{s['id']}/files/{fid}/hold", {"headers": held})
-                report["held"].append({"file": f.get("name"), "headers": held})
-                continue
-            text, err = _text_of(kind, path)
-            if not text.strip():
-                report["unreadable"].append(f"{f.get('name')}: {err or 'no text'}")
-                continue
-            items.append(_item(s, f, entry, text))
-    cache_path.write_text(json.dumps(cache, indent=1), encoding="utf-8")
-    report["indexed"] = len(items)
-    bundle = _write_bundle(ref, data / "bundle", items)
-    out_db = data / "kb.sqlite"
-    report["build"] = build(bundle, out_db, out_db if out_db.exists() else None)
-    if push:
-        report["push"] = kb_push(ref, repo, out_db, bundle=bundle)
+    store = store or RemoteStore(ref)
+    report = {"read": 0, "downloaded": 0, "held": [], "unreadable": [], "indexed": 0}
+    docs: dict[str, dict] = {}
+    texts: dict[str, str] = {}      # item id -> text read this run
+    keys: dict[str, str] = {}       # item id -> its text's step result
+    with Curation(store) as cur, tempfile.TemporaryDirectory(prefix="kb-drive-") as td:
+        seen = cur.state.section("drive")
+        listed: set[str] = set()
+        for s in _sources(ref, source):
+            files = canopy_web.call("GET", f"{_base(ref)}/sources/{s['id']}/files?readable=true") or []
+            for f in files:
+                fid, mime = f["file_id"], f.get("mime_type") or ""
+                listed.add(fid)
+                fmt, kind = _reader_for(mime)
+                if not kind:
+                    report["unreadable"].append(f.get("name"))
+                    continue
+                report["read"] += 1
+                stamp = f.get("md5") or f.get("drive_version") or f.get("modified_time") or ""
+                key = read_step(kind).key(file=fid, stamp=stamp)
+                entry = seen.get(fid) or {}
+                released = bool(f.get("hold_released"))
+                need_text = entry.get("key") != key or (entry.get("headers") and released and not entry.get("text_sha"))
+                if need_text:
+                    path = Path(td) / f"{fid}.{fmt or kind}"
+                    gog.download(fid, path, fmt)
+                    body = path.read_bytes()
+                    report["downloaded"] += 1
+                    entry = {"key": key, "stamp": stamp, "sha256": hashlib.sha256(body).hexdigest(),
+                             "bytes": len(body), "fetched_at": _now(), "kind": kind}
+                    if kind in ("xlsx", "xls", "csv"):
+                        entry["headers"] = header_flags(spreadsheet_headers(path, kind))
+                    if not entry.get("headers") or released:  # read it; a held file's text is never kept
+                        text, err = _read(kind, path)
+                        if text.strip():
+                            cur.put(key, {"text": text})
+                            texts[DOC_PREFIX + fid] = text
+                            entry |= {"text_sha": _text_sha(text), "text_sha256": hashlib.sha256(
+                                text.encode("utf-8")).hexdigest()}
+                        else:
+                            entry["error"] = err or "no text"
+                    path.unlink(missing_ok=True)
+                    seen[fid] = entry
+                held = entry.get("headers") or []
+                if held and not released:
+                    if f.get("held_headers") != held:
+                        canopy_web.call("POST", f"{_base(ref)}/sources/{s['id']}/files/{fid}/hold", {"headers": held})
+                    report["held"].append({"file": f.get("name"), "headers": held})
+                    continue
+                if not entry.get("text_sha"):
+                    report["unreadable"].append(f"{f.get('name')}: {entry.get('error') or 'no text'}")
+                    continue
+                docs[DOC_PREFIX + fid] = _item(s, f, entry)
+                keys[DOC_PREFIX + fid] = key
+        for fid in set(seen) - listed:
+            seen.pop(fid)  # no longer readable (removed, excluded, trashed): forget it
+        report["indexed"] = len(docs)
+        if not push:
+            return report
+
+        def text_of(ids: list[str]) -> dict[str, str]:
+            got = cur.results([keys[i] for i in ids if i not in texts])
+            out = {}
+            for i in ids:
+                if i in texts:
+                    out[i] = texts[i]
+                elif keys[i] in got:
+                    out[i] = got[keys[i]]["text"]
+                else:
+                    raise KBError(f"{i}: its text is not stored on canopy-web; sync again to re-read it")
+            return out
+
+        report["push"] = cur.publish(docs, text_of, _parts(ref), allow_removals=True)
     return report
 
 
-def _item(source: dict, f: dict, entry: dict, text: str) -> dict:
-    """A Drive file as an item of the bundle (`drive:<file id>`), its source recorded."""
+def _text_sha(text: str) -> str:
+    """The address a record gives its text (`canopy_kb.records`)."""
+    from canopy_kb import records
+    return records.sha(text)
+
+
+def _item(source: dict, f: dict, entry: dict) -> dict:
+    """A Drive file as a published record (`drive:<file id>`, its text by reference), its
+    source recorded."""
     fid = f["file_id"]
     revision = f.get("drive_version") or f.get("md5") or ""
     name = f.get("name") or fid
     return {
         "id": DOC_PREFIX + fid, "type": ITEM_TYPES.get(f.get("mime_type") or "", "file"), "title": name,
         "url": f.get("web_url") or f"https://drive.google.com/file/d/{fid}/view",
-        "date": (f.get("modified_time") or "")[:10], "text": text,
-        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-        "fetched_at": f.get("modified_time") or "",
+        "date": (f.get("modified_time") or "")[:10], "text_sha": entry["text_sha"],
+        "sha256": entry["text_sha256"], "fetched_at": f.get("modified_time") or "",
         "meta": {"source": "drive", "source_name": source.get("name"), "folder": f.get("path") or "",
                  "drive": {"file_id": fid, "revision": revision, "mime_type": f.get("mime_type") or ""}},
         "original": {"sha256": entry["sha256"], "filename": name, "content_type": f.get("mime_type") or "",
@@ -304,19 +363,11 @@ def _item(source: dict, f: dict, entry: dict, text: str) -> dict:
     }
 
 
-def _write_bundle(ref: str, bundle: Path, items: list[dict]) -> Path:
-    bundle.mkdir(parents=True, exist_ok=True)
-    (bundle / "tables").mkdir(exist_ok=True)
-    manifest = bundle / "manifest.json"
-    if not manifest.exists():
-        manifest.write_text(json.dumps({
-            "name": re.sub(r"[^a-z0-9-]+", "-", ref.split("/")[-1]), "publisher": "Google Drive folders",
-            "license": "private: the folders' owner decides who reads it",
-            "guide": ["Documents are files from approved Google Drive folders; `original` gives the Drive link."],
-            "tables": {}}, indent=2), encoding="utf-8")
-    items = sorted(items, key=lambda i: i["id"])
-    (bundle / "items.jsonl").write_text("".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items),
-                                        encoding="utf-8")
-    if not (bundle / "aliases.json").exists():
-        (bundle / "aliases.json").write_text("{}", encoding="utf-8")
-    return bundle
+def _parts(ref: str) -> dict:
+    """The corpus-wide parts of a Drive KB: its manifest and (no) aliases."""
+    return {"manifest": {
+        "name": re.sub(r"[^a-z0-9-]+", "-", ref.split("/")[-1]), "publisher": "Google Drive folders",
+        "license": "private: the folders' owner decides who reads it",
+        "guide": ["Documents are files from approved Google Drive folders; `original` gives the Drive link."],
+        "tables": {}}, "aliases": {}}
+

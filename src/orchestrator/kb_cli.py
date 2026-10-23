@@ -395,6 +395,8 @@ def _upload_blobs(base: str, bundle: Path, plan: dict) -> int:
     rec = _records()
     want = set(plan.get("upload_docs") or [])
     objs = [r for iid, _, r in rec.records(bundle) if iid in want]
+    if hasattr(rec, "texts"):  # records carry their text by reference: send the texts too
+        objs += [t for _, t in rec.texts(bundle, want)]
     parts = rec.parts(bundle)
     objs += [parts[n] for n in plan.get("upload_parts") or []]
     encoded = {}
@@ -563,35 +565,6 @@ def push_cmd(kb_ref, repo, max_age_hours, path, originals, bundle, full, no_wait
     _emit(push(kb_ref, repo, path, originals, bundle=bundle, full=full, wait=not no_wait))
 
 
-@kb_group.group("workdir")
-def workdir_group():
-    """A curator's working cache, kept on canopy-web so the next refresh can run on any
-    machine: `restore` before a refresh, `save` after it publishes."""
-
-
-@workdir_group.command("save")
-@_kb_option
-@click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
-@click.option("--exclude", multiple=True,
-              help="a path or glob to leave out, e.g. kb.sqlite or bundle/ (a trailing / is a directory)")
-@_guard
-def workdir_save_cmd(kb_ref, repo, max_age_hours, directory, exclude):
-    """Upload what changed in DIRECTORY (never what the KB's originals hold) and point the KB at it."""
-    from orchestrator.kb_workdir import save
-    _emit(save(kb_ref, directory, exclude))
-
-
-@workdir_group.command("restore")
-@_kb_option
-@click.argument("directory", type=click.Path(file_okay=False, path_type=Path))
-@click.option("--force", is_flag=True, help="also replace files changed on this machine since its last save")
-@_guard
-def workdir_restore_cmd(kb_ref, repo, max_age_hours, directory, force):
-    """Bring DIRECTORY up to the working cache saved last (fetches only what differs; deletes nothing)."""
-    from orchestrator.kb_workdir import restore
-    _emit(restore(kb_ref, directory, force))
-
-
 @kb_group.group("drive")
 def drive_group():
     """A knowledge base made from Google Drive folders, read only as far as their owner
@@ -611,16 +584,14 @@ def drive_inventory_cmd(kb_ref, repo, max_age_hours, source, force):
 
 @drive_group.command("sync")
 @_kb_option
-@click.option("--data", type=click.Path(file_okay=False, path_type=Path), required=True,
-              help="working cache: downloads, the bundle and the local build")
 @click.option("--source", default="", help="one drive_folders source by name (default: all)")
-@click.option("--no-push", is_flag=True, help="build locally and stop")
+@click.option("--no-push", is_flag=True, help="read and report; publish nothing")
 @_guard
-def drive_sync_cmd(kb_ref, repo, max_age_hours, data, source, no_push):
+def drive_sync_cmd(kb_ref, repo, max_age_hours, source, no_push):
     """Read the approved files that changed, hold spreadsheets whose headers look like
-    personal data, build, and publish the difference."""
+    personal data, and publish the difference. Runs from an empty disk on any machine."""
     from orchestrator.kb_drive import sync
-    _emit(sync(kb_ref, repo, data, source, push=not no_push))
+    _emit(sync(kb_ref, repo, source, push=not no_push))
 
 
 @click.command("mcp-headers")

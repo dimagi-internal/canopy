@@ -67,6 +67,32 @@ bundle/
 - `aliases.json`: names that are one organisation or program (renames, synonyms), so
   `entity` gathers them; normalised spellings and acronyms merge without it.
 
+## Curating with no local state
+
+A refresh runs from an empty disk on any machine (canopy-web#1925): canopy-web keeps
+everything it needs from the last one, so no runner's disk matters and none is a copy
+to lose. A curator's refresh builds a `canopy_kb.curate.Curation` over
+`orchestrator.kb_remote.RemoteStore` (the project's host) and:
+
+- **reads the curation state**: the fetch index (each url's ETag, sha256, links, a
+  Google export's stable hash), each input's descriptor, the cards. It is stored in
+  content-addressed chunks, saved with the version commit (compare-and-swap), and kept
+  under a lease, so one refresh runs at a time;
+- **keys every derived thing by its inputs and the code that makes it**
+  (`Step.key`: name, REVISION, prompt, model, settings). An extracted text, an OCR
+  transcription or a card is computed only where canopy-web lacks its key. A new prompt
+  re-runs that step by itself; a code change without a REVISION bump is refused before
+  anything runs (`steps.lock`, `check_lock`), so nothing goes stale silently;
+- **plans model calls before making any** (`--budget`, $2 by default) and stores each
+  result the moment it returns;
+- **publishes only what changed**: a record carries its text by reference, so a new
+  card or link re-sends a few hundred bytes. canopy-web builds the index, the first
+  version included.
+
+The bytes a step needs come from the originals store, and only for inputs whose result
+is missing. A refresh with nothing new downloads the state, makes the publisher's
+conditional checks, and publishes nothing.
+
 ## Build and publish (curators)
 
 ```bash
@@ -96,7 +122,7 @@ it is read until the project's owner approves it:
 ```bash
 canopy kb drive inventory --kb <ws>/<handle>            # metadata only: names, types, owners, sharing
 #   → the owner reviews on canopy-web: /w/<ws>/projects/<handle>/kb
-canopy kb drive sync --kb <ws>/<handle> --data <dir>    # read the approved files, build, push the difference
+canopy kb drive sync --kb <ws>/<handle>                 # read the approved files that changed, publish the difference
 ```
 
 `inventory` never opens a file. canopy-web flags names that suggest records about people
@@ -106,8 +132,9 @@ a file that appears later under an approved folder in a "new since approval" que
 that folder auto-approves. `sync` reads only what is approved (re-downloading a file only
 when its md5 or version moved; Docs as Markdown, Sheets as xlsx, Slides as PDF), checks
 every spreadsheet's column headers and holds one that names or identifies people until the
-owner releases it, and pushes the rest; a file removed, trashed, excluded or held leaves
-the next version. Originals are not copied: `original` gives the Drive link and the
+owner releases it (a held file's text is never stored, only the verdict), and publishes
+the rest; a file removed, trashed, excluded or held leaves the next version. It keeps
+nothing on the machine (above). Originals are not copied: `original` gives the Drive link and the
 revision indexed. A Drive KB is queryable only by its owner, its steward and the readers
 the owner names. Run both on a runner with the steward's Google login.
 
