@@ -264,15 +264,6 @@ def upload_originals(ref: str, bundle: Path) -> dict:
     return {"files": len(shas), "already_stored": have, "uploaded": uploaded, "bytes_uploaded": sent}
 
 
-def _put_bytes(url: str, data: bytes, headers: dict) -> None:
-    import urllib.request
-
-    req = urllib.request.Request(url, data=data, method="PUT", headers={**headers, "Content-Length": str(len(data))})
-    with urllib.request.urlopen(req, timeout=600) as resp:
-        if resp.status >= 300:
-            raise KBError(f"upload to storage failed: HTTP {resp.status}")
-
-
 def _put(url: str, path: Path, headers: dict) -> None:
     import urllib.request
 
@@ -284,10 +275,6 @@ def _put(url: str, path: Path, headers: dict) -> None:
                 raise KBError(f"upload to storage failed: HTTP {resp.status}")
 
 
-BLOBS_BATCH = 1000  # canopy-web's per-request limit
-BLOB_WORKERS = 8
-#: How long `push` waits for canopy-web to index a delta before reporting it pending.
-WAIT_SECONDS = 1800
 
 
 def _records():
@@ -313,9 +300,11 @@ def plan_only(ref: str, bundle: Path) -> dict:
 
 def publish_to_canopy(ref: str, path: Path, bundle: Path | None = None, *, full: bool = False,
                       wait: bool = True) -> dict:
-    """Publish a workspace project's KB to canopy-web: a delta when the bundle is given
-    and the project's head carries a state, else the whole file (with the state, so
-    the next publish can be a delta). Returns what was sent and the version."""
+    """Publish a workspace project's KB to canopy-web: the whole file this machine built,
+    with the bundle's state when given. canopy-web never builds an index (canopy-web#1971:
+    its in-process build ran it out of memory); it stores and serves finished files. An
+    unchanged bundle sends nothing. `full` and `wait` are kept for callers; every publish
+    is whole and ready when it returns."""
     from orchestrator import canopy_web
 
     ws, handle = _WORKSPACE_REF.match(ref).groups()
@@ -323,38 +312,14 @@ def publish_to_canopy(ref: str, path: Path, bundle: Path | None = None, *, full:
     mcp_url = canopy_web.resolve_base_url(None).rstrip("/") + f"/api/mcp/projects/{ws}/{handle}/"
     state = _records().state(bundle) if bundle is not None else None
     if state is not None and not full:
-        for _ in range(3):
-            try:
-                plan = canopy_web.call("POST", f"{base}/plan", {"state": state}) or {}
-            except canopy_web.CanopyError as e:
-                if "-> 404" in str(e) or "-> 405" in str(e):
-                    break  # a canopy-web that predates deltas: the whole file
+        try:
+            plan = canopy_web.call("POST", f"{base}/plan", {"state": state}) or {}
+        except canopy_web.CanopyError as e:
+            if "-> 404" not in str(e) and "-> 405" not in str(e):
                 raise
-            if plan.get("unchanged"):
-                return {"published": "unchanged", "version": plan.get("base"), "bytes_uploaded": 0,
-                        "mcp_url": mcp_url}
-            if plan.get("full_required"):
-                break
-            sent = _upload_blobs(base, bundle, plan)
-            try:
-                got = canopy_web.call("POST", f"{base}/versions",
-                                      {"state": state, "base": plan.get("base"), "uploaded_bytes": sent}) or {}
-            except canopy_web.CanopyError as e:
-                if "-> 409" in str(e):
-                    continue  # the log moved (another publish, a rollback): plan again
-                raise
-            v = got.get("version") or {}
-            if wait and v.get("status") in ("pending", "building"):
-                v = _wait_for(base, v["number"])
-            out = {"published": "delta", "version": v.get("number"), "status": v.get("status"),
-                   "added": plan.get("added"), "changed": plan.get("changed"), "removed": plan.get("removed"),
-                   "bytes_uploaded": sent, "mcp_url": mcp_url}
-            if v.get("status") == "failed":
-                raise KBError(f"canopy-web could not index version {v.get('number')}: {v.get('error')} "
-                              "(the published version is unchanged)")
-            return out
-        else:
-            raise KBError("the knowledge base kept moving while publishing; try again")
+            plan = {}
+        if plan.get("unchanged"):
+            return {"published": "unchanged", "version": plan.get("base"), "bytes_uploaded": 0, "mcp_url": mcp_url}
     return _publish_full(base, path, state, mcp_url)
 
 
@@ -382,54 +347,6 @@ def _publish_full(base: str, path: Path, state: dict | None, mcp_url: str) -> di
     return {"published": "full", "version": proj.get("kb_version_number"), "bytes_uploaded": size,
             "mcp_url": mcp_url if proj.get("mcp_path") is None else
             canopy_web.resolve_base_url(None).rstrip("/") + (proj.get("mcp_path") or "")}
-
-
-def _upload_blobs(base: str, bundle: Path, plan: dict) -> int:
-    """Upload the records and parts a plan asks for that canopy-web's store lacks.
-    Returns the bytes sent."""
-    import concurrent.futures as cf
-    import hashlib
-
-    from orchestrator import canopy_web
-
-    rec = _records()
-    want = set(plan.get("upload_docs") or [])
-    objs = [r for iid, _, r in rec.records(bundle) if iid in want]
-    if hasattr(rec, "texts"):  # records carry their text by reference: send the texts too
-        objs += [t for _, t in rec.texts(bundle, want)]
-    parts = rec.parts(bundle)
-    objs += [parts[n] for n in plan.get("upload_parts") or []]
-    encoded = {}
-    for o in objs:
-        data = rec.encode(o)
-        encoded[rec.sha(o)] = data
-    shas = sorted(encoded)
-    sent = 0
-    for i in range(0, len(shas), BLOBS_BATCH):
-        batch = [{"sha256": h, "gz_sha256": hashlib.sha256(encoded[h]).hexdigest(), "bytes": len(encoded[h])}
-                 for h in shas[i:i + BLOBS_BATCH]]
-        got = canopy_web.call("POST", f"{base}/blobs", {"blobs": batch}) or {}
-        ups = got.get("uploads") or []
-        with cf.ThreadPoolExecutor(BLOB_WORKERS) as ex:
-            list(ex.map(lambda u: _put_bytes(u["url"], encoded[u["sha256"]], u.get("headers") or {}), ups))
-        sent += sum(len(encoded[u["sha256"]]) for u in ups)
-    return sent
-
-
-def _wait_for(base: str, number: int) -> dict:
-    """Poll the version log until version `number` is ready or failed."""
-    import time
-
-    from orchestrator import canopy_web
-
-    deadline, delay = time.monotonic() + WAIT_SECONDS, 2.0
-    while True:
-        log = canopy_web.call("GET", f"{base}/versions?limit=10") or []
-        v = next((x for x in log if x.get("number") == number), {})
-        if v.get("status") in ("ready", "failed") or time.monotonic() > deadline:
-            return v or {"number": number, "status": "pending"}
-        time.sleep(delay)
-        delay = min(delay * 1.5, 15.0)
 
 
 def _pull_from_canopy(ref: str, force: bool) -> dict:

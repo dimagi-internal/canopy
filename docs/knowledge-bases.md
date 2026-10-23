@@ -100,20 +100,14 @@ canopy kb build bundle/ --out kb.sqlite [--previous last.sqlite]   # diff → ch
 canopy kb push --kb connect/givewell-kb kb.sqlite --originals bundle/   # originals, then only what changed
 ```
 
-**Publishing sends only differences.** `push` computes the bundle's state — the sha256 of
-each document record (an items.jsonl line, without the curator's local paths) and of the
-manifest, aliases and each table (`canopy_kb.records`) — and asks canopy-web what changed
-since the version it serves (`…/kb/plan`). Nothing changed: nothing is sent and no version
-is made. Otherwise it uploads only the new and changed records (gzipped, content-addressed,
-only what the store lacks) and commits a delta (`…/kb/versions`); canopy-web applies it to
-its index (`canopy_kb.apply`, the same writer a full build uses, so the result is the full
-build of that content), and `push` waits until the version serves (`--no-wait` not to).
-The whole file goes only for a first build or with `--full`. Every publish is a version:
-`GET …/kb/versions`, `POST …/kb/versions/<n>/rollback`, and `whats_new` reads that log.
-Nothing goes to Drive: a project that wants a Drive copy turns its replica on
-(`PUT …/kb/settings {drive_replica: true}`, off by default) and canopy-web writes it. The
-bundle (`--bundle`, default `--originals`) is what makes the delta possible; without it
-`push` sends the whole file.
+**canopy-web never builds an index** (canopy-web#1971: building in its web process ran
+it out of memory). The machine that refreshes builds the file (`canopy kb build`, or a
+curated refresh's `canopy_kb.apply` of what changed onto the served file) and `push`
+publishes it whole, with the bundle's state; canopy-web stores and serves it as a new
+version (`GET …/kb/versions`, `POST …/kb/versions/<n>/rollback`; `whats_new` reads that
+log). An unchanged bundle sends nothing (`…/kb/plan` says so). Nothing goes to Drive: a
+project that wants a Drive copy turns its replica on (`PUT …/kb/settings {drive_replica:
+true}`, off by default) and canopy-web writes it.
 
 **A KB made from Google Drive folders** has a `drive_folders` source
 (`POST …/kb/sources {kind: drive_folders, name, config: {folders: [ids]}}`), and nothing in
