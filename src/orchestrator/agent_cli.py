@@ -1881,10 +1881,17 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
                    "mode, its access and its credential reads are all judged as an editor "
                    "or a viewer. Only lowers, so anyone may ask; it ends with the turn. How "
                    "to run the non-admin path for real.")
+@click.option("--on-behalf-of", "on_behalf_of", default="",
+              help="In an agent's turn: send this as the agent acting FOR the person who "
+                   "asked — their email, or 'caller' for this turn's verified asker — so "
+                   "canopy-web judges the runner pin and --mode auto on THEIR access, not "
+                   "the agent's. Checked against the turn this session's login serves; a "
+                   "wrong person, a stored PAT or a finished turn is refused. Omit to act "
+                   "as the agent itself.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links,
                    next_action, idempotency_key, runner_ref, queue_if_not_ready, turn_mode,
-                   acts_as, as_json):
+                   acts_as, on_behalf_of, as_json):
     """Record work on an agent's board, then trigger a runner session to do it.
 
     The one-shot counterpart to a schedule: schedules are for recurring work, this is
@@ -1904,6 +1911,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     import datetime as _dt
 
     from orchestrator import canopy_web
+    from orchestrator.provenance import on_behalf_headers
     from orchestrator.agent_dispatch import (
         RUNNERS_PATH,
         DispatchError,
@@ -1929,6 +1937,10 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     task_links = parse_task_links(links)
     if queue_if_not_ready and not runner_ref.strip():
         raise click.UsageError("--queue-if-not-ready only applies with --runner")
+    try:  # before the board: a turn with no person to act for must not leave a card
+        behalf = on_behalf_headers(on_behalf_of)
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
 
     # Resolve and vet the pin FIRST: a refusal after the board write would leave a card
     # for work that was never sent anywhere.
@@ -1985,7 +1997,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
                                      task_ext_id=task_ext_id,
                                      runner_id=str(pinned["id"]) if pinned else None,
                                      turn_mode=turn_mode, person=person, acts_as=acts_as)
-        turn = canopy_web.call("POST", TURNS_PATH, payload)
+        turn = canopy_web.call("POST", TURNS_PATH, payload, headers=behalf or None)
     except DispatchError as e:
         raise click.ClickException(str(e))
     except (CanopyError, RuntimeError) as e:
@@ -1998,16 +2010,22 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     mode_out = {"requested": turn_mode,
                 "recorded": turn.get("requested_turn_mode") if "requested_turn_mode" in turn
                 else None}
+    # Who the server RECORDED this was done for (never what we sent): None when acting
+    # as the agent itself, or on a canopy-web that does not know the header.
+    behalf_out = (turn.get("origin_ref") or {}).get("on_behalf_of") if behalf else None
     runner_out = None
     if pinned:
         runner_out = {"id": pinned.get("id"), "name": pinned.get("name"),
                       "status": pinned.get("status"), "warnings": pin_notes}
     if as_json:
         _emit({"task_ext_id": task_ext_id, "idempotency_key": key, "turn": summary,
-               "runner": runner_out, "mode": mode_out})
+               "runner": runner_out, "mode": mode_out, "on_behalf_of": behalf_out})
         return
 
     click.echo(f"Agent:  {slug}")
+    if behalf_out:
+        click.echo(f"For:    {behalf_out.get('email')}  (on their access: "
+                   f"{', '.join(behalf_out.get('decided') or []) or 'nothing it changed'})")
     if task_ext_id:
         click.echo(f"Task:   {task_ext_id}  {title.strip()}")
     if pinned:

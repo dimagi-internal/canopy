@@ -727,3 +727,55 @@ def test_cli_dispatch_from_outside_an_agent_repo_names_the_person(monkeypatch):
     post = [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]][0][2]
     assert "Sent by someone@dimagi.com" in post["prompt"]
     assert post["origin_ref"]["dispatched_by_person"] == "someone@dimagi.com"
+
+
+# --- acting on behalf of the person in the turn (canopy-web turn_asker) -------------
+
+def _behalf_setup(monkeypatch, tmp_path, *, verified=True, kind="user"):
+    seen = []
+
+    def transport(method, url, headers, data):
+        seen.append((method, url, dict(headers)))
+        if "/harness/turns/" in url and method == "POST":
+            return 201, json.dumps({"id": "t-9", "status": "queued", "origin_ref": {
+                "on_behalf_of": {"email": "jj@dimagi.com", "decided": ["pin eva's turn to cloud-ec2-2"]}}})
+        return 200, json.dumps([])
+
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+    monkeypatch.setattr("orchestrator.provenance.CALLER_ROOT", tmp_path)
+    monkeypatch.setenv("CANOPY_TURN_ID", "11111111-2222-3333-4444-555555555555")
+    (tmp_path / "11111111-2222-3333-4444-555555555555.json").write_text(json.dumps({
+        "verified": verified, "who": {"kind": kind, "user": {"email": "jj@dimagi.com"}}}))
+    return seen
+
+
+def test_on_behalf_of_caller_names_the_turns_verified_asker_and_reports_what_was_recorded(
+        monkeypatch, tmp_path):
+    seen = _behalf_setup(monkeypatch, tmp_path)
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "eva", "--no-task", "--prompt", "go",
+                                  "--on-behalf-of", "caller", "--json-output"])
+    assert r.exit_code == 0, r.output
+    post = [h for m, u, h in seen if m == "POST" and "/harness/turns/" in u][0]
+    assert post["X-Canopy-On-Behalf-Of"] == "jj@dimagi.com"
+    assert json.loads(r.output)["on_behalf_of"]["decided"] == ["pin eva's turn to cloud-ec2-2"]
+
+
+def test_without_the_flag_the_agent_acts_for_itself(monkeypatch, tmp_path):
+    seen = _behalf_setup(monkeypatch, tmp_path)
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "eva", "--no-task", "--prompt", "go",
+                                  "--json-output"])
+    assert r.exit_code == 0, r.output
+    assert all("X-Canopy-On-Behalf-Of" not in h for _, _, h in seen)
+    assert json.loads(r.output)["on_behalf_of"] is None
+
+
+@pytest.mark.parametrize("verified,kind", [(False, "user"), (True, "agent")])
+def test_caller_with_no_verified_person_is_refused_before_anything_is_sent(
+        monkeypatch, tmp_path, verified, kind):
+    seen = _behalf_setup(monkeypatch, tmp_path, verified=verified, kind=kind)
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "eva", "--title", "x", "--prompt", "go",
+                                  "--on-behalf-of", "caller"])
+    assert r.exit_code != 0 and "no verified person" in r.output
+    assert not [s for s in seen if s[0] == "POST"]  # no board card, no turn

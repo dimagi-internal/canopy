@@ -237,6 +237,41 @@ def provenance_parent(cwd: Optional[str] = None) -> dict:
         return {}
 
 
+#: The header an agent names the person it acts for with (canopy-web
+#: apps/harness/turn_asker.py; access.md → "Acting on behalf of the person who asked").
+ON_BEHALF_HEADER = "X-Canopy-On-Behalf-Of"
+
+
+def turn_asker_email(cwd: Optional[str] = None) -> str:
+    """The verified person who started the turn this session runs for, from its caller
+    envelope — or "" (no turn, no envelope, canopy or an agent asked, or unverified)."""
+    turn = resolve_parent(cwd).get("turn_id") or ""
+    env = _read_json(caller_root() / f"{turn}.json") if turn else {}
+    if not env:
+        path = os.environ.get("CANOPY_CALLER", "").strip()
+        env = _read_json(Path(path)) if path else {}
+    who = env.get("who") if isinstance(env.get("who"), dict) else {}
+    user = who.get("user") if isinstance(who.get("user"), dict) else {}
+    if not env.get("verified") or who.get("kind") != "user" or not user.get("email"):
+        return ""
+    return str(user["email"])
+
+
+def on_behalf_headers(who: str, *, cwd: Optional[str] = None) -> dict:
+    """`{X-Canopy-On-Behalf-Of: email}` for an agent acting for `who` — an email, or
+    "caller" for this turn's verified asker. {} for none. canopy-web checks the claim
+    against the turn the request's login serves and refuses a wrong one (403)."""
+    who = (who or "").strip()
+    if not who:
+        return {}
+    if who == "caller":
+        who = turn_asker_email(cwd)
+        if not who:
+            raise RuntimeError("--on-behalf-of caller: this session's turn has no verified person "
+                               "asking (no caller envelope, or canopy or an agent started it)")
+    return {ON_BEHALF_HEADER: who}
+
+
 def provenance_headers(client: str = DEFAULT_CLIENT, *, cwd: Optional[str] = None) -> dict:
     """Headers identifying this client and, when knowable, its originating session.
 
