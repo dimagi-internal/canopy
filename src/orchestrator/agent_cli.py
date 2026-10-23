@@ -1900,7 +1900,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     says — do not dispatch: run `canopy agent use <slug>` once, then ask in your
     own Claude Code session. Dispatch starts a fresh session on a runner each time,
     with no memory of the last one; to follow up on one, use
-    `canopy agent reply <session> --prompt ...`.
+    `canopy agent reply <turn-id> --prompt ...` with the turn id this prints.
 
     The one-shot counterpart to a schedule: schedules are for recurring work, this is
     "go do this now". The runner claims the turn and spawns a visible emdash session
@@ -1928,6 +1928,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
         check_runner_pin,
         derive_idempotency_key,
         local_agent_slug,
+        reply_hint,
         resolve_runner,
         summarize_turn,
     )
@@ -2056,9 +2057,13 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     else:
         click.echo("Mode:   (not requested — the agent's rules decide at claim)")
     click.echo(f"Turn:   {summary['id']}  →  {summary['headline']}")
+    if summary.get("canopy_session_url"):
+        click.echo(f"Session: {summary['canopy_session_url']}")
     click.echo("")
     click.echo("This is a LAUNCH, not a result — the agent may not have read the brief yet.")
-    click.echo(f"  verify:  canopy agent turns --slug {slug}")
+    click.echo(f"  verify:  canopy agent turns --slug {slug}  (shows each turn's session link)")
+    if summary.get("id"):
+        click.echo(reply_hint(summary["id"]))
     _note_local_use(slug, canopy_web)
 
 
@@ -2095,21 +2100,23 @@ def _dispatching_person(canopy_web) -> str:
 def agent_reply(session, prompt, prompt_file, as_json):
     """Send a follow-up into an EXISTING canopy session instead of starting a new one.
 
-    SESSION is the canopy session's id, or its canopy-web link (the id is the UUID in
-    the URL). The session keeps its memory of the earlier work, so a follow-up does not
+    SESSION is the turn id `canopy agent dispatch` printed, the canopy session's id, or
+    its canopy-web link (the id is the UUID in the URL). A turn id is followed to the
+    session that turn ran in; while the turn is still queued there is none yet, and this
+    says so. The session keeps its memory of the earlier work, so a follow-up does not
     redo it — unlike a second `canopy agent dispatch`, which starts from nothing.
     Uses canopy-web's own send route (`POST /api/canopy-sessions/<id>/send`, the one
     canopy's chat and `canopy_sessions_send` use); you need write access to the session.
     """
     from orchestrator import canopy_web
-    from orchestrator.agent_dispatch import DispatchError, session_send_path
+    from orchestrator.agent_dispatch import DispatchError, reply_send_path
 
     if prompt_file:
         prompt = Path(prompt_file).read_text(encoding="utf-8")
     if not prompt.strip():
         raise click.UsageError("nothing to send: pass --prompt or --prompt-file")
     try:
-        path = session_send_path(session)
+        path = reply_send_path(session, canopy_web.call)
         out = canopy_web.call("POST", path, {"text": prompt}) or {}
     except DispatchError as e:
         raise click.ClickException(str(e))
@@ -2175,7 +2182,8 @@ def agent_turns(slug, limit, as_json):
     """Recent harness turns for an agent — how you check what a dispatch actually did.
 
     Statuses are reported through the same honest lens as `dispatch`: a `done` launch
-    turn is `launched`, never `complete`.
+    turn is `launched`, never `complete`. A turn whose runner has opened its canopy
+    session shows that session's link; `canopy agent reply <turn-id>` follows up in it.
     """
     from orchestrator import canopy_web
     from orchestrator.agent_dispatch import summarize_turn
@@ -2199,6 +2207,9 @@ def agent_turns(slug, limit, as_json):
         s = summarize_turn(t)
         click.echo(f"{str(t.get('created_at'))[:16]}  {s['state']:<9} {s['id']}")
         click.echo(f"    {s['headline']}")
+        if s["canopy_session_id"]:
+            click.echo(f"    session: {s['canopy_session_url'] or s['canopy_session_id']}"
+                       f"  (follow up: canopy agent reply {s['id']} --prompt ...)")
         first = (str(t.get("prompt") or "").strip().splitlines() or [""])[0]
         if first:
             click.echo(f"    prompt: {first[:110]}")

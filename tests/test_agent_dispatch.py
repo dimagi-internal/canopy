@@ -944,3 +944,119 @@ def test_cli_reply_needs_a_prompt_and_a_real_session(monkeypatch):
     assert r.exit_code != 0 and "--prompt" in r.output
     r = CliRunner().invoke(main, ["agent", "reply", "not-a-session", "--prompt", "x"])
     assert r.exit_code != 0 and "not a canopy session id" in r.output
+
+
+# --- reply by TURN id: dispatch prints only a turn id (canopy-web#1974) ---------------------
+
+TID = "7f3523ba-0000-4000-8000-000000000001"
+
+
+def _reply_world(monkeypatch, turn=None, turn_status=200):
+    calls = []
+
+    def transport(method, url, headers, data):
+        calls.append((method, url, json.loads(data) if data else None))
+        if method == "GET" and "/api/harness/turns/" in url:
+            if turn_status != 200:
+                return turn_status, json.dumps({"detail": "turn not found"})
+            return 200, json.dumps(turn)
+        return 200, json.dumps({"turn_id": "turn-9", "message": {"id": "m1"}})
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+    return calls
+
+
+def test_cli_reply_follows_a_turn_id_to_its_session(monkeypatch):
+    calls = _reply_world(monkeypatch, {"id": TID, "status": "running", "agent_slug": "ace",
+                                       "canopy_session_id": SID})
+    r = CliRunner().invoke(main, ["agent", "reply", TID, "--prompt", "more", "--json-output"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output)["session"] == SID
+    assert calls[-1] == ("POST", f"https://x/api/canopy-sessions/{SID}/send", {"text": "more"})
+
+
+def test_cli_reply_to_a_queued_turn_says_there_is_no_session_yet(monkeypatch):
+    calls = _reply_world(monkeypatch, {"id": TID, "status": "queued", "agent_slug": "ace",
+                                       "canopy_session_id": None})
+    r = CliRunner().invoke(main, ["agent", "reply", TID, "--prompt", "more"])
+    assert r.exit_code != 0
+    text = " ".join(r.output.split())
+    assert "no session yet" in text and "queued" in text and "canopy agent turns --slug ace" in text
+    assert not [c for c in calls if c[0] == "POST"], "nothing may be sent anywhere"
+
+
+def test_cli_reply_bare_session_id_still_works_when_it_is_no_turn(monkeypatch):
+    calls = _reply_world(monkeypatch, turn_status=404)
+    r = CliRunner().invoke(main, ["agent", "reply", SID, "--prompt", "more"])
+    assert r.exit_code == 0, r.output
+    assert calls[-1][1] == f"https://x/api/canopy-sessions/{SID}/send"
+
+
+def test_cli_reply_on_an_older_canopy_web_names_the_gap(monkeypatch):
+    calls = _reply_world(monkeypatch, {"id": TID, "status": "done", "agent_slug": "ace"})
+    r = CliRunner().invoke(main, ["agent", "reply", TID, "--prompt", "more"])
+    assert r.exit_code != 0
+    assert "does not say which session" in " ".join(r.output.split())
+    assert not [c for c in calls if c[0] == "POST"]
+
+
+def test_cli_reply_with_a_link_never_probes_the_turn_api(monkeypatch):
+    calls = _reply_world(monkeypatch, turn_status=500)
+    r = CliRunner().invoke(main, ["agent", "reply", f"https://x/w/connect/chat/{SID}",
+                                  "--prompt", "more"])
+    assert r.exit_code == 0, r.output
+    assert not [c for c in calls if "/harness/turns/" in c[1]]
+
+
+def test_cli_dispatch_tells_how_to_follow_up_without_polling(monkeypatch):
+    calls = []
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport",
+                        _fake_transport(calls, turn_status="queued"))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "hal", "--no-task", "--prompt", "p"])
+    assert r.exit_code == 0, r.output
+    assert "canopy agent reply turn-123" in r.output
+    # One enqueue, and no re-reads of the turn waiting for its session.
+    assert not [c for c in calls if c[0] == "GET" and "/harness/turns/" in c[1]]
+
+
+def test_cli_dispatch_prints_the_session_link_when_the_server_has_one(monkeypatch):
+    def transport(method, url, headers, data):
+        if "/harness/turns/" in url and method == "POST":
+            return 200, json.dumps({"id": "turn-123", "status": "running",
+                                    "canopy_session_id": SID,
+                                    "canopy_session_url": f"https://x/w/connect/chat/{SID}"})
+        return 200, json.dumps([])
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "hal", "--no-task", "--prompt", "p"])
+    assert r.exit_code == 0, r.output
+    assert f"Session: https://x/w/connect/chat/{SID}" in r.output
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "hal", "--no-task", "--prompt", "p",
+                                  "--json-output"])
+    out = json.loads(r.output[:r.output.rindex("}") + 1])  # a stderr note may follow the JSON
+    assert out["turn"]["canopy_session_id"] == SID
+
+
+def test_cli_turns_shows_each_turns_session(monkeypatch):
+    def transport(method, url, headers, data):
+        return 200, json.dumps([{"id": "t1", "agent_slug": "hal", "status": "done",
+                                 "created_at": "2026-07-28T13:00:00Z", "prompt": "x",
+                                 "canopy_session_id": SID,
+                                 "canopy_session_url": f"https://x/w/connect/chat/{SID}"},
+                                {"id": "t2", "agent_slug": "hal", "status": "queued",
+                                 "created_at": "2026-07-28T13:01:00Z", "prompt": "y",
+                                 "canopy_session_id": None, "canopy_session_url": None}])
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+    r = CliRunner().invoke(main, ["agent", "turns", "--slug", "hal"])
+    assert r.exit_code == 0, r.output
+    assert f"session: https://x/w/connect/chat/{SID}" in r.output
+    assert r.output.count("session: ") == 1
+    r = CliRunner().invoke(main, ["agent", "turns", "--slug", "hal", "--json-output"])
+    rows = json.loads(r.output)
+    assert rows[0]["canopy_session_id"] == SID and rows[1]["canopy_session_id"] is None

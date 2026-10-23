@@ -501,6 +501,11 @@ def summarize_turn(turn: dict) -> dict:
         # session's own outcome or the agent's next turn record — the caller's job.
         "verified": False,
         "session_name": session_name,
+        # The canopy conversation the turn ran in (canopy-web serves it once the runner has
+        # made it; None while queued, or from a canopy-web that predates the field). This is
+        # what `canopy agent reply` sends into — NOT `session_name`, the runner's own name.
+        "canopy_session_id": turn.get("canopy_session_id"),
+        "canopy_session_url": turn.get("canopy_session_url"),
         "result_note": note,
         "headline": headline,
     }
@@ -593,3 +598,53 @@ def session_send_path(session_ref: str) -> str:
             f"{session_ref!r} is not a canopy session id — pass the session's id or its "
             f"canopy-web link (the UUID in the URL)")
     return f"/api/canopy-sessions/{m.group(0).lower()}/send"
+
+
+# A dispatch hands back only a TURN id, and a turn's canopy session is what `reply` sends into.
+# canopy-web names it on the turn (`canopy_session_id`, canopy-web#1974); a turn id and a
+# session id are both bare UUIDs, so a bare UUID is read as a turn first and, if canopy-web
+# knows no such turn, as a session. A link is always a session (no page addresses a turn).
+
+def reply_send_path(ref: str, call) -> str:
+    """`POST /api/canopy-sessions/<id>/send` for a canopy session id, its canopy-web link, or
+    the id of a TURN that ran in one (`canopy agent dispatch` prints it). `call(method, path)`
+    is canopy_web.call. Raises DispatchError, saying why, when a turn has no session to send
+    into yet — never guesses one."""
+    path = session_send_path(ref)  # validates: a UUID somewhere in it, or DispatchError
+    if "/" in (ref or "").strip():
+        return path
+    uid = path.split("/")[3]
+    try:
+        turn = call("GET", f"/api/harness/turns/{uid}")
+    except Exception as e:  # noqa: BLE001 — a 404 means "not a turn": then it is a session id
+        if " -> 404" in str(e):
+            return path
+        raise
+    turn = turn if isinstance(turn, dict) else {}
+    if "canopy_session_id" not in turn:
+        raise DispatchError(
+            f"{uid} is a turn, and this canopy-web does not say which session a turn ran in. "
+            f"Pass the session's id or its canopy-web link instead (open the agent's Turns tab "
+            f"or the chat it started).")
+    sid = turn.get("canopy_session_id")
+    if sid:
+        return session_send_path(str(sid))
+    status = str(turn.get("status") or "").lower()
+    if status in _UNCLAIMED:
+        raise DispatchError(
+            f"turn {uid} has no session yet: it is still {status} (no runner has claimed it). "
+            f"Try again once `canopy agent turns --slug {turn.get('agent_slug') or '<slug>'}` "
+            f"shows it running.")
+    if status in _PENDING:
+        raise DispatchError(
+            f"turn {uid} has no session yet: a runner claimed it ({status}) and has not opened "
+            f"its session. Try again in a moment.")
+    raise DispatchError(
+        f"turn {uid} ({status or 'unknown status'}) has no recorded canopy session. If you have "
+        f"the session's canopy-web link, pass that instead.")
+
+
+def reply_hint(turn_id) -> str:
+    """The one line `dispatch` prints so the follow-up path is the obvious one."""
+    return (f"  follow up: canopy agent reply {turn_id} --prompt \"...\"  (same session, keeps its "
+            f"context; works once a runner has started the turn)")
