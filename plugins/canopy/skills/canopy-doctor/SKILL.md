@@ -1,6 +1,6 @@
 ---
 name: canopy-doctor
-description: Diagnose canopy plugin health — workbench token, repo-map, session log, hook registration, and skill connectivity. Renamed from `doctor` to avoid colliding with Claude Code's native `/doctor` slash command.
+description: Diagnose canopy plugin health — workbench token, repo-map, hook registration, and skill connectivity. Renamed from `doctor` to avoid colliding with Claude Code's native `/doctor` slash command.
 ---
 
 # Canopy Doctor
@@ -21,7 +21,9 @@ CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERR
 uv run --project "$CANOPY_ROOT" canopy doctor
 ```
 
-This runs read-only checks for hook registration, session log, repo map,
+This runs read-only checks for hook registration (the plugin registers the
+repo-map SessionStart hook; a leftover `~/.claude/settings.json` entry for the
+retired PostToolUse capture hook warns — `/canopy:setup` removes it), repo map,
 workbench token (presence, non-empty, mode 600), and the installed plugin
 version. It exits 0 when everything passes and non-zero if any check fails,
 so it is safe to gate on in scripts/CI.
@@ -41,7 +43,7 @@ checks' `detail` strings — each one carries its own fix hint (e.g. "run
 
 ## 2. Hook Python compatibility (not in CLI)
 
-The hook runs under whatever `python3` is on the user's PATH — often the
+The plugin's hooks run under whatever `python3` the launcher finds on the user's PATH — often the
 Xcode CLT default `python3.9` on macOS, not the project venv. A 3.10+-only
 annotation in hook code (`str | None` PEP 604 union syntax, etc.) compiles
 fine in CI under the project venv but silently no-ops on real user machines.
@@ -52,9 +54,8 @@ caller's system python, which the CLI (running under the venv) cannot see.
 SYS_PY=$(command -v python3)
 PY_VER=$(python3 --version 2>&1 | awk '{print $2}')
 _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
-CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
 HOOK_DIR=""
-[ -d "$CANOPY_ROOT/hooks" ] && HOOK_DIR="$CANOPY_ROOT/hooks"
+[ -d "$_CANOPY_PLUGIN/hooks" ] && HOOK_DIR="$_CANOPY_PLUGIN/hooks"
 
 if [ -z "$HOOK_DIR" ]; then
   echo "WARN: could not locate hooks dir — skipping compat check"

@@ -3,8 +3,8 @@
 
 A session a person opens on their private runner with an agent is a local turn
 (canopy-web#1704; `agent_op_env.py` opened it, `caller_context.py` showed its envelope).
-Without the runner app nothing else would send its transcript anywhere: the plugin
-only keeps `~/.claude/canopy/session-log.jsonl`. This hook hands `transcript_path` to
+Without the runner app nothing else would send its transcript anywhere: it stays only
+in Claude Code's own `~/.claude/projects/`. This hook hands `transcript_path` to
 `canopy local close`, which appends it to the turn in batches (each with a batch id,
 so a retry is not appended twice) and finishes the turn `done`.
 

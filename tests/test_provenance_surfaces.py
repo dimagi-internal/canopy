@@ -1,5 +1,5 @@
-"""Provenance beyond `canopy_web.call` (#768): the canopy-web MCP headersHelper, the
-post_tool_use hook's direct POST, and the uploaders that build their own requests.
+"""Provenance beyond `canopy_web.call` (#768): the canopy-web MCP headersHelper and the
+uploaders that build their own requests.
 
 #768 put the headers on the CLI's shared client. These are the other doors to
 canopy-web a session uses — the MCP server (remote, but canopy owns its

@@ -2,8 +2,8 @@
 
 Surfaced when a strict `repo == 'jjackson/ace'` session-review filter found
 only 2 of 8 known ace worktree sessions because the others' worktrees had
-been deleted before the post_tool_use hook ever fired for them. The hook
-captures the right thing live; these helpers cover the past-or-deleted case
+been deleted before the repo-map hook ever ran for them. The hook
+(plugins/canopy/hooks/repo_map_capture.py) captures the right thing live; these helpers cover the past-or-deleted case
 by inferring `owner/repo` from the emdash path convention and
 cross-referencing against existing repo_map values.
 """

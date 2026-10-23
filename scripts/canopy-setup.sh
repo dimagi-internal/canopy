@@ -5,11 +5,11 @@
 # Each step prints its own pass/skip/fail line. Safe to re-run.
 #
 # Steps:
-#   1. ~/.claude/canopy/ state dir (session-log + repo-map will land here)
+#   1. ~/.claude/canopy/ state dir (repo-map.json lands here)
 #   2. ~/emdash-projects/canopy/ main checkout (stable path used by emdash worktrees + CLI)
-#   3. PostToolUse capture hook — now PLUGIN-MANAGED (plugins/canopy/hooks/hooks.json
-#      registers it via ${CLAUDE_PLUGIN_ROOT}); this step only REMOVES a legacy
-#      settings.json registration pointing at a checkout, so the two never double-fire
+#   3. Legacy hook cleanup — the retired PostToolUse capture hook (now a no-op) may
+#      still be registered in settings.json by an older setup; this step REMOVES it.
+#      The plugin's own hooks are registered by plugins/canopy/hooks/hooks.json
 #   4. workbench-token (per-human PAT; mint via /canopy:canopy-web-pat-mint)
 #   5. canopy CLI installed non-editable from the marketplace clone (same source
 #      /canopy:update deploys from — never an editable dev-checkout install)
@@ -80,10 +80,9 @@ sys.exit(0 if found else 1)
 PY
 }
 
-# The capture hook is plugin-managed now (plugins/canopy/hooks/hooks.json). If a
-# legacy settings.json registration from an older setup exists, remove it so the
-# plugin-managed hook takes over (the plugin copy defers while a working legacy
-# entry is present, so removal here is what flips it).
+# The PostToolUse capture hook is retired (the repo-root file is a no-op kept so a
+# stale registration does not error). If an older setup registered it in
+# settings.json, remove that entry.
 if hook_already_registered; then
   if python3 - <<'PY' >/dev/null 2>&1
 import json
@@ -104,13 +103,13 @@ if changed:
     s.write_text(json.dumps(d, indent=2) + "\n")
 PY
   then
-    echo "[3/7] post-tool hook  : MIGRATED — legacy settings.json entry removed; plugin-managed hook active"
+    echo "[3/7] legacy hook     : REMOVED — retired capture hook unregistered from settings.json"
   else
-    echo "[3/7] post-tool hook  : FAIL — could not remove legacy settings.json entry"
+    echo "[3/7] legacy hook     : FAIL — could not remove the retired capture hook from settings.json"
     FAILED=1
   fi
 else
-  echo "[3/7] post-tool hook  : OK (plugin-managed via hooks.json — nothing to register)"
+  echo "[3/7] legacy hook     : OK (none registered in settings.json)"
 fi
 
 # ---------- 4. Workbench token ----------

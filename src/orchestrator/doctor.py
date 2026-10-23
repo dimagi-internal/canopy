@@ -6,8 +6,8 @@ with a human-readable detail rather than raising. ``run_doctor`` composes
 them all and reports an overall pass/fail.
 
 Ported from the documented checks in
-``plugins/canopy/skills/canopy-doctor/SKILL.md``: hook registration, session
-log, repo map, workbench token (presence + permissions), and plugin version.
+``plugins/canopy/skills/canopy-doctor/SKILL.md``: hook registration, repo
+map, workbench token (presence + permissions), and plugin version.
 Network-dependent checks (live workbench API connectivity, auth-preflight)
 are intentionally left to the skill launcher so ``canopy doctor`` stays fast,
 offline, and CI-gateable. The one external-tool check reads Homebrew's cached
@@ -49,14 +49,14 @@ def _claude_dir(home: Path) -> Path:
     return home / ".claude"
 
 
-def _registers_post_tool_use(data: dict) -> bool:
-    """True if a hooks mapping registers the capture hook on PostToolUse.
+def _registers(data: dict, event: str, script: str) -> bool:
+    """True if a hooks mapping registers ``script`` on ``event``.
 
     ``settings.json`` and a plugin's ``hooks.json`` share this shape.
     """
-    entries = data.get("hooks", {}).get("PostToolUse", [])
+    entries = data.get("hooks", {}).get(event, [])
     return any(
-        "post_tool_use.py" in h.get("command", "")
+        script in h.get("command", "")
         for entry in entries
         if isinstance(entry, dict)
         for h in entry.get("hooks", [])
@@ -81,58 +81,51 @@ def _installed_plugin_dir(home: Path) -> Path | None:
     return None
 
 
-def check_hook_registered(home: Path | None = None) -> CheckResult:
-    """The PostToolUse capture hook must be registered — by EITHER path.
+REPO_MAP_HOOK = "repo_map_capture.py"
+LEGACY_CAPTURE_HOOK = "post_tool_use.py"
 
-    The hook is plugin-managed now (``plugins/canopy/hooks/hooks.json``), and
-    ``/canopy:setup`` deliberately removes the legacy ``~/.claude/settings.json``
-    entry. Checking only settings.json therefore failed on every correctly
-    configured machine, and its remediation ("run /canopy:setup") could never
-    clear it — setup is what removed the thing it was looking for. Accept the
-    plugin registration first, then fall back to the legacy one, which stays
-    valid because the plugin copy defers to it.
+
+def check_hook_registered(home: Path | None = None) -> CheckResult:
+    """The installed plugin must register the repo-map SessionStart hook.
+
+    The hook is plugin-managed (``plugins/canopy/hooks/hooks.json``). A
+    ``~/.claude/settings.json`` PostToolUse entry for the retired
+    ``post_tool_use.py`` capture hook is left over from an old setup: it is a
+    no-op now, so it only warns, and ``/canopy:setup`` removes it.
     """
     home = home or Path.home()
     name = "Hook registration"
+
+    legacy = ""
+    settings = _claude_dir(home) / "settings.json"
+    try:
+        if _registers(json.loads(settings.read_text(encoding="utf-8")),
+                      "PostToolUse", LEGACY_CAPTURE_HOOK):
+            legacy = (f"; {settings} still registers the retired {LEGACY_CAPTURE_HOOK} "
+                      "hook — run /canopy:setup to remove it")
+    except (json.JSONDecodeError, OSError):
+        pass
 
     plugin_dir = _installed_plugin_dir(home)
     if plugin_dir is not None:
         hooks_json = plugin_dir / "hooks" / "hooks.json"
         try:
-            if _registers_post_tool_use(json.loads(hooks_json.read_text(encoding="utf-8"))):
-                return CheckResult(name, True, f"registered by the canopy plugin ({hooks_json})")
+            if _registers(json.loads(hooks_json.read_text(encoding="utf-8")),
+                          "SessionStart", REPO_MAP_HOOK):
+                return CheckResult(
+                    name, True,
+                    f"repo-map hook registered by the canopy plugin ({hooks_json}){legacy}",
+                    warn=bool(legacy),
+                )
         except (json.JSONDecodeError, OSError):
-            pass  # fall through to the legacy registration
-
-    settings = _claude_dir(home) / "settings.json"
-    try:
-        if _registers_post_tool_use(json.loads(settings.read_text(encoding="utf-8"))):
-            return CheckResult(name, True, f"registered via legacy {settings}")
-    except (json.JSONDecodeError, OSError):
-        pass
+            pass
 
     return CheckResult(
         name,
         False,
-        "PostToolUse hook not registered by the plugin or settings.json — "
-        "run /canopy:update (plugin-managed), or /canopy:setup if canopy is not installed",
+        f"the canopy plugin does not register the SessionStart {REPO_MAP_HOOK} hook — "
+        f"run /canopy:update, or /canopy:setup if canopy is not installed{legacy}",
     )
-
-
-def check_session_log(canopy_dir: Path | None = None) -> CheckResult:
-    """The session log should exist and have at least one entry."""
-    canopy_dir = canopy_dir or CANOPY_DIR
-    log = canopy_dir / "session-log.jsonl"
-    name = "Session log"
-    if not log.exists():
-        return CheckResult(name, False, "session-log.jsonl not found — hook may not be firing")
-    try:
-        lines = sum(1 for line in log.read_text(encoding="utf-8").splitlines() if line.strip())
-    except OSError as e:
-        return CheckResult(name, False, f"could not read session-log.jsonl: {e}")
-    if lines == 0:
-        return CheckResult(name, False, "session-log.jsonl is empty — hook may not be firing")
-    return CheckResult(name, True, f"session-log.jsonl has {lines} entries")
 
 
 def check_repo_map(canopy_dir: Path | None = None) -> CheckResult:
@@ -141,15 +134,15 @@ def check_repo_map(canopy_dir: Path | None = None) -> CheckResult:
     repo_map = canopy_dir / "repo-map.json"
     name = "Repo map"
     if not repo_map.exists():
-        # NOT a failure. The PostToolUse hook writes this lazily, the first time a tool runs
-        # inside a git repo that has a GitHub remote — so on a correct fresh install the file
+        # NOT a failure. The SessionStart repo-map hook writes this lazily, the first time a
+        # session starts inside a git repo that has a GitHub remote — so on a correct fresh install the file
         # legitimately does not exist yet, and it appears on its own. Reporting FAIL sent new
         # operators hunting for a broken install and a fix that does not exist.
         return CheckResult(
             name,
             True,
-            "repo-map.json not created yet — the PostToolUse hook writes it the first time "
-            "you use a tool inside a git repo with a GitHub remote; nothing to fix",
+            "repo-map.json not created yet — the repo-map hook writes it the first time "
+            "a session starts inside a git repo with a GitHub remote; nothing to fix",
             warn=True,
         )
     try:
@@ -477,7 +470,6 @@ def _brew_outdated() -> tuple[int, str, str]:
 # Order matters for display: registration → state → auth → CLI deploy.
 _CHECKS = (
     check_hook_registered,
-    check_session_log,
     check_repo_map,
     check_workbench_token,
     check_plugin_version,
@@ -500,7 +492,6 @@ def run_doctor(
 
     results = [
         check_hook_registered(home=home),
-        check_session_log(canopy_dir=canopy_dir),
         check_repo_map(canopy_dir=canopy_dir),
         check_workbench_token(home=home, canopy_dir=canopy_dir),
         check_plugin_version(home=home),

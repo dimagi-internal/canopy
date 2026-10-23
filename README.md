@@ -11,9 +11,9 @@ machinery through skills, slash commands, and agents.
 
 Canopy closes a loop:
 
-1. **Observe** — a Claude Code hook (`hooks/post_tool_use.py`) captures a session
-   log and repo mappings as you work. The orchestrator parses transcripts and
-   extracts observations (friction, gaps, recurring patterns).
+1. **Observe** — the orchestrator parses Claude Code's own session transcripts
+   (`~/.claude/projects/`) and extracts observations (friction, gaps, recurring
+   patterns); a SessionStart hook maps each project dir to its GitHub repo.
 2. **Propose** — observations are turned into improvement proposals, each with a
    verification plan. Proposals are checked against the existing skill catalog so
    canopy doesn't propose building something it already ships.
@@ -48,8 +48,8 @@ Getting started is three steps — the user-facing guide is
    /canopy:setup
    ```
 
-   `/canopy:setup` is idempotent. It provisions the state directory, the main checkout, the
-   capture hook and the `canopy` CLI, signs you in to canopy-web in the browser, and
+   `/canopy:setup` is idempotent. It provisions the state directory, the main checkout
+   and the `canopy` CLI, signs you in to canopy-web in the browser, and
    registers your ONE agent catalog, `canopy-agents` (`/plugins/marketplace.json`: every
    agent in every workspace you belong to, auto-update on), in `~/.claude/settings.json`
    with canopy's headers helper — `canopy agents connect`. That registration is the only
@@ -115,7 +115,7 @@ canopy improve [--dry-run|--observe-only]   # the core loop: analyze → propose
 canopy patterns                             # recurring friction across your sessions
 canopy proposals list / show <id>           # inspect what canopy wants to build
 canopy brief                                # strategic summary of recent activity
-canopy sessions status                      # is the capture hook logging my work?
+canopy sessions list                        # sessions with recent activity
 canopy doctor                               # plugin health (hook, token, version)
 canopy serve                                # transcript browser UI on localhost:8484
 ```

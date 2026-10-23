@@ -1,10 +1,9 @@
-"""Integration test — full flow from session log to corpus."""
+"""Integration test — create, save and reload a multi-server corpus entry."""
 
 from pathlib import Path
 
 import pytest
 
-from orchestrator.capture import append_log_entry, read_session_log, group_by_session, classify_sessions
 from orchestrator.corpus import create_corpus_entry, save_corpus_entry, load_corpus_entry
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -12,37 +11,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 @pytest.mark.integration
 def test_full_flow(tmp_path):
-    """Test: log a multi-server session, classify it, create a corpus entry."""
-    # 1. Simulate a multi-server session
-    log_file = tmp_path / "session-log.jsonl"
-    append_log_entry(log_file, {
-        "ts": "2026-03-20T14:32:01Z",
-        "session_id": "integration-test",
-        "project": "connect-labs",
-        "server": "commcare-hq",
-        "tool": "get_app_structure",
-        "input_summary": {"app_id": "test"},
-        "success": True,
-    })
-    append_log_entry(log_file, {
-        "ts": "2026-03-20T14:32:15Z",
-        "session_id": "integration-test",
-        "project": "connect-labs",
-        "server": "solicitations",
-        "tool": "create_solicitation",
-        "input_summary": {"program_id": 1},
-        "success": True,
-    })
-
-    # 4. Read and classify
-    entries = read_session_log(log_file)
-    assert len(entries) == 2
-
-    groups = group_by_session(entries)
-    classified = classify_sessions(groups)
-    assert "integration-test" in classified["multi_server"]
-
-    # 5. Create corpus entry
+    """Test: create a multi-server corpus entry, save it, load it back."""
+    # 1. Create corpus entry
     corpus_dir = tmp_path / "corpus"
     entry = create_corpus_entry(
         entry_id="test-solicitation",

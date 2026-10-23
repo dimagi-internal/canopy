@@ -99,8 +99,8 @@ Restart Claude Code (or `/reload-plugins`) so the new commands register.
 /canopy:setup
 ```
 
-It is idempotent — safe to re-run — and provisions the state directory, the
-capture hook and the `canopy` CLI, signs you in to canopy-web in the browser, and
+It is idempotent — safe to re-run — and provisions the state directory and
+the `canopy` CLI, signs you in to canopy-web in the browser, and
 registers your one agent catalog `canopy-agents` (every agent in every workspace you
 belong to; auto-updating) — `canopy agents connect`. It installs no agents: it lists them
 with their install lines (e.g. `/plugin install ace@canopy-agents`); install the ones you
