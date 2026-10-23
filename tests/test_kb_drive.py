@@ -126,40 +126,46 @@ def _readable(**over):
     return rows
 
 
-def test_sync_reads_only_approved_files_holds_personal_data_and_publishes_the_rest(monkeypatch, tmp_path):
-    pytest.importorskip("canopy_kb", reason="canopy_kb (canopy-web packages/canopy_kb) not installed")
+def test_sync_reads_only_approved_files_holds_personal_data_and_publishes_the_rest(monkeypatch):
+    """From an empty disk every time: what a sync remembers is on the host."""
+    pytest.importorskip("canopy_kb.curate", reason="canopy_kb (canopy-web packages/canopy_kb) not installed")
+    from canopy_kb.curate import MemoryStore
+    store = MemoryStore()
     calls = _calls(monkeypatch, [SOURCE], readable=_readable())
-    pushed = []
-    monkeypatch.setattr("orchestrator.kb_cli.push", lambda ref, repo, path, **kw: pushed.append(kw) or {"published": "delta"})
     fake = FakeGog(_tree(), bodies={"doc": b"# Protocol\n\nSkin to skin for 20 hours a day.",
                                     "sheet": b"Mother name,DOB,Weight\nA,2026-01-01,1800\n"})
     gog = RealishGog(fake)
-    out = kb_drive.sync("connect/kmc-kb", None, tmp_path, gog=gog)
-    assert gog.downloads == [("doc", "md"), ("sheet", "")]
+    out = kb_drive.sync("connect/kmc-kb", None, gog=gog, store=store)
+    assert fake.downloads == [("doc", "md"), ("sheet", "")]
     assert out["held"] == [{"file": "Patient list", "headers": ["Mother name", "DOB"]}]
     assert ("POST", "sources/7/files/sheet/hold", {"headers": ["Mother name", "DOB"]}) in calls
-    items = [json.loads(line) for line in open(tmp_path / "bundle" / "items.jsonl")]
-    assert [i["id"] for i in items] == ["drive:doc"]
-    assert items[0]["meta"]["drive"] == {"file_id": "doc", "revision": "4",
-                                          "mime_type": "application/vnd.google-apps.document"}
-    assert "path" not in items[0]["original"]
-    assert items[0]["original"]["source_url"] == "https://docs.google.com/document/d/doc"
-    assert pushed[0]["bundle"] == tmp_path / "bundle"
+    assert list(store.head()["docs"]) == ["drive:doc"] and out["push"]["published"]
+    doc = store.item("drive:doc")
+    assert doc["meta"]["drive"] == {"file_id": "doc", "revision": "4", "mime_type": "application/vnd.google-apps.document"}
+    assert doc["original"]["source_url"] == "https://docs.google.com/document/d/doc" and "20 hours" in doc["text"]
+    import gzip
+    assert not any(b"Mother name,DOB" in gzip.decompress(v) for v in
+                   list(store.objects["results"].values()) + list(store.objects["records"].values())), \
+        "a held spreadsheet's contents reached the host"
 
-    # unchanged files are not downloaded again; a released hold indexes the sheet
-    gog.downloads.clear()
+    # a second sync, a fresh machine: nothing downloaded, nothing published
+    fake.downloads.clear()
+    out = kb_drive.sync("connect/kmc-kb", None, gog=RealishGog(fake), store=store)
+    assert fake.downloads == [] and out["push"]["unchanged"]
+
+    # a released hold reads the sheet (its text was never kept, so it is downloaded again)
     _calls(monkeypatch, [SOURCE], readable=_readable(sheet={"held_headers": ["Mother name", "DOB"], "hold_released": True}))
-    out = kb_drive.sync("connect/kmc-kb", None, tmp_path, gog=gog)
-    assert gog.downloads == [] and out["held"] == []
-    assert [json.loads(line)["id"] for line in open(tmp_path / "bundle" / "items.jsonl")] == ["drive:doc", "drive:sheet"]
+    out = kb_drive.sync("connect/kmc-kb", None, gog=RealishGog(fake), store=store)
+    assert fake.downloads == [("sheet", "")] and out["held"] == []
+    assert sorted(store.head()["docs"]) == ["drive:doc", "drive:sheet"]
 
-    # an edited doc is re-read; a file no longer readable leaves the bundle
-    gog.bodies["doc"] = b"# Protocol v2\n\nSkin to skin, now 24 hours."
+    # an edited doc is re-read; a file no longer readable is removed
+    fake.downloads.clear()
+    fake.bodies["doc"] = b"# Protocol v2\n\nSkin to skin, now 24 hours."
     _calls(monkeypatch, [SOURCE], readable=_readable(doc={"drive_version": "5"})[:1])
-    kb_drive.sync("connect/kmc-kb", None, tmp_path, gog=gog)
-    assert gog.downloads == [("doc", "md")]
-    items = [json.loads(line) for line in open(tmp_path / "bundle" / "items.jsonl")]
-    assert [i["id"] for i in items] == ["drive:doc"] and "24 hours" in items[0]["text"]
+    out = kb_drive.sync("connect/kmc-kb", None, gog=RealishGog(fake), store=store)
+    assert fake.downloads == [("doc", "md")] and out["push"]["removed"] == 1
+    assert list(store.head()["docs"]) == ["drive:doc"] and "24 hours" in store.item("drive:doc")["text"]
 
 
 def test_a_shared_drive_listing_without_sharing_asks_each_file(monkeypatch):
@@ -174,10 +180,10 @@ def test_a_shared_drive_listing_without_sharing_asks_each_file(monkeypatch):
     assert gog.perm_calls == 3 and all(f["readers"] == ["user:hal@dimagi-ai.com"] for f in posted[0]["files"])
 
 
-def test_sync_without_the_engine_says_how_to_install_it(monkeypatch, tmp_path):
+def test_sync_without_the_engine_says_how_to_install_it(monkeypatch):
     import builtins
     real = builtins.__import__
     monkeypatch.setattr(builtins, "__import__",
                         lambda name, *a, **k: (_ for _ in ()).throw(ImportError(name)) if name.startswith("canopy_kb") else real(name, *a, **k))
     with pytest.raises(kb_drive.KBError, match="uv tool install"):
-        kb_drive.sync("connect/kmc-kb", None, tmp_path, gog=FakeGog(_tree()))
+        kb_drive.sync("connect/kmc-kb", None, gog=FakeGog(_tree()))
