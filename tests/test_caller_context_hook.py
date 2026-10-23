@@ -628,13 +628,13 @@ def test_no_ids_no_parent_line(tmp_path):
     assert "- parent:" not in cc.summarize(env, str(tmp_path / "env.json"), "")
 
 
-def test_a_sensitive_conversations_history_is_its_memory(tmp_path):
-    """canopy-web's `conversation.history`: a sensitive conversation's turns start
-    fresh, so the earlier lines are how the agent remembers them."""
-    env = {**ENV, "conversation": {"history": [
-        {"role": "person", "author": "Amy", "text": "how many visits?"},
-        {"role": "agent", "author": None, "text": "12 visits\nacross 3 workers"}]}}
+def test_a_turn_that_starts_fresh_is_told_so(tmp_path):
+    """A sensitive conversation's turn that could not resume its session: canopy-web
+    has no history to give it (`conversation.starts_fresh`, from the runner)."""
+    env = {**ENV, "conversation": {"starts_fresh": True}}
     text = cc.summarize(env, str(tmp_path / "env.json"), TID)
-    assert "Earlier in this conversation" in text
-    assert "- Amy: how many visits?" in text and "- Agent: 12 visits\n  across 3 workers" in text
-    assert "Earlier in this conversation" not in cc.summarize(ENV, str(tmp_path / "e"), TID)
+    assert "- starting fresh:" in text and "canopy cannot supply them" in text
+    assert "starting fresh" not in cc.summarize(ENV, str(tmp_path / "e"), TID)
+    # An older canopy-web's `history` is ignored, not rendered.
+    old = {**ENV, "conversation": {"history": [{"role": "person", "text": "how many visits?"}]}}
+    assert "how many visits?" not in cc.summarize(old, str(tmp_path / "e"), TID)

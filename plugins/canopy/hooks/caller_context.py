@@ -260,7 +260,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     lines.extend(_apps_lines(env.get("apps")))
     lines.extend(_parent_lines(env, tid))
     lines.extend(person_lines(env.get("person")))
-    lines.extend(_history_lines(env.get("conversation")))
+    lines.extend(_fresh_lines(env.get("conversation")))
     lines.append(f"Full envelope: {path}; re-read it with the who_is_asking tool "
                  f"(turn_id={tid}) before anything irreversible. Terms: {ACCESS_DOC}")
     return "\n".join(lines)
@@ -284,24 +284,18 @@ def _parent_lines(env: dict, tid: str) -> list:
             "conversation's people. The canopy CLI sends it for you."]
 
 
-def _history_lines(conversation) -> list:
-    """A SENSITIVE conversation's earlier lines (canopy-web `conversation.history`).
-    Its turns run confined, are never resumed and are deleted on the box, so this is
-    the agent's only memory of what was already said. Absent for every other
-    conversation, which resumes its own session instead."""
-    history = conversation.get("history") if isinstance(conversation, dict) else None
-    if not isinstance(history, list) or not history:
+def _fresh_lines(conversation) -> list:
+    """A SENSITIVE conversation's turn that could not resume its own session
+    (canopy-web `conversation.starts_fresh`, set by the sensitive-data runner).
+    Such a conversation's agent keeps its memory in the Claude session its box
+    kept; when that session is gone, canopy holds no copy of the words it could
+    hand back, so the agent is told plainly. Absent otherwise."""
+    if not isinstance(conversation, dict) or conversation.get("starts_fresh") is not True:
         return []
-    out = ["Earlier in this conversation (it holds a host's sensitive data, so this turn "
-           "starts fresh; this is what was already said, oldest first). Do not repeat it "
-           "back unasked, and keep it inside this conversation:"]
-    for h in history:
-        if not isinstance(h, dict) or not h.get("text"):
-            continue
-        who = "Agent" if h.get("role") == "agent" else (h.get("author") or "Person")
-        text = str(h["text"]).replace("\n", "\n  ")
-        out.append(f"- {_clean(who, 80)}: {text}")
-    return out if len(out) > 1 else []
+    return ["- starting fresh: this conversation holds a host's sensitive data, and this turn "
+            "could not resume your earlier session in it, so you have none of its earlier "
+            "messages and canopy cannot supply them. If the person refers to something said "
+            "before, say so plainly and ask them to repeat what you need; never guess it."]
 
 
 def _clean(value, limit: int = 200) -> str:
