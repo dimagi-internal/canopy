@@ -30,10 +30,19 @@ def _cfg(monkeypatch, tmp_path):
     return cfg
 
 
-def transport_for(status=200, body=CATALOG, seen=None):
+MY_AGENTS = {"items": [{"slug": "ace", "name": "ACE", "workspace": "connect"},
+                       {"slug": "eva", "name": "Eva", "workspace": "family"}], "count": 2}
+ME_AGENTS_URL = "https://canopy.dimagi.com/api/me/agents/"
+
+
+def transport_for(status=200, body=CATALOG, seen=None, mine=MY_AGENTS):
     def t(method, url, headers, data):
         if seen is not None:
             seen.append((method, url, headers.get("Authorization")))
+        if url.startswith(ME_AGENTS_URL):
+            if isinstance(mine, int):
+                return mine, "boom"
+            return 200, json.dumps(mine)
         return status, json.dumps(body) if not isinstance(body, str) else body
     return t
 
@@ -75,7 +84,7 @@ def test_url_is_one_constant():
 def test_connect_registers_one_catalog_installs_nothing_and_lists_agents(_cfg, capsys):
     seen, claude = [], FakeClaude()
     ws._connect(runner=claude, transport=transport_for(seen=seen))
-    assert seen == [("GET", URL, "Bearer pat_person")]
+    assert seen == [("GET", URL, "Bearer pat_person"), ("GET", ME_AGENTS_URL, "Bearer pat_person")]
     entry = _settings(_cfg)["extraKnownMarketplaces"]["canopy-agents"]
     assert entry["autoUpdate"] is True and entry["source"]["url"] == URL
     helper = entry["source"]["headersHelper"]
@@ -84,10 +93,27 @@ def test_connect_registers_one_catalog_installs_nothing_and_lists_agents(_cfg, c
     assert len(helper) <= 500 and "    " not in helper
     assert not [c for c in claude.calls if c[1:3] == ["plugin", "install"]]
     out = capsys.readouterr().out
-    for needle in ("/plugin install ace@canopy-agents", "then /ace:setup",
-                   "/plugin install eva@canopy-agents", "then /eva:setup",
-                   "github: dimagi-internal/ace", "GitHub read access"):
+    for needle in ("canopy agent use ace --dir", "then /ace:setup",
+                   "canopy agent use eva --dir", "then /eva:setup", "[connect]",
+                   "github: dimagi-internal/ace", "GitHub read access",
+                   "/plugin install <agent>@canopy-agents"):
         assert needle in out
+    # Dispatch is named for what it is, so a member's Claude does not reach for it.
+    assert "dispatch` is only for handing work to a runner to do unattended" in out
+
+
+def test_offer_lists_only_the_agents_canopy_web_says_you_can_use(_cfg, capsys):
+    mine = {"items": [{"slug": "ace", "name": "ACE", "workspace": "connect"}]}
+    ws._connect(runner=FakeClaude(), transport=transport_for(mine=mine))
+    out = capsys.readouterr().out
+    assert "canopy agent use ace" in out and "canopy agent use eva" not in out
+
+
+def test_offer_falls_back_to_the_catalog_when_my_agents_is_unreadable(_cfg, capsys):
+    # Never blocking: an unreadable /api/me/agents/ still offers every catalog agent.
+    ws._connect(runner=FakeClaude(), transport=transport_for(mine=500))
+    out = capsys.readouterr().out
+    assert "canopy agent use ace" in out and "canopy agent use eva" in out
 
 
 def test_connect_removes_retired_per_workspace_entries_and_says_so(_cfg, capsys):
@@ -130,12 +156,13 @@ def test_dry_run_changes_nothing(_cfg, capsys):
     assert "canopy-agents" not in _settings(_cfg)["extraKnownMarketplaces"] and claude.calls == []
     out = capsys.readouterr().out
     assert "would remove retired per-workspace marketplace 'canopy-family'" in out
-    assert "/plugin install ace@canopy-agents" in out
+    assert "canopy agent use ace" in out
 
 
 def test_empty_catalog_says_so(_cfg, capsys):
-    ws._connect(runner=FakeClaude(), transport=transport_for(body={"name": "canopy-agents", "plugins": []}))
-    assert "No agents to install yet" in capsys.readouterr().out
+    ws._connect(runner=FakeClaude(), transport=transport_for(body={"name": "canopy-agents", "plugins": []},
+                                                             mine={"items": []}))
+    assert "No agents for you to use yet" in capsys.readouterr().out
 
 
 def test_catalog_with_another_name_is_refused(_cfg):

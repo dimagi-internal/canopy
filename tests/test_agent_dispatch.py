@@ -28,6 +28,14 @@ from orchestrator.agent_dispatch import (
 from orchestrator.cli import main
 
 
+@pytest.fixture(autouse=True)
+def _no_local_use_note(request, monkeypatch):
+    """The local-use note is its own concern (tests at the end of this file); every other
+    test here pins dispatch's stdout, which the note must never touch."""
+    if "local_use" not in request.node.name:
+        monkeypatch.setattr("orchestrator.agent_dispatch.local_use_note_for", lambda slug, call: "")
+
+
 # --- the payload -------------------------------------------------------------
 
 def test_payload_carries_slug_prompt_and_origin():
@@ -779,3 +787,160 @@ def test_caller_with_no_verified_person_is_refused_before_anything_is_sent(
                                   "--on-behalf-of", "caller"])
     assert r.exit_code != 0 and "no verified person" in r.output
     assert not [s for s in seen if s[0] == "POST"]  # no board card, no turn
+
+
+# --- dispatch is for unattended work; local use is how a person works with an agent -------
+# canopy-web#1955: two members asked ACE 17 questions as one-shot dispatches because nothing
+# told them `canopy agent use` existed.
+
+from orchestrator import agent_dispatch as AD  # noqa: E402
+
+_NOTE_ENV = ("CANOPY_TURN_ID", "CANOPY_AGENT", "CANOPY_AGENT_SLUG")
+
+
+def _as_person(monkeypatch, tmp_path):
+    for var in _NOTE_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.chdir(tmp_path)  # no agent repo underfoot
+    monkeypatch.setattr("orchestrator.canopy_web._dispatched_agent_slug", lambda: "")
+
+
+def _web(licences=(), via=None, fail=()):
+    calls = []
+
+    def call(method, path, body=None, **kw):
+        calls.append(path)
+        if any(f in path for f in fail):
+            raise RuntimeError("boom")
+        if path == "/api/me/":
+            return {"id": 7, "email": "member@dimagi.com"}
+        if path.endswith("/licenses"):
+            return list(licences)
+        if path.endswith("/credentials/access"):
+            return {"via": via}
+        raise AssertionError(path)
+    call.calls = calls
+    return call
+
+
+def test_local_use_note_names_canopy_agent_use_and_unattended():
+    note = AD.local_use_note("ace")
+    assert "canopy agent use ace" in note and "unattended" in note and "\n" not in note
+
+
+def test_local_use_note_for_a_person_without_a_licence(monkeypatch, tmp_path):
+    _as_person(monkeypatch, tmp_path)
+    assert AD.local_use_note_for("ace", _web()) == AD.local_use_note("ace")
+
+
+def test_local_use_note_silent_with_an_active_licence(monkeypatch, tmp_path):
+    _as_person(monkeypatch, tmp_path)
+    lic = [{"user_id": 7, "email": "member@dimagi.com", "status": "active"}]
+    assert AD.local_use_note_for("ace", _web(licences=lic)) == ""
+    # a requested (not yet approved) or revoked licence is not local use
+    for st in ("requested", "revoked"):
+        assert AD.local_use_note_for("ace", _web(licences=[{**lic[0], "status": st}]))
+
+
+def test_local_use_note_silent_for_an_admin(monkeypatch, tmp_path):
+    _as_person(monkeypatch, tmp_path)
+    assert AD.local_use_note_for("ace", _web(via="admin")) == ""
+
+
+def test_local_use_note_never_raises_when_canopy_web_fails(monkeypatch, tmp_path):
+    _as_person(monkeypatch, tmp_path)
+    web = _web(fail=("/api/me/", "/licenses", "/access"))
+    assert AD.local_use_note_for("ace", web) == AD.local_use_note("ace")
+
+
+@pytest.mark.parametrize("var", ["CANOPY_TURN_ID", "CANOPY_AGENT"])
+def test_local_use_note_silent_inside_an_agents_turn(monkeypatch, tmp_path, var):
+    """Agents dispatching to each other is what dispatch is for: no note, no extra calls."""
+    _as_person(monkeypatch, tmp_path)
+    monkeypatch.setenv(var, "hal" if var == "CANOPY_AGENT" else "turn-1")
+    web = _web()
+    assert AD.local_use_note_for("ace", web) == "" and web.calls == []
+
+
+def test_local_use_note_silent_in_an_agent_repo(monkeypatch, tmp_path):
+    _as_person(monkeypatch, tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "gating.json").write_text(json.dumps({"slug": "hal"}))
+    assert AD.local_use_note_for("ace", _web()) == ""
+
+
+def test_cli_dispatch_prints_the_local_use_note_on_stderr_only(monkeypatch):
+    calls = []
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", _fake_transport(calls))
+    monkeypatch.setattr("orchestrator.agent_dispatch.local_use_note_for",
+                        lambda slug, call: AD.local_use_note(slug))
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "ace", "--no-task",
+                                  "--prompt", "q", "--json-output"])
+    assert r.exit_code == 0, r.output
+    json.loads(r.stdout)  # stdout stays pure JSON
+    assert "canopy agent use ace" in r.stderr and "unattended" in r.stderr
+
+
+def test_cli_dispatch_still_dispatches_when_the_note_check_blows_up(monkeypatch):
+    calls = []
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", _fake_transport(calls))
+
+    def boom(slug, call):
+        raise RuntimeError("x")
+    monkeypatch.setattr("orchestrator.agent_dispatch.local_use_note_for", boom)
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--slug", "ace", "--no-task", "--prompt", "q"])
+    assert r.exit_code == 0, r.output
+    assert [c for c in calls if c[0] == "POST" and "/harness/turns/" in c[1]]
+
+
+def test_dispatch_help_points_people_to_local_use_and_reply():
+    r = CliRunner().invoke(main, ["agent", "dispatch", "--help"])
+    text = " ".join(r.output.split())
+    assert "UNATTENDED" in text and "canopy agent use <slug>" in text
+    assert "canopy agent reply" in text
+
+
+# --- canopy agent reply: a follow-up reaches the session it follows ------------------------
+
+SID = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
+
+
+@pytest.mark.parametrize("ref", [SID, SID.upper(), f"https://canopy.dimagi.com/w/connect/chat/{SID}"])
+def test_session_send_path_takes_an_id_or_a_link(ref):
+    assert AD.session_send_path(ref) == f"/api/canopy-sessions/{SID}/send"
+
+
+@pytest.mark.parametrize("ref", ["", "ace-main", "turn-123"])
+def test_session_send_path_refuses_anything_else(ref):
+    with pytest.raises(DispatchError):
+        AD.session_send_path(ref)
+
+
+def test_cli_reply_sends_into_the_existing_session(monkeypatch):
+    calls = []
+
+    def transport(method, url, headers, data):
+        calls.append((method, url, json.loads(data) if data else None))
+        return 200, json.dumps({"turn_id": "turn-9", "message": {"id": "m1"}})
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+    r = CliRunner().invoke(main, ["agent", "reply", f"https://x/w/connect/chat/{SID}",
+                                  "--prompt", "and the rest?", "--json-output"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output) == {"session": SID, "turn_id": "turn-9", "message_id": "m1"}
+    assert calls == [("POST", f"https://x/api/canopy-sessions/{SID}/send", {"text": "and the rest?"})]
+    # never a new turn: a reply must not touch the harness turn queue or the board
+    assert not [c for c in calls if "/harness/turns/" in c[1] or "/tasks" in c[1]]
+
+
+def test_cli_reply_needs_a_prompt_and_a_real_session(monkeypatch):
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    r = CliRunner().invoke(main, ["agent", "reply", SID])
+    assert r.exit_code != 0 and "--prompt" in r.output
+    r = CliRunner().invoke(main, ["agent", "reply", "not-a-session", "--prompt", "x"])
+    assert r.exit_code != 0 and "not a canopy session id" in r.output
