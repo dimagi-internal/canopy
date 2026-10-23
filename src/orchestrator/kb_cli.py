@@ -295,6 +295,22 @@ def _records():
     return engine().records
 
 
+def plan_only(ref: str, bundle: Path) -> dict:
+    """What publishing `bundle` would change, asked of canopy-web; nothing is sent or
+    published (`push --dry-run`)."""
+    from orchestrator import canopy_web
+
+    if _kind(ref) != "workspace-project":
+        raise KBError("--dry-run plans against canopy-web: it needs a workspace project (<workspace>/<handle>)")
+    ws, handle = _WORKSPACE_REF.match(ref).groups()
+    plan = canopy_web.call("POST", f"/api/workspace-projects/{ws}/{handle}/kb/plan",
+                           {"state": _records().state(bundle)}) or {}
+    return {"kb": ref, "dry_run": True, "unchanged": bool(plan.get("unchanged")),
+            "full_required": bool(plan.get("full_required")), "base": plan.get("base"),
+            "added": plan.get("added"), "changed": plan.get("changed"), "removed": plan.get("removed"),
+            "upload_docs": len(plan.get("upload_docs") or []), "upload_parts": len(plan.get("upload_parts") or [])}
+
+
 def publish_to_canopy(ref: str, path: Path, bundle: Path | None = None, *, full: bool = False,
                       wait: bool = True) -> dict:
     """Publish a workspace project's KB to canopy-web: a delta when the bundle is given
@@ -532,13 +548,48 @@ def pull_cmd(kb_ref, repo, max_age_hours, force):
               help="the bundle the build came from, to publish only what changed (default: --originals)")
 @click.option("--full", is_flag=True, help="publish the whole file even when a delta would do")
 @click.option("--no-wait", is_flag=True, help="do not wait for canopy-web to index a delta")
+@click.option("--dry-run", is_flag=True, help="say what publishing would change; send and publish nothing")
 @_guard
-def push_cmd(kb_ref, repo, max_age_hours, path, originals, bundle, full, no_wait):
+def push_cmd(kb_ref, repo, max_age_hours, path, originals, bundle, full, no_wait, dry_run):
     """Publish a built kb.sqlite (curators). A workspace project's goes to canopy-web, which
     serves it as the project's MCP: originals first (--originals), then only the documents
     that changed since the published version (--bundle; the whole file on a first build
     or --full). Other KBs go to their Drive folder."""
+    if dry_run:
+        if not (bundle or originals):
+            raise click.ClickException("--dry-run needs the bundle the build came from (--bundle)")
+        _emit(plan_only(kb_ref, bundle or originals))
+        return
     _emit(push(kb_ref, repo, path, originals, bundle=bundle, full=full, wait=not no_wait))
+
+
+@kb_group.group("workdir")
+def workdir_group():
+    """A curator's working cache, kept on canopy-web so the next refresh can run on any
+    machine: `restore` before a refresh, `save` after it publishes."""
+
+
+@workdir_group.command("save")
+@_kb_option
+@click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--exclude", multiple=True,
+              help="a path or glob to leave out, e.g. kb.sqlite or bundle/ (a trailing / is a directory)")
+@_guard
+def workdir_save_cmd(kb_ref, repo, max_age_hours, directory, exclude):
+    """Upload what changed in DIRECTORY (never what the KB's originals hold) and point the KB at it."""
+    from orchestrator.kb_workdir import save
+    _emit(save(kb_ref, directory, exclude))
+
+
+@workdir_group.command("restore")
+@_kb_option
+@click.argument("directory", type=click.Path(file_okay=False, path_type=Path))
+@click.option("--force", is_flag=True, help="also replace files changed on this machine since its last save")
+@_guard
+def workdir_restore_cmd(kb_ref, repo, max_age_hours, directory, force):
+    """Bring DIRECTORY up to the working cache saved last (fetches only what differs; deletes nothing)."""
+    from orchestrator.kb_workdir import restore
+    _emit(restore(kb_ref, directory, force))
 
 
 @kb_group.group("drive")
