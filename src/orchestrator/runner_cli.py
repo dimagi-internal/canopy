@@ -412,122 +412,49 @@ def list_cmd(workspace, as_json):
 
 
 # ── credentials ─────────────────────────────────────────────────────────────
-#: The cascade, in the order the runner tries it. Subscriptions first (already
-#: paid for), the metered API key last.
-_CRED_SLOTS = (
-    ("claude_token", "subscription 1", "has_claude_token",
-     "Primary Claude subscription. Every turn runs on this until its cap trips."),
-    ("claude_token_secondary", "subscription 2", "has_claude_token_secondary",
-     "Second subscription. Takes over automatically when #1 hits its weekly cap."),
-    ("claude_api_key", "API key", "has_claude_api_key",
-     "Last resort — METERED, bills per token. Falling back to it notifies you."),
-)
-
-
-def _mint_setup_token() -> str:
-    """Run `claude setup-token` against the operator's terminal, then take the
-    result by hidden prompt.
-
-    Deliberately NOT captured from stdout: setup-token is an interactive browser
-    login, and capturing its stream to scrape a token out of it breaks the very
-    TUI the human has to click through. Letting it own the terminal and then
-    asking for the value is duller and works.
-    """
-    import subprocess
-
-    click.echo("\n  Launching `claude setup-token` — sign in as the account you want, "
-               "then copy the token it prints.\n")
-    try:
-        subprocess.run(["claude", "setup-token"], check=False)
-    except FileNotFoundError:
-        raise click.ClickException(
-            "`claude` is not on PATH here. Mint the token on a machine that has it "
-            "(`claude setup-token`) and re-run this with the paste option.")
-    return click.prompt("  Paste the token", hide_input=True, default="", show_default=False)
-
-
-def _prompt_slot(field: str, label: str, blurb: str, already_set: bool) -> str | None:
-    """Return a new value for one slot, or None to leave it as-is."""
-    state = "already set" if already_set else "not set"
-    click.echo(f"\n{label} ({state})\n  {blurb}")
-    choices = "m=mint / p=paste / k=keep" if already_set else "m=mint / p=paste / s=skip"
-    while True:
-        pick = (click.prompt(f"  [{choices}]", default="k" if already_set else "s",
-                             show_default=True) or "").strip().lower()[:1]
-        if pick in ("k", "s", ""):
-            return None
-        if pick == "m":
-            value = _mint_setup_token()
-        elif pick == "p":
-            value = click.prompt("  Paste the value", hide_input=True, default="",
-                                 show_default=False)
-        else:
-            click.echo("  pick m, p, or " + ("k" if already_set else "s"))
-            continue
-        value = (value or "").strip()
-        if value:
-            return value
-        click.echo("  nothing entered — leaving this slot unchanged")
-        return None
-
-
 @runner.command("credential")
 @click.argument("name_or_id")
 @click.option("--workspace", default="", help="Tenant, when the runner is not in your default one.")
-@click.option("--show", is_flag=True, help="Only report which slots are set, and exit.")
-def runner_credential(name_or_id, workspace, show):
-    """Set a cloud runner's Claude credentials — the failover cascade.
+def runner_credential(name_or_id, workspace):
+    """Show a cloud runner's Claude credentials, in the order it uses them — and where
+    to change them.
 
-    A subscription's weekly cap stops EVERY agent on the box at once, so a runner
-    carries an ordered cascade: subscription 1, then subscription 2, then a
-    metered API key. The runner advances on a cap and re-runs the turn; reaching
-    the API key notifies you, because it bills per token.
-
-    Values are read by HIDDEN prompt and sent straight to canopy-web (encrypted at
-    rest) — they are never echoed, never stored in a file, and never land in your
-    shell history. Laptop runners don't use this; they use emdash's ambient auth.
+    A runner's tokens and API keys live in a vault only its own device key opens
+    (canopy-web spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md): a
+    token is signed in on the box and sealed there, an API key sealed in your browser.
+    Nothing takes a pasted value any more, so this prints the list (never a value) and
+    the runner's Credentials tab, where you make its vault key, sign a token in, add
+    an API key or reorder them.
     """
     from orchestrator import canopy_web
 
     try:
         r = _resolve(name_or_id, workspace)
-        _refuse_if_not_ours(r, "set credentials on")
+        _refuse_if_not_ours(r, "read the credentials of")
         if str(r.get("kind") or "") != "cloud":
             click.echo(f"note: '{r.get('name')}' is a {r.get('kind')} runner — it uses "
-                       f"emdash's ambient Claude auth and ignores this bundle.")
-        path = f"/api/harness/runners/{r['id']}/credential"
-        # The masked view comes back from a no-op POST (every field defaults to
-        # None = unchanged). The GET on this path returns REAL VALUES for the
-        # runner to consume, and we are not putting those on an operator's screen
-        # just to render a checklist.
-        status = canopy_web.call("POST", path, {}) or {}
-
-        click.echo(f"\nrunner: {r.get('name')}  ({r.get('status')}"
-                   f"{', paused' if r.get('paused') else ''})")
-        if show:
-            for field, label, has_key, _ in _CRED_SLOTS:
-                click.echo(f"  {'set  ' if status.get(has_key) else 'unset'}  {label}")
+                       f"emdash's ambient Claude auth, not a credential list.")
             return
-
-        body: dict[str, str] = {}
-        for field, label, has_key, blurb in _CRED_SLOTS:
-            value = _prompt_slot(field, label, blurb, bool(status.get(has_key)))
-            if value is not None:
-                body[field] = value
-
-        if not body:
-            click.echo("\nnothing changed.")
-            return
-
-        result = canopy_web.call("POST", path, body) or {}
-        click.echo("\nstored (encrypted). cascade now:")
-        for field, label, has_key, _ in _CRED_SLOTS:
-            click.echo(f"  {'set  ' if result.get(has_key) else 'unset'}  {label}")
-        if not result.get("has_claude_token_secondary") and not result.get("has_claude_api_key"):
-            click.echo("\nwarning: only one credential is set — a usage cap will stop every "
-                       "agent on this box with nothing to fail over to.")
-        click.echo("\nThe runner stages these at start-up, so it picks them up on its next "
-                   "restart (the auto-updater bounces it within ~30 min, or restart it now "
-                   "with `systemctl restart canopy-runner` on the box).")
+        status = canopy_web.call("GET", f"/api/harness/runners/{r['id']}/credential/status") or {}
+        click.echo(f"\nrunner: {r.get('name')}  ({r.get('status')}{', paused' if r.get('paused') else ''})")
+        vaults = status.get("vaults") or []
+        if not vaults:
+            click.echo("vault:  none yet — its tokens and API keys need one")
+        for v in vaults:
+            click.echo(f"vault:  {v.get('name')}  ({'key version ' + str(v['kv']) if v.get('kv') else 'no key yet'})")
+        entries = status.get("credentials") or []
+        if not entries:
+            click.echo("  (no credentials)")
+        for i, e in enumerate(entries, 1):
+            kind = {"login": "login", "token": "token", "api_key": "API key"}.get(e.get("kind"), e.get("kind"))
+            who = e.get("account") or e.get("name") or ""
+            held = (e.get("signed_in") if e.get("kind") == "login" else e.get("in_vault"))
+            state = ("signed in" if held else "not signed in") if e.get("kind") == "login" else \
+                    ("in the vault" if held else "no value yet")
+            click.echo(f"  {i}. {kind:<8} {who:<28} {state}")
+        ws = r.get("workspace") or ""
+        base = canopy_web.resolve_base_url(None).rstrip("/")
+        where = f"{base}/w/{ws}/runners/{r['id']}/credentials" if ws else f"{base}/supervisor?tab=runners"
+        click.echo(f"\nchange them (make the vault key, sign in, add an API key, reorder): {where}")
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
