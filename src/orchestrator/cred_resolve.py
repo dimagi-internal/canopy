@@ -172,6 +172,37 @@ def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[s
     return {**body, "values": {n: values[n] for n in wanted if n in values}}
 
 
+def runner_resolve_path(runner_id: str) -> str:
+    return f"/api/harness/runners/{runner_id}/credential/resolve"
+
+
+def resolve_runner(runner_id: str, *, token: Optional[str] = None, base_url: Optional[str] = None,
+                   transport: Optional[canopy_web.Transport] = None, ecdh=None) -> dict:
+    """A cloud runner's OWN Claude credentials, out of the vault that holds them
+    (canopy-web spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md).
+
+    canopy-web answers only the box's own runner token with a proof of its device key,
+    and only with ciphertext: ``{vaults: [...]}`` in the shape an agent's resolve gives
+    its workspace vault layers. Each opens here under its own key, unwrapped from this
+    device's copy, exactly as :func:`merge_vault_layers` opens an agent's. Returns
+    ``{values: {name: plaintext}, vault_layers: [...]}``; a vault this device may not
+    open is named in ``vault_layers``, never a failed read. Never logs a value."""
+    path = runner_resolve_path(runner_id)
+    try:
+        body = canopy_web.call("GET", path, token=token, base_url=base_url, transport=transport,
+                               headers=_headers(path, base_url, "")) or {}
+    except canopy_web.CanopyError as e:
+        text = str(e)
+        if "device_proof_required" in text:
+            raise DeviceProofRequired(
+                f"canopy-web hands runner {runner_id}'s credentials only to its own approved device "
+                f"key: {text[:300]}") from None
+        raise
+    merged = merge_vault_layers(f"runner {runner_id}", {"values": {}, "vaults": body.get("vaults") or []},
+                                ecdh=ecdh)
+    return {"values": merged["values"], "vault_layers": merged["vault_layers"]}
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # zero-knowledge answers (canopy-web#1550)
 # ──────────────────────────────────────────────────────────────────────────────
