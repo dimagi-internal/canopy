@@ -187,20 +187,57 @@ def resolve_runner(runner_id: str, *, token: Optional[str] = None, base_url: Opt
     device's copy, exactly as :func:`merge_vault_layers` opens an agent's. Returns
     ``{values: {name: plaintext}, vault_layers: [...]}``; a vault this device may not
     open is named in ``vault_layers``, never a failed read. Never logs a value."""
-    path = runner_resolve_path(runner_id)
+    layers = _runner_layers(runner_id, token=token, base_url=base_url, transport=transport)
+    merged = merge_vault_layers(f"runner {runner_id}", {"values": {}, "vaults": layers}, ecdh=ecdh)
+    return {"values": merged["values"], "vault_layers": merged["vault_layers"]}
+
+
+def _runner_call(method: str, path: str, runner_id: str, body=None, *, token, base_url, transport) -> dict:
+    """One call to a runner's own vault route, with a device proof for THIS method."""
+    url = canopy_web.resolve_base_url(base_url) + path
     try:
-        body = canopy_web.call("GET", path, token=token, base_url=base_url, transport=transport,
-                               headers=_headers(path, base_url, "")) or {}
+        return canopy_web.call(method, path, body, token=token, base_url=base_url, transport=transport,
+                               headers=device_key.proof_headers(method, url)) or {}
     except canopy_web.CanopyError as e:
         text = str(e)
         if "device_proof_required" in text:
             raise DeviceProofRequired(
-                f"canopy-web hands runner {runner_id}'s credentials only to its own approved device "
+                f"canopy-web reaches runner {runner_id}'s credentials only with its own approved device "
                 f"key: {text[:300]}") from None
         raise
-    merged = merge_vault_layers(f"runner {runner_id}", {"values": {}, "vaults": body.get("vaults") or []},
-                                ecdh=ecdh)
-    return {"values": merged["values"], "vault_layers": merged["vault_layers"]}
+
+
+def _runner_layers(runner_id: str, *, token, base_url, transport) -> list:
+    body = _runner_call("GET", runner_resolve_path(runner_id), runner_id, token=token,
+                        base_url=base_url, transport=transport)
+    return body.get("vaults") or []
+
+
+def seal_runner_values(runner_id: str, values: dict, *, token: Optional[str] = None,
+                       base_url: Optional[str] = None, transport: Optional[canopy_web.Transport] = None,
+                       ecdh=None) -> dict:
+    """Seal a cloud runner's own credentials into the vault that serves it: open this
+    device's copy of the vault key, encrypt each ``{name: plaintext}`` under it (bound
+    to the vault and the name), and write the ciphertext with
+    ``PUT /api/harness/runners/<id>/vault/values``. canopy-web never sees a value.
+    Returns ``{names, vault_id}``. Raises ZkUnlockError when this device holds no copy
+    of a vault key to seal with. Never logs a value."""
+    from orchestrator import vault_zk as zk
+    layer = next((lay for lay in _runner_layers(runner_id, token=token, base_url=base_url,
+                                                transport=transport)
+                  if isinstance(lay, dict) and isinstance(lay.get("wrap"), dict)), None)
+    if layer is None:
+        raise ZkUnlockError(f"runner {runner_id} holds no copy of a vault key to seal with — its "
+                            "owner makes the vault's key on the runner's credentials page")
+    binding, kv = str(layer["binding_id"]), layer["kv"]
+    vk = unwrap_device_vk(layer["wrap"], agent_id=binding, kv=kv, ecdh=_device_ecdh(ecdh))
+    sealed = [{"name": str(n), "value_zk": zk.encrypt_value(vk, binding, str(n), kv, str(v))}
+              for n, v in values.items()]
+    vk = b""  # noqa: F841 — drop our only reference
+    out = _runner_call("PUT", f"/api/harness/runners/{runner_id}/vault/values", runner_id,
+                       {"vault_id": layer["vault_id"], "kv": kv, "values": sealed},
+                       token=token, base_url=base_url, transport=transport)
+    return {"names": out.get("names") or [], "vault_id": str(layer["vault_id"])}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
