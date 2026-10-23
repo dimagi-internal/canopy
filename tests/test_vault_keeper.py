@@ -167,3 +167,61 @@ def test_a_workspace_vault_uses_its_grant_path_and_the_signers_agent(vk):
     method, path, body = call.posts[0]
     assert path == "/api/harness/runners/r1/vault-keeper/vaults/abc/wraps"
     assert _opens(body["wraps"][0]["wrap"], BOX_KEY, BOX_JWK, zk.device_info(binding, KV, box_jkt)) == vk
+
+
+# ---- the keepers' shared record (canopy-web Vault.keeper_pins_zk) --------------------------
+
+def _record(vk, people, kv=KV, version=3):
+    import json
+    value = zk.encrypt_value(vk, AGENT_ID, vault_keeper.PINS_NAME, kv, json.dumps({"v": 1, "people": people}))
+    return {"value": value, "kv": kv, "version": version}
+
+
+def _with_record(work, rec):
+    return {**work, "pins": rec, "pins_path": "/api/harness/runners/r1/vault-keeper/ace/pins"}
+
+
+def test_a_new_box_refuses_a_key_the_shared_record_pinned_differently(vk):
+    # A brand-new cloud box (empty pin file) still knows ed's key from the vault itself.
+    rec = _record(vk, {"9": {"jkt": "eds-real-key", "email": "ed@dimagi.com"}})
+    call = Recorder()
+    res = vault_keeper.keep_one(_with_record(_work(vk, [_member()]), rec), pins={}, call=call,
+                                ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert res.granted == [] and call.posts == [] and "vault key changed" in res.skipped[0]
+
+
+def test_a_person_pinned_first_here_is_written_back_over_the_version_read(vk):
+    import json
+    call = Recorder()
+    work = _with_record(_work(vk, [_member()]), {"value": "", "kv": 0, "version": 0})
+    res = vault_keeper.keep_one(work, pins={}, call=call, ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert len(res.granted) == 1
+    method, path, body = call.posts[1]
+    assert (method, path, body["expected_version"], body["kv"]) == ("PUT", work["pins_path"], 0, KV)
+    people = json.loads(zk.decrypt_value(vk, AGENT_ID, vault_keeper.PINS_NAME, KV, body["value"]))["people"]
+    assert people["9"]["jkt"] == zk.jwk_thumbprint(ED_JWK)
+
+
+def test_this_box_and_the_record_disagreeing_means_the_person_waits(vk):
+    rec = _record(vk, {"9": {"jkt": zk.jwk_thumbprint(ED_JWK), "email": "ed@dimagi.com"}})
+    pins = {"9": {"jkt": "what-this-box-saw", "email": "ed@dimagi.com"}}
+    call = Recorder()
+    res = vault_keeper.keep_one(_with_record(_work(vk, [_member()]), rec), pins=pins, call=call,
+                                ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert res.granted == [] and call.posts == [] and "shared record pin different keys" in res.skipped[0]
+
+
+def test_a_record_that_does_not_open_stops_every_grant(vk):
+    rec = _record(os.urandom(32), {})          # not made with this vault's key: forged
+    call = Recorder()
+    res = vault_keeper.keep_one(_with_record(_work(vk, [_member()]), rec), pins={}, call=call,
+                                ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert res.granted == [] and call.posts == [] and "does not open" in res.error
+
+
+def test_a_record_from_an_older_vault_key_is_started_afresh(vk):
+    rec = _record(os.urandom(32), {}, kv=KV - 1 if KV > 1 else 0)
+    call = Recorder()
+    res = vault_keeper.keep_one(_with_record(_work(vk, [_member()]), {**rec, "kv": 0}), pins={},
+                                call=call, ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert len(res.granted) == 1
