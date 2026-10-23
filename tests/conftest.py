@@ -69,6 +69,36 @@ def _no_ambient_device_key(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(turn_agent_token, "CACHE_DIR", tmp_path_factory.mktemp("agent-token"))
 
 
+_LOOPBACK = {"127.0.0.1", "localhost", "::1", ""}
+
+
+@pytest.fixture(autouse=True)
+def _no_real_network(request, monkeypatch):
+    """No test reaches a real host. The suite hides the device key (above) but not the
+    developer's token, so a test that falls through to the real transport asks PRODUCTION
+    canopy-web as that person with no device proof — and a device-bound agent's owner
+    gets a "Resolve refused: bad or missing device proof" alert for it (eva, 2026-10-22:
+    test_agent_bootstrap's vault read of the gog clients, four alerts in one evening). A
+    non-loopback urlopen fails here the way an unreachable host does, so fail-open code
+    takes its offline path. Mark a test ``real_network`` to let it out."""
+    if request.node.get_closest_marker("real_network"):
+        return
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    real = urllib.request.urlopen
+
+    def guarded(url, *a, **k):
+        full = url.full_url if isinstance(url, urllib.request.Request) else str(url)
+        host = urllib.parse.urlsplit(full).hostname or ""
+        if host not in _LOOPBACK:
+            raise urllib.error.URLError(f"tests do not reach {host} (tests/conftest.py)")
+        return real(url, *a, **k)
+
+    monkeypatch.setattr(urllib.request, "urlopen", guarded)
+
+
 @pytest.fixture(autouse=True)
 def _write_identity_readback_off_by_default(monkeypatch):
     """Every write with a resolved token first reads `/api/me/` back (canopy#813).
