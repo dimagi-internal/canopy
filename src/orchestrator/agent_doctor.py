@@ -997,6 +997,8 @@ def check_setup(
         return CheckResult(name, False, msg)
     except RuntimeError as e:  # missing PAT / transport config
         return CheckResult(name, False, str(e))
+    except OSError as e:  # canopy-web unreachable: one failed check, not a doctor with no output
+        return CheckResult(name, False, f"canopy-web unreachable: {e}")
     left = [s for s in steps if s.get("status") not in ("done", "optional")]
     if not left:
         return CheckResult(name, True, f"registered; all {len(steps)} setup step(s) done")

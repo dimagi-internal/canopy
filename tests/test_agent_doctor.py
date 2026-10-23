@@ -1101,3 +1101,20 @@ def test_secrets_backend_skips_without_identity_and_survives_a_probe_crash():
     assert "skipped" in check_secrets_backend(None).detail
     r = check_secrets_backend(_ident(), probe=boom)
     assert r.ok and r.warn and "down" in r.detail
+
+
+def test_check_setup_reports_an_unreachable_canopy_web_instead_of_crashing():
+    import urllib.error
+
+    from orchestrator import agent_doctor
+
+    class Offline:
+        def __init__(self, cfg):
+            pass
+
+        def setup_steps(self):
+            raise urllib.error.URLError("no route")
+
+    ident = type("I", (), {"slug": "hal"})()
+    res = agent_doctor.check_setup(ident, client_factory=Offline)
+    assert res.ok is False and "canopy-web unreachable" in res.detail
