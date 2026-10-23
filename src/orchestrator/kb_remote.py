@@ -172,8 +172,9 @@ class RemoteStore:
         gz.unlink(missing_ok=True)
         return out
 
-    def publish_file(self, gz, sha256: str, state: dict) -> dict:
-        """Upload a built kb.sqlite.gz and publish it, with the state it was built from."""
+    def publish_file(self, gz, sha256: str, state: dict, changes: dict | None = None) -> dict:
+        """Upload a built kb.sqlite.gz and publish it, with the state it was built from and
+        the documents whose content changed (what the version log lists)."""
         from orchestrator import canopy_web
         target = self.call("POST", f"{self.base}/upload") or {}
         if not target.get("url"):
@@ -185,7 +186,10 @@ class RemoteStore:
                 if resp.status >= 300:
                     raise KBError(f"upload to storage failed: HTTP {resp.status}")
         try:
-            proj = self.call("POST", f"{self.base}/publish", {"key": target["key"], "sha256": sha256, "state": state}) or {}
+            body = {"key": target["key"], "sha256": sha256, "state": state}
+            if changes is not None:
+                body["changes"] = changes
+            proj = self.call("POST", f"{self.base}/publish", body) or {}
         except canopy_web.CanopyError as e:
             if "-> 409" in str(e):
                 raise KBError(f"canopy-web refused the publish: {e}") from e
