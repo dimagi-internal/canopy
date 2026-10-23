@@ -279,7 +279,6 @@ def _delta_world(tmp_path, monkeypatch, plans, versions=None):
         raise AssertionError(path)
 
     monkeypatch.setattr(canopy_web, "call", fake_call)
-    monkeypatch.setattr(kb_cli, "_put_bytes", lambda url, data, headers: puts.append((url, len(data))))
     monkeypatch.setattr(kb_cli, "_put", lambda url, path, headers: puts.append((url, path.stat().st_size)))
     monkeypatch.setattr("time.sleep", lambda s: None)
     return b, calls, puts
@@ -297,15 +296,14 @@ def test_an_unchanged_bundle_sends_nothing(tmp_path, monkeypatch):
     assert [c[1] for c in calls] == ["plan"] and puts == []
 
 
-def test_a_changed_bundle_uploads_only_the_records_the_plan_asks_for_and_waits(tmp_path, monkeypatch):
+def test_a_changed_bundle_publishes_the_whole_file_built_here_never_a_delta(tmp_path, monkeypatch):
+    """canopy-web never builds an index (canopy-web#1971): a changed bundle sends the file
+    this machine built, with its state, and nothing of the old delta routes."""
     db = _kb_file(tmp_path / "kb.sqlite")
     b, calls, puts = _delta_world(tmp_path, monkeypatch, [dict(PLAN)])
     out = kb_cli.push("connect/givewell-kb", tmp_path, db, bundle=b)
-    assert [c[1] for c in calls[:3]] == ["plan", "blobs", "versions"]
-    assert len(calls[1][2]["blobs"]) == 1 and len(puts) == 1  # record "b" only, never the file
-    commit = calls[2][2]
-    assert commit["base"] == 1 and commit["uploaded_bytes"] == puts[0][1] and set(commit["state"]["docs"]) == {"a", "b"}
-    assert (out["published"], out["version"], out["status"], out["bytes_uploaded"]) == ("delta", 2, "ready", puts[0][1])
+    assert [c[1] for c in calls] == ["plan", "upload", "publish"] and set(calls[-1][2]["state"]["docs"]) == {"a", "b"}
+    assert out["published"] == "full" and len(puts) == 1
 
 
 def test_a_first_build_sends_the_whole_file_with_its_state(tmp_path, monkeypatch):
@@ -314,18 +312,6 @@ def test_a_first_build_sends_the_whole_file_with_its_state(tmp_path, monkeypatch
     out = kb_cli.push("connect/givewell-kb", tmp_path, db, bundle=b)
     assert [c[1] for c in calls] == ["plan", "upload", "publish"] and calls[-1][2]["state"]["docs"]
     assert out["published"] == "full"
-
-
-def test_a_log_that_moved_is_planned_again(tmp_path, monkeypatch):
-    from orchestrator import canopy_web
-
-    db = _kb_file(tmp_path / "kb.sqlite")
-    b, calls, _ = _delta_world(tmp_path, monkeypatch, [dict(PLAN), {**PLAN, "base": 3}],
-                               versions=[canopy_web.CanopyError("POST …/kb/versions -> 409 moved"), None])
-    out = kb_cli.push("connect/givewell-kb", tmp_path, db, bundle=b)
-    commits = [c[2] for c in calls if c[1] == "versions"]
-    assert [c[1] for c in calls if c[1] in ("plan", "versions")] == ["plan", "versions", "plan", "versions"]
-    assert [c["base"] for c in commits] == [1, 3] and out["published"] == "delta"
 
 
 def _originals_bundle(tmp_path):
