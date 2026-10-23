@@ -180,25 +180,38 @@ avoids the venv-contention failure mode. Most cycles do not need this.
 
 ### Step 4: Check Version Staleness
 
-For each analyzed session, search `~/.claude/canopy/session-log.jsonl` for
-entries matching that session's ID:
+For each analyzed session, read its Claude Code transcript
+(`~/.claude/projects/<project-key>/<session-id>.jsonl`). It holds every Skill
+call (an assistant `tool_use` block with `name: "Skill"`, the skill in
+`input.skill`) and, in the user message carrying that call's result, a text
+block `Base directory for this skill: …/plugins/cache/<marketplace>/<plugin>/<version>/skills/<name>`
+— the plugin version the skill actually ran from:
 
 ```bash
-grep '"session_id": "<id>"' ~/.claude/canopy/session-log.jsonl | head -20
+T=$(ls ~/.claude/projects/*/<id>.jsonl | head -1)
+python3 - "$T" <<'PY'
+import json, re, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    try: content = (json.loads(line).get("message") or {}).get("content")
+    except ValueError: continue
+    for b in content if isinstance(content, list) else []:
+        if b.get("type") == "tool_use" and b.get("name") == "Skill":
+            print("skill", (b.get("input") or {}).get("skill"))
+        m = re.search(r"Base directory for this skill: \S*/plugins/cache/([^/]+)/([^/]+)/([^/]+)/skills/(\S+)", b.get("text") or "")
+        if m: print("ran", f"{m[2]}:{m[4]}", "version", m[3])
+PY
 ```
 
-Look for:
-- `session_start` events → extract `plugin_version`
-- `skill_invoked` events → extract skill name + version
-- Compare against current plugin version:
+Then compare each `ran` line's version (for `canopy:*` skills, the
+`…/canopy/canopy/<version>/…` segment) against the current plugin version:
 
 ```bash
 python3 -c "import json; d=json.load(open('$HOME/.claude/plugins/installed_plugins.json')); print(d['plugins']['canopy@canopy'][0].get('version', 'unknown'))"
 ```
 
 **Staleness rules:**
-- If session's `plugin_version` < current version → flag as **stale**
-- If no version metadata → note "version unknown", skip staleness check
+- If the version a skill ran from < current version → flag as **stale**
+- If the session invoked no plugin skill → note "version unknown", skip staleness check
 - Record which specific skills were invoked on the stale version
 
 ### Step 5: Verify findings against current state (REQUIRED)

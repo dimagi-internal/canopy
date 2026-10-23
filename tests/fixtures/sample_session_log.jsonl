@@ -1,3 +1,0 @@
-{"ts": "2026-03-20T14:32:01Z", "session_id": "test-session-1", "project": "connect-labs", "server": "commcare-hq", "tool": "get_app_structure", "input_summary": {"app_id": "def"}, "success": true}
-{"ts": "2026-03-20T14:32:15Z", "session_id": "test-session-1", "project": "connect-labs", "server": "solicitations", "tool": "create_solicitation", "input_summary": {"program_id": 42}, "success": true}
-{"ts": "2026-03-20T14:35:00Z", "session_id": "test-session-2", "project": "connect-labs", "server": "commcare-hq", "tool": "get_form_questions", "input_summary": {"xmlns": "test"}, "success": false}

@@ -4,8 +4,7 @@ import sys
 import datetime as _dt
 from pathlib import Path
 import click
-from orchestrator.paths import CANOPY_DIR, ensure_canopy_dir
-from orchestrator.capture import read_session_log, group_by_session, classify_sessions
+from orchestrator.paths import ensure_canopy_dir
 from orchestrator.pipeline import run_cycle, CycleConfig
 from orchestrator.server import run_server
 from orchestrator.agent_cli import agent as agent_group
@@ -216,26 +215,6 @@ def sessions_list(hours, as_json, project, min_turns):
         # no shared key.
         sid = (s.get("session_id") or "")[:8] or "-" * 8
         click.echo(f"  {i:>3}  [{ts}]  {sid}  {project:<30}  \"{msg}\"  ({s['user_msgs']} msgs)")
-
-
-@sessions.command("status")
-def sessions_status():
-    """Show session log status."""
-    log_file = CANOPY_DIR / "session-log.jsonl"
-    entries = read_session_log(log_file)
-    if not entries:
-        click.echo("No session log entries found.")
-        return
-
-    groups = group_by_session(entries)
-    classified = classify_sessions(groups)
-
-    click.echo(f"Session log: {len(entries)} entries, {len(groups)} sessions")
-    click.echo(f"  Multi-server sessions: {len(classified['multi_server'])}")
-    click.echo(f"  Single-server sessions: {len(classified['single_server'])}")
-
-    latest = entries[-1]
-    click.echo(f"  Latest: {latest['ts']} — {latest['server']}.{latest['tool']}")
 
 
 @main.command("improve")

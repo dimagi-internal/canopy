@@ -131,7 +131,7 @@ for Claude Code sessions:
 
 | Self-improvement need | Reef | Canopy (already exists) |
 |---|---|---|
-| Capture what happened | SSH-scrape agent dirs | `hooks/post_tool_use.py` logs every session |
+| Capture what happened | SSH-scrape agent dirs | Claude Code's own transcripts (`~/.claude/projects/`), read by `scanner.py` |
 | Observe friction/gaps | "Skills to Spread" (passive) | `analyzer.py` → `observations.py` |
 | Propose a change | — | `proposer.py` → `proposals.py` |
 | Execute the change | — | agent dispatch via `/canopy:improve` → PR |
@@ -668,7 +668,7 @@ the authoring today, and that is the actual frontier — not a compromise.**
   (per-remote trust policy), echo `contact-memory/SKILL.md`; confirmed not installed/populated
   on this machine.
 - **canopy**: `src/orchestrator/{pipeline,analyzer,proposer,tracker,observations,proposals}.py`,
-  `hooks/post_tool_use.py`, canopy-web `/agents` + `/insights` surfaces.
+  canopy-web `/agents` + `/insights` surfaces.
 - **deep-research run** (`wf_1c88e6e6-2ab`, 9 sources, 43 claims; verification rate-limited —
   claims unverified-not-refuted, see §6 caveat):
   - Anthropic — Claude Code *hooks-guide* & Agent SDK *permissions* (`code.claude.com`) — primary

@@ -32,14 +32,14 @@ class TestEnsureCanopyDir:
         canopy = tmp_path / ".claude" / "canopy"
         legacy = tmp_path / ".claude" / "orchestrator"
         legacy.mkdir(parents=True)
-        (legacy / "session-log.jsonl").write_text('{"test": true}\n')
+        (legacy / "repo-map.json").write_text('{"test": true}\n')
         monkeypatch.setattr("orchestrator.paths.CANOPY_DIR", canopy)
         monkeypatch.setattr("orchestrator.paths._LEGACY_DIR", legacy)
         result = ensure_canopy_dir()
         assert result == canopy
         assert canopy.is_dir()
         assert not legacy.exists()
-        assert (canopy / "session-log.jsonl").read_text() == '{"test": true}\n'
+        assert (canopy / "repo-map.json").read_text() == '{"test": true}\n'
 
     def test_uses_canopy_when_both_exist(self, tmp_path, monkeypatch):
         canopy = tmp_path / ".claude" / "canopy"

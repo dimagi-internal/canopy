@@ -16,26 +16,14 @@ def _make_healthy_home(home: Path, canopy_dir: Path) -> None:
     (claude / "plugins").mkdir(parents=True)
     canopy_dir.mkdir(parents=True, exist_ok=True)
 
-    # Hook registration
-    (claude / "settings.json").write_text(json.dumps({
-        "hooks": {
-            "PostToolUse": [
-                {"hooks": [{"command": "python3 /path/to/hooks/post_tool_use.py"}]}
-            ]
-        }
-    }))
-    # Session log
-    (canopy_dir / "session-log.jsonl").write_text('{"a": 1}\n{"b": 2}\n')
     # Repo map
     (canopy_dir / "repo-map.json").write_text(json.dumps({"proj": "owner/repo"}))
     # Workbench token (mode 600, non-empty)
     token = canopy_dir / "workbench-token"
     token.write_text("a-secret-token-value")
     token.chmod(0o600)
-    # Installed plugins
-    (claude / "plugins" / "installed_plugins.json").write_text(json.dumps({
-        "plugins": {"canopy@canopy": [{"version": "0.2.119"}]}
-    }))
+    # Installed plugin, registering the repo-map hook
+    _make_plugin_hook_registration(home, version="0.2.119")
     # CLI deployed from the marketplace clone, at the clone's version
     _make_cli_install(home, version="0.2.119")
 
@@ -60,115 +48,86 @@ def _make_cli_install(home: Path, version: str, source: Path | None = None) -> P
     return clone
 
 
-def _make_plugin_hook_registration(home: Path, *, register: bool = True) -> Path:
-    """Lay down an installed canopy plugin whose hooks.json registers PostToolUse.
-
-    This is the CURRENT registration path: the capture hook is plugin-managed
-    (``plugins/canopy/hooks/hooks.json``), and ``/canopy:setup`` deliberately
-    REMOVES the legacy ~/.claude/settings.json entry.
-    """
-    install = home / ".claude" / "plugins" / "cache" / "canopy" / "canopy" / "0.2.347"
+def _make_plugin_hook_registration(
+    home: Path, *, register: bool = True, version: str = "0.2.347"
+) -> Path:
+    """Lay down an installed canopy plugin whose hooks.json registers the repo-map hook."""
+    install = home / ".claude" / "plugins" / "cache" / "canopy" / "canopy" / version
     (install / "hooks").mkdir(parents=True, exist_ok=True)
-    hooks: dict = {"hooks": {"SessionStart": [{"matcher": "*", "hooks": []}]}}
+    session_start: list = [{"matcher": "*", "hooks": []}]
     if register:
-        hooks["hooks"]["PostToolUse"] = [
-            {"matcher": "*", "hooks": [
+        session_start.append(
+            {"matcher": "startup|resume|clear", "hooks": [
                 {"type": "command",
-                 "command": 'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py"'},
+                 "command": 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/python.sh" '
+                            '"${CLAUDE_PLUGIN_ROOT}/hooks/repo_map_capture.py"',
+                 "timeout": 5},
             ]}
-        ]
-    (install / "hooks" / "hooks.json").write_text(json.dumps(hooks))
+        )
+    (install / "hooks" / "hooks.json").write_text(
+        json.dumps({"hooks": {"SessionStart": session_start}})
+    )
 
     registry = home / ".claude" / "plugins" / "installed_plugins.json"
     registry.parent.mkdir(parents=True, exist_ok=True)
     registry.write_text(json.dumps({
-        "plugins": {"canopy@canopy": [{"version": "0.2.347", "installPath": str(install)}]}
+        "plugins": {"canopy@canopy": [{"version": version, "installPath": str(install)}]}
     }))
     return install
 
 
-class TestCheckHookRegistered:
-    def test_plugin_managed_registration_passes_without_settings_json(self, tmp_path):
-        """The regression: a correctly-configured machine has NO settings.json entry.
+def _write_legacy_capture_registration(home: Path) -> Path:
+    settings = home / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({
+        "hooks": {"PostToolUse": [{"hooks": [{"command": "python3 /x/hooks/post_tool_use.py"}]}]}
+    }))
+    return settings
 
-        /canopy:setup removes the legacy registration once the plugin manages the
-        hook, so requiring settings.json made this check fail forever — and its
-        remediation ("run /canopy:setup") could never clear it.
-        """
+
+class TestCheckHookRegistered:
+    def test_plugin_registration_passes(self, tmp_path):
         _make_plugin_hook_registration(tmp_path)
         r = doctor.check_hook_registered(home=tmp_path)
-        assert r.ok is True
+        assert r.ok is True and r.warn is False
         assert "plugin" in r.detail.lower()
 
     def test_plugin_installed_but_hook_absent_fails(self, tmp_path):
         _make_plugin_hook_registration(tmp_path, register=False)
         r = doctor.check_hook_registered(home=tmp_path)
         assert r.ok is False
+        assert "repo_map_capture.py" in r.detail
 
-    def test_legacy_settings_registration_still_passes(self, tmp_path):
-        """Legacy registration remains valid — the plugin copy defers to it."""
-        claude = tmp_path / ".claude"
-        claude.mkdir(parents=True)
-        (claude / "settings.json").write_text(json.dumps({
-            "hooks": {"PostToolUse": [{"hooks": [{"command": "x post_tool_use.py"}]}]}
-        }))
+    def test_no_plugin_fails(self, tmp_path):
         r = doctor.check_hook_registered(home=tmp_path)
-        assert r.ok is True
+        assert r.ok is False
 
-    def test_malformed_registry_falls_back_to_settings(self, tmp_path):
+    def test_malformed_registry_fails_gracefully(self, tmp_path):
         plugins = tmp_path / ".claude" / "plugins"
         plugins.mkdir(parents=True)
         (plugins / "installed_plugins.json").write_text("{not json")
-        (tmp_path / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {"PostToolUse": [{"hooks": [{"command": "x post_tool_use.py"}]}]}
-        }))
-        r = doctor.check_hook_registered(home=tmp_path)
-        assert r.ok is True
-
-    def test_neither_registration_fails(self, tmp_path):
-        r = doctor.check_hook_registered(home=tmp_path)
-        assert r.ok is False
-        assert "not registered" in r.detail
-
-    def test_registered_passes(self, tmp_path):
-        claude = tmp_path / ".claude"
-        claude.mkdir(parents=True)
-        (claude / "settings.json").write_text(json.dumps({
-            "hooks": {"PostToolUse": [{"hooks": [{"command": "x post_tool_use.py"}]}]}
-        }))
-        r = doctor.check_hook_registered(home=tmp_path)
-        assert r.ok is True
-
-    def test_present_but_unregistered_fails(self, tmp_path):
-        claude = tmp_path / ".claude"
-        claude.mkdir(parents=True)
-        (claude / "settings.json").write_text(json.dumps({"hooks": {}}))
         r = doctor.check_hook_registered(home=tmp_path)
         assert r.ok is False
 
-    def test_malformed_json_fails_gracefully(self, tmp_path):
-        claude = tmp_path / ".claude"
-        claude.mkdir(parents=True)
-        (claude / "settings.json").write_text("{not json")
+    def test_legacy_settings_entry_alone_does_not_pass(self, tmp_path):
+        """The retired capture hook is a no-op; it no longer counts as registration."""
+        _write_legacy_capture_registration(tmp_path)
         r = doctor.check_hook_registered(home=tmp_path)
         assert r.ok is False
+        assert "/canopy:setup" in r.detail
 
+    def test_legacy_settings_entry_warns_alongside_plugin(self, tmp_path):
+        _make_plugin_hook_registration(tmp_path)
+        _write_legacy_capture_registration(tmp_path)
+        r = doctor.check_hook_registered(home=tmp_path)
+        assert r.ok is True and r.warn is True
+        assert "retired" in r.detail and "/canopy:setup" in r.detail
 
-class TestCheckSessionLog:
-    def test_missing_fails(self, tmp_path):
-        r = doctor.check_session_log(canopy_dir=tmp_path)
-        assert r.ok is False
-
-    def test_empty_fails(self, tmp_path):
-        (tmp_path / "session-log.jsonl").write_text("\n  \n")
-        r = doctor.check_session_log(canopy_dir=tmp_path)
-        assert r.ok is False
-
-    def test_populated_passes(self, tmp_path):
-        (tmp_path / "session-log.jsonl").write_text('{"a":1}\n{"b":2}\n')
-        r = doctor.check_session_log(canopy_dir=tmp_path)
-        assert r.ok is True
-        assert "2 entries" in r.detail
+    def test_malformed_settings_is_ignored(self, tmp_path):
+        _make_plugin_hook_registration(tmp_path)
+        (tmp_path / ".claude" / "settings.json").write_text("{not json")
+        r = doctor.check_hook_registered(home=tmp_path)
+        assert r.ok is True and r.warn is False
 
 
 class TestCheckRepoMap:
@@ -329,7 +288,7 @@ class TestDoctorCLI:
         canopy_dir = home / ".claude" / "canopy"
         home.mkdir()
         _make_healthy_home(home, canopy_dir)
-        (canopy_dir / "session-log.jsonl").unlink()
+        (canopy_dir / "repo-map.json").write_text("[not, valid")
         monkeypatch.setattr(doctor.Path, "home", staticmethod(lambda: home))
         monkeypatch.setattr(doctor, "CANOPY_DIR", canopy_dir)
 

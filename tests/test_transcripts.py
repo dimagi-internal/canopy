@@ -7,7 +7,6 @@ from orchestrator.transcripts import (
     extract_tool_calls,
     extract_assistant_text,
     get_session_id,
-    find_completed_transcripts,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_transcript.jsonl"
@@ -48,35 +47,6 @@ class TestExtractUserMessages:
         entries = read_transcript(FIXTURE)
         messages = extract_user_messages(entries)
         assert all("tool_result" not in m for m in messages)
-
-
-class TestFindCompletedTranscripts:
-    def test_returns_list(self, tmp_path):
-        log = tmp_path / "session-log.jsonl"
-        log.touch()
-        result = find_completed_transcripts(log)
-        assert isinstance(result, list)
-
-    def test_empty_log_returns_empty(self, tmp_path):
-        log = tmp_path / "session-log.jsonl"
-        log.touch()
-        assert find_completed_transcripts(log) == []
-
-    def test_skips_processed_sessions(self, tmp_path):
-        log = tmp_path / "session-log.jsonl"
-        log.write_text('{"session_id":"s1","project":"/test","ts":"2026-03-20T10:00:00","server":"x","tool":"y"}\n')
-        result = find_completed_transcripts(log, processed={"s1"})
-        assert len(result) == 0
-
-    def test_respects_since_ts(self, tmp_path):
-        log = tmp_path / "session-log.jsonl"
-        log.write_text(
-            '{"session_id":"s1","project":"/test","ts":"2026-03-19T10:00:00","server":"x","tool":"y"}\n'
-            '{"session_id":"s2","project":"/test","ts":"2026-03-20T10:00:00","server":"x","tool":"y"}\n'
-        )
-        result = find_completed_transcripts(log, since_ts="2026-03-20T00:00:00")
-        session_ids = [r["session_id"] for r in result]
-        assert "s1" not in session_ids
 
 
 class TestExtractToolCalls:

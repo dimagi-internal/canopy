@@ -111,8 +111,8 @@ These have each reddened CI or silently broken a skill. Full detail lives in
 - **Mind the description budget.** Skill `description` frontmatter is surfaced in
   the system prompt; too many/too long and Claude Code drops skills wholesale. Use
   `canopy skills budget` and `canopy skills dropped` to diagnose.
-- **The capture hook is stdlib-only.** `hooks/post_tool_use.py` runs under system
-  `python3` with no PyYAML — keep it to the standard library.
+- **Plugin hooks are stdlib-only.** `plugins/canopy/hooks/*.py` run under system
+  `python3` with no PyYAML — keep them to the standard library.
 
 `tests/test_command_skill_collisions.py` and
 `tests/test_builtin_command_collisions.py` enforce the collision rules — adding a

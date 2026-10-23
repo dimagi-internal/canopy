@@ -9,6 +9,23 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.771] - 2026-10-23
+
+### Removed
+- **Canopy no longer writes `~/.claude/canopy/session-log.jsonl`.** The PostToolUse capture
+  hook is gone: Claude Code's own transcripts under `~/.claude/projects/` already hold every
+  tool call, Skill call and the plugin version a skill ran from, and the log copied MCP call
+  arguments onto disk (sensitive-data runner boxes). `canopy sessions status`,
+  `orchestrator.capture` and the doctor's session-log check went with it; session-review reads
+  versions from the transcript. Repo-root `hooks/post_tool_use.py` is now a no-op for machines
+  whose `settings.json` still registers it (`/canopy:setup` removes the entry; `canopy doctor`
+  warns while it is there). `hooks/install.py` is deleted.
+
+### Changed
+- **The repo map is captured once per session, at SessionStart**
+  (`plugins/canopy/hooks/repo_map_capture.py`), instead of on every tool call. Same
+  `~/.claude/canopy/repo-map.json`, same keys. `canopy doctor`'s hook check now looks for it.
+
 ## [0.2.742] - 2026-10-20
 
 ### Changed

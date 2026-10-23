@@ -68,9 +68,10 @@ def get_repo_for_project(repo_map: dict, project_key: str) -> str | None:
 def infer_repo_from_project_key(project_key: str, repo_map: dict) -> str | None:
     """Infer the GitHub repo for a project_key via emdash path conventions.
 
-    Used as a fallback when the post_tool_use hook never captured an entry
-    for this project_key (common for worktrees deleted before any tool call
-    fired, or sessions that pre-date the hook). The emdash layout is:
+    Used as a fallback when the SessionStart repo-map hook
+    (plugins/canopy/hooks/repo_map_capture.py) never captured an entry for
+    this project_key (worktrees with no origin remote at session start, or
+    sessions that pre-date the hook). The emdash layout is:
 
       ~/emdash/worktrees/<repo-short>/emdash/<branch>   →
         project_key = "-Users-<user>-emdash-worktrees-<repo-short>-emdash-<branch>"

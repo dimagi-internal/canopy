@@ -88,7 +88,7 @@ you what it needs; canopy only needs it to **act as** an agent whose credentials
 
 ## Done
 
-Tell the user to restart Claude Code (or `/reload-plugins`) so the capture hook (and any agent
-they install) loads, then `/canopy:canopy-doctor` to verify. Their next steps are the agent
+Tell the user to restart Claude Code (or `/reload-plugins`) so the plugin's hooks (and any agent
+they install) load, then `/canopy:canopy-doctor` to verify. Their next steps are the agent
 install lines from step 3, then each installed agent's own setup command. Operators who will
 *host* agents on this machine continue with `canopy agent bootstrap` (printed at the end of step 1).

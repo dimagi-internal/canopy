@@ -89,7 +89,6 @@ Then follow the plugin-update steps below (`/canopy:update` etc.) if
   Python pipeline stops after proposals)
 
 ## Commands
-- `canopy sessions status` — show session log entry count and classification summary
 - `canopy sessions list [--hours N] [--json-output]` — list recent sessions
 - `canopy create-agent <slug> --mandate "..." [--name --mailbox --google-account --stakeholders --into --force]` — scaffold a new Claude Code agent (its own git repo) from the operating model: persona, `turn` orchestrator, reads-free/writes-gated rails (`config/gating.json`, enforced by canopy's session hook — the agent registers no hook), the `.claude-plugin/marketplace.json` runners install it from, canopy-web-ready layout. See `docs/agent-operating-model.md`.
 - `canopy agent-publish {register|skills|sync|tasks} [--repo DIR ...]` — publish an agent repo to its canopy-web workspace (`/agents/<slug>`): register, mirror the skill catalog, post a sync, or create a batch of tasks (asks included). Run from an agent repo root; identity resolved from its `.claude-plugin/plugin.json` + `config/agent.json`; `register` also records `repo_url` (normalised from the git origin) while canopy-web holds none — it never moves a recorded repo (`canopy agent register --repo` sets one explicitly). The shared generalization of echo's `bin/echo_canopy.py`.
@@ -249,8 +248,8 @@ merged. A future framework judge-prompt follows the framework rule: inline it.
 - `src/orchestrator/repo_paths.py` — resolves local repo checkout paths for a project
 
 ### Capture & hooks
-- `hooks/post_tool_use.py` — captures repo mapping on every tool call, logs MCP calls
-- `src/orchestrator/capture.py` — session log writer
+- `plugins/canopy/hooks/repo_map_capture.py` — SessionStart hook: records the session's project dir → GitHub `owner/repo` in `~/.claude/canopy/repo-map.json` (read by `repo_map.py`). Canopy keeps no session log of its own — Claude Code's transcripts under `~/.claude/projects/` are the record.
+- `hooks/post_tool_use.py` — the retired PostToolUse capture hook, now a no-op kept only because an old `~/.claude/settings.json` may still register it; `/canopy:setup` removes that registration
 
 ### Browser UI (visibility tool, not primary interface)
 - `src/orchestrator/server.py` — HTTP server with JSON API
@@ -319,12 +318,13 @@ merged. A future framework judge-prompt follows the framework rule: inline it.
 - `plugins/canopy/agents/` — autonomous agents (ddd, pm-supervisor, session-review, walkthrough, website-builder)
 - `plugins/canopy/agent-core/` — canonical fleet process docs, read at RUNTIME by the ~20-line stubs stamped into every agent repo (NOT under `skills/`, so they cost zero skill-description budget): `turn.md`, `shipping.md`, `task-tracker.md`, `manager-sync.md`, `deliverables.md`, `agent-runtime.md`, `email-drafts.md`, `handoff.md`, `huddle.md`, `checkin.md` (`work-group.md` redirects to it), `thread.md`, plus the shared hook bodies `gating_guard.py` / `gdoc_gate.py` and `gating-baseline.json` (fleet-baseline deny rails keyed by channel mount — canopy's own `--session` PreToolUse hook resolves the SESSION's agent — `$CANOPY_AGENT_SLUG` → `$CANOPY_AGENT` → the agent repo under the project dir → nobody — and merges baseline + that agent's rails at call time, fail-closed if the baseline is unresolvable; nobody's session gets the channel-independent `always` rails only. Agents register NO gating hook of their own (canopy#849); a leftover per-agent loader stands down outside its own agent's session). A rail or process fix here propagates by `/canopy:update`, no per-agent PRs. Shipped as chunks A+B (PRs #312, #315); design: `docs/superpowers/specs/2026-07-13-agent-core-shared-skills-design.md`.
 - `plugins/canopy/mcp/` — TypeScript MCP servers shipped with the plugin (ESM, run via `npx tsx`, no build step). `gws-server.ts` = **canopy-gws** (**not registered in plugin.json since 2026-10-09** — never called by any agent, which use `gog`/`canopy gdoc`; re-register it when an agent env carries `GWS_*`), the domain-neutral Google Workspace server ported from ACE's `ace-gdrive` (32 atoms: `drive_*` / `docs_*` / `sheets_*` / `slides_*` + `get_google_form_definition` + `read_personal_drive_doc`; the ACE-aware atoms stayed in ACE). Identity is the SESSION's agent, resolved lazily at the first tool call through `canopy cred check` + `canopy cred env` (canopy#850, `mcp/gws/lib/session-identity.ts`): the agent's `~/.<slug>/.env` supplies `GWS_IDENTITY_MODE=sa` + `GWS_SA_KEY_PATH` (required; `gog` mode is a tracked follow-up), optional `GWS_ROOT_FOLDER_ID` default root + `GWS_ALLOWED_DRIVE_IDS` write allowlist enforced by the Shared-Drive write probe. **A human session, a broker refusal, or a missing identity refuses every tool call — no default identity fallback.** Node toolchain lives in `plugins/canopy/package.json` (installed by `/canopy:setup` step 7 and the `/canopy:update` rsync step; `node_modules` is uncommitted). Offline vitest suites in `plugins/canopy/test/gws/` (registration-coverage drift gate, identity contract, mocked-client handler tests) run in CI via `.github/workflows/gws-tests.yml`.
-- `plugins/canopy/hooks/hooks.json` — every hook the plugin registers fires in **every** session where canopy is installed (i.e. the whole fleet), so each is built fail-open: `SessionStart` → `fleet_session_start_update.py` (§ Fleet Auto-Update); `UserPromptSubmit` → `caller_context.py` (on a prompt a canopy-web turn delivered, injects who is asking — verified or not, relationship, turn mode — and, from envelope v3, the fleet's `person` record of them (corrections first, facts, digest) — from `~/.canopy/caller/<turn_id>.json`, and leaves the `by-task/<task>.json` parent record `provenance.py` reads); `PreToolUse` → `agent-core/gating_guard.py --session` (the fleet gating hook: applies the session's agent's rails, canopy#849), `profile_guard.py` (confines a CALLER's session to the capability its agent's declared interface grants; owner/admin sessions are untouched) and `one_shot_turn_guard.py` (in a one-shot cloud-runner turn, refuses background work that would die when `claude -p` exits, #755) and `sleep_cap_guard.py` (refuses a FOREGROUND shell wait — `sleep`, perl/python sleeps, loops counted by iterations, bounded by `timeout` and the Bash tool timeout — over 270 s, because the prompt cache expires after 5 min idle and every longer wait re-writes the whole context; `CANOPY_SLEEP_CAP_SECONDS` overrides); `PostToolUse` → `post_tool_use.py` (capture). No `Stop` hook: decide-guard is a per-person opt-in (`canopy decide-guard stamp --user`), never plugin- or agent-repo-wide.
+- `plugins/canopy/hooks/hooks.json` — every hook the plugin registers fires in **every** session where canopy is installed (i.e. the whole fleet), so each is built fail-open: `SessionStart` → `fleet_session_start_update.py` (§ Fleet Auto-Update), `agent_op_env.py` and `repo_map_capture.py` (project dir → GitHub repo in `~/.claude/canopy/repo-map.json`); `UserPromptSubmit` → `caller_context.py` (on a prompt a canopy-web turn delivered, injects who is asking — verified or not, relationship, turn mode — and, from envelope v3, the fleet's `person` record of them (corrections first, facts, digest) — from `~/.canopy/caller/<turn_id>.json`, and leaves the `by-task/<task>.json` parent record `provenance.py` reads); `PreToolUse` → `agent-core/gating_guard.py --session` (the fleet gating hook: applies the session's agent's rails, canopy#849), `profile_guard.py` (confines a CALLER's session to the capability its agent's declared interface grants; owner/admin sessions are untouched) and `one_shot_turn_guard.py` (in a one-shot cloud-runner turn, refuses background work that would die when `claude -p` exits, #755) and `sleep_cap_guard.py` (refuses a FOREGROUND shell wait — `sleep`, perl/python sleeps, loops counted by iterations, bounded by `timeout` and the Bash tool timeout — over 270 s, because the prompt cache expires after 5 min idle and every longer wait re-writes the whole context; `CANOPY_SLEEP_CAP_SECONDS` overrides); no `PostToolUse` hook. No `Stop` hook: decide-guard is a per-person opt-in (`canopy decide-guard stamp --user`), never plugin- or agent-repo-wide.
 - `.claude-plugin/marketplace.json` — marketplace manifest listing **two** plugins: `canopy` (versioned with `VERSION`) and `canopy-web` (`plugins/canopy-web/`, #712) — a slim plugin that is just canopy-web's HTTP MCP server with browser sign-in, for people who want canopy-web from Claude without the canopy runtime. It versions on its own (`1.0.0`); `canopy version bump` does not touch it.
 
 ## Important: Hook Must Use Stdlib Only
-`hooks/post_tool_use.py` runs with system python3 which may not have PyYAML.
-The repo map uses JSON (not YAML). Any hook code must use only stdlib modules.
+Plugin hooks (`plugins/canopy/hooks/*.py`) run under whatever python3 `hooks/python.sh`
+finds — often the system python, which may not have PyYAML. The repo map uses JSON
+(not YAML). Any hook code must use only stdlib modules.
 
 ## Skill Authoring: Bash Positional Parameters
 Bash code blocks in skill/command markdown files must NOT use `$1`, `$2`, etc.
@@ -458,11 +458,10 @@ edited checkout must never silently shadow the installed version.
 - `video-engine/` is the one dev-checkout exception: Remotion's `node_modules`
   is too heavy to bundle per plugin version, so local render resolves a dev
   checkout where `/canopy:setup` ran `npm ci`, with a loud error otherwise.
-- The PostToolUse capture hook is **plugin-managed**
-  (`plugins/canopy/hooks/hooks.json` → `${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py`).
-  Repo-root `hooks/post_tool_use.py` is a legacy-compat shim; the plugin copy
-  defers while a working legacy settings.json registration exists, and
-  `/canopy:setup` removes that legacy entry.
+- Canopy's hooks are **plugin-managed** (`plugins/canopy/hooks/hooks.json` →
+  `${CLAUDE_PLUGIN_ROOT}/hooks/…`). Repo-root `hooks/post_tool_use.py` is the
+  retired capture hook, a no-op kept for machines whose settings.json still
+  registers it; `/canopy:setup` removes that legacy entry.
 
 ## Tool Hygiene (Read, Bash, parallel calls)
 
@@ -690,7 +689,7 @@ Per-project canopy state lives at `<repo>/.canopy/`, committed to the project's 
 
 Outside a git repo, the PM resolver falls back to `$HOME/.canopy/pm/<basename-of-cwd>/`.
 
-The global "self-improvement brain" (`~/.claude/canopy/observations/`, `proposals/`, `session-log.jsonl`, etc.) stays under `$HOME/.claude/canopy/` — that data is intentionally cross-project on a single machine.
+The global "self-improvement brain" (`~/.claude/canopy/observations/`, `proposals/`, `repo-map.json`, etc.) stays under `$HOME/.claude/canopy/` — that data is intentionally cross-project on a single machine.
 
 ## Repo Notes (DDD & rendering)
 
