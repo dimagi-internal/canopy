@@ -4,7 +4,7 @@
 step results and originals by key (presigned, straight to storage, never through
 canopy-web's web task), the head version and the curation state it was built from, and
 the whole-file publish made from it (canopy-web refuses one made from a version that is
-no longer the head). A curator's refresh (`canopy kb drive sync`, eva's GiveWell refresh)
+no longer the head). A curator's refresh (e.g. eva's GiveWell refresh)
 builds a `canopy_kb.curate.Curation` over it, and runs from an empty disk on any machine
 the agent's identity works on (canopy-web#1925).
 

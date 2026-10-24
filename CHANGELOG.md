@@ -9,6 +9,15 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.784] - 2026-10-24
+
+### Removed
+- **`canopy kb drive` (`inventory`, `sync`).** A knowledge base is published as a curator
+  bundle (`canopy kb build` + `canopy kb push`); the `drive_folders` source, whose files were
+  read only after the project owner approved each one on canopy-web, is gone along with
+  `orchestrator/kb_drive.py`. `kb pull` of a Drive-folder ref and the project's Drive replica
+  are unchanged.
+
 ## [0.2.783] - 2026-10-24
 
 ### Added
