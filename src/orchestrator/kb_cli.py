@@ -5,9 +5,8 @@ Four commands, because only these are work a prompt cannot do: `build` (index + 
 diff), `push` / `pull` (a workspace project's KB goes to canopy-web, which serves it as
 the project's own remote MCP server — `push` sends only the documents that changed, as a
 new version, and the whole file only for a first build; any other KB's copy lives in its
-Drive folder) and `mcp` (serve a local copy over stdio). `drive inventory|sync` keep a
-KB made from Google Drive folders (`orchestrator/kb_drive.py`). Reading is the MCP tools' job, and HOW to read a given library — what to
-cite, which table beats prose — is a skill's (e.g. Eva's `givewell-kb`). There are
+Drive folder) and `mcp` (serve a local copy over stdio). Reading is the MCP tools' job,
+and HOW to read a given library — what to cite, which table beats prose — is a skill's (e.g. Eva's `givewell-kb`). There are
 deliberately no read subcommands duplicating the tools.
 
 Which KB: `--kb` (or $CANOPY_KB) is one of
@@ -166,8 +165,8 @@ def push(ref: str, repo: Path, path: Path, originals: Path | None = None) -> dic
     A workspace project's goes to canopy-web, which serves it as the project's own
     MCP: its originals first (when given), then the whole file, as a new version made
     from the one it serves now. canopy-web never builds an index (canopy-web#1971). A
-    curator that refreshes incrementally does it through `canopy_kb.curate` (eva's
-    GiveWell refresh, `canopy kb drive sync`), which also skips an unchanged publish;
+    curator that refreshes incrementally does it through `canopy_kb.curate` (e.g. eva's
+    GiveWell refresh), which also skips an unchanged publish;
     this is the hand-built file's path. Nothing is written to Drive (a project that
     wants a Drive copy turns its replica on, and canopy-web writes it). Any other KB's
     store is its Drive folder."""
@@ -436,35 +435,6 @@ def push_cmd(kb_ref, repo, max_age_hours, path, originals):
     serves it as the project's MCP: originals first (--originals), then the whole file,
     as a new version. Other KBs go to their Drive folder."""
     _emit(push(kb_ref, repo, path, originals))
-
-
-@kb_group.group("drive")
-def drive_group():
-    """A knowledge base made from Google Drive folders, read only as far as their owner
-    approves (canopy-web's review page, /w/<ws>/projects/<handle>/kb)."""
-
-
-@drive_group.command("inventory")
-@_kb_option
-@click.option("--source", default="", help="one drive_folders source by name (default: all)")
-@click.option("--force", is_flag=True, help="walk the folders even when Drive's changes feed shows nothing new")
-@_guard
-def drive_inventory_cmd(kb_ref, repo, max_age_hours, source, force):
-    """List the source folders' files as METADATA only (never contents) for the owner's review."""
-    from orchestrator.kb_drive import inventory
-    _emit(inventory(kb_ref, repo, source, force))
-
-
-@drive_group.command("sync")
-@_kb_option
-@click.option("--source", default="", help="one drive_folders source by name (default: all)")
-@click.option("--no-push", is_flag=True, help="read and report; publish nothing")
-@_guard
-def drive_sync_cmd(kb_ref, repo, max_age_hours, source, no_push):
-    """Read the approved files that changed, hold spreadsheets whose headers look like
-    personal data, and publish the difference. Runs from an empty disk on any machine."""
-    from orchestrator.kb_drive import sync
-    _emit(sync(kb_ref, repo, source, push=not no_push))
 
 
 @click.command("mcp-headers")

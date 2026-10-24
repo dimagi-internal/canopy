@@ -4,8 +4,8 @@ A **knowledge base** is everything one publisher has made public — a funder's 
 reports, blog, podcast transcripts, cost-effectiveness models — kept as dated, cited
 copies, with the tables you compute with alongside. Engine: canopy-web's
 `packages/canopy_kb` (stdlib-only; loaded here by `src/orchestrator/kb_engine.py`)
-(build + read), `kb_cli.py` (CLI: build, publish, pull), `kb_drive.py` (a KB made from Google
-Drive folders), `kb_mcp.py` (stdio MCP server).
+(build + read), `kb_cli.py` (CLI: build, publish, pull), `kb_remote.py` (a curated refresh's
+canopy-web store), `kb_mcp.py` (stdio MCP server).
 
 ## Who owns what
 
@@ -113,30 +113,6 @@ file's own history). Skipping an unchanged publish is a curated refresh's job
 (`canopy_kb.curate`), not `push`'s. Nothing goes to Drive: a
 project that wants a Drive copy turns its replica on (`PUT …/kb/settings {drive_replica:
 true}`, off by default) and canopy-web writes it.
-
-**A KB made from Google Drive folders** has a `drive_folders` source
-(`POST …/kb/sources {kind: drive_folders, name, config: {folders: [ids]}}`), and nothing in
-it is read until the project's owner approves it:
-
-```bash
-canopy kb drive inventory --kb <ws>/<handle>            # metadata only: names, types, owners, sharing
-#   → the owner reviews on canopy-web: /w/<ws>/projects/<handle>/kb
-canopy kb drive sync --kb <ws>/<handle>                 # read the approved files that changed; publish if anything did
-```
-
-`inventory` never opens a file. canopy-web flags names that suggest records about people
-(raw data, consent, patient, line list, …) and owners outside the organisation, skips a
-file shared more narrowly than its folder, keeps every decision across refreshes, and puts
-a file that appears later under an approved folder in a "new since approval" queue unless
-that folder auto-approves. `sync` reads only what is approved (re-downloading a file only
-when its md5 or version moved; Docs as Markdown, Sheets as xlsx, Slides as PDF), checks
-every spreadsheet's column headers and holds one that names or identifies people until the
-owner releases it (a held file's text is never stored, only the verdict), and publishes
-the rest; a file removed, trashed, excluded or held leaves the next version (canopy-web
-opens what is published and checks every document against the approvals). It keeps
-nothing on the machine (above). Originals are not copied: `original` gives the Drive link and the
-revision indexed. A Drive KB is queryable only by its owner, its steward and the readers
-the owner names. Run both on a runner with the steward's Google login.
 
 `build` needs the engine in canopy's environment (`uv tool install … --with
 'canopy-kb @ git+ssh://git@github.com/dimagi-internal/canopy-web.git#subdirectory=packages/canopy_kb'`;

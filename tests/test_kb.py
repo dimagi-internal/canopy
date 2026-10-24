@@ -340,3 +340,8 @@ def _rpc_real(path, *msgs):
     stdout = io.StringIO()
     serve(lambda: (kb_engine.open_file(path), ""), stdin=stdin, stdout=stdout)
     return [json.loads(line) for line in stdout.getvalue().splitlines()]
+
+
+def test_kb_has_no_drive_folder_source_commands():
+    """A KB is published as a curator bundle (build + push); there is no `kb drive`."""
+    assert set(kb_cli.kb_group.commands) == {"build", "push", "pull", "mcp"}
