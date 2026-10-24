@@ -801,8 +801,9 @@ def agent_bootstrap(slugs, repo, dry_run, op_account):
 
 
 # The statuses a board drain actually wants: everything not yet resolved. `normalize_task_status`
-# maps the whole vocabulary onto four tokens, and the two below are the un-resolved pair.
-OPEN_TASK_STATUSES = ("suggested", "in_progress")
+# maps the whole vocabulary onto six tokens (canopy-web's Linear categories), and these four
+# are the open ones: proposed, accepted-not-now, accepted-next-up, under way.
+OPEN_TASK_STATUSES = ("suggested", "backlog", "todo", "in_progress")
 
 
 @agent.command("tasks")
@@ -849,21 +850,27 @@ def resolve_project_ref(client, ref):
     """
     raw = str(ref or "").strip()
     projects = client.list_projects()
+    def ref_of(project):
+        # A project made outside an agent's route carries no `P<N>`: name it by its
+        # workspace address, which every agent route also accepts.
+        return project.get("ext_id") or project.get("address") or project.get("handle")
+
     for project in projects:
-        if str(project.get("ext_id") or "").strip().casefold() == raw.casefold():
-            return project["ext_id"]
+        if raw.casefold() in {str(project.get(k) or "").strip().casefold()
+                              for k in ("ext_id", "handle", "address")} - {""}:
+            return ref_of(project)
 
     named = [p for p in projects
              if str(p.get("name") or "").strip().casefold() == raw.casefold()]
     if len(named) == 1:
-        return named[0]["ext_id"]
+        return ref_of(named[0])
     if len(named) > 1:
         raise click.ClickException(
             f"{raw!r} is the name of {len(named)} projects on this board — "
-            f"pass the P<N> ext_id instead ({', '.join(p['ext_id'] for p in named)})."
+            f"pass the P<N> ext_id instead ({', '.join(ref_of(p) for p in named)})."
         )
 
-    known = ", ".join(f"{p['ext_id']} {p['name']}" for p in projects) or "none yet"
+    known = ", ".join(f"{ref_of(p)} {p['name']}" for p in projects) or "none yet"
     raise click.ClickException(
         f"no project {raw!r} on this board — pass a P<N> ext_id or the exact name. "
         f"Nothing was written. Known: {known}. "
@@ -1335,7 +1342,7 @@ def _appended_notes(client, task_id, text):
     return f"{current}\n\n{addition}" if current else addition
 
 
-TASK_STATUSES = ("suggested", "in_progress", "done", "declined")
+TASK_STATUSES = ("suggested", "backlog", "todo", "in_progress", "done", "declined")
 
 
 def _task_status_token(s):
@@ -1352,7 +1359,11 @@ def _task_status_token(s):
     if s in ("in progress", "doing", "wip", "active", "started", "ongoing",
              "blocked", "waiting", "on hold", "hold", "stuck"):
         return "in_progress"
-    if s in ("suggested", "proposed", "todo", "to do", "backlog"):
+    if s in ("todo", "to do", "next", "up next", "accepted"):
+        return "todo"
+    if s in ("backlog", "later", "not now", "someday"):
+        return "backlog"
+    if s in ("suggested", "proposed", "triage"):
         return "suggested"
     return None
 
@@ -1593,7 +1604,7 @@ def next_task_ext_id(tasks):
               help="The single concrete next step, verb-first. Max 300 chars — over-length "
                    "is REJECTED, never truncated, so a card never shows a half instruction.")
 @click.option("--status", default="suggested",
-              help="suggested (default) / in_progress / done / declined — human synonyms accepted.")
+              help="suggested (default) / backlog / todo / in_progress / done / declined — human synonyms accepted.")
 @click.option("--owner", default="",
               help="The human stakeholder who owns the outcome — never the agent. Max 120 chars.")
 @click.option("--assigned", default="",

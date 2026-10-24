@@ -75,7 +75,8 @@ class TestSetRejectsAnUnknownStatus:
 
     @pytest.mark.parametrize("given,token", [
         ("done", "done"), ("Shipped", "done"), ("in-progress", "in_progress"),
-        ("declined", "declined"), ("suggested", "suggested"), ("backlog", "suggested"),
+        ("declined", "declined"), ("suggested", "suggested"), ("backlog", "backlog"), ("not now", "backlog"),
+        ("todo", "todo"), ("to do", "todo"),
     ])
     def test_valid_spellings_are_sent_as_the_canonical_token(self, client, given, token):
         res = CliRunner().invoke(agent, ["set", "--slug", "hal", "--task-id", "T27",
@@ -115,3 +116,12 @@ def test_the_writer_is_strict():
         check_task_status("")
     with pytest.raises(click.ClickException):
         check_task_status("pending")
+
+
+def test_backlog_and_todo_are_open_work_for_the_drain():
+    """canopy-web's Linear statuses: a task a person accepted (todo) or parked (backlog)
+    is still open, so the turn-start drain must not drop it, nor read it as a suggestion."""
+    from orchestrator.agent_cli import OPEN_TASK_STATUSES
+
+    assert {"suggested", "backlog", "todo", "in_progress"} == set(OPEN_TASK_STATUSES)
+    assert normalize_task_status("todo") == "todo" and normalize_task_status("backlog") == "backlog"

@@ -12,8 +12,17 @@ canopy CLI.
 
 ## The vocabulary (echo conventions, fleet-wide)
 - **Title** — the outcome. **Next action** — the single concrete next step, *verb-first*.
-- **Status** — `suggested` (you proposed it; a human validates) → `in_progress` →
-  `done` / `declined`. There is no "blocked": *waiting on a person* is expressed by **Assigned**.
+- **Key** — every task also has a workspace key (`DIM-142`, the `key` field), its name in
+  canopy-web's UI and in links (`/w/<ws>/tasks/<KEY>`). Your `T<N>` still names it on your
+  board; either works wherever a task ref is taken.
+- **Status** — `suggested` (you proposed it; a human validates) → `todo` (accepted, next up)
+  or `backlog` (accepted, not now) → `in_progress` → `done` / `declined`. A person moves your
+  suggestion to `todo`/`backlog` when they accept it without starting it: treat `todo` as
+  yours to start when you have room, `backlog` as parked until someone moves it. There is no
+  "blocked": *waiting on a person* is expressed by **Assigned**.
+- **Assignee** — a task is assigned to an agent or to a person (`agent_slug` /
+  `assignee_email`). Your board lists the tasks you are assigned plus those you filed that no
+  agent has; a task you filed but assigned to a person is theirs to do — follow it, do not work it.
 - **`[MANUAL — …]`** — a **Next action** beginning with this literal marker means the human has
   taken the task **off your queue entirely**: they are doing it themselves. It is NOT the same as
   Assigned. Assigned says *"you're next after they move"*; `[MANUAL — …]` says *"stop bringing
