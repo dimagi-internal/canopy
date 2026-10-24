@@ -138,13 +138,12 @@ def test_sync_reads_only_approved_files_holds_personal_data_and_publishes_the_re
     assert fake.downloads == [("doc", "md"), ("sheet", "")]
     assert out["held"] == [{"file": "Patient list", "headers": ["Mother name", "DOB"]}]
     assert ("POST", "sources/7/files/sheet/hold", {"headers": ["Mother name", "DOB"]}) in calls
-    assert list(store.head()["docs"]) == ["drive:doc"] and out["push"]["published"]
+    assert store.item_ids() == ["drive:doc"] and out["push"]["published"]
     doc = store.item("drive:doc")
     assert doc["meta"]["drive"] == {"file_id": "doc", "revision": "4", "mime_type": "application/vnd.google-apps.document"}
     assert doc["original"]["source_url"] == "https://docs.google.com/document/d/doc" and "20 hours" in doc["text"]
     import gzip
-    assert not any(b"Mother name,DOB" in gzip.decompress(v) for v in
-                   list(store.objects["results"].values()) + list(store.objects["records"].values())), \
+    assert not any(b"Mother name,DOB" in gzip.decompress(v) for v in store.objects["results"].values()), \
         "a held spreadsheet's contents reached the host"
 
     # a second sync, a fresh machine: nothing downloaded, nothing published
@@ -156,7 +155,7 @@ def test_sync_reads_only_approved_files_holds_personal_data_and_publishes_the_re
     _calls(monkeypatch, [SOURCE], readable=_readable(sheet={"held_headers": ["Mother name", "DOB"], "hold_released": True}))
     out = kb_drive.sync("connect/kmc-kb", None, gog=RealishGog(fake), store=store)
     assert fake.downloads == [("sheet", "")] and out["held"] == []
-    assert sorted(store.head()["docs"]) == ["drive:doc", "drive:sheet"]
+    assert store.item_ids() == ["drive:doc", "drive:sheet"]
 
     # an edited doc is re-read; a file no longer readable is removed
     fake.downloads.clear()
@@ -164,7 +163,7 @@ def test_sync_reads_only_approved_files_holds_personal_data_and_publishes_the_re
     _calls(monkeypatch, [SOURCE], readable=_readable(doc={"drive_version": "5"})[:1])
     out = kb_drive.sync("connect/kmc-kb", None, gog=RealishGog(fake), store=store)
     assert fake.downloads == [("doc", "md")] and out["push"]["removed"] == 1
-    assert list(store.head()["docs"]) == ["drive:doc"] and "24 hours" in store.item("drive:doc")["text"]
+    assert store.item_ids() == ["drive:doc"] and "24 hours" in store.item("drive:doc")["text"]
 
 
 def test_a_shared_drive_listing_without_sharing_asks_each_file(monkeypatch):

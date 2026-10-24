@@ -246,10 +246,12 @@ def _now() -> str:
 def sync(ref: str, repo: Path, source: str = "", push: bool = True, gog: Gog | None = None, store=None) -> dict:
     """Read the approved files, hold spreadsheets with personal-data headers, and publish
     the difference, from an empty disk (canopy-web#1925). What a sync needs from the last
-    one lives on canopy-web: the curation state remembers each file's revision and what
-    reading it found, and the text it read is a step result. So an unchanged file is not
-    downloaded at all, and canopy-web builds the index; no machine keeps a cache or a
-    kb.sqlite. A held spreadsheet's text is never stored: only the verdict is."""
+    one lives on canopy-web: the head version's curation state remembers each file's
+    revision and what reading it found, and the text it read is a step result. So an
+    unchanged file is not downloaded at all, an unchanged folder publishes nothing, and
+    this machine builds the index from the served file; no machine keeps a cache. A held
+    spreadsheet's text is never stored: only the verdict is. canopy-web opens what is
+    published and checks every document in it against the owner's approvals."""
     import tempfile
 
     engine()

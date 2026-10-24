@@ -160,29 +160,27 @@ def pull(ref: str, repo: Path, force: bool = False) -> dict:
     return {"kb": ref, "path": str(cdir / KB_FILE), "pulled": True, "modified": remote_mod}
 
 
-def push(ref: str, repo: Path, path: Path, originals: Path | None = None, bundle: Path | None = None,
-         full: bool = False, wait: bool = True) -> dict:
+def push(ref: str, repo: Path, path: Path, originals: Path | None = None) -> dict:
     """Publish a built kb.sqlite (curator only).
 
     A workspace project's goes to canopy-web, which serves it as the project's own
-    MCP: its originals first (when given), then only the DIFFERENCE from what is
-    published — the bundle's state (`canopy_kb.records`) is planned against the
-    project's head, only new and changed document records are uploaded, and
-    canopy-web applies them to its index as a new version. An unchanged bundle sends
-    nothing. The whole file goes only for the first build, or with `full`. Nothing is
-    written to Drive (a project that wants a Drive copy turns its replica on, and
-    canopy-web writes it). Any other KB's store is its Drive folder."""
+    MCP: its originals first (when given), then the whole file, as a new version made
+    from the one it serves now. canopy-web never builds an index (canopy-web#1971). A
+    curator that refreshes incrementally does it through `canopy_kb.curate` (eva's
+    GiveWell refresh, `canopy kb drive sync`), which also skips an unchanged publish;
+    this is the hand-built file's path. Nothing is written to Drive (a project that
+    wants a Drive copy turns its replica on, and canopy-web writes it). Any other KB's
+    store is its Drive folder."""
     built = summary(path)
     kind = _kind(ref)
     if originals is not None and kind != "workspace-project":
         raise KBError("--originals needs a workspace project (<workspace>/<handle>): canopy-web stores them")
     if kind != "workspace-project":
         return _push_to_drive(ref, repo, path, built)
-    bundle = bundle or originals
     out = {"kb": ref, "summary": built}
     if originals is not None:
         out["originals"] = upload_originals(ref, originals)
-    out.update(publish_to_canopy(ref, path, bundle, full=full, wait=wait))
+    out.update(publish_to_canopy(ref, path))
     return out
 
 
@@ -277,53 +275,19 @@ def _put(url: str, path: Path, headers: dict) -> None:
 
 
 
-def _records():
-    from orchestrator.kb_engine import engine
-    return engine().records
-
-
-def plan_only(ref: str, bundle: Path) -> dict:
-    """What publishing `bundle` would change, asked of canopy-web; nothing is sent or
-    published (`push --dry-run`)."""
-    from orchestrator import canopy_web
-
-    if _kind(ref) != "workspace-project":
-        raise KBError("--dry-run plans against canopy-web: it needs a workspace project (<workspace>/<handle>)")
-    ws, handle = _WORKSPACE_REF.match(ref).groups()
-    plan = canopy_web.call("POST", f"/api/workspace-projects/{ws}/{handle}/kb/plan",
-                           {"state": _records().state(bundle)}) or {}
-    return {"kb": ref, "dry_run": True, "unchanged": bool(plan.get("unchanged")),
-            "full_required": bool(plan.get("full_required")), "base": plan.get("base"),
-            "added": plan.get("added"), "changed": plan.get("changed"), "removed": plan.get("removed"),
-            "upload_docs": len(plan.get("upload_docs") or []), "upload_parts": len(plan.get("upload_parts") or [])}
-
-
-def publish_to_canopy(ref: str, path: Path, bundle: Path | None = None, *, full: bool = False,
-                      wait: bool = True) -> dict:
+def publish_to_canopy(ref: str, path: Path) -> dict:
     """Publish a workspace project's KB to canopy-web: the whole file this machine built,
-    with the bundle's state when given. canopy-web never builds an index (canopy-web#1971:
-    its in-process build ran it out of memory); it stores and serves finished files. An
-    unchanged bundle sends nothing. `full` and `wait` are kept for callers; every publish
-    is whole and ready when it returns."""
+    as a version made from the one the project serves now."""
     from orchestrator import canopy_web
+    from orchestrator.kb_remote import RemoteStore
 
     ws, handle = _WORKSPACE_REF.match(ref).groups()
     base = f"/api/workspace-projects/{ws}/{handle}/kb"
     mcp_url = canopy_web.resolve_base_url(None).rstrip("/") + f"/api/mcp/projects/{ws}/{handle}/"
-    state = _records().state(bundle) if bundle is not None else None
-    if state is not None and not full:
-        try:
-            plan = canopy_web.call("POST", f"{base}/plan", {"state": state}) or {}
-        except canopy_web.CanopyError as e:
-            if "-> 404" not in str(e) and "-> 405" not in str(e):
-                raise
-            plan = {}
-        if plan.get("unchanged"):
-            return {"published": "unchanged", "version": plan.get("base"), "bytes_uploaded": 0, "mcp_url": mcp_url}
-    return _publish_full(base, path, state, mcp_url)
+    return _publish_full(base, path, RemoteStore(ref).head()["version"], mcp_url)
 
 
-def _publish_full(base: str, path: Path, state: dict | None, mcp_url: str) -> dict:
+def _publish_full(base: str, path: Path, head: int | None, mcp_url: str) -> dict:
     import hashlib
 
     from orchestrator import canopy_web
@@ -339,10 +303,13 @@ def _publish_full(base: str, path: Path, state: dict | None, mcp_url: str) -> di
         with open(gzpath, "rb") as fh:
             for chunk in iter(lambda: fh.read(1 << 20), b""):
                 digest.update(chunk)
-        body = {"key": target["key"], "sha256": digest.hexdigest()}
-        if state is not None:
-            body["state"] = state
-        proj = canopy_web.call("POST", f"{base}/publish", body) or {}
+        try:
+            proj = canopy_web.call("POST", f"{base}/publish",
+                                   {"key": target["key"], "sha256": digest.hexdigest(), "base": head}) or {}
+        except canopy_web.CanopyError as e:
+            if "-> 409" in str(e):
+                raise KBError(f"another version was published while this one uploaded; push again: {e}") from e
+            raise
         size = gzpath.stat().st_size
     return {"published": "full", "version": proj.get("kb_version_number"), "bytes_uploaded": size,
             "mcp_url": mcp_url if proj.get("mcp_path") is None else
@@ -463,23 +430,12 @@ def pull_cmd(kb_ref, repo, max_age_hours, force):
 @click.argument("path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--originals", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None,
               help="the bundle the build came from: upload each item's original file first (workspace projects)")
-@click.option("--bundle", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None,
-              help="the bundle the build came from, to publish only what changed (default: --originals)")
-@click.option("--full", is_flag=True, help="publish the whole file even when a delta would do")
-@click.option("--no-wait", is_flag=True, help="do not wait for canopy-web to index a delta")
-@click.option("--dry-run", is_flag=True, help="say what publishing would change; send and publish nothing")
 @_guard
-def push_cmd(kb_ref, repo, max_age_hours, path, originals, bundle, full, no_wait, dry_run):
+def push_cmd(kb_ref, repo, max_age_hours, path, originals):
     """Publish a built kb.sqlite (curators). A workspace project's goes to canopy-web, which
-    serves it as the project's MCP: originals first (--originals), then only the documents
-    that changed since the published version (--bundle; the whole file on a first build
-    or --full). Other KBs go to their Drive folder."""
-    if dry_run:
-        if not (bundle or originals):
-            raise click.ClickException("--dry-run needs the bundle the build came from (--bundle)")
-        _emit(plan_only(kb_ref, bundle or originals))
-        return
-    _emit(push(kb_ref, repo, path, originals, bundle=bundle, full=full, wait=not no_wait))
+    serves it as the project's MCP: originals first (--originals), then the whole file,
+    as a new version. Other KBs go to their Drive folder."""
+    _emit(push(kb_ref, repo, path, originals))
 
 
 @kb_group.group("drive")
