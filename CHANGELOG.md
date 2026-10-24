@@ -9,6 +9,16 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.782] - 2026-10-24
+
+### Changed
+- **Tasks have Backlog and Todo, keys and assignees (canopy-web's workspace tasks).** The CLI
+  now knows `backlog` (accepted, not now) and `todo` (accepted, next up) as open statuses —
+  the turn-start drain (`agent tasks --open`) keeps them, and `project-audit` counts them —
+  instead of reading both as `suggested`. `--project` also takes a project's handle or
+  address, and names a project with no `P<N>` by its address. `task-tracker.md` explains the
+  workspace key (`DIM-142`) and person-or-agent assignees.
+
 ## [0.2.771] - 2026-10-23
 
 ### Removed

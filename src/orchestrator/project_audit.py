@@ -47,7 +47,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 
-OPEN_STATUSES = ("suggested", "in_progress")
+OPEN_STATUSES = ("suggested", "backlog", "todo", "in_progress")
 MANUAL_MARKER = "[MANUAL"
 DEFAULT_RECENT_DAYS = 2
 DRIVE_LIST_MAX = 1000
