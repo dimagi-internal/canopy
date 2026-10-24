@@ -9,6 +9,18 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.783] - 2026-10-24
+
+### Added
+- **Every project's toolbox through one connection.** The plugin declares one more MCP server,
+  `projects` (`https://canopy.dimagi.com/api/mcp/projects/`, signed by the same headers helper),
+  with the same few tools however many projects exist: `projects` (what you may open),
+  `open_project` (a project's card: what its knowledge base holds, its skills, the servers and
+  plugins it shares), `project_skill` (a skill's instructions, read when needed), and the
+  knowledge-base tools `kb_search`, `kb_read`, … `kb_table`, each taking the `project` it reads.
+  A board turn on a project's task names `open_project("<address>")` in its brief.
+  `task-tracker.md` says when to open one, and not to copy a project's server into a plugin.
+
 ## [0.2.782] - 2026-10-24
 
 ### Changed
