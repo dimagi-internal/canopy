@@ -74,38 +74,43 @@ everything it needs from the last one, so no runner's disk matters and none is a
 to lose. A curator's refresh builds a `canopy_kb.curate.Curation` over
 `orchestrator.kb_remote.RemoteStore` (the project's host) and:
 
-- **reads the curation state**: the fetch index (each url's ETag, sha256, links, a
-  Google export's stable hash), each input's descriptor, the cards. It is stored in
-  content-addressed chunks, saved with the version commit (compare-and-swap), and kept
-  under a lease, so one refresh runs at a time;
+- **reads the curation state the served version was built from**: the fetch index (each
+  url's ETag, sha256, links, a Google export's stable hash), each input's descriptor,
+  the cards, and what that version published. It is stored in content-addressed chunks
+  and belongs to its version (`curation_sha`), so a rollback rolls it back too;
 - **keys every derived thing by its inputs and the code that makes it**
-  (`Step.key`: name, REVISION, prompt, model, settings). An extracted text, an OCR
-  transcription or a card is computed only where canopy-web lacks its key. A new prompt
+  (`Step.key`: name, REVISION, prompt, model, settings). An extracted text or a card is
+  computed only where canopy-web lacks its key, and never changes once stored. There is
+  no OCR. A new prompt
   re-runs that step by itself; a code change without a REVISION bump is refused before
   anything runs (`steps.lock`, `check_lock`), so nothing goes stale silently;
 - **plans model calls before making any** (`--budget`, $2 by default) and stores each
   result the moment it returns;
-- **publishes only what changed**: a record carries its text by reference, so a new
-  card or link re-sends a few hundred bytes. canopy-web builds the index, the first
-  version included.
+- **decides itself whether anything changed**, against what its starting state published.
+  Nothing: nothing is built, sent or saved, and no version is made. Otherwise it applies
+  what changed to the served file (`canopy_kb.apply`) on its own machine and publishes the
+  whole file as a version made from the one it started at; canopy-web refuses it if
+  another landed since (refresh again: every result it paid for is kept).
 
 The bytes a step needs come from the originals store, and only for inputs whose result
 is missing. A refresh with nothing new downloads the state, makes the publisher's
-conditional checks, and publishes nothing.
+conditional checks, and publishes nothing. A large KB's refresh moves its whole file
+down and up (GiveWell's is ~760 MB), so run it on a cloud runner.
 
 ## Build and publish (curators)
 
 ```bash
 canopy kb build bundle/ --out kb.sqlite [--previous last.sqlite]   # diff → change history
-canopy kb push --kb connect/givewell-kb kb.sqlite --originals bundle/   # originals, then only what changed
+canopy kb push --kb connect/givewell-kb kb.sqlite --originals bundle/   # originals, then the whole file
 ```
 
 **canopy-web never builds an index** (canopy-web#1971: building in its web process ran
 it out of memory). The machine that refreshes builds the file (`canopy kb build`, or a
 curated refresh's `canopy_kb.apply` of what changed onto the served file) and `push`
-publishes it whole, with the bundle's state; canopy-web stores and serves it as a new
-version (`GET …/kb/versions`, `POST …/kb/versions/<n>/rollback`; `whats_new` reads that
-log). An unchanged bundle sends nothing (`…/kb/plan` says so). Nothing goes to Drive: a
+publishes it whole, as a version made from the one served now; canopy-web stores and
+serves it (`GET …/kb/versions`, `POST …/kb/versions/<n>/rollback`; `whats_new` reads the
+file's own history). Skipping an unchanged publish is a curated refresh's job
+(`canopy_kb.curate`), not `push`'s. Nothing goes to Drive: a
 project that wants a Drive copy turns its replica on (`PUT …/kb/settings {drive_replica:
 true}`, off by default) and canopy-web writes it.
 
@@ -116,7 +121,7 @@ it is read until the project's owner approves it:
 ```bash
 canopy kb drive inventory --kb <ws>/<handle>            # metadata only: names, types, owners, sharing
 #   → the owner reviews on canopy-web: /w/<ws>/projects/<handle>/kb
-canopy kb drive sync --kb <ws>/<handle>                 # read the approved files that changed, publish the difference
+canopy kb drive sync --kb <ws>/<handle>                 # read the approved files that changed; publish if anything did
 ```
 
 `inventory` never opens a file. canopy-web flags names that suggest records about people
@@ -127,7 +132,8 @@ that folder auto-approves. `sync` reads only what is approved (re-downloading a 
 when its md5 or version moved; Docs as Markdown, Sheets as xlsx, Slides as PDF), checks
 every spreadsheet's column headers and holds one that names or identifies people until the
 owner releases it (a held file's text is never stored, only the verdict), and publishes
-the rest; a file removed, trashed, excluded or held leaves the next version. It keeps
+the rest; a file removed, trashed, excluded or held leaves the next version (canopy-web
+opens what is published and checks every document against the approvals). It keeps
 nothing on the machine (above). Originals are not copied: `original` gives the Drive link and the
 revision indexed. A Drive KB is queryable only by its owner, its steward and the readers
 the owner names. Run both on a runner with the steward's Google login.
@@ -140,7 +146,7 @@ entity index, outlines and links, stores each declared table as SQL, and carries
 previous build's change rows forward, so `whats_new` is a dated history across
 refreshes. It carries originals forward the same way: a file no item points at any more
 stays listed as a superseded version. A build with no previous is a baseline. `push`
-needs the engine for a delta (the bundle's state).
+does not need the engine.
 
 `--originals bundle/` uploads each item's original to canopy-web's store before the build
 is published, only the ones it lacks: they are stored by sha256 (S3 checks each upload

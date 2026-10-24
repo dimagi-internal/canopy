@@ -1,9 +1,10 @@
 """A knowledge base's host as a refresh sees it: canopy-web, over canopy's own client.
 
 `RemoteStore` is `canopy_kb.curate.Store` for a workspace project (`<workspace>/<handle>`):
-step results, records and originals by key (presigned, straight to storage, never
-through canopy-web's web task), the curation state and its lease, and the delta publish
-(plan, whole-file publish). A curator's refresh (`canopy kb drive sync`, eva's GiveWell refresh)
+step results and originals by key (presigned, straight to storage, never through
+canopy-web's web task), the head version and the curation state it was built from, and
+the whole-file publish made from it (canopy-web refuses one made from a version that is
+no longer the head). A curator's refresh (`canopy kb drive sync`, eva's GiveWell refresh)
 builds a `canopy_kb.curate.Curation` over it, and runs from an empty disk on any machine
 the agent's identity works on (canopy-web#1925).
 
@@ -104,33 +105,24 @@ class RemoteStore:
             n += len(ups)
         return n
 
-    # curation
-    def curation(self) -> dict:
-        return self.call("GET", f"{self.base}/curation") or {}
-
-    def take_lease(self, holder: str, seconds: int) -> dict:
+    # versions
+    def head(self) -> dict:
+        """The version the project serves and the curation state it was built from
+        ({version: None} before the first)."""
         from orchestrator import canopy_web
         try:
-            return self.call("POST", f"{self.base}/curation/lease", {"holder": holder, "seconds": seconds}) or {}
+            log = self.call("GET", f"{self.base}/versions?limit=20") or []
         except canopy_web.CanopyError as e:
-            if "-> 409" in str(e):
-                raise KBError(f"another refresh of this knowledge base is running: {e}") from e
-            if "-> 404" in str(e) or "-> 405" in str(e):
-                raise KBError("canopy-web predates curation (canopy-web#1925): deploy it first") from e
+            if "-> 404" in str(e):
+                return {"version": None, "curation": None}
             raise
-
-    def drop_lease(self, holder: str) -> None:
-        try:
-            self.call("DELETE", f"{self.base}/curation/lease?holder={holder}")
-        except Exception:  # noqa: BLE001 - it expires on its own
-            pass
-
-    def save_curation(self, sha: str, base: str | None) -> dict:
-        return self.call("PUT", f"{self.base}/curation", {"sha": sha, "base": base}) or {}
-
-    # publishing
-    def plan(self, state: dict) -> dict:
-        return self.call("POST", f"{self.base}/plan", {"state": state}) or {}
+        cur = next((v for v in log if v.get("current")), None)
+        if cur is None:
+            return {"version": None, "curation": None}
+        if "curation_sha" not in cur:
+            raise KBError("canopy-web predates versions that carry their curation state (canopy-web#1986): "
+                          "deploy it first")
+        return {"version": cur["number"], "curation": cur.get("curation_sha") or None}
 
     def served(self, out):
         """The kb.sqlite the project serves now, downloaded and checked (None before its
@@ -163,9 +155,9 @@ class RemoteStore:
         gz.unlink(missing_ok=True)
         return out
 
-    def publish_file(self, gz, sha256: str, state: dict, changes: dict | None = None) -> dict:
-        """Upload a built kb.sqlite.gz and publish it, with the state it was built from and
-        the documents whose content changed (what the version log lists)."""
+    def publish_file(self, gz, sha256: str, *, base: int | None, curation: str, changes: dict | None = None) -> dict:
+        """Upload a built kb.sqlite.gz and publish it as a version made from `base`, with
+        the curation state it was built from and how many documents' content changed."""
         from orchestrator import canopy_web
         target = self.call("POST", f"{self.base}/upload") or {}
         if not target.get("url"):
@@ -176,13 +168,13 @@ class RemoteStore:
             with urllib.request.urlopen(req, timeout=3600) as resp:
                 if resp.status >= 300:
                     raise KBError(f"upload to storage failed: HTTP {resp.status}")
+        body = {"key": target["key"], "sha256": sha256, "base": base, "curation": curation}
+        if changes is not None:
+            body["changes"] = changes
         try:
-            body = {"key": target["key"], "sha256": sha256, "state": state}
-            if changes is not None:
-                body["changes"] = changes
             proj = self.call("POST", f"{self.base}/publish", body) or {}
         except canopy_web.CanopyError as e:
             if "-> 409" in str(e):
-                raise KBError(f"canopy-web refused the publish: {e}") from e
+                raise KBError(f"another version landed since this refresh started; refresh again: {e}") from e
             raise
         return {"version": proj.get("kb_version_number")}

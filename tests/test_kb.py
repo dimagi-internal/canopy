@@ -202,6 +202,8 @@ def test_a_workspace_projects_first_push_publishes_the_whole_file_to_canopy_and_
                     "headers": {"Content-Type": "application/gzip"}}
         if path.endswith("/kb/publish"):
             return {"mcp_path": "/api/mcp/projects/connect/givewell-kb/", "kb_version_number": 1}
+        if "/kb/versions" in path:
+            return []  # no version yet
         raise AssertionError(path)
 
     monkeypatch.setattr(canopy_web, "call", fake_call)
@@ -210,108 +212,43 @@ def test_a_workspace_projects_first_push_publishes_the_whole_file_to_canopy_and_
     out = kb_cli.push("connect/givewell-kb", tmp_path, db)
 
     publish = calls[-1]
-    assert publish[1].endswith("/kb/publish") and "state" not in publish[2]
+    assert publish[1].endswith("/kb/publish") and publish[2]["base"] is None
     assert publish[2]["sha256"] == hashlib.sha256(stored["data"]).hexdigest()
     assert stored["data"][:2] == b"\x1f\x8b"
     assert (out["published"], out["version"]) == ("full", 1)
     assert out["mcp_url"].endswith("/api/mcp/projects/connect/givewell-kb/")
 
 
-class _FakeRecords:
-    """`canopy_kb.records` over a bundle of {id, text} lines (the real one is tested in canopy-web)."""
-
-    TABLE = "table:"
-
-    @staticmethod
-    def _items(bundle):
-        return [json.loads(line) for line in open(bundle / "items.jsonl") if line.strip()]
-
-    def records(self, bundle):
-        return [(i["id"], self.sha(i), i) for i in self._items(bundle)]
-
-    def parts(self, bundle):
-        return {"manifest": {"name": "acme"}}
-
-    def state(self, bundle):
-        return {"docs": {i: s for i, s, _ in self.records(bundle)}, "parts": {"manifest": self.sha({"name": "acme"})}}
-
-    @staticmethod
-    def sha(obj):
-        import hashlib
-        return hashlib.sha256(json.dumps(obj, sort_keys=True).encode()).hexdigest()
-
-    @staticmethod
-    def encode(obj):
-        import gzip
-        return gzip.compress(json.dumps(obj, sort_keys=True).encode(), mtime=0)
-
-
-def _delta_world(tmp_path, monkeypatch, plans, versions=None):
+def test_a_push_is_a_version_made_from_the_head_and_loses_to_one_that_landed_first(tmp_path, monkeypatch):
+    """canopy-web never builds an index (canopy-web#1971): a push sends the whole file this
+    machine built, made from the version served now; one that landed meanwhile wins."""
     from orchestrator import canopy_web
 
-    b = tmp_path / "bundle"
-    b.mkdir()
-    (b / "items.jsonl").write_text("\n".join(json.dumps(i) for i in [{"id": "a", "text": "A"}, {"id": "b", "text": "B2"}]))
-    monkeypatch.setattr(kb_cli, "_records", lambda: _FakeRecords())
+    db = _kb_file(tmp_path / "kb.sqlite")
     monkeypatch.setattr(kb_cli, "_Drive", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Drive")))
-    calls, puts = [], []
+    calls, raced = [], []
 
     def fake_call(method, path, body=None, **kw):
-        calls.append((method, path.rsplit("/kb/", 1)[-1], body))
-        if path.endswith("/kb/plan"):
-            return plans.pop(0)
-        if path.endswith("/kb/blobs"):
-            return {"have": 0, "uploads": [{"sha256": x["sha256"], "url": f"https://s3/{x['sha256']}", "headers": {}}
-                                           for x in body["blobs"]]}
-        if path.endswith("/kb/versions") and method == "POST":
-            if versions:
-                v = versions.pop(0)
-                if isinstance(v, Exception):
-                    raise v
-                return v
-            return {"created": True, "version": {"number": 2, "status": "pending"}}
-        if "/kb/versions?" in path:
-            return [{"number": 2, "status": "ready"}]
+        calls.append((path.rsplit("/kb/", 1)[-1], body))
+        if "/kb/versions" in path:
+            return [{"number": 3, "current": False, "curation_sha": ""}, {"number": 2, "current": True,
+                                                                          "curation_sha": "r" * 64}]
         if path.endswith("/kb/upload"):
             return {"key": "k", "url": "https://s3/put", "headers": {}}
         if path.endswith("/kb/publish"):
-            return {"mcp_path": "/api/mcp/projects/connect/givewell-kb/", "kb_version_number": 1}
+            if raced:
+                raise canopy_web.CanopyError("POST publish -> 409: at version 3, not 2")
+            return {"mcp_path": "/api/mcp/projects/connect/givewell-kb/", "kb_version_number": 4}
         raise AssertionError(path)
 
     monkeypatch.setattr(canopy_web, "call", fake_call)
-    monkeypatch.setattr(kb_cli, "_put", lambda url, path, headers: puts.append((url, path.stat().st_size)))
-    monkeypatch.setattr("time.sleep", lambda s: None)
-    return b, calls, puts
-
-
-PLAN = {"base": 1, "full_required": False, "unchanged": False, "added": 0, "changed": 1, "removed": 0,
-        "upload_docs": ["b"], "upload_parts": []}
-
-
-def test_an_unchanged_bundle_sends_nothing(tmp_path, monkeypatch):
-    db = _kb_file(tmp_path / "kb.sqlite")
-    b, calls, puts = _delta_world(tmp_path, monkeypatch, [{**PLAN, "unchanged": True, "upload_docs": []}])
-    out = kb_cli.push("connect/givewell-kb", tmp_path, db, bundle=b)
-    assert (out["published"], out["bytes_uploaded"]) == ("unchanged", 0)
-    assert [c[1] for c in calls] == ["plan"] and puts == []
-
-
-def test_a_changed_bundle_publishes_the_whole_file_built_here_never_a_delta(tmp_path, monkeypatch):
-    """canopy-web never builds an index (canopy-web#1971): a changed bundle sends the file
-    this machine built, with its state, and nothing of the old delta routes."""
-    db = _kb_file(tmp_path / "kb.sqlite")
-    b, calls, puts = _delta_world(tmp_path, monkeypatch, [dict(PLAN)])
-    out = kb_cli.push("connect/givewell-kb", tmp_path, db, bundle=b)
-    assert [c[1] for c in calls] == ["plan", "upload", "publish"] and set(calls[-1][2]["state"]["docs"]) == {"a", "b"}
-    assert out["published"] == "full" and len(puts) == 1
-
-
-def test_a_first_build_sends_the_whole_file_with_its_state(tmp_path, monkeypatch):
-    db = _kb_file(tmp_path / "kb.sqlite")
-    b, calls, _ = _delta_world(tmp_path, monkeypatch, [{**PLAN, "full_required": True, "base": None}])
-    out = kb_cli.push("connect/givewell-kb", tmp_path, db, bundle=b)
-    assert [c[1] for c in calls] == ["plan", "upload", "publish"] and calls[-1][2]["state"]["docs"]
-    assert out["published"] == "full"
+    monkeypatch.setattr(kb_cli, "_put", lambda url, path, headers: None)
+    out = kb_cli.push("connect/givewell-kb", tmp_path, db)
+    assert [c[0] for c in calls] == ["versions?limit=20", "upload", "publish"] and calls[-1][1]["base"] == 2
+    assert (out["published"], out["version"]) == ("full", 4)
+    raced.append(1)
+    with pytest.raises(KBError, match="push again"):
+        kb_cli.push("connect/givewell-kb", tmp_path, db)
 
 
 def _originals_bundle(tmp_path):
@@ -348,13 +285,14 @@ def test_push_uploads_only_the_originals_canopy_lacks_before_publishing(tmp_path
             return {"key": "k", "url": "https://s3/put", "headers": {}}
         if path.endswith("/kb/publish"):
             return {"mcp_path": "/api/mcp/projects/connect/givewell-kb/"}
+        if "/kb/versions" in path:
+            return []
         raise AssertionError(path)
 
     monkeypatch.setattr(canopy_web, "call", fake_call)
     monkeypatch.setattr(kb_cli, "_put", lambda url, path, headers: puts.append((url, path.read_bytes(), headers)))
 
-    monkeypatch.setattr(kb_cli, "_records", lambda: _FakeRecords())
-    out = kb_cli.push("connect/givewell-kb", tmp_path, db, originals=_originals_bundle(tmp_path), full=True)
+    out = kb_cli.push("connect/givewell-kb", tmp_path, db, originals=_originals_bundle(tmp_path))
 
     assert puts[0] == ("https://s3/b", b"PK workbook", {"x-amz-checksum-sha256": "x"})
     assert out["originals"] == {"files": 2, "already_stored": 1, "uploaded": 1, "bytes_uploaded": 11}

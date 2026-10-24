@@ -13,21 +13,21 @@ class Web:
     """canopy-web's curation routes over a dict, presigning links to a fake storage."""
 
     def __init__(self):
-        self.stored = {"results": {}, "records": {}, "originals": {}, "served": {}, "upload": {}}
+        self.stored = {"results": {}, "originals": {}, "served": {}, "upload": {}}
         self.served_sha = ""
         self.posts = []
+        self.versions = []
 
     def __call__(self, method, path, body=None, **kw):
-        route = path.split("/kb/", 1)[1]
+        route = path.split("/kb/", 1)[1].split("?", 1)[0]
         self.posts.append((method, route))
         if route == "objects/have":
             return {"have": [k for k in body["keys"] if k in self.stored[body["store"]]]}
         if route == "objects/links":
             return {"links": [{"key": k, "url": f"https://s3/{body['store']}/{k}"} for k in body["keys"]]}
-        if route in ("results", "blobs"):
-            store = "results" if route == "results" else "records"
-            return {"uploads": [{"sha256": b["sha256"], "url": f"https://s3/{store}/{b['sha256']}", "headers": {}}
-                                for b in body["blobs"] if b["sha256"] not in self.stored[store]]}
+        if route == "results":
+            return {"uploads": [{"sha256": b["sha256"], "url": f"https://s3/results/{b['sha256']}", "headers": {}}
+                                for b in body["blobs"] if b["sha256"] not in self.stored["results"]]}
         if route == "originals":
             return {"uploads": [{"sha256": f["sha256"], "url": f"https://s3/originals/{f['sha256']}", "headers": {}}
                                 for f in body["files"] if f["sha256"] not in self.stored["originals"]]}
@@ -38,8 +38,8 @@ class Web:
         if route == "publish":
             self.published = body
             return {"kb_version_number": 2}
-        if route == "curation":
-            return {"sha": "r" * 64} if method == "GET" else {"sha": body["sha"]}
+        if route == "versions":
+            return self.versions
         raise AssertionError(route)
 
 
@@ -73,7 +73,17 @@ def test_results_go_to_storage_once_and_come_back_by_key(web):
     assert s.have("results", ["a" * 64, "b" * 64]) == {"a" * 64}
     assert s.get("results", ["a" * 64, "b" * 64]) == {"a" * 64: blob}  # a missing key is just absent
     assert s.put_originals({"c" * 64: (b"%PDF", "application/pdf")}) == 1 and web.stored["originals"]["c" * 64] == b"%PDF"
-    assert s.curation()["sha"] == "r" * 64
+
+
+def test_the_head_is_the_served_version_and_the_state_it_was_built_from(web):
+    s = kb_remote.RemoteStore("connect/givewell-kb", call=web)
+    assert s.head() == {"version": None, "curation": None}  # before the first version
+    web.versions = [{"number": 4, "current": False, "curation_sha": "x" * 64},
+                    {"number": 3, "current": True, "curation_sha": "r" * 64}]  # 4 failed; 3 serves
+    assert s.head() == {"version": 3, "curation": "r" * 64}
+    web.versions = [{"number": 3, "current": True}]  # a canopy-web from before canopy-web#1986
+    with pytest.raises(KBError, match="deploy it first"):
+        s.head()
 
 
 def test_a_ref_must_be_a_workspace_project():
@@ -93,8 +103,8 @@ def test_a_refresh_downloads_the_served_file_checked_and_publishes_a_built_one(w
         s.served(tmp_path / "again.sqlite")
     gz = tmp_path / "built.gz"
     gz.write_bytes(b"built")
-    assert s.publish_file(gz, "f" * 64, {"docs": {}, "parts": {}}, {"added": ["x"], "changed": [], "removed": []}) \
+    assert s.publish_file(gz, "f" * 64, base=1, curation="r" * 64, changes={"added": 1, "changed": 0, "removed": 0}) \
         == {"version": 2}
-    assert web.published["changes"]["added"] == ["x"]
+    assert (web.published["base"], web.published["curation"], web.published["changes"]["added"]) == (1, "r" * 64, 1)
     assert web.stored["upload"]["k1"] == b"built" and web.published["sha256"] == "f" * 64
 
