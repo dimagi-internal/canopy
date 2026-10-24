@@ -67,7 +67,9 @@ import sys
 #: Bump only when the profile contract changes.
 #: 2 = also honours CANOPY_PROFILE (the cloud runner, which spawns claude itself).
 #: 3 = writes are checked against `write_paths` (absent → none), not read_paths.
-PROFILE_ENFORCEMENT_VERSION = 3
+#: 4 = honours `attachment_dirs`: the files a person sent with a private conversation's
+#:     turn, put in that turn's own directory, readable by Read and nothing else.
+PROFILE_ENFORCEMENT_VERSION = 4
 
 PROFILE_ROOT = os.path.expanduser("~/.canopy/profiles")
 _ANCHOR = re.compile(r"-worktrees-.+?-emdash-(?P<leaf>.+)$")
@@ -267,10 +269,25 @@ def _is_own_envelope(tool: str, tool_input: dict, prof: dict) -> bool:
     return bool(target) and os.path.realpath(os.path.expanduser(target)) == os.path.realpath(own)
 
 
+def _is_own_attachment(tool: str, tool_input: dict, prof: dict) -> bool:
+    """A file a person sent with THIS turn (a private conversation's, canopy-web
+    `private_attachments`): the runner puts it in the turn's own directory and names
+    that directory in `attachment_dirs`. Read only, a file inside one of them, resolved
+    — the one exception beside the envelope, and no wider: the capability's own
+    read_paths and tools are unchanged."""
+    dirs = prof.get("attachment_dirs") or []
+    if tool != "Read" or not isinstance(dirs, list):
+        return False
+    target = str((tool_input or {}).get("file_path") or "")
+    if not target or not os.path.isabs(os.path.expanduser(target)):
+        return False
+    return any(isinstance(d, str) and os.path.isabs(d) and _in_dir(target, d, "/") for d in dirs)
+
+
 def decide(tool: str, tool_input: dict, prof: dict, cwd: str, results_dir=None):
     """None to allow, else the reason to refuse. `results_dir` is the session's own
     tool-results directory (see `own_results_dir`), readable by any listed read tool."""
-    if _is_own_envelope(tool, tool_input, prof):
+    if _is_own_envelope(tool, tool_input, prof) or _is_own_attachment(tool, tool_input, prof):
         return None
     cap = prof["capability"]
     name = cap.get("name") or "?"

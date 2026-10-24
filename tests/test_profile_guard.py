@@ -446,3 +446,41 @@ def test_an_error_while_judging_is_a_refusal_not_an_allow(monkeypatch, capsys, p
     monkeypatch.setattr(pg, "decide", boom)
     code, err = _run(monkeypatch, capsys, "Read", {"file_path": "/Users/a/w/x"})
     assert code == 2 and "refused" in err
+
+
+# --- a private conversation's files, for the turn they were sent with ------------------
+
+
+def test_a_turns_own_attachment_dir_is_readable_by_read_alone(monkeypatch, capsys, profiles, tmp_path):
+    turn_dir = tmp_path / "w" / ".canopy-attachments" / "t1"
+    other_dir = tmp_path / "w" / ".canopy-attachments" / "t2"
+    turn_dir.mkdir(parents=True)
+    other_dir.mkdir(parents=True)
+    mine, theirs = turn_dir / "1-scan.png", other_dir / "1-x.png"
+    mine.write_text("x")
+    theirs.write_text("x")
+    prof = json.loads((profiles / f"{TASK}.json").read_text())
+    prof["capability"] = {**prof["capability"], "tools": [], "read_paths": []}
+    prof["attachment_dirs"] = [str(turn_dir)]
+    (profiles / f"{TASK}.json").write_text(json.dumps(prof))
+    assert _run(monkeypatch, capsys, "Read", {"file_path": str(mine)})[0] == 0
+    # Nothing beside it: another turn's files, a climb out, another tool, a relative path.
+    assert _run(monkeypatch, capsys, "Read", {"file_path": str(theirs)})[0] == 2
+    assert _run(monkeypatch, capsys, "Read", {"file_path": str(turn_dir / ".." / "t2" / "1-x.png")})[0] == 2
+    assert _run(monkeypatch, capsys, "Grep", {"path": str(turn_dir), "pattern": "x"})[0] == 2
+    assert _run(monkeypatch, capsys, "Write", {"file_path": str(mine)})[0] == 2
+    assert _run(monkeypatch, capsys, "Read", {"file_path": "1-scan.png"}, cwd=str(turn_dir))[0] == 2
+    # And it widens nothing else: Read stays refused outside it.
+    assert _run(monkeypatch, capsys, "Read", {"file_path": str(tmp_path / "w" / "README")})[0] == 2
+
+
+def test_a_symlink_out_of_the_attachment_dir_is_refused(monkeypatch, capsys, profiles, tmp_path):
+    turn_dir = tmp_path / ".canopy-attachments" / "t1"
+    turn_dir.mkdir(parents=True)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("s")
+    (turn_dir / "1-link.png").symlink_to(secret)
+    prof = json.loads((profiles / f"{TASK}.json").read_text())
+    prof["attachment_dirs"] = [str(turn_dir)]
+    (profiles / f"{TASK}.json").write_text(json.dumps(prof))
+    assert _run(monkeypatch, capsys, "Read", {"file_path": str(turn_dir / "1-link.png")})[0] == 2
