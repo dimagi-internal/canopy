@@ -169,6 +169,15 @@ canopy agent project-set --slug <slug> --project "<Project>" --status done
 canopy agent project-audit --slug <slug> [--json]      # what the board is missing (read-only)
 ```
 
+**A project's toolbox: open the project, then use it.** A project on canopy-web can carry a
+knowledge base, skills, shared MCP servers and plugins, for everyone working on it. The `projects`
+server reaches every project's with the same few tools: `projects` lists what you may open;
+`open_project "<workspace>/<handle>"` gives its card (a task's brief says `Its toolbox (…): open
+it first with open_project("…")` when there is one); the `kb_` tools (`kb_search`, `kb_read`,
+`kb_table`, …) read its knowledge base, each taking `project`; `project_skill` reads a skill when
+the work needs it. Never copy a project's own server into your plugin's MCP config: that adds its
+tools to every session you run.
+
 Then **file the work into it** — a task takes the project's name or its `P<N>`:
 ```
 canopy agent add --slug <slug> --title "…" --project "<Project>" --next-action "…"
