@@ -152,8 +152,24 @@ canopy email dangling --repo <your agent repo>
 ```
 
 It sweeps your **Gmail** mailbox (the Google account in `config/agent.json`: `google_account`,
-else `email`). A canopy-hosted address has no Gmail inbox to sweep — its threads reach you as
-`--thread <uuid>` turns — so an agent with only a hosted address skips this step and says so.
+else `email`). A **canopy-hosted** address (the workspace's own mail domain, run by canopy-web)
+has no Gmail inbox, so `dangling` skips it — but it is NOT a mailbox with nothing to sweep.
+canopy-web stores every message to it, including mail that never started a turn (a no-reply
+sender, or anyone the workspace's admission rules refuse a turn to). Sweep it instead:
+
+```bash
+canopy email inbox --repo <your agent repo>          # unread hosted threads (--all adds read ones)
+```
+
+One line per thread: `*` (unread), thread UUID, last-message time, counterpart, subject. Every
+unread line is **NEEDS ATTENTION** — unless a turn already holds it (`live-turns.sh --ref <uuid>`
+shows `OTHERS>=1`: that is **OWNED**, leave it). Triage each one as a normal Step 2 item, **one
+counterpart at a time**: read it with `canopy email thread <uuid>`, act or draft, then
+`canopy email mark-read <uuid>` (handled, keep) or `canopy email archive <uuid>` (handled or
+not actionable — a verification code, a welcome mail, a receipt). A read thread still listed
+under `--all` is **HANDLED**: archive it, don't answer it late. An agent with BOTH a Gmail
+mailbox and a hosted address runs both sweeps; `inbox` lists only the hosted one, and on a
+Gmail-only agent it says so and exits 0.
 
 A thread you owe a reply to **generates no new inbound by definition** — the counterpart is
 waiting on *you*. So it is invisible to an unread scan, invisible to the poller that triggers
@@ -232,7 +248,8 @@ needed one tuned to get the same answer for the wrong reason.)*
 `--slack <channel>/<ts>` — that ref IS your single inbound item: go **straight to it**, skip the
 inbox scan (the harness runner passes the ref because it already resolved it — don't waste a turn
 re-resolving). Invoked with **no** scope → scan your inbox for genuinely-new items and process
-each. Either way, the per-item rules below apply.
+each — for a canopy-hosted address that scan is `canopy email inbox` (Step 2.0), not a skip.
+Either way, the per-item rules below apply.
 
 **A `--thread` ref has two shapes — tell them apart before you read it.** On a **canopy-hosted**
 address (the workspace's own mail domain, run through canopy-web/SES — no Gmail, nothing signed in)

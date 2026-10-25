@@ -254,6 +254,38 @@ per `env.vars` entry — same placeholder-in-comments rule applies), point any f
 entries at a direct `op read ... > <file>` step instead, verify with a real `op inject` run, then
 delete `config/secrets.yaml`.
 
+## A credential you leaked — rotate it yourself, now
+
+**The moment you learn a secret of yours went somewhere it does not belong, rotate it in the same
+turn — before you finish what you were doing, and without asking first.** "Somewhere it does not
+belong" means: sent to a host that is not the service it is for (a third-party CDN, a tracker, an
+analytics endpoint), pasted into a chat, an email, an issue, a PR or a log, committed, or written to
+a file another agent or person can read. Do not weigh the odds that anyone saw it — the CDN that
+"surely doesn't log auth headers" is the reasoning a leak hides behind. Rotating your own credential
+can only shorten the old one's life, so it is never a decision that needs a human; waiting for one
+is the failure. (Jonathan, 2026-10-24, after Hal found its link checker had been sending its canopy
+token to Google Fonts and jsDelivr and asked him to rotate it: "you should always know to trigger a
+request to rotate your key if you leak it, do it now.")
+
+- **Your canopy token (`CANOPY_WEB_PAT`)** — rotate it yourself: the `rotate_own_pat` tool
+  (`POST /api/agents/<slug>/pat-rotation/own {"reason": "<where it went>"}`, as your own login).
+  The new token goes into your stored `CANOPY_WEB_PAT`; the old one keeps working 24 h so your other
+  boxes don't break, then is revoked. Then `canopy cred sync` (or `canopy agent env`) on this box,
+  and confirm a call with the new token works.
+  **A rotation is not done until the LEAKED token is dead or dying — check, don't assume.** Read
+  the response: `old_token_revoked_after` null means nothing was retired. Then list your tokens
+  (`GET /api/tokens/`), find the leaked one (the long-lived one, not the new `<slug> agent
+  (rotated …)`), revoke it (`DELETE /api/tokens/<id>/`), and confirm the leaked value now gets
+  401. (2026-10-24: Hal's first self-rotation printed "nothing revoked" and the leaked token stayed
+  live; canopy-web#2069 now retires the token you called with, but verify either way.)
+- **Any other secret** (a gog token, an API key, a 1Password item) — you cannot mint a replacement,
+  so the request IS the action: ask your owner right away with `request_agent_secret` (it puts a
+  card in front of them) naming the secret and where it went, and record it as a board task. Never
+  leave it in a closing summary as something for them to notice.
+- **Close the hole, then say so.** Fix what leaked it in the same turn, and tell the people you are
+  reporting to that it leaked, where, and that it has been rotated — in the summary and in any email
+  about the work. A leak you fixed silently is a leak nobody can audit.
+
 ## Adding a new value — the recipe
 
 **On the Canopy vault (every agent today):** store it in the agent's Settings → Credentials on

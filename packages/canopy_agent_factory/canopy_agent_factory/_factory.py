@@ -604,7 +604,9 @@ follows it: preflight → process inbound (one counterpart at a time) → skill 
 5. The agent's own thing is its MAILBOX ({{MAILBOX}}).
    - **Canopy-hosted** (an address on the workspace's own mail domain): nothing to sign in.
      canopy-web routes mail to the agent when it is created and sends as it; `canopy email`
-     finds the route itself, and turns get a canopy-web thread UUID. A Google sign-in is optional
+     finds the route itself, and turns get a canopy-web thread UUID. canopy-web keeps every
+     message, even ones that start no turn: an unscoped turn sweeps them with
+     `canopy email inbox --repo .` (unread hosted threads). A Google sign-in is optional
      — only for Drive/Docs — and is for the agent's Google ACCOUNT, which is usually a different
      address (e.g. `{{AGENT_SLUG}}@dimagi-ai.com`): name it in `config/agent.json`
      `google_account` (`canopy create-agent --google-account`), or gog runs as the mail address.
