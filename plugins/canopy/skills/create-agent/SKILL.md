@@ -30,10 +30,11 @@ the human for any you don't have; infer sensible defaults for the rest:
   Stamped into `config/agent.json` as `google_account`; omit it when the mailbox is Gmail.
   **A canopy-hosted mailbox never needs a paid Google seat.** If the agent has no Google
   account and its hosted domain is not dimagi.ai (e.g. a family domain), the Google account is a
-  FREE **Google Workspace Essentials Starter** account on the mailbox address itself (Drive,
-  Docs, Sheets — no Gmail and NO Calendar: the Calendar API returns `notACalendarUser`): sign up at workspace.google.com/essentials with that address (the code
+  FREE **Google Workspace Essentials Starter** account on the mailbox address itself (Calendar,
+  Drive, Docs — no Gmail). **Calendar is OFF by default**: admin.google.com → Apps → Google
+  Workspace → Calendar → ON, or every Calendar call returns `403 notACalendarUser`: sign up at workspace.google.com/essentials with that address (the code
   arrives through canopy mail), then `gog login <address> --client canopy --services
-  drive,docs,sheets` (never `gmail`). Omit `--google-account` then — it IS the mailbox.
+  calendar,drive,docs,sheets --force-consent` and tick Select all (never `gmail`). Omit `--google-account` then — it IS the mailbox.
 - `--stakeholders` — who it serves.
 
 ## Step 2 — Generate
