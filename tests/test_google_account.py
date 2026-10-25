@@ -170,8 +170,10 @@ def test_load_key_order(tmp_path):
 class FakeZkVault:
     """The two calls `vault_store` makes of a `vault_zk_cli.ZkVault`."""
 
-    def __init__(self, state, wrap_error=None):
-        self._state, self.wrap_error, self.puts = state, wrap_error, []
+    vault_id = ""
+
+    def __init__(self, state, wrap_error=None, slug="trellis"):
+        self._state, self.wrap_error, self.puts, self.slug = state, wrap_error, [], slug
 
     def state(self):
         return self._state

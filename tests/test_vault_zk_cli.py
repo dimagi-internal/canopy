@@ -747,3 +747,26 @@ def test_request_answers_through_the_request_route(home, monkeypatch):
                            ["zk", "set", "--agent", "bailey", "--request", REQ_ID, "OTHER"],
                            input=SEALED_SECRET + "\n")
     assert r.exit_code != 0 and "asks for GITHUB_TOKEN, not OTHER" in r.output
+
+
+class _BornAgent:
+    """A new agent: zero-knowledge, no vault key yet (kv 0)."""
+    vault_id = ""
+    slug = "trellis"
+
+    def __init__(self):
+        self.calls = []
+
+    def state(self):
+        return {"enabled": True, "kv": 0, "wraps": []}
+
+    def web(self, method, path, body=None):
+        self.calls.append((method, path, body))
+        return []
+
+
+def test_set_on_an_agent_with_no_vault_key_is_sealed_by_canopy_web_not_refused():
+    v = _BornAgent()
+    res = vault_zk_cli.run_set(v, {"GOOGLE_PASSWORD": "s3cret"})
+    assert v.calls == [("PUT", "/api/agents/trellis/credentials", {"values": {"GOOGLE_PASSWORD": "s3cret"}})]
+    assert res.kv == 0 and "s3cret" not in vault_zk_cli.render(res)

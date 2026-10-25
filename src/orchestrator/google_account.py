@@ -239,9 +239,9 @@ def vault_store(slug: str, vault=None) -> Store:
     device cannot write to stops the command before Google is touched.
 
     An agent born zero-knowledge has no vault key yet (kv 0) — every new agent until its
-    first machine is approved. Its values go to canopy-web's credentials write, which
-    seals each one to the agent's readers as it arrives (canopy-web#1567); nobody sets the
-    vault up by hand first. With a vault key, they are encrypted here (`run_set`)."""
+    first machine is approved. `run_set` then writes through canopy-web, which seals each
+    value to the agent's readers as it arrives; nobody sets the vault up by hand first.
+    With a vault key, this device must hold its copy, and the values are encrypted here."""
     from orchestrator import vault_zk_cli as zc
 
     v = vault or zc._vault(slug)
@@ -253,11 +253,7 @@ def vault_store(slug: str, vault=None) -> Store:
         raise GoogleAccountError(f"'{slug}' is not zero-knowledge — `canopy vault zk "
                                  f"enable --agent {slug}` first")
     if state.get("kv") == 0:
-        def store_sealed(values: dict) -> str:
-            v.web("PUT", f"/api/agents/{slug}/credentials", {"values": values})
-            return (f"stored {', '.join(sorted(values))} for {slug}, sealed by canopy-web to "
-                    "its readers (no vault key yet)")
-        return store_sealed
+        return lambda values: zc.render(zc.run_set(v, values))
     try:
         v.my_wrap()
     except zc.ZkCliError as e:
