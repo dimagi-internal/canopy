@@ -99,12 +99,35 @@ def test_create_refuses_an_existing_address_before_touching_the_vault():
     assert v.values == {}
 
 
-def test_create_treats_403_on_lookup_as_an_error_not_absent():
+def test_create_reads_403_on_lookup_as_absent_because_google_says_403_for_no_such_user():
+    """Measured 2026-10-25: the OU-fenced provisioner gets 403, not 404, for an address
+    that does not exist — so a 403 that stopped `create` meant it could create nobody."""
+    g, v = FakeGoogle(fail={"GET"}), Vault()
+    ga.run_create(_dir(g), v, email="trellis@dimagi-ai.com", given="Trellis", family="Agent",
+                  ou="/Non-person/AI", password=lambda: PW)
+    assert g.users["trellis@dimagi-ai.com"]["orgUnitPath"] == "/Non-person/AI"
+
+
+def test_create_of_an_address_taken_outside_the_ou_is_refused_by_googles_insert():
+    class Taken(FakeGoogle):
+        def __call__(self, method, url, body, headers):
+            if method == "POST" and url == ga.USERS_URL:
+                self.calls.append((method, url))
+                return 409, {"error": {"message": "Entity already exists."}}
+            return super().__call__(method, url, body, headers)
+
+    g, v = Taken(fail={"GET"}), Vault()
+    with pytest.raises(ga.GoogleAccountError, match="already exists outside"):
+        ga.run_create(_dir(g), v, email="someone@dimagi-ai.com", given="S", family="P",
+                      ou="/Non-person/AI", password=lambda: PW)
+
+
+def test_reset_still_treats_403_as_an_error():
     g, v = FakeGoogle(fail={"GET"}), Vault()
     with pytest.raises(ga.GoogleAccountError, match="cannot read"):
-        ga.run_create(_dir(g), v, email="someone@dimagi.com", given="S", family="P",
-                      ou="/Non-person/AI", password=lambda: PW)
-    assert v.values == {} and ("POST", ga.USERS_URL) not in g.calls
+        ga.run_reset(_dir(g), v, email="someone@dimagi.com", ou="/Non-person/AI",
+                     password=lambda: PW)
+    assert v.values == {}
 
 
 def test_reset_sets_then_stores():
@@ -142,3 +165,49 @@ def test_load_key_order(tmp_path):
     assert ga.load_key("", "ada", env={}, resolve=vault) == {"from": "ada"}
     with pytest.raises(ga.GoogleAccountError, match="no provisioner key"):
         ga.load_key("", "ada", env={}, resolve=lambda s, r: None)
+
+
+class FakeZkVault:
+    """The two calls `vault_store` makes of a `vault_zk_cli.ZkVault`."""
+
+    def __init__(self, state, wrap_error=None):
+        self._state, self.wrap_error, self.puts = state, wrap_error, []
+
+    def state(self):
+        return self._state
+
+    def web(self, method, path, body=None):
+        self.puts.append((method, path, body))
+        return []
+
+    def my_wrap(self):
+        if self.wrap_error:
+            raise self.wrap_error
+
+
+def test_a_new_agent_with_no_vault_key_is_stored_through_canopy_webs_sealing_write():
+    v = FakeZkVault({"enabled": True, "kv": 0})
+    line = ga.vault_store("trellis", vault=v)({"GOOGLE_ACCOUNT": "t@dimagi-ai.com", "GOOGLE_PASSWORD": PW})
+    assert v.puts == [("PUT", "/api/agents/trellis/credentials",
+                       {"values": {"GOOGLE_ACCOUNT": "t@dimagi-ai.com", "GOOGLE_PASSWORD": PW}})]
+    assert "sealed" in line and PW not in line
+
+
+def test_an_agent_with_a_vault_key_still_needs_this_devices_copy_before_google():
+    from orchestrator import vault_zk_cli as zc
+
+    v = FakeZkVault({"enabled": True, "kv": 1}, wrap_error=zc.ZkCliError("no wrap"))
+    with pytest.raises(ga.GoogleAccountError, match="cannot write"):
+        ga.vault_store("ada", vault=v)
+    assert v.puts == []
+
+
+def test_a_vault_this_caller_cannot_read_stops_before_google():
+    from orchestrator import vault_zk_cli as zc
+
+    class Refused(FakeZkVault):
+        def state(self):
+            raise zc.ZkCliError("canopy-web refused GET: 403 owner or admin")
+
+    with pytest.raises(ga.GoogleAccountError, match="403"):
+        ga.vault_store("trellis", vault=Refused({}))
