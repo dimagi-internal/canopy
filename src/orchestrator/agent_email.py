@@ -2797,6 +2797,66 @@ def format_ses_thread(thread: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def hosted_routes(own: Sequence[str]) -> tuple[list[dict], list[str]]:
+    """The SES mailboxes among the agent's OWN addresses, one route per (workspace, agent).
+
+    Returns `(routes, problems)`. `problems` names each address whose lookup failed for a
+    reason other than "not an SES mailbox" (network, auth, 5xx) — so a caller can tell a
+    Gmail-only agent from a canopy-web it could not ask. Addresses on the fleet's Google
+    Workspace domain are Google accounts and are never probed."""
+    routes: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    problems: list[str] = []
+    for address in own:
+        key = (address or "").strip().lower()
+        if not key or key.endswith("@" + GOOGLE_WORKSPACE_DOMAIN):
+            continue
+        route = _ses_route(key, quiet=True)
+        if route is None:
+            if key in _RESOLVE_FAILURES:
+                problems.append(f"{key}: {_RESOLVE_FAILURES[key]}")
+            continue
+        pair = (str(route["workspace"]), str(route.get("agent") or ""))
+        if pair not in seen:
+            seen.add(pair)
+            routes.append({**route, "address": route.get("address") or key})
+    return routes, problems
+
+
+def ses_list_threads(route: dict, *, slug: str, archived: bool = False,
+                     unread_only: bool = True) -> list[dict]:
+    """The agent's hosted threads, newest first: `GET /api/mail/threads/<ws>?agent=&archived=`.
+
+    canopy-web stores every inbound message — including mail that never started a turn (a
+    no-reply sender the admission rules refuse) — so this is how an agent SEES that mail.
+    Unread filtering happens here; the server filters only on agent and archived."""
+    from urllib.parse import urlencode
+    from orchestrator import canopy_web
+    agent = route.get("agent") or slug
+    query = urlencode({"agent": agent, "archived": "true" if archived else "false"})
+    path = f"/api/mail/threads/{route['workspace']}?{query}"
+    try:
+        got = canopy_web.call("GET", path)
+    except Exception as e:  # noqa: BLE001
+        raise AgentEmailError(
+            f"cannot list hosted threads for {agent} in {route['workspace']}: {e}") from e
+    items = got.get("items") if isinstance(got, dict) else None
+    if not isinstance(items, list):
+        raise AgentEmailError(f"unexpected thread list from {path}: {str(got)[:200]}")
+    if unread_only:
+        items = [t for t in items if t.get("unread")]
+    return sorted(items, key=lambda t: str(t.get("last_message_at") or ""), reverse=True)
+
+
+def format_inbox_line(thread: dict) -> str:
+    """One thread as one line: uuid, date, counterpart, subject, and `*` when unread."""
+    when = str(thread.get("last_message_at") or "")[:16].replace("T", " ")
+    who = str(thread.get("counterpart") or "?")
+    subject = str(thread.get("subject") or "(no subject)")
+    mark = "*" if thread.get("unread") else " "
+    return f"{mark} {thread.get('thread_id', '')}  {when:16}  {who[:40]:40}  {subject}"
+
+
 def _acct(ident) -> str:
     return ident.account if ident is not None else ""
 
@@ -3188,10 +3248,10 @@ def _run_dangling(repo, agent, account, client, days, limit, stale_after, older_
     try:
         hosted = _hosted_identity(repo, agent, account)
         if hosted is not None:
-            # Step 2.0 sweeps a Gmail inbox; a hosted mailbox has none — its threads reach
-            # the agent as `--thread <uuid>` turns. Say so (an instrumented absence), exit 0.
+            # This sweeps a Gmail inbox; a hosted mailbox has none. Its sweep is
+            # `canopy email inbox` — say so (an instrumented absence), exit 0.
             click.echo(f"Skipped: {hosted.account} is a mailbox canopy-web hosts — no Gmail "
-                       "inbox to sweep; its threads arrive as `--thread` turns.")
+                       "inbox to sweep. Sweep it with `canopy email inbox`.")
             return
         ident = _identity_from_opts(repo, agent, account, client)
         owners = None
@@ -3356,6 +3416,65 @@ def email_thread(repo, agent, account, client, thread_id):
         click.echo(format_ses_thread(ses_read_thread(ses, thread_id)), nl=False)
     except AgentEmailError as e:
         raise click.ClickException(str(e))
+
+
+@email_group.command("inbox")
+@_with_identity_options
+@click.option("--all", "show_all", is_flag=True,
+              help="Include read threads (default: unread only).")
+@click.option("--archived", is_flag=True,
+              help="List archived threads, read and unread, instead of the inbox.")
+@click.option("--json", "as_json", is_flag=True,
+              help="Emit JSON: {agent, mailboxes, threads} instead of one line per thread.")
+def email_inbox(repo, agent, account, client, show_all, archived, as_json):
+    """List the agent's canopy-hosted mailbox (unread by default).
+
+    canopy-web keeps every message to a hosted address, including mail that never started a
+    turn, so this is the hosted inbox sweep. One line per thread: `*` (unread), thread
+    UUID, last-message time, counterpart, subject. Triage each with
+    `canopy email thread <uuid>`, then `mark-read` / `archive`. A Gmail-only agent has no
+    hosted mailbox; its sweep is `canopy email dangling` and an unread scan of Gmail."""
+    try:
+        if account:
+            slug, own = agent or account.split("@")[0], [account]
+        else:
+            repo_dir = Path(repo) if repo else (find_agent_repo(agent) if agent else Path.cwd())
+            ident = resolve_email_identity(repo_dir)
+            slug = ident.slug
+            own = [ident.email] + sorted(ident.addresses - {ident.email.lower()})
+        routes, problems = hosted_routes(own)
+        if not routes and problems:
+            raise AgentEmailError(
+                "could not ask canopy-web whether this agent has a hosted mailbox — "
+                + "; ".join(problems))
+        threads = []
+        for route in routes:
+            for t in ses_list_threads(route, slug=slug, archived=archived,
+                                      unread_only=not (show_all or archived)):
+                threads.append({**t, "workspace": route["workspace"]})
+    except AgentEmailError as e:
+        raise click.ClickException(str(e))
+    threads.sort(key=lambda t: str(t.get("last_message_at") or ""), reverse=True)
+    mailboxes = [{"address": r["address"], "workspace": r["workspace"],
+                  "agent": r.get("agent") or slug} for r in routes]
+    if as_json:
+        click.echo(json.dumps({"agent": slug, "mailboxes": mailboxes, "threads": threads},
+                              indent=2))
+        return
+    if not routes:
+        click.echo(
+            f"{slug} has no canopy-hosted mailbox: canopy-web hosts none of "
+            f"{', '.join(own)}. Its inbox sweep is the Gmail one — `canopy email dangling` "
+            "plus an unread scan of the Gmail inbox.")
+        return
+    which = "archived" if archived else ("all" if show_all else "unread")
+    for m in mailboxes:
+        click.echo(f"# {m['address']} (workspace {m['workspace']}) — {which}")
+    if not threads:
+        click.echo(f"no {which} threads")
+        return
+    for t in threads:
+        click.echo(format_inbox_line(t))
 
 
 @email_group.command("why")
