@@ -223,6 +223,10 @@ class ZkVault:
                 continue
             if row.get("ecdh_jkt") == jkt or (mine_id and str(_row_target(row, "device")) == mine_id):
                 return row["wrap"], kv
+        if kv == 0:
+            raise ZkCliError(f"'{self.slug}' has no vault key yet (kv 0) — nothing to set up by "
+                             "hand: values written to it are sealed to its readers, and its key "
+                             "is made when its owner approves a machine for it")
         raise ZkCliError(f"this device holds no wrap of '{self.slug}'s vault key at kv {kv} — "
                          "it is not a member yet; ask an admin to grant it")
 
@@ -383,6 +387,14 @@ def run_enable(v: ZkVault, *, confirm: Optional[Confirm] = None) -> ZkResult:
 def run_set(v: ZkVault, values: dict) -> ZkResult:
     if not v.state().get("enabled"):
         raise ZkCliError(f"'{v.slug}' is not zero-knowledge — `canopy vault zk enable` first")
+    if v.state().get("kv") == 0 and not v.vault_id:
+        # Born zero-knowledge, no vault key yet (every new agent until a machine is
+        # approved for it): canopy-web's credentials write seals each value to the
+        # agent's readers as it arrives (canopy-web#1567). Nobody sets a key up first.
+        v.web("PUT", f"/api/agents/{v.slug}/credentials", {"values": values})
+        return ZkResult(v.slug, kv=0, actions=[f"stored {len(values)} value(s), sealed by "
+                                               "canopy-web to its readers (no vault key yet): "
+                                               f"{', '.join(sorted(values))}"])
     vk, kv = v.vk()
     payload = {"kv": kv, "values": v.encrypt(vk, kv, values)}
     vk = b""  # noqa: F841
