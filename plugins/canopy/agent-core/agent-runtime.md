@@ -272,6 +272,12 @@ request to rotate your key if you leak it, do it now.")
   The new token goes into your stored `CANOPY_WEB_PAT`; the old one keeps working 24 h so your other
   boxes don't break, then is revoked. Then `canopy cred sync` (or `canopy agent env`) on this box,
   and confirm a call with the new token works.
+  **A rotation is not done until the LEAKED token is dead or dying — check, don't assume.** Read
+  the response: `old_token_revoked_after` null means nothing was retired. Then list your tokens
+  (`GET /api/tokens/`), find the leaked one (the long-lived one, not the new `<slug> agent
+  (rotated …)`), revoke it (`DELETE /api/tokens/<id>/`), and confirm the leaked value now gets
+  401. (2026-10-24: Hal's first self-rotation printed "nothing revoked" and the leaked token stayed
+  live; canopy-web#2069 now retires the token you called with, but verify either way.)
 - **Any other secret** (a gog token, an API key, a 1Password item) — you cannot mint a replacement,
   so the request IS the action: ask your owner right away with `request_agent_secret` (it puts a
   card in front of them) naming the secret and where it went, and record it as a board task. Never
