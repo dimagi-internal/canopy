@@ -13,7 +13,8 @@ re-password accounts in that OU and touch nothing else in the tenant. Licenses a
 its reach too; seat assignment stays a person's job in the Admin console.
 
 The password is generated here, sent to Google once over TLS, and written to the agent's
-zero-knowledge vault encrypted on this device (`vault_zk_cli.run_set`) as
+zero-knowledge vault — encrypted on this device (`vault_zk_cli.run_set`), or, for an agent
+with no vault key yet, sealed to its readers by canopy-web's credentials write — as
 ``GOOGLE_ACCOUNT`` (the address) and ``GOOGLE_PASSWORD``. It is never printed, logged or
 written to disk. Ordering keeps a password from ever being lost:
 
@@ -129,11 +130,14 @@ class Directory:
     def _user_url(self, email: str) -> str:
         return f"{USERS_URL}/{urllib.parse.quote(email)}"
 
-    def get(self, email: str) -> Optional[dict]:
-        """The user, or None if no such user. A 403 is NOT "absent": the user may exist
-        outside the provisioner's OU, so it is an error."""
+    def get(self, email: str, *, unreadable_is_absent: bool = False) -> Optional[dict]:
+        """The user, or None if no such user. Google answers an OU-fenced admin 403, not
+        404, for an address that does not exist — and the same 403 for a user outside its
+        OU, so the two cannot be told apart here. A 403 is an error unless the caller
+        says otherwise (`create`, whose insert Google refuses for an address already
+        taken anywhere in the tenant)."""
         status, body = self._call("GET", self._user_url(email))
-        if status == 404:
+        if status == 404 or (status == 403 and unreadable_is_absent):
             return None
         if status == 200:
             return body
@@ -143,6 +147,9 @@ class Directory:
     def insert(self, user: dict) -> dict:
         status, body = self._call("POST", USERS_URL, user)
         if status not in (200, 201):
+            if status == 409:
+                raise GoogleAccountError(f"{user['primaryEmail']} already exists outside "
+                                         "the provisioner's OU — nothing was created")
             raise GoogleAccountError(f"Google did not create {user['primaryEmail']} "
                                      f"({status}): {_message(body)}")
         return body
@@ -166,7 +173,7 @@ def _in_ou(user: dict, ou: str) -> bool:
 
 def run_create(d: Directory, store: Store, *, email: str, given: str, family: str, ou: str,
                recovery_email: str = "", password: Callable[[], str] = new_password) -> list:
-    if d.get(email) is not None:
+    if d.get(email, unreadable_is_absent=True) is not None:
         raise GoogleAccountError(f"{email} already exists — use `reset-password` to put a "
                                  "fresh password in the vault")
     pw = password()
@@ -227,15 +234,30 @@ def load_key(key_file: str, key_agent: str, *, env=os.environ, resolve=None) -> 
         raise GoogleAccountError("the provisioner key is not JSON") from None
 
 
-def vault_store(slug: str) -> Store:
-    """Encrypt-here store into the agent's zero-knowledge vault. Checked up front so a
-    vault this device cannot write to stops the command before Google is touched."""
+def vault_store(slug: str, vault=None) -> Store:
+    """Store into the agent's zero-knowledge vault. Checked up front so a vault this
+    device cannot write to stops the command before Google is touched.
+
+    An agent born zero-knowledge has no vault key yet (kv 0) — every new agent until its
+    first machine is approved. Its values go to canopy-web's credentials write, which
+    seals each one to the agent's readers as it arrives (canopy-web#1567); nobody sets the
+    vault up by hand first. With a vault key, they are encrypted here (`run_set`)."""
     from orchestrator import vault_zk_cli as zc
 
-    v = zc._vault(slug)
-    if not v.state().get("enabled"):
+    v = vault or zc._vault(slug)
+    try:
+        state = v.state()
+    except zc.ZkCliError as e:
+        raise GoogleAccountError(f"cannot write {slug}'s vault: {e}") from None
+    if not state.get("enabled"):
         raise GoogleAccountError(f"'{slug}' is not zero-knowledge — `canopy vault zk "
                                  f"enable --agent {slug}` first")
+    if state.get("kv") == 0:
+        def store_sealed(values: dict) -> str:
+            v.web("PUT", f"/api/agents/{slug}/credentials", {"values": values})
+            return (f"stored {', '.join(sorted(values))} for {slug}, sealed by canopy-web to "
+                    "its readers (no vault key yet)")
+        return store_sealed
     try:
         v.my_wrap()
     except zc.ZkCliError as e:
