@@ -401,6 +401,7 @@ def test_dangling_skips_a_hosted_only_agent_and_says_so(monkeypatch, tmp_path):
     result = CliRunner().invoke(email_group, ["dangling", "--repo", str(_repo(tmp_path, email=SES))])
     assert result.exit_code == 0, result.output
     assert result.output.startswith("Skipped:")
+    assert "canopy email inbox" in result.output
 
 
 def test_health_does_not_flag_a_hosted_only_agent_inbox(monkeypatch):
