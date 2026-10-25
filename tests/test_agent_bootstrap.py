@@ -457,3 +457,22 @@ def test_no_recorded_vault_fails_loudly_and_injects_nothing(tmp_path):
     assert any("no 1Password vault recorded on canopy-web" in n for n in rep.notes)
     assert not any(c[:2] == ["op", "inject"] for c in runner.calls)
     assert not any("Agent-Ace" in " ".join(c) for c in runner.calls)
+
+
+# ── a canopy-hosted mailbox has no gog token ────────────────────────────────
+
+def test_a_hosted_mailbox_asks_nobody_for_a_gog_token(tmp_path):
+    """bailey, 2026-10-25: its own turn's bootstrap asked canopy-web for `gog-token`, which a
+    hosted agent never declares — an owner alert — and then failed it for having none."""
+    from orchestrator.agent_email import EmailIdentity
+    repo = _repo(tmp_path)
+    runner = FakeRunner()
+    asked = []
+    b = _boot(tmp_path, runner, installed=("ace",))
+    b.web_token = lambda slug: asked.append(slug) or (None, "")
+    b.hosted = lambda r: EmailIdentity(slug="ace", account="ace@marshellis.com",
+                                       client="canopy", repo=Path(r))
+    rep = b.bootstrap_one("ace", repo)
+    assert asked == [] and b.verified == []
+    assert not any(a[:2] == ["op", "read"] and "gog-token" in a[2] for a in runner.calls)
+    assert rep.ok and (rep.token, rep.gmail) == ("n/a", "canopy-hosted")

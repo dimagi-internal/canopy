@@ -62,6 +62,8 @@ from orchestrator.agent_email import (
     agent_env_files,
     env_file_keyring_settings,
     gog_client_credentials,
+    hosted_only,
+    hosted_only_note,
     preflight,
     resolve_email_identity,
     is_fleet_client,
@@ -349,6 +351,18 @@ def fetch_web_token(slug: str) -> tuple[str | None, str]:
     return ((body or {}).get("values") or {}).get("gog-token"), ""
 
 
+def hosted_identity(repo: Path) -> EmailIdentity | None:
+    """The repo's identity when its mail is wholly canopy-hosted (an SES address and no
+    Google account — `agent_email.hosted_only`), else None. Such an agent has no gog token
+    to import or verify; asking canopy-web for one raises an owner alert about a ref the
+    agent never declares (bailey, 2026-10-25)."""
+    try:
+        ident = resolve_email_identity(Path(repo))
+    except AgentEmailError:
+        return None
+    return ident if hosted_only(ident) else None
+
+
 class Bootstrapper:
     def __init__(self, *, dry_run: bool = False, op_account: str = OP_ACCOUNT,
                  runner: Runner = subprocess.run,
@@ -357,8 +371,10 @@ class Bootstrapper:
                  marketplaces_path: str | None = None, home: Path | None = None,
                  verify: Callable = preflight, echo: Callable[[str], None] = print,
                  platform: str = sys.platform,
-                 vault_for: Optional[Callable[[str], str]] = None):
+                 vault_for: Optional[Callable[[str], str]] = None,
+                 hosted: Callable[[Path], EmailIdentity | None] = hosted_identity):
         self.dry_run = dry_run
+        self.hosted = hosted
         self.op_account = op_account
         self.run = runner
         self.web_token = web_token
@@ -760,6 +776,13 @@ class Bootstrapper:
                 step()
             except Exception as e:  # noqa: BLE001 — one step must not sink the agent
                 rep.fail(f"unexpected error: {_first_line(str(e))}")
+        hosted = self.hosted(repo)
+        if hosted is not None:
+            # Mail goes through canopy-web: no Gmail token exists or is needed, so neither
+            # the vault nor canopy-web is asked for one and nothing is "missing".
+            rep.token, rep.gmail, rep.turn = "n/a", "canopy-hosted", "OK (canopy-hosted)"
+            rep.notes.append(f"ok: {hosted_only_note(hosted)}")
+            return rep
         tok = None
         try:
             tok = self.step_token(slug, repo, rep)
