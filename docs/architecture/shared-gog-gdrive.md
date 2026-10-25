@@ -84,7 +84,9 @@ identity, rules, secrets, and domain skills are the agent's"*):
   account (`google_account`, default `email`) is separate from its mail: an agent whose only mail
   address is canopy-hosted still does Drive/Docs as `<slug>@dimagi-ai.com`. On a hosted domain outside
   dimagi.ai (no dimagi-ai.com seat), the Google account is a free Google Workspace Essentials
-  Starter account on the hosted address itself — no Gmail, no cost, never a paid Workspace seat. Every gog call runs as
+  Starter account on the hosted address itself — no Gmail, no cost, never a paid Workspace seat.
+  It has Drive/Docs/Sheets but no Google Calendar (`notACalendarUser`), so calendar access needs
+  another route. Every gog call runs as
   that Google account (`EmailIdentity.account`), over the ONE shared fleet OAuth app — two clients, `canopy` and `canopy-web`, one
   GCP project (`canopy-494811`), interchangeable for every call. A gog "client" is the app identity
   (client_id + client_secret) — reusing it across agents is fine and reduces setup; the failure the
