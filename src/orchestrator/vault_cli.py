@@ -13,6 +13,7 @@ changes an agent that has not been switched.
     canopy vault device  --registered KEY_ID --runner ID     record a registration made elsewhere
     canopy vault binding --agent X on|off                    require an approved device key
     canopy vault zk status|enable|set|grant|rotate --agent X zero-knowledge (vault_zk_cli.py)
+    canopy vault open-slot-data  < lease.json               a pool lease's sealed slot secrets
     canopy vault import --agent X --zk                       ... encrypted here
 
 WHAT IS AN AGENT'S SET OF REFS. Every `NAME=…` line of the agent's `.env.tpl` (the one
@@ -777,6 +778,36 @@ def runner_credentials_cmd(runner_id, base_url, print_json):
     runner_id, token = _runner_and_token(runner_id, base_url)
     try:
         out = cred_resolve.resolve_runner(runner_id, token=token, base_url=base_url or None)
+    except canopy_web.CanopyError as e:
+        raise VaultCliError(str(e)[:400]) from None
+    click.echo(json.dumps(out, sort_keys=True))
+
+
+@vault_group.command("open-slot-data")
+@click.option("--capability", default="", help="The pool capability (default: the lease's `capability`).")
+@click.option("--slot", default="", help="The slot (default: the lease's `slot`).")
+def open_slot_data_cmd(capability, slot):
+    """Open a pool lease's slot data with this machine's device key.
+
+    Reads, as JSON on stdin, the lease canopy-web returned to the user who acquired it
+    (or just its `slot_data`, with --capability and --slot), and prints
+    `{"public": {...}, "secret": {key: plaintext}}` — plaintext, so pipe it straight into
+    the program that needs it, never into a log. A canopy-web that still sends `secret` in
+    clear is passed through."""
+    from orchestrator import cred_resolve
+
+    try:
+        body = json.loads(sys.stdin.read() or "null")
+    except ValueError:
+        raise VaultCliError("stdin is not JSON (a lease, or its slot_data)") from None
+    if not isinstance(body, dict):
+        raise VaultCliError("pass a lease (or its slot_data) as a JSON object on stdin")
+    data = body.get("slot_data") if "slot_data" in body else body
+    if data is None:
+        raise VaultCliError("this lease carries no slot_data (not ready, not yours, or the slot has none)")
+    try:
+        out = cred_resolve.open_slot_data(data, capability=capability or str(body.get("capability") or ""),
+                                          slot=slot or str(body.get("slot") or ""))
     except canopy_web.CanopyError as e:
         raise VaultCliError(str(e)[:400]) from None
     click.echo(json.dumps(out, sort_keys=True))
