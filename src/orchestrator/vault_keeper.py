@@ -22,6 +22,11 @@ file, so a brand-new cloud box knows every key the fleet already trusted; where 
 and this box's file disagree about a person, that person waits. People this box pins are
 written back over the version it read (a stale write is retried on the next pass).
 
+**Delegated credentials** (a person's own token given to an agent, canopy-web
+``accounts``) are sealed to the machines that run the agent, not under the vault key. This
+box re-seals one it holds for a waiting machine under the same machine rule — an
+endorsement of its exact key by a person it trusts — and to nobody else (``keep_delegated``).
+
 A target that fails is left waiting and named in the output; nothing is ever wrapped to an
 unverified key "to make it work". canopy-web accepts a keeper's wraps only for targets with
 no copy yet, so a keeper never replaces one. Nothing here prints a key or a value.
@@ -216,6 +221,62 @@ def keep_one(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
     return res
 
 
+def keep_delegated(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
+    """Re-seal one credential a person delegated to an agent (canopy-web
+    ``accounts.keeper_work``), which this box holds, for the machines that run the agent
+    and wait for it. It goes to the readers it is sealed to now, and to each waiting
+    machine this box trusts (an endorsement of its exact key, as for the vault key) —
+    never to anyone else, and never under the vault key. canopy-web refuses any other
+    recipient too (``accounts.reseal``)."""
+    agent_id, name = str(work["agent_id"]), str(work["name"])
+    res = KeepResult(f"{work.get('agent') or ''} ({name})")
+    stored = str(work.get("value_zk") or "")
+    try:
+        body = zk.parse_sealed(stored, name)
+        plaintext = cred_resolve.open_sealed_for_device(stored, agent_id=agent_id, name=name, ecdh=ecdh)
+    except (zk.ZkError, canopy_web.CanopyError) as e:
+        res.error = str(e)[:300]
+        return res
+    current = {(str(r.get("kind")), str(r.get("target"))) for r in body["r"] if isinstance(r, dict)}
+    waiting = {str(t) for t in work.get("waiting") or []}
+    endorsements = [e for e in work.get("endorsements") or [] if isinstance(e, dict)]
+    to: list = []
+    for row in work.get("recipients") or []:
+        if not isinstance(row, dict) or not isinstance(row.get("public_jwk"), dict):
+            continue
+        kind, target, jwk = str(row.get("kind") or ""), str(row.get("target") or ""), row["public_jwk"]
+        try:
+            thumb = zk.jwk_thumbprint(jwk)
+        except (KeyError, TypeError, zk.ZkError):
+            res.skipped.append(f"{kind} {target}: canopy-web sent a malformed key")
+            continue
+        if kind == "device" and thumb != target:
+            res.skipped.append(f"device {target}: its key's thumbprint is {thumb} — not sealing to it")
+            continue
+        if (kind, target) in current:
+            if kind == "member" and not _trust_person(pins, target, "", thumb, res):
+                continue
+            to.append((kind, target, jwk))
+        elif kind == "device" and target in waiting:
+            t = Target("device", target, {k: jwk[k] for k in ("kty", "crv", "x", "y")},
+                       str(row.get("runner_name") or ""), thumb)
+            if _endorsed(t, thumb, endorsements, agent_id, pins, res):
+                to.append((kind, target, jwk))
+                res.granted.append(f"{t.label or 'machine'} — ECDH key {thumb[:16]}…")
+            else:
+                res.skipped.append(f"{t.label or target}: not endorsed by a person this box trusts")
+    if not res.granted:
+        return res
+    value = zk.seal_value(agent_id, name, body["kv"], plaintext, to)
+    plaintext = ""  # noqa: F841 — drop our only reference
+    try:
+        call("PUT", work["reseal_path"], {"value_zk": value, "expect": work["expect"]})
+    except canopy_web.CanopyError as e:
+        res.granted = []
+        res.error = f"canopy-web refused the re-seal: {str(e)[:300]}"
+    return res
+
+
 def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
              transport=None, ecdh=None, pins_file=None) -> list[KeepResult]:
     """One keeper pass over every agent this runner holds a vault key for."""
@@ -234,8 +295,11 @@ def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
         return canopy_web.call(method, path, body, token=token, base_url=base, transport=transport)
 
     path = f"/api/harness/runners/{runner_id}/vault-keeper"
-    work = (call("GET", path) or {}).get("agents") or []
-    if not work:
+    body = call("GET", path) or {}
+    work = body.get("agents") or []
+    # Credentials people delegated to an agent, which this box holds and a machine waits for.
+    delegated = body.get("delegated") or []
+    if not work and not delegated:
         return []
     if ecdh is None:
         try:
@@ -248,6 +312,8 @@ def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
     out = []
     for w in work:
         out.append(keep_one({**w, "_base": path}, pins=pins, call=call, ecdh=ecdh))
+    for d in delegated:
+        out.append(keep_delegated(d, pins=pins, call=call, ecdh=ecdh))
     save_pins(pins, pins_file)
     return out
 

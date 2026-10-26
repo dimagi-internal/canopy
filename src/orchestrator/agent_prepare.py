@@ -101,8 +101,10 @@ class RunnerCredentials:
 
 
 #: Top-level fields of the /credentials/resolve body (its own names) that
-#: `cred env --runner --print-json` passes through beside `values`.
-RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "salesforce_creds")
+#: `cred env --runner --print-json` passes through beside `values`. `delegated` is
+#: {name: plaintext} of the credentials people delegated to the agent, opened with this
+#: box's own key (`cred_resolve.open_delegated`) — never written to the agent's env.
+RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "salesforce_creds", "delegated")
 
 
 #: What the credentials-only pass (the runner-update timer, every 30 minutes) actually

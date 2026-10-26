@@ -389,4 +389,25 @@ def open_zk(slug: str, body: dict, *, agent_id: str, ecdh=None) -> dict:
     vk = b""  # noqa: F841 — drop our only reference
     out = {k: v for k, v in body.items() if k != "wrap"}
     out["values"] = values
+    if isinstance(body.get("delegated"), dict):
+        out["delegated"], out["delegated_errors"] = open_delegated(body["delegated"], agent_id=agent_id, ecdh=ecdh)
     return out
+
+
+def open_delegated(entries: dict, *, agent_id: str, ecdh=None) -> tuple[dict, dict]:
+    """``({name: plaintext}, {name: why})`` for the credentials people delegated to the agent
+    (canopy-web ``accounts``): each sealed to the machines that run it, opened here with
+    this device's own key. One that is not sealed to this device yet is reported, never a
+    failed resolve — a machine that holds it re-seals it (``canopy vault zk keep``)."""
+    from orchestrator import vault_zk as zk
+    opened, errors = {}, {}
+    for name, entry in entries.items():
+        stored = entry.get("value_zk") if isinstance(entry, dict) else None
+        if not zk.is_sealed_value(stored):
+            errors[str(name)] = "not a sealed value"
+            continue
+        try:
+            opened[str(name)] = open_sealed_for_device(str(stored), agent_id=agent_id, name=str(name), ecdh=ecdh)
+        except ZkUnlockError as e:
+            errors[str(name)] = str(e)[:300]
+    return opened, errors
