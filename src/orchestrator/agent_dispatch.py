@@ -100,6 +100,28 @@ TURN_MODES = ("auto", "manual")
 ACTS_AS = ("editor", "viewer")
 
 
+def github_links_in(prompt: str, existing=()) -> list[dict]:
+    """The GitHub issue/PR URLs a brief names, as card links (`owner/repo#N`), skipping any
+    URL already in `existing`.
+
+    The card is the only thing `project-audit` check (f) reads for a dispatch's GitHub work,
+    and (f) reads links, not notes. A brief that names its issue only in its prose therefore
+    filed a card nothing could ever see finish: on 2026-10-26 hal's board held two
+    "Fix canopy-web#2092" dispatch cards, still in progress, eleven hours after #2113 had
+    fixed and closed the issue. Copying the brief's own URLs onto the card is what lets (f)
+    flag it. Shares (f)'s regex so the two can't disagree about what counts as a ref."""
+    from orchestrator.project_audit import _GITHUB_REF_RE
+
+    seen = {str((link or {}).get("url") or "") for link in existing}
+    out = []
+    for m in _GITHUB_REF_RE.finditer(prompt or ""):
+        url = m.group(0)
+        if url not in seen:
+            seen.add(url)
+            out.append({"label": f"{m.group(1)}/{m.group(2)}#{m.group(3)}", "url": url})
+    return out
+
+
 def untitled_work_basis(prompt: str) -> str:
     """What stands in for the title when a dispatch has none: a hash of the WHOLE prompt.
 
