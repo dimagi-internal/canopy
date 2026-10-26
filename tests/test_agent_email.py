@@ -10,6 +10,7 @@ import pytest
 from orchestrator import review_receipt as _rr
 from orchestrator.agent_email import (
     AgentEmailError,
+    gog_data_dir,
     EmailIdentity,
     archive,
     build_send_command,
@@ -820,7 +821,10 @@ def _gog_home(tmp_path, *, creds=True, mapped=True):
     home = tmp_path / "gogcli"
     home.mkdir()
     if creds:
-        (home / "credentials-hal.json").write_text('{"client_id": "x", "client_secret": "y"}')
+        data = gog_data_dir(str(home))   # where gog reads the client file on this OS
+        os.makedirs(data, exist_ok=True)
+        with open(os.path.join(data, "credentials-hal.json"), "w") as fh:
+            fh.write('{"client_id": "x", "client_secret": "y"}')
     if mapped:
         (home / "config.json").write_text(
             json.dumps({"account_clients": {"hal@dimagi-ai.com": "hal"}}))
@@ -1949,3 +1953,10 @@ def test_forward_dry_run_shows_named_attachments(tmp_path):
     assert r["subject"] == "Fwd: Older"
     assert [os.path.basename(a) for a in r["attachments"]] == ["Old.pdf"]
     assert "---------- Forwarded message ---------" in r["plain"]
+
+
+def test_gog_client_credentials_ignores_a_legacy_home_copy(tmp_path, monkeypatch):
+    from orchestrator.agent_email import gog_client_credentials
+    monkeypatch.setenv("GOG_HOME", str(tmp_path))
+    (tmp_path / "credentials-canopy.json").write_text("{}")
+    assert gog_client_credentials(str(tmp_path), "canopy") is None   # gog reads <home>/data only

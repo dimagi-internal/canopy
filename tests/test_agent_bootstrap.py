@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 from orchestrator import agent_bootstrap as ab
+from orchestrator.agent_email import gog_data_dir
 from orchestrator.agent_doctor import (
     RequiredPlugin,
     check_required_plugins,
@@ -215,7 +216,9 @@ def test_token_for_another_mailbox_is_not_imported(tmp_path):
 def test_identical_token_already_in_gog_is_not_reimported(tmp_path):
     repo = _repo(tmp_path)
     (tmp_path / "gog").mkdir()
-    (tmp_path / "gog" / "credentials-canopy.json").write_text("{}")
+    data = Path(gog_data_dir(str(tmp_path / "gog")))   # where gog reads it on this OS
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "credentials-canopy.json").write_text("{}")
     (tmp_path / "gog" / "config.json").write_text(json.dumps(
         {"keyring_backend": "keychain", "account_clients": {"ace@dimagi-ai.com": "canopy"}}))
     runner = FakeRunner(
@@ -437,6 +440,22 @@ def test_client_file_is_written_to_gogs_data_dir_under_gog_home(tmp_path, monkey
     (xdg / "gogcli").mkdir(parents=True)
     (xdg / "gogcli" / "credentials-canopy.json").write_text("{}")
     monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+    repo = _repo(tmp_path)
+    _boot(tmp_path, FakeRunner(gog_accounts=[]), web={"ace": _tok()},
+          installed=("ace",)).bootstrap_one("ace", repo)
+    assert (home / "data" / "credentials-canopy.json").read_text() == VAULT_CLIENTS["canopy"]
+
+
+def test_a_legacy_home_copy_does_not_count_and_the_data_copy_is_written(tmp_path, monkeypatch):
+    # cloud-ec2-2, 2026-10-26: ace and ada kept the <home>/credentials-canopy.json an earlier
+    # bootstrap wrote; it satisfied the check, the data copy gog reads was never written, and
+    # their mail stayed dead while eva (no legacy copy) worked.
+    import sys as _sys
+    monkeypatch.setattr(_sys, "platform", "linux")
+    home = tmp_path / "gog"
+    monkeypatch.setenv("GOG_HOME", str(home))
+    home.mkdir(parents=True)
+    (home / "credentials-canopy.json").write_text("{}")   # the stale legacy copy
     repo = _repo(tmp_path)
     _boot(tmp_path, FakeRunner(gog_accounts=[]), web={"ace": _tok()},
           installed=("ace",)).bootstrap_one("ace", repo)

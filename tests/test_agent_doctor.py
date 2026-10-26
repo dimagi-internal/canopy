@@ -15,6 +15,7 @@ from orchestrator.agent_doctor import (
     check_secrets_manifest,
     run_agent_doctor,
 )
+from orchestrator.agent_email import gog_data_dir
 from orchestrator.canopy_web import CanopyError
 from orchestrator.cli import main
 
@@ -78,7 +79,9 @@ def _agent_repo(tmp_path, *, email="hal@dimagi-ai.com", slug="hal",
 def _gog_home(tmp_path, *, slug="hal", account="hal@dimagi-ai.com"):
     home = tmp_path / "gogcli"
     home.mkdir()
-    (home / f"credentials-{slug}.json").write_text('{"client_id": "x"}')
+    data = Path(gog_data_dir(str(home)))   # where gog reads the client file on this OS
+    data.mkdir(parents=True, exist_ok=True)
+    (data / f"credentials-{slug}.json").write_text('{"client_id": "x"}')
     (home / "config.json").write_text(
         json.dumps({"account_clients": {account: slug}}))
     return str(home)
