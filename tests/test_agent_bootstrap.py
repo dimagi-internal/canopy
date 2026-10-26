@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 from orchestrator import agent_bootstrap as ab
+from orchestrator.agent_email import gog_data_dir
 from orchestrator.agent_doctor import (
     RequiredPlugin,
     check_required_plugins,
@@ -215,7 +216,9 @@ def test_token_for_another_mailbox_is_not_imported(tmp_path):
 def test_identical_token_already_in_gog_is_not_reimported(tmp_path):
     repo = _repo(tmp_path)
     (tmp_path / "gog").mkdir()
-    (tmp_path / "gog" / "credentials-canopy.json").write_text("{}")
+    data = Path(gog_data_dir(str(tmp_path / "gog")))   # where gog reads it on this OS
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "credentials-canopy.json").write_text("{}")
     (tmp_path / "gog" / "config.json").write_text(json.dumps(
         {"keyring_backend": "keychain", "account_clients": {"ace@dimagi-ai.com": "canopy"}}))
     runner = FakeRunner(
