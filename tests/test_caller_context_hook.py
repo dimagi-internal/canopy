@@ -589,6 +589,19 @@ def test_a_slack_conversation_names_its_channel_and_thread(tmp_path):
     assert f"start_new_slack_thread(turn_id={TID}" in line
 
 
+def test_a_slack_turn_is_told_its_reply_is_the_post(tmp_path):
+    # 2026-10-25: an ACE Slack turn asked "want me to post this to the thread?" about
+    # a reply canopy-web had already relayed there.
+    env = {**ENV, "conversation": {"slack": SLACK}}
+    (line,) = _slack_line(env, tmp_path)
+    assert "posts automatically, as you, into this thread, where everyone in #dev (C0123) reads it" in line
+    assert "not a separate send" in line
+    dm = {**ENV, "conversation": {"slack": {**SLACK, "channel_id": "D9", "thread_ts": None,
+                                            "is_dm": True}}}
+    (line,) = _slack_line(dm, tmp_path)
+    assert "posts automatically, as you, into this DM" in line
+
+
 def test_an_unnamed_channel_is_given_by_id(tmp_path):
     env = {**ENV, "conversation": {"slack": {**SLACK, "channel_name": None}}}
     (line,) = _slack_line(env, tmp_path)
