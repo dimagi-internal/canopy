@@ -22,6 +22,12 @@ chat's secrets and no other's. There is deliberately no flag to name another
 session or chat, and no fallback: a session holding no key is not driving a
 chat, and has no chat secrets to reach.
 
+**canopy-web cannot read it.** The person's browser seals the value (``zks1``)
+to the device keys of the machine running the chat; this command fetches it
+sealed and opens it with this machine's own ECDH key (the one `canopy vault`
+uses). A secret sealed to another machine — the chat moved runners after it
+was shared — cannot be opened here; the person shares it again.
+
 The value goes to exactly one child process and never to this process's output:
 the child's stdout and stderr are relayed with every occurrence of the value
 replaced by `***`. That is the point — the model driving the terminal reads the
@@ -124,13 +130,49 @@ def list_secrets(key: str, *, call=None) -> list[dict]:
     return _get("/api/session-secrets/key", call=call, key=key) or []
 
 
-def fetch_value(key: str, name: str, *, call=None) -> str:
-    """The plaintext. Errors name the secret and never carry a value."""
-    body = _get(f"/api/session-secrets/key/{name}", call=call, key=key)
-    value = (body or {}).get("value") or ""
-    if not value:
-        raise click.ClickException(f"{name} came back empty")
-    return value
+def fetch_value(key: str, name: str, *, call=None, ecdh=None) -> str:
+    """The plaintext, opened HERE. Errors name the secret and never carry a value.
+
+    canopy-web holds the secret only sealed (``zks1``) to the device keys of the
+    machine running the chat, so it comes back sealed (``?sealed=true``) and this
+    machine opens it with its own ECDH key. A canopy-web from before sealing
+    ignores the flag and hands the value itself; that is accepted, so this CLI
+    can ship first."""
+    body = _get(f"/api/session-secrets/key/{name}?sealed=true", call=call, key=key) or {}
+    sealed = body.get("value_zk") or ""
+    if not sealed:
+        value = body.get("value") or ""
+        if not value:
+            raise click.ClickException(f"{name} came back empty")
+        return value
+    return open_sealed(sealed, name=name, binding=str(body.get("binding_id") or ""), ecdh=ecdh)
+
+
+def open_sealed(sealed: str, *, name: str, binding: str, ecdh=None) -> str:
+    """Open a chat secret sealed to this machine's ECDH key, or say plainly why not."""
+    from orchestrator import cred_resolve
+    from orchestrator import vault_zk as zk
+
+    if not binding:
+        raise click.ClickException(f"{name} came back sealed but without what it is bound to")
+    try:
+        ecdh = cred_resolve._device_ecdh(ecdh)
+    except cred_resolve.ZkUnlockError as exc:
+        raise click.ClickException(f"{name} is sealed to the machine running this chat, and "
+                                   f"this machine cannot open it: {exc}") from None
+    try:
+        zk.sealed_entry(sealed, name, "device", ecdh.jkt)
+    except zk.ZkError:
+        raise click.ClickException(
+            f"{name} was sealed to another machine, not this one — the chat has probably moved "
+            "to another runner since it was shared. Ask the person to share it again from the "
+            "chat's Secrets menu.") from None
+    try:
+        return cred_resolve.open_sealed_for_device(sealed, agent_id=binding, name=name, ecdh=ecdh)
+    except cred_resolve.ZkUnlockError:
+        raise click.ClickException(
+            f"this machine could not open {name}: it does not authenticate under this "
+            "machine's key. Ask the person to share it again.") from None
 
 
 def _relay(src: IO[bytes], dst: IO[bytes], secret: bytes) -> None:
