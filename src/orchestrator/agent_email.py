@@ -127,23 +127,52 @@ def _default_gog_config_dir() -> str:
     return os.path.join(xdg, "gogcli")
 
 
+def gog_data_dir(gog_home: str) -> str:
+    """The dir gog >= 0.40 keeps client credentials in, for this gog home — where it WRITES
+    them and the path its "OAuth client credentials missing (expected at …)" error names.
+
+    `<GOG_HOME>/data` under a $GOG_HOME (flat or split), the sibling `data/` of a split
+    `config/` dir, the config dir itself on macOS/Windows defaults, and $XDG_DATA_HOME/gogcli
+    only for Linux's DEFAULT home. With $GOG_HOME set gog never reads the box-wide XDG dir —
+    so neither may we (2026-10-26: a box-wide ~/.local/share/gogcli copy satisfied the check
+    for eva's own ~/.gog/eva home, bootstrap skipped writing hers, and every turn on
+    cloud-ec2-2 failed "OAuth client credentials missing")."""
+    home = os.path.normpath(os.path.expanduser(gog_home))
+    if os.path.basename(home) == "config":
+        return os.path.join(os.path.dirname(home), "data")
+    if (os.environ.get("GOG_HOME") or "").strip():
+        return os.path.join(home, "data")
+    if sys.platform in ("darwin", "win32"):
+        return home
+    xdg_config = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    if home == os.path.normpath(os.path.join(xdg_config, "gogcli")):
+        xdg_data = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+        return os.path.join(xdg_data, "gogcli")
+    return os.path.join(home, "data")
+
+
+def gog_client_credentials_paths(gog_home: str, client: str) -> list[str]:
+    """Every path gog reads `credentials-<client>.json` from for this home, the data dir
+    first: the data dir (gog >= 0.40), the home itself (the legacy/flat copy older gog reads,
+    and gog >= 0.40 still does), and `<home>/data`. Nothing outside the home's own tree."""
+    name = f"credentials-{client}.json"
+    home = os.path.normpath(os.path.expanduser(gog_home))
+    out: list[str] = []
+    for d in (gog_data_dir(home), home, os.path.join(home, "data")):
+        path = os.path.join(d, name)
+        if path not in out:
+            out.append(path)
+    return out
+
+
 def gog_client_credentials(gog_home: str, client: str) -> str | None:
     """Where gog's `<client>` OAuth credentials actually are, or None.
 
-    gog >= 0.40 writes them to its DATA dir and still reads the legacy copy in the config
-    dir. The data dir is the config dir itself on macOS/Windows defaults, `<GOG_HOME>/data`
-    under the split $GOG_HOME layout, and $XDG_DATA_HOME/gogcli on Linux. Checking only
-    `<config>/credentials-<client>.json` called a working Windows mailbox broken
-    (Shayoni, 2026-09-29: gog 0.40 stored it at <GOG_HOME>/data/credentials-canopy.json)."""
-    name = f"credentials-{client}.json"
-    dirs = [gog_home, os.path.join(gog_home, "data")]
-    if os.path.basename(os.path.normpath(gog_home)) == "config":
-        dirs.append(os.path.join(os.path.dirname(os.path.normpath(gog_home)), "data"))
-    if sys.platform not in ("darwin", "win32"):
-        xdg_data = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-        dirs.append(os.path.join(xdg_data, "gogcli"))
-    for d in dirs:
-        path = os.path.join(d, name)
+    Checks only the paths gog itself reads for this home (`gog_client_credentials_paths`).
+    Checking only `<config>/credentials-<client>.json` called a working Windows mailbox
+    broken (Shayoni, 2026-09-29: gog 0.40 stored it at <GOG_HOME>/data/credentials-canopy.json);
+    checking a dir gog does NOT read called a broken one working (cloud-ec2-2, 2026-10-26)."""
+    for path in gog_client_credentials_paths(gog_home, client):
         if os.path.isfile(path) and os.path.getsize(path) > 0:
             return path
     return None
@@ -2405,12 +2434,12 @@ def preflight(
         if remedy:
             return False, remedy
         return False, [
-            f"FIX: gog `{identity.client}` client credentials missing: {creds}",
-            f"     This is the SHARED fleet OAuth client (client_id + client_secret), not per-agent.",
-            f"     Standard fix: `op read \"op://<vault>/<item>/<field>\" > {creds}` (a non-env "
-            "credential FILE — see agent-runtime.md).",
-            f"     Legacy: declare it in config/secrets.yaml so `canopy provision` places it.",
-            f"     Then: {login_cmd}",
+            f"FIX: gog `{identity.client}` OAuth client file missing: "
+            f"{gog_client_credentials_paths(gog_home, identity.client)[0]}",
+            "     This is the SHARED fleet OAuth client (client_id + client_secret), not the "
+            "token — the mailbox can be connected on canopy-web and still fail here.",
+            f"     Fix: canopy agent bootstrap --slug {identity.slug}   (a laptop) — or Refresh "
+            "the runner (a cloud box). Both write it from the workspace's canopy vault.",
         ]
     cfg_path = os.path.join(gog_home, "config.json")
     mapped = False
@@ -2441,6 +2470,18 @@ def preflight(
         if remedy:
             return False, remedy
         first_err = (r.stderr or "").strip().splitlines()[:1]
+        if re.search(r"OAuth client credentials missing|credentials-[\w-]+\.json", r.stderr or ""):
+            # gog could not find the CLIENT file — not a token problem; reconnecting the
+            # mailbox cannot fix it (2026-10-26: this read "token bad" and sent two
+            # sessions to reconnect a mailbox canopy-web showed as Connected).
+            return False, [
+                f"FIX: gog `{identity.client}` OAuth client file missing where gog reads it "
+                f"({gog_client_credentials_paths(gog_home, identity.client)[0]}) — the token "
+                "is not the problem.",
+                f"     Fix: canopy agent bootstrap --slug {identity.slug}   (a laptop) — or "
+                "Refresh the runner (a cloud box).",
+                f"     ({first_err[0] if first_err else 'no detail'})",
+            ]
         return False, [
             f"FIX: gog `{identity.client}` creds present but not logged in / token bad.",
             f"     Run: {login_cmd}",

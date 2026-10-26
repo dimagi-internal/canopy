@@ -403,11 +403,9 @@ when the token is under a NON-fleet client the agent's turns would not use.
 From Shayoni's first Windows onboarding (Fizzy, 2026-09-29). The first three are fixed in
 canopy; the fourth is PowerShell and stays your problem.
 
-- **The shared OAuth client.** `agent bootstrap` reads it from
-  `op://Canopy-Shared/gog-oauth-client/credential`. Every operator needs membership in the
-  `Canopy-Shared` vault — if bootstrap says you are not a member, ask Jonathan (or Hal) to add
-  you. There is deliberately no fallback to `AI-Agents`: that vault is for humans only, and an
-  agent's secrets live in its own vault (the instance's `op_vault` on canopy-web) plus `Canopy-Shared`.
+- **The shared OAuth client.** `agent bootstrap` reads it from the workspace's canopy vault
+  "Shared" on canopy-web (`gog-oauth-client`) — no 1Password. If bootstrap says it cannot read it,
+  this machine needs a key to that vault: ask a workspace owner to give it one on canopy-web.
 - **Where gog keeps things.** gog on Windows defaults to `%APPDATA%\gogcli`. gog 0.40+ puts the
   client credentials in a `data\` subfolder (`<GOG_HOME>\data\credentials-canopy.json`) and
   `config.json` in `config\` when `GOG_HOME` is set. `agent doctor` now looks in all of these, so

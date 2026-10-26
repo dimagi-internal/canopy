@@ -144,7 +144,7 @@ def _repo(root: Path, slug="ace", *, gog_client="canopy", required=None, setup=F
 def _creds(**over):
     base = dict(repo_url="https://github.com/dimagi-internal/ace", vault="Agent-Ace", key=AGENT_KEY, shared_vault="Canopy-Shared",
                 shared_key=SHARED_KEY, github_token=GH, mailbox="ace@dimagi-ai.com",
-                web_gog_token=None)
+                web_gog_token=_token(), values={"gog-oauth-client": '{"installed": {}}'})
     return RunnerCredentials(**{**base, **over})
 
 
@@ -164,17 +164,18 @@ def _prep(tmp, box, creds=None, reports=None, verify_ok=True):
         platform="linux")
 
 
-def test_each_op_call_carries_exactly_the_key_for_its_vault(tmp_path):
+def test_the_gog_token_and_client_never_come_from_1password(tmp_path):
+    # Off 1Password (2026-10-26): canopy-web's token, the canopy vault's client file.
     _repo(tmp_path / "agents")
     box = Box(tmp_path, vault_items={
-        "Agent-Ace/gog-token/credential": _token(),
-        "Canopy-Shared/gog-oauth-client/credential": '{"installed": {}}'})
+        "Agent-Ace/gog-token/credential": _token(created="2027-01-01T00:00:00Z"),
+        "Canopy-Shared/gog-oauth-client/credential": '{"from": "1password"}'})
     rep = _prep(tmp_path, box).prepare("ace")
-    reads = {c[0][2]: c[1] for c in box.ran(["op", "read"])}
-    assert reads["op://Agent-Ace/gog-token/credential"] == AGENT_KEY
-    assert reads["op://Canopy-Shared/gog-oauth-client/credential"] == SHARED_KEY
+    reads = [c[0][2] for c in box.ran(["op", "read"])]
+    assert not [r for r in reads if "gog-token" in r or "gog-oauth-client" in r]
     assert all("--account" not in c[0] for c in box.ran(["op"]))
     assert rep.env_ok is True and rep.client_creds_ok and rep.gog_client == "canopy"
+    assert rep.token.startswith("canopy-web canopy")
 
 
 def test_the_github_token_rides_one_git_commands_env_never_argv(tmp_path):
@@ -236,28 +237,29 @@ def test_an_agent_repo_without_a_marketplace_manifest_fails_the_plugins_step(tmp
 
 def test_the_mailbox_is_the_instances_and_a_token_for_another_is_refused(tmp_path):
     _repo(tmp_path / "agents")
-    box = Box(tmp_path, vault_items={
-        "Agent-Ace/gog-token/credential": _token(email="someone-else@dimagi-ai.com")})
-    rep = _prep(tmp_path, box).prepare("ace")
+    box = Box(tmp_path)
+    rep = _prep(tmp_path, box, creds=_creds(
+        web_gog_token=_token(email="someone-else@dimagi-ai.com"))).prepare("ace")
     assert any("NOT importing" in n for n in rep.notes)
     assert not box.ran(["gog", "auth", "tokens", "import"])
 
 
-def test_newest_token_wins_between_the_vault_and_canopy_web(tmp_path):
+def test_a_canopy_web_client_token_gets_its_client_from_the_canopy_vault(tmp_path):
     _repo(tmp_path / "agents")
-    box = Box(tmp_path, vault_items={
-        "Agent-Ace/gog-token/credential": _token(created="2026-05-01T00:00:00Z"),
-        "Canopy-Shared/gog-oauth-client-web/credential": "{}"})
-    creds = _creds(web_gog_token=_token(client="canopy-web", created="2026-10-01T00:00:00Z"))
+    box = Box(tmp_path)
+    creds = _creds(web_gog_token=_token(client="canopy-web", created="2026-10-01T00:00:00Z"),
+                   values={"gog-oauth-client-web": "{}"})
     rep = _prep(tmp_path, box, creds=creds).prepare("ace")
     assert rep.gog_client == "canopy-web" and rep.token.startswith("canopy-web canopy-web")
     # turns declare `canopy`; a canopy-web token serves them (one app, two doors)
     assert (rep.turn_client, rep.turn_ready) == ("canopy-web", True)
+    assert rep.client_creds_ok
 
 
 def test_readiness_is_tri_state_and_did_not_check_is_never_broken(tmp_path):
     _repo(tmp_path / "agents")
-    rep = _prep(tmp_path, Box(tmp_path)).prepare("ace", credentials_only=True)
+    rep = _prep(tmp_path, Box(tmp_path), creds=_creds(web_gog_token=None)).prepare(
+        "ace", credentials_only=True)
     payload = rep.payload("cloud-test")
     assert payload["turn_ready"] is None and payload["env_ok"] is None
     assert payload["mailbox_ok"] is False
@@ -556,9 +558,7 @@ def test_a_canopy_hosted_mailbox_needs_no_gmail_token_and_is_ready(tmp_path):
 
 def test_a_hosted_mailbox_stages_an_optional_google_sign_in_for_drive(tmp_path):
     _repo(tmp_path / "agents")
-    box = Box(tmp_path, vault_items={
-        "Agent-Ace/gog-token/credential": _token(),
-        "Canopy-Shared/gog-oauth-client/credential": '{"installed": {}}'})
+    box = Box(tmp_path)
     rep = _prep(tmp_path, box, creds=_creds(mailbox_backend="ses")).prepare("ace", credentials_only=True)
     assert rep.ok and rep.gmail == "canopy-hosted" and rep.gog_client == "canopy"
     assert any("Drive" in n for n in rep.notes)
@@ -571,9 +571,7 @@ def test_an_ses_primary_agent_stages_its_separate_google_account_token(tmp_path)
     Google account. canopy-web names it (`google_account`), and the token for THAT
     account is the one to stage — not refused as "another mailbox"."""
     _repo(tmp_path / "agents")
-    box = Box(tmp_path, vault_items={
-        "Agent-Ace/gog-token/credential": _token(email="ace@dimagi-ai.com"),
-        "Canopy-Shared/gog-oauth-client/credential": '{"installed": {}}'})
+    box = Box(tmp_path)
     creds = _creds(mailbox="ace@dimagi.ai", mailbox_backend="ses",
                    google_account="ace@dimagi-ai.com")
     rep = _prep(tmp_path, box, creds=creds).prepare("ace", credentials_only=True)
@@ -607,9 +605,9 @@ def test_runner_credentials_carry_google_account_when_canopy_web_sends_it():
     assert (c.mailbox, c.google_account) == ("ace@dimagi.ai", "ace@dimagi-ai.com")
 
 
-def test_a_workspace_vault_client_is_used_before_1password():
+def test_the_client_file_comes_from_the_workspace_vault():
     """A shared OAuth client a workspace vault holds arrives in the box's own resolve
-    (merged under the agent's values); the box writes it from there, no `op read`."""
+    (merged under the agent's values); the box writes it from there — the only source."""
     from orchestrator.agent_prepare import RunnerCredentials, RunnerPreparer
 
     p = RunnerPreparer.__new__(RunnerPreparer)

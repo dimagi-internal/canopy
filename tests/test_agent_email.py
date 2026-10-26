@@ -832,7 +832,19 @@ def test_preflight_missing_creds_gives_exact_login_remediation(tmp_path):
     assert not ok
     joined = "\n".join(lines)
     assert "credentials-hal.json" in joined
-    assert "gog login hal@dimagi-ai.com --client hal --services" in joined
+    assert "canopy agent bootstrap --slug hal" in joined
+    assert "op read" not in joined           # off 1Password (2026-10-26)
+
+
+def test_a_missing_client_file_is_never_reported_as_a_bad_token(tmp_path):
+    # cloud-ec2-2, 2026-10-26: gog's own "OAuth client credentials missing" read as
+    # "token bad" and sent two sessions to reconnect a mailbox that was Connected.
+    def runner(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1, "", "OAuth client credentials missing "
+                                           "(OAuth client ID JSON).")
+    ok, lines = preflight(IDENT, gog_dir=_gog_home(tmp_path), runner=runner)
+    joined = "\n".join(lines)
+    assert not ok and "OAuth client file missing" in joined and "token bad" not in joined
 
 
 def _provision_repo(tmp_path, op_ref="op://AI-Agents/Hal - gog OAuth client/notesPlain"):
