@@ -58,15 +58,14 @@ from typing import Callable, Optional
 
 from orchestrator import canopy_web
 from orchestrator.agent_bootstrap import (
+    SHARED_CLIENT_ITEMS,
     AgentReport,
     Bootstrapper,
     _first_line,
     _write_private,
 )
 from orchestrator.agent_doctor import declared_required_plugins
-
-#: The fleet's shared OAuth clients and their item in the WORKSPACE's shared vault.
-SHARED_CLIENT_ITEMS = {"canopy": "gog-oauth-client", "canopy-web": "gog-oauth-client-web"}
+from orchestrator.agent_email import gog_client_credentials
 GIT_HELPER = ('!f() { test "$1" = get || exit 0; [ -n "$GH_TOKEN" ] || exit 0; '
               'echo username=x-access-token; echo "password=$GH_TOKEN"; }; f')
 
@@ -344,15 +343,6 @@ class RunnerPreparer(Bootstrapper):
         item = SHARED_CLIENT_ITEMS.get(client)
         value = (self.creds(slug).values or {}).get(item) if item else None
         return str(value) if value else None
-
-    def client_ref(self, client: str, vault: str) -> str:
-        """A shared client from the WORKSPACE's shared vault (read with its own key), any
-        other from the agent's vault. Measured 2026-09-07: one pass read Agent-Ace fine and
-        failed Canopy-Shared — a per-agent key cannot read the shared vault, by design."""
-        item = SHARED_CLIENT_ITEMS.get(client)
-        if item:
-            return f"op://{self.creds(self._slug).shared_vault or '<no shared vault>'}/{item}/credential"
-        return f"op://{vault}/gog-oauth-client/credential"
 
     def expected_mailbox(self, slug: str, repo: Path) -> str:
         """The Google account THIS instance's token must be for — canopy-web's
@@ -721,7 +711,7 @@ class RunnerPreparer(Bootstrapper):
                 rep.fail(f"token: unexpected error: {_first_line(str(e))}")
             if tok is not None:
                 rep.gog_client = tok.client
-                rep.client_creds_ok = (self.gog_dir / f"credentials-{tok.client}.json").is_file()
+                rep.client_creds_ok = bool(gog_client_credentials(str(self.gog_dir), tok.client))
             try:
                 self.step_verify(repo, tok, rep)
             except Exception as e:  # noqa: BLE001
@@ -755,7 +745,7 @@ class RunnerPreparer(Bootstrapper):
             side.notes.append(_first_line(str(e)))
         if tok is not None and side.ok:
             rep.token, rep.gog_client = side.token, tok.client
-            rep.client_creds_ok = (self.gog_dir / f"credentials-{tok.client}.json").is_file()
+            rep.client_creds_ok = bool(gog_client_credentials(str(self.gog_dir), tok.client))
             rep.notes.append("ok: Google sign-in staged (Drive/Docs)")
         else:
             rep.notes.append("google sign-in (optional, for Drive/Docs) not staged: "

@@ -80,8 +80,13 @@ class FakeRunner:
         return bad("unexpected " + " ".join(argv))
 
 
+#: The workspace canopy vault's client items — where bootstrap reads a client file from.
+VAULT_CLIENTS = {"canopy": '{"installed":{"client_id":"c"}}',
+                 "canopy-web": '{"installed":{"client_id":"w"}}'}
+
+
 def _boot(tmp_path, runner, *, web=None, verify_ok=True, dry_run=False, installed=(),
-          marketplaces=(), vaults=None):
+          marketplaces=(), vaults=None, clients=None):
     reg = tmp_path / "installed_plugins.json"
     reg.write_text(json.dumps({"plugins": {f"{p}@{p}": [{}] for p in installed}}))
     mk = tmp_path / "known_marketplaces.json"
@@ -99,6 +104,8 @@ def _boot(tmp_path, runner, *, web=None, verify_ok=True, dry_run=False, installe
                         verify=verify, echo=lambda s: None, platform="darwin",
                         vault_for=_vault_for(RECORDED_VAULTS if vaults is None else vaults))
     b.verified = verified
+    table = VAULT_CLIENTS if clients is None else clients
+    b.client_from_vault = lambda slug, client: table.get(client)
     return b
 
 
@@ -132,13 +139,23 @@ def test_tie_or_undated_degrades_to_the_first_candidate_the_vault():
 
 # ── the client comes from the token ─────────────────────────────────────────
 
-def test_client_op_ref_mapping():
-    assert ab.client_op_ref("canopy", "ace") == "op://Canopy-Shared/gog-oauth-client/credential"
-    assert ab.client_op_ref("canopy-web", "ace") == \
-        "op://Canopy-Shared/gog-oauth-client-web/credential"
-    # An agent's own client lives in the vault its instance records — passed in, not derived.
-    assert ab.client_op_ref("echo", "Echo-Vault") == "op://Echo-Vault/gog-oauth-client/credential"
-    assert not hasattr(ab, "agent_vault")
+def test_the_token_and_client_never_come_from_1password(tmp_path):
+    # Off 1Password (Jonathan, 2026-10-26): canopy-web's token, the canopy vault's client.
+    repo = _repo(tmp_path)
+    runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok(created="2027-01-01T00:00:00Z"),
+                            "op://Canopy-Shared/gog-oauth-client/credential": "{}"})
+    rep = _boot(tmp_path, runner, web={"ace": _tok()}, installed=("ace",)).bootstrap_one("ace", repo)
+    assert rep.token.startswith("canopy-web canopy"), rep.token
+    assert not any(c[:2] == ["op", "read"] for c in runner.calls)
+    assert (tmp_path / "gog" / "credentials-canopy.json").read_text() == VAULT_CLIENTS["canopy"]
+    assert not hasattr(ab, "client_op_ref") and not hasattr(ab, "agent_vault")
+
+
+def test_no_web_token_says_to_connect_the_mailbox(tmp_path):
+    repo = _repo(tmp_path)
+    rep = _boot(tmp_path, FakeRunner(), installed=("ace",)).bootstrap_one("ace", repo)
+    assert not rep.ok and rep.token == "NONE"
+    assert any("Connect Google mailbox" in n for n in rep.notes)
 
 
 def test_client_is_taken_from_token_not_agent_json(tmp_path):
@@ -202,15 +219,17 @@ def test_identical_token_already_in_gog_is_not_reimported(tmp_path):
     (tmp_path / "gog" / "config.json").write_text(json.dumps(
         {"keyring_backend": "keychain", "account_clients": {"ace@dimagi-ai.com": "canopy"}}))
     runner = FakeRunner(
-        op={"op://Agent-Ace/gog-token/credential": _tok()},
         gog_accounts=[{"email": "ace@dimagi-ai.com", "client": "canopy",
                        "created_at": "2026-09-07T14:04:13Z"}])
-    rep = _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
+    asked = []
+    b = _boot(tmp_path, runner, web={"ace": _tok()}, installed=("ace",))
+    b.client_from_vault = lambda slug, client: asked.append(client)
+    rep = b.bootstrap_one("ace", repo)
     assert rep.ok, rep.notes
     assert runner.imported == []
     assert "(present)" in rep.token and rep.turn == "OK (canopy)"
-    # the creds file was present, so the shared client was never read from 1Password
-    assert not any("gog-oauth-client" in " ".join(c) for c in runner.calls)
+    # the creds file was present, so the canopy vault was never asked for the client
+    assert asked == []
 
 
 def test_token_present_requires_same_client_and_created_at():
@@ -227,10 +246,8 @@ def test_changed_token_is_imported_via_private_tempfile_and_config_merged(tmp_pa
     (tmp_path / "gog").mkdir()
     (tmp_path / "gog" / "config.json").write_text(json.dumps(
         {"keyring_backend": "keychain", "account_clients": {"eva@dimagi-ai.com": "canopy"}}))
-    runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok(),
-                            "op://Canopy-Shared/gog-oauth-client/credential": "{}"},
-                        gog_accounts=[])
-    rep = _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
+    runner = FakeRunner(gog_accounts=[])
+    rep = _boot(tmp_path, runner, web={"ace": _tok()}, installed=("ace",)).bootstrap_one("ace", repo)
     assert rep.ok, rep.notes
     assert runner.imported == [_tok()]
     import_path = next(c[4] for c in runner.calls if c[:4] == ["gog", "auth", "tokens", "import"])
@@ -307,9 +324,8 @@ def test_plugins_installed_via_claude_cli(tmp_path):
 def test_dry_run_touches_nothing(tmp_path):
     repo = _repo(tmp_path, "eva", required=[{"name": "chrome-sales",
                                               "marketplace": "dimagi-internal/chrome-sales"}])
-    runner = FakeRunner(op={"op://Agent-Eva/gog-token/credential": _tok(email="eva@dimagi-ai.com"),
-                            "op://Canopy-Shared/gog-oauth-client/credential": "{}"})
-    b = _boot(tmp_path, runner, dry_run=True)
+    runner = FakeRunner()
+    b = _boot(tmp_path, runner, dry_run=True, web={"eva": _tok(email="eva@dimagi-ai.com")})
     rep = b.bootstrap_one("eva", repo)
     mutating = [c for c in runner.calls
                 if c[0] == "claude" or c[:2] == ["op", "inject"] or c[:3] == ["gog", "auth", "tokens"]]
@@ -332,8 +348,7 @@ def test_env_injected_with_private_mode(tmp_path):
 
 def test_one_failing_step_does_not_stop_the_rest(tmp_path):
     repo = _repo(tmp_path)
-    runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok(),
-                            "op://Canopy-Shared/gog-oauth-client/credential": "{}"})
+    runner = FakeRunner()
     orig = runner.__call__
 
     def flaky(argv, **kw):
@@ -341,7 +356,7 @@ def test_one_failing_step_does_not_stop_the_rest(tmp_path):
             return subprocess.CompletedProcess(argv, 1, "", "[ERROR] could not resolve op://x/y/z")
         return orig(argv, **kw)
 
-    b = _boot(tmp_path, flaky, installed=("ace",))
+    b = _boot(tmp_path, flaky, installed=("ace",), web={"ace": _tok()})
     rep = b.bootstrap_one("ace", repo)
     assert rep.env == "FAIL" and not rep.ok
     assert rep.gmail.startswith("LIVE")        # token + verify still ran
@@ -384,41 +399,48 @@ def test_never_downgrades_a_newer_token_gog_already_holds(tmp_path):
     (tmp_path / "gog").mkdir()
     (tmp_path / "gog" / "credentials-canopy.json").write_text("{}")
     runner = FakeRunner(
-        op={"op://Agent-Ace/gog-token/credential": _tok(created="2026-05-01T00:00:00Z")},
         gog_accounts=[{"email": "ace@dimagi-ai.com", "client": "canopy",
                        "created_at": "2026-09-07T14:04:13Z"}])
-    rep = _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
+    rep = _boot(tmp_path, runner, installed=("ace",),
+                web={"ace": _tok(created="2026-05-01T00:00:00Z")}).bootstrap_one("ace", repo)
     assert runner.imported == [] and "(kept newer)" in rep.token
 
 
-# ── an operator who cannot see Canopy-Shared (Shayoni, Windows, 2026-09-29) ────
+# ── the client file comes from the workspace's canopy vault ─────────────────
 
-# AI-Agents is a humans-only vault: the fix for a missing Canopy-Shared membership is
-# the membership, never a second copy of the client (Jonathan, 2026-09-29).
-
-def test_unreadable_shared_client_asks_for_canopy_shared_access(tmp_path):
+def test_unreadable_canopy_vault_client_is_named_and_nothing_is_written(tmp_path):
     repo = _repo(tmp_path)
-    runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok()}, gog_accounts=[])
-    rep = _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
+    runner = FakeRunner(gog_accounts=[])
+    rep = _boot(tmp_path, runner, web={"ace": _tok()}, clients={},
+                installed=("ace",)).bootstrap_one("ace", repo)
     assert not rep.ok
-    msg = str(rep.__dict__)
-    assert "not a member of the Canopy-Shared vault" in msg
+    assert any("canopy vault" in n and "gog-oauth-client" in n for n in rep.notes)
     assert not (tmp_path / "gog" / "credentials-canopy.json").exists()
+    assert not any(c[0] == "op" and c[1] == "read" for c in runner.calls)
 
 
-def test_bootstrap_never_reads_ai_agents(tmp_path):
-    repo = _repo(tmp_path)
-    runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok()}, gog_accounts=[])
-    _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
-    assert not any("AI-Agents" in " ".join(c) for c in runner.calls)
-
-
-def test_an_agents_own_client_gets_no_shared_vault_hint(tmp_path):
+def test_a_non_fleet_client_token_is_told_to_re_mint(tmp_path):
     repo = _repo(tmp_path, gog_client="ace")
-    runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok(client="ace")},
-                        gog_accounts=[])
-    rep = _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
-    assert not rep.ok and "Canopy-Shared" not in str(rep.__dict__)
+    rep = _boot(tmp_path, FakeRunner(gog_accounts=[]), web={"ace": _tok(client="ace")},
+                installed=("ace",)).bootstrap_one("ace", repo)
+    assert not rep.ok and any("not a fleet client" in n for n in rep.notes)
+
+
+def test_client_file_is_written_to_gogs_data_dir_under_gog_home(tmp_path, monkeypatch):
+    # cloud-ec2-2, 2026-10-26: a per-agent $GOG_HOME reads <home>/data/credentials-*.json,
+    # and a box-wide XDG copy must not count as this home's.
+    import sys as _sys
+    monkeypatch.setattr(_sys, "platform", "linux")      # the cloud box: XDG dirs in play
+    home = tmp_path / "gog"
+    monkeypatch.setenv("GOG_HOME", str(home))
+    xdg = tmp_path / "xdg"
+    (xdg / "gogcli").mkdir(parents=True)
+    (xdg / "gogcli" / "credentials-canopy.json").write_text("{}")
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+    repo = _repo(tmp_path)
+    _boot(tmp_path, FakeRunner(gog_accounts=[]), web={"ace": _tok()},
+          installed=("ace",)).bootstrap_one("ace", repo)
+    assert (home / "data" / "credentials-canopy.json").read_text() == VAULT_CLIENTS["canopy"]
 
 
 def test_client_creds_in_gogs_data_dir_count_as_present(tmp_path):
@@ -426,9 +448,11 @@ def test_client_creds_in_gogs_data_dir_count_as_present(tmp_path):
     repo = _repo(tmp_path)
     (tmp_path / "gog" / "data").mkdir(parents=True)
     (tmp_path / "gog" / "data" / "credentials-canopy.json").write_text("{}")
-    runner = FakeRunner(op={"op://Agent-Ace/gog-token/credential": _tok()}, gog_accounts=[])
-    _boot(tmp_path, runner, installed=("ace",)).bootstrap_one("ace", repo)
-    assert not any("gog-oauth-client" in " ".join(c) for c in runner.calls)
+    asked = []
+    b = _boot(tmp_path, FakeRunner(gog_accounts=[]), web={"ace": _tok()}, installed=("ace",))
+    b.client_from_vault = lambda slug, client: asked.append(client)
+    b.bootstrap_one("ace", repo)
+    assert asked == []
 
 
 # ── the vault comes from the instance (2026-10-14) ───────────────────────────
@@ -443,9 +467,6 @@ def test_env_inject_sets_agent_vault_from_the_recorded_instance(tmp_path):
     assert runner.envs[i]["AGENT_VAULT"] == "Some-Vault"
     assert runner.envs[i]["AGENT_SLUG"] == "ace"
     assert rep.env.startswith("OK")
-    b.step_token("ace", repo, rep)
-    assert ["op", "read", "op://Some-Vault/gog-token/credential",
-            "--account", "dimagi.1password.com"] in runner.calls
 
 
 def test_no_recorded_vault_fails_loudly_and_injects_nothing(tmp_path):

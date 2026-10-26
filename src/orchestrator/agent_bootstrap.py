@@ -10,13 +10,12 @@ laptop has instead of per-agent service-account keys. Per agent:
                 registry already has them.
   2. env      — `op inject -f -i <repo>/.env.tpl -o ~/.<slug>/.env` with AGENT_VAULT /
                 AGENT_SLUG set (templates reference op://${AGENT_VAULT}/…), chmod 600.
-  3. token    — the gog Gmail token, NEWEST WINS by the token's own `created_at`, between
-                canopy-web's `/credentials/resolve` copy and op://<vault>/gog-token, <vault>
-                being the instance's recorded `op_vault` (agent_instance.instance_vault —
-                never a name derived from the slug).
+  3. token    — the gog Gmail token from canopy-web's `/credentials/resolve` — the one copy
+                ("Connect Google mailbox" mints it). No 1Password (2026-10-26).
   4. client   — the OAuth client the TOKEN names (never config/agent.json — that inference
-                broke echo's working mailbox on 2026-09-05, canopy-web#661), materialized to
-                <gog dir>/credentials-<client>.json.
+                broke echo's working mailbox on 2026-09-05, canopy-web#661), written from the
+                workspace's canopy vault (`SHARED_CLIENT_ITEMS`) to gog's data dir AND the
+                home itself — the paths gog actually reads (`gog_data_dir`).
   5. import   — `gog auth tokens import`, skipped when gog already holds that exact token
                 (same client + created_at); then account_clients[<email>] = <client> merged
                 into gog's config.json.
@@ -62,6 +61,7 @@ from orchestrator.agent_email import (
     agent_env_files,
     env_file_keyring_settings,
     gog_client_credentials,
+    gog_data_dir,
     hosted_only,
     hosted_only_note,
     preflight,
@@ -72,22 +72,13 @@ from orchestrator.agent_email import (
 OP_ACCOUNT = "dimagi.1password.com"
 KNOWN_MARKETPLACES = "~/.claude/plugins/known_marketplaces.json"
 
-#: Shared fleet OAuth clients live in the tenant's shared vault; any other client is an
-#: agent's own and lives in that agent's vault. Keyed on the client the TOKEN names.
-SHARED_CLIENT_REFS = {
-    "canopy": "op://Canopy-Shared/gog-oauth-client/credential",
-    "canopy-web": "op://Canopy-Shared/gog-oauth-client-web/credential",
-}
-#: The same clients' names in a canopy (workspace) vault, read first (`client_from_vault`).
+#: The fleet's two OAuth clients, by their item name in the workspace's canopy vault
+#: ("Shared": gog-oauth-client, gog-oauth-client-web). The ONLY place a client file is read
+#: from — no 1Password (Jonathan, 2026-10-26: "we want to get off 1pass entirely").
 SHARED_CLIENT_ITEMS = {"canopy": "gog-oauth-client", "canopy-web": "gog-oauth-client-web"}
 
-#: Deliberately NO fallback vault. An operator who cannot read Canopy-Shared is granted
-#: membership in it — the fix is access, not a second copy. AI-Agents is a humans-only
-#: vault now that every agent has its own vault plus Canopy-Shared (Jonathan,
-#: 2026-09-29, reverting #707's AI-Agents fallback: "Don't have anything fall back to
-#: ai-agents").
-SHARED_VAULT_HINT = ("you are not a member of the Canopy-Shared vault — ask a vault owner "
-                     "(Jonathan, or Hal) to add you, then re-run")
+CONNECT_MAILBOX_HINT = ("connect it on canopy-web: the agent's Settings → External accounts → "
+                        "Connect Google mailbox")
 
 #: stderr fragments meaning "1Password is locked / not signed in", not "item missing".
 OP_AUTH_FAILURES = ("authorization timeout", "not currently signed in", "authorization prompt",
@@ -105,14 +96,6 @@ Runner = Callable[..., subprocess.CompletedProcess]
 # ──────────────────────────────────────────────────────────────────────────────
 # pure decision logic
 # ──────────────────────────────────────────────────────────────────────────────
-
-def client_op_ref(client: str, vault: str) -> str:
-    """The 1Password ref holding <client>'s OAuth id+secret. Decided by the CLIENT (which
-    the token names), not by the agent: a shared client is read from the shared vault no
-    matter which agent's token needs it; any other is the agent's own, in `vault` (the
-    instance's recorded op_vault)."""
-    return SHARED_CLIENT_REFS.get(client) or f"op://{vault}/gog-oauth-client/credential"
-
 
 def operator_instance_vault(slug: str) -> str:
     """The instance's vault, read as the operator (this machine's binding, else canopy-web's
@@ -434,20 +417,17 @@ class Bootstrapper:
         """op's environment for reading `vault` (None = inherit). A person needs nothing."""
         return base
 
-    def client_ref(self, client: str, vault: str) -> str:
-        return client_op_ref(client, vault)
-
     def client_from_vault(self, slug: str, client: str) -> Optional[str]:
         """<client>'s OAuth id+secret from the canopy vault (a workspace vault layered
-        under the agent's own), or None to read it from 1Password as before. A person's
-        machine asks canopy-web with its own key; any failure is None, never a stop."""
+        under the agent's own), or None. A person's machine asks canopy-web with its own
+        key; a failure is None and the caller names it."""
         item = SHARED_CLIENT_ITEMS.get(client)
         if not item:
             return None
         try:
             from orchestrator import cred_resolve
             body = cred_resolve.resolve(slug, token=_operator_token(), refs=[item], fallback=False)
-        except Exception:  # noqa: BLE001 — 1Password is the fallback, as before
+        except Exception:  # noqa: BLE001 — reported by the caller as "not readable"
             return None
         value = (body.get("values") or {}).get(item)
         return str(value) if value else None
@@ -613,25 +593,17 @@ class Bootstrapper:
                              "Keychain; if a setup step re-adds them, delete them again")
 
     def step_token(self, slug: str, repo: Path, rep: AgentReport) -> Token | None:
-        """Pick the newest token, materialize its client, import it, map the account."""
-        vault, verr = self.vault(slug)
-        if vault:
-            vault_raw, vault_err = self._op_read(f"op://{vault}/gog-token/credential")
-        else:
-            vault_raw, vault_err = None, verr
+        """Take canopy-web's token, materialize its client from the canopy vault, import it,
+        map the account. No 1Password anywhere on this path (2026-10-26)."""
         web_raw, web_err = self.web_token(slug)
-        # Vault FIRST: a tie degrades toward the vault (see pick_newest).
-        tok = pick_newest([parse_token("vault", vault_raw), parse_token("canopy-web", web_raw)])
+        tok = parse_token("canopy-web", web_raw)
         if tok is None:
             rep.token = "NONE"
-            rep.fail(f"token: no gog token in op://{vault or '<no vault>'}/gog-token "
-                     f"({vault_err or 'unparseable'}) nor canopy-web "
-                     f"({web_err or 'none stored'})")
+            rep.fail(f"token: no gog token on canopy-web for {slug} "
+                     f"({web_err or ('unparseable' if web_raw else 'none stored')}) — "
+                     + CONNECT_MAILBOX_HINT)
             return None
         rep.token = f"{tok.source} {tok.client or '?'} {age_label(tok.epoch)}"
-        if vault_raw is None and self._op_blocked:
-            rep.notes.append("token: vault copy not consulted (1Password locked) — "
-                             "newest-wins decided on canopy-web's copy alone")
         if not tok.client:
             rep.fail("token: the token names no `client` — refusing to guess one "
                      "(the client is a property of the token, never of agent.json)")
@@ -646,36 +618,30 @@ class Bootstrapper:
             rep.fail("token: no mailbox — neither the token nor config/agent.json names one")
             return None
 
-        # Client creds for the client the TOKEN names.
-        creds = self.gog_dir / f"credentials-{tok.client}.json"
-        from_vault = (None if gog_client_credentials(str(self.gog_dir), tok.client)
-                      else self.client_from_vault(slug, tok.client))
-        if from_vault:
-            # A canopy (workspace) vault holds it — read with this machine's own key, no
-            # 1Password (canopy-web spec 2026-10-22-vault-access-follows-canopy-access-design.md §4).
-            if self.dry_run:
-                rep.notes.append(f"token: would materialize credentials-{tok.client}.json from the canopy vault")
-            else:
-                _write_private(creds, from_vault)
-                rep.notes.append(f"token: materialized credentials-{tok.client}.json from the canopy vault")
-        elif not gog_client_credentials(str(self.gog_dir), tok.client):
-            ref = self.client_ref(tok.client, vault)
-            if not vault and tok.client not in SHARED_CLIENT_REFS:
-                rep.fail(f"token: cannot read OAuth client '{tok.client}': {verr}")
+        # Client creds for the client the TOKEN names, where gog actually reads them.
+        if not gog_client_credentials(str(self.gog_dir), tok.client):
+            item = SHARED_CLIENT_ITEMS.get(tok.client)
+            if not item:
+                rep.fail(f"token: the token is under '{tok.client}', not a fleet client — its "
+                         "OAuth client is not in the canopy vault. Re-mint it under a fleet "
+                         "client: " + CONNECT_MAILBOX_HINT)
                 return tok
+            secret = self.client_from_vault(slug, tok.client)
+            if not secret:
+                rep.fail(f"token: cannot read OAuth client '{tok.client}' from the canopy vault "
+                         f"(workspace vault item '{item}') — this machine needs a key to the "
+                         "workspace's Shared vault on canopy-web")
+                return tok
+            # The data dir gog >= 0.40 reads, and the legacy home copy older gog reads.
+            name = f"credentials-{tok.client}.json"
+            targets = list(dict.fromkeys([Path(gog_data_dir(str(self.gog_dir))) / name,
+                                          self.gog_dir / name]))
             if self.dry_run:
-                rep.notes.append(f"token: would materialize credentials-{tok.client}.json "
-                                 f"from {ref}")
+                rep.notes.append(f"token: would write {name} from the canopy vault to {targets[0]}")
             else:
-                secret, err = self._op_read(ref)
-                if secret is None:
-                    hint = ("; " + SHARED_VAULT_HINT
-                            if tok.client in SHARED_CLIENT_REFS and not self._op_blocked else "")
-                    rep.fail(f"token: cannot read OAuth client '{tok.client}' from {ref}: "
-                             f"{err}{hint}")
-                    return tok
-                _write_private(creds, secret)
-                rep.notes.append(f"token: materialized credentials-{tok.client}.json")
+                for path in targets:
+                    _write_private(path, secret)
+                rep.notes.append(f"token: wrote {name} from the canopy vault to {targets[0]}")
 
         # Import — unless gog already holds this exact token, or a newer one.
         accounts = self.gog_accounts()

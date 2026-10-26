@@ -405,7 +405,8 @@ def test_email_auth_keeps_full_multiline_remediation():
         result = check_email_auth(ident, gog_dir=d, runner=runner)
     assert not result.ok
     # the FULL fix block survives, not just line 1 (an early line AND the last line both present)
-    assert "gog login" in result.detail and "SHARED fleet OAuth client" in result.detail
+    assert "canopy agent bootstrap --slug hal" in result.detail
+    assert "SHARED fleet OAuth client" in result.detail
 
 
 # --------------------------------------------------------------------------------------

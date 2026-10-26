@@ -101,14 +101,16 @@ identity, rules, secrets, and domain skills are the agent's"*):
   is in Production. Don't "fix" a non-problem by flipping user type.) So when fleet email breaks, it's
   a **provisioning** issue — a missing/misnamed 1Password item so `credentials-canopy.json` never
   lands — which `canopy email preflight` now diagnoses precisely; it is not the OAuth app config.
-- **Where the pieces live today (2026-10-04).** Both fleet clients' id+secret are in the
-  workspace's SHARED vault (`op://Canopy-Shared/gog-oauth-client/credential` for `canopy`,
-  `…/gog-oauth-client-web/credential` for `canopy-web`), read with the workspace's key; each
-  mailbox's refresh token is the agent's `gog-token` — in its own vault
-  (`op://<the instance's op_vault>/gog-token/credential`, minted at a terminal) and/or in canopy-web (minted
-  by the "Connect Google mailbox" button). A box imports the NEWER of the two by the token's own
-  `created_at` (cloud: `runner/ec2/bootstrap_agents.sh`; laptop: `canopy agent bootstrap`) and
-  materializes the client the token names as `credentials-<client>.json`. Every agent and the
+- **Where the pieces live today (2026-10-26 — no 1Password).** Both fleet clients' id+secret are
+  in the workspace's canopy vault "Shared" on canopy-web (`gog-oauth-client` for `canopy`,
+  `gog-oauth-client-web` for `canopy-web`); each mailbox's refresh token is the agent's `gog-token`
+  on canopy-web (the "Connect Google mailbox" button). A box imports that token (cloud:
+  `canopy agent prepare` via `runner/ec2/bootstrap_agents.sh`; laptop: `canopy agent bootstrap`)
+  and writes the client the token names as `credentials-<client>.json` into gog's DATA dir and
+  the home itself — the paths gog actually reads for that home (`agent_email.gog_data_dir`). A
+  per-agent `$GOG_HOME` never reads the box-wide XDG dir, so a copy there does not count
+  (cloud-ec2-2, 2026-10-26: it did, and every eva turn failed "OAuth client credentials missing"
+  while canopy-web showed the mailbox Connected). Every agent and the
   factory declare `gog_client: canopy`; the per-agent clients (`echo`, `ace`) are retired.
   *(History: 2026-07-08 `echo` was grandfathered on a hand-placed `credentials-echo.json`;
   2026-07-25 the fleet moved to `.env.tpl` + `op inject`/`op read`.)*

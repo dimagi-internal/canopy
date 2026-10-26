@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator import gog_home as gh
-from tests.test_agent_prepare import Box, _prep, _repo, _token
+from tests.test_agent_prepare import Box, _prep, _repo
 
 SECRET = bytes(range(32))
 
@@ -120,9 +120,7 @@ def test_unset_means_nothing_changes(tmp_path):
 
 def test_prepare_without_a_secret_runs_gog_as_before(tmp_path):
     _repo(tmp_path / "agents")
-    box = Box(tmp_path, vault_items={
-        "Agent-Ace/gog-token/credential": _token(),
-        "Canopy-Shared/gog-oauth-client/credential": '{"installed": {}}'})
+    box = Box(tmp_path)
     _prep(tmp_path, box).prepare("ace")
     gog = [e for e in box.envs if e[0][0] == "gog"]
     assert gog and all("GOG_HOME" not in env for _, env in gog)
@@ -131,11 +129,12 @@ def test_prepare_without_a_secret_runs_gog_as_before(tmp_path):
 
 # ── prepare imports into the agent's own home ─────────────────────────────────
 
-def test_prepare_imports_into_the_agents_own_gog_home(secret_file, tmp_path):
+def test_prepare_imports_into_the_agents_own_gog_home(secret_file, tmp_path, monkeypatch):
+    # A temp HOME: the agent's own gog home lives under HOME, and this test must never
+    # write the developer's real one (a leftover copy there also hid the data/ check below).
+    monkeypatch.setenv("HOME", str(tmp_path / "h"))
     _repo(tmp_path / "agents")
-    box = Box(tmp_path, vault_items={
-        "Agent-Ace/gog-token/credential": _token(),
-        "Canopy-Shared/gog-oauth-client/credential": '{"installed": {}}'})
+    box = Box(tmp_path)
     prep = _prep(tmp_path, box)
     home = Path(os.environ["HOME"])
     rep = prep.prepare("ace")
@@ -145,7 +144,9 @@ def test_prepare_imports_into_the_agents_own_gog_home(secret_file, tmp_path):
         assert env["GOG_HOME"] == str(home / ".gog" / "ace")
         assert env["GOG_KEYRING_PASSWORD"] == gh.derive_password(SECRET, "ace")
         assert env["GOG_KEYRING_BACKEND"] == "file"
-    # The OAuth client landed in the agent's own home, not the box's shared gog dir.
+    # The OAuth client landed in the agent's own home — in data/, where gog >= 0.40 reads
+    # it (cloud-ec2-2, 2026-10-26) — not the box's shared gog dir.
+    assert (home / ".gog" / "ace" / "data" / "credentials-canopy.json").is_file()
     assert (home / ".gog" / "ace" / "credentials-canopy.json").is_file()
     assert not (tmp_path / "gog" / "credentials-canopy.json").exists()
     # And this process is back to how it was.
