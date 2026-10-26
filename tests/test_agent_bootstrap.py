@@ -437,6 +437,10 @@ def test_client_file_is_written_to_gogs_data_dir_under_gog_home(tmp_path, monkey
     (xdg / "gogcli").mkdir(parents=True)
     (xdg / "gogcli" / "credentials-canopy.json").write_text("{}")
     monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+    # ...nor a stale copy at the home's ROOT, which the old bootstrap wrote and gog never
+    # reads under a $GOG_HOME (2026-10-26: it skipped the write again after #1071).
+    home.mkdir(parents=True)
+    (home / "credentials-canopy.json").write_text('{"stale": true}')
     repo = _repo(tmp_path)
     _boot(tmp_path, FakeRunner(gog_accounts=[]), web={"ace": _tok()},
           installed=("ace",)).bootstrap_one("ace", repo)
