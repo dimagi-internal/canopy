@@ -428,6 +428,22 @@ function sessionAgentToken() {
   return "";
 }
 
+// AN AGENT'S SESSION NEVER ACTS AS THE PERSON WHOSE MACHINE IT RUNS ON (canopy-web:
+// "an agent acts as itself, or as you only under an act-as-you permission you
+// granted"). A runner names the agent in CANOPY_AGENT for every agent turn, laptop and
+// cloud; such a session acts with the agent's own login or with nothing — never the
+// operator's workbench-token, which is the person's whole canopy. The same rule as the
+// canopy CLI (`canopy_web.resolve_token`), with the same opt-out for a human working
+// in an agent's repo: CANOPY_ALLOW_OPERATOR_IDENTITY=1.
+function agentSession() {
+  const slug = (process.env.CANOPY_AGENT || "").trim();
+  return /^[a-z0-9][a-z0-9_-]*$/i.test(slug) && process.env.CANOPY_ALLOW_OPERATOR_IDENTITY !== "1";
+}
+
+function operatorToken() {
+  return agentSession() ? "" : fileToken();
+}
+
 let headers = {};
 try {
   const token =
@@ -437,7 +453,7 @@ try {
     (process.env.CANOPY_WEB_PAT || "").trim() ||
     slugEnvPat(process.env.CANOPY_AGENT) ||
     agentEnvPat() ||
-    fileToken();
+    operatorToken();
   if (token) {
     headers = { ...provenanceHeaders(), Authorization: `Bearer ${token}` };
     const key = chatKey();

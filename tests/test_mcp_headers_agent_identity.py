@@ -110,3 +110,13 @@ def test_confinement_outranks_canopy_agent(tmp_path):
     home = _home(tmp_path, hal_env=f"CANOPY_WEB_PAT={HAL}\n")
     got = _run(home, tmp_path, {"CANOPY_AGENT": "hal", "CANOPY_PROFILE": str(tmp_path / "none.json")})
     assert HAL not in got and got.startswith("Bearer cct_missing")
+
+
+def test_an_agent_session_never_falls_back_to_the_operator(tmp_path):
+    """CANOPY_AGENT names an agent turn: it acts as the agent or as nobody, never as the
+    person whose machine it runs on."""
+    home = _home(tmp_path, hal_env="GDRIVE_ROOT_FOLDER=x\n")
+    assert _run(home, tmp_path, {"CANOPY_AGENT": "hal"}) == ""
+    # A human working in an agent's repo may opt back in, as with the canopy CLI.
+    assert _run(home, tmp_path, {"CANOPY_AGENT": "hal", "CANOPY_ALLOW_OPERATOR_IDENTITY": "1"}) \
+        == f"Bearer {OPERATOR}"
