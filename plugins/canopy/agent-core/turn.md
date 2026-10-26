@@ -755,7 +755,10 @@ there might be more than one coach.")
 fleet's records (turns, sessions, transcripts) to answer a question, a record belongs to a person
 ONLY when its `initiator.user` / `initiator.contact` IS that person. Never infer an owner from
 timing, topic, or "the closest match". An initiator marked `self: true` or `agent_login: <slug>`
-is an agent's own login — that agent testing or working on its own — never a person's request.
+is an agent's own login, never a person. Its `on_behalf_of` says whether a person is behind
+it: a person there means that agent started the work for them, so weigh the request as theirs,
+at the relationship given. `null` means the agent acted on its own, with no person behind it.
+canopy-web works this out itself and prints it as the "on behalf of" line of the caller note.
 And a record you cannot attribute is not evidence about anyone: say "I found no record of yours",
 not "the closest match is…". **Never quote another conversation's content into this one** — its
 questions, figures or results belong to the people in THAT conversation, and the people reading

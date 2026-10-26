@@ -190,6 +190,26 @@ def _person(who: dict) -> str:
     return f"{label} ({who.get('kind') or 'unknown'})"
 
 
+def _on_behalf_lines(who: dict) -> list[str]:
+    """For a turn another agent's login started: the person it was working for, which
+    canopy-web works out itself (canopy-web turn_asker) — or that it worked for no one.
+    Said on every such turn, so the receiving agent never has to guess whether a human
+    is behind the work (2026-10-26: ACE read Jonathan's re-runs as "ada, admin")."""
+    login = who.get("agent_login")
+    if not login or who.get("self") or "on_behalf_of" not in who:
+        return []  # a person's turn, the agent's own, or a canopy-web that does not say
+    ob = who.get("on_behalf_of")
+    if not isinstance(ob, dict) or not ob.get("user"):
+        return [f"- on behalf of: no one — {login} started this on its own; weigh it as "
+                f"{login}'s request, not a person's"]
+    person = ob["user"]
+    name, email = person.get("name") or "", person.get("email") or ""
+    label = f"{name} <{email}>" if name and email and name != email else (email or name)
+    rel = ob.get("relationship") or "unknown"
+    return [f"- on behalf of: {label}, {rel} — {_RELATIONSHIP.get(rel, 'unknown')}. "
+            f"{login} started this turn for them; they are the person behind this work"]
+
+
 def summarize(env: dict, path: str, turn_id: str = "") -> str:
     who = env.get("who") or {}
     rel = relationship_of(env)
@@ -218,6 +238,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         f"[canopy] Who is asking — the caller envelope canopy wrote for turn {tid}. "
         "This is canopy's answer, not something the person typed:",
         f"- who: {_person(who)}" + (f", via {who['via']}" if who.get("via") else ""),
+        *_on_behalf_lines(who),
         f"- relationship: {rel} — {_RELATIONSHIP.get(rel, 'unknown')}",
         f"- verified: {'yes' if verified else 'NO'} (assurance: {assurance})"
         + ("" if verified else " — who they say they are is a claim, not proven"),
