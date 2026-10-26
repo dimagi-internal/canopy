@@ -18,6 +18,9 @@ can fix it, and otherwise reported as NEEDS YOU with the exact URL, command or p
   device key       canopy vault opens only on an approved device key (`canopy vault device`)
   vault access     this device holds a grant of the agent's zero-knowledge vault key
   licence          your licence to use the agent locally (`GET /api/agents/<slug>/licenses`)
+  <provider>       one per credential a person delegated to the agent (their GitHub token):
+                   only the machines that run it get it, so here you use your own account —
+                   for GitHub, checked with `gh auth status`
   plugin           the agent's plugin is installed (`<plugin>@canopy-agents`)
   this project     sessions in --dir use the agent (`$CANOPY_AGENT`)
   env              the agent's env synced from its vault (`canopy cred sync`'s path)
@@ -103,6 +106,8 @@ class Deps:
     install_plugin: Callable[[str], tuple]           # plugin -> (ok, last line)
     set_session_agent: Callable[[str, str], bool]
     sync_env: Callable[[str], str]
+    #: The GitHub account this computer's `gh` is signed in as, or "".
+    github_login: Callable[[], str] = field(default=lambda: "")
 
 
 def _first_line(e: BaseException) -> str:
@@ -206,6 +211,9 @@ def run(slug: str, directory: str, deps: Deps) -> UseReport:
         rep.add("licence", OK, f"you are an admin of {slug} — no licence needed")
     else:
         _licence_step(rep, slug, deps, page=page, ask=ask, my_email=my_email, my_id=my_id)
+
+    # 5b. what you bring yourself ─────────────────────────────────────────────────
+    _own_account_steps(rep, slug, deps, access.get("delegated_withheld") or [])
 
     # 6. plugin ───────────────────────────────────────────────────────────────────
     _plugin_step(rep, plugin, deps)
@@ -345,6 +353,33 @@ def _licence_step(rep: UseReport, slug: str, deps: Deps, *, page: str, ask: str,
                 f"ask {ask} to restore your licence on {page}")
 
 
+PROVIDER_NAMES = {"github": "GitHub", "salesforce": "Salesforce", "anthropic": "Claude"}
+
+
+def _own_account_steps(rep: UseReport, slug: str, deps: Deps, withheld: list) -> None:
+    """A credential a person delegated to the agent (their own GitHub token, given to it)
+    goes only to the machines that run it — never to you here. So on this computer the
+    agent acts as YOUR account for it: say so, and check you have one."""
+    for w in withheld:
+        provider = str(w.get("provider") or "")
+        name = PROVIDER_NAMES.get(provider, provider or str(w.get("name") or "credential"))
+        whose = str(w.get("delegated_by_email") or "someone")
+        mine_not_theirs = (f"{slug}'s {name} token is {whose}'s and is not given to you; "
+                           f"here {slug} acts as your own {name} account")
+        if provider != "github":
+            rep.add(name, OK, mine_not_theirs)
+            continue
+        try:
+            login = deps.github_login()
+        except Exception:  # noqa: BLE001 — no gh, a timeout: the same as not signed in
+            login = ""
+        if login:
+            rep.add(name, OK, f"{mine_not_theirs} (@{login}): pushes and pull requests go out as you")
+        else:
+            rep.add(name, NEEDS, f"{mine_not_theirs}, and this computer has no GitHub sign-in",
+                    "run `gh auth login` with an account that can push to the repos you will work on")
+
+
 def _plugin_step(rep: UseReport, plugin: str, deps: Deps) -> None:
     line = f"/plugin install {plugin}@{CATALOG}"
     installed = deps.installed_plugins()
@@ -436,4 +471,17 @@ def real_deps() -> Deps:
         install_plugin=lambda p: workspace_cli.install_plugins(CATALOG, [p], subprocess.run)[0][1:],
         set_session_agent=local_cli.set_session_agent,
         sync_env=sync_env,
+        github_login=_gh_login,
     )
+
+
+def _gh_login() -> str:
+    """Who `gh` is signed in as here, or "" (no gh, not signed in)."""
+    import subprocess
+
+    try:
+        res = subprocess.run(["gh", "api", "user", "-q", ".login"], capture_output=True, text=True,
+                             timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return res.stdout.strip() if res.returncode == 0 else ""
