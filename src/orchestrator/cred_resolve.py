@@ -419,3 +419,39 @@ def open_delegated(entries: dict, *, agent_id: str, ecdh=None) -> tuple[dict, di
         except ZkUnlockError as e:
             errors[str(name)] = str(e)[:300]
     return opened, errors
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# a pool lease's slot data (canopy-web: capabilities.md § 6, "Slot data")
+# ──────────────────────────────────────────────────────────────────────────────
+
+def slot_sealed_name(capability: str, slot: str, key: str) -> str:
+    """The name canopy-web seals a pool slot's secret under (its AAD and HKDF info)."""
+    return f"capability-slot:{capability}/{slot}/{key}"
+
+
+def open_slot_data(slot_data: dict, *, capability: str, slot: str, ecdh=None) -> dict:
+    """A ready pool lease's ``slot_data`` → ``{"public": {...}, "secret": {key: plaintext}}``.
+
+    canopy-web delivers the secret half SEALED (``sealed: {key: "zks1:…"}`` plus the
+    ``agent_id`` it is bound to) to the agent's readers; this opens each value with this
+    device's ECDH key. An older canopy-web that still sends ``secret`` in clear is passed
+    through as is, so a caller works across the rollout. Raises ZkUnlockError (never
+    carrying a value) when a sealed value is not for this device."""
+    if not isinstance(slot_data, dict):
+        raise ZkUnlockError("slot_data is not an object")
+    public = slot_data.get("public") or {}
+    secret = slot_data.get("secret") or {}
+    sealed = slot_data.get("sealed") or {}
+    if not all(isinstance(m, dict) for m in (public, secret, sealed)):
+        raise ZkUnlockError("slot_data's public, secret and sealed must be maps")
+    secret = dict(secret)
+    if sealed:
+        agent_id = str(slot_data.get("agent_id") or "")
+        if not agent_id or not capability or not slot:
+            raise ZkUnlockError("sealed slot data needs its agent_id, capability and slot to open")
+        ecdh = _device_ecdh(ecdh)
+        for key, stored in sealed.items():
+            secret[str(key)] = open_sealed_for_device(
+                str(stored), agent_id=agent_id, name=slot_sealed_name(capability, slot, str(key)), ecdh=ecdh)
+    return {"public": dict(public), "secret": secret}
