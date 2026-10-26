@@ -377,3 +377,32 @@ def test_cli_json(w, tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     body = json.loads(r.output)
     assert body["ready"] is True and body["next"].endswith("/eva:turn")
+
+
+# ── credentials someone delegated to the agent ───────────────────────────────
+
+GITHUB_WITHHELD = {"name": "github-token", "provider": "github",
+                   "label": "GitHub · delegated by Jonathan Jackson",
+                   "delegated_by_email": "jjackson@dimagi.com"}
+
+
+def test_a_delegated_github_token_is_said_to_be_someone_elses_and_yours_is_used(w, tmp_path):
+    w.access = {**w.access, "delegated_withheld": [GITHUB_WITHHELD]}
+    deps = w.deps()
+    deps.github_login = lambda: "sam"
+    rep = au.run("eva", str(tmp_path), deps)
+    step = _step(rep, "GitHub")
+    assert step.status == au.OK
+    assert "jjackson@dimagi.com's and is not given to you" in step.detail and "@sam" in step.detail
+    assert not rep.needs
+
+
+def test_no_github_sign_in_here_is_a_needs_you_with_the_command(w, tmp_path):
+    w.access = {**w.access, "delegated_withheld": [GITHUB_WITHHELD]}
+    rep = _run(w, tmp_path)
+    step = _step(rep, "GitHub")
+    assert step.status == au.NEEDS and step.fix.startswith("run `gh auth login`")
+
+
+def test_nothing_delegated_adds_no_step(w, tmp_path):
+    assert "GitHub" not in [s.name for s in _run(w, tmp_path).steps]

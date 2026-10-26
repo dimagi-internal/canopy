@@ -261,7 +261,9 @@ def fetch_access(slug: str, *, refresh: bool = False) -> dict:
     out = {"agent": slug,
            "credential_source": source if source in SOURCES else DEFAULT_SOURCE,
            "may_resolve": bool(body.get("may_resolve")),
-           "via": body.get("via"), "reason": str(body.get("reason") or ""), "error": ""}
+           "via": body.get("via"), "reason": str(body.get("reason") or ""), "error": "",
+           # Credentials people delegated to the agent: never given to you; bring your own.
+           "delegated_withheld": [w for w in body.get("delegated_withheld") or [] if isinstance(w, dict)]}
     _cache_put(key, out)
     return out
 
