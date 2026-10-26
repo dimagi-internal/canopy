@@ -274,7 +274,7 @@ def test_the_transient_root_is_created_0700(tmp_path, turn_root):
         assert stat.S_IMODE(d.stat().st_mode) == 0o700, d
 
 
-# ── --print-json extras: the resolve's own op_sa_token / op_vault / salesforce_creds ──
+# ── --print-json extras: the resolve's own op_sa_token / op_vault ──
 
 def _resolve_transport(body):
     """canopy-web: /runtime, /credentials/resolve (answering `body`), /credentials/access."""
@@ -291,11 +291,10 @@ def _resolve_transport(body):
 
 
 @pytest.mark.parametrize("body,want", [
-    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_sa_token": "ops_K", "op_vault": "Agent-Ace",
-      "salesforce_creds": '{"u": 1}'},
-     {"op_sa_token": "ops_K", "op_vault": "Agent-Ace", "salesforce_creds": '{"u": 1}'}),
+    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_sa_token": "ops_K", "op_vault": "Agent-Ace"},
+     {"op_sa_token": "ops_K", "op_vault": "Agent-Ace"}),
     ({"values": {"CANOPY_WEB_PAT": "w"}, "op_vault": "Agent-Ace"}, {"op_vault": "Agent-Ace"}),
-    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_sa_token": None, "salesforce_creds": ""}, {}),
+    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_sa_token": None}, {}),
     ({"values": {"CANOPY_WEB_PAT": "w"}}, {}),
 ])
 def test_print_json_passes_through_the_resolves_extras(tmp_path, turn_root, monkeypatch,
@@ -332,7 +331,7 @@ def test_print_json_extras_still_need_runner(fake_values):
 def test_out_never_writes_the_extras(tmp_path, turn_root, monkeypatch):
     from orchestrator import agent_prepare
     transport, _ = _resolve_transport({"values": {"CANOPY_WEB_PAT": "w"},
-                                       "op_sa_token": "ops_K", "salesforce_creds": "{}"})
+                                       "op_sa_token": "ops_K"})
     real = agent_prepare.fetch_runner_credentials
     monkeypatch.setattr(agent_prepare, "fetch_runner_credentials",
                         lambda slug, **kw: real(slug, **{**kw, "transport": transport}))
