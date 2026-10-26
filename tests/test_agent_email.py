@@ -1949,3 +1949,10 @@ def test_forward_dry_run_shows_named_attachments(tmp_path):
     assert r["subject"] == "Fwd: Older"
     assert [os.path.basename(a) for a in r["attachments"]] == ["Old.pdf"]
     assert "---------- Forwarded message ---------" in r["plain"]
+
+
+def test_gog_client_credentials_ignores_a_legacy_home_copy(tmp_path, monkeypatch):
+    from orchestrator.agent_email import gog_client_credentials
+    monkeypatch.setenv("GOG_HOME", str(tmp_path))
+    (tmp_path / "credentials-canopy.json").write_text("{}")
+    assert gog_client_credentials(str(tmp_path), "canopy") is None   # gog reads <home>/data only

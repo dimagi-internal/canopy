@@ -152,9 +152,9 @@ def gog_data_dir(gog_home: str) -> str:
 
 
 def gog_client_credentials_paths(gog_home: str, client: str) -> list[str]:
-    """Every path gog reads `credentials-<client>.json` from for this home, the data dir
-    first: the data dir (gog >= 0.40), the home itself (the legacy/flat copy older gog reads,
-    and gog >= 0.40 still does), and `<home>/data`. Nothing outside the home's own tree."""
+    """Every path `credentials-<client>.json` is WRITTEN to for this home, the data dir
+    first: the data dir (where gog >= 0.40 reads it), the home itself (the legacy/flat copy
+    older gog reads — never counted as present, `gog_client_credentials`), and `<home>/data`. Nothing outside the home's own tree."""
     name = f"credentials-{client}.json"
     home = os.path.normpath(os.path.expanduser(gog_home))
     out: list[str] = []
@@ -166,13 +166,21 @@ def gog_client_credentials_paths(gog_home: str, client: str) -> list[str]:
 
 
 def gog_client_credentials(gog_home: str, client: str) -> str | None:
-    """Where gog's `<client>` OAuth credentials actually are, or None.
+    """Where gog's `<client>` OAuth credentials are, or None — only a data-dir copy (the
+    path gog's "OAuth client credentials missing (expected at …)" error names,
+    `gog_data_dir`, or `<home>/data` for a $GOG_HOME this process was not given).
 
-    Checks only the paths gog itself reads for this home (`gog_client_credentials_paths`).
-    Checking only `<config>/credentials-<client>.json` called a working Windows mailbox
-    broken (Shayoni, 2026-09-29: gog 0.40 stored it at <GOG_HOME>/data/credentials-canopy.json);
-    checking a dir gog does NOT read called a broken one working (cloud-ec2-2, 2026-10-26)."""
+    The legacy `<home>/credentials-<client>.json` is written for older gog, never counted: a legacy `<home>/credentials-<client>.json` an earlier bootstrap left behind
+    satisfied this check while gog read only `<home>/data/`, so bootstrap never wrote the
+    data copy and ace's and ada's mail stayed dead on cloud-ec2-2 (2026-10-26; eva, with no
+    legacy copy, was written and worked). Checking only `<config>/credentials-<client>.json`
+    once called a working Windows mailbox broken (Shayoni, 2026-09-29: gog 0.40 stored it at
+    <GOG_HOME>/data/credentials-canopy.json) — the data dir is where that one was."""
+    home = os.path.normpath(os.path.expanduser(gog_home))
+    legacy = os.path.join(home, f"credentials-{client}.json")
     for path in gog_client_credentials_paths(gog_home, client):
+        if path == legacy and os.path.dirname(path) != gog_data_dir(home):
+            continue  # written for older gog; gog >= 0.40 never reads it
         if os.path.isfile(path) and os.path.getsize(path) > 0:
             return path
     return None
