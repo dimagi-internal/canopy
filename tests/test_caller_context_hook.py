@@ -670,3 +670,27 @@ def test_a_turn_that_starts_fresh_is_told_so(tmp_path):
     # An older canopy-web's `history` is ignored, not rendered.
     old = {**ENV, "conversation": {"history": [{"role": "person", "text": "how many visits?"}]}}
     assert "how many visits?" not in cc.summarize(old, str(tmp_path / "e"), TID)
+
+# --- on behalf of (canopy-web turn_asker): who an agent's turn was working for -----------
+
+ADA_ASKS = {"kind": "user", "via": "chat", "assurance": "pat", "agent_login": "ada", "self": False,
+            "user": {"id": 23, "email": "ada@dimagi-ai.com", "name": "ada@dimagi-ai.com"}}
+
+
+def test_an_agents_turn_names_the_person_it_was_working_for(tmp_path):
+    who = {**ADA_ASKS, "on_behalf_of": {
+        "user": {"id": 1, "email": "jj@dimagi.com", "name": "Jonathan Jackson"},
+        "relationship": "owner", "via_agent": "ada", "turn": "t-1"}}
+    text = cc.summarize({**ENV, "who": who}, str(tmp_path / "e"), TID)
+    assert ("- on behalf of: Jonathan Jackson <jj@dimagi.com>, owner — the agent's OWNER. "
+            "ada started this turn for them") in text
+
+
+def test_an_agents_own_initiative_is_said_outright(tmp_path):
+    text = cc.summarize({**ENV, "who": {**ADA_ASKS, "on_behalf_of": None}}, str(tmp_path / "e"), TID)
+    assert "- on behalf of: no one — ada started this on its own" in text
+
+
+def test_a_persons_turn_and_an_older_canopy_web_say_nothing_new(tmp_path):
+    assert "on behalf of" not in cc.summarize(ENV, str(tmp_path / "e"), TID)
+    assert "on behalf of" not in cc.summarize({**ENV, "who": ADA_ASKS}, str(tmp_path / "e"), TID)

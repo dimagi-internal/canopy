@@ -1893,12 +1893,11 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
                    "or a viewer. Only lowers, so anyone may ask; it ends with the turn. How "
                    "to run the non-admin path for real.")
 @click.option("--on-behalf-of", "on_behalf_of", default="",
-              help="In an agent's turn: send this as the agent acting FOR the person who "
-                   "asked — their email, or 'caller' for this turn's verified asker — so "
-                   "canopy-web judges the runner pin and --mode auto on THEIR access, not "
-                   "the agent's. Checked against the turn this session's login serves; a "
-                   "wrong person, a stored PAT or a finished turn is refused. Omit to act "
-                   "as the agent itself.")
+              help="Optional assertion. In an agent's turn canopy-web already works out the "
+                   "person the turn's login works for, judges the runner pin and --mode auto "
+                   "on THEIR access, and stamps them on the turn this starts. Name them here "
+                   "(their email, or 'caller') to have the request refused if it is anyone "
+                   "else.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links,
                    next_action, idempotency_key, runner_ref, queue_if_not_ready, turn_mode,
