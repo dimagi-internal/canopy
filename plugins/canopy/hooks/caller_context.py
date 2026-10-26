@@ -303,11 +303,22 @@ def _clean(value, limit: int = 200) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
+# canopy-web relays every reply of a Slack-born (or bound) turn into its thread
+# (apps/slack/relay.py). An agent told only "here is the thread, and here is the tool
+# that posts to it" read its own answer as an unsent draft: an ACE turn in #connect-rutf
+# closed two replies with "I haven't posted this to the Slack thread — want me to?"
+# while both were already in it, written to the owner instead of the thread
+# (2026-10-25). So the line says the reply IS the post, and who reads it.
+_SLACK_REPLY = ("Your reply to this turn posts automatically, as you, into this {where} — "
+                "write it to the people there, and never offer to \"post it to Slack\" or say it "
+                "hasn't been posted; that reply is not a separate send needing approval.")
+
+
 def _slack_lines(conversation, tid: str) -> list:
-    """Where in Slack this conversation is (canopy-web `conversation.slack`), and the
-    one call that moves it to a fresh thread in the same channel. A Slack turn asked
-    to "post a new clean thread in the channel" used to have to ask which channel it
-    was in (2026-10-16)."""
+    """Where in Slack this conversation is (canopy-web `conversation.slack`), that the
+    turn's reply lands there, and the one call that moves it to a fresh thread in the
+    same channel. A Slack turn asked to "post a new clean thread in the channel" used
+    to have to ask which channel it was in (2026-10-16)."""
     slack = conversation.get("slack") if isinstance(conversation, dict) else None
     if not isinstance(slack, dict) or not slack.get("channel_id"):
         return []
@@ -317,10 +328,13 @@ def _slack_lines(conversation, tid: str) -> list:
     link = _clean(slack.get("permalink"), 300)
     if slack.get("is_dm") or not slack.get("thread_ts"):
         return [f"- slack: a direct message ({cid})" + (f", {link}" if link else "")
-                + " — one running conversation, no threads to move between."]
+                + " — one running conversation, no threads to move between. "
+                + _SLACK_REPLY.format(where="DM")]
     return [f"- slack: {where}, thread {_clean(slack['thread_ts'], 40)}" + (f" — {link}" if link else "")
-            + f". To continue in a NEW thread in this channel: start_new_slack_thread(turn_id={tid}, "
-            "summary=…); to post an update here: share_session_to_slack(turn_id=…, summary=…)."]
+            + ". " + _SLACK_REPLY.format(where=f"thread, where everyone in {where} reads it")
+            + f" To continue in a NEW thread in this channel: start_new_slack_thread(turn_id={tid}, "
+            "summary=…); for an update outside a turn's reply: share_session_to_slack(turn_id=…, "
+            "summary=…)."]
 
 
 def _page_lines(page) -> list:
