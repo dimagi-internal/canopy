@@ -67,8 +67,8 @@ So an agent repo names **no secret and no vault**:
 - **No `.env.tpl`.** It was the 1Password path's template. A canopy-vault agent never reads it;
   keeping it is a second list that drifts (ACE's went 40 names out of step). `canopy agent
   doctor` passes a repo without one and flags one that remains. The factory stopped stamping it.
-- **No `secrets:` list in `runtime.yaml`.** runtime.yaml keeps what is not a secret — plugins,
-  tools, capabilities, engine, true literals (see § `runtime.yaml` below).
+- **No `runtime.yaml`.** Nothing reads one; capabilities publish from their `capability.yaml`
+  (see § No agent ships a `runtime.yaml` below).
 - **`config/agent.json`** keeps identity (mailbox, `gog_client`) — facts, not secrets.
 
 The sections below on `.env.tpl`, `op inject`, `canopy agent vault` and `Canopy-Shared` describe
@@ -310,20 +310,24 @@ in the agent repo changes.
 5. **Verify**: `canopy agent vault --slug <slug> --check` (every reference filled, key stored)
    and confirm the key landed in `~/.<agent>/.env`.
 
-## `runtime.yaml` — not a secrets path
+## No agent ships a `runtime.yaml` — capabilities publish from `capability.yaml`
 
-Some agents (Ace, Echo) ship a repo-root `runtime.yaml` (canopy-web's Agent Runtime Registry
-schema, `canopy-web/packages/canopy_runtime/`). Today it does two things only: it declares the
-agent's **capabilities** (`canopy-runtime publish-capabilities`), and its declared secret names
-feed canopy-web's credentials screen. It never fills an env. A *reconciler* that would have
-resolved those names and provisioned a box was designed but never wired into any runner, and
-was retired on 2026-10-15 — an agent is prepared by `canopy agent prepare` and its env filled
-from `.env.tpl` (docs/architecture/agent-setup-lifecycle.md).
+There is no repo-root `runtime.yaml` any more (retired fleet-wide 2026-10-26). It was canopy-web's
+Agent Runtime Registry file, and by the end it did one thing: point at an agent's capability
+manifests. Its `plugins:`, `tools:`, `env:`, `preflight:` and `engine:` were read by a reconciler
+that was designed but never wired into any runner (retired 2026-10-15), and its secret names were
+a second copy of what the vault holds. An agent is prepared by `canopy agent prepare` and its env
+filled by `canopy cred sync` from the vault (docs/architecture/agent-setup-lifecycle.md).
 
-- **Adding a value → store it in the agent's Canopy vault** (§ One declaration). Nothing in
-  runtime.yaml reaches an agent's env.
-- **runtime.yaml carries no `secrets:` list.** A secret named there is a second declaration of
-  what the vault already holds, and it drifts.
+- **Adding a value → store it in the agent's Canopy vault** (§ One declaration). Nothing in the
+  repo reaches an agent's env.
+- **Publishing a capability** (a machine or pool the agent leases from canopy-web) → ship a
+  `capability.yaml` per capability in the agent's repo (ACE: `infra/capabilities/*/capability.yaml`)
+  and run `canopy-runtime publish-capabilities --dir infra/capabilities --agent <slug>`.
+  The list is the agent's complete set: canopy-web retires any capability it leaves out and
+  releases its live leases, so use `--dir`, which refuses an empty directory.
+- **Do not add one back.** A file that nothing reads drifts, and an agent that adds it has
+  declared something no one will ever act on.
 
 ## Rollout status (2026-07-25)
 
