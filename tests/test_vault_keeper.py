@@ -225,3 +225,81 @@ def test_a_record_from_an_older_vault_key_is_started_afresh(vk):
     res = vault_keeper.keep_one(_with_record(_work(vk, [_member()]), {**rec, "kv": 0}), pins={},
                                 call=call, ecdh=_ecdh(ME_KEY, ME_JWK))
     assert len(res.granted) == 1
+
+
+# ---- a credential a person delegated to the agent ---------------------------------------
+
+STRANGER_KEY, STRANGER_JWK = _key()
+
+
+def _delegated_work(waiting=(), recipients=None, endorsements=()):
+    me_jkt, box_jkt = zk.jwk_thumbprint(ME_JWK), zk.jwk_thumbprint(BOX_JWK)
+    value = zk.seal_value(AGENT_ID, "github-token", KV, "github_pat_jj", [("device", me_jkt, ME_JWK)])
+    rows = recipients if recipients is not None else [
+        {"kind": "device", "target": me_jkt, "public_jwk": ME_JWK, "runner_name": "cloud-ec2-2"},
+        {"kind": "device", "target": box_jkt, "public_jwk": BOX_JWK, "runner_name": "cloud-ec2-3"},
+    ]
+    return {"agent": "ace", "agent_id": AGENT_ID, "name": "github-token", "device_jkt": me_jkt,
+            "value_zk": value, "expect": "digest", "recipients": rows, "waiting": list(waiting),
+            "endorsements": list(endorsements),
+            "reseal_path": "/api/harness/runners/r1/vault-keeper/ace/delegated/github-token"}
+
+
+def _opens_sealed(value, priv, jwk) -> str:
+    return zk.open_sealed(value, AGENT_ID, "github-token", "device", zk.jwk_thumbprint(jwk), priv)
+
+
+def test_a_delegated_credential_is_resealed_for_an_endorsed_waiting_machine():
+    box_jkt = zk.jwk_thumbprint(BOX_JWK)
+    call = Recorder()
+    res = vault_keeper.keep_delegated(
+        _delegated_work([box_jkt], endorsements=[_endorse(JJ_KEY, "device", box_jkt, box_jkt)]),
+        pins={}, call=call, ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert res.error == "" and len(res.granted) == 1
+    [(method, path, body)] = call.posts
+    assert (method, path) == ("PUT", "/api/harness/runners/r1/vault-keeper/ace/delegated/github-token")
+    assert body["expect"] == "digest"
+    assert _opens_sealed(body["value_zk"], BOX_KEY, BOX_JWK) == "github_pat_jj"
+    assert _opens_sealed(body["value_zk"], ME_KEY, ME_JWK) == "github_pat_jj"
+
+
+def test_an_unendorsed_machine_waits_and_nothing_is_written():
+    box_jkt = zk.jwk_thumbprint(BOX_JWK)
+    call = Recorder()
+    res = vault_keeper.keep_delegated(_delegated_work([box_jkt]), pins={}, call=call,
+                                      ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert res.granted == [] and call.posts == [] and "not endorsed" in res.skipped[0]
+
+
+def test_a_recipient_canopy_web_slips_in_is_never_sealed_to():
+    """A server that lists a stranger as already holding it, or a key under the wrong
+    thumbprint, gets nothing: only current holders and endorsed waiting machines."""
+    me_jkt, box_jkt = zk.jwk_thumbprint(ME_JWK), zk.jwk_thumbprint(BOX_JWK)
+    rows = [
+        {"kind": "device", "target": me_jkt, "public_jwk": ME_JWK},
+        {"kind": "device", "target": zk.jwk_thumbprint(STRANGER_JWK), "public_jwk": STRANGER_JWK},
+        {"kind": "device", "target": box_jkt, "public_jwk": STRANGER_JWK},   # wrong key for the target
+        {"kind": "device", "target": box_jkt, "public_jwk": BOX_JWK},
+    ]
+    call = Recorder()
+    res = vault_keeper.keep_delegated(
+        _delegated_work([box_jkt], rows, [_endorse(JJ_KEY, "device", box_jkt, box_jkt)]),
+        pins={}, call=call, ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert len(res.granted) == 1
+    sealed_to = {r["target"] for r in zk.parse_sealed(call.posts[0][2]["value_zk"])["r"]}
+    assert sealed_to == {me_jkt, box_jkt}
+    with pytest.raises(Exception):
+        _opens_sealed(call.posts[0][2]["value_zk"], STRANGER_KEY, STRANGER_JWK)
+
+
+def test_resolve_opens_each_delegated_credential_sealed_to_this_device():
+    from orchestrator import cred_resolve
+
+    me_jkt = zk.jwk_thumbprint(ME_JWK)
+    mine = zk.seal_value(AGENT_ID, "github-token", KV, "github_pat_jj", [("device", me_jkt, ME_JWK)])
+    other = zk.seal_value(AGENT_ID, "sf", KV, "x", [("device", zk.jwk_thumbprint(BOX_JWK), BOX_JWK)])
+    opened, errors = cred_resolve.open_delegated(
+        {"github-token": {"value_zk": mine}, "sf": {"value_zk": other}}, agent_id=AGENT_ID,
+        ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert opened == {"github-token": "github_pat_jj"}
+    assert list(errors) == ["sf"]
