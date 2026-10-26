@@ -303,3 +303,18 @@ def test_resolve_opens_each_delegated_credential_sealed_to_this_device():
         ecdh=_ecdh(ME_KEY, ME_JWK))
     assert opened == {"github-token": "github_pat_jj"}
     assert list(errors) == ["sf"]
+
+
+def test_a_custodial_answer_with_a_delegated_credential_is_opened_too():
+    """A delegated credential is sealed whatever the vault's mode: a custodial agent's
+    answer still has to be opened, or its GitHub token reaches git as the envelope."""
+    from orchestrator import cred_resolve
+
+    mine = zk.seal_value(AGENT_ID, "github-token", KV, "github_pat_jj",
+                         [("device", zk.jwk_thumbprint(ME_JWK), ME_JWK)])
+    body = {"zk": False, "values": {"FOO": "plain"}, "delegated": {"github-token": {"value_zk": mine}}}
+    assert cred_resolve.has_sealed(body)
+    assert not cred_resolve.has_sealed({"zk": False, "values": {"FOO": "plain"}})
+    out = cred_resolve.open_zk("echo", body, agent_id=AGENT_ID, ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert out["values"] == {"FOO": "plain"}
+    assert out["delegated"] == {"github-token": "github_pat_jj"}

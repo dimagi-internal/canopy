@@ -305,8 +305,16 @@ def open_sealed_for_device(stored: str, *, agent_id: str, name: str, ecdh=None) 
 
 
 def has_sealed(body) -> bool:
+    """Does this answer carry anything only this device can open — a sealed value, or a
+    credential a person delegated to the agent? The latter comes whatever the vault's
+    mode: a custodial agent's delegated GitHub token is sealed all the same, and left
+    unopened it reached git as the text of its envelope."""
     from orchestrator import vault_zk as zk
-    values = (body or {}).get("values") if isinstance(body, dict) else None
+    if not isinstance(body, dict):
+        return False
+    if body.get("delegated"):
+        return True
+    values = body.get("values")
     return isinstance(values, dict) and any(zk.is_sealed_value(v) for v in values.values())
 
 
