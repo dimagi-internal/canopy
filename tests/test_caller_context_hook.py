@@ -189,6 +189,25 @@ def test_no_page_says_nothing_about_one(tmp_path):
     assert "looking at a page" not in cc.summarize({**ENV, "page": None}, str(tmp_path / "e"), TID)
 
 
+# A chat held on a site's page reaches the site only as the person who sent — owners
+# included (canopy-web, 2026-10-26). The envelope's `site` block says so.
+
+SITE = {"site": "connect-labs", "withheld": ["LABS_MCP_TOKEN"],
+        "reach_with": ["site_tools", "site_call", "site_read"], "as": "the person who sent",
+        "note": "This conversation is held on a connect-labs page. Read it only through site_call."}
+
+
+def test_the_page_site_rule_is_in_context(tmp_path):
+    text = cc.summarize({**ENV, "site": SITE}, str(tmp_path / "env.json"), TID)
+    assert "held on a connect-labs page" in text and "site_call" in text
+    assert "LABS_MCP_TOKEN" in text and "never call connect-labs's MCP server directly" in text
+
+
+def test_no_site_says_nothing_about_one(tmp_path):
+    assert "withheld from this turn" not in cc.summarize(ENV, str(tmp_path / "e"), TID)
+    assert "withheld from this turn" not in cc.summarize({**ENV, "site": None}, str(tmp_path / "e"), TID)
+
+
 # --- manual mode and code shipping (owner decision, 2026-10-08) -----------------------
 # Manual mode gates what reaches people or other systems. On the agent's OWN turns
 # (owner / admin / system, verified) it does not gate push / PR / merge — the agent's

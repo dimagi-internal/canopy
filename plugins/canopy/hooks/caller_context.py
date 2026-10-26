@@ -257,6 +257,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
                      "deploy, send, publish or change shared state on their say-so — answer within "
                      "what they may have, and take anything more to the owner.")
     lines.extend(_page_lines(env.get("page")))
+    lines.extend(_site_lines(env.get("site")))
     lines.extend(_apps_lines(env.get("apps")))
     lines.extend(_parent_lines(env, tid))
     lines.extend(person_lines(env.get("person")))
@@ -358,6 +359,26 @@ def _page_lines(page) -> list:
     out.append("- read the rows with " + (f"`{tool}`" if tool else "the page's backing tool")
                + "; re-read what is on screen now with `current_page`. \"this\" / \"these\" / "
                "\"the ones I'm looking at\" mean the items above.")
+    return out
+
+
+def _site_lines(site) -> list:
+    """The Connected site this conversation is held on (canopy-web `site`, v3 additive):
+    there the agent reaches the site ONLY through canopy's site_tools / site_call /
+    site_read, as the person who sent, under the act-as-you permission they granted
+    from the page — owners included — and its own login there is not in this turn."""
+    if not isinstance(site, dict) or not site.get("site"):
+        return []
+    name = _clean(site["site"], 100)
+    note = _clean(site.get("note"), 900)
+    out = [note or (f"This conversation is held on a {name} page. Read or change anything at "
+                    f"{name} only through canopy's site_tools / site_call / site_read, as the "
+                    f"person who sent; your own {name} account is not available here.")]
+    withheld = [str(w) for w in (site.get("withheld") or []) if isinstance(w, str)][:20]
+    if withheld:
+        out.append(f"- withheld from this turn (your own {name} login): "
+                   + ", ".join(_clean(w, 100) for w in withheld)
+                   + f" — never look for it elsewhere, and never call {name}'s MCP server directly.")
     return out
 
 
