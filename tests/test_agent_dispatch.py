@@ -1060,3 +1060,49 @@ def test_cli_turns_shows_each_turns_session(monkeypatch):
     r = CliRunner().invoke(main, ["agent", "turns", "--slug", "hal", "--json-output"])
     rows = json.loads(r.output)
     assert rows[0]["canopy_session_id"] == SID and rows[1]["canopy_session_id"] is None
+
+
+# --- the card carries the brief's GitHub refs ----------------------------------
+
+def test_github_links_in_picks_up_issue_and_pr_urls_once():
+    from orchestrator.agent_dispatch import github_links_in
+
+    brief = ("Fix https://github.com/dimagi-internal/canopy-web/issues/2092 — see also "
+             "https://github.com/dimagi-internal/canopy-web/pull/2096 and again "
+             "https://github.com/dimagi-internal/canopy-web/issues/2092. Shorthand #2100 "
+             "and https://github.com/dimagi-internal/canopy-web/blob/main/x.py are not refs.")
+    assert github_links_in(brief) == [
+        {"label": "dimagi-internal/canopy-web#2092",
+         "url": "https://github.com/dimagi-internal/canopy-web/issues/2092"},
+        {"label": "dimagi-internal/canopy-web#2096",
+         "url": "https://github.com/dimagi-internal/canopy-web/pull/2096"},
+    ]
+
+
+def test_github_links_in_skips_a_url_already_linked():
+    from orchestrator.agent_dispatch import github_links_in
+
+    url = "https://github.com/o/r/issues/7"
+    assert github_links_in(f"do {url}", [{"label": "the issue", "url": url}]) == []
+
+
+def test_cli_dispatch_card_links_the_briefs_issue_so_project_audit_can_see_it(monkeypatch):
+    """2026-10-26: two 'Fix canopy-web#2092' cards sat in progress after #2092 closed,
+    because the issue was only in the notes and check (f) reads links."""
+    from orchestrator.project_audit import github_refs
+
+    calls = []
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", _fake_transport(calls))
+
+    r = CliRunner().invoke(main, [
+        "agent", "dispatch", "--slug", "hal", "--title", "Fix it",
+        "--links", "spec|https://example.com/spec",
+        "--prompt", "Ship https://github.com/dimagi-internal/canopy-web/issues/2092",
+        "--json-output"])
+    assert r.exit_code == 0, r.output
+    created = [c[2] for c in calls if c[0] == "POST" and "/tasks" in c[1]]
+    card = created[0][0]  # create_tasks posts a bare list
+    assert card["links"][0] == {"label": "spec", "url": "https://example.com/spec"}
+    assert github_refs(card) == ["dimagi-internal/canopy-web#2092"]

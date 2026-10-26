@@ -1938,6 +1938,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
         build_turn_payload,
         check_runner_pin,
         derive_idempotency_key,
+        github_links_in,
         local_agent_slug,
         reply_hint,
         resolve_runner,
@@ -1955,6 +1956,7 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     title = check_task_field("title", title)
     next_action = check_task_field("next_action", next_action or "Work this dispatch")
     task_links = parse_task_links(links)
+    task_links += github_links_in(prompt, task_links)
     if queue_if_not_ready and not runner_ref.strip():
         raise click.UsageError("--queue-if-not-ready only applies with --runner")
     try:  # before the board: a turn with no person to act for must not leave a card
