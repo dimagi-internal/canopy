@@ -153,12 +153,20 @@ def gog_data_dir(gog_home: str) -> str:
 
 def gog_client_credentials_paths(gog_home: str, client: str) -> list[str]:
     """Every path gog reads `credentials-<client>.json` from for this home, the data dir
-    first: the data dir (gog >= 0.40), the home itself (the legacy/flat copy older gog reads,
-    and gog >= 0.40 still does), and `<home>/data`. Nothing outside the home's own tree."""
+    first. Under a $GOG_HOME root that is `<root>/data` and `<root>/config` only; otherwise
+    the data dir, the home itself (the config dir — the legacy copy gog still reads) and
+    `<home>/data`. Nothing outside the home's own tree."""
     name = f"credentials-{client}.json"
     home = os.path.normpath(os.path.expanduser(gog_home))
+    if (os.environ.get("GOG_HOME") or "").strip() and os.path.basename(home) != "config":
+        # A $GOG_HOME root: gog >= 0.40 reads <root>/data and the legacy <root>/config —
+        # never the root itself. The old bootstrap wrote the root, and counting that copy
+        # skipped the real write all over again (cloud-ec2-2, 2026-10-26, after #1071).
+        dirs = (os.path.join(home, "data"), os.path.join(home, "config"))
+    else:
+        dirs = (gog_data_dir(home), home, os.path.join(home, "data"))
     out: list[str] = []
-    for d in (gog_data_dir(home), home, os.path.join(home, "data")):
+    for d in dirs:
         path = os.path.join(d, name)
         if path not in out:
             out.append(path)
