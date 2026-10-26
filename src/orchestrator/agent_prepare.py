@@ -205,6 +205,11 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         web_gog_token=((body.get("values") or {}).get("gog-token")) or None)
 
 
+#: Where a runner hands `canopy agent prepare --runner` the GitHub token of the turn it
+#: prepares the agent in (canopy-web's runner/ec2/cloud_runner.py::prepare_agent).
+TURN_GITHUB_TOKEN_ENV = "CANOPY_TURN_GITHUB_TOKEN"
+
+
 @dataclass
 class RunnerReport(AgentReport):
     """AgentReport plus the readiness facts canopy-web stores (AgentBootstrapReport).
@@ -278,6 +283,11 @@ class RunnerPreparer(Bootstrapper):
         #: Secrets off disk (module doc): resolve and check, write no value to a file.
         self.no_secret_files = secrets_off_disk() if no_secret_files is None else no_secret_files
         self.agent_root = Path(agent_root)
+        # The agent's GitHub token for THIS turn, when a runner prepares an agent inside
+        # one (canopy-web returns it from credentials/resolve no longer: it reaches a box
+        # only per turn). Taken out of the environment so no op/setup child inherits it;
+        # only `_git` uses it.
+        self._turn_github_token = os.environ.pop(TURN_GITHUB_TOKEN_ENV, "").strip()
         self.plugin_deps_root = Path(plugin_deps_root or
                                      Path.home() / ".claude" / "plugins" / "agent-deps")
         self.runner_name = runner_name or os.uname().nodename
@@ -354,7 +364,7 @@ class RunnerPreparer(Bootstrapper):
 
     # ── runner-only steps ────────────────────────────────────────────────────
     def _git(self, args: list[str], github_token: str, timeout: int = 300):
-        env = {**os.environ, "GH_TOKEN": github_token}
+        env = {**os.environ, "GH_TOKEN": github_token or self._turn_github_token}
         return self.run(["git", "-c", "credential.https://github.com.helper=",
                          "-c", f"credential.https://github.com.helper={GIT_HELPER}", *args],
                         capture_output=True, text=True, timeout=timeout, env=env)

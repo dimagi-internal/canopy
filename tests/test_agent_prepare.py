@@ -16,6 +16,7 @@ moving the logic here (2026-10-15, agent-setup-lifecycle.md phase 2) keeps all o
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -617,3 +618,16 @@ def test_a_workspace_vault_client_is_used_before_1password():
     assert p.client_from_vault("ace", "canopy-web") == '{"installed": {}}'
     assert p.client_from_vault("ace", "canopy") is None
     assert p.client_from_vault("ace", "someone-elses-client") is None
+
+
+def test_with_no_token_from_resolve_git_uses_the_turns_gh_token(tmp_path, monkeypatch):
+    """canopy-web stopped returning the agent's GitHub token from credentials/resolve;
+    a runner preparing an agent in a turn hands over that turn's token, which only git
+    gets (it leaves the environment, so no other child inherits it)."""
+    monkeypatch.setenv(ap.TURN_GITHUB_TOKEN_ENV, "ghp_TURN")
+    box = Box(tmp_path)
+    _prep(tmp_path, box, creds=_creds(github_token="")).prepare("ace", credentials_only=False)
+    git = box.ran(["git"])
+    assert git and all(c[2] == "ghp_TURN" for c in git)
+    assert all(c[2] is None for c in box.calls if c[0][0] != "git")
+    assert ap.TURN_GITHUB_TOKEN_ENV not in os.environ
