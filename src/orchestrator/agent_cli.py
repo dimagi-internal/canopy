@@ -475,14 +475,14 @@ def delegated_chrome_sales_home(slug: str) -> Path:
 @click.option("--slug", envvar="CANOPY_AGENT", required=True,
               help="Agent slug. Default: $CANOPY_AGENT.")
 def agent_stage_delegated(slug):
-    """Stage the credentials this agent BORROWS onto this machine.
+    """Stage the Salesforce identity this agent uses onto this machine.
 
-    Today: the Salesforce identity lent to it (canopy-web#1291 — agents act in
-    Salesforce with delegated access to Eva's credential), written to
-    ~/.canopy/delegated/<slug>/chrome-sales/.sf-creds.json (0600). When canopy-web
-    says it borrows none, a stale file is REMOVED: a withdrawn loan must stop
-    acting here too. The laptop twin of the cloud runner's `_stage_salesforce`;
-    same route (`/credentials/resolve`, operator-authorized), same path.
+    Agents act in Salesforce as Eva's own login, held in a workspace vault attached
+    to each agent that uses it: it arrives among the agent's resolved values as
+    `salesforce` (opened here with this device's key) and is written to
+    ~/.canopy/delegated/<slug>/chrome-sales/.sf-creds.json (0600). With none, a stale
+    file is REMOVED: a vault detached from the agent must stop acting here too. The
+    laptop twin of the cloud runner's `_stage_salesforce`; same path.
 
     Prints one line saying what it did; never the credential.
     """
@@ -505,11 +505,11 @@ def agent_stage_delegated(slug):
             f"could not resolve {slug}'s delegated credentials: {str(e).splitlines()[0][:300]}")
     home = delegated_chrome_sales_home(slug)
     target = home / ".sf-creds.json"
-    creds = str(body.get("salesforce_creds") or "")
+    creds = str((body.get("values") or {}).get("salesforce") or "")
     if not creds:
         existed = target.exists()
         target.unlink(missing_ok=True)
-        click.echo(f"salesforce: {slug} borrows no Salesforce identity"
+        click.echo(f"salesforce: {slug} has no Salesforce identity in its vaults"
                    + (" — removed the stale staged copy" if existed else ""))
         return
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -518,7 +518,7 @@ def agent_stage_delegated(slug):
     with os.fdopen(fd, "w") as fh:
         fh.write(creds)
     os.replace(tmp, target)
-    click.echo(f"salesforce: staged {slug}'s borrowed Salesforce identity at {target}")
+    click.echo(f"salesforce: staged {slug}'s Salesforce identity at {target}")
 
 
 @agent.command("env")

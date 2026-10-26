@@ -1,8 +1,8 @@
-"""`canopy agent stage-delegated`: a laptop stages what an agent BORROWS (canopy-web#1291).
+"""`canopy agent stage-delegated`: a laptop stages the Salesforce identity an agent uses.
 
-Pinned: the borrowed Salesforce credential lands at the path chrome-sales reads in
-agent sessions (0600); a withdrawn loan removes the staged copy; the credential is
-never printed.
+Pinned: the agent's `salesforce` vault value (a workspace vault attached to it holds Eva's
+login) lands at the path chrome-sales reads in agent sessions (0600); none removes the
+staged copy; the credential is never printed.
 """
 import json
 import stat
@@ -16,7 +16,7 @@ CREDS = json.dumps({"clientId": "PlatformCLI", "refreshToken": "SECRET-r1", "ins
 
 def _run(monkeypatch, tmp_path, creds):
     monkeypatch.setattr(agent_cli.Path, "home", lambda: tmp_path)
-    monkeypatch.setattr(canopy_web, "call", lambda *a, **k: {"salesforce_creds": creds})
+    monkeypatch.setattr(canopy_web, "call", lambda *a, **k: {"values": {"salesforce": creds} if creds else {}})
     monkeypatch.setattr("orchestrator.agent_bootstrap._operator_token", lambda: "pat")
     return CliRunner().invoke(agent_cli.agent, ["stage-delegated", "--slug", "hal"])
 

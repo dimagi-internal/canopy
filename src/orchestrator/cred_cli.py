@@ -729,8 +729,8 @@ def runner_env_bundle(slug: str, *, agent_root: Path, base_url: str = "", token:
     """({NAME: value}, backend) as a RUNNER resolves them for one turn — the same
     credentials `canopy agent prepare --runner` uses (canopy-web `/credentials/resolve` with
     the runner's token; `op inject` of the clone's .env.tpl to a pipe with the agent's own
-    key), held in memory — plus the resolve's top-level `op_sa_token` / `op_vault` /
-    `salesforce_creds`, each only when it returned one (`agent_prepare.RESOLVE_EXTRAS`), from
+    key), held in memory — plus the resolve's top-level `op_sa_token` / `op_vault` / `delegated`,
+    each only when it returned one (`agent_prepare.RESOLVE_EXTRAS`), from
     the same resolve call (device proof and zero-knowledge unwrap included)."""
     from orchestrator.agent_prepare import RunnerPreparer
     base = base_url or os.environ.get("CANOPY_BASE_URL", "").strip() or \
@@ -1180,7 +1180,7 @@ def check_cmd(agent, refresh, as_json):
                    "Prints the path.")
 @click.option("--print-json", "print_json", is_flag=True,
               help="With --runner: resolve in memory and print {agent, source, values} — plus "
-                   "op_sa_token / op_vault / salesforce_creds when the resolve returned them — "
+                   "op_sa_token / op_vault / delegated when the resolve returned them — "
                    "as JSON on stdout, for a runner's in-memory cache. Writes nothing.")
 @click.option("--runner", "runner_mode", is_flag=True,
               help="Resolve as a RUNNER (its token, CANOPY_TOKEN; the clone under "
