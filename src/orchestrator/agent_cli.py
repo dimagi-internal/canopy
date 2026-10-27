@@ -1912,6 +1912,13 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
     with no memory of the last one; to follow up on one, use
     `canopy agent reply <turn-id> --prompt ...` with the turn id this prints.
 
+    Already holding the context and the repo for the work? Do it yourself in this
+    session. Dispatch hands it to a fresh session that must rebuild that context from
+    your brief, and leaves the person tracking another session (two now share the
+    files). Dispatch only when that is cleaner: work for ANOTHER agent's repo or
+    mandate, a different box/identity, or a genuinely parallel job that should not
+    block this conversation (agent-core/turn.md § Do it yourself or dispatch).
+
     The one-shot counterpart to a schedule: schedules are for recurring work, this is
     "go do this now". The runner claims the turn and spawns a visible emdash session
     you can watch and interrupt.
