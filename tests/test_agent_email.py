@@ -1692,6 +1692,28 @@ def test_unseen_quoted_surfaces_an_off_list_message_the_mailbox_never_received()
     assert "could be a winner" in out
 
 
+def test_unseen_quoted_matches_the_agents_own_MARKDOWN_body_against_its_rendered_quote():
+    """canopy#1085. The commonest thread there is: the agent sends, a person replies. The
+    agent's stored body is the markdown it sent; the reply quotes the RENDERED mail, where
+    `[text](url)` became `text <url>` and `**bold**` became `*bold*`. Matching on raw
+    words reported the agent's own message as mail it was never sent."""
+    sibling = (
+        "Hi Jonathan, Braxton,\n\nThe doc is here: [Nova × ACE — build efficiency audit "
+        "(Oct 2026)](https://docs.google.com/document/d/1zsAv/edit). Braxton, it's written "
+        "so you can paste the whole thing into an AI session.\n\n**What I audited:** every "
+        "ACE session from the last 120 days."
+    )
+    tail = (
+        "On Sat, Oct 17, 2026 at 7:44 PM <hal@dimagi-ai.com> wrote:\n"
+        "> Hi Jonathan, Braxton,\n>\n"
+        "> The doc is here: Nova × ACE — build efficiency audit (Oct 2026)\n"
+        "> <https://docs.google.com/document/d/1zsAv/edit>.\n"
+        "> Braxton, it's written so you can paste the whole thing into an AI session.\n>\n"
+        "> *What I audited:* every ACE session from the last 120 days.\n"
+    )
+    assert unseen_quoted(tail, [sibling]) == ""
+
+
 def test_unseen_quoted_ignores_a_signature_sized_fragment():
     """Short blocks are signatures and stray lines, not messages. Surfacing them would
     bury the one block that matters."""

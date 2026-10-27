@@ -1513,9 +1513,21 @@ def _unquote(text: str) -> str:
     return "\n".join(out)
 
 
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)\s]*\)")
+_URL = re.compile(r"<?https?://[^\s>]+>?")
+_MD_EMPHASIS = re.compile(r"[*_`]")
+
+
 def _normalize_for_match(text: str) -> str:
     """Collapse all whitespace — quoting re-wraps lines, so newline placement cannot be
-    part of the comparison. Lowercased; punctuation kept (it is signal, not noise)."""
+    part of the comparison. Lowercased; punctuation kept (it is signal, not noise).
+
+    Markup is NOT signal: an agent's stored body is the markdown it sent, and a reply
+    quotes the rendered mail — `[text](url)` arrives as `text <url>`, `**bold**` as
+    `*bold*`. So link syntax, URLs and emphasis markers go on both sides (canopy#1085)."""
+    text = _MD_LINK.sub(r"\1", text)
+    text = _URL.sub(" ", text)
+    text = _MD_EMPHASIS.sub("", text)
     return " ".join(text.split()).lower()
 
 
