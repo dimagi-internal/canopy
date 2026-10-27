@@ -88,6 +88,16 @@ def test_create_agent_stamps_auto_bump(tmp_path):
     assert ".github/workflows/auto-version-bump.yml" in names
 
 
+def test_auto_bump_workflow_stages_the_directory(tmp_path):
+    """Naming marketplace.json in `git add` failed every push for agents without one
+    (sift); stage `.claude-plugin/` so the commit works either way."""
+    root = tmp_path / "echo"
+    create_agent(_spec(), root)
+    wf = (root / ".github" / "workflows" / "auto-version-bump.yml").read_text()
+    assert "git add .claude-plugin/\n" in wf
+    assert "marketplace.json" not in wf.split("git add", 1)[1].splitlines()[0]
+
+
 def test_bump_script_bumps_all_version_fields(tmp_path):
     """The stamped bump script advances plugin.json + both marketplace.json fields."""
     root = tmp_path / "echo"

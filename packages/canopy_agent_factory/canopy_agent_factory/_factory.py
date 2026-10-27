@@ -865,7 +865,9 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .claude-plugin/plugin.json .claude-plugin/marketplace.json
+          # Stage the directory, not named files: an agent without marketplace.json
+          # would fail `git add` (exit 128) on every push. The bump script skips it too.
+          git add .claude-plugin/
           git commit -m "chore: auto-bump plugin version [skip bump]"
           git push origin HEAD:main
 '''
