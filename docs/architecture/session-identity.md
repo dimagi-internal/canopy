@@ -239,7 +239,7 @@ text=True)`; non-zero → return the stderr as the tool's error text.
 - `GET /api/agents/{slug}/credentials/access` → `{agent, credential_source, may_resolve,
   via: "runner"|"admin"|null, reason}` — no values.
 - `GET /api/agents/{slug}/credentials/resolve` (bearer) → `{values, op_vault, op_sa_token,
-  shared_op_vault, shared_op_sa_token, github_token, salesforce_creds, mailbox}` — allowed for
+  github_token, salesforce_creds, mailbox}` — allowed for
   runner pairs and agent owners/admins. Every canopy caller goes through one client,
   `orchestrator/cred_resolve.py`, which adds `?refs=` when it wants a subset (re-asking once
   without it if the server dropped a ref, so an old server and an undeclared ref both behave as
