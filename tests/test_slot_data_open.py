@@ -57,9 +57,16 @@ def test_a_value_sealed_to_another_device_does_not_open():
                                     ecdh=me)
 
 
-def test_an_older_servers_plaintext_secret_passes_through_without_a_device_key():
+def test_a_plaintext_secret_is_refused_never_passed_through():
     data = {"public": {"phone": "+1"}, "secret": {"pin": PIN}}
-    assert cred_resolve.open_slot_data(data, capability="", slot="") == data
+    with pytest.raises(cred_resolve.ZkUnlockError, match="in clear") as exc:
+        cred_resolve.open_slot_data(data, capability="", slot="")
+    assert PIN not in str(exc.value)
+
+
+def test_public_only_slot_data_needs_no_device_key():
+    data = {"public": {"phone": "+1"}}
+    assert cred_resolve.open_slot_data(data, capability="", slot="") == {"public": {"phone": "+1"}, "secret": {}}
 
 
 def test_the_cli_reads_a_lease_on_stdin_and_prints_the_opened_data(monkeypatch):

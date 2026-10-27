@@ -18,6 +18,7 @@ from click.testing import CliRunner
 
 from orchestrator import agent_prepare as ap
 from orchestrator import cred_cli
+from tests import sealed_resolve
 from tests.test_agent_prepare import AGENT_KEY, Box, _creds, _prep, _repo
 
 
@@ -277,8 +278,11 @@ def test_the_transient_root_is_created_0700(tmp_path, turn_root):
 # ── --print-json extras: the resolve's own op_sa_token / op_vault ──
 
 def _resolve_transport(body):
-    """canopy-web: /runtime, /credentials/resolve (answering `body`), /credentials/access."""
+    """canopy-web: /runtime, /credentials/resolve (answering `body`, its values sealed to
+    this machine as canopy-web sends them), /credentials/access."""
     calls = []
+    body = {**body, "values": sealed_resolve.sealed_values(body.get("values") or {}), "zk": True,
+            "agent_id": sealed_resolve.AGENT_ID}
 
     def transport(method, url, headers, data):
         calls.append(url)
@@ -300,6 +304,7 @@ def _resolve_transport(body):
 def test_print_json_passes_through_the_resolves_extras(tmp_path, turn_root, monkeypatch,
                                                        body, want):
     from orchestrator import agent_prepare
+    sealed_resolve.install(monkeypatch)
     transport, calls = _resolve_transport(body)
     real = agent_prepare.fetch_runner_credentials
     monkeypatch.setattr(agent_prepare, "fetch_runner_credentials",
@@ -330,6 +335,7 @@ def test_print_json_extras_still_need_runner(fake_values):
 
 def test_out_never_writes_the_extras(tmp_path, turn_root, monkeypatch):
     from orchestrator import agent_prepare
+    sealed_resolve.install(monkeypatch)
     transport, _ = _resolve_transport({"values": {"CANOPY_WEB_PAT": "w"},
                                        "op_sa_token": "ops_K"})
     real = agent_prepare.fetch_runner_credentials

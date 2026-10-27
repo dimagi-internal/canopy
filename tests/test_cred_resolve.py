@@ -9,8 +9,14 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from orchestrator import canopy_web, cred_resolve, device_key
+from tests import sealed_resolve
 
 SECRET = "value-never-printed"
+
+
+@pytest.fixture(autouse=True)
+def _this_machine_opens_them(monkeypatch):
+    sealed_resolve.install(monkeypatch)
 
 
 class FakeServer:
@@ -30,7 +36,9 @@ class FakeServer:
         if self.mode == "new" and "refs" in q:
             want = set(q["refs"][0].split(","))
             values = {k: v for k, v in values.items() if k in want and k in self.declared}
-        return 200, json.dumps({"values": values, "op_vault": "Agent-Eva", "op_sa_token": ""})
+        return 200, json.dumps({"values": sealed_resolve.sealed_values(values), "zk": True,
+                                "agent_id": sealed_resolve.AGENT_ID, "op_vault": "Agent-Eva",
+                                "op_sa_token": ""})
 
 
 def _resolve(server, **kw):

@@ -19,19 +19,20 @@ in one place:
 A 401 ``device_proof_required`` is turned into an error that says how to get this
 machine approved. Nothing here prints a value.
 
-**Zero-knowledge agents (canopy-web#1550).** For an agent with ZK on, canopy-web holds only
+**Zero-knowledge only (canopy-web#1550).** canopy-web holds an agent's values only as
 ciphertext and answers ``{zk: true, kv, values: {name: "zk1:…"}, wrap: {alg: "ecdh-es", …}}``
 — the agent's vault key wrapped to THIS device's ECDH key. :func:`resolve` unwraps it here
 (the ECDH key hands back Z; ``device_info(agent_id, kv, ecdh_jkt)`` binds the wrap), decrypts
-every value, and returns the body with plaintext ``values`` — so ``canopy cred``,
-``agent prepare --runner``, ``cred exec`` and ``cred sync`` handle a ZK agent exactly like a
-custodial one. ``agent_id`` is canopy-web's Agent primary key: the resolve body's
+every value, and returns the body with plaintext ``values`` for ``canopy cred``,
+``agent prepare --runner``, ``cred exec`` and ``cred sync``. A ``zks1:`` value (sealed to
+this device's ECDH key one reader at a time, before a vault-key holder settled it) opens
+here too (:func:`open_zk`). canopy-web never sends a value in clear: one that arrives so is
+refused, never handed on. ``agent_id`` is canopy-web's Agent primary key: the resolve body's
 ``agent_id`` when the server sends it, else ``id`` from ``GET /api/agents/<slug>/``. A 409
 ``zk_wrap_missing`` (this device was never granted the current key version) becomes an error
-that says to ask an admin to grant this device. A body without ``zk`` takes the old path,
-untouched — unless a value in it is ``zks1:`` (sealed by canopy-web to this device's ECDH
-key, before a vault-key holder settled it), which opens here too (:func:`open_zk`). Pass
-``raw=True`` to get the stored ciphertext instead (``canopy vault zk settle``).
+that says to ask an admin to grant this device. A legacy 1Password agent's answer carries no
+values (only ``op_vault``/``op_sa_token``) and passes through untouched. Pass ``raw=True``
+to get the stored ciphertext instead (``canopy vault zk settle``).
 """
 from __future__ import annotations
 
@@ -149,7 +150,7 @@ def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[s
                                    headers=_headers(path, base_url, turn, purpose)) or {}
         except canopy_web.CanopyError as e:
             raise _explain_401(slug, e) from None
-        if not raw and isinstance(body, dict) and (body.get("zk") or has_sealed(body)):
+        if not raw and needs_opening(body):
             if "id" not in agent_ids:
                 agent_ids["id"] = zk_agent_id(slug, body, token=token, base_url=base_url,
                                               transport=transport)
@@ -304,18 +305,15 @@ def open_sealed_for_device(stored: str, *, agent_id: str, name: str, ecdh=None) 
                             "device") from None
 
 
-def has_sealed(body) -> bool:
-    """Does this answer carry anything only this device can open — a sealed value, or a
-    credential a person delegated to the agent? The latter comes whatever the vault's
-    mode: a custodial agent's delegated GitHub token is sealed all the same, and left
-    unopened it reached git as the text of its envelope."""
-    from orchestrator import vault_zk as zk
+def needs_opening(body) -> bool:
+    """Does this answer carry anything to open on this device — any value of the agent's
+    own (every one is ciphertext), or a credential a person delegated to it? The latter
+    comes whatever the vault holds, and left unopened it reached git as the text of its
+    envelope. Only a legacy 1Password agent's answer, with neither, needs no device key."""
     if not isinstance(body, dict):
         return False
-    if body.get("delegated"):
-        return True
     values = body.get("values")
-    return isinstance(values, dict) and any(zk.is_sealed_value(v) for v in values.values())
+    return bool(body.get("zk") or body.get("delegated") or (isinstance(values, dict) and values))
 
 
 def merge_vault_layers(slug: str, body: dict, *, ecdh=None) -> dict:
@@ -363,8 +361,8 @@ def open_zk(slug: str, body: dict, *, agent_id: str, ecdh=None) -> dict:
     """A ZK resolve answer → the same body with plaintext ``values`` (``wrap`` dropped).
     ``zk1:`` values open under the vault key (unwrapped from this device's wrap);
     ``zks1:`` values — sealed by canopy-web to named devices, before anyone settled them
-    under the vault key — open with this device's own ECDH key. A custodial answer that
-    carries a sealed value is opened the same way. Never logs or returns a key."""
+    under the vault key — open with this device's own ECDH key. A value in clear is
+    refused: canopy-web never sends one. Never logs or returns a key."""
     from orchestrator import vault_zk as zk
     kv = body.get("kv")
     wrap = body.get("wrap")
@@ -393,7 +391,8 @@ def open_zk(slug: str, body: dict, *, agent_id: str, ecdh=None) -> dict:
             raise ZkUnlockError(f"'{slug}': {name} is zero-knowledge but canopy-web sent no "
                                 "wrap of the vault key for this device")
         else:
-            values[name] = stored
+            raise ZkUnlockError(f"'{slug}': {name} came in clear — canopy-web holds no value it "
+                                "can read, so this answer is not to be trusted")
     vk = b""  # noqa: F841 — drop our only reference
     out = {k: v for k, v in body.items() if k != "wrap"}
     out["values"] = values
@@ -435,17 +434,19 @@ def open_slot_data(slot_data: dict, *, capability: str, slot: str, ecdh=None) ->
 
     canopy-web delivers the secret half SEALED (``sealed: {key: "zks1:…"}`` plus the
     ``agent_id`` it is bound to) to the agent's readers; this opens each value with this
-    device's ECDH key. An older canopy-web that still sends ``secret`` in clear is passed
-    through as is, so a caller works across the rollout. Raises ZkUnlockError (never
-    carrying a value) when a sealed value is not for this device."""
+    device's ECDH key. canopy-web never sends ``secret`` in clear; one that does is
+    refused. Raises ZkUnlockError (never carrying a value) when a sealed value is not for
+    this device."""
     if not isinstance(slot_data, dict):
         raise ZkUnlockError("slot_data is not an object")
     public = slot_data.get("public") or {}
-    secret = slot_data.get("secret") or {}
     sealed = slot_data.get("sealed") or {}
-    if not all(isinstance(m, dict) for m in (public, secret, sealed)):
-        raise ZkUnlockError("slot_data's public, secret and sealed must be maps")
-    secret = dict(secret)
+    if not all(isinstance(m, dict) for m in (public, sealed)):
+        raise ZkUnlockError("slot_data's public and sealed must be maps")
+    if slot_data.get("secret"):
+        raise ZkUnlockError("slot_data carries secret values in clear — canopy-web holds them only "
+                            "sealed, so this answer is not to be trusted")
+    secret: dict = {}
     if sealed:
         agent_id = str(slot_data.get("agent_id") or "")
         if not agent_id or not capability or not slot:

@@ -5,8 +5,8 @@ This command acts as this machine's device, which is a member of the vault throu
 device wrap (the vault key VK wrapped to its ECDH key — `device_key.load_ecdh`):
 
     canopy vault zk status --agent X              state, wraps, pending targets
-    canopy vault zk enable --agent X [--yes]      custodial -> zero-knowledge (prints the
-                                                  recovery code ONCE)
+    canopy vault zk enable --agent X [--yes]      make the vault key (prints the recovery
+                                                  code ONCE)
     canopy vault zk set    --agent X NAME         one value, read from stdin / a hidden prompt
     canopy vault zk set    --agent X NAME --sealed [--request ID] [--yes]
                                                   seal it (zks1) to the recipients a PINNED
@@ -360,7 +360,7 @@ def run_enable(v: ZkVault, *, confirm: Optional[Confirm] = None) -> ZkResult:
     res.notes += notes
     targets = _dedupe(targets + pending)
     if v.vault_id:
-        values = {}  # a workspace vault starts empty: nothing custodial to carry over
+        values = {}  # a workspace vault starts empty: nothing sealed to carry over
     else:
         try:
             body = cred_resolve.resolve(v.slug, token=v.token, transport=v.transport)

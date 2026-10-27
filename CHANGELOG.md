@@ -9,6 +9,21 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.804] - 2026-10-27
+
+### Added
+- **The keeper re-seals pool slots' secrets.** `canopy vault zk keep` also reads
+  `GET …/vault-keeper/slot-secrets` (a test worker's PIN and the like, sealed to the agent's
+  readers) and re-seals each one it holds for a reader who arrived later: an endorsed machine,
+  or a vault member under the same pin-on-first-sight rule as the vault key. A canopy-web
+  without the route is no work, never a failed pass. `keep_delegated` is now `keep_sealed`.
+
+### Removed
+- **Plaintext from canopy-web is no longer accepted.** canopy-web holds no agent value, slot
+  secret or chat secret it can read, so the paths that took one in clear are gone: a resolve
+  value that is neither `zk1` nor `zks1` is refused (it was passed through), `open-slot-data`
+  refuses a `secret` map in clear, and `canopy secret` refuses an answer with no sealed value.
+
 ## [0.2.784] - 2026-10-24
 
 ### Removed

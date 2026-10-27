@@ -22,10 +22,17 @@ file, so a brand-new cloud box knows every key the fleet already trusted; where 
 and this box's file disagree about a person, that person waits. People this box pins are
 written back over the version it read (a stale write is retried on the next pass).
 
-**Delegated credentials** (a person's own token given to an agent, canopy-web
-``accounts``) are sealed to the machines that run the agent, not under the vault key. This
-box re-seals one it holds for a waiting machine under the same machine rule — an
-endorsement of its exact key by a person it trusts — and to nobody else (``keep_delegated``).
+**Sealed values** are not under the vault key: each is sealed (``zks1``) to its readers one
+by one, so a reader who arrives later needs a holder to re-seal it (``keep_sealed``):
+
+* a **delegated credential** (a person's own token given to an agent, canopy-web
+  ``accounts``), sealed to the machines that run the agent;
+* a **pool slot's secret** (a test worker's PIN, canopy-web ``capabilities.slot_data``),
+  sealed to the agent's readers — its machines and its vault members.
+
+This box re-seals one it holds for a waiting machine under the same machine rule — an
+endorsement of its exact key by a person it trusts — and for a waiting person under the
+person rule above, and to nobody else.
 
 A target that fails is left waiting and named in the output; nothing is ever wrapped to an
 unverified key "to make it work". canopy-web accepts a keeper's wraps only for targets with
@@ -221,13 +228,14 @@ def keep_one(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
     return res
 
 
-def keep_delegated(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
-    """Re-seal one credential a person delegated to an agent (canopy-web
-    ``accounts.keeper_work``), which this box holds, for the machines that run the agent
-    and wait for it. It goes to the readers it is sealed to now, and to each waiting
-    machine this box trusts (an endorsement of its exact key, as for the vault key) —
-    never to anyone else, and never under the vault key. canopy-web refuses any other
-    recipient too (``accounts.reseal``)."""
+def keep_sealed(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
+    """Re-seal one sealed value this box holds — a credential a person delegated to an
+    agent (canopy-web ``accounts.keeper_work``) or a pool slot's secret
+    (``slot_data.keeper_work``) — for the readers that wait for it. It goes to the readers
+    it is sealed to now, to each waiting machine this box trusts (an endorsement of its
+    exact key, as for the vault key) and to each waiting person it trusts (pinned, or on
+    first sight) — never to anyone else, and never under the vault key. canopy-web refuses
+    any other recipient too (``accounts.reseal``, ``slot_data.reseal``)."""
     agent_id, name = str(work["agent_id"]), str(work["name"])
     res = KeepResult(f"{work.get('agent') or ''} ({name})")
     stored = str(work.get("value_zk") or "")
@@ -265,6 +273,10 @@ def keep_delegated(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
                 res.granted.append(f"{t.label or 'machine'} — ECDH key {thumb[:16]}…")
             else:
                 res.skipped.append(f"{t.label or target}: not endorsed by a person this box trusts")
+        elif kind == "member" and target in waiting:
+            if _trust_person(pins, target, "", thumb, res):
+                to.append((kind, target, jwk))
+                res.granted.append(f"person {target} — vault key {thumb[:16]}…")
     if not res.granted:
         return res
     value = zk.seal_value(agent_id, name, body["kv"], plaintext, to)
@@ -275,6 +287,16 @@ def keep_delegated(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
         res.granted = []
         res.error = f"canopy-web refused the re-seal: {str(e)[:300]}"
     return res
+
+
+def _slot_secrets(call, path: str) -> list:
+    """Pool slots' secrets this box holds that a reader waits for. A canopy-web without
+    the route (404) or a failed read is no work this pass, never a failed keeper."""
+    try:
+        body = call("GET", f"{path}/slot-secrets") or {}
+    except canopy_web.CanopyError:
+        return []
+    return [w for w in body.get("slot_secrets") or [] if isinstance(w, dict)]
 
 
 def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
@@ -297,9 +319,10 @@ def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
     path = f"/api/harness/runners/{runner_id}/vault-keeper"
     body = call("GET", path) or {}
     work = body.get("agents") or []
-    # Credentials people delegated to an agent, which this box holds and a machine waits for.
-    delegated = body.get("delegated") or []
-    if not work and not delegated:
+    # Values sealed to readers one by one, which this box holds and a reader waits for:
+    # credentials people delegated to an agent, and pool slots' secrets.
+    sealed = list(body.get("delegated") or []) + _slot_secrets(call, path)
+    if not work and not sealed:
         return []
     if ecdh is None:
         try:
@@ -312,8 +335,8 @@ def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
     out = []
     for w in work:
         out.append(keep_one({**w, "_base": path}, pins=pins, call=call, ecdh=ecdh))
-    for d in delegated:
-        out.append(keep_delegated(d, pins=pins, call=call, ecdh=ecdh))
+    for d in sealed:
+        out.append(keep_sealed(d, pins=pins, call=call, ecdh=ecdh))
     save_pins(pins, pins_file)
     return out
 

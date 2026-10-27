@@ -212,7 +212,7 @@ def test_the_one_resolve_client_sends_the_aws_proof(on_ec2):
 
     def server(method, url, headers, data):
         seen.append(dict(headers))
-        return 200, json.dumps({"values": {"A": "x"}})
+        return 200, json.dumps({"values": {}})
 
     cred_resolve.resolve("eva", token="pat", base_url="https://canopy.example", refs=["A"],
                          turn_id="t-1", transport=server)
