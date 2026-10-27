@@ -263,3 +263,58 @@ def test_default_label_names_macos_not_its_kernel(monkeypatch):
     assert dk.default_label(lambda: "Darwin") == "DIM-SA-A126 (macOS)"
     assert dk.default_label(lambda: "Windows") == "DIM-SA-A126 (Windows)"
     assert dk.default_label(lambda: "") == "DIM-SA-A126 (unknown)"
+
+
+# --- Windows: the software key sealed with DPAPI (canopy-web#2203) -----------------
+
+class _FakeDpapi:
+    """Stands in for CryptProtectData/CryptUnprotectData: a reversible, non-PEM blob."""
+    TAG = b"DPAPI:"
+
+    def protect(self, data: bytes) -> bytes:
+        return self.TAG + data[::-1]
+
+    def unprotect(self, blob: bytes) -> bytes:
+        if not blob.startswith(self.TAG):
+            raise OSError("CryptUnprotectData failed")
+        return blob[len(self.TAG):][::-1]
+
+
+def _pem() -> bytes:
+    from cryptography.hazmat.primitives import serialization
+    key = ec.generate_private_key(ec.SECP256R1())
+    return key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                             serialization.NoEncryption())
+
+
+def test_reads_a_software_key_the_windows_runner_sealed(keydir, monkeypatch):
+    """canopy-web's runner seals sw.pem with DPAPI on Windows; `canopy vault` on the same
+    box must still sign with it, or every credential resolve there fails."""
+    monkeypatch.setattr(dk, "_dpapi", lambda: _FakeDpapi())
+    pem = _pem()
+    dk.sw_path().parent.mkdir(parents=True, exist_ok=True)
+    dk.sw_path().write_bytes(_FakeDpapi().protect(pem))
+    assert dk._read_private_pem(dk.sw_path()) == pem
+
+
+def test_a_plain_windows_key_is_sealed_in_place(keydir, monkeypatch):
+    monkeypatch.setattr(dk, "_dpapi", lambda: _FakeDpapi())
+    pem = _pem()
+    dk.sw_path().parent.mkdir(parents=True, exist_ok=True)
+    dk.sw_path().write_bytes(pem)
+    assert dk._read_private_pem(dk.sw_path()) == pem
+    assert dk.sw_path().read_bytes() == _FakeDpapi().protect(pem)
+
+
+def test_new_windows_software_keys_are_sealed(keydir, monkeypatch):
+    monkeypatch.setattr(dk, "_dpapi", lambda: _FakeDpapi())
+    dk._write_private_pem(dk.sw_path(), b"-----BEGIN PRIVATE KEY-----\nx\n")
+    assert dk.sw_path().read_bytes().startswith(_FakeDpapi.TAG)
+
+
+def test_a_sealed_key_off_windows_is_a_clear_error(keydir, monkeypatch):
+    monkeypatch.setattr(dk, "_dpapi", lambda: None)
+    dk.sw_path().parent.mkdir(parents=True, exist_ok=True)
+    dk.sw_path().write_bytes(b"\x01\x00\x00\x00sealed")
+    with pytest.raises(dk.DeviceKeyError, match="DPAPI"):
+        dk._read_private_pem(dk.sw_path())
