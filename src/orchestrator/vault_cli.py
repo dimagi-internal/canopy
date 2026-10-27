@@ -14,7 +14,7 @@ changes an agent that has not been switched.
     canopy vault binding --agent X on|off                    require an approved device key
     canopy vault zk status|enable|set|grant|rotate --agent X zero-knowledge (vault_zk_cli.py)
     canopy vault open-slot-data  < lease.json               a pool lease's sealed slot secrets
-    canopy vault import --agent X --zk                       ... encrypted here
+    canopy vault import --agent X                            ... encrypted here (never plaintext)
 
 WHAT IS AN AGENT'S SET OF REFS. Every `NAME=…` line of the agent's `.env.tpl` (the one
 source of truth for what `~/.X/.env` holds): an `op://` reference is read from 1Password,
@@ -262,9 +262,11 @@ def run_import(slug: str, *, token: str, op: av.Op, switch: bool = False,
         values[r.name] = val
         res.rows.append(Row(r.name, "read", f"1Password item {r.item}"))
     _copy_gmail_token(agent, op, web, values, res)
-    if values and zk:
-        # Zero-knowledge (canopy-web#1550): encrypted HERE under the vault key this device
-        # unwraps; canopy-web only ever sees zk1: ciphertext.
+    del zk  # every write is encrypted here now; `--zk` is kept so old invocations still parse
+    if values:
+        # Zero-knowledge (canopy-web#1550): encrypted HERE — under the vault key this device
+        # unwraps, or, before the agent has one, sealed to its readers. canopy-web only ever
+        # sees ciphertext, and refuses plaintext (422 sealed_only).
         from orchestrator import vault_zk_cli
         v = zk_vault or vault_zk_cli.ZkVault(slug, token=token, transport=transport)
         try:
@@ -273,10 +275,7 @@ def run_import(slug: str, *, token: str, op: av.Op, switch: bool = False,
             raise VaultCliError(e.message) from None
         res.actions += out.actions
         res.notes += vault_zk_cli.settle_quietly(slug, token=token, transport=transport, vault=v)
-    elif values:
-        web("PUT", f"/api/agents/{slug}/credentials", {"values": values})
-        res.actions.append(f"wrote {len(values)} value(s) to canopy-web "
-                           f"(1Password vault {agent.vault} untouched)")
+        res.notes.append(f"1Password vault {agent.vault} untouched")
     values = {}  # noqa: F841 — drop our only references
     present = credential_status(slug, web)
     missing = [r.name for r in agent.refs if not (present.get(r.name) or {}).get("set")]
@@ -577,8 +576,9 @@ def vault_group():
 @click.option("--switch", "do_switch", is_flag=True,
               help="Then set credential_source=canopy-web — only if every ref is stored.")
 @click.option("--zk", "zk", is_flag=True,
-              help="The agent is zero-knowledge: encrypt each value here under its vault key "
-                   "(this device must hold a wrap) — canopy-web sees only ciphertext.")
+              help="Accepted for old scripts; every value is now encrypted here (under the "
+                   "vault key, or sealed to the agent's readers before it has one) — "
+                   "canopy-web sees only ciphertext.")
 def import_cmd(slug, repo, op_account, do_switch, zk):
     """Copy the agent's declared refs from 1Password (your own `op`) to canopy-web.
 

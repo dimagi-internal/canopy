@@ -749,24 +749,61 @@ def test_request_answers_through_the_request_route(home, monkeypatch):
     assert r.exit_code != 0 and "asks for GITHUB_TOKEN, not OTHER" in r.output
 
 
-class _BornAgent:
-    """A new agent: zero-knowledge, no vault key yet (kv 0)."""
-    vault_id = ""
-    slug = "trellis"
+class _BornAgent(vault_zk_cli.ZkVault):
+    """A new agent: zero-knowledge, no vault key yet (kv 0). Its readers: one approved
+    machine and its owner's vault key, as canopy-web lists them in `pending`."""
 
-    def __init__(self):
+    def __init__(self, *, enabled=True, readers=True):
+        super().__init__("trellis", token="t")
         self.calls = []
+        self.machine = ec.generate_private_key(ec.SECP256R1())
+        self.owner = ec.generate_private_key(ec.SECP256R1())
+        mjwk = zk.jwk(self.machine.public_key())
+        self.machine_jkt = zk.jwk_thumbprint(mjwk)
+        self._pending = [
+            {"kind": "device", "target": "41", "ecdh_jkt": self.machine_jkt, "public_jwk": mjwk,
+             "label": "box · secure-enclave"},
+            {"kind": "member", "target": "7", "public_jwk": zk.jwk(self.owner.public_key()),
+             "label": "owner@example.com"},
+        ] if readers else []
+        self._enabled = enabled
 
-    def state(self):
-        return {"enabled": True, "kv": 0, "wraps": []}
+    def state(self, refresh=False):
+        return {"agent": "trellis", "agent_id": "77", "enabled": self._enabled, "kv": 0, "wraps": [],
+                "pending": self._pending}
 
     def web(self, method, path, body=None):
         self.calls.append((method, path, body))
-        return []
+        return {}
 
 
-def test_set_on_an_agent_with_no_vault_key_is_sealed_by_canopy_web_not_refused():
+def test_set_on_an_agent_with_no_vault_key_seals_here_and_sends_only_ciphertext():
     v = _BornAgent()
     res = vault_zk_cli.run_set(v, {"GOOGLE_PASSWORD": "s3cret"})
-    assert v.calls == [("PUT", "/api/agents/trellis/credentials", {"values": {"GOOGLE_PASSWORD": "s3cret"}})]
-    assert res.kv == 0 and "s3cret" not in vault_zk_cli.render(res)
+    [(method, path, body)] = v.calls
+    assert (method, path, body["kv"]) == ("PUT", "/api/agents/trellis/vault/zk/values", 0)
+    assert "s3cret" not in json.dumps(body) and "s3cret" not in vault_zk_cli.render(res)
+    [value] = body["values"]
+    assert value["name"] == "GOOGLE_PASSWORD" and value["value_zk"].startswith("zks1:")
+    # Each reader opens it with its own key: the machine (bound to its ECDH thumbprint)
+    # and the owner (bound to their user id).
+    assert zk.open_sealed(value["value_zk"], "77", "GOOGLE_PASSWORD", "device", v.machine_jkt,
+                          v.machine) == "s3cret"
+    assert zk.open_sealed(value["value_zk"], "77", "GOOGLE_PASSWORD", "member", "7", v.owner) == "s3cret"
+    assert res.kv == 0
+
+
+def test_a_legacy_agent_that_never_stored_a_value_is_sealed_to_too():
+    v = _BornAgent(enabled=False)
+    vault_zk_cli.run_set(v, {"K": "v"})
+    assert v.calls[0][1] == "/api/agents/trellis/vault/zk/values"
+
+
+def test_set_with_nobody_to_seal_to_or_a_blank_value_sends_nothing():
+    v = _BornAgent(readers=False)
+    with pytest.raises(vault_zk_cli.ZkCliError, match="nobody can read"):
+        vault_zk_cli.run_set(v, {"K": "v"})
+    v = _BornAgent()
+    with pytest.raises(vault_zk_cli.ZkCliError, match="empty value"):
+        vault_zk_cli.run_set(v, {"K": "  "})
+    assert v.calls == []

@@ -424,7 +424,7 @@ def seal_info(agent_id, name, kv, kind: str, target) -> str:
 def seal_value(agent_id, name: str, kv, plaintext: str, recipients: list, *,
                ephemerals: Optional[list] = None, nonces: Optional[list] = None) -> str:
     """Seal one value to ``recipients`` — ``(kind, target, public key or JWK)`` each.
-    canopy-web does this server side; here for parity and the tests."""
+    The CLI seals what it stores before an agent has a vault key (`run_seal_to_readers`)."""
     if not recipients:
         raise ZkError(f"{name}: a sealed value needs at least one recipient")
     entries = []

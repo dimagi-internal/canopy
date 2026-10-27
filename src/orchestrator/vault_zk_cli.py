@@ -384,17 +384,40 @@ def run_enable(v: ZkVault, *, confirm: Optional[Confirm] = None) -> ZkResult:
     return res
 
 
+def run_seal_to_readers(v: ZkVault, values: dict) -> ZkResult:
+    """Store ``values`` on an agent that has no vault key yet (kv 0 — every new agent
+    until a machine is approved for it — or a legacy agent that never stored one): each
+    is sealed HERE (``zks1``) to every reader canopy-web lists as pending, and only the
+    ciphertext is sent. canopy-web takes no plaintext (``PUT …/credentials`` is 422
+    ``sealed_only``). The first holder of the vault key settles them into ``zk1``.
+
+    The readers are the server's list, as for a grant: each key's thumbprint is
+    recomputed here (``target_from_row``), and a key that does not parse is skipped."""
+    blank = sorted(n for n, val in values.items() if not str(val or "").strip())
+    if blank:
+        raise ZkCliError(f"refusing to store an empty value: {', '.join(blank)}")
+    readers, notes = v.pending()
+    if not readers:
+        raise ZkCliError(f"nobody can read '{v.slug}' yet — approve a machine for it, or set up "
+                         "your vault key in canopy-web; nothing was sent")
+    aid = v.agent_id()
+    to = [(t.kind, t.bind, t.public_jwk) for t in readers]
+    payload = {"kv": 0, "values": [{"name": n, "value_zk": zk.seal_value(aid, n, 0, str(val), to)}
+                                   for n, val in sorted(values.items())]}
+    values = {}  # noqa: F841 — drop our only references
+    v.web("PUT", f"{v.base}/values", payload)
+    return ZkResult(v.slug, kv=0, notes=notes,
+                    actions=[f"stored {len(payload['values'])} value(s), sealed here to "
+                             f"{len(readers)} reader(s) (no vault key yet): "
+                             f"{', '.join(sorted(x['name'] for x in payload['values']))}"])
+
+
 def run_set(v: ZkVault, values: dict) -> ZkResult:
-    if not v.state().get("enabled"):
+    st = v.state()
+    if not v.vault_id and (not st.get("enabled") or str(st.get("kv")) == "0"):
+        return run_seal_to_readers(v, values)
+    if not st.get("enabled"):
         raise ZkCliError(f"'{v.slug}' is not zero-knowledge — `canopy vault zk enable` first")
-    if v.state().get("kv") == 0 and not v.vault_id:
-        # Born zero-knowledge, no vault key yet (every new agent until a machine is
-        # approved for it): canopy-web's credentials write seals each value to the
-        # agent's readers as it arrives (canopy-web#1567). Nobody sets a key up first.
-        v.web("PUT", f"/api/agents/{v.slug}/credentials", {"values": values})
-        return ZkResult(v.slug, kv=0, actions=[f"stored {len(values)} value(s), sealed by "
-                                               "canopy-web to its readers (no vault key yet): "
-                                               f"{', '.join(sorted(values))}"])
     vk, kv = v.vk()
     payload = {"kv": kv, "values": v.encrypt(vk, kv, values)}
     vk = b""  # noqa: F841

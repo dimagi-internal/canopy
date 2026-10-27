@@ -21,9 +21,11 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from click.testing import CliRunner
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from orchestrator import agent_vault as av
 from orchestrator import canopy_web, cred_cli, vault_cli
+from orchestrator import vault_zk
 
 SECRETS = {"canopy-pat": "cpat_SECRET_A", "kindora-service-key": "kindora_SECRET_B",
            "gdrive-root-folder": "folder_SECRET_C"}
@@ -119,6 +121,8 @@ class FakeWeb:
         self.stored = dict(stored or {})
         self.sources = sources or {}
         self.calls = []
+        self.reader = ec.generate_private_key(ec.SECP256R1())   # the owner's vault key
+        self.sealed: dict = {}
 
     def __call__(self, method, url, headers, data):
         parts = urlsplit(url)
@@ -135,10 +139,24 @@ class FakeWeb:
                                      "last_read_at": "2026-10-16T01:00:00Z"}
                                     for n in sorted(self.stored)])
         if method == "PUT" and path == f"{base}/credentials":
+            # canopy-web takes no plaintext: what an older CLI would hear.
+            return 422, '{"error":"sealed_only","detail":"seal it where you are"}'
+        if method == "GET" and path == f"{base}/vault/zk":
+            # No vault key yet: values are sealed to the readers it lists.
+            return 200, json.dumps({"agent": "eva", "agent_id": "11", "enabled": True, "kv": 0,
+                                    "wraps": [], "pending": [
+                                        {"kind": "member", "target": "7", "label": "owner",
+                                         "public_jwk": vault_zk.jwk(self.reader.public_key())}]})
+        if method == "PUT" and path == f"{base}/vault/zk/values":
             if not self.is_admin:
                 return 403, '{"detail":"admin only"}'
-            self.stored.update(body["values"])
-            return 200, "[]"
+            assert body["kv"] == 0
+            for v in body["values"]:
+                # What the reader opens; canopy-web itself only ever held the ciphertext.
+                self.sealed[v["name"]] = v["value_zk"]
+                self.stored[v["name"]] = vault_zk.open_sealed(v["value_zk"], "11", v["name"], "member", "7",
+                                                              self.reader)
+            return 200, json.dumps({"kv": 0, "names": [v["name"] for v in body["values"]]})
         if method == "PATCH" and path == f"{base}/credential-source":
             self.source = body["credential_source"]
             return 200, json.dumps({"slug": "eva", "credential_source": self.source})
@@ -226,6 +244,11 @@ def test_import_copies_to_canopy_web_and_leaves_1password_alone(fake_op, repo, w
                           "CANOPY_WEB_PAT": SECRETS["canopy-pat"],
                           "KINDORA_SERVICE_KEY": SECRETS["kindora-service-key"]}
     assert "GOG_TOKEN" not in web.stored
+    # Sealed here to the agent's readers: canopy-web is sent ciphertext only.
+    assert set(web.sealed) == set(web.stored) and all(v.startswith("zks1:") for v in web.sealed.values())
+    sent = json.dumps([c for c in web.calls if c[0] == "PUT"])
+    _no_secret(sent)
+    assert not [c for c in web.calls if c[0] == "PUT" and c[1].endswith("/credentials")]
     assert fake_op.read()["vaults"] == before
     argv = json.dumps(fake_op.read()["argv"])
     _no_secret(argv)                                              # values never in argv

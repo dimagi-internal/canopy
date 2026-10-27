@@ -239,8 +239,8 @@ def vault_store(slug: str, vault=None) -> Store:
     device cannot write to stops the command before Google is touched.
 
     An agent born zero-knowledge has no vault key yet (kv 0) — every new agent until its
-    first machine is approved. `run_set` then writes through canopy-web, which seals each
-    value to the agent's readers as it arrives; nobody sets the vault up by hand first.
+    first machine is approved. `run_set` then seals each value HERE to the agent's readers
+    and sends only the ciphertext; nobody sets the vault up by hand first.
     With a vault key, this device must hold its copy, and the values are encrypted here."""
     from orchestrator import vault_zk_cli as zc
 
