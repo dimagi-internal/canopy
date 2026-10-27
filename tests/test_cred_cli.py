@@ -11,6 +11,7 @@ import pytest
 from click.testing import CliRunner
 
 from orchestrator import cred_cli
+from tests import sealed_resolve
 
 RESOLVED = "resolved-value-never-printed"
 
@@ -31,7 +32,9 @@ def _isolated(monkeypatch, tmp_path):
 
 @pytest.fixture()
 def web(monkeypatch):
-    """Fake canopy-web: /access and /resolve per agent."""
+    """Fake canopy-web: /access and /resolve per agent. A resolve's values go out sealed
+    to this machine, as canopy-web sends them."""
+    sealed_resolve.install(monkeypatch)
     # `vaults` = each agent's recorded Agent.op_vault on canopy-web (a table, not a rule).
     state = {"access": {}, "resolve": {}, "calls": [], "fail": False,
              "vaults": {"ace": "Agent-Ace", "hal": "Agent-Hal"}}
@@ -45,7 +48,9 @@ def web(monkeypatch):
             return state["access"].get(slug, {"agent": slug, "credential_source": "1password",
                                               "may_resolve": False, "via": None, "reason": ""})
         if path.split("?")[0].endswith("/credentials/resolve"):
-            return state["resolve"].get(slug, {"values": {}})
+            body = state["resolve"].get(slug, {"values": {}})
+            return {**body, "values": sealed_resolve.sealed_values(body.get("values") or {}),
+                    "zk": True, "agent_id": sealed_resolve.AGENT_ID}
         if path == f"/api/agents/{slug}/":
             return {"slug": slug, "op_vault": state["vaults"].get(slug, "")}
         raise AssertionError(path)

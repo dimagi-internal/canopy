@@ -135,16 +135,12 @@ def fetch_value(key: str, name: str, *, call=None, ecdh=None) -> str:
 
     canopy-web holds the secret only sealed (``zks1``) to the device keys of the
     machine running the chat, so it comes back sealed (``?sealed=true``) and this
-    machine opens it with its own ECDH key. A canopy-web from before sealing
-    ignores the flag and hands the value itself; that is accepted, so this CLI
-    can ship first."""
+    machine opens it with its own ECDH key. A value in clear is never accepted."""
     body = _get(f"/api/session-secrets/key/{name}?sealed=true", call=call, key=key) or {}
     sealed = body.get("value_zk") or ""
     if not sealed:
-        value = body.get("value") or ""
-        if not value:
-            raise click.ClickException(f"{name} came back empty")
-        return value
+        raise click.ClickException(f"{name} came back without a sealed value — canopy-web holds a "
+                                   "chat secret only sealed to the chat's machine; share it again")
     return open_sealed(sealed, name=name, binding=str(body.get("binding_id") or ""), ecdh=ecdh)
 
 

@@ -10,13 +10,17 @@ import stat
 from click.testing import CliRunner
 
 from orchestrator import agent_cli, canopy_web
+from tests import sealed_resolve
 
 CREDS = json.dumps({"clientId": "PlatformCLI", "refreshToken": "SECRET-r1", "instanceUrl": "https://x"})
 
 
 def _run(monkeypatch, tmp_path, creds):
     monkeypatch.setattr(agent_cli.Path, "home", lambda: tmp_path)
-    monkeypatch.setattr(canopy_web, "call", lambda *a, **k: {"values": {"salesforce": creds} if creds else {}})
+    sealed_resolve.install(monkeypatch)
+    values = sealed_resolve.sealed_values({"salesforce": creds} if creds else {})
+    monkeypatch.setattr(canopy_web, "call", lambda *a, **k: {"values": values, "zk": True,
+                                                             "agent_id": sealed_resolve.AGENT_ID})
     monkeypatch.setattr("orchestrator.agent_bootstrap._operator_token", lambda: "pat")
     return CliRunner().invoke(agent_cli.agent, ["stage-delegated", "--slug", "hal"])
 

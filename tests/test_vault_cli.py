@@ -24,6 +24,7 @@ from click.testing import CliRunner
 
 from orchestrator import agent_vault as av
 from orchestrator import canopy_web, cred_cli, vault_cli
+from tests import sealed_resolve
 
 SECRETS = {"canopy-pat": "cpat_SECRET_A", "kindora-service-key": "kindora_SECRET_B",
            "gdrive-root-folder": "folder_SECRET_C"}
@@ -151,7 +152,9 @@ class FakeWeb:
         if method == "GET" and path == f"{base}/credentials/resolve":
             want = q.get("refs", [""])[0].split(",") if "refs" in q else None
             vals = {k: v for k, v in self.stored.items() if want is None or k in want}
-            return 200, json.dumps({"values": vals})
+            # As canopy-web answers: every value sealed (it seals a plain PUT on arrival).
+            return 200, json.dumps({"values": sealed_resolve.sealed_values(vals), "zk": True,
+                                    "agent_id": sealed_resolve.AGENT_ID})
         return 404, "{}"
 
 
@@ -168,6 +171,7 @@ def repo(tmp_path, monkeypatch):
 
 @pytest.fixture
 def web(monkeypatch):
+    sealed_resolve.install(monkeypatch)
     w = FakeWeb()
     monkeypatch.setattr(canopy_web, "urllib_transport", w)
     monkeypatch.setattr(vault_cli, "_token", lambda: "person-pat")

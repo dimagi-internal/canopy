@@ -793,7 +793,7 @@ def open_slot_data_cmd(capability, slot):
     (or just its `slot_data`, with --capability and --slot), and prints
     `{"public": {...}, "secret": {key: plaintext}}` — plaintext, so pipe it straight into
     the program that needs it, never into a log. A canopy-web that still sends `secret` in
-    clear is passed through."""
+    clear is refused."""
     from orchestrator import cred_resolve
 
     try:

@@ -252,7 +252,7 @@ def _opens_sealed(value, priv, jwk) -> str:
 def test_a_delegated_credential_is_resealed_for_an_endorsed_waiting_machine():
     box_jkt = zk.jwk_thumbprint(BOX_JWK)
     call = Recorder()
-    res = vault_keeper.keep_delegated(
+    res = vault_keeper.keep_sealed(
         _delegated_work([box_jkt], endorsements=[_endorse(JJ_KEY, "device", box_jkt, box_jkt)]),
         pins={}, call=call, ecdh=_ecdh(ME_KEY, ME_JWK))
     assert res.error == "" and len(res.granted) == 1
@@ -266,7 +266,7 @@ def test_a_delegated_credential_is_resealed_for_an_endorsed_waiting_machine():
 def test_an_unendorsed_machine_waits_and_nothing_is_written():
     box_jkt = zk.jwk_thumbprint(BOX_JWK)
     call = Recorder()
-    res = vault_keeper.keep_delegated(_delegated_work([box_jkt]), pins={}, call=call,
+    res = vault_keeper.keep_sealed(_delegated_work([box_jkt]), pins={}, call=call,
                                       ecdh=_ecdh(ME_KEY, ME_JWK))
     assert res.granted == [] and call.posts == [] and "not endorsed" in res.skipped[0]
 
@@ -282,7 +282,7 @@ def test_a_recipient_canopy_web_slips_in_is_never_sealed_to():
         {"kind": "device", "target": box_jkt, "public_jwk": BOX_JWK},
     ]
     call = Recorder()
-    res = vault_keeper.keep_delegated(
+    res = vault_keeper.keep_sealed(
         _delegated_work([box_jkt], rows, [_endorse(JJ_KEY, "device", box_jkt, box_jkt)]),
         pins={}, call=call, ecdh=_ecdh(ME_KEY, ME_JWK))
     assert len(res.granted) == 1
@@ -305,16 +305,69 @@ def test_resolve_opens_each_delegated_credential_sealed_to_this_device():
     assert list(errors) == ["sf"]
 
 
-def test_a_custodial_answer_with_a_delegated_credential_is_opened_too():
-    """A delegated credential is sealed whatever the vault's mode: a custodial agent's
-    answer still has to be opened, or its GitHub token reaches git as the envelope."""
+def test_a_legacy_answer_with_a_delegated_credential_is_opened_too():
+    """A delegated credential is sealed whatever the vault holds: an answer with no
+    values of its own still has to be opened, or its GitHub token reaches git as the
+    envelope."""
     from orchestrator import cred_resolve
 
     mine = zk.seal_value(AGENT_ID, "github-token", KV, "github_pat_jj",
                          [("device", zk.jwk_thumbprint(ME_JWK), ME_JWK)])
-    body = {"zk": False, "values": {"FOO": "plain"}, "delegated": {"github-token": {"value_zk": mine}}}
-    assert cred_resolve.has_sealed(body)
-    assert not cred_resolve.has_sealed({"zk": False, "values": {"FOO": "plain"}})
+    body = {"zk": False, "values": {}, "delegated": {"github-token": {"value_zk": mine}}}
+    assert cred_resolve.needs_opening(body)
+    assert not cred_resolve.needs_opening({"zk": False, "values": {}, "op_vault": "Agent-Ace"})
     out = cred_resolve.open_zk("echo", body, agent_id=AGENT_ID, ecdh=_ecdh(ME_KEY, ME_JWK))
-    assert out["values"] == {"FOO": "plain"}
+    assert out["values"] == {}
     assert out["delegated"] == {"github-token": "github_pat_jj"}
+
+
+def test_a_value_in_clear_is_refused_never_passed_through():
+    """canopy-web stores no agent value it can read, so one that arrives in clear is
+    something wrong, not a value to hand to a turn."""
+    from orchestrator import cred_resolve
+
+    body = {"zk": False, "values": {"FOO": "plain"}}
+    assert cred_resolve.needs_opening(body)
+    with pytest.raises(cred_resolve.ZkUnlockError, match="FOO came in clear"):
+        cred_resolve.open_zk("echo", body, agent_id=AGENT_ID, ecdh=_ecdh(ME_KEY, ME_JWK))
+
+
+# ---- a pool slot's secret ------------------------------------------------------------------
+
+SLOT_NAME = "capability-slot:test-worker/worker-1/pin"
+
+
+def _slot_work(waiting, recipients, endorsements=()):
+    me_jkt = zk.jwk_thumbprint(ME_JWK)
+    value = zk.seal_value(AGENT_ID, SLOT_NAME, KV, "PIN-1234", [("device", me_jkt, ME_JWK)])
+    return {"agent": "ace", "agent_id": AGENT_ID, "name": SLOT_NAME, "device_jkt": me_jkt,
+            "value_zk": value, "expect": "digest", "recipients": recipients, "waiting": list(waiting),
+            "endorsements": list(endorsements),
+            "reseal_path": "/api/harness/runners/r1/vault-keeper/ace/slot-secrets/test-worker/worker-1/pin"}
+
+
+def test_a_slot_secret_is_resealed_for_an_endorsed_machine_and_a_waiting_person():
+    me_jkt, box_jkt = zk.jwk_thumbprint(ME_JWK), zk.jwk_thumbprint(BOX_JWK)
+    rows = [{"kind": "device", "target": me_jkt, "public_jwk": ME_JWK, "runner_name": "cloud-1"},
+            {"kind": "device", "target": box_jkt, "public_jwk": BOX_JWK, "runner_name": "cloud-2"},
+            {"kind": "member", "target": "7", "public_jwk": JJ_JWK}]
+    call, pins = Recorder(), {}
+    res = vault_keeper.keep_sealed(
+        _slot_work([box_jkt, "7"], rows, [_endorse(JJ_KEY, "device", box_jkt, box_jkt)]),
+        pins=pins, call=call, ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert res.error == "" and len(res.granted) == 2
+    [(method, path, body)] = call.posts
+    assert path.endswith("/slot-secrets/test-worker/worker-1/pin") and method == "PUT"
+    assert zk.open_sealed(body["value_zk"], AGENT_ID, SLOT_NAME, "device", box_jkt, BOX_KEY) == "PIN-1234"
+    assert zk.open_sealed(body["value_zk"], AGENT_ID, SLOT_NAME, "member", "7", JJ_KEY) == "PIN-1234"
+    assert pins["7"]["jkt"] == zk.jwk_thumbprint(JJ_JWK)       # pinned on first sight
+
+
+def test_a_waiting_person_whose_key_changed_is_not_sealed_to():
+    me_jkt = zk.jwk_thumbprint(ME_JWK)
+    rows = [{"kind": "device", "target": me_jkt, "public_jwk": ME_JWK},
+            {"kind": "member", "target": "7", "public_jwk": STRANGER_JWK}]
+    call = Recorder()
+    res = vault_keeper.keep_sealed(_slot_work(["7"], rows), pins={"7": {"jkt": zk.jwk_thumbprint(JJ_JWK)}},
+                                   call=call, ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert res.granted == [] and call.posts == [] and "changed" in res.skipped[0]

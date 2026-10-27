@@ -316,7 +316,9 @@ reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.jso
   ever answers Z. Enrollment sends `ecdh_public_jwk`; an older helper or server is not an error.
 - **Resolve.** A ZK answer is `{zk: true, kv, values: {name: "zk1:…"}, wrap}`; `cred_resolve`
   unwraps with `device_info(agent_id, kv, ecdh_jkt)` and decrypts, so `cred`, `agent prepare
-  --runner`, `cred exec` and `cred sync` see plaintext exactly as for a custodial agent.
+  --runner`, `cred exec` and `cred sync` see plaintext. canopy-web stores no agent value it
+  can read, so a value that arrives in clear is refused, never handed on (only a legacy
+  1Password agent's answer, with no values at all, needs no device key).
   `agent_id` = the answer's `agent_id` if sent, else `GET /api/agents/<slug>/`'s `id`. 409
   `zk_wrap_missing` → "ask an admin to grant this device".
 - **Sealed values (`zks1:`).** canopy-web mints some secrets itself (Connect Google mailbox's
@@ -324,7 +326,7 @@ reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.jso
   PUBLIC keys: `"zks1:" + b64u(JSON {kv, r: [{kind: device|member, target: ecdh jkt | user id,
   epk, ct}]})`, key = HKDF(ECDH, salt="", info=`canopy-vault/v1/seal-value|{agent_id}|{name}|
   {kv}|{kind}:{target}`), AAD = the value AAD. `cred_resolve.open_zk` opens this device's own
-  entry, in a ZK or a custodial answer. A VK holder **settles** them — re-encrypts as `zk1:`
+  entry. A VK holder **settles** them — re-encrypts as `zk1:`
   under VK, so every member reads them: `canopy vault zk settle`, which `import --zk` and
   `switch` also run. The runner's Gmail token therefore works on a ZK agent: the bootstrap's
   `fetch_web_token` goes through `cred_resolve`, which hands it plaintext.

@@ -36,7 +36,7 @@ DEV11_KEY, DEV11_JWK = _new_key()
 
 class FakeZkServer:
     def __init__(self, values, *, keyset=True, pending=(), send_agent_id=False):
-        self.custodial = dict(values)
+        self.unsettled = dict(values)
         self.enabled, self.kv = False, 0
         self.wraps: list[dict] = []
         self.zk_values: dict = {}
@@ -100,7 +100,7 @@ class FakeZkServer:
             self.recovery = [w for w in body["wraps"] if w["kind"] == "recovery"][0]["wrap"]
             self.zk_values = {v["name"]: v["value_zk"] for v in body["values"]}
             for v in body["values"]:
-                self.custodial.pop(v["name"], None)          # value_enc wiped
+                self.unsettled.pop(v["name"], None)          # now under the vault key
             return 200, json.dumps(self.state())
         if (method, path) == ("PUT", f"{base}/vault/zk/values"):
             if body["kv"] != self.kv:
@@ -121,7 +121,13 @@ class FakeZkServer:
             return 200, "{}"
         if (method, path) == ("GET", f"{base}/credentials/resolve"):
             if not self.enabled:
-                return 200, json.dumps({"values": self.custodial, "op_vault": ""})
+                # Before the vault key: each value sealed (zks1) to this machine, as
+                # canopy-web seals a value written before anyone holds a vault key.
+                jwk = self.keys[("device", str(ME))]
+                return 200, json.dumps({"values": {
+                    n: (v if zk.is_sealed_value(v) else
+                        zk.seal_value(AGENT_ID, n, 0, v, [("device", zk.jwk_thumbprint(jwk), jwk)]))
+                    for n, v in self.unsettled.items()}, "op_vault": ""})
             if "DPoP" not in headers:
                 return 401, '{"error": "device_proof_required"}'
             if self.kv == 0:                         # born zero-knowledge, holding nothing
@@ -190,7 +196,7 @@ def test_enable_encrypts_here_and_wraps_for_every_member(server, me):
     assert server.enabled and server.kv == 1
     assert SECRET not in _sent(server)                       # canopy-web never saw it
     assert all(v.startswith("zk1:") for v in server.zk_values.values())
-    assert server.custodial == {}
+    assert server.unsettled == {}
     targets = {(w["kind"], str(w["target"])) for w in server.wraps}
     assert targets == {("device", str(ME)), ("member", "7"), ("device", "9")}
     vk = server.vk_for("device", ME, _priv_of(me))
@@ -233,7 +239,7 @@ def test_enable_creates_the_first_key_of_an_agent_born_zero_knowledge(server):
         _enable(server)
 
 
-# ── resolve: a ZK answer opens here, exactly like custodial values ───────────
+# ── resolve: a ZK answer opens here ─────────────────────────────────────────
 
 def test_resolve_opens_a_zk_answer_with_this_devices_key(server):
     _enable(server)
@@ -454,15 +460,15 @@ def test_the_bootstrap_reads_a_zk1_gmail_token_as_plaintext(server, monkeypatch)
     """`import --zk` stores the Gmail token as zk1; the runner's token step must get the
     JSON, not the ciphertext."""
     from orchestrator import agent_bootstrap
-    server.custodial["gog-token"] = GMAIL
+    server.unsettled["gog-token"] = GMAIL
     _enable(server)
     assert server.zk_values["gog-token"].startswith("zk1:")
     monkeypatch.setattr(agent_bootstrap, "_operator_token", lambda: "pat")
     assert agent_bootstrap.fetch_web_token("eva") == (GMAIL, "")
 
 
-def test_a_custodial_answer_carrying_a_sealed_value_opens_it(server, me):
-    server.custodial["gog-token"] = zk.seal_value(AGENT_ID, "gog-token", 1, GMAIL,
+def test_an_answer_from_before_the_vault_key_opens_its_sealed_values(server, me):
+    server.unsettled["gog-token"] = zk.seal_value(AGENT_ID, "gog-token", 1, GMAIL,
                                                   [("device", me.jkt, me.public_jwk)])
     body = cred_resolve.resolve("eva", token="pat", turn_id="")
     assert body["values"]["gog-token"] == GMAIL and body["values"]["CHANNEL"] == "eva@example.com"

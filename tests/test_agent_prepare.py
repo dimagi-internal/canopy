@@ -25,6 +25,13 @@ import pytest
 
 from orchestrator import agent_prepare as ap
 from orchestrator.agent_prepare import RunnerCredentials, RunnerPreparer, turn_readiness
+from tests import sealed_resolve
+
+
+def _sealed_answer(values: dict, **extra) -> str:
+    """A resolve answer as canopy-web sends it: values sealed to this machine."""
+    return json.dumps({"values": sealed_resolve.sealed_values(values), "zk": True,
+                       "agent_id": sealed_resolve.AGENT_ID, **extra})
 
 AGENT_KEY, SHARED_KEY, GH = "ops_AGENT", "ops_SHARED", "ghp_OWNER"
 
@@ -439,6 +446,7 @@ def test_prepare_purpose_from_the_cli(monkeypatch):
 
 def _recording(secret_refs):
     resolves = []
+    answer = _sealed_answer({"gog-token": "{}"}, op_vault="V", op_sa_token="k")
 
     def transport(method, url, headers, data):
         if url.endswith("/runtime"):
@@ -446,14 +454,15 @@ def _recording(secret_refs):
         if "/credentials/resolve" in url:
             resolves.append(url)
             # A scoped answer: the extras ride beside `values`, never inside it.
-            return 200, '{"values": {"gog-token": "{}"}, "op_vault": "V", "op_sa_token": "k"}'
+            return 200, answer
         return 200, "{}"
     return transport, resolves
 
 
-def test_the_refresh_asks_only_for_the_gog_token_and_the_vault_keys():
+def test_the_refresh_asks_only_for_the_gog_token_and_the_vault_keys(monkeypatch):
     """Not the agent's PAT, Salesforce, GitHub token or anything else: the timer pass
     writes no env, so every other secret it read went on the wire every 30 minutes."""
+    sealed_resolve.install(monkeypatch)
     transport, resolves = _recording(["CANOPY_WEB_PAT", "gog-token", "salesforce"])
     c = ap.fetch_runner_credentials("hal", base_url="https://c.test", token="t",
                                     transport=transport, minimal=True)
@@ -463,7 +472,8 @@ def test_the_refresh_asks_only_for_the_gog_token_and_the_vault_keys():
     assert (c.key, c.web_gog_token, c.values) == ("k", "{}", {"gog-token": "{}"})
 
 
-def test_a_refresh_of_an_agent_without_a_gog_token_names_none():
+def test_a_refresh_of_an_agent_without_a_gog_token_names_none(monkeypatch):
+    sealed_resolve.install(monkeypatch)
     """Naming an undeclared ref raises an owner alert; a box must not cause one."""
     transport, resolves = _recording(["CANOPY_WEB_PAT"])
     ap.fetch_runner_credentials("eva", base_url="https://c.test", token="t",
@@ -472,7 +482,8 @@ def test_a_refresh_of_an_agent_without_a_gog_token_names_none():
                         "?refs=op_sa_token,shared_op_sa_token"]
 
 
-def test_a_full_prepare_still_resolves_everything():
+def test_a_full_prepare_still_resolves_everything(monkeypatch):
+    sealed_resolve.install(monkeypatch)
     transport, resolves = _recording(["CANOPY_WEB_PAT", "gog-token"])
     ap.fetch_runner_credentials("hal", base_url="https://c.test", token="t", transport=transport)
     assert resolves == ["https://c.test/api/agents/hal/credentials/resolve"]
@@ -520,13 +531,15 @@ def test_the_full_env_step_takes_the_same_branch(tmp_path):
     assert rep.env_ok is True and not [c for c in box.calls if c[0][:1] == ["op"]]
 
 
-def test_runner_credentials_carry_the_backend_and_values():
+def test_runner_credentials_carry_the_backend_and_values(monkeypatch):
+    sealed_resolve.install(monkeypatch)
+
     def transport(method, url, headers, data):
         if url.endswith("/credentials/access"):
             return 200, '{"credential_source": "canopy-web", "may_resolve": true}'
         if url.endswith("/runtime"):
             return 200, "{}"
-        return 200, '{"values": {"A": "1"}, "op_vault": "", "op_sa_token": ""}'
+        return 200, _sealed_answer({"A": "1"}, op_vault="", op_sa_token="")
 
     c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
                                     transport=transport)

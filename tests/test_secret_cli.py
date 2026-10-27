@@ -199,6 +199,8 @@ def test_a_machine_with_no_ecdh_key_says_so(served, monkeypatch):
     assert "cannot open it" in str(exc.value) and "ECDH" in str(exc.value)
 
 
-def test_a_canopy_web_from_before_sealing_still_hands_the_value(served):
-    """Rollout: this CLI ships first, so it must still work against the old server."""
-    assert secret_cli.fetch_value(KEY, "GH_TOKEN", call=_serving({"name": "GH_TOKEN", "value": VALUE})) == VALUE
+def test_a_value_in_clear_is_refused_and_never_echoed(served):
+    """canopy-web holds a chat secret only sealed: an answer in clear is not taken."""
+    with pytest.raises(Exception) as exc:
+        secret_cli.fetch_value(KEY, "GH_TOKEN", call=_serving({"name": "GH_TOKEN", "value": VALUE}))
+    assert "without a sealed value" in str(exc.value) and VALUE not in str(exc.value)
