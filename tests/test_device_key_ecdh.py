@@ -272,6 +272,20 @@ def test_device_key_drives_the_tpm_ecdh_key(monkeypatch):
     assert lib.keys == {} and not dk.tpm_ecdh_path().exists()
 
 
+def test_a_tpm_that_will_not_make_an_ecdh_key_falls_back_to_software(monkeypatch):
+    # Raising here used to enroll the TPM signing key with no ECDH key at all, so no
+    # vault key could be wrapped to the device (DIM-SI-W021, 2026-10-26).
+    class Refuses:
+        def __getattr__(self, name):
+            raise OSError("NTE_NOT_SUPPORTED")
+    monkeypatch.setattr(tpm, "load_ncrypt", lambda: Refuses())
+    key, created = dk.ensure_ecdh("tpm")
+    assert created and key.kind == "software" and "TPM would not make" in key.note
+    assert dk.ecdh_pem_path().is_file() and not dk.tpm_ecdh_path().exists()
+    again, created2 = dk.ensure_ecdh("tpm")
+    assert not created2 and again.jkt == key.jkt
+
+
 # ── enrollment sends ecdh_public_jwk ──────────────────────────────────────────
 
 def _server(seen, **extra):

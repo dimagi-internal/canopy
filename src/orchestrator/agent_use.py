@@ -284,6 +284,27 @@ def _canopy_vault_steps(rep: UseReport, slug: str, deps: Deps, access: dict, *, 
             except Exception as e:  # noqa: BLE001
                 rep.add("device key", NEEDS, f"could not enroll ({_first_line(e)})",
                         "`canopy vault device --enroll`")
+    elif st.get("status") in ("active", "pending") and not st.get("ecdh_jkt"):
+        # Enrolled with no ECDH key — a TPM that would not make one, before the software
+        # fallback. No vault key can be wrapped to it, so "Grant pending" never lists it.
+        # Enrolling again is idempotent for the signing key and adds the ECDH key, which
+        # then waits for its owner's approval.
+        try:
+            st = deps.enroll_device(runner_id) or st
+        except Exception as e:  # noqa: BLE001
+            rep.add("device key", NEEDS,
+                    f"this computer's key can't receive a vault grant, and adding one failed "
+                    f"({_first_line(e)})", "`canopy vault device --enroll`, then approve it")
+        else:
+            if st.get("ecdh_jkt"):
+                rep.add("device key", NEEDS,
+                        "added the key a vault grant is sealed to; waiting for approval",
+                        f"approve it with your passkey: {st.get('approve_url') or page}")
+            else:
+                rep.add("device key", NEEDS,
+                        f"this computer's key can't receive a vault grant "
+                        f"({st.get('ecdh_note') or 'no ECDH key'})",
+                        "`canopy vault device --reenroll --kind software`, then approve it")
     elif st.get("status") == "active":
         device_ok = True
         rep.add("device key", OK, f"{st.get('kind') or 'key'} {str(st['jkt'])[:12]}…, approved")
@@ -296,7 +317,11 @@ def _canopy_vault_steps(rep: UseReport, slug: str, deps: Deps, access: dict, *, 
 
     # vault access ─────────────────────────────────────────────────────────────
     if zk is None:
-        if zk_err is not None and _is_denied(zk_err):
+        if zk_err is not None and _is_denied(zk_err) and not device_ok:
+            rep.add("vault access", SKIP,
+                    f"only an admin of {slug} can see which devices hold a grant — once the "
+                    f"device key above is approved, ask {ask} to press Grant pending on {page}")
+        elif zk_err is not None and _is_denied(zk_err):
             rep.add("vault access", SKIP,
                     f"only an admin of {slug} can see which devices hold a grant — if your "
                     f"first session says this device has none, ask {ask} to press "

@@ -29,7 +29,7 @@ class World:
         self.access = {"credential_source": "canopy-web", "may_resolve": False,
                        "via": None, "error": ""}
         self.device = {"id": "dk-1", "jkt": "abcdef0123456789xyz", "status": "active",
-                       "kind": "secure-enclave", "runner": "rid-1"}
+                       "kind": "secure-enclave", "runner": "rid-1", "ecdh_jkt": "ec-1"}
         self.runner_id = "rid-1"
         self.enrolled = []
         self.zk = {"enabled": True, "kv": 1, "wraps": [], "pending": [],
@@ -207,6 +207,38 @@ def test_a_pending_device_key_points_at_its_approve_url(w, tmp_path):
     w.device.update(status="pending", approve_url=f"{BASE}/approve/dk-1")
     s = _step(_run(w, tmp_path), "device key")
     assert s.status == au.NEEDS and s.fix.endswith(f"{BASE}/approve/dk-1")
+
+
+def test_an_active_key_with_no_ecdh_key_enrolls_again_to_add_one(w, tmp_path):
+    # A Windows TPM that would not make an ECDH key enrolled without one (DIM-SI-W021,
+    # 2026-10-26): approved, but no vault key could ever be wrapped to it.
+    del w.device["ecdh_jkt"]
+    d = w.deps()
+    d.enroll_device = lambda rid: (w.enrolled.append(rid) or
+                                   {**w.device, "ecdh_jkt": "ec-new",
+                                    "approve_url": f"{BASE}/runners/approve/dk-1"})
+    rep = au.run("eva", str(tmp_path), d)
+    s = _step(rep, "device key")
+    assert w.enrolled == ["rid-1"]
+    assert s.status == au.NEEDS and s.fix.endswith(f"{BASE}/runners/approve/dk-1")
+
+
+def test_an_active_key_that_still_gets_no_ecdh_key_says_reenroll_software(w, tmp_path):
+    del w.device["ecdh_jkt"]
+    d = w.deps()
+    d.enroll_device = lambda rid: {**w.device, "ecdh_note": "the TPM would not make one"}
+    s = _step(au.run("eva", str(tmp_path), d), "device key")
+    assert s.status == au.NEEDS and "the TPM would not make one" in s.detail
+    assert "--reenroll --kind software" in s.fix
+
+
+def test_a_member_whose_device_is_not_ready_is_not_sent_to_grant_pending_yet(w, tmp_path):
+    del w.device["ecdh_jkt"]
+    w.zk, w.zk_error = None, CanopyError("GET /api/agents/eva/vault/zk -> 403: forbidden")
+    d = w.deps()
+    d.enroll_device = lambda rid: {**w.device, "ecdh_note": "no"}
+    s = _step(au.run("eva", str(tmp_path), d), "vault access")
+    assert "once the device key above is approved" in s.detail
 
 
 def test_a_revoked_device_key_says_reenroll(w, tmp_path):
