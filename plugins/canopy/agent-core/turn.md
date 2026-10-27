@@ -155,9 +155,22 @@ invoke that sibling's skill directly when it's the clean move, or flag it to Ada
 conductor) as an escalation. One lane per turn; the fleet covers the rest.
 
 ## Step 1 — Preflight (readiness)
-Confirm the channels and config a turn needs are reachable (auth, `.env`, any board PAT). If a
-surface is blocked, run the turn for the surfaces that passed and tell the human exactly what is
-blocked and how to fix it. Do not abort the whole turn for one blocker.
+Confirm the channels and config a turn needs are reachable (auth, `.env`, any board PAT).
+
+**Your own login failing is canopy's error, not news for anyone you are talking to.** When a tool
+fails on YOUR credentials — no credentials, an expired or revoked grant, a 401, a bad API key, a
+missing key file — the turn cannot do its work, and it ends **failed**: canopy raises a failure
+investigation and an alert for the agent's owner, and the thread, left unread, comes back to you
+once the credential works.
+The canopy plugin's `credential_guard` hook does this by itself: it runs `canopy turn abort`, stops
+you, and refuses every further tool call in that turn. When you recognise one it missed, run it
+yourself, once: `canopy turn abort --tool <tool> --reason "<the tool's own error>"`. Then send
+nothing, mark nothing read, and end with one line saying the turn was aborted and why. **Never tell
+a counterpart about logins, credentials or runner setup** — they cannot fix it, and a reply that
+says "I couldn't" makes a broken turn look finished (2026-10-27: ACE emailed an outside
+requester that "this runner has no logins", and the turn finished `done` with nothing alarmed).
+A 403 / "permission denied" on one file or record is NOT this: that is access to one resource,
+and asking the person for it is fine.
 
 **Expired AWS SSO is not a "tell the human" blocker. Fix it yourself:** run
 `canopy aws login --profile <p> --reason "<what you need AWS for>"` in the background (or with a
