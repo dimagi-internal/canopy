@@ -509,6 +509,9 @@ class EcdhKey:
     kind: str
     public_jwk: dict
     _derive: Callable[[bytes], bytes]
+    #: Why this key is not on the hardware the signing key is on (e.g. a TPM that would
+    #: not make one), "" when it is. Enrollment records it as `ecdh_note`.
+    note: str = ""
 
     @property
     def jkt(self) -> str:
@@ -759,17 +762,23 @@ def ensure_ecdh(signing_kind: str, *, runner: Runner = subprocess.run,
         if p.returncode != 0:
             raise _helper_fail("ecdh-create", p)
         return _se_ecdh_key(helper, runner), True
+    note = ""
     if kind == KIND_TPM:
         from orchestrator import device_key_tpm as tpm
         try:
             key = tpm.create_ecdh_key(tpm.ECDH_KEY_NAME, tpm_lib)
             jwk = key.public_jwk()
         except Exception as e:  # noqa: BLE001 — a TPM that will not make one
-            raise EcdhUnsupported(f"the TPM would not make an ECDH key ({e})")
-        _write_private(tpm_ecdh_path(), json.dumps({"provider": tpm.PROVIDER,
-                                                    "name": tpm.ECDH_KEY_NAME},
-                                                   indent=1).encode("utf-8"))
-        return EcdhKey(KIND_TPM, jwk, key.derive), True
+            # Fall back to a software PEM, as aws-iam does. Raising here used to enroll
+            # the TPM signing key with NO ECDH key: the device was approved and signed in,
+            # but no vault key could ever be wrapped to it, and "Grant pending" listed
+            # nothing to grant (a Windows laptop, DIM-SI-W021, 2026-10-26).
+            note = f"the TPM would not make an ECDH key ({str(e)[:200]}); using a software key"
+        else:
+            _write_private(tpm_ecdh_path(), json.dumps({"provider": tpm.PROVIDER,
+                                                        "name": tpm.ECDH_KEY_NAME},
+                                                       indent=1).encode("utf-8"))
+            return EcdhKey(KIND_TPM, jwk, key.derive), True
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -777,7 +786,9 @@ def ensure_ecdh(signing_kind: str, *, runner: Runner = subprocess.run,
     pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                             serialization.NoEncryption())
     _write_private(ecdh_pem_path(), pem)
-    return _sw_ecdh_key(pem), True
+    made = _sw_ecdh_key(pem)
+    made.note = note
+    return made, True
 
 
 def remove_local() -> list[str]:
@@ -976,6 +987,8 @@ def enroll(*, runner_id: str, call: Call, label: str = "", allow_software: Optio
         status["role_arn"] = key.role_arn
     if ecdh is not None:
         status.update(ecdh_jkt=ecdh.jkt, ecdh_kind=ecdh.kind)
+        if ecdh.note:
+            status["ecdh_note"] = ecdh.note[:300]
     elif ecdh_note:
         status["ecdh_note"] = ecdh_note[:300]
     write_status(status)
