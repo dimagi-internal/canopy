@@ -20,7 +20,10 @@ on this machine and nowhere else:
   ``X-Canopy-Aws-Proof`` header — a SigV4-signed, unsent ``sts:GetCallerIdentity`` that
   canopy-web replays to STS. See :mod:`orchestrator.device_key_aws`. Marker: ``aws-iam.json``.
 * **software** — anywhere else (no enclave, no TPM, not EC2): a P-256 key in a 0600 PEM
-  (``sw.pem``), registered as ``kind=software`` so canopy-web can tell them apart.
+  (``sw.pem``), registered as ``kind=software`` so canopy-web can tell them apart. On
+  Windows, where a file mode protects nothing, the PEM is sealed at rest with DPAPI
+  (CurrentUser scope), exactly as canopy-web's runner does (canopy-web#2203) — the two
+  share this file on a box with both, so each must read what the other writes.
 
 Enrollment: ``POST /api/runner-device-keys/`` registers the public JWK for a runner and
 answers ``{id, jkt, status: "pending", approve_url}``; a person approves it in canopy-web
@@ -59,8 +62,10 @@ enclave key never leaves the enclave).
 from __future__ import annotations
 
 import base64
+import ctypes
 import hashlib
 import json
+import logging
 import os
 import platform
 import shutil
@@ -207,7 +212,8 @@ def _write_private(path: Path, data: bytes) -> None:
     _ensure_dir()
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-")
     try:
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "fchmod") and os.name != "nt":  # no file modes on Windows
+            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         os.replace(tmp, path)
@@ -217,6 +223,93 @@ def _write_private(path: Path, data: bytes) -> None:
         except OSError:
             pass
         raise
+
+
+# --- the software key at rest on Windows (DPAPI) ---------------------------------
+# Byte-for-byte the format canopy-web's runner writes (runner device_proof.py,
+# canopy-web#2203): a DPAPI blob, or a plain PEM from before it.
+
+_log = logging.getLogger(__name__)
+CRYPTPROTECT_UI_FORBIDDEN = 0x1
+_DPAPI_DESCRIPTION = "canopy device key"
+_PEM_MARK = b"-----BEGIN"
+
+
+class _DataBlob(ctypes.Structure):
+    _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+
+class Dpapi:
+    """``CryptProtectData`` / ``CryptUnprotectData`` in CurrentUser scope, never prompting.
+    ``crypt32`` / ``local_free`` are seams the tests drive with a fake."""
+
+    def __init__(self, crypt32, local_free):
+        self.crypt32, self.local_free = crypt32, local_free
+
+    def _call(self, fn, what: str, data: bytes, *extra) -> bytes:
+        buf = ctypes.create_string_buffer(data, len(data))
+        blob_in = _DataBlob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+        blob_out = _DataBlob()
+        if not fn(ctypes.byref(blob_in), *extra, None, None, None, CRYPTPROTECT_UI_FORBIDDEN,
+                  ctypes.byref(blob_out)):
+            raise OSError(f"{what} failed")
+        try:
+            return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+        finally:
+            self.local_free(blob_out.pbData)
+
+    def protect(self, data: bytes) -> bytes:
+        return self._call(self.crypt32.CryptProtectData, "CryptProtectData", data,
+                          _DPAPI_DESCRIPTION)
+
+    def unprotect(self, blob: bytes) -> bytes:
+        return self._call(self.crypt32.CryptUnprotectData, "CryptUnprotectData", blob, None)
+
+
+def _dpapi() -> Optional[Dpapi]:
+    """DPAPI on Windows; None everywhere else (the file mode is the protection there)."""
+    if os.name != "nt":
+        return None
+    crypt32 = ctypes.WinDLL("crypt32.dll")  # type: ignore[attr-defined]
+    kernel32 = ctypes.WinDLL("kernel32.dll")  # type: ignore[attr-defined]
+    pblob, vp = ctypes.POINTER(_DataBlob), ctypes.c_void_p
+    crypt32.CryptProtectData.argtypes = [pblob, ctypes.c_wchar_p, pblob, vp, vp,
+                                         ctypes.c_uint32, pblob]
+    crypt32.CryptProtectData.restype = ctypes.c_int
+    crypt32.CryptUnprotectData.argtypes = [pblob, ctypes.c_void_p, pblob, vp, vp,
+                                           ctypes.c_uint32, pblob]
+    crypt32.CryptUnprotectData.restype = ctypes.c_int
+    kernel32.LocalFree.argtypes = [vp]
+    kernel32.LocalFree.restype = vp
+    return Dpapi(crypt32, kernel32.LocalFree)
+
+
+def _write_private_pem(path: Path, pem: bytes) -> None:
+    """A software key's PEM, sealed with DPAPI where there is DPAPI."""
+    d = _dpapi()
+    _write_private(path, d.protect(pem) if d is not None else pem)
+
+
+def _read_private_pem(path: Path) -> bytes:
+    """The PEM back: a plain one as is (re-sealed in place on Windows, best-effort), a
+    DPAPI-sealed one opened as this Windows account."""
+    raw = path.read_bytes()
+    d = _dpapi()
+    if raw.lstrip().startswith(_PEM_MARK):
+        if d is not None:
+            try:
+                _write_private(path, d.protect(raw))
+            except Exception as e:  # noqa: BLE001 — still a usable key, just not sealed
+                _log.warning("could not seal %s with DPAPI (%s); left as is", path, e)
+        return raw
+    if d is None:
+        raise DeviceKeyError(f"{path} is sealed with Windows DPAPI — only the Windows account "
+                             "that made it can open it")
+    try:
+        return d.unprotect(raw)
+    except OSError as e:
+        raise DeviceKeyError(f"{path} could not be opened with DPAPI ({e}) — it was sealed by "
+                             "another Windows account or machine") from None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -340,7 +433,7 @@ def _create_software() -> DeviceKey:
     key = ec.generate_private_key(ec.SECP256R1())
     pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                             serialization.NoEncryption())
-    _write_private(sw_path(), pem)
+    _write_private_pem(sw_path(), pem)
     return _sw_key(pem)
 
 
@@ -386,7 +479,7 @@ def load(*, runner: Runner = subprocess.run,
                 f"— {REBUILD_HELPER}")
         return _se_key(helper, runner)
     if sw_path().is_file():
-        return _sw_key(sw_path().read_bytes())
+        return _sw_key(_read_private_pem(sw_path()))
     return None
 
 
@@ -707,7 +800,7 @@ def load_ecdh(*, runner: Runner = subprocess.run,
                 f"installed — {REBUILD_HELPER}")
         return _se_ecdh_key(helper, runner)
     if ecdh_pem_path().is_file():
-        return _sw_ecdh_key(ecdh_pem_path().read_bytes())
+        return _sw_ecdh_key(_read_private_pem(ecdh_pem_path()))
     return None
 
 
@@ -785,7 +878,7 @@ def ensure_ecdh(signing_kind: str, *, runner: Runner = subprocess.run,
     key = ec.generate_private_key(ec.SECP256R1())
     pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                             serialization.NoEncryption())
-    _write_private(ecdh_pem_path(), pem)
+    _write_private_pem(ecdh_pem_path(), pem)
     made = _sw_ecdh_key(pem)
     made.note = note
     return made, True
