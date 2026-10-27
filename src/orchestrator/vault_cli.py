@@ -14,6 +14,7 @@ changes an agent that has not been switched.
     canopy vault binding --agent X on|off                    require an approved device key
     canopy vault zk status|enable|set|grant|rotate --agent X zero-knowledge (vault_zk_cli.py)
     canopy vault open-slot-data  < lease.json               a pool lease's sealed slot secrets
+    canopy vault google-mint --agent X < work.json          finish a Google sign-in on a runner
     canopy vault import --agent X --zk                       ... encrypted here
 
 WHAT IS AN AGENT'S SET OF REFS. Every `NAME=…` line of the agent's `.env.tpl` (the one
@@ -834,6 +835,38 @@ def runner_seal_cmd(runner_id, base_url):
         out = cred_resolve.seal_runner_values(runner_id, values, token=token, base_url=base_url or None)
     except canopy_web.CanopyError as e:
         raise VaultCliError(str(e)[:400]) from None
+    click.echo(json.dumps(out, sort_keys=True))
+
+
+@vault_group.command("google-mint")
+@AGENT_OPT
+@click.option("--runner", "runner_id", default="",
+              help="Runner id (default: ~/.canopy/runner.json's).")
+@click.option("--base-url", default="", help="canopy-web (default: CANOPY_WEB_API_URL).")
+def google_mint_cmd(slug, runner_id, base_url):
+    """Finish an agent's Google sign-in on this box (canopy-web never sees the token).
+
+    Reads, as JSON on stdin, the work canopy-web handed the runner (`code`, `redirect_uri`,
+    `client_id`, `client`, `expected_account`, `agent_id`, `kv`, `recipients`) plus the
+    `code_verifier` the runner kept. Exchanges the code with Google using the OAuth client
+    from the agent's vault, and prints ONE JSON line: `{name, kv, value_zk, account}` —
+    the token encrypted for the agent — or `{error, detail}` (exit 1). For the canopy
+    runner, as itself (CANOPY_TOKEN); never prints the token."""
+    from orchestrator import google_mint
+
+    try:
+        work = json.loads(sys.stdin.read() or "null")
+    except ValueError:
+        work = None
+    if not isinstance(work, dict):
+        click.echo(json.dumps({"error": "bad-request", "detail": "stdin is not a JSON object"}))
+        raise SystemExit(1)
+    _, token = _runner_and_token(runner_id, base_url)
+    try:
+        out = google_mint.run(slug, work, token=token, base_url=base_url or None)
+    except google_mint.MintError as e:
+        click.echo(json.dumps(e.out(), sort_keys=True))
+        raise SystemExit(1) from None
     click.echo(json.dumps(out, sort_keys=True))
 
 
