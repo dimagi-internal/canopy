@@ -20,6 +20,7 @@ from orchestrator.decide_guard_cli import decide_guard_group
 from orchestrator.huddle_cli import huddle_group
 from orchestrator.checkin_cli import checkin_group, huddle_group_group
 from orchestrator.thread_cli import thread_group
+from orchestrator.turn_cli import turn_group
 from orchestrator.people_cli import people_group
 from orchestrator.slack_ingest_cli import slack_group
 from orchestrator.aws_cli import aws_group
@@ -127,6 +128,7 @@ main.add_command(huddle_group)
 main.add_command(checkin_group)
 main.add_command(huddle_group_group)
 main.add_command(thread_group)
+main.add_command(turn_group)
 main.add_command(people_group)
 main.add_command(slack_group)
 main.add_command(aws_group)

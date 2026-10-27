@@ -185,8 +185,13 @@ class TestRegistration:
         assert any("repo_map_capture.py" in c for c in cmds)
 
     def test_no_post_tool_use_capture(self):
+        """The retired capture hook stays retired. PostToolUse itself is used again, by
+        credential_guard (a tool failing on credentials aborts the turn)."""
         hooks = json.loads((HOOK_PATH.parent / "hooks.json").read_text())["hooks"]
-        assert "PostToolUse" not in hooks
+        cmds = [h["command"] for event in ("PostToolUse", "PostToolUseFailure")
+                for m in hooks.get(event, []) for h in m["hooks"]]
+        assert not any("post_tool_use" in c for c in cmds)
+        assert all("credential_guard.py" in c for c in cmds)
 
 
 class TestRetiredLegacyHook:

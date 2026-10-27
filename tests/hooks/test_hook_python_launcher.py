@@ -19,7 +19,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 HOOKS_DIR = ROOT / "plugins" / "canopy" / "hooks"
 LAUNCHER = HOOKS_DIR / "python.sh"
-GUARDS = {"gating_guard.py", "profile_guard.py", "one_shot_turn_guard.py"}
+GUARDS = {"gating_guard.py", "profile_guard.py", "one_shot_turn_guard.py", "credential_guard.py"}
 
 SH = shutil.which("sh")
 pytestmark = pytest.mark.skipif(SH is None, reason="needs a POSIX sh")
@@ -75,10 +75,12 @@ def test_advisory_hook_is_skipped_not_blocking(tmp_path):
 
 def test_every_plugin_hook_goes_through_the_launcher():
     hooks = json.loads((HOOKS_DIR / "hooks.json").read_text())["hooks"]
-    commands = [h["command"] for groups in hooks.values() for g in groups
+    commands = [(event, h["command"]) for event, groups in hooks.items() for g in groups
                 for h in g["hooks"] if h.get("type") == "command"]
     assert commands
-    for cmd in commands:
+    for event, cmd in commands:
         assert cmd.startswith('sh "${CLAUDE_PLUGIN_ROOT}/hooks/python.sh" '), cmd
-        is_guard = any(g in cmd for g in GUARDS)
+        # A guard blocks only before a tool runs; after one (credential_guard's PostToolUse
+        # half) a missing interpreter has nothing to block.
+        is_guard = event == "PreToolUse" and any(g in cmd for g in GUARDS)
         assert ("--guard" in cmd) == is_guard, cmd
