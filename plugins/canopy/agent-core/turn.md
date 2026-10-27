@@ -1011,6 +1011,18 @@ proposed action, what was approved & done, what is parked; then your recommendat
 else is worth doing; plus anything still blocked from preflight. Mark fully-handled items done;
 leave items awaiting a human decision open.
 
+**Answer first; the audit lines go last.** When a person is reading the session, which is any
+chat turn or a session they are watching, the first two or three lines answer two questions:
+is it done, and does anything need them. The required checklist lines are proof for the record,
+not news for the reader: the skill self-check, `projects:`, `people:`, the duplicate-session and
+re-read checks, and what the pre-send review caught. Put them after everything else as one short
+block (a line each), or leave them to the filed close (`<slug>-close`) when that carries them.
+Never make the reader scroll past bookkeeping to find out whether the work finished.
+**Test:** could they stop after the first paragraph and know what happened and what is theirs?
+(Origin 2026-10-27: an ada turn answered the owner's email well, then closed in chat with about
+thirty lines of checks. The owner replied *"is this totally done… this seems really hard to
+follow right?"*)
+
 **Write it in THEIR vocabulary, not your bookkeeping.** Board task ids (`T7`), run ids, session
 ids, internal slugs and ext_ids are *your* plumbing — the human has no index for them and should
 not need one. Name the actual thing: not "Board task T7", but "the connect-labs audit-scan
