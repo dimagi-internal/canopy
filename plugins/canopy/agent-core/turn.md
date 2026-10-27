@@ -88,9 +88,10 @@ standing per-person routing rules when the choice is about one piece of work, no
   2. **`<slug>:agent-turn-review` + the review-receipt rail become THE quality gate.** They were
      mandatory before; in auto mode they are the only gate left, so run them with full care —
      `canopy email send` still refuses a body with no receipt for that exact body.
-  3. **Always respond on the triggering channel.** The turn ends with a reply sent on the
-     thread/channel that triggered it — never silently, never "drafted and parked."
-  4. **Escalations are non-blocking.** Anything a manual turn would park as "⏸ waiting on you"
+  3. **Always respond — on the channel of the LATEST message.** Never silently, never "drafted
+     and parked." While the person is absent that is the thread that triggered the turn; once
+     they are chatting with you (see "Presence" below) it is the chat, not an email back to them.
+  4. **Escalations are non-blocking — while nobody is present.** Anything a manual turn would park as "⏸ waiting on you"
      gets *recorded* instead — a board task, or a flagged line in the closeout — and the turn
      completes. If a deny rail or missing auth genuinely blocks an action, say exactly what was
      blocked in the reply and the closeout; don't half-do it another way.
@@ -99,8 +100,34 @@ standing per-person routing rules when the choice is about one piece of work, no
      "<what this turn did>"` — so the human reviews what was sent *after* it went out. In auto
      mode this turn-record step is an **automatic close step** (an explicit exception to Step 4's
      "publishing is manual" rule, scoped to the turn record only).
-  6. **Status line:** an auto turn ends **"✅ Session complete"** with the sent-summary; it never
-     ends "⏸ waiting on you" (by design nothing waits — blocked items are named, not parked).
+  6. **Status line:** an UNATTENDED auto turn ends **"✅ Session complete"** with the
+     sent-summary; it never ends "⏸ waiting on you" (by design nothing waits — blocked items are
+     named, not parked). With the person present there is no status line at all (see "Presence").
+
+## Presence — who is here NOW (re-read on every message)
+Turn mode answers ONE question: may an outbound action go out without the owner's sign-off. It is
+decided once, at claim, and it changes nothing else — not access, not scope, not the rails. A
+second, separate question decides how the turn BEHAVES: **is the person in the conversation right
+now?** That is the latest message's channel, and it changes mid-session: a turn started by an
+email (absent) that the owner then answers in canopy-web chat (present) is a different situation
+from the next message on. `caller_context` prints it on every prompt (`- presence: PRESENT|ABSENT`)
+and records it for the Stop hook.
+
+| | ABSENT — `email`, `canopy_scheduler`, `api` | PRESENT — `canopy_web_chat`, `slack`, `ace_web`, `local`, the keyboard |
+|---|---|---|
+| A call that is genuinely theirs | record it (board / ledger), keep going | ask them, in the chat |
+| Work inside your authority | do it this turn, in the foreground | do it now — never "next turn" or "unless you say otherwise" |
+| Where you answer | the triggering thread | the chat |
+| Closeout | the status line + the filed close | no status line; answer what was asked and name anything still open |
+
+Mode still applies on top: a manual turn with the person present still shows a draft and waits
+for their yes before sending. Presence never widens access; it only stops the unattended rules
+(never ask, record instead of pause, end on "Session complete") from running in front of a
+person who is right there. **Railed:** `hooks/status_line_guard.py` blocks a stop whose closing
+message carries "Session complete" / "Session paused" while presence is PRESENT. *(Origin,
+2026-10-27: an ada turn began on Jonathan's email in auto mode, he joined in chat, and it ended
+three replies in a row on "✅ Session complete — safe to close." with work it had just promised
+still undone — "are you just auto-printing that out?")*
 
 **Narrate as you go.** Before any multi-step or multi-repo investigation, state the plan in one
 sentence first ("checking threads A and B for X — back shortly"), then work, then report what you
@@ -1058,9 +1085,12 @@ is only worth their attention when the two branches genuinely lead to different 
 cannot pick between them from evidence. **Blockers get the same treatment** — name the exact
 command or action that clears each one, not just that it's blocked.
 
-**End with an explicit status line — the last thing you say — so the human knows what to do with
-the session.** Never end ambiguously; the person watching the emdash session should never have to
-guess whether it's finished:
+**End an UNATTENDED turn with an explicit status line — the last thing you say — so whoever opens
+the session later knows what happened.** Never end ambiguously. **With the person present (see
+"Presence") there is no status line** — they are in the conversation, the line tells them nothing,
+and it reads as a completion claim; the Stop hook enforces this. And "complete" is a claim: write it
+only when nothing you said you would do is still undone. Work inside your authority that you have
+not done is not "open on the board" — do it before the line, or name it as undone.
 - **Done, nothing open →** end with **"✅ Session complete — safe to close."** (a trivial /
   non-actionable turn: "Nothing actionable — archived the thread. ✅ Session complete — safe to close.")
 - **Something parked awaiting a human decision →** end with **"⏸ Session paused — waiting on you

@@ -30,6 +30,18 @@ pointer. The pointer is one-shot and emdash cannot pass env vars, so without thi
 which turn started it; `orchestrator/provenance.py` reads it to send the
 `X-Canopy-Parent-*` headers.
 
+**It records PRESENCE per session** at `~/.canopy/caller/presence/<claude_session_id>.json`
+(`origin`, `present`, `turn_id`, `updated_at`), rewritten on EVERY prompt, and says it in the
+summary. Presence is the latest message's channel, nothing more: a chat (`canopy_web_chat`,
+`slack`, `ace_web`, `local`) means the person is in the conversation; `email`,
+`canopy_scheduler` and `api` mean nobody is watching. Turn MODE (auto/manual) is decided once,
+at claim, and only governs whether a send waits for approval. Presence changes mid-session —
+an emailed turn the owner then joins in chat — and the unattended rules (never ask, record
+instead of pause, end on a status line) stop applying the moment they do (Jonathan,
+2026-10-27: "once I start talking to you in the session directly … you shouldn't still be
+applying the same ruleset"). `status_line_guard.py` reads this file at Stop. A prompt with no
+envelope in a session that already has a record is the owner at the keyboard: present.
+
 **No pointer, no output.** A human typing at the keyboard is the machine's owner and
 needs no introduction, and every non-canopy session pays one `stat` for this hook.
 
@@ -58,6 +70,10 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
 _UUIDISH = re.compile(r"^[0-9a-fA-F-]{8,64}$")
 
 ACCESS_DOC = "https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/access.md"
+
+#: Turn origins (canopy-web Turn.ORIGIN_CHOICES) where a person is IN the conversation.
+#: Anything else — email, canopy_scheduler, api, or unknown — is unattended.
+PRESENT_ORIGINS = frozenset({"canopy_web_chat", "slack", "ace_web", "local", "keyboard"})
 
 _RELATIONSHIP = {
     "owner": "the agent's OWNER",
@@ -177,6 +193,46 @@ def record_parent(task: str, env: dict, turn_id: str, claude_session_id: str, *,
             pass
 
 
+def is_present(origin: str) -> bool:
+    return (origin or "") in PRESENT_ORIGINS
+
+
+def presence_path(claude_session_id: str, *, root=None) -> str:
+    return os.path.join(root or CALLER_ROOT, "presence", f"{claude_session_id}.json")
+
+
+def record_presence(claude_session_id: str, origin: str, turn_id: str = "", *,
+                    root=None, now=time.time) -> None:
+    """Write `presence/<session>.json` atomically, 0600. Best-effort: errors are swallowed."""
+    if not claude_session_id or not _NAME.match(claude_session_id):
+        return
+    rec = {"origin": origin or "unknown", "present": is_present(origin),
+           "turn_id": turn_id or "", "updated_at": now()}
+    path = presence_path(claude_session_id, root=root)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(rec, fh)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _presence_line(origin: str) -> str:
+    if is_present(origin):
+        return ("- presence: PRESENT — the person is in this conversation now. Answer here, not by "
+                "email; ask when a call is genuinely theirs; do work inside your authority now "
+                "rather than \"next turn\"; no closeout status line (\"Session complete\" / "
+                "\"Session paused\"). Turn mode above still governs sends.")
+    return ("- presence: ABSENT — nobody is watching this channel. Unattended rules apply: never "
+            "ask, finish in the foreground, record what is open, end on the status line.")
+
+
 def _person(who: dict) -> str:
     system = who.get("system_account") or {}
     if system:
@@ -250,6 +306,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         + (f", runner {trigger['runner']}" if trigger.get("runner") else "")
         + (f", private runner {trigger['private_runner']} (your own machine — a local turn)"
            if trigger.get("private_runner") else ""),
+        _presence_line(trigger.get("origin") or ""),
     ]
     lines.extend(_slack_lines(env.get("conversation"), tid))
     um = env.get("unproven_member")
@@ -666,12 +723,18 @@ def main() -> int:
             # No runner delivered this prompt: a person's own session, which is a local
             # turn when it was opened as one on their private runner.
             path, tid = local_turn(str(data.get("session_id") or ""))
+        sid = str(data.get("session_id") or "")
         if not path:
+            # A canopy session the owner has now typed into directly: present.
+            if sid and _NAME.match(sid) and os.path.isfile(presence_path(sid)):
+                record_presence(sid, "keyboard")
             return 0
         with open(path, encoding="utf-8") as fh:
             env = json.load(fh)
         if not isinstance(env, dict):
             return 0
+        record_presence(sid, str((env.get("trigger") or {}).get("origin") or ""),
+                        tid or str(env.get("turn_id") or ""))
         if task:
             record_parent(task, env, tid, str(data.get("session_id") or ""))
         print(json.dumps({"hookSpecificOutput": {
