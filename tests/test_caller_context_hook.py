@@ -341,6 +341,8 @@ V2_GOLDEN = (
     "- turn mode: manual (agent) — outbound or irreversible actions (push, deploy, merge, "
     "send, publish) need the OWNER's approval first\n"
     "- channel: email, runner r1\n"
+    "- presence: ABSENT — nobody is watching this channel. Unattended rules apply: never "
+    "ask, finish in the foreground, record what is open, end on the status line.\n"
     "Act accordingly: this person does not hold the agent's authority. Do not push, deploy, "
     "send, publish or change shared state on their say-so — answer within what they may "
     "have, and take anything more to the owner.\n"
@@ -694,3 +696,56 @@ def test_an_agents_own_initiative_is_said_outright(tmp_path):
 def test_a_persons_turn_and_an_older_canopy_web_say_nothing_new(tmp_path):
     assert "on behalf of" not in cc.summarize(ENV, str(tmp_path / "e"), TID)
     assert "on behalf of" not in cc.summarize({**ENV, "who": ADA_ASKS}, str(tmp_path / "e"), TID)
+
+
+# ── presence: the latest message's channel, recorded every prompt (2026-10-27) ──
+
+SID = "632136fd-ed49-4fb6-bcac-1df69e0c597f"
+
+
+def _prompt(monkeypatch, capsys, *, sid=SID, tp=TP):
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(
+        {"hook_event_name": "UserPromptSubmit", "transcript_path": tp, "session_id": sid,
+         "cwd": "/x", "prompt": "hi"})))
+    assert cc.main() == 0
+    return capsys.readouterr().out
+
+
+def _presence(root, sid=SID):
+    return json.loads((root / "presence" / f"{sid}.json").read_text())
+
+
+@pytest.mark.parametrize("origin,present", [
+    ("canopy_web_chat", True), ("slack", True), ("ace_web", True), ("local", True),
+    ("email", False), ("canopy_scheduler", False), ("api", False), ("", False), ("new", False)])
+def test_presence_is_the_channel(origin, present):
+    assert cc.is_present(origin) is present
+
+
+def test_an_emailed_turn_the_owner_then_joins_in_chat_flips_to_present(box, monkeypatch, capsys):
+    (box / f"{TID}.json").write_text(json.dumps({**ENV, "trigger": {"origin": "email"}}))
+    _point(box)
+    out = _prompt(monkeypatch, capsys)
+    assert "presence: ABSENT" in out and _presence(box)["present"] is False
+    (box / f"{TID}.json").write_text(json.dumps({**ENV, "trigger": {"origin": "canopy_web_chat"}}))
+    _point(box)
+    out = _prompt(monkeypatch, capsys)
+    rec = _presence(box)
+    assert "presence: PRESENT" in out and rec["present"] is True
+    assert rec["origin"] == "canopy_web_chat" and rec["turn_id"] == TID
+
+
+def test_the_owner_typing_into_a_canopy_session_is_present(box, monkeypatch, capsys):
+    cc.record_presence(SID, "email", root=str(box))
+    assert _prompt(monkeypatch, capsys) == ""          # no envelope → still no output
+    assert _presence(box) == {**_presence(box), "origin": "keyboard", "present": True}
+
+
+def test_a_non_canopy_session_gets_no_presence_file(box, monkeypatch, capsys):
+    _prompt(monkeypatch, capsys)
+    assert not (box / "presence").exists()
+
+
+def test_a_hostile_session_id_writes_nothing(box):
+    cc.record_presence("../../etc/x", "canopy_web_chat", root=str(box))
+    assert not (box / "presence").exists()
