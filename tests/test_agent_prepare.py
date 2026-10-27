@@ -26,7 +26,7 @@ import pytest
 from orchestrator import agent_prepare as ap
 from orchestrator.agent_prepare import RunnerCredentials, RunnerPreparer, turn_readiness
 
-AGENT_KEY, SHARED_KEY, GH = "ops_AGENT", "ops_SHARED", "ghp_OWNER"
+AGENT_KEY, GH = "ops_AGENT", "ghp_OWNER"
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +68,7 @@ class Box:
         cmd = argv[0]
         if cmd == "op" and argv[1] == "read":
             ref = argv[2][len("op://"):]
-            key_ok = {"Agent-Ace": AGENT_KEY, "Canopy-Shared": SHARED_KEY}.get(ref.split("/")[0])
+            key_ok = {"Agent-Ace": AGENT_KEY}.get(ref.split("/")[0])
             if env.get("OP_SERVICE_ACCOUNT_TOKEN") != key_ok:
                 return bad(f'"{ref.split("/")[0]}" isn\'t a vault in this account')
             v = self.items.get(ref) or self.items.get(ref + "/credential")
@@ -142,8 +142,8 @@ def _repo(root: Path, slug="ace", *, gog_client="canopy", required=None, setup=F
 
 
 def _creds(**over):
-    base = dict(repo_url="https://github.com/dimagi-internal/ace", vault="Agent-Ace", key=AGENT_KEY, shared_vault="Canopy-Shared",
-                shared_key=SHARED_KEY, github_token=GH, mailbox="ace@dimagi-ai.com",
+    base = dict(repo_url="https://github.com/dimagi-internal/ace", vault="Agent-Ace", key=AGENT_KEY,
+                github_token=GH, mailbox="ace@dimagi-ai.com",
                 web_gog_token=_token(), values={"gog-oauth-client": '{"installed": {}}'})
     return RunnerCredentials(**{**base, **over})
 
@@ -169,7 +169,7 @@ def test_the_gog_token_and_client_never_come_from_1password(tmp_path):
     _repo(tmp_path / "agents")
     box = Box(tmp_path, vault_items={
         "Agent-Ace/gog-token/credential": _token(created="2027-01-01T00:00:00Z"),
-        "Canopy-Shared/gog-oauth-client/credential": '{"from": "1password"}'})
+        "Agent-Ace/gog-oauth-client/credential": '{"from": "1password"}'})
     rep = _prep(tmp_path, box).prepare("ace")
     reads = [c[0][2] for c in box.ran(["op", "read"])]
     assert not [r for r in reads if "gog-token" in r or "gog-oauth-client" in r]
@@ -215,12 +215,12 @@ def test_required_plugins_are_pulled_every_pass_get_deps_and_key_files(tmp_path)
         "    target: '{repo}/.gws-sa-key.json'\n"
         "  - name: sf\n    op: op://AI-Agents/sf/credential\n    target: '{repo}/sf'\n"
         "    optional: true\n")
-    box = Box(tmp_path, vault_items={"Canopy-Shared/gws-sa-key/credential": "KEYFILE"})
+    box = Box(tmp_path, vault_items={"Agent-Ace/gws-sa-key/credential": "KEYFILE"})
     rep = _prep(tmp_path, box).prepare("ace")
     assert box.ran(["git", "-c"]) and any(dep.as_posix() in " ".join(c[0]) and "pull" in c[0]
                                           for c in box.ran(["git"]))
     assert [c[3] for c in box.ran(["npm"])] == [str(dep)]
-    assert (dep / ".gws-sa-key.json").read_text() == "KEYFILE"      # agent vault, then shared
+    assert (dep / ".gws-sa-key.json").read_text() == "KEYFILE"      # the agent's vault
     assert not (dep / "sf").exists()                                   # optional: never staged
     assert "chrome-sales@chrome-sales" in box.plugins and "ace@ace" in box.plugins
     assert not [n for n in rep.notes if n.startswith("plugins:")], rep.notes
@@ -458,7 +458,7 @@ def test_the_refresh_asks_only_for_the_gog_token_and_the_vault_keys():
     c = ap.fetch_runner_credentials("hal", base_url="https://c.test", token="t",
                                     transport=transport, minimal=True)
     assert resolves == ["https://c.test/api/agents/hal/credentials/resolve"
-                        "?refs=gog-token,op_sa_token,shared_op_sa_token"], \
+                        "?refs=gog-token,op_sa_token"], \
         "exactly one scoped read, never the unscoped fallback"
     assert (c.key, c.web_gog_token, c.values) == ("k", "{}", {"gog-token": "{}"})
 
@@ -469,7 +469,7 @@ def test_a_refresh_of_an_agent_without_a_gog_token_names_none():
     ap.fetch_runner_credentials("eva", base_url="https://c.test", token="t",
                                 transport=transport, minimal=True)
     assert resolves == ["https://c.test/api/agents/eva/credentials/resolve"
-                        "?refs=op_sa_token,shared_op_sa_token"]
+                        "?refs=op_sa_token"]
 
 
 def test_a_full_prepare_still_resolves_everything():

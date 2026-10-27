@@ -77,8 +77,6 @@ class RunnerCredentials:
     """What canopy-web lends a runner for one agent. Any field may be blank."""
     vault: str = ""
     key: str = field(default="", repr=False)
-    shared_vault: str = ""
-    shared_key: str = field(default="", repr=False)
     github_token: str = field(default="", repr=False)
     mailbox: str = ""
     #: Where `mailbox` lives (canopy-web): "ses" = canopy-hosted — mail goes through
@@ -108,11 +106,12 @@ RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "delegated")
 
 
 #: What the credentials-only pass (the runner-update timer, every 30 minutes) actually
-#: uses: the vault keys `op` reads the gog token and OAuth client with, and canopy-web's
-#: copy of the gog token for newest-wins. Never the agent's other secrets — it writes no
-#: env (a turn's claim does, naming its turn), so reading them every 30 minutes outside a
-#: turn only put them on the wire (canopy-web#1563).
-REFRESH_EXTRAS = ("op_sa_token", "shared_op_sa_token")
+#: uses: the agent's vault key and canopy-web's copy of the gog token. Never the agent's
+#: other secrets — it writes no env (a turn's claim does, naming its turn), so reading them
+#: every 30 minutes outside a turn only put them on the wire (canopy-web#1563). Not
+#: `shared_op_sa_token` either: canopy-web dropped the tenant shared 1Password vault
+#: (canopy-web#2178), so naming it raised an hourly undeclared-ref alert for every agent.
+REFRESH_EXTRAS = ("op_sa_token",)
 REFRESH_VALUES = ("gog-token",)
 
 
@@ -198,8 +197,6 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         credential_source=source, values=values, extras=extras,
         repo_url=repo_url,
         vault=str(body.get("op_vault") or ""), key=str(body.get("op_sa_token") or ""),
-        shared_vault=str(body.get("shared_op_vault") or ""),
-        shared_key=str(body.get("shared_op_sa_token") or ""),
         github_token=str(body.get("github_token") or ""), mailbox=str(body.get("mailbox") or ""),
         mailbox_backend=str(body.get("mailbox_backend") or ""),
         google_account=str(body.get("google_account") or "").strip(),
@@ -325,17 +322,12 @@ class RunnerPreparer(Bootstrapper):
         return list(argv)   # a service-account key needs no --account
 
     def op_env(self, vault: str, base: Optional[dict] = None) -> dict:
-        """op's environment with exactly ONE key: the agent's for its vault, the
-        workspace's for the shared vault — never the box's, never another agent's."""
+        """op's environment with exactly ONE key: the agent's, for its own vault — never the
+        box's, never another agent's."""
         c = self.creds(self._slug)
         env = {k: v for k, v in (base if base is not None else os.environ).items()
                if not k.startswith("OP_SESSION_") and k != "OP_SERVICE_ACCOUNT_TOKEN"}
-        if vault and vault == c.shared_vault:
-            key = c.shared_key
-        elif vault and vault == c.vault:
-            key = c.key
-        else:
-            key = ""
+        key = c.key if vault and vault == c.vault else ""
         if key:
             env["OP_SERVICE_ACCOUNT_TOKEN"] = key
         return env
@@ -471,21 +463,15 @@ class RunnerPreparer(Bootstrapper):
             dest = path / rel
             if dest.is_file() and dest.stat().st_size:
                 continue
-            tried = []
-            for vault in (c.vault, c.shared_vault):
-                if not vault:
-                    continue
-                tried.append(f"op://{vault}/{item}")
-                value, _ = self._op_read(f"op://{vault}/{item}")
-                if value:
-                    if not self.dry_run:
-                        _write_private(dest, value)
-                        os.chmod(dest, int(mode, 8))
-                    break
+            value, _ = self._op_read(f"op://{c.vault}/{item}") if c.vault else ("", "")
+            if value:
+                if not self.dry_run:
+                    _write_private(dest, value)
+                    os.chmod(dest, int(mode, 8))
             else:
-                rep.notes.append(f"{name}: secret '{sname}' is in neither vault this box reads "
-                                 f"({', '.join(tried) or 'none registered'}) — share 1Password "
-                                 f"item '{item.split('/')[0]}' into the workspace's shared vault")
+                rep.notes.append(f"{name}: secret '{sname}' is not in the agent's vault "
+                                 f"({f'op://{c.vault}/{item}' if c.vault else 'none registered'})"
+                                 f" — share 1Password item '{item.split('/')[0]}' into it")
 
     def step_runner_plugins(self, slug: str, repo: Path, rep: RunnerReport) -> None:
         installed = 0
