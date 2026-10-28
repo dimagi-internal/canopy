@@ -413,6 +413,29 @@ def scoped_caller_token(cwd: Optional[Path] = None) -> tuple[bool, str]:
     return False, ""
 
 
+def _local_turn_token(slug: str) -> str:
+    """In a person's local turn, their own token: their PAT, else their linked private
+    runner's token. "" outside a local turn. A license holder's box may still hold the
+    agent's login in ``~/.<slug>/.env`` (canopy-web leaked it to license reads until
+    canopy-web#2265), and acting as the agent is exactly what a local turn replaces —
+    so it is never used here."""
+    from orchestrator import private_runner_session
+
+    if not private_runner_session.in_local_turn():
+        return ""
+    import click
+
+    from orchestrator import local_cli
+
+    try:
+        return local_cli.person_token(slug)
+    except click.ClickException as e:
+        runner_tok = private_runner_session.token()
+        if runner_tok:
+            return runner_tok
+        raise RuntimeError(f"this is a local turn, which acts as you, but {e.message}") from None
+
+
 def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
     """The canopy-web PAT this process acts with.
 
@@ -420,6 +443,9 @@ def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
     turn or project chat, canopy-web#1782) acts with that conversation's caller
     token, ahead of every PAT, and never falls back to one
     (:func:`scoped_caller_token`). An agent's own session keeps acting as the agent.
+
+    A person's LOCAL turn (``CANOPY_LOCAL_TURN=1``, canopy-web#1704) acts as that person
+    (:func:`_local_turn_token`), never as the agent, whatever agent login the box holds.
 
     Precedence otherwise: explicit arg → env ``CANOPY_WEB_PAT`` (a cloud runner's turn login) →
     in a runner turn, the login canopy-web issues for that turn
@@ -438,6 +464,9 @@ def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
     if token:
         return token
     slug = agent_context_slug()
+    local = _local_turn_token(slug)
+    if local:
+        return local
     if not slug:
         scoped, caller = scoped_caller_token()
         if scoped:

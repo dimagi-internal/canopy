@@ -13,6 +13,8 @@ reading the Python client.
 - **Auth header:** `Authorization: Bearer <PAT>`.
 - **PAT resolution (precedence):** explicit arg → `CANOPY_WEB_PAT` env →
   `~/.claude/canopy/workbench-token`. Mint one with `/canopy:canopy-web-pat-mint`.
+  In a person's local turn (`CANOPY_LOCAL_TURN=1`) every call acts as that person (their PAT,
+  else their private runner's token), never as the agent — `canopy_web.resolve_token`.
 - **Base URL (precedence):** explicit arg → `CANOPY_WEB_API_URL` env →
   `https://canopy.dimagi.com` (prod default).
 - **Content-Type:** `application/json` on bodies. Non-2xx responses are errors.

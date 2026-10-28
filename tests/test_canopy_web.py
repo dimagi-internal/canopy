@@ -419,3 +419,43 @@ def test_an_agents_session_keeps_acting_as_the_agent(monkeypatch, tmp_path):
     monkeypatch.setenv("CANOPY_WEB_PAT", "ace-own-pat")
     monkeypatch.chdir(tmp_path)
     assert cw.resolve_token(None) == "ace-own-pat"
+
+
+def test_a_local_turn_acts_as_the_person_not_the_agents_stored_login(monkeypatch, tmp_path):
+    """A license holder's box can hold the agent's login in ~/.<slug>/.env; their local
+    turn must still act as them (the ACE dispatch that went out as ace@, 2026-10-28)."""
+    from orchestrator import local_cli
+
+    home = tmp_path / "home"
+    (home / ".ace").mkdir(parents=True)
+    (home / ".ace" / ".env").write_text("CANOPY_WEB_PAT=ace-own-token\n")
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    monkeypatch.setenv("CANOPY_AGENT", "ace")
+    monkeypatch.setenv("CANOPY_WEB_PAT", "ace-own-token")
+    monkeypatch.chdir(tmp_path)
+    seen = []
+    monkeypatch.setattr(local_cli, "person_token", lambda slug="": seen.append(slug) or "person-pat")
+
+    assert cw.resolve_token(None) == "ace-own-token"          # not a local turn: unchanged
+    monkeypatch.setenv("CANOPY_LOCAL_TURN", "1")
+    assert cw.resolve_token(None) == "person-pat" and seen == ["ace"]
+    assert cw.resolve_token("explicit") == "explicit"
+
+
+def test_a_local_turn_without_a_pat_uses_the_private_runner_token_or_refuses(monkeypatch, tmp_path):
+    import click
+
+    from orchestrator import local_cli, private_runner_session
+
+    monkeypatch.setenv("CANOPY_LOCAL_TURN", "1")
+    monkeypatch.setenv("CANOPY_WEB_PAT", "ace-own-token")
+
+    def no_pat(slug=""):
+        raise click.ClickException("no canopy-web token for you on this machine")
+
+    monkeypatch.setattr(local_cli, "person_token", no_pat)
+    monkeypatch.setattr(private_runner_session, "token", lambda **k: "box-runner-token")
+    assert cw.resolve_token(None) == "box-runner-token"
+    monkeypatch.setattr(private_runner_session, "token", lambda **k: "")
+    with pytest.raises(RuntimeError, match="local turn"):
+        cw.resolve_token(None)
