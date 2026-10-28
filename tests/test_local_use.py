@@ -4,7 +4,8 @@ three hooks that make a person's own session a recorded local turn.
 * SessionStart (`agent_op_env.py`) opens the local turn on a registered private runner and
   exports its id, so the credential reads that follow name it;
 * UserPromptSubmit (`caller_context.py`) shows the turn's envelope once and renews it;
-* SessionEnd (`local_turn_close.py`) uploads the transcript and finishes the turn.
+* Stop / PostToolUse (`local_turn_sync.py`) stream the transcript up while it runs;
+* SessionEnd (`local_turn_close.py`) uploads the rest and finishes the turn.
 """
 import importlib.util
 import json
@@ -310,6 +311,146 @@ def test_session_end_closes_with_the_transcript(tmp_path):
             break
         time.sleep(0.1)
     assert log.read_text().strip() == f"local close --session-id s1 --transcript {t}"
+
+
+# --- live sync: the transcript streams up while the session runs -------------------
+
+def _open_with_transcript(home, text):
+    _cli("pr", "register", "--name", "aath-mbp")
+    t = home / "t.jsonl"
+    t.write_text(text)
+    _cli("local", "open", "--slug", "ace", "--session-id", "s1", "--transcript", str(t))
+    return t
+
+
+def _sent(calls):
+    return [ln for c in calls if c[1].endswith("/transcript") for ln in c[2]["lines"]]
+
+
+def test_sync_sends_only_new_complete_lines(home, calls):
+    t = _open_with_transcript(home, '{"n": 0}\n{"n": 1}\n{"n": 2, "half')
+    _cli("local", "sync", "--session-id", "s1")
+    assert _sent(calls) == ['{"n": 0}', '{"n": 1}']           # the half-written line waits
+    t.write_text('{"n": 0}\n{"n": 1}\n{"n": 2, "half": 1}\n{"n": 3}\n')
+    _cli("local", "sync", "--session-id", "s1")
+    assert _sent(calls) == ['{"n": 0}', '{"n": 1}', '{"n": 2, "half": 1}', '{"n": 3}']
+    state = json.loads((home / ".canopy/local/s1.json").read_text())
+    assert state["uploaded"] == 4 and state["synced_at"] and not state.get("closed_at")
+    _cli("local", "close", "--session-id", "s1")               # close sends nothing twice
+    assert len(_sent(calls)) == 4 and calls[-1][1].endswith("/finish")
+
+
+def test_a_sync_that_fails_halfway_keeps_what_went_up(home, calls, monkeypatch):
+    _open_with_transcript(home, "".join(json.dumps({"n": i, "pad": "x" * 10}) + "\n" for i in range(4)))
+    monkeypatch.setattr(local_cli, "TRANSCRIPT_BATCH_BYTES", 40)
+    inner, posts = canopy_web.call, []
+
+    def flaky(method, path, body=None, **kw):
+        if path.endswith("/transcript"):
+            posts.append(body)
+            if len(posts) == 2:
+                raise canopy_web.CanopyError("POST -> 503")
+        return inner(method, path, body, **kw)
+
+    monkeypatch.setattr(canopy_web, "call", flaky)
+    r = CliRunner().invoke(local_cli.local_group, ["sync", "--session-id", "s1"])
+    assert r.exit_code != 0
+    assert json.loads((home / ".canopy/local/s1.json").read_text())["uploaded"] == 1
+    assert not (home / ".canopy/local/s1.sync.lock").exists()
+    _cli("local", "sync", "--session-id", "s1")
+    assert [json.loads(ln)["n"] for b in posts[2:] for ln in b["lines"]] == [1, 2, 3]
+
+
+def test_sync_can_be_turned_off(home, calls, monkeypatch):
+    _open_with_transcript(home, '{"n": 0}\n')
+    monkeypatch.setenv(local_cli.LIVE_SYNC_ENV, "0")
+    assert "off" in _cli("local", "sync", "--session-id", "s1")
+    assert _sent(calls) == []
+    _cli("local", "close", "--session-id", "s1")               # the close still uploads
+    assert _sent(calls) == ['{"n": 0}']
+
+
+def test_sync_skips_while_another_sync_holds_the_lock(home, calls):
+    _open_with_transcript(home, '{"n": 0}\n')
+    (home / ".canopy/local/s1.sync.lock").write_text("")
+    assert "another sync" in _cli("local", "sync", "--session-id", "s1")
+    assert _sent(calls) == []
+
+
+def test_sync_takes_over_a_stale_lock(home, calls):
+    _open_with_transcript(home, '{"n": 0}\n')
+    lock = home / ".canopy/local/s1.sync.lock"
+    lock.write_text("")
+    old = lock.stat().st_mtime - local_cli.SYNC_LOCK_STALE - 1
+    os.utime(lock, (old, old))
+    _cli("local", "sync", "--session-id", "s1")
+    assert _sent(calls) == ['{"n": 0}'] and not lock.exists()
+
+
+def test_sync_of_a_closed_session_does_nothing(home, calls):
+    _open_with_transcript(home, '{"n": 0}\n')
+    _cli("local", "close", "--session-id", "s1")
+    before = len(calls)
+    assert "no live local turn" in _cli("local", "sync", "--session-id", "s1")
+    assert len(calls) == before
+
+
+def _run_sync_hook(tmp_path, state, event, *, extra_env=None):
+    home = tmp_path / "home"
+    (home / ".canopy/local").mkdir(parents=True, exist_ok=True)
+    (home / ".canopy/local/s1.json").write_text(json.dumps(state))
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    log = tmp_path / "args"
+    log.unlink(missing_ok=True)
+    (bindir / "canopy").write_text(f"#!/bin/sh\necho \"$@\" > {log}\n")
+    (bindir / "canopy").chmod(0o755)
+    t = tmp_path / "t.jsonl"
+    t.write_text("{}\n")
+    env = {**os.environ, "HOME": str(home), "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+           **(extra_env or {})}
+    r = subprocess.run([sys.executable, str(HOOKS / "local_turn_sync.py")],
+                       input=json.dumps({"session_id": "s1", "transcript_path": str(t),
+                                         "hook_event_name": event}),
+                       capture_output=True, text=True, env=env, timeout=10)
+    assert r.returncode == 0 and r.stdout == ""
+    import time
+    for _ in range(30):
+        if log.exists() and log.read_text().strip():
+            return log.read_text().strip(), t
+        time.sleep(0.1)
+    return None, t
+
+
+def test_sync_hook_syncs_after_every_reply(tmp_path):
+    import time
+    args, t = _run_sync_hook(tmp_path, {"turn_id": "tid", "synced_at": time.time()}, "Stop")
+    assert args == f"local sync --session-id s1 --transcript {t}"
+
+
+def test_sync_hook_throttles_between_tool_calls(tmp_path):
+    import time
+    args, _ = _run_sync_hook(tmp_path, {"turn_id": "tid", "synced_at": time.time()}, "PostToolUse")
+    assert args is None
+    args, _ = _run_sync_hook(tmp_path, {"turn_id": "tid", "synced_at": time.time() - 120},
+                             "PostToolUse")
+    assert args and args.startswith("local sync --session-id s1")
+
+
+@pytest.mark.parametrize("state,env", [
+    ({"turn_id": "tid", "closed_at": 1}, {}),
+    ({"turn_id": "tid"}, {"CANOPY_LOCAL_LIVE_TRANSCRIPT": "0"}),
+])
+def test_sync_hook_is_inert_for_a_closed_session_or_when_off(tmp_path, state, env):
+    args, _ = _run_sync_hook(tmp_path, state, "Stop", extra_env=env)
+    assert args is None
+
+
+def test_sync_hook_is_registered_after_replies_and_tool_calls():
+    hooks = json.loads((HOOKS / "hooks.json").read_text())["hooks"]
+    for event in ("Stop", "PostToolUse"):
+        cmds = [h["command"] for entry in hooks[event] for h in entry["hooks"]]
+        assert any("local_turn_sync.py" in c for c in cmds), event
 
 
 def test_session_end_is_registered():

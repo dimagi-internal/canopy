@@ -393,8 +393,12 @@ grant, licence, plugin, `$CANOPY_AGENT`, env). Underneath:
    credential reads that follow (`canopy agent op-token`, `cred sync`) name the turn and
    go out under the license (`via=license` in the read log). `caller_context.py` shows the
    turn's envelope on the first prompt (an editor's says `manual`) and renews its lease;
-   `local_turn_close.py` (SessionEnd) runs `canopy local close`, which uploads the
-   transcript to the turn and finishes it.
+   `local_turn_sync.py` streams the transcript up WHILE the session runs (`canopy local
+   sync`: after every reply, and at most once a minute between tool calls; only whole
+   lines, from the offset last sent), so a live local session can be read on canopy-web;
+   `local_turn_close.py` (SessionEnd) runs `canopy local close`, which uploads the rest
+   and finishes the turn. `CANOPY_LOCAL_LIVE_TRANSCRIPT=0` turns the streaming off (the
+   close still uploads everything).
 
 A license read never carries the agent's own canopy login, its owner's GitHub delegation,
 a lent credential or the shared vault key. It does carry the agent's 1Password key, so an
