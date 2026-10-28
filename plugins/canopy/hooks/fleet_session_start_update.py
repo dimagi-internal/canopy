@@ -34,6 +34,15 @@ inert and invisible on the happy path:
   * It emits NOTHING on stdout (no context injection / no per-session noise);
     one line per run goes to ~/.claude/canopy/fleet-update.log.
 
+It also keeps the `canopy` CLI (the engine most hooks shell out to — `canopy local`,
+`canopy agent`, credential reads) at the plugin's version: canopy ships as a plugin AND
+a `uv tool` CLI, and a plugin update alone left a machine running new hooks against an
+old engine. When `canopy --version` is BEHIND the canopy marketplace clone it reinstalls
+from that clone (see refresh_cli). The canopy runner app does the same on a timer
+(canopy-web `cli_refresh`), but a person who only uses an agent in their own Claude Code
+has no runner app — this hook is the one thing that runs there. Opt out of just this
+step with CANOPY_CLI_REFRESH=0 (the runner's switch too).
+
 Opt out per machine (any one):
   * env  CANOPY_FLEET_AUTOUPDATE=0   (also: false / no / off)
   * touch ~/.claude/canopy/fleet-autoupdate-disabled
@@ -53,6 +62,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -516,6 +526,8 @@ def _fmt(result: dict) -> str:
         return f"{name} {result['old_ver']}→{result['new_ver']} (sha {result['old_sha']}→{result['new_sha']})"
     if status == "up-to-date":
         return f"{name} up-to-date"
+    if status == "cli":
+        return f"{name} {result['detail']}"
     if status == "runtime-repaired":
         return f"{name} runtime bundle repaired into installed cache"
     return f"{name} error: {result['error']}"
@@ -529,6 +541,75 @@ def log_run(results: list[dict]) -> None:
             fh.write(line + "\n")
     except OSError:
         pass
+
+
+# ── the canopy CLI ──────────────────────────────────────────────────────────
+
+CLI_TIMEOUT = 300
+
+
+def _version_tuple(v: str) -> tuple:
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", v or "")
+    return tuple(int(x) for x in m.groups()) if m else ()
+
+
+def _which(name: str) -> str | None:
+    found = shutil.which(name)
+    if found:
+        return found
+    for cand in (HOME / ".local" / "bin" / name, HOME / ".local" / "bin" / f"{name}.exe",
+                 HOME / ".cargo" / "bin" / name, Path("/opt/homebrew/bin") / name,
+                 Path("/usr/local/bin") / name):
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
+    return None
+
+
+def _uv_receipt(uv: str) -> Path | None:
+    rc, out, _ = run([uv, "tool", "dir"], 30)
+    return Path(out) / "canopy" / "uv-receipt.toml" if rc == 0 and out else None
+
+
+def refresh_cli(clone: str) -> str:
+    """Reinstall the `canopy` CLI from the marketplace clone when it is BEHIND the
+    clone's plugin version. Returns what it did: "current", "refreshed", or why not.
+
+    Only behind: a CLI ahead of the clone is a developer's install and is left alone.
+    No CLI at all is left alone too — installing it is setup's job. Same reinstall as
+    the /canopy:update skill and scripts/canopy-setup.sh: when the CLI already comes from
+    this clone, `uv tool upgrade --reinstall canopy` rebuilds it and keeps what was
+    installed beside it (`--with canopy-kb`); otherwise `install --reinstall --force`.
+    On Windows a canopy.exe that is running cannot be replaced: that fails, is logged,
+    and the next session tries again."""
+    if _falsey(os.environ.get("CANOPY_CLI_REFRESH", "1")):
+        return "off"
+    want = _version_tuple(_read_version(Path(clone) / _plugin_source_subdir(clone, "canopy")))
+    if not want:
+        return "no canopy plugin version in the clone"
+    cli = _which("canopy")
+    if not cli:
+        return "no canopy CLI"
+    rc, out, _ = run([cli, "--version"], 30)
+    have = _version_tuple(out) if rc == 0 else ()
+    if have and have >= want:
+        return "current"
+    uv = _which("uv")
+    if not uv:
+        return "behind, and no uv to reinstall it"
+    receipt = _uv_receipt(uv)
+    try:
+        text = receipt.read_text(encoding="utf-8") if receipt else ""
+    except OSError:
+        text = ""
+    # TOML escapes a Windows path's backslashes.
+    from_clone = any(f'directory = "{c}"' in text for c in (clone, clone.replace("\\", "\\\\")))
+    cmd = ([uv, "tool", "upgrade", "--reinstall", "canopy"] if from_clone
+           else [uv, "tool", "install", "--reinstall", "--force", clone])
+    rc, out, err = run(cmd, CLI_TIMEOUT)
+    if rc != 0:
+        return f"reinstall failed: {(err or out)[-200:]}"
+    fmt = lambda v: ".".join(map(str, v)) or "?"   # noqa: E731
+    return f"refreshed {fmt(have)}→{fmt(want)}"
 
 
 # ── orchestration ───────────────────────────────────────────────────────────
@@ -598,6 +679,15 @@ def main() -> int:
                         "error": f"unexpected: {exc}",
                     }
                 )
+
+        canopy = next((t for t in targets if t["name"] == "canopy"), None)
+        if canopy:
+            try:
+                cli = refresh_cli(canopy["clone"])
+            except Exception as exc:  # noqa: BLE001 — never let the CLI step abort the run
+                cli = f"error: {exc}"
+            if cli not in ("current", "off", "no canopy CLI"):
+                results.append({"name": "canopy-cli", "status": "cli", "detail": cli})
 
         if any(r["status"] != "up-to-date" for r in results):
             log_run(results)

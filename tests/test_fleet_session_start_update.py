@@ -575,3 +575,98 @@ def test_install_node_deps_without_an_installer_is_the_plain_npm_install(tmp_pat
     monkeypatch.setattr(flu.shutil, "which", lambda n: f"/usr/bin/{n}")
     flu.install_node_deps("eva", cache)
     assert calls == [["npm", "install", "--no-audit", "--no-fund"]]
+
+
+# ── the canopy CLI follows the plugin ───────────────────────────────────────
+
+
+def _cli_fixture(tmp_path, monkeypatch, *, plugin="0.2.900", cli="0.2.800", receipt_dir=None):
+    clone = tmp_path / "clone"
+    (clone / ".claude-plugin").mkdir(parents=True)
+    (clone / ".claude-plugin" / "marketplace.json").write_text(json.dumps(
+        {"plugins": [{"name": "canopy", "source": "./plugins/canopy"}]}))
+    (clone / "plugins/canopy/.claude-plugin").mkdir(parents=True)
+    (clone / "plugins/canopy/.claude-plugin/plugin.json").write_text(json.dumps({"version": plugin}))
+    tooldir = tmp_path / "tools"
+    (tooldir / "canopy").mkdir(parents=True)
+    (tooldir / "canopy" / "uv-receipt.toml").write_text(
+        f'[tool]\nrequirements = [{{ name = "canopy", directory = "{receipt_dir or "/elsewhere"}" }}]\n')
+    calls = []
+
+    def fake_run(cmd, timeout, cwd=None):
+        calls.append(cmd)
+        if cmd[1:] == ["--version"]:
+            return (0, f"canopy {cli}", "") if cli else (1, "", "boom")
+        if cmd[1:] == ["tool", "dir"]:
+            return 0, str(tooldir), ""
+        return 0, "", ""
+
+    monkeypatch.setattr(flu, "run", fake_run)
+    monkeypatch.setattr(flu, "_which", lambda name: f"/bin/{name}")
+    monkeypatch.delenv("CANOPY_CLI_REFRESH", raising=False)
+    return str(clone), calls
+
+
+def test_refresh_cli_reinstalls_a_cli_behind_the_plugin(tmp_path, monkeypatch):
+    clone, calls = _cli_fixture(tmp_path, monkeypatch)
+    assert flu.refresh_cli(clone) == "refreshed 0.2.800→0.2.900"
+    assert calls[-1] == ["/bin/uv", "tool", "install", "--reinstall", "--force", clone]
+
+
+def test_refresh_cli_upgrades_in_place_when_installed_from_the_clone(tmp_path, monkeypatch):
+    """`upgrade --reinstall` keeps what was installed beside canopy (`--with canopy-kb`)."""
+    clone, calls = _cli_fixture(tmp_path, monkeypatch, receipt_dir=str(tmp_path / "clone"))
+    assert flu.refresh_cli(clone).startswith("refreshed")
+    assert calls[-1] == ["/bin/uv", "tool", "upgrade", "--reinstall", "canopy"]
+
+
+@pytest.mark.parametrize("cli", ["0.2.900", "0.2.950"])
+def test_refresh_cli_leaves_a_current_or_ahead_cli_alone(tmp_path, monkeypatch, cli):
+    clone, calls = _cli_fixture(tmp_path, monkeypatch, cli=cli)
+    assert flu.refresh_cli(clone) == "current"
+    assert not any("tool" in c for c in calls)
+
+
+def test_refresh_cli_reinstalls_a_cli_that_cannot_say_its_version(tmp_path, monkeypatch):
+    clone, calls = _cli_fixture(tmp_path, monkeypatch, cli="")
+    assert flu.refresh_cli(clone) == "refreshed ?→0.2.900"
+
+
+def test_refresh_cli_never_installs_a_missing_cli(tmp_path, monkeypatch):
+    clone, calls = _cli_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(flu, "_which", lambda name: None if name == "canopy" else f"/bin/{name}")
+    assert flu.refresh_cli(clone) == "no canopy CLI" and calls == []
+
+
+def test_refresh_cli_can_be_turned_off(tmp_path, monkeypatch):
+    clone, calls = _cli_fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv("CANOPY_CLI_REFRESH", "0")
+    assert flu.refresh_cli(clone) == "off" and calls == []
+
+
+def test_refresh_cli_reports_a_failed_reinstall(tmp_path, monkeypatch):
+    clone, calls = _cli_fixture(tmp_path, monkeypatch)
+    inner = flu.run
+    monkeypatch.setattr(flu, "run", lambda cmd, timeout, cwd=None:
+                        (1, "", "Access is denied") if "install" in cmd else inner(cmd, timeout, cwd))
+    assert flu.refresh_cli(clone) == "reinstall failed: Access is denied"
+
+
+def test_main_refreshes_the_cli_after_updating_the_plugins(tmp_path, monkeypatch):
+    seen = []
+    target = {"name": "canopy", "clone": "/c", "version": "1", "sha": "", "key": "canopy@canopy",
+              "marketplace": "canopy", "install_path": "/i"}
+    monkeypatch.setattr(flu, "CANOPY_DIR", tmp_path)
+    monkeypatch.setattr(flu, "LOCK_FILE", tmp_path / "lock")
+    monkeypatch.setattr(flu, "LOG_FILE", tmp_path / "log")
+    monkeypatch.setattr(flu, "STAMP_FILE", tmp_path / "stamp")
+    monkeypatch.setattr(flu, "_disabled", lambda: False)
+    monkeypatch.setattr(flu, "load_json", lambda p: {})
+    monkeypatch.setattr(flu, "discover_fleet", lambda r, m: [target])
+    monkeypatch.setattr(flu, "update_one", lambda t: seen.append("plugin") or
+                        {"name": "canopy", "status": "up-to-date"})
+    monkeypatch.setattr(flu, "refresh_cli", lambda clone: seen.append(("cli", clone)) or
+                        "refreshed 0.2.1→0.2.2")
+    assert flu.main() == 0
+    assert seen == ["plugin", ("cli", "/c")]
+    assert "canopy-cli refreshed 0.2.1→0.2.2" in (tmp_path / "log").read_text()
