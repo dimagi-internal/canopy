@@ -1042,7 +1042,7 @@ def send(
 # --------------------------------------------------------------------------------------
 
 def _headers_of(msg: dict) -> dict:
-    return {h["name"].lower(): h["value"] for h in msg.get("payload", {}).get("headers", [])}
+    return {h["name"].lower(): h.get("value", "") for h in msg.get("payload", {}).get("headers", [])}
 
 
 def derive_reply_all(

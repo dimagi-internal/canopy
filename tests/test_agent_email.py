@@ -1284,6 +1284,20 @@ def test_read_thread_computes_reply_all():
     assert ra["reply_to_message_id"] == "msg-123"
 
 
+def test_read_thread_survives_a_header_with_no_value():
+    """An empty Subject comes back from gog as {"name": "Subject"} with no "value" key.
+
+    read_thread and derive_reply_all used to KeyError on it, so a mail with a blank
+    subject could be neither read nor replied to through canopy (2026-10-28, ACE).
+    """
+    raw = json.loads(_inbound_thread_json([{"mimeType": "text/plain", "body": {"size": 2, "data": "aGk="}}]))
+    for m in (raw.get("thread") or raw)["messages"]:
+        m["payload"]["headers"].append({"name": "Subject"})
+    res = read_thread(_ACE, "t", runner=_runner_ok(json.dumps(raw)))
+    assert res["messages"][0]["subject"] == ""
+    assert res["reply_all"]["to"] == "e@spark.org"
+
+
 # --------------------------------------------------------------------------------------
 # reconcile_client — the OAuth client follows the token, because identity is the MAILBOX
 #
