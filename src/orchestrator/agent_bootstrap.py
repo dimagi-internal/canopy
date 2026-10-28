@@ -360,8 +360,13 @@ class Bootstrapper:
                  verify: Callable = preflight, echo: Callable[[str], None] = print,
                  platform: str = sys.platform,
                  vault_for: Optional[Callable[[str], str]] = None,
-                 hosted: Callable[[Path], EmailIdentity | None] = hosted_identity):
+                 hosted: Callable[[Path], EmailIdentity | None] = hosted_identity,
+                 mailbox_hint: str = CONNECT_MAILBOX_HINT):
         self.dry_run = dry_run
+        #: What a missing/foreign token tells the reader to do. An admin connects the
+        #: mailbox; a licence holder cannot (the button is admin-only), so `canopy agent
+        #: google-login` passes an "ask an admin" line instead.
+        self.mailbox_hint = mailbox_hint
         self.hosted = hosted
         self.op_account = op_account
         self.run = runner
@@ -606,7 +611,7 @@ class Bootstrapper:
             rep.token = "NONE"
             rep.fail(f"token: no gog token on canopy-web for {slug} "
                      f"({web_err or ('unparseable' if web_raw else 'none stored')}) — "
-                     + CONNECT_MAILBOX_HINT)
+                     + self.mailbox_hint)
             return None
         rep.token = f"{tok.source} {tok.client or '?'} {age_label(tok.epoch)}"
         if not tok.client:
@@ -629,7 +634,7 @@ class Bootstrapper:
             if not item:
                 rep.fail(f"token: the token is under '{tok.client}', not a fleet client — its "
                          "OAuth client is not in the canopy vault. Re-mint it under a fleet "
-                         "client: " + CONNECT_MAILBOX_HINT)
+                         "client: " + self.mailbox_hint)
                 return tok
             secret = self.client_from_vault(slug, tok.client)
             if not secret:
@@ -742,12 +747,26 @@ class Bootstrapper:
                      "or pass --repo")
             return rep
         for step in (lambda: self.step_plugins(repo, rep),
-                     lambda: self.step_env(slug, repo, rep),
-                     lambda: self.step_keyring(slug, rep)):
+                     lambda: self.step_env(slug, repo, rep)):
             try:
                 step()
             except Exception as e:  # noqa: BLE001 — one step must not sink the agent
                 rep.fail(f"unexpected error: {_first_line(str(e))}")
+        return self.google_login(slug, repo, rep)
+
+    def google_login(self, slug: str, repo: Path, rep: AgentReport | None = None, *,
+                     verify: bool = True) -> AgentReport:
+        """The agent's Google login on this machine: keyring (macOS), then — unless its mail
+        is canopy-hosted — token, OAuth client file, import, account mapping and (``verify``)
+        one Gmail call. `bootstrap_one`'s tail, and all of `canopy agent use`'s and
+        `canopy agent google-login`'s Google step (2026-10-28, failure investigation 17:
+        `agent use` had none, so a licensee's first ace turn died on a missing
+        credentials-canopy.json)."""
+        rep = rep or AgentReport(slug=slug)
+        try:
+            self.step_keyring(slug, rep)
+        except Exception as e:  # noqa: BLE001
+            rep.fail(f"unexpected error: {_first_line(str(e))}")
         hosted = self.hosted(repo)
         if hosted is not None:
             # Mail goes through canopy-web: no Gmail token exists or is needed, so neither
@@ -760,11 +779,32 @@ class Bootstrapper:
             tok = self.step_token(slug, repo, rep)
         except Exception as e:  # noqa: BLE001
             rep.fail(f"token: unexpected error: {_first_line(str(e))}")
+        if not verify:
+            return rep
         try:
             self.step_verify(repo, tok, rep)
         except Exception as e:  # noqa: BLE001
             rep.fail(f"verify: unexpected error: {_first_line(str(e))}")
         return rep
+
+
+def google_login_present(repo: Path, gog_dir: str | None = None) -> str:
+    """The client this machine's gog maps the agent's Google account to, when that client's
+    OAuth file is where gog reads it — else "". Local files only: no gog call (each can be a
+    Keychain prompt), no network. What `canopy agent google-login --if-needed` (every local
+    session's start) checks before doing anything."""
+    try:
+        account = resolve_email_identity(Path(repo)).account
+    except AgentEmailError:
+        return ""
+    home = gog_dir or GOG_CONFIG_DIR
+    try:
+        cfg = json.loads((Path(home) / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    mapped = (cfg if isinstance(cfg, dict) else {}).get("account_clients") or {}
+    client = str(mapped.get(account) or mapped.get(account.lower()) or "")
+    return client if client and gog_client_credentials(home, client) else ""
 
 
 def render_table(reports: list[AgentReport]) -> str:

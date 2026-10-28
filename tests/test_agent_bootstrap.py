@@ -516,3 +516,51 @@ def test_a_hosted_mailbox_asks_nobody_for_a_gog_token(tmp_path):
     assert asked == [] and b.verified == []
     assert not any(a[:2] == ["op", "read"] and "gog-token" in a[2] for a in runner.calls)
     assert rep.ok and (rep.token, rep.gmail) == ("n/a", "canopy-hosted")
+
+
+# ── google_login: the Google half `canopy agent use` / `agent google-login` share ──
+# 2026-10-28, failure investigation 17, turn c10c9748: `canopy agent use` had no Google
+# step, so a licensee's first ace turn died on a missing credentials-canopy.json.
+
+def test_google_login_alone_writes_the_client_imports_and_maps(tmp_path):
+    repo = _repo(tmp_path)
+    runner = FakeRunner(gog_accounts=[])
+    b = _boot(tmp_path, runner, web={"ace": _tok()})
+    rep = b.google_login("ace", repo)
+    assert rep.ok, rep.notes
+    assert rep.token.endswith("(imported)") and rep.gmail == "LIVE (canopy)"
+    assert (Path(gog_data_dir(str(tmp_path / "gog"))) / "credentials-canopy.json").is_file()
+    assert json.loads((tmp_path / "gog" / "config.json").read_text())["account_clients"] == {
+        "ace@dimagi-ai.com": "canopy"}
+    # never the plugin or env steps: those are `agent use`'s own
+    assert not any(c[0] in ("claude", "op") for c in runner.calls)
+    assert ab.google_login_present(repo, str(tmp_path / "gog")) == "canopy"
+
+
+def test_google_login_without_verify_makes_no_gmail_call(tmp_path):
+    repo = _repo(tmp_path)
+    b = _boot(tmp_path, FakeRunner(gog_accounts=[]), web={"ace": _tok()})
+    rep = b.google_login("ace", repo, verify=False)
+    assert rep.ok and b.verified == [] and rep.gmail == "-"
+
+
+def test_a_licence_holders_missing_token_never_says_connect_the_mailbox(tmp_path):
+    repo = _repo(tmp_path)
+    b = _boot(tmp_path, FakeRunner())
+    b.mailbox_hint = "ask an admin of ace to connect its Google mailbox on canopy-web"
+    rep = b.google_login("ace", repo)
+    assert not rep.ok and any("ask an admin of ace" in n for n in rep.notes)
+    assert not any("Connect Google mailbox" in n for n in rep.notes)
+
+
+def test_google_login_present_needs_both_the_mapping_and_the_client_file(tmp_path):
+    repo = _repo(tmp_path)
+    gog = tmp_path / "gog"
+    gog.mkdir()
+    assert ab.google_login_present(repo, str(gog)) == ""
+    (gog / "config.json").write_text(json.dumps({"account_clients": {"ace@dimagi-ai.com": "canopy"}}))
+    assert ab.google_login_present(repo, str(gog)) == ""          # no client file yet
+    data = Path(gog_data_dir(str(gog)))
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "credentials-canopy.json").write_text('{"installed":{}}')
+    assert ab.google_login_present(repo, str(gog)) == "canopy"

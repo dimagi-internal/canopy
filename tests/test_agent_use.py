@@ -47,6 +47,12 @@ class World:
         self.synced = []
         self.sync_result = "re-injected from canopy-web"
         self.sync_error = None
+        self.google = {"repo_error": "", "hosted": "", "gog": True,
+                       "install": "brew install gogcli"}
+        self.google_result = {"ok": True, "imported": False, "wrote_client": False,
+                              "summary": "canopy-web canopy 3d (present), gmail LIVE (canopy)",
+                              "notes": []}
+        self.google_logins = []
 
     def web(self, method, path, body=None):
         if path in self.web_fail:
@@ -90,6 +96,12 @@ class World:
                 raise self.sync_error
             return self.sync_result
 
+        def google_login(slug):
+            self.google_logins.append(slug)
+            if isinstance(self.google_result, Exception):
+                raise self.google_result
+            return self.google_result
+
         return au.Deps(
             base_url=lambda: BASE, web=self.web,
             read_registration=lambda: self.registration, register_computer=register,
@@ -98,7 +110,8 @@ class World:
             refresh_device=lambda rid: dict(self.device), zk_status=zk_status,
             decide_1password=lambda slug: self.verdict,
             installed_plugins=lambda: self.installed, known_marketplaces=lambda: self.known,
-            install_plugin=install, set_session_agent=set_agent, sync_env=sync)
+            install_plugin=install, set_session_agent=set_agent, sync_env=sync,
+            google_check=lambda slug: dict(self.google), google_login=google_login)
 
 
 @pytest.fixture
@@ -121,7 +134,7 @@ def test_everything_in_place_ends_with_the_start_line(w, tmp_path):
     assert not rep.needs
     assert [s.name for s in rep.steps] == ["signed in", "agent", "this computer", "secrets",
                                            "device key", "vault access", "licence", "plugin",
-                                           "this project", "env"]
+                                           "this project", "env", "google login"]
     assert rep.end_line() == f"Start a new Claude Code session in {tmp_path.resolve()} and run /eva:turn"
     assert _step(rep, "secrets").detail == "canopy vault (zero-knowledge, kv 1)"
     assert w.agent_set == [("eva", str(tmp_path.resolve()))]
@@ -470,3 +483,108 @@ def test_no_github_sign_in_here_is_a_needs_you_with_the_command(w, tmp_path):
 
 def test_nothing_delegated_adds_no_step(w, tmp_path):
     assert "GitHub" not in [s.name for s in _run(w, tmp_path).steps]
+
+
+# ── google login (2026-10-28, failure investigation 17, turn c10c9748) ─────────
+# `canopy agent use` had no Google step: a licensee's first ace turn died on gog's missing
+# OAuth client file, and the fix it printed was an admin's `canopy agent bootstrap`.
+
+def test_an_admin_whose_google_login_is_in_place_is_ok(w, tmp_path):
+    w.access.update(may_resolve=True, via="admin")
+    s = _step(_run(w, tmp_path), "google login")
+    assert s.status == au.OK and "(present)" in s.detail
+    assert w.google_logins == ["eva"]
+
+
+def test_an_admin_gets_the_client_file_and_token_imported(w, tmp_path):
+    w.access.update(may_resolve=True, via="admin")
+    w.google_result = {"ok": True, "imported": True, "wrote_client": True,
+                       "summary": "canopy-web canopy 3d (imported), gmail LIVE (canopy)",
+                       "notes": ["token: wrote credentials-canopy.json from the canopy vault"]}
+    rep = _run(w, tmp_path)
+    s = _step(rep, "google login")
+    assert s.status == au.DONE and "(imported)" in s.detail and not rep.needs
+
+
+def test_a_failed_import_needs_you_and_an_admin_sees_why(w, tmp_path):
+    w.access.update(may_resolve=True, via="admin")
+    w.google_result = {"ok": False, "summary": "canopy-web canopy 3d, gmail -",
+                       "notes": ["token: cannot read OAuth client 'canopy' from the canopy vault"]}
+    s = _step(_run(w, tmp_path), "google login")
+    assert s.status == au.NEEDS and "cannot read OAuth client" in s.fix
+
+
+def test_a_licence_holder_is_told_the_session_imports_it(w, tmp_path):
+    # Outside a turn canopy-web will not resolve for a licence holder (may_resolve False).
+    s = _step(_run(w, tmp_path), "google login")
+    assert s.status == au.OK and "first session starts" in s.detail
+    assert w.google_logins == []
+
+
+def test_no_gog_needs_you_with_the_install_line_for_this_os(w, tmp_path):
+    w.google.update(gog=False, install="download gogcli_<version>_windows_amd64.zip from …")
+    rep = _run(w, tmp_path)
+    s = _step(rep, "google login")
+    assert s.status == au.NEEDS and "windows_amd64.zip" in s.fix and "brew" not in s.fix
+    assert "google login" in rep.end_line()
+
+
+def test_blocked_by_an_unapproved_device_is_skipped(w, tmp_path):
+    w.device.update(status="pending", approve_url=f"{BASE}/approve/dk-1")
+    w.access.update(may_resolve=True, via="admin")
+    s = _step(_run(w, tmp_path), "google login")
+    assert s.status == au.SKIP and "device key" in s.detail and w.google_logins == []
+
+
+def test_a_canopy_hosted_agent_needs_no_google_login(w, tmp_path):
+    w.access.update(may_resolve=True, via="admin")
+    w.google.update(hosted="bailey@marshellis.com is a mailbox canopy-web hosts")
+    s = _step(_run(w, tmp_path), "google login")
+    assert s.status == au.SKIP and "canopy-web hosts" in s.detail and w.google_logins == []
+
+
+def test_no_fix_ever_tells_a_non_admin_to_sign_in_as_the_agent(w, tmp_path):
+    # Defensive: a non-admin reaching the import (a licence read) gets "ask the owner",
+    # never `gog login <agent>` or "Connect Google mailbox".
+    w.access.update(may_resolve=True, via="license")
+    w.google_result = {"ok": False, "summary": "NONE",
+                       "notes": ["token: no gog token on canopy-web for eva — connect it on "
+                                 "canopy-web: … Connect Google mailbox"]}
+    s = _step(_run(w, tmp_path), "google login")
+    assert s.status == au.NEEDS and "ask jj@dimagi.com" in s.fix
+    assert "Connect Google mailbox" not in s.fix and "gog login" not in s.fix
+
+
+def test_the_real_google_check_names_the_os_install_line(monkeypatch, tmp_path):
+    import shutil
+
+    from orchestrator import agent_bootstrap, agent_email
+    monkeypatch.setattr(agent_email, "find_agent_repo", lambda slug: tmp_path)
+    monkeypatch.setattr(agent_bootstrap, "hosted_identity", lambda repo: None)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr(agent_email.sys, "platform", "win32")
+    out = au._google_check("ace")
+    assert out["gog"] is False and "windows_amd64.zip" in out["install"]
+    assert "brew" not in out["install"]
+
+
+def test_google_login_cli_if_needed_touches_nothing_when_present(monkeypatch, tmp_path):
+    from orchestrator import agent_bootstrap, agent_cli, agent_email
+    monkeypatch.setattr(agent_email, "find_agent_repo", lambda slug: tmp_path)
+    monkeypatch.setattr(agent_bootstrap, "google_login_present", lambda repo, gog_dir=None: "canopy")
+    monkeypatch.setattr(agent_bootstrap.Bootstrapper, "google_login",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no import")))
+    r = CliRunner().invoke(agent_cli.agent, ["google-login", "--slug", "ace", "--if-needed"])
+    assert r.exit_code == 0 and "present here (client canopy)" in r.output
+
+
+def test_google_login_cli_without_gog_names_the_install_line(monkeypatch, tmp_path):
+    import shutil
+
+    from orchestrator import agent_bootstrap, agent_cli, agent_email
+    monkeypatch.setattr(agent_email, "find_agent_repo", lambda slug: tmp_path)
+    monkeypatch.setattr(agent_bootstrap, "google_login_present", lambda repo, gog_dir=None: "")
+    monkeypatch.setattr(agent_bootstrap, "hosted_identity", lambda repo: None)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    r = CliRunner().invoke(agent_cli.agent, ["google-login", "--slug", "ace", "--if-needed"])
+    assert r.exit_code == 1 and "gog is not installed" in r.output

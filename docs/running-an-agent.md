@@ -35,7 +35,13 @@ with the exact URL or person. It is safe to re-run until everything is ok:
 - you have a licence to use the agent (requested automatically at your first session; an admin
   approves it unless the agent's caller list already gives you the whole agent),
 - the agent's plugin is installed (`/plugin install <slug>@canopy-agents`),
-- `$CANOPY_AGENT` is set for the project, and the agent's env is synced.
+- `$CANOPY_AGENT` is set for the project, and the agent's env is synced,
+- the agent's Google login is in gog (its OAuth client file, its token, the account mapped),
+  so its Gmail and Drive work. The agent acts on Google as itself. An admin's computer gets it
+  at once; with a licence it is imported when your first session starts (canopy-web hands a
+  licence holder the agent's login only inside their own turn), by
+  `canopy agent google-login --if-needed`. It needs `gog` installed — the step names the
+  install for your OS. An agent whose mail canopy-web hosts skips this step.
 
 It ends with one line: start a session and run `/<slug>:turn`, or the list of what still needs
 you.

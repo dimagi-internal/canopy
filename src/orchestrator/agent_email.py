@@ -299,6 +299,62 @@ def button_remedy(slug: str) -> str:
             f"cloud runner")
 
 
+GOG_RELEASES = "https://github.com/openclaw/gogcli/releases"
+
+
+def gog_install_hint(platform: str | None = None) -> str:
+    """How to install gog on THIS OS — never brew on Windows (2026-10-28, failure
+    investigation 17: a Windows licensee). gogcli is in homebrew-core (no tap); Windows and
+    Linux take the release archive from GitHub (steipete/gogcli moved to openclaw/gogcli)."""
+    plat = platform or sys.platform
+    if plat == "darwin":
+        return "brew install gogcli"
+    if plat == "win32":
+        return (f"download gogcli_<version>_windows_amd64.zip (arm64 on ARM) from {GOG_RELEASES}, "
+                "unzip it to a permanent folder (e.g. %LOCALAPPDATA%\\gog) and add that "
+                "folder to your PATH, then open a new terminal")
+    return (f"download gogcli_<version>_linux_amd64.tar.gz (arm64 on ARM) from {GOG_RELEASES} "
+            "and put `gog` on your PATH (or `brew install gogcli` where Homebrew is set up)")
+
+
+def _gog_missing(_platform: str | None = None) -> str:
+    return f"gog CLI not found on PATH ({gog_install_hint(_platform)})"
+
+
+def machine_mode(slug: str) -> str:
+    """How this machine runs `slug` — `cred_cli.machine_mode`; "unknown" on any failure."""
+    try:
+        from orchestrator.cred_cli import machine_mode as _mode
+        return _mode(slug)
+    except Exception:  # noqa: BLE001 — a fix line never fails the preflight
+        return "unknown"
+
+
+def reimport_command(slug: str, mode: str | None = None) -> str:
+    """The one command that (re)writes the agent's gog OAuth client and imports its Google
+    login on THIS machine, by how it runs the agent. A licence holder's is `canopy agent
+    google-login` (it reads the login only inside their own turn) — never `bootstrap`, which
+    is an admin's (2026-10-28, failure investigation 17, turn c10c9748)."""
+    mode = mode or machine_mode(slug)
+    if mode == "license":
+        return f"canopy agent google-login --slug {slug}"
+    return f"canopy agent bootstrap --slug {slug}"
+
+
+def client_file_fix(slug: str, mode: str | None = None) -> str:
+    """The `Fix:` line for a missing gog OAuth client file, by `machine_mode`."""
+    mode = mode or machine_mode(slug)
+    if mode == "license":
+        return (f"     Fix: canopy agent google-login --slug {slug}   (in a session of {slug} — "
+                f"your licence reads its Google login only during your own turn); or "
+                f"`canopy agent use {slug}`, then start a new session.")
+    if mode == "admin":
+        return (f"     Fix: canopy agent bootstrap --slug {slug}   (writes it from the "
+                "workspace's canopy vault).")
+    return (f"     Fix: canopy agent bootstrap --slug {slug}   (a laptop) — or Refresh "
+            "the runner (a cloud box). Both write it from the workspace's canopy vault.")
+
+
 @dataclass
 class ClientReconciliation:
     """What client this mailbox should actually use on THIS machine, and why.
@@ -1137,7 +1193,7 @@ def _remove_labels(
             results.append({"thread_id": th, "ok": False, "error": "timed out after 30s"})
             continue
         except FileNotFoundError:
-            raise AgentEmailError("gog CLI not found on PATH (brew install gogcli)")
+            raise AgentEmailError(_gog_missing())
         if r.returncode == 0:
             results.append({"thread_id": th, "ok": True, "error": ""})
         else:
@@ -2064,7 +2120,7 @@ def search_threads(
     try:
         r = runner(cmd, capture_output=True, text=True, timeout=SEARCH_TIMEOUT)
     except FileNotFoundError:
-        raise AgentEmailError("gog CLI not found on PATH (brew install gogcli)")
+        raise AgentEmailError(_gog_missing())
     except subprocess.TimeoutExpired:
         raise AgentEmailError(f"search: gog timed out after {SEARCH_TIMEOUT}s on {query!r}")
     if r.returncode != 0:
@@ -2428,7 +2484,7 @@ def session_keyring_problems(slug: str, *, gog_dir: str | None = None,
         "       1. gog auth keyring keychain",
         f"       2. delete {' and '.join(KEYRING_VARS)} from: "
         + (", ".join(remove) if remove else "(no agent .env sets them)"),
-        f"       3. canopy agent bootstrap --slug {slug}   # re-imports the token into the Keychain",
+        f"       3. {reimport_command(slug)}   # re-imports the token into the Keychain",
         "     Never `launchctl setenv GOG_KEYRING_PASSWORD` — it hands the password to every "
         "process of this user.",
     ]
@@ -2458,8 +2514,7 @@ def preflight(
             f"{gog_client_credentials_paths(gog_home, identity.client)[0]}",
             "     This is the SHARED fleet OAuth client (client_id + client_secret), not the "
             "token — the mailbox can be connected on canopy-web and still fail here.",
-            f"     Fix: canopy agent bootstrap --slug {identity.slug}   (a laptop) — or Refresh "
-            "the runner (a cloud box). Both write it from the workspace's canopy vault.",
+            client_file_fix(identity.slug),
         ]
     cfg_path = os.path.join(gog_home, "config.json")
     mapped = False
@@ -2482,7 +2537,7 @@ def preflight(
             capture_output=True, text=True, timeout=30,
         )
     except FileNotFoundError:
-        return False, ["FIX: gog CLI not installed (brew install gogcli)."]
+        return False, [f"FIX: gog CLI not installed ({gog_install_hint()})."]
     except subprocess.TimeoutExpired:
         return False, ["FIX: gog gmail search timed out — check network / re-login."]
     if r.returncode != 0:
@@ -2498,9 +2553,19 @@ def preflight(
                 f"FIX: gog `{identity.client}` OAuth client file missing where gog reads it "
                 f"({gog_client_credentials_paths(gog_home, identity.client)[0]}) — the token "
                 "is not the problem.",
-                f"     Fix: canopy agent bootstrap --slug {identity.slug}   (a laptop) — or "
-                "Refresh the runner (a cloud box).",
+                client_file_fix(identity.slug),
                 f"     ({first_err[0] if first_err else 'no detail'})",
+            ]
+        if machine_mode(identity.slug) == "license":
+            # A licence holder cannot sign in as the agent, and "Connect Google mailbox" is
+            # an admin's button: the login is the agent's, imported from canopy-web.
+            return False, [
+                f"FIX: gog `{identity.client}` creds present but {identity.account} is not "
+                "logged in here / its token is bad.",
+                f"     Fix: {reimport_command(identity.slug, 'license')}   (re-imports "
+                f"{identity.slug}'s Google login from canopy-web); if that fails, ask an admin "
+                f"of {identity.slug} to reconnect its Google mailbox on canopy-web.",
+                f"     ({first_err[0] if first_err else 'no token'})",
             ]
         return False, [
             f"FIX: gog `{identity.client}` creds present but not logged in / token bad.",

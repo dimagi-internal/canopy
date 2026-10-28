@@ -184,6 +184,31 @@ def sync_env(canopy: str, slug: str, token: str) -> None:
         print(f"canopy: {slug}'s vault changed — re-injected ~/.{slug}/.env")
 
 
+def google_login(canopy: str, slug: str) -> None:
+    """`canopy agent google-login --if-needed` inside a person's LOCAL turn: the agent's
+    Google login (gog's OAuth client file, its token, the account mapping) put on this
+    computer the first time — canopy-web hands a licence holder the agent's login only
+    during their own turn, so `canopy agent use` cannot do it beforehand. Local files only
+    once it is in place (no gog call, no network). Silent when present; one line otherwise.
+
+    2026-10-28, failure investigation 17, turn c10c9748: a licensee's first ace turn on a
+    Windows laptop died on `gog gmail search` — "OAuth client credentials missing" — because
+    nothing on the licence path ever wrote gog's client file or imported ace's login."""
+    try:
+        r = subprocess.run([canopy, "agent", "google-login", "--slug", slug, "--if-needed",
+                            "--no-verify"], capture_output=True, text=True, timeout=90)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"canopy: could not set up {slug}'s Google login here ({type(e).__name__})")
+        return
+    lines = [ln for ln in ((r.stdout or "") + (r.stderr or "")).strip().splitlines() if ln.strip()]
+    last = (lines[-1] if lines else "")[:300]
+    if r.returncode != 0:
+        print(f"canopy: {slug}'s Google login is not set up on this computer — "
+              f"{last or 'google-login failed'}")
+    elif last and "present here" not in last and "canopy-hosted" not in last:
+        print(f"canopy: {last}")
+
+
 def _hook_input() -> dict:
     """SessionStart's stdin (`session_id`, `cwd`, `source`, …), or {}."""
     try:
@@ -299,6 +324,8 @@ def main() -> int:
             # The reads below are this local turn's: on a private runner they sign in
             # with the box's own key (orchestrator/private_runner_session.py).
             os.environ["CANOPY_LOCAL_TURN"] = "1"
+            if not confined:
+                google_login(canopy, slug)
     if canopy and not confined and not on_runner:
         stage_delegated(canopy, slug)
     present = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
