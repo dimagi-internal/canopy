@@ -284,11 +284,16 @@ def _first_line(text: str, limit: int = 200) -> str:
 
 
 def _write_private(path: Path, data: str) -> None:
-    """Write `data` to `path` via a 0600 temp file in the same dir + atomic rename."""
+    """Write `data` to `path` via a 0600 temp file in the same dir + atomic rename.
+
+    No os.fchmod before Python 3.13 on Windows: an unguarded call made `canopy agent bootstrap`
+    die there before writing gog's OAuth client (2026-10-28, ace turn c10c9748 on a Windows
+    laptop aborted: credentials-canopy.json missing; failure investigation 17)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-", suffix=path.suffix)
     try:
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "fchmod") and os.name != "nt":  # no file modes on Windows
+            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(data)
         os.replace(tmp, path)
@@ -657,7 +662,8 @@ class Bootstrapper:
             self._keychain_heads_up()
             fd, tmp = tempfile.mkstemp(prefix="gog-token-", suffix=".json")
             try:
-                os.fchmod(fd, 0o600)
+                if hasattr(os, "fchmod") and os.name != "nt":  # no file modes on Windows
+                    os.fchmod(fd, 0o600)
                 with os.fdopen(fd, "w", encoding="utf-8") as fh:
                     fh.write(tok.raw)
                 r = self._gog(["gog", "auth", "tokens", "import", tmp],
