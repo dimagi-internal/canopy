@@ -13,9 +13,11 @@ canopy-web#1704. Three objects:
   ``~/.canopy/private-runner.json``.
 * a **local turn** — one Claude Code session here using one agent. The canopy
   plugin's SessionStart hook opens it (`canopy local open`), the prompt hook
-  renews it and shows its caller envelope, and the SessionEnd hook uploads the
-  transcript and finishes it (`canopy local close`). State per session lives in
-  ``~/.canopy/local/<claude session id>.json``; the envelope beside the runner's,
+  renews it and shows its caller envelope, the transcript streams up as the session
+  goes (`canopy local sync`, after every reply and at most every minute between tool
+  calls — so a live session can be debugged from canopy-web, not only after it ends),
+  and the SessionEnd hook uploads the rest and finishes it (`canopy local close`).
+  State per session lives in ``~/.canopy/local/<claude session id>.json``; the envelope beside the runner's,
   in ``~/.canopy/caller/<turn id>.json``.
 * a **license** (person × agent) — canopy-web issues it on first use when the
   agent's caller list gives you the whole agent; credential reads go against it.
@@ -44,6 +46,11 @@ from orchestrator import canopy_web
 TRANSCRIPT_BATCH_BYTES = 512 * 1024
 #: The prompt hook renews the turn's lease at most this often.
 RENEW_EVERY = 600
+#: Set to "0" to stop streaming a live session's transcript; it then goes up only when
+#: the session ends (`canopy local close`), as before.
+LIVE_SYNC_ENV = "CANOPY_LOCAL_LIVE_TRANSCRIPT"
+#: A sync lock older than this belongs to a sync that died; the next one takes it over.
+SYNC_LOCK_STALE = 300
 
 
 def _canopy_dir() -> Path:
@@ -356,8 +363,85 @@ def local_renew(session_id, force):
         state = reopen(state, status)
         if not state:
             return
+    else:
+        # Re-read: a `sync` may have recorded a later upload offset meanwhile.
+        state = read_session(session_id) or state
     state["renewed_at"] = time.time()
     _write_private(_session_file(session_id), state)
+
+
+def live_sync_enabled() -> bool:
+    return os.environ.get(LIVE_SYNC_ENV, "").strip() != "0"
+
+
+@local_group.command("sync")
+@click.option("--session-id", required=True)
+@click.option("--transcript", "transcript", default="", help="The session's transcript JSONL.")
+def local_sync(session_id, transcript):
+    """Append what this live session's transcript gained since the last upload to its
+    local turn (hook-facing; the Stop and PostToolUse hooks run it detached)."""
+    click.echo(sync_session(session_id, transcript=transcript))
+
+
+def sync_session(session_id: str, *, transcript: str = "") -> str:
+    """Upload the complete lines a live session's transcript gained since the last
+    upload, and record how far it got. Returns one line saying what happened.
+
+    Only whole lines go up (the last one may still be being written); `close` sends the
+    rest. One sync at a time per session: canopy-web dedups only a retry of the batch
+    just before, so two syncs racing from the same offset would append twice."""
+    if not live_sync_enabled():
+        return f"live transcript off ({LIVE_SYNC_ENV}=0)"
+    state = read_session(session_id)
+    if not state or state.get("closed_at") or not state.get("turn_id"):
+        return "no live local turn for this session"
+    transcript = transcript or str(state.get("transcript") or "")
+    if not transcript or not Path(transcript).is_file():
+        return "no transcript to sync"
+    lock = _session_file(session_id).with_suffix(".sync.lock")
+    if not _take_lock(lock):
+        return "another sync is running"
+    try:
+        turn_id = state["turn_id"]
+        start = int(state.get("uploaded") or 0)
+
+        def record(sent: int) -> None:
+            # After EVERY batch, so a sync that fails halfway does not resend what went up.
+            # Re-read: a renew may have written the state (or re-opened the turn) meanwhile.
+            fresh = read_session(session_id)
+            if fresh.get("turn_id") != turn_id or fresh.get("closed_at"):
+                return
+            fresh.update(uploaded=sent, synced_at=time.time())
+            fresh.setdefault("transcript", transcript)
+            _write_private(_session_file(session_id), fresh)
+
+        sent = upload_transcript(turn_id, Path(transcript), session_token(state.get("slug", "")),
+                                 start=start, complete_only=True, on_batch=record)
+        record(sent)
+        return f"local turn {turn_id}: {sent - start} new lines ({sent} in all)"
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _take_lock(lock: Path, *, wait: float = 0) -> bool:
+    """Create `lock` exclusively, taking over one left by a sync that died; with `wait`,
+    retry for up to that many seconds."""
+    deadline = time.time() + wait
+    while True:
+        try:
+            lock.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.close(os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+            return True
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > SYNC_LOCK_STALE:
+                    lock.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                continue
+        if time.time() >= deadline:
+            return False
+        time.sleep(0.2)
 
 
 def reopen(state: dict, status: str) -> dict:
@@ -405,16 +489,23 @@ def _batches(lines: list[str]):
         yield batch
 
 
-def upload_transcript(turn_id: str, transcript: Path, token: str, *, start: int = 0) -> int:
+def upload_transcript(turn_id: str, transcript: Path, token: str, *, start: int = 0,
+                      complete_only: bool = False, on_batch=None) -> int:
     """Append the transcript's lines from `start` to the turn. Returns the line count
-    sent up to. Each batch carries an id, so a retried batch is not appended twice."""
-    lines = [ln for ln in transcript.read_text(encoding="utf-8", errors="replace").splitlines()
-             if ln.strip()]
+    sent up to. Each batch carries an id, so a retried batch is not appended twice.
+    `complete_only` leaves out a last line with no newline yet (still being written);
+    `on_batch(sent)` is told after each batch lands."""
+    text = transcript.read_text(encoding="utf-8", errors="replace")
+    if complete_only:
+        text = text[:text.rfind("\n") + 1]
+    lines = [ln for ln in text.splitlines() if ln.strip()]
     sent = start
     for i, batch in enumerate(_batches(lines[start:])):
         canopy_web.call("POST", f"/api/harness/turns/{turn_id}/transcript",
                         {"lines": batch, "batch_id": f"local-{turn_id}-{sent}-{i}"}, token=token)
         sent += len(batch)
+        if on_batch:
+            on_batch(sent)
     return sent
 
 
@@ -461,6 +552,16 @@ def close_session(session_id: str, *, transcript: str = "", status: str = "done"
     state = read_session(session_id)
     if not state:
         return "no local turn for this session"
+    lock = _session_file(session_id).with_suffix(".sync.lock")
+    locked = _take_lock(lock, wait=30)   # let a sync in flight finish, then read its offset
+    try:
+        return _close(session_id, read_session(session_id) or state, transcript, status)
+    finally:
+        if locked:
+            lock.unlink(missing_ok=True)
+
+
+def _close(session_id: str, state: dict, transcript: str, status: str) -> str:
     transcript = transcript or str(state.get("transcript") or "")
     tok = session_token(state.get("slug", ""))
     turn_id = state["turn_id"]
