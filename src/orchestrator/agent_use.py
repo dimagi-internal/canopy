@@ -319,13 +319,14 @@ def _canopy_vault_steps(rep: UseReport, slug: str, deps: Deps, access: dict, *, 
     if zk is None:
         if zk_err is not None and _is_denied(zk_err) and not device_ok:
             rep.add("vault access", SKIP,
-                    f"only an admin of {slug} can see which devices hold a grant — once the "
-                    f"device key above is approved, ask {ask} to press Grant pending on {page}")
+                    f"only an admin of {slug} can see which devices hold a grant — "
+                    + _grant_next(slug, deps, page=page, ask=ask,
+                                  first="once the device key above is approved, "))
         elif zk_err is not None and _is_denied(zk_err):
             rep.add("vault access", SKIP,
                     f"only an admin of {slug} can see which devices hold a grant — if your "
-                    f"first session says this device has none, ask {ask} to press "
-                    f"Grant pending on {page}")
+                    f"first session says this device has none: "
+                    + _grant_next(slug, deps, page=page, ask=ask))
         else:
             rep.add("vault access", SKIP, f"could not read {slug}'s vault state "
                                           f"({_first_line(zk_err) if zk_err else 'no answer'})")
@@ -344,11 +345,36 @@ def _canopy_vault_steps(rep: UseReport, slug: str, deps: Deps, access: dict, *, 
         return
     i_hold_member_wrap = bool(my_id) and any(
         w.get("kind") == "member" and str(w.get("target")) == my_id for w in zk.get("wraps") or [])
-    who = ("press Grant pending on " + page + " (you hold a grant; your passkey unlocks it)"
-           if i_hold_member_wrap else f"ask {ask} to press Grant pending on {page}")
-    if not device_ok:
-        who = "once the device key is approved, " + who
+    if i_hold_member_wrap:
+        who = "press Grant pending on " + page + " (you hold a grant; your passkey unlocks it)"
+        if not device_ok:
+            who = "once the device key is approved, " + who
+    else:
+        who = _grant_next(slug, deps, page=page, ask=ask,
+                          first="" if device_ok else "once the device key is approved, ")
     rep.add("vault access", NEEDS, "this device holds no grant of the vault key yet", who)
+
+
+def _grant_next(slug: str, deps: Deps, *, page: str, ask: str, first: str = "") -> str:
+    """What happens next for a device with no grant, from who canopy-web says can pass the
+    key on (`GET /api/agents/<slug>/vault/members` → `holders`). A keeper grants a device
+    its person approved by itself, and the vault's admins are emailed if none has in 15
+    minutes — so a named person is asked only when nothing and nobody would be told."""
+    try:
+        holders = (deps.web("GET", f"/api/agents/{slug}/vault/members") or {}).get("holders") or {}
+    except Exception:  # noqa: BLE001 — an older canopy-web, or no answer: ask a person
+        holders = {}
+    keepers = [str(k) for k in holders.get("keepers") or []]
+    admins = [str(p) for p in holders.get("people") or []]
+    if keepers:
+        return (f"{first}nothing to do: a keeper ({', '.join(keepers)}) passes {slug}'s key to this "
+                f"device by itself within a couple of minutes while online, and {slug}'s admins are "
+                f"emailed if none has in 15 minutes — then re-run `canopy agent use {slug}`")
+    if admins:
+        return (f"{first}no keeper passes {slug}'s key on by itself, so an admin who holds it "
+                f"grants it ({', '.join(admins)}, emailed after 15 minutes) — re-run "
+                f"`canopy agent use {slug}` once they have")
+    return f"{first}ask {ask} to press Grant pending on {page}"
 
 
 def _licence_step(rep: UseReport, slug: str, deps: Deps, *, page: str, ask: str,
