@@ -820,6 +820,23 @@ def test_a_turn_with_nothing_staged_is_told_where_it_lives(delegated):
     assert "cloud runner" in res.output and "connect/google" in res.output
 
 
+def test_a_session_stages_its_own_access_token_without_calling_google(delegated):
+    delegated["gog"] = json.dumps({"email": GINA, "session": True, "access_token": "ya29.s",
+                                   "expires_at": 4600.0, "scopes": ["https://www.googleapis.com/auth/gmail.modify"]})
+    path = cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"], now=1000.0)
+    staged = json.loads(path.read_text())
+    assert staged["access_token"] == "ya29.s" and staged["expires_at"] == 4600.0 and staged["session"] is True
+    assert delegated["posts"] == [], "a session has nothing to refresh"
+
+
+def test_an_ended_session_stages_nothing_and_removes_what_was_staged(delegated):
+    delegated["gog"] = json.dumps({"email": GINA, "session": True, "access_token": "ya29.s", "expires_at": 4600.0})
+    path = cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"], now=1000.0)
+    with pytest.raises(cred_cli.CredError) as e:
+        cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"], now=4590.0)
+    assert e.value.exit_code == cred_cli.EXIT_REFUSED and "ended" in str(e.value) and not path.exists()
+
+
 def test_an_expired_staged_token_is_not_handed_out(delegated):
     cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"], now=0.0)
     with pytest.raises(cred_cli.CredError):

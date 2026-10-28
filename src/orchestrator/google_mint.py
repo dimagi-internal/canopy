@@ -25,6 +25,11 @@ the work says ``delegated`` and names the entry, ``google-delegated-<account>``)
 is sealed (``zks1``) under that name to exactly the readers canopy-web listed — the
 machines that may hold a credential of theirs and their own vault key — and NEVER under
 the vault key, even when this box holds a copy (every vault member could read it then).
+
+A SESSION (the work says ``session``; canopy-web asked Google for ``access_type=online``):
+the person lends the account for about an hour, from a page. Google issues no refresh
+token, and none is kept even if one came back: the sealed value is the access token and
+when Google says it expires, so it is dead everywhere at that moment, copies included.
 """
 from __future__ import annotations
 
@@ -98,6 +103,23 @@ def build_gog_token(*, email: str, refresh_token: str, granted_scopes, client: s
         "scopes": scopes,
         "created_at": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "refresh_token": refresh_token,
+    }
+
+
+def build_session_token(*, email: str, access_token: str, expires_in, granted_scopes, client: str,
+                        now: Optional[datetime] = None) -> dict:
+    """A session's sealed value: the access token and its end, never a refresh token."""
+    scopes = sorted(set(granted_scopes))
+    stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return {
+        "email": email,
+        "client": client,
+        "services": services_for(scopes),
+        "scopes": scopes,
+        "created_at": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "session": True,
+        "access_token": access_token,
+        "expires_at": stamp.timestamp() + float(expires_in or 0),
     }
 
 
@@ -216,6 +238,8 @@ def finish(work: dict, *, client_raw: Optional[str], vk: Optional[bytes], vk_kv=
     ``code_verifier`` the runner kept), the client file from the vault, and the vault key if
     this box holds it. Returns what to post to canopy-web. Raises MintError."""
     delegated = bool(work.get("delegated"))
+    if work.get("session") and not delegated:
+        raise MintError("bad-request", "only a person's own account can be lent for a session")
     name = delegated_name(work) if delegated else GOG_TOKEN
     code, verifier = str(work.get("code") or ""), str(work.get("code_verifier") or "")
     client_id, redirect = str(work.get("client_id") or ""), str(work.get("redirect_uri") or "")
@@ -226,8 +250,12 @@ def finish(work: dict, *, client_raw: Optional[str], vk: Optional[bytes], vk_kv=
     secret = client_secret(client_raw, client_id)
     tokens = exchange_code(code=code, verifier=verifier, client_id=client_id, secret=secret,
                            redirect_uri=redirect, post=post)
-    refresh = str(tokens.get("refresh_token") or "")
-    if not refresh:
+    session = bool(work.get("session"))
+    refresh = "" if session else str(tokens.get("refresh_token") or "")
+    access = str(tokens.get("access_token") or "") if session else ""
+    if session and not access:
+        raise MintError("exchange-failed", "Google returned no access token")
+    if not session and not refresh:
         # Google withholds it when the account already consented and `prompt` was not
         # forced; a token without one imports cleanly and can never refresh.
         raise MintError("no-refresh-token", "Google returned no refresh token")
@@ -237,9 +265,14 @@ def finish(work: dict, *, client_raw: Optional[str], vk: Optional[bytes], vk_kv=
     expected = str(work.get("expected_account") or "").strip().lower()
     if expected and email.lower() != expected:
         raise MintError("wrong-account", f"Google signed in as {email}, not {expected}", account=email)
-    token = build_gog_token(email=email, refresh_token=refresh,
-                            granted_scopes=str(tokens.get("scope") or "").split(),
-                            client=str(work.get("client") or "canopy-web"), now=now)
+    if session:
+        token = build_session_token(email=email, access_token=access, expires_in=tokens.get("expires_in") or 3600,
+                                    granted_scopes=str(tokens.get("scope") or "").split(),
+                                    client=str(work.get("client") or "canopy-web"), now=now)
+    else:
+        token = build_gog_token(email=email, refresh_token=refresh,
+                                granted_scopes=str(tokens.get("scope") or "").split(),
+                                client=str(work.get("client") or "canopy-web"), now=now)
     plain = json.dumps(token)
     if delegated:
         # A person's own account: sealed to the readers canopy-web listed, never under
@@ -250,7 +283,7 @@ def finish(work: dict, *, client_raw: Optional[str], vk: Optional[bytes], vk_kv=
         kv, value_zk = encrypt_for_agent(plain, agent_id=agent_id, vk=vk,
                                          kv=vk_kv if vk is not None else work.get("kv"),
                                          recipients=work.get("recipients"))
-    plain = refresh = ""  # noqa: F841 — drop our references
+    plain = refresh = access = ""  # noqa: F841 — drop our references
     return {"name": name, "kv": kv, "value_zk": value_zk, "account": email}
 
 
