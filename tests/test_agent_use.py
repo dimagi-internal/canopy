@@ -35,6 +35,7 @@ class World:
         self.zk = {"enabled": True, "kv": 1, "wraps": [], "pending": [],
                    "this_device": "holds a wrap at the current kv"}
         self.zk_error = None
+        self.holders = {"has_key": True, "people": [], "keepers": []}
         self.verdict = SimpleNamespace(allowed=True, reason="1Password (user) can read vault 'V'",
                                        message="")
         self.installed = {"eva", "canopy"}
@@ -56,6 +57,8 @@ class World:
             return self.agent
         if path == "/api/agents/eva/licenses":
             return self.licenses
+        if path == "/api/agents/eva/vault/members":
+            return {"holders": self.holders}
         raise AssertionError(path)
 
     def deps(self) -> au.Deps:
@@ -249,13 +252,35 @@ def test_a_revoked_device_key_says_reenroll(w, tmp_path):
 
 # ── vault access ──────────────────────────────────────────────────────────────
 
-def test_no_grant_asks_the_owner_to_press_grant_pending(w, tmp_path):
+def test_no_grant_and_nobody_to_pass_it_on_asks_the_owner_to_press_grant_pending(w, tmp_path):
     w.zk["this_device"] = "this device holds no wrap of 'eva's vault key at kv 1"
     rep = _run(w, tmp_path)
     s = _step(rep, "vault access")
     assert s.status == au.NEEDS
     assert s.fix == f"ask jj@dimagi.com (its owner) to press Grant pending on {BASE}/agents/eva"
     assert _step(rep, "env").status == au.SKIP and w.synced == []
+
+
+def test_no_grant_with_a_keeper_asks_nobody(w, tmp_path):
+    w.zk["this_device"] = "no wrap"
+    w.holders = {"has_key": True, "people": ["jj@dimagi.com"], "keepers": ["cloud-ec2-live"]}
+    s = _step(_run(w, tmp_path), "vault access")
+    assert s.fix.startswith("nothing to do: a keeper (cloud-ec2-live) passes eva's key")
+    assert "ask " not in s.fix and "Grant pending" not in s.fix
+
+
+def test_no_grant_without_a_keeper_says_the_admins_are_emailed(w, tmp_path):
+    w.zk["this_device"] = "no wrap"
+    w.holders = {"has_key": True, "people": ["jj@dimagi.com"], "keepers": []}
+    s = _step(_run(w, tmp_path), "vault access")
+    assert "an admin who holds it grants it (jj@dimagi.com, emailed after 15 minutes)" in s.fix
+
+
+def test_an_older_canopy_web_without_the_members_list_falls_back_to_asking(w, tmp_path):
+    w.zk["this_device"] = "no wrap"
+    w.web_fail["/api/agents/eva/vault/members"] = CanopyError("404")
+    s = _step(_run(w, tmp_path), "vault access")
+    assert s.fix == f"ask jj@dimagi.com (its owner) to press Grant pending on {BASE}/agents/eva"
 
 
 def test_no_grant_but_you_hold_one_says_press_it_yourself(w, tmp_path):
@@ -284,6 +309,13 @@ def test_a_non_admin_cannot_see_the_vault_state(w, tmp_path):
     s = _step(rep, "vault access")
     assert s.status == au.SKIP and "Grant pending" in s.detail
     assert _step(rep, "secrets").detail == "canopy vault"
+
+
+def test_a_non_admin_with_a_keeper_is_told_to_wait_not_to_ask(w, tmp_path):
+    w.zk_error = CanopyError("canopy-web refused GET /api/agents/eva/vault/zk: -> 403: admins only")
+    w.holders = {"has_key": True, "people": ["jj@dimagi.com"], "keepers": ["cloud-ec2-live"]}
+    s = _step(_run(w, tmp_path), "vault access")
+    assert "nothing to do: a keeper (cloud-ec2-live)" in s.detail and "Grant pending" not in s.detail
 
 
 def test_born_zero_knowledge_has_nothing_to_grant(w, tmp_path):
