@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -743,3 +744,83 @@ def test_op_token_exits_3_for_a_canopy_vault_agent(web):
     r = CliRunner().invoke(agent_cli.agent, ["op-token", "--slug", "ace"])
     assert r.exit_code == agent_cli.OP_TOKEN_CANOPY_VAULT == 3
     assert "canopy vault" in r.output and not [c for c in web["calls"] if "resolve" in c[1]]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# google-token --delegated: a Google account a person delegated to the agent
+# ──────────────────────────────────────────────────────────────────────────────
+
+GINA = "gina@gmail.com"
+GINA_ENTRY = "google-delegated-gina@gmail.com"
+
+
+@pytest.fixture()
+def delegated(monkeypatch, tmp_path):
+    """The runner's resolve: Gina's gog token (opened with this box's key) and the client."""
+    from orchestrator import cred_resolve
+
+    monkeypatch.setattr(cred_cli, "CACHE_DIR", tmp_path / ".canopy")
+    for var in ("CANOPY_TURN_ID", "CANOPY_AGENT_SLUG", "CANOPY_AGENT"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(cred_cli, "_turn_id", lambda: ("", ""))
+    state = {"resolves": [], "gog": json.dumps({"email": GINA, "client": "canopy-web", "refresh_token": REFRESH}),
+             "posts": []}
+
+    def resolve(slug, **kw):
+        state["resolves"].append((slug, kw))
+        return {"agent_id": "42", "values": {}, "delegated": {GINA_ENTRY: {"value_zk": "zks1:x"}}}
+
+    def open_delegated(entries, **kw):
+        return ({n: state["gog"] for n in entries if state["gog"]}, {})
+
+    monkeypatch.setattr(cred_resolve, "resolve", resolve)
+    monkeypatch.setattr(cred_resolve, "open_delegated", open_delegated)
+    monkeypatch.setattr(cred_resolve, "merge_vault_layers", lambda slug, body, **kw: {
+        **body, "values": {"gog-oauth-client-web": json.dumps({"web": {"client_id": "cid", "client_secret": "csec"}})}})
+
+    def post(url, form):
+        state["posts"].append(form)
+        return {"access_token": ACCESS, "expires_in": 3599, "scope": "https://www.googleapis.com/auth/gmail.modify"}
+
+    state["post"] = post
+    return state
+
+
+def test_the_runner_stages_only_an_access_token_for_a_delegated_account(delegated, tmp_path):
+    path = cred_cli.stage_delegated_google_token("bailey", "Gina@gmail.com", token="crt", post=delegated["post"],
+                                                 now=1000.0)
+    assert path == tmp_path / ".canopy" / "delegated" / "bailey" / "google" / "gina@gmail.com.json"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    staged = json.loads(path.read_text())
+    assert staged["access_token"] == ACCESS and staged["account"] == GINA and staged["expires_at"] == 1000.0 + 3599
+    assert REFRESH not in path.read_text(), "the refresh token stays with the runner"
+    [(slug, kw)] = delegated["resolves"]
+    assert slug == "bailey" and kw["refs"] == ["gog-oauth-client-web"] and kw["fallback"] is False
+    assert delegated["posts"][0]["refresh_token"] == REFRESH and delegated["posts"][0]["client_id"] == "cid"
+
+
+def test_a_withdrawn_delegation_removes_the_staged_token(delegated, tmp_path):
+    path = cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"])
+    delegated["gog"] = ""
+    with pytest.raises(cred_cli.CredError) as e:
+        cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"])
+    assert e.value.exit_code == cred_cli.EXIT_REFUSED and not path.exists()
+
+
+def test_a_turn_reads_the_staged_path_and_never_the_token(delegated):
+    cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"])
+    res = CliRunner().invoke(cred_cli.cred_group, ["google-token", "--agent", "bailey", "--delegated", GINA])
+    assert res.exit_code == 0, res.output
+    assert ACCESS not in res.output and res.output.strip().endswith("delegated/bailey/google/gina@gmail.com.json")
+
+
+def test_a_turn_with_nothing_staged_is_told_where_it_lives(delegated):
+    res = CliRunner().invoke(cred_cli.cred_group, ["google-token", "--agent", "bailey", "--delegated", GINA])
+    assert res.exit_code == cred_cli.EXIT_REFUSED
+    assert "cloud runner" in res.output and "connect/google" in res.output
+
+
+def test_an_expired_staged_token_is_not_handed_out(delegated):
+    cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"], now=0.0)
+    with pytest.raises(cred_cli.CredError):
+        cred_cli.delegated_google_token("bailey", GINA, now=3600.0)

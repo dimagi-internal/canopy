@@ -24,6 +24,9 @@ Commands::
     canopy cred sync   [--agent X] [--ttl S]  re-inject ~/.X/.env iff its vault changed
     canopy cred exec   [--agent X] -- <cmd>   run <cmd> with X's env in the CHILD only (no file)
     canopy cred google-token [--agent X]      X's Google access token -> a 0600 file; prints its path
+    canopy cred google-token --delegated A [--agent X]   the access token for Google account A a
+                                              person delegated to X, as staged by the runner; its path
+    canopy cred google-token --runner --delegated A --agent X   (the runner) stage that file
     canopy cred whoami [--json]               who this session is, and why
 
 Exit codes (stable — agent-identity MCP servers shell out to `check`):
@@ -1125,6 +1128,154 @@ def google_token(slug: str, *, runner: Optional[Runner] = None,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# google-token --delegated: a Google account a PERSON delegated to the agent
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# canopy-web's `/agents/<slug>/connect/google`: a person lends the agent their own Google
+# account. It is a delegated vault entry, `google-delegated-<account>` (a gog token with a
+# refresh token), sealed only to the machines that run the agent — a cloud runner, never
+# another person's laptop. The RUNNER opens it with its own key and stages only a
+# short-lived ACCESS token for the turn (`--runner`); the turn reads that file. The
+# refresh token never reaches a file a turn can read.
+
+DELEGATED_GOOGLE_PREFIX = "google-delegated-"
+#: The shared vault item holding the OAuth client a delegated token was minted for.
+DELEGATED_GOOGLE_CLIENT_ITEM = "gog-oauth-client-web"
+#: A staged token with less life than this is not handed to a turn.
+DELEGATED_GOOGLE_MIN_LIFE = 60
+
+
+def delegated_google_token_path(slug: str, account: str) -> Path:
+    """~/.canopy/delegated/<slug>/google/<account>.json — the cloud runner's staging path."""
+    return CACHE_DIR / "delegated" / slug / "google" / f"{account.strip().lower()}.json"
+
+
+def _client_pair(raw) -> tuple[str, str]:
+    """(client_id, client_secret) out of a client file: Google's download or gog's flat one."""
+    try:
+        data = json.loads(raw or "")
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        data = data.get("web") or data.get("installed") or data
+    if not isinstance(data, dict) or not data.get("client_id") or not data.get("client_secret"):
+        raise CredError(f"this machine cannot read the Google OAuth client ({DELEGATED_GOOGLE_CLIENT_ITEM}) "
+                        "from the agent's vault — give it a key to the workspace's shared vault")
+    return str(data["client_id"]), str(data["client_secret"])
+
+
+def _refresh_google(client_id: str, secret: str, refresh: str, account: str, *, post=None) -> dict:
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    form = {"client_id": client_id, "client_secret": secret, "refresh_token": refresh,
+            "grant_type": "refresh_token"}
+    if post is not None:
+        return post(GOOGLE_TOKEN_URL, form)
+    try:
+        with urllib.request.urlopen(GOOGLE_TOKEN_URL, urllib.parse.urlencode(form).encode(),
+                                    timeout=30) as resp:  # noqa: S310 - fixed https endpoint
+            return json.load(resp)
+    except urllib.error.HTTPError as e:
+        try:
+            reason = json.load(e).get("error_description") or ""
+        except Exception:  # noqa: BLE001
+            reason = ""
+        raise CredError(f"Google refused {account}'s delegated login ({e.code} {reason}) — its "
+                        "person connects it again at the agent's connect/google page")
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise CredError(f"could not reach Google to refresh {account}'s delegated login: {e}")
+
+
+def stage_delegated_google_token(slug: str, account: str, *, token: Optional[str] = None,
+                                 base_url: Optional[str] = None, transport=None, ecdh=None,
+                                 post=None, now: Optional[float] = None) -> Path:
+    """The RUNNER's half: open the Google account `account` a person delegated to `slug`
+    (this machine's own resolve, device proof included), refresh it at Google, and write
+    only the access token to `delegated_google_token_path` (0600). A credential that is no
+    longer delegated (withdrawn, its person no longer an admin) REMOVES the staged file."""
+    from orchestrator import cred_resolve
+    from orchestrator import vault_zk as zk
+
+    account = account.strip().lower()
+    now = time.time() if now is None else now
+    out = delegated_google_token_path(slug, account)
+    tok = token or os.environ.get("CANOPY_TOKEN", "").strip() or canopy_web.resolve_token(None)
+    try:
+        body = cred_resolve.resolve(slug, token=tok, refs=[DELEGATED_GOOGLE_CLIENT_ITEM], base_url=base_url,
+                                    transport=transport, raw=True, fallback=False,
+                                    purpose=cred_resolve.RUNNER_REFRESH) or {}
+    except canopy_web.CanopyError as e:
+        raise CredError(f"could not resolve '{slug}' as this runner: {str(e)[:300]}")
+    agent_id = str(body.get("agent_id") or "")
+    name = DELEGATED_GOOGLE_PREFIX + account
+    opened, errors = cred_resolve.open_delegated(
+        {k: v for k, v in (body.get("delegated") or {}).items() if k == name}, agent_id=agent_id, ecdh=ecdh)
+    if name not in opened:
+        out.unlink(missing_ok=True)
+        why = errors.get(name) or "none is delegated to it that this machine may open"
+        raise CredError(f"no Google account {account} delegated to '{slug}' on this machine ({why})", EXIT_REFUSED)
+    try:
+        gog = json.loads(opened.pop(name))
+    except ValueError:
+        raise CredError(f"the delegated Google account {account} is not a gog token")
+    refresh = str(gog.get("refresh_token") or "")
+    if not refresh or str(gog.get("email") or "").strip().lower() != account:
+        raise CredError(f"the delegated Google credential for {account} has no refresh token for that account")
+    try:
+        layered = cred_resolve.merge_vault_layers(slug, body, ecdh=ecdh)
+    except cred_resolve.ZkUnlockError as e:
+        raise CredError(f"could not open '{slug}'s vault for the Google OAuth client: {e}")
+    raw = (layered.get("values") or {}).get(DELEGATED_GOOGLE_CLIENT_ITEM)
+    if zk.is_zk_value(raw) or zk.is_sealed_value(raw):
+        try:
+            raw = (cred_resolve.open_zk(slug, {**body, "vaults": [], "delegated": None}, agent_id=agent_id,
+                                        ecdh=ecdh).get("values") or {}).get(DELEGATED_GOOGLE_CLIENT_ITEM)
+        except cred_resolve.ZkUnlockError as e:
+            raise CredError(f"could not open the Google OAuth client in '{slug}'s vault: {e}")
+    client_id, secret = _client_pair(raw)
+    data = _refresh_google(client_id, secret, refresh, account, post=post)
+    refresh = gog = ""  # noqa: F841 — drop our references
+    if not data.get("access_token"):
+        raise CredError(f"Google returned no access token for {account}")
+    out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _write_private(out, json.dumps({
+        "agent": slug, "account": account, "delegated": True,
+        "access_token": data["access_token"],
+        "expires_at": now + float(data.get("expires_in") or 3600),
+        "scope": data.get("scope", ""),
+    }))
+    return out
+
+
+def delegated_google_token(slug: str, account: str, *, now: Optional[float] = None) -> Path:
+    """The TURN's half: the path of the access token the runner staged for `account`,
+    refused when there is none or it is about to lapse (the runner keeps it fresh while a
+    turn runs). A runner turn may ask only for its own agent."""
+    now = time.time() if now is None else now
+    session = session_identity()
+    if session.kind == "agent-turn" and session.agent != slug:
+        raise CredError(f"refused: {session.why}", EXIT_REFUSED)
+    out = delegated_google_token_path(slug, account)
+    try:
+        staged = json.loads(out.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        staged = None
+    if not isinstance(staged, dict) or not staged.get("access_token"):
+        raise CredError(
+            f"no access token for the Google account {account.strip().lower()} delegated to '{slug}' is "
+            "staged on this machine. Only a cloud runner that runs the agent (or its person's own runner) "
+            f"holds it, and stages it for each turn of '{slug}' ($CANOPY_DELEGATED_GOOGLE lists the "
+            "accounts). Its person connects one at /w/<workspace>/agents/<slug>/connect/google.",
+            EXIT_REFUSED)
+    if float(staged.get("expires_at") or 0) - now < DELEGATED_GOOGLE_MIN_LIFE:
+        raise CredError(f"the staged token for {account} has expired and the runner has not refreshed "
+                        "it — retry in a minute; if it persists the runner says why in its log")
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1288,16 +1439,35 @@ def exec_cmd(agent, refs, cmd):
 
 @cred_group.command("google-token")
 @AGENT_OPT
-def google_token_cmd(agent):
+@click.option("--delegated", "delegated", default="", metavar="ACCOUNT",
+              help="A Google account a PERSON delegated to the agent (you@gmail.com), instead of "
+                   "the agent's own login: the path of the access token the runner staged for it.")
+@click.option("--runner", "runner_mode", is_flag=True,
+              help="With --delegated: as the RUNNER (its token, CANOPY_TOKEN, and device proof), "
+                   "open the delegated account, refresh it at Google and stage the access token.")
+def google_token_cmd(agent, delegated, runner_mode):
     """Write a short-lived access token for the agent's OWN Google login and print the
     file's path (never the token): ~/.canopy/google-token/<agent>.json, mode 0600, with
     `access_token`, `expires_at` (epoch seconds) and `account`.
 
     For tools that should act on Google as the agent instead of a shared service account.
     Reuses the file while it has 5+ minutes left. A runner turn may only ask for its own
-    agent."""
+    agent.
+
+    `--delegated ACCOUNT`: a Google account a person lent the agent (canopy-web's
+    connect/google page). In a turn on a runner that holds it, prints the path of the
+    access token the runner staged — ~/.canopy/delegated/<agent>/google/<account>.json —
+    for `gog --access-token "$(jq -r .access_token "$(canopy cred google-token --delegated
+    ACCOUNT)")" …`. The refresh token stays with the runner."""
     slug = _require_agent(agent)
-    click.echo(str(google_token(slug)))
+    if runner_mode and not delegated:
+        raise CredError("--runner stages a delegated account: pass --delegated ACCOUNT", EXIT_USAGE)
+    if delegated and runner_mode:
+        click.echo(str(stage_delegated_google_token(slug, delegated)))
+    elif delegated:
+        click.echo(str(delegated_google_token(slug, delegated)))
+    else:
+        click.echo(str(google_token(slug)))
 
 
 @cred_group.command("whoami")
