@@ -19,6 +19,12 @@ This module is the box's half once the code arrives (``canopy vault google-mint`
 
 It prints one JSON line — ``{name, kv, value_zk, account}`` or ``{error, detail}`` — and
 the runner posts that to canopy-web. The plaintext token lives only in this process.
+
+A PERSON's own account, delegated to the agent (canopy-web ``google_mint.start_delegated``;
+the work says ``delegated`` and names the entry, ``google-delegated-<account>``): the token
+is sealed (``zks1``) under that name to exactly the readers canopy-web listed — the
+machines that may hold a credential of theirs and their own vault key — and NEVER under
+the vault key, even when this box holds a copy (every vault member could read it then).
 """
 from __future__ import annotations
 
@@ -175,17 +181,32 @@ def _readers(rows) -> list:
     return out
 
 
-def encrypt_for_agent(value: str, *, agent_id: str, vk: Optional[bytes], kv, recipients) -> tuple:
-    """``(kv, value_zk)``: under the vault key at its kv when this box holds it, else sealed
-    to the readers canopy-web listed (at canopy-web's kv), which a vault-key holder later
-    settles under the key."""
+def encrypt_for_agent(value: str, *, agent_id: str, vk: Optional[bytes], kv, recipients,
+                      name: str = GOG_TOKEN) -> tuple:
+    """``(kv, value_zk)``: under the vault key at its kv when this box holds it (``vk``),
+    else sealed to the readers canopy-web listed (at canopy-web's kv), which a vault-key
+    holder later settles under the key. A delegated value passes ``vk=None``: sealed only."""
     if vk is not None and kv:
-        return kv, zk.encrypt_value(vk, agent_id, GOG_TOKEN, kv, value)
+        return kv, zk.encrypt_value(vk, agent_id, name, kv, value)
     readers = _readers(recipients)
     if not readers:
         raise MintError("zk-no-recipients", "nobody can read this agent's secrets yet — set up "
                         "its vault (a passkey, or an approved machine) first")
-    return kv or 0, zk.seal_value(agent_id, GOG_TOKEN, kv or 0, value, readers)
+    return kv or 0, zk.seal_value(agent_id, name, kv or 0, value, readers)
+
+
+DELEGATED_PREFIX = "google-delegated-"
+
+
+def delegated_name(work: dict) -> str:
+    """The entry a delegated sign-in is sealed under, checked to be the account's own
+    (``google-delegated-<expected_account>``). Raises MintError."""
+    name = str(work.get("name") or "")
+    expected = str(work.get("expected_account") or "").strip().lower()
+    if not expected or name != DELEGATED_PREFIX + expected:
+        raise MintError("bad-request", "a delegated Google sign-in must name the account it is for "
+                        "and its entry (google-delegated-<account>) — start it again")
+    return name
 
 
 def finish(work: dict, *, client_raw: Optional[str], vk: Optional[bytes], vk_kv=None,
@@ -194,6 +215,8 @@ def finish(work: dict, *, client_raw: Optional[str], vk: Optional[bytes], vk_kv=
     redirect_uri, client_id, client, expected_account, agent_id, kv, recipients — plus the
     ``code_verifier`` the runner kept), the client file from the vault, and the vault key if
     this box holds it. Returns what to post to canopy-web. Raises MintError."""
+    delegated = bool(work.get("delegated"))
+    name = delegated_name(work) if delegated else GOG_TOKEN
     code, verifier = str(work.get("code") or ""), str(work.get("code_verifier") or "")
     client_id, redirect = str(work.get("client_id") or ""), str(work.get("redirect_uri") or "")
     agent_id = str(work.get("agent_id") or "")
@@ -218,11 +241,17 @@ def finish(work: dict, *, client_raw: Optional[str], vk: Optional[bytes], vk_kv=
                             granted_scopes=str(tokens.get("scope") or "").split(),
                             client=str(work.get("client") or "canopy-web"), now=now)
     plain = json.dumps(token)
-    kv, value_zk = encrypt_for_agent(plain, agent_id=agent_id, vk=vk,
-                                     kv=vk_kv if vk is not None else work.get("kv"),
-                                     recipients=work.get("recipients"))
+    if delegated:
+        # A person's own account: sealed to the readers canopy-web listed, never under
+        # the vault key this box may hold — every member of the vault could open that.
+        kv, value_zk = encrypt_for_agent(plain, agent_id=agent_id, vk=None, kv=work.get("kv"),
+                                         recipients=work.get("recipients"), name=name)
+    else:
+        kv, value_zk = encrypt_for_agent(plain, agent_id=agent_id, vk=vk,
+                                         kv=vk_kv if vk is not None else work.get("kv"),
+                                         recipients=work.get("recipients"))
     plain = refresh = ""  # noqa: F841 — drop our references
-    return {"name": GOG_TOKEN, "kv": kv, "value_zk": value_zk, "account": email}
+    return {"name": name, "kv": kv, "value_zk": value_zk, "account": email}
 
 
 def run(slug: str, work: dict, *, token: Optional[str] = None, base_url: Optional[str] = None,

@@ -158,6 +158,8 @@ canopy cred refresh [--agent X]
 canopy cred sync    [--agent X] [--ttl S]
 canopy cred exec    [--agent X] [--ref NAME …] -- <cmd> [args…]
 canopy cred google-token [--agent X]
+canopy cred google-token --delegated ACCOUNT [--agent X]
+canopy cred google-token --runner --delegated ACCOUNT --agent X
 canopy cred whoami  [--json]
 ```
 
@@ -212,6 +214,16 @@ the command exits 2: `this session is not an agent … Pass --agent <slug>.`
   refresh token gog holds for X's mailbox (client per `canopy email client`) and reuses the file
   while 5+ minutes remain. A runner turn may ask only for its own agent (exit 3); a missing login
   exits 1 naming the `gog login` to run.
+- **`google-token --delegated ACCOUNT`** is for a Google account a PERSON delegated to X (canopy-web
+  `/w/<ws>/agents/X/connect/google`: the vault entry `google-delegated-<account>`, sealed only to the
+  machines that run X). With `--runner` (the cloud runner, its own `CANOPY_TOKEN` and device proof) it
+  opens that entry from the resolve's `delegated` field, refreshes it at Google with the
+  `gog-oauth-client-web` client from the vault and writes only the access token to
+  `~/.canopy/delegated/X/google/<account>.json` (0600: `access_token`, `expires_at`, `account`,
+  `scope`); a withdrawn one removes the file (exit 3). Without `--runner` (in a turn) it prints that
+  file's path, or exits 3 when nothing fresh is staged. The runner stages it before each turn of X
+  and on its lease heartbeat, and lists the accounts in `$CANOPY_DELEGATED_GOOGLE`. Use it as
+  `gog … --access-token "$(jq -r .access_token "$(canopy cred google-token --delegated ACCOUNT)")"`.
 - **`whoami`** prints `identity: agent 'X'` (runner turn) or `identity: human (you)`, plus `why:`.
 
 No command prints a secret value; `env` and `google-token` print a path. The one exception is

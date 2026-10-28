@@ -197,3 +197,35 @@ def test_the_command_reports_a_refusal_as_json(monkeypatch):
     assert res.exit_code == 1
     assert json.loads(res.output.strip().splitlines()[-1])["error"] == "no-refresh-token"
 
+
+
+# --- a person's own account, delegated to the agent ------------------------------------
+
+def _delegated(**over):
+    return _work(**{"delegated": True, "name": "google-delegated-gina@gmail.com",
+                    "expected_account": "gina@gmail.com", "kv": 3, **over})
+
+
+def test_a_delegated_account_is_sealed_under_its_own_name_never_under_the_vault_key():
+    """Even on a box that holds the vault key: under it, every vault member could read her inbox."""
+    vk = os.urandom(32)
+    out = gm.finish(_delegated(), client_raw=CLIENT_FILE, vk=vk, vk_kv=3,
+                    post=lambda u, d: _google(email="gina@gmail.com"))
+    assert out["name"] == "google-delegated-gina@gmail.com" and out["account"] == "gina@gmail.com"
+    assert out["value_zk"].startswith("zks1:") and out["kv"] == 3
+    token = json.loads(zk.open_sealed(out["value_zk"], AGENT_ID, "google-delegated-gina@gmail.com", "device",
+                                      zk.jwk_thumbprint(ME_JWK), ME_KEY))
+    assert token["email"] == "gina@gmail.com" and token["refresh_token"] == "1//refresh"
+
+
+def test_a_delegated_sign_in_without_its_entry_name_is_refused():
+    with pytest.raises(gm.MintError) as e:
+        gm.finish(_delegated(name="gog-token"), client_raw=CLIENT_FILE, vk=None,
+                  post=lambda u, d: _google(email="gina@gmail.com"))
+    assert e.value.error == "bad-request"
+
+
+def test_a_delegated_sign_in_from_another_account_is_refused():
+    with pytest.raises(gm.MintError) as e:
+        gm.finish(_delegated(), client_raw=CLIENT_FILE, vk=None, post=lambda u, d: _google(email="jj@gmail.com"))
+    assert e.value.error == "wrong-account"
