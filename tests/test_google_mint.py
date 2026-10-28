@@ -229,3 +229,28 @@ def test_a_delegated_sign_in_from_another_account_is_refused():
     with pytest.raises(gm.MintError) as e:
         gm.finish(_delegated(), client_raw=CLIENT_FILE, vk=None, post=lambda u, d: _google(email="jj@gmail.com"))
     assert e.value.error == "wrong-account"
+
+
+# --- a session: the account lent for about an hour, no refresh token ---------------------
+
+def test_a_session_seals_the_access_token_and_its_end_and_no_refresh_token():
+    google = {**_google(email="gina@gmail.com"), "access_token": "ya29.session", "expires_in": 3599}
+    out = gm.finish(_delegated(session=True), client_raw=CLIENT_FILE, vk=None, post=lambda u, d: google)
+    token = json.loads(zk.open_sealed(out["value_zk"], AGENT_ID, "google-delegated-gina@gmail.com", "device",
+                                      zk.jwk_thumbprint(ME_JWK), ME_KEY))
+    assert token["session"] is True and token["access_token"] == "ya29.session"
+    assert "refresh_token" not in token, "even when Google sends one, a session keeps none"
+    assert token["expires_at"] > 0
+
+
+def test_a_session_without_an_access_token_is_refused():
+    with pytest.raises(gm.MintError) as e:
+        gm.finish(_delegated(session=True), client_raw=CLIENT_FILE, vk=None,
+                  post=lambda u, d: _google(email="gina@gmail.com", refresh=""))
+    assert e.value.error == "exchange-failed"
+
+
+def test_only_a_persons_own_account_can_be_lent_for_a_session():
+    with pytest.raises(gm.MintError) as e:
+        gm.finish(_work(session=True), client_raw=CLIENT_FILE, vk=None, post=lambda u, d: _google())
+    assert e.value.error == "bad-request"

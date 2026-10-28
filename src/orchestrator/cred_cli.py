@@ -1287,6 +1287,24 @@ def stage_delegated_google_token(slug: str, account: str, *, token: Optional[str
         gog = json.loads(opened.pop(name))
     except ValueError:
         raise CredError(f"the delegated Google account {account} is not a gog token")
+    if isinstance(gog, dict) and gog.get("session"):
+        # Lent for a session: the sealed value IS the access token, with Google's own end.
+        # Nothing to refresh; past its end it is dead everywhere, so stage nothing.
+        expires_at = float(gog.get("expires_at") or 0)
+        if str(gog.get("email") or "").strip().lower() != account or not gog.get("access_token"):
+            raise CredError(f"the delegated Google session for {account} is not for that account")
+        if expires_at - now < DELEGATED_GOOGLE_MIN_LIFE:
+            out.unlink(missing_ok=True)
+            raise CredError(f"{account}'s Google session for '{slug}' has ended — its person starts a new "
+                            "one from the page that asked for it", EXIT_REFUSED)
+        out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        _write_private(out, json.dumps({
+            "agent": slug, "account": account, "delegated": True, "session": True,
+            "access_token": gog["access_token"], "expires_at": expires_at,
+            "scope": " ".join(gog.get("scopes") or []),
+        }))
+        gog = ""  # noqa: F841
+        return out
     refresh = str(gog.get("refresh_token") or "")
     if not refresh or str(gog.get("email") or "").strip().lower() != account:
         raise CredError(f"the delegated Google credential for {account} has no refresh token for that account")
