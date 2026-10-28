@@ -212,7 +212,8 @@ def _write_private(path: Path, data: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-", suffix=path.suffix)
     try:
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "fchmod") and os.name != "nt":  # no file modes on Windows
+            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(data)
         os.replace(tmp, path)
