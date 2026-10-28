@@ -24,6 +24,9 @@ can fix it, and otherwise reported as NEEDS YOU with the exact URL, command or p
   plugin           the agent's plugin is installed (`<plugin>@canopy-agents`)
   this project     sessions in --dir use the agent (`$CANOPY_AGENT`)
   env              the agent's env synced from its vault (`canopy cred sync`'s path)
+  google login     the agent's Google login in gog — OAuth client file, token, account
+                   mapping, one Gmail call (`agent_bootstrap.Bootstrapper.google_login`);
+                   skipped for an agent whose mail canopy-web hosts
 
 and ends with one line: start a session and run `/<plugin>:turn`, or the NEEDS YOU list.
 
@@ -108,6 +111,15 @@ class Deps:
     sync_env: Callable[[str], str]
     #: The GitHub account this computer's `gh` is signed in as, or "".
     github_login: Callable[[], str] = field(default=lambda: "")
+    #: slug -> {"repo_error": str, "hosted": str (the hosted-mail note, "" if not),
+    #: "gog": bool (gog on PATH), "install": str (how to install gog on this OS)}.
+    google_check: Callable[[str], dict] = field(
+        default=lambda slug: {"repo_error": "", "hosted": "", "gog": True, "install": ""})
+    #: slug -> {"ok", "imported", "wrote_client", "summary", "notes"}: the Google login
+    #: put in place (`Bootstrapper.google_login`). Raises on an unexpected failure.
+    google_login: Callable[[str], dict] = field(
+        default=lambda slug: {"ok": True, "imported": False, "wrote_client": False,
+                              "summary": "present", "notes": []})
 
 
 def _first_line(e: BaseException) -> str:
@@ -230,6 +242,10 @@ def run(slug: str, directory: str, deps: Deps) -> UseReport:
 
     # 8. env ──────────────────────────────────────────────────────────────────────
     _env_step(rep, slug, deps, source=source, may_resolve=bool(access.get("may_resolve")))
+
+    # 9. google login ─────────────────────────────────────────────────────────────
+    _google_step(rep, slug, deps, may_resolve=bool(access.get("may_resolve")),
+                 is_admin=is_admin, ask=ask, page=page)
     return rep
 
 
@@ -479,6 +495,64 @@ def _env_step(rep: UseReport, slug: str, deps: Deps, *, source: str, may_resolve
     rep.add("env", DONE if changed else OK, f"~/.{slug}/.env from canopy vault ({what})")
 
 
+def _google_step(rep: UseReport, slug: str, deps: Deps, *, may_resolve: bool, is_admin: bool,
+                 ask: str, page: str) -> None:
+    """The agent's Google login on this computer: what `canopy agent bootstrap` does for an
+    admin, so the agent's first Gmail or Drive call (gog, `canopy cred google-token`) works.
+
+    2026-10-28, failure investigation 17, turn c10c9748: a licensee set up ace on a Windows
+    laptop with `canopy agent use`, which had no Google step — so the turn died on its first
+    `gog gmail search` ("OAuth client credentials missing … credentials-canopy.json") and
+    the fix it printed was `canopy agent bootstrap`, an admin's command. The agent acts on
+    Google as itself (Jonathan, 2026-10-28). A licence holder reads its login only inside
+    their own local turn, so for them the session's start does the import
+    (`canopy agent google-login --if-needed`, hooks/agent_op_env.py) and this step says so.
+    No fix here ever says `gog login <agent mailbox>` or "Connect Google mailbox": a
+    licence holder can do neither."""
+    blocked = [s.name for s in rep.needs
+               if s.name in ("device key", "vault access", "licence", "plugin")]
+    if blocked:
+        rep.add("google login", SKIP, f"after {', '.join(blocked)}")
+        return
+    try:
+        chk = deps.google_check(slug) or {}
+    except Exception as e:  # noqa: BLE001
+        rep.add("google login", NEEDS, f"could not read {slug}'s Google identity ({_first_line(e)})",
+                f"re-run `canopy agent use {slug}`")
+        return
+    if chk.get("repo_error"):
+        rep.add("google login", NEEDS, f"{slug}'s plugin is not readable here ({chk['repo_error']})",
+                f"install it: `/plugin install {rep.plugin or slug}@{CATALOG}`, then re-run")
+        return
+    if chk.get("hosted"):
+        rep.add("google login", SKIP, f"not needed: {chk['hosted']}")
+        return
+    if not chk.get("gog"):
+        rep.add("google login", NEEDS, f"gog (the Google CLI {slug} uses for Gmail and Drive) "
+                                       "is not installed",
+                f"install gog: {chk.get('install') or 'see https://github.com/openclaw/gogcli'}")
+        return
+    if not may_resolve:
+        rep.add("google login", OK, f"imported when your first session starts (inside your local "
+                                    f"turn — canopy-web gives a licence holder {slug}'s Google "
+                                    f"login only then)")
+        return
+    try:
+        res = deps.google_login(slug) or {}
+    except Exception as e:  # noqa: BLE001
+        res = {"ok": False, "summary": _first_line(e), "notes": []}
+    if res.get("ok"):
+        done = res.get("imported") or res.get("wrote_client")
+        rep.add("google login", DONE if done else OK, str(res.get("summary") or "present"))
+        return
+    notes = [str(n) for n in res.get("notes") or []]
+    detail = notes[0] if notes else str(res.get("summary") or "failed")
+    fix = ("; ".join(notes) if is_admin and notes
+           else f"ask {ask} to check {slug}'s Google mailbox on {page}, then re-run "
+                f"`canopy agent use {slug}`")
+    rep.add("google login", NEEDS, detail[:300], fix)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # the real world
 # ──────────────────────────────────────────────────────────────────────────────
@@ -523,7 +597,39 @@ def real_deps() -> Deps:
         set_session_agent=local_cli.set_session_agent,
         sync_env=sync_env,
         github_login=_gh_login,
+        google_check=_google_check,
+        google_login=_google_login,
     )
+
+
+def _google_check(slug: str) -> dict:
+    import shutil
+
+    from orchestrator.agent_bootstrap import hosted_identity
+    from orchestrator.agent_email import (AgentEmailError, find_agent_repo, gog_install_hint,
+                                          hosted_only_note)
+    try:
+        repo = find_agent_repo(slug)
+    except AgentEmailError as e:
+        return {"repo_error": _first_line(e)}
+    hosted = hosted_identity(repo)
+    return {"repo_error": "", "hosted": hosted_only_note(hosted) if hosted else "",
+            "gog": bool(shutil.which("gog")), "install": gog_install_hint()}
+
+
+def _google_login(slug: str) -> dict:
+    """`Bootstrapper.google_login` — the same code `canopy agent bootstrap` runs."""
+    from orchestrator.agent_bootstrap import Bootstrapper
+    from orchestrator.agent_email import find_agent_repo
+
+    import sys
+
+    # Its one heads-up (the macOS Keychain dialog) goes to stderr: --json owns stdout.
+    boot = Bootstrapper(echo=lambda m: print(m, file=sys.stderr))
+    rep = boot.google_login(slug, find_agent_repo(slug))
+    wrote = any(n.startswith("token: wrote ") for n in rep.notes)
+    return {"ok": rep.ok, "imported": rep.token.endswith("(imported)"), "wrote_client": wrote,
+            "summary": f"{rep.token}, gmail {rep.gmail}", "notes": list(rep.notes)}
 
 
 def _gh_login() -> str:

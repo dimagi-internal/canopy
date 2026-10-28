@@ -212,6 +212,45 @@ def test_session_start_opens_the_local_turn_before_reading_credentials(tmp_path)
     assert "local turn of ace" in r.stdout and "KEY" not in r.stdout
 
 
+@pytest.mark.parametrize("rc,out,said", [
+    (0, "ace: Google login present here (client canopy)", ""),
+    (1, "ace: token NONE — ask an admin of ace to connect its Google mailbox",
+     "Google login is not set up on this computer"),
+])
+def test_a_local_turn_puts_the_agents_google_login_in_place(tmp_path, rc, out, said):
+    """2026-10-28, failure investigation 17, turn c10c9748: a licensee's ace turn died on
+    gog's missing OAuth client file — `canopy agent use` cannot import the agent's login (a
+    licence reads it only inside the person's own turn), so the session's start does, with
+    the turn id on the call."""
+    home = tmp_path / "home"
+    (home / ".canopy").mkdir(parents=True)
+    (home / ".canopy/private-runner.json").write_text('{"id": "pr-1"}')
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "args"
+    (bindir / "canopy").write_text(
+        "#!/bin/sh\n"
+        f"echo \"$@ turn=$CANOPY_TURN_ID\" >> {log}\n"
+        "[ \"$1\" = local ] && { echo '{\"turn_id\": \"tid-9\"}'; exit 0; }\n"
+        f"[ \"$2\" = google-login ] && {{ echo '{out}'; exit {rc}; }}\n"
+        "[ \"$2\" = op-token ] && exit 3\n"
+        "exit 0\n")
+    (bindir / "canopy").chmod(0o755)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CANOPY_TURN_ID", "OP_SERVICE_ACCOUNT_TOKEN", "CANOPY_PROFILE", "EMDASH_TASK_ID")}
+    env.update(HOME=str(home), PATH=f"{bindir}{os.pathsep}{env['PATH']}", CANOPY_AGENT="ace",
+               CLAUDE_ENV_FILE=str(tmp_path / "session.env"))
+    r = subprocess.run([sys.executable, str(HOOKS / "agent_op_env.py")], input=json.dumps(
+        {"session_id": "sess-1", "cwd": "/w", "source": "startup"}), capture_output=True,
+        text=True, env=env, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert "agent google-login --slug ace --if-needed --no-verify turn=tid-9" in log.read_text()
+    if said:
+        assert said in r.stdout and "ask an admin of ace" in r.stdout
+    else:
+        assert "Google" not in r.stdout
+
+
 def test_the_prompt_hook_shows_the_local_envelope_once(tmp_path, monkeypatch):
     hook = _load("caller_context")
     caller = tmp_path / "caller"

@@ -16,6 +16,17 @@ def _keyring_check_off_by_default(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _machine_mode_unknown_by_default(monkeypatch):
+    """How this machine runs an agent (`cred_cli.machine_mode`) picks preflight fix lines.
+    Live, it reads the developer's own canopy-web access (and its on-disk cache), so a fix
+    line would depend on whose laptop runs the suite. "unknown" — today's wording — unless
+    a test sets it."""
+    from orchestrator import agent_email
+
+    monkeypatch.setattr(agent_email, "machine_mode", lambda slug: "unknown")
+
+
+@pytest.fixture(autouse=True)
 def _canopy_web_session_source_off_by_default(monkeypatch):
     """The canopy-web session source joins the default set whenever a PAT resolves —
     which it does on any developer laptop. Keep it out unless a test opts in, so no

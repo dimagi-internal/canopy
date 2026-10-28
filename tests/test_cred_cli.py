@@ -824,3 +824,61 @@ def test_an_expired_staged_token_is_not_handed_out(delegated):
     cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"], now=0.0)
     with pytest.raises(cred_cli.CredError):
         cred_cli.delegated_google_token("bailey", GINA, now=3600.0)
+
+
+# ── machine_mode: how THIS machine runs an agent (picks a fix line) ───────────
+# 2026-10-28, failure investigation 17: a licensee was told `canopy agent bootstrap`.
+
+@pytest.fixture()
+def modes(monkeypatch):
+    monkeypatch.setattr(cred_cli, "_MODES", {})
+    state = {"access": {}, "licenses": [], "calls": [], "fail": False}
+
+    def fake_call(method, path, body=None, **kw):
+        state["calls"].append(path)
+        assert kw.get("transport") is not None          # always the short-timeout one
+        if state["fail"]:
+            raise cred_cli.canopy_web.CanopyError(f"{method} {path} -> 503")
+        if path == "/api/me/":
+            return {"id": 7, "email": "sudubey@dimagi.com"}
+        if path.endswith("/licenses"):
+            return state["licenses"]
+        if path.endswith("/credentials/access"):
+            return state["access"]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(cred_cli.canopy_web, "call", fake_call)
+    return state
+
+
+@pytest.mark.parametrize("via", ["runner", "admin", "license"])
+def test_machine_mode_is_canopy_webs_via(modes, via):
+    modes["access"] = {"credential_source": "canopy-web", "may_resolve": True, "via": via}
+    assert cred_cli.machine_mode("ace") == via
+
+
+def test_a_licence_holder_outside_a_turn_is_still_license(modes):
+    # Outside their own turn canopy-web reads nothing for them: via is None.
+    modes["access"] = {"credential_source": "canopy-web", "may_resolve": False, "via": None}
+    modes["licenses"] = [{"user_id": 7, "status": "active"}]
+    assert cred_cli.machine_mode("ace") == "license"
+
+
+def test_no_access_and_no_licence_is_unknown(modes):
+    modes["access"] = {"credential_source": "canopy-web", "may_resolve": False, "via": None}
+    modes["licenses"] = [{"user_id": 7, "status": "revoked"}]
+    assert cred_cli.machine_mode("ace") == "unknown"
+
+
+def test_machine_mode_offline_is_unknown_and_asked_once(modes):
+    modes["fail"] = True
+    assert cred_cli.machine_mode("ace") == "unknown"
+    n = len(modes["calls"])
+    assert cred_cli.machine_mode("ace") == "unknown" and len(modes["calls"]) == n
+
+
+def test_agent_runs_as_prints_one_word(modes):
+    from orchestrator import agent_cli
+    modes["access"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
+    r = CliRunner().invoke(agent_cli.agent, ["runs-as", "--slug", "ace"])
+    assert r.exit_code == 0 and r.output == "admin\n"

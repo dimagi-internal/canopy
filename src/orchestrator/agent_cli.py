@@ -424,6 +424,76 @@ def agent_use(slug, directory, as_json):
         raise SystemExit(1)
 
 
+@agent.command("runs-as")
+@click.option("--slug", envvar="CANOPY_AGENT", required=True,
+              help="Agent slug. Default: $CANOPY_AGENT.")
+def agent_runs_as(slug):
+    """Print how THIS machine runs agent SLUG, as one word: runner | admin | license | unknown.
+
+    \b
+      runner   a runner box that serves the agent (fix by Refreshing the runner)
+      admin    an admin's own computer          (fix with `canopy agent bootstrap --slug X`)
+      license  a person's licence to use it     (fix with `canopy agent use X` /
+                                                 `canopy agent google-login --slug X`)
+      unknown  canopy-web could not say (offline, an error) — never a failure
+
+    From canopy-web's /credentials/access (cached) with a short timeout, so an agent's
+    doctor can pick the right fix line. Always exits 0."""
+    from orchestrator.cred_cli import machine_mode
+    click.echo(machine_mode(slug))
+
+
+@agent.command("google-login")
+@click.option("--slug", envvar="CANOPY_AGENT", required=True,
+              help="Agent slug. Default: $CANOPY_AGENT.")
+@click.option("--if-needed", is_flag=True,
+              help="Do nothing when gog already maps the agent's Google account to a client "
+                   "whose OAuth file is in place (local files only — no gog call, no network).")
+@click.option("--no-verify", is_flag=True, help="Skip the one Gmail call at the end.")
+def agent_google_login(slug, if_needed, no_verify):
+    """Put agent SLUG's Google login on THIS computer — its gog OAuth client file, its
+    token imported into gog, the account mapped — and check it with one Gmail call.
+
+    The Google half of `canopy agent bootstrap`, for anyone who uses the agent here: an
+    admin, or a licence holder INSIDE a session of the agent (canopy-web hands a licence
+    holder the agent's login only during their own local turn; every such session runs
+    this with --if-needed when it starts). The agent acts on Google as itself. Exits 1
+    with what to do when something is missing."""
+    import shutil
+
+    from orchestrator.agent_bootstrap import Bootstrapper, google_login_present, hosted_identity
+    from orchestrator.agent_email import (AgentEmailError, find_agent_repo, gog_install_hint,
+                                          hosted_only_note)
+    from orchestrator.cred_cli import machine_mode
+
+    try:
+        repo = find_agent_repo(slug)
+    except AgentEmailError as e:
+        click.echo(f"{slug}: {e} — install it first: `canopy agent use {slug}`", err=True)
+        raise SystemExit(1)
+    if if_needed and (client := google_login_present(repo)):
+        click.echo(f"{slug}: Google login present here (client {client})")
+        return
+    if (hosted := hosted_identity(repo)) is not None:
+        click.echo(f"{slug}: mail is canopy-hosted — no Google login to set up "
+                   f"({hosted_only_note(hosted)})")
+        return
+    if not shutil.which("gog"):
+        click.echo(f"{slug}: gog is not installed — {gog_install_hint()}", err=True)
+        raise SystemExit(1)
+    hint = None
+    if machine_mode(slug) == "license":
+        hint = (f"ask an admin of {slug} to connect its Google mailbox on canopy-web "
+                f"(the agent's Settings → External accounts)")
+    boot = Bootstrapper(echo=click.echo, **({"mailbox_hint": hint} if hint else {}))
+    rep = boot.google_login(slug, repo, verify=not no_verify)
+    for n in rep.notes:
+        click.echo(f"  {n}")
+    click.echo(f"{slug}: token {rep.token}, gmail {rep.gmail}, turn-client {rep.turn}")
+    if not rep.ok:
+        raise SystemExit(1)
+
+
 @agent.command("op-token")
 @click.option("--slug", envvar="CANOPY_AGENT", required=True,
               help="Agent slug. Default: $CANOPY_AGENT (set by every agent repo's settings.json).")

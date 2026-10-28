@@ -851,6 +851,61 @@ def test_a_missing_client_file_is_never_reported_as_a_bad_token(tmp_path):
     assert not ok and "OAuth client file missing" in joined and "token bad" not in joined
 
 
+# 2026-10-28, failure investigation 17, turn c10c9748: a licensee's ace turn aborted on a
+# missing gog client file and was told `canopy agent bootstrap` — an admin's command.
+
+@pytest.mark.parametrize("mode,want,never", [
+    ("license", "canopy agent google-login --slug hal", "canopy agent bootstrap"),
+    ("admin", "canopy agent bootstrap --slug hal", "Refresh"),
+    ("runner", "Refresh the runner", "google-login"),
+    ("unknown", "canopy agent bootstrap --slug hal   (a laptop) — or Refresh", "google-login"),
+])
+def test_the_missing_client_fix_follows_how_this_machine_runs_the_agent(
+        tmp_path, monkeypatch, mode, want, never):
+    from orchestrator import agent_email
+    monkeypatch.setattr(agent_email, "machine_mode", lambda slug: mode)
+    ok, lines = preflight(IDENT, gog_dir=_gog_home(tmp_path, creds=False))
+    joined = "\n".join(lines)
+    assert not ok and want in joined and never not in joined
+    if mode == "license":
+        assert "canopy agent use hal" in joined
+
+
+def test_gogs_own_client_missing_error_gets_the_licence_fix_too(tmp_path, monkeypatch):
+    from orchestrator import agent_email
+    monkeypatch.setattr(agent_email, "machine_mode", lambda slug: "license")
+
+    def runner(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1, "", "OAuth client credentials missing "
+                                           "(OAuth client ID JSON) — expected at C:\\x")
+    ok, lines = preflight(IDENT, gog_dir=_gog_home(tmp_path), runner=runner)
+    joined = "\n".join(lines)
+    assert "canopy agent google-login --slug hal" in joined and "bootstrap" not in joined
+
+
+def test_a_licence_holders_bad_token_never_says_sign_in_as_the_agent(tmp_path, monkeypatch):
+    from orchestrator import agent_email
+    monkeypatch.setattr(agent_email, "machine_mode", lambda slug: "license")
+
+    def runner(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1, "", "token expired or revoked")
+    ok, lines = preflight(IDENT, gog_dir=_gog_home(tmp_path), runner=runner)
+    joined = "\n".join(lines)
+    assert not ok and "canopy agent google-login --slug hal" in joined
+    assert "gog login" not in joined and "Connect Google mailbox" not in joined
+
+
+@pytest.mark.parametrize("plat,want,never", [
+    ("darwin", "brew install gogcli", "windows"),
+    ("win32", "gogcli_<version>_windows_amd64.zip", "brew"),
+    ("linux", "gogcli_<version>_linux_amd64.tar.gz", "windows"),
+])
+def test_the_gog_install_line_suits_the_os(plat, want, never):
+    from orchestrator.agent_email import gog_install_hint
+    hint = gog_install_hint(plat)
+    assert want in hint and never not in hint
+
+
 def _provision_repo(tmp_path, op_ref="op://AI-Agents/Hal - gog OAuth client/notesPlain"):
     """An agent repo whose config/secrets.yaml declares the gog client for provisioning."""
     repo = _agent_repo(tmp_path)

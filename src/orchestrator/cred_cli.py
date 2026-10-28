@@ -236,7 +236,8 @@ def _human_token() -> str:
     return _operator_token()
 
 
-def fetch_access(slug: str, *, refresh: bool = False) -> dict:
+def fetch_access(slug: str, *, refresh: bool = False,
+                 transport: Optional[canopy_web.Transport] = None) -> dict:
     """canopy-web's verdict for this caller on agent ``slug`` — cached CACHE_TTL.
 
     Returns the /access body plus ``error`` ("" on success). On any failure the
@@ -255,7 +256,7 @@ def fetch_access(slug: str, *, refresh: bool = False) -> dict:
             return hit
     try:
         body = canopy_web.call("GET", f"/api/agents/{slug}/credentials/access",
-                               token=_human_token(),
+                               token=_human_token(), transport=transport,
                                headers={TURN_HEADER: turn} if turn else None) or {}
     except Exception as e:  # noqa: BLE001 — degrade, don't traceback
         return {"agent": slug, "credential_source": DEFAULT_SOURCE, "may_resolve": False,
@@ -270,6 +271,71 @@ def fetch_access(slug: str, *, refresh: bool = False) -> dict:
            "delegated_withheld": [w for w in body.get("delegated_withheld") or [] if isinstance(w, dict)]}
     _cache_put(key, out)
     return out
+
+
+#: How this machine runs an agent (`machine_mode`): a runner box that serves it, an admin's
+#: own laptop, a person's licence to use it locally — or not known (offline, an error).
+MODES = ("runner", "admin", "license", "unknown")
+#: The mode lookup sits on failure paths (a preflight's fix line): never wait long for it.
+MODE_TIMEOUT = 5.0
+_MODES: dict = {}
+
+
+def _timeout_transport(timeout: float) -> "canopy_web.Transport":
+    import urllib.error
+    import urllib.request
+
+    def send(method: str, url: str, headers: dict, body: Optional[bytes]):
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode("utf-8", "replace")
+    return send
+
+
+def machine_mode(slug: str, *, transport: Optional["canopy_web.Transport"] = None) -> str:
+    """How THIS machine runs agent ``slug``: "runner" | "admin" | "license" | "unknown".
+
+    canopy-web's `/credentials/access` answer (`fetch_access`, cached CACHE_TTL) says as whom
+    this caller reads the agent's secrets. Outside a turn a licence holder reads nothing, so
+    `via` is None for them; then an ACTIVE licence of yours in `/licenses` still says
+    "license". Any failure is "unknown" — this only picks a fix line, so it never raises
+    and asks with a short timeout. Cached per process.
+
+    A licence holder repairs the agent's Google login with `canopy agent use` /
+    `canopy agent google-login`, never with `canopy agent bootstrap` or a mailbox
+    re-connect (2026-10-28, failure investigation 17: ace on a licensee's laptop)."""
+    if slug in _MODES:
+        return _MODES[slug]
+    mode = "unknown"
+    try:
+        tr = transport or _timeout_transport(MODE_TIMEOUT)
+        access = fetch_access(slug, transport=tr)
+        via = access.get("via")
+        if via in ("runner", "admin", "license"):
+            mode = via
+        elif not access.get("error") and _holds_active_licence(slug, tr):
+            mode = "license"
+    except Exception:  # noqa: BLE001 — a fix line must never cost the preflight
+        mode = "unknown"
+    _MODES[slug] = mode
+    return mode
+
+
+def _holds_active_licence(slug: str, transport) -> bool:
+    token = _human_token()
+    me = canopy_web.call("GET", "/api/me/", token=token, transport=transport) or {}
+    my_id = str(me.get("id") or me.get("user_id") or "")
+    my_email = str(me.get("email") or "").lower()
+    rows = canopy_web.call("GET", f"/api/agents/{slug}/licenses", token=token,
+                           transport=transport) or []
+    if isinstance(rows, dict):
+        rows = rows.get("items") or rows.get("results") or []
+    return any(isinstance(r, dict) and r.get("status") == "active" and (
+        (my_id and str(r.get("user_id")) == my_id)
+        or (my_email and str(r.get("email") or "").lower() == my_email)) for r in rows)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
