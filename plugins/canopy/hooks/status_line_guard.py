@@ -30,7 +30,7 @@ import sys
 
 CALLER_ROOT = os.path.expanduser("~/.canopy/caller")
 _SID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
-STATUS_LINE = re.compile(r"Session (complete|paused)", re.IGNORECASE)
+STATUS_LINE = re.compile(r"Session (complete|paused|monitoring|incomplete)", re.IGNORECASE)
 
 REASON = (
     "canopy status_line_guard: the person is in this conversation (presence: PRESENT — the "

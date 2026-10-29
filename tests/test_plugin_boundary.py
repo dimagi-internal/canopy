@@ -29,7 +29,7 @@ FRAMEWORK = {
     "skill_budget", "skill_catalog", "skill_runner", "provision", "run_log",
     "version_bump", "version", "doctor", "agent_review", "structure_drift",
     "eval_cli", "eval_rubric", "turn_synthesis", "session_upload", "fleet_align",
-    "decide_guard_prompt", "decide_guard_cli",
+    "decide_guard_prompt", "decide_guard_cli", "closeout", "closeout_cli",
     "session_sources", "session_liveness", "work_cursor", "kb_engine", "kb_cli", "kb_remote", "kb_mcp", "agent_dispatch", "llm_output",
     "project_dispatch", "project_cli", "project_audit", "project_folder", "task_folder", "runner_cli", "secret_cli", "people_cli", "act_as_cli", "slack_ingest_cli", "aws_cli", "cred_cli", "cred_resolve", "local_cli", "agent_use", "private_runner_session", "device_key", "device_key_aws", "device_key_kms", "device_key_tpm", "runner_session", "turn_agent_token", "vault_cli", "vault_zk", "vault_zk_cli", "vault_keeper", "google_account", "google_mint", "workspace_cli",
     "provenance",

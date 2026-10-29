@@ -1104,7 +1104,10 @@ the session later knows what happened.** Never end ambiguously. **With the perso
 "Presence") there is no status line** — they are in the conversation, the line tells them nothing,
 and it reads as a completion claim; the Stop hook enforces this. And "complete" is a claim: write it
 only when nothing you said you would do is still undone. Work inside your authority that you have
-not done is not "open on the board" — do it before the line, or name it as undone.
+not done is not "open on the board" — do it before the line, or name it as undone. **An
+incident-style turn (an alarm, a page) does not type the line:** `canopy closeout record` computes
+it from the facts (`orchestrator/closeout.py` defines them) and `hooks/closeout_guard.py` blocks
+"safe to close" on any verdict but CLOSED.
 - **Done, nothing open →** end with **"✅ Session complete — safe to close."** (a trivial /
   non-actionable turn: "Nothing actionable — archived the thread. ✅ Session complete — safe to close.")
 - **Something parked awaiting a human decision →** end with **"⏸ Session paused — waiting on you
