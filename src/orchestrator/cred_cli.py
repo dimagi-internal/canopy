@@ -27,13 +27,18 @@ Commands::
     canopy cred google-token --delegated A [--agent X]   the access token for Google account A a
                                               person delegated to X, as staged by the runner; its path
     canopy cred google-token --runner --delegated A --agent X   (the runner) stage that file
+    canopy cred salesforce-token              the person's own Salesforce access token (canopy-web
+                                              connection) -> ~/.canopy/connections/salesforce.json; its path
+    canopy cred salesforce-token --agent X    in a turn: the path of the token the runner staged for X
+    canopy cred salesforce-token --runner --agent X --runner-id R --turn T   (the runner) stage that file;
+                                              exit 3 when X has no Salesforce connection
     canopy cred whoami [--json]               who this session is, and why
 
 Exit codes (stable — agent-identity MCP servers shell out to `check`):
     0 allowed · 1 error (resolve failed) · 2 usage (no agent named or detectable)
     3 refused (stderr: one actionable paragraph) · 4 undetermined (could not decide)
 
-No command ever prints a secret value (google-token prints a path, not the token) — except
+No command ever prints a secret value (google-token / salesforce-token print a path, not the token) — except
 `cred env --print-json`, whose caller is a runner process keeping the values in memory.
 """
 from __future__ import annotations
@@ -1361,6 +1366,124 @@ def delegated_google_token(slug: str, account: str, *, now: Optional[float] = No
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# salesforce-token: a short-lived Salesforce access token from canopy-web's connections
+# ──────────────────────────────────────────────────────────────────────────────
+
+#: A staged/cached Salesforce token is not handed out inside this many seconds of expiry.
+SALESFORCE_MIN_LIFE = 300
+
+
+def salesforce_token_path(slug: str = "") -> Path:
+    """~/.canopy/connections/salesforce.json (a person's), or .../<slug>/salesforce.json (a turn's)."""
+    base = CACHE_DIR / "connections"
+    return (base / slug / "salesforce.json") if slug else (base / "salesforce.json")
+
+
+def _epoch(value) -> float:
+    """`expires_at` as epoch seconds: canopy-web sends ISO 8601; a number passes through."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    from datetime import UTC, datetime
+    dt = datetime.fromisoformat(str(value).strip())
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.timestamp()
+
+
+def _problem(e: Exception) -> dict:
+    """The problem+json body inside a CanopyError ("POST /p -> 409: {...}"), or {}."""
+    text = str(e)
+    _, _, tail = text.partition(": ")
+    try:
+        body = json.loads(tail.strip())
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _status_of(e: Exception) -> int:
+    m = re.search(r"-> (\d{3})", str(e))
+    return int(m.group(1)) if m else 0
+
+
+def _usable(path: Path, now: float) -> bool:
+    try:
+        staged = json.loads(path.read_text(encoding="utf-8"))
+        return bool(staged.get("access_token")) and _epoch(staged["expires_at"]) - now >= SALESFORCE_MIN_LIFE
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def _write_salesforce(path: Path, body: dict) -> Path:
+    try:
+        staged = {"access_token": body["access_token"], "instance_url": body["instance_url"],
+                  "expires_at": _epoch(body["expires_at"]), "account_label": body.get("account_label", "")}
+    except (KeyError, ValueError, TypeError):
+        raise CredError("canopy-web answered with a Salesforce token this CLI cannot read") from None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(path.parent, 0o700)
+    _write_private(path, json.dumps(staged))
+    return path
+
+
+def _refusal(e: Exception, *, runner: bool) -> CredError:
+    """A canopy-web refusal as a CredError: detail + connect_url on stderr, never a token."""
+    body = _problem(e)
+    detail = body.get("detail") or body.get("title") or str(e)[:300]
+    if runner and _status_of(e) == 409 and body.get("error") == "not_connected":
+        return CredError(detail, EXIT_REFUSED)
+    msg = str(detail)
+    if body.get("connect_url"):
+        msg += f"\nConnect Salesforce here: {body['connect_url']}"
+    return CredError(msg)
+
+
+def salesforce_token(*, now: Optional[float] = None) -> Path:
+    """A PERSON's own token: POST /api/me/connections/salesforce/token with their PAT, written
+    0600 to ~/.canopy/connections/salesforce.json and reused until 5 minutes before it lapses."""
+    now = time.time() if now is None else now
+    out = salesforce_token_path()
+    if _usable(out, now):
+        return out
+    try:
+        body = canopy_web.call("POST", "/api/me/connections/salesforce/token", token=_human_token())
+    except canopy_web.CanopyError as e:
+        raise _refusal(e, runner=False) from None
+    return _write_salesforce(out, body)
+
+
+def stage_salesforce_token(slug: str, runner_id: str, turn_id: str, *, token: Optional[str] = None) -> Path:
+    """The RUNNER's half: with its own bearer (CANOPY_TOKEN), ask canopy-web for the token of the
+    Salesforce connection `slug` uses and write it 0600 to ~/.canopy/connections/<slug>/salesforce.json.
+    Exit 3 when the agent has no Salesforce connection (the runner treats that as silent)."""
+    tok = token or os.environ.get("CANOPY_TOKEN", "").strip()
+    if not tok:
+        raise CredError("--runner needs the runner's bearer in $CANOPY_TOKEN", EXIT_USAGE)
+    if not runner_id or not turn_id:
+        raise CredError("--runner needs --runner-id and --turn", EXIT_USAGE)
+    try:
+        body = canopy_web.call("POST", f"/api/harness/runners/{runner_id}/turns/{turn_id}/connection-token",
+                               {"provider": "salesforce"}, token=tok)
+    except canopy_web.CanopyError as e:
+        raise _refusal(e, runner=True) from None
+    return _write_salesforce(salesforce_token_path(slug), body)
+
+
+def staged_salesforce_token(slug: str, *, now: Optional[float] = None) -> Path:
+    """The TURN's half: the path of the token the runner staged for `slug`. Never touches the network."""
+    now = time.time() if now is None else now
+    session = session_identity()
+    if session.kind == "agent-turn" and session.agent != slug:
+        raise CredError(f"refused: {session.why}", EXIT_REFUSED)
+    out = salesforce_token_path(slug)
+    if not _usable(out, now):
+        raise CredError(f"no Salesforce token staged for {slug} — this agent has no Salesforce connection, "
+                        "or this runner does not stage one")
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1553,6 +1676,28 @@ def google_token_cmd(agent, delegated, runner_mode):
         click.echo(str(delegated_google_token(slug, delegated)))
     else:
         click.echo(str(google_token(slug)))
+
+
+@cred_group.command("salesforce-token")
+@click.option("--agent", "agent", default=None, help="Agent slug: read the token the runner staged for it.")
+@click.option("--runner", "runner_mode", is_flag=True,
+              help="As the RUNNER (bearer in $CANOPY_TOKEN): stage the agent's token for one turn.")
+@click.option("--runner-id", "runner_id", default="", help="With --runner: this runner's id.")
+@click.option("--turn", "turn", default="", help="With --runner: the turn's id.")
+def salesforce_token_cmd(agent, runner_mode, runner_id, turn):
+    """Print the path of a short-lived Salesforce access token file (never the token):
+    {access_token, instance_url, expires_at, account_label}, mode 0600.
+
+    No flags: YOUR connection (connect it in canopy-web) -> ~/.canopy/connections/salesforce.json,
+    reused until 5 minutes before it lapses. `--agent X` in a turn: the file the runner staged for
+    X, ~/.canopy/connections/X/salesforce.json (no network). `--runner --agent X --runner-id R
+    --turn T`: the runner stages it; exit 3 when X has no Salesforce connection."""
+    if runner_mode:
+        click.echo(str(stage_salesforce_token(_require_agent(agent), runner_id, turn)))
+    elif agent:
+        click.echo(str(staged_salesforce_token(_require_agent(agent))))
+    else:
+        click.echo(str(salesforce_token()))
 
 
 @cred_group.command("whoami")
