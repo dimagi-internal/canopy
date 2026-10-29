@@ -170,6 +170,19 @@ def test_proof_header_only_for_a_registered_key(keydir):
     assert dk.proof_headers("GET", "https://x/y") == {}           # cache names another key
 
 
+def test_proof_or_reason_names_what_is_missing(keydir):
+    proof, why = dk.proof_or_reason("GET", "https://x/y")
+    assert proof == {} and "no enrolled device key" in why and "status none" in why
+    key, _ = dk.ensure(allow_software=True, system=lambda: "Linux")
+    dk.write_status({"jkt": key.jkt, "status": "revoked"})
+    assert "status revoked" in dk.proof_or_reason("GET", "https://x/y")[1]
+    dk.write_status({"jkt": "someone-elses", "status": "active"})
+    assert "not the enrolled one" in dk.proof_or_reason("GET", "https://x/y")[1]
+    dk.write_status({"jkt": key.jkt, "status": "active"})
+    proof, why = dk.proof_or_reason("GET", "https://x/y")
+    assert "DPoP" in proof and why == ""
+
+
 def test_a_broken_helper_never_breaks_a_resolve(helper, monkeypatch):
     helper(available=True)
     key, _ = dk.ensure(system=lambda: "Darwin")

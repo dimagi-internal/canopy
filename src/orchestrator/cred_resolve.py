@@ -42,6 +42,8 @@ from urllib.parse import quote
 from orchestrator import canopy_web, device_key
 
 TURN_HEADER = "X-Canopy-Turn-Id"
+#: Why this request carries no device proof (`device_key.proof_or_reason`).
+MISSING_PROOF_HEADER = "X-Canopy-Proof-Missing"
 #: Why a read outside a turn is happening (canopy-web#1563). canopy-web skips its
 #: "read outside a turn" alert for a named box that sends ``runner-refresh``.
 PURPOSE_HEADER = "X-Canopy-Read-Purpose"
@@ -88,7 +90,11 @@ def _headers(path: str, base_url: Optional[str], turn_id: str, purpose: str = ""
     if purpose:
         headers[PURPOSE_HEADER] = purpose
     url = canopy_web.resolve_base_url(base_url) + path
-    headers.update(device_key.proof_headers("GET", url))
+    proof, missing = device_key.proof_or_reason("GET", url)
+    headers.update(proof)
+    if missing:
+        # canopy-web keeps it on the owner's alert when the agent needs a proof.
+        headers[MISSING_PROOF_HEADER] = " ".join(missing.split())[:200]
     return headers
 
 
