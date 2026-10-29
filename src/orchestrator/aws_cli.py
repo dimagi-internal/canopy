@@ -19,10 +19,18 @@ here finishes by itself. This command then confirms the session with
 `aws sts get-caller-identity` and reports the outcome back
 (`.../sign-in-requests/<id>/result`), which takes it off the feed.
 
-It speaks AS THE RUNNER, using `~/.canopy/runner.json`, and not as the agent.
-That is the only identity canopy-web lets put an approval in front of the
-runner's owner. An approved device code grants AWS access to whoever started
-it, so being able to send one must already mean being the owner.
+It speaks AS THE RUNNER, and not as the agent. That is the only identity
+canopy-web lets put an approval in front of the runner's owner. An approved
+device code grants AWS access to whoever started it, so being able to send one
+must already mean being the owner.
+
+"As the runner" means the credential the live runner itself signs in with: the
+hour-long runner token its approved device key buys (`runner_session`, cached in
+`~/.canopy/runner-session.json`). Only a box with no device key falls back to
+the legacy `token` in `~/.canopy/runner.json`. A paired laptop keeps that field
+EMPTY, and an empty token used to fall through to whatever PAT the session held
+(the agent's), which owns no runner: canopy-web answered 404 "runner not found"
+for a runner that was online (jj-mbp-cdp, 2026-10-29).
 
 When no device was reached (push not enabled, no runner on this box, canopy-web
 unreachable) it prints the link so the caller can deliver it another way. It
@@ -60,18 +68,78 @@ def load_runner_config(path: Optional[Path] = None) -> Optional[dict]:
     """`{base_url, token, runner_id}` from the runner's own config, or None.
 
     `token` may be `@<file>`, which is how canopy-runner stores it
-    (canopy_runner/config.py).
+    (canopy_runner/config.py), or "" on a box that signs in with its device key.
     """
     path = path or Path(os.environ.get(RUNNER_CONFIG_ENV) or DEFAULT_RUNNER_CONFIG)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        token = str(raw["token"])
+        token = str(raw.get("token") or "").strip()
         if token.startswith("@"):
             token = Path(token[1:]).expanduser().read_text(encoding="utf-8").strip()
         return {"base_url": str(raw["base_url"]).rstrip("/"), "token": token,
                 "runner_id": str(raw["runner_id"])}
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
+
+
+def runner_credential(config: Optional[dict] = None, *,
+                      session_token: Optional[Callable[[str], str]] = None,
+                      key_runner_id: Optional[Callable[[], str]] = None,
+                      ) -> tuple[Optional[dict], str]:
+    """`({base_url, token, runner_id, source}, "")`, or `(None, why)`.
+
+    The token is the one the live runner uses: its device key's runner token
+    (`source` "runner-session"). Only when the box has none does the legacy
+    runner.json token stand in (`source` "runner.json"). Never an empty token,
+    which `canopy_web.call` would replace with the session's own PAT.
+    """
+    if session_token is None:
+        from orchestrator import runner_session
+
+        session_token = runner_session.token
+    if key_runner_id is None:
+        def key_runner_id() -> str:
+            from orchestrator import device_key
+
+            return str(device_key.read_status().get("runner") or "").strip()
+
+    cfg = config if config is not None else load_runner_config()
+    runner_id = (cfg or {}).get("runner_id") or key_runner_id()
+    if not runner_id:
+        return None, ("this box is no canopy runner (no ~/.canopy/runner.json and no "
+                      "device key registered for a runner)")
+    base_url = (cfg or {}).get("base_url") or canopy_web.resolve_base_url(None)
+    try:
+        tok = session_token(base_url)
+    except Exception:  # noqa: BLE001 — runner_session.token never raises; a stub might
+        tok = ""
+    if tok:
+        return {"base_url": base_url, "token": tok, "runner_id": runner_id,
+                "source": "runner-session"}, ""
+    legacy = (cfg or {}).get("token") or ""
+    if legacy:
+        return {"base_url": base_url, "token": legacy, "runner_id": runner_id,
+                "source": "runner.json"}, ""
+    return None, (f"no runner credential for runner {runner_id}: its device key bought no "
+                  "runner token (is the key approved? `canopy vault device --refresh` shows its status) "
+                  "and ~/.canopy/runner.json has no legacy token")
+
+
+def explain_push_error(exc: Exception, cfg: dict) -> str:
+    """What to do about a refused push, in one line. A 404 on the runner's own
+    route means the credential is not the runner owner's, not that the runner
+    is gone."""
+    text = str(exc)
+    if "-> 404" in text and "runner not found" in text:
+        return (f"canopy-web answered 404 \"runner not found\" for runner {cfg['runner_id']} "
+                f"using the {cfg.get('source', 'runner')} credential: that token does not "
+                f"belong to the runner's owner on {cfg['base_url']}. Check the runner is not "
+                "retired, then check its device key (`canopy vault device --refresh`; on a "
+                "box without one, re-pair the runner)")
+    if "-> 401" in text:
+        return (f"canopy-web refused the {cfg.get('source', 'runner')} credential (401): "
+                f"{text[:200]}. Check the device key with `canopy vault device --refresh`")
+    return text
 
 
 def push_sign_in_request(cfg: dict, *, url: str, label: str, requested_by: str, reason: str,
@@ -79,6 +147,10 @@ def push_sign_in_request(cfg: dict, *, url: str, label: str, requested_by: str, 
     """(devices reached, the stored request's id). The id is "" from a
     canopy-web that stores nothing. Raises CanopyError when canopy-web refused
     or was unreachable."""
+    if not cfg.get("token"):
+        # canopy_web.call reads "" as "no token given" and sends the session's own
+        # PAT, which owns no runner: a 404 that looks like the runner is gone.
+        raise canopy_web.CanopyError("no runner token to sign the request with")
     out = call("POST", f"/api/harness/runners/{cfg['runner_id']}/sign-in-request",
                {"provider": "aws", "url": url, "label": label, "requested_by": requested_by,
                 "reason": reason},
@@ -93,6 +165,9 @@ def report_sign_in_result(cfg: dict, request_id: str, outcome: str,
     does not land leaves a row that expires with its code anyway."""
     if not request_id:
         return
+    if cfg.get("source") == "runner-session" and call is None:
+        # The login waits up to 10 minutes: report with a token that is fresh now.
+        cfg = runner_credential()[0] or cfg
     call = call or canopy_web.call
     try:
         call("POST", f"/api/harness/runners/{cfg['runner_id']}/sign-in-requests/{request_id}/result",
@@ -168,16 +243,18 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
     url = box[0]
 
     who = requested_by or canopy_web.agent_context_slug().capitalize() or "An agent"
-    cfg = load_runner_config()
-    sent, request_id, why = 0, "", ""
-    if cfg is None:
-        why = "no runner config on this box"
-    else:
+    cfg, why = runner_credential()
+    sent, request_id = 0, ""
+    if cfg is not None:
         try:
             sent, request_id = push_sign_in_request(cfg, url=url, label=profile, requested_by=who,
                                                     reason=reason)
         except canopy_web.CanopyError as exc:
-            why = str(exc)
+            if "-> 401" in str(exc) and cfg.get("source") == "runner-session":
+                from orchestrator import runner_session
+
+                runner_session.forget()  # refused early: the next call buys a fresh one
+            why = explain_push_error(exc, cfg)
     if sent:
         feed = " and listed on their supervisor feed" if request_id else ""
         click.echo(f"aws/{profile}: approval pushed to the runner owner's phone "
