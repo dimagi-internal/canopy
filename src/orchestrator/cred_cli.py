@@ -27,13 +27,22 @@ Commands::
     canopy cred google-token --delegated A [--agent X]   the access token for Google account A a
                                               person delegated to X, as staged by the runner; its path
     canopy cred google-token --runner --delegated A --agent X   (the runner) stage that file
+    canopy cred connection-token P [--refresh]  the person's own access token for their canopy-web
+                                              connection to provider P (e.g. salesforce) ->
+                                              ~/.canopy/connections/P.json; its path (--refresh: a new
+                                              token, e.g. after the provider answered 401)
+    canopy cred connection-token P --agent X  in a turn: the path of the P token the runner staged for X
+    canopy cred connection-token P --runner --agent X --runner-id R --turn T [--min-life S] [--refresh]
+                                              (the runner) stage ~/.canopy/connections/X/P.json; exit 3
+                                              when X has no P connection
+    canopy cred salesforce-token …            = connection-token salesforce …
     canopy cred whoami [--json]               who this session is, and why
 
 Exit codes (stable — agent-identity MCP servers shell out to `check`):
     0 allowed · 1 error (resolve failed) · 2 usage (no agent named or detectable)
     3 refused (stderr: one actionable paragraph) · 4 undetermined (could not decide)
 
-No command ever prints a secret value (google-token prints a path, not the token) — except
+No command ever prints a secret value (google-token / connection-token print a path, not the token) — except
 `cred env --print-json`, whose caller is a runner process keeping the values in memory.
 """
 from __future__ import annotations
@@ -1361,6 +1370,153 @@ def delegated_google_token(slug: str, account: str, *, now: Optional[float] = No
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# connection-token: a short-lived access token from one of canopy-web's connections
+# (Salesforce today; any provider canopy-web lists). `salesforce-token` is its alias.
+# ──────────────────────────────────────────────────────────────────────────────
+
+#: A staged/cached connection token is not handed out inside this many seconds of expiry.
+CONNECTION_MIN_LIFE = 300
+#: A provider key as canopy-web names it (`salesforce`): it becomes a file name and a URL segment.
+_PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
+
+
+def _provider_key(provider: str) -> str:
+    if not _PROVIDER_KEY.fullmatch(provider or ""):
+        raise CredError(f"{provider!r} is not a provider key (e.g. salesforce)", EXIT_USAGE)
+    return provider
+
+
+def connection_token_path(provider: str, slug: str = "") -> Path:
+    """~/.canopy/connections/<provider>.json (a person's), or .../<slug>/<provider>.json (a turn's)."""
+    base = CACHE_DIR / "connections"
+    name = f"{_provider_key(provider)}.json"
+    return (base / slug / name) if slug else (base / name)
+
+
+def _epoch(value) -> float:
+    """`expires_at` as epoch seconds: canopy-web sends ISO 8601; a number passes through."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    from datetime import UTC, datetime
+    dt = datetime.fromisoformat(str(value).strip())
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.timestamp()
+
+
+def _problem(e: Exception) -> dict:
+    """The problem+json body inside a CanopyError ("POST /p -> 409: {...}"), or {}."""
+    text = str(e)
+    _, _, tail = text.partition(": ")
+    try:
+        body = json.loads(tail.strip())
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _status_of(e: Exception) -> int:
+    m = re.search(r"-> (\d{3})", str(e))
+    return int(m.group(1)) if m else 0
+
+
+def _usable(path: Path, now: float) -> bool:
+    try:
+        staged = json.loads(path.read_text(encoding="utf-8"))
+        return bool(staged.get("access_token")) and _epoch(staged["expires_at"]) - now >= CONNECTION_MIN_LIFE
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def _write_connection_token(path: Path, body: dict) -> Path:
+    try:
+        staged = {"access_token": body["access_token"], "instance_url": body.get("instance_url") or "",
+                  "expires_at": _epoch(body["expires_at"]), "account_label": body.get("account_label", "")}
+    except (KeyError, ValueError, TypeError):
+        raise CredError("canopy-web answered with a token this CLI cannot read") from None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(path.parent, 0o700)
+    _write_private(path, json.dumps(staged))
+    return path
+
+
+def _refusal(e: Exception, *, runner: bool) -> CredError:
+    """A canopy-web refusal as a CredError: its detail, then where to connect when it says.
+    Never a token. In runner mode `not_connected` is exit 3 (the runner stays silent)."""
+    body = _problem(e)
+    detail = str(body.get("detail") or body.get("title") or str(e)[:300])
+    if runner and _status_of(e) == 409 and body.get("error") == "not_connected":
+        return CredError(detail, EXIT_REFUSED)
+    if body.get("connect_url"):
+        detail += f"\nConnect it in canopy-web: {body['connect_url']}"
+    return CredError(detail)
+
+
+def connection_token(provider: str, *, now: Optional[float] = None, refresh: bool = False) -> Path:
+    """A PERSON's own token: POST /api/me/connections/<provider>/token with their PAT, written 0600
+    to ~/.canopy/connections/<provider>.json and reused until 5 minutes before it lapses.
+    `refresh` skips the file and asks canopy-web for a new token (`?refresh=true`)."""
+    provider = _provider_key(provider)
+    now = time.time() if now is None else now
+    session = session_identity()
+    if session.kind == "agent-turn":
+        raise CredError(f"refused: this is an agent turn, which never holds a person's {provider} token. "
+                        f"Ask for the agent's own with `canopy cred connection-token {provider} --agent "
+                        f"{session.agent or '<slug>'}`.", EXIT_REFUSED)
+    out = connection_token_path(provider)
+    if not refresh and _usable(out, now):
+        return out
+    path = f"/api/me/connections/{provider}/token" + ("?refresh=true" if refresh else "")
+    try:
+        body = canopy_web.call("POST", path, token=_human_token())
+    except canopy_web.CanopyError as e:
+        raise _refusal(e, runner=False) from None
+    return _write_connection_token(out, body)
+
+
+def stage_connection_token(provider: str, slug: str, runner_id: str, turn_id: str, *,
+                           token: Optional[str] = None, min_life: Optional[int] = None,
+                           refresh: bool = False) -> Path:
+    """The RUNNER's half: with its own bearer (CANOPY_TOKEN), ask canopy-web for the token of the
+    `provider` connection `slug` uses and write it 0600 to ~/.canopy/connections/<slug>/<provider>.json.
+    `min_life` (seconds) is forwarded as `min_life_seconds`, so canopy-web refreshes rather than hand
+    back a cached token that lapses before the runner's next re-stage; `refresh` forces a new one.
+    Exit 3 when the agent has no such connection (the runner treats that as silent)."""
+    provider = _provider_key(provider)
+    tok = token or os.environ.get("CANOPY_TOKEN", "").strip()
+    if not tok:
+        raise CredError("--runner needs the runner's bearer in $CANOPY_TOKEN", EXIT_USAGE)
+    if not runner_id or not turn_id:
+        raise CredError("--runner needs --runner-id and --turn", EXIT_USAGE)
+    req: dict = {"provider": provider}
+    if min_life is not None:
+        req["min_life_seconds"] = min_life
+    if refresh:
+        req["refresh"] = True
+    try:
+        body = canopy_web.call("POST", f"/api/harness/runners/{runner_id}/turns/{turn_id}/connection-token",
+                               req, token=tok)
+    except canopy_web.CanopyError as e:
+        raise _refusal(e, runner=True) from None
+    return _write_connection_token(connection_token_path(provider, slug), body)
+
+
+def staged_connection_token(provider: str, slug: str, *, now: Optional[float] = None) -> Path:
+    """The TURN's half: the path of the `provider` token the runner staged for `slug`. No network."""
+    provider = _provider_key(provider)
+    now = time.time() if now is None else now
+    session = session_identity()
+    if session.kind == "agent-turn" and session.agent != slug:
+        raise CredError(f"refused: {session.why}", EXIT_REFUSED)
+    out = connection_token_path(provider, slug)
+    if not _usable(out, now):
+        raise CredError(f"no {provider} token staged for {slug}: this agent has no {provider} connection, "
+                        "or this runner does not stage one")
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1553,6 +1709,61 @@ def google_token_cmd(agent, delegated, runner_mode):
         click.echo(str(delegated_google_token(slug, delegated)))
     else:
         click.echo(str(google_token(slug)))
+
+
+def _connection_token_options(f):
+    for opt in reversed((
+        click.option("--agent", "agent", default=None, help="Agent slug: read the token the runner staged for it."),
+        click.option("--runner", "runner_mode", is_flag=True,
+                     help="As the RUNNER (bearer in $CANOPY_TOKEN): stage the agent's token for one turn."),
+        click.option("--runner-id", "runner_id", default="", help="With --runner: this runner's id."),
+        click.option("--turn", "turn", default="", help="With --runner: the turn's id."),
+        click.option("--min-life", "min_life", type=click.IntRange(0, 3600), default=None,
+                     help="With --runner: seconds the token must still live, else canopy-web refreshes it."),
+        click.option("--refresh", "refresh", is_flag=True,
+                     help="Ignore any cached token and have canopy-web refresh (after the provider answered 401)."),
+    )):
+        f = opt(f)
+    return f
+
+
+def _connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh) -> None:
+    if runner_mode:
+        click.echo(str(stage_connection_token(provider, _require_agent(agent), runner_id, turn,
+                                              min_life=min_life, refresh=refresh)))
+        return
+    if min_life is not None:
+        raise CredError("--min-life applies only with --runner", EXIT_USAGE)
+    if agent:
+        if refresh:
+            raise CredError("--refresh does not apply with --agent: the runner re-stages that token", EXIT_USAGE)
+        click.echo(str(staged_connection_token(provider, _require_agent(agent))))
+    else:
+        click.echo(str(connection_token(provider, refresh=refresh)))
+
+
+@cred_group.command("connection-token")
+@click.argument("provider")
+@_connection_token_options
+def connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh):
+    """Print the path of a short-lived access token file for a canopy-web connection (never the
+    token): {access_token, instance_url, expires_at, account_label}, mode 0600. PROVIDER is the
+    connection's key, e.g. `salesforce`.
+
+    No flags: YOUR connection (connect it in canopy-web Settings) ->
+    ~/.canopy/connections/PROVIDER.json, reused until 5 minutes before it lapses (`--refresh` skips
+    the file). `--agent X` in a turn: the file the runner staged for X,
+    ~/.canopy/connections/X/PROVIDER.json (no network). `--runner --agent X --runner-id R --turn T`:
+    the runner stages it (`--min-life S` forwarded; `--refresh` forces a new token); exit 3 when X
+    has no PROVIDER connection."""
+    _connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh)
+
+
+@cred_group.command("salesforce-token")
+@_connection_token_options
+def salesforce_token_cmd(agent, runner_mode, runner_id, turn, min_life, refresh):
+    """`connection-token salesforce`: the same command, by the name it first shipped under."""
+    _connection_token_cmd("salesforce", agent, runner_mode, runner_id, turn, min_life, refresh)
 
 
 @cred_group.command("whoami")
