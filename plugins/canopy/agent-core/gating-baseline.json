@@ -139,7 +139,7 @@
       "_unquoted_doc": "Matched with quoted strings removed first (`unquoted`), so a commit message, echo or grep that merely MENTIONS the command passes; a command hidden inside `bash -c \"…\"` is a gap this rail accepts."
     },
     {
-      "_pattern_doc": "The act-as credential (canopy act-as, act_as_cli.py): a short-lived login AS the person who started the turn, granted by their passkey approval and stored at ~/.canopy/act-as/<turn>.token. The sanctioned path is `canopy act-as get|call`, which never prints it, refuses non-canopy-web URLs and a write on a read grant, and drops the file when canopy-web stops accepting it. Reading the file (cat, jq, python) or splicing it into curl puts a person's credential into the transcript, which is uploaded and reviewed. Matches the store anchored at a home directory (~, $HOME, /Users/<u>, /home/<u>, /root), so a repo grep for the string stays free; `canopy act-as …` itself never spells the path.",
+      "_pattern_doc": "The act-as credential (canopy act-as, act_as_cli.py): a short-lived login AS the person who started the turn, granted by their passkey approval and stored at ~/.canopy/act-as/<claude session>.token. The sanctioned path is `canopy act-as get|call`, which never prints it, refuses non-canopy-web URLs and a write on a read grant, and drops the file when canopy-web stops accepting it. Reading the file (cat, jq, python) or splicing it into curl puts a person's credential into the transcript, which is uploaded and reviewed. Matches the store anchored at a home directory (~, $HOME, /Users/<u>, /home/<u>, /root), so a repo grep for the string stays free; `canopy act-as …` itself never spells the path.",
       "tool": "Bash",
       "per_statement": true,
       "agent_only": true,

@@ -19,7 +19,7 @@ expires_at} and, on the FIRST read after approval only, ``token``; ``POST …/{i
 The request, status and stop calls go out with the TURN's own agent login
 (:func:`canopy_web.resolve_token`, agent-strict — never a person's PAT, never the box's).
 
-**The credential is explicit-only.** It is kept at ``~/.canopy/act-as/<turn>.token``
+**The credential is explicit-only.** It is kept at ``~/.canopy/act-as/<claude session>.token``
 (0600, dir 0700) and used ONLY by ``canopy act-as get|call``; ``canopy_web.resolve_token``,
 the MCP headers helper and every other canopy call keep acting as the agent. It is never
 printed. It is ignored (and deleted) once its ``expires_at`` passes, deleted by
@@ -31,6 +31,7 @@ An older canopy-web has no act-as routes: a 404 on the request says so and exits
 from __future__ import annotations
 
 import datetime as _dt
+import http.client
 import json
 import os
 import re
@@ -72,6 +73,13 @@ class StillPending(click.ClickException):
     exit_code = EXIT_STILL_PENDING
 
 
+class Transient(click.ClickException):
+    """canopy-web could not be reached (DNS, connection, timeout). Local state is kept."""
+
+#: Back-off between retries of a transient network failure inside a wait.
+RETRY_SECONDS = (2.0, 4.0, 8.0, 15.0, 30.0)
+
+
 def act_as_dir() -> Path:
     return Path.home() / ".canopy" / "act-as"
 
@@ -79,11 +87,15 @@ def act_as_dir() -> Path:
 # --- whose turn, which login --------------------------------------------------
 
 def grant_key() -> str:
-    """The turn this session runs for (else its Claude session): one grant per key."""
+    """The Claude session this runs in (else its turn): one grant per key.
+
+    Keyed by the SESSION, not the turn: in a canopy-web chat each message is a new turn
+    (and CANOPY_TURN_ID may be empty), while CLAUDE_CODE_SESSION_ID stays put — the
+    request one turn makes is collected by the next."""
     from orchestrator import provenance
 
     p = provenance.resolve_parent()
-    key = p.get("turn_id") or p.get("claude_session_id") or ""
+    key = p.get("claude_session_id") or p.get("turn_id") or ""
     if not _KEY.match(key):
         raise click.ClickException(
             "act-as belongs to a turn, and this session names none (no CANOPY_TURN_ID, caller "
@@ -188,7 +200,12 @@ def _send(method: str, path: str, token: str, body=None, *, base: str) -> "tuple
     headers = {**provenance_headers(), "Authorization": f"Bearer {token}",
                "Content-Type": "application/json", "Accept": "application/json"}
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    return transport(method, base + path, headers, data)
+    try:
+        return transport(method, base + path, headers, data)
+    except (OSError, http.client.HTTPException) as exc:  # URLError is an OSError
+        reason = getattr(exc, "reason", None) or exc
+        raise Transient(f"could not reach canopy-web ({type(exc).__name__}: {reason}) — "
+                        "nothing changed locally; try again.") from None
 
 
 def _json(text: str):
@@ -215,9 +232,14 @@ def _agent_call(method: str, path: str, body=None) -> dict:
     if status == 404 and path == API:
         raise NoActAsApi("this canopy-web doesn't support act-as yet (no "
                          f"{API} route) — nothing was asked.")
+    if status >= 500:
+        raise Transient(f"canopy-web answered {status} for {method} {path} — nothing changed "
+                        "locally; try again.")
     if not (200 <= status < 300):
         raise click.ClickException(f"{method} {path} -> {status}: {_detail(text)}")
     doc = _json(text)
+    if isinstance(doc, list):
+        return {"results": doc}
     return doc if isinstance(doc, dict) else {}
 
 
@@ -239,6 +261,52 @@ def _public(doc: dict) -> dict:
     return {k: v for k, v in doc.items() if k != "token"}
 
 
+# --- recovery -----------------------------------------------------------------
+
+class TokenGone(click.ClickException):
+    """Approved, but the one-time credential was handed out and this machine lacks it."""
+
+
+def _fresh_doc(key: str, got: dict) -> dict:
+    return {"id": got["id"], "status": got.get("status") or "pending",
+            "scope": got.get("scope") or "", "expires_at": got.get("expires_at"),
+            "approve_url": got.get("approve_url") or "", "reason": got.get("reason") or "",
+            "base_url": canopy_web.resolve_base_url(None),
+            "agent": canopy_web.agent_context_slug(), "key": key,
+            "claude_session_id": _claude_session()}
+
+
+def _recover(key: str) -> Optional[dict]:
+    """Rebuild lost local state from canopy-web's list of this agent's requests in this
+    session (``GET /api/me/act-as-requests/`` with the turn login; never carries tokens).
+    A pending one is stored; an approved one is collected (its token is handed out once)."""
+    try:
+        listed = _agent_call("GET", API)
+    except Transient:
+        raise
+    except click.ClickException:
+        return None  # an older canopy-web without the list, or a refusal: nothing to recover
+    items = listed.get("results") or listed.get("requests") or listed.get("items") or []
+    live = [i for i in items if isinstance(i, dict) and i.get("id")
+            and i.get("status") in ("pending", "approved") and _live(i)]
+    if not live:
+        return None
+    # An approved grant first (it is what the person last said yes to), then the newest.
+    live.sort(key=lambda i: (i.get("status") == "approved", str(i.get("created_at") or ""),
+                             str(i.get("id"))), reverse=True)
+    doc = _fresh_doc(key, live[0])
+    if doc["status"] == "approved":
+        return _refresh(key, doc)  # may raise TokenGone
+    write_grant(key, doc)
+    click.echo(f"(recovered act-as #{doc['id']} from canopy-web)", err=True)
+    return doc
+
+
+def load_grant(key: str) -> Optional[dict]:
+    """This session's grant: the local copy, else recovered from canopy-web."""
+    return read_grant(key) or _recover(key)
+
+
 # --- the wait -----------------------------------------------------------------
 
 def _refresh(key: str, doc: dict) -> dict:
@@ -252,8 +320,8 @@ def _refresh(key: str, doc: dict) -> dict:
     if status in FINAL:
         _forget(key)
     elif status == "approved" and not merged.get("token"):
-        _forget(key)
-        raise click.ClickException(
+        write_grant(key, merged)
+        raise TokenGone(
             f"act-as #{doc['id']} is approved, but its one-time credential was already handed "
             "out and this machine does not hold it. Ask again (`canopy act-as request`).")
     else:
@@ -263,8 +331,20 @@ def _refresh(key: str, doc: dict) -> dict:
 
 def _wait(key: str, doc: dict, timeout: float) -> dict:
     deadline = NOW() + max(timeout, 0)
+    misses = 0
     while True:
-        doc = _refresh(key, doc)
+        try:
+            doc = _refresh(key, doc)
+            misses = 0
+        except Transient as exc:
+            if NOW() >= deadline:
+                raise StillPending(
+                    f"act-as #{doc['id']}: {exc.message} Still waiting on canopy-web — check "
+                    "again with `canopy act-as status --wait`.") from None
+            click.echo(f"(network hiccup, retrying: {exc.message})", err=True)
+            SLEEP(RETRY_SECONDS[min(misses, len(RETRY_SECONDS) - 1)])
+            misses += 1
+            continue
         status = doc.get("status")
         if status == "approved":
             return doc
@@ -302,9 +382,12 @@ def request_cmd(reason, scope, wait, timeout):
         raise click.UsageError("--reason must say specifically what you will do as them.")
     sweep_expired()
     key = grant_key()
-    held = read_grant(key)
+    try:
+        held = load_grant(key)
+    except TokenGone:
+        held = None  # approved elsewhere and already collected: ask afresh
     if held and held.get("status") == "approved" and held.get("token"):
-        click.echo("already approved for this turn — reusing it, nothing new was asked.")
+        click.echo("already approved for this session — reusing it, nothing new was asked.")
         _say(held)
         return
     if held and held.get("status") == "pending":
@@ -316,21 +399,19 @@ def request_cmd(reason, scope, wait, timeout):
         got = _agent_call("POST", API, {"reason": reason, "scope": scope})
         if not got.get("id"):
             raise click.ClickException(f"canopy-web answered without a request id: {_public(got)}")
-        expires = got.get("expires_at") or _dt.datetime.fromtimestamp(
+        doc = _fresh_doc(key, got)
+        doc["scope"] = doc["scope"] or scope
+        doc["reason"] = reason
+        doc["expires_at"] = doc["expires_at"] or _dt.datetime.fromtimestamp(
             NOW() + 1800, _dt.timezone.utc).isoformat()
-        doc = {"id": got["id"], "status": got.get("status") or "pending",
-               "scope": got.get("scope") or scope, "expires_at": expires,
-               "approve_url": got.get("approve_url") or "", "reason": reason,
-               "base_url": canopy_web.resolve_base_url(None),
-               "agent": canopy_web.agent_context_slug(), "key": key,
-               "claude_session_id": _claude_session()}
         write_grant(key, doc)
         click.echo(f"Asked to act as the person who started this turn (act-as #{doc['id']}, "
                    f"scope {scope}).")
         click.echo("SHOW THIS LINK TO THE PERSON — they approve with their passkey:")
         click.echo(f"\n  Approve at: {doc['approve_url']}\n")
     if not wait:
-        click.echo("Not waiting. Check with `canopy act-as status --wait`.")
+        click.echo("Not waiting. Show the person the link and end your turn; on your next turn "
+                   "(or when they say they approved) run `canopy act-as status` to collect it.")
         return
     doc = _wait(key, doc, timeout)
     click.echo("Approved.")
@@ -352,12 +433,12 @@ def status_cmd(wait, timeout, as_json):
     """This turn's act-as grant, if any (refreshes a pending one)."""
     sweep_expired()
     key = grant_key()
-    doc = read_grant(key)
+    doc = load_grant(key)
     if not doc:
         if as_json:
             click.echo(json.dumps({"status": "none"}))
         else:
-            click.echo("no act-as grant for this turn — you act as yourself.")
+            click.echo("no act-as grant for this session — you act as yourself.")
         return
     if doc.get("status") == "pending":
         doc = _wait(key, doc, timeout) if wait else _refresh(key, doc)
@@ -378,8 +459,13 @@ def stop_cmd():
     except (OSError, ValueError):
         doc = None
     if not isinstance(doc, dict) or not doc.get("id"):
+        try:
+            doc = _recover(key)
+        except TokenGone:
+            doc = read_grant(key)
+    if not isinstance(doc, dict) or not doc.get("id"):
         _forget(key)
-        click.echo("no act-as grant for this turn — nothing to stop.")
+        click.echo("no act-as grant for this session — nothing to stop.")
         return
     try:
         _agent_call("POST", f"{API}{doc['id']}/stop", {})
@@ -395,13 +481,17 @@ def stop_cmd():
 def _held_token() -> "tuple[str, dict]":
     key = grant_key()
     doc = read_grant(key)
+    if doc and doc.get("status") == "pending":
+        doc = _refresh(key, doc)  # approved since? collect the credential now
+    elif not doc:
+        doc = _recover(key)
     if not doc or not doc.get("token"):
         if doc and doc.get("status") == "pending":
             raise click.ClickException(
                 f"act-as #{doc['id']} is still waiting for the person's approval — "
                 "`canopy act-as status --wait`.")
         raise click.ClickException(
-            "no live act-as grant for this turn (none asked, declined, stopped or expired). "
+            "no live act-as grant for this session (none asked, declined, stopped or expired). "
             "Ask with `canopy act-as request --reason …` — or use your own login.")
     return key, doc
 

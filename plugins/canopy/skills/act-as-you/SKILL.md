@@ -44,16 +44,26 @@ server-side list of routes. Every call you make with it is logged as **"<agent> 
    scope that does the job — `read` unless you must change something:
 
    ```bash
-   canopy act-as request --reason "Read your session 4328 (transcript + turns) to find why it stalled" --scope read
+   canopy act-as request --reason "Read your session 4328 (transcript + turns) to find why it stalled" --scope read --no-wait
    ```
 
-   It prints an **Approve at:** link and waits (up to 240 s; give the Bash call a matching
-   timeout, e.g. 300000 ms).
+   It prints an **Approve at:** link and returns.
 
-2. **Show the link to the person in chat, verbatim, and wait.** They approve or decline with
-   their passkey. If the wait ends with "still pending" (exit 4), check again with
-   `canopy act-as status --wait` — don't re-request. Declined or expired means you do **not**
-   act as them: carry on with your own login and tell them what you couldn't do.
+2. **Show the link to the person, verbatim, and END YOUR TURN.** In a chat, never block the
+   turn waiting for them (no `--wait`, no background poll): post the link, say what you'll do
+   once they approve, and stop. The request lives 30 minutes and survives your turn ending.
+   **On your next turn** (or as soon as they say they approved), collect it:
+
+   ```bash
+   canopy act-as status        # approved → the credential is stored; pending → still waiting
+   ```
+
+   State is kept per Claude session, not per turn, and is recovered from canopy-web if the
+   local copy is gone — so a new turn picks it up. Still pending: tell them it's waiting on
+   their approval; don't re-request (`request` reuses a pending one anyway). Declined or
+   expired means you do **not** act as them: carry on with your own login and tell them what
+   you couldn't do. (Only outside a chat — an unattended script with the person watching —
+   use `--wait`, which polls up to 240 s and retries network blips.)
 
 3. **Do only what you said.** Through the CLI, never by hand:
 

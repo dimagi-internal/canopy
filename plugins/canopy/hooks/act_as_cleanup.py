@@ -2,7 +2,7 @@
 """SessionEnd: delete this session's act-as credential (and any expired one).
 
 `canopy act-as request` stores a credential that acts as a PERSON at
-``~/.canopy/act-as/<turn>.token`` (see ``src/orchestrator/act_as_cli.py``). canopy-web
+``~/.canopy/act-as/<claude session>.token`` (see ``src/orchestrator/act_as_cli.py``). canopy-web
 already refuses it once the turn stops executing or 30 minutes pass; this removes the
 file itself when the Claude session that asked for it ends, so it does not outlive the
 turn on disk. Also sweeps every file whose ``expires_at`` has passed.
