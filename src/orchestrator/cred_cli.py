@@ -1733,10 +1733,10 @@ def _connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_lif
                                               min_life=min_life, refresh=refresh)))
         return
     if min_life is not None:
-        raise CredError("--min-life is the runner's (--runner)", EXIT_USAGE)
+        raise CredError("--min-life applies only with --runner", EXIT_USAGE)
     if agent:
         if refresh:
-            raise CredError("--refresh cannot apply to a staged token: the runner re-stages it", EXIT_USAGE)
+            raise CredError("--refresh does not apply with --agent: the runner re-stages that token", EXIT_USAGE)
         click.echo(str(staged_connection_token(provider, _require_agent(agent))))
     else:
         click.echo(str(connection_token(provider, refresh=refresh)))
