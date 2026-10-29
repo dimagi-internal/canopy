@@ -52,6 +52,59 @@ def test_no_runner_config_is_none_not_an_error(tmp_path):
     assert aws_cli.load_runner_config(tmp_path / "missing.json") is None
 
 
+# The laptop runner signs in with its device key and keeps runner.json's token
+# EMPTY. Sending "" let canopy_web.call swap in the session's own PAT (an agent's,
+# which owns no runner): 404 "runner not found" for an online runner, 2026-10-29.
+PAIRED = {"base_url": "https://c", "token": "", "runner_id": "r-1"}
+
+
+def test_the_live_runners_session_token_is_used_first():
+    cfg, why = aws_cli.runner_credential({**PAIRED, "token": "cpat_legacy"},
+                                         session_token=lambda base: "crt_session",
+                                         key_runner_id=lambda: "")
+    assert why == ""
+    assert cfg == {"base_url": "https://c", "token": "crt_session", "runner_id": "r-1",
+                   "source": "runner-session"}
+
+
+def test_the_legacy_token_stands_in_only_without_a_session_token():
+    cfg, _ = aws_cli.runner_credential({**PAIRED, "token": "cpat_legacy"},
+                                       session_token=lambda base: "", key_runner_id=lambda: "")
+    assert cfg["token"] == "cpat_legacy" and cfg["source"] == "runner.json"
+
+
+def test_an_empty_legacy_token_is_never_sent():
+    cfg, why = aws_cli.runner_credential(PAIRED, session_token=lambda base: "",
+                                         key_runner_id=lambda: "")
+    assert cfg is None
+    assert "r-1" in why and "device key" in why
+
+
+def test_a_cloud_box_finds_its_runner_through_its_device_key(monkeypatch):
+    monkeypatch.setattr(canopy_web, "resolve_base_url", lambda b: "https://cloud")
+    seen = []
+    cfg, _ = aws_cli.runner_credential({}, session_token=lambda base: seen.append(base) or "crt",
+                                       key_runner_id=lambda: "r-cloud")
+    assert cfg["runner_id"] == "r-cloud" and cfg["base_url"] == "https://cloud"
+    assert seen == ["https://cloud"]
+
+
+def test_no_runner_at_all_says_so():
+    cfg, why = aws_cli.runner_credential({}, session_token=lambda base: "x",
+                                         key_runner_id=lambda: "")
+    assert cfg is None and "no canopy runner" in why
+
+
+def test_an_empty_token_in_runner_json_still_reads():
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "runner.json"
+        p.write_text(json.dumps({"base_url": "https://c/", "token": "", "runner_id": "r-1"}))
+        assert aws_cli.load_runner_config(p) == PAIRED
+
+
 def test_the_push_speaks_as_the_runner_to_its_own_route():
     seen = {}
 
@@ -69,6 +122,17 @@ def test_the_push_speaks_as_the_runner_to_its_own_route():
     assert seen["body"] == {"provider": "aws", "url": "https://x.awsapps.com/?user_code=A",
                             "label": "labs", "requested_by": "hal",
                             "reason": "read the 5xx logs"}
+
+
+def test_an_empty_token_is_refused_before_it_reaches_canopy_web():
+    import pytest
+
+    def call(*a, **k):
+        raise AssertionError("must not be sent")
+
+    with pytest.raises(canopy_web.CanopyError, match="no runner token"):
+        aws_cli.push_sign_in_request(PAIRED, url="u", label="l", requested_by="h",
+                                     reason="r", call=call)
 
 
 class _FakeProc:
@@ -99,7 +163,8 @@ def _patch(monkeypatch, *, identities, proc, cfg, sent=None, push_error=None, re
     ids = iter(identities)
     monkeypatch.setattr(aws_cli, "caller_identity", lambda profile: next(ids))
     monkeypatch.setattr(aws_cli.subprocess, "Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(aws_cli, "load_runner_config", lambda: cfg)
+    monkeypatch.setattr(aws_cli, "runner_credential",
+                        lambda: (cfg, "" if cfg else "this box is no canopy runner"))
     monkeypatch.setattr(canopy_web, "agent_context_slug", lambda: "hal")
     pushed: list[dict] = []
 
@@ -166,6 +231,24 @@ def test_zero_devices_falls_back_to_printing_the_link(monkeypatch):
     assert r.exit_code == 0, r.output
     assert "could not push" in r.output
     assert "?user_code=ABCD-EFGH" in r.output
+
+
+def test_a_runner_not_found_404_says_what_to_do(monkeypatch):
+    _patch(monkeypatch, identities=["", "arn:x"], proc=_FakeProc(AWS_OUTPUT),
+           cfg={**CFG, "source": "runner.json"},
+           push_error='POST /api/harness/runners/r/sign-in-request -> 404: {"detail": "runner not found"}')
+    r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
+    assert r.exit_code == 0, r.output
+    assert "does not belong to the runner's owner" in r.output
+    assert "runner.json credential" in r.output
+    assert "?user_code=ABCD-EFGH" in r.output, "the link is still printed to deliver by hand"
+
+
+def test_no_runner_credential_prints_why_and_the_link(monkeypatch):
+    _patch(monkeypatch, identities=["", "arn:x"], proc=_FakeProc(AWS_OUTPUT), cfg=None)
+    r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
+    assert r.exit_code == 0, r.output
+    assert "no canopy runner" in r.output and "?user_code=ABCD-EFGH" in r.output
 
 
 def test_a_refused_push_falls_back_too(monkeypatch):
