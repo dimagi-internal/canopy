@@ -1443,6 +1443,11 @@ def salesforce_token(*, now: Optional[float] = None) -> Path:
     """A PERSON's own token: POST /api/me/connections/salesforce/token with their PAT, written
     0600 to ~/.canopy/connections/salesforce.json and reused until 5 minutes before it lapses."""
     now = time.time() if now is None else now
+    session = session_identity()
+    if session.kind == "agent-turn":
+        raise CredError("refused: this is an agent turn, which never holds a person's Salesforce token. "
+                        "Ask for the agent's own with `canopy cred salesforce-token --agent "
+                        f"{session.agent or '<slug>'}`.", EXIT_REFUSED)
     out = salesforce_token_path()
     if _usable(out, now):
         return out

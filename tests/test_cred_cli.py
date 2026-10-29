@@ -6,6 +6,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -967,7 +968,7 @@ def test_sf_human_reuses_the_file_until_five_minutes_before_expiry(sf, tmp_path)
     assert len(sf["calls"]) == 1
     path = tmp_path / "home" / ".canopy" / "connections" / "salesforce.json"
     staged = json.loads(path.read_text())
-    staged["expires_at"] = __import__("time").time() + 120      # inside the 5 minute margin
+    staged["expires_at"] = time.time() + 120      # inside the 5 minute margin
     path.write_text(json.dumps(staged))
     _sf()
     assert len(sf["calls"]) == 2
@@ -1021,7 +1022,7 @@ def _stage(tmp_path, slug, expires_in):
     p = tmp_path / "home" / ".canopy" / "connections" / slug / "salesforce.json"
     p.parent.mkdir(parents=True)
     p.write_text(json.dumps({"access_token": SF_TOKEN, "instance_url": "https://x.my.salesforce.com",
-                             "expires_at": __import__("time").time() + expires_in, "account_label": "a"}))
+                             "expires_at": time.time() + expires_in, "account_label": "a"}))
     return p
 
 
@@ -1052,3 +1053,17 @@ def test_sf_turn_refuses_another_agents_token(sf, tmp_path, monkeypatch):
     monkeypatch.setenv("CANOPY_AGENT_SLUG", "eva")
     res = _sf("--agent", "hal")
     assert res.exit_code == cred_cli.EXIT_REFUSED
+
+
+def test_sf_human_path_is_refused_inside_an_agent_turn(sf, tmp_path, monkeypatch):
+    human = tmp_path / "home" / ".canopy" / "connections" / "salesforce.json"
+    human.parent.mkdir(parents=True)
+    human.write_text(json.dumps({"access_token": SF_TOKEN, "instance_url": "x",
+                                 "expires_at": time.time() + 1800, "account_label": "a"}))
+    monkeypatch.setenv("CANOPY_TURN_ID", "t1")
+    monkeypatch.setenv("CANOPY_AGENT_SLUG", "eva")
+    res = _sf()
+    assert res.exit_code == cred_cli.EXIT_REFUSED
+    assert "--agent eva" in res.output
+    assert sf["calls"] == []
+    _assert_no_token(res)
