@@ -940,27 +940,47 @@ def proof_headers(method: str, url: str, *, runner: Runner = subprocess.run,
     Never raises: a resolve must behave exactly as before when there is no key, the
     helper is missing, or anything else goes wrong — the server decides whether a proof
     is required, and says so with a 401 the caller can explain."""
+    return proof_or_reason(method, url, runner=runner, which=which)[0]
+
+
+def proof_or_reason(method: str, url: str, *, runner: Runner = subprocess.run,
+                    which: Callable[[str], Optional[str]] = shutil.which) -> tuple[dict, str]:
+    """``(proof_headers, "")``, or ``({}, why there is none)`` — the reason a resolve sends
+    as ``X-Canopy-Proof-Missing`` so the owner's vault alert can say which process asked
+    without a proof and why (2026-10-28: a trellis alert named only the box). Never a
+    secret; never raises."""
+    who = _os_user()
     try:
         st = read_status()
-        if st.get("status") not in PROOF_STATUSES:
-            return {}
+        status = str(st.get("status") or "")
+        if status not in PROOF_STATUSES:
+            return {}, (f"no enrolled device key for OS user {who} "
+                        f"(status {status or 'none'} at {status_path()})")
         key = load(runner=runner, which=which)
         if key is None:
-            return {}
+            return {}, f"device key enrolled ({status}) but not readable by OS user {who}"
         if key.kind == KIND_AWS_IAM:
             if st.get("kind") != KIND_AWS_IAM or (st.get("role_arn") and
                                                   st["role_arn"] != key.role_arn):
-                return {}
+                return {}, f"aws-iam key does not match the enrolled one (OS user {who})"
             from orchestrator import device_key_aws as aws
             creds = aws.instance_credentials()
             if creds is None:
-                return {}
-            return {aws.PROOF_HEADER: aws.proof(creds, normalize_htu(url))}
+                return {}, f"no EC2 instance credentials reachable by OS user {who}"
+            return {aws.PROOF_HEADER: aws.proof(creds, normalize_htu(url))}, ""
         if st.get("jkt") and st["jkt"] != key.jkt:
-            return {}
-        return {"DPoP": dpop_proof(key, method, url)}
-    except Exception:  # noqa: BLE001 — a proof is an addition, never a new failure
-        return {}
+            return {}, f"{key.kind} key on disk is not the enrolled one (OS user {who})"
+        return {"DPoP": dpop_proof(key, method, url)}, ""
+    except Exception as e:  # noqa: BLE001 — a proof is an addition, never a new failure
+        return {}, f"proof failed for OS user {who}: {type(e).__name__}: {str(e)[:120]}"
+
+
+def _os_user() -> str:
+    try:
+        import getpass
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001
+        return "?"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

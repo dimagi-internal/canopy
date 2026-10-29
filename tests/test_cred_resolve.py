@@ -102,6 +102,21 @@ def test_dpop_header_signed_for_this_url_without_query(tmp_path, monkeypatch):
     assert claims["htm"] == "GET"
 
 
+def test_no_proof_says_why_and_a_proof_says_nothing(tmp_path, monkeypatch):
+    """The owner's vault alert names why a resolve carried no proof (canopy-web keeps
+    the header on the alert) — never a secret, and absent once a proof goes out."""
+    s = FakeServer({})
+    _resolve(s, turn_id="")
+    why = s.requests[0][2][cred_resolve.MISSING_PROOF_HEADER]
+    assert why.startswith("no enrolled device key for OS user ") and "status none" in why
+    assert "DPoP" not in s.requests[0][2]
+    key, _ = device_key.ensure(allow_software=True, system=lambda: "Linux")
+    device_key.write_status({"jkt": key.jkt, "status": "active"})
+    _resolve(s, turn_id="")
+    assert "DPoP" in s.requests[1][2]
+    assert cred_resolve.MISSING_PROOF_HEADER not in s.requests[1][2]
+
+
 def test_device_proof_required_says_how_to_get_approved():
     device_key.write_status({"jkt": "j", "status": "pending",
                              "approve_url": "https://canopy.example/approve/9"})
