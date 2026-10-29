@@ -558,6 +558,35 @@ def test_without_owners_the_sweep_bands_exactly_as_before():
     assert _row(unread=True)["disposition"] == "respond"
 
 
+# 2026-10-29, hal: a cc'd colleague's message landed on 10-26 while the thread's only
+# owner, a chat session, had last run on 10-25. The sweep printed OWNED, "leave it
+# unread — the owner disposes of it". An owner that finished before a message arrived
+# never read it, so a question there would have waited on nobody, indefinitely.
+
+def test_a_message_newer_than_a_finished_owner_needs_attention():
+    owners = harness_turn_owners(
+        "echo", now=NOW, caller=_caller([_turn("t", finished="2026-09-03T03:31:00Z")]))
+    r = _row(unread=True, owners=owners, date="Thu, 03 Sep 2026 12:39:11 +0000")
+    assert r["disposition"] == "respond"
+    assert r["new_since_owner"] is True
+    assert r["owner"]["session"] == "chat-1"  # still named, so the turn can read it
+
+
+def test_a_LIVE_owner_keeps_a_newer_message():
+    owners = harness_turn_owners(
+        "echo", now=NOW,
+        caller=_caller([_turn("t", status="running", finished="2026-09-03T03:31:00Z")]))
+    r = _row(unread=True, owners=owners, date="Thu, 03 Sep 2026 12:39:11 +0000")
+    assert r["disposition"] == "owned"
+    assert r["new_since_owner"] is False
+
+
+def test_an_unparseable_date_keeps_the_owner():
+    owners = harness_turn_owners("echo", now=NOW, caller=_caller([_turn("t")]))
+    r = _row(unread=True, owners=owners, date="not a date")
+    assert r["disposition"] == "owned"
+
+
 def test_a_finished_turn_outside_the_window_no_longer_owns_the_thread():
     old = _turn("t", finished="2026-08-01T00:00:00Z")
     assert harness_turn_owners("echo", now=NOW, caller=_caller([old])) == {}
