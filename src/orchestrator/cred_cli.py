@@ -27,11 +27,13 @@ Commands::
     canopy cred google-token --delegated A [--agent X]   the access token for Google account A a
                                               person delegated to X, as staged by the runner; its path
     canopy cred google-token --runner --delegated A --agent X   (the runner) stage that file
-    canopy cred salesforce-token              the person's own Salesforce access token (canopy-web
+    canopy cred salesforce-token [--refresh]  the person's own Salesforce access token (canopy-web
                                               connection) -> ~/.canopy/connections/salesforce.json; its path
+                                              (--refresh: a new token, e.g. after Salesforce answered 401)
     canopy cred salesforce-token --agent X    in a turn: the path of the token the runner staged for X
-    canopy cred salesforce-token --runner --agent X --runner-id R --turn T   (the runner) stage that file;
-                                              exit 3 when X has no Salesforce connection
+    canopy cred salesforce-token --runner --agent X --runner-id R --turn T [--min-life S] [--refresh]
+                                              (the runner) stage that file; exit 3 when X has no Salesforce
+                                              connection
     canopy cred whoami [--json]               who this session is, and why
 
 Exit codes (stable — agent-identity MCP servers shell out to `check`):
@@ -1439,9 +1441,10 @@ def _refusal(e: Exception, *, runner: bool) -> CredError:
     return CredError(msg)
 
 
-def salesforce_token(*, now: Optional[float] = None) -> Path:
+def salesforce_token(*, now: Optional[float] = None, refresh: bool = False) -> Path:
     """A PERSON's own token: POST /api/me/connections/salesforce/token with their PAT, written
-    0600 to ~/.canopy/connections/salesforce.json and reused until 5 minutes before it lapses."""
+    0600 to ~/.canopy/connections/salesforce.json and reused until 5 minutes before it lapses.
+    `refresh` skips the file and asks canopy-web for a new token (`?refresh=true`)."""
     now = time.time() if now is None else now
     session = session_identity()
     if session.kind == "agent-turn":
@@ -1449,27 +1452,36 @@ def salesforce_token(*, now: Optional[float] = None) -> Path:
                         "Ask for the agent's own with `canopy cred salesforce-token --agent "
                         f"{session.agent or '<slug>'}`.", EXIT_REFUSED)
     out = salesforce_token_path()
-    if _usable(out, now):
+    if not refresh and _usable(out, now):
         return out
+    path = "/api/me/connections/salesforce/token" + ("?refresh=true" if refresh else "")
     try:
-        body = canopy_web.call("POST", "/api/me/connections/salesforce/token", token=_human_token())
+        body = canopy_web.call("POST", path, token=_human_token())
     except canopy_web.CanopyError as e:
         raise _refusal(e, runner=False) from None
     return _write_salesforce(out, body)
 
 
-def stage_salesforce_token(slug: str, runner_id: str, turn_id: str, *, token: Optional[str] = None) -> Path:
+def stage_salesforce_token(slug: str, runner_id: str, turn_id: str, *, token: Optional[str] = None,
+                           min_life: Optional[int] = None, refresh: bool = False) -> Path:
     """The RUNNER's half: with its own bearer (CANOPY_TOKEN), ask canopy-web for the token of the
     Salesforce connection `slug` uses and write it 0600 to ~/.canopy/connections/<slug>/salesforce.json.
+    `min_life` (seconds) is forwarded as `min_life_seconds`, so canopy-web refreshes rather than hand
+    back a cached token that lapses before the runner's next re-stage; `refresh` forces a new one.
     Exit 3 when the agent has no Salesforce connection (the runner treats that as silent)."""
     tok = token or os.environ.get("CANOPY_TOKEN", "").strip()
     if not tok:
         raise CredError("--runner needs the runner's bearer in $CANOPY_TOKEN", EXIT_USAGE)
     if not runner_id or not turn_id:
         raise CredError("--runner needs --runner-id and --turn", EXIT_USAGE)
+    req: dict = {"provider": "salesforce"}
+    if min_life is not None:
+        req["min_life_seconds"] = min_life
+    if refresh:
+        req["refresh"] = True
     try:
         body = canopy_web.call("POST", f"/api/harness/runners/{runner_id}/turns/{turn_id}/connection-token",
-                               {"provider": "salesforce"}, token=tok)
+                               req, token=tok)
     except canopy_web.CanopyError as e:
         raise _refusal(e, runner=True) from None
     return _write_salesforce(salesforce_token_path(slug), body)
@@ -1689,20 +1701,31 @@ def google_token_cmd(agent, delegated, runner_mode):
               help="As the RUNNER (bearer in $CANOPY_TOKEN): stage the agent's token for one turn.")
 @click.option("--runner-id", "runner_id", default="", help="With --runner: this runner's id.")
 @click.option("--turn", "turn", default="", help="With --runner: the turn's id.")
-def salesforce_token_cmd(agent, runner_mode, runner_id, turn):
+@click.option("--min-life", "min_life", type=click.IntRange(0, 3600), default=None,
+              help="With --runner: seconds the token must still live, else canopy-web refreshes it.")
+@click.option("--refresh", "refresh", is_flag=True,
+              help="Ignore any cached token and have canopy-web refresh (after a 401 from Salesforce).")
+def salesforce_token_cmd(agent, runner_mode, runner_id, turn, min_life, refresh):
     """Print the path of a short-lived Salesforce access token file (never the token):
     {access_token, instance_url, expires_at, account_label}, mode 0600.
 
     No flags: YOUR connection (connect it in canopy-web) -> ~/.canopy/connections/salesforce.json,
     reused until 5 minutes before it lapses. `--agent X` in a turn: the file the runner staged for
     X, ~/.canopy/connections/X/salesforce.json (no network). `--runner --agent X --runner-id R
-    --turn T`: the runner stages it; exit 3 when X has no Salesforce connection."""
+    --turn T`: the runner stages it (`--min-life S` forwarded; `--refresh` forces a new token);
+    exit 3 when X has no Salesforce connection. `--refresh` in the person's mode skips the file."""
     if runner_mode:
-        click.echo(str(stage_salesforce_token(_require_agent(agent), runner_id, turn)))
-    elif agent:
+        click.echo(str(stage_salesforce_token(_require_agent(agent), runner_id, turn,
+                                              min_life=min_life, refresh=refresh)))
+        return
+    if min_life is not None:
+        raise CredError("--min-life is the runner's (--runner)", EXIT_USAGE)
+    if agent:
+        if refresh:
+            raise CredError("--refresh cannot apply to a staged token: the runner re-stages it", EXIT_USAGE)
         click.echo(str(staged_salesforce_token(_require_agent(agent))))
     else:
-        click.echo(str(salesforce_token()))
+        click.echo(str(salesforce_token(refresh=refresh)))
 
 
 @cred_group.command("whoami")

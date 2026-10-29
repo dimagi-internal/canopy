@@ -975,10 +975,12 @@ def test_sf_human_reuses_the_file_until_five_minutes_before_expiry(sf, tmp_path)
 
 
 def test_sf_human_409_prints_the_connect_url_and_fails(sf):
-    sf["reply"] = _conflict("not_connected", connect_url="https://canopy.example/connect/salesforce")
+    # The server's real shape: an absolute URL to the bare start view.
+    sf["reply"] = _conflict("not_connected",
+                            connect_url="https://canopy.dimagi.com/auth/connections/salesforce/start/")
     res = _sf()
     assert res.exit_code != 0
-    assert "https://canopy.example/connect/salesforce" in res.output
+    assert "Connect Salesforce here: https://canopy.dimagi.com/auth/connections/salesforce/start/" in res.output
     assert "You have not connected salesforce." in res.output
     _assert_no_token(res)
 
@@ -1067,3 +1069,28 @@ def test_sf_human_path_is_refused_inside_an_agent_turn(sf, tmp_path, monkeypatch
     assert "--agent eva" in res.output
     assert sf["calls"] == []
     _assert_no_token(res)
+
+
+# ── salesforce-token: --refresh and --min-life ───────────────────────────────
+
+def test_sf_human_refresh_skips_the_file_and_asks_the_server_to_refresh(sf, tmp_path):
+    _sf()
+    assert len(sf["calls"]) == 1
+    res = _sf("--refresh")
+    assert res.exit_code == 0, res.output
+    assert sf["calls"][1]["path"] == "/api/me/connections/salesforce/token?refresh=true"
+    _assert_no_token(res)
+
+
+def test_sf_runner_forwards_min_life_and_refresh(sf, tmp_path):
+    res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, "--min-life", "900", "--refresh",
+              env={"CANOPY_TOKEN": "crt_runner"})
+    assert res.exit_code == 0, res.output
+    assert sf["calls"][0]["body"] == {"provider": "salesforce", "min_life_seconds": 900, "refresh": True}
+
+
+def test_sf_min_life_and_refresh_belong_to_the_server_modes(sf, tmp_path):
+    _stage(tmp_path, "eva", 1800)
+    assert _sf("--agent", "eva", "--refresh").exit_code == cred_cli.EXIT_USAGE
+    assert _sf("--min-life", "900").exit_code == cred_cli.EXIT_USAGE
+    assert sf["calls"] == []
