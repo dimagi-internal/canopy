@@ -24,6 +24,18 @@ verdict from them:
   ``{"person": <who>, "decision": <the one decision asked of them>}``, or
   ``{"dispatched": <session/turn id>}``. "someone", a role, or no owner is rejected.
 - ``closeout_steps`` — each close-out step and its EXIT CODE (an int, not a reading of a tail).
+- ``improvement`` — required only when the record carries ``improvement_policy.required``
+  (an agent opts its incident turns in; Hal's alarm turns do). What this fire left behind for
+  whoever answers the NEXT page: a MERGED PR, ``{"kind": "cause_fix"|"diagnosability", "pr":
+  <url>}`` (diagnosability also names its ``signal``: metric | log_line | alarm_definition |
+  alarm_description | runbook_query | retune). ``check_improvement`` verifies it with ``gh``
+  (its exit code becomes a close-out step); a filed issue, an unmerged PR, or a PR that only
+  touches the agent's own prose (``improvement_policy.prose_only``: repo + path globs, the
+  agent's config) is rejected. The one exception, ``{"kind": "already_diagnosable", "query":
+  <the one command>, "output": <link to its output>}``, holds only when ``cause`` is
+  ``confirmed`` with ``identified_by`` equal to that same query. Why: of 24 labs alarm
+  incidents since 2026-08-26, ~10 ended "cause unknown, needs someone with AWS SSO" and ~8
+  "improved" only Hal's own skill prose — the next page was exactly as hard to answer.
 
 Verdict, in order:
 
@@ -47,6 +59,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -59,6 +72,13 @@ INCIDENT_STATES = ("OK", "ALARM", "UNKNOWN")
 CAUSES = ("confirmed", "likely", "unknown")
 REMEDIES = ("none_needed", "shipped_verified_live", "merged_not_live", "proposed", "none")
 CLOSING_REMEDIES = ("none_needed", "shipped_verified_live")
+
+IMPROVEMENT_KINDS = ("cause_fix", "diagnosability", "already_diagnosable")
+SIGNALS = ("metric", "log_line", "alarm_definition", "alarm_description", "runbook_query", "retune")
+_PR_URL = re.compile(r"^https?://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)(?:[/?#].*)?$")
+_PR_REF = re.compile(r"^([\w.-]+/[\w.-]+)#(\d+)$")
+_ISSUE_URL = re.compile(r"^https?://github\.com/[\w.-]+/[\w.-]+/issues/\d+")
+_GH_FILES_CAP = 100  # `gh pr view --json files` returns at most this many
 
 #: An owner that names nobody. Matched against a person owner's name (and a bare-string owner).
 _VAGUE = re.compile(
@@ -169,6 +189,8 @@ def compute(record: dict) -> Verdict:
         elif code != 0:
             problems.append(f"{name} exited {code}")
 
+    problems += improvement_problems(rec, cause)
+
     asks, monitors, unscheduled = [], [], []
     items = rec.get("open_items") or []
     if not isinstance(items, list):
@@ -213,6 +235,147 @@ def compute(record: dict) -> Verdict:
     gap = (f"agent-owned item(s) with no re-check time: {', '.join(unscheduled)}" if unscheduled
            else "nothing open is owned to finish it")
     return Verdict(INCOMPLETE, [f"not closed ({'; '.join(why)}) and {gap}"], [], monitors)
+
+
+# ---- the improvement: what this fire left for whoever answers the next page -----------------
+
+def _glob_re(pattern: str) -> re.Pattern:
+    """A path glob: ``**/`` = any dirs (incl. none), ``**`` = anything, ``*`` = within a segment."""
+    out, i = "", 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif pattern.startswith("**", i):
+            out, i = out + ".*", i + 2
+        elif pattern[i] == "*":
+            out, i = out + "[^/]*", i + 1
+        elif pattern[i] == "?":
+            out, i = out + "[^/]", i + 1
+        else:
+            out, i = out + re.escape(pattern[i]), i + 1
+    return re.compile(f"^{out}$")
+
+
+def prose_only(repo: str, files: list[str], policy: dict) -> bool:
+    """True when every changed file is the agent's own prose per ``policy['prose_only']``."""
+    if not files:
+        return False
+    for rule in policy.get("prose_only") or []:
+        if not isinstance(rule, dict) or _s(rule.get("repo")).lower() != repo.lower():
+            continue
+        pats = [_glob_re(_s(p)) for p in rule.get("paths") or [] if _s(p)]
+        if pats and all(any(p.match(f) for p in pats) for f in files):
+            return True
+    return False
+
+
+def _pr_ref(ref: str) -> tuple[str, str] | None:
+    m = _PR_URL.match(ref) or _PR_REF.match(ref)
+    return (m.group(1), m.group(2)) if m else None
+
+
+def _single_command(q: str) -> bool:
+    return bool(q) and "\n" not in q and not re.search(r"&&|\|\||;", q)
+
+
+def improvement_problems(rec: dict, cause: dict) -> list[str]:
+    """Why the record's ``improvement`` does not count (empty = it counts, or none is required)."""
+    policy = rec.get("improvement_policy") if isinstance(rec.get("improvement_policy"), dict) else {}
+    if not policy.get("required"):
+        return []
+    imp = rec.get("improvement")
+    if not isinstance(imp, dict) or not imp:
+        return ["no improvement recorded — an incident turn is not done until a MERGED PR fixes the "
+                "cause or makes the next fire easier to diagnose (kind cause_fix | diagnosability: "
+                "a metric, log line, alarm definition/description, runbook query or retune). When "
+                "the cause is unknown, ship the missing signal"]
+    kind = _s(imp.get("kind")).lower()
+    if kind not in IMPROVEMENT_KINDS:
+        return [f"improvement.kind {kind or 'missing'!r} is not one of {', '.join(IMPROVEMENT_KINDS)}"]
+    if kind == "already_diagnosable":
+        query, out = _s(imp.get("query")), _s(imp.get("output"))
+        bad = []
+        if not _single_command(query):
+            bad.append("already_diagnosable needs the ONE query/command that diagnosed this fire "
+                       "(a single command, not a sequence)")
+        if not re.match(r"^https?://", out):
+            bad.append("already_diagnosable needs a link to that query's output excerpt")
+        if (_s(cause.get("status")).lower() != "confirmed"
+                or " ".join(_s(cause.get("identified_by")).split()) != " ".join(query.split())):
+            bad.append("already_diagnosable only holds when this record's cause is 'confirmed' "
+                       "with identified_by = that same query — else the fire was not diagnosable "
+                       "in one step, so ship the signal that would have made it so")
+        return bad
+    if kind == "diagnosability" and _s(imp.get("signal")).lower() not in SIGNALS:
+        return [f"a diagnosability improvement names its signal: one of {', '.join(SIGNALS)}"]
+    ref = _s(imp.get("pr"))
+    if not ref:
+        return [f"improvement ({kind}) names no PR — record its merged PR URL"]
+    if _ISSUE_URL.match(ref):
+        return [f"improvement {ref} is a filed issue, not a merged PR — an issue helps nobody "
+                "answer the next page until something ships"]
+    if not _pr_ref(ref):
+        return [f"improvement {ref!r} is not a GitHub PR URL"]
+    chk = imp.get("checked") if isinstance(imp.get("checked"), dict) else None
+    if not chk:
+        return [f"improvement {ref} was not checked — record it via `canopy closeout record`, "
+                "which verifies it with gh"]
+    if chk.get("error"):
+        return [f"improvement {ref} could not be verified as a PR: {chk['error']}"]
+    if _s(chk.get("state")).upper() != "MERGED":
+        return [f"improvement {ref} is {_s(chk.get('state')).upper() or 'not merged'}, not MERGED — "
+                "the turn is not done until it merges"]
+    files = [f for f in chk.get("files") or [] if isinstance(f, str)]
+    if len(files) < _GH_FILES_CAP and prose_only(_s(chk.get("repo")), files, policy):
+        return [f"improvement {ref} only changes the agent's own skill/prose files "
+                f"({', '.join(files[:5])}) — that helps one agent's prompt, not whoever answers "
+                "the page; ship the signal (connect-labs instrumentation, alarm description, "
+                "runbook query) instead"]
+    return []
+
+
+def check_improvement(record: dict, run=None) -> dict:
+    """Verify the record's improvement PR with ``gh`` (I/O). Returns a NEW record whose
+    ``improvement.checked`` is what gh said — anything the turn typed there is discarded — and
+    whose ``closeout_steps`` gain the check's exit code. No PR to check → record unchanged."""
+    rec = json.loads(json.dumps(record if isinstance(record, dict) else {}))
+    imp = rec.get("improvement")
+    if not isinstance(imp, dict):
+        return rec
+    imp.pop("checked", None)
+    ref = _s(imp.get("pr"))
+    if not ref or _s(imp.get("kind")).lower() == "already_diagnosable" or _ISSUE_URL.match(ref):
+        return rec
+    pr = _pr_ref(ref)
+    if not pr:
+        return rec
+    repo, num = pr
+    run = run or _run
+    code, out, err = run(["gh", "pr", "view", num, "-R", repo, "--json", "state,mergedAt,url,files"])
+    try:
+        doc = json.loads(out) if code == 0 else None
+    except ValueError:
+        doc = None
+    if isinstance(doc, dict):
+        imp["checked"] = {"repo": repo, "number": int(num), "url": _s(doc.get("url")),
+                          "state": _s(doc.get("state")).upper(), "merged_at": doc.get("mergedAt"),
+                          "files": [_s(f.get("path")) for f in doc.get("files") or []
+                                    if isinstance(f, dict)]}
+    else:
+        imp["checked"] = {"repo": repo, "number": int(num),
+                          "error": (_s(err).splitlines() or [f"gh exited {code}"])[0][:200]}
+    steps = rec.get("closeout_steps") if isinstance(rec.get("closeout_steps"), list) else []
+    rec["closeout_steps"] = steps + [{"name": f"gh pr view {repo}#{num} (improvement merged?)",
+                                      "exit_code": code}]
+    return rec
+
+
+def _run(args, timeout=60):
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout, p.stderr
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 127, "", str(exc)
 
 
 def status_line(v: Verdict) -> str:
