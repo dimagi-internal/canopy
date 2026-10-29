@@ -200,3 +200,165 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
         raise click.ClickException(f"aws/{profile}: sign-in did not complete (aws exited {rc}).")
     report_sign_in_result(cfg, request_id, "approved")
     click.echo(f"aws/{profile}: signed in as {arn}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# `canopy aws credentials` — one hour of a NAMED read-only role, with no SSO
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# For the AWS CLI's `credential_process`, never for a person or a transcript:
+#
+#     [profile labs-observe]
+#     credential_process = canopy aws credentials --role labs-observe
+#     region = us-east-1
+#
+# `labs-observe` is connect-labs' `labs-jj-observe-readonly`: CloudWatch metrics,
+# alarms and resource metadata, with explicit denies on log events, object bodies,
+# secrets, task commands/env and database content. Two sources, first that answers:
+#
+# 1. a cloud runner's root-owned broker (canopy-web runner/ec2/aws_broker.py,
+#    `/run/canopy-aws/sock`): the instance role assumes the role for this runner's
+#    uid — works even when canopy-web is down;
+# 2. canopy-web, `POST /api/agents/<slug>/aws-credentials`, as this agent's own
+#    login (canopy-web's task role assumes the role).
+#
+# Either way the session is stamped with the agent, so CloudTrail says who made each
+# call. Keys are cached (0600) until 5 minutes before they expire, because the AWS CLI
+# runs credential_process on every invocation.
+
+AWS_BROKER_SOCKET_ENV = "CANOPY_AWS_BROKER_SOCKET"
+DEFAULT_AWS_BROKER_SOCKET = "/run/canopy-aws/sock"
+AWS_CREDENTIALS_CACHE = Path.home() / ".canopy" / "aws-credentials"
+CREDENTIALS_MIN_LIFE = 300
+#: The roles a profile can be written for, and the region each lives in.
+KNOWN_ROLES = {"labs-observe": "us-east-1"}
+_PROCESS_KEYS = ("Version", "AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration")
+
+
+def _expires_at(expiration: str) -> float:
+    import calendar
+    import time
+
+    try:
+        return float(calendar.timegm(time.strptime(str(expiration)[:19], "%Y-%m-%dT%H:%M:%S")))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _process_json(doc: dict) -> dict:
+    out = {k: doc[k] for k in _PROCESS_KEYS if k in doc}
+    out["Version"] = 1
+    missing = [k for k in _PROCESS_KEYS if not out.get(k)]
+    if missing:
+        raise click.ClickException(f"the credential source returned no {', '.join(missing)}")
+    return out
+
+
+def from_broker(role: str, agent: str, socket_path: str) -> Optional[dict]:
+    """The runner broker's answer, or None when there is no broker here.
+    Raises ClickException when the broker answered with an error."""
+    import socket
+
+    if not os.path.exists(socket_path):
+        return None
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(30)
+    try:
+        s.connect(socket_path)
+        s.sendall((json.dumps({"role": role, "agent": agent or "unknown"}) + "\n").encode())
+        line = s.makefile("rb").readline()
+    except OSError:
+        return None   # a socket nobody serves: fall through to canopy-web
+    finally:
+        s.close()
+    try:
+        doc = json.loads(line or b"{}")
+    except ValueError:
+        raise click.ClickException("the AWS broker answered with something that is not JSON")
+    if doc.get("error"):
+        raise click.ClickException(f"the AWS broker refused: {doc['error']}")
+    return doc
+
+
+def from_canopy_web(role: str, agent: str, call: Callable = canopy_web.call) -> dict:
+    if not agent:
+        raise click.ClickException(
+            "no agent: canopy vends AWS roles to an agent (run inside an agent's session, "
+            "or pass --agent <slug>)")
+    try:
+        return call("POST", f"/api/agents/{agent}/aws-credentials", {"role": role})
+    except canopy_web.CanopyError as exc:
+        raise click.ClickException(f"canopy-web refused AWS role {role} for {agent}: {exc}")
+
+
+def aws_credentials(role: str, agent: str, *, socket_path: Optional[str] = None,
+                    cache_dir: Optional[Path] = None, now: Optional[float] = None,
+                    call: Callable = canopy_web.call) -> dict:
+    """credential_process JSON for `role` as `agent`: cached, else the box's broker,
+    else canopy-web."""
+    import time
+
+    now = time.time() if now is None else now
+    cache_dir = cache_dir or AWS_CREDENTIALS_CACHE
+    cached_path = cache_dir / f"{agent or 'unknown'}--{role}.json"
+    try:
+        cached = json.loads(cached_path.read_text(encoding="utf-8"))
+        if _expires_at(cached.get("Expiration", "")) - now > CREDENTIALS_MIN_LIFE:
+            return _process_json(cached)
+    except (OSError, ValueError, click.ClickException):
+        pass
+    socket_path = socket_path or os.environ.get(AWS_BROKER_SOCKET_ENV) or DEFAULT_AWS_BROKER_SOCKET
+    doc = from_broker(role, agent, socket_path)
+    if doc is None:
+        doc = from_canopy_web(role, agent, call=call)
+    out = _process_json(doc)
+    cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(cached_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(out, fh)
+    return out
+
+
+@aws_group.command("credentials")
+@click.option("--role", required=True, help="The named role, e.g. labs-observe.")
+@click.option("--agent", default="", help="Which agent is asking. Default: this session's agent.")
+def credentials_cmd(role: str, agent: str):
+    """credential_process JSON for a named read-only role (for the AWS CLI, not people).
+
+    Put it in a profile with `canopy aws profile --role labs-observe`, then use
+    `aws ... --profile labs-observe`. Run directly, it prints live AWS keys."""
+    agent = agent or canopy_web.agent_context_slug()
+    click.echo(json.dumps(aws_credentials(role, agent)))
+
+
+def profile_block(role: str) -> str:
+    region = KNOWN_ROLES[role]
+    return (f"[profile {role}]\ncredential_process = canopy aws credentials --role {role}\n"
+            f"region = {region}\n")
+
+
+def write_profile(role: str, config_path: Optional[Path] = None) -> bool:
+    """Add `[profile <role>]` to ~/.aws/config unless a profile of that name exists.
+    Returns whether it wrote. Never edits an existing profile."""
+    config_path = config_path or Path(os.environ.get("AWS_CONFIG_FILE") or Path.home() / ".aws" / "config")
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    if re.search(rf"^\[profile {re.escape(role)}\]\s*$", text, re.M):
+        return False
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    sep = "" if not text or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
+    with open(config_path, "a", encoding="utf-8") as fh:
+        fh.write(sep + profile_block(role))
+    return True
+
+
+@aws_group.command("profile")
+@click.option("--role", required=True, type=click.Choice(sorted(KNOWN_ROLES)),
+              help="The named role to write a profile for.")
+def profile_cmd(role: str):
+    """Add an AWS CLI profile that gets its keys from `canopy aws credentials` (idempotent)."""
+    wrote = write_profile(role)
+    click.echo(f"aws/{role}: {'added' if wrote else 'already in'} ~/.aws/config — "
+               f"use `aws ... --profile {role}`")
