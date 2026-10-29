@@ -2169,6 +2169,26 @@ def _age_days(date_header: str, now: "dt.datetime") -> int | None:
     return max(0, (now - when).days)
 
 
+def _owner_predates(owner: dict, date_header: str) -> bool:
+    """True when a FINISHED owner's last turn is older than the message `date_header`.
+
+    Unparseable on either side → False: keep the owner, exactly as before this check.
+    """
+    if owner.get("live"):
+        return False
+    from email.utils import parsedate_to_datetime
+    try:
+        sent = parsedate_to_datetime(date_header)
+        last = dt.datetime.fromisoformat(str(owner.get("last_at") or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if sent is None:
+        return False
+    sent = sent if sent.tzinfo else sent.replace(tzinfo=dt.timezone.utc)
+    last = last if last.tzinfo else last.replace(tzinfo=dt.timezone.utc)
+    return sent > last
+
+
 #: How far back a FINISHED canopy-web turn still counts as owning its thread. A
 #: queued/claimed/running turn always does. A chat session is a conversation the
 #: principal resumes at will — ten turns over two days on one email thread is the
@@ -2344,9 +2364,13 @@ def dangling_threads(
         unread = tid in unread_ids
         age = _age_days(last.get("date", ""), now)
         owner = (owners or {}).get(tid)
+        # An owner that FINISHED before this message arrived never saw it: it cannot
+        # be working an ask it has not read. Band it NEEDS ATTENTION, naming the owner.
+        # A LIVE owner still owns it — the message may be what it is reading now.
+        new_since_owner = bool(owner and _owner_predates(owner, last.get("date", "")))
         disposition = "handled"
         if unread:
-            disposition = "owned" if owner else "respond"
+            disposition = "owned" if owner and not new_since_owner else "respond"
         owed.append({
             "thread_id": tid,
             # the thread subject (gog's row) over the last message's, which carries
@@ -2364,6 +2388,8 @@ def dangling_threads(
             "disposition": disposition,
             # The canopy-web turn keyed to this thread, if any (canopy#758).
             "owner": owner,
+            # The newest message landed after that owner's last turn finished.
+            "new_since_owner": new_since_owner,
             # Only meaningful on the unread, UNOWNED band: old AND unlooked-at.
             "stale": bool(disposition == "respond" and (age is None or age > stale_after)),
         })
@@ -3403,6 +3429,10 @@ def _run_dangling(repo, agent, account, client, days, limit, stale_after, older_
         tags = []
         if not o["ever_replied"]:
             tags.append("never replied")
+        if o.get("new_since_owner"):
+            w = o["owner"]
+            tags.append(f"new since its owner's last turn ({w.get('origin') or 'turn'} "
+                        f"session {w.get('session') or '?'}, {w.get('last_at') or '?'})")
         if o.get("stale"):
             tags.append("STALE — nobody looked in "
                         f"{'?' if o['age_days'] is None else o['age_days']}d")
