@@ -902,7 +902,7 @@ def test_agent_runs_as_prints_one_word(modes):
     assert r.exit_code == 0 and r.output == "admin\n"
 
 
-# ── salesforce-token ─────────────────────────────────────────────────────────
+# ── connection-token (salesforce-token is its alias; these drive the alias) ──────
 
 SF_TOKEN = "00Dxx!sf-access-token-never-printed"
 RID, TID = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
@@ -934,7 +934,7 @@ def sf(monkeypatch):
 
 
 def _conflict(error, **extra):
-    body = {"title": "Not connected", "detail": "You have not connected salesforce.", "error": error, **extra}
+    body = {"title": "Not connected", "detail": "Your Salesforce is not connected.", "error": error, **extra}
     return cred_cli.canopy_web.CanopyError(f"POST /x -> 409: {json.dumps(body)}")
 
 
@@ -980,8 +980,8 @@ def test_sf_human_409_prints_the_connect_url_and_fails(sf):
                             connect_url="https://canopy.dimagi.com/auth/connections/salesforce/start/")
     res = _sf()
     assert res.exit_code != 0
-    assert "Connect Salesforce here: https://canopy.dimagi.com/auth/connections/salesforce/start/" in res.output
-    assert "You have not connected salesforce." in res.output
+    assert "Connect it in canopy-web: https://canopy.dimagi.com/auth/connections/salesforce/start/" in res.output
+    assert "Your Salesforce is not connected." in res.output
     _assert_no_token(res)
 
 
@@ -1007,7 +1007,8 @@ def test_sf_runner_not_connected_exits_3_and_stages_nothing(sf, tmp_path):
 
 
 def test_sf_runner_other_refusals_are_nonzero_with_the_detail(sf):
-    sf["reply"] = _conflict("reconnect_required", detail="eva's salesforce connection no longer works.")
+    sf["reply"] = _conflict("reconnect_required",
+                            detail="eva's Salesforce connection no longer works; connect it again.")
     res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, env={"CANOPY_TOKEN": "crt_runner"})
     assert res.exit_code not in (0, 3)
     assert "no longer works" in res.output
@@ -1039,7 +1040,7 @@ def test_sf_turn_prints_the_staged_path_without_the_network(sf, tmp_path):
 def test_sf_turn_errors_when_nothing_is_staged(sf):
     res = _sf("--agent", "eva")
     assert res.exit_code != 0 and sf["calls"] == []
-    assert "no Salesforce token staged for eva" in res.output
+    assert "no salesforce token staged for eva" in res.output
 
 
 def test_sf_turn_errors_when_the_staged_token_is_about_to_lapse(sf, tmp_path):
@@ -1071,7 +1072,7 @@ def test_sf_human_path_is_refused_inside_an_agent_turn(sf, tmp_path, monkeypatch
     _assert_no_token(res)
 
 
-# ── salesforce-token: --refresh and --min-life ───────────────────────────────
+# ── connection-token: --refresh and --min-life ───────────────────────────────
 
 def test_sf_human_refresh_skips_the_file_and_asks_the_server_to_refresh(sf, tmp_path):
     _sf()
@@ -1094,3 +1095,52 @@ def test_sf_min_life_and_refresh_belong_to_the_server_modes(sf, tmp_path):
     assert _sf("--agent", "eva", "--refresh").exit_code == cred_cli.EXIT_USAGE
     assert _sf("--min-life", "900").exit_code == cred_cli.EXIT_USAGE
     assert sf["calls"] == []
+
+
+# ── connection-token: any provider, by the same paths and routes ──────────────
+
+def _ct(*args, env=None):
+    return CliRunner().invoke(cred_cli.cred_group, ["connection-token", *args], env=env)
+
+
+def test_connection_token_names_its_files_and_routes_by_provider(sf, tmp_path):
+    res = _ct("intacct")
+    person = tmp_path / "home" / ".canopy" / "connections" / "intacct.json"
+    assert res.exit_code == 0, res.output
+    assert res.output.strip() == str(person)
+    assert sf["calls"][-1]["path"] == "/api/me/connections/intacct/token"
+    res = _ct("intacct", "--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID,
+              env={"CANOPY_TOKEN": "crt_runner"})
+    staged = tmp_path / "home" / ".canopy" / "connections" / "eva" / "intacct.json"
+    assert res.exit_code == 0 and res.output.strip() == str(staged)
+    assert sf["calls"][-1]["body"] == {"provider": "intacct"}
+    res = _ct("intacct", "--agent", "eva")
+    assert res.exit_code == 0 and res.output.strip() == str(staged)
+    _assert_no_token(res)
+
+
+def test_connection_token_without_instance_url_is_fine(sf, tmp_path):
+    """A provider with a fixed API host (Google) sends an empty `instance_url`."""
+    sf["reply"] = {"access_token": SF_TOKEN, "instance_url": "", "expires_at": time.time() + 3600,
+                   "account_label": "jj@dimagi.com"}
+    res = _ct("gmail")
+    assert res.exit_code == 0, res.output
+    assert json.loads((tmp_path / "home" / ".canopy" / "connections" / "gmail.json").read_text())["instance_url"] == ""
+
+
+@pytest.mark.parametrize("bad", ["../x", "Sales Force", "", "a/b", "x" * 41])
+def test_connection_token_refuses_a_key_that_is_not_a_provider(sf, bad):
+    res = _ct(bad)
+    assert res.exit_code == cred_cli.EXIT_USAGE and sf["calls"] == []
+
+
+def test_salesforce_token_is_connection_token_salesforce(sf, tmp_path):
+    assert _sf().output == _ct("salesforce").output
+
+
+def test_connection_token_inside_a_turn_points_at_the_agents_own(sf, monkeypatch):
+    monkeypatch.setenv("CANOPY_TURN_ID", "t1")
+    monkeypatch.setenv("CANOPY_AGENT_SLUG", "eva")
+    res = _ct("intacct")
+    assert res.exit_code == cred_cli.EXIT_REFUSED
+    assert "connection-token intacct --agent eva" in res.output and sf["calls"] == []
