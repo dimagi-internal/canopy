@@ -69,10 +69,6 @@ Skip any step that is already done, and show me each result before moving on.
    start that session and run /<slug>:turn.
 ```
 
-**Legacy 1Password agent (Muse)?** Move it first: an admin with 1Password access runs
-`canopy vault import --agent <slug> --zk --switch` in their own terminal. Never paste a
-1Password key into Claude or into a tool.
-
 ## What stays with a person, and why
 
 Claude stops at these on purpose. None of them is a gap in the tools.
@@ -96,6 +92,6 @@ Claude stops at these on purpose. None of them is a gap in the tools.
 
 | Agent | Owner(s) | Workspace | Secrets |
 |---|---|---|---|
-| Muse | Gillian Javetski, Amie Vaccaro | `commcare` | 1Password (LEGACY) — its owners move it with `canopy vault import --agent muse --zk --switch` |
+| Muse | Gillian Javetski, Amie Vaccaro | `commcare` | canopy vault |
 | Fizzy | Shayoni Mazumdar | `strategy` | canopy vault |
 | Jarvis | Andrea King | `connect` | not created yet, see [moving an OpenClaw](moving-an-openclaw-onto-canopy.md) |

@@ -18,12 +18,11 @@ send a header, and the catalog is filtered by the caller's membership, so it mus
 fetched as the person. A user-settings `extraKnownMarketplaces` entry carries a
 `headersHelper` that Claude Code runs without asking, including background auto-update.
 
-Runners, vault keys, `gog login` and `op inject` are deliberately NOT here: they belong to
+Runners, vault keys and `gog login` are deliberately NOT here: they belong to
 the operator who hosts an agent (`canopy agent bootstrap`), not to someone who uses one.
 
     canopy agents connect [--dry-run] [--install-all]
     canopy workspace list [--json]
-    canopy workspace op-status          # one line; always exits 0
 """
 from __future__ import annotations
 
@@ -31,7 +30,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -51,7 +49,6 @@ AGENTS_MARKETPLACE_PATH = "/plugins/marketplace.json"
 # The retired per-workspace catalogs (canopy-web#1376; now 410) — removed from settings.
 LEGACY_MARKETPLACE_RE = re.compile(r"/w/[^/]+/marketplace\.json$")
 HELPER_REL = Path("plugins") / "canopy" / "scripts" / "canopy-web-mcp-headers.js"
-OP_INSTALL_URL = "https://developer.1password.com/docs/cli/get-started/"
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -255,33 +252,13 @@ def install_plugins(name: str, plugins: list[str], runner: Runner) -> list[tuple
     return out
 
 
-def op_status(which: Callable[[str], Optional[str]] = shutil.which,
-              runner: Runner = subprocess.run) -> tuple[bool, str]:
-    """(ok, one line). Never fails setup: an agent only needs `op` when it keeps its
-    credentials in 1Password AND you will act as it (`canopy cred check`)."""
-    if not which("op"):
-        return False, (f"1Password CLI: not installed — install it ({OP_INSTALL_URL}) and sign "
-                       f"in (`op signin`) if you'll act as an agent that keeps its credentials "
-                       f"in 1Password. Not needed to use agents.")
-    try:
-        r = runner(["op", "account", "list", "--format", "json"], capture_output=True,
-                   text=True, timeout=20)
-        accounts = json.loads(r.stdout or "[]") if r.returncode == 0 else []
-    except (OSError, ValueError, subprocess.SubprocessError):
-        accounts = []
-    if not accounts:
-        return False, ("1Password CLI: installed but no account signed in — run `op signin` "
-                       "(or enable CLI integration in the 1Password app).")
-    return True, f"1Password CLI: OK ({len(accounts)} account(s))"
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 
 @click.group("workspace")
 def workspace_group():
-    """Your canopy-web workspaces (list) and the 1Password check (op-status)."""
+    """Your canopy-web workspaces."""
 
 
 @workspace_group.command("list")
@@ -463,10 +440,3 @@ def _echo_offer(name: str, agents: list[dict], mine: Optional[list[dict]] = None
     click.echo("")
     for line in offer_lines(name, agents, mine):
         click.echo(line)
-
-
-@workspace_group.command("op-status")
-def op_status_cmd():
-    """One line on the 1Password CLI. Always exits 0."""
-    _, line = op_status()
-    click.echo(line)

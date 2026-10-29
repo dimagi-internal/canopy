@@ -1,17 +1,17 @@
 """`canopy agent bootstrap` — make this MACHINE ready to run the fleet's agents.
 
 The laptop counterpart of canopy-web's `runner/ec2/bootstrap_agents.sh` (the cloud
-runner's bootstrap). Same rules, macOS paths, and the interactive 1Password account a
-laptop has instead of per-agent service-account keys. Per agent:
+runner's bootstrap). Same rules, macOS paths, and the signed-in person's own canopy-web
+identity instead of the runner's. Per agent:
 
   1. plugins  — the agent's own plugin (`<slug>@<slug>`, marketplace from its repo) plus its
                 config/agent.json `required_plugins`, parsed by the SAME function
                 `canopy agent doctor`'s check_required_plugins uses. Skipped when the
                 registry already has them.
-  2. env      — `op inject -f -i <repo>/.env.tpl -o ~/.<slug>/.env` with AGENT_VAULT /
-                AGENT_SLUG set (templates reference op://${AGENT_VAULT}/…), chmod 600.
+  2. env      — ~/.<slug>/.env written (0600) from the Canopy vault: canopy-web's
+                `/credentials/resolve`.
   3. token    — the gog Gmail token from canopy-web's `/credentials/resolve` — the one copy
-                ("Connect Google mailbox" mints it). No 1Password (2026-10-26).
+                ("Connect Google mailbox" mints it).
   4. client   — the OAuth client the TOKEN names (never config/agent.json — that inference
                 broke echo's working mailbox on 2026-09-05, canopy-web#661), written from the
                 workspace's canopy vault (`SHARED_CLIENT_ITEMS`) to gog's data dir AND the
@@ -46,7 +46,6 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from orchestrator import canopy_web
-from orchestrator.agent_instance import inject_env
 from orchestrator.agent_doctor import (
     PLUGIN_REGISTRY,
     _plugin_source,
@@ -69,21 +68,15 @@ from orchestrator.agent_email import (
     is_fleet_client,
 )
 
-OP_ACCOUNT = "dimagi.1password.com"
 KNOWN_MARKETPLACES = "~/.claude/plugins/known_marketplaces.json"
 
 #: The fleet's two OAuth clients, by their item name in the workspace's canopy vault
 #: ("Shared": gog-oauth-client, gog-oauth-client-web). The ONLY place a client file is read
-#: from — no 1Password (Jonathan, 2026-10-26: "we want to get off 1pass entirely").
+#: from.
 SHARED_CLIENT_ITEMS = {"canopy": "gog-oauth-client", "canopy-web": "gog-oauth-client-web"}
 
 CONNECT_MAILBOX_HINT = ("connect it on canopy-web: the agent's Settings → External accounts → "
                         "Connect Google mailbox")
-
-#: stderr fragments meaning "1Password is locked / not signed in", not "item missing".
-OP_AUTH_FAILURES = ("authorization timeout", "not currently signed in", "authorization prompt",
-                    "session expired", "no accounts configured", "connect to 1password",
-                    "prompterror")
 
 KEYCHAIN_HEADS_UP = (
     "Heads-up: gog reads its tokens from the macOS login Keychain — if a dialog asks to "
@@ -96,13 +89,6 @@ Runner = Callable[..., subprocess.CompletedProcess]
 # ──────────────────────────────────────────────────────────────────────────────
 # pure decision logic
 # ──────────────────────────────────────────────────────────────────────────────
-
-def operator_instance_vault(slug: str) -> str:
-    """The instance's vault, read as the operator (this machine's binding, else canopy-web's
-    `op_vault`). Raises agent_instance.InstanceError when none is recorded."""
-    from orchestrator.agent_instance import instance_vault
-    return instance_vault(slug, token=_operator_token())
-
 
 def parse_created_at(value) -> int:
     """Epoch seconds for a gog `created_at` ("2026-09-07T14:04:13Z"), 0 when absent/odd."""
@@ -119,7 +105,7 @@ def parse_created_at(value) -> int:
 
 @dataclass
 class Token:
-    source: str          # "canopy-web" | "vault"
+    source: str          # "canopy-web"
     raw: str = field(repr=False)   # the secret — never printed
     client: str
     email: str
@@ -141,20 +127,6 @@ def parse_token(source: str, raw: str | None) -> Token | None:
                  email=str(data.get("email") or "").strip().lower(),
                  created_at=str(data.get("created_at") or ""),
                  epoch=parse_created_at(data.get("created_at")))
-
-
-def pick_newest(candidates: list[Token | None]) -> Token | None:
-    """NEWEST WINS by the token's own created_at. On a tie (including both undated) the
-    EARLIER candidate wins — callers pass the vault first, so an undecidable comparison
-    degrades toward the vault, same as the cloud bootstrap (never import canopy-web's copy
-    over a good vault rotation on a guess)."""
-    best: Token | None = None
-    for c in candidates:
-        if c is None:
-            continue
-        if best is None or c.epoch > best.epoch:
-            best = c
-    return best
 
 
 def token_already_present(tok: Token, accounts: list[dict] | None) -> bool:
@@ -310,7 +282,7 @@ def _operator_token() -> str:
     and `/credentials/resolve` authorizes the operator — so an agent PAT picked up from the
     cwd (canopy_web.resolve_token's second tier) is the wrong identity here. Explicit env
     wins outside an agent's session; inside one the workbench-token comes first, because
-    there CANOPY_WEB_PAT is usually the agent's OWN PAT (its .env.tpl sets it) and
+    there CANOPY_WEB_PAT is usually the agent's OWN PAT (its env sets it) and
     `/credentials/resolve` refuses an agent's login (canopy#945). Otherwise whatever
     resolve_token finds."""
     env = os.environ.get("CANOPY_WEB_PAT", "").strip()
@@ -352,14 +324,13 @@ def hosted_identity(repo: Path) -> EmailIdentity | None:
 
 
 class Bootstrapper:
-    def __init__(self, *, dry_run: bool = False, op_account: str = OP_ACCOUNT,
+    def __init__(self, *, dry_run: bool = False,
                  runner: Runner = subprocess.run,
                  web_token: Callable[[str], tuple[str | None, str]] = fetch_web_token,
                  gog_dir: str | None = None, registry_path: str | None = None,
                  marketplaces_path: str | None = None, home: Path | None = None,
                  verify: Callable = preflight, echo: Callable[[str], None] = print,
                  platform: str = sys.platform,
-                 vault_for: Optional[Callable[[str], str]] = None,
                  hosted: Callable[[Path], EmailIdentity | None] = hosted_identity,
                  mailbox_hint: str = CONNECT_MAILBOX_HINT):
         self.dry_run = dry_run
@@ -368,7 +339,6 @@ class Bootstrapper:
         #: google-login` passes an "ask an admin" line instead.
         self.mailbox_hint = mailbox_hint
         self.hosted = hosted
-        self.op_account = op_account
         self.run = runner
         self.web_token = web_token
         self.gog_dir = Path(gog_dir or GOG_CONFIG_DIR)
@@ -381,9 +351,6 @@ class Bootstrapper:
         self._accounts: list[dict] | None = None
         self._accounts_read = False
         self._warned_keychain = False
-        self._op_blocked = ""
-        self.vault_for = vault_for or operator_instance_vault
-        self._vaults: dict[str, tuple[str, str]] = {}
 
     # ── helpers ───────────────────────────────────────────────────────────────
     def _keychain_heads_up(self) -> None:
@@ -391,42 +358,7 @@ class Bootstrapper:
             self._warned_keychain = True
             self.echo(KEYCHAIN_HEADS_UP)
 
-    def _op(self, argv: list[str], timeout: int,
-            env: Optional[dict] = None) -> tuple[subprocess.CompletedProcess | None, str]:
-        """Run `op …`, short-circuiting once 1Password has refused to authorize.
-
-        A locked 1Password makes every `op` call wait out its own ~60s authorization timeout;
-        without this, five agents × three reads is a quarter of an hour of silence."""
-        if self._op_blocked:
-            return None, self._op_blocked
-        try:
-            kw = {"env": env} if env is not None else {}
-            r = self.run(argv, capture_output=True, text=True, timeout=timeout, **kw)
-        except FileNotFoundError:
-            self._op_blocked = "op CLI not installed"
-            return None, self._op_blocked
-        except subprocess.TimeoutExpired:
-            self._op_blocked = f"op timed out after {timeout}s — is 1Password unlocked?"
-            return None, self._op_blocked
-        err = (r.stderr or "").lower()
-        if r.returncode != 0 and any(m in err for m in OP_AUTH_FAILURES):
-            # The reason only — op's full line names the FIRST ref tried, which would read as
-            # the wrong agent's secret in every later agent's report.
-            reason = _first_line(r.stderr).rsplit(": ", 1)[-1]
-            self._op_blocked = (f"1Password did not authorize `op` ({reason}) — "
-                                "unlock the 1Password app / approve its prompt, then re-run")
-            return None, self._op_blocked
-        return r, ""
-
     # ── where credentials come from — overridden by a runner (agent_prepare.RunnerPreparer) ──
-    def op_argv(self, argv: list[str]) -> list[str]:
-        """A PERSON's op: their signed-in account."""
-        return [*argv, "--account", self.op_account]
-
-    def op_env(self, vault: str, base: Optional[dict] = None) -> Optional[dict]:
-        """op's environment for reading `vault` (None = inherit). A person needs nothing."""
-        return base
-
     def client_from_vault(self, slug: str, client: str) -> Optional[str]:
         """<client>'s OAuth id+secret from the canopy vault (a workspace vault layered
         under the agent's own), or None. A person's machine asks canopy-web with its own
@@ -449,15 +381,6 @@ class Bootstrapper:
             return resolve_email_identity(Path(repo)).account.lower()
         except AgentEmailError:
             return ""
-
-    def _op_read(self, ref: str) -> tuple[str | None, str]:
-        vault = ref[len("op://"):].split("/", 1)[0] if ref.startswith("op://") else ""
-        r, err = self._op(self.op_argv(["op", "read", ref]), timeout=120, env=self.op_env(vault))
-        if r is None:
-            return None, err
-        if r.returncode != 0 or not (r.stdout or "").strip():
-            return None, _first_line(r.stderr)
-        return r.stdout, ""
 
     def _gog(self, argv: list[str], **kw):
         """Run gog. On a Mac, WITHOUT any GOG_KEYRING_* from this shell: a turn the runner
@@ -487,18 +410,6 @@ class Bootstrapper:
         except (ValueError, OSError, TypeError):
             return set()
 
-    def vault(self, slug: str) -> tuple[str, str]:
-        """(vault, error) for `slug`, asked once per run. No convention fallback: an
-        instance with no recorded vault is an error the report names."""
-        if slug not in self._vaults:
-            try:
-                self._vaults[slug] = (self.vault_for(slug), "")
-            except Exception as e:  # noqa: BLE001 — InstanceError, or canopy-web unreachable
-                msg = getattr(e, "message", None) or str(e)
-                self._vaults[slug] = ("", _first_line(msg, 300))
-        return self._vaults[slug]
-
-    # ── steps ─────────────────────────────────────────────────────────────────
     def step_plugins(self, repo: Path, rep: AgentReport) -> None:
         actions, problems, n_ok = plugin_plan(
             repo, installed_plugin_names(self.registry_path), self._known_marketplaces())
@@ -535,31 +446,25 @@ class Bootstrapper:
             rep.plugins += f" (+{installed_now} new)"
         rep.plugins += " FAIL" if (problems or failed) else ("" if self.dry_run and actions else " OK")
 
+    def env_values(self, slug: str) -> dict:
+        """The agent's Canopy vault values, resolved as the operator."""
+        from orchestrator import cred_resolve
+        body = cred_resolve.resolve(slug, token=_operator_token()) or {}
+        return body.get("values") or {}
+
     def step_env(self, slug: str, repo: Path, rep: AgentReport) -> None:
-        tpl = Path(repo) / ".env.tpl"
-        if not tpl.is_file():
-            rep.env = "n/a"
-            return
-        out = self.home / f".{slug}" / ".env"
+        """~/.<slug>/.env from the Canopy vault, as the operator (0600)."""
         if self.dry_run:
-            rep.env = "would inject"
+            rep.env = "would write"
             return
-        vault, verr = self.vault(slug)
-        if not vault:
+        from orchestrator.cred_cli import write_env_from_values
+        try:
+            n, _ = write_env_from_values(slug, self.home / f".{slug}" / ".env",
+                                         self.env_values(slug))
+        except Exception as e:  # noqa: BLE001 — reported, never a value
             rep.env = "FAIL"
-            rep.fail(f"env: {verr}")
+            rep.fail(f"env: could not write from the Canopy vault: {_first_line(str(e), 300)}")
             return
-        out.parent.mkdir(parents=True, exist_ok=True)
-        r, err = self._op(self.op_argv(["op", "inject", "-f", "-i", str(tpl), "-o", str(out)]),
-                          timeout=180, env=self.op_env(vault, inject_env(dict(os.environ), vault, slug)))
-        if r is None or r.returncode != 0:
-            rep.env = "FAIL"
-            # op names the reference it could not resolve, never a value.
-            rep.fail(f"env: op inject failed: {err or _first_line(r.stderr, 300)}")
-            return
-        os.chmod(out, 0o600)
-        n = sum(1 for line in out.read_text(encoding="utf-8").splitlines()
-                if "=" in line and not line.lstrip().startswith("#"))
         rep.env = f"OK ({n} vars)"
 
     def step_keyring(self, slug: str, rep: AgentReport) -> None:
@@ -604,7 +509,7 @@ class Bootstrapper:
 
     def step_token(self, slug: str, repo: Path, rep: AgentReport) -> Token | None:
         """Take canopy-web's token, materialize its client from the canopy vault, import it,
-        map the account. No 1Password anywhere on this path (2026-10-26)."""
+        map the account."""
         web_raw, web_err = self.web_token(slug)
         tok = parse_token("canopy-web", web_raw)
         if tok is None:

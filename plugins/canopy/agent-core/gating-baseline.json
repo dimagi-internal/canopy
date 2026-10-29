@@ -51,26 +51,6 @@
     {
       "tool": "Bash",
       "per_statement": true,
-      "_pattern_doc": "1Password's LOCAL credential store. ~/.config/op/config holds the account's Secret Key (`accountKey`, the 2nd factor of the whole 1Password account) plus device secrets; the app's Group Container holds its settings and state. Anything an agent reads lands in the transcript, which is uploaded and reviewed. 2026-10-15: Ada `cat`-ed ~/.config/op/config through a sed meant to redact long tokens; the Secret Key is shorter and printed in full, and Jonathan had to rotate it. A redaction filter is prose in code form: the rail removes the read. Nothing legitimate needs these files: `op whoami` / `op account list` say who is signed in, and every secret is read through `op` itself (`op inject`, `op read` into a pipe). Matches the path anchored at a home directory (~, $HOME, /Users/<u>, /home/<u>), so grepping a repo for the string '.config/op' stays free.",
-      "pattern": "(?:~|\\$HOME|\\$\\{HOME\\}|/(?:Users|home)/[^/\\s\"\\']+)(?:/\\.config/op\\b|/\\.op/config\\b|/Library/Group(?:\\\\? |%20)Containers/2BUA8C4S2C\\.com\\.1password)",
-      "message": "BLOCKED: this touches 1Password's local credential store (~/.config/op or the 1Password app's Group Container). ~/.config/op/config contains the account's SECRET KEY, and whatever {slug} reads is written into the transcript (this exact leak happened 2026-10-15). There is no need to read it: `op whoami --account <acct>` / `op account list` show who is signed in. To act as the HUMAN's 1Password account (create a vault, mint a key via the agent's provisioning bin), use the unlocked desktop app: `unset OP_SERVICE_ACCOUNT_TOKEN; export OP_BIOMETRIC_UNLOCK_ENABLED=true` in the same command, with the Bash sandbox disabled (the sandbox blocks the app's IPC, which surfaces as 'not signed in' / 'operation not supported by device')."
-    },
-    {
-      "tool_pattern": "^(?:Read|Grep|Glob|Edit|Write|NotebookEdit|NotebookRead)$",
-      "_pattern_doc": "The same store, through the file tools (their input JSON / file_path). See the Bash rail above.",
-      "pattern": "(?:/\\.config/op\\b|/\\.op/config\\b|/Library/Group(?:\\\\? |%20)Containers/2BUA8C4S2C\\.com\\.1password)",
-      "message": "BLOCKED: this touches 1Password's local credential store (~/.config/op or the 1Password app's Group Container). ~/.config/op/config contains the account's SECRET KEY, and whatever {slug} reads is written into the transcript (this exact leak happened 2026-10-15). There is no need to read it: `op whoami --account <acct>` / `op account list` show who is signed in. To act as the HUMAN's 1Password account (create a vault, mint a key via the agent's provisioning bin), use the unlocked desktop app: `unset OP_SERVICE_ACCOUNT_TOKEN; export OP_BIOMETRIC_UNLOCK_ENABLED=true` in the same command, with the Bash sandbox disabled (the sandbox blocks the app's IPC, which surfaces as 'not signed in' / 'operation not supported by device')."
-    },
-    {
-      "tool": "Bash",
-      "per_statement": true,
-      "_pattern_doc": "Raw `op service-account create` prints the new key to stdout — into the transcript. An agent's vault key is minted by `canopy agent vault`, which pipes it from op straight into canopy-web and never prints it (moved here from Ada's config/gating.json on 2026-10-15 so every agent has it).",
-      "pattern": "(?:^|\\b(?:then|do|else)\\s+)(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*op\\s+service-account\\s+create\\b",
-      "message": "BLOCKED: a raw `op service-account create` prints the new key into this transcript. `canopy agent vault --slug <slug>` mints an agent's read-only vault key, stores it on canopy-web and never prints it. Run by a PERSON with 1Password rights."
-    },
-    {
-      "tool": "Bash",
-      "per_statement": true,
       "_pattern_doc": "A sending domain is added on canopy-web (workspace › Mail › Add domain, or the add_mail_domain tool): that one path creates the SES identity with Easy DKIM, the bounce.<domain> MAIL FROM and the tenant configuration set, records it against a workspace, and shows the exact DNS records with live status. canopy-web refuses to adopt an identity that already exists in SES, so a hand-made one (aws sesv2 create-email-identity / aws ses verify-domain-identity|verify-domain-dkim) both skips the standard setup and blocks the domain from ever being added properly (this happened with dimagi.ai on 2026-10-15).",
       "pattern": "(?:^|\\b(?:then|do|else)\\s+)(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*aws\\s+(?:sesv2\\s+create-email-identity|ses\\s+verify-domain-(?:identity|dkim))\\b",
       "message": "BLOCKED: don't create an SES domain identity by hand. Add the domain on canopy-web instead: the add_mail_domain MCP tool (workspace, name) or workspace › Mail › Add domain. It creates the identity the standard way (Easy DKIM 2048, bounce.<domain> MAIL FROM, tenant configuration set) and lists the DNS records to publish. canopy-web will not adopt an identity that already exists in SES, so a hand-made one blocks the domain from being added there."
@@ -78,21 +58,21 @@
     {
       "tool": "Bash",
       "per_statement": true,
-      "_pattern_doc": "A raw curl WRITE to an agent's /vault (carries a service-account key) or /canopy-token (returns the agent's token) puts a secret on the command line or in this transcript. GET reads of /vault are masked and stay free.",
-      "pattern": "(?s)(?=.*curl)(?=.*/api/(?:w/[^/\\s]+/)?agents/[^\\s/]+/(?:vault|canopy-token)\\b)(?=.*(?:-X\\s*(?:POST|PUT|PATCH|DELETE)|--data|--json\\b|\\s-d[\\s@]))",
-      "message": "BLOCKED: a raw write to an agent's /vault or /canopy-token puts a key or token in the transcript. `canopy agent vault --slug <slug>` does both without printing either. Masked GET reads of /vault stay free."
+      "_pattern_doc": "A raw curl WRITE to an agent's /canopy-token returns the agent's token — a secret on the command line or in this transcript.",
+      "pattern": "(?s)(?=.*curl)(?=.*/api/(?:w/[^/\\s]+/)?agents/[^\\s/]+/canopy-token\\b)(?=.*(?:-X\\s*(?:POST|PUT|PATCH|DELETE)|--data|--json\\b|\\s-d[\\s@]))",
+      "message": "BLOCKED: a raw write to an agent's /canopy-token puts its token in the transcript. Mint or rotate an agent's canopy token in canopy-web (/agents/<slug> → Settings), not by raw curl."
     },
     {
-      "tool_pattern": "__(?:set_agent_vault|set_shared_vault|mint_agent_canopy_token)$",
-      "_pattern_doc": "canopy-web MCP tools whose ARGUMENTS (set_*_vault: a service-account key) or RESULT (mint_agent_canopy_token: the agent's token) are a secret, recorded verbatim in the transcript.",
-      "message": "BLOCKED: this MCP tool's key argument or token result would be recorded in the transcript. An agent's vault, key and canopy token: `canopy agent vault --slug <slug>`. The shared vault key: its owner sets it in the browser (/w/<ws>/settings/secrets). Read state with get_agent_vault."
+      "tool_pattern": "__mint_agent_canopy_token$",
+      "_pattern_doc": "The canopy-web MCP tool whose RESULT (mint_agent_canopy_token: the agent's token) is a secret, recorded verbatim in the transcript.",
+      "message": "BLOCKED: this MCP tool's token result would be recorded in the transcript. Mint or rotate an agent's canopy token in canopy-web (/agents/<slug> → Settings)."
     },
     {
       "tool": "Bash",
       "per_statement": true,
-      "_pattern_doc": "Listing other processes' FULL command lines or environments. The shell this tool runs in is started with its environment exported INLINE on its command line — an agent's OP_SERVICE_ACCOUNT_TOKEN among it — so `pgrep -fl`, `ps aux`, `ps -ef` print that key into the transcript. 2026-10-15: a `pgrep -fl wire.sh` printed Ada's 1Password key and it had to be rotated. Matches ps with a/x/-e/-f style selectors or an args/command column, pgrep/pidof listing args (-l/-a), and /proc/<pid>/cmdline|environ reads. `pgrep -f <pattern>` alone prints PIDs and stays free.",
+      "_pattern_doc": "Listing other processes' FULL command lines or environments. The shell this tool runs in is started with its environment exported INLINE on its command line — the agent's credentials among it — so `pgrep -fl`, `ps aux`, `ps -ef` print those secrets into the transcript. 2026-10-15: a `pgrep -fl wire.sh` printed Ada's service-account key and it had to be rotated. Matches ps with a/x/-e/-f style selectors or an args/command column, pgrep/pidof listing args (-l/-a), and /proc/<pid>/cmdline|environ reads. `pgrep -f <pattern>` alone prints PIDs and stays free.",
       "pattern": "(?:^|\\b(?:then|do|else)\\s+)(?:sudo\\s+)?(?:ps\\s+(?:[^\\n|;&]*\\s)?(?:-?[a-zA-Z]*(?:ax|xa|aux|e[fF]|[fF]e)[a-zA-Z]*|-[a-zA-Z]*[fF][a-zA-Z]*)(?:\\s|$)|ps\\b[^\\n|;&]*-o\\s*\\S*(?:args|command|cmd)|pgrep\\s+(?:[^\\n|;&]*\\s)?-[a-zA-Z]*[la][a-zA-Z]*(?:\\s|$))|/proc/[^/\\s]+/(?:cmdline|environ)\\b",
-      "message": "BLOCKED: this lists other processes' full command lines (or environments). This session's shell exports its environment INLINE on its command line — including a 1Password service-account key — so the listing prints secrets into the transcript (it happened 2026-10-15; the key was rotated). Instead: `pgrep -f <pattern>` (PIDs only), `ps -o pid,etime,comm -p <pid>` (no arguments), or `pgrep -x <name>`."
+      "message": "BLOCKED: this lists other processes' full command lines (or environments). This session's shell exports its environment INLINE on its command line — including the agent's credentials — so the listing prints secrets into the transcript (it happened 2026-10-15; the key had to be rotated). Instead: `pgrep -f <pattern>` (PIDs only), `ps -o pid,etime,comm -p <pid>` (no arguments), or `pgrep -x <name>`."
     },
     {
       "tool": "Bash",

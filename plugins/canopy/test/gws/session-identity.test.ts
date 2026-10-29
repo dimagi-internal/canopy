@@ -131,8 +131,8 @@ describe('resolveSessionIdentity', () => {
   });
 
   it('refuses when `canopy cred env` fails', async () => {
-    const r = await resolveSessionIdentity(deps(runner({ check: OK, env: { status: 1, stdout: '', stderr: 'op inject failed' } })));
-    expect(!r.ok && r.message).toMatch(/cred env --agent hal` error \(exit 1\): op inject failed/);
+    const r = await resolveSessionIdentity(deps(runner({ check: OK, env: { status: 1, stdout: '', stderr: 'resolve failed' } })));
+    expect(!r.ok && r.message).toMatch(/cred env --agent hal` error \(exit 1\): resolve failed/);
   });
 });
 

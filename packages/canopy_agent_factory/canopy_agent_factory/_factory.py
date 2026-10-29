@@ -311,7 +311,7 @@ infra you'd want every agent to get, it belongs in canopy; raise it there, don't
 - **Secrets are declared in ONE place: the agent's Canopy vault** (canopy-web → the agent's
   Settings → Credentials). Each stored name becomes one env var; values shared by every agent in
   a workspace (the fleet's gog OAuth clients) live in that workspace's vault, layered under this
-  one. This repo names no secret and no vault — no `.env.tpl`, no secret list in a runtime spec
+  one. This repo names no secret and no vault, and keeps no secret list in a runtime spec
   (canopy agent-core/agent-runtime.md § One declaration).
 - Outputs that are deliverables live where the team can see them (a shared drive / the canopy-web
   workspace), not as loose local files.
@@ -637,16 +637,15 @@ _AGENT_JSON = '''{
 _SETUP_SKILL = '''---
 name: setup
 description: >
-  Set up this machine to run {{AGENT_NAME}}: fill ~/.{{AGENT_SLUG}}/.env from wherever canopy-web
-  keeps {{AGENT_NAME}}'s credentials (the Canopy vault or 1Password), then check readiness. Use on
+  Set up this machine to run {{AGENT_NAME}}: fill ~/.{{AGENT_SLUG}}/.env from {{AGENT_NAME}}'s
+  Canopy vault on canopy-web, then check readiness. Use on
   first run, a new machine, or a missing/stale .env.
 ---
 
 # Setup — {{AGENT_NAME}}
 
-A plugin is code; an **instance** is canopy-web's Agent record — identity, workspace and where its
-credentials live (`credential_source`: the Canopy vault, or a 1Password vault). One command
-handles both.
+A plugin is code; an **instance** is canopy-web's Agent record — identity, workspace and its
+credentials (the Canopy vault).
 
 **1. Fill the env.**
 
@@ -657,8 +656,7 @@ canopy cred env --agent {{AGENT_SLUG}} --refresh
 It prints the path it wrote (`~/.{{AGENT_SLUG}}/.env`, 0600 — the worktree-clean home every
 `bin/` script reads through `bin/_env.py`) and, on stderr, where the values came from. Relay a
 refusal **verbatim** and act on it — it names its own fix: not a member of the agent's workspace,
-not one of its admins, or (a legacy 1Password agent) 1Password not signed in or no access to
-the vault. Never guess past it. Missing values on
+or not one of its admins. Never guess past it. Missing values on
 the Canopy vault are filled in the agent's Settings → Credentials on canopy-web.
 
 **2. Check readiness.**

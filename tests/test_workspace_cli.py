@@ -204,16 +204,3 @@ def test_list_workspaces(monkeypatch):
                         lambda m, p, **kw: [{"slug": "family", "name": "Family"}, {"name": "x"}])
     r = CliRunner().invoke(ws.workspace_group, ["list", "--json"])
     assert json.loads(r.output) == [{"slug": "family", "name": "Family"}]
-
-
-def test_op_status_never_fails_and_names_the_fix():
-    ok, line = ws.op_status(which=lambda n: None)
-    assert not ok and "op signin" in line and "install" in line
-    ok, line = ws.op_status(which=lambda n: "/usr/bin/op",
-                            runner=lambda a, **k: subprocess.CompletedProcess(a, 0, "[]", ""))
-    assert not ok and "op signin" in line
-    ok, line = ws.op_status(which=lambda n: "/usr/bin/op",
-                            runner=lambda a, **k: subprocess.CompletedProcess(a, 0, '[{"url":"x"}]', ""))
-    assert ok
-    r = CliRunner().invoke(ws.workspace_group, ["op-status"])
-    assert r.exit_code == 0

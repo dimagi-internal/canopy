@@ -1,6 +1,6 @@
 """Tests for scripts/canopy-auth-preflight.sh.
 
-Strategy: build a tmp PATH containing shim executables for `gh`, `op`,
+Strategy: build a tmp PATH containing shim executables for `gh`,
 `aws`, and `git`, each of which exits with a configurable code. The shims
 are the *only* binaries on PATH (we explicitly do NOT inherit the system
 PATH so the harness can't pick up real tools), with one exception: we add
@@ -55,7 +55,6 @@ def test_all_pass(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _make_shim(bin_dir, "gh", 0)
-    _make_shim(bin_dir, "op", 0)
     # No `git` shim and cwd is not labs-y, so AWS branch is skipped.
 
     cwd = tmp_path / "neutral"
@@ -64,7 +63,6 @@ def test_all_pass(tmp_path: Path) -> None:
     result = _run(f"{bin_dir}:/bin:/usr/bin", cwd)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "gh: OK" in result.stdout
-    assert "op: OK" in result.stdout
     assert "aws/labs" not in result.stdout
     assert "auth-preflight: PASS" in result.stdout
 
@@ -73,7 +71,6 @@ def test_gh_fail_recovery_hint(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _make_shim(bin_dir, "gh", 1)
-    _make_shim(bin_dir, "op", 0)
 
     cwd = tmp_path / "neutral"
     cwd.mkdir()
@@ -85,28 +82,13 @@ def test_gh_fail_recovery_hint(tmp_path: Path) -> None:
     assert "auth-preflight: FAIL" in result.stdout
 
 
-def test_op_fail_recovery_hint(tmp_path: Path) -> None:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _make_shim(bin_dir, "gh", 0)
-    _make_shim(bin_dir, "op", 1)
-
-    cwd = tmp_path / "neutral"
-    cwd.mkdir()
-
-    result = _run(f"{bin_dir}:/bin:/usr/bin", cwd)
-    assert result.returncode == 1
-    assert "op: FAIL" in result.stdout
-    assert "op signin --account dimagi.1password.com" in result.stdout
-
-
 def test_not_installed_is_not_a_failure(tmp_path: Path) -> None:
     """When tools are missing entirely, the script should report NOT INSTALLED
     and still exit 0 (we treat absence as best-effort, not failure)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    # No shims at all — gh and op are absent. PATH is bash ALONE, not /bin:/usr/bin:
-    # CI and the cloud runners install gh (and op) in /usr/bin, so inheriting it made
+    # No shims at all — gh is absent. PATH is bash ALONE, not /bin:/usr/bin:
+    # CI and the cloud runners install gh in /usr/bin, so inheriting it made
     # "absent" mean "present and unauthenticated" there. The script needs only builtins.
     (bin_dir / "bash").symlink_to(shutil.which("bash"))
 
@@ -116,7 +98,7 @@ def test_not_installed_is_not_a_failure(tmp_path: Path) -> None:
     result = _run(str(bin_dir), cwd)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "gh: NOT INSTALLED" in result.stdout
-    assert "op: NOT INSTALLED" in result.stdout
+    assert "op:" not in result.stdout
     assert "auth-preflight: PASS" in result.stdout
 
 
@@ -125,7 +107,6 @@ def test_labs_path_triggers_aws_check(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _make_shim(bin_dir, "gh", 0)
-    _make_shim(bin_dir, "op", 0)
     _make_shim(bin_dir, "aws", 1)  # SSO expired
 
     cwd = tmp_path / "connect-labs-checkout"
@@ -141,7 +122,6 @@ def test_labs_path_aws_pass(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _make_shim(bin_dir, "gh", 0)
-    _make_shim(bin_dir, "op", 0)
     _make_shim(bin_dir, "aws", 0)
 
     cwd = tmp_path / "ace-web-app"
@@ -166,7 +146,6 @@ def test_no_secret_leak_in_output(tmp_path: Path) -> None:
         "#!/usr/bin/env bash\necho 'SECRET-VAULT-CONTENTS-DO-NOT-LEAK'\nexit 0\n"
     )
     leaky.chmod(leaky.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    _make_shim(bin_dir, "op", 0)
 
     cwd = tmp_path / "neutral"
     cwd.mkdir()
@@ -184,7 +163,6 @@ def test_each_labs_marker_activates_aws(tmp_path: Path, marker: str) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _make_shim(bin_dir, "gh", 0)
-    _make_shim(bin_dir, "op", 0)
     _make_shim(bin_dir, "aws", 0)
 
     cwd = tmp_path / f"{marker}-x"

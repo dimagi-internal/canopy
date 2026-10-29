@@ -110,11 +110,10 @@ def test_ensure_env_returns_the_turn_file_and_writes_nothing(home, turn_file, mo
 
 
 def test_cred_sync_skips_a_turn_with_its_own_env_file(home, turn_file, monkeypatch):
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_x")
-
     def boom(*a, **k):
-        raise AssertionError("op must not run")
-    assert "CANOPY_AGENT_ENV_FILE" in cred_cli.sync_env("eva", runner=boom)
+        raise AssertionError("canopy-web must not be asked")
+    monkeypatch.setattr(cred_cli, "fetch_canopy_web_values", boom)
+    assert "CANOPY_AGENT_ENV_FILE" in cred_cli.sync_env("eva")
 
 
 def test_cred_check_local_env_still_counts_on_a_laptop(home, monkeypatch):
@@ -138,17 +137,17 @@ def test_doctor_env_home_turn_first(home, turn_file, tmp_path):
 # ── the SessionStart hook ─────────────────────────────────────────────────────
 
 def test_session_start_hook_does_not_sync_when_the_turn_has_its_env_file(tmp_path, monkeypatch):
-    from tests.test_agent_op_env_hook import _run
+    from tests.test_agent_session_start_hook import _run
     monkeypatch.setenv("CANOPY_AGENT_ENV_FILE", str(tmp_path / "env"))
-    r, _ef, log = _run(tmp_path, have_key=True)
+    r, _ef, log = _run(tmp_path)
     assert r.returncode == 0
     assert "cred sync" not in (log.read_text() if log.exists() else "")
 
 
 def test_session_start_hook_still_syncs_without_it(tmp_path, monkeypatch):
-    from tests.test_agent_op_env_hook import _run
+    from tests.test_agent_session_start_hook import _run
     monkeypatch.delenv("CANOPY_AGENT_ENV_FILE", raising=False)
-    r, _ef, log = _run(tmp_path, have_key=True)
+    r, _ef, log = _run(tmp_path)
     assert r.returncode == 0 and "cred sync" in log.read_text()
 
 

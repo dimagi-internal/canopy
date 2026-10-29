@@ -11,28 +11,19 @@ import json
 import os
 import stat
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
 
 from orchestrator import agent_prepare as ap
 from orchestrator import cred_cli
-from tests.test_agent_prepare import AGENT_KEY, Box, _creds, _prep, _repo
+from tests.test_agent_prepare import Box, _creds, _prep, _repo
 
 
 class PipeBox(Box):
-    """The fake machine, plus `op inject` to stdout (no -o): the in-memory resolve."""
+    """The fake machine, plus an installer that writes its own copies."""
 
     def __call__(self, argv, **kw):
-        if argv[:2] == ["op", "inject"] and "-o" not in argv:
-            env = kw.get("env") or {}
-            self.calls.append((list(argv), env.get("OP_SERVICE_ACCOUNT_TOKEN"), None, None))
-            self.envs.append((list(argv), dict(env)))
-            if env.get("OP_SERVICE_ACCOUNT_TOKEN") != AGENT_KEY or env.get("AGENT_VAULT") != "Agent-Ace":
-                return SimpleNamespace(returncode=1, stdout="", stderr="could not resolve")
-            return SimpleNamespace(returncode=0, stdout="CANOPY_WEB_PAT=x\nGDRIVE_ROOT=y\n",
-                                   stderr="")
         if argv[0] == "bash":
             env = kw.get("env") or {}
             f = env.get("AGENT_ENV_FILE")
@@ -68,7 +59,7 @@ def _hermetic(tmp_path, monkeypatch):
     monkeypatch.setattr(canopy_web, "TOKEN_FILE", home / ".claude" / "canopy" / "workbench-token")
     for k in ("CANOPY_TOKEN", "CANOPY_WEB_PAT", "CANOPY_BASE_URL", "CANOPY_WEB_API_URL",
               "CANOPY_TURN_ID", "CANOPY_AGENT", "CANOPY_AGENT_SLUG", "CANOPY_AGENT_ENV_FILE",
-              "OP_SERVICE_ACCOUNT_TOKEN", "AGENT_VAULT", "AGENT_SLUG", "GH_TOKEN",
+              "AGENT_SLUG", "GH_TOKEN",
               "CANOPY_GOG_SECRET_FILE", "CANOPY_ECDH_BROKER"):
         monkeypatch.delenv(k, raising=False)
 
@@ -85,7 +76,8 @@ def turn_root(tmp_path, monkeypatch):
 def test_prepare_runner_writes_no_secret_files(tmp_path, turn_root):
     _repo(tmp_path / "agents", setup=True)
     box = PipeBox(tmp_path)
-    rep = _prep(tmp_path, box).prepare("ace")
+    rep = _prep(tmp_path, box, creds=_creds(
+        values={"CANOPY_WEB_PAT": "x", "GDRIVE_ROOT": "y"})).prepare("ace")
     assert rep.env_ok is True and "not written" in rep.env
     assert _secret_files(tmp_path / "home", tmp_path / "agents") == []
     assert not (tmp_path / "home" / ".ace" / ".env").exists()
@@ -100,26 +92,16 @@ def test_prepare_env_only_resolves_in_memory(tmp_path, turn_root):
     _repo(tmp_path / "agents")
     box = PipeBox(tmp_path)
     rep = _prep(tmp_path, box).prepare("ace", env_only=True)
-    assert rep.env_ok is True and rep.env.startswith("OK (2 vars")
-    assert [c[0][:2] for c in box.calls] == [["op", "inject"]]
-    assert box.calls[0][1] == AGENT_KEY
+    assert rep.env_ok is True and rep.env.startswith("OK (1 vars")
+    assert not box.calls
     assert _secret_files(tmp_path / "home", tmp_path / "agents") == []
-
-
-def test_prepare_canopy_web_backend_writes_nothing(tmp_path, turn_root):
-    _repo(tmp_path / "agents")
-    box = PipeBox(tmp_path)
-    creds = _creds(credential_source="canopy-web", key="", values={"CANOPY_WEB_PAT": "w"})
-    rep = _prep(tmp_path, box, creds=creds).prepare("ace", env_only=True)
-    assert rep.env_ok is True and "canopy-web" in rep.env
-    assert not (tmp_path / "home" / ".ace" / ".env").exists()
 
 
 def test_prepare_resolve_failure_is_reported(tmp_path, turn_root):
     _repo(tmp_path / "agents")
-    rep = _prep(tmp_path, PipeBox(tmp_path), creds=_creds(key="ops_WRONG")).prepare(
-        "ace", env_only=True)
-    assert rep.env_ok is False and any("op inject failed" in n for n in rep.notes)
+    creds = ap.RunnerCredentials(error="could not reach canopy-web for ace's credentials: timeout")
+    rep = _prep(tmp_path, PipeBox(tmp_path), creds=creds).prepare("ace", env_only=True)
+    assert rep.env_ok is False and any("could not reach canopy-web" in n for n in rep.notes)
 
 
 def test_the_flag_opts_in_without_the_root(tmp_path, monkeypatch):
@@ -147,7 +129,7 @@ def fake_values(monkeypatch):
 
     def runner_values(slug, *, agent_root, **kw):
         got["runner"] = (slug, agent_root)
-        return {"CANOPY_WEB_PAT": "p", "OP_SERVICE_ACCOUNT_TOKEN": "k", "gog-token": "{\n}"}, "1Password"
+        return {"CANOPY_WEB_PAT": "p", "OTHER_VAR": "k", "gog-token": "{\n}"}, "canopy-web"
 
     monkeypatch.setattr(cred_cli, "runner_env_values", runner_values)
     monkeypatch.setattr(cred_cli, "runner_env_bundle",
@@ -164,7 +146,7 @@ def test_cred_env_out_is_0600_under_the_root(tmp_path, turn_root, fake_values):
     assert stat.S_IMODE(out.stat().st_mode) == 0o600
     assert stat.S_IMODE(out.parent.stat().st_mode) == 0o700
     text = out.read_text()
-    assert "CANOPY_WEB_PAT=p\n" in text and "OP_SERVICE_ACCOUNT_TOKEN=k\n" in text
+    assert "CANOPY_WEB_PAT=p\n" in text and "OTHER_VAR=k\n" in text
     assert "gog-token" not in text      # not an env var: never in the file
     assert fake_values["runner"][0] == "ace"
 
@@ -202,8 +184,8 @@ def test_cred_env_print_json_shape(tmp_path, turn_root, fake_values):
                                                  "--print-json"])
     assert r.exit_code == 0, r.output
     body = json.loads(r.stdout.strip().splitlines()[-1])
-    assert body == {"agent": "ace", "source": "1Password",
-                    "values": {"CANOPY_WEB_PAT": "p", "OP_SERVICE_ACCOUNT_TOKEN": "k"}}
+    assert body == {"agent": "ace", "source": "canopy-web",
+                    "values": {"CANOPY_WEB_PAT": "p", "OTHER_VAR": "k"}}
     assert not turn_root.exists()       # wrote nothing
 
 
@@ -213,22 +195,21 @@ def test_cred_env_runner_needs_a_destination(fake_values):
 
 
 def test_runner_env_values_resolves_like_prepare(tmp_path, monkeypatch):
-    """`cred env --runner` uses the runner's credentials and the agent's own key, in memory."""
+    """`cred env --runner` uses the runner's credentials, in memory."""
     _repo(tmp_path / "agents")
     box = PipeBox(tmp_path)
     seen = {}
 
     def fetch(slug, **kw):
         seen.update(kw)
-        return _creds()
+        return _creds(values={"CANOPY_WEB_PAT": "x", "GDRIVE_ROOT": "y"})
     monkeypatch.setattr(ap, "fetch_runner_credentials", fetch)
     monkeypatch.setenv("CANOPY_TURN_ID", "turn-9")
     values, how = cred_cli.runner_env_values("ace", agent_root=tmp_path / "agents",
                                              base_url="https://canopy.test", token="rt",
                                              runner=box)
-    assert values == {"CANOPY_WEB_PAT": "x", "GDRIVE_ROOT": "y"} and how == "1Password"
+    assert values == {"CANOPY_WEB_PAT": "x", "GDRIVE_ROOT": "y"} and how == "canopy-web"
     assert seen["token"] == "rt" and seen["in_turn"] is True
-    assert box.calls[0][1] == AGENT_KEY
     assert not (tmp_path / "home" / ".ace" / ".env").exists()
 
 
@@ -274,31 +255,28 @@ def test_the_transient_root_is_created_0700(tmp_path, turn_root):
         assert stat.S_IMODE(d.stat().st_mode) == 0o700, d
 
 
-# ── --print-json extras: the resolve's own op_sa_token / op_vault ──
+# ── --print-json against old and new servers ──
 
 def _resolve_transport(body):
-    """canopy-web: /runtime, /credentials/resolve (answering `body`), /credentials/access."""
+    """canopy-web: /runtime, /credentials/resolve (answering `body`)."""
     calls = []
 
     def transport(method, url, headers, data):
         calls.append(url)
         if "/credentials/resolve" in url:
             return 200, json.dumps(body)
-        if "/credentials/access" in url:
-            return 200, json.dumps({"credential_source": "canopy-web"})
         return 200, json.dumps({"repo_url": ""})
     return transport, calls
 
 
 @pytest.mark.parametrize("body,want", [
-    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_sa_token": "ops_K", "op_vault": "Agent-Ace"},
-     {"op_sa_token": "ops_K", "op_vault": "Agent-Ace"}),
-    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_vault": "Agent-Ace"}, {"op_vault": "Agent-Ace"}),
-    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_sa_token": None}, {}),
+    # an OLD server still sends op_sa_token / op_vault: never passed through
+    ({"values": {"CANOPY_WEB_PAT": "w"}, "op_sa_token": "ops_K", "op_vault": "Agent-Ace"}, {}),
+    ({"values": {"CANOPY_WEB_PAT": "w"}, "delegated": None}, {}),
     ({"values": {"CANOPY_WEB_PAT": "w"}}, {}),
 ])
-def test_print_json_passes_through_the_resolves_extras(tmp_path, turn_root, monkeypatch,
-                                                       body, want):
+def test_print_json_passes_through_only_the_resolves_current_extras(tmp_path, turn_root,
+                                                                    monkeypatch, body, want):
     from orchestrator import agent_prepare
     transport, calls = _resolve_transport(body)
     real = agent_prepare.fetch_runner_credentials
@@ -323,15 +301,15 @@ def test_print_json_passes_through_the_resolves_extras(tmp_path, turn_root, monk
 
 
 def test_print_json_extras_still_need_runner(fake_values):
-    fake_values["extras"] = {"op_sa_token": "ops_K"}
+    fake_values["extras"] = {"delegated": {"GH": "tok"}}
     r = CliRunner().invoke(cred_cli.cred_group, ["env", "--slug", "ace", "--print-json"])
-    assert r.exit_code == cred_cli.EXIT_USAGE and "ops_K" not in r.output
+    assert r.exit_code == cred_cli.EXIT_USAGE and "tok" not in r.output
 
 
 def test_out_never_writes_the_extras(tmp_path, turn_root, monkeypatch):
     from orchestrator import agent_prepare
     transport, _ = _resolve_transport({"values": {"CANOPY_WEB_PAT": "w"},
-                                       "op_sa_token": "ops_K"})
+                                       "op_sa_token": "tok"})
     real = agent_prepare.fetch_runner_credentials
     monkeypatch.setattr(agent_prepare, "fetch_runner_credentials",
                         lambda slug, **kw: real(slug, **{**kw, "transport": transport}))
@@ -342,4 +320,4 @@ def test_out_never_writes_the_extras(tmp_path, turn_root, monkeypatch):
                                                  "--agent-root", str(tmp_path / "agents"),
                                                  "--out", str(out)])
     assert r.exit_code == 0, r.output
-    assert "ops_K" not in out.read_text() and "CANOPY_WEB_PAT=w" in out.read_text()
+    assert "tok" not in out.read_text() and "CANOPY_WEB_PAT=w" in out.read_text()

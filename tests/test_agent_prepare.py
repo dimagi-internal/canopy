@@ -2,13 +2,13 @@
 
 Each test pins a lesson canopy-web's runner/ec2/bootstrap_agents.sh learned the hard way, so
 moving the logic here (2026-10-15, agent-setup-lifecycle.md phase 2) keeps all of them:
-- every `op` call carries exactly ONE key: the agent's for its vault, the workspace's for the
-  shared vault (2026-09-07: a per-agent key cannot read the shared gog client);
+- the agent's env and the gog client both come from the values canopy-web resolved for the
+  runner (the Canopy vault, workspace vault layered under the agent's);
 - the GitHub token rides one git command's environment, never argv or the box;
 - a clone whose pull failed is still provisioned (#965); no clone at all fails the agent but
   still reports;
 - required plugins are pulled every pass, get node deps when the lockfile moved, and get their
-  key files from the two vaults this box reads (canopy-web#1237);
+  key files from the agent's Canopy vault (canopy-web#1237);
 - the mailbox is the INSTANCE's (canopy-web), never the repo's (#984);
 - readiness is tri-state: "did not check" is never reported as broken (2026-09-08);
 - canopy-web unreachable is not "unregistered".
@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,7 +25,7 @@ import pytest
 from orchestrator import agent_prepare as ap
 from orchestrator.agent_prepare import RunnerCredentials, RunnerPreparer, turn_readiness
 
-AGENT_KEY, GH = "ops_AGENT", "ghp_OWNER"
+GH = "ghp_OWNER"
 
 
 @pytest.fixture(autouse=True)
@@ -34,9 +33,9 @@ def _isolated_home(tmp_path, monkeypatch):
     """Every path under ~ (~/.<slug>/.env, its stamp, gog, plugins) lands in tmp — a test
     must never touch the real machine's agent state (2026-10-15: one did, a stamp)."""
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    # GH_TOKEN too: a cloud runner exports its own, and op_env inherits os.environ, so the
-    # box's token would read as the preparer leaking the agent's into a non-git call.
-    for k in ("OP_SERVICE_ACCOUNT_TOKEN", "AGENT_VAULT", "AGENT_SLUG", "GH_TOKEN"):
+    # GH_TOKEN too: a cloud runner exports its own, and the box's token would read as the
+    # preparer leaking the agent's into a non-git call.
+    for k in ("AGENT_SLUG", "GH_TOKEN"):
         monkeypatch.delenv(k, raising=False)
 
 
@@ -46,12 +45,11 @@ def _token(client="canopy", email="ace@dimagi-ai.com", created="2026-10-01T00:00
 
 
 class Box:
-    """A fake machine: records every command, answers op/git/claude/npm/gog."""
+    """A fake machine: records every command, answers git/claude/npm/gog."""
 
-    def __init__(self, tmp: Path, *, vault_items=None, pull_fails=False, clone_fails=False,
+    def __init__(self, tmp: Path, *, pull_fails=False, clone_fails=False,
                  gog_live=True, accounts=None):
         self.tmp, self.calls = tmp, []
-        self.items = vault_items or {}        # "vault/item/field" -> value
         self.pull_fails, self.clone_fails = pull_fails, clone_fails
         self.gog_live, self.accounts = gog_live, accounts or []
         self.markets, self.plugins = set(), set()
@@ -60,29 +58,11 @@ class Box:
 
     def __call__(self, argv, **kw):
         env = kw.get("env") or {}
-        self.calls.append((list(argv), env.get("OP_SERVICE_ACCOUNT_TOKEN"), env.get("GH_TOKEN"),
-                           kw.get("cwd")))
+        self.calls.append((list(argv), None, env.get("GH_TOKEN"), kw.get("cwd")))
         self.envs.append((list(argv), dict(env)))
         ok = SimpleNamespace(returncode=0, stdout="", stderr="")
         bad = lambda e: SimpleNamespace(returncode=1, stdout="", stderr=e)  # noqa: E731
         cmd = argv[0]
-        if cmd == "op" and argv[1] == "read":
-            ref = argv[2][len("op://"):]
-            key_ok = {"Agent-Ace": AGENT_KEY}.get(ref.split("/")[0])
-            if env.get("OP_SERVICE_ACCOUNT_TOKEN") != key_ok:
-                return bad(f'"{ref.split("/")[0]}" isn\'t a vault in this account')
-            v = self.items.get(ref) or self.items.get(ref + "/credential")
-            return SimpleNamespace(returncode=0, stdout=v, stderr="") if v else bad("isn't an item")
-        if cmd == "op" and argv[1:3] == ["vault", "get"]:
-            if env.get("OP_SERVICE_ACCOUNT_TOKEN") != AGENT_KEY:
-                return bad("isn't a vault in this account")
-            return SimpleNamespace(returncode=0, stdout='{"content_version": 7}', stderr="")
-        if cmd == "op" and argv[1] == "inject":
-            if env.get("OP_SERVICE_ACCOUNT_TOKEN") != AGENT_KEY or env.get("AGENT_VAULT") != "Agent-Ace":
-                return bad("could not resolve op://${AGENT_VAULT}/canopy-pat/credential")
-            out = Path(argv[argv.index("-o") + 1])
-            out.write_text("CANOPY_WEB_PAT=x\n")
-            return ok
         if cmd == "git":
             sub = [a for a in argv if not a.startswith("credential.") and a != "-c"]
             if "clone" in sub:
@@ -134,7 +114,6 @@ def _repo(root: Path, slug="ace", *, gog_client="canopy", required=None, setup=F
     if required:
         cfg["required_plugins"] = required
     (repo / "config" / "agent.json").write_text(json.dumps(cfg))
-    (repo / ".env.tpl").write_text("CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential\n")
     if setup:
         (repo / "bin").mkdir(exist_ok=True)
         (repo / "bin" / f"{slug}-setup").write_text("#!/bin/bash\n")
@@ -142,9 +121,10 @@ def _repo(root: Path, slug="ace", *, gog_client="canopy", required=None, setup=F
 
 
 def _creds(**over):
-    base = dict(repo_url="https://github.com/dimagi-internal/ace", vault="Agent-Ace", key=AGENT_KEY,
+    base = dict(repo_url="https://github.com/dimagi-internal/ace",
                 github_token=GH, mailbox="ace@dimagi-ai.com",
-                web_gog_token=_token(), values={"gog-oauth-client": '{"installed": {}}'})
+                web_gog_token=_token(),
+                values={"CANOPY_WEB_PAT": "x", "gog-oauth-client": '{"installed": {}}'})
     return RunnerCredentials(**{**base, **over})
 
 
@@ -164,16 +144,10 @@ def _prep(tmp, box, creds=None, reports=None, verify_ok=True):
         platform="linux")
 
 
-def test_the_gog_token_and_client_never_come_from_1password(tmp_path):
-    # Off 1Password (2026-10-26): canopy-web's token, the canopy vault's client file.
+def test_the_gog_token_and_client_come_from_canopy_web_and_the_canopy_vault(tmp_path):
     _repo(tmp_path / "agents")
-    box = Box(tmp_path, vault_items={
-        "Agent-Ace/gog-token/credential": _token(created="2027-01-01T00:00:00Z"),
-        "Agent-Ace/gog-oauth-client/credential": '{"from": "1password"}'})
+    box = Box(tmp_path)
     rep = _prep(tmp_path, box).prepare("ace")
-    reads = [c[0][2] for c in box.ran(["op", "read"])]
-    assert not [r for r in reads if "gog-token" in r or "gog-oauth-client" in r]
-    assert all("--account" not in c[0] for c in box.ran(["op"]))
     assert rep.env_ok is True and rep.client_creds_ok and rep.gog_client == "canopy"
     assert rep.token.startswith("canopy-web canopy")
 
@@ -192,7 +166,7 @@ def test_a_clone_whose_pull_failed_is_still_provisioned(tmp_path):
     box = Box(tmp_path, pull_fails=True)
     rep = _prep(tmp_path, box).prepare("ace")
     assert any("repo not updated" in n for n in rep.notes)
-    assert box.ran(["op", "inject"]) and rep.env_ok is True
+    assert rep.env_ok is True and (tmp_path / "home" / ".ace" / ".env").is_file()
 
 
 def test_no_clone_at_all_fails_the_agent_but_still_reports(tmp_path):
@@ -211,12 +185,13 @@ def test_required_plugins_are_pulled_every_pass_get_deps_and_key_files(tmp_path)
     (dep / "package.json").write_text("{}")
     (dep / "config").mkdir()
     (dep / "config" / "secrets.yaml").write_text(
-        "secrets:\n  - name: gws\n    op: op://AI-Agents/gws-sa-key/credential\n"
+        "secrets:\n  - name: gws-sa-key\n"
         "    target: '{repo}/.gws-sa-key.json'\n"
-        "  - name: sf\n    op: op://AI-Agents/sf/credential\n    target: '{repo}/sf'\n"
+        "  - name: sf\n    target: '{repo}/sf'\n"
         "    optional: true\n")
-    box = Box(tmp_path, vault_items={"Agent-Ace/gws-sa-key/credential": "KEYFILE"})
-    rep = _prep(tmp_path, box).prepare("ace")
+    box = Box(tmp_path)
+    creds = _creds(values={"CANOPY_WEB_PAT": "x", "gws-sa-key": "KEYFILE"})
+    rep = _prep(tmp_path, box, creds=creds).prepare("ace")
     assert box.ran(["git", "-c"]) and any(dep.as_posix() in " ".join(c[0]) and "pull" in c[0]
                                           for c in box.ran(["git"]))
     assert [c[3] for c in box.ran(["npm"])] == [str(dep)]
@@ -272,49 +247,34 @@ def test_unreachable_canopy_web_is_not_unregistered(tmp_path):
     assert not any("PUT /api/agents" in n for n in rep.notes)
 
 
-def test_no_vault_registered_says_how_and_injects_nothing(tmp_path):
-    _repo(tmp_path / "agents")
-    box = Box(tmp_path)
-    rep = _prep(tmp_path, box, creds=_creds(vault="", key="")).prepare("ace")
-    assert rep.env_ok is False and not box.ran(["op", "inject"])
-    assert any("canopy agent vault --slug ace" in n for n in rep.notes)
-
-
 def test_credentials_only_never_clones_or_reprovisions_a_live_agent(tmp_path):
     _repo(tmp_path / "agents", setup=True)
     box = Box(tmp_path)
     _prep(tmp_path, box).prepare("ace", credentials_only=True)
     assert not box.ran(["git"]) and not box.ran(["claude"]) and not box.ran(["bash"])
-    assert not box.ran(["op", "inject"])
 
 
-def test_env_only_is_cred_sync_reinject_only_on_a_change(tmp_path):
-    """The claim-time refresh is canopy's `cred sync` — the function every session start
-    runs — so a runner keeps no copy of its own: one `op vault get`, `op inject` only
-    when the fingerprint moved, with the agent's key and its vault."""
+def test_env_only_writes_the_env_from_the_resolved_values(tmp_path):
+    """The claim-time refresh writes ~/.<slug>/.env from the values canopy-web resolved for
+    this runner, 0600."""
     _repo(tmp_path / "agents")
     box = Box(tmp_path)
     rep = _prep(tmp_path, box).prepare("ace", env_only=True)
-    assert rep.env_ok is True and rep.env == "re-injected"
-    assert [c[0][:3] for c in box.calls] == [["op", "vault", "get"], ["op", "inject", "-f"]]
-    assert all(c[1] == AGENT_KEY for c in box.calls)
-    assert (tmp_path / "home" / ".ace" / ".env").is_file()
-    box.calls.clear()
-    rep = _prep(tmp_path, box).prepare("ace", env_only=True)
-    assert rep.env == "unchanged" and [c[0][1] for c in box.calls] == ["vault"]
-    import os
-    assert "OP_SERVICE_ACCOUNT_TOKEN" not in os.environ   # staged for the call, then removed
+    assert rep.env_ok is True and rep.env == "OK (1 vars from canopy-web)"
+    env = tmp_path / "home" / ".ace" / ".env"
+    assert "CANOPY_WEB_PAT=x" in env.read_text() and oct(env.stat().st_mode)[-3:] == "600"
+    assert not box.calls
 
 
-def test_the_provisioner_gets_only_this_agents_key(tmp_path):
+def test_the_provisioner_runs_the_agents_setup(tmp_path):
     _repo(tmp_path / "agents", setup=True)
     box = Box(tmp_path)
     _prep(tmp_path, box).prepare("ace")
     (setup,) = box.ran(["bash"])
-    assert setup[1] == AGENT_KEY and setup[0][-1] == "--skip-doctor"
+    assert setup[0][-1] == "--skip-doctor"
 
 
-def test_the_provisioner_is_handed_the_vault_and_the_env_this_pass_filled(tmp_path):
+def test_the_provisioner_is_handed_the_env_this_pass_filled(tmp_path):
     """bin/<slug>-setup must not re-resolve what prepare already did: re-resolving goes
     through `canopy agent env`, which needs a person's token a runner never has
     (cloud-ec2-2, 2026-10-18: ACE's setup failed every pass at exactly that step)."""
@@ -323,20 +283,23 @@ def test_the_provisioner_is_handed_the_vault_and_the_env_this_pass_filled(tmp_pa
     rep = _prep(tmp_path, box).prepare("ace")
     assert rep.env_ok is True
     ((argv, env),) = [e for e in box.envs if e[0][0] == "bash"]
-    assert env["AGENT_VAULT"] == "Agent-Ace" and env["AGENT_SLUG"] == "ace"
+    assert env["AGENT_SLUG"] == "ace"
     assert env["AGENT_ENV_FILE"] == str(tmp_path / "home" / ".ace" / ".env")
-    assert Path(env["AGENT_ENV_FILE"]).read_text() == "CANOPY_WEB_PAT=x\n"
+    assert "CANOPY_WEB_PAT=x" in Path(env["AGENT_ENV_FILE"]).read_text()
     assert env["CLAUDE_PLUGIN_DATA"].endswith("plugins/data/ace-ace")
 
 
 def test_a_failed_env_step_hands_the_provisioner_no_env_file(tmp_path):
     _repo(tmp_path / "agents", setup=True)
     box = Box(tmp_path)
-    # The wrong key: op inject fails, so there is no freshly filled env to hand over.
-    rep = _prep(tmp_path, box, creds=_creds(key="ops_WRONG")).prepare("ace")
+    # Unwritable home: the env step fails, so there is no freshly filled env to hand over.
+    blocker = tmp_path / "home" / ".ace"
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_text("not a directory")
+    rep = _prep(tmp_path, box).prepare("ace")
     assert rep.env_ok is False
     ((argv, env),) = [e for e in box.envs if e[0][0] == "bash"]
-    assert "AGENT_ENV_FILE" not in env and env["AGENT_VAULT"] == "Agent-Ace"
+    assert "AGENT_ENV_FILE" not in env
 
 
 def test_a_failed_provisioner_reports_its_fail_line_not_its_info_banner(tmp_path):
@@ -344,7 +307,7 @@ def test_a_failed_provisioner_reports_its_fail_line_not_its_info_banner(tmp_path
     box = Box(tmp_path)
     box.setup_result = SimpleNamespace(returncode=1, stderr="", stdout=(
         "INFO plugin_root=/home/ubuntu/.claude/plugins/cache/ace/ace/0.13.2041 (source=x)\n"
-        "PASS op: authenticated as service-account\n"
+        "PASS plugin: installed\n"
         "FAIL instance: canopy could not resolve this install's ACE instance and vault. "
         "canopy said:\n"
         "Error: not signed in to canopy-web — run /canopy:canopy-web-pat-mint, then re-run.\n"
@@ -386,11 +349,11 @@ def test_runner_credentials_read_the_repo_from_runtime():
         calls.append(url)
         if url.endswith("/runtime"):
             return 200, '{"repo_url": "https://github.com/o/r"}'
-        return 200, '{"op_vault": "V", "op_sa_token": "k", "mailbox": "a@b"}'
+        return 200, '{"mailbox": "a@b"}'
 
     c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
                                     transport=transport)
-    assert (c.repo_url, c.vault, c.mailbox) == ("https://github.com/o/r", "V", "a@b")
+    assert (c.repo_url, c.mailbox) == ("https://github.com/o/r", "a@b")
 
 
 def test_runner_credentials_say_they_are_a_box_refresh():
@@ -401,7 +364,7 @@ def test_runner_credentials_say_they_are_a_box_refresh():
     def transport(method, url, headers, data):
         if "/credentials/resolve" in url:
             seen.append(dict(headers))
-        return 200, '{"op_vault": "V"}'
+        return 200, '{"values": {}}'
 
     ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t", transport=transport)
     assert seen and seen[0]["X-Canopy-Read-Purpose"] == "runner-refresh"
@@ -415,7 +378,7 @@ def test_a_verification_run_labels_its_reads_as_a_check():
     def transport(method, url, headers, data):
         if "/credentials/resolve" in url:
             seen.append(dict(headers))
-        return 200, '{"op_vault": "V"}'
+        return 200, '{"values": {}}'
 
     purpose = ap.verification_purpose("vault laptop check")
     ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t", transport=transport,
@@ -446,21 +409,20 @@ def _recording(secret_refs):
         if "/credentials/resolve" in url:
             resolves.append(url)
             # A scoped answer: the extras ride beside `values`, never inside it.
-            return 200, '{"values": {"gog-token": "{}"}, "op_vault": "V", "op_sa_token": "k"}'
+            return 200, '{"values": {"gog-token": "{}"}}'
         return 200, "{}"
     return transport, resolves
 
 
-def test_the_refresh_asks_only_for_the_gog_token_and_the_vault_keys():
+def test_the_refresh_asks_only_for_the_gog_token():
     """Not the agent's PAT, Salesforce, GitHub token or anything else: the timer pass
     writes no env, so every other secret it read went on the wire every 30 minutes."""
     transport, resolves = _recording(["CANOPY_WEB_PAT", "gog-token", "salesforce"])
     c = ap.fetch_runner_credentials("hal", base_url="https://c.test", token="t",
                                     transport=transport, minimal=True)
-    assert resolves == ["https://c.test/api/agents/hal/credentials/resolve"
-                        "?refs=gog-token,op_sa_token"], \
+    assert resolves == ["https://c.test/api/agents/hal/credentials/resolve?refs=gog-token"], \
         "exactly one scoped read, never the unscoped fallback"
-    assert (c.key, c.web_gog_token, c.values) == ("k", "{}", {"gog-token": "{}"})
+    assert (c.web_gog_token, c.values) == ("{}", {"gog-token": "{}"})
 
 
 def test_a_refresh_of_an_agent_without_a_gog_token_names_none():
@@ -468,8 +430,7 @@ def test_a_refresh_of_an_agent_without_a_gog_token_names_none():
     transport, resolves = _recording(["CANOPY_WEB_PAT"])
     ap.fetch_runner_credentials("eva", base_url="https://c.test", token="t",
                                 transport=transport, minimal=True)
-    assert resolves == ["https://c.test/api/agents/eva/credentials/resolve"
-                        "?refs=op_sa_token"]
+    assert resolves == []
 
 
 def test_a_full_prepare_still_resolves_everything():
@@ -492,64 +453,58 @@ def test_prepare_scopes_only_the_credentials_only_pass(tmp_path, monkeypatch):
         assert seen[-1] is want, kwargs
 
 
-# ── an agent on the canopy-web backend (Canopy Vault, canopy#946) ─────────────
+# ── the agent's env comes from the Canopy vault ───────────────────────────────
 
-def test_a_canopy_web_agent_gets_its_env_from_canopy_web_not_op(tmp_path):
-    """canopy-web withholds the vault key from a canopy-web-backed agent, so `op inject`
-    cannot run: the env comes from the values canopy-web resolved for this runner."""
+def test_an_agents_env_comes_from_the_values_canopy_web_resolved(tmp_path):
+    """The env is the values canopy-web resolved for this runner, written 0600."""
     _repo(tmp_path / "agents")
     box = Box(tmp_path)
-    creds = _creds(credential_source="canopy-web", key="", vault="",
-                   values={"CANOPY_WEB_PAT": "cpat_FROM_WEB", "gog-token": "{\n}"})
+    creds = _creds(values={"CANOPY_WEB_PAT": "cpat_FROM_WEB", "gog-token": "{\n}"})
     rep = _prep(tmp_path, box, creds=creds).prepare("ace", env_only=True)
     assert rep.env_ok is True and rep.env == "OK (1 vars from canopy-web)"
     env = (tmp_path / "home" / ".ace" / ".env")
     assert "CANOPY_WEB_PAT=cpat_FROM_WEB" in env.read_text() and "gog-token" not in env.read_text()
     assert oct(env.stat().st_mode)[-3:] == "600"
-    assert not [c for c in box.calls if c[0][:1] == ["op"]]
-    assert not any("no key" in n for n in rep.notes)
+    assert not box.calls
 
 
-def test_the_full_env_step_takes_the_same_branch(tmp_path):
+def test_the_full_env_step_takes_the_same_path(tmp_path):
     repo = _repo(tmp_path / "agents")
     box = Box(tmp_path)
-    p = _prep(tmp_path, box, creds=_creds(credential_source="canopy-web", key="",
-                                          values={"CANOPY_WEB_PAT": "x"}))
+    p = _prep(tmp_path, box, creds=_creds(values={"CANOPY_WEB_PAT": "x"}))
     rep = ap.RunnerReport(slug="ace")
     p._env("ace", repo, rep)
-    assert rep.env_ok is True and not [c for c in box.calls if c[0][:1] == ["op"]]
+    assert rep.env_ok is True and not box.calls
 
 
-def test_runner_credentials_carry_the_backend_and_values():
+def test_runner_credentials_carry_the_values_and_tolerate_old_server_fields():
+    """An older canopy-web still sends op_vault / op_sa_token: they are ignored, never
+    required, and never appear on the credentials."""
     def transport(method, url, headers, data):
-        if url.endswith("/credentials/access"):
-            return 200, '{"credential_source": "canopy-web", "may_resolve": true}'
         if url.endswith("/runtime"):
             return 200, "{}"
-        return 200, '{"values": {"A": "1"}, "op_vault": "", "op_sa_token": ""}'
+        return 200, '{"values": {"A": "1"}, "op_vault": "V", "op_sa_token": "k"}'
 
     c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
                                     transport=transport)
-    assert c.credential_source == "canopy-web" and c.values == {"A": "1"}
+    assert c.values == {"A": "1"} and c.extras == {}
+    assert not hasattr(c, "key") and not hasattr(c, "vault")
 
 
-def test_an_unreachable_access_route_means_the_default_path():
+def test_runner_credentials_work_against_a_server_without_the_old_fields():
     def transport(method, url, headers, data):
-        if url.endswith("/credentials/access"):
-            return 500, "boom"
-        return 200, '{"op_vault": "V", "op_sa_token": "k"}'
+        return 200, '{"values": {"A": "1"}}' if "resolve" in url else "{}"
 
     c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
                                     transport=transport)
-    assert c.credential_source == "" and (c.vault, c.key) == ("V", "k")
+    assert c.values == {"A": "1"} and c.error == ""
 
 
 def test_a_canopy_hosted_mailbox_needs_no_gmail_token_and_is_ready(tmp_path):
     # An address on the workspace's own mail domain: canopy-web receives and sends it, so a
     # missing gog token is not a broken mailbox (it used to fail "no gog token" forever).
     _repo(tmp_path / "agents")
-    creds = _creds(mailbox="scout@marshellis.com", mailbox_backend="ses", vault="",
-                   key="", credential_source="canopy-web")
+    creds = _creds(mailbox="scout@marshellis.com", mailbox_backend="ses")
     rep = _prep(tmp_path, Box(tmp_path), creds=creds).prepare("ace", credentials_only=True)
     assert rep.ok, rep.notes
     assert rep.gmail == "canopy-hosted" and rep.mailbox_ok and rep.turn_ready is True
@@ -584,9 +539,10 @@ def test_without_google_account_the_token_is_still_compared_to_the_mailbox(tmp_p
     """An older canopy-web sends no `google_account`: the mailbox stays the comparison,
     so a token for any other address is still refused."""
     _repo(tmp_path / "agents")
-    box = Box(tmp_path, vault_items={
-        "Agent-Ace/gog-token/credential": _token(email="ace@dimagi-ai.com")})
-    prep = _prep(tmp_path, box, creds=_creds(mailbox="ace@dimagi.ai", mailbox_backend="ses"))
+    box = Box(tmp_path)
+    prep = _prep(tmp_path, box, creds=_creds(
+        mailbox="ace@dimagi.ai", mailbox_backend="ses",
+        web_gog_token=_token(email="ace@dimagi-ai.com")))
     assert prep.expected_mailbox("ace", tmp_path) == "ace@dimagi.ai"
     rep = prep.prepare("ace", credentials_only=True)
     assert not box.ran(["gog", "auth", "tokens", "import"])

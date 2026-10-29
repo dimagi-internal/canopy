@@ -3,7 +3,7 @@
  *
  * One server, many agents: the subprocess resolves WHO it acts as and WHERE
  * it may write entirely from session environment variables, exported per
- * agent (settings/env or canopy provision). There is deliberately NO
+ * agent (settings/env or the Canopy vault). There is deliberately NO
  * fallback to any default identity — if the identity env is absent the
  * server must fail loudly at startup rather than act as a shared account.
  *
@@ -47,7 +47,7 @@ export class GwsIdentityError extends Error {
 const HELP =
   'canopy-gws resolves its Google identity from per-agent session env. ' +
   'Set GWS_IDENTITY_MODE=sa and GWS_SA_KEY_PATH=/path/to/sa-key.json in the ' +
-  "agent's environment (settings env block or `canopy provision`). " +
+  "agent's environment (settings env block or its Canopy vault). " +
   'There is no default identity fallback by design.';
 
 /**

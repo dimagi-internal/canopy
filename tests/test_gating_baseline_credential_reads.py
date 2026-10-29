@@ -102,8 +102,8 @@ def test_another_turns_env_is_denied_when_the_turn_has_no_file(monkeypatch, tmp_
 
 ALLOWED = [
     ("Read", {"file_path": "/home/u/.hal/.env"}),            # its own legacy env
-    ("Bash", {"command": "cat ~/.hal/.env.tpl"}),
-    ("Read", {"file_path": "/home/u/.eva/.env.tpl"}),          # a template, no values
+    ("Bash", {"command": "cat ~/.hal/notes.md"}),
+    ("Read", {"file_path": "/home/u/.eva/README.md"}),         # no values
     ("Read", {"file_path": OWN}),                              # its own turn file
     ("Bash", {"command": f"canopy cred env --slug hal --out {OWN}"}),
     ("Read", {"file_path": "/home/u/.gog/hal/config.json"}),   # its own gog home
@@ -154,25 +154,22 @@ def test_the_session_hook_routes_file_reads_to_the_guard():
 
 
 # Built at runtime so the literal never sits on a command line the live guard scans.
-OP_STORE = "/Users/jj/.config/" + "op/" + "config"
+ACT_AS_STORE = "/Users/jj/.canopy/" + "act-as/" + "eva.json"
 
 
 def test_a_persons_session_does_not_rail_read_tools_at_all(monkeypatch, tmp_path):
     """Read/Grep/Glob reach the guard since these rails; a person's session never was gated on
-    them and is not now — not even by the 1Password store rail (which still blocks Edit/Write
-    there, as before)."""
+    them and is not now (these rails are agent-only)."""
     monkeypatch.setenv("CANOPY_PLUGIN_DIR", str(PLUGIN))
     guard = _guard()
     plain = tmp_path / "plain"
     plain.mkdir()
     env = {"CLAUDE_PROJECT_DIR": str(plain)}
-    for tool, inp in [("Read", {"file_path": OP_STORE}),
+    for tool, inp in [("Read", {"file_path": ACT_AS_STORE}),
                       ("Grep", {"pattern": "x", "path": "/etc/canopy-runner"}),
                       ("Glob", {"pattern": "**", "path": "/Users/jj/.gog"})]:
         assert guard.run_session({"tool_name": tool, "tool_input": inp, "cwd": str(plain)},
                                  env=env)[0] == 0, tool
-    edit = {"tool_name": "Edit", "tool_input": {"file_path": OP_STORE}, "cwd": str(plain)}
-    assert guard.run_session(edit, env=env)[0] == 2
 
 
 def test_subject_for_search_tools_is_where_they_look():

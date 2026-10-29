@@ -40,7 +40,7 @@ procedure, authoring rules and gate are in `/canopy:ddd-recorded-walkthrough`.
 ## Prerequisites
 - Run from the **project repo** that owns the narrative (e.g. connect-labs) — the spec's `setup:` reseeds there.
 - A live browse session authenticated to the target app, for session-auth specs (see `/canopy:walkthrough` setup).
-- The **video engine deps**: `video-engine/node_modules` installed (run `/canopy:setup`, or `cd video-engine && npm ci`) + `ELEVENLABS_API_KEY` in env / `--env-file` / a `.env` (e.g. from 1Password). The renderer refuses to render silent.
+- The **video engine deps**: `video-engine/node_modules` installed (run `/canopy:setup`, or `cd video-engine && npm ci`) + `ELEVENLABS_API_KEY` in env / `--env-file` / a `.env`. The renderer refuses to render silent.
 - `ffmpeg` + `playwright` (the canopy recorder's deps).
 
 ## Procedure

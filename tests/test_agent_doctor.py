@@ -12,7 +12,6 @@ from orchestrator.agent_doctor import (
     check_hook_wiring,
     check_identity,
     check_setup,
-    check_secrets_manifest,
     run_agent_doctor,
 )
 from orchestrator.agent_email import gog_data_dir
@@ -29,13 +28,23 @@ def _secrets_backend_offline(monkeypatch):
     """The secrets-backend check asks canopy-web; keep every test offline with a canopy-vault
     agent this device can open, unless a test is about that check."""
     monkeypatch.setattr("orchestrator.agent_doctor.probe_secrets_backend",
-                        lambda slug: {"source": "canopy-web", "enabled": True, "kv": 1,
+                        lambda slug: {"enabled": True, "kv": 1,
                                       "this_device": True, "error": ""})
 
 
+@pytest.fixture(autouse=True)
+def _env_materialized(monkeypatch, tmp_path_factory):
+    """A machine where hal's env is already written (~/.hal/.env), so the 'Secrets
+    materialized' check is green unless a test is about that check."""
+    monkeypatch.delenv("CANOPY_AGENT_ENV_FILE", raising=False)
+    home = tmp_path_factory.mktemp("home")
+    (home / ".hal").mkdir()
+    (home / ".hal" / ".env").write_text("CANOPY_WEB_PAT=pat-value\n")
+    monkeypatch.setenv("HOME", str(home))
+
+
 def _agent_repo(tmp_path, *, email="hal@dimagi-ai.com", slug="hal",
-                gating=True, secrets=True, hooks=True, agent_json_extra=None,
-                materialize=False):
+                gating=True, hooks=True, agent_json_extra=None):
     repo = tmp_path / slug
     (repo / ".claude-plugin").mkdir(parents=True)
     (repo / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": slug}))
@@ -59,20 +68,6 @@ def _agent_repo(tmp_path, *, email="hal@dimagi-ai.com", slug="hal",
                                       "hooks": [{"type": "command",
                                                  "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/gating_guard.py\""}]}]}
         }))
-    if secrets:
-        (repo / "config" / "secrets.yaml").write_text(
-            "secrets:\n"
-            "  - name: gog client\n"
-            f"    op: op://AI-Agents/{slug} gog client/notesPlain\n"
-            '    target: "{repo}/creds.json"\n'
-            "env:\n"
-            '  target: "{repo}/.env"\n'
-            "  vars:\n"
-            f"    - key: {slug.upper()}_GMAIL_ACCOUNT\n"
-            f"      value: \"{email}\"\n")
-        if materialize:
-            (repo / "creds.json").write_text("{}")
-            (repo / ".env").write_text("X=1\n")
     return repo
 
 
@@ -102,7 +97,7 @@ def _steps(**status):
     keys = ("repo", "github", "mailbox", "vault", "runner", "job", "first_turn")
     return [{"key": k, "title": k.replace("_", " ").title(), "status": status.get(k, "done"),
              "where": "terminal" if k == "vault" else "web",
-             "command": "canopy agent vault --slug hal" if k == "vault" else ""} for k in keys]
+             "command": "canopy agent use hal" if k == "vault" else ""} for k in keys]
 
 
 class _FakeClient:
@@ -158,67 +153,6 @@ def test_gating_counts_rules(tmp_path):
     assert "1 effective deny rail(s)" in result.detail and "0 fleet-baseline" in result.detail
 
 
-def test_no_secrets_manifest_is_the_canopy_vault_target_state(tmp_path):
-    """The agent's Canopy vault is the one declaration (2026-10-22): a repo with no
-    .env.tpl and no config/secrets.yaml passes and says where its secrets are named."""
-    result = check_secrets_manifest(_agent_repo(tmp_path, secrets=False))
-    assert result.ok
-    assert "Canopy vault" in result.detail
-
-
-def test_secrets_manifest_counts_entries(tmp_path):
-    result = check_secrets_manifest(_agent_repo(tmp_path))
-    assert result.ok
-    assert "1 file secret(s), 1 env var(s)" in result.detail
-    assert "LEGACY" in result.detail
-
-
-def test_secrets_manifest_env_tpl_is_primary_no_secrets_yaml_needed(tmp_path):
-    """`.env.tpl` + `op inject` is the standard now — it must pass PRIMARY, on its own,
-    with no `config/secrets.yaml` present."""
-    repo = _agent_repo(tmp_path, secrets=False)
-    (repo / ".env.tpl").write_text(
-        "HAL_GMAIL_ACCOUNT=hal@dimagi-ai.com\n"
-        "GDRIVE_ROOT_FOLDER=op://Agent-Hal/gdrive-root-folder/credential\n"
-    )
-    result = check_secrets_manifest(repo)
-    assert result.ok
-    assert ".env.tpl (2 var(s)" in result.detail
-    # Same parser + table `canopy agent vault` fills from; a literal vault and a missing
-    # CANOPY_WEB_PAT are said, not failed (the agent may still run — on the wrong token).
-    assert "names vault(s) Agent-Hal literally" in result.detail
-    assert "no CANOPY_WEB_PAT line" in result.detail
-    (repo / ".env.tpl").write_text(
-        "CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential\n"
-        "GOG=op://${AGENT_VAULT}/gog-token/credential\n")
-    detail = check_secrets_manifest(repo).detail
-    assert "canopy-pat (minted), gog-token (linked)" in detail
-    assert "literally" not in detail and "no CANOPY_WEB_PAT" not in detail
-    # The vault is the one declaration (2026-10-22): a template is named as the copy it is.
-    assert "delete .env.tpl" in detail
-
-
-def test_secrets_manifest_fails_a_secret_reference_in_a_comment(tmp_path):
-    """A placeholder in a comment breaks the whole `op inject` once ${AGENT_VAULT} is set
-    (lex, 2026-10-15) — so it is a failure, not a style note."""
-    repo = _agent_repo(tmp_path, secrets=False)
-    (repo / ".env.tpl").write_text(
-        "# every ref is `op://${AGENT_VAULT}/<item>/<field>`\n"
-        "CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential\n")
-    result = check_secrets_manifest(repo)
-    assert not result.ok and "line(s) 1" in result.detail
-
-
-def test_secrets_manifest_prefers_env_tpl_over_legacy_yaml(tmp_path):
-    """When BOTH exist (mid-migration), `.env.tpl` wins — it's the primary manifest now."""
-    repo = _agent_repo(tmp_path, secrets=True)
-    (repo / ".env.tpl").write_text("KEY=op://Agent-Hal/some-item/credential\n")
-    result = check_secrets_manifest(repo)
-    assert result.ok
-    assert ".env.tpl" in result.detail
-    assert "LEGACY" not in result.detail
-
-
 def test_email_auth_skipped_without_identity():
     result = check_email_auth(None)
     assert not result.ok
@@ -243,7 +177,7 @@ def test_setup_reads_canopy_webs_checklist_not_a_second_opinion(tmp_path):
         steps=_steps(vault="todo", runner="waiting")))
     assert not result.ok
     assert "2 of 7 setup step(s) left" in result.detail
-    assert "Vault (todo) — run `canopy agent vault --slug hal`" in result.detail
+    assert "Vault (todo) — run `canopy agent use hal`" in result.detail
     assert "Runner (waiting)" in result.detail
 
 
@@ -264,13 +198,13 @@ def test_fix_registers_only_an_unregistered_agent_not_a_step_left(tmp_path):
 # --------------------------------------------------------------------------------------
 
 def test_run_agent_doctor_all_green(tmp_path):
-    repo = _agent_repo(tmp_path, materialize=True)
+    repo = _agent_repo(tmp_path)
     results, ok = run_agent_doctor(
         repo, gog_dir=_gog_home(tmp_path), runner=_ok_runner,
         client_factory=_client_factory(),
         registry_path=str(_plugin_registry(tmp_path)))
     assert ok
-    assert [r.ok for r in results] == [True] * 15
+    assert [r.ok for r in results] == [True] * 14
 
 
 def test_run_agent_doctor_hosted_only_agent_skips_gog_and_stays_green(tmp_path, monkeypatch):
@@ -279,14 +213,14 @@ def test_run_agent_doctor_hosted_only_agent_skips_gog_and_stays_green(tmp_path, 
     monkeypatch.setattr("orchestrator.agent_doctor.hosted_only", lambda identity: True)
     monkeypatch.setattr("orchestrator.agent_doctor.check_email_auth",
                         lambda *a, **k: pytest.fail("a hosted mailbox needs no gog probe"))
-    repo = _agent_repo(tmp_path, email="hal@marshellis.com", materialize=True)
+    repo = _agent_repo(tmp_path, email="hal@marshellis.com")
     results, ok = run_agent_doctor(
         repo, gog_dir=str(tmp_path / "no-gog"), runner=_ok_runner,
         client_factory=_client_factory(),
         registry_path=str(_plugin_registry(tmp_path)))
     by_name = {r.name: r for r in results}
     assert ok, [r for r in results if not r.ok]
-    assert len(results) == 15
+    assert len(results) == 14
     assert "google_account" in by_name["Email auth (gog)"].detail
     for name in ("Auth client", "Auth services", "Gog keychain trust"):
         assert by_name[name].detail.startswith("skipped — hosted mailbox")
@@ -304,23 +238,22 @@ def test_run_agent_doctor_identity_failure_degrades_dependents(tmp_path):
     assert "skipped" in by_name["canopy-web setup"].detail
     # non-identity checks still ran
     assert by_name["Gating rails"].ok
-    assert by_name["Secrets manifest"].ok
 
 
 def test_cli_agent_doctor_json_and_exit_code(tmp_path, monkeypatch):
-    repo = _agent_repo(tmp_path, secrets=False)
+    repo = _agent_repo(tmp_path)
     monkeypatch.setattr(
         "orchestrator.agent_doctor.preflight",
         lambda identity, gog_dir=None, runner=None: (True, ["OK: gog Gmail ready"]))
     monkeypatch.setattr(
         "orchestrator.agent_doctor.AgentClient", _client_factory())
     result = CliRunner().invoke(main, ["agent", "doctor", "--repo", str(repo), "--json-output"])
-    assert result.exit_code == 1  # secrets manifest missing
+    assert result.exit_code == 1  # secrets not materialized here
     payload = json.loads(result.output)
     assert payload["ok"] is False
     names = [c["name"] for c in payload["checks"]]
     assert names == ["Identity", "Plugin install", "Required plugins", "Gating rails",
-                     "Hook wiring", "Secrets manifest", "Secrets materialized",
+                     "Hook wiring", "Secrets materialized",
                      "Secrets backend", "Rails enforced", "Email auth (gog)", "Auth client", "Auth services",
                      "canopy-web setup", "Dependency upgrades", "Gog keychain trust"]
 
@@ -390,13 +323,6 @@ def test_gating_zero_rails_ok_without_email_shim(tmp_path):
     (repo / "config" / "gating.json").write_text(json.dumps({"deny": [], "approve": []}))
     result = check_gating(repo)
     assert result.ok
-
-
-def test_secrets_self_managed_provisioning_declared_in_agent_json(tmp_path):
-    repo = _agent_repo(tmp_path, secrets=False,
-                       agent_json_extra={"provisioning": ".env.tpl + op inject"})
-    result = check_secrets_manifest(repo)
-    assert result.ok and "self-managed" in result.detail
 
 
 def test_email_auth_keeps_full_multiline_remediation():
@@ -706,43 +632,20 @@ def test_required_plugins_skipped_when_registry_absent(tmp_path):
 
 
 # --------------------------------------------------------------------------------------
-# check_secrets_materialized — manifest declared vs actually provisioned HERE
+# check_secrets_materialized — the env file exists HERE and holds values
 # --------------------------------------------------------------------------------------
 
-def test_secrets_materialized_fails_when_targets_absent(tmp_path):
-    """A fresh macOS user has every repo, every manifest, and none of the resolved files."""
+def test_secrets_materialized_checks_the_agents_own_env_home(tmp_path):
+    """`canopy agent env` writes ~/.<slug>/.env; it must exist and every var must hold a value."""
     from orchestrator.agent_doctor import check_secrets_materialized
     repo = _agent_repo(tmp_path)
-    r = check_secrets_materialized(repo)
-    assert not r.ok and "missing on this machine" in r.detail and "canopy provision" in r.detail
-
-
-def test_secrets_materialized_passes_once_targets_exist(tmp_path):
-    from orchestrator.agent_doctor import check_secrets_materialized
-    repo = _agent_repo(tmp_path, materialize=True)
-    r = check_secrets_materialized(repo)
-    assert r.ok and "all 2 provisioned target(s) present" in r.detail
-
-
-def test_secrets_materialized_skipped_without_manifest(tmp_path):
-    from orchestrator.agent_doctor import check_secrets_materialized
-    r = check_secrets_materialized(_agent_repo(tmp_path, secrets=False))
-    assert r.ok and "skipped" in r.detail
-
-
-def test_secrets_materialized_checks_the_env_tpl_agents_own_env_home(tmp_path):
-    """`canopy agent env` writes ~/.<slug>/.env; every KEY the template declares must be there
-    WITH a value. Until 2026-10-15 this skipped .env.tpl agents, so a half-filled vault passed."""
-    from orchestrator.agent_doctor import check_secrets_materialized
-    repo = _agent_repo(tmp_path, secrets=False)
-    (repo / ".env.tpl").write_text("A=lit\nCANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential\n")
     home = tmp_path / "home"
     r = check_secrets_materialized(repo, home=home)
     assert not r.ok and "does not exist" in r.detail and "/hal:setup" in r.detail
     (home / ".hal").mkdir(parents=True)
     (home / ".hal" / ".env").write_text("A=lit\nCANOPY_WEB_PAT=\n")
     r = check_secrets_materialized(repo, home=home)
-    assert not r.ok and "empty CANOPY_WEB_PAT" in r.detail and "canopy vault" in r.detail
+    assert not r.ok and "empty CANOPY_WEB_PAT" in r.detail and "Canopy vault" in r.detail
     (home / ".hal" / ".env").write_text("A=lit\nCANOPY_WEB_PAT=secret-value\n")
     r = check_secrets_materialized(repo, home=home)
     assert r.ok and "all 2 var(s)" in r.detail and "secret-value" not in r.detail
@@ -841,11 +744,11 @@ def test_heal_agent_runs_fixer_only_for_failing_checks(tmp_path):
     from orchestrator.agent_doctor import heal_agent
     from orchestrator.doctor import CheckResult
     called = []
-    fixers = {"Secrets materialized": ("provision", lambda repo: called.append(repo) or "did it")}
+    fixers = {"Secrets materialized": ("fix", lambda repo: called.append(repo) or "did it")}
     results = [CheckResult("Secrets materialized", False, "missing"),
                CheckResult("Email auth (gog)", False, "dead token")]
     actions = heal_agent(tmp_path, results, fixers=fixers)
-    assert actions == [("provision", True, "did it")]
+    assert actions == [("fix", True, "did it")]
     assert len(called) == 1  # the un-fixable check was left alone, not half-attempted
 
 
@@ -854,11 +757,11 @@ def test_heal_agent_reports_fixer_failure_without_raising(tmp_path):
     from orchestrator.doctor import CheckResult
 
     def boom(repo):
-        raise RuntimeError("op not signed in")
+        raise RuntimeError("canopy-web unreachable")
 
     actions = heal_agent(tmp_path, [CheckResult("Secrets materialized", False, "missing")],
-                         fixers={"Secrets materialized": ("provision", boom)})
-    assert actions == [("provision", False, "op not signed in")]
+                         fixers={"Secrets materialized": ("fix", boom)})
+    assert actions == [("fix", False, "canopy-web unreachable")]
 
 
 def test_heal_agent_noop_when_all_green(tmp_path):
@@ -1067,7 +970,7 @@ def test_auth_services_skips_rather_than_failing_when_no_scopes_are_readable():
 
 
 # --------------------------------------------------------------------------------------
-# secrets backend: canopy vault first, 1Password legacy
+# secrets backend: canopy vault
 # --------------------------------------------------------------------------------------
 
 def _ident(slug="hal"):
@@ -1075,20 +978,17 @@ def _ident(slug="hal"):
 
 
 @pytest.mark.parametrize("probe,ok,warn,want", [
-    ({"source": "canopy-web", "enabled": True, "kv": 1, "this_device": True},
+    ({"enabled": True, "kv": 1, "this_device": True},
      True, False, "secrets: canopy vault (zero-knowledge, kv 1), this device has access: yes"),
-    ({"source": "canopy-web", "enabled": True, "kv": 2, "this_device": False},
+    ({"enabled": True, "kv": 2, "this_device": False},
      False, False, "this device has access: no — an admin presses Grant pending on /agents/hal"),
-    ({"source": "canopy-web", "enabled": True, "kv": 0, "this_device": False},
+    ({"enabled": True, "kv": 0, "this_device": False},
      True, False, "kv 0"),
-    ({"source": "canopy-web", "enabled": None, "kv": None, "this_device": None},
+    ({"enabled": None, "kv": None, "this_device": None},
      True, False, "only an admin of hal can see"),
-    ({"source": "canopy-web", "enabled": False},
+    ({"enabled": False},
      True, False, "canopy-web holds the values"),
-    ({"source": "1password"},
-     True, True, "1Password (LEGACY) — an admin with 1Password access moves it to canopy vault: "
-                 "`canopy vault import --agent hal --zk --switch`"),
-    ({"source": "canopy-web", "error": "GET … -> 503"}, True, True, "could not ask canopy-web"),
+    ({"error": "GET … -> 503"}, True, True, "could not ask canopy-web"),
 ])
 def test_secrets_backend_says_where_secrets_live(probe, ok, warn, want):
     from orchestrator.agent_doctor import check_secrets_backend

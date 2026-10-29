@@ -72,8 +72,7 @@ def load_dotenv_into_env(extra: Path | None = None) -> None:
     The renderer's per-beat voiceover (ElevenLabs) reads
     ``ELEVENLABS_API_KEY`` from process env. We look in, in order:
     an explicit ``--env-file``, ``./.env`` (cwd), the engine dir's ``.env``,
-    and canopy's injected secrets file (``~/.claude/canopy/.env`` — produced by
-    ``op inject -i .env.tpl``, the canopy convention). Existing env values
+    and canopy's secrets file (``~/.claude/canopy/.env``). Existing env values
     always win. Keys with embedded newlines are skipped.
     """
     canopy_env = Path.home() / ".claude" / "canopy" / ".env"
@@ -330,7 +329,7 @@ def main() -> int:
             "\nERROR: ELEVENLABS_API_KEY not found in env, --env-file, ./.env, "
             "or the engine dir's .env.\n"
             "       The renderer refuses to render a silent video by default.\n"
-            "       Export the key (e.g. from 1Password) and re-run.",
+            "       Export the key and re-run.",
             file=sys.stderr,
         )
         return 2

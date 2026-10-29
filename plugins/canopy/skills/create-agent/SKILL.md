@@ -60,7 +60,7 @@ session it is),
 `bin/<slug>-email` (thin shim over the shared `canopy email` engine; raw `gog gmail send` is
 deny-railed out of the box), `config/agent.json` (identity: mailbox + `gog_client`),
 `skills/setup/SKILL.md` (`/<slug>:setup` — fills `~/.<slug>/.env` with
-`canopy cred env`, from the Canopy vault or 1Password, whichever canopy-web records for the agent),
+`canopy cred env`, from the agent's Canopy vault),
 `config/allowlist.txt`, the plugin manifest, and `.claude-plugin/marketplace.json` — the manifest a
 runner installs the agent's plugin from (without it a box installs nothing).
 `config/allowlist.txt` is a **legacy fallback**: `canopy caller tier` consults it only while the
@@ -101,11 +101,9 @@ is not done, in the order returned, using each step's own `detail` and `href`/`a
 restate or second-guess those steps here — the checklist is computed from canopy-web's own checks,
 so re-call `agent_setup` after each fix to confirm it turned done, rather than judging it yourself.
 
-A step with **`where: terminal`** (the vault: `canopy agent vault --slug <slug>`) needs the
-human's OWN access — 1Password rights to create a vault and mint its key. Hand them its `command`
-to run themselves (in this session, `! <command>`): it asks, with hidden input, for the few values
-only they know, and that prompt needs their terminal. It mints the agent's canopy token and vault
-key itself and prints neither.
+A step with **`where: terminal`** needs the human's OWN access. Hand them its `command` to run
+themselves (in this session, `! <command>`): any prompt it shows needs their terminal. Never ask
+them to paste a secret into the chat.
 
 The one step that happens in Claude Code is **`job`** (`where: claude-code`): the agent's first
 real work. Its `command` starts that session; in it, apply the judgment below.
@@ -139,7 +137,7 @@ real work. Its `command` starts that session; in it, apply the judgment below.
 
 Secrets the domain skill needs are stored in the agent's Canopy vault (canopy-web → its
 Settings → Credentials), named as the env var each becomes — that vault is the ONE declaration;
-the repo holds no `.env.tpl` (agent-core/agent-runtime.md § One declaration). `/<slug>:setup`
+the repo holds no secrets list (agent-core/agent-runtime.md § One declaration). `/<slug>:setup`
 materializes them. canopy-web can't see this machine, so before the first turn on a laptop also run
 `uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .` (and again on any new machine).
 

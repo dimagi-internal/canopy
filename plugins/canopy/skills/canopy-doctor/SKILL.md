@@ -79,7 +79,7 @@ fi
 ## 3. Workbench API connectivity + auth (not in CLI)
 
 `canopy doctor` is intentionally offline and fast. To verify the token works
-against the live API and that GitHub / 1Password / AWS SSO credentials are
+against the live API and that GitHub / AWS SSO credentials are
 fresh, run the auth preflight (the same checks are available standalone via
 `canopy:auth-preflight`):
 

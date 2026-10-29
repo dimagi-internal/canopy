@@ -9,8 +9,7 @@
  * walkthrough-share/upload.py and canopy-doctor read from that path.
  *
  * Replaces the previous shared-secret WORKBENCH_WRITE_TOKEN bootstrap
- * (which required ops to fetch the value from 1Password / Secret
- * Manager) with a per-machine, per-human one-time browser flow.
+ * (which required ops to fetch the value from a secret manager) with a per-machine, per-human one-time browser flow.
  *
  * Flow (gh / fly / gcloud loopback pattern, ported verbatim from
  * the ace plugin's scripts/ace-web-pat-mint.ts):

@@ -1,7 +1,7 @@
 """The fleet rail on listing other processes' full command lines (gating-baseline `always`).
 
 WHY (2026-10-15). This tool's shell is started with its environment exported INLINE on its
-command line, an agent's 1Password service-account key among it. A `pgrep -fl wire.sh`
+command line, an agent's service-account key among it. A `pgrep -fl wire.sh`
 (checking whether a background job was still running) printed that key into the transcript,
 and Ada's key had to be rotated. PIDs and bare command names are safe; arguments are not.
 

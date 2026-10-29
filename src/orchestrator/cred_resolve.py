@@ -128,7 +128,7 @@ def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[s
             turn_id: Optional[str] = None, base_url: Optional[str] = None,
             transport: Optional[canopy_web.Transport] = None, raw: bool = False,
             purpose: str = "", fallback: bool = True) -> dict:
-    """The resolve body (``values``, ``op_vault``, ``op_sa_token``, …). With ``refs``,
+    """The resolve body (``values``, ``delegated``, …). With ``refs``,
     ``values`` holds exactly those of them that exist. Raises canopy_web.CanopyError
     (DeviceProofRequired for a missing/unapproved device proof).
 

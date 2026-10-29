@@ -1,7 +1,7 @@
 """Local use of an agent (canopy-web#1704): `canopy private-runner`, `canopy local`, and the
 three hooks that make a person's own session a recorded local turn.
 
-* SessionStart (`agent_op_env.py`) opens the local turn on a registered private runner and
+* SessionStart (`agent_session_start.py`) opens the local turn on a registered private runner and
   exports its id, so the credential reads that follow name it;
 * UserPromptSubmit (`caller_context.py`) shows the turn's envelope once and renews it;
 * Stop / PostToolUse (`local_turn_sync.py`) stream the transcript up while it runs;
@@ -137,7 +137,7 @@ def _load(name):
 
 
 def test_local_eligible_only_on_a_private_runner_and_never_for_a_runner_turn(tmp_path, monkeypatch):
-    hook = _load("agent_op_env")
+    hook = _load("agent_session_start")
     for var in ("CANOPY_TURN_ID", "CANOPY_PROFILE", "EMDASH_TASK_ID"):
         monkeypatch.delenv(var, raising=False)
     assert not hook.local_eligible(str(tmp_path))
@@ -156,7 +156,7 @@ def test_local_eligible_only_on_a_private_runner_and_never_for_a_runner_turn(tmp
 def test_a_runner_headless_session_is_not_a_local_turn(tmp_path, monkeypatch, marker):
     """The runner app's headless engine starts claude with these and no turn id: its turn
     already exists, and a second, local one would move its credential reads to the license."""
-    hook = _load("agent_op_env")
+    hook = _load("agent_session_start")
     for var in ("CANOPY_TURN_ID", "CANOPY_PROFILE", "EMDASH_TASK_ID", *hook.RUNNER_ENV_MARKERS):
         monkeypatch.delenv(var, raising=False)
     (tmp_path / ".canopy").mkdir()
@@ -169,7 +169,7 @@ def test_a_runner_headless_session_is_not_a_local_turn(tmp_path, monkeypatch, ma
 def test_a_desktop_engine_worktree_is_not_a_local_turn(tmp_path, monkeypatch):
     """The Claude app (not the runner) starts a desktop-engine session, so no runner env
     reaches it; its worktree's `.canopy-desktop/` channel is the mark."""
-    hook = _load("agent_op_env")
+    hook = _load("agent_session_start")
     for var in ("CANOPY_TURN_ID", "CANOPY_PROFILE", "EMDASH_TASK_ID", *hook.RUNNER_ENV_MARKERS):
         monkeypatch.delenv(var, raising=False)
     (tmp_path / ".canopy").mkdir()
@@ -194,23 +194,22 @@ def test_session_start_opens_the_local_turn_before_reading_credentials(tmp_path)
         f"echo \"$@ turn=$CANOPY_TURN_ID\" >> {log}\n"
         "[ \"$1\" = local ] && { echo '{\"turn_id\": \"tid-9\", \"private_runner\": \"aath-mbp\", "
         "\"turn_mode\": \"manual\", \"turn_mode_basis\": \"b\", \"url\": \"u\"}'; exit 0; }\n"
-        "[ \"$2\" = op-token ] && { echo KEY; exit 0; }\n"
         "exit 0\n")
     (bindir / "canopy").chmod(0o755)
     env = {k: v for k, v in os.environ.items()
-           if k not in ("CANOPY_TURN_ID", "OP_SERVICE_ACCOUNT_TOKEN", "CANOPY_PROFILE", "EMDASH_TASK_ID")}
+           if k not in ("CANOPY_TURN_ID", "CANOPY_PROFILE", "EMDASH_TASK_ID")}
     env.update(HOME=str(home), PATH=f"{bindir}{os.pathsep}{env['PATH']}", CANOPY_AGENT="ace",
                CLAUDE_ENV_FILE=str(tmp_path / "session.env"))
-    r = subprocess.run([sys.executable, str(HOOKS / "agent_op_env.py")], input=json.dumps(
+    r = subprocess.run([sys.executable, str(HOOKS / "agent_session_start.py")], input=json.dumps(
         {"session_id": "sess-1", "cwd": "/w", "source": "startup"}), capture_output=True,
         text=True, env=env, timeout=30)
     assert r.returncode == 0, r.stderr
     lines = log.read_text().splitlines()
     assert lines[0].startswith("local open --slug ace --session-id sess-1")
-    assert any(ln.startswith("agent op-token --slug ace turn=tid-9") for ln in lines)
+    assert any(ln.startswith("cred sync --agent ace turn=tid-9") for ln in lines)
     exported = (tmp_path / "session.env").read_text()
-    assert "export CANOPY_TURN_ID=tid-9" in exported and "OP_SERVICE_ACCOUNT_TOKEN=KEY" in exported
-    assert "local turn of ace" in r.stdout and "KEY" not in r.stdout
+    assert "export CANOPY_TURN_ID=tid-9" in exported
+    assert "local turn of ace" in r.stdout
 
 
 @pytest.mark.parametrize("rc,out,said", [
@@ -234,14 +233,13 @@ def test_a_local_turn_puts_the_agents_google_login_in_place(tmp_path, rc, out, s
         f"echo \"$@ turn=$CANOPY_TURN_ID\" >> {log}\n"
         "[ \"$1\" = local ] && { echo '{\"turn_id\": \"tid-9\"}'; exit 0; }\n"
         f"[ \"$2\" = google-login ] && {{ echo '{out}'; exit {rc}; }}\n"
-        "[ \"$2\" = op-token ] && exit 3\n"
         "exit 0\n")
     (bindir / "canopy").chmod(0o755)
     env = {k: v for k, v in os.environ.items()
-           if k not in ("CANOPY_TURN_ID", "OP_SERVICE_ACCOUNT_TOKEN", "CANOPY_PROFILE", "EMDASH_TASK_ID")}
+           if k not in ("CANOPY_TURN_ID", "CANOPY_PROFILE", "EMDASH_TASK_ID")}
     env.update(HOME=str(home), PATH=f"{bindir}{os.pathsep}{env['PATH']}", CANOPY_AGENT="ace",
                CLAUDE_ENV_FILE=str(tmp_path / "session.env"))
-    r = subprocess.run([sys.executable, str(HOOKS / "agent_op_env.py")], input=json.dumps(
+    r = subprocess.run([sys.executable, str(HOOKS / "agent_session_start.py")], input=json.dumps(
         {"session_id": "sess-1", "cwd": "/w", "source": "startup"}), capture_output=True,
         text=True, env=env, timeout=30)
     assert r.returncode == 0, r.stderr

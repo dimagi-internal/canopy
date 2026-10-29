@@ -55,14 +55,13 @@ Getting started is three steps — the user-facing guide is
    with canopy's headers helper — `canopy agents connect`. That registration is the only
    reason a canopy command is involved: `claude plugin marketplace add` can't send a token.
    It installs no agents; it ends by listing them, each with its install line and its
-   `/<agent>:setup`. It also says, without failing, whether the 1Password CLI is installed
-   and signed in.
+   `/<agent>:setup`.
 2. **Install an agent** — the normal Claude Code way, only the ones you choose, e.g.
    `/plugin install ace@canopy-agents` (or the `/plugin` menu). Each agent installs from its
    GitHub repo, so you need your own GitHub read access to that repo — ACE's is public; for
    a private agent, ask its owner. canopy never lends access.
 3. **Set up the agent** — run that agent's own setup command, e.g. `/ace:setup`. It tells
-   you what that agent needs (credentials, 1Password, …).
+   you what that agent needs (credentials in its Canopy vault, …).
 
 Agents are used by installing their plugin, not remotely. The claude.ai custom connector
 (`https://canopy.dimagi.com/api/mcp/`) is for canopy-web the product — board, sessions,

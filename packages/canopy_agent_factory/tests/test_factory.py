@@ -159,13 +159,12 @@ def test_hyphenated_slug_makes_valid_env_names(tmp_path):
     spec.slug, spec.display_name = "ops-desk", "Ops Desk"
     create_agent(spec, tmp_path / "ops-desk")
     root = tmp_path / "ops-desk"
-    assert not (root / ".env.tpl").exists()
     env_py = (root / "bin" / "_env.py").read_text()
     assert 'replace("-", "_") + "_ENV"' in env_py and "$OPS_DESK_ENV" in env_py
 
 
-def test_setup_works_for_either_credential_backend(tmp_path):
-    """New agents are born on the Canopy vault; `canopy agent env` only knows 1Password."""
+def test_setup_fills_the_env_from_the_canopy_vault(tmp_path):
+    """New agents are born on the Canopy vault; setup resolves it with `canopy cred env`."""
     create_agent(_spec(), tmp_path / "echo")
     setup = (tmp_path / "echo" / "skills" / "setup" / "SKILL.md").read_text()
     assert "canopy cred env --agent echo" in setup

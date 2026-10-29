@@ -1403,7 +1403,7 @@ def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders,
     click.echo("  3. Add each outbound action as a deny rail in config/gating.json naming its one")
     click.echo("     sanctioned path; keep `approve` empty (approval is the turn checklist's job).")
     click.echo("  4. Store secrets in its Canopy vault (canopy-web → Settings → Credentials); /<slug>:setup")
-    click.echo("     (already stamped) fills ~/.<slug>/.env from it. No .env.tpl — the vault is the one list.")
+    click.echo("     (already stamped) fills ~/.<slug>/.env from it — the vault is the one list.")
     click.echo("  5. Push to GitHub, then `canopy agent-publish register` from the repo — it records")
     click.echo("     the repo URL runners clone (from the git origin).")
 
@@ -2418,47 +2418,6 @@ def openclaw_reconcile(snapshot_dir, agent):
     click.echo(f"Ported {len(ported)} skill(s) into {repo}: {', '.join(ported) or '(none)'}")
     if ported:
         click.echo("Review the bodies, then branch → PR → merge in the agent repo.")
-
-
-@main.command("provision")
-@click.option("--repo", default=None, type=click.Path(), help="Agent/provider repo (default: cwd)")
-@click.option("--check", is_flag=True, help="Validate 1Password refs + show targets, write nothing")
-@click.option("--json-output", "as_json", is_flag=True)
-def provision_cmd(repo, check, as_json):
-    """LEGACY: materialize an agent's secrets from 1Password per its config/secrets.yaml.
-
-    Superseded by `.env.tpl` + `op inject` (env vars) / `op read` (credential files) as the
-    fleet standard — see agent-core/agent-runtime.md. Kept fully working for agents/repos that
-    still declare `config/secrets.yaml`; don't build new agents on this path. Portable: anyone
-    with `op` access + the right grants runs this on any machine (incl. emdash worktrees) to get
-    the creds an agent needs — no hand-shuffling keys. See provision.py.
-    """
-    import json as json_mod
-    from pathlib import Path
-    from orchestrator.provision import provision, ProvisionError
-
-    target = Path(repo).expanduser() if repo else Path.cwd()
-    try:
-        result = provision(target, check=check)
-    except ProvisionError as e:
-        raise click.ClickException(str(e))
-
-    if as_json:
-        click.echo(json_mod.dumps(result, indent=2))
-        return
-    verb = "would provision" if check else "provisioned"
-    line = f"{result['provisioned']} {verb}, {result['skipped']} skipped"
-    if result["errors"]:
-        line += f", {len(result['errors'])} error(s)"
-    click.echo(line)
-    for r in result["results"]:
-        tgt = f" → {r['target']}" if r.get("target") else ""
-        mode = f"  ({r['mode']})" if r.get("mode") else ""
-        click.echo(f"  [{r['status']}] {r['name']}{tgt}{mode}")
-    if result["errors"]:
-        for e in result["errors"]:
-            click.echo(f"  ! {e}")
-        raise click.ClickException("provisioning had errors")
 
 
 @main.group("cursor")

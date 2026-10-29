@@ -201,7 +201,7 @@ Extract the §1 primitives into a generator. Output for a new agent `<name>`:
 - an **invariants-as-hooks** starter (`.claude/settings.json` + a `hooks/` example)
 - canopy-web workspace registration (board + syncs + skill catalog)
 - the Step-4 skill self-check baked into the turn
-- a `setup`/`preflight` bootstrap pattern (1Password `.env.tpl`, per-machine provisioning)
+- a `setup`/`preflight` bootstrap pattern (Canopy vault env fill, per-machine provisioning)
 
 Agent #2 = run the factory, fill in persona + domain skills. *This is the literal ask:
 "so I can create more of these agents."*
@@ -217,8 +217,8 @@ Not a separate workstream — these are the first improvements the loop should p
 best test of what the factory must template:
 - **OAuth bootstrap can't self-heal** (new-machine "People API not enabled" needed manual
   console work) → detect + guide/auto-enable.
-- **1Password half-wired** (items created, never round-trip validated; special-char titles
-  break `op read`) → validate readability after create.
+- **Credentials not validated** (stored, never round-trip checked) → validate readability after
+  storing.
 - **Reply checklist gets dropped under load** → move the always-do checklist from prose to a
   PreToolUse hook (the §1a "strongest form" upgrade).
 
@@ -230,7 +230,7 @@ best test of what the factory must template:
 hybrid split.** This is the shape echo already has (`dimagi-internal/echo`), generalized.
 
 Two new first-class requirements drive this:
-- **Team-runnable.** A teammate clones *one* agent repo, runs its `setup` (1Password provision
+- **Team-runnable.** A teammate clones *one* agent repo, runs its `setup` (Canopy vault env fill
   + canopy-web registration), and drives it. Multi-operator = "more people run the same repo,"
   **not** one shared always-on instance (that's the OpenClaw topology that bled contexts).
 - **Channels over time.** Each agent mounts the comms channels it needs (email today; Slack,
@@ -362,54 +362,20 @@ agent the factory produces:
   genuinely secret per-operator `.env` must be provisioned per-worktree (or read from a global
   location). Keep secrets out of the hot path where possible.
 
-## 4e. Portable secret provisioning (decided; superseded for agents — see below)
-
-> **Update (2026-07-25): for AGENT repos, `.env.tpl` + `op inject`/`op read` is now the fleet
-> standard** — see `agent-core/agent-runtime.md`. The fleet has migrated (ada/eva/hal/echo ship
-> `.env.tpl`; `config/secrets.yaml` deleted from those repos). `canopy create-agent` now scaffolds
-> `.env.tpl`. The recipe below (`config/secrets.yaml` + `canopy provision`) still works and is
-> kept functional — it remains the path for non-agent PROVIDER repos (e.g. chrome-sales) and any
-> agent that hasn't migrated yet — but it is no longer what new agents should be built on.
->
-> **Update (2026-10-14): the vault belongs to the INSTANCE, not the plugin.** A plugin is code;
-> an instance is canopy-web's Agent record (identity, workspace, `Agent.op_vault`). Templates
-> reference `op://${AGENT_VAULT}/<item>/<field>` and name no vault; each agent's
-> `/<agent>:setup` runs `canopy agent env --plugin <plugin>`, which binds the install to ONE
-> instance (recorded in `~/.<plugin>/canopy-instance.json`; switching needs `--force`) and runs
-> `op inject` with `AGENT_VAULT` set to that instance's recorded vault. No `Agent-<Slug>`
-> naming convention is derived anywhere. Full contract: `agent-core/agent-runtime.md`.
+## 4e. Secrets — the agent's Canopy vault (decided)
 
 Agents need credentials (service-account keys, OAuth creds, PATs) that must never be in git yet
 must be available wherever the agent runs — main checkout, any emdash worktree, every operator's
-machine. Hand-shuffling keys is the lazy, non-portable status quo. The (legacy) standard:
+machine. They live in **the agent's Canopy vault on canopy-web** (its Settings → Credentials), and
+nothing in an agent repo names a secret — see `agent-core/agent-runtime.md`.
 
-- **1Password is the source of truth** (the house pattern; `op` is already the auth path for
-  echo/ace/chrome-sales).
-- **Each agent/provider repo declares a tracked `config/secrets.yaml`** — *no secret values*, only
-  1Password references + local targets (`{repo}/…`, `~/…`, or repo-relative; default mode `0600`;
-  `optional: true` to skip-not-fail).
-- **`canopy provision`** materializes them via `op` — idempotent, validated, one command on any
-  machine (`--check` to dry-run). Anyone with vault access + the right grants is set up instantly.
-- **Worktree-clean (§4d):** targets that an agent reads globally point at `~/.canopy`/`~/.claude/canopy`;
-  provider-local creds (e.g. chrome-sales's MCP keys) point at `{repo}/…` in the provider's main
-  checkout, where its launcher resolves them. Never a gitignored repo `.env` a worktree lacks.
+A plugin is code; an *instance* is canopy-web's Agent record (identity, workspace, credentials).
+Each agent's `/<agent>:setup` runs `canopy agent env --plugin <plugin>`, which binds the install to
+ONE instance (recorded in `~/.<plugin>/canopy-instance.json`; switching needs `--force`) and fills
+`~/.<plugin>/.env` (0600) from that instance's vault.
 
-Backed by `src/orchestrator/provision.py` + `canopy provision`. First adopter: chrome-sales
-(`config/secrets.yaml` → `.gws-sa-key.json` + `.sf-creds.json`).
-
-### Service-account lifecycle (Phase 2 — design)
-Provisioning (above) is the *distribution* layer; it assumes the secret already exists in 1Password.
-The *creation + sharing* of service accounts is the remaining manual bit, automatable as:
-1. **Create** — `gcloud iam service-accounts create <name>` + `keys create` → a JSON key (needs a
-   GCP project + gcloud authed). One SA per capability domain (e.g. an agents-gdrive SA), not per agent.
-2. **Store** — `op item create` the key into the AI-Agents vault under the name the manifest expects,
-   so `canopy provision` distributes it everywhere.
-3. **Share** — grant the SA's `client_email` access to each target resource (a sheet, a Drive
-   folder). Scriptable via the Drive API / the gdrive MCP's permission tools; the SA then acts as
-   itself, visible to humans (e.g. Beth) as a named collaborator.
-
-A `canopy sa-setup` could wrap steps 1–2 (and emit the email + a share command for step 3). Until
-then: create/own the SA once, `op item create` it, and every machine gets it via `canopy provision`.
+**Worktree-clean (§4d):** the env lives in a global home (`~/.<slug>/.env`), never a gitignored repo
+`.env` a worktree lacks.
 
 ## 5. Sequencing & open questions
 
@@ -660,7 +626,7 @@ the authoring today, and that is the actual frontier — not a compromise.**
 - **echo**: `CLAUDE.md`, `docs/research/agentic-frameworks.md`, `skills/{turn,inbox-triage,
   contact-memory,canopy-publish,task-tracker,self-review,manager-sync}/SKILL.md`,
   `scripts/hooks/block_raw_gog_send.py`, `bin/*.py`; analysis of the most recent turn
-  transcript (setup-heavy turn: 13 PRs, OAuth/1Password friction, zero gbrain calls).
+  transcript (setup-heavy turn: 13 PRs, OAuth friction, zero gbrain calls).
 - **reef**: `lib/openclaw.ts` (hygiene-check `TODO`), `lib/insights.ts`, `lib/report-html.ts`
   (renderLearningOpportunities — observe-only), `.claude/pm/{context,learnings}.md` and
   `runs/*` (transfer-skill backlogged; "skills are the unit of collective learning").

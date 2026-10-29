@@ -29,8 +29,7 @@ is for. This page says which is which, in order.
 
 ### Phase 1 — Hal does this (no action from you)
 
-Hal needs one thing to start: **SSH access to the droplet** — the key is in 1Password as
-`AI-Agents/openclaw-<slug> - SSH Private Key`. Whoever holds the vault shares it with Hal (or runs
+Hal needs one thing to start: **SSH access to the droplet** — whoever holds the droplet's SSH key shares it with Hal (or runs
 the snapshot once in Hal's session). Then Hal:
 
 1. **Snapshots the agent's brain** — persona, skills, memory — off the droplet. Credentials are

@@ -11,36 +11,26 @@ data, so **any** session that loaded ACE's plugin acted as ACE. On 2026-10-09 an
 doc through ace-gdrive and got "not found", because it was signed in as the wrong account. Identity
 has to come from the **session**, not from whichever plugin happens to be loaded.
 
-## 1. Two backends: canopy vault (the default) and `1password` (legacy)
+## 1. Where the secrets live: the Canopy vault
 
-Per agent, a field on the canopy-web agent record: `credential_source: "canopy-web" | "1password"`.
-Every agent's secrets live in **canopy vault** (Jonathan, 2026-10-21); 1Password is legacy.
+Every agent's secrets live in its **Canopy vault** on canopy-web (Jonathan, 2026-10-21). The values
+come back from `GET /api/agents/{slug}/credentials/resolve`. A zero-knowledge agent's values are
+ciphertext there, opened only on a device that holds a grant (§ Zero-knowledge). ada, ace, echo,
+eva and hal are zero-knowledge (kv 1); lex and fizzy were born zero-knowledge (kv 0). `canopy agent
+env`, `canopy cred` and the SessionStart hook all take this path.
 
-- **`canopy-web`** (canopy vault) — the values live on canopy-web and come back from
-  `GET /api/agents/{slug}/credentials/resolve`. A zero-knowledge agent's values are ciphertext
-  there, opened only on a device that holds a grant (§ Zero-knowledge). ada, ace, echo, eva and
-  hal are zero-knowledge (kv 1); lex and fizzy were born zero-knowledge (kv 0). `canopy agent
-  env`, `canopy cred` and the SessionStart hook all take this path, and never touch `op`.
-- **`1password`** (legacy) — the values live in the agent's 1Password vault: the instance this
-  machine is bound to (`~/.<slug>/canopy-instance.json`), else the `op_vault` canopy-web records
-  — never a name derived from the slug. `~/.<slug>/.env` is resolved with `op inject` of the
-  agent's `.env.tpl`, `AGENT_VAULT` set to that vault. Muse is the last one; an admin with
-  1Password access moves an agent with `canopy vault import --agent X --zk --switch`.
+## 2. Resolved once, kept current
 
-## 2. No repeated 1Password prompts
-
-The broker resolves once and writes the existing per-agent env file `~/.<slug>/.env` (chmod 600) —
-the same file `op inject` wrote before, so every `bin/` script and `_env.py` keeps working
-unchanged. It re-resolves only when the file is missing, on `canopy cred refresh`, or when a caller
-reports an auth failure (and then runs `canopy cred refresh`). Service-account reads never prompt.
-A value changed in the vault reaches the file without anyone re-running anything: the canopy
-SessionStart hook (`agent_op_env.py`) runs `canopy cred sync` with the agent's own service-account
-key, which re-injects `~/.<slug>/.env` only when the vault's `content_version` or `.env.tpl`
-changed. It checks at most every 5 minutes per agent (`~/.<slug>/.env.stamp`), with one
-`op vault get` per vault. The cloud runner applies the same rule when it claims a turn
-(canopy-web `cloud_runner._refresh_agent_env`), so laptops and cloud agree on what "changed" means.
-`canopy cred check` caches canopy-web's `/access` answer and a successful 1Password probe for 10
-minutes in `~/.canopy/cred-cache.json` (verdicts only, never values).
+The broker resolves once and writes the per-agent env file `~/.<slug>/.env` (chmod 600), so every
+`bin/` script and `_env.py` keeps working unchanged. It re-resolves only when the file is missing,
+on `canopy cred refresh`, or when a caller reports an auth failure (and then runs `canopy cred
+refresh`). A value changed in the vault reaches the file without anyone re-running anything: the
+canopy SessionStart hook (`agent_session_start.py`) runs `canopy cred sync`, which re-writes
+`~/.<slug>/.env` only when the fingerprint of the vault's values changed. It checks at most every
+5 minutes per agent (`~/.<slug>/.env.stamp`). The cloud runner applies the same rule when it
+claims a turn (canopy-web `cloud_runner._refresh_agent_env`), so laptops and cloud agree on what
+"changed" means. `canopy cred check` caches canopy-web's `/access` answer for 10 minutes in
+`~/.canopy/cred-cache.json` (verdicts only, never values).
 
 ## 3. Who may resolve which agent
 
@@ -48,24 +38,19 @@ minutes in `~/.canopy/cred-cache.json` (verdicts only, never values).
 
 - **A runner turn** — a turn id is known (`$CANOPY_TURN_ID`, the caller envelope, or the laptop's
   by-task record) — may act only as its own agent (`$CANOPY_AGENT_SLUG`, else `$CANOPY_AGENT`, else
-  the envelope's `agent`). Any other `--agent` is refused. It resolves through the runner-provided
-  `OP_SERVICE_ACCOUNT_TOKEN` (scoped to its own vault), never through a desktop-app session.
+  the envelope's `agent`). Any other `--agent` is refused.
 - **A human session** may act as agent X when:
   - **X's env is already resolved on this machine**: `~/.X/.env` exists, is non-empty, is owned
-    by this user and is private (no group/other bits). This is checked first and asks neither
-    1Password nor canopy-web, so the one-time resolve really is one-time: a locked 1Password
-    app does not refuse every new session (Jonathan, 2026-10-09). `--refresh` skips it and
-    re-proves access. Runner turns never take this path. Otherwise:
-  - backend `1password`: the user's **own** `op` can read X's vault (`op vault get <vault>`; a
-    service-account key a hook staged into the session is tried only after the user's own `op`,
-    and only reads that agent's own vault), or
-  - backend `canopy-web`: `GET /api/agents/X/credentials/access` says `may_resolve` — the user
+    by this user and is private (no group/other bits). This is checked first and does not ask
+    canopy-web, so the one-time resolve really is one-time (Jonathan, 2026-10-09). `--refresh`
+    skips it and re-proves access. Runner turns never take this path. Otherwise:
+  - `GET /api/agents/X/credentials/access` says `may_resolve` — the user
     pairs a runner X routes to (`via: "runner"`) or is X's owner/admin (`via: "admin"`). The
     `/resolve` route gains the admin-bearer path, audited like the runner path.
 - **Otherwise** the session acts as the human, and the refusal says exactly what access to get.
 
-If `/access` can't be reached, `canopy cred` assumes the default backend (canopy vault) with
-`may_resolve` false, so an unreachable canopy-web never grants anything by itself. `/access` is
+If `/access` can't be reached, `canopy cred` assumes `may_resolve` is false, so an unreachable
+canopy-web never grants anything by itself. `/access` is
 asked with the current turn (`X-Canopy-Turn-Id`), since a licence holder may resolve only during
 their own local turn.
 
@@ -170,25 +155,21 @@ the command exits 2: `this session is not an agent … Pass --agent <slug>.`
 | exit | meaning |
 |---|---|
 | 0 | allowed (`check`); env present/resolved (`env`, `refresh`) |
-| 1 | error — resolve failed (no repo / no `.env.tpl`, `op inject` failed, canopy-web `/resolve` failed) |
+| 1 | error — resolve failed (canopy-web `/resolve` failed) |
 | 2 | usage — no agent named and none detectable, or a malformed slug |
 | 3 | **refused** — this session may not act as X; stderr carries one actionable paragraph |
 | 4 | undetermined — `check` hit an unexpected error; treat as refused |
 
 - **`check`** prints `ok: this session may act as 'X' — <reason>` on success. With `--json`, stdout
-  is one JSON object: `{agent, allowed, identity: "agent-turn"|"human", source, via, reason,
-  message, op_mode, vault, exit_code, notes}`. Refusal paragraphs:
+  is one JSON object: `{agent, allowed, identity: "agent-turn"|"human", via, reason,
+  message, exit_code, notes}`. Refusal paragraphs:
   - turn for another agent: *This is agent 'ada's runner turn (…), so it may act only as 'ada' —
     not as 'ace'. To get work done as 'ace', dispatch it or ask it …*
-  - `op` missing: *Acting as agent 'ace' needs its credentials from 1Password (vault 'Agent-Ace'),
-    and the 1Password CLI is not installed. Install the 1Password CLI (…) and sign in
-    (`op signin`), or ask the vault owner to share 'Agent-Ace' with you. Until then this session
-    acts as you, not as 'ace'.*
-  - not signed in / no vault access / canopy-web says no: same shape, naming `op signin`, the vault
-    owner, or the agent admin on canopy-web (`/agents/X → Settings`).
+  - canopy-web says no / unreachable: names the agent admin on canopy-web (`/agents/X → Settings`)
+    and `canopy agent use X`.
 - **`env`** ensures `~/.X/.env` (0600) — resolving only when missing or with `--refresh` — and
   prints **only its path** on stdout (a status line goes to stderr). Refused → exit 3, nothing
-  written. The `canopy-web` backend writes each `values` entry whose name is an env identifier;
+  written. It writes each `values` entry whose name is an env identifier;
   others (e.g. `gog-token`) are staged by their own paths and listed, by name, on stderr.
   In a turn whose runner set `$CANOPY_AGENT_ENV_FILE` (for X), it prints that path and writes
   nothing.
@@ -197,18 +178,16 @@ the command exits 2: `this session is not an agent … Pass --agent <slug>.`
   (symlinks resolved) is refused with exit 2 before anything is resolved. Prints the path.
   **`env --runner --print-json`** (it requires `--runner`; exit 2 without, and a baseline rail
   denies it in an agent's turn) prints `{"agent", "source", "values": {NAME: value}}` — plus the resolve
-  body's own top-level `op_sa_token`, `op_vault` and `salesforce_creds`, each only when that same
-  resolve returned it (never `null`) — on stdout and writes nothing — for a runner process's in-memory cache. **`--runner`** resolves as the runner does (its token
-  in `CANOPY_TOKEN`; the clone under `--agent-root` for `.env.tpl`; `op inject` to a pipe with the
-  agent's own key, or canopy-web's values), naming the turn when `$CANOPY_TURN_ID` is set.
+  body's own top-level `delegated` field, only when that same resolve returned it (never `null`) —
+  on stdout and writes nothing — for a runner process's in-memory cache. **`--runner`** resolves as
+  the runner does (its token in `CANOPY_TOKEN`; canopy-web's values), naming the turn when
+  `$CANOPY_TURN_ID` is set.
 - **`refresh`** drops the cached verdicts and re-resolves `~/.X/.env`.
 - **`exec`** runs `<cmd>` with X's variables in **the child's environment only** — no
   `~/.X/.env`, nothing exported into the session. Same decision as `check`, except that an
-  already-resolved `~/.X/.env` is not itself a reason to allow. 1Password: `op inject` to a pipe;
-  canopy-web: `/resolve` (with `?refs=` when `--ref` narrows it). Exits with `<cmd>`'s status.
-- **`sync`** is skipped in a turn whose runner set `$CANOPY_AGENT_ENV_FILE`. Otherwise, without a 1Password key in the env refreshes a **canopy-web-backed** agent's
-  `~/.X/.env` from canopy-web (throttled, rewritten only when the values' fingerprint moved);
-  for a 1Password agent it is a no-op, as before.
+  already-resolved `~/.X/.env` is not itself a reason to allow. It uses `/resolve` (with `?refs=` when `--ref` narrows it). Exits with `<cmd>`'s status.
+- **`sync`** is skipped in a turn whose runner set `$CANOPY_AGENT_ENV_FILE`. Otherwise it refreshes
+  `~/.X/.env` from canopy-web (throttled, rewritten only when the values' fingerprint moved).
 - **`google-token`** writes `~/.canopy/google-token/X.json` (0600: `access_token`, `expires_at`
   epoch seconds, `account`) for X's own Google login and prints **only its path**. It exchanges the
   refresh token gog holds for X's mailbox (client per `canopy email client`) and reuses the file
@@ -248,9 +227,9 @@ text=True)`; non-zero → return the stderr as the tool's error text.
 
 ### canopy-web routes this depends on
 
-- `GET /api/agents/{slug}/credentials/access` → `{agent, credential_source, may_resolve,
+- `GET /api/agents/{slug}/credentials/access` → `{agent, may_resolve,
   via: "runner"|"admin"|null, reason}` — no values.
-- `GET /api/agents/{slug}/credentials/resolve` (bearer) → `{values, op_vault, op_sa_token,
+- `GET /api/agents/{slug}/credentials/resolve` (bearer) → `{values,
   github_token, salesforce_creds, mailbox}` — allowed for
   runner pairs and agent owners/admins. Every canopy caller goes through one client,
   `orchestrator/cred_resolve.py`, which adds `?refs=` when it wants a subset (re-asking once
@@ -258,29 +237,20 @@ text=True)`; non-zero → return the stderr as the tool's error text.
   before), `X-Canopy-Turn-Id` when a turn is known, and a `DPoP` device proof when this machine
   holds a registered device key (below).
 
-## Canopy Vault — the canopy-web backend, opt in per agent (canopy#946)
+## Canopy Vault — the canopy-web backend (canopy#946)
 
-1Password stays the default and fully supported. An owner/admin can move ONE agent's values to
-canopy-web (`credential_source = "canopy-web"`); the server half is canopy-web#1538.
+Server half: canopy-web#1538.
 
 ```
-canopy vault import --agent X [--switch]       # 1Password -> canopy-web, as YOU (op, Touch ID ok)
-canopy vault status --agent X [--no-drift]     # per ref: present, last read, drift (hash only)
-canopy vault switch --agent X --to canopy-web|1password
-canopy vault export --agent X [--check]        # canopy-web -> 1Password (the rollback)
+canopy vault status --agent X                  # per credential: set or missing, last read
 canopy vault device [--enroll|--reenroll|--refresh] [--kind K]
 canopy vault device --public-jwk [--kind software]           # {kind, jkt, jwk, created}; no canopy-web call
 canopy vault device --registered KEY_ID --runner ID [--status active|pending]
 canopy vault binding --agent X on|off          # PATCH /device-binding {require_device_binding}
 ```
 
-- **Refs** = every `NAME=` line of the agent's `.env.tpl` (an `op://` ref is read; a literal is
-  carried as-is so the canopy-web env is complete) plus canopy-web's `runtime_sources`. Items
-  another flow owns (`gog-token`, the shared OAuth client) are left alone. `import` never edits
-  the vault; `--switch` / `switch --to canopy-web` refuse until canopy-web reports every ref set.
-- **Runners** for a canopy-web agent write `~/.X/.env` from `/resolve` values (`canopy agent
-  prepare --runner`), and the SessionStart hook's `cred sync` keeps it current — canopy-web
-  withholds the vault key from such an agent, so `op inject` cannot run.
+- **Runners** write `~/.X/.env` from `/resolve` values (`canopy agent prepare --runner`), and the
+  SessionStart hook's `cred sync` keeps it current.
 - **Device key.** `require_device_binding` on an agent makes `/resolve` answer 401
   `device_proof_required` unless the request carries a DPoP proof (RFC 9449: `typ dpop+jwt`,
   ES256, `jwk` header; `htm`, `htu` without query, `iat`, `jti`) from an **approved** key. On a
@@ -337,12 +307,10 @@ reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.jso
   epk, ct}]})`, key = HKDF(ECDH, salt="", info=`canopy-vault/v1/seal-value|{agent_id}|{name}|
   {kv}|{kind}:{target}`), AAD = the value AAD. `cred_resolve.open_zk` opens this device's own
   entry, in a ZK or a custodial answer. A VK holder **settles** them — re-encrypts as `zk1:`
-  under VK, so every member reads them: `canopy vault zk settle`, which `import --zk` and
-  `switch` also run. The runner's Gmail token therefore works on a ZK agent: the bootstrap's
+  under VK, so every member reads them: `canopy vault zk settle`. The runner's Gmail token therefore works on a ZK agent: the bootstrap's
   `fetch_web_token` goes through `cred_resolve`, which hands it plaintext.
 - **CLI, as this device** (a member through its device wrap):
-  `canopy vault zk status|enable|set|grant|rotate|settle --agent X` and `canopy vault import
-  --zk` (which now carries the Gmail token too, encrypted here).
+  `canopy vault zk status|enable|set|grant|rotate|settle --agent X`.
   `enable` wraps for this device, your keyset (`GET /api/vault/keyset`) and every pending target,
   plus recovery, and prints the recovery code once; `grant`/`rotate` list every public key they
   will wrap to and ask first (`--yes` to skip).
@@ -360,11 +328,6 @@ reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.jso
   no endorsed recipient is an error, never a fallback to the server's list. Writes `PUT
   …/vault/zk/values` (or `PUT …/secret-requests/ID/value`) and prints only `NAME stored for
   AGENT (sealed to N readers)`. Skipped recipients get the value at the next settle.
-
-**Pilot (Eva, Jonathan's Mac):** `canopy vault import --agent eva` → approve the runner's
-device key in canopy-web → `canopy vault switch --agent eva --to canopy-web`, then set
-`require_device_binding` on Eva → run Eva as usual. Rollback: `canopy vault export --agent eva
-&& canopy vault switch --agent eva --to 1password`.
 
 ## Local use: a private runner, a license, a local turn (canopy-web#1704)
 
@@ -386,11 +349,11 @@ grant, licence, plugin, `$CANOPY_AGENT`, env). Underneath:
    alias.
 2. **`$CANOPY_AGENT`** is set for the project (`.claude/settings.local.json`; an agent repo's
    own `.claude/settings.json` sets it too). `canopy local use` is an alias of `agent use`.
-3. Each session there is a **local turn**. `agent_op_env.py` (SessionStart) runs
+3. Each session there is a **local turn**. `agent_session_start.py` (SessionStart) runs
    `canopy local open` FIRST: canopy-web issues your **license** when the agent's caller
    list gives you the whole agent (else 403, and the request is recorded for its admins),
    opens a RUNNING `origin=local` turn, and the hook exports `CANOPY_TURN_ID` — so the
-   credential reads that follow (`canopy agent op-token`, `cred sync`) name the turn and
+   credential reads that follow (`cred sync`, `cred env`) name the turn and
    go out under the license (`via=license` in the read log). `caller_context.py` shows the
    turn's envelope on the first prompt (an editor's says `manual`) and renews its lease;
    `local_turn_sync.py` streams the transcript up WHILE the session runs (`canopy local
@@ -401,9 +364,7 @@ grant, licence, plugin, `$CANOPY_AGENT`, env). Underneath:
    close still uploads everything).
 
 A license read never carries the agent's own canopy login, its owner's GitHub delegation,
-a lent credential or the shared vault key. It does carry the agent's 1Password key, so an
-agent that keeps its own canopy PAT in that vault exposes it to license holders — keep
-the PAT on canopy-web instead. Not eligible: a runner's turn (`$CANOPY_TURN_ID` already
+a lent credential or the shared vault key. Not eligible: a runner's turn (`$CANOPY_TURN_ID` already
 set), a confined `cx-` session, a session the runner app's headless engine started
 (`CANOPY_HEADLESS` / `CANOPY_ONE_SHOT_TURN`), one in a desktop-engine worktree
 (`<cwd>/.canopy-desktop/`), and an emdash session on a machine that runs the runner

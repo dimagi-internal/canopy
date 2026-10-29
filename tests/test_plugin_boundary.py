@@ -22,16 +22,16 @@ PKG = ROOT / "src" / "orchestrator"
 
 # ── Tiers (canonical copy lives in src/orchestrator/TIERS.md; keep in sync) ─────
 FRAMEWORK = {
-    "agent_bootstrap", "agent_env_file", "gog_home", "agent_instance", "agent_vault", "agent_prepare", "agent_cli", "agent_client", "agent_handoff", "agent_coverage", "agent_landscape", "agent_doctor", "dependency_health", "agent_email", "caller", "agent_gdoc", "agent_gslides", "gdoc_email_blocks", "gdoc_review", "gdoc_suggest", "review_receipt", "agent_health", "agent_web", "canopy_web",
+    "agent_bootstrap", "agent_env_file", "gog_home", "agent_instance", "agent_prepare", "agent_cli", "agent_client", "agent_handoff", "agent_coverage", "agent_landscape", "agent_doctor", "dependency_health", "agent_email", "caller", "agent_gdoc", "agent_gslides", "gdoc_email_blocks", "gdoc_review", "gdoc_suggest", "review_receipt", "agent_health", "agent_web", "canopy_web",
     "inbox_filters", "inbox_rules",
     "capture", "transcripts", "scanner", "circuit_breaker", "rate_limiter",
     "scheduler", "paths", "repo_map", "repo_paths", "repo_evidence",
-    "skill_budget", "skill_catalog", "skill_runner", "provision", "run_log",
+    "skill_budget", "skill_catalog", "skill_runner", "run_log",
     "version_bump", "version", "doctor", "agent_review", "structure_drift",
     "eval_cli", "eval_rubric", "turn_synthesis", "session_upload", "fleet_align",
     "decide_guard_prompt", "decide_guard_cli", "closeout", "closeout_cli",
     "session_sources", "session_liveness", "work_cursor", "kb_engine", "kb_cli", "kb_remote", "kb_mcp", "agent_dispatch", "llm_output",
-    "project_dispatch", "project_cli", "project_audit", "project_folder", "task_folder", "runner_cli", "secret_cli", "people_cli", "act_as_cli", "slack_ingest_cli", "aws_cli", "cred_cli", "cred_resolve", "local_cli", "agent_use", "private_runner_session", "device_key", "device_key_aws", "device_key_kms", "device_key_tpm", "runner_session", "turn_agent_token", "vault_cli", "vault_zk", "vault_zk_cli", "vault_keeper", "google_account", "google_mint", "workspace_cli",
+    "project_dispatch", "project_cli", "project_audit", "project_folder", "task_folder", "runner_cli", "secret_cli", "people_cli", "act_as_cli", "slack_ingest_cli", "aws_cli", "cred_cli", "cred_resolve", "local_cli", "agent_use", "private_runner_session", "device_key", "device_key_aws", "device_key_kms", "device_key_tpm", "runner_session", "turn_agent_token", "vault_cli", "vault_zk", "vault_zk_cli", "vault_keeper", "google_account", "google_mint", "workspace_cli", "onepassword",
     "provenance",
     "huddle", "huddle_store", "huddle_cli", "huddle_group_cli", "checkin_cli", "huddle_types", "thread", "thread_cli", "turn_cli", "runner_pin",
 }

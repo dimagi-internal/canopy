@@ -7,11 +7,8 @@ revision", 2026-10-09). In short:
   envelope, or the laptop's by-task record) may act only as the agent it was
   dispatched for (``$CANOPY_AGENT_SLUG`` / ``$CANOPY_AGENT`` / the envelope's
   ``agent``). Any other ``--agent`` is refused.
-* **A human session** may act as X when X's credential backend says so:
-  ``canopy-web`` (canopy vault, the default — every agent's secrets live there,
-  Jonathan 2026-10-21) — ``GET /api/agents/X/credentials/access`` says
-  ``may_resolve``; ``1password`` (LEGACY) — the user's own ``op`` can read X's
-  vault. The backend is the agent record's ``credential_source``.
+* **A human session** may act as X when canopy-web says so (the Canopy vault is where every
+  agent's secrets live): ``GET /api/agents/X/credentials/access`` says ``may_resolve``.
 * Anything else acts as the human, and the refusal says what access to get.
 
 Commands::
@@ -69,23 +66,11 @@ EXIT_USAGE = 2
 EXIT_REFUSED = 3
 EXIT_UNDETERMINED = 4
 
-SOURCES = ("1password", "canopy-web")
-#: canopy vault. 1Password is legacy: only an agent canopy-web SAYS is `1password` uses it.
-DEFAULT_SOURCE = "canopy-web"
-
-#: How long a canopy-web /access answer and a successful 1Password probe are
-#: trusted. An MCP server checks before every action; re-probing `op` each time
-#: would be slow and, through the desktop app, could prompt.
+#: How long a canopy-web /access answer is trusted. An MCP server checks before every
+#: action; asking canopy-web each time would be slow.
 CACHE_TTL = 600
 CACHE_DIR = Path.home() / ".canopy"
 CACHE_FILE = CACHE_DIR / "cred-cache.json"
-
-OP_INSTALL_URL = "https://developer.1password.com/docs/cli/get-started/"
-
-#: stderr fragments meaning "op is not signed in / locked", not "no access".
-OP_SIGNIN_FAILURES = ("not currently signed in", "no accounts configured", "session expired",
-                      "authorization timeout", "authorization prompt", "connect to 1password",
-                      "prompterror", "account is not signed in", "you are not currently signed in")
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$", re.I)
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -239,8 +224,8 @@ def _write_private(path: Path, data: str) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _human_token() -> str:
-    """The person's own canopy-web PAT (the same operator rule `canopy agent op-token`
-    and `agent bootstrap` use: explicit env, else the workbench-token)."""
+    """The person's own canopy-web PAT (the same operator rule `agent bootstrap` uses:
+    explicit env, else the workbench-token)."""
     from orchestrator.agent_bootstrap import _operator_token
     return _operator_token()
 
@@ -249,9 +234,8 @@ def fetch_access(slug: str, *, refresh: bool = False,
                  transport: Optional[canopy_web.Transport] = None) -> dict:
     """canopy-web's verdict for this caller on agent ``slug`` — cached CACHE_TTL.
 
-    Returns the /access body plus ``error`` ("" on success). On any failure the
-    backend falls back to the default (canopy-web) with ``may_resolve`` False, so an
-    unreachable canopy-web never grants anything by itself.
+    Returns the /access body plus ``error`` ("" on success). On any failure
+    ``may_resolve`` is False, so an unreachable canopy-web never grants anything by itself.
 
     Names the current turn (``X-Canopy-Turn-Id``) when there is one: a licence holder
     may resolve only during their own local turn, and canopy-web can say so only when
@@ -268,12 +252,9 @@ def fetch_access(slug: str, *, refresh: bool = False,
                                token=_human_token(), transport=transport,
                                headers={TURN_HEADER: turn} if turn else None) or {}
     except Exception as e:  # noqa: BLE001 — degrade, don't traceback
-        return {"agent": slug, "credential_source": DEFAULT_SOURCE, "may_resolve": False,
-                "via": None, "reason": "",
+        return {"agent": slug, "may_resolve": False, "via": None, "reason": "",
                 "error": str(e).splitlines()[0][:200] if str(e) else type(e).__name__}
-    source = body.get("credential_source") or DEFAULT_SOURCE
     out = {"agent": slug,
-           "credential_source": source if source in SOURCES else DEFAULT_SOURCE,
            "may_resolve": bool(body.get("may_resolve")),
            "via": body.get("via"), "reason": str(body.get("reason") or ""), "error": "",
            # Credentials people delegated to the agent: never given to you; bring your own.
@@ -348,78 +329,6 @@ def _holds_active_licence(slug: str, transport) -> bool:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1Password: can the user's `op` read X's vault?
-# ──────────────────────────────────────────────────────────────────────────────
-
-def agent_vault_name(slug: str) -> str:
-    """X's 1Password vault: the instance this machine is bound to (`canopy agent env`'s
-    ~/.X/canopy-instance.json), else the ``op_vault`` canopy-web records for X. Raises
-    CredError when neither has one — no naming-convention fallback (a plugin is code; the
-    vault belongs to the instance)."""
-    from orchestrator.agent_instance import InstanceError, instance_vault
-    try:
-        return instance_vault(slug, token=_human_token())
-    except InstanceError as e:
-        raise CredError(e.message, EXIT_UNDETERMINED)
-
-
-def _template_env(slug: str, tpl: Path, env: dict, vault: str = "") -> dict:
-    """`env` plus AGENT_VAULT / AGENT_SLUG when the template references ${AGENT_VAULT}
-    (templates stopped naming the vault; the instance's recorded one fills it in)."""
-    from orchestrator.agent_instance import inject_env, uses_vault_var
-    if not uses_vault_var(tpl.read_text(encoding="utf-8")):
-        return env
-    return inject_env(env, vault or agent_vault_name(slug), slug)
-
-
-@dataclass
-class OpProbe:
-    ok: bool
-    problem: str = ""        # "" | "missing" | "signin" | "no-access"
-    mode: str = ""           # "user" | "service-account" — which identity read the vault
-    detail: str = ""
-
-
-def _op_env(mode: str) -> dict:
-    env = dict(os.environ)
-    if mode == "user":
-        # The USER's own op: never the agent service-account key a hook may have
-        # staged into this session (agent_op_env) — that key is the agent's, not yours.
-        env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
-    return env
-
-
-def probe_op(vault: str, *, runner: Runner = subprocess.run,
-             which: Callable[[str], Optional[str]] = shutil.which) -> OpProbe:
-    """`op vault get <vault>` — cheap, prints no secret. Tries the user's own op
-    first; if that can't read it and a service-account key is in the env, tries
-    that key (an agent session's own key reads its own vault)."""
-    if not which("op"):
-        return OpProbe(False, "missing", detail="the 1Password CLI (`op`) is not installed")
-    modes = ["user"] + (["service-account"] if os.environ.get("OP_SERVICE_ACCOUNT_TOKEN") else [])
-    last = OpProbe(False, "no-access")
-    for mode in modes:
-        try:
-            r = runner(["op", "vault", "get", vault, "--format", "json"], capture_output=True,
-                       text=True, timeout=45, env=_op_env(mode))
-        except FileNotFoundError:
-            return OpProbe(False, "missing", detail="the 1Password CLI (`op`) is not installed")
-        except subprocess.TimeoutExpired:
-            last = OpProbe(False, "signin", mode=mode,
-                           detail="`op` timed out — 1Password is locked or waiting on a prompt")
-            continue
-        if r.returncode == 0:
-            return OpProbe(True, mode=mode)
-        err = (r.stderr or "").strip()
-        low = err.lower()
-        if any(m in low for m in OP_SIGNIN_FAILURES):
-            last = OpProbe(False, "signin", mode=mode, detail=(err.splitlines() or [""])[0][:200])
-        elif mode == "user" or last.problem != "signin":
-            last = OpProbe(False, "no-access", mode=mode, detail=(err.splitlines() or [""])[0][:200])
-    return last
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # the decision
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -428,52 +337,14 @@ class Verdict:
     agent: str
     allowed: bool
     identity: str               # "agent-turn" | "human"
-    source: str = ""            # credential backend consulted ("" for a turn)
-    via: Optional[str] = None   # "runner" | "admin" | "1password" | "local-env" | "turn" | None
+    via: Optional[str] = None   # "runner" | "admin" | "license" | "local-env" | "turn" | None
     reason: str = ""            # short machine-ish reason
     message: str = ""           # the one-paragraph human message (refusals)
-    op_mode: str = ""           # which op identity read the vault (1password)
-    vault: str = ""
     exit_code: int = EXIT_OK
     notes: list = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return asdict(self)
-
-
-def _agent_repo(slug: str) -> Optional[Path]:
-    """X's repo on this machine: the cwd's agent repo when it IS X, else a local
-    checkout (~/emdash/repositories/X and the other roots), else the installed plugin."""
-    here = Path.cwd().resolve()
-    for d in (here, *here.parents):
-        if (d / ".claude-plugin" / "plugin.json").is_file():
-            if canopy_web._agent_slug_for_cwd(d) == slug:
-                return d
-            break
-    try:
-        from orchestrator.agent_email import AgentEmailError, find_agent_repo
-        return find_agent_repo(slug)
-    except Exception:  # noqa: BLE001 — AgentEmailError or anything odd: no repo
-        return None
-
-
-def _refusal_1password(slug: str, vault: str, probe: OpProbe) -> str:
-    lead = f"Acting as agent '{slug}' needs its credentials from 1Password (vault '{vault}'), "
-    tail = (f" Until then this session acts as you, not as '{slug}'. Re-check with "
-            f"`canopy cred check --agent {slug}`.")
-    if probe.problem == "missing":
-        return (lead + f"and the 1Password CLI is not installed. Install the 1Password CLI "
-                f"({OP_INSTALL_URL}) and sign in (`op signin`), or ask the vault owner to "
-                f"share '{vault}' with you." + tail)
-    if probe.problem == "signin":
-        return (lead + f"and the 1Password CLI is not signed in ({probe.detail or 'no session'}). "
-                f"Sign in with `op signin` (or unlock the 1Password app and enable its CLI "
-                f"integration); if you have no access to '{vault}', ask the vault owner to "
-                f"share it with you." + tail)
-    return (lead + f"and your 1Password account cannot read '{vault}'"
-            + (f" ({probe.detail})" if probe.detail else "")
-            + f". Ask the vault owner to share '{vault}' with you (or check you are signed "
-            f"in to the right 1Password account: `op whoami`)." + tail)
 
 
 def _refusal_canopy_web(slug: str, access: dict) -> str:
@@ -501,16 +372,11 @@ def _refusal_canopy_web(slug: str, access: dict) -> str:
             f"--agent {slug}`. Until then this session acts as you, not as '{slug}'.")
 
 
-def decide(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
-           which: Callable[[str], Optional[str]] = shutil.which,
-           local_env_counts: bool = True) -> Verdict:
+def decide(slug: str, *, refresh: bool = False, local_env_counts: bool = True) -> Verdict:
     sess = session_identity()
     if sess.kind == "agent-turn":
         if sess.agent and sess.agent == slug:
-            # A turn resolves through the runner-provided service-account key, never
-            # through a desktop-app session on the box.
-            mode = "service-account" if os.environ.get("OP_SERVICE_ACCOUNT_TOKEN") else "user"
-            return Verdict(slug, True, "agent-turn", via="turn", op_mode=mode,
+            return Verdict(slug, True, "agent-turn", via="turn",
                            reason=f"runner turn {sess.turn_id} is agent '{slug}'s own")
         who = f"agent '{sess.agent}'s" if sess.agent else "a"
         msg = (f"This is {who} runner turn ({sess.turn_id}), so it may act only as "
@@ -520,62 +386,25 @@ def decide(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
         return Verdict(slug, False, "agent-turn", via=None, reason="turn-is-another-agent",
                        message=msg, exit_code=EXIT_REFUSED)
 
-    # A human who already resolved X's env on this machine (the one-time `op inject` /
-    # `canopy cred env`) keeps acting as X without asking 1Password again — re-probing a
-    # locked desktop app on every server start is the "constant op prompt" Jonathan ruled
-    # out (2026-10-09). Only a private file counts; --refresh always re-proves access.
-    # Runner turns never reach this branch: they stay limited to their own agent above.
+    # A human who already resolved X's env on this machine (`canopy cred env`) keeps acting
+    # as X without asking canopy-web again on every server start. Only a private file
+    # counts; --refresh always re-proves access. Runner turns never reach this branch: they
+    # stay limited to their own agent above.
     if local_env_counts and not refresh and _private_env(env_path(slug)):
-        return Verdict(slug, True, "human", source="local-env", via="local-env",
+        return Verdict(slug, True, "human", via="local-env",
                        reason=f"{env_path(slug)} already resolved on this machine")
 
     access = fetch_access(slug, refresh=refresh)
-    source = access.get("credential_source") or DEFAULT_SOURCE
     notes = []
     if access.get("error"):
-        notes.append(f"canopy-web /access unavailable ({access['error']}); "
-                     f"assuming the default backend, canopy vault")
-
-    if source == "canopy-web":
-        if access.get("may_resolve"):
-            return Verdict(slug, True, "human", source=source, via=access.get("via"),
-                           reason=access.get("reason") or "canopy-web: may_resolve", notes=notes)
-        return Verdict(slug, False, "human", source=source, via=None,
-                       reason=access.get("reason") or "canopy-web: may not resolve",
-                       message=_refusal_canopy_web(slug, access), exit_code=EXIT_REFUSED,
-                       notes=notes)
-
-    try:
-        vault = agent_vault_name(slug)
-    except CredError as e:
-        message = f"Cannot decide whether you may act as agent '{slug}': {e.message}"
-        if " 404" in e.message or "-> 404" in e.message:
-            # canopy-web answers 404 to a non-member of the agent's workspace.
-            message += (f" canopy-web does not show you agent '{slug}' (not a member of its "
-                        f"workspace) — ask a workspace admin to invite you first.")
-        return Verdict(slug, False, "human", source=source, via=None, reason="no-vault",
-                       message=message, exit_code=EXIT_UNDETERMINED, notes=notes)
-    key = f"op|{vault}|{slug}"
-    hit = None if refresh else _cache_get(key)
-    if hit and hit.get("ok"):
-        probe = OpProbe(True, mode=hit.get("mode") or "user")
-    else:
-        probe = probe_op(vault, runner=runner, which=which)
-        if probe.ok:
-            _cache_put(key, {"ok": True, "mode": probe.mode})
-    if probe.ok:
-        return Verdict(slug, True, "human", source=source, via="1password",
-                       reason=f"1Password ({probe.mode}) can read vault '{vault}'",
-                       op_mode=probe.mode, vault=vault, notes=notes)
-    message = _refusal_1password(slug, vault, probe)
-    if " 404" in (access.get("error") or "") or "-> 404" in (access.get("error") or ""):
-        # canopy-web answers /access with 404 to a non-member of the agent's workspace.
-        message += (f" canopy-web also does not show you agent '{slug}' (not a member of its "
-                    f"workspace) — if '{slug}' keeps its credentials on canopy-web, ask a "
-                    f"workspace admin to invite you first.")
-    return Verdict(slug, False, "human", source=source, via=None,
-                   reason=f"1password: {probe.problem}", vault=vault,
-                   message=message, exit_code=EXIT_REFUSED, notes=notes)
+        notes.append(f"canopy-web /access unavailable ({access['error']})")
+    if access.get("may_resolve"):
+        return Verdict(slug, True, "human", via=access.get("via"),
+                       reason=access.get("reason") or "canopy-web: may_resolve", notes=notes)
+    return Verdict(slug, False, "human", via=None,
+                   reason=access.get("reason") or "canopy-web: may not resolve",
+                   message=_refusal_canopy_web(slug, access), exit_code=EXIT_REFUSED,
+                   notes=notes)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -616,37 +445,6 @@ def _fresh(path: Path) -> bool:
         return path.is_file() and path.stat().st_size > 0
     except OSError:
         return False
-
-
-def resolve_1password(slug: str, out: Path, verdict: Verdict, *,
-                      runner: Runner = subprocess.run) -> str:
-    repo = _agent_repo(slug)
-    if repo is None:
-        raise CredError(
-            f"no repo for agent '{slug}' on this machine — clone it (gh repo clone "
-            f"dimagi-internal/{slug} ~/emdash/repositories/{slug}), install its plugin, or "
-            f"run from inside it. Its .env.tpl says what ~/.{slug}/.env holds.")
-    tpl = repo / ".env.tpl"
-    if not tpl.is_file():
-        raise CredError(f"agent '{slug}'s repo ({repo}) has no .env.tpl — nothing to resolve")
-    out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd, tmp = tempfile.mkstemp(dir=str(out.parent), prefix=".tmp-", suffix=".env")
-    os.close(fd)
-    os.chmod(tmp, 0o600)
-    try:
-        env = _template_env(slug, tpl, _op_env(verdict.op_mode or "user"), verdict.vault)
-        r = runner(["op", "inject", "-f", "-i", str(tpl), "-o", tmp], capture_output=True,
-                   text=True, timeout=180, env=env)
-        if r.returncode != 0:
-            # op names the reference it could not resolve, never a value.
-            first = ((r.stderr or "").strip().splitlines() or ["no output"])[0][:300]
-            raise CredError(f"op inject failed for '{slug}': {first}")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, out)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-    return f"1Password ({verdict.op_mode or 'user'}) via {tpl}"
 
 
 def _env_line(name: str, value: str) -> str:
@@ -710,11 +508,10 @@ def resolve_canopy_web(slug: str, out: Path) -> str:
     return note + ")"
 
 
-def ensure_env(slug: str, *, refresh: bool = False, runner: Runner = subprocess.run,
-               which: Callable[[str], Optional[str]] = shutil.which) -> tuple[Path, str]:
+def ensure_env(slug: str, *, refresh: bool = False) -> tuple[Path, str]:
     """(path, what happened). Raises CredError(EXIT_REFUSED) when the session may not
     act as ``slug``."""
-    verdict = decide(slug, refresh=refresh, runner=runner, which=which)
+    verdict = decide(slug, refresh=refresh)
     if not verdict.allowed:
         raise CredError(verdict.message, EXIT_REFUSED)
     turn_file = turn_env_file(slug)
@@ -729,14 +526,7 @@ def ensure_env(slug: str, *, refresh: bool = False, runner: Runner = subprocess.
         except OSError:
             pass
         return out, "present"
-    source = verdict.source or ""
-    if verdict.identity == "agent-turn":
-        # A turn may resolve its own agent; the backend still decides how.
-        source = fetch_access(slug, refresh=refresh).get("credential_source") or DEFAULT_SOURCE
-    if source == "canopy-web":
-        how = resolve_canopy_web(slug, out)
-    else:
-        how = resolve_1password(slug, out, verdict, runner=runner)
+    how = resolve_canopy_web(slug, out)
     return out, f"resolved from {how}"
 
 
@@ -807,9 +597,8 @@ def runner_env_bundle(slug: str, *, agent_root: Path, base_url: str = "", token:
                       runner: Runner = subprocess.run) -> tuple[dict, str, dict]:
     """({NAME: value}, backend) as a RUNNER resolves them for one turn — the same
     credentials `canopy agent prepare --runner` uses (canopy-web `/credentials/resolve` with
-    the runner's token; `op inject` of the clone's .env.tpl to a pipe with the agent's own
-    key), held in memory — plus the resolve's top-level `op_sa_token` / `op_vault` / `delegated`,
-    each only when it returned one (`agent_prepare.RESOLVE_EXTRAS`), from
+    the runner's token), held in memory — plus the resolve's top-level `delegated`,
+    when it returned one (`agent_prepare.RESOLVE_EXTRAS`), from
     the same resolve call (device proof and zero-knowledge unwrap included)."""
     from orchestrator.agent_prepare import RunnerPreparer
     base = base_url or os.environ.get("CANOPY_BASE_URL", "").strip() or \
@@ -830,59 +619,15 @@ def runner_env_bundle(slug: str, *, agent_root: Path, base_url: str = "", token:
 # exec: the agent's env in ONE child process — no file, no session env
 # ──────────────────────────────────────────────────────────────────────────────
 
-def parse_dotenv(text: str) -> dict:
-    """NAME=value lines (what `op inject` prints for a .env.tpl); comments and blanks
-    skipped, the first `=` splits, surrounding quotes of a whole value dropped."""
-    out = {}
-    for line in text.splitlines():
-        s = line.strip()
-        if not s or s.startswith("#") or "=" not in s:
-            continue
-        name, _, val = s.partition("=")
-        name = name.strip().removeprefix("export ").strip()
-        if not _ENV_NAME_RE.match(name):
-            continue
-        val = val.strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
-            val = val[1:-1]
-        out[name] = val
-    return out
-
-
-def _inject_to_memory(slug: str, verdict: Verdict, *, runner: Runner) -> dict:
-    """`op inject` of the agent's .env.tpl to a PIPE — values reach this process's memory
-    and never a file."""
-    repo = _agent_repo(slug)
-    tpl = repo / ".env.tpl" if repo else None
-    if tpl is None or not tpl.is_file():
-        raise CredError(f"no .env.tpl for agent '{slug}' on this machine — clone its repo or "
-                        f"run from inside it")
-    env = _template_env(slug, tpl, _op_env(verdict.op_mode or "user"), verdict.vault)
-    r = runner(["op", "inject", "-i", str(tpl)], capture_output=True, text=True, timeout=180,
-               env=env)
-    if r.returncode != 0:
-        first = ((r.stderr or "").strip().splitlines() or ["no output"])[0][:300]
-        raise CredError(f"op inject failed for '{slug}': {first}")
-    return parse_dotenv(r.stdout or "")
-
-
-def exec_env(slug: str, *, refs: Optional[list] = None, runner: Runner = subprocess.run,
-             which: Callable[[str], Optional[str]] = shutil.which) -> tuple[dict, str]:
+def exec_env(slug: str, *, refs: Optional[list] = None) -> tuple[dict, str]:
     """({NAME: value} for the child, which backend). The same rules as `cred check`
     decide — a runner turn only for its own agent — except that an already-resolved
     ~/.<slug>/.env is NOT a reason to allow: exec never touches that file."""
-    verdict = decide(slug, runner=runner, which=which, local_env_counts=False)
+    verdict = decide(slug, local_env_counts=False)
     if not verdict.allowed:
         raise CredError(verdict.message, EXIT_REFUSED)
-    source = verdict.source or ""
-    if verdict.identity == "agent-turn":
-        source = fetch_access(slug).get("credential_source") or DEFAULT_SOURCE
-    if source == "canopy-web":
-        values, _ = env_values(fetch_canopy_web_values(slug, refs=refs))
-        how = "canopy-web"
-    else:
-        values = _inject_to_memory(slug, verdict, runner=runner)
-        how = f"1Password ({verdict.op_mode or 'user'})"
+    values, _ = env_values(fetch_canopy_web_values(slug, refs=refs))
+    how = "canopy-web"
     if refs:
         missing = [r for r in refs if r not in values]
         if missing:
@@ -898,68 +643,26 @@ def exec_env(slug: str, *, refs: Optional[list] = None, runner: Runner = subproc
 #: Re-checked at most this often per agent. Shared across processes through the stamp,
 #: because the caller is a SessionStart hook: a new process every session.
 SYNC_TTL = 300
-_OP_REF_VAULT = re.compile(r"op://([^/\s]+)/")
-#: Only the agent's key decides whose vault is read — never a personal session.
-_OP_PERSONAL_ENV_PREFIXES = ("OP_SESSION_",)
-_OP_PERSONAL_ENV_KEYS = ("OP_ACCOUNT", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN")
 
 
 def stamp_path(slug: str) -> Path:
-    """Beside the env file: the fingerprint last injected. The cloud runner writes the
+    """Beside the env file: the fingerprint last written. The cloud runner writes the
     same file in the same format (`cloud_runner._refresh_agent_env`)."""
     return legacy_env_path(slug).with_name(".env.stamp")
 
 
-def op_key_account(token: str) -> str:
-    """The 1Password account a service-account key signs in to, from the key's public
-    header — never a secret. A key minted in the wrong account fails every call with
-    "Signin credentials are not compatible…", which names nothing (ACE, 2026-10-12)."""
-    import base64
-    try:
-        raw = token.strip().removeprefix("ops_")
-        body = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-        return str(body.get("signInAddress") or "").removeprefix("https://").rstrip("/")
-    except Exception:  # noqa: BLE001
-        return ""
+def sync_env(slug: str, *, ttl: float = SYNC_TTL, now: Optional[float] = None) -> str:
+    """Bring ~/.<slug>/.env up to date with the agent's Canopy vault, without waste.
+    Returns what happened: "skipped: …", "unchanged", or "re-injected from canopy-web".
 
+    Throttled to once per `ttl` per agent via the stamp; when due, the values are fetched
+    and the file re-written only when their fingerprint moved. A failure keeps the existing
+    file and raises CredError with the reason.
 
-def _sync_op_err(r: subprocess.CompletedProcess, what: str, token: str) -> str:
-    # op names the reference or vault it could not read, never a value.
-    err = " ".join((r.stderr or "").split())[:300] or f"{what} exited {r.returncode}"
-    if "not compatible" in err or "signin" in err.lower().replace(" ", ""):
-        account = op_key_account(token)
-        if account:
-            err += f" — this key signs in to {account}; re-mint it in the account that holds the vault"
-    return err
-
-
-def vault_fingerprint(tpl: Path, env: dict, token: str, *, runner: Runner) -> str:
-    """The template's hash plus each vault's `content_version` — which moves on any item
-    change. One small `op vault get` per vault the template names; no secret is read."""
-    import hashlib
-
-    from orchestrator.agent_instance import expand_vars
-    text = tpl.read_text(encoding="utf-8")
-    parts = [hashlib.sha256(text.encode()).hexdigest()]
-    # ${AGENT_VAULT} refs name the vault op inject will read once the variable is set.
-    for vault in sorted(set(_OP_REF_VAULT.findall(expand_vars(text, env)))):
-        r = runner(["op", "vault", "get", vault, "--format", "json"], capture_output=True,
-                   text=True, timeout=45, env=env)
-        if r.returncode != 0:
-            raise CredError(_sync_op_err(r, f"op vault get {vault}", token))
-        try:
-            version = json.loads(r.stdout or "{}").get("content_version")
-        except ValueError:
-            version = None
-        if version is None:
-            raise CredError(f"op vault get {vault} returned no content_version")
-        parts.append(f"{vault}={version}")
-    return "|".join(parts)
-
-
-def _sync_from_canopy_web(slug: str, *, ttl: float, now: Optional[float]) -> str:
-    """`sync_env` for an agent whose backend is canopy-web: throttled like the 1Password
-    path (the same stamp), re-written only when the values' fingerprint moved."""
+    A turn whose runner handed it ``$CANOPY_AGENT_ENV_FILE`` is skipped: that file is the
+    turn's env, written fresh at claim, and there is no persistent copy to keep current."""
+    if turn_env_file(slug) is not None:
+        return "skipped: this turn's env is $CANOPY_AGENT_ENV_FILE (the runner's)"
     out, stamp = legacy_env_path(slug), stamp_path(slug)
     now = time.time() if now is None else now
     try:
@@ -970,8 +673,6 @@ def _sync_from_canopy_web(slug: str, *, ttl: float, now: Optional[float]) -> str
     if out.is_file() and now - float(prior.get("checked_at") or 0) < ttl:
         return "skipped: checked recently"
     access = fetch_access(slug)
-    if access.get("credential_source") != "canopy-web":
-        return "skipped: no agent 1Password key in this session"
     sess = session_identity()
     if sess.kind == "agent-turn" and sess.agent != slug:
         return f"skipped: {sess.why}"
@@ -983,7 +684,7 @@ def _sync_from_canopy_web(slug: str, *, ttl: float, now: Optional[float]) -> str
             out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             _write_private(stamp, json.dumps({**prior, **fields, "checked_at": now}))
         except OSError:
-            pass
+            pass  # an unwritable stamp only costs a re-check
 
     try:
         values = fetch_canopy_web_values(slug)
@@ -997,96 +698,6 @@ def _sync_from_canopy_web(slug: str, *, ttl: float, now: Optional[float]) -> str
     write_env_from_values(slug, out, values)
     record(fingerprint=fingerprint, injected_at=now)
     return "re-injected from canopy-web"
-
-
-def sync_env(slug: str, *, ttl: float = SYNC_TTL, runner: Optional[Runner] = None,
-             now: Optional[float] = None, repo: Optional[Path] = None) -> str:
-    """Bring ~/.<slug>/.env up to date with the agent's vault, without waste. Returns
-    what happened: "skipped: …", "unchanged", or "re-injected".
-
-    Runs only with the agent's OWN service-account key in the environment (the
-    SessionStart hook stages it): that key never prompts, which is what makes checking on
-    every session safe — the user's desktop app is never asked (the "constant op prompt"
-    ruled out on 2026-10-09). Throttled to once per `ttl` per agent via the stamp; when
-    due, one `op vault get` per vault decides; the full `op inject` runs only when the
-    fingerprint moved or the file is missing. A failure keeps the existing file and raises
-    CredError with op's reason.
-
-    A turn whose runner handed it ``$CANOPY_AGENT_ENV_FILE`` is skipped: that file is the
-    turn's env, written fresh at claim, and there is no persistent copy to keep current."""
-    if turn_env_file(slug) is not None:
-        return "skipped: this turn's env is $CANOPY_AGENT_ENV_FILE (the runner's)"
-    runner = runner or subprocess.run
-    token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
-    if not token:
-        # No 1Password key: an agent on the canopy-web backend (Canopy Vault, canopy#946)
-        # has none by design — canopy-web withholds it — so keep its env current from
-        # canopy-web instead. Any other agent: unchanged, nothing to do.
-        return _sync_from_canopy_web(slug, ttl=ttl, now=now)
-    repo = repo or _agent_repo(slug)
-    tpl = repo / ".env.tpl" if repo else None
-    if tpl is None or not tpl.is_file():
-        return f"skipped: no .env.tpl for '{slug}' on this machine"
-    out, stamp = legacy_env_path(slug), stamp_path(slug)
-    now = time.time() if now is None else now
-    try:
-        prior = json.loads(stamp.read_text(encoding="utf-8"))
-        prior = prior if isinstance(prior, dict) else {}
-    except (OSError, ValueError):
-        prior = {}
-    if out.is_file() and now - float(prior.get("checked_at") or 0) < ttl:
-        return "skipped: checked recently"
-    env = {k: v for k, v in os.environ.items()
-           if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
-    # The vault a RUNNER already knows (it staged this agent's key with it, from canopy-web)
-    # is the answer — asking canopy-web again needs a person's token, which a box has none
-    # of. That is what let cloud_runner keep its own copy of this function; it calls this
-    # one now (agent-setup-lifecycle.md phase 2).
-    staged = env.get("AGENT_VAULT", "").strip() if env.get("AGENT_SLUG", "") == slug else ""
-    env = _template_env(slug, tpl, env, staged)
-
-    def record(**fields) -> None:
-        try:
-            out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            _write_private(stamp, json.dumps({**prior, **fields, "checked_at": now}))
-        except OSError:
-            pass  # an unwritable stamp only costs a re-check
-
-    try:
-        fingerprint = vault_fingerprint(tpl, env, token, runner=runner)
-    except CredError:
-        record()  # throttle the retry too: an unreachable 1Password costs one probe per ttl
-        raise
-    except subprocess.TimeoutExpired:
-        record()
-        raise CredError("1Password did not answer within 45s")
-    except OSError as e:  # FileNotFoundError: no `op` on this machine
-        record()
-        raise CredError(f"could not run the 1Password CLI (`op`): {e.strerror or e} — {OP_INSTALL_URL}")
-    if out.is_file() and fingerprint == prior.get("fingerprint"):
-        record()
-        return "unchanged"
-    out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd, tmp = tempfile.mkstemp(dir=str(out.parent), prefix=".tmp-", suffix=".env")
-    os.close(fd)
-    os.chmod(tmp, 0o600)
-    try:
-        try:
-            r = runner(["op", "inject", "-f", "-i", str(tpl), "-o", tmp], capture_output=True,
-                       text=True, timeout=180, env=env)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            record()
-            raise CredError(f"op inject did not complete for '{slug}': {e}")
-        if r.returncode != 0:
-            record()
-            raise CredError(f"op inject failed for '{slug}': {_sync_op_err(r, 'op inject', token)}")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, out)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-    record(fingerprint=fingerprint, injected_at=now)
-    return "re-injected"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1572,7 +1183,7 @@ def check_cmd(agent, refresh, as_json):
                    "Prints the path.")
 @click.option("--print-json", "print_json", is_flag=True,
               help="With --runner: resolve in memory and print {agent, source, values} — plus "
-                   "op_sa_token / op_vault / delegated when the resolve returned them — "
+                   "delegated when the resolve returned it — "
                    "as JSON on stdout, for a runner's in-memory cache. Writes nothing.")
 @click.option("--runner", "runner_mode", is_flag=True,
               help="Resolve as a RUNNER (its token, CANOPY_TOKEN; the clone under "
@@ -1636,13 +1247,10 @@ def refresh_cmd(agent):
 @click.option("--ttl", type=float, default=SYNC_TTL, show_default=True,
               help="Seconds between checks for this agent.")
 def sync_cmd(agent, ttl):
-    """Re-write ~/.<agent>/.env from its vault IF the values changed.
+    """Re-write ~/.<agent>/.env from its Canopy vault IF the values changed.
 
-    Cheap enough for every session start: throttled per agent. canopy vault (every
-    agent): re-written from canopy-web when the values' fingerprint moved. LEGACY
-    1Password: needs the agent's own key in $OP_SERVICE_ACCOUNT_TOKEN (never the desktop
-    app) — one `op vault get` per vault when due, the full `op inject` only on a change.
-    Never prints a value; a failure keeps the existing file and exits 1 with the reason."""
+    Cheap enough for every session start: throttled per agent; re-written from canopy-web
+    when the values' fingerprint moved. Never prints a value; a failure keeps the existing file and exits 1 with the reason."""
     slug = _require_agent(agent)
     try:
         click.echo(f"[canopy cred] {slug}: {sync_env(slug, ttl=ttl)}", err=True)
@@ -1663,8 +1271,8 @@ def exec_cmd(agent, refs, cmd):
     """Run CMD with the agent's credentials in ITS environment only.
 
     `canopy cred exec [--agent X] [--ref NAME …] -- <cmd> [args…]`. Resolves from the
-    agent's backend (1Password through `op inject` to a pipe, or canopy-web) under the
-    same rules as `cred check` — a runner turn only as its own agent — and writes nothing:
+    Canopy vault (canopy-web) under the same rules as `cred check` — a runner turn only as
+    its own agent — and writes nothing:
     no ~/.X/.env, nothing into this session's environment. Exits with CMD's status."""
     slug = _require_agent(agent)
     values, how = exec_env(slug, refs=list(refs) or None)

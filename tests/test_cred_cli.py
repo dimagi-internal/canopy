@@ -1,12 +1,10 @@
-"""`canopy cred` — session identity (canopy#850 design revision). op + canopy-web mocked."""
+"""`canopy cred` — session identity (canopy#850 design revision). canopy-web mocked."""
 from __future__ import annotations
 
 import json
 import os
-import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -19,13 +17,12 @@ RESOLVED = "resolved-value-never-printed"
 
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch, tmp_path):
-    """Fake home (cache + ~/.<slug>/.env), no ambient op key, cwd outside any repo."""
+    """Fake home (cache + ~/.<slug>/.env), cwd outside any repo."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(cred_cli.Path, "home", classmethod(lambda cls: home))
     monkeypatch.setattr(cred_cli, "CACHE_DIR", home / ".canopy")
     monkeypatch.setattr(cred_cli, "CACHE_FILE", home / ".canopy" / "cred-cache.json")
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
     monkeypatch.setattr(cred_cli, "_human_token", lambda: "pat_human")
     monkeypatch.chdir(tmp_path)
     return home
@@ -34,9 +31,7 @@ def _isolated(monkeypatch, tmp_path):
 @pytest.fixture()
 def web(monkeypatch):
     """Fake canopy-web: /access and /resolve per agent."""
-    # `vaults` = each agent's recorded Agent.op_vault on canopy-web (a table, not a rule).
-    state = {"access": {}, "resolve": {}, "calls": [], "fail": False,
-             "vaults": {"ace": "Agent-Ace", "hal": "Agent-Hal"}}
+    state = {"access": {}, "resolve": {}, "calls": [], "fail": False}
 
     def fake_call(method, path, body=None, **kw):
         state["calls"].append((method, path, kw.get("token")))
@@ -44,56 +39,14 @@ def web(monkeypatch):
             raise cred_cli.canopy_web.CanopyError(f"{method} {path} -> 404: not found")
         slug = path.split("/")[3]
         if path.endswith("/credentials/access"):
-            return state["access"].get(slug, {"agent": slug, "credential_source": "1password",
-                                              "may_resolve": False, "via": None, "reason": ""})
+            return state["access"].get(slug, {"agent": slug, "may_resolve": False,
+                                              "via": None, "reason": ""})
         if path.split("?")[0].endswith("/credentials/resolve"):
             return state["resolve"].get(slug, {"values": {}})
-        if path == f"/api/agents/{slug}/":
-            return {"slug": slug, "op_vault": state["vaults"].get(slug, "")}
         raise AssertionError(path)
 
     monkeypatch.setattr(cred_cli.canopy_web, "call", fake_call)
     return state
-
-
-class FakeOp:
-    """Records op invocations; `readable` = vaults the USER's op can read."""
-
-    def __init__(self, readable=(), sa_readable=(), signed_in=True):
-        self.readable, self.sa_readable, self.signed_in = set(readable), set(sa_readable), signed_in
-        self.calls = []
-
-    def __call__(self, argv, **kw):
-        env = kw.get("env") or {}
-        sa = "OP_SERVICE_ACCOUNT_TOKEN" in env
-        self.calls.append((argv, sa))
-        if argv[:3] == ["op", "vault", "get"]:
-            vault = argv[3]
-            if not sa and not self.signed_in:
-                return subprocess.CompletedProcess(argv, 1, "", "[ERROR] You are not currently signed in.")
-            ok = vault in (self.sa_readable if sa else self.readable)
-            return subprocess.CompletedProcess(argv, 0 if ok else 1, "{}" if ok else "",
-                                               "" if ok else f'[ERROR] "{vault}" isn\'t a vault in this account.')
-        if argv[:2] == ["op", "inject"]:
-            out = argv[argv.index("-o") + 1]
-            Path(out).write_text(f"SETTING={RESOLVED}\n")
-            return subprocess.CompletedProcess(argv, 0, "", "")
-        raise AssertionError(argv)
-
-
-def _which(present=True):
-    return lambda name: "/usr/bin/op" if present else None
-
-
-def _agent_repo(tmp_path, slug, tpl=True, op_vault=None):
-    repo = tmp_path / "repos" / slug
-    (repo / ".claude-plugin").mkdir(parents=True)
-    (repo / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": slug}))
-    (repo / "config").mkdir()
-    (repo / "config" / "agent.json").write_text(json.dumps({"op_vault": op_vault} if op_vault else {}))
-    if tpl:
-        (repo / ".env.tpl").write_text("TOKEN=op://Agent-X/item/credential\n")
-    return repo
 
 
 # ── session identity ──────────────────────────────────────────────────────────
@@ -115,7 +68,7 @@ def test_runner_turn_names_its_agent(monkeypatch):
 def test_turn_may_act_as_its_own_agent_without_asking_anyone(monkeypatch, web):
     monkeypatch.setenv("CANOPY_TURN_ID", "t-1")
     monkeypatch.setenv("CANOPY_AGENT_SLUG", "ace")
-    v = cred_cli.decide("ace", runner=FakeOp(), which=_which())
+    v = cred_cli.decide("ace")
     assert v.allowed and v.via == "turn"
     assert web["calls"] == []
 
@@ -130,119 +83,52 @@ def test_turn_is_refused_any_other_agent(monkeypatch, web):
 
 def test_turn_without_an_agent_may_act_as_none(monkeypatch, web):
     monkeypatch.setenv("CANOPY_TURN_ID", "t-1")
-    v = cred_cli.decide("ace", runner=FakeOp(), which=_which())
+    v = cred_cli.decide("ace")
     assert not v.allowed and v.exit_code == cred_cli.EXIT_REFUSED
 
 
-# ── check: humans, 1Password backend ──────────────────────────────────────────
+# ── check: humans ─────────────────────────────────────────────────────────────
 
-def test_human_with_vault_access_may_act(web):
-    op = FakeOp(readable={"Agent-Ace"})
-    v = cred_cli.decide("ace", runner=op, which=_which())
-    assert v.allowed and v.via == "1password" and v.vault == "Agent-Ace"
-    assert op.calls[0][0] == ["op", "vault", "get", "Agent-Ace", "--format", "json"]
-
-
-def test_vault_name_comes_from_the_instance_record_on_canopy_web(web):
-    web["vaults"]["ace"] = "ACE"
-    v = cred_cli.decide("ace", runner=FakeOp(readable={"ACE"}), which=_which())
-    assert v.allowed and v.vault == "ACE"
-    assert ("GET", "/api/agents/ace/", "pat_human") in web["calls"]
-
-
-def test_vault_name_comes_from_this_machines_binding_first(web, _isolated):
-    (_isolated / ".ace").mkdir()
-    (_isolated / ".ace" / "canopy-instance.json").write_text(json.dumps(
-        {"plugin": "ace", "agent": "ace", "workspace": "connect", "vault": "Bound-Vault"}))
-    v = cred_cli.decide("ace", runner=FakeOp(readable={"Bound-Vault"}), which=_which())
-    assert v.allowed and v.vault == "Bound-Vault"
-    assert not any(c[1] == "/api/agents/ace/" for c in web["calls"])
-
-
-def test_no_recorded_vault_is_undetermined_never_a_convention(web):
-    web["vaults"].pop("ace")
-    op = FakeOp(readable={"Agent-Ace"})
-    v = cred_cli.decide("ace", runner=op, which=_which())
-    assert not v.allowed and v.exit_code == cred_cli.EXIT_UNDETERMINED
-    assert "no 1Password vault recorded on canopy-web" in v.message
-    assert op.calls == []   # nothing probed a guessed vault name
-
-
-def test_op_missing_says_install_and_signin(web):
-    v = cred_cli.decide("ace", runner=FakeOp(), which=_which(False))
-    assert not v.allowed
-    assert "install the 1Password CLI".lower() in v.message.lower()
-    assert "op signin" in v.message and "share 'Agent-Ace'" in v.message
-
-
-def test_op_not_signed_in_says_signin(web):
-    v = cred_cli.decide("ace", runner=FakeOp(signed_in=False), which=_which())
-    assert not v.allowed and v.reason == "1password: signin" and "op signin" in v.message
-
-
-def test_no_vault_access_says_ask_the_owner(web):
-    v = cred_cli.decide("hal", runner=FakeOp(readable={"Agent-Ace"}), which=_which())
-    assert not v.allowed and "Ask the vault owner to share 'Agent-Hal'" in v.message
-
-
-def test_users_op_never_borrows_a_staged_agent_key_first(monkeypatch, web):
-    """A hook may have staged ACE's service-account key into this session; the probe
-    asks the user's own op first, and the key only reads ACE's own vault."""
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_ace")
-    op = FakeOp(readable=set(), sa_readable={"Agent-Ace"})
-    assert not cred_cli.decide("hal", runner=op, which=_which()).allowed
-    assert op.calls[0][1] is False  # user first
-    v = cred_cli.decide("ace", runner=op, which=_which())
-    assert v.allowed and v.op_mode == "service-account"
-
-
-def test_positive_op_verdict_is_cached(web):
-    op = FakeOp(readable={"Agent-Ace"})
-    cred_cli.decide("ace", runner=op, which=_which())
-    cred_cli.decide("ace", runner=op, which=_which())
-    assert len(op.calls) == 1
-    cred_cli.decide("ace", refresh=True, runner=op, which=_which())
-    assert len(op.calls) == 2
-
-
-def test_canopy_web_unreachable_falls_back_to_canopy_vault_and_refuses(web):
-    # canopy vault is the default backend (2026-10-21); an unreachable canopy-web never
-    # grants anything, and never sends a person to 1Password.
+def test_canopy_web_unreachable_refuses(web):
+    # An unreachable canopy-web never grants anything by itself.
     web["fail"] = True
-    op = FakeOp()
-    v = cred_cli.decide("ace", runner=op, which=_which())
-    assert not v.allowed and v.source == "canopy-web" and v.notes
-    assert "1Password" not in v.message
+    v = cred_cli.decide("ace")
+    assert not v.allowed and v.notes
 
 
-# ── check: humans, canopy-web backend ─────────────────────────────────────────
-
-def test_canopy_web_backend_follows_may_resolve(web):
-    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True,
+def test_a_server_that_still_sends_credential_source_is_tolerated(web):
+    """An older canopy-web sends `credential_source` / `op_vault`: neither is required or used."""
+    web["access"]["ace"] = {"credential_source": "legacy", "op_vault": "V", "may_resolve": True,
                             "via": "admin", "reason": "you are an admin of ace"}
-    v = cred_cli.decide("ace", runner=FakeOp(), which=_which(False))
+    v = cred_cli.decide("ace")
+    assert v.allowed and v.via == "admin"
+    assert "credential_source" not in cred_cli.fetch_access("ace")
+
+
+def test_follows_may_resolve(web):
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin",
+                            "reason": "you are an admin of ace"}
+    v = cred_cli.decide("ace")
     assert v.allowed and v.via == "admin"
 
 
-def test_canopy_web_backend_refusal_names_the_admin_path(web):
-    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": False,
-                            "via": None, "reason": "not an owner or admin"}
+def test_refusal_names_the_admin_path(web):
+    web["access"]["ace"] = {"may_resolve": False, "via": None, "reason": "not an owner or admin"}
     r = CliRunner().invoke(cred_cli.cred_group, ["check", "--agent", "ace"])
     assert r.exit_code == cred_cli.EXIT_REFUSED
     assert "not an owner or admin" in r.output and "admin of 'ace'" in r.output
 
 
 def test_access_is_cached(web):
-    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin"}
     cred_cli.fetch_access("ace")
     cred_cli.fetch_access("ace")
     assert len(web["calls"]) == 1
     assert (cred_cli.CACHE_FILE.stat().st_mode & 0o777) == 0o600
 
 
-def test_check_json_and_exit_zero(monkeypatch, web):
-    monkeypatch.setattr(cred_cli, "probe_op",
-                        lambda vault, **kw: cred_cli.OpProbe(True, mode="user"))
+def test_check_json_and_exit_zero(web):
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin"}
     r = CliRunner().invoke(cred_cli.cred_group, ["check", "--agent", "ace", "--json"])
     assert r.exit_code == 0, r.output
     assert json.loads(r.output.splitlines()[0])["allowed"] is True
@@ -256,41 +142,22 @@ def test_no_agent_is_a_usage_error(web):
 
 def test_default_agent_is_the_sessions(monkeypatch, web):
     monkeypatch.setenv("CANOPY_AGENT", "ace")
-    monkeypatch.setattr(cred_cli, "probe_op",
-                        lambda vault, **kw: cred_cli.OpProbe(True, mode="user"))
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin"}
     r = CliRunner().invoke(cred_cli.cred_group, ["check"])
     assert r.exit_code == 0 and "'ace'" in r.output
 
 
 # ── env ───────────────────────────────────────────────────────────────────────
 
-def test_env_injects_from_the_agent_repo_once(tmp_path, monkeypatch, web, _isolated):
-    repo = _agent_repo(tmp_path, "ace")
-    monkeypatch.chdir(repo)
-    op = FakeOp(readable={"Agent-Ace"})
-    path, how = cred_cli.ensure_env("ace", runner=op, which=_which())
-    assert path == _isolated / ".ace" / ".env"
-    assert (path.stat().st_mode & 0o777) == 0o600 and RESOLVED in path.read_text()
-    assert "1Password" in how
-    injects = [c for c in op.calls if c[0][:2] == ["op", "inject"]]
-    assert injects[0][0][:5] == ["op", "inject", "-f", "-i", str(repo / ".env.tpl")]
-    # present → no second resolve
-    _, how2 = cred_cli.ensure_env("ace", runner=op, which=_which())
-    assert how2 == "present" and len([c for c in op.calls if c[0][1] == "inject"]) == 1
-    # --refresh → resolves again
-    cred_cli.ensure_env("ace", refresh=True, runner=op, which=_which())
-    assert len([c for c in op.calls if c[0][1] == "inject"]) == 2
-
-
 def test_env_refused_never_writes(web, _isolated):
     with pytest.raises(cred_cli.CredError) as e:
-        cred_cli.ensure_env("ace", runner=FakeOp(), which=_which(False))
+        cred_cli.ensure_env("ace")
     assert e.value.exit_code == cred_cli.EXIT_REFUSED
     assert not (_isolated / ".ace" / ".env").exists()
 
 
-def test_env_from_canopy_web_writes_values_but_never_prints_them(web, _isolated):
-    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
+def test_env_writes_values_but_never_prints_them(web, _isolated):
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin"}
     web["resolve"]["ace"] = {"values": {"SETTING_A": RESOLVED, "gog-token": "{json}"},
                              "op_sa_token": "opsx-marker"}
     r = CliRunner().invoke(cred_cli.cred_group, ["env", "--agent", "ace"])
@@ -300,26 +167,29 @@ def test_env_from_canopy_web_writes_values_but_never_prints_them(web, _isolated)
     assert str(path) in r.output
     text = path.read_text()
     assert f"SETTING_A={RESOLVED}" in text and "gog-token" not in text.split("\n", 1)[1]
+    assert "opsx-marker" not in text
     assert (path.stat().st_mode & 0o777) == 0o600
 
 
-def test_turn_env_uses_its_service_account_key(tmp_path, monkeypatch, web):
-    repo = _agent_repo(tmp_path, "ace")
-    monkeypatch.chdir(repo)
+def test_env_is_resolved_once_then_present_until_refreshed(web, _isolated):
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin"}
+    web["resolve"]["ace"] = {"values": {"SETTING_A": RESOLVED}}
+    path, how = cred_cli.ensure_env("ace")
+    assert path == _isolated / ".ace" / ".env" and how.startswith("resolved from canopy-web")
+    _, how2 = cred_cli.ensure_env("ace")
+    assert how2 == "present"
+    resolves = lambda: len([c for c in web["calls"] if "/credentials/resolve" in c[1]])  # noqa: E731
+    assert resolves() == 1
+    cred_cli.ensure_env("ace", refresh=True)
+    assert resolves() == 2
+
+
+def test_a_turn_resolves_its_own_agents_env(monkeypatch, web, _isolated):
     monkeypatch.setenv("CANOPY_TURN_ID", "t-1")
     monkeypatch.setenv("CANOPY_AGENT_SLUG", "ace")
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_ace")
-    op = FakeOp()
-    cred_cli.ensure_env("ace", runner=op, which=_which())
-    inject = [c for c in op.calls if c[0][1] == "inject"][0]
-    assert inject[1] is True  # SA key kept in op's env
-
-
-def test_env_without_a_repo_says_where_to_get_it(monkeypatch, web):
-    monkeypatch.setattr(cred_cli, "_agent_repo", lambda slug: None)
-    with pytest.raises(cred_cli.CredError) as e:
-        cred_cli.ensure_env("ace", runner=FakeOp(readable={"Agent-Ace"}), which=_which())
-    assert "gh repo clone dimagi-internal/ace" in str(e.value.message)
+    web["resolve"]["ace"] = {"values": {"SETTING_A": RESOLVED}}
+    path, how = cred_cli.ensure_env("ace")
+    assert RESOLVED in path.read_text() and how.startswith("resolved from canopy-web")
 
 
 # ── whoami ────────────────────────────────────────────────────────────────────
@@ -335,7 +205,7 @@ def test_whoami_human_and_turn(monkeypatch):
 
 def test_non_member_404_says_get_invited(web):
     web["fail"] = True  # fake raises "-> 404"
-    v = cred_cli.decide("ace", runner=FakeOp(), which=_which(False))
+    v = cred_cli.decide("ace")
     assert not v.allowed and "not a member of its workspace" in v.message
 
 
@@ -349,25 +219,24 @@ def _env_file(home, slug, mode=0o600, body="SETTING=x\n"):
     return path
 
 
-def test_human_with_a_private_resolved_env_never_asks_1password(web, _isolated):
-    """The one-time resolve is enough: a locked 1Password app must not refuse the
+def test_human_with_a_private_resolved_env_never_asks_canopy_web(web, _isolated):
+    """The one-time resolve is enough: an unreachable canopy-web must not refuse the
     human who already resolved this agent's env here (Jonathan, 2026-10-09)."""
     _env_file(_isolated, "ace")
-    op = FakeOp(signed_in=False)
-    v = cred_cli.decide("ace", runner=op, which=_which())
-    assert v.allowed and v.via == "local-env" and op.calls == [] and web["calls"] == []
+    v = cred_cli.decide("ace")
+    assert v.allowed and v.via == "local-env" and web["calls"] == []
 
 
 def test_a_world_readable_or_empty_env_does_not_count(web, _isolated):
     _env_file(_isolated, "ace", mode=0o644)
-    assert not cred_cli.decide("ace", runner=FakeOp(signed_in=False), which=_which()).allowed
+    assert not cred_cli.decide("ace").allowed
     _env_file(_isolated, "ace", body="")
-    assert not cred_cli.decide("ace", runner=FakeOp(signed_in=False), which=_which()).allowed
+    assert not cred_cli.decide("ace").allowed
 
 
 def test_refresh_re_proves_access_despite_a_resolved_env(web, _isolated):
     _env_file(_isolated, "ace")
-    v = cred_cli.decide("ace", refresh=True, runner=FakeOp(signed_in=False), which=_which())
+    v = cred_cli.decide("ace", refresh=True)
     assert not v.allowed and v.via is None
 
 
@@ -375,120 +244,51 @@ def test_a_turn_is_never_let_in_by_another_agents_env(monkeypatch, web, _isolate
     _env_file(_isolated, "ace")
     monkeypatch.setenv("CANOPY_TURN_ID", "t-1")
     monkeypatch.setenv("CANOPY_AGENT_SLUG", "ada")
-    assert not cred_cli.decide("ace", runner=FakeOp(readable={"Agent-Ace"}), which=_which()).allowed
+    assert not cred_cli.decide("ace").allowed
 
 
 # ── cred sync: keep ~/.<slug>/.env current with the vault, cheaply ─────────────
 
-class VaultOp:
-    """`op vault get` answers a content_version; `op inject` writes the current value."""
-
-    def __init__(self, version=7, value="v1", probe_err=""):
-        self.version, self.value, self.probe_err, self.calls = version, value, probe_err, []
-
-    def __call__(self, argv, **kw):
-        self.calls.append((argv, dict(kw.get("env") or {})))
-        if argv[:3] == ["op", "vault", "get"]:
-            if self.probe_err:
-                return subprocess.CompletedProcess(argv, 1, "", self.probe_err)
-            return subprocess.CompletedProcess(
-                argv, 0, json.dumps({"name": argv[3], "content_version": self.version}), "")
-        if argv[:2] == ["op", "inject"]:
-            Path(argv[argv.index("-o") + 1]).write_text(f"SETTING={self.value}\n")
-            return subprocess.CompletedProcess(argv, 0, "", "")
-        raise AssertionError(argv)
-
-    def injects(self):
-        return [a for a, _ in self.calls if a[:2] == ["op", "inject"]]
-
-
 @pytest.fixture()
-def synced(tmp_path, monkeypatch, _isolated):
-    repo = _agent_repo(tmp_path, "ace")
-    monkeypatch.chdir(repo)
-    monkeypatch.setattr(cred_cli.canopy_web, "_agent_slug_for_cwd", lambda d: "ace")
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ACE-KEY")
+def synced(monkeypatch, _isolated):
     return _isolated / ".ace" / ".env"
 
 
-def test_sync_injects_a_missing_env(synced):
-    op = VaultOp()
-    assert cred_cli.sync_env("ace", runner=op, now=1000) == "re-injected"
-    assert synced.read_text() == "SETTING=v1\n" and oct(synced.stat().st_mode)[-3:] == "600"
-    assert all(env["OP_SERVICE_ACCOUNT_TOKEN"] == "ACE-KEY" for _, env in op.calls)
+def test_sync_refreshes_a_canopy_vault_agent(synced, web):
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin"}
+    web["resolve"]["ace"] = {"values": {"SETTING_A": "v1"}}
+    assert cred_cli.sync_env("ace", now=1000) == "re-injected from canopy-web"
+    assert "SETTING_A=v1" in synced.read_text() and oct(synced.stat().st_mode)[-3:] == "600"
+    assert cred_cli.sync_env("ace", now=1100) == "skipped: checked recently"
+    assert cred_cli.sync_env("ace", now=2000) == "unchanged"
+    web["resolve"]["ace"] = {"values": {"SETTING_A": "v2"}}
+    assert cred_cli.sync_env("ace", now=3000) == "re-injected from canopy-web"
+    assert "SETTING_A=v2" in synced.read_text()
 
 
-def test_sync_within_the_ttl_touches_nothing(synced):
-    op = VaultOp()
-    cred_cli.sync_env("ace", runner=op, now=1000)
-    assert cred_cli.sync_env("ace", runner=op, now=1100) == "skipped: checked recently"
-    assert len(op.calls) == 2
+def test_sync_skips_when_canopy_web_will_not_resolve(synced, web):
+    assert cred_cli.sync_env("ace", now=1000).startswith("skipped: canopy-web will not resolve")
+    assert not any("/credentials/resolve" in c[1] for c in web["calls"]) and not synced.exists()
 
 
-def test_sync_unchanged_vault_costs_one_probe(synced):
-    op = VaultOp()
-    cred_cli.sync_env("ace", runner=op, now=1000)
-    assert cred_cli.sync_env("ace", runner=op, now=2000) == "unchanged"
-    assert len(op.injects()) == 1 and len(op.calls) == 3
-
-
-def test_sync_vault_edit_re_injects(synced):
-    op = VaultOp()
-    cred_cli.sync_env("ace", runner=op, now=1000)
-    op.version, op.value = 8, "v2"
-    assert cred_cli.sync_env("ace", runner=op, now=2000) == "re-injected"
-    assert synced.read_text() == "SETTING=v2\n"
-
-
-def test_sync_template_edit_re_injects(synced, tmp_path):
-    op = VaultOp()
-    cred_cli.sync_env("ace", runner=op, now=1000)
-    tpl = tmp_path / "repos" / "ace" / ".env.tpl"
-    tpl.write_text(tpl.read_text() + "MORE=op://Agent-X/other/credential\n")
-    assert cred_cli.sync_env("ace", runner=op, now=2000) == "re-injected"
-
-
-def test_sync_never_uses_the_desktop_app(synced, monkeypatch, web):
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN")
-    op = VaultOp()
-    assert cred_cli.sync_env("ace", runner=op).startswith("skipped: no agent 1Password key")
-    assert op.calls == []
-
-
-def test_sync_strips_a_personal_session(synced, monkeypatch):
-    monkeypatch.setenv("OP_SESSION_dimagi", "personal")
-    op = VaultOp()
-    cred_cli.sync_env("ace", runner=op, now=1000)
-    assert all("OP_SESSION_dimagi" not in env for _, env in op.calls)
-
-
-def test_sync_failure_keeps_the_file_names_the_account_and_throttles(synced, monkeypatch):
-    import base64
-    header = base64.urlsafe_b64encode(
-        json.dumps({"signInAddress": "someone-else.1password.com"}).encode()).decode().rstrip("=")
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_" + header)
+def test_sync_failure_keeps_the_file_and_throttles(synced, web, monkeypatch):
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin"}
     synced.parent.mkdir(parents=True, exist_ok=True)
     synced.write_text("SETTING=old\n")
-    op = VaultOp(probe_err="[ERROR] Signin credentials are not compatible with the provided user auth from server")
-    with pytest.raises(cred_cli.CredError, match="signs in to someone-else.1password.com"):
-        cred_cli.sync_env("ace", runner=op, now=1000)
-    assert synced.read_text() == "SETTING=old\n" and op.injects() == []
-    assert cred_cli.sync_env("ace", runner=op, now=1100) == "skipped: checked recently"
+
+    def boom(slug, refs=None):
+        raise cred_cli.CredError("could not resolve 'ace's credentials from canopy-web: 503")
+    monkeypatch.setattr(cred_cli, "fetch_canopy_web_values", boom)
+    with pytest.raises(cred_cli.CredError, match="503"):
+        cred_cli.sync_env("ace", now=1000)
+    assert synced.read_text() == "SETTING=old\n"
+    assert cred_cli.sync_env("ace", now=1100) == "skipped: checked recently"
 
 
-def test_sync_without_op_installed_fails_cleanly(synced):
-    def no_op(argv, **kw):
-        raise FileNotFoundError(2, "No such file or directory", "op")
-    with pytest.raises(cred_cli.CredError, match="could not run the 1Password CLI"):
-        cred_cli.sync_env("ace", runner=no_op, now=1000)
-
-
-def test_sync_cli_never_prints_a_value(synced, monkeypatch):
-    op = VaultOp(value="hunter2")
-    monkeypatch.setattr(cred_cli.subprocess, "run", op)
-    res = CliRunner().invoke(cred_cli.cred_group, ["sync", "--agent", "ace"],
-                             obj=None, catch_exceptions=False,
-                             env={"OP_SERVICE_ACCOUNT_TOKEN": "ACE-KEY"})
+def test_sync_cli_never_prints_a_value(synced, web):
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin"}
+    web["resolve"]["ace"] = {"values": {"SETTING_A": "hunter2"}}
+    res = CliRunner().invoke(cred_cli.cred_group, ["sync", "--agent", "ace"])
     assert res.exit_code == 0 and "re-injected" in res.output and "hunter2" not in res.output
 
 
@@ -597,41 +397,6 @@ def test_google_token_cli_prints_the_path_never_the_token(google, monkeypatch):
     assert ACCESS not in res.output and res.output.strip().endswith("google-token/eva.json")
 
 
-# ── ${AGENT_VAULT} templates (2026-10-14) ─────────────────────────────────────
-
-def test_env_inject_sets_agent_vault_for_a_variable_template(tmp_path, monkeypatch, web):
-    repo = tmp_path / "ace"
-    (repo / "config").mkdir(parents=True)
-    (repo / ".env.tpl").write_text("TOKEN=op://${AGENT_VAULT}/item/credential\n")
-    monkeypatch.setattr(cred_cli, "_agent_repo", lambda slug: repo)
-    web["vaults"]["ace"] = "Ace-Instance-Vault"
-    op = FakeOp(readable={"Ace-Instance-Vault"})
-    seen = []
-    orig = op.__call__
-
-    def spy(argv, **kw):
-        if argv[:2] == ["op", "inject"]:
-            seen.append(kw.get("env") or {})
-        return orig(argv, **kw)
-    cred_cli.ensure_env("ace", runner=spy, which=_which())
-    assert seen and seen[0]["AGENT_VAULT"] == "Ace-Instance-Vault" and seen[0]["AGENT_SLUG"] == "ace"
-
-
-def test_fingerprint_reads_the_vault_the_variable_names():
-    calls = []
-
-    def runner(argv, **kw):
-        calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0, json.dumps({"content_version": 7}), "")
-    import tempfile
-    with tempfile.TemporaryDirectory() as d:
-        tpl = Path(d) / ".env.tpl"
-        tpl.write_text("A=op://${AGENT_VAULT}/x/credential\nB=op://Canopy-Shared/y/credential\n")
-        fp = cred_cli.vault_fingerprint(tpl, {"AGENT_VAULT": "V1"}, "ops_x", runner=runner)
-    assert "V1=7" in fp and "Canopy-Shared=7" in fp
-    assert ["op", "vault", "get", "V1", "--format", "json"] in calls
-
-
 # ── exec: the agent's env in the CHILD only (canopy#946) ──────────────────────
 
 _CHILD = [sys.executable, "-c",
@@ -640,7 +405,7 @@ _CHILD = [sys.executable, "-c",
 
 
 def test_exec_from_canopy_web_reaches_the_child_and_nothing_else(web, _isolated):
-    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin"}
     web["resolve"]["ace"] = {"values": {"SETTING_A": RESOLVED, "gog-token": "{json}"}}
     r = CliRunner().invoke(cred_cli.cred_group, ["exec", "--agent", "ace", "--", *_CHILD])
     assert r.exit_code == 0, r.output
@@ -651,7 +416,7 @@ def test_exec_from_canopy_web_reaches_the_child_and_nothing_else(web, _isolated)
 
 def test_exec_ignores_an_already_resolved_env_file_for_the_decision(web, _isolated):
     _env_file(_isolated, "ace")   # a resolved file must not stand in for access
-    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": False,
+    web["access"]["ace"] = {"may_resolve": False,
                             "reason": "not an admin"}
     r = CliRunner().invoke(cred_cli.cred_group, ["exec", "--agent", "ace", "--", "true"])
     assert r.exit_code == cred_cli.EXIT_REFUSED
@@ -665,482 +430,11 @@ def test_exec_refuses_another_agent_in_a_runner_turn(monkeypatch, web):
     assert web["resolve"] == {} and not any("resolve" in c[1] for c in web["calls"])
 
 
-def test_exec_1password_injects_to_a_pipe_never_a_file(tmp_path, monkeypatch, web):
-    repo = _agent_repo(tmp_path, "ace")
-    monkeypatch.chdir(repo)
-    monkeypatch.setattr(cred_cli.canopy_web, "_agent_slug_for_cwd", lambda d: "ace")
-    calls = []
-
-    def op(argv, **kw):
-        calls.append(argv)
-        if argv[:3] == ["op", "vault", "get"]:
-            return subprocess.CompletedProcess(argv, 0, "{}", "")
-        if argv[:2] == ["op", "inject"]:
-            return subprocess.CompletedProcess(argv, 0, f"# c\nSETTING_A={RESOLVED}\nB='q'\n", "")
-        raise AssertionError(argv)
-
-    values, how = cred_cli.exec_env("ace", runner=op, which=_which())
-    assert values == {"SETTING_A": RESOLVED, "B": "q"} and how.startswith("1Password")
-    inject = [a for a in calls if a[:2] == ["op", "inject"]][0]
-    assert "-o" not in inject                                   # stdout, not a file
-    only, _ = cred_cli.exec_env("ace", refs=["B"], runner=op, which=_which())
-    assert only == {"B": "q"}
-    with pytest.raises(cred_cli.CredError, match="NOPE"):
-        cred_cli.exec_env("ace", refs=["NOPE"], runner=op, which=_which())
-
-
 def test_exec_canopy_web_refs_are_sent_to_the_server(web, _isolated):
-    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
+    web["access"]["ace"] = {"may_resolve": True, "via": "admin"}
     web["resolve"]["ace"] = {"values": {"SETTING_A": RESOLVED}}
     values, _ = cred_cli.exec_env("ace", refs=["SETTING_A"])
     assert values == {"SETTING_A": RESOLVED}
     assert any(c[1].endswith("/credentials/resolve?refs=SETTING_A") for c in web["calls"])
 
 
-# ── sync for an agent on the canopy-web backend (canopy#946) ──────────────────
-
-def test_sync_without_a_key_refreshes_a_canopy_web_agent(synced, monkeypatch, web):
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN")
-    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
-    web["resolve"]["ace"] = {"values": {"SETTING_A": "v1"}}
-    assert cred_cli.sync_env("ace", now=1000) == "re-injected from canopy-web"
-    assert "SETTING_A=v1" in synced.read_text() and oct(synced.stat().st_mode)[-3:] == "600"
-    assert cred_cli.sync_env("ace", now=1100) == "skipped: checked recently"
-    assert cred_cli.sync_env("ace", now=2000) == "unchanged"
-    web["resolve"]["ace"] = {"values": {"SETTING_A": "v2"}}
-    assert cred_cli.sync_env("ace", now=3000) == "re-injected from canopy-web"
-    assert "SETTING_A=v2" in synced.read_text()
-
-
-def test_sync_without_a_key_leaves_a_1password_agent_alone(synced, monkeypatch, web):
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN")
-    assert cred_cli.sync_env("ace", now=1000).startswith("skipped: no agent 1Password key")
-    assert not any("resolve" in c[1] for c in web["calls"]) and not synced.exists()
-
-
-def test_access_names_the_current_turn(web, monkeypatch):
-    # A licence holder may resolve only during their own local turn; /access can say so
-    # only when it is told which turn is asking (canopy-web#1704).
-    seen = []
-    real = cred_cli.canopy_web.call
-
-    def spy(method, path, body=None, **kw):
-        seen.append(kw.get("headers"))
-        return real(method, path, body, **kw)
-
-    monkeypatch.setattr(cred_cli.canopy_web, "call", spy)
-    monkeypatch.setenv("CANOPY_TURN_ID", "turn-123")
-    cred_cli.fetch_access("ace", refresh=True)
-    assert seen[-1] == {"X-Canopy-Turn-Id": "turn-123"}
-    monkeypatch.delenv("CANOPY_TURN_ID")
-    cred_cli.fetch_access("ace", refresh=True)
-    assert seen[-1] is None
-
-
-def test_op_token_exits_3_for_a_canopy_vault_agent(web):
-    from click.testing import CliRunner
-
-    from orchestrator import agent_cli
-    web["access"]["ace"] = {"credential_source": "canopy-web", "may_resolve": True}
-    r = CliRunner().invoke(agent_cli.agent, ["op-token", "--slug", "ace"])
-    assert r.exit_code == agent_cli.OP_TOKEN_CANOPY_VAULT == 3
-    assert "canopy vault" in r.output and not [c for c in web["calls"] if "resolve" in c[1]]
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# google-token --delegated: a Google account a person delegated to the agent
-# ──────────────────────────────────────────────────────────────────────────────
-
-GINA = "gina@gmail.com"
-GINA_ENTRY = "google-delegated-gina@gmail.com"
-
-
-@pytest.fixture()
-def delegated(monkeypatch, tmp_path):
-    """The runner's resolve: Gina's gog token (opened with this box's key) and the client."""
-    from orchestrator import cred_resolve
-
-    monkeypatch.setattr(cred_cli, "CACHE_DIR", tmp_path / ".canopy")
-    for var in ("CANOPY_TURN_ID", "CANOPY_AGENT_SLUG", "CANOPY_AGENT"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(cred_cli, "_turn_id", lambda: ("", ""))
-    state = {"resolves": [], "gog": json.dumps({"email": GINA, "client": "canopy-web", "refresh_token": REFRESH}),
-             "posts": []}
-
-    def resolve(slug, **kw):
-        state["resolves"].append((slug, kw))
-        return {"agent_id": "42", "values": {}, "delegated": {GINA_ENTRY: {"value_zk": "zks1:x"}}}
-
-    def open_delegated(entries, **kw):
-        return ({n: state["gog"] for n in entries if state["gog"]}, {})
-
-    monkeypatch.setattr(cred_resolve, "resolve", resolve)
-    monkeypatch.setattr(cred_resolve, "open_delegated", open_delegated)
-    monkeypatch.setattr(cred_resolve, "merge_vault_layers", lambda slug, body, **kw: {
-        **body, "values": {"gog-oauth-client-web": json.dumps({"web": {"client_id": "cid", "client_secret": "csec"}})}})
-
-    def post(url, form):
-        state["posts"].append(form)
-        return {"access_token": ACCESS, "expires_in": 3599, "scope": "https://www.googleapis.com/auth/gmail.modify"}
-
-    state["post"] = post
-    return state
-
-
-def test_the_runner_stages_only_an_access_token_for_a_delegated_account(delegated, tmp_path):
-    path = cred_cli.stage_delegated_google_token("bailey", "Gina@gmail.com", token="crt", post=delegated["post"],
-                                                 now=1000.0)
-    assert path == tmp_path / ".canopy" / "delegated" / "bailey" / "google" / "gina@gmail.com.json"
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    staged = json.loads(path.read_text())
-    assert staged["access_token"] == ACCESS and staged["account"] == GINA and staged["expires_at"] == 1000.0 + 3599
-    assert REFRESH not in path.read_text(), "the refresh token stays with the runner"
-    [(slug, kw)] = delegated["resolves"]
-    assert slug == "bailey" and kw["refs"] == ["gog-oauth-client-web"] and kw["fallback"] is False
-    assert delegated["posts"][0]["refresh_token"] == REFRESH and delegated["posts"][0]["client_id"] == "cid"
-
-
-def test_a_withdrawn_delegation_removes_the_staged_token(delegated, tmp_path):
-    path = cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"])
-    delegated["gog"] = ""
-    with pytest.raises(cred_cli.CredError) as e:
-        cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"])
-    assert e.value.exit_code == cred_cli.EXIT_REFUSED and not path.exists()
-
-
-def test_a_turn_reads_the_staged_path_and_never_the_token(delegated):
-    cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"])
-    res = CliRunner().invoke(cred_cli.cred_group, ["google-token", "--agent", "bailey", "--delegated", GINA])
-    assert res.exit_code == 0, res.output
-    assert ACCESS not in res.output and res.output.strip().endswith("delegated/bailey/google/gina@gmail.com.json")
-
-
-def test_a_turn_with_nothing_staged_is_told_where_it_lives(delegated):
-    res = CliRunner().invoke(cred_cli.cred_group, ["google-token", "--agent", "bailey", "--delegated", GINA])
-    assert res.exit_code == cred_cli.EXIT_REFUSED
-    assert "cloud runner" in res.output and "connect/google" in res.output
-
-
-def test_a_session_stages_its_own_access_token_without_calling_google(delegated):
-    delegated["gog"] = json.dumps({"email": GINA, "session": True, "access_token": "ya29.s",
-                                   "expires_at": 4600.0, "scopes": ["https://www.googleapis.com/auth/gmail.modify"]})
-    path = cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"], now=1000.0)
-    staged = json.loads(path.read_text())
-    assert staged["access_token"] == "ya29.s" and staged["expires_at"] == 4600.0 and staged["session"] is True
-    assert delegated["posts"] == [], "a session has nothing to refresh"
-
-
-def test_an_ended_session_stages_nothing_and_removes_what_was_staged(delegated):
-    delegated["gog"] = json.dumps({"email": GINA, "session": True, "access_token": "ya29.s", "expires_at": 4600.0})
-    path = cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"], now=1000.0)
-    with pytest.raises(cred_cli.CredError) as e:
-        cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"], now=4590.0)
-    assert e.value.exit_code == cred_cli.EXIT_REFUSED and "ended" in str(e.value) and not path.exists()
-
-
-def test_an_expired_staged_token_is_not_handed_out(delegated):
-    cred_cli.stage_delegated_google_token("bailey", GINA, token="crt", post=delegated["post"], now=0.0)
-    with pytest.raises(cred_cli.CredError):
-        cred_cli.delegated_google_token("bailey", GINA, now=3600.0)
-
-
-# ── machine_mode: how THIS machine runs an agent (picks a fix line) ───────────
-# 2026-10-28, failure investigation 17: a licensee was told `canopy agent bootstrap`.
-
-@pytest.fixture()
-def modes(monkeypatch):
-    monkeypatch.setattr(cred_cli, "_MODES", {})
-    state = {"access": {}, "licenses": [], "calls": [], "fail": False}
-
-    def fake_call(method, path, body=None, **kw):
-        state["calls"].append(path)
-        assert kw.get("transport") is not None          # always the short-timeout one
-        if state["fail"]:
-            raise cred_cli.canopy_web.CanopyError(f"{method} {path} -> 503")
-        if path == "/api/me/":
-            return {"id": 7, "email": "sudubey@dimagi.com"}
-        if path.endswith("/licenses"):
-            return state["licenses"]
-        if path.endswith("/credentials/access"):
-            return state["access"]
-        raise AssertionError(path)
-
-    monkeypatch.setattr(cred_cli.canopy_web, "call", fake_call)
-    return state
-
-
-@pytest.mark.parametrize("via", ["runner", "admin", "license"])
-def test_machine_mode_is_canopy_webs_via(modes, via):
-    modes["access"] = {"credential_source": "canopy-web", "may_resolve": True, "via": via}
-    assert cred_cli.machine_mode("ace") == via
-
-
-def test_a_licence_holder_outside_a_turn_is_still_license(modes):
-    # Outside their own turn canopy-web reads nothing for them: via is None.
-    modes["access"] = {"credential_source": "canopy-web", "may_resolve": False, "via": None}
-    modes["licenses"] = [{"user_id": 7, "status": "active"}]
-    assert cred_cli.machine_mode("ace") == "license"
-
-
-def test_no_access_and_no_licence_is_unknown(modes):
-    modes["access"] = {"credential_source": "canopy-web", "may_resolve": False, "via": None}
-    modes["licenses"] = [{"user_id": 7, "status": "revoked"}]
-    assert cred_cli.machine_mode("ace") == "unknown"
-
-
-def test_machine_mode_offline_is_unknown_and_asked_once(modes):
-    modes["fail"] = True
-    assert cred_cli.machine_mode("ace") == "unknown"
-    n = len(modes["calls"])
-    assert cred_cli.machine_mode("ace") == "unknown" and len(modes["calls"]) == n
-
-
-def test_agent_runs_as_prints_one_word(modes):
-    from orchestrator import agent_cli
-    modes["access"] = {"credential_source": "canopy-web", "may_resolve": True, "via": "admin"}
-    r = CliRunner().invoke(agent_cli.agent, ["runs-as", "--slug", "ace"])
-    assert r.exit_code == 0 and r.output == "admin\n"
-
-
-# ── connection-token (salesforce-token is its alias; these drive the alias) ──────
-
-SF_TOKEN = "00Dxx!sf-access-token-never-printed"
-RID, TID = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
-
-
-@pytest.fixture()
-def sf(monkeypatch):
-    """Fake canopy-web at the `canopy_web.call` boundary; `reply` is a body or a CanopyError."""
-    import datetime as dt
-    state = {"calls": [], "reply": None}
-
-    def default():
-        exp = (dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)).isoformat()
-        return {"access_token": SF_TOKEN, "instance_url": "https://dimagi.my.salesforce.com",
-                "expires_at": exp, "account_label": "jj@dimagi.com"}
-
-    def fake_call(method, path, body=None, **kw):
-        state["calls"].append({"method": method, "path": path, "body": body, "token": kw.get("token")})
-        reply = state["reply"] if state["reply"] is not None else default()
-        if isinstance(reply, Exception):
-            raise reply
-        return reply
-
-    monkeypatch.setattr(cred_cli.canopy_web, "call", fake_call)
-    monkeypatch.delenv("CANOPY_TURN_ID", raising=False)
-    monkeypatch.delenv("CANOPY_AGENT_SLUG", raising=False)
-    monkeypatch.delenv("CANOPY_AGENT", raising=False)
-    return state
-
-
-def _conflict(error, **extra):
-    body = {"title": "Not connected", "detail": "Your Salesforce is not connected.", "error": error, **extra}
-    return cred_cli.canopy_web.CanopyError(f"POST /x -> 409: {json.dumps(body)}")
-
-
-def _sf(*args, env=None):
-    return CliRunner().invoke(cred_cli.cred_group, ["salesforce-token", *args], env=env)
-
-
-def _assert_no_token(res):
-    assert SF_TOKEN not in res.output
-    assert SF_TOKEN not in (getattr(res, "stderr", "") or "")
-
-
-def test_sf_human_writes_a_private_file_and_prints_only_its_path(sf, tmp_path):
-    res = _sf()
-    path = tmp_path / "home" / ".canopy" / "connections" / "salesforce.json"
-    assert res.exit_code == 0, res.output
-    assert res.output.strip() == str(path)
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    staged = json.loads(path.read_text())
-    assert staged["access_token"] == SF_TOKEN and staged["account_label"] == "jj@dimagi.com"
-    assert staged["instance_url"] == "https://dimagi.my.salesforce.com"
-    assert isinstance(staged["expires_at"], (int, float))
-    assert sf["calls"] == [{"method": "POST", "path": "/api/me/connections/salesforce/token",
-                            "body": None, "token": "pat_human"}]
-    _assert_no_token(res)
-
-
-def test_sf_human_reuses_the_file_until_five_minutes_before_expiry(sf, tmp_path):
-    _sf()
-    _sf()
-    assert len(sf["calls"]) == 1
-    path = tmp_path / "home" / ".canopy" / "connections" / "salesforce.json"
-    staged = json.loads(path.read_text())
-    staged["expires_at"] = time.time() + 120      # inside the 5 minute margin
-    path.write_text(json.dumps(staged))
-    _sf()
-    assert len(sf["calls"]) == 2
-
-
-def test_sf_human_409_prints_the_connect_url_and_fails(sf):
-    # The server's real shape: an absolute URL to the bare start view.
-    sf["reply"] = _conflict("not_connected",
-                            connect_url="https://canopy.dimagi.com/auth/connections/salesforce/start/")
-    res = _sf()
-    assert res.exit_code != 0
-    assert "Connect it in canopy-web: https://canopy.dimagi.com/auth/connections/salesforce/start/" in res.output
-    assert "Your Salesforce is not connected." in res.output
-    _assert_no_token(res)
-
-
-def test_sf_runner_stages_under_the_agent_dir_via_the_runner_route(sf, tmp_path):
-    res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, env={"CANOPY_TOKEN": "crt_runner"})
-    path = tmp_path / "home" / ".canopy" / "connections" / "eva" / "salesforce.json"
-    assert res.exit_code == 0, res.output
-    assert res.output.strip() == str(path)
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
-    assert json.loads(path.read_text())["access_token"] == SF_TOKEN
-    assert sf["calls"] == [{"method": "POST",
-                            "path": f"/api/harness/runners/{RID}/turns/{TID}/connection-token",
-                            "body": {"provider": "salesforce"}, "token": "crt_runner"}]
-    _assert_no_token(res)
-
-
-def test_sf_runner_not_connected_exits_3_and_stages_nothing(sf, tmp_path):
-    sf["reply"] = _conflict("not_connected")
-    res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, env={"CANOPY_TOKEN": "crt_runner"})
-    assert res.exit_code == 3
-    assert not (tmp_path / "home" / ".canopy" / "connections" / "eva" / "salesforce.json").exists()
-
-
-def test_sf_runner_other_refusals_are_nonzero_with_the_detail(sf):
-    sf["reply"] = _conflict("reconnect_required",
-                            detail="eva's Salesforce connection no longer works; connect it again.")
-    res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, env={"CANOPY_TOKEN": "crt_runner"})
-    assert res.exit_code not in (0, 3)
-    assert "no longer works" in res.output
-
-
-def test_sf_runner_needs_its_token_ids_and_agent(sf):
-    res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, env={"CANOPY_TOKEN": ""})
-    assert res.exit_code == cred_cli.EXIT_USAGE and not sf["calls"]
-    res = _sf("--runner", "--agent", "eva", env={"CANOPY_TOKEN": "crt_runner"})
-    assert res.exit_code == cred_cli.EXIT_USAGE and not sf["calls"]
-
-
-def _stage(tmp_path, slug, expires_in):
-    p = tmp_path / "home" / ".canopy" / "connections" / slug / "salesforce.json"
-    p.parent.mkdir(parents=True)
-    p.write_text(json.dumps({"access_token": SF_TOKEN, "instance_url": "https://x.my.salesforce.com",
-                             "expires_at": time.time() + expires_in, "account_label": "a"}))
-    return p
-
-
-def test_sf_turn_prints_the_staged_path_without_the_network(sf, tmp_path):
-    p = _stage(tmp_path, "eva", 1800)
-    res = _sf("--agent", "eva")
-    assert res.exit_code == 0 and res.output.strip() == str(p)
-    assert sf["calls"] == []
-    _assert_no_token(res)
-
-
-def test_sf_turn_errors_when_nothing_is_staged(sf):
-    res = _sf("--agent", "eva")
-    assert res.exit_code != 0 and sf["calls"] == []
-    assert "no salesforce token staged for eva" in res.output
-
-
-def test_sf_turn_errors_when_the_staged_token_is_about_to_lapse(sf, tmp_path):
-    _stage(tmp_path, "eva", 120)
-    res = _sf("--agent", "eva")
-    assert res.exit_code != 0 and sf["calls"] == []
-    _assert_no_token(res)
-
-
-def test_sf_turn_refuses_another_agents_token(sf, tmp_path, monkeypatch):
-    _stage(tmp_path, "hal", 1800)
-    monkeypatch.setenv("CANOPY_TURN_ID", "t1")
-    monkeypatch.setenv("CANOPY_AGENT_SLUG", "eva")
-    res = _sf("--agent", "hal")
-    assert res.exit_code == cred_cli.EXIT_REFUSED
-
-
-def test_sf_human_path_is_refused_inside_an_agent_turn(sf, tmp_path, monkeypatch):
-    human = tmp_path / "home" / ".canopy" / "connections" / "salesforce.json"
-    human.parent.mkdir(parents=True)
-    human.write_text(json.dumps({"access_token": SF_TOKEN, "instance_url": "x",
-                                 "expires_at": time.time() + 1800, "account_label": "a"}))
-    monkeypatch.setenv("CANOPY_TURN_ID", "t1")
-    monkeypatch.setenv("CANOPY_AGENT_SLUG", "eva")
-    res = _sf()
-    assert res.exit_code == cred_cli.EXIT_REFUSED
-    assert "--agent eva" in res.output
-    assert sf["calls"] == []
-    _assert_no_token(res)
-
-
-# ── connection-token: --refresh and --min-life ───────────────────────────────
-
-def test_sf_human_refresh_skips_the_file_and_asks_the_server_to_refresh(sf, tmp_path):
-    _sf()
-    assert len(sf["calls"]) == 1
-    res = _sf("--refresh")
-    assert res.exit_code == 0, res.output
-    assert sf["calls"][1]["path"] == "/api/me/connections/salesforce/token?refresh=true"
-    _assert_no_token(res)
-
-
-def test_sf_runner_forwards_min_life_and_refresh(sf, tmp_path):
-    res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, "--min-life", "900", "--refresh",
-              env={"CANOPY_TOKEN": "crt_runner"})
-    assert res.exit_code == 0, res.output
-    assert sf["calls"][0]["body"] == {"provider": "salesforce", "min_life_seconds": 900, "refresh": True}
-
-
-def test_sf_min_life_and_refresh_belong_to_the_server_modes(sf, tmp_path):
-    _stage(tmp_path, "eva", 1800)
-    assert _sf("--agent", "eva", "--refresh").exit_code == cred_cli.EXIT_USAGE
-    assert _sf("--min-life", "900").exit_code == cred_cli.EXIT_USAGE
-    assert sf["calls"] == []
-
-
-# ── connection-token: any provider, by the same paths and routes ──────────────
-
-def _ct(*args, env=None):
-    return CliRunner().invoke(cred_cli.cred_group, ["connection-token", *args], env=env)
-
-
-def test_connection_token_names_its_files_and_routes_by_provider(sf, tmp_path):
-    res = _ct("intacct")
-    person = tmp_path / "home" / ".canopy" / "connections" / "intacct.json"
-    assert res.exit_code == 0, res.output
-    assert res.output.strip() == str(person)
-    assert sf["calls"][-1]["path"] == "/api/me/connections/intacct/token"
-    res = _ct("intacct", "--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID,
-              env={"CANOPY_TOKEN": "crt_runner"})
-    staged = tmp_path / "home" / ".canopy" / "connections" / "eva" / "intacct.json"
-    assert res.exit_code == 0 and res.output.strip() == str(staged)
-    assert sf["calls"][-1]["body"] == {"provider": "intacct"}
-    res = _ct("intacct", "--agent", "eva")
-    assert res.exit_code == 0 and res.output.strip() == str(staged)
-    _assert_no_token(res)
-
-
-def test_connection_token_without_instance_url_is_fine(sf, tmp_path):
-    """A provider with a fixed API host (Google) sends an empty `instance_url`."""
-    sf["reply"] = {"access_token": SF_TOKEN, "instance_url": "", "expires_at": time.time() + 3600,
-                   "account_label": "jj@dimagi.com"}
-    res = _ct("gmail")
-    assert res.exit_code == 0, res.output
-    assert json.loads((tmp_path / "home" / ".canopy" / "connections" / "gmail.json").read_text())["instance_url"] == ""
-
-
-@pytest.mark.parametrize("bad", ["../x", "Sales Force", "", "a/b", "x" * 41])
-def test_connection_token_refuses_a_key_that_is_not_a_provider(sf, bad):
-    res = _ct(bad)
-    assert res.exit_code == cred_cli.EXIT_USAGE and sf["calls"] == []
-
-
-def test_salesforce_token_is_connection_token_salesforce(sf, tmp_path):
-    assert _sf().output == _ct("salesforce").output
-
-
-def test_connection_token_inside_a_turn_points_at_the_agents_own(sf, monkeypatch):
-    monkeypatch.setenv("CANOPY_TURN_ID", "t1")
-    monkeypatch.setenv("CANOPY_AGENT_SLUG", "eva")
-    res = _ct("intacct")
-    assert res.exit_code == cred_cli.EXIT_REFUSED
-    assert "connection-token intacct --agent eva" in res.output and sf["calls"] == []

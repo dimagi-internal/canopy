@@ -99,9 +99,9 @@ identity, rules, secrets, and domain skills are the agent's"*):
   status is **In Production**, so refresh tokens are long-lived. (The 7-day refresh-token expiry that
   bites automated OAuth apps only affects the **"Testing"** publishing status — NOT this app, which
   is in Production. Don't "fix" a non-problem by flipping user type.) So when fleet email breaks, it's
-  a **provisioning** issue — a missing/misnamed 1Password item so `credentials-canopy.json` never
+  a **provisioning** issue — a missing OAuth client in the workspace vault so `credentials-canopy.json` never
   lands — which `canopy email preflight` now diagnoses precisely; it is not the OAuth app config.
-- **Where the pieces live today (2026-10-26 — no 1Password).** Both fleet clients' id+secret are
+- **Where the pieces live today.** Both fleet clients' id+secret are
   in the workspace's canopy vault "Shared" on canopy-web (`gog-oauth-client` for `canopy`,
   `gog-oauth-client-web` for `canopy-web`); each mailbox's refresh token is the agent's `gog-token`
   on canopy-web (the "Connect Google mailbox" button). A box imports that token (cloud:
@@ -112,8 +112,6 @@ identity, rules, secrets, and domain skills are the agent's"*):
   (cloud-ec2-2, 2026-10-26: it did, and every eva turn failed "OAuth client credentials missing"
   while canopy-web showed the mailbox Connected). Every agent and the
   factory declare `gog_client: canopy`; the per-agent clients (`echo`, `ace`) are retired.
-  *(History: 2026-07-08 `echo` was grandfathered on a hand-placed `credentials-echo.json`;
-  2026-07-25 the fleet moved to `.env.tpl` + `op inject`/`op read`.)*
 - **Tiers (generalizing ACE's model):** `act` = canopy-web's grant — the agent's declared
   interface plus workspace membership, resolved per message by `canopy caller tier` — senders who
   may steer the agent's work (a static `config/allowlist.txt` is consulted only for an agent with
@@ -153,7 +151,7 @@ agent via a `.mcp.json` entry (operating model §4c — the echo↔chrome-sales 
 formalized). ACE's ACE-aware atoms (`resolve_opp_path`, `validate_run_state`,
 `classify_phase_writeback`, `update_yaml_file`, …) stay in ACE, layered on the shared server.
 
-**Per-agent settings contract** (env, provisioned via `canopy provision` / 1Password):
+**Per-agent settings contract** (env, from the agent's Canopy vault):
 
 ```
 GWS_IDENTITY_MODE = sa | gog          # service-account (headless) or agent-OAuth via gog creds

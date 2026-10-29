@@ -280,14 +280,14 @@ def agent_actions(slug):
 @click.option("--all", "all_agents", is_flag=True,
               help="Run across EVERY discovered agent in the fleet (ignores --repo/--slug).")
 @click.option("--fix", "do_fix", is_flag=True,
-              help="Attempt the safe, non-interactive repairs (provision secrets, register on "
+              help="Attempt the safe, non-interactive repairs (register on "
                    "canopy-web), then re-check. Interactive steps are still only printed.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def agent_doctor(repo, slug, all_agents, do_fix, as_json):
     """Diagnose ONE agent's operational readiness on THIS machine (or the whole fleet with --all).
 
     Read-only composition of the existing point-checks: identity
-    (config/agent.json), gating rails, secrets manifest (provisionable),
+    (config/agent.json), gating rails, the materialized env,
     live gog email auth, canopy-web registration + board. Exits non-zero
     if any check fails. `canopy doctor` covers the plugin install; this
     covers the agent. `--all` sweeps every discovered agent and exits
@@ -389,7 +389,7 @@ def agent_doctor(repo, slug, all_agents, do_fix, as_json):
         if overall_ok:
             click.echo(f"All checks passed — agent at {repo_dir} is ready on this machine.")
         else:
-            click.echo("Some checks failed — fix lines above (see also `canopy provision --check`).")
+            click.echo("Some checks failed — fix lines above.")
     if not overall_ok:
         raise SystemExit(1)
 
@@ -494,47 +494,6 @@ def agent_google_login(slug, if_needed, no_verify):
         raise SystemExit(1)
 
 
-@agent.command("op-token")
-@click.option("--slug", envvar="CANOPY_AGENT", required=True,
-              help="Agent slug. Default: $CANOPY_AGENT (set by every agent repo's settings.json).")
-def agent_op_token(slug):
-    """Print THIS agent's own 1Password service-account key, for `OP_SERVICE_ACCOUNT_TOKEN`.
-
-    The laptop twin of the cloud runner's `_agent_op_token`: the same canopy-web route
-    (`/credentials/resolve`), the same key — scoped to the agent's own vault — so `op` on an
-    emdash/laptop session never touches the 1Password desktop app (which locks, and then
-    `op` hangs on an unlock prompt nobody is there to answer). Authorized as the OPERATOR:
-    canopy-web hands the key only to a caller who pairs a live runner this agent routes to.
-
-    Prints the key alone on stdout, for `OP_SERVICE_ACCOUNT_TOKEN="$(canopy agent op-token)"`.
-    Exit 1 with the reason on stderr when there is none — never an empty success. Exit 3
-    when the agent keeps its secrets in canopy vault: it HAS no 1Password key, by design
-    (the SessionStart hook then just syncs its env from canopy vault).
-    """
-    from orchestrator import cred_resolve
-    from orchestrator.agent_bootstrap import _operator_token
-    from orchestrator.cred_cli import fetch_access
-    access = fetch_access(slug)
-    if not access.get("error") and access.get("credential_source") == "canopy-web":
-        click.echo(f"{slug} keeps its secrets in canopy vault — there is no 1Password key "
-                   f"(`canopy cred sync --agent {slug}` keeps its env current)", err=True)
-        raise SystemExit(OP_TOKEN_CANOPY_VAULT)
-    try:
-        body = cred_resolve.resolve(slug, token=_operator_token()) or {}
-    except Exception as e:  # noqa: BLE001 — report, don't traceback
-        raise click.ClickException(f"could not resolve {slug}'s 1Password key: {str(e).splitlines()[0][:300]}")
-    token = str(body.get("op_sa_token") or "")
-    if not token:
-        raise click.ClickException(
-            f"canopy-web has no 1Password key for {slug} — it is a LEGACY 1Password agent; an "
-            f"admin moves it to canopy vault with `canopy vault import --agent {slug} --zk --switch`")
-    click.echo(token)
-
-
-#: `canopy agent op-token`'s exit code for an agent whose secrets live in canopy vault.
-OP_TOKEN_CANOPY_VAULT = 3
-
-
 def delegated_chrome_sales_home(slug: str) -> Path:
     """Where chrome-sales reads Salesforce creds in this agent's sessions — the same
     path the cloud runner stages to (canopy-web#1291), so chrome-sales has one rule."""
@@ -594,31 +553,30 @@ def agent_stage_delegated(slug):
 @agent.command("env")
 @click.option("--plugin", required=True,
               help="The agent plugin's name, as installed (`<plugin>@canopy-agents`).")
-@click.option("--template", type=click.Path(dir_okay=False), default=".env.tpl",
-              show_default=True, help="The agent's .env.tpl (refs op://${AGENT_VAULT}/…).")
+# Accepted and ignored: agent repos' `/<agent>:setup` scripts written before the Canopy vault
+# became the only source still pass them, and a CLI that rejects them would break those setups.
+@click.option("--template", hidden=True, default=None, help="Ignored (legacy).")
+@click.option("--vault", hidden=True, default=None, help="Ignored (legacy).")
 @click.option("--out", default=None,
               help="Where the filled env goes. Default: ~/.<plugin>/.env. The binding is "
                    "recorded beside it (canopy-instance.json).")
 @click.option("--agent", "agent_slug", default="",
               help="The instance (canopy-web agent slug) to bind to, when you can see several.")
-@click.option("--vault", default="",
-              help="LEGACY: a 1Password vault to fill from instead of the agent's own secrets.")
 @click.option("--force", is_flag=True,
               help="Re-bind this install to a different instance than the one recorded.")
 @click.option("--print", "print_only", is_flag=True,
-              help="Print the resolved instance and vault as JSON; inject and record nothing.")
-def agent_env(plugin, template, out, agent_slug, vault, force, print_only):
-    """Bind this install to ONE agent instance and fill its .env from that instance's vault.
+              help="Print the resolved instance as JSON; fill and record nothing.")
+def agent_env(plugin, template, vault, out, agent_slug, force, print_only):
+    """Bind this install to ONE agent instance and fill its .env from that instance's Canopy vault.
 
     A plugin is code; an instance is canopy-web's Agent record (identity, workspace,
     where its secrets live). Resolves the instance of PLUGIN you can see (--agent picks
     one; the one this install is already bound to is kept; several stop with a re-run
     line each) and records the binding beside --out (switching instance needs --force).
 
-    Secrets come from the instance's canopy vault (decrypted on this device). Only a
-    LEGACY 1Password agent (or --vault) runs `op inject -i TEMPLATE -o OUT` with
-    AGENT_VAULT and AGENT_SLUG set. Called by each agent's /<agent>:setup. Never
-    prompts; never prints a secret. To use an agent yourself: `canopy agent use <slug>`.
+    Secrets come from the instance's Canopy vault (decrypted on this device). Called by
+    each agent's /<agent>:setup. Never prompts; never prints a secret. To use an agent
+    yourself: `canopy agent use <slug>`.
     """
     from orchestrator import agent_instance as ai
     from orchestrator.workspace_cli import person_token
@@ -628,84 +586,19 @@ def agent_env(plugin, template, out, agent_slug, vault, force, print_only):
         raise click.ClickException(
             "not signed in to canopy-web — run /canopy:canopy-web-pat-mint, then re-run.")
     out_path = Path(out).expanduser() if out else Path.home() / f".{plugin}" / ".env"
-    res = ai.run(plugin, template=Path(template) if template else None, out=out_path,
-                 agent=agent_slug, vault=vault, force=force, print_only=print_only, token=token)
+    res = ai.run(plugin, out=out_path, agent=agent_slug, force=force, print_only=print_only,
+                 token=token)
     inst = res.instance
     if print_only:
         _emit({"plugin": inst.plugin, "agent": inst.agent, "workspace": inst.workspace,
-               "vault": res.vault, "vault_source": res.vault_source, "why": res.why,
-               "binding": str(res.binding), "out": str(out_path), "notes": res.notes})
+               "why": res.why, "binding": str(res.binding), "out": str(out_path),
+               "notes": res.notes})
         return
     click.echo(f"instance: {inst.label()} — {res.why}")
-    if res.vault_source == "canopy vault":
-        click.echo("secrets:  canopy vault")
-        for n in res.notes:
-            click.echo(f"note:     {n}")
-        click.echo(f"env:      {out_path} ({res.lines} vars) from canopy vault")
-        click.echo(f"bound:    {res.binding}")
-        return
-    click.echo(f"vault:    {res.vault} (from {res.vault_source}) — 1Password, LEGACY: an admin "
-               f"moves it with `canopy vault import --agent {inst.agent} --zk --switch`")
     for n in res.notes:
         click.echo(f"note:     {n}")
-    click.echo(f"env:      {out_path} ({res.lines} vars) from {template}, AGENT_VAULT={res.vault}")
+    click.echo(f"env:      {out_path} ({res.lines} vars) from the Canopy vault")
     click.echo(f"bound:    {res.binding}")
-
-
-@agent.command("vault")
-@click.option("--slug", required=True, help="The agent (canopy-web slug).")
-@click.option("--workspace", default="",
-              help="Its canopy-web workspace (default: the one canopy-web records for it).")
-@click.option("--vault", default="",
-              help="The vault to create or use, for an agent with none recorded (required then).")
-@click.option("--repo", type=click.Path(exists=True, file_okay=False), default=None,
-              help="The agent's checkout, to read .env.tpl from (default: its repo on GitHub).")
-@click.option("--check", is_flag=True,
-              help="Report what is missing; create, mint, prompt and write nothing.")
-@click.option("--rotate-key", is_flag=True,
-              help="Mint and store a NEW read-only key even if one is stored.")
-@click.option("--rotate-pat", is_flag=True,
-              help="Mint a NEW canopy token for the agent even if its vault holds one.")
-@click.option("--no-prompt", is_flag=True,
-              help="Never ask for values (they are reported as still empty).")
-@click.option("--op-account", default="dimagi.1password.com", show_default=True)
-@click.option("--key-expires-in", default="90d", show_default=True,
-              help="Lifetime of a newly minted runner key (op duration: 90d, 12w, 720h), "
-                   "or `never`. Rotate before it lapses with --rotate-key.")
-def agent_vault(slug, workspace, vault, repo, check, rotate_key, rotate_pat, no_prompt,
-                op_account, key_expires_in):
-    """Give an agent its 1Password vault, filled, and the read-only key its runners use.
-
-    Run by a PERSON with 1Password rights who is the agent's owner or admin on canopy-web.
-    Creates the vault if missing and makes the agent's owner its admin; for each
-    op://${AGENT_VAULT}/… reference in the agent's .env.tpl, creates the item and fills it —
-    MINTS what the system can (its own canopy-web token), points at the control for what
-    another flow produces (its Gmail token: Connect Google mailbox), and ASKS, with hidden
-    input, only for what a person alone knows (an outside service's key). Then mints a
-    read-only service account for the vault (expiring after --key-expires-in, default 90
-    days) and stores it on canopy-web.
-    Safe to re-run; prints no secret. See orchestrator/agent_vault.py.
-    """
-    import sys
-
-    from orchestrator import agent_vault as av
-    from orchestrator.workspace_cli import person_token
-
-    token = person_token()
-    if not token:
-        raise click.ClickException(
-            "not signed in to canopy-web — run /canopy:canopy-web-pat-mint, then re-run.")
-    ask = None if (check or no_prompt or not sys.stdin.isatty()) else av.hidden_prompt
-    try:
-        rep = av.run(slug, token=token, workspace=workspace, vault=vault,
-                     repo=Path(repo) if repo else None, check=check, rotate_key=rotate_key,
-                     rotate_pat=rotate_pat, op=av.Op(op_account), ask=ask,
-                     key_expires_in=key_expires_in)
-    except av.VaultError as e:
-        raise click.ClickException(str(e))
-    click.echo(av.render(rep))
-    if rep.missing or (check and rep.key != "stored"):
-        sys.exit(1)
 
 
 def _prepare_purpose(check) -> str:
@@ -753,9 +646,9 @@ def agent_prepare(slugs, runner_mode, agent_root, repo_url, credentials_only, en
     """Make agents runnable on THIS machine — the one implementation every runner calls.
 
     Runner mode (`--runner`): credentials from canopy-web's /credentials/resolve with the
-    runner's token; clone/pull, .env via op inject with the agent's own key, its plugin and
+    runner's token; clone/pull, .env from the agent's Canopy vault, its plugin and
     required plugins (node deps, key files), bin/<slug>-setup, the Gmail token (its own
-    client, newest of vault and canopy-web), a real mailbox call, then a readiness report.
+    client, from canopy-web), a real mailbox call, then a readiness report.
     Without --runner it is `canopy agent bootstrap` (a person's laptop). See
     orchestrator/agent_prepare.py.
     """
@@ -763,8 +656,7 @@ def agent_prepare(slugs, runner_mode, agent_root, repo_url, credentials_only, en
 
     if not runner_mode:
         ctx = click.get_current_context()
-        return ctx.invoke(agent_bootstrap, slugs=slugs, repo=None, dry_run=dry_run,
-                          op_account="dimagi.1password.com")
+        return ctx.invoke(agent_bootstrap, slugs=slugs, repo=None, dry_run=dry_run)
     from orchestrator import canopy_web
     from orchestrator.agent_prepare import RunnerPreparer
 
@@ -802,17 +694,13 @@ def agent_prepare(slugs, runner_mode, agent_root, repo_url, credentials_only, en
 @click.option("--dry-run", is_flag=True,
               help="Show what would happen. Reads token sources and the plugin/gog state, "
                    "but installs, injects, imports and writes nothing, and skips the gmail call.")
-@click.option("--op-account", default="dimagi.1password.com", show_default=True,
-              help="1Password account for `op read` / `op inject`.")
-def agent_bootstrap(slugs, repo, dry_run, op_account):
+def agent_bootstrap(slugs, repo, dry_run):
     """Make THIS machine ready to run agents — the laptop twin of the cloud runner's
     bootstrap_agents.sh, same rules.
 
-    Per agent: install its plugin + config/agent.json required_plugins; `op inject` its
-    .env.tpl into ~/.<slug>/.env; take the NEWEST gog token (canopy-web vs
-    op://<vault>/gog-token, by the token's own created_at — <vault> is the instance's recorded
-    op_vault, never derived from the slug); materialize the OAuth client
-    the TOKEN names; import it (skipped if gog already holds it) and map the account; verify
+    Per agent: install its plugin + config/agent.json required_plugins; write
+    ~/.<slug>/.env from its Canopy vault; take the gog token from canopy-web; materialize
+    the OAuth client the TOKEN names; import it (skipped if gog already holds it) and map the account; verify
     with one real gmail call and check the client turns ask for against the token's.
     Idempotent — re-running on a ready machine changes nothing. One agent failing never
     stops the others; exits non-zero if any agent has a problem.
@@ -852,7 +740,7 @@ def agent_bootstrap(slugs, repo, dry_run, op_account):
             raise click.ClickException(
                 "no agent repos discovered on this machine — pass --slug <x> or --repo <dir>")
 
-    boot = Bootstrapper(dry_run=dry_run, op_account=op_account, echo=click.echo)
+    boot = Bootstrapper(dry_run=dry_run, echo=click.echo)
     click.echo(f"{'DRY RUN — ' if dry_run else ''}bootstrapping "
                f"{', '.join(s for s, _ in targets)}")
     reports = []

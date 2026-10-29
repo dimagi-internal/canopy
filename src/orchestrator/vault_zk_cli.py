@@ -19,7 +19,6 @@ device wrap (the vault key VK wrapped to its ECDH key — `device_key.load_ecdh`
     canopy vault zk status|enable|set|grant --vault ID   the same, for a workspace vault
     canopy vault zk keep                          pass on every vault key this runner holds to
                                                   whoever waits and is trusted (`vault_keeper`)
-    canopy vault import --agent X --zk            1Password -> canopy-web, encrypted here
 
 The endpoints (owner/admin only) are canopy-web's: ``GET /api/agents/<slug>/vault/zk``,
 ``POST …/vault/zk/enable``, ``PUT …/vault/zk/values``, ``POST …/vault/zk/wraps``,

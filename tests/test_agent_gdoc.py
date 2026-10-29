@@ -81,7 +81,7 @@ def test_resolve_identity_defaults(tmp_path):
 
 def test_root_folder_from_env_wins_over_agent_json(tmp_path, monkeypatch):
     # The Drive root is environment-specific and vault-resolved: the reconciler injects
-    # GDRIVE_ROOT_FOLDER from op://Agent-<Slug>/gdrive-root-folder. It must beat any
+    # GDRIVE_ROOT_FOLDER from the agent's Canopy vault. It must beat any
     # legacy committed value in agent.json.
     monkeypatch.setenv("GDRIVE_ROOT_FOLDER", "FROM_VAULT")
     ident = resolve_gdoc_identity(_agent_repo(tmp_path, root_folder="STALE_IN_GIT"))
