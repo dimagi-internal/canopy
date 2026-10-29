@@ -56,13 +56,17 @@ def closeout_group():
 @click.option("--file", "path", required=True, help="the closeout record JSON ('-' = stdin)")
 @click.option("--step", "steps", multiple=True, metavar="NAME=EXIT",
               help="append a close-out step and its exit code (repeatable)")
+@click.option("--improvement-policy", "policy_path", default=None, metavar="FILE",
+              help="the agent's improvement policy JSON ({required, prose_only:[{repo, paths}]}); "
+                   "opts this record into the merged-PR improvement rule")
 @click.option("--session-id", default=None, help="default: $CLAUDE_CODE_SESSION_ID")
 @click.option("--turn-id", default=None, help="default: $CANOPY_TURN_ID / the caller record")
 @click.option("--dry-run", is_flag=True, help="compute and print; store nothing")
 @click.option("--json", "as_json", is_flag=True, help="print the stored document as JSON")
-def record_cmd(path, steps, session_id, turn_id, dry_run, as_json):
+def record_cmd(path, steps, policy_path, session_id, turn_id, dry_run, as_json):
     """Compute the verdict from the record, store it for the Stop hook, print the status line.
 
+    An improvement PR in the record is checked with `gh pr view` (its exit code is a step).
     Exits 3 on INCOMPLETE (the turn must keep working or record owners), 0 otherwise.
     End the turn on the LAST line this prints, verbatim."""
     rec = _load(path)
@@ -74,6 +78,10 @@ def record_cmd(path, steps, session_id, turn_id, dry_run, as_json):
                 rec["closeout_steps"].append({"name": name or s, "exit_code": int(code)})
             except ValueError:
                 rec["closeout_steps"].append({"name": s, "exit_code": None})
+    if policy_path:
+        policy = _load(policy_path)
+        rec["improvement_policy"] = policy.get("improvement", policy)
+    rec = co.check_improvement(rec)  # verifies the improvement PR with gh (dry runs too)
     if dry_run:
         doc = {"record": rec, **co.compute(rec).as_dict()}
     else:

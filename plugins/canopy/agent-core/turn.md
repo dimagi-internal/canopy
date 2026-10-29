@@ -1107,7 +1107,8 @@ only when nothing you said you would do is still undone. Work inside your author
 not done is not "open on the board" — do it before the line, or name it as undone. **An
 incident-style turn (an alarm, a page) does not type the line:** `canopy closeout record` computes
 it from the facts (`orchestrator/closeout.py` defines them) and `hooks/closeout_guard.py` blocks
-"safe to close" on any verdict but CLOSED.
+"safe to close" on any verdict but CLOSED. An agent that opts in (`--improvement-policy`) is not
+done until a MERGED PR fixes the cause or ships the signal that makes the next fire diagnosable.
 - **Done, nothing open →** end with **"✅ Session complete — safe to close."** (a trivial /
   non-actionable turn: "Nothing actionable — archived the thread. ✅ Session complete — safe to close.")
 - **Something parked awaiting a human decision →** end with **"⏸ Session paused — waiting on you
