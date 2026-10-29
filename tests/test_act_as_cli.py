@@ -113,7 +113,7 @@ def test_request_wait_stores_token_0600_and_never_prints_it(env):
     assert "Approved." in r.output
     assert SECRET not in r.output
     # The request went out with the agent's turn login and the contract body.
-    assert srv.calls[0] == ("POST", "/api/me/act-as-requests/", "Bearer agent-turn-login",
+    assert [c for c in srv.calls if c[0] == "POST"][0] == ("POST", "/api/me/act-as-requests/", "Bearer agent-turn-login",
                             {"reason": "Read your session 4328 to see why it stalled",
                              "scope": "read"})
     f = token_file(env.home)
@@ -148,7 +148,7 @@ def test_token_is_reused_until_expiry_then_refused(env):
     n = len(srv.calls)
     late = run("get", "/api/sessions/4328/")
     assert late.exit_code != 0 and "no live act-as grant" in late.output
-    assert len(srv.calls) == n
+    assert all(c[2] != f"Bearer {SECRET}" for c in srv.calls[n:])
     assert not token_file(env.home).exists()
 
 
@@ -277,7 +277,9 @@ def test_approved_without_token_is_not_silently_usable(env):
     env({POST: pending(c), GET: approved(c, token=False)})
     r = run("request", "--reason", "Read your session 4328 please")
     assert r.exit_code == 1 and "already handed out" in r.output
-    assert not token_file(env.home).exists()
+    # Kept (only 401 / expired / stopped / declined delete state), but never usable.
+    assert "token" not in json.loads(token_file(env.home).read_text())
+    assert "no live act-as grant" in run("get", "/api/x/").output
 
 
 def test_default_identity_never_reads_the_act_as_store():
@@ -379,3 +381,117 @@ def test_skill_names_every_verb():
         assert f"canopy act-as {verb}" in text, verb
         assert verb in act_as_cli.act_as_group.commands, verb
     assert "as <person>" in text
+
+
+# --- chat flow, recovery, flaky network (first real use, 2026-10-28) ----------
+
+LIST = ("GET", "/api/me/act-as-requests/")
+
+
+def test_grant_is_keyed_by_the_claude_session_not_the_turn(monkeypatch):
+    """In a canopy-web chat every message is a new turn; the session is what persists."""
+    monkeypatch.undo()
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "11111111-2222-3333-4444-555555555555")
+    monkeypatch.setenv("CANOPY_TURN_ID", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert act_as_cli.grant_key() == "11111111-2222-3333-4444-555555555555"
+    monkeypatch.setenv("CANOPY_TURN_ID", "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert act_as_cli.grant_key() == "11111111-2222-3333-4444-555555555555"
+
+
+def test_chat_flow_request_no_wait_then_next_turn_status_collects(env):
+    c = env.clock
+    srv = env({POST: pending(c), GET: approved(c),
+               ("GET", "/api/sessions/4328/"): (200, {"id": 4328})})
+    r = run("request", "--reason", "Read your session 4328 please", "--no-wait")
+    assert r.exit_code == 0 and "Approve at:" in r.output and "end your turn" in r.output
+    # Next turn: the person approved meanwhile.
+    s = run("status")
+    assert s.exit_code == 0 and "approved" in s.output and SECRET not in s.output
+    assert json.loads(token_file(env.home).read_text())["token"] == SECRET
+    assert run("get", "/api/sessions/4328/").exit_code == 0
+    assert srv.calls[-1][2] == f"Bearer {SECRET}"
+
+
+def test_get_collects_a_pending_grant_approved_since(env):
+    c = env.clock
+    env({POST: pending(c), GET: approved(c), ("GET", "/api/x/"): (200, {"ok": 1})})
+    assert run("request", "--reason", "Read your session 4328 please", "--no-wait").exit_code == 0
+    assert run("get", "/api/x/").exit_code == 0
+
+
+def test_lost_local_state_is_recovered_from_the_list(env):
+    c = env.clock
+    _, p = pending(c)
+    srv = env({LIST: (200, [{"id": 5, "status": "expired", "expires_at": _iso(c.t - 1)},
+                            {**p, "created_at": "2026-10-28T10:00:00Z"}]),
+               GET: approved(c)})
+    assert not token_file(env.home).exists()
+    s = run("status")
+    assert s.exit_code == 0, s.output
+    assert "approved" in s.output and SECRET not in s.output
+    assert json.loads(token_file(env.home).read_text())["token"] == SECRET
+    assert not [x for x in srv.calls if x[0] == "POST"]
+
+
+def test_request_recovers_instead_of_asking_twice(env):
+    c = env.clock
+    _, p = pending(c)
+    srv = env({LIST: (200, {"results": [p]}), POST: pending(c), GET: approved(c)})
+    r = run("request", "--reason", "Read your session 4328 please")
+    assert r.exit_code == 0 and "already waiting" in r.output
+    assert not [x for x in srv.calls if x[0] == "POST"]
+
+
+def test_stop_from_a_later_turn_uses_the_list(env):
+    c = env.clock
+    _, p = pending(c)
+    srv = env({LIST: (200, [p]), ("POST", "/api/me/act-as-requests/7/stop"): (200, {})})
+    r = run("stop")
+    assert r.exit_code == 0 and "stopped act-as #7" in r.output
+    assert not token_file(env.home).exists()
+
+
+class Flaky:
+    """Raises a DNS failure the first N times, then delegates."""
+
+    def __init__(self, inner, n):
+        self.inner, self.n = inner, n
+
+    def __call__(self, *a):
+        if self.n:
+            self.n -= 1
+            import urllib.error
+            raise urllib.error.URLError(OSError(8, "nodename nor servname provided, or not known"))
+        return self.inner(*a)
+
+
+def test_wait_retries_transient_dns_failures_without_traceback(env, monkeypatch):
+    c = env.clock
+    srv = env({POST: pending(c), GET: approved(c)})
+    assert run("request", "--reason", "Read your session 4328 please", "--no-wait").exit_code == 0
+    monkeypatch.setattr(act_as_cli, "TRANSPORT", Flaky(srv, 3))
+    r = run("status", "--wait")
+    assert r.exit_code == 0, r.output
+    assert "approved" in r.output and "Traceback" not in r.output
+    assert json.loads(token_file(env.home).read_text())["token"] == SECRET
+
+
+def test_network_failure_keeps_state_and_is_clean(env, monkeypatch):
+    c = env.clock
+    srv = env({POST: pending(c), GET: (200, {"id": 7, "status": "pending", "scope": "read"})})
+    assert run("request", "--reason", "Read your session 4328 please", "--no-wait").exit_code == 0
+    monkeypatch.setattr(act_as_cli, "TRANSPORT", Flaky(srv, 10_000))
+    r = run("status")
+    assert r.exit_code == 1 and "could not reach canopy-web" in r.output
+    assert r.exception is None or isinstance(r.exception, SystemExit)
+    w = run("status", "--wait", "--timeout", "20")
+    assert w.exit_code == act_as_cli.EXIT_STILL_PENDING and "Traceback" not in w.output
+    assert json.loads(token_file(env.home).read_text())["id"] == 7  # state survived
+
+
+def test_server_5xx_keeps_state(env):
+    c = env.clock
+    srv = env({POST: pending(c), GET: (502, "<html>bad gateway</html>")})
+    assert run("request", "--reason", "Read your session 4328 please", "--no-wait").exit_code == 0
+    assert run("status").exit_code == 1
+    assert token_file(env.home).exists()
