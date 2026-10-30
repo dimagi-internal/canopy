@@ -39,8 +39,8 @@ so each is unit testable without a network:
               every turn re-spent the same judgment to leave them open. A ref whose close
               time is unknown keeps the old rule — over-report, never hide.
 
-Tasks whose Next action carries the `[MANUAL — …]` marker are skipped by (a), (e) and (f): the
-human has taken them off the agent's queue (task-tracker.md vocabulary).
+Tasks taken off the agent's queue — a `[MANUAL — …]` or `Parked:` next action, or snoozed
+until a time still ahead — are skipped by (a), (e) and (f) (task-tracker.md vocabulary).
 """
 from __future__ import annotations
 
@@ -49,6 +49,7 @@ from datetime import datetime, timedelta, timezone
 
 OPEN_STATUSES = ("suggested", "backlog", "todo", "in_progress")
 MANUAL_MARKER = "[MANUAL"
+PARKED_RE = re.compile(r"\s*\[?PARKED\b", re.IGNORECASE)
 DEFAULT_RECENT_DAYS = 2
 DRIVE_LIST_MAX = 1000
 
@@ -82,6 +83,19 @@ def _is_open(task: dict) -> bool:
 
 def _is_manual(task: dict) -> bool:
     return str(task.get("next_action") or "").lstrip().startswith(MANUAL_MARKER)
+
+
+def _is_off_queue(task: dict, now: datetime | None = None) -> bool:
+    """Taken off the agent's queue on purpose: `[MANUAL`, a parked next action (`Parked:` /
+    `[PARKED`), or snoozed until a time still ahead. Flagging these every turn trained agents
+    to ignore the audit line (hal, 2026-10-30: the same 15-loose/1-shipped line, three parked
+    Supply tasks among them, reported turn after turn and never acted on)."""
+    if _is_manual(task):
+        return True
+    if PARKED_RE.match(str(task.get("next_action") or "")):
+        return True
+    until = _parse_ts(task.get("snoozed_until"))
+    return bool(until and until > (now or datetime.now(timezone.utc)))
 
 
 def _parse_ts(value) -> datetime | None:
@@ -135,7 +149,7 @@ def check_loose_tasks(tasks, turns, folders=None, projects=None) -> list[dict]:
     by_task = turns_by_task(turns)
     out = []
     for t in tasks or []:
-        if not _is_open(t) or _is_manual(t) or t.get("project_ext_id"):
+        if not _is_open(t) or _is_off_queue(t) or t.get("project_ext_id"):
             continue
         ext = str(t.get("ext_id") or t.get("id"))
         signals = []
@@ -230,7 +244,7 @@ def check_unrecorded_tasks(tasks, turns, *, now: datetime, days: int = DEFAULT_R
             recent_turn_tasks.update(str(e) for e in turn.get("task_ext_ids") or [])
     out = []
     for t in tasks or []:
-        if not _is_open(t) or _is_manual(t):
+        if not _is_open(t) or _is_off_queue(t):
             continue
         updated = _parse_ts(t.get("updated_at"))
         ext = str(t.get("ext_id") or t.get("id"))
@@ -257,7 +271,7 @@ def open_task_github_refs(tasks) -> list[str]:
     """Every ref check (f) needs a state for, de-duplicated, capped at GITHUB_REFS_MAX."""
     refs: list[str] = []
     for t in tasks or []:
-        if _is_open(t) and not _is_manual(t):
+        if _is_open(t) and not _is_off_queue(t):
             refs.extend(r for r in github_refs(t) if r not in refs)
     return refs[:GITHUB_REFS_MAX]
 
@@ -319,7 +333,7 @@ def check_shipped_tasks(tasks, github_states) -> list[dict]:
     that nobody has touched since the last of them closed."""
     out = []
     for t in tasks or []:
-        if not _is_open(t) or _is_manual(t):
+        if not _is_open(t) or _is_off_queue(t):
             continue
         refs = github_refs(t)
         if not refs or not all(_ref_state(github_states.get(r)) in DONE_GITHUB_STATES

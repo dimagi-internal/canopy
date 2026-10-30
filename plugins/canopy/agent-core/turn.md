@@ -1017,6 +1017,37 @@ mailbox, NEVER raw send. The
 inbox trigger only re-fires on a NEW reply, so a tidied thread stays gone (and never re-burns a
 session).
 
+### Step 2.9 — Choosing the board work: leverage, not list order
+When the inbound is drained and the board is what's left, **"first actionable task" is not a
+choice.** A board of fifteen open tasks has fifteen actionable ones, and the one at the top is
+there by accident of ordering. Before you start, do this — it takes two minutes and decides
+whether the turn was worth running:
+
+1. **Owner-waiting items come first, as an ask, not as work.** List every open task whose next
+   step is the owner's (`waiting_on_email` set, an open ask, a next action that says "waiting on
+   <owner>" / "needs <owner>'s OK"). Each becomes ONE line at the top of your summary — what is
+   ready, the exact yes you need, what happens on yes. That line is usually the most valuable
+   thing a turn produces: a decision they can make in ten seconds that unblocks finished work.
+   **Never write "nothing waiting on you" while such a task is open** — check the list, don't
+   recall it.
+2. **Rank the top three candidates by what each moves for the owner** — a launch it unblocks, a
+   person it unsticks, a risk it closes — over effort. Skip `[MANUAL` and parked/snoozed tasks.
+   Pick the winner and say in one line, in the summary, why it beat the other two.
+3. **Do the step the task names, to its end.** A task's next action is the owner's (or a past
+   turn's) definition of done for this step. A precursor question in it ("first find out why X")
+   is a TIMEBOX, not the destination: answer it, record the answer, then do the named work. An
+   optimisation or cleanup you discover on the way becomes its own task (`agent add`, with the
+   finding as rationale) unless it is minutes of work — it does not replace the step. The test
+   at the close: **did the task's named next step get done? If not, why was what you did
+   instead worth more?** Say it.
+
+(Origin 2026-10-30: a hal turn picked the knowledge-base task because it was first, was told
+"run acceptance checks 2–7; first find out why no fetches came back 304", answered the 304
+question in fifteen minutes, then spent the rest of the turn building a refresh speedup that
+pays off two hand-run refreshes later — and ran one of the six checks that gate the launch. Its
+summary also said nothing was waiting on the owner while a finished feature sat waiting on his
+deploy OK. Asked *"do you really think you're helping me maximally?"*, the honest answer was no.)
+
 ## Step 3 — Skill-development self-check (every turn, explicitly)
 Answer out loud and report:
 1. **Did I create or improve a skill this turn?** Name it.
@@ -1059,6 +1090,9 @@ not news for the reader: the skill self-check, `projects:`, `people:`, the dupli
 re-read checks, and what the pre-send review caught. Put them after everything else as one short
 block (a line each), or leave them to the filed close (`<slug>-close`) when that carries them.
 Never make the reader scroll past bookkeeping to find out whether the work finished.
+**This holds for unattended turns too** — the owner reads that summary later, cold, which makes
+the first lines matter more, not less. When any open task waits on the owner (Step 2.9 item 1),
+the summary opens with a **Needs you:** line naming each, before what you did.
 **Test:** could they stop after the first paragraph and know what happened and what is theirs?
 (Origin 2026-10-27: an ada turn answered the owner's email well, then closed in chat with about
 thirty lines of checks. The owner replied *"is this totally done… this seems really hard to
@@ -1171,7 +1205,10 @@ set --project`), register the project for a folder you are actively working in a
 name, `--drive-folder-url` of the existing folder), record the turn (`agent turn --task
 --session-id`; without `--upload` that is board bookkeeping, not the opt-in publish below) — then
 report what is left, with the reason, in the line's place (e.g. `projects: 2 loose tasks — T4,
-T6 are single-run one-offs`). If the audit could not reach canopy-web it says so; report that
+T6 are single-run one-offs`). **A flag you leave standing twice in a row is a decision you keep
+not making:** either fix it, or put the task where the audit stops counting it (`[MANUAL`, a
+`Parked:` / `[PARKED` next action, or `snoozed_until`), so the line goes back to meaning
+something. If the audit could not reach canopy-web it says so; report that
 line as-is rather than dropping it.
 
 **Publishing to canopy-web is MANUAL — none of it is an automatic close step** (one exception:
