@@ -9,6 +9,10 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.831] - 2026-10-30
+### Fixed
+- `canopy vault ws list` crashed with a `TypeError` on a workspace vault attached to a runner (the Claude-credentials vaults); it now prints `serves: runner <name>`.
+
 ## [0.2.827] - 2026-10-30
 
 ### Removed

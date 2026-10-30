@@ -1006,10 +1006,22 @@ def _ws_call(method: str, path: str, body=None):
         raise ZkCliError(f"canopy-web refused {method} {path}: {str(e)[:300]}") from None
 
 
+def _serves(a: dict) -> str:
+    """What one attachment of a workspace vault serves: an agent, a whole workspace and
+    below, or a runner (the Claude-credentials vaults attach to the machine that uses them)."""
+    if a.get("agent"):
+        return f"agent {a['agent']}"
+    if a.get("runner"):
+        return f"runner {a.get('runner_name') or a['runner']}"
+    if a.get("workspace"):
+        return f"{a['workspace']} and below"
+    return "(unknown)"
+
+
 def render_ws_vault(v: dict) -> str:
     lines = [f"{v.get('workspace')}/{v.get('name')}  (id {v.get('vault_id')}, kv {v.get('kv')})"]
     for a in v.get("attachments") or []:
-        lines.append(f"  serves: {('agent ' + a['agent']) if a.get('agent') else a.get('workspace') + ' and below'}")
+        lines.append(f"  serves: {_serves(a)}")
     for m in v.get("members") or []:
         lines.append(f"  member: {m.get('email')} ({m.get('role')}; {', '.join(m.get('sources') or [])})"
                      + ("" if m.get("has_vault_key") else " — no vault key yet"))
