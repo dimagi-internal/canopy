@@ -9,7 +9,7 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
-## [0.2.826] - 2026-10-29
+## [0.2.827] - 2026-10-30
 
 ### Removed
 - **1Password as a credential source.** Every agent's secrets live in its Canopy vault on
