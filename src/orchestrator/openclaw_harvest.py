@@ -101,7 +101,7 @@ def snapshot_via_ssh(host: str, into: Path, openclaw_root: str = "~/.openclaw") 
     """Best-effort rsync of an OpenClaw's *readable workspace* (persona/skills/memory) to `into`.
 
     Excludes credential files. `host` is anything ssh can reach (user@ip, or an ssh-config alias —
-    reef resolves DO droplet IPs + 1Password keys; point ssh at the result). Returns the relative
+    reef resolves DO droplet IPs and ssh keys; point ssh at the result). Returns the relative
     paths pulled. Raises HarvestError if rsync/ssh isn't available or the pull fails.
     """
     into = Path(into).expanduser()

@@ -227,7 +227,7 @@ def load_key(key_file: str, key_agent: str, *, env=os.environ, resolve=None) -> 
             raise GoogleAccountError(
                 f"no provisioner key: pass --key-file, set ${KEY_REF}, or store it in "
                 f"{key_agent}'s vault (`canopy vault zk set --agent {key_agent} {KEY_REF} "
-                f"< key.json`) and declare {KEY_REF} in {key_agent}'s .env.tpl")
+                f"< key.json`)")
     try:
         return json.loads(raw)
     except ValueError:

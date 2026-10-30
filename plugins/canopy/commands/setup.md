@@ -26,7 +26,7 @@ which lists every agent in every workspace you belong to. That registration is t
 a canopy command is involved: `claude plugin marketplace add` can't send your sign-in token, so
 canopy writes the entry with a headers helper that does. It installs no agents by itself; step
 3 offers `canopy agent use` for each agent you can use and runs it for the ones you pick. Runners, vault
-keys, `gog login` and `op inject` are NOT part of it either — they belong to the operator who
+keys and `gog login` are NOT part of it either — they belong to the operator who
 *hosts* an agent (`canopy agent bootstrap`). The user-facing guide is
 https://canopy.dimagi.com/get-started.
 
@@ -99,13 +99,6 @@ On a failure it prints the exact cause (not signed in, catalog not served yet) �
 don't improvise around it. If the catalog lists no agents, the user isn't in a workspace with
 agents yet and should ask a workspace admin for an invite. (`--install-all` exists for someone
 who explicitly wants every agent; it is not the default.)
-
-## 4. 1Password check (never fails setup)
-
-Step 1 printed one `[op]` line. If it says not installed / not signed in, repeat that single fix
-to the user. Whether an agent needs 1Password is up to that agent — its own setup command tells
-you what it needs; canopy only needs it to **act as** an agent whose credentials live in
-1Password (`canopy cred check --agent <slug>` says whether this session may).
 
 ## Done
 

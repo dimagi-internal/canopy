@@ -59,9 +59,6 @@ ciphertext; values are opened on a device that holds a grant of the agent's vaul
 - **Changing a value**: the agent's Settings → Credentials, or `canopy vault zk set --agent <slug>
   NAME`. The next session picks it up.
 
-Muse still keeps its secrets in 1Password. That path still works but is **legacy**: an admin with
-1Password access moves an agent with `canopy vault import --agent <slug> --zk --switch`.
-
 A computer with no runner app holds its device key too: registering it for local use gives it
 its own private "computer" runner on canopy-web, which never runs turns. Until that canopy-web
 change is live, `canopy agent use` says "this computer can't hold a vault key yet".

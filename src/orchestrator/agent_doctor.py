@@ -1,15 +1,15 @@
 """Per-AGENT health checks — `canopy agent doctor`.
 
 `canopy doctor` diagnoses the canopy plugin install; THIS module diagnoses one
-agent repo's operational readiness: identity config, gating rails, secrets
-manifest, gog email auth, and canopy-web registration + board reachability.
+agent repo's operational readiness: identity config, gating rails, the materialized
+env, gog email auth, and canopy-web registration + board reachability.
 Composes the point-checks that already exist (`resolve_email_identity`,
-provision's manifest loaders, `agent_email.preflight`,
+`agent_email.preflight`,
 `AgentClient.pending_actions`) into one command, so "the agent was set up on
 some machine once" stops diverging from "this machine can run the agent".
 
 Born from hal (2026-07-02): hal's gog client existed somewhere, but this
-machine had no credentials file, no secrets.yaml to provision it from, and no
+machine had no credentials file and no
 canopy-web registration — and nothing in the framework would have said so
 short of an actual failed turn. `canopy create-agent` documents these steps
 for NEW agents; this doctor verifies them for any agent, any machine, any day.
@@ -60,12 +60,6 @@ from orchestrator.agent_client import AgentClient, CanopyError
 from orchestrator.dependency_health import (
     check_dependency_upgrades,
     check_gog_keychain_trust,
-)
-from orchestrator.provision import (
-    ProvisionError,
-    load_env_block,
-    load_manifest,
-    resolve_target,
 )
 
 
@@ -281,90 +275,6 @@ def check_hook_wiring(repo: Path) -> CheckResult:
                        "(agent-core/gating_guard.py --session); no agent-registered hook")
 
 
-def check_secrets_manifest(repo: Path) -> CheckResult:
-    """Where this agent's secrets are declared. The agent's Canopy vault on canopy-web is the
-    ONE declaration (agent-core/agent-runtime.md § One declaration): an agent repo with no
-    manifest is the target state, not a gap. A repo that still carries `.env.tpl` or
-    `config/secrets.yaml` (the 1Password paths) is checked structurally — a broken one still
-    breaks a legacy `op inject` — and told the file is a second copy to delete once the agent
-    is on the Canopy vault."""
-    name = "Secrets manifest"
-    repo = Path(repo)
-    env_tpl = repo / ".env.tpl"
-    secrets_yaml = repo / "config" / "secrets.yaml"
-
-    if env_tpl.exists():
-        # The same parser and table `canopy agent vault` fills the vault from, so what the
-        # doctor says a template needs is exactly what that command will produce.
-        from orchestrator.agent_vault import PAT_ITEM, commented_refs, kind_of, parse_refs
-
-        text = env_tpl.read_text(encoding="utf-8")
-        bad = commented_refs(text)
-        if bad:
-            return CheckResult(
-                name, False,
-                f".env.tpl has a secret reference (op://…) in a comment on line(s) "
-                f"{', '.join(map(str, bad))} — `op inject` parses comments, so this fails the "
-                "whole inject (or leaks a real one). Reword those comments without op://.",
-            )
-        keys = _template_keys(text)
-        refs, literal = parse_refs(text)
-        kinds = ", ".join(f"{item} ({kind_of(item).kind})" for item, _ in refs) or "none"
-        notes = []
-        if literal:
-            notes.append(f"names vault(s) {', '.join(literal)} literally — use "
-                         "op://${AGENT_VAULT}/… so the instance's vault is used")
-        if PAT_ITEM not in {i for i, _ in refs}:
-            notes.append("no CANOPY_WEB_PAT line, so its turns use a person's canopy token")
-        notes.append("a second copy of the agent's secret names (the 1Password path) — on the "
-                     "Canopy vault the vault itself declares them; delete .env.tpl once switched")
-        return CheckResult(
-            name, True,
-            f".env.tpl ({len(keys)} var(s); vault refs: {kinds}) — filled by "
-            "`canopy agent vault`, materialized by `/<agent>:setup`"
-            + ("; note: " + "; ".join(notes) if notes else ""),
-        )
-
-    if secrets_yaml.exists():
-        try:
-            secrets = load_manifest(repo)
-            env = load_env_block(repo)
-        except ProvisionError as e:
-            return CheckResult(name, False, str(e))
-        n_env = len(env.vars) if env else 0
-        return CheckResult(
-            name, True,
-            f"config/secrets.yaml ({len(secrets)} file secret(s), {n_env} env var(s)) — LEGACY "
-            "manifest via `canopy provision`; new agents should scaffold .env.tpl + `op inject` "
-            "instead — validate refs via `canopy provision --check`",
-        )
-
-    # Escape hatch for agents with their own bespoke provisioning — declared, not inferred, so
-    # absence stays a failure by default.
-    agent_json = repo / "config" / "agent.json"
-    try:
-        provisioning = json.loads(agent_json.read_text(encoding="utf-8")).get("provisioning", "")
-    except (OSError, ValueError):
-        provisioning = ""
-    if provisioning:
-        return CheckResult(
-            name, True,
-            f"self-managed ({provisioning}) — declared in agent.json; "
-            "no canopy provision manifest expected",
-        )
-    return CheckResult(
-        name, True,
-        "declared by the agent's Canopy vault (canopy-web → Settings → Credentials), the one "
-        "place its secrets are named; `canopy cred env --agent <agent>` materializes them",
-    )
-
-
-def _template_keys(text: str) -> list[str]:
-    """The KEY of every `KEY=value` line in an .env.tpl (comments skipped)."""
-    return [l.split("=", 1)[0].strip() for l in text.splitlines()
-            if l.strip() and not l.strip().startswith("#") and "=" in l]
-
-
 def env_home(repo: Path, home: Path | None = None) -> Path:
     """Where `canopy agent env` writes this agent's env: ~/.<plugin>/.env (its default)."""
     from orchestrator.agent_web import AgentWebError, resolve_identity
@@ -378,63 +288,34 @@ def env_home(repo: Path, home: Path | None = None) -> Path:
 
 
 def check_secrets_materialized(repo: Path, *, home: Path | None = None) -> CheckResult:
-    """The manifest's targets actually EXIST on this machine.
+    """The agent's env file EXISTS on this machine and holds values.
 
-    `check_secrets_manifest` proves the repo *declares* what it needs; it says nothing about
-    whether `canopy provision` was ever run HERE. That distinction is the whole point of a
-    per-machine doctor: a fresh macOS user has every repo, every manifest, and none of the
-    resolved files (`~/.<slug>/.env`, `credentials-<client>.json`). Fixable non-interactively,
-    so `--fix` heals it.
-
-    For `.env.tpl` the target is `canopy agent env`'s default, `~/.<slug>/.env`: every KEY the
-    template declares must be there with a value. An empty one is a vault item nobody filled
-    — `canopy agent vault --slug <slug>` fills it. (Until 2026-10-15 this check skipped
-    `.env.tpl` agents entirely, so a half-filled vault passed.) Values are read, never shown.
-    """
+    The agent's Canopy vault on canopy-web declares what the agent needs; this proves THIS
+    machine has it written out (`~/.<slug>/.env`, or the turn's env file). A fresh machine
+    has every repo and none of the resolved files. Values are read, never shown."""
     name = "Secrets materialized"
-    repo = Path(repo)
-    if (repo / ".env.tpl").exists():
-        target = env_home(repo, home)
-        slug = target.parent.name.lstrip(".")
-        if not target.exists():
-            return CheckResult(
-                name, False,
-                f"{target} does not exist on this machine — run `/{slug}:setup` "
-                f"(`canopy agent env --plugin {slug}`)",
-            )
-        have = {}
-        for line in target.read_text(encoding="utf-8").splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                k, v = line.split("=", 1)
-                have[k.strip()] = bool(v.strip())
-        want = _template_keys((repo / ".env.tpl").read_text(encoding="utf-8"))
-        missing = [k for k in want if k not in have]
-        empty = [k for k in want if have.get(k) is False]
-        if missing or empty:
-            bits = ([f"missing {', '.join(missing)} (re-run `/{slug}:setup`)"] if missing else []) + (
-                [f"empty {', '.join(empty)} (set them in its canopy vault — /agents/{slug} → "
-                 f"Settings → Credentials — then `/{slug}:setup`)"] if empty else [])
-            return CheckResult(name, False, f"{target}: " + "; ".join(bits))
-        return CheckResult(name, True, f"{target} has all {len(want)} var(s) with values")
-    if not (repo / "config" / "secrets.yaml").exists():
-        return CheckResult(name, True, "skipped — no canopy provision manifest (see Secrets manifest)")
-    try:
-        secrets = load_manifest(repo)
-        env = load_env_block(repo)
-    except ProvisionError as e:
-        return CheckResult(name, False, str(e))
-    targets = [resolve_target(s.target, Path(repo)) for s in secrets]
-    if env and env.target:
-        targets.append(resolve_target(env.target, Path(repo)))
-    missing = [str(t) for t in targets if not t.exists()]
-    if missing:
+    target = env_home(Path(repo), home)
+    slug = target.parent.name.lstrip(".")
+    if not target.exists():
         return CheckResult(
             name, False,
-            f"{len(missing)}/{len(targets)} provisioned target(s) missing on this machine "
-            f"({', '.join(missing[:3])}{'…' if len(missing) > 3 else ''}) — run "
-            f"`canopy provision --repo {repo}` (needs a signed-in `op`), or `--fix`",
+            f"{target} does not exist on this machine — run `/{slug}:setup` "
+            f"(`canopy agent env --plugin {slug}`)",
         )
-    return CheckResult(name, True, f"all {len(targets)} provisioned target(s) present")
+    have = {}
+    for line in target.read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            k, v = line.split("=", 1)
+            have[k.strip()] = bool(v.strip())
+    empty = [k for k, filled in have.items() if not filled]
+    if not have:
+        return CheckResult(name, False, f"{target} holds no variables — run `/{slug}:setup`")
+    if empty:
+        return CheckResult(
+            name, False,
+            f"{target}: empty {', '.join(empty)} (set them in its Canopy vault — /agents/{slug} "
+            f"→ Settings → Credentials — then `/{slug}:setup`)")
+    return CheckResult(name, True, f"{target} has all {len(have)} var(s) with values")
 
 
 RAILS_PROBE = "gog gmail send --to probe@example.invalid --subject probe"
@@ -909,13 +790,13 @@ SECRETS_BACKEND_CHECK = "Secrets backend"
 
 
 def probe_secrets_backend(slug: str) -> dict:
-    """Where agent `slug`'s secrets live and whether THIS device can open them:
-    {source, enabled, kv, this_device (True/False/None = cannot tell), error}."""
+    """Whether THIS device can open agent `slug`'s Canopy vault:
+    {enabled, kv, this_device (True/False/None = cannot tell), error}."""
     from orchestrator.cred_cli import fetch_access
     access = fetch_access(slug)
-    out = {"source": access.get("credential_source") or "canopy-web", "enabled": None,
-           "kv": None, "this_device": None, "error": access.get("error") or ""}
-    if out["source"] != "canopy-web" or out["error"]:
+    out = {"enabled": None, "kv": None, "this_device": None,
+           "error": access.get("error") or ""}
+    if out["error"]:
         return out
     try:
         from orchestrator import vault_zk_cli
@@ -930,10 +811,7 @@ def probe_secrets_backend(slug: str) -> dict:
 
 
 def check_secrets_backend(identity: EmailIdentity | None, *, probe=None) -> CheckResult:
-    """Say where the agent's secrets live — canopy vault, or 1Password (LEGACY) — and
-    whether this device can open them. Every agent's secrets live in canopy vault
-    (Jonathan, 2026-10-21); a 1Password agent passes with a WARN and the one line that
-    moves it."""
+    """Say whether this device can open the agent's secrets in the Canopy vault."""
     name = SECRETS_BACKEND_CHECK
     if identity is None:
         return CheckResult(name, False, "skipped — identity unresolved")
@@ -944,11 +822,6 @@ def check_secrets_backend(identity: EmailIdentity | None, *, probe=None) -> Chec
         return CheckResult(name, True, f"could not tell ({str(e)[:200]})", warn=True)
     if b.get("error"):
         return CheckResult(name, True, f"could not ask canopy-web ({b['error']})", warn=True)
-    if b.get("source") == "1password":
-        return CheckResult(
-            name, True,
-            f"1Password (LEGACY) — an admin with 1Password access moves it to canopy vault: "
-            f"`canopy vault import --agent {slug} --zk --switch`", warn=True)
     if b.get("enabled") is None:
         return CheckResult(name, True, "secrets: canopy vault (only an admin of "
                                        f"{slug} can see whether this device holds a grant)")
@@ -1011,15 +884,6 @@ def check_setup(
                                     f"canopy-web: " + "; ".join(parts))
 
 
-def _default_provisioner(repo: Path) -> str:
-    from orchestrator.provision import provision as _provision
-    summary = _provision(Path(repo))
-    if summary.get("errors"):
-        raise ProvisionError("; ".join(str(e) for e in summary["errors"][:3]))
-    return (f"provisioned {summary.get('provisioned', 0)} target(s), "
-            f"skipped {summary.get('skipped', 0)}")
-
-
 def _default_registrar(repo: Path) -> str:
     from orchestrator.agent_web import register as _register
     result = _register(Path(repo))
@@ -1031,7 +895,6 @@ def _default_registrar(repo: Path) -> str:
 # (gog consent, plugin install, PAT mint, config authorship) stays a printed instruction —
 # a doctor that half-performs an interactive step leaves a worse mess than one that asks.
 FIXERS = {
-    "Secrets materialized": ("canopy provision", _default_provisioner),
     SETUP_CHECK: ("canopy agent-publish register", _default_registrar),
 }
 
@@ -1100,7 +963,6 @@ def run_agent_doctor(
         check_required_plugins(repo, registry_path=registry_path),
         check_gating(repo),
         check_hook_wiring(repo),
-        check_secrets_manifest(repo),
         check_secrets_materialized(repo),
         check_secrets_backend(identity, probe=secrets_probe),
         check_rails_fire(repo),

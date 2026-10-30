@@ -59,10 +59,10 @@ def test_a_refused_pat_is_retried_as_the_runner_with_a_fresh_proof(box):
 
 def test_an_agents_own_pat_refused_403_is_retried_too(box):
     fake, seen = _server({"agent-pat": (403, {"title": "needs a runner"}),
-                          "crt_box": (200, {"credential_source": "canopy-web"})})
+                          "crt_box": (200, {"may_resolve": True})})
     out = cw.call("GET", "/api/agents/hal/credentials/access", base_url=BASE,
                   token="agent-pat", transport=fake)
-    assert out["credential_source"] == "canopy-web"
+    assert out["may_resolve"] is True
 
 
 def test_no_pat_at_all_goes_straight_out_as_the_runner(box, monkeypatch):

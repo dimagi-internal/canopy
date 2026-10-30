@@ -265,7 +265,7 @@ def open_user_key(seal: dict, user_id, prf_out: bytes) -> bytes:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 4b. user keyset seal by passphrase + Secret Key (1Password-style 2SKD)
+# 4b. user keyset seal by passphrase + Secret Key (two-secret key derivation, 2SKD)
 # ──────────────────────────────────────────────────────────────────────────────
 
 PBKDF2_ITERATIONS = 650000

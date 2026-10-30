@@ -44,10 +44,10 @@ doctor` / `canopy fleet-align` flag it as a warning to remove.
 **No environment-varying value is committed to git.** Not a password or API key — and *also not* a
 Drive folder id, doc id, sheet id, or script id. The fleet runs in **multiple environments** (your
 laptop, the cloud runner, a fresh box) and those values differ per environment/Workspace. A literal
-in a repo can't vary; a **1Password reference** can.
+in a repo can't vary; a **credential in the agent's Canopy vault** can.
 
 > **The test is NOT "is it sensitive?" — it is "does this differ between environments?"**
-> If yes → it's a reference. This is the rule that was being missed: ids kept getting written as
+> If yes → it goes in the vault. This is the rule that was being missed: ids kept getting written as
 > literals because "an id isn't a secret", which is true and irrelevant.
 
 ## One declaration — the agent's Canopy vault
@@ -64,15 +64,11 @@ layered under each agent's own; no agent repeats it (Jonathan, 2026-10-22: "the 
 ids should go into the workspace vaults for dimagi since they are the same across all agents").
 
 So an agent repo names **no secret and no vault**:
-- **No `.env.tpl`.** It was the 1Password path's template. A canopy-vault agent never reads it;
-  keeping it is a second list that drifts (ACE's went 40 names out of step). `canopy agent
-  doctor` passes a repo without one and flags one that remains. The factory stopped stamping it.
+- **No secrets list in the repo.** A template or manifest naming the agent's secrets is a second
+  list that drifts (ACE's went 40 names out of step). The vault is the list.
 - **No `runtime.yaml`.** Nothing reads one; capabilities publish from their `capability.yaml`
   (see § No agent ships a `runtime.yaml` below).
 - **`config/agent.json`** keeps identity (mailbox, `gog_client`) — facts, not secrets.
-
-The sections below on `.env.tpl`, `op inject`, `canopy agent vault` and `Canopy-Shared` describe
-the **1Password path**, kept only until the last 1Password code is removed.
 
 ## The gog client — never type one
 
@@ -94,165 +90,65 @@ door; omitting `--client` leans on gog's `account_clients` map, which nothing ke
 Code calls the same rule directly: `agent_email.reconcile_client` (Python) or
 `canopy email client --json` (anything else).
 
-## Two-tier vault topology
+## How a value reaches a turn
 
-| Vault | Holds |
-|---|---|
-| `Canopy-Shared` | values **every** canopy agent resolves — `gog-oauth-client`, `github-token` |
-| the instance's vault (`Agent.op_vault`) | one per agent instance — its identity + integration values: `canopy-pat`, `claude-oauth-token`, `gog-token`, `gdrive-root-folder`, … |
-
-**The vault belongs to the instance, never to the plugin** (Jonathan, 2026-10-14). A plugin is
-code; an *instance* is canopy-web's Agent record — identity, workspace and 1Password vault
-(`Agent.op_vault`, set by the instance's owner on `/agents/<slug>`). Nothing in canopy or an
-agent repo derives a vault name from the slug (today's fleet vaults happen to be called
-`Agent-Ace`, `Agent-Hal`, … — a name the owner recorded, not a rule), and nothing falls back to
-one: an instance with no recorded vault is an error that says so.
-
-One vault per agent (**not** the legacy flat `AI-Agents` dumping ground) so each agent is
-least-privilege and independently grantable. Every item is an **API Credential** whose value sits
-in a single `credential` field, so a reference resolves as `op://<vault>/<item>/credential`.
-
-New agent? `canopy agent vault --slug <slug>` (the canopy-web setup checklist's "Give it a
-vault" step) creates the vault, makes the owner its admin, creates and FILLS every item the
-agent's `.env.tpl` references — minting what the system can, asking only for what a person
-alone knows — and stores the read-only key on canopy-web. Safe to re-run; `--check` reports.
-`canopy-web/deploy/secrets/migrate_echo.sh` is the worked example of copying values out of the
-legacy `AI-Agents` vault.
-
-## How a value reaches a turn (use this today)
-
-**`.env.tpl` + `op inject` is THE standard** — for every env var an agent needs, committed and
-resolved into a **worktree-clean global env home** (`~/.<agent>/.env`, mode 0600). emdash runs
-each turn in a fresh worktree, so a repo-local `.env` would vanish; the global home is read by
-every worktree via `bin/_env.py`. The fleet has already migrated onto this: ada, eva, hal, and
-echo all ship `.env.tpl`, with `config/secrets.yaml` deleted.
-
-Templates never name the vault — they reference **`${AGENT_VAULT}`**, which `op inject`
-substitutes from its environment (`op inject --help`: "Use variables in secret references"):
-
-```bash
-GDRIVE_ROOT_FOLDER=op://${AGENT_VAULT}/gdrive-root-folder/credential
-```
+Every env var an agent needs is resolved from its Canopy vault into a **worktree-clean global env
+home** (`~/.<agent>/.env`, mode 0600). emdash runs each turn in a fresh worktree, so a repo-local
+`.env` would vanish; the global home is read by every worktree via `bin/_env.py`.
 
 ### Setup: `canopy agent env` — bind ONE instance, fill the env
 
 Every agent's `/<agent>:setup` calls the one shared step:
 
 ```bash
-canopy agent env --plugin <plugin> [--template .env.tpl] [--out ~/.<plugin>/.env] \
-                 [--agent <instance>] [--vault <name>] [--force] [--print]
+canopy agent env --plugin <plugin> [--out ~/.<plugin>/.env] [--agent <instance>] [--force] [--print]
 ```
+
+A plugin is code; an *instance* is canopy-web's Agent record — identity, workspace and credentials.
 
 1. **Instance.** The instances of `<plugin>` you can see on canopy-web (the catalog entry's
    `metadata.instances`, else `GET /api/agents/` filtered by `plugin.name`). `--agent` picks one;
    the instance this install is already bound to is kept; exactly one is used and named; several
    stop with the exact re-run line for each (it never prompts — scripts and slash commands call
    it); none stops.
-2. **Vault.** `--vault` wins, else the instance's `op_vault`. None recorded → error: *"this agent
-   instance has no 1Password vault recorded on canopy-web; its owner sets it"*.
-3. **Binding.** Recorded beside the output: `~/.<plugin>/canopy-instance.json`
-   (`{plugin, agent, workspace, vault, bound_at}`). Re-running for a DIFFERENT instance refuses
+2. **Binding.** Recorded beside the output: `~/.<plugin>/canopy-instance.json`
+   (`{plugin, agent, workspace, bound_at}`). Re-running for a DIFFERENT instance refuses
    unless `--force` — an install never switches instance by accident; using another instance
-   means running setup again. The `agent_op_env` SessionStart hook exports the binding's
-   `AGENT_VAULT`/`AGENT_SLUG` into agent sessions, finding it in `~/.<slug>/` or, for an agent
-   whose setup writes to its plugin data dir (ACE), `~/.claude/plugins/data/<slug>-<marketplace>/`
-   (several there → the installed one; still ambiguous → nothing exported, one line).
-4. **Fill.** `op inject -i <template> -o <out>` with `AGENT_VAULT=<vault>` and
-   `AGENT_SLUG=<instance>` in its environment. `op` missing / not signed in / vault unreadable
-   → one message naming the vault, `dimagi.1password.com`, and "ask the agent's owner for access".
+   means running setup again.
+3. **Fill.** The instance's Canopy vault values, resolved on this device and written 0600
+   (`canopy cred`'s resolve). A refusal names its own fix: `canopy agent use <slug>` says what this
+   computer still needs (sign-in, device key, a grant, your licence).
 
-`--print` emits the resolved instance and vault as JSON and changes nothing. The rest of canopy
-asks the same question the same way (`agent_instance.instance_vault`: this machine's binding,
-else canopy-web's `op_vault`, else a loud error) — `canopy agent bootstrap`, `canopy cred
-env|sync|check` all set `AGENT_VAULT` before injecting, and the SessionStart hook exports the
-bound `AGENT_VAULT` / `AGENT_SLUG` into agent sessions so a hand-run `op inject` works too.
-Runners must set `AGENT_VAULT` (= `Agent.op_vault`) for every `op inject` of an agent template.
+`--print` emits the resolved instance as JSON and changes nothing.
 
 **Non-env credential FILES** (something an SDK/CLI wants as a JSON file on disk, e.g. a gog
-OAuth-client json, a service-account key) are NOT env vars — resolve them directly with native
-`op read`, never through `.env.tpl`:
-
-```bash
-op read "op://$AGENT_VAULT/gog-oauth-client/credential" > ~/Library/Application\ Support/gogcli/credentials-<slug>.json
-chmod 0600 ~/Library/Application\ Support/gogcli/credentials-<slug>.json
-```
-
-Either way the rule is identical: **the template/command holds an `op://…` reference, never the
-value.**
-
-> ## ⚠️ CRITICAL SECURITY RULE — never write a literal `op://…` in a comment
->
-> `op inject` resolves **every** `op://` reference it finds in the input file — **including
-> inside `#` comments and example lines.** It does not know the difference between "the config
-> line I should resolve" and "the example I put in a comment for a human to read." So:
->
-> - **`.env.tpl` must NEVER contain a real, resolvable `op://<vault>/<item>/<field>` string in a
->   comment or example** — only in an actual `KEY=op://…` assignment line you intend to resolve.
->   A "just for illustration" `op://` in a comment resolves exactly like a real line does; the
->   resolved secret then prints to stdout the next time someone does `op inject -i .env.tpl | cat`
->   (or anything else that reads the output), leaking it.
-> - **In `.env.tpl` itself, no `op://` in a comment AT ALL — not even a placeholder.** A
->   placeholder does not leak, but it BREAKS the inject: `op://${AGENT_VAULT}/<item>/<field>` in
->   a comment expands to `op://Agent-X/<item>/…`, which op rejects ("invalid secret reference …
->   too few '/'") and fails the whole file. Every factory-made agent shipped such a comment
->   until 2026-10-15 (lex's env never materialized). Point at a live line instead;
->   `canopy agent doctor` fails a template that breaks this.
-> - **In any other doc, use an angle-bracket placeholder**: `op://<vault>/<item>/<field>` —
->   never a real vault/item name, even a plausible-looking one.
-> - This applies to **any file `op inject` might ever be pointed at**, not just `.env.tpl` — treat
->   it as a rule about writing `op://` strings in text at all, not a quirk of one filename.
+OAuth-client json, a service-account key) are credentials in the vault like any other; code that
+needs the file writes it from the value (`canopy cred exec --agent <slug> --ref NAME -- <cmd>`
+puts one value in a child's environment without writing a file).
 
 ## Session identity — resolve through `canopy cred` (fleet baseline, canopy#850)
 
-**Recommendation for every agent and every agent-identity MCP server:** don't run `op inject`
-by hand and don't read a key bundled in plugin data. Ask the broker:
+**Recommendation for every agent and every agent-identity MCP server:** don't resolve
+secrets by hand and don't read a key bundled in plugin data. Ask the broker:
 
 ```bash
 canopy cred check --agent <slug>   # exit 0 = this session may act as <slug>; 3 = refused (stderr says why)
 canopy cred env   --agent <slug>   # ensures ~/.<slug>/.env (0600), resolving only when missing; prints the path
 canopy cred refresh --agent <slug> # after a rotation or an auth failure
-canopy cred sync  --agent <slug>   # re-inject only if the vault/.env.tpl changed (the SessionStart hook runs this)
+canopy cred sync  --agent <slug>   # re-write only if the vault's values changed (the SessionStart hook runs this)
 canopy cred exec  --agent <slug> -- <cmd>   # the agent's env in <cmd>'s process ONLY — no file
 ```
 
-- **Canopy Vault** (canopy#946) is an **opt-in** second backend: an owner moves one agent's
-  values to canopy-web with `canopy vault import --agent <slug> --switch` (and back with
-  `canopy vault export` + `switch --to 1password`). Nothing above changes for the agent — `cred
-  env`/`sync` and the runners read the backend the agent record names. 1Password stays the
-  default. Details: `docs/architecture/session-identity.md` § Canopy Vault.
-
 - A **runner turn** may act only as its own agent; a **human** session may act as an agent when
-  their own `op` can read its vault (`1password` backend) or canopy-web says they are its runner
-  operator / owner / admin (`canopy-web` backend, the agent record's `credential_source`).
-- `~/.<slug>/.env` is the same file `op inject` writes, so `bin/_env.py` and every `bin/` script
+  canopy-web says they are its runner operator / owner / admin (or hold a licence and are in their
+  own local turn). Details: `docs/architecture/session-identity.md` § Canopy Vault.
+- `~/.<slug>/.env` is the file `canopy cred env` writes, so `bin/_env.py` and every `bin/` script
   keep working unchanged.
 - An MCP server that acts as an agent (ace-gdrive, chrome-sales gdrive; canopy-gws when registered) calls
   `canopy cred check --agent <its agent>` before acting and, on non-zero, returns the stderr as
   its refusal — **never** falls back to a bundled key.
 
 Contract, exit codes and a Node/TS snippet: `docs/architecture/session-identity.md` in the canopy repo.
-
-## The legacy path — `config/secrets.yaml` + `canopy provision`
-
-Still supported (`canopy provision`, `--check` to dry-run, is fully functional), and some
-repos/agents that haven't migrated yet still use it — but **do not scaffold new agents onto it.**
-It is a declarative YAML manifest `canopy provision` materializes:
-
-```yaml
-env:
-  target: "~/.<agent>/.env"
-  mode: "0600"
-  vars:
-    - key: SOME_LITERAL
-      value: "not-environment-varying"                      # rare — see the rule above
-    - key: GDRIVE_ROOT_FOLDER
-      op: "op://<vault>/gdrive-root-folder/credential"  # the instance's vault, by name
-```
-
-Migrating an agent off it: write the equivalent `.env.tpl` (one `KEY=value` / `KEY=op://…` line
-per `env.vars` entry — same placeholder-in-comments rule applies), point any file-type `secrets:`
-entries at a direct `op read ... > <file>` step instead, verify with a real `op inject` run, then
-delete `config/secrets.yaml`.
 
 ## A credential you leaked — rotate it yourself, now
 
@@ -278,7 +174,7 @@ request to rotate your key if you leak it, do it now.")
   (rotated …)`), revoke it (`DELETE /api/tokens/<id>/`), and confirm the leaked value now gets
   401. (2026-10-24: Hal's first self-rotation printed "nothing revoked" and the leaked token stayed
   live; canopy-web#2069 now retires the token you called with, but verify either way.)
-- **Any other secret** (a gog token, an API key, a 1Password item) — you cannot mint a replacement,
+- **Any other secret** (a gog token, an API key, a vault credential) — you cannot mint a replacement,
   so the request IS the action: ask your owner right away with `request_agent_secret` (it puts a
   card in front of them) naming the secret and where it went, and record it as a board task. Never
   leave it in a closing summary as something for them to notice.
@@ -288,27 +184,12 @@ request to rotate your key if you leak it, do it now.")
 
 ## Adding a new value — the recipe
 
-**On the Canopy vault (every agent today):** store it in the agent's Settings → Credentials on
+Store it in the agent's Settings → Credentials on
 canopy-web (or `canopy vault zk set --agent <slug> <NAME>`, value on stdin), named as the env var
 it becomes; a value every agent in the workspace needs goes in the workspace vault instead
 (`canopy vault zk set --vault <id> <NAME>`; ids from `canopy vault ws list`). Then
 `/<agent>:setup` or the next runner prepare materializes it, and code reads the env var. Nothing
 in the agent repo changes.
-
-**1Password path (legacy):**
-
-1. **Reference it** in the agent's `.env.tpl` as `KEY=op://${AGENT_VAULT}/<name>/credential`
-   (legacy agents: `config/secrets.yaml`'s `env.vars`) — never the value, never a vault name, and
-   never a real `op://…` in a comment (see the security rule above).
-2. **Put it in the vault**: `canopy agent vault --slug <slug>` creates the item and asks for the
-   value with hidden input — never `op item create … "credential[password]=<value>"`, which puts
-   the value in argv, visible to every process on the machine. A value the fleet can PRODUCE
-   (minted, or made by another control) belongs in `KINDS` in `src/orchestrator/agent_vault.py`,
-   so no person is ever asked for it. Needed by every agent → `Canopy-Shared` instead.
-3. **Materialize** it: `/<agent>:setup` (`canopy agent env --plugin <plugin>`; legacy: `canopy provision`).
-4. **Read it** as the env var in code/skills — never re-hardcode the value.
-5. **Verify**: `canopy agent vault --slug <slug> --check` (every reference filled, key stored)
-   and confirm the key landed in `~/.<agent>/.env`.
 
 ## No agent ships a `runtime.yaml` — capabilities publish from `capability.yaml`
 
@@ -328,23 +209,6 @@ filled by `canopy cred sync` from the vault (docs/architecture/agent-setup-lifec
   releases its live leases, so use `--dir`, which refuses an empty directory.
 - **Do not add one back.** A file that nothing reads drifts, and an agent that adds it has
   declared something no one will ever act on.
-
-## Rollout status (2026-07-25)
-
-- **`.env.tpl` + `op inject` is standard fleet-wide:** ada, eva, hal, and echo all ship `.env.tpl`;
-  `config/secrets.yaml` has been deleted from those repos. `canopy create-agent` scaffolds
-  `.env.tpl` for new agents. Any agent still on `config/secrets.yaml` is on the legacy path and
-  should migrate when convenient (see "Migrating an agent off it" above).
-- **Vaults:** `Canopy-Shared` + one vault per instance (today named `Agent-Ace`, `Agent-Hal`, …
-  — recorded on each Agent as `op_vault`) exist, each with `canopy-pat` /
-  `claude-oauth-token` / `gog-token` + `gdrive-root-folder` (the agent's OWN root folder id — an
-  agent never resolves anything about that root's parent).
-- **Legacy:** the flat `AI-Agents` vault is still populated and still referenced by some agents'
-  `.env.tpl` (or a not-yet-migrated `secrets.yaml`). Migrating those refs onto per-agent vaults is
-  outstanding work — copy the value into the instance's vault first, then repoint the ref.
-- **`${AGENT_VAULT}` migration (2026-10-14):** agent templates still naming their vault
-  (`op://Agent-Ace/…`) keep working — `canopy agent env` warns about each — and move to
-  `op://${AGENT_VAULT}/…` once every runner that injects them sets `AGENT_VAULT`.
 
 ## Related
 

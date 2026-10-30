@@ -18,7 +18,7 @@ snapshot excludes `auth-profiles.json`, `channels.json`, and `*token*`/key files
 
 ## Step 1 — Snapshot the OpenClaw
 Get the readable workspace onto local disk. `HOST` is anything `ssh` can reach — reef resolves DO
-droplet IPs + the 1Password SSH key, so point ssh at that (or use an ssh-config alias):
+droplet IPs and ssh keys, so point ssh at that (or use an ssh-config alias):
 ```bash
 _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
 CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }

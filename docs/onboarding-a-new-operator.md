@@ -46,7 +46,6 @@ Install these first. Everything below assumes they exist.
 | [git](https://git-scm.com/downloads) | Your agent is a repo | `git --version` |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | Runs the `canopy` CLI | `uv --version` |
 | [GitHub CLI](https://cli.github.com/) | Creating the agent's repo | `gh auth status` |
-| [1Password CLI](https://developer.1password.com/docs/cli/get-started/) | Only for a LEGACY agent still on 1Password (Muse); every other agent's secrets are in canopy vault | `op whoami` |
 | [Node.js 20+](https://nodejs.org/en/download) | `npx` runs the token-mint script | `node --version` |
 | [gog](https://github.com/openclaw/gogcli) | Your agent's Gmail/Drive access — §5 uses it | `gog --version` |
 
@@ -289,7 +288,7 @@ This opens a browser, and writes the token to `~/.claude/canopy/workbench-token`
 > refuses until it does, so that gate lands later than section 5 implies. And
 > `snapshot` needs `ssh` (it uses `rsync` when present and falls back to
 > `ssh … tar` otherwise), so Windows is fine, but the key has to actually load —
-> see the 1Password SSH-agent note in section 6.
+> load it with `ssh-add` and confirm with `ssh-add -l`.
 
 Two decisions first, and only two:
 
@@ -348,7 +347,6 @@ fixes it**. On a fresh scaffold you should expect roughly this:
 [FAIL] Plugin install        plugin 'scout' is NOT installed — ...
 [OK  ] Gating rails          2 effective deny rail(s)
 [OK  ] Hook wiring           rails enforced by canopy's session gating hook (agent-core/gating_guard.py --session); no agent-registered hook
-[OK  ] Secrets manifest      .env.tpl (1 var(s), 0 op:// ref(s))
 [OK  ] Rails enforced        guard blocked the raw-send probe (exit 2)
 [FAIL] Email auth (gog)      ... does not map scout@dimagi-ai.com -> canopy
 [FAIL] Auth client           no gog token on this machine for scout@dimagi-ai.com
@@ -383,8 +381,7 @@ factory cannot do for you. Work them in this order:
    (`canopy vault zk enable --agent <slug>` — keep the recovery code it prints offline), and
    press **Grant pending** for each device that needs them. Then `canopy cred env --agent
    <slug>` writes `~/.<slug>/.env` here; `doctor`'s *Secrets backend* line says whether this
-   device has access. (A legacy 1Password agent: `canopy vault import --agent <slug> --zk
-   --switch` moves it.)
+   device has access.
 
 Re-run `agent doctor` after each. **Do not move on until it is all green** — and
 re-run it on any new machine, since it catches setup that only ever existed on
@@ -393,8 +390,8 @@ the old one.
 **Existing agents on a new machine or macOS account?** To use one yourself, `canopy agent
 use <slug>`. To host them all, `canopy agent bootstrap --dry-run` to preview, then
 `canopy agent bootstrap` (add `--slug <x>` to limit it). It installs each agent's
-plugin + `required_plugins`, writes `~/.<slug>/.env`, imports the newest gog token
-(canopy-web vs 1Password, newest `created_at` wins) under the client the token names,
+plugin + `required_plugins`, writes `~/.<slug>/.env`, imports the gog token from canopy-web
+under the client the token names,
 and verifies Gmail. Either fleet client serves a fleet declaration; it flags loudly only
 when the token is under a NON-fleet client the agent's turns would not use.
 
@@ -404,7 +401,7 @@ From Shayoni's first Windows onboarding (Fizzy, 2026-09-29). The first three are
 canopy; the fourth is PowerShell and stays your problem.
 
 - **The shared OAuth client.** `agent bootstrap` reads it from the workspace's canopy vault
-  "Shared" on canopy-web (`gog-oauth-client`) — no 1Password. If bootstrap says it cannot read it,
+  "Shared" on canopy-web (`gog-oauth-client`) If bootstrap says it cannot read it,
   this machine needs a key to that vault: ask a workspace owner to give it one on canopy-web.
 - **Where gog keeps things.** gog on Windows defaults to `%APPDATA%\gogcli`. gog 0.40+ puts the
   client credentials in a `data\` subfolder (`<GOG_HOME>\data\credentials-canopy.json`) and
@@ -417,11 +414,8 @@ canopy; the fourth is PowerShell and stays your problem.
   keeps the agent's existing name, email, description and persona. Before, it failed with a 422
   without `--name`, and passing `--name` blanked the rest. If you moved an agent that way, check
   its page on canopy-web and re-register with the missing fields.
-- **PowerShell, not canopy:**
-  - `op read … > file` writes **UTF-16**, which gog cannot read. Pipe it in instead:
-    `op read "op://…" | gog auth credentials set - --client=canopy`.
-  - Write `--client=canopy`, not `--client canopy`. A long command pasted from chat can break
-    at the space.
+- **PowerShell, not canopy:** write `--client=canopy`, not `--client canopy`. A long command
+  pasted from chat can break at the space.
 
 Then fill in the two files that carry the actual judgment:
 
@@ -472,35 +466,10 @@ Two Windows-specific setup notes:
 - **The emdash DB path differs.** In `%USERPROFILE%\.canopy\runner.json`:
   `"emdash_db": "C:\\Users\\<you>\\AppData\\Roaming\\Emdash\\emdash4.db"`
 
-**If you need to SSH anywhere (harvesting an OpenClaw, reaching a droplet), read
-this first — 1Password's SSH agent inverts its own default the moment you touch
-it.** Two traps, both of which present as "the key is wrong" when the key is fine:
-
-- **`agent.toml` lives somewhere else on Windows:**
-  `%LOCALAPPDATA%\1Password\config\ssh\agent.toml`, *not* `~/.config/1Password/`.
-- **With no entries, the Private vault is offered automatically. The instant a
-  single `[[ssh-keys]]` entry exists, that file becomes the entire allowlist.**
-  1Password's own *"Enable key for SSH agent"* button writes exactly one entry —
-  so clicking the button that sounds like it enables your key silently stops every
-  other vault being offered. Fleet keys live in a shared **AI-Agents** vault, so
-  the button actively makes things worse, and `ssh-add -l` then returns nothing
-  with no explanation. The fix is one entry naming the vault or the item:
-
-  ```toml
-  [[ssh-keys]]
-  vault = "AI-Agents"
-  ```
-
-- **Even with the right key loaded, you can get `Too many authentication
-  failures`.** With all the fleet keys offered, most servers cut you off after six
-  attempts — so a key sitting eighth in the offer order is never reached, and the
-  error names authentication rather than ordering. Narrowing `agent.toml` to the
-  one item fixes it properly; `IdentitiesOnly=yes` only masks it.
-
-An exported `.pem` is the other failure mode here, and it is worth ruling out
-early: `ssh-keygen -l -f <file>` says `is not a key file` for a corrupt export,
-and if the host offers `publickey` only there is no way past it. Using the agent
-means the key never lands on disk at all.
+**If you need to SSH anywhere (harvesting an OpenClaw, reaching a droplet),** an exported
+`.pem` is a failure mode worth ruling out early: `ssh-keygen -l -f <file>` says `is not a key file` for a corrupt export,
+and if the host offers `publickey` only there is no way past it. Load the key into
+`ssh-agent` so it never lands on disk unprotected.
 
 Everything else — Claude Code, emdash (stable ships `emdash-x64.exe` and
 `.msi`), the canopy CLI, canopy-web — is cross-platform already.

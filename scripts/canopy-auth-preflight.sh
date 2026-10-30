@@ -2,7 +2,7 @@
 # canopy-auth-preflight.sh
 #
 # Fast auth health check before any long-running deploy/workflow.
-# Probes gh, 1Password (op), and (when labs work is likely) AWS SSO labs profile.
+# Probes gh and (when labs work is likely) AWS SSO labs profile.
 # Prints one pass/fail line per dependency plus a final summary.
 #
 # Exit code:
@@ -27,18 +27,6 @@ if command -v gh >/dev/null 2>&1; then
   fi
 else
   echo "gh: NOT INSTALLED"
-fi
-
-# ---------- op (1Password CLI) ----------
-if command -v op >/dev/null 2>&1; then
-  if op whoami >/dev/null 2>&1; then
-    echo "op: OK"
-  else
-    echo "op: FAIL — run \`op signin --account dimagi.1password.com\`"
-    FAILED=1
-  fi
-else
-  echo "op: NOT INSTALLED"
 fi
 
 # ---------- AWS labs (only if labs work is likely) ----------

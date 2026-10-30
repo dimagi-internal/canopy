@@ -45,7 +45,7 @@ For each, decide implement / defer / skip. Bias:
   NOT prose. (Prose fails under load; the gating hook forces it. §1a / §6.6.)
 - **`new_skill` / `skill_edit`** when a multi-step manual pattern repeats — capture it so the
   agent stops re-deriving it (the Voyager/skill-library lesson, §6.2).
-- **`channel_fix`** for auth/setup friction (e.g. echo's OAuth "API not enabled" loop, 1Password
+- **`channel_fix`** for auth/setup friction (e.g. echo's OAuth "API not enabled" loop, a credential
   round-trip) — make setup self-heal / validate, don't just document it.
 
 **A human correction about HANDING BACK work** ("why are you asking me? just do it", or the

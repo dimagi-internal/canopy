@@ -272,19 +272,6 @@ else
   echo "After fixing the items above, re-run \`/canopy:setup\` — it's idempotent and skips completed steps."
 fi
 
-# ---------- 1Password CLI (informational; never fails setup) ----------
-# Using a workspace's agents needs no 1Password. Acting AS an agent that keeps its
-# credentials in 1Password does (`canopy cred check`, canopy#850) — so say the one
-# fix up front, and move on.
-if ! command -v op >/dev/null 2>&1; then
-  echo "[op]  1Password CLI : not installed — only needed to act as an agent whose credentials live in 1Password:"
-  echo "      install it (https://developer.1password.com/docs/cli/get-started/), then \`op signin\`"
-elif op account list --format json 2>/dev/null | grep -q '"url"'; then
-  echo "[op]  1Password CLI : OK (signed in)"
-else
-  echo "[op]  1Password CLI : installed, not signed in — run \`op signin\` (or enable CLI integration in the 1Password app)"
-fi
-
 echo
 echo "Operators only — HOSTING agents on this machine (runners, vault keys, gog), not just using them:"
 echo "  canopy agent bootstrap --dry-run   # preview: plugins, ~/.<slug>/.env, gog token + client, per agent"

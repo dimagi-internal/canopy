@@ -601,7 +601,7 @@ _GATING_MARKERS = re.compile(
 )
 _AUTH_MARKERS = re.compile(
     r"(?:not logged in|no token|invalid token|unauthorized|401|403|api .*not enabled|"
-    r"credentials?|oauth|1password|op read|op inject)",
+    r"credentials?|oauth)",
     re.I,
 )
 # A completed file write is never runtime friction — but its success result (or a path/filename

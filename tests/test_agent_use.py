@@ -3,8 +3,6 @@
 ok / done / NEEDS YOU with the exact URL, command or person."""
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 from click.testing import CliRunner
 
@@ -26,8 +24,7 @@ class World:
                           "basis": "full:members"}]
         self.registration = {"id": "pr-1", "name": "aath-mbp"}
         self.registered = []
-        self.access = {"credential_source": "canopy-web", "may_resolve": False,
-                       "via": None, "error": ""}
+        self.access = {"may_resolve": False, "via": None, "error": ""}
         self.device = {"id": "dk-1", "jkt": "abcdef0123456789xyz", "status": "active",
                        "kind": "secure-enclave", "runner": "rid-1", "ecdh_jkt": "ec-1"}
         self.runner_id = "rid-1"
@@ -36,8 +33,6 @@ class World:
                    "this_device": "holds a wrap at the current kv"}
         self.zk_error = None
         self.holders = {"has_key": True, "people": [], "keepers": []}
-        self.verdict = SimpleNamespace(allowed=True, reason="1Password (user) can read vault 'V'",
-                                       message="")
         self.installed = {"eva", "canopy"}
         self.known = {"canopy-agents", "canopy"}
         self.install_result = (True, "installed")
@@ -108,7 +103,6 @@ class World:
             access=lambda slug: self.access, device_status=lambda: dict(self.device),
             machine_runner_id=lambda: self.runner_id, enroll_device=enroll,
             refresh_device=lambda rid: dict(self.device), zk_status=zk_status,
-            decide_1password=lambda slug: self.verdict,
             installed_plugins=lambda: self.installed, known_marketplaces=lambda: self.known,
             install_plugin=install, set_session_agent=set_agent, sync_env=sync,
             google_check=lambda slug: dict(self.google), google_login=google_login)
@@ -345,23 +339,13 @@ def test_a_custodial_canopy_vault_needs_no_device_key(w, tmp_path):
     assert _step(rep, "vault access").status == au.OK
 
 
-# ── legacy 1Password ──────────────────────────────────────────────────────────
+# ── an older server still sends credential_source ─────────────────────────────
 
-def test_a_1password_agent_is_marked_legacy_with_the_move_line(w, tmp_path):
-    w.access = {"credential_source": "1password", "may_resolve": False, "via": None}
+def test_an_old_servers_credential_source_field_is_ignored(w, tmp_path):
+    w.access = {"credential_source": "legacy-backend", "may_resolve": False, "via": None}
     rep = _run(w, tmp_path)
-    s = _step(rep, "secrets")
-    assert "LEGACY" in s.detail and "canopy vault import --agent eva --zk --switch" in s.detail
     assert _step(rep, "vault access").status == au.OK
-    assert "device key" not in [x.name for x in rep.steps]
-    assert w.synced == []
-
-
-def test_a_1password_agent_you_cannot_read_needs_you(w, tmp_path):
-    w.access = {"credential_source": "1password"}
-    w.verdict = SimpleNamespace(allowed=False, message="ask the vault owner to share 'V'")
-    s = _step(_run(w, tmp_path), "vault access")
-    assert s.status == au.NEEDS and s.fix == "ask the vault owner to share 'V'"
+    assert "legacy" not in " ".join(x.detail for x in rep.steps).lower()
 
 
 # ── licence ───────────────────────────────────────────────────────────────────

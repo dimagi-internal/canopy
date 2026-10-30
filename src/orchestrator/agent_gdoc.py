@@ -122,10 +122,8 @@ class GdocIdentity:
     repo: Path | None = None
 
 
-# The agent's <Agent> Drive folder id. Resolved from the per-agent 1Password vault
-# (`op://${AGENT_VAULT}/gdrive-root-folder/credential`, the instance's recorded vault) via the agent's .env.tpl (the standard —
-# `op inject`) or the legacy config/secrets.yaml (`canopy provision`), and resolved into
-# ~/.<agent>/.env either way. A Drive folder id is environment-specific — it differs per
+# The agent's <Agent> Drive folder id. A `GDRIVE_ROOT_FOLDER` credential in the agent's
+# Canopy vault, resolved into ~/.<agent>/.env. A Drive folder id is environment-specific — it differs per
 # Workspace/tenant — so it is referenced, never committed. See agent-core/agent-runtime.md.
 GDRIVE_ROOT_ENV = "GDRIVE_ROOT_FOLDER"
 
@@ -134,8 +132,8 @@ def resolve_gdoc_identity(repo_dir: Path) -> GdocIdentity:
     """Resolve the agent's doc-authoring identity from its repo + the resolved env.
 
     Account + client come from the same fields email uses. The agent's Drive root is
-    read from the environment (`GDRIVE_ROOT_FOLDER`) — `canopy provision` resolves it from
-    the agent's own 1Password vault into ~/.<agent>/.env, so the id never lives in git and
+    read from the environment (`GDRIVE_ROOT_FOLDER`) — the agent's Canopy vault resolves it
+    into ~/.<agent>/.env, so the id never lives in git and
     can differ per environment. `config/agent.json`'s `gdrive_root_folder` remains a
     deprecated fallback for un-provisioned boxes. The other OPTIONAL
     carve-out is `gdrive_share_default` (domain | anyone | none).
@@ -653,7 +651,7 @@ def resolve_subfolder(identity: GdocIdentity, *, area: str = "Projects",
     if not identity.root_folder:
         raise AgentGdocError(
             f"no Drive root resolved (${GDRIVE_ROOT_ENV}) — it comes from "
-            "op://${AGENT_VAULT}/gdrive-root-folder; run `canopy agent env` (the agent's setup) and "
+            "the agent's GDRIVE_ROOT_FOLDER credential; run `canopy agent env` (the agent's setup) and "
             "re-source "
             "~/.<agent>/.env, or pass --parent explicitly")
     area_id = _find_or_create_folder(identity, identity.root_folder, (area or "Projects").strip(),

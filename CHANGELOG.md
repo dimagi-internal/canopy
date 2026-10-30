@@ -9,6 +9,28 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.827] - 2026-10-30
+
+### Removed
+- **1Password as a credential source.** Every agent's secrets live in its Canopy vault on
+  canopy-web, and everything that resolves a secret now goes through it alone. Gone:
+  `canopy vault import|export|switch`, `canopy agent vault`, `canopy agent op-token`,
+  `canopy provision` (and `config/secrets.yaml` provisioning), `canopy workspace op-status`;
+  `op inject` / `.env.tpl` handling in `canopy cred`, `agent env`, `agent bootstrap`,
+  `agent prepare`, `agent use` and `agent doctor`; the 1Password check in
+  `canopy:auth-preflight` and `/canopy:setup`; the root `.env.tpl`; and the baseline deny rails
+  that only guarded `op` (its local store, `op service-account create`, the `/vault` write).
+- `canopy agent env --template` / `--vault` are accepted and ignored so existing agent setup
+  scripts keep working.
+- The CLI tolerates, and never requires, the canopy-web fields being retired
+  (`credential_source`, `op_vault`, `op_sa_token`, vault-health `source` / `in_1password`).
+
+### Changed
+- The SessionStart hook `agent_op_env.py` is now `agent_session_start.py` (local turn, borrowed
+  credentials, Google login, `canopy cred sync`); it no longer fetches or exports a service-account key.
+- `src/orchestrator/onepassword.py` keeps the primitive `op` helpers in one isolated module that
+  nothing imports and no command exposes.
+
 ## [0.2.784] - 2026-10-24
 
 ### Removed

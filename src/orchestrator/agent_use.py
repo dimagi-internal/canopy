@@ -14,7 +14,7 @@ can fix it, and otherwise reported as NEEDS YOU with the exact URL, command or p
   agent            you can see the agent (`GET /api/agents/<slug>/`)
   this computer    registered for local use (`local_cli.register_this_computer`; canopy-web
                    calls the record a "private runner" — an internal word, never shown)
-  secrets          where the agent's secrets live: canopy vault, or 1Password (LEGACY)
+  secrets          the agent's secrets live in its canopy vault
   device key       canopy vault opens only on an approved device key (`canopy vault device`)
   vault access     this device holds a grant of the agent's zero-knowledge vault key
   licence          your licence to use the agent locally (`GET /api/agents/<slug>/licenses`)
@@ -103,7 +103,6 @@ class Deps:
     enroll_device: Callable[[str], dict]             # runner_id -> status
     refresh_device: Callable[[str], dict]            # runner_id -> status
     zk_status: Callable[[str], dict]                 # vault_zk_cli.run_status
-    decide_1password: Callable[[str], object]        # cred_cli.decide -> Verdict
     installed_plugins: Callable[[], Optional[set]]
     known_marketplaces: Callable[[], set]
     install_plugin: Callable[[str], tuple]           # plugin -> (ok, last line)
@@ -198,25 +197,10 @@ def run(slug: str, directory: str, deps: Deps) -> UseReport:
 
     # 4. where the secrets live ───────────────────────────────────────────────────
     access = deps.access(slug) or {}
-    source = access.get("credential_source") or "canopy-web"
     via = access.get("via")
     is_admin = via in ("admin", "runner")
-    if source == "canopy-web":
-        _canopy_vault_steps(rep, slug, deps, access, page=page, ask=ask, my_id=my_id,
-                            is_admin=is_admin)
-    else:
-        rep.add("secrets", OK, f"1Password (LEGACY) — an admin with 1Password access moves it "
-                               f"to canopy vault: `canopy vault import --agent {slug} --zk --switch`")
-        try:
-            v = deps.decide_1password(slug)
-            if getattr(v, "allowed", False):
-                rep.add("vault access", OK, getattr(v, "reason", "") or "your 1Password can read it")
-            else:
-                rep.add("vault access", NEEDS, "your 1Password cannot read its vault",
-                        getattr(v, "message", "") or f"ask {ask} for access")
-        except Exception as e:  # noqa: BLE001
-            rep.add("vault access", NEEDS, f"could not check 1Password ({_first_line(e)})",
-                    "sign in to the 1Password CLI (`op signin`), then re-run")
+    _canopy_vault_steps(rep, slug, deps, access, page=page, ask=ask, my_id=my_id,
+                        is_admin=is_admin)
 
     # 5. licence ──────────────────────────────────────────────────────────────────
     if is_admin:
@@ -241,7 +225,7 @@ def run(slug: str, directory: str, deps: Deps) -> UseReport:
                 f"{directory}/.claude/settings.local.json")
 
     # 8. env ──────────────────────────────────────────────────────────────────────
-    _env_step(rep, slug, deps, source=source, may_resolve=bool(access.get("may_resolve")))
+    _env_step(rep, slug, deps, may_resolve=bool(access.get("may_resolve")))
 
     # 9. google login ─────────────────────────────────────────────────────────────
     _google_step(rep, slug, deps, may_resolve=bool(access.get("may_resolve")),
@@ -473,11 +457,8 @@ def _plugin_step(rep: UseReport, plugin: str, deps: Deps) -> None:
                 f"{plugin}'s repo)")
 
 
-def _env_step(rep: UseReport, slug: str, deps: Deps, *, source: str, may_resolve: bool) -> None:
+def _env_step(rep: UseReport, slug: str, deps: Deps, *, may_resolve: bool) -> None:
     blocked = [s.name for s in rep.needs if s.name in ("device key", "vault access", "licence")]
-    if source != "canopy-web":
-        rep.add("env", OK, "filled from 1Password when each session starts (LEGACY)")
-        return
     if blocked:
         rep.add("env", SKIP, f"after {', '.join(blocked)}")
         return
@@ -506,7 +487,7 @@ def _google_step(rep: UseReport, slug: str, deps: Deps, *, may_resolve: bool, is
     the fix it printed was `canopy agent bootstrap`, an admin's command. The agent acts on
     Google as itself (Jonathan, 2026-10-28). A licence holder reads its login only inside
     their own local turn, so for them the session's start does the import
-    (`canopy agent google-login --if-needed`, hooks/agent_op_env.py) and this step says so.
+    (`canopy agent google-login --if-needed`, hooks/agent_session_start.py) and this step says so.
     No fix here ever says `gog login <agent mailbox>` or "Connect Google mailbox": a
     licence holder can do neither."""
     blocked = [s.name for s in rep.needs
@@ -590,7 +571,6 @@ def real_deps() -> Deps:
                                                     owner_token=local_cli.person_token()),
         refresh_device=lambda rid: device_key.refresh(runner_id=rid, call=dev_call),
         zk_status=zk_status,
-        decide_1password=lambda slug: cred_cli.decide(slug, local_env_counts=False),
         installed_plugins=installed_plugin_names,
         known_marketplaces=lambda: workspace_cli._known(subprocess.run),
         install_plugin=lambda p: workspace_cli.install_plugins(CATALOG, [p], subprocess.run)[0][1:],

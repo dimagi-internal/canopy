@@ -8,7 +8,7 @@ name. The session running that chat then:
     canopy secret exec --stdin GH_TOKEN -- \\
         gh secret set GH_TOKEN --repo dimagi-internal/canopy          # on stdin
     canopy secret exec GH_TOKEN -- \\
-        sh -c 'op item edit gh-token "credential=$GH_TOKEN"'          # as $GH_TOKEN
+        sh -c 'curl -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/user'  # as $GH_TOKEN
 
 The env-var form needs the `sh -c '…'` with SINGLE quotes: `"$GH_TOKEN"` typed
 straight into the calling shell is expanded there, where it is unset, before

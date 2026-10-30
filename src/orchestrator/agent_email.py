@@ -247,7 +247,7 @@ class EmailIdentity:
     slug: str        # agent slug, e.g. "hal"
     account: str     # Google account for gog, e.g. hal@dimagi-ai.com
     client: str      # gog client name (credentials-<client>.json): `canopy` or `canopy-web`
-    repo: Path | None = None  # agent repo root — lets preflight read config/secrets.yaml
+    repo: Path | None = None  # agent repo root
     email: str = ""  # primary mail address; "" = `account`
     addresses: frozenset = frozenset()  # every own address, lowercased (filled below)
     google_account: str = ""  # agent.json `google_account` as declared; "" = not declared
@@ -1258,64 +1258,6 @@ def _oauth_remedy(identity: EmailIdentity, stderr: str) -> list[str] | None:
         "     Then wait ~1 min for it to propagate and re-run this preflight.",
     ]
     return lines
-
-
-def _provision_remedy(identity: EmailIdentity, creds: str) -> list[str] | None:
-    """Route the missing-client fix through the DECLARATIVE (legacy) path when the agent's repo
-    declares this gog client in `config/secrets.yaml` via `canopy provision`. `.env.tpl`-primary
-    agents (the current standard — see agent-runtime.md) don't declare file-type secrets this way
-    at all: a non-env credential FILE like this one is resolved directly with
-    `op read "op://<vault>/<item>/<field>" > <file>`, so this helper falls through to the
-    generic `preflight` fallback message for them, same as any agent with no declared secrets.
-
-    The manual "copy the JSON into place" instruction is the fallback of last resort — an
-    agent that declares its client for provisioning (hal is the reference) should never be
-    told to hand-shuffle keys. This helper distinguishes the three real failure modes the
-    old message collapsed into one:
-      * declared, but the 1Password item doesn't resolve  -> vault it, THEN provision
-      * declared and resolvable, just not materialized here -> run `canopy provision`
-      * not declared at all                                -> None (caller's manual fallback)
-    Returns remediation lines, or None to fall back.
-    """
-    repo = getattr(identity, "repo", None)
-    if repo is None:
-        return None
-    try:
-        from orchestrator import provision as _provision
-    except ImportError:
-        return None
-    try:
-        secrets = _provision.load_manifest(Path(repo))
-    except Exception:
-        return None
-    want = os.path.basename(creds)  # credentials-<client>.json
-    match = next(
-        (s for s in secrets
-         if os.path.basename(_provision.resolve_target(s.target, Path(repo))) == want),
-        None,
-    )
-    if match is None:
-        return None
-    prov_cmd = f"canopy provision --repo {repo}"
-    try:
-        _provision._op_read(match.op_ref)
-    except Exception as e:
-        # The item isn't in 1Password (missing or misnamed) — the true blocker.
-        return [
-            f"FIX: the `{identity.client}` gog OAuth client isn't in 1Password yet: {match.op_ref}",
-            f"     This is the SHARED fleet app (client_id + client_secret), minted ONCE for all "
-            "agents — not a per-agent client.",
-            f"     Vault the client JSON at that ref, then materialize it: {prov_cmd}",
-            f"     ({str(e).splitlines()[0][:140] if str(e) else 'op read failed'})",
-        ]
-    # The item resolves — it just hasn't been written to this machine.
-    login_cmd = login_command(identity.account, identity.client)
-    return [
-        f"FIX: the `{identity.client}` gog client is in 1Password but not on this machine.",
-        f"     Materialize it: {prov_cmd}",
-        f"     Then consent {identity.slug}'s mailbox into it once (interactive): {login_cmd}",
-        f"     ({button_remedy(identity.slug)})",
-    ]
 
 
 def granted_services(
@@ -2530,11 +2472,7 @@ def preflight(
     if keyring:
         return False, keyring
     login_cmd = login_command(identity.account, identity.client)
-    creds = os.path.join(gog_home, f"credentials-{identity.client}.json")
     if not gog_client_credentials(gog_home, identity.client):
-        remedy = _provision_remedy(identity, creds)
-        if remedy:
-            return False, remedy
         return False, [
             f"FIX: gog `{identity.client}` OAuth client file missing: "
             f"{gog_client_credentials_paths(gog_home, identity.client)[0]}",

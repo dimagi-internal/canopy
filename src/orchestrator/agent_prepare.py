@@ -9,31 +9,28 @@ Preparing an agent had five homes: canopy-web's runner/ec2/bootstrap_agents.sh (
 of bash, a fleet-wide batch at box start), cloud_runner.py's per-claim patches (env refresh,
 lazy clone, pull), this module's laptop twin, `canopy agent env`, and an unwired runtime
 reconciler. The laptop runner did none of it. Every lesson in that bash — the token names its
-client, newest token wins, the shared client needs the TENANT's key, keep op's stderr, a
+client, newest token wins, the shared client needs the TENANT's key, a
 stale clone is still a clone, readiness is a CALL — is kept here, once, and every runner calls
 this per agent.
 
 TWO CREDENTIAL MODES, one set of steps:
-  person  — `canopy agent bootstrap`: `op` as the signed-in person, the instance's vault
-            from canopy-web, the shared clients from Canopy-Shared. (agent_bootstrap.py)
+  person  — `canopy agent bootstrap`: the signed-in person's own canopy-web identity.
+            (agent_bootstrap.py)
   runner  — `--runner`: everything from canopy-web's `/api/agents/<slug>/credentials/resolve`,
-            asked with the RUNNER's token (CANOPY_TOKEN): the agent's vault + its own
-            read-only key, the workspace's shared vault + ITS key, the owner's lent GitHub
-            token, the instance's mailbox, canopy-web's gog-token. Every `op` call names the
-            one key it is made with (OP_SERVICE_ACCOUNT_TOKEN, scoped to that call), so
-            "which identity read this secret" always has an answer and nothing downstream
-            inherits a key that spans agents.
+            asked with the RUNNER's token (CANOPY_TOKEN): the agent's Canopy vault values,
+            the workspace's shared vault, the owner's lent GitHub token, the instance's
+            mailbox, canopy-web's gog-token.
 
 RUNNER STEPS, in order (each says what it did; one failing never stops the rest):
   1. repo — clone, or `git pull --ff-only`, with the owner's GitHub token on that one git
      command only. A pull that fails on an existing clone provisions the clone as it is.
-  2. env — `op inject` the agent's .env.tpl into ~/.<slug>/.env with ITS key.
+  2. env — ~/.<slug>/.env written from the agent's Canopy vault values.
   3. plugins — its own plugin from the clone (a directory marketplace: the pull is the
      update); each required plugin cloned beside the CLI's marketplaces, pulled every pass,
-     node deps installed, its declared key files staged from the two vaults this box may
-     read; then `bin/<slug>-setup` with only this agent's key.
+     node deps installed, its declared key files staged from the agent's Canopy vault;
+     then `bin/<slug>-setup`.
   4. gmail — the token's own client materialized from the right vault with the right key,
-     the NEWEST of the vault's and canopy-web's tokens imported, the account mapped, then
+     canopy-web's token imported, the account mapped, then
      verified by making the call; turn-client compared with what turns present.
   5. report — POST /api/agents/<slug>/bootstrap-report: what this box could actually do.
 `--credentials-only` does 4 + 5 only (no clone, no re-provision under a live agent);
@@ -75,8 +72,6 @@ Runner = Callable[..., subprocess.CompletedProcess]
 @dataclass
 class RunnerCredentials:
     """What canopy-web lends a runner for one agent. Any field may be blank."""
-    vault: str = ""
-    key: str = field(default="", repr=False)
     github_token: str = field(default="", repr=False)
     mailbox: str = ""
     #: Where `mailbox` lives (canopy-web): "ses" = canopy-hosted — mail goes through
@@ -89,9 +84,7 @@ class RunnerCredentials:
     web_gog_token: Optional[str] = field(default=None, repr=False)
     repo_url: str = ""
     error: str = ""
-    #: The agent's backend (canopy#850/#946): "canopy-web" means its env comes from
-    #: `values` below, not from `op inject` — canopy-web withholds the vault key then.
-    credential_source: str = ""
+    #: The agent's env, from the Canopy vault: canopy-web's resolved values.
     values: dict = field(default_factory=dict, repr=False)
     #: The resolve body's top-level secrets a runner hands a turn as-is (`cred env --runner
     #: --print-json`), each only when the resolve returned it: RESOLVE_EXTRAS.
@@ -102,16 +95,13 @@ class RunnerCredentials:
 #: `cred env --runner --print-json` passes through beside `values`. `delegated` is
 #: {name: plaintext} of the credentials people delegated to the agent, opened with this
 #: box's own key (`cred_resolve.open_delegated`) — never written to the agent's env.
-RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "delegated")
+RESOLVE_EXTRAS = ("delegated",)
 
 
 #: What the credentials-only pass (the runner-update timer, every 30 minutes) actually
-#: uses: the agent's vault key and canopy-web's copy of the gog token. Never the agent's
-#: other secrets — it writes no env (a turn's claim does, naming its turn), so reading them
-#: every 30 minutes outside a turn only put them on the wire (canopy-web#1563). Not
-#: `shared_op_sa_token` either: canopy-web dropped the tenant shared 1Password vault
-#: (canopy-web#2178), so naming it raised an hourly undeclared-ref alert for every agent.
-REFRESH_EXTRAS = ("op_sa_token",)
+#: uses: canopy-web's copy of the gog token. Never the agent's other secrets — it writes no
+#: env (a turn's claim does, naming its turn), so reading them every 30 minutes outside a
+#: turn only put them on the wire (canopy-web#1563).
 REFRESH_VALUES = ("gog-token",)
 
 
@@ -153,8 +143,8 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
     """`/credentials/resolve` with the runner's token. Unreachable is not unregistered: it
     returns an `error` the report states, so a human retries instead of registering.
 
-    `minimal`: the credentials-only pass — ask only for REFRESH_EXTRAS and those of
-    REFRESH_VALUES the agent declares (an undeclared name would raise an owner alert).
+    `minimal`: the credentials-only pass — ask only for those of REFRESH_VALUES the agent
+    declares (an undeclared name would raise an owner alert).
 
     `purpose`: what the read says it is (X-Canopy-Read-Purpose). Default the box's own
     refresh; a person's verification run says `check: …` (see `verification_purpose`),
@@ -170,7 +160,7 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
     refs = None
     if minimal:
         declared = set(rt.get("secret_refs") or [])
-        refs = [n for n in REFRESH_VALUES if n in declared] + list(REFRESH_EXTRAS)
+        refs = [n for n in REFRESH_VALUES if n in declared]
     try:
         from orchestrator import cred_resolve
         # A box staging an agent outside any turn (bootstrap, the runner-update timer)
@@ -178,25 +168,21 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         # maintenance every hour (canopy-web#1563).
         # A claim resolving the env FOR a turn (`in_turn`, the turn id rides
         # X-Canopy-Turn-Id) is the read the alert is about — it carries no refresh label.
-        body = cred_resolve.resolve(slug, base_url=base_url, token=token,
-                                    transport=transport, refs=refs, fallback=not minimal,
-                                    purpose=purpose or ("" if in_turn else
-                                                        cred_resolve.RUNNER_REFRESH)) or {}
+        if minimal and not refs:
+            body = {}   # nothing the refresh uses is declared: ask for nothing, never everything
+        else:
+            body = cred_resolve.resolve(slug, base_url=base_url, token=token,
+                                        transport=transport, refs=refs, fallback=not minimal,
+                                        purpose=purpose or ("" if in_turn else
+                                                            cred_resolve.RUNNER_REFRESH)) or {}
     except Exception as e:  # noqa: BLE001
         return RunnerCredentials(error=f"could not reach canopy-web for {slug}'s credentials: "
                                        f"{_first_line(str(e), 200)}")
-    try:
-        acc = canopy_web.call("GET", f"/api/agents/{slug}/credentials/access",
-                              base_url=base_url, token=token, transport=transport) or {}
-        source = str(acc.get("credential_source") or "")
-    except Exception:  # noqa: BLE001 — unknown backend = the default path (op inject)
-        source = ""
     values = body.get("values") if isinstance(body.get("values"), dict) else {}
     extras = {k: body[k] for k in RESOLVE_EXTRAS if body.get(k) not in (None, "")}
     return RunnerCredentials(
-        credential_source=source, values=values, extras=extras,
+        values=values, extras=extras,
         repo_url=repo_url,
-        vault=str(body.get("op_vault") or ""), key=str(body.get("op_sa_token") or ""),
         github_token=str(body.get("github_token") or ""), mailbox=str(body.get("mailbox") or ""),
         mailbox_backend=str(body.get("mailbox_backend") or ""),
         google_account=str(body.get("google_account") or "").strip(),
@@ -283,7 +269,7 @@ class RunnerPreparer(Bootstrapper):
         self.agent_root = Path(agent_root)
         # The agent's GitHub token for THIS turn, when a runner prepares an agent inside
         # one (canopy-web returns it from credentials/resolve no longer: it reaches a box
-        # only per turn). Taken out of the environment so no op/setup child inherits it;
+        # only per turn). Taken out of the environment so no setup child inherits it;
         # only `_git` uses it.
         self._turn_github_token = os.environ.pop(TURN_GITHUB_TOKEN_ENV, "").strip()
         self.plugin_deps_root = Path(plugin_deps_root or
@@ -297,7 +283,7 @@ class RunnerPreparer(Bootstrapper):
         self._values: dict[str, dict] = {}   # off-disk: this pass's resolved env, in memory
         self._gog_env: dict = {}              # this agent's gog home + password, if any
         self._slug = ""
-        super().__init__(vault_for=self._vault_for, web_token=self._web_token, **kw)
+        super().__init__(web_token=self._web_token, **kw)
 
     # ── credentials ──────────────────────────────────────────────────────────
     def creds(self, slug: str) -> RunnerCredentials:
@@ -305,32 +291,9 @@ class RunnerPreparer(Bootstrapper):
             self._creds[slug] = self._creds_for(slug)
         return self._creds[slug]
 
-    def _vault_for(self, slug: str) -> str:
-        c = self.creds(slug)
-        if c.error:
-            raise RuntimeError(c.error)
-        if not c.vault or not c.key:
-            raise RuntimeError(f"canopy-web has {'no vault' if not c.vault else 'no key'} for "
-                               f"{slug} (PUT /api/agents/{slug}/vault — `canopy agent vault`)")
-        return c.vault
-
     def _web_token(self, slug: str) -> tuple[Optional[str], str]:
         c = self.creds(slug)
         return c.web_gog_token, c.error
-
-    def op_argv(self, argv: list[str]) -> list[str]:
-        return list(argv)   # a service-account key needs no --account
-
-    def op_env(self, vault: str, base: Optional[dict] = None) -> dict:
-        """op's environment with exactly ONE key: the agent's, for its own vault — never the
-        box's, never another agent's."""
-        c = self.creds(self._slug)
-        env = {k: v for k, v in (base if base is not None else os.environ).items()
-               if not k.startswith("OP_SESSION_") and k != "OP_SERVICE_ACCOUNT_TOKEN"}
-        key = c.key if vault and vault == c.vault else ""
-        if key:
-            env["OP_SERVICE_ACCOUNT_TOKEN"] = key
-        return env
 
     def client_from_vault(self, slug: str, client: str):
         """From this box's own resolve: a workspace vault layered under the agent's values."""
@@ -439,7 +402,7 @@ class RunnerPreparer(Bootstrapper):
 
     def stage_plugin_secrets(self, slug: str, name: str, path: Path, rep: RunnerReport) -> None:
         """A dependency plugin's declared key FILES (config/secrets.yaml, required, inside
-        the plugin) from the two vaults this box may read, each with its own key."""
+        the plugin), each written from the agent's Canopy vault credential of that name."""
         spec = path / "config" / "secrets.yaml"
         if not spec.is_file():
             return
@@ -452,26 +415,24 @@ class RunnerPreparer(Bootstrapper):
         for entry in (data or {}).get("secrets") or [] if isinstance(data, dict) else []:
             if not isinstance(entry, dict) or entry.get("optional") is True:
                 continue
-            sname, ref = str(entry.get("name") or ""), str(entry.get("op") or "")
+            sname = str(entry.get("name") or "")
             target, mode = str(entry.get("target") or ""), str(entry.get("mode") or "0600")
-            if not (sname and ref.startswith("op://") and target.startswith("{repo}/")):
+            if not (sname and target.startswith("{repo}/")):
                 continue
-            item = ref[len("op://"):].split("/", 1)[1] if "/" in ref[len("op://"):] else ""
             rel = target[len("{repo}/"):]
-            if not item or not rel or rel.startswith("/") or ".." in rel.split("/"):
+            if not rel or rel.startswith("/") or ".." in rel.split("/"):
                 continue
             dest = path / rel
             if dest.is_file() and dest.stat().st_size:
                 continue
-            value, _ = self._op_read(f"op://{c.vault}/{item}") if c.vault else ("", "")
+            value = (c.values or {}).get(sname)
             if value:
                 if not self.dry_run:
-                    _write_private(dest, value)
+                    _write_private(dest, str(value))
                     os.chmod(dest, int(mode, 8))
             else:
-                rep.notes.append(f"{name}: secret '{sname}' is not in the agent's vault "
-                                 f"({f'op://{c.vault}/{item}' if c.vault else 'none registered'})"
-                                 f" — share 1Password item '{item.split('/')[0]}' into it")
+                rep.notes.append(f"{name}: secret '{sname}' is not in the agent's Canopy vault "
+                                 f"— add a credential named '{sname}' on /agents/{slug}")
 
     def step_runner_plugins(self, slug: str, repo: Path, rep: RunnerReport) -> None:
         installed = 0
@@ -527,7 +488,7 @@ class RunnerPreparer(Bootstrapper):
         rep.plugins = f"{installed} ok" + (" FAIL" if problems else "")
 
     def step_provisioner(self, slug: str, repo: Path, rep: RunnerReport) -> None:
-        """The agent's own installer, with THIS agent's key and no other. Then mirror its
+        """The agent's own installer. Then mirror its
         data-dir key file to the plugin root, where a directory-source plugin's MCP server
         looks for it (otherwise every Drive call fails "unregistered callers")."""
         if err := self.node_deps(repo):
@@ -537,15 +498,11 @@ class RunnerPreparer(Bootstrapper):
             return
         data_dir = self.home / ".claude" / "plugins" / "data" / f"{slug}-{slug}"
         data_dir.mkdir(parents=True, exist_ok=True)
-        c = self.creds(slug)
         base = {**os.environ, "CLAUDE_PLUGIN_DATA": str(data_dir), "AGENT_SLUG": slug}
         # What this pass already resolved, handed over so the installer need not resolve
-        # it again: the vault, and the .env the env step just filled from it. An agent's
-        # setup re-resolving them goes through `canopy agent env`, which needs a PERSON's
-        # canopy-web token — a runner has none, so ACE's setup died there on every pass
-        # (cloud-ec2-2, 2026-10-18). Names only; an installer that ignores them is unchanged.
-        if c.vault:
-            base["AGENT_VAULT"] = c.vault
+        # it again: the .env the env step just filled. An agent's setup re-resolving it goes
+        # through `canopy agent env`, which needs a PERSON's canopy-web token — a runner has
+        # none, so ACE's setup died there on every pass (cloud-ec2-2, 2026-10-18).
         transient = None
         if self.no_secret_files:
             # Off disk: the values this pass resolved in memory, through a 0600 file under
@@ -557,10 +514,9 @@ class RunnerPreparer(Bootstrapper):
             env_file = self.home / f".{slug}" / ".env"
             if rep.env_ok and env_file.is_file():
                 base["AGENT_ENV_FILE"] = str(env_file)
-        env = self.op_env(c.vault, base)
         try:
             r = self.run(["bash", str(setup), "--skip-doctor"], capture_output=True, text=True,
-                         timeout=900, env=env, cwd=str(repo))
+                         timeout=900, env=base, cwd=str(repo))
             if r.returncode != 0:
                 rep.notes.append(f"provisioner: bin/{slug}-setup failed: "
                                  f"{_setup_failure(r.stdout, r.stderr)}")
@@ -661,17 +617,12 @@ class RunnerPreparer(Bootstrapper):
                  env_only: bool = False, report: bool = True) -> RunnerReport:
         self._slug = slug
         # The credentials-only pass stages the gog token and reports readiness, nothing
-        # else, so it asks canopy-web for only what that uses (REFRESH_EXTRAS).
+        # else, so it asks canopy-web for only what that uses (REFRESH_VALUES).
         self._minimal = credentials_only and not env_only
         rep = RunnerReport(slug=slug)
         c = self.creds(slug)
         if c.error:
             rep.fail(c.error)
-        elif c.credential_source == "canopy-web":
-            pass  # no vault key on purpose: its env comes from canopy-web
-        elif not (c.vault and c.key):
-            rep.notes.append(f"canopy-web has {'no vault' if not c.vault else 'no key'} for "
-                             f"{slug} — `canopy agent vault --slug {slug}`")
         repo = self.agent_root / slug
         if env_only:
             self._env_sync(slug, repo, rep)
@@ -723,7 +674,7 @@ class RunnerPreparer(Bootstrapper):
         rep.mailbox_ok = True
         rep.turn_ready = True
         rep.notes.append(f"ok: {c.mailbox} is canopy-hosted email — no Gmail sign-in needed")
-        if not (c.web_gog_token or c.vault):
+        if not c.web_gog_token:
             return
         side = RunnerReport(slug=slug)
         try:
@@ -741,42 +692,21 @@ class RunnerPreparer(Bootstrapper):
 
     # ── secrets off disk: resolve + check in memory ─────────────────────────────
     def env_values(self, slug: str, repo: Path) -> tuple[dict, str]:
-        """({NAME: value}, which backend) for the agent's env, resolved IN MEMORY: canopy-web's
-        values, or `op inject` of the clone's .env.tpl to a pipe with the agent's own key.
-        Raises RuntimeError with the reason (never a value)."""
-        from orchestrator.agent_instance import inject_env, uses_vault_var
-        from orchestrator.cred_cli import env_values, parse_dotenv
+        """({NAME: value}, which backend) for the agent's env, resolved IN MEMORY from
+        canopy-web's values. Raises RuntimeError with the reason (never a value)."""
+        from orchestrator.cred_cli import env_values
 
         c = self.creds(slug)
         if c.error:
             raise RuntimeError(c.error)
-        if c.credential_source == "canopy-web":
-            usable, _ = env_values(c.values)
-            return usable, "canopy-web"
-        tpl = Path(repo) / ".env.tpl"
-        if not tpl.is_file():
-            raise RuntimeError(f"no .env.tpl in {repo}")
-        if not (c.vault and c.key):
-            raise RuntimeError(f"canopy-web has {'no vault' if not c.vault else 'no key'} for "
-                               f"{slug} — `canopy agent vault --slug {slug}`")
-        base = dict(os.environ)
-        if uses_vault_var(tpl.read_text(encoding="utf-8")):
-            base = inject_env(base, c.vault, slug)
-        r, err = self._op(["op", "inject", "-i", str(tpl)], timeout=180,
-                          env=self.op_env(c.vault, base))
-        if r is None or r.returncode != 0:
-            raise RuntimeError(f"op inject failed: {err or _first_line(r.stderr, 300)}")
-        return parse_dotenv(r.stdout or ""), "1Password"
+        usable, _ = env_values(c.values)
+        return usable, "canopy-web"
 
     def _env_in_memory(self, slug: str, repo: Path, rep: RunnerReport) -> None:
         """Step 2 with secrets off disk: resolve and check, keep the values in this process
         only (for the provisioner's transient file), write nothing."""
         if self.dry_run:
             rep.env, rep.env_ok = "would resolve (in memory)", None
-            return
-        if not (repo and (Path(repo) / ".env.tpl").is_file()) and \
-                self.creds(slug).credential_source != "canopy-web":
-            rep.env, rep.env_ok = "n/a", None
             return
         try:
             values, how = self.env_values(slug, repo)
@@ -788,40 +718,20 @@ class RunnerPreparer(Bootstrapper):
         rep.env, rep.env_ok = f"OK ({len(values)} vars from {how}, not written)", True
 
     def _env_sync(self, slug: str, repo: Path, rep: RunnerReport) -> None:
-        """The claim-time refresh: canopy's `cred sync` (the function every agent session's
-        start hook runs) — re-inject only when the vault or template changed, keep the last
-        good file on failure. ONE implementation; cloud_runner used to carry its own."""
-        from orchestrator.cred_cli import CredError, sync_env
-
+        """The claim-time refresh: ~/.<slug>/.env from the values canopy-web resolved for
+        this runner, or in memory when secrets stay off disk."""
         if self.no_secret_files:
             self._env_in_memory(slug, repo, rep)
             return
         c = self.creds(slug)
-        if c.credential_source == "canopy-web" and not c.error:
-            self._env_from_web(slug, c, rep)
-            return
-        if not (c.vault and c.key):
+        if c.error:
             rep.env, rep.env_ok = "skipped", None
             return
-        saved = {k: os.environ.get(k) for k in ("OP_SERVICE_ACCOUNT_TOKEN", "AGENT_VAULT",
-                                                  "AGENT_SLUG")}
-        os.environ.update(OP_SERVICE_ACCOUNT_TOKEN=c.key, AGENT_VAULT=c.vault, AGENT_SLUG=slug)
-        try:
-            rep.env = sync_env(slug, ttl=0, runner=self.run, repo=repo)
-            rep.env_ok = True
-        except CredError as e:
-            rep.env, rep.env_ok = "FAIL", False
-            rep.fail(f"env: {e}")
-        finally:
-            for k, v in saved.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+        self._env_from_web(slug, c, rep)
 
     def _env_from_web(self, slug: str, c: RunnerCredentials, rep: RunnerReport) -> None:
-        """An agent on the canopy-web backend: ~/.<slug>/.env from the values canopy-web
-        resolved for this runner — the same file `canopy cred env` writes."""
+        """~/.<slug>/.env from the values canopy-web resolved for this runner — the same
+        file `canopy cred env` writes."""
         from orchestrator.cred_cli import write_env_from_values
 
         if self.dry_run:
@@ -840,11 +750,7 @@ class RunnerPreparer(Bootstrapper):
             self._env_in_memory(slug, repo, rep)
             return
         c = self.creds(slug)
-        if c.credential_source == "canopy-web" and not c.error:
-            self._env_from_web(slug, c, rep)
+        if c.error:
+            rep.env, rep.env_ok = "skipped", None
             return
-        try:
-            self.step_env(slug, repo, rep)
-        except Exception as e:  # noqa: BLE001
-            rep.fail(f"env: unexpected error: {_first_line(str(e))}")
-        rep.env_ok = None if rep.env in ("n/a", "-", "would inject") else rep.env.startswith("OK")
+        self._env_from_web(slug, c, rep)

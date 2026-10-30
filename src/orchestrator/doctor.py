@@ -197,7 +197,7 @@ def check_workbench_token(
             False,
             f"no canopy-web PAT: ${{CANOPY_WEB_PAT}} unset and no workbench-token at "
             f"{canopy_dir / 'workbench-token'} — run /canopy:setup, or set CANOPY_WEB_PAT "
-            f"(headless hosts should provision it via .env.tpl rather than the browser flow)",
+            f"(headless hosts should set it in the environment rather than use the browser flow)",
         )
     try:
         contents = token_file.read_text(encoding="utf-8").strip()

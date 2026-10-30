@@ -20,8 +20,8 @@
  *      naming the agent's env file. There is no default identity.
  *
  * An allow is cached for the life of the process (one per session). A refusal
- * is not, so fixing access (`op signin`, adding GWS_* to the agent's
- * .env.tpl) takes effect on the next call. A tool call that fails drops the
+ * is not, so fixing access (adding GWS_* to the agent's
+ * Canopy vault credentials) takes effect on the next call. A tool call that fails drops the
  * cached allow, so the next call re-checks.
  *
  * Contract: docs/architecture/session-identity.md.
@@ -52,7 +52,7 @@ export interface CredResult {
 /** Runs `canopy <args>`. Injectable so tests never touch the real CLI. */
 export type CredRunner = (args: string[]) => Promise<CredResult>;
 
-/** Long enough for a 1Password unlock prompt or an `op inject`; still a real bound. */
+/** Long enough for a vault resolve over the network; still a real bound. */
 const CRED_TIMEOUT_MS = 120_000;
 
 export const defaultCredRunner: CredRunner = (args) =>
@@ -181,7 +181,7 @@ export async function resolveSessionIdentity(deps: ResolveDeps = {}): Promise<Re
       ok: false,
       message:
         `Agent '${agent}' may act here, but its env file ${envPath} has no usable Google identity: ` +
-        `${e.message} Add the GWS_* values to the agent's .env.tpl (or its canopy-web credentials) ` +
+        `${e.message} Add the GWS_* values to the agent's Canopy vault credentials ` +
         `and run \`canopy cred refresh --agent ${agent}\`.`,
     };
   }

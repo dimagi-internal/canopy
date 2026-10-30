@@ -27,7 +27,8 @@ def test_templates_is_non_empty_with_expected_count():
     # instance (`canopy agent env`).
     # +1 on 2026-10-21: .claude-plugin/marketplace.json — a runner installs the agent's plugin
     # only from it (canopy agent_prepare `step_runner_plugins`).
-    # -1 on 2026-10-22: .env.tpl — the agent's Canopy vault is the one secrets declaration.
+    # -1 on 2026-10-22: the repo stamps no secrets template — the agent's Canopy vault is the one
+    # secrets declaration.
     assert len(t) == 21
     assert ".claude-plugin/marketplace.json" in t
     assert "skills/setup/SKILL.md" in t
@@ -76,13 +77,11 @@ def test_answer_caller_reads_the_person_block_and_resolves_the_instance():
 
 def test_no_env_template_secrets_live_only_in_the_canopy_vault():
     """2026-10-22 (Jonathan: no duplicate declarations): the agent's Canopy vault is the one
-    place its secrets are declared, so the factory stamps no `.env.tpl` and no repo file
-    names a vault."""
+    place its secrets are declared, so no repo file names a vault."""
     t = templates()
-    assert ".env.tpl" not in t
+    assert not [n for n in t if n.endswith(".tpl")]
     assert "Canopy vault" in t["CLAUDE.md"] and "Agent-" not in t["CLAUDE.md"]
     setup = t["skills/setup/SKILL.md"]
-    # `canopy cred env` resolves either backend (the Canopy vault or 1Password); `canopy agent
-    # env` only knows 1Password, and new agents are born on the Canopy vault.
+    # `canopy cred env` resolves the agent's Canopy vault.
     assert "canopy cred env --agent {{AGENT_SLUG}}" in setup
     assert "Agent-" not in setup
