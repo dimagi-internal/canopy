@@ -8,6 +8,7 @@ minutes, never extended, and only while the turn is still running. canopy-web lo
 call made with it as "<agent> as <person>".
 
     canopy act-as request --reason "…" [--scope read|write|either] [--wait/--no-wait] [--timeout S]
+                          [--open/--no-open]
     canopy act-as status [--wait] [--timeout S]
     canopy act-as get PATH [--param k=v …] [--workspace SLUG]
     canopy act-as call METHOD PATH [--json BODY] [--workspace SLUG]
@@ -27,6 +28,18 @@ printed. It is ignored (and deleted) once its ``expires_at`` passes, deleted by
 
 An older canopy-web has no act-as routes: a 404 on the request says so and exits
 ``EXIT_NO_ACT_AS_API`` (3).
+
+**Waiting for the person, and putting the page in front of them.** A command's output only
+reaches the chat when the command ENDS, so a blocking ``request --wait`` hides the very link
+the person has to tap. The sanctioned flow when the person is in the conversation is therefore
+two calls in ONE turn: ``request --no-wait`` (prints the link and returns), the agent says the
+link to the person as a message, then ``status --wait`` (polls up to 240 s, under the fleet's
+270 s foreground cap) and carries on in the same turn the moment they approve. Whether the
+person is there is read from the presence record canopy's caller hook keeps per session
+(``~/.canopy/caller/presence/<claude session>.json``): recorded ABSENT (an emailed or scheduled
+turn) makes ``--wait`` default to off, because nobody is watching to tap anything; unknown keeps
+the old default. On a session running on the person's own computer ``--open`` (auto) also opens
+the approval page in their browser, so approving is one tap and their passkey.
 """
 from __future__ import annotations
 
@@ -38,6 +51,7 @@ import re
 import sys
 import time
 import urllib.parse
+import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -54,6 +68,8 @@ POLL_SECONDS = 3.0
 #: Default wait. Under the fleet's 270 s foreground-wait cap (sleep_cap_guard): a person
 #: who has not answered by then is asked again with `canopy act-as status --wait`.
 DEFAULT_TIMEOUT = 240
+#: While waiting, say we are still waiting this often (stderr), so a long wait is visibly alive.
+NUDGE_SECONDS = 30
 FINAL = ("declined", "expired", "stopped")
 _KEY = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 
@@ -61,6 +77,7 @@ _KEY = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 TRANSPORT = None
 SLEEP = time.sleep
 NOW = time.time
+OPEN_URL = None  # webbrowser.open unless a test says otherwise
 
 
 class NoActAsApi(click.ClickException):
@@ -307,6 +324,48 @@ def load_grant(key: str) -> Optional[dict]:
     return read_grant(key) or _recover(key)
 
 
+# --- is the person here, and can we open the page for them --------------------
+
+def person_present() -> Optional[bool]:
+    """Whether the person is in the conversation now: True / False as canopy's caller hook
+    last recorded for this Claude session, None when nothing is recorded (then assume the
+    old behaviour). A chat message means present; email, a schedule or an API call means not."""
+    sid = _claude_session()
+    if not sid or not _KEY.match(sid):
+        return None
+    path = Path.home() / ".canopy" / "caller" / "presence" / f"{sid}.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(doc, dict) and "present" in doc:
+        return bool(doc["present"])
+    return None
+
+
+def on_a_desktop() -> bool:
+    """True when this process runs where a person could see a browser open: a laptop with a
+    display, never a cloud runner (no screen, and the page would open on nobody's)."""
+    if os.path.exists("/opt/canopy-runner"):
+        return False
+    return sys.platform == "darwin" or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def open_for_person(url: str) -> bool:
+    """Open the approval page in the person's browser. Never raises; False = it did not open."""
+    try:
+        return bool((OPEN_URL or webbrowser.open)(url))
+    except Exception:  # noqa: BLE001 — a browser that will not open must not fail the request
+        return False
+
+
+def tell_the_person(url: str) -> None:
+    """The one line to say to the person, as a message, BEFORE waiting."""
+    click.echo("Say this to the person as a message NOW (a command's output only reaches them "
+               "when it ends):")
+    click.echo(f'  "Tap to approve — it asks for your passkey: {url}"')
+
+
 # --- the wait -----------------------------------------------------------------
 
 def _refresh(key: str, doc: dict) -> dict:
@@ -330,7 +389,9 @@ def _refresh(key: str, doc: dict) -> dict:
 
 
 def _wait(key: str, doc: dict, timeout: float) -> dict:
-    deadline = NOW() + max(timeout, 0)
+    started = NOW()
+    deadline = started + max(timeout, 0)
+    next_nudge = started + NUDGE_SECONDS
     misses = 0
     while True:
         try:
@@ -356,6 +417,11 @@ def _wait(key: str, doc: dict, timeout: float) -> dict:
             raise StillPending(
                 f"act-as #{doc['id']} is still pending (no answer in {int(timeout)}s). Check "
                 "again with `canopy act-as status --wait`, or `canopy act-as stop` to withdraw it.")
+        if NOW() >= next_nudge:
+            gone = int(NOW() - started)
+            click.echo(f"(still waiting for the person to approve — {gone // 60}m{gone % 60:02d}s so "
+                       "far)", err=True)
+            next_nudge = NOW() + NUDGE_SECONDS
         SLEEP(POLL_SECONDS)
 
 
@@ -371,15 +437,25 @@ def act_as_group():
               help="What you will do as them and why — shown to the person verbatim.")
 @click.option("--scope", type=click.Choice(SCOPES), default="read", show_default=True,
               help="The narrowest that does the job. read = GET only.")
-@click.option("--wait/--no-wait", default=True, show_default=True,
-              help="Poll until the person answers.")
+@click.option("--wait/--no-wait", default=None,
+              help="Poll until the person answers. Default: wait, unless the person is recorded as "
+                   "not in the conversation (then nobody can tap the link).")
 @click.option("--timeout", type=int, default=DEFAULT_TIMEOUT, show_default=True,
               help="Seconds to wait before giving up for now (still pending → exit 4).")
-def request_cmd(reason, scope, wait, timeout):
+@click.option("--open/--no-open", "open_page", default=None,
+              help="Open the approval page in the person's browser. Default: yes when this runs on "
+                   "their own computer with a screen, never on a cloud runner.")
+def request_cmd(reason, scope, wait, timeout, open_page):
     """Ask the person to let this turn act as them; print the link they approve at."""
     reason = " ".join((reason or "").split())
     if len(reason) < 10:
         raise click.UsageError("--reason must say specifically what you will do as them.")
+    present = person_present()
+    if wait is None:
+        wait = present is not False
+        if not wait:
+            click.echo("(nobody is in this conversation now, so not waiting: the request is pushed to "
+                       "them and waits 30 minutes. End your turn after saying so.)", err=True)
     sweep_expired()
     key = grant_key()
     try:
@@ -409,9 +485,22 @@ def request_cmd(reason, scope, wait, timeout):
                    f"scope {scope}).")
         click.echo("SHOW THIS LINK TO THE PERSON — they approve with their passkey:")
         click.echo(f"\n  Approve at: {doc['approve_url']}\n")
+    url = doc.get("approve_url") or ""
+    if url and present is not False:
+        tell_the_person(url)
+        if open_page is None:
+            open_page = on_a_desktop()
+        if open_page and open_for_person(url):
+            click.echo("Opened the approval page in their browser — they only tap Approve and use "
+                       "their passkey.")
     if not wait:
-        click.echo("Not waiting. Show the person the link and end your turn; on your next turn "
-                   "(or when they say they approved) run `canopy act-as status` to collect it.")
+        if present is False:
+            click.echo("Not waiting: nobody is here to tap the link. Say what you will do once they "
+                       "approve and end your turn; on your next turn run `canopy act-as status`.")
+        else:
+            click.echo("Not waiting YET. Say the link to the person as a message, then, in this same "
+                       "turn, run `canopy act-as status --wait` (it polls up to 240 s and returns the "
+                       "moment they approve). Only if they are not here, end your turn instead.")
         return
     doc = _wait(key, doc, timeout)
     click.echo("Approved.")
