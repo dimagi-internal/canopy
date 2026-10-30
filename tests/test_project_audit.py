@@ -264,6 +264,25 @@ def test_shipped_check_ignores_notes_closed_and_manual_tasks():
     assert pa.check_shipped_tasks(tasks, {"dimagi-internal/x#1": "CLOSED"}) == []
 
 
+def test_parked_and_snoozed_tasks_are_off_queue_for_every_check():
+    """hal 2026-10-30: three parked Supply tasks re-flagged every turn until the line was noise."""
+    later = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    parked = [task("T1", links=3, next_action="Parked: Jon doesn't want Supply now.",
+                   link_urls=[f"{GH}/x/issues/1", f"{GH}/x/issues/2"]),
+              task("T2", links=3, next_action="[PARKED until the lab replies] …",
+                   updated="2026-10-04T20:00:00Z")]
+    snoozed = task("T3", links=3, updated="2026-10-04T20:00:00Z")
+    snoozed["snoozed_until"] = later
+    lapsed = task("T4", links=3)
+    lapsed["snoozed_until"] = "2026-01-01T00:00:00Z"
+    tasks = parked + [snoozed, lapsed]
+    assert [o["ext_id"] for o in pa.check_loose_tasks(tasks, [])] == ["T4"]
+    assert pa.check_unrecorded_tasks(tasks, [], now=NOW) == []
+    assert pa.check_shipped_tasks(tasks, {"dimagi-internal/x#1": "CLOSED",
+                                          "dimagi-internal/x#2": "CLOSED"}) == []
+    assert not pa._is_off_queue(task("T5", next_action="Park the car, then ship"))
+
+
 def _gh(stdout, rc=0, stderr=""):
     calls = []
 
