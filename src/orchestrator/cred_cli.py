@@ -28,6 +28,8 @@ Commands::
                                               connection to provider P (e.g. salesforce) ->
                                               ~/.canopy/connections/P.json; its path (--refresh: a new
                                               token, e.g. after the provider answered 401)
+    canopy cred connection-token P --workspace W  the same, for the connection P held in workspace W (needed
+                                              when you hold P in several workspaces); cached as P@W.json
     canopy cred connection-token P --agent X  in a turn: the path of the P token the runner staged for X
     canopy cred connection-token P --runner --agent X --runner-id R --turn T [--min-life S] [--refresh]
                                               (the runner) stage ~/.canopy/connections/X/P.json; exit 3
@@ -55,6 +57,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import quote
 
 import click
 
@@ -991,16 +994,27 @@ CONNECTION_MIN_LIFE = 300
 _PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 
 
+#: A workspace slug: it becomes part of a file name and a query value.
+_WORKSPACE_SLUG = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+
+
+def _workspace_slug(workspace: str) -> str:
+    if not _WORKSPACE_SLUG.fullmatch(workspace or ""):
+        raise CredError(f"{workspace!r} is not a workspace slug", EXIT_USAGE)
+    return workspace
+
+
 def _provider_key(provider: str) -> str:
     if not _PROVIDER_KEY.fullmatch(provider or ""):
         raise CredError(f"{provider!r} is not a provider key (e.g. salesforce)", EXIT_USAGE)
     return provider
 
 
-def connection_token_path(provider: str, slug: str = "") -> Path:
-    """~/.canopy/connections/<provider>.json (a person's), or .../<slug>/<provider>.json (a turn's)."""
+def connection_token_path(provider: str, slug: str = "", workspace: str = "") -> Path:
+    """~/.canopy/connections/<provider>.json (a person's; <provider>@<workspace>.json when a workspace
+    is named), or .../<slug>/<provider>.json (a turn's)."""
     base = CACHE_DIR / "connections"
-    name = f"{_provider_key(provider)}.json"
+    name = f"{_provider_key(provider)}{'@' + _workspace_slug(workspace) if workspace else ''}.json"
     return (base / slug / name) if slug else (base / name)
 
 
@@ -1052,37 +1066,47 @@ def _write_connection_token(path: Path, body: dict) -> Path:
     return path
 
 
-def _refusal(e: Exception, *, runner: bool) -> CredError:
+def _refusal(e: Exception, *, runner: bool, provider: str = "<provider>") -> CredError:
     """A canopy-web refusal as a CredError: its detail, then where to connect when it says.
     Never a token. In runner mode `not_connected` is exit 3 (the runner stays silent)."""
     body = _problem(e)
     detail = str(body.get("detail") or body.get("title") or str(e)[:300])
     if runner and _status_of(e) == 409 and body.get("error") == "not_connected":
         return CredError(detail, EXIT_REFUSED)
+    if _status_of(e) == 409 and body.get("error") == "ambiguous" and body.get("workspaces"):
+        spaces = [str(w) for w in body["workspaces"]]
+        detail += (f"\nYou hold this connection in several workspaces: {', '.join(spaces)}."
+                   f"\nRe-run with --workspace, e.g. `canopy cred connection-token {provider} "
+                   f"--workspace {spaces[0]}`.")
     if body.get("connect_url"):
         detail += f"\nConnect it in canopy-web: {body['connect_url']}"
     return CredError(detail)
 
 
-def connection_token(provider: str, *, now: Optional[float] = None, refresh: bool = False) -> Path:
+def connection_token(provider: str, *, now: Optional[float] = None, refresh: bool = False,
+                     workspace: str = "") -> Path:
     """A PERSON's own token: POST /api/me/connections/<provider>/token with their PAT, written 0600
     to ~/.canopy/connections/<provider>.json and reused until 5 minutes before it lapses.
-    `refresh` skips the file and asks canopy-web for a new token (`?refresh=true`)."""
+    `refresh` skips the file and asks canopy-web for a new token (`?refresh=true`). `workspace` picks
+    the connection held in that workspace (`?workspace=`) and caches to <provider>@<workspace>.json."""
     provider = _provider_key(provider)
+    workspace = _workspace_slug(workspace) if workspace else ""
     now = time.time() if now is None else now
     session = session_identity()
     if session.kind == "agent-turn":
         raise CredError(f"refused: this is an agent turn, which never holds a person's {provider} token. "
                         f"Ask for the agent's own with `canopy cred connection-token {provider} --agent "
                         f"{session.agent or '<slug>'}`.", EXIT_REFUSED)
-    out = connection_token_path(provider)
+    out = connection_token_path(provider, workspace=workspace)
     if not refresh and _usable(out, now):
         return out
-    path = f"/api/me/connections/{provider}/token" + ("?refresh=true" if refresh else "")
+    query = [q for q in ("refresh=true" if refresh else "",
+                         f"workspace={quote(workspace, safe='')}" if workspace else "") if q]
+    path = f"/api/me/connections/{provider}/token" + (f"?{'&'.join(query)}" if query else "")
     try:
         body = canopy_web.call("POST", path, token=_human_token())
     except canopy_web.CanopyError as e:
-        raise _refusal(e, runner=False) from None
+        raise _refusal(e, runner=False, provider=provider) from None
     return _write_connection_token(out, body)
 
 
@@ -1330,12 +1354,19 @@ def _connection_token_options(f):
                      help="With --runner: seconds the token must still live, else canopy-web refreshes it."),
         click.option("--refresh", "refresh", is_flag=True,
                      help="Ignore any cached token and have canopy-web refresh (after the provider answered 401)."),
+        click.option("--workspace", "workspace", default=None,
+                     help="Your connection held in this workspace (slug); needed when you hold the provider "
+                          "in several. Your own token only: not with --agent / --runner."),
     )):
         f = opt(f)
     return f
 
 
-def _connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh) -> None:
+def _connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh,
+                          workspace=None) -> None:
+    if workspace is not None and (runner_mode or agent):
+        raise CredError("--workspace picks YOUR connection: it does not apply with --agent or --runner "
+                        "(an agent's connection is its own)", EXIT_USAGE)
     if runner_mode:
         click.echo(str(stage_connection_token(provider, _require_agent(agent), runner_id, turn,
                                               min_life=min_life, refresh=refresh)))
@@ -1347,31 +1378,32 @@ def _connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_lif
             raise CredError("--refresh does not apply with --agent: the runner re-stages that token", EXIT_USAGE)
         click.echo(str(staged_connection_token(provider, _require_agent(agent))))
     else:
-        click.echo(str(connection_token(provider, refresh=refresh)))
+        click.echo(str(connection_token(provider, refresh=refresh, workspace=workspace or "")))
 
 
 @cred_group.command("connection-token")
 @click.argument("provider")
 @_connection_token_options
-def connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh):
+def connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh, workspace):
     """Print the path of a short-lived access token file for a canopy-web connection (never the
     token): {access_token, instance_url, expires_at, account_label}, mode 0600. PROVIDER is the
     connection's key, e.g. `salesforce`.
 
     No flags: YOUR connection (connect it in canopy-web Settings) ->
     ~/.canopy/connections/PROVIDER.json, reused until 5 minutes before it lapses (`--refresh` skips
-    the file). `--agent X` in a turn: the file the runner staged for X,
+    the file). `--workspace W` picks the connection you hold in workspace W (needed when you hold
+    PROVIDER in several; cached as PROVIDER@W.json; refused with --agent / --runner). `--agent X` in a turn: the file the runner staged for X,
     ~/.canopy/connections/X/PROVIDER.json (no network). `--runner --agent X --runner-id R --turn T`:
     the runner stages it (`--min-life S` forwarded; `--refresh` forces a new token); exit 3 when X
     has no PROVIDER connection."""
-    _connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh)
+    _connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh, workspace)
 
 
 @cred_group.command("salesforce-token")
 @_connection_token_options
-def salesforce_token_cmd(agent, runner_mode, runner_id, turn, min_life, refresh):
+def salesforce_token_cmd(agent, runner_mode, runner_id, turn, min_life, refresh, workspace):
     """`connection-token salesforce`: the same command, by the name it first shipped under."""
-    _connection_token_cmd("salesforce", agent, runner_mode, runner_id, turn, min_life, refresh)
+    _connection_token_cmd("salesforce", agent, runner_mode, runner_id, turn, min_life, refresh, workspace)
 
 
 @cred_group.command("whoami")
