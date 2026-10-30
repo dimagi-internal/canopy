@@ -770,3 +770,23 @@ def test_set_on_an_agent_with_no_vault_key_is_sealed_by_canopy_web_not_refused()
     res = vault_zk_cli.run_set(v, {"GOOGLE_PASSWORD": "s3cret"})
     assert v.calls == [("PUT", "/api/agents/trellis/credentials", {"values": {"GOOGLE_PASSWORD": "s3cret"}})]
     assert res.kv == 0 and "s3cret" not in vault_zk_cli.render(res)
+
+
+def test_render_ws_vault_names_what_each_attachment_serves():
+    """A vault can serve an agent, a workspace, or a RUNNER (the Claude-credentials vaults);
+    listing one used to crash on `None + ' and below'`."""
+    from orchestrator.vault_zk_cli import render_ws_vault
+
+    out = render_ws_vault({
+        "workspace": "dimagi", "name": "v", "vault_id": "id", "kv": 1,
+        "attachments": [
+            {"agent": "eva", "workspace": None, "runner": None},
+            {"agent": None, "workspace": "dimagi", "runner": None},
+            {"agent": None, "workspace": None, "runner": "r-1", "runner_name": "cloud-ec2-live"},
+            {"agent": None, "workspace": None, "runner": None},
+        ],
+    })
+    assert "serves: agent eva" in out
+    assert "serves: dimagi and below" in out
+    assert "serves: runner cloud-ec2-live" in out
+    assert "serves: (unknown)" in out
