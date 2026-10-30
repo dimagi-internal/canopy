@@ -533,6 +533,25 @@ def summarize_turn(turn: dict) -> dict:
     }
 
 
+def waiting_reason(events) -> str:
+    """The newest explanation canopy-web wrote on a QUEUED turn (`waiting` events), or "".
+
+    canopy-web says why a queued turn is still queued -- "jj-mbp-cdp is online but has not asked
+    for work for 5h16m", "no runner that could take it is online", the rule a runner passed it
+    over on -- as `waiting` events on the turn (canopy-web#2315). A person reading "no runner has
+    claimed it yet" should not have to know to fetch them."""
+    rows = events.get("events") if isinstance(events, dict) else events
+    for e in reversed(rows or []):
+        if not isinstance(e, dict) or e.get("kind") != "waiting":
+            continue
+        payload = e.get("payload") or {}
+        if payload.get("why"):
+            return str(payload["why"])
+        if payload.get("skipped"):
+            return f"{payload.get('runner') or 'a runner'} passed it over: {payload['skipped']}"
+    return ""
+
+
 # ── dispatch is for unattended work (canopy-web#1955) ──────────────────────────────────────
 # Two `connect` editors asked ACE 17 read-only questions as one-shot dispatches from their own
 # Claude Code (2026-10-23): neither had run `canopy agent use ace`, so `dispatch` was the only
