@@ -106,6 +106,9 @@ def test_name_drift_between_project_and_linked_folder():
     assert [(o["ext_id"], o["folder_name"]) for o in out] == [("P2", "Connect Interviews"),
                                                             ("P3", "")]
     assert "not under Projects/" in out[1]["reason"]
+    closed = [project("P5", "Old name", status="archived", folder_url=pa.folder_url("fold_x")),
+              project("P6", "Done", status="done", folder_id="fold_kmc_000000001")]
+    assert pa.check_name_drift(closed, FOLDERS) == []  # hal 2026-10-30: an archived P1, every turn
 
 
 def test_folder_id_parsed_from_either_url_shape():

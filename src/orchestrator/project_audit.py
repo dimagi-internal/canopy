@@ -21,8 +21,8 @@ so each is unit testable without a network:
               archive, so a folder is EXPECTED to outlive its board entry (owner decision,
               2026-10-04). Reported as a count; the folders are also used to suggest
               re-registering a returning project against its existing folder (same name).
-  d. DRIFT  — a project whose linked folder's name differs from the project name, or whose
-              linked folder is not under `Projects/` at all.
+  d. DRIFT  — an ACTIVE project whose linked folder's name differs from the project name, or
+              whose linked folder is not under `Projects/` at all.
   e. UNRECORDED — an open task updated in the last N days with no turn record naming it in
               that same window.
   f. SHIPPED — the opposite direction from (a)-(e): an open task the board still shows as
@@ -220,8 +220,8 @@ def check_name_drift(projects, folders) -> list[dict]:
     out = []
     for p in projects or []:
         fid = folder_id_from(p)
-        if not fid:
-            continue
+        if not fid or (p.get("status") or "active") != "active":
+            continue  # a closed project's folder is the archive; nothing will file into it
         f = by_id.get(fid)
         if f is None:
             out.append({"ext_id": p.get("ext_id") or "", "name": p.get("name") or "",
