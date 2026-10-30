@@ -2144,6 +2144,20 @@ def agent_landscape(slug, workspace, groups_file, members_only, as_json):
     click.echo(L.render(land, slug, sel))
 
 
+def _why_waiting(turn: dict) -> str:
+    """For a turn still QUEUED, canopy-web's own explanation of what it is waiting on ('' when
+    it is not queued, none was written yet, or this caller may not read the turn's events)."""
+    from orchestrator import canopy_web
+    from orchestrator.agent_dispatch import waiting_reason
+
+    if str(turn.get("status") or "").lower() != "queued" or not turn.get("id"):
+        return ""
+    try:
+        return waiting_reason(canopy_web.call("GET", f"/api/harness/turns/{turn['id']}/events"))
+    except (CanopyError, RuntimeError):
+        return ""
+
+
 @agent.command("turns")
 @click.option("--slug", required=True)
 @click.option("--limit", default=10, type=int)
@@ -2165,10 +2179,11 @@ def agent_turns(slug, limit, as_json):
     if isinstance(rows, dict):
         rows = rows.get("items") or rows.get("results") or []
     rows = rows[:limit]
+    why = {t.get("id"): _why_waiting(t) for t in rows}
 
     if as_json:
         _emit([{**summarize_turn(t), "created_at": t.get("created_at"),
-                "prompt": t.get("prompt")} for t in rows])
+                "prompt": t.get("prompt"), "waiting_why": why.get(t.get("id")) or ""} for t in rows])
         return
     if not rows:
         click.echo(f"no harness turns for {slug}")
@@ -2177,6 +2192,8 @@ def agent_turns(slug, limit, as_json):
         s = summarize_turn(t)
         click.echo(f"{str(t.get('created_at'))[:16]}  {s['state']:<9} {s['id']}")
         click.echo(f"    {s['headline']}")
+        if why.get(t.get("id")):
+            click.echo(f"    why it is waiting: {why[t.get('id')]}")
         if s["canopy_session_id"]:
             click.echo(f"    session: {s['canopy_session_url'] or s['canopy_session_id']}"
                        f"  (follow up: canopy agent reply {s['id']} --prompt ...)")

@@ -1106,3 +1106,45 @@ def test_cli_dispatch_card_links_the_briefs_issue_so_project_audit_can_see_it(mo
     card = created[0][0]  # create_tasks posts a bare list
     assert card["links"][0] == {"label": "spec", "url": "https://example.com/spec"}
     assert github_refs(card) == ["dimagi-internal/canopy-web#2092"]
+
+
+def test_a_queued_turn_says_why_it_is_waiting(monkeypatch):
+    """canopy-web writes `waiting` events on a queued turn (canopy-web#2315); `agent turns` shows
+    the newest, instead of the bare 'no runner has claimed it yet' that cost an hour."""
+    def transport(method, url, headers, data):
+        if url.endswith("/events"):
+            return 200, json.dumps({"events": [
+                {"kind": "waiting", "payload": {"why": "older explanation"}},
+                {"kind": "waiting", "payload": {"why": "jj-mbp-cdp is online but has not asked for work for 5h16m"}},
+            ]})
+        return 200, json.dumps([
+            {"id": "q1", "agent_slug": "ace", "status": "queued", "created_at": "2026-10-30T06:02:00Z",
+             "prompt": "do it"},
+            {"id": "d1", "agent_slug": "ace", "status": "done", "created_at": "2026-10-30T05:00:00Z",
+             "result_note": "created session 'x'", "prompt": "old"}])
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+
+    r = CliRunner().invoke(main, ["agent", "turns", "--slug", "ace"])
+    assert r.exit_code == 0, r.output
+    assert "why it is waiting: jj-mbp-cdp is online but has not asked for work for 5h16m" in r.output
+    assert "older explanation" not in r.output
+    # Only the QUEUED turn is asked about -- the finished one has nothing to wait for.
+    assert r.output.count("why it is waiting") == 1
+    j = CliRunner().invoke(main, ["agent", "turns", "--slug", "ace", "--json-output"])
+    rows = json.loads(j.output)
+    assert rows[0]["waiting_why"].startswith("jj-mbp-cdp is online") and rows[1]["waiting_why"] == ""
+
+
+def test_a_turn_whose_events_cannot_be_read_is_listed_without_a_reason(monkeypatch):
+    def transport(method, url, headers, data):
+        if url.endswith("/events"):
+            return 404, json.dumps({"detail": "not found"})  # someone else's private chat
+        return 200, json.dumps([{"id": "q1", "agent_slug": "ace", "status": "queued",
+                                 "created_at": "2026-10-30T06:02:00Z", "prompt": "x"}])
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_base_url", lambda b=None: "https://x")
+    monkeypatch.setattr("orchestrator.canopy_web.resolve_token", lambda t=None: "tok")
+    monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
+    r = CliRunner().invoke(main, ["agent", "turns", "--slug", "ace"])
+    assert r.exit_code == 0 and "q1" in r.output and "why it is waiting" not in r.output

@@ -495,3 +495,112 @@ def test_server_5xx_keeps_state(env):
     assert run("request", "--reason", "Read your session 4328 please", "--no-wait").exit_code == 0
     assert run("status").exit_code == 1
     assert token_file(env.home).exists()
+
+
+# --- waiting for the person, and putting the page in front of them ---------------------------
+
+def _presence(home: Path, present: bool, sid: str = "claude-1") -> None:
+    d = home / ".canopy" / "caller" / "presence"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{sid}.json").write_text(json.dumps({"origin": "x", "present": present}))
+
+
+def _gets(srv):
+    """Status polls of request #7 (not the recover-list call a fresh request starts with)."""
+    return [c for c in srv.calls if c[0] == "GET" and c[1] == "/api/me/act-as-requests/7"]
+
+
+def test_the_request_hands_over_a_line_to_say_and_the_link(env):
+    c = env.clock
+    env({POST: pending(c)})
+    r = run("request", "--reason", "Read your session 4328 to see why it stalled", "--no-wait")
+    assert r.exit_code == 0, r.output
+    assert f"Approve at: {BASE}/act-as/7/approve" in r.output
+    assert f'"Tap to approve — it asks for your passkey: {BASE}/act-as/7/approve"' in r.output
+    # Not waiting yet, and it says the next step is the same-turn wait, not ending the turn.
+    assert "run `canopy act-as status --wait`" in r.output
+
+
+def test_nobody_in_the_conversation_means_not_waiting_by_default(env):
+    c = env.clock
+    srv = env({POST: pending(c)})
+    _presence(env.home, False)
+    r = run("request", "--reason", "Read your session 4328 to see why it stalled")
+    assert r.exit_code == 0, r.output
+    assert _gets(srv) == []  # it never polled: nobody is there to tap
+    assert "nobody is in this conversation now" in r.output
+    assert "Tap to approve" not in r.output  # nothing to tell a person who is not here
+
+
+def test_an_explicit_wait_still_waits_when_nobody_is_recorded_as_there(env):
+    c = env.clock
+    srv = env({POST: pending(c), GET: approved(c)})
+    _presence(env.home, False)
+    r = run("request", "--reason", "Read your session 4328 to see why it stalled", "--wait")
+    assert r.exit_code == 0 and "Approved." in r.output
+    assert _gets(srv)
+
+
+def test_a_person_who_is_there_is_waited_for(env):
+    c = env.clock
+    srv = env({POST: pending(c), GET: approved(c)})
+    _presence(env.home, True)
+    r = run("request", "--reason", "Read your session 4328 to see why it stalled")
+    assert r.exit_code == 0 and "Approved." in r.output and _gets(srv)
+
+
+def test_the_page_opens_for_the_person_on_their_own_computer(env, monkeypatch):
+    c = env.clock
+    env({POST: pending(c)})
+    opened = []
+    monkeypatch.setattr(act_as_cli, "OPEN_URL", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(act_as_cli, "on_a_desktop", lambda: True)
+    r = run("request", "--reason", "Read your session 4328 to see why it stalled", "--no-wait")
+    assert opened == [f"{BASE}/act-as/7/approve"]
+    assert "Opened the approval page in their browser" in r.output
+
+
+def test_the_page_is_not_opened_on_a_cloud_runner_or_when_told_not_to(env, monkeypatch):
+    c = env.clock
+    env({POST: pending(c)})
+    opened = []
+    monkeypatch.setattr(act_as_cli, "OPEN_URL", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(act_as_cli, "on_a_desktop", lambda: False)  # a cloud box: no screen
+    run("request", "--reason", "Read your session 4328 to see why it stalled", "--no-wait")
+    assert opened == []
+    monkeypatch.setattr(act_as_cli, "on_a_desktop", lambda: True)
+    run("request", "--reason", "Read your session 4328 to see why it stalled", "--no-wait", "--no-open")
+    assert opened == []
+
+
+def test_a_browser_that_will_not_open_does_not_fail_the_request(env, monkeypatch):
+    c = env.clock
+    env({POST: pending(c)})
+
+    def boom(url):
+        raise RuntimeError("no browser")
+    monkeypatch.setattr(act_as_cli, "OPEN_URL", boom)
+    r = run("request", "--reason", "Read your session 4328 to see why it stalled", "--no-wait", "--open")
+    assert r.exit_code == 0 and "Opened the approval page" not in r.output
+
+
+def test_a_long_wait_says_it_is_still_waiting(env):
+    c = env.clock
+    pend = (200, {"id": 7, "status": "pending", "scope": "read"})
+    env({POST: pending(c), GET: [pend] * 25 + [approved(c)]})
+    r = run("request", "--reason", "Read your session 4328 to see why it stalled")
+    assert r.exit_code == 0 and "Approved." in r.output
+    assert "still waiting for the person to approve" in r.output
+
+
+def test_the_same_turn_flow_request_then_status_wait(env):
+    """The flow the skill teaches: request --no-wait, say the link, then status --wait."""
+    c = env.clock
+    srv = env({POST: pending(c),
+               GET: [(200, {"id": 7, "status": "pending", "scope": "read"}), approved(c)]})
+    first = run("request", "--reason", "Read your session 4328 to see why it stalled", "--no-wait")
+    assert first.exit_code == 0 and not _gets(srv)
+    second = run("status", "--wait")
+    assert second.exit_code == 0, second.output
+    assert "approved" in second.output and SECRET not in second.output
+    assert token_file(env.home).exists()
