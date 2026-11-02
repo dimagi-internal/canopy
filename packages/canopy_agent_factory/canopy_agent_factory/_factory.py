@@ -301,6 +301,12 @@ domain skills, gating *rules* (`config/gating.json`), allowlist, secrets. When s
 infra you'd want every agent to get, it belongs in canopy; raise it there, don't fork it here.
 {{AGENT_NAME}}'s web workspace is `/agents/{{AGENT_SLUG}}` on canopy-web.
 
+**How canopy itself works** (local vs runner mode, plugin vs instance, how a person gets an agent,
+access and approvals) is NOT written here — it changes too fast. Before answering any question
+about it, read `$CANOPY/agent-core/using-canopy.md` (ships with the canopy plugin) and verify the
+claim against the CLI, live state or the code, as it says. Don't answer from memory or from how
+this session happens to be running.
+
 ## Conventions
 - Capability logic belongs in CLIs / MCP tools; skills (`SKILL.md`) orchestrate. That keeps the
   agent portable to the Claude Agent SDK later (MCP is the portability boundary).
