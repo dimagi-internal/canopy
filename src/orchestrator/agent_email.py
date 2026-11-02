@@ -1635,6 +1635,27 @@ def _reply_all_of(raw_messages: list[dict], selves) -> dict:
     return {"to": to, "cc": ", ".join(cc), "reply_to_message_id": latest.get("id", "")}
 
 
+def resolve_thread_id(identity: EmailIdentity, ref: str, *, runner=subprocess.run) -> str:
+    """A Gmail THREAD id for `ref`, which may be an RFC 822 Message-ID instead.
+
+    A turn that came in by the resend-to-canopy-mailbox retry carries the SES
+    `<...@email.amazonses.com>` Message-ID as `trigger.message_id`, and gog answers that
+    with "Invalid id value" (Eva, 2026-10, turn 3712). Gmail indexes every message by its
+    Message-ID header (`rfc822msgid:`), so look the thread up. A real thread id (16 hex
+    digits, no `@`) is returned untouched, with no extra gog call."""
+    ref = (ref or "").strip()
+    if "@" not in ref:
+        return ref
+    msgid = ref.strip("<>")
+    rows = search_threads(identity, f"rfc822msgid:{msgid}", limit=1, runner=runner)
+    if not rows or not rows[0].get("id"):
+        raise AgentEmailError(
+            f"read: {ref} is an email Message-ID, not a Gmail thread id, and {identity.account} "
+            "has no message with that Message-ID (a canopy conversation id is a UUID; pass a "
+            "16-hex Gmail thread id, or a Message-ID this mailbox received)")
+    return str(rows[0]["id"])
+
+
 def read_thread(
     identity: EmailIdentity,
     thread_id: str,
@@ -1668,7 +1689,9 @@ def read_thread(
     (echo's bin/echo_read.py) — folded into the engine so they don't. `gog gmail read` is a
     THREAD reader and 404s on a bare message id (the bug that bit echo live — see
     derive_reply_all). Uses --json because the default text view omits Cc and attachment ids.
-    This is the fleet's sanctioned inbound READ path."""
+    This is the fleet's sanctioned inbound READ path. `thread_id` may also be an RFC 822
+    Message-ID (`<...@...>`), resolved to its thread first (`resolve_thread_id`)."""
+    thread_id = resolve_thread_id(identity, thread_id, runner=runner)
     r = runner(
         ["gog", "gmail", "read", thread_id, "--account", identity.account,
          "--client", identity.client, "--json"],
@@ -3484,9 +3507,16 @@ def email_read(repo, agent, account, client, thread_id):
     text/html twin so an HTML-only message is never blank), an `is_automated` flag with the
     `Auto-Submitted`/`Precedence`/`Sender` headers behind it, and each attachment's id; plus
     a thread-level `reply_all` recipient set (To/Cc/reply_to_message_id). Pass a THREAD id
-    (gog 404s on a bare message id). Attachment ids feed `fetch-attachment`. The fleet's
+    (gog 404s on a bare message id); an email Message-ID (`<...@...>`) is looked up to its
+    thread, and a canopy conversation UUID reads the SES thread. Attachment ids feed `fetch-attachment`. The fleet's
     sanctioned inbound read path — replaces per-agent gog read + base64-decode wrappers."""
     try:
+        if _is_uuid(thread_id):
+            # A canopy conversation id: an SES thread. `_route_for` reads it from canopy-web,
+            # or says plainly that none of this agent's addresses resolves to SES.
+            _ident, ses = _route_for(repo, agent, account, client, thread_id=thread_id)
+            click.echo(json.dumps(ses_read_thread(ses, thread_id), indent=2))
+            return
         ident = _identity_from_opts(repo, agent, account, client)
         result = read_thread(ident, thread_id)
     except AgentEmailError as e:
