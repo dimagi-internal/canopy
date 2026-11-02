@@ -293,6 +293,14 @@ def test_thread_prints_messages_readably(web, no_gog):
         assert needle in r.output
 
 
+def test_read_with_a_conversation_uuid_reads_the_ses_thread(web, no_gog):
+    """`email read` used to hand a canopy conversation id to gog ("Invalid id value")."""
+    r = _run("read", UUID, "--account", SES_ADDR)
+    assert r.exit_code == 0, r.output
+    assert ("GET", f"/api/mail/threads/marshellis/{UUID}", None) in web.calls
+    assert "Quarterly plan" in r.output
+
+
 def test_thread_on_gmail_mailbox_says_ses_only(monkeypatch):
     monkeypatch.setattr(canopy_web, "call", FakeWeb(resolve=_not_found()))
     r = _run("thread", "abc123", "--account", GMAIL_ADDR)

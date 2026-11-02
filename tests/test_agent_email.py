@@ -1146,6 +1146,42 @@ def test_read_thread_raises_on_gog_failure():
     assert "THREAD id" in str(e.value)
 
 
+def _msgid_runner(rows, calls):
+    """Fake gog: `gmail search` finds `rows`; `gmail read` only knows the thread id `thr-9`."""
+    thread = _inbound_thread_json([{"mimeType": "text/plain", "body": {"size": 5, "data": "aGk="}}])
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[1:3] == ["gmail", "search"]:
+            return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"threads": rows}))
+        if cmd[3] != "thr-9":
+            return SimpleNamespace(returncode=1, stdout="", stderr="Invalid id value")
+        return SimpleNamespace(returncode=0, stderr="", stdout=thread)
+    return run
+
+
+def test_read_thread_resolves_an_ses_message_id_to_its_gmail_thread():
+    """The resend-to-canopy-mailbox retry hands a turn `<...@email.amazonses.com>` as
+    trigger.message_id; gog read answered "Invalid id value" (Eva turn 3712)."""
+    calls = []
+    ref = "<0100019a@email.amazonses.com>"
+    res = read_thread(_ACE, ref, runner=_msgid_runner([{"id": "thr-9"}], calls))
+    assert res["thread_id"] == "thr-9"
+    assert calls[0][1:4] == ["gmail", "search", "rfc822msgid:0100019a@email.amazonses.com"]
+
+
+def test_read_thread_with_a_real_thread_id_does_not_search():
+    calls = []
+    read_thread(_ACE, "thr-9", runner=_msgid_runner([], calls))
+    assert [c[2] for c in calls] == ["read"]
+
+
+def test_read_thread_says_so_when_the_message_id_is_not_in_the_mailbox():
+    with pytest.raises(AgentEmailError) as e:
+        read_thread(_ACE, "<nope@email.amazonses.com>", runner=_msgid_runner([], []))
+    assert "Message-ID" in str(e.value) and "no message" in str(e.value)
+
+
 def test_fetch_attachment_returns_path_not_data():
     out = _runner_ok('{"bytes": 444892, "cached": false, "path": "/cache/fcap.xlsx"}')
     res = fetch_attachment(_ACE, "msg-123", "ATT_1", runner=out)
