@@ -441,7 +441,7 @@ process"** do not. One call confirms it — but **match the uuid ALONE, never th
 spelling**:
 
 ```bash
-ps aux | grep "[c]laude.*<uuid>"      # NOT '[c]laude --session-id <uuid>'
+pgrep -f "[c]laude.*<uuid>"      # prints PIDs, or nothing with exit 1. NOT '--session-id <uuid>'
 ```
 
 **argv does not survive a resume here either.** That is the same fact this Step already applies to
