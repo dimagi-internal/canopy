@@ -50,7 +50,8 @@ MAX_LISTED = 64
 #: Exactly the fields of each sealed plaintext (contract §0.2).
 REFRESH_KEYS = frozenset({"v", "provider", "refresh_token", "client_id", "login_host", "instance_url",
                           "account_id", "owner_key", "issued_at", "scopes", "statement_floor"})
-ACCESS_KEYS = frozenset({"v", "access_token", "expires_at", "instance_url", "account_id", "scope", "owner_key"})
+ACCESS_KEYS = frozenset({"v", "access_token", "expires_at", "instance_url", "account_id", "scope", "owner_key",
+                         "statement_floor"})
 
 _STATEMENT_KEYS = frozenset({"account_id", "agents", "connection", "endorsers", "my_computers", "v", "version"})
 _SIG_KEYS = frozenset({"by", "expect", "macs"})

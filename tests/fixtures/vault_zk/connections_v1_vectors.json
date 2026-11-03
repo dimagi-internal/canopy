@@ -34,7 +34,7 @@
     "name": "refresh",
     "kv": 0,
     "plaintext": "{\"v\":1,\"provider\":\"salesforce\",\"refresh_token\":\"5Aep861-test-refresh-token\",\"client_id\":\"3MVG9-test-client-id\",\"login_host\":\"login.salesforce.com\",\"instance_url\":\"https://acme.my.salesforce.com\",\"account_id\":\"00D000000000001AAA/005000000000001AAA\",\"owner_key\":\"y43mphpoL1Y1YMlYvAPCqD4n1VPgTmti7EYQDaIc7KY\",\"issued_at\":1793500000,\"scopes\":\"api refresh_token id\",\"statement_floor\":3}",
-    "access_plaintext": "{\"v\":1,\"access_token\":\"00D-test-access-token\",\"expires_at\":1793501800,\"instance_url\":\"https://acme.my.salesforce.com\",\"account_id\":\"00D000000000001AAA/005000000000001AAA\",\"scope\":\"api refresh_token id\",\"owner_key\":\"y43mphpoL1Y1YMlYvAPCqD4n1VPgTmti7EYQDaIc7KY\"}",
+    "access_plaintext": "{\"v\":1,\"access_token\":\"00D-test-access-token\",\"expires_at\":1793501800,\"instance_url\":\"https://acme.my.salesforce.com\",\"account_id\":\"00D000000000001AAA/005000000000001AAA\",\"scope\":\"api refresh_token id\",\"owner_key\":\"y43mphpoL1Y1YMlYvAPCqD4n1VPgTmti7EYQDaIc7KY\",\"statement_floor\":3}",
     "ephemeral_scalars_hex": [
       "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
       "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",

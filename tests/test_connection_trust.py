@@ -18,7 +18,7 @@ from orchestrator import vault_zk as zk
 from orchestrator.connections import trust, wire
 from orchestrator.connections.trust import TrustError
 
-CONN = "11111111-2222-4333-8444-555555555555"
+CONN = "abcdef11-2222-4333-8444-555555555555"
 ACCOUNT = "00D000000000001/005000000000001"
 OWNER_ID = "7"
 BINDING = wire.binding_id(CONN)
@@ -551,7 +551,7 @@ def _refresh_plain(**over) -> dict:
 
 def _access_plain(**over) -> dict:
     return {"v": 1, "access_token": "REAL-ACCESS", "expires_at": 9999999999, "instance_url": INSTANCE,
-            "account_id": ACCOUNT, "scope": "api", "owner_key": O, **over}
+            "account_id": ACCOUNT, "scope": "api", "owner_key": O, "statement_floor": 3, **over}
 
 
 def _seal(name, plain, *boxes, writer=REAL_WRITER):
@@ -635,6 +635,40 @@ def test_an_old_signed_statement_replayed_at_a_fresh_box_cannot_readmit_a_remove
     assert pins == {}
 
 
+def test_a_removed_device_cannot_lower_the_floor_with_a_refresh_it_forged():
+    """It knows the owner's public key, so it can seal a ``refresh`` naming the real owner
+    with floor 0, beside an old statement that lists it and so proves it a writer. The real
+    ``access`` carries its own floor, which it cannot change, and a re-seal never happens."""
+    removed, keeper = _ecdh_pair(), _ecdh_pair()
+    old = _material(_statement(version=1, my_computers=sorted([removed.jkt, keeper.jkt, FRESH.jkt, REAL_WRITER.jkt])))
+    forged = _seal("refresh", _refresh_plain(refresh_token="ATTACKER", statement_floor=0), keeper, writer=removed)
+    real_access = _seal("access", _access_plain(), keeper)
+    pins: dict = {}
+    with pytest.raises(TrustError) as e:
+        _read(old, forged, real_access, me=keeper, pins=pins)
+    assert e.value.code == "statement-below-floor"
+    assert pins == {}
+
+
+@pytest.mark.parametrize("refresh_floor,access_floor,version,ok", [
+    (5, 3, 5, True),    # an access left over from before a share still reads
+    (3, 5, 5, True),    # no equality between the envelopes, either way
+    (5, 3, 4, False),   # below the refresh's floor alone
+    (3, 5, 4, False),   # below the access's floor alone
+    (3, 3, 3, True),
+    (0, 0, 1, True),
+])
+def test_each_floor_is_checked_against_the_statement_on_its_own(refresh_floor, access_floor, version, ok):
+    st = _statement(version=version)
+    refresh, access = _refresh_plain(statement_floor=refresh_floor), _access_plain(statement_floor=access_floor)
+    if ok:
+        trust.check_plain(refresh, access, st)
+    else:
+        with pytest.raises(TrustError) as e:
+            trust.check_plain(refresh, access, st)
+        assert e.value.code == "statement-below-floor"
+
+
 def test_a_statement_at_the_floor_passes_and_canopy_webs_first_seal_is_zero():
     pins: dict = {}
     _read(_real_material(), _seal("refresh", _refresh_plain(statement_floor=3), FRESH), None, pins=pins)
@@ -701,6 +735,12 @@ def test_a_refresh_plaintext_of_the_wrong_shape_refuses(refresh):
     ({"owner_key": ATTACKER}, "access-mismatch"),
     ({"owner_key": None}, "access-mismatch"),
     ({"account_id": "00Dother"}, "access-mismatch"),
+    ({"statement_floor": "3"}, "bad-plaintext"),
+    ({"statement_floor": True}, "bad-plaintext"),
+    ({"statement_floor": -1}, "bad-plaintext"),
+    ({"statement_floor": None}, "bad-plaintext"),
+    ({"statement_floor": 3.0}, "bad-plaintext"),
+    ({"statement_floor": 4}, "statement-below-floor"),
     ({"instance_url": "https://evil.example.com"}, "bad-host"),
     ({"instance_url": 5}, "bad-plaintext"),
     ({"access_token": ""}, "bad-plaintext"),

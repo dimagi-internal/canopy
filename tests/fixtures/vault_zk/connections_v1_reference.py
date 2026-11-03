@@ -20,9 +20,13 @@ encodings (b64u = base64url WITHOUT padding; jkt = RFC 7638 thumbprint).
        kept unchanged by machines on every re-seal and write-back. A reader refuses a
        statement whose version is below it.
      name "access"  (stored as `access_sealed`)  plaintext = compact UTF-8 JSON
-       {"v":1,"access_token","expires_at","instance_url","account_id","scope","owner_key"}
+       {"v":1,"access_token","expires_at","instance_url","account_id","scope","owner_key",
+        "statement_floor"}
        A reader refuses an access whose account_id or owner_key differs from the refresh
-       plaintext's.
+       plaintext's. statement_floor = the refresh plaintext's value when the access was
+       written. A reader refuses a statement whose version is below the floor in refresh
+       OR the floor in access: independent checks against the statement, with no equality
+       between the two, so an access left over from before a share stays readable.
    Recipients: kind "device" (target = the device's ECDH jkt) and kind "member"
    (target = the owner's user id; only the owner).
    sealed_digest = sha256_hex(utf8(stored value)), the compare-and-swap token.
@@ -206,7 +210,7 @@ def vectors() -> dict:
     access_plaintext = compact({
         "v": 1, "access_token": "00D-test-access-token", "expires_at": 1793501800,
         "instance_url": "https://acme.my.salesforce.com", "account_id": account_id, "scope": "api refresh_token id",
-        "owner_key": owner_jkt})
+        "owner_key": owner_jkt, "statement_floor": STATEMENT_VERSION})
     recipients = [("device", writer_jkt, writer), ("device", other_jkt, other), ("member", owner_user_id, owner)]
     ephemerals = [_priv("a1" * 32), _priv("b2" * 32), _priv("c3" * 32)]
     nonces = [bytes.fromhex("101112131415161718191a1b"), bytes.fromhex("202122232425262728292a2b"),

@@ -16,9 +16,11 @@ it never names cannot be sealed to, and one it names counts only if it passes he
   after the whole read has been validated, so an aborted read teaches this box nothing.
 * The envelopes vouch for each other (:func:`check_plain`). ``access`` names the same
   ``owner_key`` as ``refresh``, so a forged ``refresh`` beside the real ``access`` is
-  refused on a box with no pin, before any re-seal could hand that token on. ``refresh``
-  carries a ``statement_floor``, so an old signed statement cannot re-admit a removed
-  device on a box with no pin.
+  refused on a box with no pin, before any re-seal could hand that token on. Each carries
+  a ``statement_floor``, so an old signed statement cannot re-admit a removed device on a
+  box with no pin. The two floors are checked against the statement separately: a removed
+  device can forge a ``refresh`` with a low one, not the real ``access``, and an ``access``
+  from before a share stays readable with a lower floor than ``refresh``.
 * Allowed are the owner's member key, the devices in ``my_computers``, and a device with a
   zk-v1 §7 endorsement of its exact ECDH key, for an agent the statement lists, signed by
   the owner's key or a key the statement lists in ``endorsers``.
@@ -157,11 +159,22 @@ def verified_statement(material: dict, *, owner_jkt: str, pins: dict) -> dict:
     return statement
 
 
+def _check_floor(floor, name: str) -> None:
+    if type(floor) is not int or floor < 0:
+        raise TrustError("bad-plaintext", f"{name} has no statement floor")
+
+
+def _below_floor(statement: dict, floor: int, name: str) -> TrustError:
+    return TrustError("statement-below-floor", f"this statement is version {statement['version']}; "
+                                               f"{name} requires at least version {floor}")
+
+
 def check_plain(refresh: dict, access: dict | None, statement: dict) -> None:
     """Refuse opened plaintexts that do not belong together or under ``statement`` (from
     :func:`verified_statement`): the provider's rules for ``refresh``, its signed account,
     its ``statement_floor``, and for ``access`` (None when there is none) the same
-    ``account_id`` and ``owner_key`` as ``refresh`` and a host the rules allow."""
+    ``account_id`` and ``owner_key`` as ``refresh``, a host the rules allow and its own
+    ``statement_floor``."""
     _shaped(statement)
     if not isinstance(refresh, dict) or set(refresh) != wire.REFRESH_KEYS:
         raise TrustError("bad-plaintext", "refresh does not have exactly the contract's fields")
@@ -175,14 +188,11 @@ def check_plain(refresh: dict, access: dict | None, statement: dict) -> None:
     owner_key, floor = refresh["owner_key"], refresh["statement_floor"]
     if not isinstance(owner_key, str) or not wire._B64U_32.fullmatch(owner_key):
         raise TrustError("bad-plaintext", "refresh names no owner key")
-    if type(floor) is not int or floor < 0:
-        raise TrustError("bad-plaintext", "refresh has no statement floor")
+    _check_floor(floor, "refresh")
     if refresh["account_id"] != statement["account_id"]:
         raise TrustError("account-mismatch", "refresh is for another account than the statement")
     if statement["version"] < floor:
-        raise TrustError("statement-below-floor",
-                         f"this statement is version {statement['version']}; the envelope requires "
-                         f"at least version {floor}")
+        raise _below_floor(statement, floor, "refresh")
     if access is None:
         return
     if not isinstance(access, dict) or set(access) != wire.ACCESS_KEYS or access["v"] != 1:
@@ -194,6 +204,9 @@ def check_plain(refresh: dict, access: dict | None, statement: dict) -> None:
         raise TrustError("access-mismatch", "access is for another account than refresh")
     if access["owner_key"] != owner_key:
         raise TrustError("access-mismatch", "access names another owner key than refresh")
+    _check_floor(access["statement_floor"], "access")
+    if statement["version"] < access["statement_floor"]:
+        raise _below_floor(statement, access["statement_floor"], "access")
     try:
         provider.check_hosts({"login_host": refresh["login_host"], "instance_url": access["instance_url"]})
     except providers.ProviderError as e:
