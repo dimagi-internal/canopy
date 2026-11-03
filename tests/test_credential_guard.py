@@ -138,6 +138,40 @@ def test_a_short_result_mentioning_it_late_is_not_a_failure():
     assert len(text) < g.SHORT_RESULT and not g.credential_failure(_post(response=text))
 
 
+#: Canopy's own record of an earlier abort, as `get_failure_investigation` returns it. 2026-11-03:
+#: Ada's debug turn 05590519 read this, the guard took the quoted error for Ada's own login, and
+#: the turn debugging one abort was aborted too; so was the audit that read it afterwards.
+QUOTING_RECORD = json.dumps({
+    "id": 24, "workspace_slug": "dimagi", "fingerprint": "721ad4609aa3c4b0",
+    "status": "open",
+    "normalized_note": "aborted by canopy: the turn could not do its work in get_opportunity_apps. "
+                       "failed on the agent's credentials: opportunity <n> not found, has no api "
+                       "key, or you do not have access to it.",
+})
+
+
+def test_a_record_quoting_an_old_error_is_not_a_failure():
+    assert g.match(QUOTING_RECORD) and len(QUOTING_RECORD) < g.SHORT_RESULT
+    assert not g.credential_failure(_post(
+        tool="mcp__plugin_canopy_canopy-web__get_failure_investigation", response=QUOTING_RECORD))
+
+
+@pytest.mark.parametrize("body", [
+    {"error": "invalid_grant"},
+    {"error": {"code": 401, "message": "Request had invalid authentication credentials"}},
+    {"detail": "Authentication failed"},
+    {"message": "Invalid API key"},
+])
+def test_an_error_answered_as_json_is_still_a_failure(body):
+    assert g.credential_failure(_post(response=json.dumps(body)))
+
+
+def test_a_failed_call_that_quotes_a_record_is_still_judged():
+    data = {"hook_event_name": "PostToolUseFailure", "tool_name": DRIVE,
+            "error": json.dumps({"note": ACE_ERROR})}
+    assert g.credential_failure(data)
+
+
 def test_a_failed_mcp_call_is_judged_whatever_its_length():
     data = {"hook_event_name": "PostToolUseFailure", "tool_name": DRIVE,
             "error": "y" * 3000 + "\n" + ACE_ERROR}
