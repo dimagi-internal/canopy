@@ -177,15 +177,16 @@ class Provider:
             raise ProviderError("bad-plaintext", "the sealed value has no refresh token or client id")
         self.check_hosts(plain)
 
-    def refresh(self, plain: dict, app: dict, *, now: Optional[float] = None) -> Tokens:
+    def refresh(self, plain: dict, app: dict, *, now: Optional[float] = None, http=None) -> Tokens:
         """Refresh at the provider. A returned refresh token (rotation) comes back in
-        ``Tokens.refresh_token``; the caller writes it back before relying on it."""
+        ``Tokens.refresh_token``; the caller writes it back before relying on it. ``http``
+        replaces :func:`post_form` for this call."""
         client_id, secret = self._checked(plain, app)
         form = {"grant_type": "refresh_token", "refresh_token": plain["refresh_token"],
                 "client_id": client_id, "client_secret": secret}
         secrets = (plain["refresh_token"], secret)
         now = time.time() if now is None else now
-        resp = self._post(self.token_url(plain), form, "refresh")
+        resp = self._post(self.token_url(plain), form, "refresh", http)
         body = resp.body
         if resp.status != 200 or (isinstance(body, dict) and "error" in body):
             raise self._error(resp, "refresh", secrets)
@@ -248,9 +249,9 @@ class Provider:
             return self.default_access_token_seconds
         return max(self.min_access_token_seconds, min(self.max_access_token_seconds, seconds))
 
-    def _post(self, url: str, form: dict, what: str) -> HttpResponse:
+    def _post(self, url: str, form: dict, what: str, http=None) -> HttpResponse:
         try:
-            return post_form(url, form, timeout=HTTP_TIMEOUT)
+            return (http or post_form)(url, form, timeout=HTTP_TIMEOUT)
         except ProviderError:
             raise
         except Exception as e:  # noqa: BLE001 - an injected transport's failure, typed

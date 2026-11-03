@@ -40,6 +40,8 @@ Commands::
 Exit codes (stable — agent-identity MCP servers shell out to `check`):
     0 allowed · 1 error (resolve failed) · 2 usage (no agent named or detectable)
     3 refused (stderr: one actionable paragraph) · 4 undetermined (could not decide)
+connection-token: `--runner` exits 3 when there is nothing for this box (silent) and 1 otherwise; a
+person's refusal (not enrolled, Use on my computers off, not connected) exits 2 with what to do.
 
 No command ever prints a secret value (google-token / connection-token print a path, not the token) — except
 `cred env --print-json`, whose caller is a runner process keeping the values in memory.
@@ -990,6 +992,8 @@ def delegated_google_token(slug: str, account: str, *, now: Optional[float] = No
 
 #: A staged/cached connection token is not handed out inside this many seconds of expiry.
 CONNECTION_MIN_LIFE = 300
+#: One call to canopy-web while opening a connection; well inside the 60 s refresh lease.
+CONNECTION_CALL_TIMEOUT = 15
 #: A provider key as canopy-web names it (`salesforce`): it becomes a file name and a URL segment.
 _PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 
@@ -1066,29 +1070,103 @@ def _write_connection_token(path: Path, body: dict) -> Path:
     return path
 
 
+def _error_code(e: Exception) -> str:
+    """The problem's `error`, also when CanopyError's 400-character cut broke its JSON."""
+    code = _problem(e).get("error")
+    if isinstance(code, str):
+        return code
+    m = re.search(r'"error"\s*:\s*"([a-z_]+)"', str(e))
+    return m.group(1) if m else ""
+
+
+#: This connection is not for this box right now: the runner stays silent.
+_RUNNER_SILENT = ("not_connected", "waiting", "revoking")
+#: A person is told what to do about it (contract §0.7: exit 2, the sentence and the command).
+_PERSON_REFUSED = ("not_connected", "waiting", "revoking", "needs_reconnect", "not_on_my_computers",
+                   "machine_not_enrolled", "device_proof_required")
+ENROLL_COMMAND = "canopy vault device --enroll"
+
+
 def _refusal(e: Exception, *, runner: bool, provider: str = "<provider>") -> CredError:
     """A canopy-web refusal as a CredError: its detail, then where to connect when it says.
-    Never a token. In runner mode `not_connected` is exit 3 (the runner stays silent)."""
+    Never a token. In runner mode `not_connected`, `waiting` and `revoking` are exit 3 (the
+    runner stays silent)."""
     body = _problem(e)
+    code = _error_code(e)
     detail = str(body.get("detail") or body.get("title") or str(e)[:300])
-    if runner and _status_of(e) == 409 and body.get("error") == "not_connected":
+    if runner and _status_of(e) == 409 and code in _RUNNER_SILENT:
         return CredError(detail, EXIT_REFUSED)
-    if _status_of(e) == 409 and body.get("error") == "ambiguous" and body.get("workspaces"):
+    if _status_of(e) == 409 and code == "ambiguous" and body.get("workspaces"):
         spaces = [str(w) for w in body["workspaces"]]
         detail += (f"\nYou hold this connection in several workspaces: {', '.join(spaces)}."
                    f"\nRe-run with --workspace, e.g. `canopy cred connection-token {provider} "
                    f"--workspace {spaces[0]}`.")
     if body.get("connect_url"):
         detail += f"\nConnect it in canopy-web: {body['connect_url']}"
+    if not runner and code in _PERSON_REFUSED:
+        if code in ("machine_not_enrolled", "device_proof_required") and ENROLL_COMMAND not in detail:
+            detail += f"\nEnroll this computer: {ENROLL_COMMAND}"
+        return CredError(detail, EXIT_USAGE)
     return CredError(detail)
+
+
+def _machine_ecdh(*, person: bool):
+    """This machine's ECDH key: what the envelopes are sealed to. Never creates one."""
+    from orchestrator import device_key
+    try:
+        ecdh = device_key.load_ecdh()
+    except device_key.DeviceKeyError as e:
+        raise CredError(f"this machine's key could not be opened: {e}") from None
+    if ecdh is None and person:
+        raise CredError(f"This computer holds no device key, so it cannot open a connection. Enroll it: "
+                        f"{ENROLL_COMMAND}", EXIT_USAGE)
+    if ecdh is None:
+        raise CredError("this box holds no device key, so it cannot open a connection")
+    return ecdh
+
+
+def _machine_call(token: str):
+    """canopy-web as this machine: `token`, a fresh device proof per request (each is
+    single-use and names its method and URL), and a timeout, because a hung call must not
+    outlive a refresh lease."""
+    from orchestrator import device_key
+    transport = _timeout_transport(CONNECTION_CALL_TIMEOUT)
+
+    def call(method: str, path: str, body=None) -> dict:
+        url = canopy_web.resolve_base_url(None) + path
+        return canopy_web.call(method, path, body, token=token, transport=transport,
+                               headers=device_key.proof_headers(method, url))
+    return call
+
+
+def _machine_token(paths, provider: str, call, *, runner: bool, min_life: int, refresh: bool,
+                   agent_id: Optional[str] = None) -> dict:
+    """`connections.access.access_token` for this machine, its refusals as CredErrors."""
+    from orchestrator import vault_zk_cli
+    from orchestrator.connections import access, trust
+
+    ecdh = _machine_ecdh(person=not runner)
+    try:
+        pins = vault_zk_cli.load_pins(trust.PINS_FILE)
+    except vault_zk_cli.ZkCliError as e:
+        raise CredError(str(e)) from None
+    try:
+        return access.access_token(paths, provider=provider, min_life=min_life, call=call, ecdh=ecdh, pins=pins,
+                                   agent_id=agent_id, refresh=refresh)
+    except canopy_web.CanopyError as e:
+        raise _refusal(e, runner=runner, provider=provider) from None
+    except (OSError, ValueError) as e:
+        raise CredError(f"could not reach canopy-web ({type(e).__name__})") from None
 
 
 def connection_token(provider: str, *, now: Optional[float] = None, refresh: bool = False,
                      workspace: str = "") -> Path:
-    """A PERSON's own token: POST /api/me/connections/<provider>/token with their PAT, written 0600
-    to ~/.canopy/connections/<provider>.json and reused until 5 minutes before it lapses.
-    `refresh` skips the file and asks canopy-web for a new token (`?refresh=true`). `workspace` picks
+    """A PERSON's own token, opened on this enrolled computer with their PAT and its device proof
+    (`connections.access`), written 0600 to ~/.canopy/connections/<provider>.json and reused until
+    5 minutes before it lapses. `refresh` skips the file and asks for a new token. `workspace` picks
     the connection held in that workspace (`?workspace=`) and caches to <provider>@<workspace>.json."""
+    from orchestrator.connections import access
+
     provider = _provider_key(provider)
     workspace = _workspace_slug(workspace) if workspace else ""
     now = time.time() if now is None else now
@@ -1100,40 +1178,62 @@ def connection_token(provider: str, *, now: Optional[float] = None, refresh: boo
     out = connection_token_path(provider, workspace=workspace)
     if not refresh and _usable(out, now):
         return out
-    query = [q for q in ("refresh=true" if refresh else "",
-                         f"workspace={quote(workspace, safe='')}" if workspace else "") if q]
-    path = f"/api/me/connections/{provider}/token" + (f"?{'&'.join(query)}" if query else "")
-    try:
-        body = canopy_web.call("POST", path, token=_human_token())
-    except canopy_web.CanopyError as e:
-        raise _refusal(e, runner=False, provider=provider) from None
+    query = f"?workspace={quote(workspace, safe='')}" if workspace else ""
+    paths = access.Paths(material=f"/api/me/connections/{provider}/material{query}",
+                         lease="/api/me/connections/{id}/refresh-lease",
+                         sealed="/api/me/connections/{id}/sealed",
+                         reconnect="/api/me/connections/{id}/reconnect-required")
+    body = _machine_token(paths, provider, _machine_call(_human_token()), runner=False,
+                          min_life=CONNECTION_MIN_LIFE, refresh=refresh)
     return _write_connection_token(out, body)
+
+
+def _runner_bearer(token: Optional[str]) -> str:
+    tok = token or os.environ.get("CANOPY_TOKEN", "").strip()
+    if tok:
+        return tok
+    from orchestrator import runner_session
+    return runner_session.token(canopy_web.resolve_base_url(None))
+
+
+def _agent_pk(slug: str, call) -> str:
+    """The primary key a statement lists `slug` by."""
+    try:
+        body = call("GET", f"/api/agents/{slug}/")
+    except canopy_web.CanopyError as e:
+        raise _refusal(e, runner=True) from None
+    except (OSError, ValueError) as e:
+        raise CredError(f"could not reach canopy-web ({type(e).__name__})") from None
+    pk = body.get("id") if isinstance(body, dict) else None
+    if type(pk) is not int:
+        raise CredError(f"canopy-web did not say which agent {slug} is")
+    return str(pk)
 
 
 def stage_connection_token(provider: str, slug: str, runner_id: str, turn_id: str, *,
                            token: Optional[str] = None, min_life: Optional[int] = None,
                            refresh: bool = False) -> Path:
-    """The RUNNER's half: with its own bearer (CANOPY_TOKEN), ask canopy-web for the token of the
-    `provider` connection `slug` uses and write it 0600 to ~/.canopy/connections/<slug>/<provider>.json.
-    `min_life` (seconds) is forwarded as `min_life_seconds`, so canopy-web refreshes rather than hand
-    back a cached token that lapses before the runner's next re-stage; `refresh` forces a new one.
+    """The RUNNER's half: with its bearer (CANOPY_TOKEN, else this box's runner token) and its device
+    proof, open the `provider` connection `slug` uses (`connections.access`) and write the access
+    token 0600 to ~/.canopy/connections/<slug>/<provider>.json. `min_life` (seconds): a token that
+    lapses sooner, before the runner's next re-stage, is refreshed here; `refresh` forces a new one.
     Exit 3 when the agent has no such connection (the runner treats that as silent)."""
+    from orchestrator.connections import access
+
     provider = _provider_key(provider)
-    tok = token or os.environ.get("CANOPY_TOKEN", "").strip()
+    tok = _runner_bearer(token)
     if not tok:
         raise CredError("--runner needs the runner's bearer in $CANOPY_TOKEN", EXIT_USAGE)
     if not runner_id or not turn_id:
         raise CredError("--runner needs --runner-id and --turn", EXIT_USAGE)
-    req: dict = {"provider": provider}
-    if min_life is not None:
-        req["min_life_seconds"] = min_life
-    if refresh:
-        req["refresh"] = True
-    try:
-        body = canopy_web.call("POST", f"/api/harness/runners/{runner_id}/turns/{turn_id}/connection-token",
-                               req, token=tok)
-    except canopy_web.CanopyError as e:
-        raise _refusal(e, runner=True) from None
+    box = f"/api/harness/runners/{runner_id}"
+    paths = access.Paths(material=f"{box}/turns/{turn_id}/connections/{provider}",
+                         lease=box + "/connections/{id}/refresh-lease",
+                         sealed=box + "/connections/{id}/sealed",
+                         reconnect=box + "/connections/{id}/reconnect-required")
+    call = _machine_call(tok)
+    body = _machine_token(paths, provider, call, runner=True, refresh=refresh, agent_id=_agent_pk(slug, call),
+                          min_life=CONNECTION_MIN_LIFE if min_life is None else min_life)
     return _write_connection_token(connection_token_path(provider, slug), body)
 
 
@@ -1351,9 +1451,9 @@ def _connection_token_options(f):
         click.option("--runner-id", "runner_id", default="", help="With --runner: this runner's id."),
         click.option("--turn", "turn", default="", help="With --runner: the turn's id."),
         click.option("--min-life", "min_life", type=click.IntRange(0, 3600), default=None,
-                     help="With --runner: seconds the token must still live, else canopy-web refreshes it."),
+                     help="With --runner: seconds the token must still live, else this box refreshes it."),
         click.option("--refresh", "refresh", is_flag=True,
-                     help="Ignore any cached token and have canopy-web refresh (after the provider answered 401)."),
+                     help="Ignore any stored token and refresh on this machine (after the provider answered 401)."),
         click.option("--workspace", "workspace", default=None,
                      help="Your connection held in this workspace (slug); needed when you hold the provider "
                           "in several. Your own token only: not with --agent / --runner."),
@@ -1394,8 +1494,10 @@ def connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life
     the file). `--workspace W` picks the connection you hold in workspace W (needed when you hold
     PROVIDER in several; cached as PROVIDER@W.json; refused with --agent / --runner). `--agent X` in a turn: the file the runner staged for X,
     ~/.canopy/connections/X/PROVIDER.json (no network). `--runner --agent X --runner-id R --turn T`:
-    the runner stages it (`--min-life S` forwarded; `--refresh` forces a new token); exit 3 when X
-    has no PROVIDER connection."""
+    the runner stages it (`--min-life S`: the life it must have left, else this box refreshes it;
+    `--refresh` forces a new token); exit 3 when X has no PROVIDER connection. The token is opened
+    and refreshed on this machine; canopy-web holds only sealed envelopes, so a person's computer
+    must be enrolled (`canopy vault device --enroll`) with Use on my computers turned on."""
     _connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh, workspace)
 
 

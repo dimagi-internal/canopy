@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -549,10 +550,16 @@ def load_pins(path: Optional[Path] = None) -> dict:
 def save_pins(pins: dict, path: Optional[Path] = None) -> None:
     p = path or pins_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(pins, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.chmod(0o600)
-    tmp.replace(p)
+    # A temp name of its own: two processes on one box save at once (two turns staging one
+    # connection), and sharing one would let a half-written file become the pins.
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(pins, indent=1, sort_keys=True) + "\n")
+        os.replace(tmp, p)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def fingerprint(jkt: str) -> str:
