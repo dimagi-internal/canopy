@@ -19,6 +19,9 @@ when it says present, blocks a stop whose closing message carries the status lin
 (`stop_hook_active` → never loop). It matches only the two fixed tokens the procedure itself
 mandates, so it is not a phrase classifier: the retired regex decide-guard taught that
 judging free-form hand-backs by pattern is whack-a-mole (agent-core/decide_guard.py).
+It reads only the message's last line, because that is where a status line goes. On
+2026-11-03 it blocked an answer to "why are you saying session is complete", because the
+answer quoted the phrase, and the agent had to send the whole message again.
 
 No presence record (a non-canopy session, or one that predates this hook), ABSENT, or any
 error → exit 0 silently. Never blocks an unattended turn.
@@ -87,6 +90,11 @@ def last_assistant_text(data: dict) -> str:
     return ""
 
 
+def last_line(text: str) -> str:
+    lines = [line for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
 def main() -> int:
     try:
         data = json.load(sys.stdin)
@@ -95,7 +103,7 @@ def main() -> int:
         rec = presence(str(data.get("session_id") or ""))
         if not rec or not rec.get("present"):
             return 0
-        if not STATUS_LINE.search(last_assistant_text(data)):
+        if not STATUS_LINE.search(last_line(last_assistant_text(data))):
             return 0
         print(json.dumps({"decision": "block",
                           "reason": REASON.format(origin=rec.get("origin") or "chat")}))

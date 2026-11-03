@@ -45,6 +45,11 @@ canopy CLI.
   board's *Waiting on you* is every open ask plus every task parked on a person. Raise one
   by creating the task with `ask_kind` + `ask_body` (MCP `create_tasks`, or
   `canopy agent-publish tasks <file.json>`); a task with no ask is simply work in flight.
+  **A next step that belongs to a person needs `waiting_on_email` or an ask.** Writing their name
+  in the next action does not reach their page. (2026-11-03: of 7 Hal cards waiting on the owner,
+  6 said so only in text, so his *Waiting on you* showed 1.) Write the ask or next action for
+  someone who has not seen the task: what it is, why they'd care, exactly what to do, and what
+  happens if they do nothing.
 
 The board groups by **who has the ball**: Suggested · Waiting on a human · agent
 working · Done.
