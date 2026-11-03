@@ -50,7 +50,7 @@ prompt always goes through, and the agent still has `who_is_asking` and the file
 
 **Vocabulary.** Every word in the summary — the agent roles (`owner` / `admin` /
 `member` / `contact` / `system`), access (`full` / `confined` / `none`),
-`granted_by`, turn mode — is defined in canopy-web's
+`permissions`, `granted_by`, turn mode — is defined in canopy-web's
 `docs/architecture/access.md` (ACCESS_DOC below). Envelope VERSION 2 renamed
 `relationship: caller` → `contact` and `profile: restricted` → `confined`; this
 hook reads both and always prints the new word. VERSION 3 adds `person` (canopy#804):
@@ -86,10 +86,10 @@ _RELATIONSHIP = {
 #: Envelope VERSION 1 words, and what they are called now.
 _LEGACY_RELATIONSHIP = {"caller": "contact"}
 _LEGACY_PROFILE = {"restricted": "confined"}
-#: What a `granted_by` basis means, for the bases that need saying.
+#: What a `granted_by` basis means, for the bases that need saying. (`granted_by` is only
+#: the REASON a permission is held; the permissions themselves are the decision.)
 _BASIS = {
-    "editor": "a workspace editor: the whole agent, but every turn runs manual",
-    "refused": "refused",
+    "refused": "refused: no permission here",
 }
 
 
@@ -300,9 +300,15 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         f"- relationship: {rel} — {_RELATIONSHIP.get(rel, 'unknown')}",
         f"- verified: {'yes' if verified else 'NO'} (assurance: {assurance})"
         + ("" if verified else " — who they say they are is a claim, not proven"),
-        f"- access: profile={profile_of(env)}, granted_by={env.get('granted_by') or 'unknown'}"
+        f"- access: profile={profile_of(env)}"
+        + (f", role={env['role']}" if env.get("role") else "")
+        + (f", permissions={', '.join(env['permissions']) or 'none'}"
+           if isinstance(env.get("permissions"), list) else "")
+        + f", granted_by={env.get('granted_by') or 'unknown'}"
         + (f" ({_BASIS[env['granted_by']]})" if env.get("granted_by") in _BASIS else "")
-        + (f", capability={cap.get('name')}" if cap.get("name") else ""),
+        + (f", capability={cap.get('name')}" if cap.get("name") else "")
+        + (" — `write` means they may steer you; whether a person approves outbound is "
+           "the turn mode below, a separate axis" if isinstance(env.get("permissions"), list) else ""),
         f"- turn mode: {mode}" + (f" ({basis})" if basis else "") + mode_note,
         f"- channel: {trigger.get('origin') or 'unknown'}"
         + (f", runner {trigger['runner']}" if trigger.get("runner") else "")

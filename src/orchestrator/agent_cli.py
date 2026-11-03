@@ -205,10 +205,9 @@ def agent_skills(slug, skills_root, url_template, json_file):
 
 @agent.group("interface")
 def agent_interface():
-    """An agent's DECLARED INTERFACE — who may make it do what: the whole agent for
-    trusted addresses (`full:`, e.g. contact@dimagi.com:verified), a confined
-    capability for everyone else. LIVE STATE held on canopy-web, never a file in
-    the agent's repo; also editable on the agent's Overview page."""
+    """An agent's DECLARED INTERFACE — the scoped `use:<capability>` permissions: what
+    everyone who does not hold `write` on the agent may make it do. LIVE STATE held on canopy-web, never a file
+    in the agent's repo; also editable on the agent's Overview page."""
 
 
 @agent_interface.command("get")

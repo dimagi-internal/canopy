@@ -112,10 +112,12 @@ def test_relationship_is_reported_in_todays_word(rel):
     assert resolve({**_env(), "relationship": rel}, RULES)["relationship"] == "contact"
 
 
-def test_a_workspace_editor_is_act_but_told_it_is_manual():
+def test_a_legacy_workspace_editor_is_act_and_manual_is_a_separate_axis():
     env = {**_env(kind="user"), "relationship": "member", "granted_by": "editor"}
     got = resolve(env, [])
-    assert got["tier"] == ACT and "MANUAL" in got["reason"]
+    assert got["tier"] == ACT and got["manual"] is False
+    assert resolve({**env, "turn_mode": {"mode": "manual"}}, [])["manual"] is True
+    assert resolve({**env, "manual_only": True}, [])["manual"] is True
 
 
 def test_a_confined_envelope_is_the_caller_tier_in_either_version():
@@ -181,3 +183,117 @@ def test_no_unproven_member_is_identical_to_today(value):
     got = resolve(env, RULES)
     assert got == resolve(base, RULES)
     assert "unproven_member" not in got
+
+
+# --- permissions: canopy-web's decision, read in its own vocabulary -------------------
+
+#: The bug: a verified connect-workspace editor, given `write` by an access-list line.
+_GRANT_LINE = "grant:workspace:connect::dimagi-associate.com"
+
+
+def _web(email="nlesh@dimagi-associate.com", **kw):
+    return {**_env(email, kind="user"), "relationship": "member", **kw}
+
+
+def test_write_via_an_access_list_line_is_act_not_unlisted():
+    env = _web(role="editor", profile="full", granted_by=_GRANT_LINE,
+               turn_mode={"mode": "manual", "basis": "editor: manual"})
+    got = resolve(env, [])
+    assert got["tier"] == ACT
+    assert got["role"] == "editor" and got["manual"] is True and got["granted_by"] == _GRANT_LINE
+
+
+def test_permissions_with_write_is_act_and_is_reported():
+    env = _web(role="editor", permissions=["agent_edit", "read", "write"], granted_by=_GRANT_LINE)
+    got = resolve(env, [])
+    assert got["tier"] == ACT and got["permissions"] == ["agent_edit", "read", "write"]
+
+
+def test_read_only_with_a_capability_line_is_caller():
+    env = _web(role="read_only", permissions=["read", "use:ask"], profile="confined",
+               granted_by="capability:ask", capability={"name": "ask"})
+    got = resolve(env, [])
+    assert got["tier"] == CALLER and "'ask'" in got["reason"] and got["role"] == "read_only"
+
+
+def test_a_scoped_use_permission_alone_is_caller_even_without_profile():
+    assert resolve(_web(permissions=["read", "use:ask"], granted_by=_GRANT_LINE), [])["tier"] == CALLER
+
+
+def test_read_without_a_capability_is_unlisted():
+    assert resolve(_web(permissions=["read"], profile="confined"), [])["tier"] == CALLER
+    assert resolve(_web(permissions=["read"], granted_by=_GRANT_LINE), [])["tier"] == UNLISTED
+
+
+def test_permissions_beat_granted_by_and_profile():
+    # an old word that says act, permissions that say no write
+    env = _web(permissions=["read", "use:ask"], granted_by="admin", profile="full",
+               capability={"name": "ask"})
+    assert resolve(env, [])["tier"] == CALLER
+    # an old word that says capability, permissions that hold write
+    assert resolve(_web(permissions=["read", "write"], granted_by="capability:ask"), [])["tier"] == ACT
+
+
+def test_permissions_never_act_on_a_refused_or_sensitive_basis():
+    for g in ("refused", "sensitive:ask"):
+        assert resolve(_web(permissions=["write"], profile="full", granted_by=g), [])["tier"] == UNLISTED
+
+
+def test_the_allowlist_does_not_override_a_refusal():
+    env = {**_env(), "granted_by": "refused"}
+    assert resolve(env, RULES)["tier"] == UNLISTED
+
+
+def test_a_profile_alone_decides_when_permissions_are_absent():
+    assert resolve(_web(profile="full", granted_by="whatever-new"), [])["tier"] == ACT
+    assert resolve(_web(profile="confined", granted_by="whatever-new"), [])["tier"] == CALLER
+
+
+def test_no_interface_ignores_permissions_and_keeps_the_allowlist():
+    env = {**_env(), "granted_by": "no-interface", "profile": "full", "permissions": ["write"]}
+    assert resolve(env, RULES)["tier"] == ACT
+    assert resolve({**env, "verified": False}, RULES)["tier"] == UNVERIFIED
+    assert resolve(env, [])["tier"] == UNLISTED
+
+
+def test_blocked_and_system_still_win_over_permissions():
+    env = _web(permissions=["write"], profile="full")
+    assert resolve({**env, "contact": {"is_blocked": True}}, [])["tier"] == BLOCKED
+    assert resolve({**env, "who": {"kind": "system", "via": "schedule"}}, [])["tier"] == SYSTEM
+
+
+# Every `granted_by` canopy-web emits, with NO `permissions` and NO `profile` (an older canopy-web).
+# A new value must be named here: it cannot silently become `unlisted`.
+_LEGACY_ONLY = [
+    ("owner", {}, ACT),
+    ("admin", {}, ACT),
+    ("system", {}, UNLISTED),  # kind=system is caught earlier; as a bare word it grants nothing
+    ("editor", {}, ACT),
+    ("full:contact@dimagi.com:verified", {}, ACT),
+    ("session:owner", {}, ACT),
+    ("session:admin", {}, ACT),
+    ("session:editor", {}, ACT),
+    ("session:read_write", {}, ACT),
+    ("session:read_only", {}, UNLISTED),
+    (_GRANT_LINE, {"role": "editor"}, ACT),
+    (_GRANT_LINE, {"role": "read_write"}, ACT),
+    (_GRANT_LINE, {"role": "read_only"}, UNLISTED),
+    (_GRANT_LINE, {}, UNLISTED),
+    ("grant:agent:ask::beth@x.org", {"role": "read_only", "capability": {"name": "ask"}}, CALLER),
+    ("capability:ask", {}, CALLER),
+    ("sensitive:ask", {}, UNLISTED),
+    ("refused", {}, UNLISTED),
+    ("no-interface", {}, UNLISTED),  # no allowlist match: the address below is not listed
+    ("brand-new-word", {}, UNLISTED),
+]
+
+
+@pytest.mark.parametrize("granted_by,extra,tier", _LEGACY_ONLY, ids=[g for g, _, _ in _LEGACY_ONLY])
+def test_every_granted_by_value_has_a_named_tier(granted_by, extra, tier):
+    env = {**_web("x@elsewhere.org"), "granted_by": granted_by, **extra}
+    assert resolve(env, [])["tier"] == tier
+
+
+def test_legacy_only_envelopes_report_no_permissions_key():
+    got = resolve({**_web(), "granted_by": "owner"}, [])
+    assert "permissions" not in got and got["role"] is None and got["manual"] is False
