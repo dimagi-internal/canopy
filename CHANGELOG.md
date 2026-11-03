@@ -9,6 +9,12 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.836] - 2026-11-03
+### Fixed
+- `canopy caller tier` read canopy-web's decision through a closed list of one-word `granted_by` values, so an asker given `write` by an access-list line (`grant:<line>`) fell through to `unlisted` and the agent refused to act. Real case: a verified connect-workspace editor (`granted_by: grant:workspace:connect::dimagi-associate.com`, role editor, profile full) resolved `unlisted`. It now reads the decision in canopy-web's own vocabulary: the envelope's `permissions` (act iff `write`), else `profile` (full → act, confined → caller), and only an older canopy-web with neither falls back to `granted_by` (now including `grant:` and `session:`). `refused` and `sensitive:` never act.
+### Changed
+- The tier output gains `role`, `permissions` (when sent) and `manual` (turn mode is manual, or `manual_only`). Tier names are unchanged; `act` now means "holds `write`" and `caller` means "confined to one capability". Whether a person approves outbound actions is the separate turn mode, never the tier: `agent-core/turn.md` and the `caller_context` hook say so, and the retired `full:<rule>` / "workspace editor runs manual" wording is gone.
+
 ## [0.2.831] - 2026-10-30
 ### Fixed
 - `canopy vault ws list` crashed with a `TypeError` on a workspace vault attached to a runner (the Claude-credentials vaults); it now prints `serves: runner <name>`.

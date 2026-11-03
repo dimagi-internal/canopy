@@ -257,12 +257,16 @@ def test_both_envelope_versions_render_todays_words(tmp_path, rel, prof):
     assert cc.ACCESS_DOC in text
 
 
-def test_the_editor_tier_is_said_plainly(tmp_path):
+def test_the_access_line_names_permissions_and_keeps_manual_a_separate_axis(tmp_path):
     env = {**ENV, "version": 2, "relationship": "member", "verified": True, "profile": "full",
-           "granted_by": "editor", "turn_mode": {"mode": "manual", "basis": "editor e@x: manual"}}
+           "role": "editor", "permissions": ["read", "write"],
+           "granted_by": "grant:workspace:connect::dimagi-associate.com",
+           "turn_mode": {"mode": "manual", "basis": "editor e@x: manual"}}
     text = cc.summarize(env, str(tmp_path / "e.json"), TID)
-    assert "granted_by=editor (a workspace editor: the whole agent, but every turn runs manual)" in text
+    assert "role=editor, permissions=read, write, granted_by=grant:workspace:connect" in text
+    assert "`write` means they may steer you" in text and "separate axis" in text
     assert "turn mode: manual" in text
+    assert "every turn runs manual" not in text
 
 
 TRIGGER = {"id": 22, "name": "AWS CloudWatch alarms", "kind": "inbound_mail",
