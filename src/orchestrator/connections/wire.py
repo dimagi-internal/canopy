@@ -54,6 +54,8 @@ ACCESS_KEYS = frozenset({"v", "access_token", "expires_at", "instance_url", "acc
                          "statement_floor"})
 
 _STATEMENT_KEYS = frozenset({"account_id", "agents", "connection", "endorsers", "my_computers", "v", "version"})
+#: Optional: the thumbprint of the canopy-web instance's key the owner lets serve this connection.
+_OPTIONAL_STATEMENT_KEYS = frozenset({"canopy_web"})
 _SIG_KEYS = frozenset({"by", "expect", "macs"})
 _BY_KEYS = frozenset({"kind", "target", "public_jwk"})
 _JWK_KEYS = frozenset({"kty", "crv", "x", "y"})
@@ -166,8 +168,14 @@ def _sorted_unique(items, pattern: re.Pattern, what: str) -> None:
 
 
 def _statement_shape(st) -> dict:
-    if not isinstance(st, dict) or set(st) != _STATEMENT_KEYS:
-        raise _bad_statement(f"must be an object with exactly {sorted(_STATEMENT_KEYS)}")
+    if not isinstance(st, dict) or not _STATEMENT_KEYS <= set(st) <= _STATEMENT_KEYS | _OPTIONAL_STATEMENT_KEYS:
+        detail = (f"must be an object with exactly {sorted(_STATEMENT_KEYS)} and optionally "
+                  f"{sorted(_OPTIONAL_STATEMENT_KEYS)}")
+        if isinstance(st, dict) and set(st) - _STATEMENT_KEYS - _OPTIONAL_STATEMENT_KEYS:
+            detail += ". If this machine's canopy is old, update it."
+        raise _bad_statement(detail)
+    if "canopy_web" in st and not (isinstance(st["canopy_web"], str) and _B64U_32.fullmatch(st["canopy_web"])):
+        raise _bad_statement("canopy_web must be a 43-character thumbprint when present")
     if type(st["v"]) is not int or st["v"] != 1:
         raise _bad_statement("v must be 1")
     if type(st["version"]) is not int or st["version"] < 1:

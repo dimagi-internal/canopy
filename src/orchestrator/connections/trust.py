@@ -244,7 +244,8 @@ def _vouched_for(jkt: str, material: dict, statement: dict, owner_jkt: str) -> b
 
 
 def _device_allowed(jkt: str, material: dict, statement: dict, owner_jkt: str) -> bool:
-    return jkt in statement["my_computers"] or _vouched_for(jkt, material, statement, owner_jkt)
+    return (jkt in statement["my_computers"] or jkt == statement.get("canopy_web")
+            or _vouched_for(jkt, material, statement, owner_jkt))
 
 
 def _who(row: dict) -> str:

@@ -776,3 +776,51 @@ def test_the_plaintext_check_needs_a_shaped_statement(statement):
     with pytest.raises(TrustError) as e:
         trust.check_plain(_refresh_plain(), None, statement)
     assert e.value.code == "bad-statement"
+
+
+# ── canopy_web: an optional recipient the owner may name ─────────────────────────────
+
+_, CW_JWK = _key()
+CW = zk.jwk_thumbprint(CW_JWK)
+
+
+def _cw_material(statement) -> dict:
+    m = _material(statement)
+    m["recipients"].append(_row(CW_JWK))
+    return m
+
+
+def test_writer_allowed_accepts_named_canopy_web():
+    m = _cw_material(_statement(canopy_web=CW))
+    assert trust.writer_allowed(_by("device", CW, CW_JWK), m, m["statement"], owner_jkt=O)
+
+
+def test_writer_allowed_refuses_canopy_web_when_statement_omits_it():
+    m = _cw_material(_statement())
+    assert not trust.writer_allowed(_by("device", CW, CW_JWK), m, m["statement"], owner_jkt=O)
+    # Naming another key admits nothing for this one.
+    m = _cw_material(_statement(canopy_web=MY_BOX))
+    assert not trust.writer_allowed(_by("device", CW, CW_JWK), m, m["statement"], owner_jkt=O)
+
+
+def test_allowed_keeps_canopy_web_recipient_when_named(res):
+    m = _cw_material(_statement(canopy_web=CW))
+    got = _allowed(m, res)
+    assert got[("device", CW)] == CW_JWK
+    assert ("device", CW, CW_JWK) in trust.refuse_unallowed(m["recipients"], got)
+
+
+def test_allowed_skips_canopy_web_row_when_not_named(res):
+    m = _cw_material(_statement())
+    got = _allowed(m, res)
+    assert ("device", CW) not in got
+    assert any(CW[:8] in s for s in res.skipped)
+
+
+@pytest.mark.parametrize("bad", ["", None, "short", CW + "="])
+def test_a_malformed_canopy_web_admits_nobody(bad, res):
+    st = _statement(canopy_web=bad)
+    m = _cw_material(st)
+    with pytest.raises(TrustError):
+        _allowed(m, res)
+    assert not trust.writer_allowed(_by("device", CW, CW_JWK), m, st, owner_jkt=O)
