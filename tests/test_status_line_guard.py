@@ -60,6 +60,12 @@ def test_present_without_a_status_line_stops_normally(root, monkeypatch, capsys)
     assert _stop(monkeypatch, capsys, last_assistant_message="Done — PR #12 merged.") is None
 
 
+def test_quoting_the_line_while_explaining_it_stops_normally(root, monkeypatch, capsys):
+    _presence(root, "canopy_web_chat", True)
+    msg = 'That "Session complete" line is for unattended turns.\n\nThe superuser roles are still open.'
+    assert _stop(monkeypatch, capsys, last_assistant_message=msg) is None
+
+
 def test_it_never_loops(root, monkeypatch, capsys):
     _presence(root, "canopy_web_chat", True)
     assert _stop(monkeypatch, capsys, last_assistant_message=CLOSE, stop_hook_active=True) is None

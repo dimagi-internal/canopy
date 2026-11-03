@@ -1032,9 +1032,12 @@ whether the turn was worth running:
 
 1. **Owner-waiting items come first, as an ask, not as work.** List every open task whose next
    step is the owner's (`waiting_on_email` set, an open ask, a next action that says "waiting on
-   <owner>" / "needs <owner>'s OK"). Each becomes ONE line at the top of your summary — what is
-   ready, the exact yes you need, what happens on yes. That line is usually the most valuable
-   thing a turn produces: a decision they can make in ten seconds that unblocks finished work.
+   <owner>" / "needs <owner>'s OK"). Each goes at the top of your summary, written for someone who
+   has not seen the task: what it is, why they'd care, exactly what to do, and what happens if
+   they do nothing. Check any fact you repeat from a card against live state first. Set
+   `waiting_on_email` on any that only say so in text, so they reach the owner's page. That ask
+   is usually the most valuable thing a turn produces: a decision they can make in ten seconds
+   that unblocks finished work.
    **Never write "nothing waiting on you" while such a task is open** — check the list, don't
    recall it.
 2. **Rank the top three candidates by what each moves for the owner** — a launch it unblocks, a
