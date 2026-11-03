@@ -449,10 +449,14 @@ RID, TID = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-2222
 
 
 @pytest.fixture()
-def sf(monkeypatch):
-    """Fake canopy-web at the `canopy_web.call` boundary; `reply` is a body or a CanopyError."""
+def sf(monkeypatch, tmp_path):
+    """The command's side of `connections.access`: what it asks for, its route, token and proof.
+    `reply` is a body or a CanopyError; opening envelopes is tests/test_connection_access.py's."""
     import datetime as dt
-    state = {"calls": [], "reply": None}
+
+    from orchestrator import device_key, runner_session
+    from orchestrator.connections import access, trust
+    state = {"calls": [], "reply": None, "asked": []}
 
     def default():
         exp = (dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)).isoformat()
@@ -460,13 +464,25 @@ def sf(monkeypatch):
                 "expires_at": exp, "account_label": "jj@dimagi.com"}
 
     def fake_call(method, path, body=None, **kw):
-        state["calls"].append({"method": method, "path": path, "body": body, "token": kw.get("token")})
+        if path == "/api/agents/eva/":
+            return {"id": 12}
+        state["calls"].append({"method": method, "path": path, "body": body, "token": kw.get("token"),
+                               "proof": (kw.get("headers") or {}).get("DPoP")})
         reply = state["reply"] if state["reply"] is not None else default()
         if isinstance(reply, Exception):
             raise reply
         return reply
 
+    def fake_access_token(paths, *, call, **kw):
+        state["asked"].append({"paths": paths, **kw})
+        return call("GET", paths.material)
+
     monkeypatch.setattr(cred_cli.canopy_web, "call", fake_call)
+    monkeypatch.setattr(access, "access_token", fake_access_token)
+    monkeypatch.setattr(device_key, "load_ecdh", lambda: object())
+    monkeypatch.setattr(device_key, "proof_headers", lambda method, url: {"DPoP": f"proof {method}"})
+    monkeypatch.setattr(runner_session, "token", lambda *a, **k: "")
+    monkeypatch.setattr(trust, "PINS_FILE", tmp_path / "connection-pins.json")
     monkeypatch.delenv("CANOPY_TURN_ID", raising=False)
     monkeypatch.delenv("CANOPY_AGENT_SLUG", raising=False)
     monkeypatch.delenv("CANOPY_AGENT", raising=False)
@@ -497,8 +513,10 @@ def test_sf_human_writes_a_private_file_and_prints_only_its_path(sf, tmp_path):
     assert staged["access_token"] == SF_TOKEN and staged["account_label"] == "jj@dimagi.com"
     assert staged["instance_url"] == "https://dimagi.my.salesforce.com"
     assert isinstance(staged["expires_at"], (int, float))
-    assert sf["calls"] == [{"method": "POST", "path": "/api/me/connections/salesforce/token",
-                            "body": None, "token": "pat_human"}]
+    assert sf["calls"] == [{"method": "GET", "path": "/api/me/connections/salesforce/material",
+                            "body": None, "token": "pat_human", "proof": "proof GET"}]
+    assert sf["asked"][0]["min_life"] == cred_cli.CONNECTION_MIN_LIFE and sf["asked"][0]["refresh"] is False
+    assert sf["asked"][0]["provider"] == "salesforce" and sf["asked"][0]["agent_slug"] is None
     _assert_no_token(res)
 
 
@@ -533,9 +551,13 @@ def test_sf_runner_stages_under_the_agent_dir_via_the_runner_route(sf, tmp_path)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
     assert json.loads(path.read_text())["access_token"] == SF_TOKEN
-    assert sf["calls"] == [{"method": "POST",
-                            "path": f"/api/harness/runners/{RID}/turns/{TID}/connection-token",
-                            "body": {"provider": "salesforce"}, "token": "crt_runner"}]
+    assert sf["calls"] == [{"method": "GET", "path": f"/api/harness/runners/{RID}/turns/{TID}/connections/salesforce",
+                            "body": None, "token": "crt_runner", "proof": "proof GET"}]
+    paths = sf["asked"][0]["paths"]
+    assert paths.lease == f"/api/harness/runners/{RID}/connections/{{id}}/refresh-lease"
+    assert paths.sealed == f"/api/harness/runners/{RID}/connections/{{id}}/sealed"
+    assert paths.reconnect == f"/api/harness/runners/{RID}/connections/{{id}}/reconnect-required"
+    assert sf["asked"][0]["agent_slug"] == "eva"
     _assert_no_token(res)
 
 
@@ -546,8 +568,16 @@ def test_sf_runner_not_connected_exits_3_and_stages_nothing(sf, tmp_path):
     assert not (tmp_path / "home" / ".canopy" / "connections" / "eva" / "salesforce.json").exists()
 
 
+def test_sf_runner_waiting_exits_4_and_stages_nothing(sf, tmp_path):
+    sf["reply"] = _conflict("waiting")
+    res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, env={"CANOPY_TOKEN": "crt_runner"})
+    assert res.exit_code == cred_cli.EXIT_WAITING == 4
+    assert not (tmp_path / "home" / ".canopy" / "connections" / "eva" / "salesforce.json").exists()
+    _assert_no_token(res)
+
+
 def test_sf_runner_other_refusals_are_nonzero_with_the_detail(sf):
-    sf["reply"] = _conflict("reconnect_required",
+    sf["reply"] = _conflict("needs_reconnect",
                             detail="eva's Salesforce connection no longer works; connect it again.")
     res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, env={"CANOPY_TOKEN": "crt_runner"})
     assert res.exit_code not in (0, 3)
@@ -614,20 +644,20 @@ def test_sf_human_path_is_refused_inside_an_agent_turn(sf, tmp_path, monkeypatch
 
 # ── connection-token: --refresh and --min-life ───────────────────────────────
 
-def test_sf_human_refresh_skips_the_file_and_asks_the_server_to_refresh(sf, tmp_path):
+def test_sf_human_refresh_skips_the_file_and_asks_for_a_new_token(sf, tmp_path):
     _sf()
     assert len(sf["calls"]) == 1
     res = _sf("--refresh")
     assert res.exit_code == 0, res.output
-    assert sf["calls"][1]["path"] == "/api/me/connections/salesforce/token?refresh=true"
+    assert len(sf["calls"]) == 2 and sf["asked"][1]["refresh"] is True
     _assert_no_token(res)
 
 
-def test_sf_runner_forwards_min_life_and_refresh(sf, tmp_path):
+def test_sf_runner_passes_on_min_life_and_refresh(sf, tmp_path):
     res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, "--min-life", "900", "--refresh",
               env={"CANOPY_TOKEN": "crt_runner"})
     assert res.exit_code == 0, res.output
-    assert sf["calls"][0]["body"] == {"provider": "salesforce", "min_life_seconds": 900, "refresh": True}
+    assert sf["asked"][0]["min_life"] == 900 and sf["asked"][0]["refresh"] is True
 
 
 def test_sf_min_life_and_refresh_belong_to_the_server_modes(sf, tmp_path):
@@ -648,12 +678,12 @@ def test_connection_token_names_its_files_and_routes_by_provider(sf, tmp_path):
     person = tmp_path / "home" / ".canopy" / "connections" / "intacct.json"
     assert res.exit_code == 0, res.output
     assert res.output.strip() == str(person)
-    assert sf["calls"][-1]["path"] == "/api/me/connections/intacct/token"
+    assert sf["calls"][-1]["path"] == "/api/me/connections/intacct/material"
     res = _ct("intacct", "--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID,
               env={"CANOPY_TOKEN": "crt_runner"})
     staged = tmp_path / "home" / ".canopy" / "connections" / "eva" / "intacct.json"
     assert res.exit_code == 0 and res.output.strip() == str(staged)
-    assert sf["calls"][-1]["body"] == {"provider": "intacct"}
+    assert sf["calls"][-1]["path"] == f"/api/harness/runners/{RID}/turns/{TID}/connections/intacct"
     res = _ct("intacct", "--agent", "eva")
     assert res.exit_code == 0 and res.output.strip() == str(staged)
     _assert_no_token(res)
@@ -693,14 +723,15 @@ def test_connection_token_workspace_is_sent_as_a_query_param_and_keys_the_cache(
     base = tmp_path / "home" / ".canopy" / "connections"
     assert res.exit_code == 0, res.output
     assert res.output.strip() == str(base / "salesforce@dimagi.json")
-    assert sf["calls"][-1]["path"] == "/api/me/connections/salesforce/token?workspace=dimagi"
+    assert sf["calls"][-1]["path"] == "/api/me/connections/salesforce/material?workspace=dimagi"
     _ct("salesforce", "--workspace", "dimagi")
     assert len(sf["calls"]) == 1                      # reused from its own file
     _ct("salesforce", "--workspace", "other-ws", "--refresh")
-    assert sf["calls"][-1]["path"] == "/api/me/connections/salesforce/token?refresh=true&workspace=other-ws"
+    assert sf["calls"][-1]["path"] == "/api/me/connections/salesforce/material?workspace=other-ws"
+    assert sf["asked"][-1]["refresh"] is True
     _ct("salesforce")
     assert (base / "salesforce.json").exists() and (base / "salesforce@other-ws.json").exists()
-    assert sf["calls"][-1]["path"] == "/api/me/connections/salesforce/token"
+    assert sf["calls"][-1]["path"] == "/api/me/connections/salesforce/material"
 
 
 def test_salesforce_token_alias_takes_workspace(sf):

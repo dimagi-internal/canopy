@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -549,10 +550,16 @@ def load_pins(path: Optional[Path] = None) -> dict:
 def save_pins(pins: dict, path: Optional[Path] = None) -> None:
     p = path or pins_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(pins, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.chmod(0o600)
-    tmp.replace(p)
+    # A temp name of its own: two processes on one box save at once (two turns staging one
+    # connection), and sharing one would let a half-written file become the pins.
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(pins, indent=1, sort_keys=True) + "\n")
+        os.replace(tmp, p)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def fingerprint(jkt: str) -> str:
@@ -981,7 +988,9 @@ def settle_cmd(slug):
 def keep_cmd(as_json):
     """Pass on every vault key this runner holds to whoever is waiting and trusted: a
     member of the agent's vault (pinned on first sight), or a machine a trusted person
-    endorsed. The runner runs this on its own clock; safe to run by hand any time."""
+    endorsed. A cloud box also re-seals the connections it holds for machines their owner's
+    signed statement allows, and revokes those being disconnected. The runner runs this on
+    its own clock; safe to run by hand any time."""
     # vault_keeper imports this module's helpers, so it is imported here, at the call.
     from orchestrator import vault_keeper
 
