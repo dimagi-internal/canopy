@@ -73,7 +73,7 @@ def pending_work(call, runner_id: str) -> tuple[list, list[KeepResult]]:
     """``(work, trouble)``: failing to ask stops no other keeper work. A canopy-web without
     the route has none to give."""
     try:
-        body = call("GET", f"/api/harness/runners/{runner_id}/vault-keeper/connections")
+        body = call("GET", f"{_box(runner_id)}/vault-keeper/connections")
     except canopy_web.CanopyError as e:
         if _status_of(e) == 404:
             return [], []
@@ -86,7 +86,7 @@ def pending_work(call, runner_id: str) -> tuple[list, list[KeepResult]]:
     return work, []
 
 
-def keep_all(work: list, *, call, ecdh, http=None) -> list[KeepResult]:
+def keep_all(work: list, *, runner_id: str, call, ecdh, http=None) -> list[KeepResult]:
     """Every connection in ``work``. ``pins`` is :data:`trust.PINS_FILE`'s content, never the
     vault keeper's people: a damaged file means no connection can be judged this pass."""
     if not work:
@@ -95,22 +95,23 @@ def keep_all(work: list, *, call, ecdh, http=None) -> list[KeepResult]:
         pins = vault_zk_cli.load_pins(trust.PINS_FILE)
     except vault_zk_cli.ZkCliError as e:
         return [_unfinished(str(e))]
-    return [keep_connection(w, pins=pins, call=call, ecdh=ecdh, http=http) for w in work]
+    return [keep_connection(w, runner_id=runner_id, pins=pins, call=call, ecdh=ecdh, http=http) for w in work]
 
 
-def keep_connection(work: dict, *, pins: dict, call, ecdh, http=None) -> KeepResult:
+def keep_connection(work: dict, *, runner_id: str, pins: dict, call, ecdh, http=None) -> KeepResult:
     """One connection a box holds (``ConnectionKeeperWorkOut``). ``pins`` is
     :data:`trust.PINS_FILE`'s content, ``http`` replaces the provider transport. Never raises
-    for anything this connection did."""
+    for anything this connection did. Writes go to paths built here, from this runner and the
+    connection the owner signed for, never to one canopy-web names."""
     res = KeepResult(_label(work), kind=KIND)
     try:
         provider = work.get("provider") if isinstance(work, dict) else None
         read = access.checked_read(work, provider=provider, ecdh=ecdh, pins=pins)
         if work.get("revoking") is True:
             access.save_pin(read.statement, read.owner_jkt, pins)
-            _revoke(read, res, call, http)
+            _revoke(read, res, call, http, f"{_box(runner_id)}/connections/{read.connection_id}/revoked")
         else:
-            _reseal(read, res, call, ecdh, pins)
+            _reseal(read, res, call, ecdh, pins, f"{_box(runner_id)}/vault-keeper/connections/{read.connection_id}")
     except (trust.TrustError, wire.WireError, zk.ZkError, providers.ProviderError, CredError) as e:
         res.error = f"refused this connection ({e})"
     except canopy_web.CanopyError as e:
@@ -118,6 +119,10 @@ def keep_connection(work: dict, *, pins: dict, call, ecdh, http=None) -> KeepRes
     except Exception as e:  # noqa: BLE001 - one connection must not stop the pass; by type, so no value leaks
         res.error = f"could not finish this connection ({type(e).__name__})"
     return res
+
+
+def _box(runner_id: str) -> str:
+    return f"/api/harness/runners/{runner_id}"
 
 
 def _label(work) -> str:
@@ -128,7 +133,7 @@ def _label(work) -> str:
 
 # ---- re-sealing ----------------------------------------------------------------------
 
-def _reseal(read: access._Read, res: KeepResult, call, ecdh, pins: dict) -> None:
+def _reseal(read: access._Read, res: KeepResult, call, ecdh, pins: dict, path: str) -> None:
     material = read.material
     if material.get("access_sealed") and read.access is None:
         res.error = ("holds an access envelope this box cannot open, and a re-seal must carry it: "
@@ -145,7 +150,7 @@ def _reseal(read: access._Read, res: KeepResult, call, ecdh, pins: dict) -> None
         return
     rows = [(kind, target, jwk) for (kind, target), jwk in allowed.items()
             if (kind, target) in held or (kind == "device" and target in new)]
-    call("PUT", material["reseal_path"], _sealed_body(read, rows, ecdh))
+    call("PUT", path, _sealed_body(read, rows, ecdh))
     res.granted = [f"{_name(material, target)} — ECDH key {target[:16]}…" for target in sorted(new)]
 
 
@@ -187,7 +192,7 @@ def _name(material: dict, target: str) -> str:
 
 # ---- revoking ------------------------------------------------------------------------
 
-def _revoke(read: access._Read, res: KeepResult, call, http) -> None:
+def _revoke(read: access._Read, res: KeepResult, call, http, path: str) -> None:
     """At the provider only when told, then confirm what it definitely answered."""
     revoked, error = True, ""
     outcome = "disconnected here; another connection of this account remains, so not revoked at the provider"
@@ -204,7 +209,7 @@ def _revoke(read: access._Read, res: KeepResult, call, http) -> None:
             else:
                 revoked, error = False, _revoke_code(e)
     try:
-        call("POST", read.material["revoked_path"], {"revoked": revoked, "error": error})
+        call("POST", path, {"revoked": revoked, "error": error})
     except canopy_web.CanopyError as e:
         if _status_of(e) != 404:  # 404: another holder confirmed first
             raise

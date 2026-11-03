@@ -335,11 +335,11 @@ def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
                 out.append(keep_delegated(d, pins=pins, call=call, ecdh=ecdh))
             save_pins(pins, pins_file)
     except Exception:
-        kept = trouble + connection_keep.keep_all(connections, call=machine_call, ecdh=ecdh)
+        kept = trouble + connection_keep.keep_all(connections, runner_id=runner_id, call=machine_call, ecdh=ecdh)
         if kept:
             print(render(kept))
         raise
-    return out + trouble + connection_keep.keep_all(connections, call=machine_call, ecdh=ecdh)
+    return out + trouble + connection_keep.keep_all(connections, runner_id=runner_id, call=machine_call, ecdh=ecdh)
 
 
 def render(results: list[KeepResult]) -> str:

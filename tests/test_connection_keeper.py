@@ -28,6 +28,7 @@ ACCOUNT = "00D000000000001/005000000000001"
 OWNER_ID = "7"
 RID = "11111111-1111-1111-1111-111111111111"
 BASE = "https://canopy.test"
+RESEAL = f"/api/harness/runners/{RID}/vault-keeper/connections/{CONN}"
 ACCESS_TOKEN = "sf-access-never-printed"
 REFRESH = "sf-refresh-never-printed"
 SECRET = "app-client-secret-never-printed"
@@ -148,14 +149,13 @@ class KeeperWeb:
                 "endorsements": self.endorsements, "recipients": self.recipients,
                 "app": {"client_id": self.client_id, "client_secret": SECRET, "options": {}},
                 "lease": None, "rotates_refresh_token": True,
-                "waiting": list(waiting), "revoking": revoking, "revoke_at_provider": revoke_at_provider,
-                "reseal_path": f"/keeper/{self.conn}", "revoked_path": f"/revoked/{self.conn}"}
+                "waiting": list(waiting), "revoking": revoking, "revoke_at_provider": revoke_at_provider}
 
     def __call__(self, method, path, body=None):
         self.order.append(f"{method} {path}")
-        if method == "PUT" and path == f"/keeper/{self.conn}":
+        if method == "PUT" and path == f"/api/harness/runners/{RID}/vault-keeper/connections/{self.conn}":
             return self._reseal(path, body)
-        if method == "POST" and path == f"/revoked/{self.conn}":
+        if method == "POST" and path == f"/api/harness/runners/{RID}/connections/{self.conn}/revoked":
             self.confirmed.append(body)
             if self.confirm_failure:
                 status, error = self.confirm_failure
@@ -237,7 +237,7 @@ def http(fake_web):
 
 
 def _keep(fake_web, work, *, http=None, pins=None, ecdh=BOX):
-    return keep_connection(work, pins={} if pins is None else pins, call=fake_web, ecdh=ecdh, http=http)
+    return keep_connection(work, runner_id=RID, pins={} if pins is None else pins, call=fake_web, ecdh=ecdh, http=http)
 
 
 def _entries(value) -> set:
@@ -558,7 +558,7 @@ def test_a_pin_that_cannot_be_saved_stops_the_write(fake_web, _pins_file):
 
 def test_keeper_revokes_then_confirms(fake_web, http):
     res = _keep(fake_web, fake_web.work(revoking=True, revoke_at_provider=True), http=http)
-    assert fake_web.order == ["revoke@provider", f"POST /revoked/{CONN}"]
+    assert fake_web.order == ["revoke@provider", f"POST /api/harness/runners/{RID}/connections/{CONN}/revoked"]
     assert http.urls == ["https://login.salesforce.com/services/oauth2/revoke"]
     assert http.forms[0]["token"] == REFRESH and http.forms[0]["client_secret"] == SECRET
     assert fake_web.confirmed == [{"revoked": True, "error": ""}]
@@ -587,7 +587,7 @@ def test_a_google_disconnect_revokes_only_when_told(told, urls):
     web.provider = "google"
     web.seal_refresh(_google_plain())
     http = Http(web)
-    res = keep_connection(web.work(revoking=True, revoke_at_provider=told), pins={}, call=web, ecdh=BOX, http=http)
+    res = keep_connection(web.work(revoking=True, revoke_at_provider=told), runner_id=RID, pins={}, call=web, ecdh=BOX, http=http)
     assert res.error == "" and http.urls == urls
     assert web.confirmed == [{"revoked": True, "error": ""}]
 
@@ -726,7 +726,7 @@ def test_an_unexpected_failure_is_named_by_its_type_only(fake_web):
     def explode(*a, **k):
         raise RuntimeError(f"holding {REFRESH} and {ACCESS_TOKEN}")
 
-    res = keep_connection(fake_web.work(fake_web.waiting_for(MY_LAPTOP)), pins={}, call=explode, ecdh=BOX)
+    res = keep_connection(fake_web.work(fake_web.waiting_for(MY_LAPTOP)), runner_id=RID, pins={}, call=explode, ecdh=BOX)
     assert "RuntimeError" in res.error
     _assert_no_secret(_text(res))
 
@@ -735,7 +735,7 @@ def test_a_lost_connection_to_canopy_web_is_an_error_not_a_crash(fake_web):
     def lost(*a, **k):
         raise ConnectionError(f"lost, holding {REFRESH}")
 
-    res = keep_connection(fake_web.work(fake_web.waiting_for(MY_LAPTOP)), pins={}, call=lost, ecdh=BOX)
+    res = keep_connection(fake_web.work(fake_web.waiting_for(MY_LAPTOP)), runner_id=RID, pins={}, call=lost, ecdh=BOX)
     assert res.error and res.granted == []
     _assert_no_secret(_text(res))
 
@@ -791,7 +791,7 @@ class Server:
                 return self.connections_status, json.dumps({"error": "nope", "detail": "nope"})
             return 200, json.dumps({"connections": self.work})
         for web in self.webs:
-            if path.endswith(web.conn):
+            if web.conn in path:
                 try:
                     return 200, json.dumps(web(method, path, body))
                 except canopy_web.CanopyError as e:
@@ -833,7 +833,7 @@ def test_connection_routes_carry_a_device_proof_and_the_vault_route_stays_as_it_
     assert "DPoP" not in by_path[f"GET /api/harness/runners/{RID}/vault-keeper"]
     conn_get = f"GET /api/harness/runners/{RID}/vault-keeper/connections"
     assert by_path[conn_get]["DPoP"] == f"proof GET {BASE}/api/harness/runners/{RID}/vault-keeper/connections"
-    assert by_path[f"PUT /keeper/{CONN}"]["DPoP"] == f"proof PUT {BASE}/keeper/{CONN}"
+    assert by_path[f"PUT {RESEAL}"]["DPoP"] == f"proof PUT {BASE}{RESEAL}"
     assert all(h["Authorization"] == "Bearer runner-token" for _, _, h in server.requests)
 
 
@@ -929,6 +929,15 @@ def test_run_keep_revokes_through_the_provider_transport(fake_web, box, monkeypa
     assert results[0].done
 
 
+def test_writes_go_where_this_box_says_never_where_canopy_web_says(fake_web, http):
+    """canopy-web's work may name any path; the box would otherwise send it a proof and sealed
+    envelopes wherever a compromised server pointed, on its own host."""
+    res = _keep(fake_web, {**fake_web.work(fake_web.waiting_for(MY_LAPTOP)), "reseal_path": "/api/elsewhere"})
+    assert res.error == "" and f"PUT {RESEAL}" in fake_web.order
+    _keep(fake_web, {**fake_web.work(revoking=True), "revoked_path": "/api/elsewhere"}, http=http)
+    assert f"POST /api/harness/runners/{RID}/connections/{CONN}/revoked" in fake_web.order
+
+
 def test_render_names_a_connections_outcomes(fake_web):
     res = _keep(fake_web, fake_web.work(fake_web.waiting_for(MY_LAPTOP, STRANGER)))
     text = vault_keeper.render([res])
@@ -960,7 +969,7 @@ def test_what_canopy_web_says_in_a_refusal_is_not_repeated(fake_web):
     def refuses(method, path, body=None):
         raise canopy_web.CanopyError(f'{method} {path} -> 409: {{"error": "zk_value_changed", "detail": "{REFRESH}"}}')
 
-    res = keep_connection(fake_web.work(fake_web.waiting_for(MY_LAPTOP)), pins={}, call=refuses, ecdh=BOX)
+    res = keep_connection(fake_web.work(fake_web.waiting_for(MY_LAPTOP)), runner_id=RID, pins={}, call=refuses, ecdh=BOX)
     assert "zk_value_changed" in res.error
     _assert_no_secret(_text(res))
 
