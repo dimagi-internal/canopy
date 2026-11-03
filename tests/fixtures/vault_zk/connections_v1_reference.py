@@ -13,11 +13,16 @@ encodings (b64u = base64url WITHOUT padding; jkt = RFC 7638 thumbprint).
 2. ENVELOPES. Two zk-v1 §6 "zks1" values per connection, both at kv = 0:
      name "refresh" (stored as `sealed`)         plaintext = compact UTF-8 JSON
        {"v":1,"provider","refresh_token","client_id","login_host","instance_url",
-        "account_id","owner_key","issued_at","scopes"}
+        "account_id","owner_key","issued_at","scopes","statement_floor"}
        owner_key = jkt of the owner's member public key. Google: login_host and
-       instance_url are "".
+       instance_url are "". statement_floor = integer >= 0: 0 from canopy-web's first
+       seal, the new statement's version from the owner's browser at every share, and
+       kept unchanged by machines on every re-seal and write-back. A reader refuses a
+       statement whose version is below it.
      name "access"  (stored as `access_sealed`)  plaintext = compact UTF-8 JSON
-       {"v":1,"access_token","expires_at","instance_url","account_id","scope"}
+       {"v":1,"access_token","expires_at","instance_url","account_id","scope","owner_key"}
+       A reader refuses an access whose account_id or owner_key differs from the refresh
+       plaintext's.
    Recipients: kind "device" (target = the device's ECDH jkt) and kind "member"
    (target = the owner's user id; only the owner).
    sealed_digest = sha256_hex(utf8(stored value)), the compare-and-swap token.
@@ -82,6 +87,7 @@ b64u, unb64u, hkdf, jwk, jkt = zk.b64u, zk.unb64u, zk.hkdf, zk.jwk, zk.jkt
 
 STATEMENT_PREFIX = "canopy-connections/v1/grant|"
 KV = 0
+STATEMENT_VERSION = 3  # the vector statement's version, and so its refresh plaintext's statement_floor
 
 
 # --- 1. binding / 2. envelopes ---------------------------------------------------------------
@@ -195,7 +201,12 @@ def vectors() -> dict:
         "v": 1, "provider": "salesforce", "refresh_token": "5Aep861-test-refresh-token",
         "client_id": "3MVG9-test-client-id", "login_host": "login.salesforce.com",
         "instance_url": "https://acme.my.salesforce.com", "account_id": account_id,
-        "owner_key": owner_jkt, "issued_at": 1793500000, "scopes": "api refresh_token id"})
+        "owner_key": owner_jkt, "issued_at": 1793500000, "scopes": "api refresh_token id",
+        "statement_floor": STATEMENT_VERSION})
+    access_plaintext = compact({
+        "v": 1, "access_token": "00D-test-access-token", "expires_at": 1793501800,
+        "instance_url": "https://acme.my.salesforce.com", "account_id": account_id, "scope": "api refresh_token id",
+        "owner_key": owner_jkt})
     recipients = [("device", writer_jkt, writer), ("device", other_jkt, other), ("member", owner_user_id, owner)]
     ephemerals = [_priv("a1" * 32), _priv("b2" * 32), _priv("c3" * 32)]
     nonces = [bytes.fromhex("101112131415161718191a1b"), bytes.fromhex("202122232425262728292a2b"),
@@ -231,7 +242,7 @@ def vectors() -> dict:
 
     # 3. the grant statement, signed by the owner.
     statement = {"account_id": account_id, "agents": ["12", "40"], "connection": connection,
-                 "endorsers": endorsers, "my_computers": [other_jkt], "v": 1, "version": 3}
+                 "endorsers": endorsers, "my_computers": [other_jkt], "v": 1, "version": STATEMENT_VERSION}
     statement_sig = sign_statement(statement, owner)
     assert verify_statement(statement, statement_sig, owner.public_key())
     for bad in ({**statement, "agents": ["12"]}, {**statement, "version": 4},
@@ -255,6 +266,7 @@ def vectors() -> dict:
             "name": "refresh",
             "kv": KV,
             "plaintext": plaintext,
+            "access_plaintext": access_plaintext,
             "ephemeral_scalars_hex": ["a1" * 32, "b2" * 32, "c3" * 32],
             "nonces_hex": [n.hex() for n in nonces],
             "sealed": sealed,

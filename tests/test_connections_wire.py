@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 from orchestrator import device_key
 from orchestrator import vault_zk as zk
-from orchestrator.connections import wire
+from orchestrator.connections import trust, wire
 
 FIXTURES = Path(__file__).parent / "fixtures" / "vault_zk"
 VECTORS = FIXTURES / "connections_v1_vectors.json"
@@ -208,6 +208,17 @@ def test_seal_reproduces_the_vector_bytes_and_device_writer_sig():
         nonces=[bytes.fromhex(n) for n in ENV["nonces_hex"]])
     assert value == SEALED
     assert sig == DEVICE_SIG
+
+
+def test_the_plaintext_key_sets_are_the_vectors():
+    assert set(PLAIN) == wire.REFRESH_KEYS
+    assert set(json.loads(ENV["access_plaintext"])) == wire.ACCESS_KEYS
+
+
+def test_the_vectors_plaintexts_pass_the_plaintext_check():
+    access = json.loads(ENV["access_plaintext"])
+    assert access["owner_key"] == PLAIN["owner_key"] and PLAIN["statement_floor"] == GOOD["version"]
+    trust.check_plain(PLAIN, access, GOOD)
 
 
 def test_the_plaintext_is_compact_json_like_the_reference():
