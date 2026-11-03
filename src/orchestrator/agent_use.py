@@ -557,7 +557,7 @@ def real_deps() -> Deps:
             vault_zk_cli.ZkVault(slug, token=local_cli.person_token()))
 
     def sync_env(slug):
-        return cred_cli._sync_from_canopy_web(slug, ttl=0, now=None)
+        return cred_cli.sync_env(slug, ttl=0)
 
     return Deps(
         base_url=lambda: canopy_web.resolve_base_url(None),
