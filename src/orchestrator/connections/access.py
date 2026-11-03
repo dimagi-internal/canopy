@@ -36,7 +36,7 @@ from orchestrator import canopy_web
 from orchestrator import vault_zk as zk
 from orchestrator import vault_zk_cli
 from orchestrator.connections import providers, trust, wire
-from orchestrator.cred_cli import EXIT_REFUSED, CredError, _error_code, _status_of
+from orchestrator.cred_cli import EXIT_ERROR, EXIT_REFUSED, EXIT_WAITING, CredError, _error_code, _status_of
 
 WAIT_SECONDS = 30
 POLL_SECONDS = 2
@@ -49,6 +49,8 @@ RETRY_SECONDS = 2
 RETRY_MAX_SECONDS = 15
 #: canopy-web's limit on what `reconnect-required` takes as an error code.
 _ERROR_MAX = 100
+#: And on the provider's description of it.
+_DETAIL_MAX = 300
 INVALID_GRANT = "invalid_grant"
 #: The stored connection moved since it was read: read it again and seal against that.
 _STALE = frozenset({"zk_value_changed", "zk_rewrap_required", "foreign_reader", "bad_writer_sig"})
@@ -175,6 +177,18 @@ def _open_access(material: dict, statement: dict, owner_jkt: str, ecdh) -> dict 
     return access
 
 
+def _turn_agent(material: dict, slug: str) -> str:
+    """The primary key a statement lists the turn's agent by. canopy-web's word, which it was
+    either way. What it cannot then do is answer for another agent than the one this stage
+    is for: the token would be written under that agent's name."""
+    if material.get("agent_slug") != slug:
+        raise trust.TrustError("wrong-agent", f"canopy-web answered for another agent than {slug}")
+    agent_id = material.get("agent_id")
+    if not isinstance(agent_id, str) or not wire._DECIMAL_ID.fullmatch(agent_id):
+        raise trust.TrustError("wrong-agent", f"canopy-web did not say which agent {slug} is")
+    return agent_id
+
+
 def checked_read(material, *, provider: str, ecdh, pins: dict, agent_id: str | None = None) -> _Read:
     """Everything a read checks, in the order `connections.trust` gives, with nothing used
     before the last check. The caller saves the pin (:func:`save_pin`) once it accepts the
@@ -205,7 +219,8 @@ class _Box:
 
     paths: Paths
     provider: str
-    agent_id: str | None
+    #: The turn's agent, whose grant the statement must list; None for a person's own CLI.
+    agent_slug: str | None
     call: object
     ecdh: object
     pins: dict
@@ -231,17 +246,22 @@ class _Box:
             raise _refused(e) from None
 
     def _validated(self, material) -> _Read:
-        read = checked_read(material, provider=self.provider, ecdh=self.ecdh, pins=self.pins,
-                            agent_id=self.agent_id)
+        agent_id = _turn_agent(material, self.agent_slug) if self.agent_slug and isinstance(material, dict) else None
+        read = checked_read(material, provider=self.provider, ecdh=self.ecdh, pins=self.pins, agent_id=agent_id)
         save_pin(read.statement, read.owner_jkt, self.pins)
         return read
 
     # ---- another holder --------------------------------------------------------------
 
-    def wait_for_new_access(self, first: _Read) -> _Read:
+    def wait_for_new_access(self, first: _Read, *, accept_live: bool = True) -> _Read:
         """Someone else is refreshing: a parallel refresh would kill a rotated token, so wait
-        for what they write."""
+        for what they write. Out of time, whatever access token is still alive will do: a stage
+        that fails drops its hold, and the whole turn would run without a token because another
+        box was slow. Unless the caller wants a new one because this one failed (``accept_live``
+        false). With nothing alive a cloud box exits 4, so the runner keeps its hold and asks
+        again on the heartbeat."""
         seen = _expiry(first)
+        latest = first
         deadline = self.monotonic() + WAIT_SECONDS
         for _ in range(WAIT_SECONDS // POLL_SECONDS):
             if self.monotonic() >= deadline:
@@ -253,9 +273,12 @@ class _Box:
                 if _transient(e):
                     continue
                 raise
+            latest = read
             if _newer(read, seen):
                 return read
-        raise CredError("refresh in progress elsewhere")
+        if accept_live and latest.access and latest.access["expires_at"] > time.time():
+            return latest
+        raise CredError("refresh in progress elsewhere", EXIT_WAITING if self.reseals_for_others else EXIT_ERROR)
 
     # ---- the lease -------------------------------------------------------------------
 
@@ -318,12 +341,16 @@ class _Box:
             return provider.refresh(read.refresh, read.material.get("app"), http=self.http)
         except providers.ProviderError as e:
             reconnect = self._path(self.paths.reconnect, read)
+            # ``detail`` is scrubbed of what was sent, and says what the code cannot:
+            # Salesforce's ``ip restricted`` is ``invalid_grant`` too.
+            said = {"lease_id": lease.id, "detail": (e.detail or "")[:_DETAIL_MAX]}
             if e.code == "rejected" and e.provider_code == INVALID_GRANT:
-                self._quietly("POST", reconnect, {"lease_id": lease.id, "error": INVALID_GRANT})
+                self._quietly("POST", reconnect, {**said, "error": INVALID_GRANT})
+                self.release(lease, read)
                 raise CredError(f"{provider.title} refused this connection's refresh token: its owner must "
                                 "connect it again in canopy-web", EXIT_REFUSED) from None
             if e.code == "rejected" and e.provider_code:
-                self._quietly("POST", reconnect, {"lease_id": lease.id, "error": e.provider_code[:_ERROR_MAX]})
+                self._quietly("POST", reconnect, {**said, "error": e.provider_code[:_ERROR_MAX]})
             self.release(lease, read)
             raise CredError(e.detail or e.code) from None
 
@@ -471,25 +498,25 @@ def _ttl(lease_answer, *, default: float | None = None) -> float:
 
 
 def access_token(paths: Paths, *, provider: str, min_life: int, call, ecdh, pins: dict,
-                 agent_id: str | None = None, reseals_for_others: bool = False, refresh: bool = False,
+                 agent_slug: str | None = None, reseals_for_others: bool = False, refresh: bool = False,
                  sleep=time.sleep, monotonic=time.monotonic, http=None) -> dict:
     """``{access_token, instance_url, expires_at, account_label}`` for this machine.
 
     ``call(method, path, body=None)`` is canopy-web, with this machine's token and a fresh
     device proof per call. ``ecdh`` is this machine's key. ``pins`` is the content of
-    ``trust.PINS_FILE``. ``provider`` is what was asked for, and ``agent_id`` (a turn's
-    agent's primary key, None for a person's own CLI) what the statement must list.
+    ``trust.PINS_FILE``. ``provider`` is what was asked for, and ``agent_slug`` (a turn's
+    agent, None for a person's own CLI) who the material must be for and the statement must list.
     ``reseals_for_others``: a cloud box, whose write-back also reaches machines still
     waiting. ``refresh`` wants a new token even if the stored one is alive; ``http``
     replaces the provider transport (``providers.base.post_form``)."""
-    box = _Box(paths, provider, agent_id, call, ecdh, pins, sleep, monotonic, http, reseals_for_others)
+    box = _Box(paths, provider, agent_slug, call, ecdh, pins, sleep, monotonic, http, reseals_for_others)
     first = box.read()
     live = first.access
     if live and not refresh and live["expires_at"] - time.time() > min_life:
         return _answer_from(first)
     lease = box.take_lease(first)
     if lease is None:
-        return _answer_from(box.wait_for_new_access(first))
+        return _answer_from(box.wait_for_new_access(first, accept_live=not refresh))
     try:
         read = box.read()  # R16: only now can no earlier holder land a rotation
     except Exception:

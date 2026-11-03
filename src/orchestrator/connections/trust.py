@@ -63,7 +63,7 @@ class TrustError(Exception):
     ``bad-statement``, ``bad-binding``, ``bad-statement-sig``, ``bad-pin``,
     ``statement-rollback``, ``statement-owner-changed``, ``statement-below-floor``,
     ``bad-plaintext``, ``bad-host``, ``unknown-provider``, ``account-mismatch``,
-    ``access-mismatch``, ``zk_unendorsed_recipient``. Never carries a secret."""
+    ``access-mismatch``, ``wrong-agent``, ``zk_unendorsed_recipient``. Never carries a secret."""
 
     def __init__(self, code: str, detail: str = ""):
         super().__init__(f"{code}: {detail}" if detail else code)

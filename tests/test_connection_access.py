@@ -145,6 +145,7 @@ class FakeWeb:
         self.lease_bodies: list[dict] = []
         self.deletes: list[str] = []
         self.reconnects: list[dict] = []
+        self.turn_agent: dict = {}
         self.puts: list[dict] = []
         self.put_failures: list = []
         self.lease_refusal = None
@@ -188,7 +189,7 @@ class FakeWeb:
                 "owner": {"user_id": OWNER_ID, "public_jwk": self.owner_jwk},
                 "endorsements": self.endorsements, "recipients": self.recipients,
                 "app": {"client_id": self.client_id, "client_secret": SECRET, "options": {}},
-                "lease": None, "rotates_refresh_token": True}
+                "lease": None, "rotates_refresh_token": True, **self.turn_agent}
 
     # ---- the routes ----------------------------------------------------------------
 
@@ -812,11 +813,34 @@ def test_second_process_waits_for_new_access_instead_of_refreshing(fake_web, htt
 def test_a_waiter_gives_up_after_the_wait(fake_web, http, clock, get_token):
     fake_web.held_by_another()
     start = clock.now
-    with pytest.raises(CredError, match="refresh in progress elsewhere"):
+    with pytest.raises(CredError, match="refresh in progress elsewhere") as e:
         get_token()
+    assert e.value.exit_code == cred_cli.EXIT_ERROR
     assert http.refreshes == 0
     assert clock.now - start == access.WAIT_SECONDS
     assert access.WAIT_SECONDS == 30 and access.POLL_SECONDS == 2
+
+
+def test_a_cloud_box_out_of_time_with_nothing_live_exits_4_so_the_runner_keeps_its_hold(fake_web, http, get_token):
+    fake_web.held_by_another()
+    with pytest.raises(CredError, match="refresh in progress elsewhere") as e:
+        get_token(reseals_for_others=True)
+    assert e.value.exit_code == cred_cli.EXIT_WAITING == 4
+
+
+def test_a_waiter_out_of_time_takes_a_token_still_alive_rather_than_fail(fake_web, http, get_token):
+    """Too short for min_life, but alive: a failed stage would cost the whole turn its token."""
+    fake_web.seal_access(_access_plain(expires_in=120))
+    fake_web.held_by_another()
+    assert get_token()["access_token"] == OLD_ACCESS
+    assert http.refreshes == 0
+
+
+def test_a_waiter_does_not_take_a_dead_token(fake_web, http, get_token):
+    fake_web.seal_access(_access_plain(expires_in=-60))
+    fake_web.held_by_another()
+    with pytest.raises(CredError, match="refresh in progress elsewhere"):
+        get_token()
 
 
 def test_a_keeper_reseal_of_the_same_token_is_not_a_new_access(fake_web, http, get_token):
@@ -906,7 +930,8 @@ def test_invalid_grant_reports_reconnect_required(fake_web, http, get_token):
     with pytest.raises(CredError) as e:
         get_token()
     assert e.value.exit_code == cred_cli.EXIT_REFUSED
-    assert fake_web.reconnects == [{"lease_id": LEASE, "error": "invalid_grant"}]
+    assert fake_web.reconnects == [{"lease_id": LEASE, "error": "invalid_grant", "detail": "Salesforce refresh refused (400): expired"}]
+    assert fake_web.deletes == [DELETE]
     assert fake_web.puts == []
     assert REFRESH not in str(e.value)
     with pytest.raises(canopy_web.CanopyError, match="needs_reconnect"):
@@ -919,7 +944,8 @@ def test_another_rejection_is_noted_not_a_reconnect_and_frees_the_lease(fake_web
     with pytest.raises(CredError) as e:
         get_token()
     assert e.value.exit_code == cred_cli.EXIT_ERROR
-    assert fake_web.reconnects == [{"lease_id": LEASE, "error": "invalid_client"}]
+    assert fake_web.reconnects == [{"lease_id": LEASE, "error": "invalid_client",
+                                   "detail": "Salesforce refresh refused (401): invalid_client"}]
     assert fake_web.deletes == [DELETE]
 
 
@@ -1096,9 +1122,21 @@ def test_a_sealed_value_of_another_provider_is_refused(fake_web, http, get_token
 
 def test_a_turn_refuses_a_statement_that_does_not_list_its_agent(fake_web, http, get_token):
     fake_web.seal_access(_access_plain())
-    assert get_token(agent_id="12")["access_token"] == OLD_ACCESS
-    with pytest.raises(CredError, match="agent"):
-        get_token(agent_id="40")
+    fake_web.turn_agent = {"agent_id": "12", "agent_slug": "eva"}
+    assert get_token(agent_slug="eva")["access_token"] == OLD_ACCESS
+    fake_web.turn_agent = {"agent_id": "40", "agent_slug": "eva"}
+    with pytest.raises(CredError, match="does not lend this to this agent"):
+        get_token(agent_slug="eva")
+
+
+@pytest.mark.parametrize("said", [{"agent_id": "12", "agent_slug": "hal"}, {"agent_id": "", "agent_slug": "eva"},
+                                  {"agent_id": 12, "agent_slug": "eva"}, {}])
+def test_a_stage_refuses_material_that_is_not_for_its_agent(fake_web, http, get_token, said):
+    """A misrouted stage would write another agent's token under this agent's name."""
+    fake_web.seal_access(_access_plain())
+    fake_web.turn_agent = said
+    with pytest.raises(CredError, match="wrong-agent"):
+        get_token(agent_slug="eva")
 
 
 # ── pins ─────────────────────────────────────────────────────────────────────────────
@@ -1221,8 +1259,7 @@ def tmp_home(monkeypatch, tmp_path, fake_web, http):
 
     def fake_call(method, path, body=None, **kw):
         calls.append({"method": method, "path": path, "token": kw.get("token"), "headers": kw.get("headers")})
-        if path == "/api/agents/eva/":
-            return {"id": 12, "slug": "eva"}
+        fake_web.turn_agent = {"agent_id": "12", "agent_slug": "eva"} if "/runners/" in path else {}
         mapped = (path.replace("/api/me/connections/salesforce/material", PATHS.material)
                   .replace(f"/api/harness/runners/{RID}/turns/{TID}/connections/salesforce", PATHS.material)
                   .replace("?workspace=dimagi", ""))

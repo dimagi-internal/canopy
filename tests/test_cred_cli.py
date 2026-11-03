@@ -516,7 +516,7 @@ def test_sf_human_writes_a_private_file_and_prints_only_its_path(sf, tmp_path):
     assert sf["calls"] == [{"method": "GET", "path": "/api/me/connections/salesforce/material",
                             "body": None, "token": "pat_human", "proof": "proof GET"}]
     assert sf["asked"][0]["min_life"] == cred_cli.CONNECTION_MIN_LIFE and sf["asked"][0]["refresh"] is False
-    assert sf["asked"][0]["provider"] == "salesforce" and sf["asked"][0]["agent_id"] is None
+    assert sf["asked"][0]["provider"] == "salesforce" and sf["asked"][0]["agent_slug"] is None
     _assert_no_token(res)
 
 
@@ -557,7 +557,7 @@ def test_sf_runner_stages_under_the_agent_dir_via_the_runner_route(sf, tmp_path)
     assert paths.lease == f"/api/harness/runners/{RID}/connections/{{id}}/refresh-lease"
     assert paths.sealed == f"/api/harness/runners/{RID}/connections/{{id}}/sealed"
     assert paths.reconnect == f"/api/harness/runners/{RID}/connections/{{id}}/reconnect-required"
-    assert sf["asked"][0]["agent_id"] == "12"
+    assert sf["asked"][0]["agent_slug"] == "eva"
     _assert_no_token(res)
 
 

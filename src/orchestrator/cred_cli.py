@@ -1153,7 +1153,7 @@ def _machine_call(token: str):
 
 
 def _machine_token(paths, provider: str, call, *, runner: bool, min_life: int, refresh: bool,
-                   agent_id: Optional[str] = None) -> dict:
+                   agent_slug: Optional[str] = None) -> dict:
     """`connections.access.access_token` for this machine, its refusals as CredErrors. Only
     the cloud runner stages with `--runner`, so `runner` is a box that re-seals for machines
     still waiting; a person's computer never does."""
@@ -1167,7 +1167,7 @@ def _machine_token(paths, provider: str, call, *, runner: bool, min_life: int, r
         raise CredError(str(e)) from None
     try:
         return access.access_token(paths, provider=provider, min_life=min_life, call=call, ecdh=ecdh, pins=pins,
-                                   agent_id=agent_id, reseals_for_others=runner, refresh=refresh)
+                                   agent_slug=agent_slug, reseals_for_others=runner, refresh=refresh)
     except canopy_web.CanopyError as e:
         raise _refusal(e, runner=runner, provider=provider) from None
     except (OSError, ValueError) as e:
@@ -1211,20 +1211,6 @@ def _runner_bearer(token: Optional[str]) -> str:
     return runner_session.token(canopy_web.resolve_base_url(None))
 
 
-def _agent_pk(slug: str, call) -> str:
-    """The primary key a statement lists `slug` by."""
-    try:
-        body = call("GET", f"/api/agents/{slug}/")
-    except canopy_web.CanopyError as e:
-        raise _refusal(e, runner=True) from None
-    except (OSError, ValueError) as e:
-        raise CredError(f"could not reach canopy-web ({type(e).__name__})") from None
-    pk = body.get("id") if isinstance(body, dict) else None
-    if type(pk) is not int:
-        raise CredError(f"canopy-web did not say which agent {slug} is")
-    return str(pk)
-
-
 def stage_connection_token(provider: str, slug: str, runner_id: str, turn_id: str, *,
                            token: Optional[str] = None, min_life: Optional[int] = None,
                            refresh: bool = False) -> Path:
@@ -1247,8 +1233,7 @@ def stage_connection_token(provider: str, slug: str, runner_id: str, turn_id: st
                          lease=box + "/connections/{id}/refresh-lease",
                          sealed=box + "/connections/{id}/sealed",
                          reconnect=box + "/connections/{id}/reconnect-required")
-    call = _machine_call(tok)
-    body = _machine_token(paths, provider, call, runner=True, refresh=refresh, agent_id=_agent_pk(slug, call),
+    body = _machine_token(paths, provider, _machine_call(tok), runner=True, refresh=refresh, agent_slug=slug,
                           min_life=CONNECTION_MIN_LIFE if min_life is None else min_life)
     return _write_connection_token(connection_token_path(provider, slug), body)
 
