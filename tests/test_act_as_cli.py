@@ -69,6 +69,9 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(act_as_cli, "grant_key", lambda: "turn-1")
     monkeypatch.setattr(act_as_cli, "_claude_session", lambda: "claude-1")
     monkeypatch.setattr(act_as_cli.canopy_web, "agent_context_slug", lambda *a, **k: "ada")
+    # Live this says yes on any Mac, and `request` would open a tab per test. The tests about
+    # opening the page set it themselves.
+    monkeypatch.setattr(act_as_cli, "on_a_desktop", lambda: False)
 
     def install(routes):
         srv = Server(routes)
