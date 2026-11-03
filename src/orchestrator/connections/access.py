@@ -115,14 +115,16 @@ def _rotated(tokens: providers.Tokens, refresh: dict) -> bool:
 
 
 def _newer(read: _Read, seen: dict | None) -> bool:
-    """Is what this read holds a new token? New means another token than ``seen`` (an ``access``
-    plaintext), because a keeper re-seal changes the ciphertext and not the token, and expiring
-    no sooner, because two refreshes in one second expire together. Whatever its life, it is
-    the newest there is."""
+    """Is what this read holds a new token, next to ``seen`` (an ``access`` plaintext)? A later
+    expiry says so even for the same string, which a provider may hand back. So does another
+    token expiring no sooner, because two refreshes in one second expire together. The same
+    token and expiry is only a keeper's re-seal. Whatever its life, it is the newest there is."""
     a = read.access
     if not a or a["expires_at"] <= time.time():
         return False
-    return seen is None or (a["access_token"] != seen["access_token"] and a["expires_at"] >= seen["expires_at"])
+    if seen is None or a["expires_at"] > seen["expires_at"]:
+        return True
+    return a["access_token"] != seen["access_token"] and a["expires_at"] == seen["expires_at"]
 
 
 def _answer_from(read: _Read) -> dict:

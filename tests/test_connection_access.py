@@ -830,6 +830,18 @@ def test_a_waiter_sees_a_new_token_even_when_it_expires_in_the_same_second(fake_
     assert get_token(refresh=True)["access_token"] == NEW_ACCESS
 
 
+def test_a_waiter_sees_the_same_token_string_with_a_later_expiry_as_new(fake_web, http, clock, get_token):
+    """A provider may hand the same string back and extend it."""
+    plain = _access_plain(expires_in=3600)
+    fake_web.seal_access(plain)
+    fake_web.held_by_another()
+    later = {**plain, "expires_at": plain["expires_at"] + 600}
+    fake_web.on_material = lambda web: web.seal_access(later) if web.polls == 2 else None
+    start = clock.now
+    get_token(refresh=True)
+    assert clock.now - start < access.WAIT_SECONDS
+
+
 def test_a_cloud_box_out_of_time_with_nothing_live_exits_4_so_the_runner_keeps_its_hold(fake_web, http, get_token):
     fake_web.held_by_another()
     with pytest.raises(CredError, match="refresh in progress elsewhere") as e:
