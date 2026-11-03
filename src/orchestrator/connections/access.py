@@ -114,16 +114,15 @@ def _rotated(tokens: providers.Tokens, refresh: dict) -> bool:
     return bool(tokens.refresh_token) and tokens.refresh_token != refresh["refresh_token"]
 
 
-def _newer(read: _Read, seen: int | None) -> bool:
-    """Is what this read holds a new token? New means a later expiry than ``seen``, because
-    a keeper re-seal changes the ciphertext and not the token. Whatever its life, it is the
-    newest there is."""
+def _newer(read: _Read, seen: dict | None) -> bool:
+    """Is what this read holds a new token? New means another token than ``seen`` (an ``access``
+    plaintext), because a keeper re-seal changes the ciphertext and not the token, and expiring
+    no sooner, because two refreshes in one second expire together. Whatever its life, it is
+    the newest there is."""
     a = read.access
-    return bool(a) and (seen is None or a["expires_at"] > seen) and a["expires_at"] > time.time()
-
-
-def _expiry(read: _Read) -> int | None:
-    return read.access["expires_at"] if read.access else None
+    if not a or a["expires_at"] <= time.time():
+        return False
+    return seen is None or (a["access_token"] != seen["access_token"] and a["expires_at"] >= seen["expires_at"])
 
 
 def _answer_from(read: _Read) -> dict:
@@ -260,7 +259,7 @@ class _Box:
         box was slow. Unless the caller wants a new one because this one failed (``accept_live``
         false). With nothing alive a cloud box exits 4, so the runner keeps its hold and asks
         again on the heartbeat."""
-        seen = _expiry(first)
+        seen = first.access
         latest = first
         deadline = self.monotonic() + WAIT_SECONDS
         for _ in range(WAIT_SECONDS // POLL_SECONDS):
@@ -525,7 +524,7 @@ def access_token(paths: Paths, *, provider: str, min_life: int, call, ecdh, pins
     if read.connection_id != first.connection_id:
         box.release(lease, first)
         raise CredError("canopy-web answered with another connection than the one leased; nothing was refreshed")
-    if _newer(read, _expiry(first)):
+    if _newer(read, first.access):
         box.release(lease, read)
         return _answer_from(read)
     box._checked_recipients(read, lease)

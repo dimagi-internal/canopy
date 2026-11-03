@@ -821,6 +821,15 @@ def test_a_waiter_gives_up_after_the_wait(fake_web, http, clock, get_token):
     assert access.WAIT_SECONDS == 30 and access.POLL_SECONDS == 2
 
 
+def test_a_waiter_sees_a_new_token_even_when_it_expires_in_the_same_second(fake_web, http, clock, get_token):
+    """Two refreshes a moment apart: whole-second expiries, equal, and still a new token."""
+    plain = _access_plain(expires_in=3600)
+    fake_web.seal_access(plain)
+    fake_web.held_by_another()
+    fake_web.on_material = lambda web: web.seal_access({**plain, "access_token": NEW_ACCESS}) if web.polls == 2 else None
+    assert get_token(refresh=True)["access_token"] == NEW_ACCESS
+
+
 def test_a_cloud_box_out_of_time_with_nothing_live_exits_4_so_the_runner_keeps_its_hold(fake_web, http, get_token):
     fake_web.held_by_another()
     with pytest.raises(CredError, match="refresh in progress elsewhere") as e:
