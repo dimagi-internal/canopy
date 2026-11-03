@@ -277,6 +277,7 @@ _MODES: dict = {}
 
 
 def _timeout_transport(timeout: float) -> "canopy_web.Transport":
+    import http.client
     import urllib.error
     import urllib.request
 
@@ -287,6 +288,10 @@ def _timeout_transport(timeout: float) -> "canopy_web.Transport":
                 return resp.status, resp.read().decode("utf-8")
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode("utf-8", "replace")
+        except http.client.HTTPException as e:
+            # A broken answer, as an OSError like any other lost connection. By name only:
+            # IncompleteRead's text holds what had arrived.
+            raise ConnectionError(f"canopy-web's answer broke off ({type(e).__name__})") from None
     return send
 
 
@@ -1141,7 +1146,9 @@ def _machine_call(token: str):
 
 def _machine_token(paths, provider: str, call, *, runner: bool, min_life: int, refresh: bool,
                    agent_id: Optional[str] = None) -> dict:
-    """`connections.access.access_token` for this machine, its refusals as CredErrors."""
+    """`connections.access.access_token` for this machine, its refusals as CredErrors. Only
+    the cloud runner stages with `--runner`, so `runner` is a box that re-seals for machines
+    still waiting; a person's computer never does."""
     from orchestrator import vault_zk_cli
     from orchestrator.connections import access, trust
 
@@ -1152,7 +1159,7 @@ def _machine_token(paths, provider: str, call, *, runner: bool, min_life: int, r
         raise CredError(str(e)) from None
     try:
         return access.access_token(paths, provider=provider, min_life=min_life, call=call, ecdh=ecdh, pins=pins,
-                                   agent_id=agent_id, refresh=refresh)
+                                   agent_id=agent_id, reseals_for_others=runner, refresh=refresh)
     except canopy_web.CanopyError as e:
         raise _refusal(e, runner=runner, provider=provider) from None
     except (OSError, ValueError) as e:
