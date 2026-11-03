@@ -1,0 +1,170 @@
+{
+  "format": "canopy-connections/v1",
+  "statement": {
+    "statement": {
+      "account_id": "00D000000000001AAA/005000000000001AAA",
+      "agents": [
+        "12",
+        "40"
+      ],
+      "connection": "0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87",
+      "my_computers": [
+        "PIhKbkCFr18r3u7pBB4M1jI7BCO5OTI6ISK7wLRo4Lw"
+      ],
+      "v": 1,
+      "version": 3
+    },
+    "msg": "canopy-connections/v1/grant|{\"account_id\":\"00D000000000001AAA/005000000000001AAA\",\"agents\":[\"12\",\"40\"],\"connection\":\"0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87\",\"my_computers\":[\"PIhKbkCFr18r3u7pBB4M1jI7BCO5OTI6ISK7wLRo4Lw\"],\"v\":1,\"version\":3}",
+    "sig": "4Yh2t2_ilZQ_EgqvHn89p1KCRsZmi88a7peJk74Ebe8OdYCGtJy6FXREBCYsrs3ROR1LkCjPqvFZFpnUvJHOKQ",
+    "signer_priv_scalar_hex": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+    "signer_jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "KYMZWgdXwLrShDBhP2T79Ss1kRdZvbX_Omzv5xGIeGc",
+      "y": "XZfAecG2w5VkZMQe7JlaGJOJy0UH36WrwYh4-Epb004"
+    },
+    "signer_jkt": "y43mphpoL1Y1YMlYvAPCqD4n1VPgTmti7EYQDaIc7KY"
+  },
+  "envelope": {
+    "binding": "connection:0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87",
+    "name": "refresh",
+    "kv": 0,
+    "plaintext": "{\"v\":1,\"provider\":\"salesforce\",\"refresh_token\":\"5Aep861-test-refresh-token\",\"client_id\":\"3MVG9-test-client-id\",\"login_host\":\"login.salesforce.com\",\"instance_url\":\"https://acme.my.salesforce.com\",\"account_id\":\"00D000000000001AAA/005000000000001AAA\",\"owner_key\":\"y43mphpoL1Y1YMlYvAPCqD4n1VPgTmti7EYQDaIc7KY\",\"issued_at\":1793500000,\"scopes\":\"api refresh_token id\"}",
+    "ephemeral_scalars_hex": [
+      "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+    ],
+    "nonces_hex": [
+      "101112131415161718191a1b",
+      "202122232425262728292a2b",
+      "303132333435363738393a3b"
+    ],
+    "sealed": "zks1:eyJrdiI6MCwiciI6W3sia2luZCI6ImRldmljZSIsInRhcmdldCI6IndGNzNhTzJvSkNfeVhkQmtnR0NmUlg5Ri1wVlllTFg4dnJleEUxMTdVTzgiLCJlcGsiOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiJ3QXFzTko3XzB4b1A4dGJzMUVKcldRZVJuY3oyV3k3amc3TjdvbFFVTlZrIiwieSI6IlhRWktXZFRCdXVSN3Q0ZGVwQ2o4M05YYWRhNXV1OF9MTzdtT0xRRFZVaWsifSwiY3QiOiJFQkVTRXhRVkZoY1lHUm9iN09iS2xkMnpWZWJBa0QtQnBTR2JxZjczU2JZeGxGeEp6LUhaYjhmenNLV2dYeGhrYlFEVW9VYzlxTDRmVFNBU1FQRG42NTdPM3dJS25Mc0dwQ25hLVFIOWEtcm9PeXBYLXU4TlJaUXlIb2RBZDZaUVNPelVZT2gwS2RkdGFhdHpRRTNIQlhoZFd2VUpQRk5Wcm1XYS0zVWNGTy1hN1VEMVR3YWc5Q0xPb1Bqa3hFNWxSbmwwb2ZSMGQ3T3F3OFFObnJDODRqaC1CRHRpd3I3N000YWc5a25ZLVlZWFVlZ3B3N2lCN0dhOUtXamRxLVJtazBVaWFCYjVMeExXclJWVG9TSk5ZaV9KZXZ5UkNUSWxqNTBlUm41Y29mMHBSTjJuVXBOQlNreV9XOXRwa1Zyb3JVMzh1QVhDUWJWM2lKMVlDOXJiY3lLSVd0V2VHVmExMHlacXMtdXFXLUgtTGFCSkM3OG5aWU9aWG13ZWZWNmk1RHpjX2NTQzdFbjdoanVOV0RxVl9wdl9FNzNUWnZWSkxsRzVqdWVTU09kMWdoeTJyRXFYN1FvcjRFRXJINktGbHZNY1BHTkVQeDd5WGVWTkVPd0dxZ08wY1dVMVJNaXJzLWJXVlZWRTJjM05OSmhJeFJGSzVFcW1zYmNKVFhHcmZIYW9IWnMifSx7ImtpbmQiOiJkZXZpY2UiLCJ0YXJnZXQiOiJQSWhLYmtDRnIxOHIzdTdwQkI0TTFqSTdCQ081T1RJNklTSzd3TFJvNEx3IiwiZXBrIjp7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiOXJsaEVBV3lIdzVjcHVEWDlsWmNXbmdVZFZXT1dsY0pYZG9RM2FEcmVfSSIsInkiOiJ0aHlXMF9YVHZFUkZuZXA4aWw4YVZUcXMzc3FNZHRwRUk3X2pqNXlCMFlzIn0sImN0IjoiSUNFaUl5UWxKaWNvS1NvclJQX3hiRzJfbWVGb1hxM3pvUy1Ycnowc0F4eFZsUTBnZURWTms4b1lvTEZhTnd0NndhQ2RHZFpuM1R4cjNaeXJwR3AxTVlyRTl0TmFnSFVBcHYza1l2VHRwMFZsMlVHWDF0dHN0bmlCd3pXcEY3SzBiZURqZW1YT2wycUFMTl9lWU1uWThzeG11VXpZMUdWYjBNbXF6b1ozdUJUTU1nSVFGVnVJOEdMSDh0Q1I4S2VBT1JxcnZxVkZ5YWlra3JCTmdZUHE0MGFGSVVwSERGc2NhQ0FiZlM1Mzhiblo3ZG0tLUNGSVc5OXRSMEMwNUdtT2NrZGRwVU5CS2J3U00zZ3hmcVJINGNiYjJ2aGwySjdzc2lGQ3NCdmVyMnNLS3VrLWJ3UVdQSXJLdzI2RkNQUFZDMnJiNF9IbENQX19YNHhHODFGUk9ENkJSaGljc3R2UGtTUlpna2NYcTF0RFdWb1dtcnEta2piS2RkSFpyaWpMYXE1UUt1M0kxRHA5T1BZenl2WXExYmdUd1ppYWpObFRzb1JleVRfQ0JJUlBjSE1ZSVZrM2RxVW1BU3JtejBJOVE5RHZCWGxRcDAxMTZHM2pmdVBFV1hiNnN6c0hiaFc4UkticFo5RWkwQ3BYcWNHLVZHejZkR0NBaEUzeTlGOW1zS2RIbHFzIn0seyJraW5kIjoibWVtYmVyIiwidGFyZ2V0IjoiNyIsImVwayI6eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6ImpLQlg4UzF0WmtHUVJvNVJMbEc1LWJRRUgzVlNtamRsUUlWYkZBdHRZVm8iLCJ5IjoiVTgyQ0NrTG1ta3kyREgyTGdDT1VocjMwMzNLWS1aWFVzd19fS3k0Zkp5ZyJ9LCJjdCI6Ik1ERXlNelExTmpjNE9Ubzc2X2gxMkpDYkFWYWZsMUQ1eUw2YlhBSFVGRGlfMkxZNnQxOWRUOEs3eW04MzF5eTkyOHFxc3I0cGhObU15T3U1dkZwSUFiNXBuLWRwR2xiemxZWm5Qc1A5dDZfZTRFbnhscm5qX0gxSUxfUDBmaXMyM3BrQmM5VU9oTC15eF9sNUZUZ0UxS0hzQ2p3WTdmaTVacURiZjAyclBtTDVpOUZjckM4dkt3Z1dBajlzMmFuSGVtaFc5emQ2MmlBeWpKZUhLVldpRWh6d1I3OVlPUmJOVUhYcFNNN2FWVlROZTBscm53MUpDUmhvTk9rTVM3eVlCM21lOGZpTjRpOVhDY1U4LV92aWZPLUJlYzdMY1hWbHFVUkZhVVRFdGlTaGVldGxNeHBhdVpsT015U096SGJ1VWZ2UFdrS29HT2pXSzRIMVMyR1YxaUo2MkYyeTZZNmRJZmI4TlR1M1ZQTEowYjV3d2VRV25SaUVjNWt2M3djaF9xcHJDcV9NM01aN0ctWVFpSHdDTVhKN2oteXpCc2FVMGV5czM5Wk1fSXRJaG9SUWZfZnlURTJQY21PRDJQcHdjMkkzS0JSMWpnLU4xN0pmMTJxRmJMRHhqLThWeHBsRXBoMDYwQ3BTUkdYSzVIMFhma3VwM2hiNEg2NW1qdU83V0NERmsxMCJ9XX0",
+    "sealed_digest": "1ac3c18e0c271982533a8e65384258b9adc1a23b2453203374064e9022eb12fc",
+    "recipients": [
+      {
+        "kind": "device",
+        "target": "wF73aO2oJC_yXdBkgGCfRX9F-pVYeLX8vrexE117UO8",
+        "priv_scalar_hex": "8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b",
+        "public_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "vWDw6AVwExxQ5svVe6VAOJAJsUWttkb689JTs2O9cns",
+          "y": "y8RVNg5efbFV_JTMCOUvFHEzGS91J9XQgkawM95OQRc"
+        }
+      },
+      {
+        "kind": "device",
+        "target": "PIhKbkCFr18r3u7pBB4M1jI7BCO5OTI6ISK7wLRo4Lw",
+        "priv_scalar_hex": "9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c",
+        "public_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "Te8Mk3TOt0eYFQey4wQSWw-pfD38iYKlS_6bR-1IyFg",
+          "y": "h4ezERlA6twv7zuvxfaozekWk7nD5n4mGkWyZdDOugo"
+        }
+      },
+      {
+        "kind": "member",
+        "target": "7",
+        "priv_scalar_hex": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+        "public_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "KYMZWgdXwLrShDBhP2T79Ss1kRdZvbX_Omzv5xGIeGc",
+          "y": "XZfAecG2w5VkZMQe7JlaGJOJy0UH36WrwYh4-Epb004"
+        }
+      }
+    ],
+    "entries": [
+      {
+        "kind": "device",
+        "target": "wF73aO2oJC_yXdBkgGCfRX9F-pVYeLX8vrexE117UO8",
+        "entry_digest": "fa49348cb07744cb53b97e6f237b18ca1e99acaceb0ba91bc1fdb31961f4cb81",
+        "device_writer_msg": "canopy-connections/v1/envelope|connection:0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87|refresh|a43583ea9bd779a8239af49c714d3aeb6e8608add78ebb9e53e2d3f1f7d1a7d5|fa49348cb07744cb53b97e6f237b18ca1e99acaceb0ba91bc1fdb31961f4cb81",
+        "mac_info": "canopy-connections/v1/envelope-mac|connection:0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87|refresh|device:wF73aO2oJC_yXdBkgGCfRX9F-pVYeLX8vrexE117UO8"
+      },
+      {
+        "kind": "device",
+        "target": "PIhKbkCFr18r3u7pBB4M1jI7BCO5OTI6ISK7wLRo4Lw",
+        "entry_digest": "59581eec71f67e76ceb251cc49ba7af0da914691379957d3407de4f0d80ccef5",
+        "device_writer_msg": "canopy-connections/v1/envelope|connection:0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87|refresh|a43583ea9bd779a8239af49c714d3aeb6e8608add78ebb9e53e2d3f1f7d1a7d5|59581eec71f67e76ceb251cc49ba7af0da914691379957d3407de4f0d80ccef5",
+        "mac_info": "canopy-connections/v1/envelope-mac|connection:0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87|refresh|device:PIhKbkCFr18r3u7pBB4M1jI7BCO5OTI6ISK7wLRo4Lw"
+      },
+      {
+        "kind": "member",
+        "target": "7",
+        "entry_digest": "c0af701abfbc6465f4ed517bfb37af791d113e0b7df5bc9a0116613a53f240a6",
+        "device_writer_msg": "canopy-connections/v1/envelope|connection:0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87|refresh|a43583ea9bd779a8239af49c714d3aeb6e8608add78ebb9e53e2d3f1f7d1a7d5|c0af701abfbc6465f4ed517bfb37af791d113e0b7df5bc9a0116613a53f240a6",
+        "mac_info": "canopy-connections/v1/envelope-mac|connection:0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87|refresh|member:7"
+      }
+    ],
+    "device_writer": {
+      "priv_scalar_hex": "8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b",
+      "sig": {
+        "by": {
+          "kind": "device",
+          "target": "wF73aO2oJC_yXdBkgGCfRX9F-pVYeLX8vrexE117UO8",
+          "public_jwk": {
+            "kty": "EC",
+            "crv": "P-256",
+            "x": "vWDw6AVwExxQ5svVe6VAOJAJsUWttkb689JTs2O9cns",
+            "y": "y8RVNg5efbFV_JTMCOUvFHEzGS91J9XQgkawM95OQRc"
+          }
+        },
+        "expect": "a43583ea9bd779a8239af49c714d3aeb6e8608add78ebb9e53e2d3f1f7d1a7d5",
+        "macs": [
+          {
+            "kind": "device",
+            "target": "wF73aO2oJC_yXdBkgGCfRX9F-pVYeLX8vrexE117UO8",
+            "mac": "eXJ-bvJd2powcqbApwKy8WVN4gqmFbldLL1XJCreU8A"
+          },
+          {
+            "kind": "device",
+            "target": "PIhKbkCFr18r3u7pBB4M1jI7BCO5OTI6ISK7wLRo4Lw",
+            "mac": "aio4x4Sp1CaYqEJro4ij2I34jM475SPwpqzyuO82avg"
+          },
+          {
+            "kind": "member",
+            "target": "7",
+            "mac": "wvTotmWSa0y_it03sUukorS4_SHQpHj_9MgmPY0qI3U"
+          }
+        ]
+      }
+    },
+    "member_writer": {
+      "priv_scalar_hex": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+      "sig": {
+        "by": {
+          "kind": "member",
+          "target": "7",
+          "public_jwk": {
+            "kty": "EC",
+            "crv": "P-256",
+            "x": "KYMZWgdXwLrShDBhP2T79Ss1kRdZvbX_Omzv5xGIeGc",
+            "y": "XZfAecG2w5VkZMQe7JlaGJOJy0UH36WrwYh4-Epb004"
+          }
+        },
+        "expect": "a73bf98ff36c12cd543b8e5bb641cc63549dfe3a7b96c2c45f5479c69cde4070",
+        "macs": [
+          {
+            "kind": "device",
+            "target": "wF73aO2oJC_yXdBkgGCfRX9F-pVYeLX8vrexE117UO8",
+            "mac": "jC3EVETiDNgD3Ty2RyLS6uH_0i9zS7E7EAJ7GuPde_0"
+          },
+          {
+            "kind": "device",
+            "target": "PIhKbkCFr18r3u7pBB4M1jI7BCO5OTI6ISK7wLRo4Lw",
+            "mac": "-5r6wnMud09f1FM2O8CYDCB3J4oFZBEI_ltQWBBNDbc"
+          },
+          {
+            "kind": "member",
+            "target": "7",
+            "mac": "U696dagMfQKS_MQSZpnJA_jaVv8pW6Ze_KQTSINkQYM"
+          }
+        ]
+      }
+    }
+  }
+}
