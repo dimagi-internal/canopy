@@ -35,6 +35,7 @@ _, MY_BOX_JWK = _key()
 _, AGENT_BOX_JWK = _key()
 _, STRANGER_JWK = _key()
 O = zk.jwk_thumbprint(OWNER_JWK)
+ENDORSER = zk.jwk_thumbprint(ENDORSER_JWK)
 MY_BOX = zk.jwk_thumbprint(MY_BOX_JWK)
 AGENT_BOX = zk.jwk_thumbprint(AGENT_BOX_JWK)
 STRANGER = zk.jwk_thumbprint(STRANGER_JWK)
@@ -48,7 +49,7 @@ def _sig(priv, msg: bytes) -> str:
 
 def _statement(**over) -> dict:
     return {"account_id": ACCOUNT, "agents": ["12", "40"], "connection": CONN,
-            "my_computers": [MY_BOX], "v": 1, "version": 3, **over}
+            "endorsers": [ENDORSER], "my_computers": [MY_BOX], "v": 1, "version": 3, **over}
 
 
 def _endorse(device=AGENT_BOX, *, signed_for="12", tag="12", signer=ENDORSER_KEY, signer_jwk=ENDORSER_JWK,
@@ -85,9 +86,8 @@ def res() -> vault_keeper.KeepResult:
     return vault_keeper.KeepResult("conn")
 
 
-def _allowed(material, res, pins=None) -> dict:
-    return trust.allowed(material, material["statement"], owner_jkt=O,
-                         pins={} if pins is None else pins, res=res)
+def _allowed(material, res) -> dict:
+    return trust.allowed(material, material["statement"], owner_jkt=O, res=res)
 
 
 # ── the statement ────────────────────────────────────────────────────────────────────
@@ -213,9 +213,7 @@ def test_canopy_web_can_narrow_by_leaving_someone_out(material, res):
 
 def test_an_endorsement_for_an_agent_not_in_the_statement_admits_nothing(material, res):
     material["endorsements"] = [_endorse(signed_for="99", tag="99")]
-    pins: dict = {}
-    assert ("device", AGENT_BOX) not in _allowed(material, res, pins)
-    assert pins == {}  # and teaches this box nothing about who to trust
+    assert ("device", AGENT_BOX) not in _allowed(material, res)
 
 
 def test_an_endorsement_subject_is_checked_against_the_statement_not_the_payload(material, res):
@@ -241,31 +239,50 @@ def test_an_endorsement_must_be_of_the_devices_exact_key(material, res, over):
 def test_an_endorsement_of_another_machine_or_with_a_forged_signature_admits_nothing(material, res):
     forged = dict(_endorse(), sig=_endorse(signer=ATTACKER_KEY, signer_jwk=ATTACKER_JWK)["sig"])
     material["endorsements"] = [_endorse(device=STRANGER), forged]
-    pins: dict = {}
-    assert ("device", AGENT_BOX) not in _allowed(material, res, pins)
-    assert pins == {}
+    assert ("device", AGENT_BOX) not in _allowed(material, res)
 
 
-def test_an_endorser_is_pinned_on_first_sight_and_a_changed_key_is_not_trust(material, res):
-    pins: dict = {}
-    assert ("device", AGENT_BOX) in _allowed(material, res, pins)
-    assert pins["20"]["jkt"] == zk.jwk_thumbprint(ENDORSER_JWK)
-    # The same person, later, with another key: this box waits for an admin.
-    material["endorsements"] = [_endorse(signer=ATTACKER_KEY, signer_jwk=ATTACKER_JWK)]
-    res2 = vault_keeper.KeepResult("conn")
-    assert ("device", AGENT_BOX) not in _allowed(material, res2, pins)
-    assert any("key changed" in s for s in res2.skipped)
+def test_an_invented_person_with_a_valid_signature_is_refused(material, res):
+    """The hole the statement's ``endorsers`` closes: canopy-web makes up a person and a
+    key, and has them endorse its own device for an agent the statement lists."""
+    invented = _endorse(device=STRANGER, signer=ATTACKER_KEY, signer_jwk=ATTACKER_JWK, by="9999")
+    assert zk.verify_endorsement(invented, "12", ATTACKER_JWK)
+    material["recipients"].append(STRANGER_ROW)
+    material["endorsements"].append(invented)
+    got = _allowed(material, res)
+    assert ("device", STRANGER) not in got
+    with pytest.raises(TrustError) as e:
+        trust.refuse_unallowed(material["recipients"], got)
+    assert e.value.code == "zk_unendorsed_recipient"
+
+
+def test_the_owner_vouches_without_being_listed_and_no_one_else_does(res):
+    material = _material(_statement(endorsers=[]))
+    assert ("device", AGENT_BOX) not in _allowed(material, res)  # the fixture's endorser, unlisted
+    material["endorsements"] = [_endorse(signer=OWNER_KEY, signer_jwk=OWNER_JWK, by=OWNER_ID)]
+    assert ("device", AGENT_BOX) in _allowed(material, res)
+
+
+def test_an_endorsers_thumbprint_comes_from_the_key_that_verifies(material, res):
+    # Claims to be the listed endorser, in by_jkt; the key and signature are someone else's.
+    material["endorsements"] = [dict(_endorse(signer=ATTACKER_KEY, signer_jwk=ATTACKER_JWK), by_jkt=ENDORSER)]
+    assert ("device", AGENT_BOX) not in _allowed(material, res)
+    # Shows the listed endorser's key, over a signature someone else made.
+    material["endorsements"] = [dict(_endorse(signer=ATTACKER_KEY, signer_jwk=ATTACKER_JWK),
+                                     by_jkt=ENDORSER, by_public_jwk=ENDORSER_JWK)]
+    assert ("device", AGENT_BOX) not in _allowed(material, res)
+    # Extra fields do not make the listed key another key.
+    material["endorsements"] = [dict(_endorse(), by_public_jwk={**ENDORSER_JWK, "kid": "x"})]
+    assert ("device", AGENT_BOX) in _allowed(material, res)
 
 
 def test_my_computers_admits_exactly_the_listed_thumbprints(material, res):
     _, other_jwk = _key()
     material["endorsements"] = []
     material["recipients"] = [_row(MY_BOX_JWK), _row(other_jwk)]
-    pins: dict = {}
-    got = _allowed(material, res, pins)
+    got = _allowed(material, res)
     assert ("device", MY_BOX) in got and len(got) == 2  # the listed computer + the owner
     assert ("device", zk.jwk_thumbprint(other_jwk)) not in got
-    assert pins == {}
 
 
 def test_a_listed_thumbprint_with_another_key_behind_it_is_refused(material, res):
@@ -348,28 +365,64 @@ def test_nothing_is_mutated_in_the_material(material, res):
 
 # ── who may write ────────────────────────────────────────────────────────────────────
 
-def test_writer_must_be_allowed_or_the_owner(material, res):
-    got = _allowed(material, res)
+def _by(kind, target, jwk) -> dict:
+    return {"kind": kind, "target": target, "public_jwk": jwk}
 
-    def by(kind, target, jwk):
-        return {"kind": kind, "target": target, "public_jwk": jwk}
 
-    assert trust.writer_allowed(by("device", MY_BOX, MY_BOX_JWK), got, OWNER_ID)
-    assert trust.writer_allowed(by("device", AGENT_BOX, AGENT_BOX_JWK), got, OWNER_ID)
-    assert trust.writer_allowed(by("member", OWNER_ID, OWNER_JWK), got, OWNER_ID)
+def _writer(by, material) -> bool:
+    return trust.writer_allowed(by, material, material["statement"], owner_jkt=O)
+
+
+def test_writer_must_be_allowed_or_the_owner(material):
+    assert _writer(_by("device", MY_BOX, MY_BOX_JWK), material)
+    assert _writer(_by("device", AGENT_BOX, AGENT_BOX_JWK), material)
+    assert _writer(_by("member", OWNER_ID, OWNER_JWK), material)
     # By thumbprint: extra fields in a key do not make it another key.
-    assert trust.writer_allowed(by("member", OWNER_ID, {**OWNER_JWK, "kid": "x"}), got, OWNER_ID)
-    assert not trust.writer_allowed(by("device", STRANGER, STRANGER_JWK), got, OWNER_ID)
-    assert not trust.writer_allowed(by("member", OWNER_ID, ATTACKER_JWK), got, OWNER_ID)
-    assert not trust.writer_allowed(by("device", MY_BOX, STRANGER_JWK), got, OWNER_ID)
-    assert not trust.writer_allowed(by("member", "9", OWNER_JWK), got, OWNER_ID)
-    # A member entry that somehow is not the owner's still does not write.
-    assert not trust.writer_allowed(by("member", "9", OWNER_JWK), {("member", "9"): OWNER_JWK}, OWNER_ID)
+    assert _writer(_by("member", OWNER_ID, {**OWNER_JWK, "kid": "x"}), material)
+    assert not _writer(_by("device", STRANGER, STRANGER_JWK), material)
+    assert not _writer(_by("member", OWNER_ID, ATTACKER_JWK), material)
+    assert not _writer(_by("device", MY_BOX, STRANGER_JWK), material)
+    assert not _writer(_by("device", STRANGER, MY_BOX_JWK), material)
+    assert not _writer(_by("member", "9", OWNER_JWK), material)
+    assert not _writer(_by("owner", OWNER_ID, OWNER_JWK), material)
+
+
+def test_a_writer_pruned_since_it_wrote_can_still_be_proved(material):
+    """It left the recipients (its agent's lender stopped administering it, say), and
+    readers must still validate it, or nobody could open the envelope to re-seal it."""
+    material["recipients"] = [_row(OWNER_JWK, OWNER_ID, "member")]
+    assert _writer(_by("device", AGENT_BOX, AGENT_BOX_JWK), material)
+    assert _writer(_by("device", MY_BOX, MY_BOX_JWK), material)
+
+
+def test_a_writer_outside_the_recipients_that_cannot_be_proved_is_refused(material):
+    material["recipients"] = []
+    by = _by("device", AGENT_BOX, AGENT_BOX_JWK)
+    for endorsements in ([],                                                            # none left
+                         [_endorse(signer=ATTACKER_KEY, signer_jwk=ATTACKER_JWK)],      # an unlisted person
+                         [_endorse(signed_for="99", tag="99")],                         # another agent
+                         [_endorse(signed_for="99", tag="12")],                         # relabelled
+                         [_endorse(device=STRANGER)]):                                  # another machine
+        material["endorsements"] = endorsements
+        assert not _writer(by, material)
+
+
+def test_a_forged_set_cannot_prove_a_writer_to_a_box_that_knows_the_owner(material):
+    invented = _endorse(device=STRANGER, signer=ATTACKER_KEY, signer_jwk=ATTACKER_JWK, by="9999")
+    material["endorsements"].append(invented)
+    material["recipients"].append(STRANGER_ROW)
+    assert not _writer(_by("device", STRANGER, STRANGER_JWK), material)
 
 
 @pytest.mark.parametrize("by", [None, "x", {}, {"kind": "device"},
                                 {"kind": "device", "target": MY_BOX, "public_jwk": "x"},
                                 {"kind": "device", "target": MY_BOX, "public_jwk": None},
-                                {"kind": ["device"], "target": MY_BOX, "public_jwk": MY_BOX_JWK}])
-def test_a_malformed_writer_is_no_writer(material, res, by):
-    assert trust.writer_allowed(by, _allowed(material, res), OWNER_ID) is False
+                                {"kind": ["device"], "target": MY_BOX, "public_jwk": MY_BOX_JWK},
+                                {"kind": "device", "target": [MY_BOX], "public_jwk": MY_BOX_JWK}])
+def test_a_malformed_writer_is_no_writer(material, by):
+    assert _writer(by, material) is False
+
+
+def test_an_owner_with_no_id_is_no_writer(material):
+    material["owner"]["user_id"] = ""
+    assert not _writer(_by("member", "", OWNER_JWK), material)

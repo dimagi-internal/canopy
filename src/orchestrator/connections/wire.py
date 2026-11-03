@@ -47,7 +47,7 @@ STATEMENT_PREFIX = "canopy-connections/v1/grant|"
 #: statement's lists are bounded the same way.
 MAX_LISTED = 64
 
-_STATEMENT_KEYS = frozenset({"account_id", "agents", "connection", "my_computers", "v", "version"})
+_STATEMENT_KEYS = frozenset({"account_id", "agents", "connection", "endorsers", "my_computers", "v", "version"})
 _SIG_KEYS = frozenset({"by", "expect", "macs"})
 _BY_KEYS = frozenset({"kind", "target", "public_jwk"})
 _JWK_KEYS = frozenset({"kty", "crv", "x", "y"})
@@ -173,6 +173,7 @@ def _statement_shape(st) -> dict:
         raise _bad_statement("connection must be a lower-case hyphenated uuid")
     _sorted_unique(st["agents"], _DECIMAL_ID, "agents")
     _sorted_unique(st["my_computers"], _B64U_32, "my_computers")
+    _sorted_unique(st["endorsers"], _B64U_32, "endorsers")
     return st
 
 

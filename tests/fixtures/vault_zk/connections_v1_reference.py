@@ -25,7 +25,8 @@ encodings (b64u = base64url WITHOUT padding; jkt = RFC 7638 thumbprint).
 3. GRANT STATEMENT, signed by the owner's person key (the same P-256 scalar as
    their vault keyset, as zk-v1 §7 endorsements are):
      st  = {"account_id","agents":[agent pks as decimal strings, sorted as strings,
-            unique],"connection":uuid,"my_computers":[ECDH jkts, sorted, unique],
+            unique],"connection":uuid,"endorsers":[jkts of person public keys, sorted,
+            unique, at most 64, may be empty],"my_computers":[ECDH jkts, sorted, unique],
             "v":1,"version":int >= 1}
            (ASCII; account_id matches ^[\\x21-\\x7e]{1,255}$ with no '"' or '\\')
      msg = "canopy-connections/v1/grant|" + json.dumps(st, sort_keys=True,
@@ -33,6 +34,10 @@ encodings (b64u = base64url WITHOUT padding; jkt = RFC 7638 thumbprint).
      sig = ECDSA-P256-SHA256(msg), IEEE P1363 r||s (64 bytes), b64u
    ECDSA is randomized: the vector pins ONE valid (RFC 6979) signature every
    verifier must accept, not a signature every signer must reproduce.
+   Who may vouch: a device outside my_computers is allowed only by a valid zk-v1 §7
+   endorsement of its exact ECDH key (kind=device, target=key_jkt=its jkt) for an agent
+   in st.agents, signed by a person key whose jkt is the owner's or is in st.endorsers,
+   computed from the key that verifies the signature. Nobody is trusted on first sight.
 
 4. WRITER MAC. Beside each envelope, a writer stores
      {"by":{"kind":"device"|"member","target","public_jwk":{"kty","crv","x","y"}},
@@ -182,6 +187,7 @@ def vectors() -> dict:
     account_id = "00D000000000001AAA/005000000000001AAA"
     owner_hex, writer_hex, other_hex = "7a" * 32, "8b" * 32, "9c" * 32
     owner, writer, other = _priv(owner_hex), _priv(writer_hex), _priv(other_hex)
+    endorsers = sorted(jkt(_priv(h * 32).public_key()) for h in ("ad", "be"))
     owner_jkt, writer_jkt, other_jkt = jkt(owner.public_key()), jkt(writer.public_key()), jkt(other.public_key())
 
     # 2. the refresh envelope, sealed to the writing box, a second box and the owner.
@@ -225,11 +231,12 @@ def vectors() -> dict:
 
     # 3. the grant statement, signed by the owner.
     statement = {"account_id": account_id, "agents": ["12", "40"], "connection": connection,
-                 "my_computers": [other_jkt], "v": 1, "version": 3}
+                 "endorsers": endorsers, "my_computers": [other_jkt], "v": 1, "version": 3}
     statement_sig = sign_statement(statement, owner)
     assert verify_statement(statement, statement_sig, owner.public_key())
     for bad in ({**statement, "agents": ["12"]}, {**statement, "version": 4},
-                {**statement, "my_computers": []}, {**statement, "connection": "x"}):
+                {**statement, "my_computers": []}, {**statement, "connection": "x"},
+                {**statement, "endorsers": []}):
         assert not verify_statement(bad, statement_sig, owner.public_key()), "statement binding not enforced"
     assert not verify_statement(statement, statement_sig, writer.public_key())
 

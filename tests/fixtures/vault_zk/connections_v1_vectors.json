@@ -8,14 +8,18 @@
         "40"
       ],
       "connection": "0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87",
+      "endorsers": [
+        "1y9K3rPEidW0VKPm1f5-xoemsJtcXjN59mrzFptbc78",
+        "ZMyo-ihMpmW08TrmnJRzclD5H5AH539jockLAIb3ePI"
+      ],
       "my_computers": [
         "PIhKbkCFr18r3u7pBB4M1jI7BCO5OTI6ISK7wLRo4Lw"
       ],
       "v": 1,
       "version": 3
     },
-    "msg": "canopy-connections/v1/grant|{\"account_id\":\"00D000000000001AAA/005000000000001AAA\",\"agents\":[\"12\",\"40\"],\"connection\":\"0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87\",\"my_computers\":[\"PIhKbkCFr18r3u7pBB4M1jI7BCO5OTI6ISK7wLRo4Lw\"],\"v\":1,\"version\":3}",
-    "sig": "4Yh2t2_ilZQ_EgqvHn89p1KCRsZmi88a7peJk74Ebe8OdYCGtJy6FXREBCYsrs3ROR1LkCjPqvFZFpnUvJHOKQ",
+    "msg": "canopy-connections/v1/grant|{\"account_id\":\"00D000000000001AAA/005000000000001AAA\",\"agents\":[\"12\",\"40\"],\"connection\":\"0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f87\",\"endorsers\":[\"1y9K3rPEidW0VKPm1f5-xoemsJtcXjN59mrzFptbc78\",\"ZMyo-ihMpmW08TrmnJRzclD5H5AH539jockLAIb3ePI\"],\"my_computers\":[\"PIhKbkCFr18r3u7pBB4M1jI7BCO5OTI6ISK7wLRo4Lw\"],\"v\":1,\"version\":3}",
+    "sig": "hGLLO8SOeGBrRSrnsA4pxsslfP_stw3dAL60CXIwYD5ny5SicbIQ8twiafUWwlGDF-FtA7syRp7UhfqnjegtZQ",
     "signer_priv_scalar_hex": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
     "signer_jwk": {
       "kty": "EC",

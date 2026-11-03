@@ -1,8 +1,8 @@
 """Who a box will seal a connection to, and whose envelope it will read: the owner's signed
 grant statement decides, never canopy-web's list (canopy-web plan Part 0 §0.5, spec §4.3).
 
-canopy-web can leave someone out, so its list can only NARROW what this module allows: a
-key it never names cannot be sealed to, and one it names counts only if it passes here.
+canopy-web can leave someone out, so its list can only NARROW whom this box seals to: a key
+it never names cannot be sealed to, and one it names counts only if it passes here.
 
 * The statement counts when its signer's key has the thumbprint sealed in the ``refresh``
   envelope (``owner_key``). The signer is identified by that thumbprint, never by a whole
@@ -11,31 +11,33 @@ key it never names cannot be sealed to, and one it names counts only if it passe
   moves forward. It also stops a wholly forged set: an envelope naming an attacker as
   ``owner_key``, a statement they signed and a device of theirs as the writer agree with
   each other, and only the pin disagrees. So a changed owner refuses, however new the
-  statement, until a person removes that connection from the pin file.
+  statement. canopy-web never changes a row's owner key (R10): a new owner is a new
+  connection, with a new id and a new pin.
 * Allowed are the owner's member key, the devices in ``my_computers``, and a device with a
-  zk-v1 §7 endorsement of its exact ECDH key, for an agent the STATEMENT lists, by a person
-  this box trusts (``vault_keeper._endorsed``). The endorsement's subject is checked
-  against the statement: an endorsement that names no agent of its own admits nothing,
-  rather than taking one from canopy-web's payload (``allowed``).
+  zk-v1 §7 endorsement of its exact ECDH key, for an agent the statement lists, signed by
+  the owner's key or a key the statement lists in ``endorsers``.
 
-Two pin stores meet here, and their keys cannot collide. ``verified_statement`` reads and
-writes connection pins, keyed by connection uuid (:data:`PINS_FILE`). ``allowed`` reads and
-writes person pins, keyed by user id (``vault_zk_cli.pins_path``), as the keeper does.
-``vault_zk_cli.load_pins`` and ``save_pins`` read and write either file.
+The statement alone says who may vouch. The person pins the vault keeper uses
+(``vault_keeper._trust_person``) play no part here: they trust a person on first sight,
+and canopy-web could invent one. An endorser's thumbprint is computed from the key that
+verifies the signature, and an endorsement's subject is the agent it was signed for, which
+the statement must list.
 
 Everything here fails closed: malformed input admits nobody and never crashes.
 """
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from orchestrator import vault_keeper
 from orchestrator import vault_zk as zk
 from orchestrator.connections import wire
-from orchestrator.vault_keeper import KeepResult
-from orchestrator.vault_zk_cli import Target
 
-#: ``{connection_id: {"owner_jkt", "version"}}``
+if TYPE_CHECKING:
+    from orchestrator.vault_keeper import KeepResult
+
+#: ``{connection_id: {"owner_jkt", "version"}}``. ``vault_zk_cli.load_pins`` and
+#: ``save_pins`` read and write it.
 PINS_FILE = Path.home() / ".canopy" / "connection-pins.json"
 
 UNENDORSED = "zk_unendorsed_recipient"
@@ -77,6 +79,12 @@ def _owner_key(material: dict, owner_jkt: str) -> dict | None:
     return jwk if jwk is not None and zk.jwk_thumbprint(jwk) == owner_jkt else None
 
 
+def _owner_id(material: dict) -> str:
+    owner = material.get("owner")
+    owner_id = str(owner.get("user_id") or "") if isinstance(owner, dict) else ""
+    return owner_id if wire._DECIMAL_ID.fullmatch(owner_id) else ""
+
+
 def _check_pin(pin, *, owner_jkt: str, version: int) -> None:
     if not isinstance(pin, dict) or not isinstance(pin.get("owner_jkt"), str) \
             or type(pin.get("version")) is not int:
@@ -84,8 +92,8 @@ def _check_pin(pin, *, owner_jkt: str, version: int) -> None:
                                     "remove it; refusing to guess what this box has seen")
     if pin["owner_jkt"] != owner_jkt:
         raise TrustError("statement-owner-changed",
-                         "this connection's owner key is not the one this box pinned — confirm with "
-                         f"its owner, then remove the connection from {PINS_FILE}")
+                         "this connection's owner key is not the one this box pinned, and canopy-web "
+                         "never changes it — treat this as forged and look into it")
     if version < pin["version"]:
         raise TrustError("statement-rollback",
                          f"this statement is version {version}; this box has seen version {pin['version']}")
@@ -94,7 +102,7 @@ def _check_pin(pin, *, owner_jkt: str, version: int) -> None:
 def verified_statement(material: dict, *, owner_jkt: str, pins: dict) -> dict:
     """The statement in ``material``, once it is the owner's (``owner_jkt``, from the
     ``refresh`` plaintext), about this connection and account, and no older than what
-    this box has seen. ``pins`` (connection pins) learns it only then."""
+    this box has seen. ``pins`` (:data:`PINS_FILE`'s content) learns it only then."""
     owner_key = _owner_key(material, owner_jkt)
     if owner_key is None:
         raise TrustError("bad-owner-key", "the owner key shown is not the one sealed in the envelope")
@@ -113,40 +121,42 @@ def verified_statement(material: dict, *, owner_jkt: str, pins: dict) -> dict:
     return statement
 
 
+def _vouched_for(jkt: str, material: dict, statement: dict, owner_jkt: str) -> bool:
+    """A valid endorsement of exactly this device key, for an agent the statement lists,
+    signed by the owner's key or a key the statement names as an endorser."""
+    vouchers = {owner_jkt, *statement["endorsers"]}
+    for e in material.get("endorsements") or []:
+        if not isinstance(e, dict) or (e.get("kind"), e.get("target"), e.get("key_jkt")) != ("device", jkt, jkt):
+            continue
+        agent = str(e.get("agent_id") or "")
+        by = _clean_jwk(e.get("by_public_jwk"))
+        if agent not in statement["agents"] or by is None:
+            continue
+        key = zk.public_key_from_jwk(by)
+        if zk.jkt(key) in vouchers and zk.verify_endorsement(e, agent, key):
+            return True
+    return False
+
+
+def _device_allowed(jkt: str, material: dict, statement: dict, owner_jkt: str) -> bool:
+    return jkt in statement["my_computers"] or _vouched_for(jkt, material, statement, owner_jkt)
+
+
 def _who(row: dict) -> str:
     target = str(row.get("target") or "?")[:16]
     return f"{row.get('runner_name') or row.get('kind') or 'recipient'} ({target}…)"
 
 
-def _device_endorsed(row: dict, jwk: dict, jkt: str, statement: dict, endorsements: list, *,
-                     pins: dict, res: KeepResult) -> bool:
-    """A valid endorsement of this exact key, for an agent the statement lists, by a
-    person this box trusts. Only endorsements naming such an agent reach ``_endorsed``:
-    it would otherwise take a missing subject from the payload, and it pins an endorser
-    on first sight, which an endorsement for another agent must not teach this box."""
-    t = Target("device", jkt, jwk, str(row.get("runner_name") or ""), jkt)
-    for agent in statement["agents"]:
-        named = [e for e in endorsements if str(e.get("agent_id") or "") == agent]
-        if named and vault_keeper._endorsed(t, jkt, named, agent, pins, res):
-            return True
-    return False
-
-
-def allowed(material: dict, statement: dict, *, owner_jkt: str, pins: dict,
-            res: KeepResult) -> dict[tuple[str, str], dict]:
+def allowed(material: dict, statement: dict, *, owner_jkt: str, res: KeepResult) -> dict[tuple[str, str], dict]:
     """``{(kind, target): public_jwk}``: everyone Part 0.5 lets this box seal to, among
     those canopy-web names. ``statement`` is what :func:`verified_statement` returned.
-    ``pins`` (person pins) gains each endorser trusted on first sight; why a listed key
-    was left out goes in ``res.skipped``."""
+    Why a listed key was left out goes in ``res.skipped``."""
     out: dict[tuple[str, str], dict] = {}
-    owner = material.get("owner")
-    owner_id = str(owner.get("user_id") or "") if isinstance(owner, dict) else ""
+    owner_id = _owner_id(material)
     owner_key = _owner_key(material, owner_jkt)
-    if owner_key is not None and wire._DECIMAL_ID.fullmatch(owner_id):
+    if owner_key is not None and owner_id:
         out[("member", owner_id)] = owner_key
 
-    computers = set(statement["my_computers"])
-    endorsements = [e for e in material.get("endorsements") or [] if isinstance(e, dict)]
     for row in material.get("recipients") or []:
         if not isinstance(row, dict):
             res.skipped.append("canopy-web sent a malformed recipient")
@@ -159,12 +169,11 @@ def allowed(material: dict, statement: dict, *, owner_jkt: str, pins: dict,
         jwk = _clean_jwk(row.get("public_jwk"))
         if kind != "device" or not isinstance(target, str) or jwk is None or zk.jwk_thumbprint(jwk) != target:
             res.skipped.append(f"{_who(row)}: canopy-web sent no key with that thumbprint")
-        elif target in computers or _device_endorsed(row, jwk, target, statement, endorsements,
-                                                     pins=pins, res=res):
+        elif _device_allowed(target, material, statement, owner_jkt):
             out[("device", target)] = jwk
         else:
             res.skipped.append(f"{_who(row)}: neither in the owner's statement nor endorsed for an "
-                               "agent it lists by a person this box trusts")
+                               "agent it lists by someone it names")
     return out
 
 
@@ -183,13 +192,18 @@ def refuse_unallowed(rows: list[dict], allowed: dict) -> list[tuple[str, str, di
     return list(out.values())
 
 
-def writer_allowed(by: dict, allowed: dict, owner_user_id: str) -> bool:
-    """May ``by`` (what ``wire.open_envelope`` returned) have written this envelope: a
-    device ``allowed`` holds or the owner's member key, by thumbprint. Never raises."""
+def writer_allowed(by: dict, material: dict, statement: dict, *, owner_jkt: str) -> bool:
+    """May ``by`` (what ``wire.open_envelope`` returned) have written this envelope: the
+    owner's member key, or a device the statement allows. Judged from ``by``'s own key
+    and the statement, not from today's recipients: a writer pruned since it wrote must
+    still be provable, or nobody could open the envelope to re-seal it. Never raises."""
     if not isinstance(by, dict):
         return False
     kind, target = by.get("kind"), by.get("target")
-    if not isinstance(target, str) or kind not in ("device", "member") \
-            or (kind == "member" and target != owner_user_id):
+    key = _clean_jwk(by.get("public_jwk"))
+    if key is None or not isinstance(target, str):
         return False
-    return (kind, target) in allowed and _same_key(by.get("public_jwk"), allowed[(kind, target)])
+    jkt = zk.jwk_thumbprint(key)
+    if kind == "member":
+        return bool(target) and target == _owner_id(material) and jkt == owner_jkt
+    return kind == "device" and jkt == target and _device_allowed(jkt, material, statement, owner_jkt)

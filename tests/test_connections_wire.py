@@ -122,7 +122,7 @@ def test_a_randomized_signature_like_the_browser_makes_verifies():
                                  ST["signer_jwk"])
 
 
-@pytest.mark.parametrize("changed", [{"agents": ["12"]}, {"version": 4}, {"my_computers": []},
+@pytest.mark.parametrize("changed", [{"agents": ["12"]}, {"version": 4}, {"my_computers": []}, {"endorsers": []},
                                      {"connection": "0f8e3c2a-5b1d-4e7f-9a60-3c2b1d0e9f88"}])
 def test_a_changed_statement_does_not_verify(changed):
     assert not wire.verify_statement({**GOOD, **changed}, ST["sig"], ST["signer_jwk"])
@@ -171,6 +171,10 @@ def test_a_statement_of_64_agents_is_accepted_and_65_is_not():
     {"agents": ["40", "12"]}, {"agents": ["12", "12"]}, {"agents": ["12", "4a"]}, {"agents": ["012"]},
     {"agents": ["0"]}, {"agents": [12]}, {"agents": "12"}, {"agents": ["12\n"]},
     {"my_computers": ["b", "a"]}, {"my_computers": ["short"]},
+    {"endorsers": ["b", "a"]}, {"endorsers": ["short"]}, {"endorsers": "x"}, {"endorsers": None},
+    {"endorsers": [GOOD["endorsers"][0]] * 2}, {"endorsers": [GOOD["endorsers"][0] + "\n"]},
+    {"endorsers": list(reversed(GOOD["endorsers"]))},
+    {"endorsers": sorted(zk.b64u(i.to_bytes(32, "big")) for i in range(65))},
     {"my_computers": [GOOD["my_computers"][0]] * 2}, {"my_computers": [GOOD["my_computers"][0] + "\n"]},
     {"version": 0}, {"version": True}, {"version": "3"}, {"version": -1}, {"version": 3.0},
     {"v": 2}, {"v": True}, {"extra": 1},
@@ -187,7 +191,8 @@ def test_malformed_statement_is_refused(bad):
     assert e.value.code == "bad-statement"
 
 
-@pytest.mark.parametrize("bad", [None, [], "st", {k: v for k, v in GOOD.items() if k != "v"}])
+@pytest.mark.parametrize("bad", [None, [], "st", {k: v for k, v in GOOD.items() if k != "v"},
+                                 {k: v for k, v in GOOD.items() if k != "endorsers"}])
 def test_a_statement_that_is_not_an_object_of_the_keys_is_refused(bad):
     with pytest.raises(wire.WireError):
         wire.check_statement(bad, connection_id=GOOD["connection"], account_id=GOOD["account_id"])
