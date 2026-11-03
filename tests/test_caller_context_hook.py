@@ -269,6 +269,49 @@ def test_the_access_line_names_permissions_and_keeps_manual_a_separate_axis(tmp_
     assert "every turn runs manual" not in text
 
 
+def _access(tmp_path, **over):
+    env = {**ENV, "version": 2, **over}
+    text = cc.summarize(env, str(tmp_path / "e.json"), TID)
+    return next(line for line in text.splitlines() if line.startswith("- access:"))
+
+
+def test_an_owner_sees_the_real_permission_list(tmp_path):
+    line = _access(tmp_path, relationship="owner", verified=True, role="owner",
+                   permissions=["read", "write", "agent_edit", "admin", "own"],
+                   granted_by="owner")
+    assert "role=owner, permissions=read, write, agent_edit, admin, own" in line
+    assert "n/a" not in line and "manual_only" not in line
+
+
+def test_an_editor_whose_turns_are_manual_only_says_so(tmp_path):
+    line = _access(tmp_path, relationship="member", verified=True, role="editor",
+                   permissions=["read", "write", "agent_edit"], manual_only=True,
+                   granted_by="grant:workspace:connect")
+    assert "permissions=read, write, agent_edit" in line
+    assert "manual_only" in line and "always run manual" in line
+
+
+def test_a_turn_with_no_agent_prints_no_contradictory_permissions(tmp_path):
+    line = _access(tmp_path, profile="full", permissions=[], granted_by="no-interface")
+    assert "permissions=none" not in line
+    assert "n/a (no agent" in line
+    assert "profile=full" in line and "granted_by=no-interface" in line
+    assert "`write` means" not in line
+
+
+def test_a_refused_caller_is_told_plainly_nothing_is_open(tmp_path):
+    line = _access(tmp_path, profile="none", permissions=[], granted_by="refused")
+    assert "permissions=none (nothing is open to this caller)" in line
+    assert "refused: no permission here" in line
+
+
+def test_a_confined_caller_names_its_capability(tmp_path):
+    line = _access(tmp_path, profile="confined", role="read_only", permissions=["read"],
+                   granted_by="grant:workspace:connect", capability={"name": "ask"})
+    assert "profile=confined" in line and "permissions=read" in line
+    assert "capability=ask" in line
+
+
 TRIGGER = {"id": 22, "name": "AWS CloudWatch alarms", "kind": "inbound_mail",
            "set_up_by": "ada@dimagi-ai.com"}
 TRIGGER_ENV = {

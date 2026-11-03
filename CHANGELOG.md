@@ -9,6 +9,11 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.837] - 2026-11-03
+### Fixed
+- The caller-context access line no longer prints `permissions=none` beside `profile=full` on a turn with no agent (`granted_by: no-interface`); it says `permissions n/a (no agent in this turn)`. A refused caller is told plainly nothing is open, and a `manual_only` caller is named.
+- `canopy agent interface` help, CLAUDE.md, turn.md and session-identity.md no longer describe the retired `role`/`callers`/`full` model: a capability says what it is, and who may use it is the agent's access list on canopy-web.
+
 ## [0.2.836] - 2026-11-03
 ### Fixed
 - `canopy caller tier` read canopy-web's decision through a closed list of one-word `granted_by` values, so an asker given `write` by an access-list line (`grant:<line>`) fell through to `unlisted` and the agent refused to act. Real case: a verified connect-workspace editor (`granted_by: grant:workspace:connect::dimagi-associate.com`, role editor, profile full) resolved `unlisted`. It now reads the decision in canopy-web's own vocabulary: the envelope's `permissions` (act iff `write`), else `profile` (full → act, confined → caller), and only an older canopy-web with neither falls back to `granted_by` (now including `grant:` and `session:`). `refused` and `sensitive:` never act.

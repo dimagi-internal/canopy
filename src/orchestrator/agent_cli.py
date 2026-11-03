@@ -205,9 +205,13 @@ def agent_skills(slug, skills_root, url_template, json_file):
 
 @agent.group("interface")
 def agent_interface():
-    """An agent's DECLARED INTERFACE — the scoped `use:<capability>` permissions: what
-    everyone who does not hold `write` on the agent may make it do. LIVE STATE held on canopy-web, never a file
-    in the agent's repo; also editable on the agent's Overview page."""
+    """An agent's DECLARED INTERFACE — the capabilities it publishes, each a door that
+    says only what it IS: description, entry, tools, bash, read_paths, write_paths, input,
+    pages, sites, ceiling, own_login, data. Who may use one is NOT here: it is the agent's
+    ACCESS LIST on canopy-web (roles read_only < read_write < editor < admin < owner =
+    permissions read/write/agent_edit/admin/own; a line may name one capability instead).
+    `role:`, `callers:` and `full:` are retired and refused. LIVE STATE held on canopy-web,
+    never a file in the agent's repo; also editable on the agent's Overview page."""
 
 
 @agent_interface.command("get")

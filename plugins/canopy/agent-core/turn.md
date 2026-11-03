@@ -46,7 +46,7 @@ read it at preflight with
 
 ```bash
 canopy agent mode --slug <slug> --caller <path>   # --caller only when your turn was given one
-# → {"turn_mode": "manual"|"auto", "basis": "rule email/beth@dimagi.com" | "agent" | "editor <email>: manual …" | …,
+# → {"turn_mode": "manual"|"auto", "basis": "rule email/beth@dimagi.com" | "agent" | "manual_only: <email> …" | …,
 #    "source": "turn"|"agent", "relationship": "owner"|"admin"|"member"|"contact"|"system", "profile": "full"|"confined"}
 ```
 

@@ -105,6 +105,38 @@ def profile_of(env: dict) -> str:
     return _LEGACY_PROFILE.get(prof, prof)
 
 
+def _access_line(env: dict, cap: dict) -> str:
+    """The `access:` line. `permissions` is canopy-web's decision about the agent; a turn with
+    no agent / no interface (`granted_by: no-interface`) has none to report, so say that
+    rather than a contradictory `permissions=none` beside `profile=full`."""
+    perms = env.get("permissions")
+    granted = env.get("granted_by")
+    prof = profile_of(env)
+    no_agent = granted == "no-interface" or (
+        prof == "full" and not env.get("role") and not perms)
+    out = f"- access: profile={prof}"
+    if env.get("role"):
+        out += f", role={env['role']}"
+    if isinstance(perms, list):
+        if perms:
+            out += f", permissions={', '.join(map(str, perms))}"
+        elif no_agent:
+            out += ", permissions n/a (no agent in this turn)"
+        else:
+            out += ", permissions=none (nothing is open to this caller)"
+    out += f", granted_by={granted or 'unknown'}"
+    if granted in _BASIS:
+        out += f" ({_BASIS[granted]})"
+    if cap.get("name"):
+        out += f", capability={cap.get('name')}"
+    if isinstance(perms, list) and perms and not no_agent:
+        out += (" — `write` means they may steer you; whether a person approves outbound is "
+                "the turn mode below, a separate axis")
+    if env.get("manual_only"):
+        out += " — this caller's turns always run manual (`manual_only`)"
+    return out
+
+
 def task_candidates(transcript_path: str, cwd: str = ""):
     """Task names this session could be, most specific first.
 
@@ -300,15 +332,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         f"- relationship: {rel} — {_RELATIONSHIP.get(rel, 'unknown')}",
         f"- verified: {'yes' if verified else 'NO'} (assurance: {assurance})"
         + ("" if verified else " — who they say they are is a claim, not proven"),
-        f"- access: profile={profile_of(env)}"
-        + (f", role={env['role']}" if env.get("role") else "")
-        + (f", permissions={', '.join(env['permissions']) or 'none'}"
-           if isinstance(env.get("permissions"), list) else "")
-        + f", granted_by={env.get('granted_by') or 'unknown'}"
-        + (f" ({_BASIS[env['granted_by']]})" if env.get("granted_by") in _BASIS else "")
-        + (f", capability={cap.get('name')}" if cap.get("name") else "")
-        + (" — `write` means they may steer you; whether a person approves outbound is "
-           "the turn mode below, a separate axis" if isinstance(env.get("permissions"), list) else ""),
+        _access_line(env, cap),
         f"- turn mode: {mode}" + (f" ({basis})" if basis else "") + mode_note,
         f"- channel: {trigger.get('origin') or 'unknown'}"
         + (f", runner {trigger['runner']}" if trigger.get("runner") else "")
