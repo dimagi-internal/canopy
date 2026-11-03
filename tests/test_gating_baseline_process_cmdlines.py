@@ -65,3 +65,17 @@ def test_listing_full_command_lines_is_blocked(call, cmd):
 ])
 def test_pids_and_command_names_pass(call, cmd):
     assert call(cmd)[0] == 0, cmd
+
+
+def test_no_fleet_procedure_tells_an_agent_to_run_what_this_rail_blocks(call):
+    """A doc printing a railed command spends a turn on the block, and it takes the
+    rest of that command down with it. turn.md's liveness check did this (2026-11-03)."""
+    offenders = []
+    for doc in sorted((PLUGIN / "agent-core").glob("*.md")):
+        in_fence = False
+        for number, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("```"):
+                in_fence = not in_fence
+            elif in_fence and "other processes" in call(line)[2]:
+                offenders.append(f"{doc.name}:{number}: {line.strip()}")
+    assert not offenders, "\n".join(offenders)
