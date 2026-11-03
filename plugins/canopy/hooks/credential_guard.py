@@ -29,7 +29,10 @@ sharing on one resource, and asking for access is a fine thing to tell a person)
 looks only where an error can be the answer, not content that merely quotes one:
 
 * an MCP tool — the failed result, or a successful one that is SHORT (`SHORT_RESULT`) with the
-  match near its start (a 48 KB transcript read that quotes an old error is not a failure);
+  match near its start (a 48 KB transcript read that quotes an old error is not a failure). A
+  successful result that is JSON is judged only on its error fields (`ERROR_FIELDS`): a record
+  can quote a failure in any other field (2026-11-03: Ada's debug turn 05590519 was aborted by
+  reading the investigation of an abort, which quotes the error);
 * Bash — only a call to the agent's credentialed commands (`canopy`, `gog`, `bin/<agent>-…`):
   a failed one's error, or a short output (exit 0 through a pipe) on a line reading as an error.
 
@@ -70,6 +73,9 @@ CREDENTIAL_FAILURE = [re.compile(p, re.IGNORECASE) for p in (
     r"\bauthentication (?:required|failed)\b|\bnot authenticated\b",
     r"\b(?:ENOENT|no such file)[^\n]{0,160}(?:key|credential|token)[\w.-]*\.json",
 )] + [re.compile(r"\bUNAUTHENTICATED\b")]                     # gRPC status, upper case only
+
+#: The fields of a successful JSON result that can be the tool's own answer rather than its data.
+ERROR_FIELDS = ("error", "errors", "error_description", "detail", "message")
 
 #: A failed Bash call is judged only when it ran one of these (the agent's own logins).
 CREDENTIALED_COMMAND = re.compile(r"^\s*(?:\S+/)?(?:canopy|gog|bin/[\w.-]+)\b")
@@ -142,6 +148,17 @@ def match(text: str):
     return None
 
 
+def _answer_text(text: str) -> str:
+    """What a successful result says for itself: all of it, unless it is JSON."""
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return text
+    if isinstance(value, dict):
+        return "\n".join(_text(value[k]) for k in ERROR_FIELDS if k in value)
+    return text if isinstance(value, str) else ""
+
+
 def credential_failure(data: dict) -> str:
     """The error text when this tool call failed on the agent's credentials, else ""."""
     tool = str(data.get("tool_name") or "")
@@ -157,7 +174,7 @@ def credential_failure(data: dict) -> str:
         else:
             if len(text) > SHORT_RESULT:
                 return ""
-            m = match(text)
+            m = match(_answer_text(text))
             if m and m.start() > NEAR_START:
                 m = None
         return text if m else ""
