@@ -51,8 +51,8 @@ class ProviderError(Exception):
     * ``unknown-provider`` — no provider by that name.
     * ``rejected`` — the provider refused (4xx, or 200 carrying ``error``);
       ``provider_code`` is its own error string (``invalid_grant``: reconnect).
-    * ``unavailable`` — no sensible answer (transport failure, 5xx, a redirect, a body that
-      is not JSON): says nothing about the grant, so never "reconnect".
+    * ``unavailable`` — no sensible answer (transport failure, 5xx, 429, a redirect, a body
+      that is not JSON): says nothing about the grant, so never "reconnect".
     * ``no-access-token`` — a 200 without an access token.
 
     ``detail`` is safe to log: it never carries a token or the client secret."""
@@ -259,10 +259,11 @@ class Provider:
             raise ProviderError("unavailable", f"{self.title} {what} failed ({type(e).__name__})") from None
 
     def _error(self, resp: HttpResponse, what: str, secrets: tuple[str, ...]) -> ProviderError:
-        """A refused answer as an error: a 5xx, a redirect or a body that is not JSON is the
-        provider unavailable; anything else a rejection carrying the provider's own code."""
+        """A refused answer as an error: a 5xx, a rate limit, a redirect or a body that is not
+        JSON is the provider unavailable; anything else a rejection carrying the provider's
+        own code."""
         body = resp.body
-        if not isinstance(body, dict) or resp.status >= 500 or 300 <= resp.status < 400:
+        if not isinstance(body, dict) or resp.status >= 500 or resp.status == 429 or 300 <= resp.status < 400:
             return ProviderError("unavailable", f"{self.title} {what} failed ({resp.status})")
         code = _scrub(str(body.get("error") or ""), secrets)
         why = _scrub(str(body.get("error_description") or code), secrets)

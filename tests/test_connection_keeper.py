@@ -592,42 +592,79 @@ def test_a_google_disconnect_revokes_only_when_told(told, urls):
     assert web.confirmed == [{"revoked": True, "error": ""}]
 
 
-def test_a_token_already_dead_counts_as_revoked(fake_web, http):
-    http.status, http.answer = 400, {"error": "invalid_grant", "error_description": "expired"}
+@pytest.mark.parametrize("code", ["invalid_grant", "invalid_token"])
+def test_a_token_already_dead_counts_as_revoked(fake_web, http, code):
+    http.status, http.answer = 400, {"error": code, "error_description": "expired"}
     res = _keep(fake_web, fake_web.work(revoking=True, revoke_at_provider=True), http=http)
     assert fake_web.confirmed == [{"revoked": True, "error": ""}]
-    assert res.error == ""
+    assert res.error == "" and res.done
+
+
+def test_a_revoke_again_after_a_lost_confirmation_still_says_revoked(fake_web, http):
+    """The token went on the first pass and only canopy-web's answer was lost. On the next
+    pass the provider says it is dead, which is what we did to it."""
+    fake_web.confirm_failure = (500, "boom")
+    first = _keep(fake_web, fake_web.work(revoking=True, revoke_at_provider=True), http=http)
+    assert first.error and first.done == []
+
+    fake_web.confirm_failure = None
+    http.status, http.answer = 400, {"error": "invalid_token"}
+    second = _keep(fake_web, fake_web.work(revoking=True, revoke_at_provider=True), http=http)
+    assert len(http.urls) == 2 and second.error == "" and second.done
+    assert fake_web.confirmed[-1] == {"revoked": True, "error": ""}
 
 
 @pytest.mark.parametrize("status,answer,code", [
     (400, {"error": "unsupported_token_type"}, "unsupported_token_type"),
-    (503, {"error": "busy"}, "unavailable"),
-    (302, None, "unavailable"),
+    (401, {"error": "invalid_client"}, "invalid_client"),
     (400, {"error": f"Bad Thing with {REFRESH} and {SECRET}"}, "rejected"),
     (400, {"error": "x" * 300}, "rejected"),
     (400, {}, "rejected"),
 ])
-def test_any_other_failure_confirms_not_revoked_with_a_code_and_no_token(fake_web, http, status, answer, code):
+def test_a_definite_rejection_confirms_not_revoked_with_a_code_and_no_token(fake_web, http, status, answer, code):
     http.status, http.answer = status, answer
     res = _keep(fake_web, fake_web.work(revoking=True, revoke_at_provider=True), http=http)
     assert fake_web.confirmed == [{"revoked": False, "error": code}]
     assert len(fake_web.confirmed[0]["error"]) <= 100
     _assert_no_secret(_text(res), json.dumps(fake_web.confirmed))
-    assert res.error
+    assert res.error and res.done == []
 
 
-def test_a_transport_failure_confirms_not_revoked(fake_web, http):
+@pytest.mark.parametrize("status,answer", [
+    pytest.param(503, {"error": f"busy {REFRESH}"}, id="5xx"),
+    pytest.param(302, None, id="a-redirect"),
+    pytest.param(400, None, id="an-answer-that-is-not-json"),
+    pytest.param(429, {"error": "rate_limited"}, id="rate-limited"),
+])
+def test_a_provider_outage_confirms_nothing_and_a_later_pass_finishes(fake_web, http, status, answer):
+    http.status, http.answer = status, answer
+    res = _keep(fake_web, fake_web.work(revoking=True, revoke_at_provider=True), http=http)
+    assert fake_web.confirmed == [] and res.done == [] and "next pass" in res.error
+    _assert_no_secret(_text(res))
+
+    http.status, http.answer = 200, {}
+    res = _keep(fake_web, fake_web.work(revoking=True, revoke_at_provider=True), http=http)
+    assert fake_web.confirmed == [{"revoked": True, "error": ""}] and res.error == "" and res.done
+
+
+def test_a_network_failure_at_the_provider_confirms_nothing(fake_web, http):
     http.error = ConnectionError(f"could not post {REFRESH}")
     res = _keep(fake_web, fake_web.work(revoking=True, revoke_at_provider=True), http=http)
-    assert fake_web.confirmed == [{"revoked": False, "error": "unavailable"}]
-    _assert_no_secret(_text(res), json.dumps(fake_web.confirmed))
+    assert fake_web.confirmed == [] and "next pass" in res.error
+    _assert_no_secret(_text(res))
 
 
-def test_a_swapped_client_is_not_sent_the_token_and_confirms_not_revoked(fake_web, http):
-    fake_web.client_id = "client-of-the-attacker"
-    _keep(fake_web, fake_web.work(revoking=True, revoke_at_provider=True), http=http)
-    assert http.urls == []
-    assert fake_web.confirmed == [{"revoked": False, "error": "client-mismatch"}]
+@pytest.mark.parametrize("app", [
+    pytest.param({"client_id": "client-of-the-attacker", "client_secret": SECRET}, id="client-mismatch"),
+    pytest.param({"client_id": "client-1", "client_secret": ""}, id="no-secret"),
+    pytest.param(None, id="no-app"),
+])
+def test_a_refusal_before_any_provider_call_sends_no_token_and_confirms_nothing(fake_web, http, app):
+    """No provider has said anything, so it is no rejection: the sweep is the backstop."""
+    work = fake_web.work(revoking=True, revoke_at_provider=True)
+    work["app"] = app
+    res = _keep(fake_web, work, http=http)
+    assert http.urls == [] and fake_web.confirmed == [] and "next pass" in res.error
 
 
 def test_a_forged_revoking_envelope_reaches_no_provider_and_confirms_nothing(fake_web, http, _pins_file):
@@ -926,3 +963,52 @@ def test_what_canopy_web_says_in_a_refusal_is_not_repeated(fake_web):
     res = keep_connection(fake_web.work(fake_web.waiting_for(MY_LAPTOP)), pins={}, call=refuses, ecdh=BOX)
     assert "zk_value_changed" in res.error
     _assert_no_secret(_text(res))
+
+
+@pytest.mark.parametrize("crash", ["damaged-vault-pins", "keep-one-raises"])
+def test_a_crash_in_vault_work_does_not_stop_a_revoke(fake_web, box, tmp_path, monkeypatch, capsys, crash):
+    monkeypatch.setattr(provider_base, "post_form", lambda url, form, *, timeout: HttpResponse(200, {}))
+    server = Server([fake_web])
+    server.vault = {"agents": [], "delegated": [_delegated_stub()]}
+    server.work = [fake_web.work(revoking=True, revoke_at_provider=True)]
+    if crash == "damaged-vault-pins":
+        (tmp_path / "vault-pins.json").write_text("{damaged")
+        wanted = vault_zk_cli.ZkCliError
+    else:
+        server.vault = {"agents": [{"agent": "a"}], "delegated": []}  # no agent_id: keep_one's KeyError
+        wanted = KeyError
+    with pytest.raises(wanted):
+        box(server)
+    assert fake_web.confirmed == [{"revoked": True, "error": ""}]
+    out = capsys.readouterr().out
+    assert "connection salesforce" in out and "revoked at the provider" in out
+
+
+def test_a_crash_in_vault_work_prints_what_failing_to_read_connections_said(box, tmp_path, capsys):
+    (tmp_path / "vault-pins.json").write_text("{damaged")
+    server = Server()
+    server.connections_status = 500
+    server.vault = {"agents": [], "delegated": [_delegated_stub()]}
+    with pytest.raises(vault_zk_cli.ZkCliError):
+        box(server)
+    assert "could not read this box's connection work" in capsys.readouterr().out
+
+
+def test_a_crash_in_vault_work_with_no_connections_is_as_it_was(box, tmp_path, capsys):
+    (tmp_path / "vault-pins.json").write_text("{damaged")
+    server = Server()
+    server.vault = {"agents": [], "delegated": [_delegated_stub()]}
+    with pytest.raises(vault_zk_cli.ZkCliError):
+        box(server)
+    assert capsys.readouterr().out == ""
+
+
+def test_a_rate_limited_provider_is_unavailable():
+    from orchestrator.connections import providers
+
+    http = Http()
+    http.status, http.answer = 429, {"error": "rate_limited"}
+    with pytest.raises(providers.ProviderError) as e:
+        providers.get("salesforce").revoke(_refresh_plain(), {"client_id": "client-1", "client_secret": SECRET},
+                                           http=http)
+    assert e.value.code == "unavailable"

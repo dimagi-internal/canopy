@@ -3,7 +3,7 @@ on each pass of ``canopy vault zk keep``, a box re-seals each connection it hold
 machines waiting for it, and revokes each one being disconnected, then confirms.
 
 canopy-web says who is waiting; the owner's signed statement says who gets a copy, so a
-server that lies can delay a machine but never add a reader. Five rules:
+server that lies can delay a machine but never add a reader. Six rules:
 
 * **A whole read first** (``access.checked_read``, the read a token uses), and the pin is saved
   once it is accepted, before anything is written or revoked, whether or not a write follows.
@@ -18,10 +18,13 @@ server that lies can delay a machine but never add a reader. Five rules:
   never used or re-sealed. A later pass tries again, after a refresher has written an
   ``access`` this box can open.
 * **A revoke needs the same read.** A read that fails reaches no provider and confirms
-  nothing: another holder may read it, and canopy-web's sweep ends it after 7 days. Once the
-  read passes, the outcome is confirmed either way, which deletes the row. Revoked means the
-  provider said so, or said the token is already dead (``invalid_grant``), or this box was
-  not told to revoke at all.
+  nothing: another holder may read it, and canopy-web's sweep ends it after 7 days.
+* **Confirming deletes the row, so only a definite answer confirms.** Revoked means the
+  provider said so, or said the token is already dead (``invalid_grant``, ``invalid_token``:
+  also what a second try gets after a confirmation was lost), or this box was not told to
+  revoke at all. Any other rejection by the provider confirms ``revoked: false``. A provider
+  that gave no answer (outage, rate limit), or a refusal here before any call, confirms
+  nothing: a later pass tries again, and the sweep is the backstop.
 * **One bad connection stops only itself.** Every failure ends as a line in its
   ``KeepResult``, which holds nothing sealed: a code or a provider's scrubbed detail, or for
   anything unexpected the exception's type alone.
@@ -40,6 +43,8 @@ from orchestrator.cred_cli import CONNECTION_CALL_TIMEOUT, CredError, _error_cod
 from orchestrator.vault_keeper import KeepResult
 
 KIND = "connection"
+#: The provider's way of saying the token is gone already, which is what a revoke is for.
+_DEAD_TOKEN = frozenset({access.INVALID_GRANT, "invalid_token"})
 #: What canopy-web writes to its log as a provider's error; anything else it calls unrecognised.
 _ERROR_CODE = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
 
@@ -183,7 +188,7 @@ def _name(material: dict, target: str) -> str:
 # ---- revoking ------------------------------------------------------------------------
 
 def _revoke(read: access._Read, res: KeepResult, call, http) -> None:
-    """At the provider only when told, then confirm: the row goes either way."""
+    """At the provider only when told, then confirm what it definitely answered."""
     revoked, error = True, ""
     outcome = "disconnected here; another connection of this account remains, so not revoked at the provider"
     if read.material.get("revoke_at_provider") is True:
@@ -191,7 +196,10 @@ def _revoke(read: access._Read, res: KeepResult, call, http) -> None:
             providers.get(read.refresh["provider"]).revoke(read.refresh, read.material.get("app"), http=http)
             outcome = "revoked at the provider"
         except providers.ProviderError as e:
-            if e.code == "rejected" and e.provider_code == access.INVALID_GRANT:
+            if e.code != "rejected":
+                res.error = f"not revoked ({e}); nothing confirmed, so the next pass tries again"
+                return
+            if e.provider_code in _DEAD_TOKEN:
                 outcome = "already dead at the provider"
             else:
                 revoked, error = False, _revoke_code(e)
@@ -203,7 +211,7 @@ def _revoke(read: access._Read, res: KeepResult, call, http) -> None:
     if revoked:
         res.done.append(outcome)
     else:
-        res.error = f"could not revoke at the provider ({error}); told canopy-web, which deletes the connection"
+        res.error = f"the provider refused the revoke ({error}); told canopy-web, which deletes the connection"
 
 
 def _revoke_code(e: providers.ProviderError) -> str:

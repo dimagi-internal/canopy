@@ -291,7 +291,9 @@ def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
              transport=None, ecdh=None, pins_file=None) -> list[KeepResult]:
     """One keeper pass over every agent this runner holds a vault key for, then every
     connection canopy-web lists for it (`connections.keep`). The vault work comes first and
-    is as it was; failing to read the connection work is one line in the results."""
+    is as it was, including what it raises: the connection work still runs, its results
+    are printed since they cannot be returned, and the error is raised again. Failing to
+    read the connection work is one line in the results."""
     from orchestrator import runner_session
     from orchestrator.connections import keep as connection_keep
 
@@ -324,13 +326,19 @@ def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
         if ecdh is None:
             raise ZkCliError(device_key.NO_ECDH_KEY)
     out = []
-    if work or delegated:
-        pins = load_pins(pins_file)
-        for w in work:
-            out.append(keep_one({**w, "_base": path}, pins=pins, call=call, ecdh=ecdh))
-        for d in delegated:
-            out.append(keep_delegated(d, pins=pins, call=call, ecdh=ecdh))
-        save_pins(pins, pins_file)
+    try:
+        if work or delegated:
+            pins = load_pins(pins_file)
+            for w in work:
+                out.append(keep_one({**w, "_base": path}, pins=pins, call=call, ecdh=ecdh))
+            for d in delegated:
+                out.append(keep_delegated(d, pins=pins, call=call, ecdh=ecdh))
+            save_pins(pins, pins_file)
+    except Exception:
+        kept = trouble + connection_keep.keep_all(connections, call=machine_call, ecdh=ecdh)
+        if kept:
+            print(render(kept))
+        raise
     return out + trouble + connection_keep.keep_all(connections, call=machine_call, ecdh=ecdh)
 
 
