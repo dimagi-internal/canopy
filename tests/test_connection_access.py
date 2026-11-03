@@ -602,6 +602,47 @@ def test_a_keeper_reseal_during_the_refresh_does_not_lose_a_rotated_token(fake_w
     assert _open(fake_web.sealed, fake_web.sealed_sig, wire.REFRESH_NAME)["refresh_token"] == ROTATED
 
 
+def _turn_ended_on_first_put(web):
+    if len(web.puts) == 1:
+        web.material_refusal = (404, "gone")
+
+
+def test_a_turn_ending_mid_write_back_keeps_trying_a_rotated_token(fake_web, http, get_token):
+    """The stale-retry's read hits the turn's route, gone with the turn; the box's write route is not."""
+    http.answer = {"access_token": NEW_ACCESS, "refresh_token": ROTATED}
+    fake_web.on_put = _turn_ended_on_first_put
+    fake_web.put_failures = [(409, "zk_value_changed")]
+    assert get_token()["access_token"] == NEW_ACCESS
+    assert http.refreshes == 1 and len(fake_web.puts) == 2
+    assert fake_web.puts[1]["sealed"] == fake_web.puts[0]["sealed"]
+    assert _open(fake_web.sealed, fake_web.sealed_sig, wire.REFRESH_NAME)["refresh_token"] == ROTATED
+
+
+def test_a_write_that_can_never_land_after_the_turn_ended_stops_at_the_budget(fake_web, http, clock, get_token):
+    """The stored digest really moved and there is no route left to read the new one."""
+    http.answer = {"access_token": NEW_ACCESS, "refresh_token": ROTATED}
+
+    def moved(web):
+        _turn_ended_on_first_put(web)
+        if len(web.puts) == 1:
+            web.seal_refresh(_refresh_plain(), writer=BOX)
+    fake_web.on_put = moved
+    start = clock.now
+    with pytest.raises(CredError, match="could not write"):
+        get_token()
+    assert clock.now - start >= access.ROTATED_WRITE_SECONDS
+    assert http.refreshes == 1 and fake_web.deletes == []
+
+
+def test_nothing_rotated_stops_when_the_turn_ended(fake_web, http, get_token):
+    fake_web.on_put = _turn_ended_on_first_put
+    fake_web.put_failures = [(409, "zk_value_changed")]
+    with pytest.raises(CredError) as e:
+        get_token()
+    assert e.value.exit_code == cred_cli.EXIT_REFUSED
+    assert len(fake_web.puts) == 1 and fake_web.deletes == [DELETE]
+
+
 def test_a_new_share_during_the_refresh_is_sealed_under_its_floor_and_recipients(fake_web, http, get_token):
     def share_once(web):
         if len(web.puts) == 1:
@@ -1283,10 +1324,25 @@ def test_a_turn_checks_its_own_agent_against_the_statement(fake_web, tmp_home):
     assert not (tmp_home / ".canopy" / "connections" / "eva" / "salesforce.json").exists()
 
 
-@pytest.mark.parametrize("error", ["not_connected", "waiting", "revoking"])
+@pytest.mark.parametrize("error", ["not_connected", "revoking"])
 def test_runner_material_refusals_are_silent_exit_3(fake_web, tmp_home, error):
     fake_web.material_refusal = (409, error)
     assert _stage().exit_code == cred_cli.EXIT_REFUSED
+
+
+def test_a_box_still_waiting_for_its_copy_exits_4_and_stages_nothing(fake_web, tmp_home):
+    """Distinct from "not connected": a keeper seals to it soon, so the runner tries again."""
+    fake_web.material_refusal = (409, "waiting")
+    res = _stage()
+    assert res.exit_code == cred_cli.EXIT_WAITING == 4
+    assert not (tmp_home / ".canopy" / "connections" / "eva" / "salesforce.json").exists()
+    for secret in SECRETS:
+        assert secret not in res.output
+
+
+def test_a_person_waiting_is_still_told_with_exit_2(fake_web, tmp_home):
+    fake_web.material_refusal = (409, "waiting")
+    assert _person().exit_code == cred_cli.EXIT_USAGE
 
 
 def test_needs_reconnect_is_not_silent(fake_web, tmp_home):

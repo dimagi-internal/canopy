@@ -40,8 +40,9 @@ Commands::
 Exit codes (stable — agent-identity MCP servers shell out to `check`):
     0 allowed · 1 error (resolve failed) · 2 usage (no agent named or detectable)
     3 refused (stderr: one actionable paragraph) · 4 undetermined (could not decide)
-connection-token: `--runner` exits 3 when there is nothing for this box (silent) and 1 otherwise; a
-person's refusal (not enrolled, Use on my computers off, not connected) exits 2 with what to do.
+connection-token: `--runner` exits 3 when there is nothing for this box (not connected, being
+disconnected), 4 while a copy has yet to reach this box (`waiting`: try again this turn), both silent to
+the turn, and 1 otherwise; a person's refusal (not enrolled, Use on my computers off, not connected) exits 2 with what to do.
 
 No command ever prints a secret value (google-token / connection-token print a path, not the token) — except
 `cred env --print-json`, whose caller is a runner process keeping the values in memory.
@@ -70,6 +71,10 @@ EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_REFUSED = 3
 EXIT_UNDETERMINED = 4
+#: `connection-token --runner` only: allowed, but no copy has reached this box yet. A keeper seals
+#: to it within about 120 s, so the runner keeps trying during the turn. Same number as
+#: EXIT_UNDETERMINED, which is `check`'s.
+EXIT_WAITING = 4
 
 #: How long a canopy-web /access answer is trusted. An MCP server checks before every
 #: action; asking canopy-web each time would be slow.
@@ -1085,8 +1090,8 @@ def _error_code(e: Exception) -> str:
     return m.group(1) if m else ""
 
 
-#: This connection is not for this box right now: the runner stays silent.
-_RUNNER_SILENT = ("not_connected", "waiting", "revoking")
+#: This connection is not for this box: the runner stays silent.
+_RUNNER_SILENT = ("not_connected", "revoking")
 #: A person is told what to do about it (contract §0.7: exit 2, the sentence and the command).
 _PERSON_REFUSED = ("not_connected", "waiting", "revoking", "needs_reconnect", "not_on_my_computers",
                    "machine_not_enrolled", "device_proof_required")
@@ -1095,13 +1100,15 @@ ENROLL_COMMAND = "canopy vault device --enroll"
 
 def _refusal(e: Exception, *, runner: bool, provider: str = "<provider>") -> CredError:
     """A canopy-web refusal as a CredError: its detail, then where to connect when it says.
-    Never a token. In runner mode `not_connected`, `waiting` and `revoking` are exit 3 (the
-    runner stays silent)."""
+    Never a token. In runner mode `not_connected` and `revoking` are exit 3 (the runner stays
+    silent) and `waiting` exit 4 (silent too, and it tries again during the turn)."""
     body = _problem(e)
     code = _error_code(e)
     detail = str(body.get("detail") or body.get("title") or str(e)[:300])
     if runner and _status_of(e) == 409 and code in _RUNNER_SILENT:
         return CredError(detail, EXIT_REFUSED)
+    if runner and _status_of(e) == 409 and code == "waiting":
+        return CredError(detail, EXIT_WAITING)
     if _status_of(e) == 409 and code == "ambiguous" and body.get("workspaces"):
         spaces = [str(w) for w in body["workspaces"]]
         detail += (f"\nYou hold this connection in several workspaces: {', '.join(spaces)}."
@@ -1225,7 +1232,8 @@ def stage_connection_token(provider: str, slug: str, runner_id: str, turn_id: st
     proof, open the `provider` connection `slug` uses (`connections.access`) and write the access
     token 0600 to ~/.canopy/connections/<slug>/<provider>.json. `min_life` (seconds): a token that
     lapses sooner, before the runner's next re-stage, is refreshed here; `refresh` forces a new one.
-    Exit 3 when the agent has no such connection (the runner treats that as silent)."""
+    Exit 3 when the agent has no such connection (the runner treats that as silent), exit 4 while
+    no copy has reached this box yet (`waiting`: the runner tries again during the turn)."""
     from orchestrator.connections import access
 
     provider = _provider_key(provider)
@@ -1503,7 +1511,8 @@ def connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life
     PROVIDER in several; cached as PROVIDER@W.json; refused with --agent / --runner). `--agent X` in a turn: the file the runner staged for X,
     ~/.canopy/connections/X/PROVIDER.json (no network). `--runner --agent X --runner-id R --turn T`:
     the runner stages it (`--min-life S`: the life it must have left, else this box refreshes it;
-    `--refresh` forces a new token); exit 3 when X has no PROVIDER connection. The token is opened
+    `--refresh` forces a new token); exit 3 when X has no PROVIDER connection, exit 4 while no copy
+    has reached this box yet (try again this turn). The token is opened
     and refreshed on this machine; canopy-web holds only sealed envelopes, so a person's computer
     must be enrolled (`canopy vault device --enroll`) with Use on my computers turned on."""
     _connection_token_cmd(provider, agent, runner_mode, runner_id, turn, min_life, refresh, workspace)

@@ -568,6 +568,14 @@ def test_sf_runner_not_connected_exits_3_and_stages_nothing(sf, tmp_path):
     assert not (tmp_path / "home" / ".canopy" / "connections" / "eva" / "salesforce.json").exists()
 
 
+def test_sf_runner_waiting_exits_4_and_stages_nothing(sf, tmp_path):
+    sf["reply"] = _conflict("waiting")
+    res = _sf("--runner", "--agent", "eva", "--runner-id", RID, "--turn", TID, env={"CANOPY_TOKEN": "crt_runner"})
+    assert res.exit_code == cred_cli.EXIT_WAITING == 4
+    assert not (tmp_path / "home" / ".canopy" / "connections" / "eva" / "salesforce.json").exists()
+    _assert_no_token(res)
+
+
 def test_sf_runner_other_refusals_are_nonzero_with_the_detail(sf):
     sf["reply"] = _conflict("needs_reconnect",
                             detail="eva's Salesforce connection no longer works; connect it again.")

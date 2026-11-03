@@ -90,6 +90,10 @@ class _Lease:
     unsure: bool = False
 
 
+class _NoMaterial(CredError):
+    """The material route answered 404. On a turn's route that may only mean the turn ended."""
+
+
 def _refused(e: trust.TrustError | wire.WireError) -> CredError:
     return CredError(f"refused this connection's material ({e})")
 
@@ -218,8 +222,8 @@ class _Box:
             material = self.call("GET", self.paths.material)
         except canopy_web.CanopyError as e:
             if _status_of(e) == 404:
-                raise CredError(f"no {self.provider} connection here: canopy-web knows of none",
-                                EXIT_REFUSED) from None
+                raise _NoMaterial(f"no {self.provider} connection here: canopy-web knows of none",
+                                  EXIT_REFUSED) from None
             raise
         try:
             return self._validated(material)
@@ -417,6 +421,12 @@ class _Box:
                     raise
             try:
                 current = self.read()
+            except _NoMaterial:
+                # A turn ending mid write-back loses the turn's route, not the box's write route,
+                # so a rotated token keeps trying what it has, within its budget.
+                if body["rotated"]:
+                    continue
+                raise
             except (canopy_web.CanopyError, OSError, ValueError) as e:
                 if _transient(e):
                     continue
