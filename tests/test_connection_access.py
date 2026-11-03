@@ -6,11 +6,14 @@ so the envelopes under test are real ones. Where a test forges something, the at
 canopy-web: everything but a sealed value and the signed statement is its word."""
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import http.client as http_client
 import json
 import logging
+import socket
 import stat
+import threading
 import time
 
 import pytest
@@ -116,11 +119,12 @@ class FakeWeb:
     `tokens.take_lease`'s: one holder, on the fake clock, a new id on takeover, and a write on
     an expired one accepted while nobody took it (R13)."""
 
-    def __init__(self, clock=None):
+    def __init__(self, clock=None, conn=CONN):
         self.clock = clock or Clock()
+        self.conn, self.binding = conn, wire.binding_id(conn)
         self.order: list[str] = []
         self.polls = 0
-        self.statement = {"account_id": ACCOUNT, "agents": ["12"], "connection": CONN, "endorsers": [],
+        self.statement = {"account_id": ACCOUNT, "agents": ["12"], "connection": self.conn, "endorsers": [],
                           "my_computers": sorted([BOX.jkt, PEER.jkt]), "v": 1, "version": 3}
         self.signer = OWNER_KEY
         self.recipients = [{"kind": "member", "target": OWNER_ID, "public_jwk": OWNER_JWK, "runner_name": ""},
@@ -155,13 +159,13 @@ class FakeWeb:
 
     def seal_refresh(self, plain, writer=PEER, recipients=None):
         self.sealed, self.sealed_sig = wire.seal_envelope(
-            BINDING, wire.REFRESH_NAME, plain,
+            self.binding, wire.REFRESH_NAME, plain,
             recipients or HOLDERS,
             writer=writer, writer_target=writer.jkt, expect="")
 
     def seal_access(self, plain, writer=PEER, recipients=None):
         self.access_sealed, self.access_sig = wire.seal_envelope(
-            BINDING, wire.ACCESS_NAME, plain,
+            self.binding, wire.ACCESS_NAME, plain,
             recipients or HOLDERS,
             writer=writer, writer_target=writer.jkt, expect="")
 
@@ -176,7 +180,7 @@ class FakeWeb:
         self.new_access_at_poll = after_polls
 
     def material(self) -> dict:
-        return {"id": CONN, "provider": self.provider, "workspace": "dimagi", "binding": BINDING,
+        return {"id": self.conn, "provider": self.provider, "workspace": "dimagi", "binding": self.binding,
                 "account_id": ACCOUNT, "account_label": "jj@dimagi.com",
                 "sealed": self.sealed, "sealed_sig": self.sealed_sig, "sealed_digest": wire.digest(self.sealed),
                 "access_sealed": self.access_sealed, "access_sig": self.access_sig, "access_expires_at": None,
@@ -191,18 +195,18 @@ class FakeWeb:
     def __call__(self, method, path, body=None):
         if method == "GET" and path == PATHS.material:
             return self._get()
-        if path == f"/c/{CONN}/refresh-lease" and method == "POST":
+        if path == f"/c/{self.conn}/refresh-lease" and method == "POST":
             return self._lease(path, body)
-        if path.startswith(f"/c/{CONN}/refresh-lease/") and method == "DELETE":
+        if path.startswith(f"/c/{self.conn}/refresh-lease/") and method == "DELETE":
             self.deletes.append(path)
             if self.on_delete:
                 self.on_delete(self)
             if path.endswith(f"/{self.lease_id}"):
                 self.lease_id = None
             return {}
-        if path == f"/c/{CONN}/sealed" and method == "PUT":
+        if path == f"/c/{self.conn}/sealed" and method == "PUT":
             return self._put(path, body)
-        if path == f"/c/{CONN}/reconnect-required" and method == "POST":
+        if path == f"/c/{self.conn}/reconnect-required" and method == "POST":
             self.reconnects.append(body)
             if body["lease_id"] != self.lease_id:
                 raise _problem("POST", path, 409, "lease_lost")
@@ -261,7 +265,8 @@ class FakeWeb:
             raise _problem("PUT", path, 409, "zk_value_changed")
         if body["rotated"] != (body.get("sealed") is not None):
             raise _problem("PUT", path, 422, "rotation_mismatch")
-        allowed = {(r["kind"], r["target"]) for r in self.recipients}
+        allowed = {(r["kind"], r["target"]) for r in self.recipients
+                   if isinstance(r, dict) and isinstance(r["kind"], str) and isinstance(r["target"], str)}
         keep = {(e["kind"], e["target"]) for e in wire._sealed_entries(self.sealed)} & allowed
         checks = [(body["access_sealed"], body["access_sig"], wire.digest(self.access_sealed))]
         if body["rotated"]:
@@ -628,6 +633,82 @@ def test_a_lease_taken_over_during_the_refresh_is_not_written_through(fake_web, 
     assert fake_web.puts == []
 
 
+def _rotating(http):
+    http.answer = {"access_token": NEW_ACCESS, "refresh_token": ROTATED}
+
+
+def test_a_lost_answer_to_a_new_id_renewal_does_not_lose_a_rotated_token(fake_web, http, get_token):
+    """canopy-web issued a new id and the answer never came, so this box is locked out of its
+    own lease until that lapses, which the budget outlasts."""
+    _rotating(http)
+    http.takes = 70
+    http.on_call = lambda: setattr(fake_web, "lease_id", None)
+    real, lost = fake_web._lease, []
+
+    def answer_lost(path, body):
+        out = real(path, body)
+        if body.get("lease_id") and not lost:
+            lost.append(out["lease_id"])
+            raise OSError("connection reset")
+        return out
+    fake_web._lease = answer_lost
+    assert get_token()["access_token"] == NEW_ACCESS
+    assert http.refreshes == 1
+    assert _open(fake_web.sealed, fake_web.sealed_sig, wire.REFRESH_NAME)["refresh_token"] == ROTATED
+    assert fake_web.puts[-1]["lease_id"] not in (LEASE, lost[0])
+
+
+def test_a_real_holder_outlasting_the_budget_stops_a_rotated_token_with_no_write(fake_web, http, clock, get_token):
+    _rotating(http)
+    http.takes = 70
+    http.on_call = fake_web.held_by_another
+    start = clock.now
+    with pytest.raises(CredError, match="could not write"):
+        get_token()
+    assert fake_web.puts == [] and clock.now - start >= access.ROTATED_WRITE_SECONDS
+
+
+def test_a_real_holder_who_wrote_is_caught_by_expect(fake_web, http, clock, get_token):
+    _rotating(http)
+    http.takes = 70
+    http.on_call = fake_web.held_by_another
+
+    def holder_finishes(path, body, real=fake_web._lease):
+        if clock.now > 1100:
+            fake_web.lease_id = None
+            fake_web.seal_refresh(_refresh_plain(refresh_token=REFRESH_2))
+        return real(path, body)
+    fake_web._lease = holder_finishes
+    with pytest.raises(CredError, match="replaced"):
+        get_token()
+    assert len(fake_web.puts) == 1
+    assert _open(fake_web.sealed, fake_web.sealed_sig, wire.REFRESH_NAME)["refresh_token"] == REFRESH_2
+
+
+def test_lease_lost_with_no_lost_answer_stops_a_rotated_token(fake_web, http, get_token):
+    """No renewal went astray, so this is a real holder."""
+    _rotating(http)
+    fake_web.on_put = lambda web: setattr(web, "lease_id", "99999999-1111-4111-8111-00000000beef")
+    with pytest.raises(canopy_web.CanopyError, match="lease_lost"):
+        get_token()
+    assert len(fake_web.puts) == 1
+
+
+def test_a_second_read_of_another_connection_refreshes_nothing(fake_web, http, clock, get_token):
+    other_conn = "abcdef11-2222-4333-8444-666666666666"
+    other = FakeWeb(clock, conn=other_conn)
+    other.statement = {**other.statement, "connection": other_conn}
+
+    def call(method, path, body=None):
+        if method == "GET" and fake_web.leases_issued:
+            return other.material()
+        return fake_web(method, path, body)
+    with pytest.raises(CredError, match="another connection"):
+        get_token(call=call)
+    assert http.refreshes == 0 and fake_web.puts == []
+    assert fake_web.deletes == [DELETE]
+
+
 def test_a_write_under_a_lease_taken_over_since_the_renewal_is_lost(fake_web, http, get_token):
     def taken(web):
         web.lease_id = "99999999-1111-4111-8111-00000000beef"
@@ -917,14 +998,31 @@ def test_a_laptops_write_back_drops_a_holder_nobody_lists_any_more(fake_web, get
     assert _targets(fake_web.puts[0]["access_sealed"]) == _held()
 
 
-def test_a_laptops_write_back_drops_a_listed_holder_the_statement_does_not_allow(fake_web, get_token):
-    """Narrowed: it holds the envelope and canopy-web lists it, but the owner's word is no.
-    canopy-web's own `keep` then refuses the write, and that is where it stops."""
+def test_a_laptops_write_back_drops_a_listed_holder_the_statement_does_not_allow(fake_web, http, get_token):
+    """It holds the envelope and canopy-web lists it, but the owner's word is no. Dropped, the
+    write would fail canopy-web's `keep` and a rotated token could never land, so a laptop
+    refuses before any provider call."""
     fake_web.seal_refresh(_refresh_plain(), recipients=[*HOLDERS, ("device", STRANGER.jkt, _public(STRANGER))])
     fake_web.recipients = [*fake_web.recipients, _row(STRANGER)]
-    with pytest.raises(CredError):
+    http.answer = {"access_token": NEW_ACCESS, "refresh_token": ROTATED}
+    with pytest.raises(CredError, match="zk_unendorsed_recipient"):
         get_token()
-    assert fake_web.puts and all(("device", STRANGER.jkt) not in _targets(p["access_sealed"]) for p in fake_web.puts)
+    assert http.refreshes == 0 and fake_web.puts == []
+    assert fake_web.deletes == [DELETE]
+
+
+def test_a_laptop_refuses_a_listed_holder_shown_with_another_key(fake_web, http, get_token):
+    fake_web.recipients = [fake_web.recipients[0], {**_row(BOX), "public_jwk": _public(STRANGER)},
+                           fake_web.recipients[2]]
+    with pytest.raises(CredError, match="zk_unendorsed_recipient"):
+        get_token()
+    assert http.refreshes == 0
+
+
+@pytest.mark.parametrize("junk", [{"kind": ["x"], "target": "y"}, {"kind": "device", "target": {}}, "nope"])
+def test_a_malformed_recipient_is_no_crash_on_a_laptop(fake_web, get_token, junk):
+    fake_web.recipients = [*fake_web.recipients, junk]
+    assert get_token()["access_token"] == NEW_ACCESS
 
 
 def test_a_vouched_for_box_is_sealed_to_and_a_key_swap_is_not(fake_web, get_token):
@@ -1122,6 +1220,37 @@ def test_a_broken_answer_is_a_lost_connection_with_no_traceback_or_content(monke
             cred_cli._timeout_transport(1)("GET", "https://x/", {}, None)
         assert SECRET not in str(e.value) and e.value.__suppress_context__
         assert access._transient(e.value)
+
+
+@pytest.mark.parametrize("status_line", ["503 Service Unavailable", "200 OK", "409 Conflict"])
+def test_an_answer_cut_short_on_a_real_socket_is_a_lost_connection(status_line):
+    """An error's body can break off too: `e.read()` runs in the HTTPError handler."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+
+    def serve():
+        conn, _ = server.accept()
+        conn.settimeout(3)
+        conn.recv(4096)
+        conn.sendall(f"HTTP/1.1 {status_line}\r\nContent-Length: 100\r\n\r\n{SECRET}".encode())
+        # End the answer early with a clean FIN, and read on: closing on unread request bytes
+        # would be a reset, which never reaches the short body.
+        conn.shutdown(socket.SHUT_WR)
+        with contextlib.suppress(OSError):
+            while conn.recv(4096):
+                pass
+        conn.close()
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(OSError) as e:
+            cred_cli._timeout_transport(3)("PUT", f"http://127.0.0.1:{server.getsockname()[1]}/x", {}, b"{}")
+    finally:
+        thread.join(3)
+        server.close()
+    assert SECRET not in str(e.value) and "IncompleteRead" in str(e.value)
+    assert access._transient(e.value)
 
 
 def test_staged_file_format_is_unchanged(fake_web, tmp_home):

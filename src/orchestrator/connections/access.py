@@ -86,6 +86,8 @@ class _Lease:
     id: str
     ttl: float
     taken_at: float  # monotonic
+    #: A renewal's answer was lost, so canopy-web may have given this box a new id it never saw.
+    unsure: bool = False
 
 
 def _refused(e: trust.TrustError | wire.WireError) -> CredError:
@@ -258,23 +260,29 @@ class _Box:
             raise CredError("canopy-web answered a refresh lease this CLI cannot read")
         return _Lease(lease_id, _ttl(out), taken_at)
 
-    def renew_if_due(self, lease: _Lease, read: _Read) -> None:
-        """Past half its life by THIS box's monotonic clock. canopy-web accepts a write on an
-        expired lease nobody took (R13), so failing to reach it here stops nothing; another
-        machine holding it, or the connection going away, does. A new id means this lease
-        ran out and this box has just been given the next one: it is what a write must name,
-        and ``expect`` still catches anyone who wrote in between."""
+    def renew_if_due(self, lease: _Lease, read: _Read, *, rotated: bool) -> bool:
+        """Past half its life by THIS box's monotonic clock; False when a write is pointless
+        for now. canopy-web accepts a write on an expired lease nobody took (R13), so failing
+        to reach it here stops nothing; the connection going away does, and so does another
+        holder, unless a rotated token is at stake. Then ``lease_held`` may be this box's own
+        lease under an id whose answer was lost, so wait for it to lapse within the budget.
+        A real holder is still caught by ``expect`` when it writes. A new id means this lease
+        ran out and this box has just been given the next one: it is what a write must name."""
         if self.monotonic() - lease.taken_at < lease.ttl / 2:
-            return
+            return True
         taken_at = self.monotonic()
         try:
             out = self.call("POST", self._path(self.paths.lease, read), {"lease_id": lease.id})
         except (canopy_web.CanopyError, OSError, ValueError) as e:
             if _transient(e):
-                return
+                lease.unsure = True
+                return True
+            if rotated and _error_code(e) == "lease_held":
+                return False
             raise
-        lease.ttl, lease.taken_at = _ttl(out, default=lease.ttl), taken_at
+        lease.ttl, lease.taken_at, lease.unsure = _ttl(out, default=lease.ttl), taken_at, False
         lease.id = _lease_id(out) or lease.id
+        return True
 
     def _quietly(self, method: str, path: str, body=None) -> None:
         """A courtesy to canopy-web: failing it must not hide why we are here."""
@@ -305,26 +313,33 @@ class _Box:
 
     # ---- writing back ----------------------------------------------------------------
 
+    def _allowed(self, read: _Read) -> dict:
+        res = types.SimpleNamespace(skipped=[])
+        return trust.allowed(read.material, read.statement, owner_jkt=read.owner_jkt, res=res)
+
     def _recipients(self, read: _Read) -> list[tuple[str, str, dict]]:
-        """Who this write seals to. A cloud box: everyone canopy-web lists, each of whom the
+        """Who this write seals to, after a refresh as well as before one. A cloud box: everyone canopy-web lists, each of whom the
         statement must allow, else nobody, since what it lists is never something a box would
         refuse (§0.5). A laptop: who holds the envelope now, narrowed by what the statement
         allows, never a machine still waiting (R18)."""
-        res = types.SimpleNamespace(skipped=[])
-        allowed = trust.allowed(read.material, read.statement, owner_jkt=read.owner_jkt, res=res)
+        allowed = self._allowed(read)
         if self.reseals_for_others:
             rows = trust.refuse_unallowed(read.material.get("recipients"), allowed)
         else:
-            held = {(e["kind"], e["target"]) for e in wire._sealed_entries(read.material["sealed"])}
+            held = _held(read)
             rows = [(kind, target, jwk) for (kind, target), jwk in allowed.items() if (kind, target) in held]
         if not 1 <= len(rows) <= wire.MAX_LISTED:
             raise trust.TrustError(trust.UNENDORSED, f"an envelope has 1-{wire.MAX_LISTED} recipients")
         return rows
 
     def _checked_recipients(self, read: _Read, lease: _Lease) -> None:
-        """Before the refresh: a rotating provider's refresh cannot be taken back."""
+        """Before the refresh: a rotating provider's refresh cannot be taken back. So a laptop
+        also refuses a holder canopy-web lists that the statement does not allow: dropping it
+        would leave a write canopy-web's ``keep`` refuses, with a rotated token unwritable."""
         try:
             self._recipients(read)
+            if not self.reseals_for_others:
+                trust.refuse_unallowed(_listed_holders(read), self._allowed(read))
         except (trust.TrustError, wire.WireError) as e:
             self.release(lease, read)
             raise _refused(e) from None
@@ -375,7 +390,8 @@ class _Box:
         kept: giving it up would invite another refresh of a token this one may have killed."""
         body = self._body(read, tokens, lease)
         for _ in self._attempts(rotated=body["rotated"]):
-            self.renew_if_due(lease, read)
+            if not self.renew_if_due(lease, read, rotated=body["rotated"]):
+                continue
             body["lease_id"] = lease.id
             try:
                 self.call("PUT", self._path(self.paths.sealed, read), body)
@@ -383,6 +399,8 @@ class _Box:
             except (canopy_web.CanopyError, OSError, ValueError) as e:
                 if _transient(e):
                     continue
+                if body["rotated"] and lease.unsure and _error_code(e) == "lease_lost":
+                    continue  # the id it names may be the one whose successor's answer was lost
                 if _error_code(e) not in _STALE:
                     raise
             try:
@@ -402,6 +420,18 @@ class _Box:
                             "was not used. If its refresh token rotated, its owner may have to connect it "
                             "again")
         return _answer(tokens.access_token, tokens.expires_at, read.refresh["instance_url"], read.material)
+
+
+def _held(read: _Read) -> set:
+    return {(e["kind"], e["target"]) for e in wire._sealed_entries(read.material["sealed"])}
+
+
+def _listed_holders(read: _Read) -> list[dict]:
+    rows = read.material.get("recipients")
+    held = _held(read)
+    return [r for r in (rows if isinstance(rows, list) else [])
+            if isinstance(r, dict) and isinstance(r.get("kind"), str) and isinstance(r.get("target"), str)
+            and (r["kind"], r["target"]) in held]
 
 
 def _lease_id(lease_answer) -> str:
@@ -443,6 +473,9 @@ def access_token(paths: Paths, *, provider: str, min_life: int, call, ecdh, pins
     except Exception:
         box.release(lease, first)
         raise
+    if read.connection_id != first.connection_id:
+        box.release(lease, first)
+        raise CredError("canopy-web answered with another connection than the one leased; nothing was refreshed")
     if _newer(read, _expiry(first)):
         box.release(lease, read)
         return _answer_from(read)

@@ -284,10 +284,11 @@ def _timeout_transport(timeout: float) -> "canopy_web.Transport":
     def send(method: str, url: str, headers: dict, body: Optional[bytes]):
         req = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-                return resp.status, resp.read().decode("utf-8")
-        except urllib.error.HTTPError as e:
-            return e.code, e.read().decode("utf-8", "replace")
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                    return resp.status, resp.read().decode("utf-8")
+            except urllib.error.HTTPError as e:
+                return e.code, e.read().decode("utf-8", "replace")  # an error's body can break off too
         except http.client.HTTPException as e:
             # A broken answer, as an OSError like any other lost connection. By name only:
             # IncompleteRead's text holds what had arrived.
