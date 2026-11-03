@@ -5,7 +5,29 @@ environment and the real home's agent .env files. Left live, every preflight-bas
 test would pass or fail by the developer's own Mac setup — so it is off by default here
 and switched on, with every input faked, only by the tests that are about it.
 """
+import webbrowser
+
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_test_opens_a_real_browser(monkeypatch):
+    """A test that reaches `webbrowser` puts tabs in the developer's own Chrome, and only on
+    their Mac: CI has no browser, so it stays green. Stop the call and fail the test. This
+    records and fails at teardown rather than raising, because callers rightly swallow a
+    browser that won't open, which would hide it. A test about opening fakes the seam its
+    module offers (e.g. `act_as_cli.OPEN_URL`)."""
+    opened = []
+
+    def record(url, *args, **kwargs):
+        opened.append(url)
+        return True
+
+    for name in ("open", "open_new", "open_new_tab"):
+        monkeypatch.setattr(webbrowser, name, record)
+    yield
+    if opened:
+        pytest.fail(f"this test tried to open a real browser: {opened}")
 
 
 @pytest.fixture(autouse=True)
