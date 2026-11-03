@@ -27,6 +27,14 @@ written back over the version it read (a stale write is retried on the next pass
 box re-seals one it holds for a waiting machine under the same machine rule — an
 endorsement of its exact key by a person it trusts — and to nobody else (``keep_delegated``).
 
+**Connections** (canopy-web spec 2026-10-31-connections-zero-knowledge-design.md §4.1, §4.5)
+are the same job under stricter rules, in ``connections.keep``: a box re-seals a connection
+it holds for waiting machines the owner's signed statement allows, and revokes one being
+disconnected, then confirms. They have their own route, their own pin file and a device
+proof on every call, and no person pin plays any part. canopy-web gives this work only to
+cloud boxes (a laptop runner's list is empty, and it refuses a laptop's re-seal or
+confirmation), so a laptop running this pass does nothing for a connection.
+
 A target that fails is left waiting and named in the output; nothing is ever wrapped to an
 unverified key "to make it work". canopy-web accepts a keeper's wraps only for targets with
 no copy yet, so a keeper never replaces one. Nothing here prints a key or a value.
@@ -57,6 +65,8 @@ class KeepResult:
     skipped: list = field(default_factory=list)     # why each other target waits
     pinned: list = field(default_factory=list)      # people pinned on first sight
     error: str = ""
+    kind: str = "agent"                             # what `agent` names: "agent" or "connection"
+    done: list = field(default_factory=list)        # what else was finished (a connection's revoke)
 
 
 def _now() -> str:
@@ -279,8 +289,11 @@ def keep_delegated(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
 
 def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
              transport=None, ecdh=None, pins_file=None) -> list[KeepResult]:
-    """One keeper pass over every agent this runner holds a vault key for."""
+    """One keeper pass over every agent this runner holds a vault key for, then every
+    connection canopy-web lists for it (`connections.keep`). The vault work comes first and
+    is as it was; failing to read the connection work is one line in the results."""
     from orchestrator import runner_session
+    from orchestrator.connections import keep as connection_keep
 
     base = canopy_web.resolve_base_url(base_url)
     runner_id = runner_id or (device_key.runner_id_from_config()
@@ -299,8 +312,10 @@ def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
     work = body.get("agents") or []
     # Credentials people delegated to an agent, which this box holds and a machine waits for.
     delegated = body.get("delegated") or []
-    if not work and not delegated:
-        return []
+    machine_call = connection_keep.machine_call(token, base, transport)
+    connections, trouble = connection_keep.pending_work(machine_call, runner_id)
+    if not work and not delegated and not connections:
+        return trouble
     if ecdh is None:
         try:
             ecdh = device_key.load_ecdh()
@@ -308,14 +323,15 @@ def run_keep(*, runner_id: Optional[str] = None, base_url: Optional[str] = None,
             raise ZkCliError(str(e)) from None
         if ecdh is None:
             raise ZkCliError(device_key.NO_ECDH_KEY)
-    pins = load_pins(pins_file)
     out = []
-    for w in work:
-        out.append(keep_one({**w, "_base": path}, pins=pins, call=call, ecdh=ecdh))
-    for d in delegated:
-        out.append(keep_delegated(d, pins=pins, call=call, ecdh=ecdh))
-    save_pins(pins, pins_file)
-    return out
+    if work or delegated:
+        pins = load_pins(pins_file)
+        for w in work:
+            out.append(keep_one({**w, "_base": path}, pins=pins, call=call, ecdh=ecdh))
+        for d in delegated:
+            out.append(keep_delegated(d, pins=pins, call=call, ecdh=ecdh))
+        save_pins(pins, pins_file)
+    return out + trouble + connection_keep.keep_all(connections, call=machine_call, ecdh=ecdh)
 
 
 def render(results: list[KeepResult]) -> str:
@@ -323,10 +339,11 @@ def render(results: list[KeepResult]) -> str:
         return "nothing waiting for a vault key this runner holds"
     lines = []
     for r in results:
-        lines.append(f"agent {r.agent}")
+        lines.append(f"{r.kind} {r.agent}")
         lines += [f"  granted: {g}" for g in r.granted]
         lines += [f"  pinned on first sight: {p}" for p in r.pinned]
         lines += [f"  waiting: {s}" for s in r.skipped]
+        lines += [f"  {d}" for d in r.done]
         if r.error:
             lines.append(f"  error: {r.error}")
     return "\n".join(lines)

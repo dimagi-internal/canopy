@@ -204,15 +204,16 @@ class Provider:
             scope=scope if isinstance(scope, str) and scope else str(plain.get("scopes") or ""),
         )
 
-    def revoke(self, plain: dict, app: dict) -> None:
+    def revoke(self, plain: dict, app: dict, *, http=None) -> None:
         """Revoke the sealed refresh token at the provider (RFC 7009), with the client's
         authentication. Raises on any answer but 200. Whether to revoke at all is the
-        caller's (a disconnect only when told ``revoke_at_provider``)."""
+        caller's (a disconnect only when told ``revoke_at_provider``). ``http`` replaces
+        :func:`post_form` for this call."""
         client_id, secret = self._checked(plain, app)
         form = {"token": plain["refresh_token"], "token_type_hint": "refresh_token",
                 "client_id": client_id, "client_secret": secret}
         secrets = (plain["refresh_token"], secret)
-        resp = self._post(self.revoke_url(plain), form, "revoke")
+        resp = self._post(self.revoke_url(plain), form, "revoke", http)
         if resp.status != 200:
             raise self._error(resp, "revoke", secrets)
 

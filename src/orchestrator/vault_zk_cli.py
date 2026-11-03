@@ -988,7 +988,9 @@ def settle_cmd(slug):
 def keep_cmd(as_json):
     """Pass on every vault key this runner holds to whoever is waiting and trusted: a
     member of the agent's vault (pinned on first sight), or a machine a trusted person
-    endorsed. The runner runs this on its own clock; safe to run by hand any time."""
+    endorsed. A cloud box also re-seals the connections it holds for machines their owner's
+    signed statement allows, and revokes those being disconnected. The runner runs this on
+    its own clock; safe to run by hand any time."""
     # vault_keeper imports this module's helpers, so it is imported here, at the call.
     from orchestrator import vault_keeper
 

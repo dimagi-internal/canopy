@@ -131,7 +131,7 @@ def _answer(token: str, expires_at: int, instance_url: str, material: dict) -> d
             "account_label": label if isinstance(label, str) else ""}
 
 
-def _save_pin(statement: dict, owner_jkt: str, pins: dict) -> None:
+def save_pin(statement: dict, owner_jkt: str, pins: dict) -> None:
     """Remember what a validated read saw, on the file as it is NOW: two processes on one
     box can both be reading. Another read that got further stands."""
     trust.record_pin(statement, owner_jkt=owner_jkt, pins=pins)
@@ -149,6 +149,50 @@ def _save_pin(statement: dict, owner_jkt: str, pins: dict) -> None:
     except (vault_zk_cli.ZkCliError, OSError) as e:
         raise CredError(f"could not record this connection's pin in {trust.PINS_FILE} "
                         f"({type(e).__name__})") from None
+
+
+def _open(material: dict, value_field: str, sig_field: str, name: str, ecdh) -> tuple[dict, dict]:
+    return wire.open_envelope(material.get(value_field), material.get(sig_field),
+                              binding=material.get("binding"), name=name, me_kind="device",
+                              me_target=ecdh.jkt, ecdh=ecdh)
+
+
+def _open_access(material: dict, statement: dict, owner_jkt: str, ecdh) -> dict | None:
+    if not material.get("access_sealed"):
+        return None
+    try:
+        access, by = _open(material, "access_sealed", "access_sig", wire.ACCESS_NAME, ecdh)
+    except wire.WireError as e:
+        if e.code == "not-for-me":  # not checked, so never used: a reader refreshes instead
+            return None
+        raise
+    if not trust.writer_allowed(by, material, statement, owner_jkt=owner_jkt):
+        raise trust.TrustError("bad-writer", "the access envelope's writer is not one the statement allows")
+    return access
+
+
+def checked_read(material, *, provider: str, ecdh, pins: dict, agent_id: str | None = None) -> _Read:
+    """Everything a read checks, in the order `connections.trust` gives, with nothing used
+    before the last check. The caller saves the pin (:func:`save_pin`) once it accepts the
+    read, and catches ``TrustError``, ``WireError`` and ``ZkError``. ``read.access`` is None
+    also when there is an access envelope this box cannot open: only the caller knows
+    whether it can do without it."""
+    if not isinstance(material, dict):
+        raise trust.TrustError("bad-material", "canopy-web's answer is not an object")
+    if material.get("provider") != provider:
+        raise trust.TrustError("wrong-provider", f"this is not the {provider} connection asked for")
+    refresh, by = _open(material, "sealed", "sealed_sig", wire.REFRESH_NAME, ecdh)
+    owner_jkt = refresh.get("owner_key")  # never canopy-web's word
+    statement = trust.verified_statement(material, owner_jkt=owner_jkt, pins=pins)
+    if not trust.writer_allowed(by, material, statement, owner_jkt=owner_jkt):
+        raise trust.TrustError("bad-writer", "the refresh envelope's writer is not one the statement allows")
+    access = _open_access(material, statement, owner_jkt, ecdh)
+    trust.check_plain(refresh, access, statement)
+    if refresh["provider"] != provider:
+        raise trust.TrustError("wrong-provider", f"what is sealed is not a {provider} connection")
+    if agent_id is not None and agent_id not in statement["agents"]:
+        raise trust.TrustError("agent-not-listed", "the owner's statement does not lend this to this agent")
+    return _Read(material, refresh, access, statement, owner_jkt)
 
 
 @dataclass
@@ -182,43 +226,11 @@ class _Box:
         except (trust.TrustError, wire.WireError, zk.ZkError) as e:
             raise _refused(e) from None
 
-    def _open(self, material: dict, value_field: str, sig_field: str, name: str) -> tuple[dict, dict]:
-        return wire.open_envelope(material.get(value_field), material.get(sig_field),
-                                  binding=material.get("binding"), name=name, me_kind="device",
-                                  me_target=self.ecdh.jkt, ecdh=self.ecdh)
-
     def _validated(self, material) -> _Read:
-        """The order is `connections.trust`'s: nothing is used before the last check."""
-        if not isinstance(material, dict):
-            raise trust.TrustError("bad-material", "canopy-web's answer is not an object")
-        if material.get("provider") != self.provider:
-            raise trust.TrustError("wrong-provider", f"this is not the {self.provider} connection asked for")
-        refresh, by = self._open(material, "sealed", "sealed_sig", wire.REFRESH_NAME)
-        owner_jkt = refresh.get("owner_key")  # never canopy-web's word
-        statement = trust.verified_statement(material, owner_jkt=owner_jkt, pins=self.pins)
-        if not trust.writer_allowed(by, material, statement, owner_jkt=owner_jkt):
-            raise trust.TrustError("bad-writer", "the refresh envelope's writer is not one the statement allows")
-        access = self._open_access(material, statement, owner_jkt)
-        trust.check_plain(refresh, access, statement)
-        if refresh["provider"] != self.provider:
-            raise trust.TrustError("wrong-provider", f"what is sealed is not a {self.provider} connection")
-        if self.agent_id is not None and self.agent_id not in statement["agents"]:
-            raise trust.TrustError("agent-not-listed", "the owner's statement does not lend this to this agent")
-        _save_pin(statement, owner_jkt, self.pins)
-        return _Read(material, refresh, access, statement, owner_jkt)
-
-    def _open_access(self, material: dict, statement: dict, owner_jkt: str) -> dict | None:
-        if not material.get("access_sealed"):
-            return None
-        try:
-            access, by = self._open(material, "access_sealed", "access_sig", wire.ACCESS_NAME)
-        except wire.WireError as e:
-            if e.code == "not-for-me":  # not checked, so never used: this box refreshes instead
-                return None
-            raise
-        if not trust.writer_allowed(by, material, statement, owner_jkt=owner_jkt):
-            raise trust.TrustError("bad-writer", "the access envelope's writer is not one the statement allows")
-        return access
+        read = checked_read(material, provider=self.provider, ecdh=self.ecdh, pins=self.pins,
+                            agent_id=self.agent_id)
+        save_pin(read.statement, read.owner_jkt, self.pins)
+        return read
 
     # ---- another holder --------------------------------------------------------------
 
