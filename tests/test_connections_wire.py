@@ -158,6 +158,35 @@ def test_good_statement_is_accepted():
                                 account_id=GOOD["account_id"]) == st
 
 
+CW = V["statement_canopy_web"]
+
+
+def test_statement_with_canopy_web_verifies():
+    st = CW["statement"]
+    assert wire.statement_msg(st) == CW["msg"].encode()
+    assert wire.verify_statement(st, CW["sig"], ST["signer_jwk"])
+    assert wire.check_statement(dict(st), connection_id=st["connection"], account_id=st["account_id"]) == st
+    # The key is signed: the old signature does not cover it, nor does this one cover its absence.
+    assert not wire.verify_statement(st, ST["sig"], ST["signer_jwk"])
+    assert not wire.verify_statement(GOOD, CW["sig"], ST["signer_jwk"])
+
+
+@pytest.mark.parametrize("which", ["empty", "malformed", "null"])
+def test_a_bad_canopy_web_is_refused_at_shape_check(which):
+    bad = CW["must_fail"][which]
+    with pytest.raises(wire.WireError) as e:
+        wire.check_statement(bad, connection_id=bad["connection"], account_id=bad["account_id"])
+    assert e.value.code == "bad-statement"
+    assert wire.verify_statement(bad, CW["sig"], ST["signer_jwk"]) is False
+
+
+def test_an_unknown_statement_key_says_to_update_canopy():
+    with pytest.raises(wire.WireError) as e:
+        wire.check_statement({**GOOD, "extra": 1}, connection_id=GOOD["connection"],
+                             account_id=GOOD["account_id"])
+    assert "If this machine's canopy is old, update it." in e.value.detail
+
+
 def test_a_statement_of_64_agents_is_accepted_and_65_is_not():
     agents = sorted(str(i) for i in range(1, 65))
     wire.check_statement({**GOOD, "agents": agents}, connection_id=GOOD["connection"],

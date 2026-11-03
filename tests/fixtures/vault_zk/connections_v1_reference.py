@@ -36,7 +36,11 @@ encodings (b64u = base64url WITHOUT padding; jkt = RFC 7638 thumbprint).
      st  = {"account_id","agents":[agent pks as decimal strings, sorted as strings,
             unique],"connection":uuid,"endorsers":[jkts of person public keys, sorted,
             unique, at most 64, may be empty],"my_computers":[ECDH jkts, sorted, unique],
-            "v":1,"version":int >= 1}
+            "v":1,"version":int >= 1,
+            "canopy_web": OPTIONAL, when present exactly a 43-char b64u RFC 7638
+            thumbprint (^[A-Za-z0-9_-]{43}$) of the canopy-web instance's ECDH key
+            that may be served this connection's secrets; "", null or any other
+            form is refused, and absent means no server holds a share}
            (ASCII; account_id matches ^[\\x21-\\x7e]{1,255}$ with no '"' or '\\')
      msg = "canopy-connections/v1/grant|" + json.dumps(st, sort_keys=True,
            separators=(",", ":"), ensure_ascii=True), UTF-8
@@ -70,6 +74,7 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -108,6 +113,14 @@ def sealed_digest(stored: str) -> str:
 
 
 # --- 3. grant statement ----------------------------------------------------------------------
+_CANOPY_WEB = re.compile(r"[A-Za-z0-9_-]{43}")
+
+
+def canopy_web_ok(value) -> bool:
+    """The optional statement member `canopy_web`: a 43-char b64u thumbprint, nothing else."""
+    return isinstance(value, str) and _CANOPY_WEB.fullmatch(value) is not None
+
+
 def statement_msg(st: dict) -> bytes:
     return (STATEMENT_PREFIX + json.dumps(st, sort_keys=True, separators=(",", ":"), ensure_ascii=True)).encode()
 
@@ -255,6 +268,20 @@ def vectors() -> dict:
         assert not verify_statement(bad, statement_sig, owner.public_key()), "statement binding not enforced"
     assert not verify_statement(statement, statement_sig, writer.public_key())
 
+    # 3b. the same statement naming a canopy-web instance (optional `canopy_web`). The
+    # statement above stays byte-identical; this is a second vector beside it.
+    cw_jkt = jkt(_priv("cd" * 32).public_key())
+    cw_statement = {**statement, "canopy_web": cw_jkt}
+    cw_sig = sign_statement(cw_statement, owner)
+    assert verify_statement(cw_statement, cw_sig, owner.public_key())
+    assert not verify_statement(cw_statement, statement_sig, owner.public_key()), "canopy_web not signed"
+    assert not verify_statement(statement, cw_sig, owner.public_key())
+    assert canopy_web_ok(cw_jkt)
+    cw_must_fail = {"empty": {**statement, "canopy_web": ""},
+                    "malformed": {**statement, "canopy_web": cw_jkt[:-1] + "="},
+                    "null": {**statement, "canopy_web": None}}
+    assert not any(canopy_web_ok(b["canopy_web"]) for b in cw_must_fail.values())
+
     return {
         "format": "canopy-connections/v1",
         "statement": {
@@ -283,6 +310,12 @@ def vectors() -> dict:
                         for e in entries],
             "device_writer": {"priv_scalar_hex": writer_hex, "sig": device_sig},
             "member_writer": {"priv_scalar_hex": owner_hex, "sig": member_sig},
+        },
+        "statement_canopy_web": {
+            "statement": cw_statement,
+            "msg": statement_msg(cw_statement).decode(),
+            "sig": cw_sig,
+            "must_fail": cw_must_fail,
         },
     }
 
