@@ -419,6 +419,18 @@ def test_a_sync_failure_needs_you_with_the_refresh_line(w, tmp_path):
     assert s.status == au.NEEDS and "canopy cred refresh --agent eva" in s.fix
 
 
+def test_the_real_env_sync_calls_cred_cli_unthrottled(monkeypatch):
+    """Every other test fakes `sync_env`, so the real wiring went unexercised: #1116
+    removed `cred_cli._sync_from_canopy_web` and every `agent use` failed its env step
+    with an AttributeError dressed as "could not sync from canopy vault"."""
+    from orchestrator import cred_cli
+    calls = []
+    monkeypatch.setattr(cred_cli, "sync_env",
+                        lambda slug, **kw: calls.append((slug, kw)) or "unchanged")
+    assert au.real_deps().sync_env("eva") == "unchanged"
+    assert calls == [("eva", {"ttl": 0})]
+
+
 def test_needs_you_list_and_exit_code_from_the_cli(w, tmp_path, monkeypatch):
     from orchestrator import agent_cli
     w.licenses = [{"user_id": 7, "status": "requested"}]
