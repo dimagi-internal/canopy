@@ -355,7 +355,7 @@ grant, licence, plugin, `$CANOPY_AGENT`, env). Underneath:
    opens a RUNNING `origin=local` turn, and the hook exports `CANOPY_TURN_ID` — so the
    credential reads that follow (`cred sync`, `cred env`) name the turn and
    go out under the license (`via=license` in the read log). `caller_context.py` shows the
-   turn's envelope on the first prompt (an editor's says `manual`) and renews its lease;
+   turn's envelope on the first prompt (it carries the asker's `permissions` and, for a `manual_only` caller, a manual turn mode) and renews its lease;
    `local_turn_sync.py` streams the transcript up WHILE the session runs (`canopy local
    sync`: after every reply, and at most once a minute between tool calls; only whole
    lines, from the offset last sent), so a live local session can be read on canopy-web;
