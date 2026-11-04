@@ -74,6 +74,15 @@ CREDENTIAL_FAILURE = [re.compile(p, re.IGNORECASE) for p in (
     r"\b(?:ENOENT|no such file)[^\n]{0,160}(?:key|credential|token)[\w.-]*\.json",
 )] + [re.compile(r"\bUNAUTHENTICATED\b")]                     # gRPC status, upper case only
 
+#: canopy-web's 401s from a route whose credential is a machine's signature (a connected site's
+#: key, a box's device key or instance role). No agent can make that signature, so the 401 says
+#: nothing about the agent's login, and the agent can simply carry on. 2026-11-04, ACE's Slack
+#: turn 9f55abcc was aborted on `get_site_agents` (failure investigation 29). canopy-web no
+#: longer offers these as tools, but a session started before that still has them.
+MACHINE_SIGNED_ROUTE = re.compile(
+    r"\bno_assertion\b|\bdevice proof refused\b|\bpairing refused\b"
+    r"|\bno valid instance-role proof\b", re.IGNORECASE)
+
 #: The fields of a successful JSON result that can be the tool's own answer rather than its data.
 ERROR_FIELDS = ("error", "errors", "error_description", "detail", "message")
 
@@ -167,7 +176,7 @@ def credential_failure(data: dict) -> str:
     if not text:
         return ""
     if tool.startswith("mcp__"):
-        if _AUTH_TOOL.search(tool):
+        if _AUTH_TOOL.search(tool) or MACHINE_SIGNED_ROUTE.search(text[:SHORT_RESULT]):
             return ""
         if failed:
             m = match(text[:SHORT_RESULT * 4])
