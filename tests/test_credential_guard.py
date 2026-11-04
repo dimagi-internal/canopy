@@ -125,6 +125,38 @@ def test_not_credential_failures(error):
     assert not g.credential_failure(_post(response=error))
 
 
+@pytest.mark.parametrize("error", [
+    # The exact error of failure investigation 29 (2026-11-04, ACE turn 9f55abcc).
+    'HTTP error 401: Unauthorized - {"type": "about:blank", "title": "Unauthorized", "status": 401, '
+    '"detail": "no_assertion: send Authorization: Bearer <a request signed with your site\'s key> '
+    '(canopy_sdk.site_agents.request_assertion)", "instance": "/api/sites/agents"}',
+    'HTTP error 401: Unauthorized - {"title": "Device proof refused", "status": 401, '
+    '"detail": "no approved device key for this runner proved itself on this request"}',
+    'HTTP error 401: Unauthorized - {"title": "Pairing refused", "status": 401, "detail": "x"}',
+    'HTTP error 401: Unauthorized - {"title": "Refused", "status": 401, '
+    '"detail": "no valid instance-role proof for this URL"}',
+])
+@pytest.mark.parametrize("event", [{"hook_event_name": "PostToolUse"},
+                                   {"hook_event_name": "PostToolUseFailure"}])
+def test_a_route_only_a_machine_can_sign_is_not_the_agents_login(error, event):
+    """A session started before canopy-web dropped these tools still has them. A 401 from one
+    says nothing about the agent's own login, so it comes back as an ordinary tool error."""
+    tool = "mcp__plugin_canopy_canopy-web__get_site_agents"
+    data = {**_post(tool=tool, response=error), **event}
+    if event["hook_event_name"] == "PostToolUseFailure":
+        data.pop("tool_response")
+        data["error"] = error
+    assert g.credential_failure(data) == ""
+
+
+def test_the_machine_route_carve_out_stops_at_those_refusals():
+    """Quoting the word in a tool's data, or an agent's real 401, still aborts."""
+    assert g.credential_failure(_post(response="HTTP 401 Unauthorized: the assertion was not valid"))
+    assert g.credential_failure(_post(response="HTTP 401 Unauthorized. bad_token"))
+    assert g.credential_failure(_post(response="HTTP 401 Unauthorized " + "x" * 2500 + " no_assertion",
+                                      hook_event_name="PostToolUseFailure"))
+
+
 def test_a_long_read_that_quotes_an_old_error_is_not_a_failure():
     """Reading ACE's own turn events (48 KB) must not abort the reader's turn."""
     events = json.dumps({"events": [{"payload": {"content": "x" * 3000}},
