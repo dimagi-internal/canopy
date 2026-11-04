@@ -139,6 +139,30 @@
       "agent_only": true,
       "pattern": "/\\.canopy/act-as(?![\\w-])",
       "message": "BLOCKED: {slug} touching the act-as credential store (~/.canopy/act-as). That file holds a credential that acts as a PERSON; read or hand-rolled into curl, it lands in the transcript and skips the scope and expiry checks. Use it only through canopy:\n  canopy act-as get <path> [--param k=v]   |   canopy act-as call <METHOD> <path> [--json BODY]\n  canopy act-as status   |   canopy act-as stop\nProcedure: the canopy:act-as-you skill."
+    },
+    {
+      "tool": "Bash",
+      "agent_only": true,
+      "_agent_only_doc": "A person's own session has no turn envelope to forge.",
+      "_pattern_doc": "Who is asking is canopy's word, written by the runner for this turn (~/.canopy/caller/<turn>.json). The own-repo rail (own-repo.md) and every script that asks 'who may do this' read it through the turn id the runner exports. A session that assigns CANOPY_TURN_ID or CANOPY_CALLER (or CANOPY_SCOPED_TURN) in a command, a script's environment or python's os.environ points those readers at a different envelope or none. Lifted from Trellis's own repo rails. Matches an assignment (`CANOPY_TURN_ID=x cmd`, `export CANOPY_CALLER=x`, `env CANOPY_TURN_ID=x`) and os.environ[...] =, os.environ.update/setdefault, putenv. Reading the variable ($CANOPY_TURN_ID), comparing it ([ \"$CANOPY_TURN_ID\" = '' ]) and `==` pass. The hook itself reads the hook process's env, which a Bash call cannot change, so this rail protects the scripts that read the env at run time.",
+      "pattern": "(?<![\\w$])CANOPY_(?:CALLER|TURN_ID|SCOPED_TURN)=(?!=)|\\bCANOPY_(?:CALLER|TURN_ID|SCOPED_TURN)[\"']\\]\\s*=(?!=)|\\b(?:environ\\.(?:update|setdefault)|putenv)\\s*\\([^)]*CANOPY_(?:CALLER|TURN_ID|SCOPED_TURN)\\b",
+      "message": "BLOCKED: setting CANOPY_CALLER, CANOPY_TURN_ID or CANOPY_SCOPED_TURN. Who is asking is canopy's word, written by the runner for this turn; pointing a script at another envelope would change the answer to 'who may do this'. Run `canopy caller tier` to see it, and let canopy's own commands read it themselves."
+    },
+    {
+      "tool": "Bash",
+      "agent_only": true,
+      "_agent_only_doc": "As above.",
+      "_pattern_doc": "Writes into ~/.canopy/caller (envelopes, by-task and presence records) or ~/.canopy/local (a local turn's state, which names its envelope). Only the runner and canopy's own hooks write them. Lifted from Trellis's own rail: a redirect, tee, cp/mv/ln/install/dd/touch/rsync/truncate aimed there, or a python/sed write in a command that names it. Known over-match: a command that READS a file there and also uses json.dump( is blocked; split it.",
+      "pattern": "(?s)(?:>>?|\\btee\\b(?:\\s+-[a-z]+)*|\\b(?:cp|mv|ln|install|dd|touch|rsync|truncate)\\b[^\\n|;&]*?)\\s*[\"']?\\S*\\.canopy/(?:caller|local)\\b|(?=.*\\.canopy/(?:caller|local)\\b)(?=.*(?:write_text|write_bytes|\\.write\\(|\\bopen\\s*\\([^)]*[\"'][wax]|sed\\s+-i|json\\.dump\\())",
+      "message": "BLOCKED: writing into ~/.canopy/caller/ or ~/.canopy/local/. Those hold canopy's caller envelopes (who asked) and local-turn state; only the runner writes them. Reading one is fine (`canopy caller tier`, or Read the file the hook printed)."
+    },
+    {
+      "tool_pattern": "^(?:Edit|Write|NotebookEdit)$",
+      "agent_only": true,
+      "_agent_only_doc": "As above.",
+      "_pattern_doc": "The Edit/Write form of the rail above.",
+      "pattern": "\\.canopy/(?:caller|local)(?:/|$)",
+      "message": "BLOCKED: writing into ~/.canopy/caller/ or ~/.canopy/local/. Those hold canopy's caller envelopes (who asked) and local-turn state; only the runner writes them. Reading one is fine."
     }
   ],
   "channels": {

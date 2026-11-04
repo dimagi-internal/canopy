@@ -9,6 +9,11 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.840] - 2026-11-04
+### Added
+- **Own-repo rail (`agent_edit`).** The session gating hook (`gating_guard.py --session`) now refuses, in a canopy turn whose asker lacks `agent_edit` (an envelope `permissions` list without it), any write to THE AGENT'S OWN REPO: `git push`, `gh pr create|merge|edit|close|review|...`, `gh release`/`gh repo` writes, and a mutating `gh api repos/<own>/...`. Issues, comments, other repos and a PR from a fork stay open, and the message says so. Applies only to a session with an agent AND a turn (runner `$CANOPY_TURN_ID`, local turn, laptop by-task record); a person working in the repo by hand is untouched. A turn with a missing/unreadable/mismatched envelope fails closed. It is a guard rail, not a boundary: see `agent-core/own-repo.md` (new, linked from `turn.md`) for what it does not cover.
+- Fleet baseline rails (lifted from Trellis's own repo, for every agent session): no assigning `CANOPY_TURN_ID` / `CANOPY_CALLER` / `CANOPY_SCOPED_TURN`, no writes into `~/.canopy/caller/` or `~/.canopy/local/`.
+
 ## [0.2.837] - 2026-11-03
 ### Fixed
 - The caller-context access line no longer prints `permissions=none` beside `profile=full` on a turn with no agent (`granted_by: no-interface`); it says `permissions n/a (no agent in this turn)`. A refused caller is told plainly nothing is open, and a `manual_only` caller is named.
