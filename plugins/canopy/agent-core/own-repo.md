@@ -14,15 +14,32 @@ the session-side half.
 Only writes to YOUR OWN repo (the `origin` of your clone, or the repo URL in `config/agent.json` /
 `.claude-plugin/plugin.json`):
 
-- `git push` of any branch or tag to it (your clone's origin, its URL, or `git -C <dir> push`),
+- `git push` of any branch or tag to it (your clone's origin, a remote whose push URL is it, its
+  URL with or without a token in it, or `git -C <dir> push`),
 - `gh pr create|merge|edit|close|review|ready|reopen|lock|unlock|update-branch` on it,
 - `gh release create|edit|delete|upload|delete-asset` and `gh repo edit|delete|rename|archive|unarchive|sync|deploy-key` on it,
+- `gh workflow run|enable|disable`, `gh secret set|delete` and `gh variable set|delete` on it
+  (`--org` / `--user` secrets and variables are not the repo's and stay open),
 - `gh api` with `-X POST|PUT|PATCH|DELETE`, or with `-f/-F/--field/--raw-field/--input` and no
-  `-X`, against `repos/<you>/...` (except `issues`, a PR's review comments and `forks`).
+  `-X`, against `repos/<you>/...` (except `issues`, a PR's review comments and `forks`),
+- a PATCH of `repos/<you>/issues/<n>` that sets `state`: a PR is an issue, so this closes a PR,
+- the same REST calls through `curl` or `wget` to `api.github.com` / `uploads.github.com`, whether
+  or not a token is on the line,
+- a `gh api graphql` (or curl/wget `/graphql`) **mutation that names your repo**: a whole string
+  or variable value that is `owner/repo` or a URL in it (`repositoryNameWithOwner: "you/repo"`), or
+  `owner` + `name` / `repo`. The operation is read from the query text, so a query, or the word
+  `mutation` in a string or comment, is not one.
+
+GraphQL mutations mostly name their target by opaque node id (`pullRequestId: "PR_..."`). The hook
+cannot map one to a repo without a network call on every command, and refusing every mutation
+would close every other repo too. So **a mutation that names no repo is allowed**: the choice is
+to refuse only what can be told to be your repo. See below.
 
 ## What stays open
 
-- `gh issue create|comment|close ...` on your repo, and `gh api repos/<you>/issues/...`.
+- `gh issue create|comment|close ...` on your repo, and `gh api repos/<you>/issues/...` (comments,
+  labels, title and body edits; only a `state` change above is refused). The same through curl/wget,
+  and GraphQL's issue and comment mutations (`addComment`, `createIssue`, `closeIssue`...).
 - A PR **from a fork**: `gh repo fork <you>`, push to the fork, then
   `gh pr create -R <you> --head <fork-owner>:<branch>`.
 - Any write to ANY OTHER repo, and every read.
@@ -54,9 +71,20 @@ The fleet baseline also refuses, for any agent session: assigning `CANOPY_TURN_I
 
 ## What it does not cover
 
-A guard rail, not a boundary: it reads the command's own words. It does not see a command built
-from variables (`git -C "$WT" push`), a script file or other program that pushes, a push through
-another tool or library, `gh api graphql` mutations, `gh api repos/<you>/issues/<n>` used to
-close a PR (a PR is an issue), `gh workflow|secret|variable`, a token used with `curl`, or a
-direct edit of the repo on the runner's disk by another process. canopy-web (not this hook) is
-the boundary for changes made through canopy-web.
+A guard rail, not a boundary: it reads the command's own words. It does not see:
+
+- a directory, URL, query or body held in a variable (`git -C "$WT" push`, `curl "$URL"`,
+  `-f query="$Q"`),
+- a script file, library or other program that pushes or calls the API, including `curl -K` configs,
+- a request body from a file or stdin: `gh api --input`, `-F query=@file`, `curl -d @file`,
+  `wget --post-file` (a mutating call to a repo path is still refused; the unseen body only decides
+  a GraphQL mutation or a PATCH of an issue's `state`),
+- a GraphQL mutation that names its target only by node id (`mergePullRequest`, `closePullRequest`,
+  `createRef`, `deleteRef`...), which is most of them,
+- `gh issue close|reopen <n>` when `<n>` is a PR: gh closes it, and a number alone does not say
+  which it is, so the issue allowance stands,
+- `gh run rerun|cancel|delete`, `gh cache delete` and `gh label` writes, which do not change the
+  repo's contents,
+- a direct edit of the repo on the runner's disk by another process.
+
+canopy-web (not this hook) is the boundary for changes made through canopy-web.

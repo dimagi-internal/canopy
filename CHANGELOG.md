@@ -9,6 +9,10 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.842] - 2026-11-04
+### Changed
+- **Own-repo rail: closes the gaps its first version named.** For a turn whose asker lacks `agent_edit`, the session hook now also refuses, on the agent's own repo: `gh workflow run|enable|disable`, `gh secret set|delete`, `gh variable set|delete` (an org's or user's stay open); a PATCH of `repos/<own>/issues/<n>` that sets `state`, since a PR is an issue (comments and other issue edits stay open); mutating REST calls through `curl`/`wget`; a `git push` whose URL carries a token or was set as a remote or push URL; `GH_REPO=` in front of a `gh` command; and a GraphQL mutation that names the repo. A mutation naming its target only by node id is still allowed, because the hook cannot map one to a repo without a network call. `agent-core/own-repo.md` lists what stays uncovered.
+
 ## [0.2.840] - 2026-11-04
 ### Added
 - **Own-repo rail (`agent_edit`).** The session gating hook (`gating_guard.py --session`) now refuses, in a canopy turn whose asker lacks `agent_edit` (an envelope `permissions` list without it), any write to THE AGENT'S OWN REPO: `git push`, `gh pr create|merge|edit|close|review|...`, `gh release`/`gh repo` writes, and a mutating `gh api repos/<own>/...`. Issues, comments, other repos and a PR from a fork stay open, and the message says so. Applies only to a session with an agent AND a turn (runner `$CANOPY_TURN_ID`, local turn, laptop by-task record); a person working in the repo by hand is untouched. A turn with a missing/unreadable/mismatched envelope fails closed. It is a guard rail, not a boundary: see `agent-core/own-repo.md` (new, linked from `turn.md`) for what it does not cover.

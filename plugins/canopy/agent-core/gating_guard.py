@@ -576,8 +576,10 @@ def run_loader(repo_dir, payload, env=None):
 # made THROUGH canopy-web. It cannot see what a session does with `git` and `gh` directly, and
 # an agent can read and write GitHub freely (other repos, issues, PRs are a feature). The one
 # thing a turn's asker without `agent_edit` may not do is change THE AGENT'S OWN REPO, so that
-# is the whole rail: a push to it, a PR/release/repo-settings write on it, or a mutating
-# `gh api repos/<it>/...`. Issues and comments stay open, and so does a PR from a FORK.
+# is the whole rail: a push to it, a PR/release/repo-settings/workflow/secret/variable write on
+# it, a mutating `gh api repos/<it>/...` or the same call through curl/wget, or a GraphQL mutation
+# that names it. Issues and comments stay open (not closing a PR through its issue), and so does
+# a PR from a FORK.
 #
 # This is a guard rail, not a boundary. It reads the command's own words; a session that
 # builds the command out of variables, a script file or another tool is not seen
@@ -594,7 +596,7 @@ OWN_REPO_PERMISSION = "agent_edit"
 _PRIVILEGED_RELATIONSHIPS = frozenset({"owner", "admin", "system"})
 _UUIDISH = re.compile(r"^[0-9a-fA-F-]{8,64}$")
 _NAMEISH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
-_PREFILTER = re.compile(r"\bgit\b|\bgh\b")
+_PREFILTER = re.compile(r"\bgit\b|\bgh\b|\bcurl\b|\bwget\b")
 _GITHUB_REPO = re.compile(r"github\.com[:/]+([^/\s]+)/([^/\s?#]+?)(?:\.git)?/*(?:[?#].*)?$", re.I)
 _PLAIN_REPO = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+?)(?:\.git)?$")
 _WRAPPERS = frozenset({"sudo", "env", "command", "exec", "nohup", "time", "nice", "builtin", "xargs"})
@@ -604,6 +606,10 @@ _GH_PR_WRITES = frozenset({"create", "merge", "edit", "close", "review", "ready"
 _GH_REPO_WRITES = frozenset({"edit", "delete", "rename", "archive", "unarchive", "sync",
                              "deploy-key"})
 _GH_RELEASE_WRITES = frozenset({"create", "edit", "delete", "upload", "delete-asset"})
+# `gh workflow|secret|variable` writes. A secret or variable set with --org/--user is not the repo's.
+_GH_WORKFLOW_WRITES = frozenset({"run", "enable", "disable"})
+_GH_SETTING_WRITES = frozenset({"set", "delete"})
+_GH_NOT_THE_REPO_FLAGS = frozenset({"-o", "--org", "-u", "--user"})
 _GH_API_FIELD_FLAGS = frozenset({"-f", "-F", "--field", "--raw-field", "--input"})
 # gh api flags that take a value (so the value is not mistaken for the endpoint).
 _GH_API_VALUE_FLAGS = frozenset({"-X", "--method", "-H", "--header", "-q", "--jq", "-t",
@@ -613,6 +619,32 @@ _GH_API_VALUE_FLAGS = frozenset({"-X", "--method", "-H", "--header", "-q", "--jq
 # conversation is an issue's), a PR's review comments, and forking it. Everything else under
 # repos/<own>/ (contents, git/refs, pulls, merges, branches, releases, settings…) is the repo.
 _GH_API_OPEN_SUBPATHS = re.compile(r"^/(?:issues(?:/|$)|pulls/\d+/comments(?:/|$)|forks/?$|subscription/?$)")
+# The one issue write that is not open: PATCH with `state` closes or reopens it, and a PR is an issue.
+_ISSUE_NUMBER = re.compile(r"^/issues/\d+/?$")
+_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# GraphQL. A mutation names its target by opaque node id (`pullRequestId: "PR_..."`), which this
+# hook cannot map to a repo without a network call, so one is refused only when a string in it, or
+# a variable, IS the own repo (`repositoryNameWithOwner: "o/r"`, a URL, `owner` + `name`). These
+# root fields are the issue-and-comment writes that stay open even then.
+_GRAPHQL_TOKEN = re.compile(r'"""(.*?)"""|"((?:[^"\\]|\\.)*)"|#[^\n]*', re.S)
+_GRAPHQL_OPEN_MUTATIONS = frozenset({
+    "addComment", "updateIssueComment", "deleteIssueComment", "minimizeComment", "unminimizeComment",
+    "createIssue", "updateIssue", "closeIssue", "reopenIssue", "addReaction", "removeReaction",
+    "addPullRequestReviewComment", "addPullRequestReviewThreadReply",
+})
+_GRAPHQL_OWNER_NAME = re.compile(r'\bowner\s*:\s*"([^"]+)"\s*,?\s*name\s*:\s*"([^"]+)"')
+_GRAPHQL_NAME_OWNER = re.compile(r'\bname\s*:\s*"([^"]+)"\s*,?\s*owner\s*:\s*"([^"]+)"')
+# A whole value that IS a GitHub repo address (a URL below it counts; a sentence holding one does not).
+_REPO_ADDRESS = re.compile(r"^(?:[a-z]+://)?(?:[^/@\s]+@)?(?:www\.)?github\.com[:/]+([^/\s]+)/([^/\s?#]+?)"
+                           r"(?:\.git)?(?:[/?#]\S*)?$", re.I)
+# curl and wget against the REST API (the host carries a token as user:token@ in some calls).
+_GITHUB_API_URL = re.compile(r"^(?:https?://)?(?:[^/@\s]+@)?(?:api|uploads)\.github\.com(?:/api/v3)?"
+                             r"(/[^?#\s]*)?(?:[?#]\S*)?$", re.I)
+_CURL_DATA_FLAGS = frozenset({"-d", "--data", "--data-raw", "--data-binary", "--data-ascii",
+                              "--data-urlencode", "--json", "-F", "--form", "--form-string"})
+_CURL_UPLOAD_FLAGS = frozenset({"-T", "--upload-file"})
+_CURL_SHORT_VALUE_FLAGS = frozenset("AbcCdDeEFHKmoPQrtTuUwxXyYz")
+_WGET_DATA_FLAGS = frozenset({"--post-data", "--post-file", "--body-data", "--body-file"})
 # git global options that take a value, so `git -C dir push` finds `push`.
 _GIT_VALUE_OPTS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
                              "--super-prefix", "--config-env"})
@@ -623,6 +655,26 @@ def repo_key(text):
     text = (text or "").strip().strip("'\"")
     m = _GITHUB_REPO.search(text) or _PLAIN_REPO.match(text)
     return f"{m.group(1)}/{m.group(2)}".lower() if m else ""
+
+
+def _substitution_end(text, i):
+    """The index of the `)` closing a `$(` whose body starts at `i` (len(text) if none)."""
+    depth, n = 1, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2; continue
+        if c in "'\"":
+            j = text.find(c, i + 1)
+            i = (n if j < 0 else j) + 1; continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if not depth:
+                return i
+        i += 1
+    return n
 
 
 def _scan_commands(text, depth=0):
@@ -700,6 +752,10 @@ def _scan_commands(text, depth=0):
                 i += 1; continue
             end_cmd(); i += 1; continue
         if c == "$" and text.startswith("$(", i):
+            if in_word and depth < 3:          # `https://x:$(cmd)@host/…`: the word goes on
+                j = _substitution_end(text, i + 2)
+                cmds.extend(_scan_commands(text[i + 2:j], depth + 1))
+                cur.append("$()"); i = j + 1; continue
             end_cmd(); i += 2; continue        # `$(cmd)`: cmd is a command of its own
         cur.append(c); in_word = True; i += 1
     end_cmd()
@@ -880,8 +936,9 @@ def _global_git_cwd(words, cwd):
     return i, d
 
 
-def _git_push_target(words, cwd, start):
-    """The `owner/repo` key a `git push` writes to, or '' when it cannot be told."""
+def _git_push_target(words, cwd, start, remotes=None):
+    """The `owner/repo` key a `git push` writes to, or '' when it cannot be told. `remotes`:
+    remotes an earlier `git remote add|set-url` in this same command gave a URL."""
     args, i, repo_opt = [], start + 1, ""
     while i < len(words):
         w = words[i]
@@ -898,7 +955,17 @@ def _git_push_target(words, cwd, start):
     if target and ("://" in target or re.match(r"^[\w.-]+@[\w.-]+:", target) or repo_key(target)):
         return repo_key(target)
     remote = target or _default_push_remote(cwd)
-    return _origin_key(cwd, remote) if remote else ""
+    if remote in (remotes or {}):
+        return repo_key(remotes[remote])
+    if not remote or not cwd or not os.path.isdir(cwd):
+        return ""
+    return repo_key(_git_run(["remote", "get-url", "--push", remote], cwd))   # a pushurl counts
+
+
+def _remote_url_set(words, start):
+    """(remote, url) for `git remote add|set-url … <remote> <url>`, else None."""
+    args = [a for a in words[start + 1:] if not a.startswith("-")]
+    return (args[1], args[2]) if len(args) >= 3 and args[0] in ("add", "set-url") else None
 
 
 def _gh_parts(words):
@@ -918,29 +985,44 @@ def _gh_parts(words):
     return repo, pos
 
 
-def _gh_api(words, cwd):
-    """(repo key, subpath) a MUTATING `gh api` writes under `repos/`, else None."""
-    method, fields, endpoint, i = "", False, "", 2
+def _gh_api_args(words):
+    """(method, fields as [(key, value)], has --input, endpoint) of `gh api …`."""
+    method, fields, has_input, endpoint, i = "", [], False, "", 2
+
+    def field(text):
+        key, _, value = text.partition("=")
+        fields.append((key, value))
+
     while i < len(words):
         w = words[i]
         flag, eq, val = w.partition("=")
         if flag in ("-X", "--method"):
             method = (val if eq else words[i + 1] if i + 1 < len(words) else "").upper()
             i += 1 if eq else 2; continue
+        if flag == "--input":
+            has_input = True
+            i += 1 if eq else 2; continue
         if flag in _GH_API_FIELD_FLAGS:
-            fields = True
+            field(val if eq else words[i + 1] if i + 1 < len(words) else "")
             i += 1 if eq else 2; continue
         if w.startswith(("-X", "-f", "-F")) and len(w) > 2 and not w.startswith("--"):
             if w.startswith("-X"):
                 method = w[2:].upper()
             else:
-                fields = True
+                field(w[2:])
         elif flag in _GH_API_VALUE_FLAGS:
             i += 1 if eq else 2; continue
         elif not w.startswith("-") and not endpoint:
             endpoint = w
         i += 1
-    mutating = method in ("POST", "PUT", "PATCH", "DELETE") or (not method and fields)
+    return method, fields, has_input, endpoint
+
+
+def _gh_api(words, cwd, here=""):
+    """(repo key, subpath, method, sets `state`) a MUTATING `gh api` writes under `repos/`, else
+    None. `here` is the repo `{owner}/{repo}` means (else the origin of `cwd`)."""
+    method, fields, has_input, endpoint = _gh_api_args(words)
+    mutating = method in _MUTATING_METHODS or (not method and (fields or has_input))
     if not mutating:
         return None
     ep = re.sub(r"^https?://[^/]+/(?:api/v3/)?", "", endpoint).lstrip("/")
@@ -949,10 +1031,193 @@ def _gh_api(words, cwd):
         return None
     owner, name, sub = m.group(1), m.group(2), m.group(3) or ""
     if owner == "{owner}" or name == "{repo}":
-        key = _origin_key(cwd)
+        key = here or _origin_key(cwd)
     else:
         key = f"{owner}/{name}".lower()
-    return key, sub
+    return key, sub, method, any(k == "state" for k, _ in fields)
+
+
+def _repo_write_is_open(sub, method, sets_state):
+    """Whether a mutating REST call on repos/<own><sub> is one of the writes that stay open."""
+    if method == "PATCH" and sets_state and _ISSUE_NUMBER.match(sub):
+        return False
+    return bool(_GH_API_OPEN_SUBPATHS.match(sub))
+
+
+def _graphql_mutation(doc):
+    """(root fields of the document's `mutation` operations, its string literals). Strings and
+    comments are set aside first, so `mutation` inside one is not an operation."""
+    literals = []
+
+    def set_aside(m):
+        if m.group(0).startswith('"'):
+            literals.append(m.group(1) if m.group(1) is not None else m.group(2))
+        return " "
+
+    skeleton = re.sub(r"\([^()]*\)", " ", _GRAPHQL_TOKEN.sub(set_aside, doc or ""))
+    depth, head, body, is_mutation = 0, [], [], False
+    for c in skeleton:
+        if c == "{":
+            depth += 1
+            if depth == 1:
+                is_mutation = "".join(head).split()[:1] == ["mutation"]
+                head = []
+            elif depth == 2 and is_mutation:
+                body.append(" ")
+        elif c == "}":
+            depth -= 1
+        elif depth == 0:
+            head.append(c)
+        elif depth == 1 and is_mutation:
+            body.append(c)
+    return re.findall(r"(?:\w+\s*:\s*)?(\w+)", "".join(body)), literals
+
+
+def _value_repo(value):
+    """The `owner/repo` key when the WHOLE of `value` is a GitHub repo address, else ''."""
+    value = (value or "").strip()
+    m = _REPO_ADDRESS.match(value) or _PLAIN_REPO.match(value)
+    return f"{m.group(1)}/{m.group(2)}".lower() if m else ""
+
+
+def _graphql_violation(doc, variables, own, here=""):
+    """What a GraphQL document does to the own repo: a short description, or ''. `variables` is
+    [(name, value)]. A mutation that names no repo passes: see _GRAPHQL_OPEN_MUTATIONS's comment."""
+    roots, literals = _graphql_mutation(doc)
+    if not roots or all(r in _GRAPHQL_OPEN_MUTATIONS for r in roots):
+        return ""
+    owner_name = here.split("/", 1) if "/" in here else ["", ""]
+
+    def fill(value):
+        return value.replace("{owner}", owner_name[0]).replace("{repo}", owner_name[1])
+
+    named = {fill(str(v)) for _, v in variables}
+    keys = {_value_repo(v) for v in set(literals) | named}
+    keys.update(f"{o}/{n}".lower() for o, n in _GRAPHQL_OWNER_NAME.findall(doc))
+    keys.update(f"{o}/{n}".lower() for n, o in _GRAPHQL_NAME_OWNER.findall(doc))
+    by_name = {k: fill(str(v)) for k, v in variables}
+    if by_name.get("owner") and (by_name.get("name") or by_name.get("repo")):
+        keys.add(f"{by_name['owner']}/{by_name.get('name') or by_name.get('repo')}".lower())
+    hit = sorted(keys & own)
+    return f"a GraphQL mutation ({', '.join(roots)}) on {hit[0]}" if hit else ""
+
+
+def _flatten(value, name=""):
+    """A JSON value's leaves as [(name, value)]."""
+    if isinstance(value, dict):
+        return [p for k, v in value.items() for p in _flatten(v, k)]
+    if isinstance(value, list):
+        return [p for v in value for p in _flatten(v, name)]
+    return [(name, value)]
+
+
+def _json_object(text):
+    try:
+        doc = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _body_sets_state(bodies):
+    """Whether a request body (JSON, or text that would be once a shell fills it) sets `state`."""
+    for body in bodies:
+        doc = _json_object(body)
+        if ("state" in doc) if doc is not None else re.search(r'"state"\s*:', body):
+            return True
+    return False
+
+
+def _curl_call(words):
+    """(method, inline bodies, url candidates) of a `curl` command."""
+    method, bodies, urls, get, head, upload, i = "", [], [], False, False, False, 1
+    while i < len(words):
+        w = words[i]
+        if w.startswith("--"):
+            flag, eq, val = w.partition("=")
+            takes = flag in ("--request", "--url") or flag in _CURL_DATA_FLAGS or flag in _CURL_UPLOAD_FLAGS
+            if takes and not eq:
+                val = words[i + 1] if i + 1 < len(words) else ""
+                i += 1
+            if flag == "--request":
+                method = val.upper()
+            elif flag == "--url":
+                urls.append(val)
+            elif flag in _CURL_DATA_FLAGS:
+                bodies.append(val)
+            elif flag in _CURL_UPLOAD_FLAGS:
+                upload = True
+            elif flag == "--get":
+                get = True
+            elif flag == "--head":
+                head = True
+        elif w.startswith("-") and len(w) > 1:
+            for j, c in enumerate(w[1:], 2):
+                if c in _CURL_SHORT_VALUE_FLAGS:
+                    val = w[j:]
+                    if not val:
+                        val = words[i + 1] if i + 1 < len(words) else ""
+                        i += 1
+                    if c == "X":
+                        method = val.upper()
+                    elif f"-{c}" in _CURL_DATA_FLAGS:
+                        bodies.append(val)
+                    elif f"-{c}" in _CURL_UPLOAD_FLAGS:
+                        upload = True
+                    break
+                get = get or c == "G"
+                head = head or c == "I"
+        else:
+            urls.append(w)
+        i += 1
+    if not method:
+        method = "HEAD" if head else "GET" if get else "PUT" if upload else "POST" if bodies else "GET"
+    return method, bodies, urls
+
+
+def _wget_call(words):
+    """(method, inline bodies, url candidates) of a `wget` command."""
+    method, bodies, urls, posts, i = "", [], [], False, 1
+    while i < len(words):
+        w = words[i]
+        flag, eq, val = w.partition("=")
+        if flag == "--method" or flag in _WGET_DATA_FLAGS:
+            if not eq:
+                val = words[i + 1] if i + 1 < len(words) else ""
+                i += 1
+            if flag == "--method":
+                method = val.upper()
+            else:
+                posts = True
+                if flag.endswith("-data"):
+                    bodies.append(val)
+        elif not w.startswith("-"):
+            urls.append(w)
+        i += 1
+    return method or ("POST" if posts else "GET"), bodies, urls
+
+
+def _http_violation(words, prog, own):
+    """What a curl/wget command writes to the own repo through the GitHub API, or ''."""
+    method, bodies, urls = (_curl_call if prog == "curl" else _wget_call)(words)
+    if method not in _MUTATING_METHODS:
+        return ""
+    for url in urls:
+        m = _GITHUB_API_URL.match(url)
+        path = (m.group(1) or "") if m else ""
+        if path.rstrip("/") == "/graphql":
+            for body in bodies:
+                doc = _json_object(body) or {}
+                hit = _graphql_violation(str(doc.get("query") or ""), _flatten(doc.get("variables") or {}), own)
+                if hit:
+                    return f"{hit} through `{prog}`"
+            continue
+        r = re.match(r"^/repos/([^/]+)/([^/]+)(/.*)?$", path)
+        if r and f"{r.group(1)}/{r.group(2)}".lower() in own:
+            sub = r.group(3) or ""
+            if not _repo_write_is_open(sub, method, _body_sets_state(bodies)):
+                return f"a {method} to repos/{r.group(1)}/{r.group(2)}{sub} through `{prog}`"
+    return ""
 
 
 def own_repo_violation(subject, cwd, own):
@@ -960,7 +1225,18 @@ def own_repo_violation(subject, cwd, own):
     return _violation(_scan_commands(subject), cwd, own, 0)
 
 
+def _gh_repo_env(words):
+    """The `GH_REPO=…` assigned in front of a command (`gh` reads it like -R), or ''."""
+    for w in words:
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w) and os.path.basename(w) not in _WRAPPERS:
+            break
+        if w.startswith("GH_REPO="):
+            return w.split("=", 1)[1]
+    return ""
+
+
 def _violation(cmds, cwd, own, depth):
+    remotes = {}
     for words in cmds:
         if words[:1] == ["cd"]:
             cwd = _chdir(cwd, words[1] if len(words) > 1 else "~")
@@ -985,16 +1261,40 @@ def _violation(cmds, cwd, own, depth):
         if prog == "git":
             i, d = _global_git_cwd(w, cwd)
             if i < len(w) and w[i] == "push":
-                key = _git_push_target(w, d, i)
+                key = _git_push_target(w, d, i, remotes)
                 if key and key in own:
                     return f"`git push` to {key}"
+            elif i + 1 < len(w) and w[i] == "remote" and _remote_url_set(w, i):
+                name, url = _remote_url_set(w, i)
+                remotes[name] = url
+        elif prog in ("curl", "wget"):
+            hit = _http_violation(w, prog, own)
+            if hit:
+                return hit
         elif prog == "gh":
             repo_flag, pos = _gh_parts(w)
+            repo_flag = repo_flag or _gh_repo_env(words)
             group, action = (pos + ["", ""])[:2]
             if group == "api":
-                hit = _gh_api(w, cwd)
-                if hit and hit[0] in own and not _GH_API_OPEN_SUBPATHS.match(hit[1]):
-                    return f"a write to repos/{hit[0]}{hit[1]} through `gh api`"
+                here = repo_key(repo_flag) or _origin_key(cwd)
+                method, fields, _, endpoint = _gh_api_args(w)
+                if re.sub(r"^https?://[^/]+/(?:api/)?", "", endpoint).strip("/") == "graphql":
+                    doc = next((v for k, v in fields if k == "query"), "")
+                    hit = _graphql_violation(doc, [f for f in fields if f[0] != "query"], own, here)
+                    if hit:
+                        return f"{hit} through `gh api graphql`"
+                    continue
+                hit = _gh_api(w, cwd, here)
+                if hit and hit[0] in own and not _repo_write_is_open(hit[1], hit[2], hit[3]):
+                    what = "a state change (a PR is an issue) to" if _ISSUE_NUMBER.match(hit[1]) else "a write to"
+                    return f"{what} repos/{hit[0]}{hit[1]} through `gh api`"
+            elif group == "workflow" and action in _GH_WORKFLOW_WRITES or (
+                    group in ("secret", "variable") and action in _GH_SETTING_WRITES):
+                if group != "workflow" and any(a.split("=", 1)[0] in _GH_NOT_THE_REPO_FLAGS for a in w):
+                    continue                     # an org's or a user's, not the repo's
+                target = repo_key(repo_flag) or _origin_key(cwd)
+                if target in own:
+                    return f"`gh {group} {action}` on {target}"
             elif (group, action) and (
                     (group == "pr" and action in _GH_PR_WRITES)
                     or (group == "repo" and action in _GH_REPO_WRITES)
