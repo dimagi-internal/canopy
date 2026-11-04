@@ -41,6 +41,10 @@ version, **two independent axes**:
   ask for `auto`; a turn started by anyone else runs `manual` unless canopy-web says otherwise.
   `canopy caller tier` reports it as `manual`.
 
+**Changing yourself is `agent_edit`.** An asker without `agent_edit` may not push to, merge into
+or otherwise write YOUR OWN repo (the fleet hook refuses it); issues, other repos and PRs from a
+fork stay open. See `agent-core/own-repo.md`.
+
 Turn mode is **board-side STATE on canopy-web, not repo config**, and it is decided **per turn**:
 read it at preflight with
 

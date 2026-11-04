@@ -404,6 +404,14 @@ def _evaluate(cfg, repo_dir, payload, slug, name, agent=True):
             msg = rule.get("message") or ("BLOCKED by " + slug + " gating policy (deny rule).")
             return 2, "", msg.rstrip() + "\n"
 
+    # The own-repo rail needs facts a regex cannot hold (who is asking, which repo is the
+    # agent's own), so it is code, not a rule. After the rules: a forged-envelope attempt is
+    # refused by its own baseline rail first.
+    if agent and tool_name in SHELL_TOOLS:
+        refusal = own_repo_refusal(subject, payload, slug, repo_dir)
+        if refusal:
+            return 2, "", refusal.rstrip() + "\n"
+
     for rule in cfg.get("approve", []):
         if matches(rule, tool_name, subject):
             return 0, json.dumps({
@@ -560,6 +568,498 @@ def run_loader(repo_dir, payload, env=None):
     if session_slug != own:
         return 0, "", ""
     return run(repo_dir, payload)
+
+
+# ── the own-repo rail ─────────────────────────────────────────────────────────────────
+#
+# canopy-web decides who may change an agent (the `agent_edit` permission) for every change
+# made THROUGH canopy-web. It cannot see what a session does with `git` and `gh` directly, and
+# an agent can read and write GitHub freely (other repos, issues, PRs are a feature). The one
+# thing a turn's asker without `agent_edit` may not do is change THE AGENT'S OWN REPO, so that
+# is the whole rail: a push to it, a PR/release/repo-settings write on it, or a mutating
+# `gh api repos/<it>/...`. Issues and comments stay open, and so does a PR from a FORK.
+#
+# This is a guard rail, not a boundary. It reads the command's own words; a session that
+# builds the command out of variables, a script file or another tool is not seen
+# (docs: agent-core/own-repo.md § What it does not cover).
+#
+# It fires only for a session that HAS an agent and a canopy turn (a turn id from the runner's
+# env, a local turn, or the laptop's by-task record): a person running Claude Code in the
+# agent's repo by hand has no turn and is untouched. Given a turn, a missing, unreadable or
+# forged envelope FAILS CLOSED.
+
+OWN_REPO_PERMISSION = "agent_edit"
+#: Envelope `relationship`s that may change the agent when an older canopy-web sent no
+#: `permissions` list (the owner and admins hold agent_edit; `system` is the agent's own login).
+_PRIVILEGED_RELATIONSHIPS = frozenset({"owner", "admin", "system"})
+_UUIDISH = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+_NAMEISH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+_PREFILTER = re.compile(r"\bgit\b|\bgh\b")
+_GITHUB_REPO = re.compile(r"github\.com[:/]+([^/\s]+)/([^/\s?#]+?)(?:\.git)?/*(?:[?#].*)?$", re.I)
+_PLAIN_REPO = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+?)(?:\.git)?$")
+_WRAPPERS = frozenset({"sudo", "env", "command", "exec", "nohup", "time", "nice", "builtin", "xargs"})
+_SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
+_GH_PR_WRITES = frozenset({"create", "merge", "edit", "close", "review", "ready", "reopen",
+                           "lock", "unlock", "update-branch"})
+_GH_REPO_WRITES = frozenset({"edit", "delete", "rename", "archive", "unarchive", "sync",
+                             "deploy-key"})
+_GH_RELEASE_WRITES = frozenset({"create", "edit", "delete", "upload", "delete-asset"})
+_GH_API_FIELD_FLAGS = frozenset({"-f", "-F", "--field", "--raw-field", "--input"})
+# gh api flags that take a value (so the value is not mistaken for the endpoint).
+_GH_API_VALUE_FLAGS = frozenset({"-X", "--method", "-H", "--header", "-q", "--jq", "-t",
+                                 "--template", "--hostname", "--cache", "-p", "--preview"}
+                                ) | _GH_API_FIELD_FLAGS
+# What of an own repo `gh api` may still write: issues and their comments (a PR's
+# conversation is an issue's), a PR's review comments, and forking it. Everything else under
+# repos/<own>/ (contents, git/refs, pulls, merges, branches, releases, settings…) is the repo.
+_GH_API_OPEN_SUBPATHS = re.compile(r"^/(?:issues(?:/|$)|pulls/\d+/comments(?:/|$)|forks/?$|subscription/?$)")
+# git global options that take a value, so `git -C dir push` finds `push`.
+_GIT_VALUE_OPTS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
+                             "--super-prefix", "--config-env"})
+
+
+def repo_key(text):
+    """`owner/repo` (lowercase) for a GitHub URL, ssh address or bare `owner/repo`, else ''."""
+    text = (text or "").strip().strip("'\"")
+    m = _GITHUB_REPO.search(text) or _PLAIN_REPO.match(text)
+    return f"{m.group(1)}/{m.group(2)}".lower() if m else ""
+
+
+def _scan_commands(text, depth=0):
+    """`text` as a list of simple commands, each a list of words (quotes removed).
+
+    Quote-aware, unlike _statements: `;`, `&&`, `||`, `|`, `&`, `(`, `)` and newlines end a
+    command only outside quotes, heredoc bodies are dropped (a PR body that quotes `git push`
+    is not a push), and `$(…)`/backtick text inside quotes is scanned as commands too."""
+    cmds, words, cur = [], [], []
+    quoted_inner = []
+    i, n = 0, len(text)
+    pending_heredocs = []
+    in_word = False
+
+    def end_word():
+        nonlocal cur, in_word
+        if in_word:
+            words.append("".join(cur))
+        cur, in_word = [], False
+
+    def end_cmd():
+        nonlocal words
+        end_word()
+        if words:
+            cmds.append(words)
+        words = []
+
+    while i < n:
+        c = text[i]
+        if c == "\\" and i + 1 < n:
+            cur.append(text[i + 1]); in_word = True; i += 2; continue
+        if c == "'":
+            j = text.find("'", i + 1)
+            j = n if j < 0 else j
+            cur.append(text[i + 1:j]); in_word = True; i = j + 1; continue
+        if c == '"':
+            j, buf = i + 1, []
+            while j < n and text[j] != '"':
+                if text[j] == "\\" and j + 1 < n:
+                    buf.append(text[j + 1]); j += 2
+                else:
+                    buf.append(text[j]); j += 1
+            body = "".join(buf)
+            cur.append(body); in_word = True; i = j + 1
+            quoted_inner.append(body)
+            continue
+        if c == "`":
+            j = text.find("`", i + 1)
+            j = n if j < 0 else j
+            quoted_inner.append(text[i + 1:j]); in_word = True; i = j + 1; continue
+        if c == "\n":
+            end_cmd()
+            i += 1
+            while pending_heredocs:
+                delim = pending_heredocs.pop(0)
+                while i < n:
+                    j = text.find("\n", i)
+                    j = n if j < 0 else j
+                    line = text[i:j]
+                    i = j + 1
+                    if line.strip() == delim:
+                        break
+            continue
+        if c in " \t":
+            end_word(); i += 1; continue
+        if c == "<" and text.startswith("<<", i) and not text.startswith("<<<", i):
+            m = re.match(r"<<-?\s*(['\"]?)([A-Za-z0-9_.-]+)\1", text[i:])
+            if m:
+                pending_heredocs.append(m.group(2))
+                i += m.end(); continue
+        if c in ";|(){}" or (c == "&" and not (cur and cur[-1].endswith((">", "<")))):
+            if c in "{}" and in_word:
+                cur.append(c); i += 1; continue
+            if c in "{}":                      # `{ cmd; }` grouping: a word, never a command end
+                i += 1; continue
+            end_cmd(); i += 1; continue
+        if c == "$" and text.startswith("$(", i):
+            end_cmd(); i += 2; continue        # `$(cmd)`: cmd is a command of its own
+        cur.append(c); in_word = True; i += 1
+    end_cmd()
+    if depth < 3:
+        for body in quoted_inner:
+            if "$(" in body or "`" in body:
+                inner = re.findall(r"\$\(([^()]*)\)|`([^`]*)`", body)
+                for a, b in inner:
+                    cmds.extend(_scan_commands(a or b, depth + 1))
+    return cmds
+
+
+def _strip_wrappers(words):
+    """Drop leading env assignments and wrappers (`sudo`, `env`, `command`, `timeout 5`…)."""
+    w = list(words)
+    while w:
+        head = os.path.basename(w[0])
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w[0]):
+            w.pop(0)
+        elif head in _WRAPPERS:
+            w.pop(0)
+            while w and (w[0].startswith("-") or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w[0])):
+                w.pop(0)
+        elif head in ("timeout", "nice") and len(w) > 1:
+            w.pop(0)
+            while w and (w[0].startswith("-") or re.match(r"^[\d.]+[smhd]?$", w[0])):
+                w.pop(0)
+        else:
+            break
+    return w
+
+
+def _drop_redirects(words):
+    out, skip = [], False
+    for w in words:
+        if skip:
+            skip = False
+            continue
+        if re.match(r"^\d*(?:>>?|<|&>>?)$", w):
+            skip = True
+            continue
+        if re.match(r"^\d*(?:>>?|<|&>)\S", w):
+            continue
+        out.append(w)
+    return out
+
+
+def _git_run(args, cwd, timeout=4):
+    import subprocess
+    try:
+        r = subprocess.run(["git", *args], cwd=cwd or None, capture_output=True, text=True,
+                           timeout=timeout, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _origin_key(cwd, remote="origin"):
+    return repo_key(_git_run(["remote", "get-url", remote], cwd)) if cwd and os.path.isdir(cwd) else ""
+
+
+def _default_push_remote(cwd):
+    if not cwd or not os.path.isdir(cwd):
+        return ""
+    up = _git_run(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}"], cwd)
+    return up.split("/", 1)[0] if "/" in up else "origin"
+
+
+def own_repo_keys(slug, repo_dir, start_cwd, caller=None):
+    """`owner/repo` keys naming THIS agent's repo: its clone's `origin` (the repo dir the hook
+    resolved, and the repo above the session's directory when it is this agent's), the repo URL
+    in config/agent.json or .claude-plugin/plugin.json, and the envelope's `agent_repo`."""
+    dirs = []
+    for d in (repo_dir, find_agent_repo(start_cwd)):
+        if d and os.path.isdir(d) and d not in dirs and repo_slug(d) == slug:
+            dirs.append(d)
+    keys = set()
+    for d in dirs:
+        keys.add(_origin_key(d))
+        for rel, field in ((("config", "agent.json"), "repo_url"), (("config", "agent.json"), "repo"),
+                           ((".claude-plugin", "plugin.json"), "repository")):
+            val = _read_json(os.path.join(d, *rel)).get(field)
+            keys.add(repo_key(val.get("url") if isinstance(val, dict) else val))
+    if isinstance(caller, dict):
+        keys.add(repo_key(caller.get("agent_repo")))
+    keys.discard("")
+    return keys
+
+
+def caller_root():
+    return os.path.realpath(os.path.expanduser("~/.canopy/caller"))
+
+
+def _turn_id_for(payload, env):
+    """This session's canopy turn id, or "": the runner's `$CANOPY_TURN_ID`; a LOCAL turn's own
+    state (`~/.canopy/local/<claude session>.json`); the laptop's by-task record (unless the
+    owner has since taken over the keyboard: presence `keyboard`)."""
+    tid = (env.get("CANOPY_TURN_ID") or "").strip()
+    if _UUIDISH.match(tid):
+        return tid
+    home = os.path.expanduser("~/.canopy")
+    sid = str((payload or {}).get("session_id") or env.get("CLAUDE_CODE_SESSION_ID") or "")
+    if sid and _NAMEISH.match(sid):
+        state = _read_json(os.path.join(home, "local", f"{sid}.json"))
+        if state and not state.get("closed_at") and _UUIDISH.match(str(state.get("turn_id") or "")):
+            return str(state["turn_id"])
+        if _read_json(os.path.join(home, "caller", "presence", f"{sid}.json")).get("origin") == "keyboard":
+            return ""
+    transcript = (payload or {}).get("transcript_path") or ""
+    cwd = (payload or {}).get("cwd") or env.get("CLAUDE_PROJECT_DIR") or ""
+    leaves = []
+    m = re.search(r"-worktrees-.+?-emdash-(?P<leaf>[^/]+)$",
+                  next((p for p in transcript.split("/") if "-worktrees-" in p), ""))
+    if m:
+        leaves.append(m.group("leaf"))
+    base = os.path.basename(os.path.normpath(cwd)) if cwd else ""
+    if base:
+        leaves.append(base[len("emdash-"):] if base.startswith("emdash-") else base)
+    for leaf in leaves:
+        for name in (leaf, leaf.rpartition("-")[0]):
+            if name and _NAMEISH.match(name):
+                rec = _read_json(os.path.join(home, "caller", "by-task", f"{name}.json"))
+                if _UUIDISH.match(str(rec.get("turn_id") or "")):
+                    return str(rec["turn_id"])
+    return ""
+
+
+def read_caller_envelope(turn_id):
+    """canopy's envelope for `turn_id` — only `<caller root>/<turn_id>.json`, a file whose own
+    `turn_id` is the one in its name — or None."""
+    root = caller_root()
+    path = os.path.realpath(os.path.join(root, f"{turn_id}.json"))
+    if os.path.dirname(path) != root:
+        return None
+    doc = _read_json(path)
+    if not doc or str(doc.get("turn_id") or turn_id) != turn_id:
+        return None
+    return doc
+
+
+def may_edit_agent(env):
+    """(allowed, held) for an envelope. `permissions` is canopy-web's own list of what the
+    asker holds on THIS agent for THIS turn (a confined turn lists read and a door only);
+    an older canopy-web sent none, so fall back to the relationship (owner/admin/system)."""
+    perms = env.get("permissions")
+    if isinstance(perms, list) and all(isinstance(p, str) for p in perms):
+        return OWN_REPO_PERMISSION in perms, sorted(perms)
+    who = env.get("who") if isinstance(env.get("who"), dict) else {}
+    ok = (env.get("relationship") in _PRIVILEGED_RELATIONSHIPS or who.get("kind") == "system") \
+        and env.get("profile") != "confined"
+    return ok, []
+
+
+def _chdir(cwd, target):
+    """`cd target` from `cwd`; None when the target is a variable, glob or substitution."""
+    if re.search(r"[$`*]", target):
+        return None
+    t = os.path.expanduser(target)
+    if os.path.isabs(t):
+        return os.path.normpath(t)
+    return os.path.normpath(os.path.join(cwd, t)) if cwd else None
+
+
+def _global_git_cwd(words, cwd):
+    """(subcommand index, working dir) for `git [-C dir …] <sub> …`, dir None if unresolvable."""
+    i, d = 1, cwd
+    while i < len(words):
+        w = words[i]
+        if w == "-C" and i + 1 < len(words):
+            d = _chdir(d, words[i + 1])
+            i += 2
+        elif w in _GIT_VALUE_OPTS and "=" not in w:
+            i += 2
+        elif w.startswith("-"):
+            i += 1
+        else:
+            break
+    return i, d
+
+
+def _git_push_target(words, cwd, start):
+    """The `owner/repo` key a `git push` writes to, or '' when it cannot be told."""
+    args, i, repo_opt = [], start + 1, ""
+    while i < len(words):
+        w = words[i]
+        if w in ("-o", "--push-option", "--receive-pack", "--exec") and "=" not in w:
+            i += 2; continue
+        if w == "--repo" and i + 1 < len(words):
+            repo_opt = words[i + 1]; i += 2; continue
+        if w.startswith("--repo="):
+            repo_opt = w.split("=", 1)[1]
+        elif not w.startswith("-"):
+            args.append(w)
+        i += 1
+    target = repo_opt or (args[0] if args else "")
+    if target and ("://" in target or re.match(r"^[\w.-]+@[\w.-]+:", target) or repo_key(target)):
+        return repo_key(target)
+    remote = target or _default_push_remote(cwd)
+    return _origin_key(cwd, remote) if remote else ""
+
+
+def _gh_parts(words):
+    """(repo flag value, positionals after `gh`) with global/-R flags removed."""
+    repo, pos, i = "", [], 1
+    while i < len(words):
+        w = words[i]
+        if w in ("-R", "--repo") and i + 1 < len(words):
+            repo = words[i + 1]; i += 2; continue
+        if w.startswith("--repo="):
+            repo = w.split("=", 1)[1]
+        elif w.startswith("-R") and len(w) > 2 and not w.startswith("--"):
+            repo = w[2:]
+        elif not w.startswith("-"):
+            pos.append(w)
+        i += 1
+    return repo, pos
+
+
+def _gh_api(words, cwd):
+    """(repo key, subpath) a MUTATING `gh api` writes under `repos/`, else None."""
+    method, fields, endpoint, i = "", False, "", 2
+    while i < len(words):
+        w = words[i]
+        flag, eq, val = w.partition("=")
+        if flag in ("-X", "--method"):
+            method = (val if eq else words[i + 1] if i + 1 < len(words) else "").upper()
+            i += 1 if eq else 2; continue
+        if flag in _GH_API_FIELD_FLAGS:
+            fields = True
+            i += 1 if eq else 2; continue
+        if w.startswith(("-X", "-f", "-F")) and len(w) > 2 and not w.startswith("--"):
+            if w.startswith("-X"):
+                method = w[2:].upper()
+            else:
+                fields = True
+        elif flag in _GH_API_VALUE_FLAGS:
+            i += 1 if eq else 2; continue
+        elif not w.startswith("-") and not endpoint:
+            endpoint = w
+        i += 1
+    mutating = method in ("POST", "PUT", "PATCH", "DELETE") or (not method and fields)
+    if not mutating:
+        return None
+    ep = re.sub(r"^https?://[^/]+/(?:api/v3/)?", "", endpoint).lstrip("/")
+    m = re.match(r"^repos/([^/]+)/([^/?#]+)(/[^?#]*)?", ep)
+    if not m:
+        return None
+    owner, name, sub = m.group(1), m.group(2), m.group(3) or ""
+    if owner == "{owner}" or name == "{repo}":
+        key = _origin_key(cwd)
+    else:
+        key = f"{owner}/{name}".lower()
+    return key, sub
+
+
+def own_repo_violation(subject, cwd, own):
+    """What in `subject` writes to the agent's own repo: a short description, or ''."""
+    return _violation(_scan_commands(subject), cwd, own, 0)
+
+
+def _violation(cmds, cwd, own, depth):
+    for words in cmds:
+        if words[:1] == ["cd"]:
+            cwd = _chdir(cwd, words[1] if len(words) > 1 else "~")
+            continue
+        w = _drop_redirects(_strip_wrappers(words))
+        if not w:
+            continue
+        prog = os.path.basename(w[0])
+        if prog in _SHELLS and depth < 3:
+            for k, a in enumerate(w[1:-1], 1):
+                if a.startswith("-") and "c" in a.lstrip("-") and not a.startswith("--"):
+                    hit = _violation(_scan_commands(w[k + 1]), cwd, own, depth + 1)
+                    if hit:
+                        return hit
+                    break
+            continue
+        if prog == "eval" and depth < 3:
+            hit = _violation(_scan_commands(" ".join(w[1:])), cwd, own, depth + 1)
+            if hit:
+                return hit
+            continue
+        if prog == "git":
+            i, d = _global_git_cwd(w, cwd)
+            if i < len(w) and w[i] == "push":
+                key = _git_push_target(w, d, i)
+                if key and key in own:
+                    return f"`git push` to {key}"
+        elif prog == "gh":
+            repo_flag, pos = _gh_parts(w)
+            group, action = (pos + ["", ""])[:2]
+            if group == "api":
+                hit = _gh_api(w, cwd)
+                if hit and hit[0] in own and not _GH_API_OPEN_SUBPATHS.match(hit[1]):
+                    return f"a write to repos/{hit[0]}{hit[1]} through `gh api`"
+            elif (group, action) and (
+                    (group == "pr" and action in _GH_PR_WRITES)
+                    or (group == "repo" and action in _GH_REPO_WRITES)
+                    or (group == "release" and action in _GH_RELEASE_WRITES)):
+                target = repo_key(repo_flag)
+                if not target:
+                    for p in pos[2:]:
+                        if "github.com" in p:
+                            target = repo_key(re.sub(r"/(?:pull|issues)/.*$", "", p))
+                            break
+                if not target and group == "repo" and len(pos) > 2:
+                    target = repo_key(pos[2])
+                if not target:
+                    target = _origin_key(cwd)
+                if target in own:
+                    if group == "pr" and action == "create":
+                        head = ""
+                        for k, a in enumerate(w):
+                            if a in ("-H", "--head") and k + 1 < len(w):
+                                head = w[k + 1]
+                            elif a.startswith("--head="):
+                                head = a.split("=", 1)[1]
+                        owner = target.split("/")[0]
+                        if ":" in head and head.split(":", 1)[0].lower() != owner:
+                            continue                 # a PR from a fork: a suggestion
+                    return f"`gh {group} {action}` on {target}"
+    return ""
+
+
+def own_repo_refusal(subject, payload, slug, repo_dir, env=None):
+    """The deny message when `subject` (a shell command) writes to this agent's own repo in a
+    turn whose asker lacks `agent_edit`; "" otherwise. See the block comment above."""
+    if not subject or not _PREFILTER.search(subject):
+        return ""
+    env = os.environ if env is None else env
+    start = env.get("CLAUDE_PROJECT_DIR") or (payload or {}).get("cwd") or ""
+    cwd = (payload or {}).get("cwd") or start or os.getcwd()
+    # Cheap exits first: no turn → a person's own session, untouched.
+    turn_id = _turn_id_for(payload, env)
+    if not turn_id:
+        return ""
+    own = own_repo_keys(slug, repo_dir, cwd or start)
+    if not own:
+        return ""
+    what = own_repo_violation(subject, os.path.abspath(cwd) if cwd else None, own)
+    if not what:
+        return ""
+    caller = read_caller_envelope(turn_id)
+    if caller is None:
+        return (f"BLOCKED (fail closed): {what} would change {slug}'s own repo, and this turn's "
+                f"caller envelope (~/.canopy/caller/{turn_id}.json) is missing or unreadable, so "
+                f"canopy cannot tell who is asking. Only people with the editor role on {slug} "
+                "may change its repo. Ask the person to retry from canopy-web, or file an issue "
+                "instead (`gh issue create -R <owner/repo>` is allowed).")
+    allowed, held = may_edit_agent(caller)
+    if allowed:
+        return ""
+    repo = sorted(own)[0]
+    return (f"BLOCKED: {what}. Only people with the editor role on {slug} may change {slug}'s "
+            f"repo; the person asking this turn holds {', '.join(held) or 'no edit permission'} "
+            f"(no `{OWN_REPO_PERMISSION}`). You can still open or comment on an issue "
+            f"(`gh issue create -R {repo}`), or open a PR from a FORK "
+            f"(`gh repo fork {repo}`, push to your fork, `gh pr create -R {repo} --head "
+            "<your-fork-owner>:<branch>`). Or ask the owner of "
+            f"{slug} to give them the editor role, then ask again.")
 
 
 def main(repo_dir=None, argv=None):
