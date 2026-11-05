@@ -2,10 +2,12 @@
 and HTTP live. stdlib urllib only (the canopy plugin has no `requests` dep)."""
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -23,6 +25,18 @@ Transport = Callable[[str, str, dict, Optional[bytes]], "tuple[int, str]"]
 
 class CanopyError(RuntimeError):
     """A non-2xx response from canopy-web."""
+
+
+class CanopyNetworkError(urllib.error.URLError):
+    """No response from canopy-web at all: refused, reset or timed out. A URLError (so an
+    OSError), which is what every existing caller already catches for "unreachable"."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
 
 
 def resolve_base_url(base_url: Optional[str]) -> str:
@@ -567,13 +581,40 @@ def announce_identity(base: str, tok: str, transport: "Transport") -> str:
 _announce_identity_impl = announce_identity
 
 
-def urllib_transport(method: str, url: str, headers: dict, body: Optional[bytes]) -> "tuple[int, str]":
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+# Every request is bounded: an unanswered socket otherwise hangs the CLI, the hook or the turn
+# that called it forever. 60 s plus a second per 100 KB of body, so a big upload still fits.
+# CANOPY_WEB_TIMEOUT (seconds) overrides the base.
+DEFAULT_TIMEOUT = 60.0
+_IDEMPOTENT = frozenset({"GET", "HEAD", "OPTIONS"})
+_NETWORK_ERRORS = (urllib.error.URLError, http.client.HTTPException, OSError)
+
+
+def request_timeout(body: Optional[bytes]) -> float:
     try:
-        with urllib.request.urlopen(req) as resp:
-            return resp.status, resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode("utf-8", "replace")
+        base = float(os.environ.get("CANOPY_WEB_TIMEOUT", "") or DEFAULT_TIMEOUT)
+    except ValueError:
+        base = DEFAULT_TIMEOUT
+    return base + len(body or b"") / 100_000
+
+
+def urllib_transport(method: str, url: str, headers: dict, body: Optional[bytes]) -> "tuple[int, str]":
+    """Send one request. Returns (status, text) for any HTTP answer; raises
+    CanopyNetworkError (a URLError) when there is none — refused, reset, timed out. A read
+    is retried once, since repeating it is harmless; a write never is."""
+    attempts = 2 if method.upper() in _IDEMPOTENT else 1
+    for attempt in range(attempts):
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=request_timeout(body)) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode("utf-8", "replace")
+        except _NETWORK_ERRORS as e:
+            if attempt + 1 < attempts:
+                time.sleep(1)
+                continue
+            raise CanopyNetworkError(f"{method} {url} -> no answer: {type(e).__name__}: {e}") from e
+    raise AssertionError("unreachable")
 
 
 def call(method: str, path: str, body=None, *,
