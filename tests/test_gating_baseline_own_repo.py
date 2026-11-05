@@ -55,6 +55,8 @@ def envelope(world, perms=None, relationship="member", **extra):
 
 def hook(world, command, *, cwd=None, turn=TURN, agent="trellis", tool="Bash", tool_input=None, extra_env=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith(("CANOPY_", "CLAUDE_"))}
+    env.pop("XDG_CONFIG_HOME", None)                       # GitHub's runners set it; gh's config is
+    env.pop("GH_CONFIG_DIR", None)                         # looked for under the fake HOME below
     env["HOME"] = str(world["home"])
     cwd = str(cwd or world["agent"])
     env["CLAUDE_PROJECT_DIR"] = cwd
@@ -515,6 +517,7 @@ def test_gh_config_dir_is_read_for_aliases_too(world):
     assert hook(world, "gh m")[0] == 0                                     # not in the default place
     assert hook(world, f"GH_CONFIG_DIR={d} gh m")[0] == 2
     assert hook(world, "gh m", extra_env={"GH_CONFIG_DIR": str(d)})[0] == 2
+    assert hook(world, "gh m", extra_env={"XDG_CONFIG_HOME": str(world["plain"])})[0] == 2
 
 
 @pytest.mark.parametrize("cmd", [
