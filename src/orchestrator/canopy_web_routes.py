@@ -506,7 +506,8 @@ def main(argv: Optional[list] = None) -> int:
     args = p.parse_args(argv)
     if args.cmd == "refresh-schema":
         trimmed = trim_schema(load_schema(checkout=args.checkout, url=args.url))
-        SCHEMA_FIXTURE.write_text(json.dumps(trimmed, indent=1, sort_keys=True) + "\n")
+        SCHEMA_FIXTURE.write_text(json.dumps(trimmed, indent=1, sort_keys=True) + "\n",
+                                  encoding="utf-8")
         print(f"wrote {SCHEMA_FIXTURE.relative_to(REPO_ROOT)}: {len(trimmed['paths'])} paths",
               file=sys.stderr)
         return 0

@@ -53,7 +53,7 @@ def extracted():
 
 @pytest.fixture(scope="module")
 def routes():
-    return R.schema_routes(json.loads(R.SCHEMA_FIXTURE.read_text()))
+    return R.schema_routes(json.loads(R.SCHEMA_FIXTURE.read_text(encoding="utf-8")))
 
 
 def _fmt(calls):
