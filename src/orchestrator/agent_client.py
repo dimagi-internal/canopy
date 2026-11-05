@@ -243,6 +243,30 @@ class AgentClient:
         callers can make the agent do."""
         return self._call("PUT", f"/api/agents/{self.slug}/interface", {"source": source})
 
+    def get_read_mode(self) -> dict:
+        """What someone who may only read gets from this agent: {source, profile}."""
+        return self._call("GET", f"/api/agents/{self.slug}/read-mode")
+
+    def put_read_mode(self, fields: dict) -> dict:
+        """Customise read mode. Only the fields sent change; `dry_run` checks without saving."""
+        return self._call("PUT", f"/api/agents/{self.slug}/read-mode", fields)
+
+    def reset_read_mode(self) -> dict:
+        """Put read mode back on canopy's default."""
+        return self._call("DELETE", f"/api/agents/{self.slug}/read-mode")
+
+    def list_connected_sites(self) -> dict:
+        """The sites this agent can be reached from: {sites, available, new_site_defaults}."""
+        return self._call("GET", f"/api/agents/{self.slug}/connected-sites")
+
+    def put_connected_site(self, site: str, fields: dict) -> dict:
+        """Add or change one connected site. Only the fields sent change; `dry_run` checks without saving."""
+        return self._call("PUT", f"/api/agents/{self.slug}/connected-sites/{site}", fields)
+
+    def delete_connected_site(self, site: str) -> dict:
+        """Remove one connected site from this agent."""
+        return self._call("DELETE", f"/api/agents/{self.slug}/connected-sites/{site}")
+
     def create_tasks(self, tasks: list[dict]) -> "list[dict]":
         """Create tasks — the body is a BARE list. Returns the tasks as created.
 
