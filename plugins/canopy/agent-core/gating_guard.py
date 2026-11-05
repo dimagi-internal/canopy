@@ -868,7 +868,8 @@ def _default_push_remote(cwd):
 def own_repo_keys(slug, repo_dir, start_cwd, caller=None):
     """`owner/repo` keys naming THIS agent's repo: its clone's `origin` (the repo dir the hook
     resolved, and the repo above the session's directory when it is this agent's), the repo URL
-    in config/agent.json or .claude-plugin/plugin.json, and the envelope's `agent_repo`."""
+    in config/agent.json or .claude-plugin/plugin.json, and the envelope's `agent_repo` when the
+    envelope is this agent's."""
     dirs = []
     for d in (repo_dir, find_agent_repo(start_cwd)):
         if d and os.path.isdir(d) and d not in dirs and repo_slug(d) == slug:
@@ -880,10 +881,24 @@ def own_repo_keys(slug, repo_dir, start_cwd, caller=None):
                            ((".claude-plugin", "plugin.json"), "repository")):
             val = _read_json(os.path.join(d, *rel)).get(field)
             keys.add(repo_key(val.get("url") if isinstance(val, dict) else val))
-    if isinstance(caller, dict):
-        keys.add(repo_key(caller.get("agent_repo")))
+    if isinstance(caller, dict) and str(caller.get("agent") or "").lower() == slug:
+        repo = caller.get("agent_repo")
+        keys.add(repo_key(repo) if isinstance(repo, str) else "")
     keys.discard("")
     return keys
+
+
+class _AnyRepo:
+    """Stands in for the own-repo keys when none can be found: every repo might be it."""
+
+    def __contains__(self, key):
+        return True
+
+
+def envelope_knows_of_no_repo(caller):
+    """Whether this canopy-web answered and had no repo to name. Only a string says so: `null` is a
+    turn with no agent, and an envelope without the field is an older canopy-web, which never said."""
+    return isinstance(caller, dict) and isinstance(caller.get("agent_repo"), str)
 
 
 def caller_root():
@@ -1171,7 +1186,7 @@ def _graphql_violation(doc, variables, own, here=""):
     by_name = {k: fill(str(v)) for k, v in variables}
     if by_name.get("owner") and (by_name.get("name") or by_name.get("repo")):
         keys.add(f"{by_name['owner']}/{by_name.get('name') or by_name.get('repo')}".lower())
-    hit = sorted(keys & own)
+    hit = sorted(k for k in keys if k and k in own)
     if hit:
         return f"a GraphQL mutation ({', '.join(roots)}) on {hit[0]}"
     closed = [r for r in roots if r not in _GRAPHQL_OPEN_MUTATIONS]
@@ -1489,8 +1504,8 @@ def _violation(cmds, cwd, own, depth):
             i, d = _global_git_cwd(w, cwd)
             if i < len(w) and w[i] == "push":
                 key = _git_push_target(w, d, i, remotes)
-                if key and key in own:
-                    return f"`git push` to {key}"
+                if key in own:                   # never "" unless every repo might be the own one
+                    return f"`git push` to {key or 'a repo the hook cannot name'}"
             elif i + 1 < len(w) and w[i] == "remote" and _remote_url_set(w, i):
                 name, url = _remote_url_set(w, i)
                 remotes[name] = url
@@ -1573,14 +1588,28 @@ def own_repo_refusal(subject, payload, slug, repo_dir, env=None):
     turn_id = _turn_id_for(payload, env)
     if not turn_id:
         return ""
-    own = own_repo_keys(slug, repo_dir, cwd or start)
+    caller = read_caller_envelope(turn_id)
+    own = own_repo_keys(slug, repo_dir, cwd or start, caller)
     if not own:
-        return ""
+        # Nothing here or in the envelope says which repo is the agent's. An envelope that does
+        # not carry the field is an older canopy-web, and one that is missing is routine (the
+        # runner prunes them after a week while a laptop's by-task record stays), so neither may
+        # lock anyone out: the rail is off as it always was. Only a canopy-web that answered "no
+        # repo" makes this fail closed, and only for an asker the rail guards.
+        if not envelope_knows_of_no_repo(caller) or may_edit_agent(caller)[0]:
+            return ""
+        what = own_repo_violation(subject, os.path.abspath(cwd) if cwd else None, _AnyRepo())
+        if not what:
+            return ""
+        return (f"BLOCKED (fail closed): {what}. canopy cannot tell which repo is {slug}'s own: "
+                f"canopy-web has none set for {slug} and this session is not in its clone, so this "
+                f"could be it, and the person asking this turn does not hold `{OWN_REPO_PERMISSION}`. "
+                "Reads, issues and comments, and a PR from a FORK still work. Ask "
+                f"{slug}'s owner to set its repo on canopy-web, or to give this person the editor role.")
     what = own_repo_violation(subject, os.path.abspath(cwd) if cwd else None, own)
     if not what:
         return ""
     hint = _GRAPHQL_HINT if _GRAPHQL_BLIND in what else ""
-    caller = read_caller_envelope(turn_id)
     if caller is None:
         return (f"BLOCKED (fail closed): {what}. That counts as changing {slug}'s own repo, and this "
                 f"turn's caller envelope (~/.canopy/caller/{turn_id}.json) is missing or unreadable, "

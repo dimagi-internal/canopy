@@ -543,6 +543,200 @@ def test_the_new_scanning_does_not_read_text_as_commands(world, cmd):
     assert hook(world, cmd.replace("{other}", str(world["other"])))[0] == 0, cmd
 
 
+# ── a session outside the clone: the envelope's `agent_repo` ─────────────────────────────────────
+
+OWN_KEY = "dimagi-internal/trellis"
+OUTSIDE_OWN_WRITES = [
+    f"gh pr merge 3 -R {OWN_KEY}",
+    f"gh pr create -R {OWN_KEY} --title t",
+    f"git push https://github.com/{OWN_KEY}.git HEAD:main",
+    f"gh api -X PUT repos/{OWN_KEY}/pulls/3/merge",
+    f"GH_REPO={OWN_KEY} gh workflow run deploy.yml",
+    f"curl -X POST https://api.github.com/repos/{OWN_KEY}/pulls -d '{{}}'",
+    GQL_COMMIT.format(repo=OWN_KEY),
+    f"gh api graphql -f query='{MERGE_BY_NODE}'",
+]
+# What each published door really runs. Taken from the agents' interfaces: `ask` on every agent
+# (with its `review-receipt` step), Trellis's `canopy` door, Oolong's Confluence reads.
+DOOR_COMMANDS = [
+    "canopy email read --repo . 19a2",
+    "canopy email review-receipt --repo . --body-file /w/.hal-ask/draft.md",
+    "canopy email review-receipt --repo . --body-file /w/.hal-ask/draft.md --verdict fixed --caught x",
+    "bin/hal-email --reply-all --thread-id 19a2 --subject-file /w/.hal-ask/s.txt --body-file /w/.hal-ask/b.md",
+    "curl -sS -g --path-as-is -H \"Accept: application/vnd.github.raw\" https://api.github.com/repos/dimagi-internal/canopy-web/contents/README.md",
+    "curl -sS -g --path-as-is https://api.github.com/repos/dimagi-internal/canopy/git/trees/main?recursive=1",
+    "curl -sS -g --path-as-is https://raw.githubusercontent.com/dimagi-internal/canopy/main/README.md",
+    "gh api repos/dimagi-internal/canopy-web/contents/README.md",
+    "gh api repos/dimagi-internal/canopy/contents/docs",
+    "bin/trellis-sessions coachees --me",
+    "bin/oolong-confluence search leave --limit 5",
+]
+CONFINED = {"profile": "confined", "relationship": "contact"}
+GUARDED_ASKERS = [({"perms": READ_WRITE}, "read_write"), ({"perms": ["read"], **CONFINED}, "confined"),
+                  ({"perms": ["read", "use:ask"], **CONFINED}, "a door")]
+UNGUARDED_ASKERS = [
+    (EDITOR, "member"),
+    (["admin", "agent_edit", "read", "write"], "admin"),
+    (["admin", "agent_edit", "own", "read", "write"], "owner"),
+    (["admin", "agent_edit", "read", "write"], "system"),                   # a schedule, as canopy-web sends it
+    (None, "owner"),                                                        # an older canopy-web
+    (None, "system"),
+]
+
+
+def _outside(world, perms=READ_WRITE, repo=OWN_KEY, relationship="member", agent="trellis", **extra):
+    fields = {} if repo is ... else {"agent_repo": repo}
+    envelope(world, perms, relationship=relationship, agent=agent, **fields, **extra)
+
+
+def _guarded(world, asker, repo):
+    asker = dict(asker)
+    _outside(world, asker.pop("perms"), repo=repo, **{"relationship": "member", **asker})
+
+
+@pytest.mark.parametrize("cmd", OUTSIDE_OWN_WRITES)
+def test_outside_the_clone_the_envelope_names_the_repo(world, cmd):
+    _outside(world)
+    code, err = hook(world, cmd, cwd=world["plain"])
+    assert code == 2, cmd
+    assert "editor role on trellis" in err and "cannot tell which repo" not in err
+    assert hook(world, cmd, cwd=world["other"])[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "gh pr merge 3 -R dimagi-internal/connect-hub",
+    "gh pr merge 3",                                                        # this checkout's origin
+    "git push origin main",
+    "gh pr create --title t",
+    "gh api -X PUT repos/dimagi-internal/connect-hub/pulls/3/merge",
+    GQL_COMMIT.format(repo="dimagi-internal/connect-hub"),
+])
+def test_outside_the_clone_another_repo_stays_open_once_the_repo_is_known(world, cmd):
+    _outside(world)
+    assert hook(world, cmd, cwd=world["other"])[0] == 0, cmd
+
+
+@pytest.mark.parametrize("perms, rel", UNGUARDED_ASKERS)
+def test_outside_the_clone_owners_editors_and_schedules_are_not_railed(world, perms, rel):
+    _outside(world, perms, relationship=rel)
+    for cmd in OUTSIDE_OWN_WRITES:
+        assert hook(world, cmd, cwd=world["other"])[0] == 0, cmd
+
+
+def test_another_agents_repo_in_the_envelope_is_not_this_agents(world):
+    _outside(world, agent="eva", repo="dimagi-internal/eva")
+    assert hook(world, "gh pr merge 3 -R dimagi-internal/eva", cwd=world["agent"])[0] == 0
+    assert hook(world, "gh pr merge 3", cwd=world["agent"])[0] == 2         # its own clone still counts
+
+
+def test_the_envelope_adds_to_what_the_clone_says_and_replaces_nothing(world):
+    _outside(world, repo="dimagi-internal/renamed-trellis")
+    assert hook(world, "gh pr merge 3 -R dimagi-internal/renamed-trellis")[0] == 2
+    assert hook(world, f"gh pr merge 3 -R {OWN_KEY}")[0] == 2
+
+
+# ── no repo known at all: fail closed for an asker the rail guards ───────────────────────────────
+
+UNKNOWN_REPO_WRITES = OUTSIDE_OWN_WRITES + [
+    "git push origin main",
+    "git push",
+    "git push https://github.com/dimagi-internal/connect-hub main",        # may be the own one: not known
+    "git -C \"$WT\" push origin main",
+    "gh pr merge 3",
+    "gh pr merge 3 -R dimagi-internal/connect-hub",
+    "gh pr close 3 -R dimagi-internal/connect-hub",
+    "gh api -X PUT repos/dimagi-internal/connect-hub/pulls/3/merge",
+    "curl -X POST https://api.github.com/repos/dimagi-internal/connect-hub/pulls -d '{}'",
+    GQL_COMMIT.format(repo="dimagi-internal/connect-hub"),
+    "gh release create v1", "gh workflow run deploy.yml", "gh secret set X --body y",
+    "if true; then gh pr merge 3; fi",
+]
+UNKNOWN_REPO_STAYS_OPEN = DOOR_COMMANDS + [
+    "git status", "git log --oneline -3", "git diff", "git commit -qm 'push it'", "git fetch origin",
+    "git clone https://github.com/dimagi-internal/connect-hub.git /tmp/x",
+    "gh pr view 3 -R dimagi-internal/connect-hub", "gh pr list", "gh pr checks 3", "gh pr diff 3",
+    "gh api repos/dimagi-internal/connect-hub/pulls/3",
+    "gh issue create -R dimagi-internal/connect-hub --title t",
+    "gh issue comment 3 -R dimagi-internal/connect-hub -b hi",
+    "gh pr comment 3 -R dimagi-internal/connect-hub -b hi",
+    "gh api repos/dimagi-internal/connect-hub/issues/3/comments -f body=b",
+    "gh pr create -R dimagi-internal/connect-hub --head someone:branch --title t",  # from a fork
+    "gh repo fork dimagi-internal/connect-hub",
+    "gh api graphql -f query='{ viewer { login } }'",
+    "Q='{ viewer { login } }'; gh api graphql -f query=\"$Q\"",
+    "gh api graphql -f query='mutation { addComment(input:{subjectId:\"x\",body:\"y\"}) { clientMutationId } }'",
+    "curl https://example.com", "curl https://api.github.com/repos/dimagi-internal/connect-hub",
+    "echo 'git push origin main'",
+    "gh issue create -R dimagi-internal/connect-hub --title t --body-file - <<'EOF'\ngit push origin main\nEOF",
+]
+
+
+@pytest.mark.parametrize("asker, label", GUARDED_ASKERS)
+@pytest.mark.parametrize("cmd", UNKNOWN_REPO_WRITES)
+def test_a_guarded_turn_with_no_repo_known_fails_closed(world, cmd, asker, label):
+    _guarded(world, asker, "")
+    code, err = hook(world, cmd, cwd=world["other"])
+    assert code == 2, (cmd, label)
+    assert "fail closed" in err and "cannot tell which repo" in err and "FORK" in err
+    assert "set its repo on canopy-web" in err
+
+
+@pytest.mark.parametrize("asker, label", GUARDED_ASKERS)
+@pytest.mark.parametrize("cmd", UNKNOWN_REPO_STAYS_OPEN)
+def test_a_guarded_turn_with_no_repo_known_keeps_reads_issues_forks_and_its_doors(world, cmd, asker, label):
+    _guarded(world, asker, "")
+    assert hook(world, cmd, cwd=world["other"])[0] == 0, (cmd, label)
+
+
+@pytest.mark.parametrize("asker, label", GUARDED_ASKERS)
+@pytest.mark.parametrize("repo", [OWN_KEY, ""])
+@pytest.mark.parametrize("where", ["agent", "other", "plain"])
+@pytest.mark.parametrize("cmd", DOOR_COMMANDS)
+def test_no_door_is_broken_wherever_it_runs(world, cmd, where, repo, asker, label):
+    _guarded(world, asker, repo)
+    assert hook(world, cmd, cwd=world[where])[0] == 0, (cmd, where, repo, label)
+
+
+@pytest.mark.parametrize("perms, rel", UNGUARDED_ASKERS)
+def test_no_repo_known_leaves_owners_editors_and_schedules_alone(world, perms, rel):
+    _outside(world, perms, repo="", relationship=rel)
+    for cmd in UNKNOWN_REPO_WRITES:
+        assert hook(world, cmd, cwd=world["other"])[0] == 0, cmd
+
+
+def test_no_repo_known_leaves_a_person_by_hand_alone(world):
+    _outside(world, repo="")
+    for cmd in UNKNOWN_REPO_WRITES:
+        assert hook(world, cmd, cwd=world["other"], turn="")[0] == 0, cmd
+
+
+@pytest.mark.parametrize("repo", [..., None, 7, ["dimagi-internal/trellis"]])
+@pytest.mark.parametrize("asker, label", GUARDED_ASKERS)
+def test_an_older_canopy_web_locks_nobody_out(world, repo, asker, label):
+    # No field: an older canopy-web. null: a turn with no agent. Neither said "no repo".
+    _guarded(world, asker, repo)
+    for cmd in UNKNOWN_REPO_WRITES:
+        assert hook(world, cmd, cwd=world["other"])[0] == 0, (cmd, label)
+
+
+def test_a_missing_envelope_locks_nobody_out_when_no_repo_is_known(world):
+    # Routine: the runner prunes an envelope after a week, and a laptop's by-task record outlives it.
+    for cmd in UNKNOWN_REPO_WRITES:
+        assert hook(world, cmd, cwd=world["other"])[0] == 0, cmd
+
+
+def test_a_repo_known_from_the_clone_is_not_failed_closed_by_an_empty_field(world):
+    # An agent with no repo set on canopy-web, working in its clone: the origin says which it is.
+    _outside(world, repo="")
+    assert hook(world, "git push origin main")[0] == 2
+    assert hook(world, "gh pr merge 3 -R dimagi-internal/connect-hub")[0] == 0
+
+
+def test_an_unparsable_repo_counts_as_none(world):
+    _outside(world, repo="not a repo")
+    assert hook(world, "gh pr merge 3", cwd=world["other"])[0] == 2
+
+
 def test_a_session_with_no_turn_is_untouched(world):
     # A developer working in the agent's repo by hand: an agent session with no canopy turn.
     assert hook(world, "git push origin main", turn="")[0] == 0
