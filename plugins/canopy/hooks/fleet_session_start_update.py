@@ -194,6 +194,53 @@ def _default_branch(clone: str) -> str:
     return "main"
 
 
+# ── release channel ─────────────────────────────────────────────────────────
+#
+# A merge used to reach every machine on its next session. A repo can now publish a
+# `fleet-stable` tag (canopy's `.github/workflows/fleet-stable.yml` advances it to the newest
+# main commit whose required checks passed and that has soaked on the `main` channel). The
+# fleet follows the tag; a canary machine follows `main` with CANOPY_FLEET_CHANNEL=main or a
+# `main` line in ~/.claude/canopy/fleet-channel. A repo without the tag is followed at main.
+
+STABLE_TAG = "fleet-stable"
+CHANNEL_FILE = CANOPY_DIR / "fleet-channel"
+
+
+def fleet_channel() -> str:
+    val = os.environ.get("CANOPY_FLEET_CHANNEL", "").strip().lower()
+    if not val:
+        try:
+            val = CHANNEL_FILE.read_text(encoding="utf-8").strip().lower()
+        except OSError:
+            val = ""
+    return "main" if val == "main" else "stable"
+
+
+def _is_ancestor(clone: str, older: str, newer: str) -> bool:
+    if not older or not newer:
+        return False
+    rc, _, _ = run(["git", "merge-base", "--is-ancestor", older, newer], 15, cwd=clone)
+    return rc == 0
+
+
+def target_ref(clone: str, branch: str) -> str:
+    """The ref this machine should run: the repo's fleet-stable tag, else origin/<branch>.
+
+    The tag is honoured only while it points into main's history, so a stray tag can never
+    send the fleet somewhere main has not been."""
+    main_ref = f"origin/{branch}"
+    if fleet_channel() == "main":
+        return main_ref
+    rc, _, _ = run(["git", "fetch", "--quiet", "--force", "origin",
+                    f"+refs/tags/{STABLE_TAG}:refs/tags/{STABLE_TAG}"], FETCH_TIMEOUT, cwd=clone)
+    if rc != 0:
+        return main_ref                      # no tag published: follow main, as before
+    rc, tag_sha, _ = run(["git", "rev-parse", f"{STABLE_TAG}^{{commit}}"], 10, cwd=clone)
+    if rc != 0 or not _is_ancestor(clone, tag_sha, main_ref):
+        return main_ref
+    return f"refs/tags/{STABLE_TAG}"
+
+
 def _current_branch(clone: str) -> str:
     rc, out, _ = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], 10, cwd=clone)
     return out if rc == 0 else ""
@@ -415,9 +462,16 @@ def update_one(target: dict) -> dict:
         result.update(status="error", error=f"fetch: {err or rc}")
         return result
 
-    rc, remote_sha, err = run(["git", "rev-parse", f"origin/{branch}"], 10, cwd=clone)
+    ref = target_ref(clone, branch)
+    rc, remote_sha, err = run(["git", "rev-parse", f"{ref}^{{commit}}"], 10, cwd=clone)
     if rc != 0 or not remote_sha:
-        result.update(status="error", error=f"rev-parse: {err or rc}")
+        result.update(status="error", error=f"rev-parse {ref}: {err or rc}")
+        return result
+
+    if remote_sha != target["sha"] and _is_ancestor(clone, remote_sha, target["sha"]):
+        # Installed is AHEAD of the channel (a manual /canopy:update, or a machine that left
+        # the main channel): never move a machine backwards; it rejoins when the channel passes.
+        result.update(status="up-to-date")
         return result
 
     if remote_sha == target["sha"]:
@@ -444,7 +498,7 @@ def update_one(target: dict) -> dict:
     if err:
         result.update(status="error", error=err)
         return result
-    rc, _, err = run(["git", "reset", "--hard", f"origin/{branch}"], PULL_TIMEOUT, cwd=clone)
+    rc, _, err = run(["git", "reset", "--hard", remote_sha], PULL_TIMEOUT, cwd=clone)
     if rc != 0:
         result.update(status="error", error=f"reset: {err or rc}")
         return result
@@ -457,30 +511,10 @@ def update_one(target: dict) -> dict:
         return result
 
     cache_dir = PLUGINS_DIR / "cache" / name / name / version
-    try:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        result.update(status="error", error=f"mkdir cache: {exc}")
-        return result
-
-    # Pure-Python mirror, not rsync: rsync does not exist on Windows, and this hook runs on
-    # every session — so it failed every time there, silently, into a log nobody reads.
-    err = mirror_tree(Path(plugin_dir), cache_dir, exclude={".git"}, delete=True)
+    err = build_and_swap(name, Path(plugin_dir), clone, cache_dir)
     if err:
-        result.update(status="error", error=f"sync: {err}")
+        result.update(status="error", error=err)
         return result
-
-    install_node_deps(name, cache_dir)
-
-    # Runtime bundle (repo-root code declared in .claude-plugin/runtime.json).
-    # Fatal when declared: a cache without its runtime strands every skill that
-    # shells into it, which is exactly the drift class this hook exists to kill.
-    manifest = _runtime_manifest(plugin_dir)
-    if manifest:
-        err = sync_runtime(clone, manifest, cache_dir)
-        if err:
-            result.update(status="error", error=err)
-            return result
 
     if not patch_registry(name, target["marketplace"], version, str(cache_dir), remote_sha):
         result.update(status="error", error="registry patch failed")
@@ -492,6 +526,164 @@ def update_one(target: dict) -> dict:
         new_sha=remote_sha[:8],
     )
     return result
+
+
+# ── build off to the side, check, then swap ─────────────────────────────────
+#
+# Running sessions execute hooks and skills out of the version dir. A commit that does not bump
+# the version lands in the SAME dir, so mirroring into it in place deleted `runtime/` and
+# `node_modules/` under live sessions for as long as the rebuild took. Instead the new version is
+# built complete in a staging dir on the same filesystem, checked, and renamed into place; a
+# failed build or check leaves the installed version exactly as it was.
+
+STAGING_DIR = "canopy-update-staging"   # under PLUGINS_DIR, outside cache/ so no scanner sees it
+RETIRED_KEEP_SECONDS = 24 * 3600
+# Carried over from the old version dir by hard link (a symlink stays a symlink), so a
+# same-version update never has a moment without them and does not reinstall from scratch.
+REUSE = ("node_modules", "runtime/.venv", "runtime/uv.lock")
+
+
+def _staging_root() -> Path:
+    return PLUGINS_DIR / STAGING_DIR
+
+
+def _link_tree(src: Path, dest: Path) -> None:
+    def _link(s, d):
+        try:
+            os.link(s, d)
+        except OSError:
+            shutil.copy2(s, d)
+    if src.is_dir() and not src.is_symlink():
+        shutil.copytree(src, dest, copy_function=_link, symlinks=True, dirs_exist_ok=True)
+    elif src.exists():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        _link(src, dest)
+
+
+def preflight(name: str, staged: Path) -> str:
+    """Check a staged version before it goes live. "" when it may, else why not.
+
+    Every plugin: the JSON its hooks read must parse. canopy: each PreToolUse guard must run
+    under this python (the one the hook launcher found) — allow a plain command, and the gating
+    guard must block a raw send. Guards fail closed, so a guard that cannot start would block
+    every tool call in every session on this machine."""
+    for rel in ("hooks/hooks.json", ".claude-plugin/plugin.json", "config/gating.json",
+                "agent-core/gating-baseline.json"):
+        p = staged / rel
+        if p.exists() and not isinstance(load_json(p), dict):
+            return f"preflight: {rel} is not a JSON object"
+    if name != "canopy":
+        return ""
+    agent = _staging_root() / f"preflight-agent-{os.getpid()}"
+    try:
+        (agent / "config").mkdir(parents=True, exist_ok=True)
+        (agent / "config" / "gating.json").write_text(
+            json.dumps({"slug": "preflight", "channels": ["email"], "deny": [], "approve": []}),
+            encoding="utf-8")
+        env = {**os.environ, "CANOPY_PLUGIN_DIR": str(staged)}
+        for var in ("CANOPY_AGENT", "CANOPY_AGENT_SLUG", "CLAUDE_PROJECT_DIR"):
+            env.pop(var, None)
+        def payload(cmd):
+            return json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd},
+                               "cwd": str(agent)})
+        checks = [
+            (["agent-core/gating_guard.py", "--session"], "git status", 0),
+            (["agent-core/gating_guard.py", "--session"],
+             "gog gmail send --to a@b.c --subject s --body b", 2),
+            (["hooks/profile_guard.py"], "git status", 0),
+            (["hooks/one_shot_turn_guard.py"], "git status", 0),
+            (["hooks/credential_guard.py", "--pre"], "git status", 0),
+        ]
+        for argv, cmd, want in checks:
+            script = staged / argv[0]
+            if not script.exists():
+                continue
+            try:
+                proc = subprocess.run([sys.executable, str(script), *argv[1:]],
+                                      input=payload(cmd), env=env, cwd=str(agent),
+                                      capture_output=True, encoding="utf-8", errors="replace",
+                                      timeout=30)
+            except (OSError, subprocess.SubprocessError) as exc:
+                return f"preflight: {argv[0]} did not run: {exc}"
+            if proc.returncode != want:
+                tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
+                return (f"preflight: {argv[0]} exited {proc.returncode} on `{cmd.split()[0]} …` "
+                        f"(want {want}) under {sys.executable}: {tail[0][:200]}")
+        return ""
+    finally:
+        shutil.rmtree(agent, ignore_errors=True)
+
+
+def _clean_retired(now: float | None = None) -> None:
+    """Drop retired version dirs once no session can plausibly still be running from them."""
+    now = time.time() if now is None else now
+    root = _staging_root()
+    if not root.is_dir():
+        return
+    for entry in root.iterdir():
+        try:
+            if entry.name.startswith("retired-") and now - entry.stat().st_mtime > RETIRED_KEEP_SECONDS:
+                shutil.rmtree(entry, ignore_errors=True)
+            elif entry.name.startswith("build-") and now - entry.stat().st_mtime > 3600:
+                shutil.rmtree(entry, ignore_errors=True)   # a crashed run's leftovers
+        except OSError:
+            continue
+
+
+def build_and_swap(name: str, plugin_dir: Path, clone: str, cache_dir: Path) -> str:
+    """Build `cache_dir`'s new contents in staging, preflight them, then rename into place.
+
+    Returns "" on success, else an error; on error the installed dir is untouched."""
+    root = _staging_root()
+    stamp = f"{name}-{cache_dir.name}-{os.getpid()}-{int(time.time())}"
+    staged = root / f"build-{stamp}"
+    try:
+        _clean_retired()
+        root.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(staged, ignore_errors=True)
+        staged.mkdir(parents=True)
+        if cache_dir.is_dir():
+            for rel in REUSE:
+                _link_tree(cache_dir / rel, staged / rel)
+    except (OSError, shutil.Error) as exc:
+        shutil.rmtree(staged, ignore_errors=True)
+        return f"staging: {exc}"
+
+    # Pure-Python mirror, not rsync: rsync does not exist on Windows.
+    err = mirror_tree(plugin_dir, staged, exclude={".git"})
+    if not err:
+        # Runtime bundle (repo-root code declared in .claude-plugin/runtime.json). Fatal when
+        # declared: a cache without its runtime strands every skill that shells into it.
+        manifest = _runtime_manifest(plugin_dir)
+        if manifest:
+            err = sync_runtime(clone, manifest, staged)
+    if not err:
+        err = preflight(name, staged)
+    if err:
+        shutil.rmtree(staged, ignore_errors=True)
+        return err if err.startswith("preflight") else f"sync: {err}"
+
+    retired = root / f"retired-{stamp}"
+    try:
+        cache_dir.parent.mkdir(parents=True, exist_ok=True)
+        if cache_dir.exists():
+            os.replace(cache_dir, retired)       # the gap between these two renames is the
+        os.replace(staged, cache_dir)            # only moment the dir is missing
+    except OSError as exc:
+        # Windows refuses to rename a dir a running process holds open. Put the old one back
+        # and try again next session rather than mirror over files in use.
+        if retired.exists() and not cache_dir.exists():
+            try:
+                os.replace(retired, cache_dir)
+            except OSError:
+                pass
+        shutil.rmtree(staged, ignore_errors=True)
+        return f"swap: {exc} (installed version left in place; retried next session)"
+    # JS deps install against the FINAL path: a plugin's own installer (ACE's) keys its shared
+    # store and its pruning on the cache layout. A same-version update already carries the old
+    # node_modules (linked above), so this refreshes a working tree rather than an empty one.
+    install_node_deps(name, cache_dir)
+    return ""
 
 
 def patch_registry(name: str, mkt: str, version: str, cache_dir: str, sha: str) -> bool:

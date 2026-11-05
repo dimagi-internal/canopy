@@ -1,0 +1,84 @@
+name: Advance fleet-stable
+
+# The fleet's session-start updater follows the `fleet-stable` tag; canary machines follow
+# `main` (CANOPY_FLEET_CHANNEL=main). This moves the tag to the newest main commit that
+#   - has been on main at least SOAK_MINUTES (canaries have run it), and
+#   - passed every required check on its own push run.
+# Hold the fleet where it is: set the repo variable FLEET_HOLD=1 (Settings → Variables).
+# Promote now (an urgent fix, or the revert that rolls a bad change back): run this workflow by
+# hand with `sha` set. The updater never moves a machine backwards, so a rollback is a revert on
+# main, promoted.
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Promote this main commit now (skips the soak, not the checks)'
+        required: false
+
+permissions:
+  contents: write
+  checks: read
+
+concurrency:
+  group: fleet-stable
+  cancel-in-progress: false
+
+env:
+  SOAK_MINUTES: '60'
+  REQUIRED: 'pytest check-version structure-drift hook-compat'
+
+jobs:
+  advance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 200
+      - name: pick and move
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOLD: ${{ vars.FLEET_HOLD }}
+          FORCE_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${HOLD:-}" = "1" ] && [ -z "${FORCE_SHA:-}" ]; then
+            echo "FLEET_HOLD=1 — fleet-stable stays where it is."; exit 0
+          fi
+          git fetch --quiet --tags --force origin
+          current=$(git rev-parse -q --verify 'refs/tags/fleet-stable^{commit}' || true)
+
+          green() {  # every required check on this commit's own runs concluded success
+            local sha=$1 name ok
+            local runs; runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?per_page=100" \
+              --jq '[.check_runs[] | {name, conclusion}]')
+            for name in $REQUIRED; do
+              ok=$(jq -r --arg n "$name" '[.[] | select(.name == $n)] | (length > 0) and all(.conclusion == "success")' <<<"$runs")
+              [ "$ok" = true ] || { echo "  $sha: $name not green"; return 1; }
+            done
+          }
+
+          pick=""
+          if [ -n "${FORCE_SHA:-}" ]; then
+            git merge-base --is-ancestor "$FORCE_SHA" origin/main || { echo "::error::$FORCE_SHA is not on main"; exit 1; }
+            green "$FORCE_SHA" || { echo "::error::$FORCE_SHA has not passed its required checks"; exit 1; }
+            pick=$(git rev-parse "$FORCE_SHA^{commit}")
+          else
+            cutoff=$(( $(date +%s) - SOAK_MINUTES * 60 ))
+            # main's first-parent history, newest first; the commit time is when it landed.
+            while read -r sha ts; do
+              [ "$ts" -le "$cutoff" ] || continue
+              [ -n "$current" ] && [ "$sha" = "$current" ] && { echo "already at $sha"; exit 0; }
+              if green "$sha"; then pick=$sha; break; fi
+            done < <(git log --first-parent --format='%H %ct' -n 60 origin/main)
+          fi
+
+          if [ -z "$pick" ]; then echo "no soaked, green commit to promote"; exit 0; fi
+          if [ -n "$current" ] && [ -z "${FORCE_SHA:-}" ] && ! git merge-base --is-ancestor "$current" "$pick"; then
+            echo "::warning::$pick is not ahead of fleet-stable ($current); leaving it"; exit 0
+          fi
+          git tag -f fleet-stable "$pick"
+          git push --force origin refs/tags/fleet-stable
+          echo "fleet-stable -> $pick ($(git log -1 --format=%s "$pick"))" | tee -a "$GITHUB_STEP_SUMMARY"
