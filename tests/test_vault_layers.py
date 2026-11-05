@@ -45,8 +45,7 @@ def test_a_layer_this_device_cannot_open_is_named_not_fatal():
     body = {"values": {"a": "1"}, "vaults": [_layer("Locked", {"x": "y"}, mine=False)]}
     out = cred_resolve.merge_vault_layers("ace", body, ecdh=_ecdh())
     assert out["values"] == {"a": "1"}
-    assert out["vault_layers"] == [{"vault": "Locked", "opened": False,
-                                    "why": "this device holds no copy of its key"}]
+    assert out["vault_layers"] == [{"vault": "Locked", "opened": False, "why": cred_resolve.NO_COPY_WHY}]
 
 
 def test_a_layer_bound_to_another_vault_does_not_open():
@@ -60,3 +59,26 @@ def test_a_workspace_vault_session_targets_its_own_routes():
     v = vault_zk_cli.ZkVault("vault abc", token="t", vault_id="abc")
     assert v.base == "/api/vaults/abc/zk"
     assert vault_zk_cli.ZkVault("ace", token="t").base == "/api/agents/ace/vault/zk"
+
+
+# ---- a shut vault says why and who fixes it (ada brief 2026-11-05, DIM-SA-W175) ---------------
+
+FIX = ("DIM-SA-W175 is waiting for idiene@dimagi.com to confirm it: canopy-web Settings → Device keys → "
+       "DIM-SA-W175 → Confirm access (passkey). Running `canopy vault zk keep` elsewhere will not help.")
+
+
+def test_a_shut_layer_carries_canopy_webs_reason_and_fix():
+    layer = {**_layer("Shared", {"x": "y"}, mine=False),
+             "waiting": {"reason": "unendorsed", "machine": "DIM-SA-W175", "fix": FIX}}
+    out = cred_resolve.merge_vault_layers("gshubdesk", {"values": {}, "vaults": [layer]}, ecdh=_ecdh())
+    assert out["vault_layers"] == [{"vault": "Shared", "opened": False, "reason": "unendorsed", "fix": FIX,
+                                    "why": f"this device holds no copy of its key: {FIX}"}]
+    assert cred_resolve.shut_vaults_note(out) == f" — this device cannot open the Shared vault ({FIX})"
+
+
+def test_without_a_reason_the_fallback_never_offers_zk_keep():
+    out = cred_resolve.merge_vault_layers(
+        "ace", {"values": {}, "vaults": [_layer("Locked", {"x": "y"}, mine=False)]}, ecdh=_ecdh())
+    assert "zk keep" not in out["vault_layers"][0]["why"]
+    assert "Device keys" in cred_resolve.shut_vaults_note(out)
+    assert cred_resolve.shut_vaults_note({"vault_layers": [{"vault": "Org", "opened": True}]}) == ""

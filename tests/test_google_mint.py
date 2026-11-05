@@ -179,6 +179,26 @@ def test_run_reads_the_client_and_the_vault_key_with_the_boxs_own_key(monkeypatc
         == "ace@dimagi-ai.com"
 
 
+def test_a_box_with_no_copy_of_the_shared_vault_is_told_why_and_who_fixes_it(monkeypatch):
+    """DIM-SA-W175, 2026-11-05: the box held no copy of the Shared vault's key because its
+    person had never confirmed it; a bare "give the box a key" sent a turn asking a key
+    holder to run `canopy vault zk keep`, which can never grant it."""
+    monkeypatch.setattr(device_key, "proof_headers", lambda m, u: {})
+    fix = ("DIM-SA-W175 is waiting for idiene@dimagi.com to confirm it: canopy-web Settings → Device "
+           "keys → DIM-SA-W175 → Confirm access (passkey). Running `canopy vault zk keep` elsewhere "
+           "will not help.")
+    shut = {**_layer({"gog-oauth-client-web": CLIENT_FILE}), "name": "Shared", "wrap": None, "values": {},
+            "waiting": {"reason": "unendorsed", "fix": fix}}
+    body = {"zk": True, "kv": 2, "agent_id": AGENT_ID, "values": {}, "wrap": None, "vaults": [shut]}
+    monkeypatch.setattr(device_key, "load_ecdh", _ecdh)
+    with pytest.raises(gm.MintError) as e:
+        gm.run("gshubdesk", _work(kv=2), token="rt", base_url="https://c.example",
+               transport=lambda m, u, h, d: (200, json.dumps(body)), ecdh=_ecdh(), post=lambda u, d: _google())
+    assert e.value.error == "no-client"
+    assert e.value.detail == ("this box cannot read the Google OAuth client ('gog-oauth-client-web') from "
+                              f"gshubdesk's vaults — this device cannot open the Shared vault ({fix})")
+
+
 def test_the_command_prints_one_line_and_never_the_token(monkeypatch):
     monkeypatch.setattr(vault_cli, "_runner_and_token", lambda r, b: ("r1", "rt"))
     monkeypatch.setattr(gm, "run", lambda slug, work, **kw: gm.finish(

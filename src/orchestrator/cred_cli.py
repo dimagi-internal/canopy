@@ -479,7 +479,13 @@ def fetch_canopy_web_values(slug: str, refs: Optional[list] = None) -> dict:
     values = body.get("values") or {}
     if not isinstance(values, dict):
         raise CredError(f"canopy-web returned no credential values for '{slug}'")
+    _SHUT_NOTE[slug] = cred_resolve.shut_vaults_note(body)
     return values
+
+
+#: Per agent, the last resolve's note on vaults this device could not open
+#: (`cred_resolve.shut_vaults_note`), so a "has no X" error says why and who fixes it.
+_SHUT_NOTE: dict = {}
 
 
 def env_values(values: dict) -> tuple[dict, list]:
@@ -647,7 +653,7 @@ def exec_env(slug: str, *, refs: Optional[list] = None) -> tuple[dict, str]:
     if refs:
         missing = [r for r in refs if r not in values]
         if missing:
-            raise CredError(f"'{slug}' has no {', '.join(missing)} in {how}")
+            raise CredError(f"'{slug}' has no {', '.join(missing)} in {how}{_SHUT_NOTE.get(slug, '')}")
         values = {k: values[k] for k in refs}
     return values, how
 

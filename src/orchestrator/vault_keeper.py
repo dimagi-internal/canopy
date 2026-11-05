@@ -118,9 +118,28 @@ def plan(work: dict, pins: dict) -> tuple[list[Target], KeepResult]:
         if _endorsed(t, jkt, endorsements, agent_id, pins, res):
             out.append(t)
         else:
-            res.skipped.append(f"{t.describe()}: not endorsed by a person this box trusts — the "
-                               "person who approves it signs it (or an admin confirms it in canopy-web)")
+            res.skipped.append(unendorsed_reason(t, row, signed=_signed_for(jkt, endorsements)))
     return out, res
+
+
+def unendorsed_reason(t: Target, row: dict, *, signed: bool) -> str:
+    """Why a waiting machine is left waiting, naming who can end it. Nobody signed for
+    it: only its OWN person can (Confirm access on Device keys) — no keeper, and no run of
+    `canopy vault zk keep` anywhere, will ever grant it. Someone signed whom this box does
+    not trust: that person's own line above says what an admin must confirm."""
+    machine = str(row.get("runner_name") or t.label or "the machine")
+    if signed:
+        return (f"{t.describe()}: confirmed only by someone this box does not trust (their line says "
+                "why) — an admin confirms that person's key, then a keeper grants it")
+    return (f"{t.describe()}: not endorsed — {machine} is waiting for its own person to confirm it: "
+            f"canopy-web Settings → Device keys → {machine} → Confirm access (passkey). No keeper "
+            "grants it before then; running `canopy vault zk keep` elsewhere will not help")
+
+
+def _signed_for(jkt: str, endorsements: list) -> bool:
+    """Does canopy-web list ANY endorsement of this exact device key (trusted or not)?"""
+    return any((e.get("kind"), str(e.get("target") or ""), e.get("key_jkt")) == ("device", jkt, jkt)
+               for e in endorsements)
 
 
 def _endorsed(t: Target, jkt: str, endorsements: list, agent_id: str, pins: dict,
@@ -274,7 +293,7 @@ def keep_delegated(work: dict, *, pins: dict, call, ecdh) -> KeepResult:
                 to.append((kind, target, jwk))
                 res.granted.append(f"{t.label or 'machine'} — ECDH key {thumb[:16]}…")
             else:
-                res.skipped.append(f"{t.label or target}: not endorsed by a person this box trusts")
+                res.skipped.append(unendorsed_reason(t, row, signed=_signed_for(thumb, endorsements)))
     if not res.granted:
         return res
     value = zk.seal_value(agent_id, name, body["kv"], plaintext, to)

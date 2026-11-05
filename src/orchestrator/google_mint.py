@@ -150,7 +150,10 @@ def client_secret(raw: Optional[str], client_id: str) -> str:
     if not isinstance(data, dict) or not data.get("client_secret"):
         raise MintError("no-client", "this box cannot read the Google OAuth client from the "
                         "agent's vault (the workspace's shared vault item "
-                        f"'{CLIENT_ITEMS['canopy-web']}') — give the box a key to that vault")
+                        f"'{CLIENT_ITEMS['canopy-web']}'). If the box holds no copy of that vault's key, its "
+                        "own person sees why on canopy-web Settings → Device keys (an unconfirmed "
+                        "machine needs their Confirm access); running `canopy vault zk keep` "
+                        "elsewhere will not help")
     if client_id and data.get("client_id") and str(data["client_id"]) != client_id:
         raise MintError("no-client", "the Google OAuth client in the vault is not the one "
                         "canopy-web signed in with, so the code cannot be exchanged")
@@ -304,6 +307,11 @@ def run(slug: str, work: dict, *, token: Optional[str] = None, base_url: Optiona
     try:
         layered = cred_resolve.merge_vault_layers(slug, body, ecdh=ecdh)
         client_raw = (layered.get("values") or {}).get(item)
+        note = cred_resolve.shut_vaults_note(layered)
+        if not client_raw and note:
+            # Say WHY this box has no copy and who fixes it, not just "give it a key".
+            raise MintError("no-client", f"this box cannot read the Google OAuth client ('{item}') "
+                            f"from {slug}'s vaults{note}")
         if zk.is_zk_value(client_raw) or zk.is_sealed_value(client_raw):
             # The agent's own copy of the client (rare): open it like any value.
             opened = cred_resolve.open_zk(slug, {**body, "vaults": []},

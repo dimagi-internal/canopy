@@ -318,3 +318,31 @@ def test_a_custodial_answer_with_a_delegated_credential_is_opened_too():
     out = cred_resolve.open_zk("echo", body, agent_id=AGENT_ID, ecdh=_ecdh(ME_KEY, ME_JWK))
     assert out["values"] == {"FOO": "plain"}
     assert out["delegated"] == {"github-token": "github_pat_jj"}
+
+
+# ---- an unendorsed machine names its real fixer (ada brief 2026-11-05, DIM-SA-W175) ----------
+
+def test_an_unendorsed_machine_says_its_own_person_confirms_it(vk):
+    row = {**_machine(), "label": "DIM-SA-W175 · tpm", "runner_name": "DIM-SA-W175"}
+    res = vault_keeper.keep_one(_work(vk, [row]), pins={}, call=Recorder(), ecdh=_ecdh(ME_KEY, ME_JWK))
+    [why] = res.skipped
+    assert why.endswith(": not endorsed — DIM-SA-W175 is waiting for its own person to confirm it: "
+                        "canopy-web Settings → Device keys → DIM-SA-W175 → Confirm access (passkey). No "
+                        "keeper grants it before then; running `canopy vault zk keep` elsewhere will not help")
+
+
+def test_a_machine_signed_by_someone_untrusted_says_so_not_unendorsed(vk):
+    box_jkt = zk.jwk_thumbprint(BOX_JWK)
+    pins = {"7": {"jkt": "jj-old-key", "email": "jj@dimagi.com"}}
+    res = vault_keeper.keep_one(_work(vk, [_machine()], [_endorse(JJ_KEY, "device", box_jkt, box_jkt)]),
+                                pins=pins, call=Recorder(), ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert any("vault key changed" in s for s in res.skipped)
+    [mine] = [s for s in res.skipped if s.startswith("device key dk-new")]
+    assert "confirmed only by someone this box does not trust" in mine and "Confirm access" not in mine
+
+
+def test_an_unendorsed_machine_waiting_for_a_delegated_credential_names_its_fixer():
+    box_jkt = zk.jwk_thumbprint(BOX_JWK)
+    res = vault_keeper.keep_delegated(_delegated_work([box_jkt]), pins={}, call=Recorder(),
+                                      ecdh=_ecdh(ME_KEY, ME_JWK))
+    assert "Confirm access" in res.skipped[0] and "will not help" in res.skipped[0]
