@@ -324,6 +324,40 @@ def has_sealed(body) -> bool:
     return isinstance(values, dict) and any(zk.is_sealed_value(v) for v in values.values())
 
 
+#: Said when canopy-web gives no reason (an older canopy-web). Never offers
+#: `canopy vault zk keep` as the reader's fix: a keeper runs it every couple of minutes
+#: already, and it cannot grant a machine nobody confirmed.
+NO_COPY_WHY = ("this device holds no copy of its key — its person can see why on canopy-web "
+               "Settings → Device keys")
+
+
+def no_copy_why(layer: dict) -> dict:
+    """``{why, reason?, fix?}`` for a vault layer this device holds no copy of: canopy-web's
+    own diagnosis (``waiting``: unendorsed / waiting_for_keeper / key_not_approved /
+    not_a_member, and the sentence that says who fixes it) when it sends one."""
+    waiting = layer.get("waiting") if isinstance(layer.get("waiting"), dict) else None
+    if not waiting or not waiting.get("fix"):
+        return {"why": NO_COPY_WHY}
+    out = {"why": f"this device holds no copy of its key: {waiting['fix']}", "fix": str(waiting["fix"])}
+    if waiting.get("reason"):
+        out["reason"] = str(waiting["reason"])
+    return out
+
+
+def shut_vaults_note(body) -> str:
+    """For a message about a missing value: the vaults this device could not open and,
+    from canopy-web's diagnosis, who can fix each — "" when every layer opened. A turn
+    that only learns "no copy" improvises a remedy (2026-11-05: it asked a key holder to
+    run `canopy vault zk keep`, which cannot grant an unconfirmed machine); this is the
+    real one, to print as is."""
+    shut = [lay for lay in (body.get("vault_layers") if isinstance(body, dict) else None) or []
+            if isinstance(lay, dict) and not lay.get("opened")]
+    if not shut:
+        return ""
+    return " — this device cannot open " + "; ".join(
+        f"the {lay.get('vault')} vault ({lay.get('fix') or lay.get('why') or NO_COPY_WHY})" for lay in shut)
+
+
 def merge_vault_layers(slug: str, body: dict, *, ecdh=None) -> dict:
     """Layer the workspace vaults canopy-web lists under the agent's own values
     (canopy-web spec 2026-10-22-vault-access-follows-canopy-access-design.md §4).
@@ -345,7 +379,7 @@ def merge_vault_layers(slug: str, body: dict, *, ecdh=None) -> dict:
         wrap, binding, kv = layer.get("wrap"), str(layer.get("binding_id") or ""), layer.get("kv")
         raw = layer.get("values") or {}
         if not isinstance(wrap, dict) or not binding or not isinstance(raw, dict):
-            report.append({"vault": name, "opened": False, "why": "this device holds no copy of its key"})
+            report.append({"vault": name, "opened": False, **no_copy_why(layer)})
             continue
         try:
             ecdh_key = ecdh_key or _device_ecdh(ecdh)
@@ -412,7 +446,8 @@ def open_delegated(entries: dict, *, agent_id: str, ecdh=None) -> tuple[dict, di
     """``({name: plaintext}, {name: why})`` for the credentials people delegated to the agent
     (canopy-web ``accounts``): each sealed to the machines that run it, opened here with
     this device's own key. One that is not sealed to this device yet is reported, never a
-    failed resolve — a machine that holds it re-seals it (``canopy vault zk keep``)."""
+    failed resolve — a keeper that holds it re-seals it once this machine's person has
+    confirmed the machine (canopy-web Settings → Device keys → Confirm access)."""
     from orchestrator import vault_zk as zk
     opened, errors = {}, {}
     for name, entry in entries.items():
