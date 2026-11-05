@@ -1148,3 +1148,12 @@ def test_a_turn_whose_events_cannot_be_read_is_listed_without_a_reason(monkeypat
     monkeypatch.setattr("orchestrator.canopy_web.urllib_transport", transport)
     r = CliRunner().invoke(main, ["agent", "turns", "--slug", "ace"])
     assert r.exit_code == 0 and "q1" in r.output and "why it is waiting" not in r.output
+
+
+def test_reads_for_goes_in_the_body_only_when_named():
+    assert "reads_for" not in build_turn_payload("trellis", prompt="x", idempotency_key="k", sender="trellis")
+    body = build_turn_payload("trellis", prompt="x", idempotency_key="k", sender="trellis",
+                              reads_for=" Lili@Dimagi.com ")
+    assert body["reads_for"] == "lili@dimagi.com"
+    # Never as a client's own stamp: canopy-web writes that, and drops a client's copy.
+    assert "reads_for" not in body["origin_ref"]

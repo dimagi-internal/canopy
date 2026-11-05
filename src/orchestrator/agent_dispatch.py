@@ -256,7 +256,8 @@ def check_pin_liveness(runner: dict) -> tuple[list[str], list[str], list[str]]:
 def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
                        task_ext_id: str | None = None, sender: str | None = None,
                        runner_id: str | None = None, turn_mode: str | None = None,
-                       person: str | None = None, acts_as: str | None = None) -> dict:
+                       person: str | None = None, acts_as: str | None = None,
+                       reads_for: str | None = None) -> dict:
     """The `POST /api/harness/turns/` body for a one-shot dispatch.
 
     `sender` is the dispatching agent's slug, defaulting to whichever agent repo we are standing
@@ -325,6 +326,11 @@ def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
         if cap not in ACTS_AS:
             raise DispatchError(f"--as must be one of {', '.join(ACTS_AS)}, not {cap!r}")
         payload["acts_as"] = cap
+    # Scope a turn nobody asked for to ONE person who let this agent review them (TurnIn.reads_for).
+    # canopy-web decides whether it may be named, and holds the turn to it.
+    scope = (reads_for or "").strip().lower()
+    if scope:
+        payload["reads_for"] = scope
     return payload
 
 

@@ -1859,10 +1859,15 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
                    "on THEIR access, and stamps them on the turn this starts. Name them here "
                    "(their email, or 'caller') to have the request refused if it is anyone "
                    "else.")
+@click.option("--reads-for", "reads_for", default="",
+              help="From a turn nobody asked for (a schedule): start this turn for ONE person "
+                   "who let the agent review them, by email. canopy-web holds it to that "
+                   "person's sessions, lets it write mail only to them and gives it no GitHub "
+                   "identity. Without it such a turn reads no one's sessions.")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links,
                    next_action, idempotency_key, runner_ref, queue_if_not_ready, turn_mode,
-                   acts_as, on_behalf_of, as_json):
+                   acts_as, on_behalf_of, reads_for, as_json):
     """Hand work to an agent to do UNATTENDED: record it on the agent's board, then a
     runner session does it.
 
@@ -1978,8 +1983,15 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
         payload = build_turn_payload(slug, prompt=prompt, idempotency_key=key,
                                      task_ext_id=task_ext_id,
                                      runner_id=str(pinned["id"]) if pinned else None,
-                                     turn_mode=turn_mode, person=person, acts_as=acts_as)
+                                     turn_mode=turn_mode, person=person, acts_as=acts_as,
+                                     reads_for=reads_for)
         turn = canopy_web.call("POST", TURNS_PATH, payload, headers=behalf or None)
+        if reads_for and not ((turn or {}).get("origin_ref") or {}).get("reads_for"):
+            # An older canopy-web ignores the field: that turn runs with no scope recorded here.
+            # Say so loudly rather than report a one-person turn that is not one.
+            raise DispatchError(f"canopy-web did not record --reads-for {reads_for} on turn "
+                                f"{(turn or {}).get('id')}, so it is not scoped to them. Stop the "
+                                "turn; this server does not know the field yet.")
     except DispatchError as e:
         raise click.ClickException(str(e))
     except (CanopyError, RuntimeError) as e:
