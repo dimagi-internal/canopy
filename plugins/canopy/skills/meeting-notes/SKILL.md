@@ -16,12 +16,18 @@ if that's refused, tell the person and ask them to add it on the Meetings page.
 1. **Check it isn't there already.** The same link or text from the same person returns their existing
    meeting, so calling `create_meeting` twice is safe.
 2. **Get the text.** A forwarded mail's body and attachments are in `get_mail_thread`. For a Google Doc link:
-   - `gog docs cat <id>` if the Doc is shared with your own Google account.
+   - **Read every tab.** Gemini's "Notes by Gemini" Doc has three tabs: Quick notes, Full notes (it ends with
+     the action items as "Name: what they'll do"), and Transcript (timestamp lines like `00:01:58`, then
+     `First Last: words`). A plain read returns only the first tab (6% of one real Doc) with no error,
+     so a summary from it looks fine and has missed the whole conversation.
+   - `gog docs cat <id> --all-tabs` if the Doc is shared with your own Google account (`gog docs list-tabs
+     <id>` shows what's there).
    - Otherwise a Google connection the person lent you (`canopy cred connection-token google --agent <you>`
-     prints the token's path), then Drive's `files/<id>/export?mimeType=text/plain`.
+     prints the token's path), then Drive's `files/<id>/export?mimeType=text/plain`, which includes every tab.
    - Still no access: say so and ask them to share the Doc with you or paste it. Never guess at what it
      says, and save the link with `create_meeting` meanwhile so nothing is lost. Saving the text later with
      the same `source_url` fills that row in.
+   - Save the transcript tab as kind `transcript` and the notes tabs as kind `summary`, on the same meeting.
 3. **Record who made it**: `source` is `google_meet`, `gemini`, `granola`, `superwhisper`, `email` or `pasted`.
    A meeting can hold several. Someone's transcript and another tool's summary sit side by side, so add to
    the existing meeting rather than making a second one.
