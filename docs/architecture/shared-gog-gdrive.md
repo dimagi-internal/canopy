@@ -1,8 +1,6 @@
 # Shared GOG email + Google Workspace capability for the agent fleet
 
-**Date:** 2026-07-01 · **Status:** decision-grade design (Jon's directive: "nearly everything needs
-to use gog and gdrive — figure out the idealized version of what we've built and make it available
-to all agents via canopy, with the appropriate settings carved out for each agent")
+**What this is:** how every agent uses gog and Google Workspace through canopy, with per-agent settings carved out.
 **Companion:** `docs/agent-operating-model.md` (§4a common-vs-agent boundary; §4c capability
 borrowing) · ACE's adoption spec (`ace: docs/superpowers/specs/2026-07-01-agent-operating-model-adoption.md`)
 
@@ -39,14 +37,12 @@ identity, rules, secrets, and domain skills are the agent's"*):
 > single repo-global value while the token store lives on each box. A fleet migration onto the
 > shared `canopy` client therefore has to be performed box by box, and any box it misses is
 > pinned to a pair with no credentials: every read and send dies on `No auth for gmail
-> <mailbox>` with a working token sitting beside it under the old client name. Echo hit this
-> twice in opposite directions — the pin was wrong for the laptop until 2026-08-06 and wrong
-> for the cloud box from then on — which is the tell that **re-pinning does not fix it, it only
-> moves which box is broken**. So the engine resolves the client from evidence at call time
+> <mailbox>` with a working token sitting beside it under the old client name. **Re-pinning does not fix
+> it, it only moves which box is broken.** So the engine resolves the client from evidence at call time
 > (`agent_email.reconcile_client`): the declared pin wins when it holds a token, otherwise the
 > single client that actually holds this mailbox is used and the substitution is announced.
 >
-> **Two fleet clients, one app (2026-10-04).** `canopy` (a Desktop client — gog's loopback
+> **Two fleet clients, one app.** `canopy` (a Desktop client — gog's loopback
 > login on a laptop) and `canopy-web` (a Web client — the only kind Google lets run a browser
 > redirect, so the one canopy-web's "Connect Google mailbox" button mints under) are in the same
 > GCP project behind the same consent screen, and a token under either reads and sends the same.
@@ -109,8 +105,7 @@ identity, rules, secrets, and domain skills are the agent's"*):
   and writes the client the token names as `credentials-<client>.json` into gog's DATA dir and
   the home itself — the paths gog actually reads for that home (`agent_email.gog_data_dir`). A
   per-agent `$GOG_HOME` never reads the box-wide XDG dir, so a copy there does not count
-  (cloud-ec2-2, 2026-10-26: it did, and every eva turn failed "OAuth client credentials missing"
-  while canopy-web showed the mailbox Connected). Every agent and the
+  (every turn fails "OAuth client credentials missing" while canopy-web shows the mailbox Connected). Every agent and the
   factory declare `gog_client: canopy`; the per-agent clients (`echo`, `ace`) are retired.
 - **Tiers (generalizing ACE's model):** `act` = canopy-web's grant — the agent's declared
   interface plus workspace membership, resolved per message by `canopy caller tier` — senders who
@@ -124,7 +119,7 @@ identity, rules, secrets, and domain skills are the agent's"*):
 - **Routing map:** the send-side contract is universal (every send records `thread_id` into the
   agent's state layer); *where* it lands is the agent's choice.
 
-## 4. Gating: rails, not approval gates (fleet-wide revision, Jon 2026-07-01)
+## 4. Gating: rails, not approval gates 
 
 Operational experience: hal's approve/ask hook rules **worked poorly** — a PreToolUse "ask" is a
 blocking modal that stalls autonomous work and nags interactive sessions. ACE's model is better:
@@ -169,7 +164,7 @@ SA-mode reads/writes on drives the ACE SA can reach — but no NEW agent should 
 `mcp__plugin_ace_…` tool names; wire a `.mcp.json` entry pointing at the server file instead, so the
 rename to `gws-mcp` is a config change.
 
-**Interim doc adapter — `canopy gdoc` (shipped 2026-07-21, `orchestrator/agent_gdoc.py`).** The one
+**Interim doc adapter — `canopy gdoc` (`orchestrator/agent_gdoc.py`).** The one
 Workspace operation the fleet does constantly — publish a markdown deliverable as a *rendered* Google
 Doc authored **as the agent** — did not need to wait for the full extraction, and its absence had the
 fleet re-copying the wrapper anyway (echo `bin/echo_gdoc.py`, eva's `gog drive upload --convert` prose,
@@ -191,7 +186,7 @@ as the new repo's CI.
 ## 6. Sequencing
 
 1. **Now (this PR):** this design doc + tracking issues; ACE ships its side (turn framework, rails,
-   guarded email — ace#816).
+   guarded email).
 2. **Adapter first** (small, high leverage): `canopy email` engine + factory template updates +
    rails-only gating default. hal gets a working email channel as the validation case (its README
    already promises one).

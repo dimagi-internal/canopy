@@ -1,19 +1,16 @@
 # Session identity — who a session may act as (`canopy cred`)
 
-> Contract for canopy#850 ("Design revision", Jonathan, 2026-10-09). Every implementing PR
-> (canopy, canopy-web, the agent repos' MCP servers) follows this page. Part 2 of 4 of
-> **shared agent plugins, separate identities**; setup is canopy#851.
+> Contract: every implementation (canopy, canopy-web, the agent repos' MCP servers) follows this
+> page. It is one part of **shared agent plugins, separate identities**.
 
 ## The problem
 
-Identity used to live inside the plugin: `ace-gdrive` read `gws-sa-key.json` from its own plugin
-data, so **any** session that loaded ACE's plugin acted as ACE. On 2026-10-09 an Ada session read a
-doc through ace-gdrive and got "not found", because it was signed in as the wrong account. Identity
-has to come from the **session**, not from whichever plugin happens to be loaded.
+Identity comes from the **session**, not from whichever plugin happens to be loaded. A plugin that
+reads an identity from its own data makes every session that loads it act as that agent.
 
 ## 1. Where the secrets live: the Canopy vault
 
-Every agent's secrets live in its **Canopy vault** on canopy-web (Jonathan, 2026-10-21). The values
+Every agent's secrets live in its **Canopy vault** on canopy-web. The values
 come back from `GET /api/agents/{slug}/credentials/resolve`. A zero-knowledge agent's values are
 ciphertext there, opened only on a device that holds a grant (§ Zero-knowledge). ada, ace, echo,
 eva and hal are zero-knowledge (kv 1); lex and fizzy were born zero-knowledge (kv 0). `canopy agent
@@ -42,7 +39,7 @@ claims a turn (canopy-web `cloud_runner._refresh_agent_env`), so laptops and clo
 - **A human session** may act as agent X when:
   - **X's env is already resolved on this machine**: `~/.X/.env` exists, is non-empty, is owned
     by this user and is private (no group/other bits). This is checked first and does not ask
-    canopy-web, so the one-time resolve really is one-time (Jonathan, 2026-10-09). `--refresh`
+    canopy-web, so the one-time resolve really is one-time. `--refresh`
     skips it and re-proves access. Runner turns never take this path. Otherwise:
   - `GET /api/agents/X/credentials/access` says `may_resolve` — the user
     pairs a runner X routes to (`via: "runner"`) or is X's owner/admin (`via: "admin"`). The
@@ -56,7 +53,7 @@ their own local turn.
 
 ## 4. Agent-identity MCP servers
 
-ace-gdrive, chrome-sales gdrive and canopy-gws (unregistered since 2026-10-09) call `canopy cred check --agent <their agent>`
+ace-gdrive, chrome-sales gdrive and canopy-gws (currently unregistered) call `canopy cred check --agent <their agent>`
 before acting. In a session that isn't allowed to be that agent they return a clear refusal that
 names the right path, and **never fall back to their bundled key**. A missing `canopy` CLI is a
 refusal too.
@@ -237,9 +234,7 @@ text=True)`; non-zero → return the stderr as the tool's error text.
   before), `X-Canopy-Turn-Id` when a turn is known, and a `DPoP` device proof when this machine
   holds a registered device key (below).
 
-## Canopy Vault — the canopy-web backend (canopy#946)
-
-Server half: canopy-web#1538.
+## Canopy Vault — the canopy-web backend
 
 ```
 canopy vault status --agent X                  # per credential: set or missing, last read
@@ -260,7 +255,7 @@ canopy vault binding --agent X on|off          # PATCH /device-binding {require_
   P-256 key in `~/.canopy/device-key/sw.pem` (0600). The laptop runner enrolls it at startup
   (`POST /api/runner-device-keys/`); a person approves the `approve_url` in canopy-web with a
   passkey. `canopy vault device` / `status` show it.
-- **Phase 1b kinds (canopy-web#1549).** `--kind` defaults to the strongest the machine has.
+- **Device-key kinds.** `--kind` defaults to the strongest the machine has.
   - **`tpm`** (Windows): a non-exportable P-256 key named `canopy-device-key` in the CNG
     "Microsoft Platform Crypto Provider", ctypes over `ncrypt.dll`, no UI policy (never
     prompts). Same DPoP proof. No TPM → `software`. Only `tpm.json` (a marker) is on disk.
@@ -280,7 +275,7 @@ canopy vault binding --agent X on|off          # PATCH /device-binding {require_
   `--public-jwk`, registers them all in one `pair-by-role` call, and records each registration
   with `--registered KEY_ID --runner ID`, so `proof_headers` sends that unit's proofs.
 
-### Zero-knowledge (canopy-web#1550)
+### Zero-knowledge
 
 For an agent with zero-knowledge on, canopy-web holds only `zk1:` ciphertext and wrapped keys.
 The formats are canopy-web's `docs/vault/zk-v1/zk_v1_reference.py`; `orchestrator/vault_zk.py`
@@ -314,7 +309,7 @@ reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.jso
   `enable` wraps for this device, your keyset (`GET /api/vault/keyset`) and every pending target,
   plus recovery, and prints the recovery code once; `grant`/`rotate` list every public key they
   will wrap to and ask first (`--yes` to skip).
-- **Give an agent a secret, without its vault key** (canopy-web#1712):
+- **Give an agent a secret, without its vault key**:
   `canopy vault zk set --sealed --agent X NAME [--yes]` and `canopy vault zk set --agent X
   --request ID` (answer the agent's secret request). Reads `GET …/vault/zk/recipients[
   ?secret_request=ID]` and seals `zks1` **only** to recipients carrying a valid zk-v1 §7
@@ -329,7 +324,7 @@ reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.jso
   …/vault/zk/values` (or `PUT …/secret-requests/ID/value`) and prints only `NAME stored for
   AGENT (sealed to N readers)`. Skipped recipients get the value at the next settle.
 
-## Local use: a private runner, a license, a local turn (canopy-web#1704)
+## Local use: a private runner, a license, a local turn
 
 A person who is not an agent's admin may still run the agent in their **own** Claude Code,
 with its skills and logins, and canopy keeps the record:
@@ -342,9 +337,8 @@ grant, licence, plugin, `$CANOPY_AGENT`, env). Underneath:
    yourself). canopy-web calls the record a **private runner**: Claude Code with the canopy
    plugin. The machine may also run the runner app: a runner set private (`canopy
    private-runner set private`) takes no fleet work, only its owner's pins and bound
-   sessions, and its local sessions sign in with its device key instead of a PAT
-   (canopy-web#1705). Acting as a lower role is per turn or per client (`acts_as`,
-   `CANOPY_ACTS_AS`), never a setting on the machine (canopy-web#1756).
+   sessions, and its local sessions sign in with its device key instead of a PAT. Acting as a lower role is per turn or per client (`acts_as`,
+   `CANOPY_ACTS_AS`), never a setting on the machine.
    `~/.canopy/private-runner.json` records it; `canopy private-runner register` is a hidden
    alias.
 2. **`$CANOPY_AGENT`** is set for the project (`.claude/settings.local.json`; an agent repo's

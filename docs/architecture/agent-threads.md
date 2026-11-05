@@ -1,7 +1,6 @@
 # Agent threads — contract between canopy-web and canopy (v1)
 
-Jonathan, 2026-10-07: agents should talk to each other directly, as "the start of a robust
-approach" to increasingly complicated agent→agent interactions. First use: the huddle's
+Agents talk to each other directly through bounded, moderated threads. First use: the huddle's
 agreement step — when a teammate answers "In, with changes" (`amend`) on an idea, the idea's
 author and that teammate settle it in a direct thread instead of one relayed hop.
 

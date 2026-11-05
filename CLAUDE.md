@@ -1,720 +1,99 @@
 # Canopy
 
-Autonomous self-improving system and Claude Code plugin that watches Claude
-Code sessions across all projects, identifies friction and gaps, and builds
-improvements — to MCP servers, skills, hooks, workflows, CLAUDE.md docs, or
-the orchestrator itself.
+The operating substrate for the Dimagi agent fleet, shipped as a Claude Code plugin plus a Python CLI
+(`canopy`). It gives agents shared rails, turn procedures and identity; talks to canopy-web (the control
+plane, a separate repo); and watches Claude Code sessions to build improvements to skills, hooks and itself.
+It invokes gstack and superpowers skills headlessly for review, QA and implementation quality.
 
-Converges with gstack and superpowers: invokes their skills headlessly via the
-skill runner for review, QA, and implementation quality.
+**How to write this file:** current state only; a rule plus its pointer in ≤ 2 lines; detail in
+`docs/architecture/<topic>.md`; history goes in the PR description, not here. `tests/test_claude_md_budget.py`
+checks size and history.
 
-## Git Worktree Rules
-This repo uses emdash which manages git worktrees. If you are in a worktree
-(check: `git rev-parse --git-dir` contains `/worktrees/`), you CANNOT
-`git checkout main` from it — it will fail.
+## Layout
 
-**There may be more than one non-worktree clone, and both parent worktrees.**
-On the primary machine there are two: `~/emdash-projects/canopy/` and
-`~/emdash/repositories/canopy/` (same origin). Run `git worktree list` to see
-which clone parents the worktree you're in — don't assume. Two consequences:
+- `src/orchestrator/` — the Python package behind the `canopy` CLI (`cli.py`), split into framework and product tiers.
+- `plugins/canopy/` — the plugin: `skills/`, `commands/`, `agents/`, `hooks/`, `mcp/`, and `agent-core/` (fleet process docs and shared rail bodies every agent reads at runtime).
+- `plugins/canopy-web/` — a slim plugin that is only canopy-web's HTTP MCP server with browser sign-in; versions on its own.
+- `packages/canopy_agent_factory/` — the published, zero-dependency agent factory; edit templates in `canopy_agent_factory/_factory.py`.
+- `scripts/` (`ddd/`, `narrative/`, `walkthrough/`) ships in the plugin runtime; `video-engine/` (Remotion) does not.
+- `hooks/` — repo-local Claude Code guards (`.claude/settings.json`).
 
-- **`main` is often checked out in a *worktree*, not in the clone itself**, so
-  `git checkout main` in the clone fails with "already checked out at …". To
-  refresh `main` in that case, fast-forward it through the worktree holding it:
-  `git -C <worktree-on-main> merge --ff-only origin/main`.
-- **A clone's local `main` ref can sit far behind `origin/main`** (one was found
-  530 commits stale, which silently starts every new worktree from an ancient
-  base). Before branching new work: `git fetch origin` and confirm
-  `git rev-list --left-right --count origin/main...main` reads `0 0`.
+## Test
 
-The `pre_tool_use_main_branch_guard.py` hook enforces "stay on main" in **any**
-non-worktree checkout (it keys off `/worktrees/` in the git-dir, not a hardcoded
-path) — but it only sees `git` run as a Bash tool call. Branch switches made by
-emdash itself bypass it, which is how a clone ends up parked on a dead feature
-branch. Check, don't assume.
+- `uv run --extra browser pytest` from the root. The browser extra is **required**: without it `scripts/walkthrough/record_video.py` calls `sys.exit` during collection and the session aborts. It installs only the `playwright` package, as CI does.
+- `(cd packages/canopy_agent_factory && uv run --with pytest pytest -q)` — sits outside `testpaths`.
+- `uv run canopy structure-drift --strict` — the structural self-audit CI runs.
 
-Direct merge to main is the **fallback only** (no `gh`, or a conflict that needs
-hand-resolving in the main checkout) — the default is a PR (next section):
-```bash
-cd ~/emdash-projects/canopy && git pull --rebase && git merge <branch-name> && git push
-```
-If that checkout has local changes, set them aside with a tagged
-`git stash push -u -m "<tag>"` (never a bare `git stash` — the stash stack is shared
-across every worktree and concurrent session).
+## Ship
 
-## Shipping Changes — always PR, then auto-merge (the maintainer does NOT review)
-
-**Default workflow for every change: open a PR and merge it yourself.** The
-maintainer does not review canopy PRs — opening one and waiting for review just
-strands the work. So the PR is a record-keeping + CI step, not a review gate.
+Always PR, and merge it yourself: the maintainer does not review canopy PRs, so the PR is CI and record, not a review gate.
 
 ```bash
-# from the worktree branch, once work is committed:
 git push -u origin <branch>
-gh pr create --title "..." --body "...\n\nCloses #<issue>"   # link the issue if any
-gh pr merge <n> --auto              # enqueue: main uses a MERGE QUEUE, which picks the strategy
+gh pr create --title "..." --body "...\n\nCloses #<issue>"
+gh pr merge <n> --auto        # no strategy flag: the merge queue sets it
 ```
 
-Then follow the plugin-update steps below (`/canopy:update` etc.) if
-`plugins/canopy/` changed.
-
-- **Always PR** (don't `git merge` straight to main) so CI runs and there's a
-  durable record. The direct-merge commands above are the fallback for when
-  `gh` is unavailable or a merge conflict needs hand-resolving in the main
-  checkout — not the default.
-- **`main` is branch-protected — the merge IS gated on CI.** canopy is a
-  **public** repo with branch protection: `check-version` is a **required status
-  check** and `enforce_admins` is on. `gh pr merge --merge` on a PR whose
-  `check-version` hasn't gone green is rejected ("base branch policy prohibits
-  the merge"). `main` now has a **merge queue** (ruleset `main protection`) and
-  repo auto-merge is on, so the flow is `gh pr merge <n> --auto` with **no
-  strategy flag** — the queue sets the strategy, and `--merge`/`--squash` print
-  "The merge strategy for main is set by the merge queue". The queue re-runs CI
-  on the merged result; if main moved and `VERSION` conflicts, rebase, re-bump
-  and push — the entry re-queues. Don't reach for `--admin` to force past a red check — a red
-  `check-version` means the version isn't bumped right; fix that instead (see the
-  STOP block below).
-- **No human reviews, but CI is a real gate now.** Required reviewers are NOT
-  configured, so you still merge your own PR — but `check-version` will block a
-  bad bump, unlike the old private-repo era where it was advisory. Before
-  merging: the suite passes (or only known-unrelated failures remain) and — for
-  `plugins/canopy/` changes — `canopy version verify` is green.
+- `main` is protected with `enforce_admins`; `pytest`, `check-version` and `structure-drift` are required checks. Never `--admin` past a red one.
+- **Anything under `plugins/canopy/` needs `uv run canopy version bump`** (and any CLI change you want deployed). Guarded on push and merge. → `docs/architecture/releasing.md`
+- After merging: `/canopy:update`, then `/reload-plugins`, or this session keeps running the old plugin and CLI.
+- If main moved and `VERSION` conflicts: rebase, re-bump, push; the entry re-queues.
 - Keep PRs scoped and the body honest about what was and wasn't verified.
-
-## Tech Stack
-- Python 3.11+, PyYAML, Click
-- Claude Code hooks and skills
-- Subprocess invocation of `claude -p` for analysis and proposals; proposal
-  *implementation* is dispatched to Claude Code agents via `/canopy:improve` (the
-  Python pipeline stops after proposals)
-
-## Commands
-- `canopy sessions list [--hours N] [--json-output]` — list recent sessions
-- `canopy create-agent <slug> --mandate "..." [--name --mailbox --google-account --stakeholders --into --force]` — scaffold a new Claude Code agent (its own git repo) from the operating model: persona, `turn` orchestrator, reads-free/writes-gated rails (`config/gating.json`, enforced by canopy's session hook — the agent registers no hook), the `.claude-plugin/marketplace.json` runners install it from, canopy-web-ready layout. See `docs/agent-operating-model.md`.
-- `canopy agent-publish {register|skills|sync|tasks} [--repo DIR ...]` — publish an agent repo to its canopy-web workspace (`/agents/<slug>`): register, mirror the skill catalog, post a sync, or create a batch of tasks (asks included). Run from an agent repo root; identity resolved from its `.claude-plugin/plugin.json` + `config/agent.json`; `register` also records `repo_url` (normalised from the git origin) while canopy-web holds none — it never moves a recorded repo (`canopy agent register --repo` sets one explicitly). The shared generalization of echo's `bin/echo_canopy.py`.
-- `canopy agent-review <slug-or-path> [--hours N --no-llm --model --json-output]` — Build 2 of the operating model: review an agent's recent TURNS for friction (tool failures, retries, gating blocks, auth friction, checklist gaps) and synthesize ranked findings + fixes scoped to the agent repo. Deterministic signals always; `claude -p` synthesis unless `--no-llm`. Corpus = every local `~/.claude/projects` PLUS canopy-web (when a PAT resolves): off-machine turns (the cloud runner's) are fetched via `/api/agents/<slug>/turns/` → the turn's raw transcript (`has_transcript`) or its linked chat session, cached under `~/.claude/canopy/session-cache/canopy-web/`, de-duplicated against local copies by Claude session id. `CANOPY_SESSION_WEB=0` keeps it local-only; a failed fetch reads `half-blind` (`src/orchestrator/session_sources.py`).
-- `canopy issue {create|context|delete} ...` — architect-routed GitHub issues with `canopy.origin/v1` provenance. **`create`** (reads a JSON record on stdin) files a CLEAN, portable GitHub issue (mandate + done-criteria + a pointer — NO local paths/yaml) and stores the rich *understanding* (provenance, intent, evidence, POINTERS to the drilled sessions) as a record locally + synced to canopy-web (`/api/issues`, django-ninja, Bearer-auth). **`context <owner/repo#n>`** hydrates that understanding (local, else canopy-web) + emits the `canopy harvest strip` commands to recover the local transcripts (flagging which exist on this machine — sessions stay local, never in the web record). **`delete <owner/repo#n> [--close-gh]`** removes the canopy-web + local record for cleanup. Backed by `src/orchestrator/issue_origin.py` + canopy-web `apps/issues/`.
-- `canopy harvest {map|strip|intent-audit|corpus} ...` — cross-user session reading for Hal-as-architect (reads every readable `/Users/*/.claude/projects`; flags `confidence: half-blind`). **`map <initiative> --match terms`** = a tiny per-session digest of EVERY matched session (your inputs + final output, tool noise stripped) — the whole arc in one cheap read (~54K tokens for DDD's 236 sessions); then **`strip <session-path> [--mode final|full]`** drills into an interesting session (full stripped conversation). **`intent-audit <session-path>`** = the one judgment lens harvest otherwise omits: reconstruct what the human asked/decided from their OWN words and flag intent-misses (approved-X/shipped-Y, question-read-as-approval, unapproved-judgment) as evidence-backed findings (PR #374). `corpus` is the older ends-only sampler (superseded by map). Deterministic material otherwise; intent/drift judgment is the agent's job. See memory `harvester-architect`.
-- `canopy project-history {select|collect|read|render|compare} ...` — reconstruct ONE project's history and render a standard project package from one analysis (the `project-history` skill holds the judgment). **`select --spec <yaml>`** picks sessions by what they DID (owned a project PR, edited project paths, called the project's MCP tools); a name match only makes a candidate. Canopy-web is the index (session search + activity); a canopy record that merged several conversations is split back into its local transcripts. **`collect`** builds the bundle (person prompts verbatim + condensed turns + PRs, input docs, project artifacts with evidence). **`render`** writes timeline / useful-artifacts / AI package and refuses an artifact judged useful without cited evidence. **`compare`** measures a selection against a hand-checked set. Backed by `src/orchestrator/project_history.py`.
-- `canopy email {send|read|forward|fetch-attachment|mark-read|archive|dangling|apply-filters|why|review-receipt|client|preflight} [--repo DIR | --agent SLUG | --account/--client]` — the fleet's shared guarded email engine (docs/architecture/shared-gog-gdrive.md §3): **`send`** = the echo/ACE HTML multipart wrapper (Gmail display-wraps plain text at ~72 cols; HTML reflows) with body-file contract, `--reply-to-message-id`, `--dry-run`, reply-all-by-default on threads, and a JSON result whose `thread_id` every caller must record into the agent's state layer; **`read`** = inbound thread read as normalized JSON (decoded `body_text` + `reply_all` recipients, PRs #391/#394) and **`fetch-attachment`** = download ONE attachment; **`mark-read`** = Gmail API UNREAD removal via the agent's own gog OAuth (gog has no mark-read; API reads don't clear the flag); **`apply-filters`** = push the Gmail half of the fleet's inbound-email table (`inbox_rules.py` → labelled filters) to an agent mailbox; **`why <thread>`** = name the table row a thread lands in (wake or archive-with-label) and the header/address/phrase that put it there; **`review-receipt`** = record that agent-turn-review ran against THIS body — send refuses without a matching receipt (the rail is keyed to the body, not the agent's memory); **`preflight`** = gog auth liveness with the exact `gog login` remediation; **`client`** = the gog client this agent's Google calls use on THIS machine (canopy and canopy-web are interchangeable fleet clients, #745/#748 — ask this rather than assuming); **`forward`** (keeps attachment filenames, #761), **`archive`**, and **`dangling`** (threads whose last message has no reply from us; an unread one a canopy-web turn is working is banded OWNED, #760). Identity resolves from the agent repo's `config/agent.json`: `email` (primary mail address), optional `addresses` (further mail addresses the agent answers at — all of them count as "self" in reply-all / dangling / last-message-was-mine), optional `google_account` (the Google account every gog call runs as; default `email` — an SES-primary agent sets it, and gog verbs refuse naming it when it is missing), and `gog_client`. `send --from <own address>` picks the address for a NEW thread (refused unless it is one of the agent's own; not caught by the `--account` rail); a UUID `--thread-id` routes through SES via `/api/mail/resolve?thread=` whatever the primary is (an older canopy-web falls back to `?address=` per own address). Agents keep only a thin `bin/<slug>-email` shim (factory-templated) plus a deny rail blocking raw `gog gmail send/reply`.  **Backend switch (per mailbox):** canopy-web's `GET /api/mail/resolve` says whether a mailbox is served by the SES mail backend (workspace email domains) or Gmail; `send`/`mark-read`/`archive` and the new `thread <id>` verb route SES mailboxes to canopy-web's `/api/mail/*` REST (no `gog`; `--attach` refused), cached per process. A 404 means Gmail silently (argv unchanged); any other resolve failure falls back to Gmail with one loud stderr line — SES is never chosen on a guess. Backed by `src/orchestrator/agent_email.py`.
-- `canopy gdoc publish [--repo DIR | --agent SLUG] ...` — shared Google-Doc authoring engine for the fleet (shared-gog-gdrive.md §5 interim): publish markdown as a rendered Google Doc authored as the agent; `--replace` edits native Docs **in place** via the Docs API (stable URL — no trash+recreate churn, #353). Backed by `src/orchestrator/agent_gdoc.py`.
-- `canopy gsheet publish [--repo DIR | --agent SLUG] ...` — the tabular sibling of `gdoc publish`: TSV/CSV → a Google Sheet authored as the agent, same filing contract (`agent-core/deliverables.md`). Lives in `agent_gdoc.py`.
-- `canopy gslides publish [--repo DIR | --agent SLUG] --pptx FILE ...` — the presentation sibling: a .pptx (e.g. a Claude Slides deck's own download) → a native Google Slides deck authored as the agent, filed + shared + read back (slide count must match). No in-place replace (Drive forbids overwriting a native file); `--supersede <id>` trashes the previous export once the new one verifies. Exists because the Slides artifact's own Google Drive export rides a claude.ai connector an org can disable. Skill: `gslides-export`. Lives in `agent_gslides.py`.
-- `canopy gdoc suggest <docId> --edits FILE [--dry-run]` — edit a doc as tracked SUGGESTIONS (Docs API `writeMode: SUGGEST`): text-anchored edits resolved to unique spans, one batch, fails if anything lands as a direct edit. Backed by `src/orchestrator/gdoc_suggest.py`.
-- `canopy gdoc check <docId> [--expect-links N] [--expect-blocks N]` — visual QA of a Doc the agent wrote (HTML export: empty body, italic bleed, leaked markdown, dropped links/blocks); a pass writes the receipt `agent-core/gdoc_gate.py` (fleet Stop hook) requires before a turn hands over the link. `publish` and `email-blocks` run it themselves. Backed by `src/orchestrator/gdoc_review.py`.
-- `canopy gdoc email-blocks <docId> --blocks FILE [--repo DIR | --agent SLUG]` — turn `@@EMAIL_<key>@@` anchor paragraphs in a Doc into email draft blocks (To/Cc/Bcc/Subject/Body with the Gmail icon — one click opens a pre-filled draft), as the agent; validates every anchor before writing. Procedure: `plugins/canopy/agent-core/email-drafts.md`. Backed by `src/orchestrator/gdoc_email_blocks.py`.
-- `canopy openclaw-harvest {snapshot|inventory|compare|bootstrap|reconcile}` — bridge a live OpenClaw into the fleet: snapshot its readable workspace (persona/skills/memory, NEVER creds), compare to the agent's GitHub repo, then bootstrap a new agent repo from it or reconcile its novel skills into the existing one. Engine is offline/testable; only `snapshot` needs ssh.
-- `canopy improve` — run a full improvement cycle (analyze → propose → implement)
-- `canopy improve --observe-only` — analyze transcripts without proposing
-- `canopy improve --dry-run` — analyze and propose without implementing
-- `canopy serve` — start transcript browser web UI on localhost:8484
-- `canopy analyze <transcript.jsonl> [--propose]` — analyze a specific transcript
-- `canopy brief [--model MODEL]` — generate strategic brief
-- `canopy patterns [--json-output]` — show cross-session friction patterns
-- `canopy observations list [--type T --status S --severity X --limit N --json-output]` — list observations
-- `canopy observations show <id>` — show full YAML for one observation (id prefix accepted)
-- `canopy proposals list [--status S --complexity X --limit N --json-output]` — list proposals
-- `canopy proposals show <id>` — show full YAML for one proposal (id prefix accepted)
-- `canopy skills list [--scope all|plugin|user --source PLUGIN --search TERM --json-output]` — list installed skills (JSON output includes `installed_version` + `cache_path` per entry)
-- `canopy skills find <query> [--limit N --json-output]` — fuzzy-match installed skills by name and description; prints top matches with SKILL.md path. Use this before brainstorming a new skill ("do we already have one for X?").
-- `canopy skills overlap <action text>` — check whether a proposed skill action duplicates an existing skill (exit 1 on overlap)
-- `canopy skills budget [--scope ... --source ... --per-skill-limit N --aggregate-limit N --top N --json-output]` — show description-size budget (per-skill ranked table + aggregate gauge). Use when Claude Code prints "N skills dropped" and you need to know which skills are pushing the system prompt over the cap.
-- `canopy skills dropped [--scope ... --source ... --per-skill-limit N --aggregate-limit N --json-output]` — simulate Claude Code's drop logic and print which skills get dropped under the aggregate cap.
-- `canopy version verify` — confirm VERSION and plugin.json agree (CI-safe)
-- `canopy version verify-bump` — fail if `plugins/canopy/` changed without a VERSION bump past origin/main (the check CI and the push guard run)
-- `canopy version bump` — bump the version by `max(local, origin/main) + patch+1` in every file that carries it (`VERSION`, `plugins/canopy/.claude-plugin/plugin.json`, both `.claude-plugin/marketplace.json` fields, and `pyproject.toml`'s `[project] version` — kept in lockstep so each release is a distinct CLI build). Fetches origin first so a parallel worktree's bump is visible before deciding the next number. Use this instead of editing the files by hand.
-- `canopy doctor` — diagnose canopy plugin health (workbench token, repo-map, session log, hook registration)
-- `canopy agent use <slug> [--dir .] [--json]` — use an agent YOURSELF in Claude Code, no runner needed (the first of the two ways to run an agent; the other is a runner — `docs/running-an-agent.md`). One idempotent command: sign-in, this computer registered for local use (canopy-web's "private runner"; `canopy private-runner register` is a hidden alias, `canopy local use` an alias of this), device key, this device's grant of the agent's canopy vault, licence, the agent's plugin (`<plugin>@canopy-agents`), `$CANOPY_AGENT` for --dir, env sync, the agent's Google login (`Bootstrapper.google_login`; a licence holder's is imported at their first session's start by `canopy agent google-login --if-needed`) — each ok / done / NEEDS YOU with the exact URL or person; ends with "run /<plugin>:turn" or the NEEDS YOU list (exit 1). Backed by `src/orchestrator/agent_use.py` (every step through injectable `Deps`).
-- `canopy agent env --plugin NAME [--out ~/.NAME/.env --agent INSTANCE --force --print]` — the shared setup step every agent's `/<agent>:setup` calls: resolve the ONE canopy-web instance of the plugin you can see (`--agent` / the already-bound one / the only one; several → a re-run line each), record the binding in `<out-dir>/canopy-instance.json` (a different instance needs `--force`), then fill the env from the instance's **Canopy vault** (`cred_cli`'s resolve). `--print` = resolution as JSON, nothing written. Older setup scripts still pass `--template` / `--vault`; both are accepted and ignored. Backed by `src/orchestrator/agent_instance.py`.
-- `canopy agent prepare --slug SLUG [--runner --agent-root DIR --credentials-only --env-only --no-report --dry-run --json]` — make ONE agent runnable on THIS machine; THE implementation every runner calls (canopy-web's bootstrap_agents.sh and cloud_runner per claim, behind their switch). `--runner`: every credential from canopy-web `/api/agents/<slug>/credentials/resolve` with the runner's token (the agent's Canopy vault values with the workspace's shared vault layered under, the owner's GitHub token, the instance's mailbox, canopy-web's gog-token). Steps: clone/pull (a failed pull still provisions), write the .env from those values, its plugin + required plugins as directory marketplaces (pulled every pass, node deps, key files from the agent's vault), `bin/<slug>-setup`, the Gmail token (its own client), a real mailbox call, then POST `/bootstrap-report`. Without `--runner` = `canopy agent bootstrap`. **Secrets off disk** (opt-in: `$CANOPY_TURN_ENV_ROOT` or `--no-secret-files`): the env is resolved and checked in memory and no `~/.<slug>/.env`, `<clone>/.env` or `.gws-sa-key.json` is written; with `$CANOPY_GOG_SECRET_FILE` each agent's gog token goes to its own `~/.gog/<slug>/` keyring (`gog_home.py`). Backed by `src/orchestrator/agent_prepare.py` (RunnerPreparer extends agent_bootstrap.Bootstrapper).
-- `canopy agent google-login [--slug SLUG] [--if-needed] [--no-verify]` — the Google half of `agent bootstrap` (`Bootstrapper.google_login`) for anyone who uses the agent here: gog OAuth client file from the workspace vault, token from `/credentials/resolve`, import, account mapping, one Gmail call. A licence holder runs it inside a session of the agent (the SessionStart hook does, `--if-needed`: local files only once in place).
-- `canopy agent runs-as [--slug SLUG]` — one word: how THIS machine runs the agent — `runner` | `admin` | `license` | `unknown` (`cred_cli.machine_mode`: `/credentials/access` `via`, else an active licence of yours; 5 s timeout, never fails). Picks the preflight's fix line (licence → `canopy agent google-login` / `canopy agent use`, admin → `canopy agent bootstrap`, runner/unknown → bootstrap or Refresh); agent doctors call it.
-- `canopy agent bootstrap [--slug SLUG ... | --repo DIR] [--dry-run]` — make THIS machine (a laptop / new macOS account) ready to run agents: the laptop twin of canopy-web's `runner/ec2/bootstrap_agents.sh`. Per agent: install its plugin + `required_plugins` (same parser as doctor), write `~/.<slug>/.env` from the agent's Canopy vault, the gog token from canopy-web, write the client the TOKEN names from the workspace's Canopy vault into gog's data dir, import (skipped if identical), verify + turn-client check. Idempotent; per-agent failures don't stop the rest.
-- `canopy agent doctor [--repo DIR | --slug SLUG]` — diagnose ONE agent's readiness on THIS machine (identity, gating rails, secrets manifest, live gog email auth, canopy-web registration + board); exits non-zero on failure. `--all` sweeps the fleet; `--fix` remediates what it safely can.
-- `canopy agent health [--repo DIR | --slug SLUG]` — work-state readiness for the agent's NEXT turn (open asks + unread inbox), distinct from `doctor` (machine/install readiness). Backed by `src/orchestrator/agent_health.py`.
-- `canopy agent {projects|project-add|project-set}` — the board state behind an agent's `Projects/<name>` Drive folder (what is open, what is done) (#662).
-- `canopy agent handoff` — move a project from one agent to another, run by the RECEIVING agent: does the mechanical parts and prints the rest, using the source agent's session transcripts for the *reasons* the artifacts don't carry. Procedure: `plugins/canopy/agent-core/handoff.md`. Backed by `src/orchestrator/agent_handoff.py` (#719).
-- `canopy agent move --slug SLUG --to WS [--dry-run]` — move an agent to another canopy-web workspace WITH its history (canopy-web `POST /api/agents/<slug>/move`, #1532): turns, chat sessions, mail, capability grants and agent-scoped rules in one transaction, or nothing. Prints the report (`tables`, `left_behind`, `stops_working` — e.g. a mail address on a domain the destination cannot use is disabled). Agent owner/admin + editor in the destination. `register --workspace` runs the same move.
-- `canopy agent interface {get|set}` — an agent's DECLARED INTERFACE: the capabilities it publishes (each has `description`, `entry`, `tools`, `bash`, `read_paths`, `write_paths`, `input`, `pages`, `sites`, `ceiling`, `own_login`, `data` — no `role`/`callers`/`full`, canopy-web refuses them). WHO may use one is the agent's access list on canopy-web (roles read_only < read_write < editor < admin < owner = permissions read/write/agent_edit/admin/own; a line may name one capability), never the file. Live state on canopy-web, never a file in the agent repo; enforced in-session by the `profile_guard` plugin hook.
-- `canopy agent mode [--caller …]` — print the turn mode (`manual`|`auto`) with its basis/source; with `--caller`, THIS turn's mode as canopy-web decided it at claim.
-- `canopy agent turns` — recent harness turns for an agent: how you check what a dispatch actually did (same LAUNCHED-not-worked lens as `dispatch`).
-- `canopy caller tier` — resolve who asked for this turn (tier `act` = the asker holds `write`, `caller` = one capability; plus role, permissions, and `manual` = the turn mode, a separate axis) from canopy-web's caller envelope, not from the email `From:` (#665). Backed by `src/orchestrator/caller.py`.
-- `canopy people {show|remember|retract|conversations}` — the fleet brain's write/read CLI (canopy#804): per-`Person` append-only facts (six work-context kinds — `role`/`project`/`instance`/`preference`/`correction`/`terminology` — each `declared` or `inferred`, superseded never edited), held on canopy-web `/api/people/`. Kind/basis/length and instruction-shaped statements are refused client-side; an older canopy-web without the routes exits 3 with a plain message. Agents record in-session through HCP (`hcp_addPreference`, `agent-core/turn.md` step 6); there is no after-the-fact digest turn. Backed by `src/orchestrator/people_cli.py`.
-- `canopy slack ingest {request|status|wait|transcript|revoke|list|allow|allowed|disallow}`: reads a whole Slack channel for an agent, **with permission only** (canopy-web#1533). `request` makes canopy-web post an Approve/Decline in the channel. Only a channel member who administers the agent's workspace, or the channel's creator, can approve. Or a workspace admin or owner allow-lists one channel for one agent explicitly (`allow`, canopy-web#1540, #1547). That agent's `request` then reads at once and posts a notice with Revoke in the channel. `--channel` takes an ID or `#name`. canopy-web does the reading. Only the agent's own login can fetch the `transcript`, which by default holds only what is new since that agent's last read (canopy-web's per-ingest `read_mark`, moved only after the output is written; `--all` for everything, canopy-web#1557). `wait` exits 0 ready, 4 declined/revoked, 5 failed, 6 still open. The fleet baseline denies every direct Slack history read (`always` rails). Skill: `slack-channel-ingest`. Backed by `src/orchestrator/slack_ingest_cli.py`.
-- `canopy kb {build|push|pull|mcp} --kb <workspace>/<handle>` — knowledge bases: a curator agent builds a cited library of one publisher's public material (bundle → `kb.sqlite`, diffed for a dated change history, gzipped into the project's Drive folder); `push` to a workspace project also publishes it to canopy-web, which serves it as the project's own remote MCP server at `/api/mcp/projects/<ws>/<handle>/` (readers add one URL; `canopy mcp-headers` is the agent-identity `headersHelper` for it); `canopy kb mcp` serves a local copy over stdio (no read subcommands: how to read a library is a skill). See `docs/knowledge-bases.md`. The engine is canopy-web's `packages/canopy_kb` (loaded by `src/orchestrator/kb_engine.py`; `build`/`mcp` need it installed, `push`/`pull` do not).
-- `canopy cursor {since|bump|read|list|reset} … [--local]` — recurring-work cursors for cadence skills: `since` filters candidates to new-or-grown items (id + timestamp), `bump` records what you processed. State lives in the agent's Drive `Process State` folder (agents run in throwaway worktrees). Backed by `src/orchestrator/work_cursor.py` (FRAMEWORK).
-- `canopy runner {list|pause|unpause|transfer|credential}` — where work runs: the fleet and what each box is doing, park/resume a runner, move a live session between boxes (cloud ↔ laptop), set a cloud runner's Claude credentials. Backed by `src/orchestrator/runner_cli.py`.
-- `canopy agents connect [--dry-run] [--install-all]` — the new-user half of `/canopy:setup` (canopy#851; one catalog per person since 2026-10-14): registers `canopy-agents` = `<canopy-web>` + `AGENTS_MARKETPLACE_PATH` (`/plugins/marketplace.json`, every agent in every workspace you belong to; entries are `github` sources, so installs need the person's own GitHub access) in USER settings (`extraKnownMarketplaces`, `autoUpdate: true`, `headersHelper` = `node <marketplace clone>/plugins/canopy/scripts/canopy-web-mcp-headers.js --archive`), removes retired `/w/<ws>/marketplace.json` entries, syncs it (`claude -p /help` + `claude plugin marketplace update`) and prints each agent's install line + `/<agent>:setup` (installs only with `--install-all`). `canopy workspace {list|op-status}` remain; `canopy workspace connect` is retired and errors. Backed by `src/orchestrator/workspace_cli.py`.
-- `canopy vault {status|device|binding} --agent X` — Canopy Vault (canopy#946, canopy-web#1549): per-credential set/missing and last read (`status`), `binding on|off` (`require_device_binding`), and this machine's device key — `secure-enclave` (canopy-web's `canopy-device-key`), `tpm` (Windows, ctypes/ncrypt, `device_key_tpm.py`), `aws-iam` (EC2 instance role, `device_key_aws.py`), else `software` (`--kind software` / `$CANOPY_DEVICE_KEY_KIND` forces it on EC2; `--public-jwk` prints the public half, `--registered KEY_ID --runner ID` records a registration made by pair-by-role; `$CANOPY_ECDH_BROKER=<socket>` puts the ECDH key behind a local KMS broker). Never prints a value. Backed by `vault_cli.py`, `device_key.py`; every `/credentials/resolve` goes through `cred_resolve.py` (`?refs=`, `X-Canopy-Turn-Id`, `DPoP` or `X-Canopy-Aws-Proof`; a zero-knowledge answer is unwrapped with this device's ECDH key and decrypted there). Zero-knowledge (canopy-web#1550): `canopy vault zk status|enable|set|grant|rotate|settle` (settle: canopy-web's sealed `zks1:` values → `zk1:` under the vault key; `set --sealed [--request ID]`: seal `zks1` with no vault key, only to recipients a person pinned in `~/.canopy/vault-pins.json` endorsed — zk-v1 §7, canopy-web#1712), `vault device --ecdh-jwk` — formats in `vault_zk.py` (byte-exact to the vectors + reference copied verbatim into `tests/fixtures/vault_zk/`), CLI in `vault_zk_cli.py`. See `docs/architecture/session-identity.md` § Canopy Vault.
-- `canopy cred {check|env|refresh|exec|whoami} [--agent X]` — session identity (canopy#850): may this session act as agent X (exit 0 allowed / 3 refused with an actionable stderr paragraph / 2 no agent / 4 undetermined), and if so ensure `~/.X/.env` (0600) from the agent's Canopy vault (canopy-web; an unreachable `/access` never grants). `/access` is asked with the current turn id (a licence reads only in its own local turn); the SessionStart hook runs `cred sync`. A runner turn may act only as its own agent. Never prints a value — except `cred env --slug X --runner --print-json` (a runner process's in-memory cache; railed in agent turns); `cred env … --out PATH` writes one turn's env 0600, refused outside `$CANOPY_TURN_ENV_ROOT`. Every reader of an agent's env looks at `$CANOPY_AGENT_ENV_FILE` first (`agent_env_file.py`). Contract: `docs/architecture/session-identity.md`. Backed by `src/orchestrator/cred_cli.py`.
-- `canopy secret {list|exec}` — use a secret a person shared with THIS chat (canopy-web's `SessionSecret`) without reading it: `exec` runs a command with it injected and masked. canopy-web holds it only sealed (`zks1`) to the device keys of the machine running the chat; `exec` opens it with this box's ECDH key. The chat key is the only lookup — no session-id fallback (#692). Backed by `src/orchestrator/secret_cli.py`.
-- `canopy agent turn [--title ... --summary ... --task-ext-id ID --work-product-url URL --upload-transcript]` — package one turn of work as a unit (optionally reducing + uploading its transcript to a `/share/<token>` link hung off the turn). Part of the `canopy agent …` operator plane. Backed by `src/orchestrator/session_upload.py`.
-- `canopy agent project-audit --slug SLUG [--repo DIR] [--recent-days 2] [--json]` — read-only, always exits 0: does the board's project model match the agent's work? Findings: open tasks with no project that look like project work (≥2 links, ≥1 turn record, or ≥2 note entries), active projects with no Drive folder, project/folder name drift, open tasks touched in the window with no `agent turn` record. `Projects/` folders with no active project are counted as DORMANT, never a finding (the board is what's active; Drive is the archive). Drive root resolves as `gdoc publish --project` does; unreachable Drive is reported and skipped. Its last line is the REQUIRED `projects:` turn close-out line (`agent-core/turn.md` Step 4). Backed by `src/orchestrator/project_audit.py`.
-- `canopy agent reply <turn-id|session-id|canopy-web link> --prompt ...` — send a follow-up INTO an existing canopy session (`POST /api/canopy-sessions/<id>/send`, the route `canopy_sessions_send` wraps) instead of a second dispatch that starts from nothing. A turn id (what `dispatch` prints) is followed to the session it ran in via the turn's `canopy_session_id`; a still-queued turn has none yet and is refused in words. `dispatch` and `canopy agent turns` print the session link once it exists. Needs write access to the session.
-- `canopy agent dispatch --slug SLUG [--title ... --prompt ... --no-task --runner NAME|ID --mode auto|manual]` — one-shot hand-off of UNATTENDED work: write it to the AGENT's board, then trigger a runner session to do it. A person working with an agent uses `canopy agent use` instead, never dispatch (canopy-web#1955): `--help` says so, and a person with no active licence for the agent (and not its admin) gets a one-line stderr note — silent in an agent's own turn (`$CANOPY_TURN_ID`, `$CANOPY_AGENT`, an agent repo underfoot) so agent-to-agent dispatch is untouched (`agent_dispatch.local_use_note_for`). Reports LAUNCHED (unverified) — a `done` harness turn means SPAWNED, not worked. Backed by `src/orchestrator/agent_dispatch.py`. `--runner NAME|ID` pins the turn to ONE box (only it may claim; for work only that machine/account can do — e.g. a file that exists only under one macOS account): refused if the runner is unknown/ambiguous/retired or doesn't list the agent in `capabilities.agents`, and refused if it is paused/stale/offline unless `--queue-if-not-ready` (the server then holds the pinned turn QUEUED until that runner is back online — a pause outranks a pin). A pinned dispatch's idempotency key includes the runner. `--mode auto|manual` chooses THIS turn's mode (canopy-web `TurnIn.turn_mode`): the top rung of the turn-mode ladder, above routing rules and the agent's switch, kept across re-claims; `manual` for anyone who may dispatch (a workspace editor's dispatch is always manual), `auto` only for the agent's owner/admins (workspace owners included; a workspace admin is not one) on a session or own PAT — else 403. A `--runner` pin needs the agent's owner/admin or that runner's admin. Terms: canopy-web `docs/architecture/access.md`. The mode joins the idempotency key too, and the output prints what the server RECORDED. Never hand-roll `runner_id`/`turn_mode` into a raw POST — this keeps the dispatch stamp.
-- `canopy huddle {plan|prompt|dispatch|report|await|status|resume|agree|proposals|file|view}` — a team of agents syncs, led by one of them. The leader takes part too: it cannot dispatch to itself, so it answers its own `prompt` in its turn and files it with `report` (an already-finished round turn tagged like a dispatched one; `plan` surveys the leader as well). Stateless between steps; canopy-web is the state: round turns are one-shot, unpinned, TAGGED (`origin_ref.kind = huddle_round`) and parented on an anchor turn the leader files as a close-out, and the conversation is read back from canopy-web's derived `GET /api/huddles/<id>` (nothing re-records prompts or replies). `await` is foreground — exit 0 settled, 3 run it again; a round turn's `done` means spawned, not replied. Huddle types are package data (`src/orchestrator/huddle_types/<type>/round<N>.md` + `schema.json`; a variant `round<N>-<v>.md` + `schema.json` `shapes` keep old block shapes valid); `work` ships first (report → roundtable → merge → co-sign). `plan --priorities-file` stores the principal's priorities brief, which opens every round prompt (round 1 asks for `levers` on its numbered priorities; round-2 proposals name a brief NUMBER, `kind`, `cost_to_jonathan`, `fails_if`); without it the pre-brief rounds run with a warning. `proposals` marks `overlaps` (same priority + a shared person) and emits `asks_of_jonathan`; round 3, `agree` and `file` refuse until the leader's `--merges merges.json` resolves each (`absorbs` / `distinct_from`). `file` applies the type's gates, files `suggested` tasks on the lead's + partners' boards (idempotent by huddle page + title), and writes the clean-outcomes record to the leader's Drive `Process State/Huddles/<id>.json`. **Check-in runs:** `plan --checkin-run <id>` (`--group-run` is its old alias) takes members (the check-in's agents; the leader — the project's agent — never its own member), a one-priority brief (the check-in's topic + the project's outcome), the channel material (quoted into rounds 1–2) and the project's open + recently decided proposed tasks with backings and replies from canopy-web `/api/checkins/runs/<id>` (falling back to the `/api/huddle-groups/runs/<id>` alias); `file` then proposes each survivor as a TASK in the check-in's project (`projects/<ref>/tasks/propose/`; a `project.new` survivor is still a task whose why says so) with co-signers' round-3 answers as task backings, and calls `checkins/runs/<id>/finished` with `tasks_proposed` — falling back LOUDLY to `projects/propose/`, then board tasks, on a canopy-web without those routes. A member canopy-web refuses to let the leader run is `dispatched: false` + `not_reached`, not a crash. Any agent may lead (`/canopy:huddle`; a team binding such as `skills/huddle` wins). Leader procedure: `plugins/canopy/agent-core/huddle.md`. Backed by `src/orchestrator/huddle.py` (pure) + `huddle_cli.py` + `huddle_store.py`. Spec: `docs/superpowers/specs/2026-10-06-huddle-design.md`.
-- `canopy checkin {material|propose|finish} --run <id>` — a project check-in's run from the agent side: print the confirmed channel read (`material`, check-in + project + window on stderr, `--json` for the run), propose ONE task in the check-in's project (`propose --title --why [--done-when --step… --partner… --new-project --new-evidence]`; falls back to a `suggested` task on an older canopy-web) and close the run (`finish --result-url … --summary … [--tasks-proposed N]`; a re-run is a no-op). `canopy huddle-group material|finish` is the old alias. Solo check-ins follow `plugins/canopy/agent-core/checkin.md`. Backed by `src/orchestrator/checkin_cli.py` (`huddle_group_cli.py` re-exports it).
-- `canopy thread {open|say|run|show}` — agent threads: bounded, moderated, DIRECT conversations between fleet agents (canopy-web `/api/threads/` stores the thread and enforces its limits — budget, deadline, turn order, speaker — on turn creation). Each message is a one-shot turn TAGGED `origin_ref.kind = thread_message` (`thread`, `n`, `speaker`; thread_key `thread:<id>`, idempotency `thread-<id>-n<n>`, through `agent_dispatch.build_turn_payload`); messages are derived back from those turns. `run` is the MODERATOR loop, foreground, stateless and resumable (everything from `GET /api/threads/<id>`): exit 0 closed, 3 run it again, 2 refusal. First use: the huddle's agreement step — `canopy huddle agree` opens one `agreement` thread per open amend (lead ↔ amender) instead of the relayed round 4, and `huddle proposals`/`file` read the outcomes (agreed → `amend→accepted`, else held "Eva and Echo didn't agree: <why>"). Participant procedure: `plugins/canopy/agent-core/thread.md`. Backed by `src/orchestrator/thread.py` (pure: prompt, block, decision) + `thread_cli.py`. Contract: `docs/architecture/agent-threads.md`.
-- `canopy project {dispatch|runners|turns} <project>` — the same one-shot aimed at a REPO rather than an agent (`canopy project dispatch connect-labs --prompt "…"`). Three things differ and each fails silently if you get them wrong, so the command handles them: the turn needs a `--workspace` (its tenant, carried in the `/api/w/<ws>/harness/turns/` path — a project turn has no agent to derive tenancy from); the runner must **report** the repo in `capabilities.projects` or the turn is accepted and then never claimed by anything (`dispatch` refuses up front rather than enqueueing into a hole, naming the machine to fix); and it writes **no board task**, because a repo has no agent board. The preflight reads the **tenant it enqueues into** (`GET /api/w/<ws>/harness/runners/`), not the flat route, because canopy-web #509 scoped that read by tenant rather than by who paired what: the flat route returns the union of every workspace you belong to, so preflighting on it and POSTing to one workspace can pass on workspace A's runners and queue forever in workspace B. Consequently an empty tenant read is a **refusal** ("workspace X has no runners"), not an `UNKNOWN` warn — `UNKNOWN` survives only for an untenanted read by a caller with no memberships. Rows carry `can_manage` (#509), so a runner you can see but not mutate is reported as "ask its owner". `--runner NAME|ID [--queue-if-not-ready]` pins the turn to one box (#663), resolved from the same tenant fleet: a pin bypasses the server's project matching, so the named runner must itself REPORT the repo or the dispatch is refused (it would otherwise claim the turn and fail on a missing checkout); paused/stale/offline needs `--queue-if-not-ready`, as with `agent dispatch`. Backed by `src/orchestrator/project_dispatch.py`.
-  - **You cannot declare a repo from the client, and you cannot skip the check.** canopy-web #513 (merged + deployed 2026-07-29) makes `capabilities["projects"]` **runner-reported** — replaced from the box on every heartbeat (emdash's projects table on a laptop, `RUNNER_PROJECTS` on a cloud runner) — and 422s any PATCH carrying `projects`. So `canopy project declare` and `--declare` are **deleted**: you make a repo routable by opening it in emdash on that runner, not by asserting it from here, and the refusal tells you which machine. `--no-preflight` is **deleted** too — it existed because the preflight's answer could not be trusted (invisible fleet, hand-typed list); both halves are fixed server-side, so a refusal is now a fact, and routing around it is exactly what left a turn queued forever in #428. See issues #433 / #428.
-  - **A runner that reports the repo but is ASLEEP is a warning (`dormant`), not a refusal.** Removing `--no-preflight` left one real case with no path: #513 makes an online runner's list fresh by construction, so the only staleness left is temporal — a box that reported the repo and then slept. Blocking there is a false negative, because a QUEUED turn is **never expired** (canopy-web's release sweep exempts queued turns so "laptop offline over a weekend must not retire Friday's slot") and the runner claims it on wake. It is also not a case for an override, since a flag that skips the whole preflight equally waves through the case that genuinely queues forever. So `classify_runners` answers it directly: warn + enqueue. `stale`/`degraded` count as recoverable; `disconnected` (never heartbeated, so any list on it is pre-#513 residue) and `retired` do not, and still block — that line is what keeps `dormant` from becoming #428 wearing a warning.
-- `canopy closeout {record|show}` — an unattended incident-style turn (an alarm, a page) records its closeout FACTS (incident state + how it was checked, cause + evidence, remedy, every open item's owner — agent+board task+re-check, named person+the one decision, or a dispatched turn; "someone" is rejected — and each close-out step's exit code); `orchestrator/closeout.py` computes CLOSED | MONITORING | NEEDS_YOU | INCOMPLETE and prints the status line to end on, tokened `[closeout: <VERDICT>]` for canopy-web. `record` exits 3 on INCOMPLETE. The Stop hook `closeout_guard.py` blocks an unattended "safe to close" when the session's latest verdict is not CLOSED. An agent opts its incident turns into the **improvement** rule with `--improvement-policy FILE` (its config: `required` + `prose_only` repo/path globs): the record then needs a MERGED PR (`cause_fix` | `diagnosability` + its signal), verified by `gh pr view` (exit code recorded as a step); a filed issue, an unmerged PR, or a PR touching only the agent's own prose is INCOMPLETE; the one exception is `already_diagnosable` with the single query whose output identified the cause (`cause.identified_by`).
-- `canopy decide-guard {render|check|stamp|unstamp|show|add-example}` — maintain the decide-don't-offer rail as a NATIVE `{"type": "prompt"}` Stop hook (blocks once when a closing message hands back a call the agent could make — dev actions ship without approval, outbound always waits, and a turn whose own rules require approval is not a hand-back). Its prompt is GENERATED from labelled examples in `plugins/canopy/agent-core/decide_guard_examples.jsonl` — never hand-edit the wired JSON. **OPT-IN since 2026-10-08** (`PLUGIN_WIDE = False` in `src/orchestrator/decide_guard_prompt.py`): the plugin's hooks.json carries no decide-guard, because one person's working preference must not be imposed on every canopy user. **PER-PERSON since 2026-10-13**: a person opts in with `stamp --user` (writes their own `~/.claude/settings.json`; refuses on Claude Code older than `MIN_CLAUDE_CODE`, whose prompt-hook evaluator 400s on every Stop) and out with `unstamp --user`; `stamp --user --check` flags a stale copy. NEVER an agent repo: its settings run for every person who runs the agent, which wedged Sarvesh's runner (failure investigation 1, turn bb892462) — `stamp --agent-repo` refuses, `unstamp --agent-repo DIR [--check]` removes/flags a copy. `add-example --closing … --handback true|false --why …` appends a case; ship, then opted-in people re-stamp.
-- `canopy fleet-align` — CLI entry for the cross-agent improvement spread (the `fleet-align` skill's analysis half). Backed by `src/orchestrator/fleet_align.py`.
-- `canopy eval {score|record} ...` — the eval runner: `score` weighted-grades a rubric, `record` writes the score → verdict path so any agent self-grades against the run lifecycle. Backed by `src/orchestrator/eval_cli.py` + `eval_rubric.py`.
-- `canopy shareout [...]` — gather a date range of sessions + PRs into a teammate-facing work briefing for the canopy-web /shareouts feed
-- `canopy structure-drift` — self-audit canopy's documented structure against the actual tree (agent frontmatter, modules, docs)
-- `canopy test-audit [...]` — build a test corpus for the agent to judge and prune dumb tests
-- `canopy verify-findings` — re-verify session-review proposals against the current state of their target repos
-
-## Framework/Product Boundary (the one invariant)
-
-The `orchestrator` package splits into **framework** (generic, agent-agnostic
-agent-runtime substrate — `canopy_web`, `agent_client`, `capture`, `work_cursor`,
-`transcripts`, `scanner`, `scheduler`, `provision`, `agent_email`, `fleet_align`, …) and
-**product** (canopy's own self-improvement / DDD / portfolio features — `analyzer`,
-`proposer`, `observations`, `harvest`, `shareout`, `test_audit`, …). **Framework
-code must never import product code; product imports framework freely.** The only
-product→framework coupling lives in 3 orchestration **hubs** (`cli`, `pipeline`,
-`server`), by design. This keeps the framework substrate cuttable (liftable onto a
-standalone host without dragging canopy's product). It's a *direction, not a wall* —
-do NOT split `orchestrator/` into `framework/`/`product/` subpackages. Enforced by
-`tests/test_plugin_boundary.py` (fails on a framework→product import, or a new
-untiered module). Full tier list + rationale: **`src/orchestrator/TIERS.md`**.
-
-## Session-analysis surfaces — which one for which grain
-
-`analyze` / `improve` / `agent-review` / `session-review` / `select-session` are
-overlapping peers. There is no single "front door" command — #352 (closed) settled
-the prompt-loading half below and left a unified entry undone — so this table is the
-decision guide. Reach for the row that matches your **grain**:
-
-| Grain | Use | What it is |
-|-------|-----|------------|
-| One specific transcript | `canopy analyze <transcript.jsonl> [--propose]` | Analyze a single session file. Runs from any cwd — no registry/checkout required (the capability-registry dependency was removed). |
-| Broad batch across sessions | `canopy improve` (or `--dry-run` / `--observe-only`) | The full analyze → propose → implement cycle over discovered transcripts. |
-| Menu-driven pick + act | `/canopy:select-session` / `/canopy:session-review` | Interactive: choose a project/session, analyze, propose, implement behind gates. |
-| One AGENT's own turns | `canopy agent-review <slug>` / `/canopy:agent-review` | Reviews an agent's recent TURN transcripts for operating-model friction. Assembles its prompt INLINE (see note below). |
-
-**Prompt-loading convention (post-#352) — one rule per tier:**
-- **PRODUCT, user-editable templates** (`analyze` / `propose` / `review` /
-  `briefing` / `verify-findings`) → external `prompts/*.md`, loaded install-safely
-  via `importlib.resources` (`orchestrator/prompts/__init__.py::load_prompt`) —
-  robust even when the wheel is relocated/zipped, belt-and-suspenders with #351's
-  `package-data`.
-- **FRAMEWORK logic-prompts** (`agent_review.build_review_prompt`,
-  `fleet_align.build_judgment_prompt`) → **inline** — static, co-located with the
-  logic they serve, and immune to the #351 packaging class (a Python string literal
-  always ships). Loading the PRODUCT `prompts/` package from a FRAMEWORK module
-  would also break the framework→product boundary (`tests/test_plugin_boundary.py`).
-
-#352 read the inline/external split as an accidental inconsistency to collapse. A
-canopy + fleet scan showed otherwise: the framework-inline set is a real class
-(`agent_review` **and** `fleet_align`; the 5 agents have no python-level prompts at
-all — theirs live in markdown skills), and a framework template store would serve
-only those two packaging-immune prompts. So the split is kept as a deliberate
-two-tier rule — the loader is hardened (`importlib.resources`), not the conventions
-merged. A future framework judge-prompt follows the framework rule: inline it.
-
-## Key Modules
-
-### Core pipeline
-- `src/orchestrator/pipeline.py` — full improvement cycle (scanner discovery, circuit breaker, rate limiter)
-- `src/orchestrator/analyzer.py` — transcript analysis via claude -p
-- `src/orchestrator/proposer.py` — proposal generation via claude -p
-- `src/orchestrator/skill_runner.py` — headless invocation of any Claude Code skill
-- `src/orchestrator/paths.py` — shared CANOPY_DIR constant and legacy migration
-- _No implementer module._ Proposal implementation is dispatched to Claude Code
-  agents via the `/canopy:improve` skill; `pipeline.py` stops after saving
-  proposals. (The old `claude -p` implementer was removed in `a6991a6` —
-  "replace claude -p implementation pipeline with agent-based dispatch".)
-
-### Data models
-- `src/orchestrator/observations.py` — friction, gaps, patterns extracted from sessions
-- `src/orchestrator/proposals.py` — improvement proposals with verification plans
-- `src/orchestrator/campaigns.py` — multi-day improvement arcs
-- `src/orchestrator/tracker.py` — proposal outcome tracking for self-improvement
-
-### Intelligence
-- `src/orchestrator/patterns.py` — cross-session pattern detection
-- `src/orchestrator/briefing.py` — strategic brief with gstack cognitive patterns
-- `src/orchestrator/router.py` — tiered routing (inline/single/team)
-- `src/orchestrator/skill_catalog.py` — enumerates installed skills (plugin + user) and detects when a `new_skill` proposal duplicates one that already exists. Wired into the proposer prompt and `_validate_proposals` to silence the "we just proposed building something that already ships" pattern.
-- `src/orchestrator/skill_budget.py` — computes per-skill + aggregate description-size budget (backs `canopy skills budget` / `dropped`)
-- `src/orchestrator/shareout.py` — gathers sessions + PRs over a date range into teammate-facing work briefings (backs `canopy shareout`)
-
-### Discovery
-- `src/orchestrator/scanner.py` — transcript discovery and metadata extraction
-- `src/orchestrator/transcripts.py` — Claude Code transcript parsing
-- `src/orchestrator/repo_map.py` — project-to-GitHub-repo mapping (JSON, stdlib only)
-- `src/orchestrator/repo_paths.py` — resolves local repo checkout paths for a project
-
-### Capture & hooks
-- `plugins/canopy/hooks/repo_map_capture.py` — SessionStart hook: records the session's project dir → GitHub `owner/repo` in `~/.claude/canopy/repo-map.json` (read by `repo_map.py`). Canopy keeps no session log of its own — Claude Code's transcripts under `~/.claude/projects/` are the record.
-- `hooks/post_tool_use.py` — the retired PostToolUse capture hook, now a no-op kept only because an old `~/.claude/settings.json` may still register it; `/canopy:setup` removes that registration
-
-### Browser UI (visibility tool, not primary interface)
-- `src/orchestrator/server.py` — HTTP server with JSON API
-- `src/orchestrator/static/index.html` — SPA frontend
-- `src/orchestrator/labels.py` — transcript label storage
-- `src/orchestrator/reviewer.py` — AI strategic review via claude -p
-
-### Scheduling
-- `src/orchestrator/scheduler.py` — launchd plist generation
-- `src/orchestrator/circuit_breaker.py` — stops pipeline after consecutive failures
-- `src/orchestrator/rate_limiter.py` — caps API calls per hour
-
-### CLI & utilities
-- `src/orchestrator/cli.py` — Click CLI entry point
-- `src/orchestrator/corpus.py` — activity corpus builder for analysis
-- `src/orchestrator/digest.py` — daily digest generation from improvement runs
-- `src/orchestrator/run_log.py` — improvement cycle run log tracking
-- `src/orchestrator/doctor.py` — canopy plugin health diagnostics (backs `canopy doctor`)
-- `src/orchestrator/structure_drift.py` — self-audit of documented structure vs the actual tree (backs `canopy structure-drift`)
-- `src/orchestrator/verify_findings.py` — re-verifies session-review proposals against current repo state (backs `canopy verify-findings`)
-- `src/orchestrator/version_bump.py` — VERSION coordination across worktrees (backs `canopy version bump`)
-- `packages/canopy_agent_factory/` — the agent factory, **extracted out of `src/orchestrator/` into its own published, zero-dependency package** (#636) so canopy-web can scaffold agents without canopy's video deps; versions independently (`.github/workflows/release-agent-factory.yml`). Stamps out a new agent repo from the operating-model templates (persona, turn, the config-driven gating hook); backs `canopy create-agent` and is the template baseline `fleet_align` compares against. Edit templates in `packages/canopy_agent_factory/canopy_agent_factory/_factory.py`. See `docs/agent-operating-model.md` (§4 Build 1, §4a topology).
-- `src/orchestrator/canopy_web.py` — the single source of canopy-web transport + auth: `resolve_base_url`/`resolve_token` (PAT precedence: arg → `CANOPY_WEB_PAT` → in a runner turn, the turn-scoped agent login canopy-web issues for it (`turn_agent_token.py`: this box's runner token + the session's turn id, cached per turn; canopy-web spec 2026-10-21-turn-scoped-agent-token) → the agent's own `~/.<slug>/.env` (slug from `$CANOPY_AGENT`, else the cwd's agent repo) → `~/.claude/canopy/workbench-token` — **never that last tier in an agent's session** (canopy#813: `agent_context_slug` = `$CANOPY_AGENT`/`$CANOPY_AGENT_SLUG`, else the dispatched turn's caller-envelope `agent`, else the cwd's agent repo): there it raises `AgentIdentityError` with the remediation, and a `CANOPY_WEB_PAT` that is just the operator's token is refused too. A human in an agent repo opts back in with `CANOPY_ALLOW_OPERATOR_IDENTITY=1` (warned); `agent_strict=True` — every DDD + walkthrough-share write — ignores even that. Every write with a resolved token first reads `/api/me/` back and prints `[canopy] writing as <email>` once per process), `require_write_workspace` (a write names its workspace or refuses — no membership guessing) + `confirm_landed` (read a write back tenant-pinned and print where it landed; ace#2805), `CanopyError`, an injectable `Transport`, and the low-level `call()`. stdlib `urllib` only (no `requests`). Everything that talks to canopy-web resolves auth through here (agent_client, agent_web, scripts/ddd/auth, shareout, the share-session/walkthrough-share uploaders).
-- `src/orchestrator/agent_client.py` — typed operator-plane client for `/api/agents` over `canopy_web`: `AgentIdentity`, `TaskAction`, `AgentClient` (register/syncs/skills/projects/create-tasks/patch-task by ext_id/action drain), and the shared `catalog_from_repo` + `_frontmatter` skill-catalog helper. Explicit identity + injectable transport (unit-testable, no network). Backs the `canopy agent` CLI. REST contract: `docs/architecture/agent-client-rest-contract.md`.
-- `src/orchestrator/agent_cli.py` — `canopy agent …` CLI (`register`/`move`/`sync`/`syncs`/`sync-delete`/`turn`/`turns`/`skills`/`tasks-create`/`tasks`/`add`/`actions`/`applied`/`set`/`mode`/`interface`/`projects`/`project-add`/`project-set`/`project-audit`/`dispatch`/`handoff`/`bootstrap`/`doctor`/`health`/`coverage`), a thin shell over `AgentClient` for shell-driven agents. Registered on `main` in `cli.py`.
-- `src/orchestrator/project_dispatch.py` + `project_cli.py` — `canopy project …`: one-shot dispatch at a REPO. Pure logic (payload, tenant path, idempotency namespace, runner-capability classification) in `project_dispatch`; HTTP + Click in `project_cli`. Deliberately separate from `agent_dispatch.py` rather than a `--project` flag on it — the two targets resolve tenancy differently, preflight differently, and write different (for a project, no) board state. Shares only `summarize_turn`, because LAUNCHED-not-worked means the same thing for both.
-- `src/orchestrator/session_upload.py` — reduces + uploads a Claude session transcript to canopy-web's `/api/sessions/upload` and returns a `/share/<token>` link; the transcript-packaging half behind `canopy agent turn`.
-- `src/orchestrator/fleet_align.py` — cross-agent improvement spread (the *spread* verb of the operating model): compares the factory-stamped fleet against the current template and each other, weighs recent-session evidence, and dispatches PRs. Backs the `fleet-align` skill. FRAMEWORK tier.
-- `src/orchestrator/eval_cli.py` + `eval_rubric.py` — the eval runner behind `canopy eval {score|record}`: `eval_rubric` is the generic weighted-rubric scorer (ACE's verdict-schema math, decoupled), `eval_cli` records the score → verdict path so any agent self-grades against the run lifecycle.
-- `src/orchestrator/turn_synthesis.py` — generic, stdlib-only transcript reducer: prompt + final-reply per turn, with `active_seconds` + session timespan. The agent-agnostic substrate shared by share-session, harvest, and `session_upload`. See memory `turn-synthesis`.
-- `src/orchestrator/issue_origin.py` — `canopy.origin/v1` provenance for architect-routed GitHub issues (backs `canopy issue create/context/delete`). Splits the CLEAN portable GitHub issue from the rich local+canopy-web understanding record.
-- `src/orchestrator/test_audit/` (package) — builds a test corpus for the agent to judge and prune dumb tests (backs `canopy test-audit`). PRODUCT tier.
-- `src/orchestrator/agent_bootstrap.py` — backs `canopy agent bootstrap` (laptop agent bootstrap). Decision logic (client-from-token, client→canopy-vault item, skip-if-identical) is pure and unit-tested; shares `parse_required_plugins` with `agent_doctor.check_required_plugins`.
-- `src/orchestrator/agent_doctor.py` — per-agent health checks (backs `canopy agent doctor`): identity, gating rails, secrets manifest, live gog email auth (via `agent_email.preflight`), canopy-web registration + board. The agent-level counterpart of `doctor.py`. Supports `--all` (fleet sweep) and `--fix`.
-- `src/orchestrator/agent_health.py` — per-agent WORK-state readiness (backs `canopy agent health`): open board items + unread inbox for the agent's next turn. Complements `agent_doctor.py` (machine/install readiness).
-- `src/orchestrator/agent_coverage.py` — per-agent bring-up coverage probe (backs `canopy agent coverage`): how much of an agent's promised surface is actually wired.
-- `src/orchestrator/gdoc_suggest.py` — tracked-suggestion edits on a doc (backs `canopy gdoc suggest`).
-- `src/orchestrator/gdoc_review.py` — visual QA of a written Doc (backs `canopy gdoc check`) + the receipts `agent-core/gdoc_gate.py` reads.
-- `src/orchestrator/agent_gdoc.py` — shared Google-Doc authoring engine (backs `canopy gdoc`): markdown → rendered Doc as the agent; `--replace` edits native Docs in place via the Docs API (#353).
-- `src/orchestrator/inbox_rules.py` — the fleet's ONE inbound-email table (#679): every message lands in exactly one row, `wanted/*` (wake) or `ignored/*` (archive + mark read + a Gmail label named after the row); unmatched = `person` (wake, fail open). Stdlib-only because canopy-web's runner vendors it VERBATIM (`runner/canopy_runner/canopy_runner/inbox_rules.py`); `tests/test_inbox_rules.py` pins its hash — edit it, re-vendor, update both pins. Backs `canopy email why`.
-- `src/orchestrator/inbox_filters.py` — the Gmail half of `inbox_rules`: creates the row labels and one labelled filter per row Gmail query on any agent mailbox (backs `canopy email apply-filters`); rows Gmail can't express (headers, Doc-comment bodies) are acted on by the runner.
-- `src/orchestrator/review_receipt.py` — the pre-send review rail: a receipt keyed to the BODY (not the agent's memory) recording that agent-turn-review ran; `canopy email send` refuses without it. Backs `canopy email review-receipt`.
-- `src/orchestrator/repo_evidence.py` — generic git-repo evidence helpers (FRAMEWORK tier, stdlib + git only), shared by the evidence-weighing passes in agent-review/fleet-align.
-- `src/orchestrator/session_sources.py` — injectable session-corpus sources: the seam that lets harvest/review read cross-user session roots without hard-coding discovery.
-- `src/orchestrator/agent_email.py` — shared guarded email engine for the agent fleet (backs `canopy email {send|mark-read|preflight}`): the generalization of echo's `bin/echo_email.py` + `bin/echo_mark_read.py` / ACE's `bin/ace-email` + `bin/ace-mark-read`. HTML multipart send via gog, Gmail-API mark-read, gog preflight with exact remediation (incl. the API-not-enabled self-heal). Per-agent identity from `config/agent.json` (`email` + `gog_client`, client defaults to slug — never share another agent's client). Injectable runner/opener, fully unit-testable offline. Implements shared-gog-gdrive.md §3.
-- `src/orchestrator/agent_web.py` — repo-identity convenience layer over the shared core: resolves an agent's identity from its `.claude-plugin/plugin.json` + `config/agent.json` (and a git-origin skill-URL template), then publishes via `AgentClient`. Backs `canopy agent-publish`. Transport/auth/frontmatter are NOT duplicated here — they delegate to `canopy_web`/`agent_client` (keeps `base_url`/`token`/`_call` shims for `issue_origin` + back-compat). The "common" half of the §4a boundary — canopy owns the client, the agent repo owns only its identity (`config/agent.json`).
-- `src/orchestrator/harvest.py` — harvest corpus engine (the deterministic half of Hal-as-architect): cross-user session discovery (`user_session_roots` walks `/Users/*`), origin-anchored initiative filtering (`find_initiative_sessions`, oldest-first), `assemble_corpus` (origin + recent slices, human-message extraction, `confidence` half-blind flag). NO judgment — intent/drift is the agent's native job. Backs `canopy harvest corpus`. See memory `harvester-architect`.
-- `src/orchestrator/onepassword.py` — intentionally UNREFERENCED: primitive helpers for the `op` CLI (read an item/field, inject a template), kept in one isolated module for a possible future use. Nothing imports it and it has no CLI surface; do not wire it back into the credential path (the Canopy vault is the only credential source).
-- `src/orchestrator/openclaw_harvest.py` — OpenClaw → canopy-agent bridge: snapshot (rsync, excludes creds) + inventory + compare-to-repo + bootstrap-new / reconcile-novel-skills. Engine is pure/offline (testable); backs `canopy openclaw-harvest` + the `openclaw-harvest` skill. Salvages ideas off the dead OpenClaw droplets into git.
-- `src/orchestrator/agent_review.py` — agent self-improvement lens (Build 2): finds an agent's recent turn transcripts (by cwd, across repo + worktrees), extracts deterministic friction signals (failures/retries/gating-blocks/auth/checklist-gaps), and runs an optional `claude -p` synthesis into ranked findings + fixes. Backs `canopy agent-review` + the `agent-review` skill. Reuses transcripts.py / repo_paths.py / the analyzer pattern — a lens on the existing loop, not a fork. See `docs/agent-operating-model.md` §4 Build 2.
-- `src/orchestrator/session_liveness.py` — is a session still being written to? `agent_review` only grades ENDED turns (a live one hasn't skipped steps it hasn't reached yet).
-- `src/orchestrator/llm_output.py` — parse a `claude -p` reply into the YAML list the caller asked for (copes with a preamble before the fence). FRAMEWORK; use it rather than re-parsing in a new gate.
-- `src/orchestrator/work_cursor.py` — backs `canopy cursor`: the one recurring-work cursor for the fleet (replaced four divergent per-agent versions).
-- `src/orchestrator/huddle.py` / `huddle_cli.py` / `huddle_store.py` / `huddle_types/` — the huddle engine (`canopy huddle`): pure ids/tags/templates/gates, the CLI over canopy-web's derived huddle API, the leader's Drive outcome records, and the shipped huddle types. FRAMEWORK.
-- `src/orchestrator/thread.py` / `thread_cli.py` — agent threads (`canopy thread`): the pure prompt/block/moderator decision and the CLI over canopy-web's `/api/threads/`. FRAMEWORK.
-- `src/orchestrator/agent_handoff.py` — evidence half of `canopy agent handoff`.
-- `src/orchestrator/caller.py` — reads canopy-web's caller envelope (backs `canopy caller tier`). The per-prompt rendering of the same envelope is the stdlib `caller_context` plugin hook, not this module.
-- `src/orchestrator/act_as_cli.py` — backs `canopy act-as` (request/status/get/call/stop): an agent acts as its turn's asker after their passkey approval, ≤30 min, over canopy-web `/api/me/act-as-requests/`. The credential sits at `~/.canopy/act-as/<claude session>.token` (0600), is used ONLY by `act-as get|call` (never `resolve_token`/the MCP helper), and is deleted by `stop`, on expiry, and by the `act_as_cleanup.py` SessionEnd hook; a fleet `always` rail blocks reading it. Skill: `act-as-you`.
-- `src/orchestrator/people_cli.py` — backs `canopy people` (fleet brain v1, canopy#804) over `canopy_web.call`; the 404 → "server predates /api/people/" probe lives here.
-- `src/orchestrator/provenance.py` — request provenance: every canopy-web call (`canopy_web.call`/`call_text`, `session_upload`, `shareout`, the DDD / share-session / walkthrough-share uploaders; plus a JS copy in the canopy-web MCP `headersHelper` as `canopy-mcp/…`, beside a bearer only) sends `X-Canopy-Client` + `User-Agent` and, when knowable, `X-Canopy-Parent-{Turn,Session}` + `X-Canopy-Claude-Session` — so a turn a dispatch or script creates records the turn that started it. The parent TURN is the whole contract: canopy-web derives runner, runner type and host from that turn's `claimed_by`, so nothing runner-specific is sent and a new runner type only exports `CANOPY_TURN_ID` (+ `CANOPY_SESSION_ID`). Parent comes from those env vars (cloud runner), else the `CANOPY_CALLER` envelope, else `~/.canopy/caller/by-task/<task>.json` (laptop; written by the `caller_context` hook when it claims a runner pointer — the task name is only the local lookup key, never sent). Best-effort: never fails a request. Contract: `docs/architecture/agent-client-rest-contract.md` § Provenance headers.
-- `src/orchestrator/runner_cli.py` / `secret_cli.py` / `decide_guard_cli.py` — back `canopy runner`, `canopy secret`, `canopy decide-guard`.
-- `src/orchestrator/dependency_health.py` — external-dependency checks for an agent box (Homebrew-upgraded `gog` breaking its keychain trust, #616); run by `agent_doctor`.
-
-### Plugin (Claude Code skills, commands, agents)
-- `plugins/canopy/skills/` — skill definitions (act-as-you, agent-review, agent-turn-review, auth-preflight, brief, canopy-doctor, context-ingestion, create-agent, ddd-ace-render, ddd-arc-eval, ddd-concept-eval, ddd-evidence-audit, ddd-findings-review, ddd-gap-walk, ddd-narrative-actionability-eval, ddd-narrative-coherence, ddd-narrative-review, ddd-product-review, ddd-recorded-walkthrough, ddd-run, ddd-spec, ddd-spec-qa, ddd-timing-eval, ddd-upload, ddd-video-improve, ddd-video-judge, ddd-why-brief, ddd-why-eval, ddd-why-qa, doc-regeneration, dynamic-view, find-session, fleet-align, improve, improve-lens, information-architecture, issue-triage, openclaw-harvest, patch-gstack-browse, patterns, product-management, project-history, project-status, select-session, share-session, share-to-slack, shareout, slack-channel-ingest, test-audit, update, verify-findings, visual-judge, walkthrough, walkthrough-defect-creator, walkthrough-eval, walkthrough-share, website-builder)
-- `plugins/canopy/commands/` — slash commands (auth-preflight, brief, canopy-web-pat-mint, ddd, ddd-ace-render, ddd-concept-eval, ddd-evidence-audit, ddd-findings-review, ddd-narrative-actionability-eval, ddd-narrative-review, ddd-run, ddd-spec, ddd-spec-qa, ddd-upload, ddd-why-brief, ddd-why-eval, ddd-why-qa, doc-regen, find-session, huddle, improve, issue-triage, patch-gstack-browse, patterns, pm-autonomous, pm-autonomous-loop, pm-scout, pm-status, project-status, select-session, session-review, setup, test-audit, update, verify-findings, walkthrough, walkthrough-defect-creator, walkthrough-eval, website-builder)
-- `plugins/canopy/agents/` — autonomous agents (ddd, pm-supervisor, session-review, walkthrough, website-builder)
-- `plugins/canopy/agent-core/` — canonical fleet process docs, read at RUNTIME by the ~20-line stubs stamped into every agent repo (NOT under `skills/`, so they cost zero skill-description budget): `turn.md`, `shipping.md`, `task-tracker.md`, `manager-sync.md`, `deliverables.md`, `agent-runtime.md`, `email-drafts.md`, `handoff.md`, `huddle.md`, `checkin.md` (`work-group.md` redirects to it), `thread.md`, plus the shared hook bodies `gating_guard.py` / `gdoc_gate.py` and `gating-baseline.json` (fleet-baseline deny rails keyed by channel mount — canopy's own `--session` PreToolUse hook resolves the SESSION's agent — `$CANOPY_AGENT_SLUG` → `$CANOPY_AGENT` → the agent repo under the project dir → nobody — and merges baseline + that agent's rails at call time, fail-closed if the baseline is unresolvable; nobody's session gets the channel-independent `always` rails only. Agents register NO gating hook of their own (canopy#849); a leftover per-agent loader stands down outside its own agent's session). A rail or process fix here propagates by `/canopy:update`, no per-agent PRs. Shipped as chunks A+B (PRs #312, #315); design: `docs/superpowers/specs/2026-07-13-agent-core-shared-skills-design.md`.
-- `plugins/canopy/mcp/` — TypeScript MCP servers shipped with the plugin (ESM, run via `npx tsx`, no build step). `gws-server.ts` = **canopy-gws** (**not registered in plugin.json since 2026-10-09** — never called by any agent, which use `gog`/`canopy gdoc`; re-register it when an agent env carries `GWS_*`), the domain-neutral Google Workspace server ported from ACE's `ace-gdrive` (32 atoms: `drive_*` / `docs_*` / `sheets_*` / `slides_*` + `get_google_form_definition` + `read_personal_drive_doc`; the ACE-aware atoms stayed in ACE). Identity is the SESSION's agent, resolved lazily at the first tool call through `canopy cred check` + `canopy cred env` (canopy#850, `mcp/gws/lib/session-identity.ts`): the agent's `~/.<slug>/.env` supplies `GWS_IDENTITY_MODE=sa` + `GWS_SA_KEY_PATH` (required; `gog` mode is a tracked follow-up), optional `GWS_ROOT_FOLDER_ID` default root + `GWS_ALLOWED_DRIVE_IDS` write allowlist enforced by the Shared-Drive write probe. **A human session, a broker refusal, or a missing identity refuses every tool call — no default identity fallback.** Node toolchain lives in `plugins/canopy/package.json` (installed by `/canopy:setup` step 7 and the `/canopy:update` rsync step; `node_modules` is uncommitted). Offline vitest suites in `plugins/canopy/test/gws/` (registration-coverage drift gate, identity contract, mocked-client handler tests) run in CI via `.github/workflows/gws-tests.yml`.
-- `plugins/canopy/hooks/hooks.json` — every hook the plugin registers fires in **every** session where canopy is installed (i.e. the whole fleet), so each is built fail-open: `SessionStart` → `fleet_session_start_update.py` (§ Fleet Auto-Update), `agent_session_start.py` (an agent session: opens the person's local turn, stages borrowed credentials, `canopy cred sync`) and `repo_map_capture.py` (project dir → GitHub repo in `~/.claude/canopy/repo-map.json`); `UserPromptSubmit` → `caller_context.py` (on a prompt a canopy-web turn delivered, injects who is asking — verified or not, relationship, turn mode — and, from envelope v3, the fleet's `person` record of them (corrections first, facts, digest) — from `~/.canopy/caller/<turn_id>.json`, and leaves the `by-task/<task>.json` parent record `provenance.py` reads); `PreToolUse` → `agent-core/gating_guard.py --session` (the fleet gating hook: applies the session's agent's rails, canopy#849), `profile_guard.py` (confines a CALLER's session to the capability its agent's declared interface grants; owner/admin sessions are untouched) and `one_shot_turn_guard.py` (in a one-shot cloud-runner turn, refuses background work that would die when `claude -p` exits, #755) and `sleep_cap_guard.py` (refuses a FOREGROUND shell wait — `sleep`, perl/python sleeps, loops counted by iterations, bounded by `timeout` and the Bash tool timeout — over 270 s, because the prompt cache expires after 5 min idle and every longer wait re-writes the whole context; `CANOPY_SLEEP_CAP_SECONDS` overrides); no `PostToolUse` hook. `Stop` → `status_line_guard.py` (no status line while the person is present), `agent_task_guard.py`, `closeout_guard.py` (no unattended "safe to close" on a non-CLOSED closeout verdict), `local_turn_sync.py`; decide-guard is a per-person opt-in (`canopy decide-guard stamp --user`), never plugin- or agent-repo-wide.
-- `.claude-plugin/marketplace.json` — marketplace manifest listing **two** plugins: `canopy` (versioned with `VERSION`) and `canopy-web` (`plugins/canopy-web/`, #712) — a slim plugin that is just canopy-web's HTTP MCP server with browser sign-in, for people who want canopy-web from Claude without the canopy runtime. It versions on its own (`1.0.0`); `canopy version bump` does not touch it.
-
-## Important: Hook Must Use Stdlib Only
-Plugin hooks (`plugins/canopy/hooks/*.py`) run under whatever python3 `hooks/python.sh`
-finds — often the system python, which may not have PyYAML. The repo map uses JSON
-(not YAML). Any hook code must use only stdlib modules.
-
-## Skill Authoring: Bash Positional Parameters
-Bash code blocks in skill/command markdown files must NOT use `$1`, `$2`, etc.
-for function arguments. Claude Code's slash-command argument expansion strips
-these before the shell sees them, causing silent failures (empty strings).
-
-**Workaround:** Move complex bash logic to standalone scripts in `bin/` or
-`scripts/` and invoke them from the skill. Simple inline commands (no functions)
-are fine.
-
-## Skill Authoring: Command/Skill Name Collisions
-
-If `commands/<name>.md` AND `skills/<name>/SKILL.md` both exist, the Skill tool
-silently resolves `canopy:<name>` to the slash-command file — the actual
-SKILL.md never lands in context, and the agent improvises from memory.
-
-**Rule:** colliding commands MUST follow Pattern B — read SKILL.md from disk
-explicitly before following it:
-
-```bash
-python3 -c "import json; d=json.load(open('$HOME/.claude/plugins/installed_plugins.json')); print(d['plugins']['canopy@canopy'][0]['installPath'] + '/skills/<name>/SKILL.md')"
-```
-
-Then `Read` that path and follow the SKILL.md exactly.
-
-`tests/test_command_skill_collisions.py` enforces this — every colliding
-command must reference `skills/<name>/SKILL.md` in its body. Adding a new
-colliding command without Pattern B will fail CI.
-
-## Skill Authoring: Built-in Command Namespace
-
-Claude Code reserves a set of built-in slash command names (`/help`, `/clear`,
-`/doctor`, `/config`, `/compact`, `/model`, `/fast`, `/login`, `/logout`,
-`/agents`, `/mcp`, `/permissions`, etc.). Naming a plugin skill / command /
-agent the same as a built-in causes a silent collision:
-
-- `canopy:<name>` invocations route to the built-in handler, NOT your skill
-- Worse, the entire skill description block can be truncated from the system
-  prompt at session start — historically 142 skill descriptions vanished when
-  `canopy:doctor` collided with native `/doctor`
-
-**Rule:** before naming a new skill/command/agent, check whether the bare name
-already works as a slash command in a stock Claude Code session. If yes, pick a
-different name. The canonical fix when a native built-in lands on top of an
-existing plugin entry is to namespace-prefix it (e.g. `doctor` →
-`canopy-doctor`, shipped in v0.2.79).
-
-`tests/test_builtin_command_collisions.py` enforces this — adding a new
-plugin entry with a reserved name will fail CI. The reserved-set list lives
-in that test; update it when Claude Code introduces new built-ins.
-
-## Skill Authoring: Description Limits
-
-Claude Code surfaces every installed skill's frontmatter `description` in the
-system prompt at session start. Two budgets apply:
-
-- **Per-skill cap**: Anthropic's authoring guidance recommends ≤1024 chars
-  per description. Over the cap, Claude Code truncates.
-- **Aggregate cap**: across all installed skills, the system prompt has a
-  hard ceiling. Once it's hit, subsequent skills are dropped wholesale and
-  Claude Code prints something like "N skills dropped" with no detail on
-  which ones.
-
-When a session reports dropped skills, run:
-
-```bash
-canopy skills budget               # ranked size table + aggregate gauge
-canopy skills dropped              # simulated drop list under default caps
-canopy skills dropped --aggregate-limit 30000   # try a different cap
-```
-
-The defaults (`--per-skill-limit 1024 --aggregate-limit 1500`) are
-conservative — `--aggregate-limit` is the one to tune since the real
-Claude Code ceiling is not publicly documented and shifts with releases.
-
-## Cache Path Resolution
-
-Plugin caches live at `~/.claude/plugins/cache/<plugin>/<plugin>/<version>/`
-(double-nested by design — the inner dir name matches the outer plugin name).
-The version segment changes every time the plugin is upgraded, so any path
-constructed by string-concatenating a known version is fragile.
-
-**Always derive the install path from `installed_plugins.json` instead of
-hardcoding a version.** Canonical one-liner:
-
-```bash
-python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])"
-```
-
-For the same shape per skill, use `canopy skills list --json-output` —
-each entry now carries `installed_version` and `cache_path` fields. No more
-string-concatenated versions.
-
-## Plugin Runtime Bundle — how skills reach the Python runtime
-
-The installed plugin cache is **self-contained**: the updaters (`/canopy:update`
-Step 2 and the fleet session-start hook) sync the repo-root runtime — `src/`,
-`scripts/`, `evals/`, `pyproject.toml`, declared in
-`plugins/canopy/.claude-plugin/runtime.json` — into `<installPath>/runtime/`
-alongside the plugin. The runtime a skill executes is therefore version-locked
-to the installed plugin **by construction** (same rsync, same SHA), not by a
-process step that can be forgotten (the global CLI once drifted 67 versions
-stale exactly that way).
-
-**The ONE idiom.** Every bash block in plugin markdown that touches the runtime
-starts with the canonical two-liner and goes through the shared resolver:
-
-```bash
-_CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
-CANOPY_ROOT="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR: canopy runtime not found — run /canopy:update"; exit 1; }
-```
-
-then either `uv run --project "$CANOPY_ROOT" canopy <subcommand> …` (CLI; cwd
-is preserved, so cwd-sensitive commands like `test-audit collect .` still work)
-or `(cd "$CANOPY_ROOT" && uv run python -m scripts.ddd.<module> …)` (module
-runs). `uv` materializes `.venv` inside the runtime dir on first use.
-
-Resolver ladder (`plugins/canopy/scripts/canopy-runtime.sh`): `$CANOPY_RUNTIME_ROOT`
-env override → `<plugin>/runtime` (production) → the script's containing repo
-(when run from a checkout's copy) → marketplace clone (bootstrap/fresh-install
-gap, self-heals next session start) → dev checkouts **last**, deliberately — an
-edited checkout must never silently shadow the installed version.
-
-**Rules (CI-enforced by `tests/test_plugin_runtime_resolution.py`):**
-- Plugin markdown must NOT reference `~/emdash-projects/canopy`,
-  `~/emdash/repositories/canopy`, or `~/.claude/plugins/marketplaces/canopy`
-  directly, and must not use bare `uv run canopy`. Allowlisted exceptions
-  (update/setup/doctor/video-engine) are enumerated in the test with reasons.
-- The global `canopy` CLI on PATH is a convenience (humans at a shell, fleet
-  shims like ACE's `bin/ace-email`) — **never a skill dependency**.
-- `video-engine/` is the one dev-checkout exception: Remotion's `node_modules`
-  is too heavy to bundle per plugin version, so local render resolves a dev
-  checkout where `/canopy:setup` ran `npm ci`, with a loud error otherwise.
-- Canopy's hooks are **plugin-managed** (`plugins/canopy/hooks/hooks.json` →
-  `${CLAUDE_PLUGIN_ROOT}/hooks/…`). Repo-root `hooks/post_tool_use.py` is the
-  retired capture hook, a no-op kept for machines whose settings.json still
-  registers it; `/canopy:setup` removes that legacy entry.
-
-## Tool Hygiene (Read, Bash, parallel calls)
-
-A few repeat foot-guns that have shown up in session reviews:
-
-- **Read before Edit, with absolute paths.** The Edit tool errors with "File
-  has not been read yet" if you try to edit a file you haven't first read in
-  the current session. Worktree-relative paths (`./src/foo.py`) sometimes
-  resolve to a different file than the absolute path that Edit later asks
-  for, so always Read with the absolute path you'll Edit with.
-- **Bash parallel-call sibling cancellation.** When you fire several Bash
-  tool calls in one turn, a sibling failure can silently cancel still-running
-  calls and discard their output. If you need every result, run them
-  sequentially or split across turns. Reserve parallel Bash for genuinely
-  independent reads where partial loss is OK.
-- **Don't extract YAML with awk/sed/grep.** Folded scalars (`>`, `|`),
-  multi-line strings, and quoted block keys break naive line-based parsing
-  and produce silent truncation. Use Python's `yaml.safe_load` instead:
-  `python3 -c "import sys,yaml; d=yaml.safe_load(open(sys.argv[1])); print(d['description'])" path.md` (after stripping the frontmatter delimiters), or invoke a CLI that already does this (e.g. `canopy skills budget` for SKILL.md descriptions).
-- **Don't dump binaries with `strings` / `cat`.** A multi-MB Mach-O dump in
-  Bash output blows up your context. Pipe through `head -c 4000` or
-  `xxd | head` if you really need a peek; otherwise use a real parser.
-
-## Plugin Updates — NEVER locally patch
-
-**Golden rule: never patch the installed plugin directly — always go through the
-release flow.** There are three copies of canopy on a machine; only the first is editable:
-
-| Location | What it is | May I edit it? |
-|----------|------------|----------------|
-| `plugins/canopy/` in **this repo** | Source of truth | ✅ **Yes — all changes start here** |
-| `~/.claude/plugins/cache/canopy/canopy/<version>/` | The **installed** plugin Claude Code actually runs | ❌ **Never hand-edit** |
-| `~/.claude/plugins/marketplaces/canopy/` | The update **channel** `/canopy:update` pulls from | ❌ Never edit/develop here — **and never leave it on a branch** |
-
-**The channel clone must stay on `main`.** Both updaters act on whatever ref is
-checked out: the skill's `git pull origin main` merges main INTO a parked branch,
-and the fleet hook's `git reset --hard origin/main` *rewrites that branch's ref*.
-On 2026-07-28 the clone was found on `ddd/preflight-applies-scroll`, and the hook
-had moved that branch to main's tip (the commits survived only because they were
-already pushed). Both paths are now guarded — the skill checks out `main` first,
-and the hook switches to `main` and refuses when doing so would strand uncommitted
-work — but if an update ever looks wrong, check first:
-`git -C ~/.claude/plugins/marketplaces/canopy rev-parse --abbrev-ref HEAD`.
-
-**CRITICAL: Never directly copy, rsync, or write files into `~/.claude/plugins/cache/`
-or edit `~/.claude/plugins/installed_plugins.json` by hand.** This is "local patching"
-and it bypasses the plugin system, creates version mismatches, and makes bugs hard to
-diagnose. If you feel the urge to locally patch, STOP — use `/canopy:update` instead.
-
-### ⛔ STOP — the #1 mistake: forgetting to bump VERSION
-
-**If you change ANYTHING under `plugins/canopy/` (skills, commands, agents, the
-`.claude-plugin/plugin.json` `description`, anything) you MUST bump the version.**
-
-The updaters now compare commit SHAs, so an unbumped change does reach installs — but
-under a version label it shares with the previous code. The plugin cache is keyed by
-version, so the sync overwrites that dir in place (under any session already running
-from it) and the label can no longer tell you which code a machine has — the same
-hazard the merge guard below exists for. The bump
-keeps every release a distinct cache dir and an honest `/plugin` label.
-
-This is a silent failure mode (PR #49 merged exactly this way, back when the check
-was advisory). `check-version` is now a **required status check** on `main`, so a
-missing/bad bump blocks the merge; the Claude Code push guard (below) catches it earlier.
-
-**The fix is layered prevention:**
-
-1. **`canopy version bump`** — the only correct way to advance the version. Fetches
-   origin/main, picks `max(local, origin/main) + patch+1`, writes every version file.
-2. **Local pre-push hook** — refuses to push a branch where `plugins/canopy/` changed
-   but VERSION didn't advance beyond origin/main. Catches the mistake before the PR
-   is even opened. See § Git Hooks below — you must opt in with `git config core.hooksPath`.
-3. **CI version-check workflow** — runs `canopy version verify-bump` on every PR; a
-   **required status check** on `main`, so a red `check-version` blocks the merge.
-
-**Mental checklist before EVERY canopy commit touching `plugins/canopy/`:**
-
-1. Did I run `uv run canopy version bump`? (It updates every version file together —
-   `VERSION`, `plugins/canopy/.claude-plugin/plugin.json`, both `canopy` fields in
-   `.claude-plugin/marketplace.json`, and `pyproject.toml`. Hand-editing a subset is how
-   marketplace.json drifted in #120.)
-2. Do they agree? `canopy version verify`; CI's version-check fails on any mismatch.
-3. Did the pre-push hook pass?
-
-## Git Hooks
-
-### Claude Code PreToolUse guard (auto-active, no opt-in) — the primary defense
-
-Because **100% of canopy commits are AI-generated through Claude Code**, the
-most reliable guard is a Claude Code `PreToolUse` hook, not a git hook. It is
-checked into `.claude/settings.json` and loads automatically — no
-`git config` step, works regardless of what emdash sets `core.hooksPath` to.
-
-- `hooks/pre_tool_use_version_bump_guard.py` — intercepts any `git push` Bash
-  call and runs the same `verify_bump_when_plugin_changed` check CI runs. If the
-  branch touched `plugins/canopy/` without advancing VERSION past `origin/main`,
-  it **denies the push** and hands the agent the exact fix (`canopy version
-  bump`). This catches both failure modes that historically reddened CI: (A)
-  forgot to bump, and (B) a parallel worktree already claimed your patch number.
-  Override with `CANOPY_ALLOW_PUSH_NO_BUMP=1`.
-- `hooks/pre_tool_use_pr_merge_guard.py` — intercepts `gh pr merge` and re-runs the
-  bump check against a **freshly fetched** `origin/main`. Closes the window the push
-  guard can't see: CI checks your branch against main *as it was when CI ran*, and
-  GitHub does not re-run it when the base moves, so two PRs opened from the same base
-  can both bump to N and both merge (this happened 2026-07-28 — #423 and #429 both
-  landed v0.2.369 forty seconds apart). Two commits sharing a version makes the
-  version-keyed plugin cache ambiguous: the second merge's cache dir already exists
-  holding the first one's code, which is how a merged fix reaches nobody. Judges only
-  the checked-out branch's PR; fails open on anything it can't determine. Override
-  with `CANOPY_ALLOW_MERGE_NO_BUMP=1`.
-- `hooks/pre_tool_use_plugin_cache_guard.py` — blocks local-patching of the
-  plugin cache (`CANOPY_ALLOW_CACHE_PATCH=1` to override).
-- `hooks/pre_tool_use_main_branch_guard.py` — keeps the **primary** canopy checkout
-  (`~/emdash-projects/canopy`, a real `.git` dir) on `main`: blocks `git
-  checkout/switch` to a non-main branch and branch creation there. Feature work goes
-  in an emdash **worktree**; the global `canopy` CLI is deployed from main, so
-  branching in the primary checkout silently changes what `canopy` runs (this is how
-  a fresh session got `No such command 'harvest'`). Worktrees branch freely.
-  Override `CANOPY_ALLOW_PRIMARY_BRANCH=1`.
-
-This is the only guard that fires in practice for AI-driven worktree flow — see
-the git hooks below for why.
-
-### Git hooks (opt-in, belt-and-suspenders) — dormant unless installed
-
-Two hooks ship in `scripts/hooks/`. They are **inert until you opt in** with:
-
-```bash
-git config core.hooksPath scripts/hooks
-```
-
-In emdash worktrees `core.hooksPath` typically points at the main checkout's
-default `.git/hooks` (which has no canopy hooks), and no human runs the opt-in —
-so these never fired, which is exactly why CI kept catching missing bumps. The
-Claude Code guard above supersedes them for the AI flow; keep these for humans.
-
-- `pre-commit` — when `VERSION` or `plugins/canopy/.claude-plugin/plugin.json` is staged,
-  runs `canopy version verify` to refuse a half-bump (one file edited, the other not).
-- `pre-push` — refuses direct pushes to `main` AND runs `canopy version verify-bump`
-  on the branch. Refuses the push if `plugins/canopy/` changed without VERSION
-  advancing past origin/main.
-
-Bypass either hook with `git push --no-verify` / `git commit --no-verify` — almost
-always the wrong call. They only catch earlier what the required `check-version` check
-enforces server-side anyway.
-
-### Update workflow (the ONLY way to update)
-1. Make changes to skills/commands/agents in `plugins/canopy/` **OR** to the CLI/package in
-   `src/orchestrator/`. **Either kind you want deployed bumps VERSION** — canopy is one versioned
-   artifact (plugin + CLI ship together). The updaters now compare commit SHAs, so an unbumped
-   change does still sync — but into the cache dir of a version label it shares with older code,
-   which is the ambiguity the merge guard exists to prevent. When in doubt, bump.
-2. Bump the **patch version** with `uv run canopy version bump` — do NOT hand-edit (see
-   the STOP block above for what it writes and why).
-3. Commit, push, PR, and `gh pr merge <n> --auto` — exactly as in § Shipping Changes
-   (the maintainer does NOT review; merge it yourself).
-4. **IMMEDIATELY after pushing**, run `/canopy:update` in the current session.
-   This is mandatory — it pulls from GitHub, creates a new cache dir, updates
-   `installed_plugins.json` (the **plugin**), AND (Step 3 of the update skill)
-   **redeploys the `canopy` CLI** — `uv tool install --reinstall --force` from the
-   marketplace clone. **canopy is a plugin AND a CLI; both ship from the same `main`.** The CLI
-   is NON-editable — never an editable install of `~/emdash-projects/canopy` (that
-   couples `canopy` to your dev branch and strands new commands; for CLI dev use
-   `uv run` from a worktree). Without `/canopy:update`, the current session runs
-   stale plugin AND stale CLI. Do NOT skip.
-5. Run `/reload-plugins` to activate the new plugin version in the current session
-
-New sessions auto-detect the version bump on startup — no manual steps needed.
-
-### How it works
-- `~/.claude/plugins/known_marketplaces.json` — marketplace entry pointing at this git repo
-- `~/.claude/plugins/installed_plugins.json` — installed plugin entry with version + commit SHA
-- Cache dir is keyed by version: `~/.claude/plugins/cache/canopy/canopy/<version>/`
-- On session start, canopy's own `fleet_session_start_update.py` hook syncs any plugin whose
-  installed `gitCommitSha` differs from `origin/main` (SHA-driven, not version-driven — see
-  § Fleet Auto-Update); `/canopy:update` is the same sync run by hand, plus the CLI deploy
-- `/reload-plugins` only reloads skills from the existing cache — it does NOT detect
-  version changes or re-install. That's why `/canopy:update` must run first.
-- Releases are **version-on-`main`** — there are no git tags. "Released" means merged to
-  `main` with the version bumped; `/canopy:update` is what distributes it.
-
-## Fleet Auto-Update (session-start self-heal) — issue #357
-
-Fleet agents (eva, hal, ada, echo, ace) run from a **versioned plugin cache**, not
-their repo, so a merge to an agent's `main` was invisible to the running harness
-(interactive sessions AND cron turns) until someone hand-ran an update skill —
-installs froze for days. Two pieces, both shipped by canopy, close this:
-
-**A. Session-start auto-updater (canopy plugin hook — the whole fleet).** canopy is
-installed user-scope alongside every agent, so its `plugins/canopy/hooks/hooks.json`
-registers an **`async` SessionStart** hook →
-`plugins/canopy/hooks/fleet_session_start_update.py`. On every session it discovers the
-fleet (canopy + any plugin shipping `config/agent.json`), and for each one **git-pulls
-the marketplace clone, rsyncs the plugin source into a version-keyed cache dir, `npm
-install`s if needed, and patches `installed_plugins.json`** — the same thing
-`/canopy:update` does by hand, automated. It is **SHA-driven** (compares installed
-`gitCommitSha` vs `origin/main`), so it self-heals even when a version bump was
-forgotten — the failure mode that makes a version-keyed `claude plugin update` a silent
-no-op. Because it does the sync + registry-patch itself, the version bump is NOT
-load-bearing; it's for label honesty only.
-  - High blast radius → built to be inert: `async` (never blocks startup), a
-    non-blocking lock (concurrent sessions don't stack), timeout-bounded subprocesses,
-    all errors swallowed, one line per run to `~/.claude/canopy/fleet-update.log`,
-    emits nothing on stdout.
-  - **Opt out per machine:** `CANOPY_FLEET_AUTOUPDATE=0` or `touch
-    ~/.claude/canopy/fleet-autoupdate-disabled`. Tuning: `CANOPY_FLEET_UPDATE_PLUGINS`
-    (explicit allowlist), `CANOPY_FLEET_UPDATE_EXCLUDE`, `CANOPY_FLEET_UPDATE_MIN_INTERVAL`.
-
-**B. Bump-on-every-merge (per-agent repo; canopy owns the template).** A
-`.github/workflows/auto-version-bump.yml` bumps the PATCH version in `plugin.json` +
-`marketplace.json` (kept in lock-step by `scripts/bump-plugin-version.py`) on **every**
-merge to `main` — bumping often is intentional. This keeps the version label +
-`claude plugin list` honest and closes the "skill changed, version forgotten" gap. The
-agent factory (`canopy create-agent`) stamps both files into new agents; existing agents
-get them distributed as PRs. GITHUB_TOKEN pushes don't retrigger workflows, and the
-bump commit carries `[skip bump]` — so no loop.
-
-## Per-Project Canopy State
-
-Per-project canopy state lives at `<repo>/.canopy/`, committed to the project's git repo:
-
-- `<repo>/.canopy/pm/` — `canopy:product-management` state (autonomous.yaml, context.md, learnings.md, runs/). Resolved via `plugins/canopy/skills/product-management/scripts/resolve_pm_dir.sh` from any PM markdown file or agent.
-- `<repo>/.canopy/lenses/` — per-project lens descriptors (PR #37).
-- `<repo>/.canopy/run-artifacts.yaml`, `<repo>/.canopy/README.md` — project run-artifact map and onboarding.
-
-Outside a git repo, the PM resolver falls back to `$HOME/.canopy/pm/<basename-of-cwd>/`.
-
-The global "self-improvement brain" (`~/.claude/canopy/observations/`, `proposals/`, `repo-map.json`, etc.) stays under `$HOME/.claude/canopy/` — that data is intentionally cross-project on a single machine.
-
-## Repo Notes (DDD & rendering)
-
-These live at the repo root (outside `plugins/canopy/`); `scripts/` reaches the
-installed plugin through the runtime bundle, `video-engine/` does not:
-
-- `scripts/ddd/` (DDD loop helpers). Since the runtime bundle (PR #395),
-  `scripts/ddd/` ships INSIDE the plugin runtime: skills resolve
-  `DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")"` (the canonical
-  two-liner in § Plugin Runtime Bundle) and run
-  `(cd "$DDD_REPO" && uv run python -m scripts.ddd.<mod> …)`.
-- `scripts/narrative/` — the neutral narrative substrate (schemas, models,
-  `${var}` substitution) extracted out of `scripts.ddd` so non-DDD callers can
-  reuse it (PR #160, repointed in #162). DDD builds on top of it.
-- `video-engine/` — the general Remotion video renderer (PR #191). Both the
-  walkthrough and DDD render paths produce video through it;
-  `video-engine/render_locally.py` is the local entry point. Not bundled (see the
-  dev-checkout exception in § Plugin Runtime Bundle).
-- DDD pause gates (`concept_change`, `external_release`, the narrative-agreement gate)
-  post to the **canopy-web review surface**, never the built-in `AskUserQuestion` tool.
-  See `plugins/canopy/agents/ddd.md` § Pause policy.
-
-## Testing
-- `uv run --extra browser pytest` from project root (~4,800 tests; `testpaths = ["tests"]`). The browser extra is **required**, not optional: without it, `scripts/walkthrough/record_video.py` calls `sys.exit` on its missing `playwright` import during collection and the whole session aborts with `INTERNALERROR` after ~690 tests — a plain `uv run pytest` never runs the suite. It installs only the `playwright` package (no browsers), the same as CI (`.github/workflows/python-tests.yml`).
-- `packages/canopy_agent_factory/tests/` sits outside `testpaths`; run it with `(cd packages/canopy_agent_factory && uv run --with pytest pytest -q)` as CI does.
+- Direct merge to main is the fallback only, for no `gh` or a conflict that needs hand-resolving.
+
+## Git worktrees
+
+You're usually in a worktree (`git rev-parse --git-dir` contains `/worktrees/`), where `git checkout main` fails.
+
+- A machine can hold several clones of this repo, each parenting worktrees. `git worktree list` says which is yours.
+- `main` is often checked out in a worktree, not the clone. Refresh it with `git -C <worktree-on-main> merge --ff-only origin/main`.
+- A clone's local `main` can sit far behind `origin/main`, which silently bases new worktrees on old code. Before branching: `git fetch origin` and confirm `git rev-list --left-right --count origin/main...main` reads `0 0`.
+- `hooks/pre_tool_use_main_branch_guard.py` keeps non-worktree checkouts on `main`, but only sees `git` run as a Bash tool call; emdash's own switches bypass it. Check, don't assume.
+- Never a bare `git stash`: the stack is shared across worktrees and concurrent sessions. Use `git stash push -u -m "<tag>"`.
+
+## Invariants
+
+- **Framework must never import product; product imports framework freely.** The only product→framework coupling lives in the `cli`, `pipeline` and `server` hubs. It's a direction, not a wall: don't split `orchestrator/` into subpackages. Enforced by `tests/test_plugin_boundary.py`; tiers in `src/orchestrator/TIERS.md`.
+- **Every canopy-web call resolves transport and auth through `src/orchestrator/canopy_web.py`.** Never the operator's token in an agent's session: it raises `AgentIdentityError`. → `docs/architecture/session-identity.md`
+- **Never patch the installed plugin or `installed_plugins.json`; the channel clone stays on `main`.** Guarded by `hooks/pre_tool_use_plugin_cache_guard.py`. → `docs/architecture/releasing.md`
+- **Plugin hooks use stdlib only**: they run under whatever python3 `hooks/python.sh` finds, often without PyYAML. Every hook fires in every session on the fleet, so each is fail-open.
+- **Plugin markdown reaches Python through the runtime resolver**, never a dev-checkout or marketplace path, never bare `uv run canopy`, never the global CLI. Enforced by `tests/test_plugin_runtime_resolution.py`. → `docs/architecture/plugin-runtime.md`
+- **Never hardcode a plugin cache path**: derive it from `installed_plugins.json` or `canopy skills list --json-output`. → `docs/architecture/plugin-runtime.md`
+- **Skill authoring**: no `$1`/`$2` in skill bash blocks; a command colliding with a skill follows Pattern B; never reuse a built-in slash-command name; descriptions ≤ 1024 chars. Enforced by `tests/test_command_skill_collisions.py`, `tests/test_builtin_command_collisions.py` and `canopy structure-drift`. → `docs/architecture/skill-authoring.md`
+- **`src/orchestrator/inbox_rules.py` is vendored verbatim by canopy-web's runner**, and `tests/test_inbox_rules.py` pins its hash: edit it, re-vendor, update both pins.
+- **The Canopy vault is the only credential source.** `src/orchestrator/onepassword.py` is unreferenced on purpose; don't wire it back in.
+- **A rail or process fix in `plugins/canopy/agent-core/` reaches the fleet by plugin update, with no per-agent PR.** Agents register no gating hook of their own: canopy's `gating_guard.py --session` merges the baseline and the session's agent's rails. → `docs/agent-operating-model.md`
+- **DDD pause gates post to the canopy-web review surface**, never `AskUserQuestion`. → `plugins/canopy/agents/ddd.md`
+- **Never extract YAML with awk/sed/grep**: folded scalars and quoted keys truncate silently. Use `yaml.safe_load` or a CLI that does.
+
+## Tool hygiene
+
+- Read with the same absolute path you'll Edit with; worktree-relative paths can resolve to a different file.
+- A failing parallel Bash call can cancel its siblings and discard their output. If you need every result, run them in sequence.
+- Don't dump binaries with `strings` or `cat`; pipe through `head -c 4000`, or use a real parser.
+
+## Per-project state
+
+- `<repo>/.canopy/` is committed to the project: `pm/` (resolved by `plugins/canopy/skills/product-management/scripts/resolve_pm_dir.sh`; outside a git repo, `$HOME/.canopy/pm/<basename-of-cwd>/`), `lenses/`, `run-artifacts.yaml`, `README.md`.
+- `~/.claude/canopy/` holds the cross-project brain on a single machine (`observations/`, `proposals/`, `repo-map.json`). Canopy keeps no session log; Claude Code's transcripts under `~/.claude/projects/` are the record.
+
+## Where to read before touching X
+
+| Touching | Read |
+|---|---|
+| A `canopy` command | `docs/architecture/cli-reference.md` (grep it), and `canopy <cmd> --help` |
+| Any module | `docs/architecture/modules.md` (grep it), `src/orchestrator/TIERS.md` |
+| Releases, version bumps, the auto-updater, guards | `docs/architecture/releasing.md` |
+| How skills reach Python, cache paths | `docs/architecture/plugin-runtime.md` |
+| A skill, command or agent file | `docs/architecture/skill-authoring.md` |
+| `analyze` / `improve` / `agent-review`, prompt loading | `docs/architecture/session-analysis.md` |
+| Identity, `canopy cred`, the vault, local use | `docs/architecture/session-identity.md` |
+| Email, Docs, gog | `docs/architecture/shared-gog-gdrive.md` |
+| `/api/agents` client, provenance headers | `docs/architecture/agent-client-rest-contract.md` |
+| Agent setup stages | `docs/architecture/agent-setup-lifecycle.md` |
+| Agent threads | `docs/architecture/agent-threads.md` |
+| The agent model and factory | `docs/agent-operating-model.md` |
+| Knowledge bases | `docs/knowledge-bases.md` |
+| Vocabulary | `docs/GLOSSARY.md` |
+| How docs stay true | `docs/documentation.md` |
+| Fleet process, as agents read it | `plugins/canopy/agent-core/` (`using-canopy.md` routes the rest) |
