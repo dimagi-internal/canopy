@@ -293,43 +293,6 @@ def agent_sites_remove(slug, site):
         raise click.ClickException(str(e))
 
 
-@agent.group("interface")
-def agent_interface():
-    """Deprecated: use `read-mode` and `sites`.
-
-    An agent's DECLARED INTERFACE — the capabilities it publishes, each a door that
-    says only what it IS: description, entry, tools, bash, read_paths, write_paths, input,
-    pages, sites, ceiling, own_login, data. Who may use one is NOT here: it is the agent's
-    ACCESS LIST on canopy-web (roles read_only < read_write < editor < admin < owner =
-    permissions read/write/agent_edit/admin/own; a line may name one capability instead).
-    `role:`, `callers:` and `full:` are retired and refused. LIVE STATE held on canopy-web,
-    never a file in the agent's repo; also editable on the agent's Overview page."""
-
-
-@agent_interface.command("get")
-@click.option("--slug", required=True)
-def agent_interface_get(slug):
-    """Print the interface as saved (YAML), or the parsed form if it has none."""
-    try:
-        body = _client(slug).get_interface()
-    except (CanopyError, RuntimeError) as e:
-        raise click.ClickException(str(e))
-    click.echo(body.get("source") or json.dumps(body.get("interface") or {}, indent=2))
-
-
-@agent_interface.command("set")
-@click.option("--slug", required=True)
-@click.option("--file", "file_", required=True, type=click.Path(exists=True, dir_okay=False),
-              help="YAML to save — any path; it is not read from, or kept in, the repo.")
-def agent_interface_set(slug, file_):
-    """Save the interface on canopy-web. Validated there; a bad file is refused
-    with the reason. Needs the agent's owner or an admin."""
-    try:
-        _emit(_client(slug).put_interface_source(Path(file_).read_text(encoding="utf-8")))
-    except (CanopyError, RuntimeError) as e:
-        raise click.ClickException(str(e))
-
-
 @agent.command("tasks-create")
 @click.option("--slug", required=True)
 @click.option("--json", "json_file", required=True, type=click.Path(exists=True),

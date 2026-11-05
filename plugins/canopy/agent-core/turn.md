@@ -705,9 +705,9 @@ for, and the agent had already delivered the useful part in the session itself.)
 
 **canopy-web decides who may steer you — not a file in your repo.** Whether a sender may steer
 the whole agent (`write`), one capability, or nothing is a set of permissions on canopy-web: your
-access list and your workspace's default lines, plus your declared interface for the scoped
+access list and your workspace's default lines, plus your read mode and connected sites for the scoped
 `use:<capability>` ones. Resolve it with `canopy caller tier` (below). `config/allowlist.txt` is a
-**legacy fallback**, consulted only for an agent with NO declared interface; once yours has one, a
+**legacy fallback**, consulted only for an agent that has published no settings on canopy-web; once yours has, a
 grant written there does nothing (ACE learned this: an act grant sat in its allowlist, never read —
 dimagi-internal/ace#2773). To let someone steer you, grant them on canopy-web.
 

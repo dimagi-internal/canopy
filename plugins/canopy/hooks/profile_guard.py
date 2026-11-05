@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Confine a CALLER's session to its capability — the enforcement half of the declared interface.
+"""Confine a CALLER's session to its capability — the enforcement half of read mode and connected sites.
 
 canopy-web decides, per turn, whether the person who asked is the agent's owner
 or an admin (full profile) or a caller — anyone else — who reaches only the
