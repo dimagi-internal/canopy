@@ -1652,7 +1652,7 @@ def test_read_thread_human_mail_not_flagged_automated():
 
 def test_read_thread_flags_a_noreply_from_with_no_sender_header():
     """SES event receipts: From is SNS's no-reply, and nothing else says 'machine' — no
-    Auto-Submitted, no Precedence, no Sender. They read as human and started 14 `ask`
+    Auto-Submitted, no Precedence, no Sender. They read as human and started 14 read-mode
     sessions on one ace@ thread (1a0d0a1632cfde4f)."""
     payload = {"mimeType": "text/plain",
                "headers": [{"name": "From",

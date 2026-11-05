@@ -89,7 +89,7 @@ def test_a_domain_grant_is_act_without_any_allowlist():
     assert got["tier"] == ACT and "dimagi-associate.com" in got["reason"]
 
 
-def test_a_capability_grant_is_a_confined_caller_even_if_allowlisted():
+def test_a_read_mode_grant_is_a_confined_caller_even_if_allowlisted():
     env = {**_env("beth@dimagi.com", verified=False), "granted_by": "capability:ask"}
     assert resolve(env, RULES)["tier"] == CALLER
 
@@ -152,7 +152,7 @@ _UNPROVEN = {"email": "member@example.org", "role": "editor",
              "note": "domain lacks aligned DKIM/DMARC"}
 
 
-def test_an_unproven_member_on_a_capability_grant_is_still_a_caller_and_says_why():
+def test_an_unproven_member_in_read_mode_is_still_a_caller_and_says_why():
     env = {**_env("member@example.org"), "granted_by": "capability:ask",
            "unproven_member": _UNPROVEN}
     got = resolve(env, [])
@@ -209,18 +209,24 @@ def test_permissions_with_write_is_act_and_is_reported():
     assert got["tier"] == ACT and got["permissions"] == ["agent_edit", "read", "write"]
 
 
-def test_read_only_with_a_capability_line_is_caller():
+def test_read_only_in_read_mode_is_caller():
     env = _web(role="read_only", permissions=["read", "use:ask"], profile="confined",
                granted_by="capability:ask", capability={"name": "ask"})
     got = resolve(env, [])
-    assert got["tier"] == CALLER and "'ask'" in got["reason"] and got["role"] == "read_only"
+    assert got["tier"] == CALLER and "read mode" in got["reason"] and got["role"] == "read_only"
 
 
 def test_a_scoped_use_permission_alone_is_caller_even_without_profile():
     assert resolve(_web(permissions=["read", "use:ask"], granted_by=_GRANT_LINE), [])["tier"] == CALLER
 
 
-def test_read_without_a_capability_is_unlisted():
+def test_a_connected_site_is_named_in_the_reason():
+    got = resolve(_web(permissions=["read", "use:connect"], profile="confined",
+                       capability={"name": "connect"}), [])
+    assert got["tier"] == CALLER and "the connected site 'connect'" in got["reason"]
+
+
+def test_read_without_a_confined_profile_is_unlisted():
     assert resolve(_web(permissions=["read"], profile="confined"), [])["tier"] == CALLER
     assert resolve(_web(permissions=["read"], granted_by=_GRANT_LINE), [])["tier"] == UNLISTED
 
@@ -230,7 +236,7 @@ def test_permissions_beat_granted_by_and_profile():
     env = _web(permissions=["read", "use:ask"], granted_by="admin", profile="full",
                capability={"name": "ask"})
     assert resolve(env, [])["tier"] == CALLER
-    # an old word that says capability, permissions that hold write
+    # an old word that says read mode, permissions that hold write
     assert resolve(_web(permissions=["read", "write"], granted_by="capability:ask"), [])["tier"] == ACT
 
 

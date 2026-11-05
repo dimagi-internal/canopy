@@ -90,7 +90,7 @@ Run sequentially, NOT in parallel (`$CANOPY_PM_DIR` may not exist yet on a fresh
    # create a divergence where the gate certifies one snapshot and the
    # PR ships another. Two real fix-forwards on ace-web traced to this
    # exact class of bug (2026-05-01 cycles 1 + 2). Cleanest fix: refuse
-   # at the door and let the user decide.
+   # up front and let the user decide.
    if ! git diff --quiet HEAD; then
      echo "autonomous: refuse to start — worktree has uncommitted modifications:"
      git status --short | grep -vE '^\?\?'

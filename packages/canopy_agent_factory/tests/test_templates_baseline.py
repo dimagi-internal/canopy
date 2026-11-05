@@ -61,7 +61,7 @@ def test_gating_config_is_present_and_non_empty():
 
 
 def test_answer_caller_reads_the_person_block_and_resolves_the_instance():
-    """canopy#804: a confined `ask` session gets the fleet's record of the asker from the
+    """canopy#804: a read-mode session gets the fleet's record of the asker from the
     envelope (no tool needed) and must not answer about a generic template as if it were
     the asker's own instance."""
     t = templates()["skills/answer-caller/SKILL.md"]
@@ -85,3 +85,13 @@ def test_no_env_template_secrets_live_only_in_the_canopy_vault():
     # `canopy cred env` resolves the agent's Canopy vault.
     assert "canopy cred env --agent {{AGENT_SLUG}}" in setup
     assert "Agent-" not in setup
+
+
+def test_a_new_agent_gets_no_ask_command_and_no_old_words():
+    """Read mode's default entry for a new agent is `/<slug>:answer-caller`. Older agents keep a
+    `commands/ask.md` only while canopy-web still stores `/<slug>:ask`; a new one never gets it."""
+    import re
+    t = templates()
+    assert not any(path.startswith("commands/") and path.endswith("ask.md") for path in t)
+    body = t["skills/answer-caller/SKILL.md"]
+    assert not re.search(r"`ask`|:ask\b|\bdoors?\b|capabilit", body)

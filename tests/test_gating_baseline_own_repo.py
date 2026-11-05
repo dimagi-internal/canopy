@@ -556,9 +556,10 @@ OUTSIDE_OWN_WRITES = [
     GQL_COMMIT.format(repo=OWN_KEY),
     f"gh api graphql -f query='{MERGE_BY_NODE}'",
 ]
-# What each published door really runs. Taken from the agents' interfaces: `ask` on every agent
-# (with its `review-receipt` step), Trellis's `canopy` door, Oolong's Confluence reads.
-DOOR_COMMANDS = [
+# What read mode and each connected site really run. Taken from the agents' settings: read mode on
+# every agent (with its `review-receipt` step; `.hal-ask/` is its stored scratch dir), Trellis's
+# `canopy` connected site, Oolong's Confluence reads.
+CONFINED_PROFILE_COMMANDS = [
     "canopy email read --repo . 19a2",
     "canopy email review-receipt --repo . --body-file /w/.hal-ask/draft.md",
     "canopy email review-receipt --repo . --body-file /w/.hal-ask/draft.md --verdict fixed --caught x",
@@ -573,7 +574,7 @@ DOOR_COMMANDS = [
 ]
 CONFINED = {"profile": "confined", "relationship": "contact"}
 GUARDED_ASKERS = [({"perms": READ_WRITE}, "read_write"), ({"perms": ["read"], **CONFINED}, "confined"),
-                  ({"perms": ["read", "use:ask"], **CONFINED}, "a door")]
+                  ({"perms": ["read", "use:ask"], **CONFINED}, "read mode")]
 UNGUARDED_ASKERS = [
     (EDITOR, "member"),
     (["admin", "agent_edit", "read", "write"], "admin"),
@@ -651,7 +652,7 @@ UNKNOWN_REPO_WRITES = OUTSIDE_OWN_WRITES + [
     "gh release create v1", "gh workflow run deploy.yml", "gh secret set X --body y",
     "if true; then gh pr merge 3; fi",
 ]
-UNKNOWN_REPO_STAYS_OPEN = DOOR_COMMANDS + [
+UNKNOWN_REPO_STAYS_OPEN = CONFINED_PROFILE_COMMANDS + [
     "git status", "git log --oneline -3", "git diff", "git commit -qm 'push it'", "git fetch origin",
     "git clone https://github.com/dimagi-internal/connect-hub.git /tmp/x",
     "gh pr view 3 -R dimagi-internal/connect-hub", "gh pr list", "gh pr checks 3", "gh pr diff 3",
@@ -683,7 +684,7 @@ def test_a_guarded_turn_with_no_repo_known_fails_closed(world, cmd, asker, label
 
 @pytest.mark.parametrize("asker, label", GUARDED_ASKERS)
 @pytest.mark.parametrize("cmd", UNKNOWN_REPO_STAYS_OPEN)
-def test_a_guarded_turn_with_no_repo_known_keeps_reads_issues_forks_and_its_doors(world, cmd, asker, label):
+def test_a_guarded_turn_with_no_repo_known_keeps_reads_issues_forks_and_its_profiles(world, cmd, asker, label):
     _guarded(world, asker, "")
     assert hook(world, cmd, cwd=world["other"])[0] == 0, (cmd, label)
 
@@ -691,8 +692,8 @@ def test_a_guarded_turn_with_no_repo_known_keeps_reads_issues_forks_and_its_door
 @pytest.mark.parametrize("asker, label", GUARDED_ASKERS)
 @pytest.mark.parametrize("repo", [OWN_KEY, ""])
 @pytest.mark.parametrize("where", ["agent", "other", "plain"])
-@pytest.mark.parametrize("cmd", DOOR_COMMANDS)
-def test_no_door_is_broken_wherever_it_runs(world, cmd, where, repo, asker, label):
+@pytest.mark.parametrize("cmd", CONFINED_PROFILE_COMMANDS)
+def test_no_confined_profile_is_broken_wherever_it_runs(world, cmd, where, repo, asker, label):
     _guarded(world, asker, repo)
     assert hook(world, cmd, cwd=world[where])[0] == 0, (cmd, where, repo, label)
 

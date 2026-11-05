@@ -3,7 +3,7 @@
 On a box whose runner names a unit secret ($CANOPY_GOG_SECRET_FILE), each agent's mail token
 lives in its own gog home (~/.gog/<slug>/) under its own keyring password,
 HKDF-SHA256(secret, info="gog:"+slug). There is no box-wide password, so a confined turn's
-mail capability opens only its own agent's mail (Review Focus 3). Without the variable,
+mail access opens only its own agent's mail (Review Focus 3). Without the variable,
 nothing changes.
 """
 from __future__ import annotations
@@ -77,7 +77,7 @@ def test_agent_gog_env(secret_file, tmp_path):
                    "GOG_KEYRING_BACKEND": "file"}
 
 
-# ── the confined turn's mail capability (Review Focus 3) ──────────────────────
+# ── the confined turn's mail access (Review Focus 3) ──────────────────────────
 
 def test_confined_mail_env_carries_only_this_agents_pair(secret_file, tmp_path):
     box = {

@@ -223,7 +223,7 @@ def _remove_tree(path: Path) -> None:
 def turn_readiness(repo: Path, tok, mailbox_ok: bool) -> tuple[str, Optional[bool]]:
     """(the client turns will present, can they read the mailbox). Turns ask for what
     config/agent.json declares; either FLEET client serves a fleet declaration (one app,
-    two sign-in doors — reconcile_client), so then they present the live token's. None
+    two sign-in routes — reconcile_client), so then they present the live token's. None
     when nothing was checked: never report "broken" for "did not look" (2026-09-08)."""
     from orchestrator.agent_email import AgentEmailError, is_fleet_client, resolve_email_identity
 

@@ -2,12 +2,12 @@
 
 **Rule:** every stage has one path, shared by the browser and the CLI.
 
-The rule: **each stage has exactly one implementation; every door calls it.** canopy-web is
+The rule: **each stage has exactly one implementation; every entry point calls it.** canopy-web is
 the source of truth for state (what exists, what a box reported); canopy holds the logic that
 needs a person's machine (a terminal); a box runs the same code a laptop
 does.
 
-| Stage | The one implementation | Doors that call it |
+| Stage | The one implementation | Entry points that call it |
 |---|---|---|
 | Create the repo | `canopy_agent_factory` (templates + push) | canopy-web New-agent page; `/canopy:create-agent` |
 | What's left to do | canopy-web `apps/agents/setup.py` (`GET /api/agents/<slug>/setup`) | Settings page, create wizard, `/canopy:create-agent` (MCP `agent_setup`) |

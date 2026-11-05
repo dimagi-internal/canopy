@@ -410,7 +410,7 @@ Then assign one:
    check.
 2. **If the "mechanical" fix turns out to need real changes, stop.**
    Re-disposition to `needs-work` and report it. `unblock` is a promise that
-   the work is done; it must not become a side door for finishing someone
+   the work is done; it must not become a way around review for finishing someone
    else's PR inside a triage.
 
 Also record, per PR, the **issues it references** (`Closes #n` / `Refs #n` in

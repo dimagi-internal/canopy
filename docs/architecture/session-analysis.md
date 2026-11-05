@@ -1,7 +1,7 @@
 # Session-analysis surfaces
 
 `analyze` / `improve` / `agent-review` / `session-review` / `select-session` are overlapping peers
-with no single front door. Reach for the row that matches your **grain**:
+with no single entry point. Reach for the row that matches your **grain**:
 
 | Grain | Use | What it is |
 |-------|-----|------------|

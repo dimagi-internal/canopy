@@ -111,8 +111,8 @@ cannot compare a target to anything. What happens depends on what the envelope s
 
 A missing envelope cannot fail closed here: the runner prunes envelopes after a week and a laptop's
 by-task record outlives them, so it is routine, and refusing would lock out the owner's own turns.
-Failing closed still leaves reads, issues and comments, a PR from a fork, and every published
-door's commands. The fix is for the owner to set your repo on canopy-web.
+Failing closed still leaves reads, issues and comments, a PR from a fork, and the commands of
+your read mode and every connected site. The fix is for the owner to set your repo on canopy-web.
 
 ## Forging
 

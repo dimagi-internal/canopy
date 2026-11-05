@@ -10,7 +10,7 @@ user), every agent gets:
   info = b"gog:" + slug, L = 32)``, lower-case hex (64 characters).
 
 So there is no box-wide ``GOG_KEYRING_PASSWORD`` that opens every agent's mail: a confined
-turn's mail capability carries exactly its own agent's pair (:func:`confined_mail_env`) and
+turn's mail access carries exactly its own agent's pair (:func:`confined_mail_env`) and
 never the secret file's path.
 
 Without ``$CANOPY_GOG_SECRET_FILE`` (a laptop, a box on older runner code) nothing here does
@@ -108,7 +108,7 @@ def agent_gog_env(slug: str, environ: Optional[Mapping[str, str]] = None,
 
 def confined_mail_env(slug: str, environ: Optional[Mapping[str, str]] = None,
                       home: Optional[Path] = None) -> dict:
-    """What a confined (caller) turn's mail capability may carry: THIS agent's gog home and
+    """What a confined (caller) turn's mail access may carry: THIS agent's gog home and
     password and nothing else — never another agent's, never the unit secret or its path.
 
     Without a unit secret (legacy) it is what the process has: the box's one keyring

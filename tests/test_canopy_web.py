@@ -187,7 +187,7 @@ def test_a_project_turn_is_not_an_agent_session(monkeypatch, tmp_path):
 
 def test_the_operator_token_copied_into_the_env_is_still_refused(monkeypatch, tmp_path):
     """`export CANOPY_WEB_PAT=$(cat workbench-token)` in a shell profile is the same
-    leak by another door: the agent would inherit the human's PAT from the env."""
+    leak by another route: the agent would inherit the human's PAT from the env."""
     _home_with_operator_token(monkeypatch, tmp_path)
     monkeypatch.chdir(_agent_repo(tmp_path, "ace"))
     monkeypatch.setenv("CANOPY_WEB_PAT", "operator-token")

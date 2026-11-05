@@ -492,7 +492,7 @@ def test_cli_dispatch_PREFLIGHTS_THE_TENANT_IT_ENQUEUES_INTO(net):
     to, while the turn goes to exactly ONE. A caller in {dimagi, connect} whose only
     runners live in dimagi would preflight GREEN off those and enqueue into connect,
     where nothing serves the repo — a 201 that queues forever, which is #428 again
-    through a different door. So the GET must carry the workspace."""
+    by a different route. So the GET must carry the workspace."""
     calls = []
     net(calls, [_runner("jj-mbp", projects=["connect-labs"])])
 

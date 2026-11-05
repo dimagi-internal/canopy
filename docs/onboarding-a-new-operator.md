@@ -124,7 +124,7 @@ Two things live here, and mixing them up is the most common early confusion.
 
 A **workspace** is canopy-web's tenant — the "team" whose agents, tasks and work
 products you can see. An agent lives in exactly one workspace **at a time**, but
-that is not a one-way door: setting an explicit `workspace` on an
+that is not irreversible: setting an explicit `workspace` on an
 already-homed agent **moves** it (`apps/agents/schemas.py`), so this is a
 reversible decision, not a commitment.
 
@@ -218,7 +218,7 @@ Only a domain-allowlisted account (any `@dimagi.com` address) or an existing
 workspace member may create a workspace — a purely invite-admitted user cannot,
 which is a deliberate security boundary rather than a bug.
 
-Creating one is **not a one-way door**: an owner can delete a workspace once it
+Creating one is **not irreversible**: an owner can delete a workspace once it
 is empty.
 
 ```bash
@@ -368,7 +368,7 @@ factory cannot do for you. Work them in this order:
    (editor or owner; takes the agent's projects, tasks, turns and skills
    with it). Deleting the GitHub repo is `gh repo delete dimagi-internal/<slug>`.
 3. **Email auth** — only if the agent has a mailbox. Needs a real Google account
-   provisioned first; ask Jonathan. Then sign the mailbox in through EITHER door — they
+   provisioned first; ask Jonathan. Then sign the mailbox in EITHER way — they
    are one Google app (`canopy` / `canopy-web`, `agent_email.FLEET_CLIENTS`) and a token
    under either serves the agent's turns:
    - browser: canopy-web `/w/<ws>/agents/<slug>/settings#credentials` → **Connect Google

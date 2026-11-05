@@ -110,7 +110,7 @@ def agent_move(slug, workspace, dry_run):
     """Move an agent to another workspace, with its history.
 
     One operation on canopy-web (POST /api/agents/{slug}/move): turns, chat
-    sessions, mail, capability grants and agent-scoped rules move together in
+    sessions, mail, leased-machine capability grants and agent-scoped rules move together in
     one transaction, or nothing does. Prints the report — per-table `tables`,
     `left_behind`, and `stops_working` (e.g. a mail address on a domain the
     destination cannot use). Needs the agent's owner or an admin, with editor

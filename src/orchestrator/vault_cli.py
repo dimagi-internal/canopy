@@ -187,7 +187,7 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh
                                "revoke it in canopy-web", err=True)
             device_key.remove_local()
         if enroll or reenroll:
-            # A token revoked before this box had a key: ask through the stranded door.
+            # A token revoked before this box had a key: ask through the stranded-box route.
             st = device_key.enroll(runner_id=runner_id, call=web, label=label, kind=kind,
                                    owner_token=token)
         elif refresh:

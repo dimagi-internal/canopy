@@ -93,7 +93,7 @@ Four things, and what each one actually enforces:
   (its unit's 32 random bytes) gives each agent its own gog home `~/.gog/<slug>/` and its own
   `file`-keyring password, `HKDF-SHA256(secret, info = "gog:" + slug)` hex
   (`orchestrator/gog_home.py`). There is no box-wide keyring password, so a confined turn's mail
-  capability (`gog_home.confined_mail_env`) carries only its own agent's pair and never the
+  access (`gog_home.confined_mail_env`) carries only its own agent's pair and never the
   secret's path — *the canopy side is shipped; the confined turn's env is built by canopy-web's
   `cloud_runner`, which does not call it yet (pending, canopy-web units work)*. Without the
   variable, gog keeps one home and one keyring, as before.

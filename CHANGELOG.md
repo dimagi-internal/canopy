@@ -9,6 +9,10 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.853] - 2026-11-05
+### Changed
+- **One vocabulary for what a caller's turn may do: read mode and connected sites.** "door", the noun "ask" and agent-sense "capability" are gone from agent-core, skills, hook messages, CLI output and comments. `canopy caller tier`, the caller-context line and the confined-session guard now say "read mode" or "the connected site '<name>'"; `/<slug>:ask` advice is `/<slug>:answer-caller`. The wire names deployed canopy-web and runners still send (`capability`, `capability:<name>`, the stamp `ask`, `use:<name>`, `.<slug>-ask/`) are unchanged and read only through named constants. Behaviour is unchanged.
+
 ## [0.2.845] - 2026-11-05
 ### Fixed
 - **Own-repo rail: the box owner's own repo chat may push.** A turn with no agent carries `permissions: []`, so in an agent's clone the rail refused even the owner of the box. It now allows such a turn when the envelope's `own_box_turn` (canopy-web) is true: a verified person, unconfined, on a box they own, the same as that person by hand. A teammate's session on someone else's box, an agent's own login, a scheduled or confined turn and an envelope without the field all stay refused. Either side can ship first; until both are live, nothing changes.
