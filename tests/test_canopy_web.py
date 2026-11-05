@@ -72,7 +72,8 @@ def test_urllib_transport_builds_request(monkeypatch):
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
-    def fake_urlopen(req):
+    def fake_urlopen(req, timeout=None):
+        captured["timeout"] = timeout
         captured["method"] = req.get_method()
         captured["url"] = req.full_url
         captured["body"] = req.data
@@ -84,6 +85,7 @@ def test_urllib_transport_builds_request(monkeypatch):
     assert (status, text) == (201, '{"created": 1}')
     assert captured["method"] == "PUT"
     assert captured["body"] == b'{"a":1}'
+    assert captured["timeout"] and captured["timeout"] > 0   # never an unbounded socket
 
 
 # --- An agent never borrows the operator's identity ----------------------------
