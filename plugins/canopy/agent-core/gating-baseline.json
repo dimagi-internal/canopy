@@ -169,7 +169,7 @@
     "email": [
       {
         "tool": "Bash",
-        "pattern": "(?:^|[\\n;&|(])\\s*gog\\s+gmail\\s+(send|reply)\\b",
+        "pattern": "(?:^|[\\n;&|(`]|\\$\\()\\s*(?:(?:[A-Za-z_]\\w*=\\S*|env(?:\\s+-\\S+)*|command|exec|sudo|nohup|time|xargs|then|do|else|!|\\{|(?:ba|z|da)?sh[ \\t]+-l?c)[ \\t]+)*[\\\"']?(?:[^\\s;&|\\\"'`]*[/\\\\])?gog(?:\\.exe)?[\\\"']?(?:[ \\t]+[^\\s;&|]+)*?[ \\t]+gmail[ \\t]+(?:-\\S+[ \\t]+(?:[^-\\s;&|]\\S*[ \\t]+)?)*?(?:send|reply)\\b",
         "message": "BLOCKED: raw `gog gmail send/reply` bypasses {slug}'s HTML wrapper and thread_id capture. Send via bin/{slug}-email (the shared canopy email engine) instead — write the body to a file and pass --body-file."
       },
       {
