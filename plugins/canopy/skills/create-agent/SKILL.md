@@ -64,8 +64,8 @@ deny-railed out of the box), `config/agent.json` (identity: mailbox + `gog_clien
 `config/allowlist.txt`, the plugin manifest, and `.claude-plugin/marketplace.json` — the manifest a
 runner installs the agent's plugin from (without it a box installs nothing).
 `config/allowlist.txt` is a **legacy fallback**: `canopy caller tier` consults it only while the
-agent has no declared interface on canopy-web. Once an interface is published, canopy-web
-(interface + workspace membership) decides who may steer the agent and the file is not read —
+agent has published no settings on canopy-web. Once it has, canopy-web
+(access list + workspace membership) decides who may steer the agent and the file is not read —
 grant people on canopy-web, not there.
 Report the path and file count back.
 

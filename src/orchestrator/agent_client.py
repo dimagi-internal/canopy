@@ -233,16 +233,6 @@ class AgentClient:
     def put_skills(self, items: list[dict]) -> dict:
         return self._call("PUT", f"/api/agents/{self.slug}/skills/", {"skills": items})
 
-    def get_interface(self) -> dict:
-        """The declared interface as canopy-web holds it: {interface, source, …}."""
-        return self._call("GET", f"/api/agents/{self.slug}/interface")
-
-    def put_interface_source(self, source: str) -> dict:
-        """Save the declared interface as YAML. It is LIVE STATE on canopy-web, not
-        a file in the agent's repo. Owner-or-admin on the server: it decides what
-        callers can make the agent do."""
-        return self._call("PUT", f"/api/agents/{self.slug}/interface", {"source": source})
-
     def get_read_mode(self) -> dict:
         """What someone who may only read gets from this agent: {source, profile}."""
         return self._call("GET", f"/api/agents/{self.slug}/read-mode")
