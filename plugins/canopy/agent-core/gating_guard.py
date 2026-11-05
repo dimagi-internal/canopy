@@ -578,8 +578,8 @@ def run_loader(repo_dir, payload, env=None):
 # thing a turn's asker without `agent_edit` may not do is change THE AGENT'S OWN REPO, so that
 # is the whole rail: a push to it, a PR/release/repo-settings/workflow/secret/variable write on
 # it, a mutating `gh api repos/<it>/...` or the same call through curl/wget, or a GraphQL mutation
-# that names it. Issues and comments stay open (not closing a PR through its issue), and so does
-# a PR from a FORK.
+# that names it or cannot be told not to be on it. Issues and comments stay open (not closing a PR
+# through its issue), and so does a PR from a FORK.
 #
 # This is a guard rail, not a boundary. It reads the command's own words; a session that
 # builds the command out of variables, a script file or another tool is not seen
@@ -599,8 +599,22 @@ _NAMEISH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
 _PREFILTER = re.compile(r"\bgit\b|\bgh\b|\bcurl\b|\bwget\b")
 _GITHUB_REPO = re.compile(r"github\.com[:/]+([^/\s]+)/([^/\s?#]+?)(?:\.git)?/*(?:[?#].*)?$", re.I)
 _PLAIN_REPO = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+?)(?:\.git)?$")
-_WRAPPERS = frozenset({"sudo", "env", "command", "exec", "nohup", "time", "nice", "builtin", "xargs"})
+# The shell keywords a command can follow on its own line (`then gh pr merge 3`) count too.
+_SHELL_KEYWORDS = frozenset({"do", "then", "else", "elif", "if", "while", "until", "!"})
+_WRAPPERS = frozenset({"sudo", "env", "command", "exec", "nohup", "time", "nice", "builtin", "xargs"}) | _SHELL_KEYWORDS
 _SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
+# A word `$(cmd)` that stands alone in a command's arguments: what it prints becomes more arguments.
+_OPAQUE_ARGS = "\0$(args)"
+# Commands that can change a shell variable without looking like `NAME=value`.
+_VARIABLE_WRITERS = frozenset({"read", "for", "select", "mapfile", "readarray", "printf", "declare",
+                               "typeset", "local", "export", "unset", "getopts", "let"})
+_EXPANSION = re.compile(r"[$`]")
+# gh's own commands; another first word is an alias of the person's (or an extension).
+_GH_COMMANDS = frozenset({"accessibility", "agent-task", "alias", "api", "attestation", "auth", "browse",
+                          "cache", "co", "codespace", "completion", "config", "copilot", "extension",
+                          "gist", "gpg-key", "help", "issue", "label", "licenses", "org", "pr", "preview",
+                          "project", "release", "repo", "ruleset", "run", "search", "secret", "ssh-key",
+                          "status", "variable", "workflow"})
 _GH_PR_WRITES = frozenset({"create", "merge", "edit", "close", "review", "ready", "reopen",
                            "lock", "unlock", "update-branch"})
 _GH_REPO_WRITES = frozenset({"edit", "delete", "rename", "archive", "unarchive", "sync",
@@ -623,15 +637,31 @@ _GH_API_OPEN_SUBPATHS = re.compile(r"^/(?:issues(?:/|$)|pulls/\d+/comments(?:/|$
 _ISSUE_NUMBER = re.compile(r"^/issues/\d+/?$")
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # GraphQL. A mutation names its target by opaque node id (`pullRequestId: "PR_..."`), which this
-# hook cannot map to a repo without a network call, so one is refused only when a string in it, or
-# a variable, IS the own repo (`repositoryNameWithOwner: "o/r"`, a URL, `owner` + `name`). These
-# root fields are the issue-and-comment writes that stay open even then.
+# hook cannot map to a repo without a network call, so it fails closed: while the rail is active a
+# mutation is refused unless its root fields are the issue-and-comment writes below, or the one
+# mutation whose input really carries its repo names another repo. A repo named anywhere else (a
+# spare variable, say) does not count, or naming any other repo would unlock a merge of this one.
+# A query the hook cannot read at all (a file, stdin, an unresolved variable) is refused the same
+# way, since it may be a mutation. Reads stay free.
 _GRAPHQL_TOKEN = re.compile(r'"""(.*?)"""|"((?:[^"\\]|\\.)*)"|#[^\n]*', re.S)
 _GRAPHQL_OPEN_MUTATIONS = frozenset({
     "addComment", "updateIssueComment", "deleteIssueComment", "minimizeComment", "unminimizeComment",
     "createIssue", "updateIssue", "closeIssue", "reopenIssue", "addReaction", "removeReaction",
     "addPullRequestReviewComment", "addPullRequestReviewThreadReply",
 })
+_GRAPHQL_NAMES_ITS_REPO = "createCommitOnBranch"
+_GRAPHQL_REPO_FIELD = re.compile(r'\brepositoryNameWithOwner\s*:\s*(?:"(\d+)"|\$(\w+))')
+_GRAPHQL_BRANCH_BY_ID = re.compile(r"\bbranch\s*:\s*\{[^{}]*\bid\s*:")
+# In every refusal that fails closed, so the message can say what to do instead.
+_GRAPHQL_BLIND = "the hook cannot read"
+_GRAPHQL_UNREAD = f"a GraphQL request whose query {_GRAPHQL_BLIND}"
+_GRAPHQL_HINT = (" It is treated as your own repo because it cannot be told apart from it, whichever "
+                 "repo you meant. For a PR on any repo use `gh pr merge|close|edit ... -R <owner/repo>` "
+                 "or REST (`gh api repos/<owner>/<repo>/...`), which name the repo. A read goes through "
+                 "if its query is on the command line or in a variable set in the same command. "
+                 "`createCommitOnBranch` may name another repo with `repositoryNameWithOwner`. Taking a "
+                 "PR out of a merge queue has no gh or REST form: use the PR's page.")
+_GRAPHQL_URL_IN_A_VARIABLE = re.compile(r"^\S*[$`]\S*/graphql/?(?:[?#]\S*)?$", re.I)
 _GRAPHQL_OWNER_NAME = re.compile(r'\bowner\s*:\s*"([^"]+)"\s*,?\s*name\s*:\s*"([^"]+)"')
 _GRAPHQL_NAME_OWNER = re.compile(r'\bname\s*:\s*"([^"]+)"\s*,?\s*owner\s*:\s*"([^"]+)"')
 # A whole value that IS a GitHub repo address (a URL below it counts; a sentence holding one does not).
@@ -664,9 +694,14 @@ def _substitution_end(text, i):
         c = text[i]
         if c == "\\":
             i += 2; continue
-        if c in "'\"":
+        if c == "'":
             j = text.find(c, i + 1)
             i = (n if j < 0 else j) + 1; continue
+        if c == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+            i += 1; continue
         if c == "(":
             depth += 1
         elif c == ")":
@@ -684,7 +719,7 @@ def _scan_commands(text, depth=0):
     command only outside quotes, heredoc bodies are dropped (a PR body that quotes `git push`
     is not a push), and `$(…)`/backtick text inside quotes is scanned as commands too."""
     cmds, words, cur = [], [], []
-    quoted_inner = []
+    quoted_inner, quoted_substitutions = [], []
     i, n = 0, len(text)
     pending_heredocs = []
     in_word = False
@@ -716,6 +751,10 @@ def _scan_commands(text, depth=0):
                 if text[j] == "\\" and j + 1 < n:
                     buf.append(text[j + 1]); j += 2
                 else:
+                    if text.startswith("$(", j):   # from the raw text: it may hold quotes and parens
+                        end = _substitution_end(text, j + 2)
+                        if end < n:
+                            quoted_substitutions.append(text[j + 2:end])
                     buf.append(text[j]); j += 1
             body = "".join(buf)
             cur.append(body); in_word = True; i = j + 1
@@ -756,15 +795,17 @@ def _scan_commands(text, depth=0):
                 j = _substitution_end(text, i + 2)
                 cmds.extend(_scan_commands(text[i + 2:j], depth + 1))
                 cur.append("$()"); i = j + 1; continue
+            if words:                          # its output is more of this command's arguments
+                words.append(_OPAQUE_ARGS)
             end_cmd(); i += 2; continue        # `$(cmd)`: cmd is a command of its own
         cur.append(c); in_word = True; i += 1
     end_cmd()
     if depth < 3:
+        for inner in quoted_substitutions:
+            cmds.extend(_scan_commands(inner, depth + 1))
         for body in quoted_inner:
-            if "$(" in body or "`" in body:
-                inner = re.findall(r"\$\(([^()]*)\)|`([^`]*)`", body)
-                for a, b in inner:
-                    cmds.extend(_scan_commands(a or b, depth + 1))
+            for inner in re.findall(r"`([^`]*)`", body):
+                cmds.extend(_scan_commands(inner, depth + 1))
     return cmds
 
 
@@ -986,8 +1027,8 @@ def _gh_parts(words):
 
 
 def _gh_api_args(words):
-    """(method, fields as [(key, value)], has --input, endpoint) of `gh api …`."""
-    method, fields, has_input, endpoint, i = "", [], False, "", 2
+    """(method, fields as [(key, value)], has --input, endpoint, other positionals) of `gh api …`."""
+    method, fields, has_input, endpoint, extras, i = "", [], False, "", [], 2
 
     def field(text):
         key, _, value = text.partition("=")
@@ -1012,16 +1053,19 @@ def _gh_api_args(words):
                 field(w[2:])
         elif flag in _GH_API_VALUE_FLAGS:
             i += 1 if eq else 2; continue
-        elif not w.startswith("-") and not endpoint:
-            endpoint = w
+        elif not w.startswith("-"):
+            if endpoint:
+                extras.append(w)
+            else:
+                endpoint = w
         i += 1
-    return method, fields, has_input, endpoint
+    return method, fields, has_input, endpoint, extras
 
 
 def _gh_api(words, cwd, here=""):
     """(repo key, subpath, method, sets `state`) a MUTATING `gh api` writes under `repos/`, else
     None. `here` is the repo `{owner}/{repo}` means (else the origin of `cwd`)."""
-    method, fields, has_input, endpoint = _gh_api_args(words)
+    method, fields, has_input, endpoint, _ = _gh_api_args(words)
     mutating = method in _MUTATING_METHODS or (not method and (fields or has_input))
     if not mutating:
         return None
@@ -1045,8 +1089,11 @@ def _repo_write_is_open(sub, method, sets_state):
 
 
 def _graphql_mutation(doc):
-    """(root fields of the document's `mutation` operations, its string literals). Strings and
-    comments are set aside first, so `mutation` inside one is not an operation."""
+    """(root fields of the document's `mutation` operations, its string literals, whether it can be
+    read). Strings and comments are set aside first, so `mutation` inside one is not an operation.
+
+    GraphQL's own `$variables` live inside parentheses, so a `$` or backtick left outside them is the
+    shell's, and what it expands to could be anything. Likewise a document that does not balance."""
     literals = []
 
     def set_aside(m):
@@ -1055,22 +1102,27 @@ def _graphql_mutation(doc):
         return " "
 
     skeleton = re.sub(r"\([^()]*\)", " ", _GRAPHQL_TOKEN.sub(set_aside, doc or ""))
+    readable = bool(skeleton.strip(" \t\r\n,﻿")) and not re.search(r'[$`()"]', skeleton)
     depth, head, body, is_mutation = 0, [], [], False
     for c in skeleton:
         if c == "{":
             depth += 1
             if depth == 1:
-                is_mutation = "".join(head).split()[:1] == ["mutation"]
+                # GraphQL ignores commas and a BOM, and `mutation@d{` needs no space.
+                is_mutation = bool(re.match(r"[\s,﻿]*mutation\b", "".join(head)))
                 head = []
             elif depth == 2 and is_mutation:
                 body.append(" ")
         elif c == "}":
             depth -= 1
+            readable = readable and depth >= 0
         elif depth == 0:
             head.append(c)
         elif depth == 1 and is_mutation:
             body.append(c)
-    return re.findall(r"(?:\w+\s*:\s*)?(\w+)", "".join(body)), literals
+    # A fragment spread stands for fields this does not resolve, so it is never an open root.
+    roots = [name or "..." for name in re.findall(r"\.\.\.|(?:\w+\s*:\s*)?(\w+)", "".join(body))]
+    return roots, literals, readable and depth == 0
 
 
 def _value_repo(value):
@@ -1080,10 +1132,31 @@ def _value_repo(value):
     return f"{m.group(1)}/{m.group(2)}".lower() if m else ""
 
 
+def _commits_name_their_repos(doc, count, by_name):
+    """Whether each of `count` createCommitOnBranch roots says its repo in the field that sets it:
+    `repositoryNameWithOwner`, a literal or a variable with a plain value, and no branch node id."""
+    literals = []
+
+    def mask(m):
+        if not m.group(0).startswith('"'):
+            return " "
+        literals.append(m.group(1) if m.group(1) is not None else m.group(2))
+        return f'"{len(literals) - 1}"'
+
+    masked = _GRAPHQL_TOKEN.sub(mask, doc or "")           # so text in a string is not a field
+    targets = _GRAPHQL_REPO_FIELD.findall(masked)
+    if len(targets) != count or _GRAPHQL_BRANCH_BY_ID.search(masked):
+        return False
+    values = [literals[int(i)] if i else by_name.get(name, "") for i, name in targets]
+    return all(_PLAIN_REPO.match(str(v)) for v in values)
+
+
 def _graphql_violation(doc, variables, own, here=""):
-    """What a GraphQL document does to the own repo: a short description, or ''. `variables` is
-    [(name, value)]. A mutation that names no repo passes: see _GRAPHQL_OPEN_MUTATIONS's comment."""
-    roots, literals = _graphql_mutation(doc)
+    """What a GraphQL document may do to the own repo: a short description, or ''. `variables` is
+    [(name, value)]. See _GRAPHQL_OPEN_MUTATIONS's comment for what passes."""
+    roots, literals, readable = _graphql_mutation(doc)
+    if not readable:
+        return _GRAPHQL_UNREAD
     if not roots or all(r in _GRAPHQL_OPEN_MUTATIONS for r in roots):
         return ""
     owner_name = here.split("/", 1) if "/" in here else ["", ""]
@@ -1099,7 +1172,155 @@ def _graphql_violation(doc, variables, own, here=""):
     if by_name.get("owner") and (by_name.get("name") or by_name.get("repo")):
         keys.add(f"{by_name['owner']}/{by_name.get('name') or by_name.get('repo')}".lower())
     hit = sorted(keys & own)
-    return f"a GraphQL mutation ({', '.join(roots)}) on {hit[0]}" if hit else ""
+    if hit:
+        return f"a GraphQL mutation ({', '.join(roots)}) on {hit[0]}"
+    closed = [r for r in roots if r not in _GRAPHQL_OPEN_MUTATIONS]
+    if all(r == _GRAPHQL_NAMES_ITS_REPO for r in closed) and _commits_name_their_repos(doc, len(closed), by_name):
+        return ""
+    return f"a GraphQL mutation ({', '.join(roots)}) whose repo {_GRAPHQL_BLIND}"
+
+
+def _resolved(value, assigned):
+    """`value` if it is not exactly `$NAME`/`${NAME}`; else what `assigned` says NAME holds, if known."""
+    m = re.fullmatch(r"\$(?:(\w+)|\{(\w+)\})", value or "")
+    return (assigned or {}).get(m.group(1) or m.group(2)) or value if m else value
+
+
+def _shell_assignments(cmds):
+    """{name: literal value} of the shell variables this command line sets with `NAME=value`.
+
+    A name set twice to different values, or touched by another command (`read`, `for`, `export`…),
+    has no known value, wherever in the line that happens: a loop can run the later one first.
+    `source` and `eval` could set anything, so then nothing is known."""
+    found = {}
+
+    def note(name, value):
+        found[name] = value if found.get(name, value) == value else None
+
+    for words in cmds:
+        words = [w for w in words if w != _OPAQUE_ARGS]
+        while words and words[0] in _SHELL_KEYWORDS:
+            words = words[1:]
+        if not words:
+            continue
+        if all(re.match(r"^[A-Za-z_]\w*\+?=", w) for w in words):
+            for w in words:
+                name, _, value = w.partition("=")
+                note(name.rstrip("+"), None if name.endswith("+") else value)
+            continue
+        prog = os.path.basename(words[0])
+        if prog in ("source", ".", "eval"):
+            return {}
+        if prog in _VARIABLE_WRITERS:
+            for a in words[1:]:
+                name = a.split("=", 1)[0]
+                if re.fullmatch(r"[A-Za-z_]\w*", name):
+                    found[name] = None
+    return found
+
+
+def _is_graphql_endpoint(endpoint, fields, has_input):
+    """Whether a `gh api` endpoint is GraphQL, or is a variable that may be with a query on the line."""
+    ep = re.sub(r"^https?://[^/]+/(?:api/)?", "", endpoint).split("?", 1)[0].strip("/").lower()
+    m = _EXPANSION.search(ep)
+    if not m:
+        return ep == "graphql"
+    return "graphql".startswith(ep[:m.start()]) and (
+        has_input or any(k == "query" or _EXPANSION.search(k) for k, _ in fields))
+
+
+def _gh_graphql_violation(fields, has_input, extras, opaque, assigned, own, here):
+    """_graphql_violation for `gh api graphql`: what the call sends has to be on the command line."""
+    queries = [v for k, v in fields if k == "query"]
+    if (has_input or opaque or not queries or any(_EXPANSION.search(x) for x in extras)
+            or any(_EXPANSION.search(k) for k, _ in fields) or any(q.startswith("@") for q in queries)):
+        return _GRAPHQL_UNREAD
+    variables = [f for f in fields if f[0] != "query"]
+    for query in queries:                                  # gh sends the last; read them all
+        hit = _graphql_violation(_resolved(query, assigned), variables, own, here)
+        if hit:
+            return hit
+    return ""
+
+
+def _http_graphql_violation(bodies, own, assigned):
+    """_graphql_violation for a curl/wget POST: one JSON body, on the line, holding the query."""
+    doc = _json_object(_resolved(bodies[0], assigned)) if len(bodies) == 1 else None
+    if doc is None or not isinstance(doc.get("query"), str):
+        return _GRAPHQL_UNREAD
+    return _graphql_violation(doc["query"], _flatten(doc.get("variables") or {}), own)
+
+
+def _gh_aliases(config_dir=""):
+    """{name: expansion} from gh's config file (no gh subprocess, and nothing is sent anywhere)."""
+    base = config_dir or os.environ.get("GH_CONFIG_DIR") or os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or "~/.config", "gh")
+    try:
+        with open(os.path.join(os.path.expanduser(base), "config.yml"), encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except (OSError, ValueError):
+        return {}
+    aliases, inside, indent, block, block_lines = {}, False, None, None, []
+
+    def finish_block():
+        nonlocal block, block_lines
+        if block:
+            aliases[block] = "\n".join(s.strip() for s in block_lines)
+        block, block_lines = None, []
+
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        width = len(line) - len(line.lstrip())
+        if width == 0:
+            finish_block()
+            inside, indent = line.strip() == "aliases:", None
+            continue
+        if not inside:
+            continue
+        indent = width if indent is None else indent
+        if width > indent:
+            if block:
+                block_lines.append(line)
+            continue
+        finish_block()
+        name, sep, value = line.strip().partition(":")
+        if not sep:
+            continue
+        name, value = name.strip("'\""), value.strip()
+        if value[:1] in ("|", ">"):
+            block = name
+        elif len(value) > 1 and value[0] == value[-1] == "'":
+            aliases[name] = value[1:-1].replace("''", "'")
+        elif len(value) > 1 and value[0] == value[-1] == '"':
+            try:
+                aliases[name] = json.loads(value)
+            except ValueError:
+                aliases[name] = value[1:-1]
+        else:
+            aliases[name] = value
+    finish_block()
+    return aliases
+
+
+def _alias_commands(expansion, rest=(), shell=False):
+    """An alias's expansion as shell text: `!cmd` and --shell run cmd, anything else is `gh <it>`."""
+    import shlex
+    expansion = expansion.strip()
+    if shell or expansion.startswith("!"):
+        return expansion.lstrip("!")
+    return " ".join(["gh", expansion, *map(shlex.quote, rest)])
+
+
+def _gh_alias_set_violation(w, pos, cwd, own, depth):
+    """What `gh alias set|import` would later let `gh <alias>` do, or ''."""
+    # `$1` is gh's own placeholder; it is read below, when the expansion is scanned.
+    if pos[1] == "import" or len(pos) < 4 or pos[3] == "-" or re.search(r"`|\$(?!\d)", pos[3]):
+        return f"`gh alias {pos[1]}` with an expansion that is not on the command line"
+    if depth >= 3:
+        return ""
+    shell = any(a in ("-s", "--shell") for a in w)
+    return _violation(_scan_commands(_alias_commands(pos[3], shell=shell)), cwd, own, depth + 1)
 
 
 def _flatten(value, name=""):
@@ -1197,20 +1418,23 @@ def _wget_call(words):
     return method or ("POST" if posts else "GET"), bodies, urls
 
 
-def _http_violation(words, prog, own):
+def _http_violation(words, prog, own, assigned=None):
     """What a curl/wget command writes to the own repo through the GitHub API, or ''."""
     method, bodies, urls = (_curl_call if prog == "curl" else _wget_call)(words)
-    if method not in _MUTATING_METHODS:
+    # A curl config file can set the method and body this cannot see, so a GraphQL URL is not a read.
+    config = prog == "curl" and any(re.match(r"^(?:-[A-Za-z]*K|--config(?:=|$))", a) for a in words[1:])
+    mutating = method in _MUTATING_METHODS
+    if not mutating and not config:
         return ""
     for url in urls:
         m = _GITHUB_API_URL.match(url)
         path = (m.group(1) or "") if m else ""
-        if path.rstrip("/") == "/graphql":
-            for body in bodies:
-                doc = _json_object(body) or {}
-                hit = _graphql_violation(str(doc.get("query") or ""), _flatten(doc.get("variables") or {}), own)
-                if hit:
-                    return f"{hit} through `{prog}`"
+        if path.rstrip("/") == "/graphql" or _GRAPHQL_URL_IN_A_VARIABLE.match(url):
+            hit = _http_graphql_violation(bodies, own, assigned)
+            if hit:
+                return f"{hit} through `{prog}`"
+            continue
+        if not mutating:
             continue
         r = re.match(r"^/repos/([^/]+)/([^/]+)(/.*)?$", path)
         if r and f"{r.group(1)}/{r.group(2)}".lower() in own:
@@ -1225,24 +1449,27 @@ def own_repo_violation(subject, cwd, own):
     return _violation(_scan_commands(subject), cwd, own, 0)
 
 
-def _gh_repo_env(words):
-    """The `GH_REPO=…` assigned in front of a command (`gh` reads it like -R), or ''."""
+def _gh_env(words, name="GH_REPO"):
+    """A variable assigned in front of a command (`gh` reads `GH_REPO` like -R), or ''."""
     for w in words:
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w) and os.path.basename(w) not in _WRAPPERS:
             break
-        if w.startswith("GH_REPO="):
+        if w.startswith(f"{name}="):
             return w.split("=", 1)[1]
     return ""
 
 
 def _violation(cmds, cwd, own, depth):
     remotes = {}
+    assigned = _shell_assignments(cmds)
     for words in cmds:
-        if words[:1] == ["cd"]:
-            cwd = _chdir(cwd, words[1] if len(words) > 1 else "~")
-            continue
+        opaque = _OPAQUE_ARGS in words
+        words = [x for x in words if x != _OPAQUE_ARGS]
         w = _drop_redirects(_strip_wrappers(words))
         if not w:
+            continue
+        if w[0] == "cd":
+            cwd = _chdir(cwd, w[1] if len(w) > 1 else "~")
             continue
         prog = os.path.basename(w[0])
         if prog in _SHELLS and depth < 3:
@@ -1268,19 +1495,29 @@ def _violation(cmds, cwd, own, depth):
                 name, url = _remote_url_set(w, i)
                 remotes[name] = url
         elif prog in ("curl", "wget"):
-            hit = _http_violation(w, prog, own)
+            hit = _http_violation(w, prog, own, assigned)
             if hit:
                 return hit
         elif prog == "gh":
             repo_flag, pos = _gh_parts(w)
-            repo_flag = repo_flag or _gh_repo_env(words)
+            repo_flag = repo_flag or _gh_env(words)
             group, action = (pos + ["", ""])[:2]
-            if group == "api":
+            if group == "alias" and action in ("set", "import"):
+                hit = _gh_alias_set_violation(w, pos, cwd, own, depth)
+                if hit:
+                    return hit
+            elif group and group not in _GH_COMMANDS and not _EXPANSION.search(group) and depth < 3:
+                expansion = _gh_aliases(_gh_env(words, "GH_CONFIG_DIR")).get(group)
+                if expansion:                    # the person's alias: what it runs is what counts
+                    rest = w[w.index(group) + 1:]
+                    hit = _violation(_scan_commands(_alias_commands(expansion, rest)), cwd, own, depth + 1)
+                    if hit:
+                        return f"{hit} (through the gh alias `{group}`)"
+            elif group == "api":
                 here = repo_key(repo_flag) or _origin_key(cwd)
-                method, fields, _, endpoint = _gh_api_args(w)
-                if re.sub(r"^https?://[^/]+/(?:api/)?", "", endpoint).strip("/") == "graphql":
-                    doc = next((v for k, v in fields if k == "query"), "")
-                    hit = _graphql_violation(doc, [f for f in fields if f[0] != "query"], own, here)
+                method, fields, has_input, endpoint, extras = _gh_api_args(w)
+                if _is_graphql_endpoint(endpoint, fields, has_input) or (opaque and not endpoint):
+                    hit = _gh_graphql_violation(fields, has_input, extras, opaque, assigned, own, here)
                     if hit:
                         return f"{hit} through `gh api graphql`"
                     continue
@@ -1342,18 +1579,19 @@ def own_repo_refusal(subject, payload, slug, repo_dir, env=None):
     what = own_repo_violation(subject, os.path.abspath(cwd) if cwd else None, own)
     if not what:
         return ""
+    hint = _GRAPHQL_HINT if _GRAPHQL_BLIND in what else ""
     caller = read_caller_envelope(turn_id)
     if caller is None:
-        return (f"BLOCKED (fail closed): {what} would change {slug}'s own repo, and this turn's "
-                f"caller envelope (~/.canopy/caller/{turn_id}.json) is missing or unreadable, so "
-                f"canopy cannot tell who is asking. Only people with the editor role on {slug} "
+        return (f"BLOCKED (fail closed): {what}. That counts as changing {slug}'s own repo, and this "
+                f"turn's caller envelope (~/.canopy/caller/{turn_id}.json) is missing or unreadable, "
+                f"so canopy cannot tell who is asking. Only people with the editor role on {slug} "
                 "may change its repo. Ask the person to retry from canopy-web, or file an issue "
-                "instead (`gh issue create -R <owner/repo>` is allowed).")
+                f"instead (`gh issue create -R <owner/repo>` is allowed).{hint}")
     allowed, held = may_edit_agent(caller)
     if allowed:
         return ""
     repo = sorted(own)[0]
-    return (f"BLOCKED: {what}. Only people with the editor role on {slug} may change {slug}'s "
+    return (f"BLOCKED: {what}.{hint} Only people with the editor role on {slug} may change {slug}'s "
             f"repo; the person asking this turn holds {', '.join(held) or 'no edit permission'} "
             f"(no `{OWN_REPO_PERMISSION}`). You can still open or comment on an issue "
             f"(`gh issue create -R {repo}`), or open a PR from a FORK "
