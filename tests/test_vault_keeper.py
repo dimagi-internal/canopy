@@ -326,9 +326,10 @@ def test_an_unendorsed_machine_says_its_own_person_confirms_it(vk):
     row = {**_machine(), "label": "DIM-SA-W175 · tpm", "runner_name": "DIM-SA-W175"}
     res = vault_keeper.keep_one(_work(vk, [row]), pins={}, call=Recorder(), ecdh=_ecdh(ME_KEY, ME_JWK))
     [why] = res.skipped
-    assert why.endswith(": not endorsed — DIM-SA-W175 is waiting for its own person to confirm it: "
-                        "canopy-web Settings → Device keys → DIM-SA-W175 → Confirm access (passkey). No "
-                        "keeper grants it before then; running `canopy vault zk keep` elsewhere will not help")
+    assert why.endswith(": not endorsed — no keeper grants it until its own person confirms it (canopy-web "
+                        "Settings → Device keys → DIM-SA-W175 → Confirm access, passkey); if no Confirm access "
+                        "shows there, an admin of the vault grants it from the vault's page. Running "
+                        "`canopy vault zk keep` elsewhere will not help")
 
 
 def test_a_machine_signed_by_someone_untrusted_says_so_not_unendorsed(vk):

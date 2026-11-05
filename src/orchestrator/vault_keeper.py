@@ -131,9 +131,10 @@ def unendorsed_reason(t: Target, row: dict, *, signed: bool) -> str:
     if signed:
         return (f"{t.describe()}: confirmed only by someone this box does not trust (their line says "
                 "why) — an admin confirms that person's key, then a keeper grants it")
-    return (f"{t.describe()}: not endorsed — {machine} is waiting for its own person to confirm it: "
-            f"canopy-web Settings → Device keys → {machine} → Confirm access (passkey). No keeper "
-            "grants it before then; running `canopy vault zk keep` elsewhere will not help")
+    return (f"{t.describe()}: not endorsed — no keeper grants it until its own person confirms it "
+            f"(canopy-web Settings → Device keys → {machine} → Confirm access, passkey); if no Confirm "
+            "access shows there, an admin of the vault grants it from the vault's page. Running "
+            "`canopy vault zk keep` elsewhere will not help")
 
 
 def _signed_for(jkt: str, endorsements: list) -> bool:
