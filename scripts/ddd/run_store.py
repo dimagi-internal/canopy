@@ -57,6 +57,7 @@ from orchestrator.canopy_web import is_workspace_required, pinned_api_path
 
 KIND = "ddd"
 BASE = "/api/agent-runs/"
+PROJECTS_PATH = "/api/projects/"
 
 _warned: set[str] = set()
 
@@ -238,7 +239,8 @@ def resolve(narrative: str, ddd_dir: Path) -> dict:
                 "project_name": proj.get("name"), "from_run": run["ext_id"],
             }
     repo = repo_slug(ddd_dir) or ""
-    status, projects = _call("GET", f"{BASE}projects/", query={"repo_slug": repo})
+    # The fleet-wide project list (canopy-web#1249 retired `/api/agent-runs/projects/`).
+    status, projects = _call("GET", PROJECTS_PATH, query={"repo_slug": repo})
     projects = _ok(status, projects, "list agent projects") or []
     status, agents = _call("GET", "/api/agents/")
     agents = agents.get("items", agents) if isinstance(agents, dict) else agents

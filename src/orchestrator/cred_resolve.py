@@ -13,8 +13,8 @@ in one place:
 * ``X-Canopy-Turn-Id`` — when a runner turn is known, so the read log names the turn.
 * ``DPoP`` — a device proof (`device_key.proof_headers`) when this machine holds a
   registered device key; on an EC2 cloud runner enrolled as ``aws-iam``, an
-  ``X-Canopy-Aws-Proof`` instead (canopy-web#1549). Required by canopy-web only for an
-  agent with ``require_device_binding`` on; ignored otherwise.
+  ``X-Canopy-Aws-Proof`` instead (canopy-web#1549). canopy-web requires it for every
+  agent (canopy-web#2322 dropped the per-agent ``require_device_binding`` switch).
 
 A 401 ``device_proof_required`` is turned into an error that says how to get this
 machine approved. Nothing here prints a value.
@@ -120,7 +120,7 @@ def _explain_401(slug: str, err: Exception) -> Exception:
             how = "enroll this machine: `canopy vault device --enroll`, then approve it in canopy-web"
         return DeviceProofRequired(
             f"canopy-web will hand '{slug}'s credentials only to an approved device "
-            f"(require_device_binding is on) — {how}")
+            f"— {how}")
     return err
 
 

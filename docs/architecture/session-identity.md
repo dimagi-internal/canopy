@@ -241,13 +241,12 @@ canopy vault status --agent X                  # per credential: set or missing,
 canopy vault device [--enroll|--reenroll|--refresh] [--kind K]
 canopy vault device --public-jwk [--kind software]           # {kind, jkt, jwk, created}; no canopy-web call
 canopy vault device --registered KEY_ID --runner ID [--status active|pending]
-canopy vault binding --agent X on|off          # PATCH /device-binding {require_device_binding}
 ```
 
 - **Runners** write `~/.X/.env` from `/resolve` values (`canopy agent prepare --runner`), and the
   SessionStart hook's `cred sync` keeps it current.
-- **Device key.** `require_device_binding` on an agent makes `/resolve` answer 401
-  `device_proof_required` unless the request carries a DPoP proof (RFC 9449: `typ dpop+jwt`,
+- **Device key.** `/resolve` answers 401 `device_proof_required` (for every agent; there is
+  no per-agent switch) unless the request carries a DPoP proof (RFC 9449: `typ dpop+jwt`,
   ES256, `jwk` header; `htm`, `htu` without query, `iat`, `jti`) from an **approved** key. On a
   Mac the key is a Secure Enclave key made by `canopy-device-key` (canopy-web
   `runner/device-key/`, built into `~/.canopy/bin/` by the runner installer) with no

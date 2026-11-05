@@ -118,33 +118,6 @@ def test_device_kind_tpm_off_windows_is_a_clear_error(monkeypatch):
     assert r.exit_code != 0 and "no TPM here" in r.output
 
 
-# ── binding ───────────────────────────────────────────────────────────────────
-
-@pytest.mark.parametrize("state,want", [("on", True), ("off", False)])
-def test_binding_patches_device_binding(monkeypatch, state, want):
-    from orchestrator.cli import main
-    monkeypatch.setattr(vault_cli, "_token", lambda: "owner-pat")
-    calls = []
-
-    def transport(method, url, headers, data):
-        calls.append((method, urlsplit(url).path, json.loads(data) if data else None))
-        return 200, json.dumps({"require_device_binding": want})
-
-    monkeypatch.setattr(canopy_web, "urllib_transport", transport)
-    r = CliRunner().invoke(main, ["vault", "binding", "--agent", "eva", state])
-    assert r.exit_code == 0, r.output
-    assert calls == [("PATCH", "/api/agents/eva/device-binding",
-                      {"require_device_binding": want})]
-    assert f"require_device_binding={state}" in r.output
-
-
-def test_binding_refuses_a_contradicting_answer(monkeypatch):
-    monkeypatch.setattr(canopy_web, "urllib_transport",
-                        lambda *a: (200, json.dumps({"require_device_binding": False})))
-    with pytest.raises(vault_cli.VaultCliError, match="expected True"):
-        vault_cli.run_binding("eva", True, token="t")
-
-
 # ── runner-session: a runner signs in with its device key, never a PAT ────────────
 
 def test_runner_session_sends_only_the_device_proof(monkeypatch):
