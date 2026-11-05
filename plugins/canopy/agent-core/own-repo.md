@@ -86,6 +86,17 @@ match its name, no symlink out). For a turn that has one and wants an own-repo w
 unreadable or mismatched envelope fails CLOSED. An older canopy-web envelope with no
 `permissions` list falls back to `relationship` (owner, admin, system allowed).
 
+### A turn with no agent, in your clone
+
+A repo chat or repo dispatch has no agent, so its asker holds no permission on you. It is allowed
+only when the envelope's `own_box_turn` is true: canopy-web's word that a verified person, unconfined,
+is working on a box they own, which is the same as that person by hand. Everything else stays refused:
+
+- a teammate's own session on someone else's box, though its `relationship` also says `owner`,
+- an agent's own login, even on its owner's box (`system`), or anyone with no edit on an agent could
+  have it dispatch a repo turn into its own clone. The owner can run that turn themselves,
+- a scheduled repo turn, a confined turn, and an envelope from a canopy-web without the field.
+
 ### When no repo is known
 
 If neither the session's directory, your installed copy nor the envelope names your repo, the rail

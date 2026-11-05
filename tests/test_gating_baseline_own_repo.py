@@ -737,6 +737,66 @@ def test_an_unparsable_repo_counts_as_none(world):
     assert hook(world, "gh pr merge 3", cwd=world["other"])[0] == 2
 
 
+# ── a turn with no agent, in the agent's clone: `own_box_turn` ───────────────────────────────────
+
+def _no_agent(world, *, relationship="owner", own_box=True, profile="full", **extra):
+    # The envelope canopy-web builds for a turn with no agent (`caller_context.build`).
+    doc = {"agent": None, "agent_repo": None, "granted_by": "no-interface", "role": None, "source": "",
+           "manual_only": False, **extra}
+    if own_box is not ...:
+        doc["own_box_turn"] = own_box
+    (world["home"] / ".canopy" / "caller" / f"{TURN}.json").write_text(json.dumps(
+        {"turn_id": TURN, "relationship": relationship, "profile": profile, "permissions": [], **doc}))
+
+
+NO_AGENT_WRITES = ["git push origin main", "gh pr merge 3", f"gh pr merge 3 -R {OWN_KEY}",
+                   f"gh api graphql -f query='{MERGE_BY_NODE}'", "gh workflow run deploy.yml"]
+
+
+@pytest.mark.parametrize("cmd", NO_AGENT_WRITES)
+def test_the_box_owners_own_repo_chat_in_an_agents_clone_may_push(world, cmd):
+    _no_agent(world)
+    assert hook(world, cmd)[0] == 0, cmd
+
+
+@pytest.mark.parametrize("kw, why", [
+    ({"own_box": False}, "a teammate's own session on someone else's box: `owner`, not their box"),
+    ({"own_box": False, "relationship": "system"}, "an agent's own login on its owner's box"),
+    ({"own_box": False, "relationship": "member"}, "a session writer"),
+    ({"own_box": False, "relationship": "contact"}, "a contact"),
+    ({"own_box": ...}, "an older canopy-web: `owner`, and no field"),
+    ({"own_box": ..., "relationship": "system"}, "an older canopy-web, an agent's login"),
+    ({"profile": "confined"}, "confined, whatever the field says"),
+    ({"own_box": "true"}, "only a real true counts"),
+    ({"own_box": 1}, "only a real true counts"),
+    ({"own_box": None}, "only a real true counts"),
+])
+@pytest.mark.parametrize("cmd", NO_AGENT_WRITES)
+def test_every_other_no_agent_turn_stays_refused_in_an_agents_clone(world, cmd, kw, why):
+    _no_agent(world, **kw)
+    code, err = hook(world, cmd)
+    assert code == 2, (cmd, why)
+    assert "editor role on trellis" in err
+
+
+def test_own_box_turn_opens_nothing_for_a_turn_with_an_agent(world):
+    # The box's owner asking THIS agent, as a read_write line: the access list decides.
+    _outside(world, READ_WRITE, own_box_turn=True)
+    assert hook(world, "git push origin main")[0] == 2
+    assert hook(world, f"gh pr merge 3 -R {OWN_KEY}", cwd=world["other"])[0] == 2
+
+
+def test_own_box_turn_needs_the_agent_to_be_said_to_be_null(world):
+    envelope(world, [], relationship="owner", own_box_turn=True)            # no `agent` key at all
+    assert hook(world, "git push origin main")[0] == 2
+
+
+def test_a_no_agent_turn_outside_any_clone_is_not_failed_closed(world):
+    # `agent_repo: null` never fails closed, own box or not: there is no agent's repo to guard.
+    _no_agent(world, own_box=False)
+    assert hook(world, "git push origin main", cwd=world["other"])[0] == 0
+
+
 def test_a_session_with_no_turn_is_untouched(world):
     # A developer working in the agent's repo by hand: an agent session with no canopy turn.
     assert hook(world, "git push origin main", turn="")[0] == 0

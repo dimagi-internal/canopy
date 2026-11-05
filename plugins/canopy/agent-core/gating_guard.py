@@ -955,7 +955,15 @@ def read_caller_envelope(turn_id):
 def may_edit_agent(env):
     """(allowed, held) for an envelope. `permissions` is canopy-web's own list of what the
     asker holds on THIS agent for THIS turn (a confined turn lists read and a door only);
-    an older canopy-web sent none, so fall back to the relationship (owner/admin/system)."""
+    an older canopy-web sent none, so fall back to the relationship (owner/admin/system).
+
+    A turn with no agent holds no permissions, so `own_box_turn` decides it: a person's own work on
+    a box they own, the same as that person by hand. Only canopy-web can say so, since `relationship:
+    owner` is also a teammate's session on someone else's box, and an envelope without the field
+    stays refused."""
+    if "agent" in env and env["agent"] is None and env.get("own_box_turn") is True \
+            and env.get("profile") != "confined":
+        return True, []
     perms = env.get("permissions")
     if isinstance(perms, list) and all(isinstance(p, str) for p in perms):
         return OWN_REPO_PERMISSION in perms, sorted(perms)

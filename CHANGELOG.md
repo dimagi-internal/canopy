@@ -9,6 +9,10 @@ bump — see `CLAUDE.md`). The project does not tag releases. Pre-history
 prior to the entries below was not formally changelogged; this file starts from the
 recent, verifiable themes in the git log.
 
+## [0.2.845] - 2026-11-05
+### Fixed
+- **Own-repo rail: the box owner's own repo chat may push.** A turn with no agent carries `permissions: []`, so in an agent's clone the rail refused even the owner of the box. It now allows such a turn when the envelope's `own_box_turn` (canopy-web) is true: a verified person, unconfined, on a box they own, the same as that person by hand. A teammate's session on someone else's box, an agent's own login, a scheduled or confined turn and an envelope without the field all stay refused. Either side can ship first; until both are live, nothing changes.
+
 ## [0.2.844] - 2026-11-04
 ### Changed
 - **Own-repo rail: holds outside the agent's clone.** The session hook now also takes the agent's repo from the caller envelope's `agent_repo` (canopy-web), so a session in another checkout with no installed copy of the agent no longer runs with the rail off. If nothing names a repo and canopy-web says the agent has none (`agent_repo: ""`), a turn whose asker lacks `agent_edit` fails closed: every write the rail covers is refused on any repo, while reads, issues and comments, a PR from a fork and every published door's commands stay open. An envelope without the field (an older canopy-web), `null` (a turn with no agent) or a missing envelope locks nobody out, and owners, editors, scheduled turns and people working by hand are unaffected. Either side can ship first.
