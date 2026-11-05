@@ -25,15 +25,36 @@ Only writes to YOUR OWN repo (the `origin` of your clone, or the repo URL in `co
 - a PATCH of `repos/<you>/issues/<n>` that sets `state`: a PR is an issue, so this closes a PR,
 - the same REST calls through `curl` or `wget` to `api.github.com` / `uploads.github.com`, whether
   or not a token is on the line,
-- a `gh api graphql` (or curl/wget `/graphql`) **mutation that names your repo**: a whole string
-  or variable value that is `owner/repo` or a URL in it (`repositoryNameWithOwner: "you/repo"`), or
-  `owner` + `name` / `repo`. The operation is read from the query text, so a query, or the word
-  `mutation` in a string or comment, is not one.
+- a `gh api graphql` (or curl/wget `/graphql`) **mutation that names your repo or does not say which
+  repo it targets**, and any GraphQL request whose query the hook cannot read. See the next section.
+- `gh <alias>` when the alias runs any of the above (read from gh's config file), and setting one
+  with `gh alias set`. `gh alias import` and an expansion from a variable or stdin are refused,
+  because what they set cannot be read.
+
+### GraphQL fails closed
 
 GraphQL mutations mostly name their target by opaque node id (`pullRequestId: "PR_..."`). The hook
-cannot map one to a repo without a network call on every command, and refusing every mutation
-would close every other repo too. So **a mutation that names no repo is allowed**: the choice is
-to refuse only what can be told to be your repo. See below.
+makes no network call, so it cannot map one to a repo. It therefore treats a mutation it cannot place
+as if it were on your repo, **on every repo, not only yours**:
+
+| Request | While the rail is active |
+|---|---|
+| A query (a read), inline or in a variable set by `NAME='...'` in the same command | allowed |
+| `addComment`, `createIssue`, `closeIssue` and the other issue and comment mutations | allowed |
+| `createCommitOnBranch` whose `repositoryNameWithOwner` is another repo | allowed |
+| `createCommitOnBranch` whose `repositoryNameWithOwner` is your repo | refused |
+| Any other mutation (`mergePullRequest`, `enablePullRequestAutoMerge`, `closePullRequest`, `enqueuePullRequest`, `dequeuePullRequest`, `deleteRef`...) | refused |
+| A query from `@file`, `--input`, stdin, or a variable or substitution the hook cannot resolve | refused |
+
+The operation is read from the query text, so the word `mutation` in a string or comment does not
+count. Naming a repo somewhere else (a spare `-f r=other/repo`) does not unlock a mutation, because
+that field does nothing to where the mutation lands.
+
+What to use instead, on any repo: `gh pr merge|close|edit ... -R <owner/repo>` (auto-merge and the
+merge queue are `gh pr merge <n> --auto -R <owner/repo>`) or REST (`gh api repos/<owner>/<repo>/...`).
+Both name the repo, so the rail allows them on other repos. **Taking a PR out of a merge queue has
+no gh or REST form** (`gh pr merge --disable-auto` exits 0 and leaves a queued PR in the queue), so a
+turn whose asker lacks `agent_edit` has to use the PR's page, or ask someone who holds it.
 
 ## What stays open
 
@@ -42,7 +63,8 @@ to refuse only what can be told to be your repo. See below.
   and GraphQL's issue and comment mutations (`addComment`, `createIssue`, `closeIssue`...).
 - A PR **from a fork**: `gh repo fork <you>`, push to the fork, then
   `gh pr create -R <you> --head <fork-owner>:<branch>`.
-- Any write to ANY OTHER repo, and every read.
+- Any write to ANY OTHER repo that says which repo it is, and every read. A GraphQL mutation that
+  does not say is the one exception, above.
 - Editing local files and committing in your clone: nothing leaves the machine until a push.
   (The Write/Edit tools are not railed on `skills/`, `persona.md`, `CLAUDE.md` or `config/`:
   agents legitimately write state under `config/`, and a path rail cannot tell a state file
@@ -71,16 +93,26 @@ The fleet baseline also refuses, for any agent session: assigning `CANOPY_TURN_I
 
 ## What it does not cover
 
-A guard rail, not a boundary: it reads the command's own words. It does not see:
+A guard rail, not a boundary: it reads the command's own words, and failing closed on GraphQL covers
+only the GraphQL it can recognise as GraphQL. It does not see:
 
-- a directory, URL, query or body held in a variable (`git -C "$WT" push`, `curl "$URL"`,
-  `-f query="$Q"`),
-- a script file, library or other program that pushes or calls the API, including `curl -K` configs,
-- a request body from a file or stdin: `gh api --input`, `-F query=@file`, `curl -d @file`,
-  `wget --post-file` (a mutating call to a repo path is still refused; the unseen body only decides
-  a GraphQL mutation or a PATCH of an issue's `state`),
-- a GraphQL mutation that names its target only by node id (`mergePullRequest`, `closePullRequest`,
-  `createRef`, `deleteRef`...), which is most of them,
+- **a script file, library or other program** that pushes or calls the API. This is the widest gap
+  and failing closed does not touch it: `bash merge.sh`, `python -c`, a `gh` extension, `hub`,
+  `httpie`, `find -exec`, `xargs -I`, `parallel`, or a Claude tool that is not the shell. A script
+  that runs `gh api graphql` with a mutation passes, and so does a query from a file it wrote,
+- a directory, URL, program or subcommand held in a variable (`git -C "$WT" push`, `curl "$URL"`,
+  `$GH api graphql`, `gh "$SUB" ...`). `gh api $ALL_ARGS`, with no field on the line, is read as a GET,
+- a shell expansion inside a query's parentheses or strings (`pullRequest(number:$N)` is how reads
+  are normally written, and GraphQL's own `$n` looks the same once quotes are gone), so a value
+  that closes the parentheses and adds a mutation is not seen. Outside them, an expansion is refused,
+- a shell alias (`shopt -s expand_aliases; alias g='gh api graphql --input x'; g`),
+- a gh alias whose config lives somewhere other than `GH_CONFIG_DIR`, `XDG_CONFIG_HOME/gh` or
+  `~/.config/gh`, or set by editing that file in the same command that runs it,
+- a request body from a file or stdin on a REST path: `gh api --input`, `curl -d @file`,
+  `wget --post-file` (the mutating call to a repo path is still refused; the unseen body only decides
+  a PATCH of an issue's `state`),
+- a session whose directory is outside your clone with no installed copy of you, where the hook
+  cannot find your repo at all, so the whole rail is off,
 - `gh issue close|reopen <n>` when `<n>` is a PR: gh closes it, and a number alone does not say
   which it is, so the issue allowance stands,
 - `gh run rerun|cancel|delete`, `gh cache delete` and `gh label` writes, which do not change the

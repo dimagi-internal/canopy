@@ -2,8 +2,10 @@
 
 A turn whose asker lacks `agent_edit` may not change THE AGENT'S OWN REPO (push, PR/release/
 repo-settings/workflow/secret/variable writes, mutating `gh api repos/<it>/...` or the same through
-curl/wget, a GraphQL mutation naming it); issues, other repos and a PR from a fork stay open; a session with no canopy turn (a person at the keyboard) is untouched; a turn with an
-unreadable envelope fails closed; and the model cannot forge the envelope or the turn id.
+curl/wget, a GraphQL mutation naming it or not saying which repo it targets); issues, reads, other
+repos and a PR from a fork stay open; a session with no canopy turn (a person at the keyboard) is
+untouched; a turn with an unreadable envelope fails closed; and the model cannot forge the envelope
+or the turn id.
 
 Run: uv run pytest tests/test_gating_baseline_own_repo.py
 """
@@ -235,10 +237,24 @@ def test_push_from_another_repos_checkout_is_allowed(world):
     GQL_COMMIT.format(repo="dimagi-internal/connect-hub"),
     "gh api graphql -f query='mutation { addComment(input:{subjectId:\"I_1\",body:\"dimagi-internal/trellis\"}) { clientMutationId } }'",
     "gh api graphql -f query='mutation { createIssue(input:{repositoryId:\"R_1\",title:\"t\"}) { clientMutationId } }' -f r=dimagi-internal/trellis",
-    "gh api graphql -f query='mutation { deleteRef(input:{refId:\"x\"}) { clientMutationId } }' -f note='see dimagi-internal/trellis'",
     "gh api graphql -f query='mutation { createCommitOnBranch(input:{branch:{repositoryNameWithOwner:\"dimagi-internal/connect-hub\"},message:{headline:\"sync https://github.com/dimagi-internal/trellis\"}}) { clientMutationId } }'",
-    "gh api graphql -f query='mutation { mergePullRequest(input:{pullRequestId:\"PR_1\"}) { clientMutationId } }'",  # a node id: not seen (documented)
-    "gh api graphql -F query=@merge.graphql",                              # a file: not seen (documented)
+    # A read in a variable set in this same command: the real shape of a merge-queue poll.
+    "Q='{repository(owner:\"dimagi-internal\",name:\"trellis\"){pullRequest(number:3){state isInMergeQueue}}}'; gh api graphql -f query=\"$Q\" --jq .data",
+    "q='query($n:Int!){repository(owner:\"o\",name:\"r\"){pullRequest(number:$n){state}}}'; for i in $(seq 1 60); do r=$(gh api graphql -F n=3 -f query=\"$q\" --jq .data); done",
+    "Q='{ viewer { login } }'; until [ \"$(gh api graphql -f query=\"${Q}\" --jq .data)\" = x ]; do sleep 1; done",
+    "for n in 1 2; do s=\"$s $(gh api graphql -f query=\"{repository(owner:\\\"o\\\",name:\\\"r\\\"){pullRequest(number:$n){state}}}\" -q .data)\"; done",
+    "[ \"$(gh api graphql -f query='{repository(owner:\"o\",name:\"r\"){pullRequest(number:1){state}}}' --jq .data)\" = true ]",
+    "gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){isInMergeQueue}}}' -f o=\"$O\" -f r=\"$R\" -F n=\"$N\" --jq .data",
+    "gh api graphql -f query='{ repository(owner:\"o\",name:\"r\") { pullRequest(number:'$N') { state } } }'",
+    # A mutation whose input names another repo, in the field that sets it.
+    "gh api graphql -f query='mutation($r:String!){ createCommitOnBranch(input:{branch:{repositoryNameWithOwner:$r,branchName:\"m\"},expectedHeadOid:\"a\",message:{headline:\"h\"}}) { clientMutationId } }' -f r=dimagi-internal/connect-hub",
+    # gh aliases that do not touch the repo.
+    "gh alias set co 'pr view'", "gh alias set v 'pr view $1'", "gh alias list", "gh alias delete co",
+    "gh unknown-extension do-something",
+    "curl -X POST https://example.com/graphql -d '{\"query\":\"mutation { x }\"}'",        # not GitHub
+    "curl https://api.github.com/graphql",
+    "gh api \"$URL\" --jq .content",                                       # a read, REST-shaped
+    "gh api \"repos/$R/issues/$N/comments\" -f body=hi",
     # gh workflow / secret / variable: reads, other repos, an org's or user's own.
     "gh workflow list", "gh workflow view deploy.yml", "gh secret list", "gh variable list", "gh variable get NAME",
     "gh workflow run deploy.yml -R dimagi-internal/connect-hub",
@@ -311,6 +327,217 @@ def test_the_refusal_says_why_closing_through_an_issue_is_refused(world):
     envelope(world, READ_WRITE)
     code, err = hook(world, "gh api -X PATCH repos/dimagi-internal/trellis/issues/3 -f state=closed")
     assert code == 2 and "a PR is an issue" in err
+
+
+MERGE_BY_NODE = "mutation { mergePullRequest(input:{pullRequestId:\"PR_1\"}) { clientMutationId } }"
+
+# Each fails closed: the hook cannot tell the target is not the agent's own repo.
+GRAPHQL_BLIND = [
+    # A mutation that names its target by node id, on any repo.
+    f"gh api graphql -f query='{MERGE_BY_NODE}'",
+    "gh api graphql -f query='mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}' -f id=$ID",
+    "ID=$(gh pr view 3 -R dimagi-internal/connect-hub --json id -q .id); gh api graphql -f query=\"mutation{enablePullRequestAutoMerge(input:{pullRequestId:\\\"$ID\\\"}){clientMutationId}}\"",
+    "gh api graphql -f query='mutation { closePullRequest(input:{pullRequestId:\"PR_1\"}) { clientMutationId } }'",
+    "gh api graphql -f query='mutation { dequeuePullRequest(input:{id:\"PR_1\"}) { clientMutationId } }'",
+    "gh api graphql -f query='mutation { deleteRef(input:{refId:\"x\"}) { clientMutationId } }'",
+    # Naming a repo anywhere but the field that sets it does not unlock one.
+    f"gh api graphql -f query='{MERGE_BY_NODE}' -f r=dimagi-internal/connect-hub",
+    f"gh api graphql -f query='{MERGE_BY_NODE}' -f owner=dimagi-internal -f name=connect-hub",
+    "gh api graphql -f query='mutation { deleteRef(input:{refId:\"x\"}) { clientMutationId } }' -f note='see dimagi-internal/trellis'",
+    "gh api graphql -f query='mutation { createCommitOnBranch(input:{branch:{id:\"BR_1\"},message:{headline:\"repositoryNameWithOwner:\\\"o/r\\\"\"}}) { clientMutationId } }'",
+    "gh api graphql -f query='mutation { createCommitOnBranch(input:{branch:{id:\"BR_1\",repositoryNameWithOwner:\"o/r\"}}) { clientMutationId } }'",
+    "gh api graphql -f query='mutation { createCommitOnBranch(input:$i) { clientMutationId } }' -F i=@input.json",
+    "gh api graphql -f query='mutation($r:String!) { createCommitOnBranch(input:{branch:{repositoryNameWithOwner:$r}}) { clientMutationId } }' -f r=\"$R\"",
+    "gh api graphql -f query='mutation { createCommitOnBranch(input:{branch:{repositoryNameWithOwner:\"o/r\"}}) { clientMutationId } mergePullRequest(input:{pullRequestId:\"PR_1\"}) { clientMutationId } }'",
+    "gh api graphql -f query='mutation { addComment(input:{subjectId:\"x\",body:\"y\"}) { clientMutationId } mergePullRequest(input:{pullRequestId:\"PR_1\"}) { clientMutationId } }'",
+    # Ways to write a mutation that do not look like one.
+    f"gh api graphql -f query=',{MERGE_BY_NODE}'",
+    "gh api graphql -f query='mutation@d { mergePullRequest(input:{pullRequestId:\"PR_1\"}) { clientMutationId } }'",
+    "gh api graphql -f query='mutation{...addComment} fragment addComment on Mutation { mergePullRequest(input:{pullRequestId:\"PR_1\"}) { clientMutationId } }'",
+    f"gh api graphql -f query='query A {{ viewer {{ login }} }} {MERGE_BY_NODE.replace('mutation', 'mutation B')}' -f operationName=B",
+    f"gh api graphql -f query='{{ viewer {{ login }} }}' -f query='{MERGE_BY_NODE}'",      # gh sends the last
+    f"gh api /graphql -f query='{MERGE_BY_NODE}'",
+    f"gh api GRAPHQL -f query='{MERGE_BY_NODE}'",
+    f"gh api 'graphql?x=1' -f query='{MERGE_BY_NODE}'",
+    f"gh api https://api.github.com/graphql --raw-field=query='{MERGE_BY_NODE}'",
+    f"gh api -X POST graphql -fquery='{MERGE_BY_NODE}'",
+    f"r=\"$(gh api graphql -f query='{MERGE_BY_NODE}' --jq .data)\"",      # parens inside "$(...)"
+    f"if true; then gh api graphql -f query='{MERGE_BY_NODE}'; fi",
+    f"for i in 1 2; do gh api graphql -f query='{MERGE_BY_NODE}'; done",
+    f"bash -c \"gh api graphql -f query='mutation {{ deleteRef(input:{{refId:1}}) {{ clientMutationId }} }}'\"",
+    # A query from a file or stdin.
+    "gh api graphql -F query=@merge.graphql",
+    "gh api graphql -f query=@merge.graphql",
+    "gh api graphql --field query=@merge.graphql",
+    "gh api graphql -F query=@-",
+    "gh api graphql -F query=@<(cat merge.graphql)",
+    "gh api graphql --input body.json",
+    "gh api graphql --input=body.json",
+    "gh api graphql --input - < body.json",
+    "cat body.json | gh api graphql --input -",
+    "gh api graphql --input - <<'EOF'\n{\"query\":\"mutation { x }\"}\nEOF",
+    "gh api graphql --input - <<< \"$BODY\"",
+    "gh api graphql",
+    # A query held in something the hook cannot read.
+    "gh api graphql -f query=\"$Q\"",
+    "gh api graphql -f query=$Q",
+    "gh api graphql -f query=\"${Q}\"",
+    "gh api graphql -f query=\"$(cat merge.graphql)\"",
+    "gh api graphql -f query=$(cat merge.graphql)",
+    "gh api graphql -f query=`cat merge.graphql`",
+    "gh api graphql -f query=\"`cat merge.graphql`\"",
+    "gh api graphql -f \"$FIELD\"",
+    "gh api graphql -f \"$K=mutation { x }\"",
+    "gh api graphql $ARGS",
+    "gh api graphql \"$@\"",
+    "gh api graphql $(cat args)",
+    "gh api $(cat args)",
+    "gh api graphql -f query='{ viewer { login } }' $(cat more-args)",
+    "gh api graphql -f query='{ viewer { login } }' $MORE",
+    "gh api graphql -f query=\"query { viewer { login } } $MORE\" -f operationName=B",
+    "gh api graphql -f query=\"mutation $REST\"",
+    f"gh api \"$EP\" -f query='{MERGE_BY_NODE}'",
+    f"gh api \"gr$X\" -f query='{MERGE_BY_NODE}'",
+    f"gh api \"https://api.github.com/$P\" -f query='{MERGE_BY_NODE}'",
+    "gh api \"$EP\" --input body.json",
+    "gh api \"$EP\" -F query=@merge.graphql",
+    # A variable set here, but not to one value the hook can trust.
+    f"Q='{MERGE_BY_NODE}'; gh api graphql -f query=\"$Q\"",
+    "Q=$(cat merge.graphql); gh api graphql -f query=\"$Q\"",
+    "Q=\"$P\"; gh api graphql -f query=\"$Q\"",
+    f"Q='{{ viewer {{ login }} }}'; [ -n \"$X\" ] && Q='{MERGE_BY_NODE}'; gh api graphql -f query=\"$Q\"",
+    f"Q='{{ a }}'; while :; do gh api graphql -f query=\"$Q\"; Q='{MERGE_BY_NODE}'; done",
+    "Q='{ a }'; Q+=' b'; gh api graphql -f query=\"$Q\"",
+    "Q='{ a }'; read Q < f; gh api graphql -f query=\"$Q\"",
+    "Q='{ a }'; cat f | while read Q; do gh api graphql -f query=\"$Q\"; done",
+    "Q='{ a }'; for Q in $(cat f); do gh api graphql -f query=\"$Q\"; done",
+    "Q='{ a }'; source ./vars; gh api graphql -f query=\"$Q\"",
+    "Q='{ a }'; eval \"$X\"; gh api graphql -f query=\"$Q\"",
+    "Q='{ a }'; export Q=\"$(cat f)\"; gh api graphql -f query=\"$Q\"",
+    "Q='{ a }' gh api graphql -f query=\"$Q\"",                 # the shell expands $Q first: empty
+    # curl and wget.
+    f"curl https://api.github.com/graphql -d '{{\"query\":\"mutation {{ mergePullRequest(input:{{pullRequestId:\\\"PR_1\\\"}}) {{ clientMutationId }} }}\"}}'",
+    "curl -X POST https://api.github.com/graphql -d @body.json",
+    "curl -X POST https://api.github.com/graphql --data-binary @-",
+    "curl -X POST https://api.github.com/graphql -d \"$BODY\"",
+    "curl -X POST https://api.github.com/graphql",
+    "curl -K cfg https://api.github.com/graphql",
+    "curl --config=cfg https://api.github.com/graphql",
+    "curl -sK cfg https://api.github.com/graphql",
+    "curl -X POST \"$API/graphql\" -d @body.json",
+    "curl -X POST \"${GITHUB_API_URL}/graphql\" -d '{\"query\":\"mutation { x }\"}'",
+    "curl -X POST https://api.github.com/graphql -d '{\"query\":\"{ a }\"}' -d '{\"query\":\"mutation { x }\"}'",
+    "curl -X POST https://api.github.com/graphql -d '{\"query\":\"'\"$Q\"'\"}'",
+    "wget --post-file=body.json https://api.github.com/graphql",
+    "wget --post-data=\"$BODY\" https://api.github.com/graphql",
+    "wget --method=POST --body-file=body.json https://api.github.com/graphql",
+]
+
+
+@pytest.mark.parametrize("cmd", GRAPHQL_BLIND)
+def test_a_graphql_request_the_hook_cannot_place_fails_closed(world, cmd):
+    envelope(world, READ_WRITE)
+    code, err = hook(world, cmd)
+    assert code == 2, cmd
+    assert "the hook cannot read" in err, cmd
+    assert "gh pr merge" in err and "REST" in err and "FORK" in err
+
+
+@pytest.mark.parametrize("cmd", GRAPHQL_BLIND)
+def test_an_editor_and_a_person_by_hand_keep_every_graphql_form(world, cmd):
+    envelope(world, EDITOR)
+    assert hook(world, cmd)[0] == 0, cmd
+    assert hook(world, cmd, turn="")[0] == 0, cmd
+
+
+def test_fail_closed_applies_from_any_directory_and_with_no_envelope(world):
+    cmd = f"gh api graphql -f query='{MERGE_BY_NODE}'"
+    code, err = hook(world, cmd)                       # a turn, and no envelope written
+    assert code == 2 and "fail closed" in err and "the hook cannot read" in err
+    envelope(world, READ_WRITE)
+    assert hook(world, f"cd {world['other']} && {cmd}")[0] == 2   # another repo's checkout tells nothing
+
+
+def test_a_mutation_named_on_the_own_repo_is_still_called_that(world):
+    envelope(world, READ_WRITE)
+    code, err = hook(world, GQL_COMMIT.format(repo="dimagi-internal/trellis"))
+    assert code == 2 and "on dimagi-internal/trellis" in err and "the hook cannot read" not in err
+
+
+def test_setting_an_alias_of_a_write_on_the_repo_is_refused_as_what_it_runs(world):
+    envelope(world, READ_WRITE)
+    assert hook(world, "gh alias set m 'pr merge'")[0] == 2
+    assert hook(world, f"cd {world['other']} && gh alias set m 'pr merge'")[0] == 0
+
+
+@pytest.mark.parametrize("cmd", [
+    f"gh alias set m 'api graphql -f query=\"{MERGE_BY_NODE.replace(chr(34), chr(92) + chr(34))}\"'",
+    "gh alias set m 'api graphql -F query=@merge.graphql'",
+    "gh alias set m 'api graphql -f query=$1'",
+    "gh alias set --shell m 'gh api graphql --input body.json'",
+    "gh alias set m '!gh api graphql --input body.json'",
+    "gh alias set m \"$EXPANSION\"",
+    "gh alias set m -",
+    "gh alias import aliases.yml",
+    "gh alias import -",
+])
+def test_gh_alias_set_cannot_hide_a_graphql_mutation(world, cmd):
+    envelope(world, READ_WRITE)
+    assert hook(world, cmd)[0] == 2, cmd
+
+
+@pytest.mark.parametrize("config, cmd, code", [
+    ("aliases:\n    m: api graphql -F query=@merge.graphql\n", "gh m", 2),
+    ("aliases:\n    m: 'api graphql --input body.json'\n", "gh m", 2),
+    ("aliases:\n    m: \"api graphql --input body.json\"\n", "gh m", 2),
+    ("aliases:\n    m: |\n        api graphql --input body.json\n", "gh m", 2),
+    ("aliases:\n    m: '!gh api graphql --input body.json'\n", "gh m", 2),
+    ("aliases:\n    m: api graphql -f query=$1\n", "gh m '{ a }'", 2),
+    ("aliases:\n    m: pr merge\n", "gh m 3", 2),                          # any rail, not only GraphQL
+    ("aliases:\n    m: pr merge\n", "gh m 3 -R dimagi-internal/connect-hub", 0),
+    ("aliases:\n    v: pr view\n", "gh v 3", 0),
+    ("aliases:\n    m: pr merge\nother: x\n", "gh other", 0),
+    ("git_protocol: https\n", "gh m", 0),                                  # not an alias: an extension
+])
+def test_a_gh_alias_already_set_counts_as_what_it_runs(world, config, cmd, code):
+    envelope(world, READ_WRITE)
+    d = world["home"] / ".config" / "gh"
+    d.mkdir(parents=True)
+    (d / "config.yml").write_text(config)
+    assert hook(world, cmd)[0] == code, cmd
+
+
+def test_gh_config_dir_is_read_for_aliases_too(world):
+    envelope(world, READ_WRITE)
+    d = world["plain"] / "gh"
+    d.mkdir()
+    (d / "config.yml").write_text("aliases:\n    m: api graphql --input body.json\n")
+    assert hook(world, "gh m")[0] == 0                                     # not in the default place
+    assert hook(world, f"GH_CONFIG_DIR={d} gh m")[0] == 2
+    assert hook(world, "gh m", extra_env={"GH_CONFIG_DIR": str(d)})[0] == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "if true; then gh pr merge 3; fi",
+    "for i in 1; do git push origin main; done",
+    "while true; do gh pr close 3; done",
+    "if true; then :; else gh pr merge 3; fi",
+    "r=\"$(gh pr merge 3 -b 'a (b)')\"",
+])
+def test_a_shell_keyword_or_a_quoted_substitution_does_not_hide_any_write(world, cmd):
+    envelope(world, READ_WRITE)
+    assert hook(world, cmd)[0] == 2, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "if true; then cd {other}; gh pr merge 3; fi",
+    "gh pr create -R dimagi-internal/connect-hub --body \"$(cat <<'EOF'\nwe don't (yet) run gh pr merge here, or gh api graphql -F query=@x\nEOF\n)\"",
+    "gh issue comment 3 --body \"$(cat <<'EOF'\nit's: gh api graphql -f query='mutation { deleteRef }'\nEOF\n)\"",
+    "git commit -qm \"$(cat <<'EOF'\nthen git push (later)\nEOF\n)\"",
+])
+def test_the_new_scanning_does_not_read_text_as_commands(world, cmd):
+    envelope(world, READ_WRITE)
+    assert hook(world, cmd.replace("{other}", str(world["other"])))[0] == 0, cmd
 
 
 def test_a_session_with_no_turn_is_untouched(world):
