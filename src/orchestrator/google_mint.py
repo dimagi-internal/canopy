@@ -152,8 +152,8 @@ def client_secret(raw: Optional[str], client_id: str) -> str:
                         "agent's vault (the workspace's shared vault item "
                         f"'{CLIENT_ITEMS['canopy-web']}'). If the box holds no copy of that vault's key, its "
                         "own person sees why on canopy-web Settings → Device keys (an unconfirmed "
-                        "machine needs their Confirm access); running `canopy vault zk keep` "
-                        "elsewhere will not help")
+                        "machine needs their Confirm access, or, where none shows, an admin's grant "
+                        "on the vault's page); running `canopy vault zk keep` elsewhere will not help")
     if client_id and data.get("client_id") and str(data["client_id"]) != client_id:
         raise MintError("no-client", "the Google OAuth client in the vault is not the one "
                         "canopy-web signed in with, so the code cannot be exchanged")
