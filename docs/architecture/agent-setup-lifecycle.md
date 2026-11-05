@@ -1,10 +1,6 @@
 # Agent setup — one path per stage, shared by canopy and canopy-web
 
-**Date:** 2026-10-15 · **Why:** Lex (Lilianna's agent) was created in the browser and stalled at
-the vault: no step named it, the vault bootstrap was a bash script that scaffolded four EMPTY
-items, the key was minted by a second tool with different permissions, and the agent's own
-canopy token could only be minted on the server. Jonathan: *"maximally DRY the
-creation/bootstrapping/validation of the agent setup between canopy and canopy-web."*
+**Rule:** every stage has one path, shared by the browser and the CLI.
 
 The rule: **each stage has exactly one implementation; every door calls it.** canopy-web is
 the source of truth for state (what exists, what a box reported); canopy holds the logic that
@@ -15,7 +11,7 @@ does.
 |---|---|---|
 | Create the repo | `canopy_agent_factory` (templates + push) | canopy-web New-agent page; `/canopy:create-agent` |
 | What's left to do | canopy-web `apps/agents/setup.py` (`GET /api/agents/<slug>/setup`) | Settings page, create wizard, `/canopy:create-agent` (MCP `agent_setup`) |
-| Vault + its values | **canopy vault** (canopy-web; zero-knowledge: `canopy vault zk`, `vault_zk_cli.py`) — every agent since 2026-10-21 | the agent's Settings → Credentials; the checklist's Vault step; `/canopy:create-agent` |
+| Vault + its values | **canopy vault** (canopy-web; zero-knowledge: `canopy vault zk`, `vault_zk_cli.py`) | the agent's Settings → Credentials; the checklist's Vault step; `/canopy:create-agent` |
 | A device's access to the vault | canopy-web's pending grants (`GET …/vault/zk`), granted with a holder's key | **Grant pending** on `/agents/<slug>`; `canopy vault zk grant --agent X`; `canopy agent use <slug>` says when one is missing |
 | The agent's canopy identity | canopy-web `POST /api/agents/<slug>/canopy-login` (sealed into canopy vault, never shown) | Settings → Credentials → **Give it its canopy login** |
 | Use an agent yourself, no runner | `canopy agent use <slug>` (`agent_use.py`) | a person on their own computer ([running-an-agent.md](../running-an-agent.md)) |
@@ -30,7 +26,7 @@ shared vault), or **asked** — only values a person alone has, like an outside 
 
 ## Phases
 
-1. **Vault (shipped 2026-10-15; the Canopy vault is the only credential store).** canopy-web:
+1. **Vault (the Canopy vault is the only credential store).** canopy-web:
    canopy-token route, Vault checklist step, stale `env_ok` cleared and boxes re-asked on a
    vault change. canopy: baseline rails for the raw token paths.
 2. **One agent preparation (in progress).** Not "port the bash": the batch-at-boot shape is
@@ -41,11 +37,9 @@ shared vault), or **asked** — only values a person alone has, like an outside 
    switch, drilled on a standby box, then the laptop runner at claim; then
    `bootstrap_agents.sh` shrinks to box provisioning (packages, gog's file keyring, the
    canopy plugin and CLI) and the unwired `canopy_runtime` reconciler is retired
-   (canopy-web#1514).
-3. **One validation story (shipped 2026-10-15).** `canopy agent doctor`'s `canopy-web setup`
+   .
+3. **One validation story.** `canopy agent doctor`'s `canopy-web setup`
    check reads `agent_setup` for every fleet fact (repo, GitHub, mailbox, vault, runner, job,
    first turn) instead of pinging the board; the doctor keeps only what is true of THIS
-   machine (local auth, plugins, rails firing, the materialized `~/.<slug>/.env` — now
-   actually checked: the env file exists and every var holds a value). Making the checklist trustworthy
-   enough to read came first: its mailbox step now also accepts a box's `turn_ready`
-   (canopy-web#1502) — it had read "todo" for four agents whose mail worked.
+   machine (local auth, plugins, rails firing, the materialized `~/.<slug>/.env`: the env file exists and every var holds a value). Making the checklist trustworthy
+   enough to read came first: its mailbox step now also accepts a box's `turn_ready`.

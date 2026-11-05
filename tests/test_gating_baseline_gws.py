@@ -126,7 +126,7 @@ def test_prose_and_unrelated_commands_are_not_railed(cmd):
     ("canopy gdoc publish --md f.md --parent FOLDER", False),
     ("canopy gslides publish --pptx d.pptx --name N", True),
     ("canopy gslides publish --pptx d.pptx --project 'IDM Talk'", False),
-    # The runtime-bundle form skills are told to use (CLAUDE.md § runtime bundle). The
+    # The runtime-bundle form skills are told to use (docs/architecture/plugin-runtime.md). The
     # rail was anchored on a bare `canopy`, so this form walked straight past it; the
     # runner's own `--project` flag sits BEFORE `canopy` and must not count as a destination.
     ('uv run --project "$CANOPY_ROOT" canopy gdoc publish --md f.md --name N', True),

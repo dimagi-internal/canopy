@@ -5,7 +5,7 @@ The canopy plugin's Python runtime ships INSIDE the installed plugin cache
 the single shared resolver scripts/canopy-runtime.sh. Skills must never reach
 for a dev checkout or the marketplace clone directly — that is the drift class
 (stale global CLI, checkout-only scripts, three competing resolution idioms)
-this architecture removed. See CLAUDE.md § Plugin Runtime Bundle.
+this architecture removed. See docs/architecture/plugin-runtime.md.
 
 Every hit of a banned pattern outside the explicit allowlist fails this test.
 If you are adding a genuinely new exception, add it to ALLOWED with a comment
@@ -70,7 +70,7 @@ def test_no_checkout_or_marketplace_refs_in_plugin_markdown():
                     violations.append(f"{rel}:{lineno}: {line.strip()[:120]}")
     assert not violations, (
         "Plugin markdown must resolve the canopy runtime via "
-        "scripts/canopy-runtime.sh (see CLAUDE.md § Plugin Runtime Bundle), "
+        "scripts/canopy-runtime.sh (see docs/architecture/plugin-runtime.md), "
         "not reference checkouts/marketplace clones directly:\n"
         + "\n".join(violations)
     )
