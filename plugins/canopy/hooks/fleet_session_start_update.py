@@ -578,7 +578,8 @@ def preflight(name: str, staged: Path) -> str:
     try:
         (agent / "config").mkdir(parents=True, exist_ok=True)
         (agent / "config" / "gating.json").write_text(
-            json.dumps({"slug": "preflight", "channels": ["email"], "deny": [], "approve": []}))
+            json.dumps({"slug": "preflight", "channels": ["email"], "deny": [], "approve": []}),
+            encoding="utf-8")
         env = {**os.environ, "CANOPY_PLUGIN_DIR": str(staged)}
         for var in ("CANOPY_AGENT", "CANOPY_AGENT_SLUG", "CLAUDE_PROJECT_DIR"):
             env.pop(var, None)
@@ -600,7 +601,8 @@ def preflight(name: str, staged: Path) -> str:
             try:
                 proc = subprocess.run([sys.executable, str(script), *argv[1:]],
                                       input=payload(cmd), env=env, cwd=str(agent),
-                                      capture_output=True, text=True, timeout=30)
+                                      capture_output=True, encoding="utf-8", errors="replace",
+                                      timeout=30)
             except (OSError, subprocess.SubprocessError) as exc:
                 return f"preflight: {argv[0]} did not run: {exc}"
             if proc.returncode != want:
