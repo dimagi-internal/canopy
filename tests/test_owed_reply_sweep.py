@@ -31,6 +31,7 @@ from orchestrator.agent_email import (
     EmailIdentity,
     dangling_threads,
     owed_replies,
+    read_thread,
     search_threads,
 )
 
@@ -630,3 +631,36 @@ def test_turn_md_names_the_owned_band():
     text = TURN.read_text()
     sweep = text.index("canopy email dangling")
     assert "OWNED" in text[sweep:sweep + 6000]
+
+
+def test_a_reply_parked_as_a_gmail_draft_stays_owed():
+    """An unsent draft is not a reply. Gmail lists it in the thread, newest, From us, so
+    reading it as a message drops the thread from the sweep ("the ball is with them") and
+    the reply waiting at the approval gate disappears from the one place meant to show it."""
+    def message(msg_id, sender, date, labels):
+        return {"id": msg_id, "labelIds": labels, "snippet": "", "payload": {"headers": [
+            {"name": "From", "value": sender},
+            {"name": "To", "value": ME},
+            {"name": "Subject", "value": "A question"},
+            {"name": "Date", "value": date},
+        ]}}
+
+    thread = {"id": "t1", "messages": [
+        message("inbound", "Jo <jo@example.org>", "Fri, 04 Sep 2026 10:00:00 +0000",
+                ["UNREAD", "INBOX"]),
+        message("parked", ME, "Fri, 04 Sep 2026 11:00:00 +0000", ["DRAFT"]),
+    ]}
+
+    def runner(cmd, **kw):
+        if "search" in cmd:
+            out = [{"id": "t1", "subject": "A question"}]
+            return type("R", (), {"returncode": 0, "stdout": json.dumps({"threads": out}), "stderr": ""})()
+        return type("R", (), {"returncode": 0, "stdout": json.dumps({"thread": thread}), "stderr": ""})()
+
+    read = read_thread(_identity(), "t1", runner=runner)
+    assert [m["message_id"] for m in read["messages"]] == ["inbound"]
+    assert read["unsent_drafts"] == ["parked"]
+
+    owed = dangling_threads(_identity(), owners={}, now=NOW, runner=runner)
+    assert [(o["thread_id"], o["disposition"]) for o in owed] == [("t1", "respond")]
+    assert owed[0]["ever_replied"] is False
