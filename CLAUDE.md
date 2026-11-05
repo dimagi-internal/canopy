@@ -34,7 +34,7 @@ gh pr create --title "..." --body "...\n\nCloses #<issue>"
 gh pr merge <n> --auto        # no strategy flag: the merge queue sets it
 ```
 
-- `main` is protected with `enforce_admins`; `pytest`, `check-version` and `structure-drift` are required checks. Never `--admin` past a red one.
+- `main` is protected with `enforce_admins`; `pytest`, `check-version`, `structure-drift` and `hook-compat` are required checks. Never `--admin` past a red one.
 - **Anything under `plugins/canopy/` needs `uv run canopy version bump`** (and any CLI change you want deployed). Guarded on push and merge. → `docs/architecture/releasing.md`
 - After merging: `/canopy:update`, then `/reload-plugins`, or this session keeps running the old plugin and CLI.
 - If main moved and `VERSION` conflicts: rebase, re-bump, push; the entry re-queues.
@@ -56,7 +56,7 @@ You're usually in a worktree (`git rev-parse --git-dir` contains `/worktrees/`),
 - **Framework must never import product; product imports framework freely.** The only product→framework coupling lives in the `cli`, `pipeline` and `server` hubs. It's a direction, not a wall: don't split `orchestrator/` into subpackages. Enforced by `tests/test_plugin_boundary.py`; tiers in `src/orchestrator/TIERS.md`.
 - **Every canopy-web call resolves transport and auth through `src/orchestrator/canopy_web.py`.** Never the operator's token in an agent's session: it raises `AgentIdentityError`. → `docs/architecture/session-identity.md`
 - **Never patch the installed plugin or `installed_plugins.json`; the channel clone stays on `main`.** Guarded by `hooks/pre_tool_use_plugin_cache_guard.py`. → `docs/architecture/releasing.md`
-- **Plugin hooks use stdlib only**: they run under whatever python3 `hooks/python.sh` finds, often without PyYAML. Every hook fires in every session on the fleet, so each is fail-open.
+- **Plugin hooks use stdlib only**: they run under whatever python3 `hooks/python.sh` finds, often without PyYAML. Every hook fires in every session on the fleet, so each is fail-open, except the PreToolUse guards, which fail closed (→ `docs/architecture/modules.md` § hooks.json).
 - **Plugin markdown reaches Python through the runtime resolver**, never a dev-checkout or marketplace path, never bare `uv run canopy`, never the global CLI. Enforced by `tests/test_plugin_runtime_resolution.py`. → `docs/architecture/plugin-runtime.md`
 - **Never hardcode a plugin cache path**: derive it from `installed_plugins.json` or `canopy skills list --json-output`. → `docs/architecture/plugin-runtime.md`
 - **Skill authoring**: no `$1`/`$2` in skill bash blocks; a command colliding with a skill follows Pattern B; never reuse a built-in slash-command name; descriptions ≤ 1024 chars. Enforced by `tests/test_command_skill_collisions.py`, `tests/test_builtin_command_collisions.py` and `canopy structure-drift`. → `docs/architecture/skill-authoring.md`

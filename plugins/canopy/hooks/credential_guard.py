@@ -40,6 +40,8 @@ The turn is the one in `~/.canopy/caller/presence/<claude_session_id>.json` (cal
 writes it on every canopy-delivered prompt). No canopy turn — a person's own session, or the
 owner typing at the keyboard — and this does nothing. Any error → exit 0 silently.
 """
+from __future__ import annotations  # hooks run under macOS's system python 3.9
+
 import json
 import os
 import re
