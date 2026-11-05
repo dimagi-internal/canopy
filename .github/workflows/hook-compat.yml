@@ -29,7 +29,7 @@ on:
 
 jobs:
   compile:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Ubuntu 26.04 has no Python 3.9, and macOS system Python 3.9 is what this guards
     strategy:
       matrix:
         python-version: ['3.9', '3.11', '3.12']
