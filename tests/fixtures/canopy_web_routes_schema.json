@@ -1,0 +1,4632 @@
+{
+ "info": {
+  "title": "canopy-web API",
+  "version": "2.0.0"
+ },
+ "openapi": "3.1.0",
+ "paths": {
+  "/api/_auth_smoke/": {
+   "get": {
+    "operationId": "_auth_smoke"
+   }
+  },
+  "/api/a2a/agents/{slug}/.well-known/agent-card.json": {
+   "get": {
+    "operationId": "public_agent_card"
+   }
+  },
+  "/api/a2a/agents/{slug}/extendedAgentCard": {
+   "get": {
+    "operationId": "extended_agent_card"
+   }
+  },
+  "/api/agent-roster/": {
+   "get": {
+    "operationId": "agent_roster"
+   }
+  },
+  "/api/agent-runs/": {
+   "get": {
+    "operationId": "list_run_docs"
+   },
+   "post": {
+    "operationId": "create_run_doc"
+   }
+  },
+  "/api/agent-runs/{ext_id}/": {
+   "get": {
+    "operationId": "get_run_doc"
+   }
+  },
+  "/api/agent-runs/{ext_id}/state/": {
+   "put": {
+    "operationId": "put_run_doc_state"
+   }
+  },
+  "/api/agent-tasks/": {
+   "post": {
+    "operationId": "create_agent_task"
+   }
+  },
+  "/api/agent-tasks/{task_id}": {
+   "get": {
+    "operationId": "get_agent_task"
+   }
+  },
+  "/api/agent-tasks/{task_id}/cancel": {
+   "post": {
+    "operationId": "cancel_agent_task"
+   }
+  },
+  "/api/agent-tasks/{task_id}/result": {
+   "post": {
+    "operationId": "submit_agent_task_result"
+   }
+  },
+  "/api/agents/": {
+   "get": {
+    "operationId": "list_agents"
+   },
+   "post": {
+    "operationId": "upsert_agent"
+   }
+  },
+  "/api/agents/scaffold": {
+   "post": {
+    "operationId": "scaffold_agent"
+   }
+  },
+  "/api/agents/scaffold/check": {
+   "post": {
+    "operationId": "check_scaffold_repo"
+   }
+  },
+  "/api/agents/schedules/week": {
+   "get": {
+    "operationId": "schedule_week"
+   }
+  },
+  "/api/agents/{slug}/": {
+   "delete": {
+    "operationId": "delete_agent"
+   },
+   "get": {
+    "operationId": "get_agent"
+   }
+  },
+  "/api/agents/{slug}/access": {
+   "get": {
+    "operationId": "agent_access"
+   }
+  },
+  "/api/agents/{slug}/access-list": {
+   "get": {
+    "operationId": "get_access_list"
+   },
+   "post": {
+    "operationId": "add_access_line"
+   }
+  },
+  "/api/agents/{slug}/access-list/{line_id}": {
+   "delete": {
+    "operationId": "remove_access_line"
+   },
+   "patch": {
+    "operationId": "change_access_line"
+   }
+  },
+  "/api/agents/{slug}/actions/": {
+   "get": {
+    "operationId": "list_task_actions"
+   }
+  },
+  "/api/agents/{slug}/actions/{action_id}/applied": {
+   "post": {
+    "operationId": "mark_task_action_applied"
+   }
+  },
+  "/api/agents/{slug}/actor-routes": {
+   "get": {
+    "operationId": "list_agent_actor_routes"
+   }
+  },
+  "/api/agents/{slug}/actor-routes/{actor}": {
+   "delete": {
+    "operationId": "delete_agent_actor_route"
+   },
+   "put": {
+    "operationId": "set_agent_actor_route"
+   }
+  },
+  "/api/agents/{slug}/admins": {
+   "get": {
+    "operationId": "list_admins"
+   }
+  },
+  "/api/agents/{slug}/admins/{user_id}": {
+   "delete": {
+    "operationId": "revoke_admin"
+   },
+   "put": {
+    "operationId": "grant_admin"
+   }
+  },
+  "/api/agents/{slug}/aws-credentials": {
+   "post": {
+    "operationId": "agent_aws_credentials"
+   }
+  },
+  "/api/agents/{slug}/bootstrap-report": {
+   "post": {
+    "operationId": "post_bootstrap_report"
+   }
+  },
+  "/api/agents/{slug}/canopy-login": {
+   "post": {
+    "operationId": "give_agent_canopy_login"
+   }
+  },
+  "/api/agents/{slug}/canopy-token": {
+   "post": {
+    "operationId": "mint_agent_canopy_token"
+   }
+  },
+  "/api/agents/{slug}/canopy-user": {
+   "put": {
+    "operationId": "link_canopy_user"
+   }
+  },
+  "/api/agents/{slug}/capabilities": {
+   "get": {
+    "operationId": "get_agent_capabilities"
+   },
+   "put": {
+    "operationId": "put_agent_capabilities"
+   }
+  },
+  "/api/agents/{slug}/capabilities/{name}/refresh": {
+   "post": {
+    "operationId": "refresh_agent_capability"
+   }
+  },
+  "/api/agents/{slug}/capabilities/{name}/slots": {
+   "get": {
+    "operationId": "list_capability_slot_data"
+   }
+  },
+  "/api/agents/{slug}/capabilities/{name}/slots/{slot}": {
+   "delete": {
+    "operationId": "delete_capability_slot_data"
+   },
+   "put": {
+    "operationId": "set_capability_slot_data"
+   }
+  },
+  "/api/agents/{slug}/capabilities/{name}/terminate-orphans": {
+   "post": {
+    "operationId": "terminate_capability_orphans"
+   }
+  },
+  "/api/agents/{slug}/clis": {
+   "patch": {
+    "operationId": "set_agent_clis"
+   }
+  },
+  "/api/agents/{slug}/connected-sites": {
+   "get": {
+    "operationId": "list_connected_sites"
+   }
+  },
+  "/api/agents/{slug}/connected-sites/{site}": {
+   "delete": {
+    "operationId": "delete_connected_site"
+   },
+   "put": {
+    "operationId": "put_connected_site"
+   }
+  },
+  "/api/agents/{slug}/connections": {
+   "get": {
+    "operationId": "agent_connections"
+   }
+  },
+  "/api/agents/{slug}/connections/{connection_id}": {
+   "delete": {
+    "operationId": "disconnect_agent_connection"
+   }
+  },
+  "/api/agents/{slug}/credential-alerts": {
+   "get": {
+    "operationId": "agent_credential_alerts"
+   }
+  },
+  "/api/agents/{slug}/credentials": {
+   "put": {
+    "operationId": "set_agent_credentials"
+   }
+  },
+  "/api/agents/{slug}/credentials/access": {
+   "get": {
+    "operationId": "agent_credential_access"
+   }
+  },
+  "/api/agents/{slug}/credentials/resolve": {
+   "get": {
+    "operationId": "resolve_agent_credentials"
+   }
+  },
+  "/api/agents/{slug}/credentials/status": {
+   "get": {
+    "operationId": "agent_credential_status"
+   }
+  },
+  "/api/agents/{slug}/credentials/{name}": {
+   "delete": {
+    "operationId": "delete_agent_credential"
+   }
+  },
+  "/api/agents/{slug}/credentials/{name}/reads": {
+   "get": {
+    "operationId": "agent_credential_reads"
+   }
+  },
+  "/api/agents/{slug}/default-order": {
+   "get": {
+    "operationId": "get_agent_default_order"
+   }
+  },
+  "/api/agents/{slug}/device-keys": {
+   "get": {
+    "operationId": "agent_device_keys"
+   }
+  },
+  "/api/agents/{slug}/github": {
+   "delete": {
+    "operationId": "delete_agent_github"
+   },
+   "get": {
+    "operationId": "get_agent_github"
+   },
+   "put": {
+    "operationId": "set_agent_github"
+   }
+  },
+  "/api/agents/{slug}/github/check": {
+   "post": {
+    "operationId": "check_agent_github"
+   }
+  },
+  "/api/agents/{slug}/google/delegate": {
+   "post": {
+    "operationId": "start_google_delegation"
+   }
+  },
+  "/api/agents/{slug}/google/delegate/{mint_id}": {
+   "get": {
+    "operationId": "get_google_delegation"
+   }
+  },
+  "/api/agents/{slug}/google/mint": {
+   "post": {
+    "operationId": "start_google_mint"
+   }
+  },
+  "/api/agents/{slug}/google/mint/{mint_id}": {
+   "get": {
+    "operationId": "get_google_mint"
+   }
+  },
+  "/api/agents/{slug}/hold": {
+   "get": {
+    "operationId": "get_agent_hold"
+   },
+   "post": {
+    "operationId": "hold_agent"
+   }
+  },
+  "/api/agents/{slug}/hold/release": {
+   "post": {
+    "operationId": "release_agent_hold"
+   }
+  },
+  "/api/agents/{slug}/inherit-workspace-defaults": {
+   "put": {
+    "operationId": "set_inherit_workspace_defaults"
+   }
+  },
+  "/api/agents/{slug}/licenses": {
+   "get": {
+    "operationId": "list_agent_licenses"
+   }
+  },
+  "/api/agents/{slug}/licenses/{user_id}/approve": {
+   "post": {
+    "operationId": "approve_agent_license"
+   }
+  },
+  "/api/agents/{slug}/licenses/{user_id}/revoke": {
+   "post": {
+    "operationId": "revoke_agent_license"
+   }
+  },
+  "/api/agents/{slug}/move": {
+   "post": {
+    "operationId": "move_agent"
+   }
+  },
+  "/api/agents/{slug}/owner": {
+   "put": {
+    "operationId": "transfer_owner"
+   }
+  },
+  "/api/agents/{slug}/pat-rotation": {
+   "get": {
+    "operationId": "get_pat_rotation"
+   },
+   "patch": {
+    "operationId": "set_pat_rotation"
+   }
+  },
+  "/api/agents/{slug}/pat-rotation/own": {
+   "post": {
+    "operationId": "rotate_own_pat"
+   }
+  },
+  "/api/agents/{slug}/pat-rotation/rotate": {
+   "post": {
+    "operationId": "rotate_pat_now"
+   }
+  },
+  "/api/agents/{slug}/pinnable-runners": {
+   "get": {
+    "operationId": "list_agent_pinnable_runners"
+   }
+  },
+  "/api/agents/{slug}/projects/": {
+   "get": {
+    "operationId": "list_projects"
+   },
+   "post": {
+    "operationId": "create_project"
+   }
+  },
+  "/api/agents/{slug}/projects/propose/": {
+   "post": {
+    "operationId": "propose_project"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/": {
+   "get": {
+    "operationId": "get_project"
+   },
+   "patch": {
+    "operationId": "patch_project"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/backings/": {
+   "get": {
+    "operationId": "list_project_backings"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/backings/agents/{backer}/": {
+   "put": {
+    "operationId": "back_project_as_agent"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/backings/me/": {
+   "delete": {
+    "operationId": "unback_project"
+   },
+   "put": {
+    "operationId": "back_project"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/checkin-runs": {
+   "get": {
+    "operationId": "list_project_checkin_runs"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/checkins/": {
+   "get": {
+    "operationId": "list_project_checkins"
+   },
+   "post": {
+    "operationId": "create_project_checkin"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/checkins/{name}": {
+   "delete": {
+    "operationId": "delete_project_checkin"
+   },
+   "get": {
+    "operationId": "get_project_checkin"
+   },
+   "patch": {
+    "operationId": "update_project_checkin"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/checkins/{name}/run-now": {
+   "post": {
+    "operationId": "run_project_checkin_now"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/contributors/": {
+   "get": {
+    "operationId": "project_ideas"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/contributors/{person}/": {
+   "get": {
+    "operationId": "contributor_page"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/contributors/{person}/summary/": {
+   "delete": {
+    "operationId": "delete_contributor_summary"
+   },
+   "put": {
+    "operationId": "put_contributor_summary"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/ideas/": {
+   "post": {
+    "operationId": "create_idea"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/tasks/propose/": {
+   "post": {
+    "operationId": "propose_task"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/tasks/{task}/backings/": {
+   "get": {
+    "operationId": "list_task_backings"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/tasks/{task}/backings/agents/{backer}/": {
+   "put": {
+    "operationId": "back_task_as_agent"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/tasks/{task}/backings/me/": {
+   "delete": {
+    "operationId": "unback_task"
+   },
+   "put": {
+    "operationId": "back_task"
+   }
+  },
+  "/api/agents/{slug}/projects/{ref}/team/": {
+   "get": {
+    "operationId": "project_team"
+   }
+  },
+  "/api/agents/{slug}/read-mode": {
+   "delete": {
+    "operationId": "reset_read_mode"
+   },
+   "get": {
+    "operationId": "get_read_mode"
+   },
+   "put": {
+    "operationId": "put_read_mode"
+   }
+  },
+  "/api/agents/{slug}/readiness": {
+   "get": {
+    "operationId": "agent_readiness"
+   }
+  },
+  "/api/agents/{slug}/repository": {
+   "patch": {
+    "operationId": "set_repository"
+   }
+  },
+  "/api/agents/{slug}/route-preview": {
+   "get": {
+    "operationId": "get_agent_route_preview"
+   }
+  },
+  "/api/agents/{slug}/runner-rules": {
+   "get": {
+    "operationId": "list_agent_runner_rules"
+   },
+   "put": {
+    "operationId": "replace_agent_runner_rules"
+   }
+  },
+  "/api/agents/{slug}/runner-rules/{source}": {
+   "delete": {
+    "operationId": "delete_agent_runner_rule"
+   },
+   "put": {
+    "operationId": "set_agent_runner_rule"
+   }
+  },
+  "/api/agents/{slug}/runners": {
+   "get": {
+    "operationId": "list_agent_runners"
+   },
+   "put": {
+    "operationId": "replace_agent_runners"
+   }
+  },
+  "/api/agents/{slug}/runs/": {
+   "get": {
+    "operationId": "list_runs"
+   },
+   "post": {
+    "operationId": "create_run"
+   }
+  },
+  "/api/agents/{slug}/runs/{run_id}/": {
+   "get": {
+    "operationId": "agent_runs_get_run"
+   }
+  },
+  "/api/agents/{slug}/runs/{run_id}/fork": {
+   "post": {
+    "operationId": "fork_run"
+   }
+  },
+  "/api/agents/{slug}/runs/{run_id}/steps/": {
+   "get": {
+    "operationId": "list_steps"
+   }
+  },
+  "/api/agents/{slug}/runs/{run_id}/steps/{step_key}/gate": {
+   "post": {
+    "operationId": "record_gate"
+   }
+  },
+  "/api/agents/{slug}/runs/{run_id}/steps/{step_key}/verdict": {
+   "post": {
+    "operationId": "record_verdict"
+   }
+  },
+  "/api/agents/{slug}/runtime": {
+   "get": {
+    "operationId": "get_agent_runtime"
+   }
+  },
+  "/api/agents/{slug}/schedules/": {
+   "get": {
+    "operationId": "list_schedules"
+   },
+   "post": {
+    "operationId": "create_schedule"
+   }
+  },
+  "/api/agents/{slug}/schedules/preview": {
+   "post": {
+    "operationId": "preview_cron"
+   }
+  },
+  "/api/agents/{slug}/schedules/{schedule_id}": {
+   "delete": {
+    "operationId": "delete_schedule"
+   },
+   "patch": {
+    "operationId": "update_schedule"
+   }
+  },
+  "/api/agents/{slug}/schedules/{schedule_id}/run-now": {
+   "post": {
+    "operationId": "run_schedule_now"
+   }
+  },
+  "/api/agents/{slug}/secret-requests": {
+   "get": {
+    "operationId": "list_agent_secret_requests"
+   },
+   "post": {
+    "operationId": "request_agent_secret"
+   }
+  },
+  "/api/agents/{slug}/secret-requests/{request_id}": {
+   "get": {
+    "operationId": "get_agent_secret_request"
+   }
+  },
+  "/api/agents/{slug}/secret-requests/{request_id}/value": {
+   "put": {
+    "operationId": "fulfil_agent_secret_request"
+   }
+  },
+  "/api/agents/{slug}/sender-trust": {
+   "get": {
+    "operationId": "list_sender_trust"
+   }
+  },
+  "/api/agents/{slug}/sender-trust/{email}": {
+   "delete": {
+    "operationId": "delete_sender_trust"
+   },
+   "put": {
+    "operationId": "set_sender_trust"
+   }
+  },
+  "/api/agents/{slug}/setup": {
+   "get": {
+    "operationId": "agent_setup"
+   }
+  },
+  "/api/agents/{slug}/skill-history/": {
+   "get": {
+    "operationId": "get_skill_history"
+   }
+  },
+  "/api/agents/{slug}/skill-history/diff": {
+   "get": {
+    "operationId": "skill_revision_diff"
+   }
+  },
+  "/api/agents/{slug}/skill-history/revisions": {
+   "get": {
+    "operationId": "skill_history"
+   }
+  },
+  "/api/agents/{slug}/skill-history/sync": {
+   "post": {
+    "operationId": "sync_skill_history"
+   }
+  },
+  "/api/agents/{slug}/skills/": {
+   "get": {
+    "operationId": "list_skills"
+   },
+   "put": {
+    "operationId": "replace_skills"
+   }
+  },
+  "/api/agents/{slug}/slack": {
+   "patch": {
+    "operationId": "set_slack_enabled"
+   }
+  },
+  "/api/agents/{slug}/state-document": {
+   "get": {
+    "operationId": "get_agent_state_document"
+   },
+   "put": {
+    "operationId": "put_agent_state_document"
+   }
+  },
+  "/api/agents/{slug}/syncs/": {
+   "get": {
+    "operationId": "list_syncs"
+   },
+   "post": {
+    "operationId": "create_sync"
+   }
+  },
+  "/api/agents/{slug}/syncs/{sync_id}/": {
+   "delete": {
+    "operationId": "delete_sync"
+   }
+  },
+  "/api/agents/{slug}/tasks/": {
+   "get": {
+    "operationId": "list_tasks"
+   },
+   "post": {
+    "operationId": "create_tasks"
+   }
+  },
+  "/api/agents/{slug}/tasks/{ref}/": {
+   "get": {
+    "operationId": "get_task"
+   },
+   "patch": {
+    "operationId": "patch_task"
+   }
+  },
+  "/api/agents/{slug}/tasks/{ref}/actions": {
+   "post": {
+    "operationId": "act_on_task"
+   }
+  },
+  "/api/agents/{slug}/test-vault-key": {
+   "get": {
+    "operationId": "get_test_vault_key"
+   },
+   "put": {
+    "operationId": "set_test_vault_key"
+   }
+  },
+  "/api/agents/{slug}/triggers/": {
+   "get": {
+    "operationId": "list_triggers"
+   },
+   "post": {
+    "operationId": "create_trigger"
+   }
+  },
+  "/api/agents/{slug}/triggers/{trigger_id}": {
+   "delete": {
+    "operationId": "delete_trigger"
+   },
+   "patch": {
+    "operationId": "update_trigger"
+   }
+  },
+  "/api/agents/{slug}/triggers/{trigger_id}/run-now": {
+   "post": {
+    "operationId": "run_trigger_now"
+   }
+  },
+  "/api/agents/{slug}/turn-mode": {
+   "patch": {
+    "operationId": "set_turn_mode"
+   }
+  },
+  "/api/agents/{slug}/turns/": {
+   "get": {
+    "operationId": "agents_list_turns"
+   },
+   "post": {
+    "operationId": "create_turn"
+   }
+  },
+  "/api/agents/{slug}/vault/agent-link": {
+   "put": {
+    "operationId": "set_agent_vault_link"
+   }
+  },
+  "/api/agents/{slug}/vault/members": {
+   "get": {
+    "operationId": "get_agent_vault_members"
+   },
+   "post": {
+    "operationId": "add_agent_vault_member"
+   }
+  },
+  "/api/agents/{slug}/vault/members/{user_id}": {
+   "delete": {
+    "operationId": "remove_agent_vault_member"
+   }
+  },
+  "/api/agents/{slug}/vault/zk": {
+   "get": {
+    "operationId": "get_agent_zk_state"
+   }
+  },
+  "/api/agents/{slug}/vault/zk/enable": {
+   "post": {
+    "operationId": "enable_agent_zk"
+   }
+  },
+  "/api/agents/{slug}/vault/zk/endorsements": {
+   "post": {
+    "operationId": "add_agent_zk_endorsements"
+   }
+  },
+  "/api/agents/{slug}/vault/zk/pins": {
+   "put": {
+    "operationId": "put_agent_zk_pins"
+   }
+  },
+  "/api/agents/{slug}/vault/zk/recipients": {
+   "get": {
+    "operationId": "get_agent_zk_recipients"
+   }
+  },
+  "/api/agents/{slug}/vault/zk/rotate": {
+   "post": {
+    "operationId": "rotate_agent_zk"
+   }
+  },
+  "/api/agents/{slug}/vault/zk/values": {
+   "put": {
+    "operationId": "set_agent_zk_values"
+   }
+  },
+  "/api/agents/{slug}/vault/zk/wraps": {
+   "post": {
+    "operationId": "add_agent_zk_wraps"
+   }
+  },
+  "/api/approvals/": {
+   "get": {
+    "operationId": "list_approvals"
+   },
+   "post": {
+    "operationId": "file_approval"
+   }
+  },
+  "/api/approvals/kinds": {
+   "get": {
+    "operationId": "list_approval_kinds"
+   }
+  },
+  "/api/approvals/{approval_id}": {
+   "get": {
+    "operationId": "get_approval"
+   }
+  },
+  "/api/approvals/{approval_id}/cancel": {
+   "post": {
+    "operationId": "cancel_approval"
+   }
+  },
+  "/api/approvals/{approval_id}/decide": {
+   "post": {
+    "operationId": "decide_approval"
+   }
+  },
+  "/api/auth/contact-token": {
+   "post": {
+    "operationId": "contact_token"
+   }
+  },
+  "/api/beta-requests": {
+   "get": {
+    "operationId": "list_beta_requests"
+   },
+   "post": {
+    "operationId": "submit_beta_request"
+   }
+  },
+  "/api/beta-requests/{request_id}": {
+   "get": {
+    "operationId": "get_beta_request"
+   }
+  },
+  "/api/beta-requests/{request_id}/decline": {
+   "post": {
+    "operationId": "decline_beta_request"
+   }
+  },
+  "/api/beta-requests/{request_id}/invite": {
+   "post": {
+    "operationId": "invite_beta_request"
+   }
+  },
+  "/api/canopy-sessions/": {
+   "get": {
+    "operationId": "canopy_sessions_list_sessions"
+   },
+   "post": {
+    "operationId": "create_session"
+   }
+  },
+  "/api/canopy-sessions/asked-review/messages": {
+   "get": {
+    "operationId": "read_asked_session"
+   }
+  },
+  "/api/canopy-sessions/attachments/{attachment_id}": {
+   "delete": {
+    "operationId": "delete_attachment"
+   }
+  },
+  "/api/canopy-sessions/attachments/{attachment_id}/content": {
+   "get": {
+    "operationId": "attachment_content"
+   }
+  },
+  "/api/canopy-sessions/attachments/{attachment_id}/sealed": {
+   "get": {
+    "operationId": "sealed_attachment_content"
+   },
+   "post": {
+    "operationId": "put_sealed_attachment"
+   }
+  },
+  "/api/canopy-sessions/join-requests/{request_id}/cancel": {
+   "post": {
+    "operationId": "cancel_join_request"
+   }
+  },
+  "/api/canopy-sessions/join-requests/{request_id}/decline": {
+   "post": {
+    "operationId": "decline_join_request"
+   }
+  },
+  "/api/canopy-sessions/my-keys": {
+   "get": {
+    "operationId": "my_key_copies"
+   },
+   "put": {
+    "operationId": "put_my_key_copies"
+   }
+  },
+  "/api/canopy-sessions/my-vault-key": {
+   "get": {
+    "operationId": "my_vault_key"
+   }
+  },
+  "/api/canopy-sessions/noise": {
+   "get": {
+    "operationId": "audit_session_noise"
+   }
+  },
+  "/api/canopy-sessions/noise/purge": {
+   "post": {
+    "operationId": "purge_session_noise"
+   }
+  },
+  "/api/canopy-sessions/reset": {
+   "post": {
+    "operationId": "reset_sessions"
+   }
+  },
+  "/api/canopy-sessions/search": {
+   "get": {
+    "operationId": "search_sessions"
+   }
+  },
+  "/api/canopy-sessions/slack/detach": {
+   "post": {
+    "operationId": "detach_session_from_slack"
+   }
+  },
+  "/api/canopy-sessions/slack/new-thread": {
+   "post": {
+    "operationId": "start_new_slack_thread"
+   }
+  },
+  "/api/canopy-sessions/slack/share": {
+   "post": {
+    "operationId": "share_session_to_slack"
+   }
+  },
+  "/api/canopy-sessions/transfer-all": {
+   "post": {
+    "operationId": "transfer_all"
+   }
+  },
+  "/api/canopy-sessions/transfer-requests": {
+   "get": {
+    "operationId": "list_transfer_requests"
+   }
+  },
+  "/api/canopy-sessions/transfer-requests/{request_id}/approve": {
+   "post": {
+    "operationId": "approve_transfer_request"
+   }
+  },
+  "/api/canopy-sessions/transfer-requests/{request_id}/cancel": {
+   "post": {
+    "operationId": "cancel_transfer_request"
+   }
+  },
+  "/api/canopy-sessions/transfer-requests/{request_id}/decline": {
+   "post": {
+    "operationId": "decline_transfer_request"
+   }
+  },
+  "/api/canopy-sessions/{session_id}": {
+   "get": {
+    "operationId": "canopy_sessions_get_session"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/answer-menu": {
+   "post": {
+    "operationId": "answer_menu"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/apps/{tool_call_id}/call": {
+   "post": {
+    "operationId": "app_view_call"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/apps/{tool_call_id}/context": {
+   "put": {
+    "operationId": "app_view_context"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/apps/{tool_call_id}/message": {
+   "post": {
+    "operationId": "app_view_message"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/apps/{tool_call_id}/read": {
+   "post": {
+    "operationId": "app_view_read"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/apps/{tool_call_id}/resource": {
+   "get": {
+    "operationId": "app_view_resource"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/apps/{tool_call_id}/subscribe": {
+   "post": {
+    "operationId": "app_view_subscribe"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/apps/{tool_call_id}/unsubscribe": {
+   "post": {
+    "operationId": "app_view_unsubscribe"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/archive": {
+   "post": {
+    "operationId": "archive_session"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/attach": {
+   "post": {
+    "operationId": "attach_session"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/attachments": {
+   "post": {
+    "operationId": "upload_attachment"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/backfill": {
+   "post": {
+    "operationId": "request_backfill"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/close": {
+   "post": {
+    "operationId": "close_session"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/content": {
+   "delete": {
+    "operationId": "delete_session_content"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/context": {
+   "get": {
+    "operationId": "get_session_context"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/detach": {
+   "post": {
+    "operationId": "detach_session"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/export": {
+   "get": {
+    "operationId": "export_session"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/fork": {
+   "post": {
+    "operationId": "fork_session"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/handoffs": {
+   "get": {
+    "operationId": "list_handoffs"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/handoffs/{handoff_id}/restore": {
+   "post": {
+    "operationId": "restore_handoff"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/human-inputs": {
+   "get": {
+    "operationId": "list_human_inputs"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/info": {
+   "get": {
+    "operationId": "get_session_info"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/join-requests": {
+   "get": {
+    "operationId": "list_join_requests"
+   },
+   "post": {
+    "operationId": "ask_to_join"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/key-copies": {
+   "post": {
+    "operationId": "give_key_copy"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/key-copies/mine": {
+   "delete": {
+    "operationId": "set_aside_my_key_copy"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/messages": {
+   "get": {
+    "operationId": "list_messages"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/move": {
+   "post": {
+    "operationId": "move_session"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/notify": {
+   "put": {
+    "operationId": "set_session_notify"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/page-actions": {
+   "get": {
+    "operationId": "list_page_actions"
+   },
+   "put": {
+    "operationId": "canopy_sessions_declare_page_actions"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/page-actions/invoke": {
+   "post": {
+    "operationId": "invoke_page_action"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/page-actions/{action_id}/result": {
+   "post": {
+    "operationId": "canopy_sessions_resolve_page_action"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/page-state": {
+   "get": {
+    "operationId": "read_page_state"
+   },
+   "put": {
+    "operationId": "canopy_sessions_declare_page_state"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/participants": {
+   "get": {
+    "operationId": "list_participants"
+   },
+   "post": {
+    "operationId": "add_participant"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/participants/candidates": {
+   "get": {
+    "operationId": "participant_candidates"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/participants/recipient": {
+   "get": {
+    "operationId": "participant_recipient"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/participants/{user_id}": {
+   "delete": {
+    "operationId": "remove_participant"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/place": {
+   "post": {
+    "operationId": "place"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/reset": {
+   "post": {
+    "operationId": "reset_session"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/run-input": {
+   "put": {
+    "operationId": "declare_run_input"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/sealed-attachments": {
+   "get": {
+    "operationId": "list_sealed_attachments"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/secrets": {
+   "get": {
+    "operationId": "list_secrets"
+   },
+   "post": {
+    "operationId": "share_secret"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/secrets/recipients": {
+   "get": {
+    "operationId": "secret_recipients"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/secrets/{name}": {
+   "delete": {
+    "operationId": "delete_secret"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/send": {
+   "post": {
+    "operationId": "canopy_sessions_send"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/slash-commands": {
+   "get": {
+    "operationId": "list_slash_commands"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/stop": {
+   "post": {
+    "operationId": "stop_session_turn"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/title": {
+   "put": {
+    "operationId": "set_session_title"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/transfer": {
+   "post": {
+    "operationId": "transfer"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/turns/{turn_id}/context": {
+   "get": {
+    "operationId": "get_session_turn_context"
+   }
+  },
+  "/api/canopy-sessions/{session_id}/unarchive": {
+   "post": {
+    "operationId": "unarchive_session"
+   }
+  },
+  "/api/capabilities/grants": {
+   "get": {
+    "operationId": "list_capability_grants"
+   },
+   "put": {
+    "operationId": "set_capability_grant"
+   }
+  },
+  "/api/capabilities/grants/{grant_id}": {
+   "delete": {
+    "operationId": "delete_capability_grant"
+   }
+  },
+  "/api/capabilities/leases": {
+   "get": {
+    "operationId": "list_capability_leases"
+   },
+   "post": {
+    "operationId": "acquire_capability_lease"
+   }
+  },
+  "/api/capabilities/leases/{lease_id}": {
+   "delete": {
+    "operationId": "release_capability_lease"
+   },
+   "get": {
+    "operationId": "get_capability_lease"
+   }
+  },
+  "/api/capabilities/leases/{lease_id}/artifacts": {
+   "get": {
+    "operationId": "list_capability_artifacts"
+   }
+  },
+  "/api/capabilities/leases/{lease_id}/exec": {
+   "post": {
+    "operationId": "exec_capability_lease"
+   }
+  },
+  "/api/capabilities/leases/{lease_id}/exec/{exec_id}": {
+   "get": {
+    "operationId": "get_capability_exec"
+   }
+  },
+  "/api/capabilities/leases/{lease_id}/force-release": {
+   "post": {
+    "operationId": "force_release_capability_lease"
+   }
+  },
+  "/api/capabilities/leases/{lease_id}/uploads": {
+   "post": {
+    "operationId": "create_capability_uploads"
+   }
+  },
+  "/api/capabilities/spend": {
+   "get": {
+    "operationId": "capability_spend"
+   }
+  },
+  "/api/checkins/": {
+   "get": {
+    "operationId": "list_checkins"
+   }
+  },
+  "/api/checkins/runs/{run_id}": {
+   "get": {
+    "operationId": "get_checkin_run"
+   }
+  },
+  "/api/checkins/runs/{run_id}/finished": {
+   "post": {
+    "operationId": "finish_checkin_run"
+   }
+  },
+  "/api/coaching/facts/": {
+   "post": {
+    "operationId": "record_coaching_fact"
+   }
+  },
+  "/api/connections/": {
+   "get": {
+    "operationId": "my_connections"
+   }
+  },
+  "/api/connections/operations": {
+   "post": {
+    "operationId": "open_connection_operation"
+   }
+  },
+  "/api/connections/temporary/{access_id}": {
+   "delete": {
+    "operationId": "end_temporary"
+   }
+  },
+  "/api/connections/{connection_id}": {
+   "delete": {
+    "operationId": "disconnect_mine"
+   }
+  },
+  "/api/connections/{connection_id}/server-use": {
+   "post": {
+    "operationId": "set_server_use"
+   }
+  },
+  "/api/connections/{connection_id}/share": {
+   "get": {
+    "operationId": "get_share_state"
+   },
+   "put": {
+    "operationId": "share_connection"
+   }
+  },
+  "/api/connections/{connection_id}/surface-shares": {
+   "get": {
+    "operationId": "list_surface_shares"
+   },
+   "post": {
+    "operationId": "approve_surface_share"
+   }
+  },
+  "/api/connections/{connection_id}/surface-shares/preview": {
+   "get": {
+    "operationId": "preview_surface_share"
+   }
+  },
+  "/api/connections/{connection_id}/surface-shares/{share_id}": {
+   "delete": {
+    "operationId": "stop_surface_share"
+   }
+  },
+  "/api/connections/{provider}/request": {
+   "post": {
+    "operationId": "request_connection_call"
+   }
+  },
+  "/api/contact/hcp/entries/{entry_id}": {
+   "delete": {
+    "operationId": "contact_hcp_delete_entry"
+   }
+  },
+  "/api/contact/hcp/export": {
+   "get": {
+    "operationId": "contact_hcp_export"
+   }
+  },
+  "/api/contact/hcp/grants/{grant_id}": {
+   "delete": {
+    "operationId": "contact_hcp_revoke"
+   }
+  },
+  "/api/contact/hcp/opt-in": {
+   "post": {
+    "operationId": "contact_hcp_opt_in"
+   }
+  },
+  "/api/contact/hcp/policy": {
+   "put": {
+    "operationId": "contact_hcp_policy"
+   }
+  },
+  "/api/contact/hcp/proof": {
+   "post": {
+    "operationId": "contact_hcp_proof"
+   }
+  },
+  "/api/contact/hcp/sessions/{session_id}/agent-grants": {
+   "post": {
+    "operationId": "contact_hcp_grant"
+   }
+  },
+  "/api/contact/hcp/sessions/{session_id}/memory": {
+   "put": {
+    "operationId": "contact_hcp_session_memory"
+   }
+  },
+  "/api/contact/hcp/state": {
+   "get": {
+    "operationId": "contact_hcp_state"
+   }
+  },
+  "/api/contact/me": {
+   "get": {
+    "operationId": "contact_me"
+   }
+  },
+  "/api/contact/sessions": {
+   "get": {
+    "operationId": "tokens_contact_list_sessions"
+   },
+   "post": {
+    "operationId": "start_session"
+   }
+  },
+  "/api/contact/sessions/{session_id}": {
+   "get": {
+    "operationId": "tokens_contact_get_session"
+   }
+  },
+  "/api/contact/sessions/{session_id}/apps/{tool_call_id}/call": {
+   "post": {
+    "operationId": "contact_app_view_call"
+   }
+  },
+  "/api/contact/sessions/{session_id}/apps/{tool_call_id}/context": {
+   "put": {
+    "operationId": "contact_app_view_context"
+   }
+  },
+  "/api/contact/sessions/{session_id}/apps/{tool_call_id}/message": {
+   "post": {
+    "operationId": "contact_app_view_message"
+   }
+  },
+  "/api/contact/sessions/{session_id}/apps/{tool_call_id}/read": {
+   "post": {
+    "operationId": "contact_app_view_read"
+   }
+  },
+  "/api/contact/sessions/{session_id}/apps/{tool_call_id}/resource": {
+   "get": {
+    "operationId": "contact_app_view_resource"
+   }
+  },
+  "/api/contact/sessions/{session_id}/apps/{tool_call_id}/subscribe": {
+   "post": {
+    "operationId": "contact_app_view_subscribe"
+   }
+  },
+  "/api/contact/sessions/{session_id}/apps/{tool_call_id}/unsubscribe": {
+   "post": {
+    "operationId": "contact_app_view_unsubscribe"
+   }
+  },
+  "/api/contact/sessions/{session_id}/archive": {
+   "post": {
+    "operationId": "contact_archive_session"
+   }
+  },
+  "/api/contact/sessions/{session_id}/attach": {
+   "post": {
+    "operationId": "attach"
+   }
+  },
+  "/api/contact/sessions/{session_id}/detach": {
+   "post": {
+    "operationId": "detach"
+   }
+  },
+  "/api/contact/sessions/{session_id}/messages": {
+   "get": {
+    "operationId": "messages"
+   }
+  },
+  "/api/contact/sessions/{session_id}/page-actions": {
+   "put": {
+    "operationId": "tokens_contact_declare_page_actions"
+   }
+  },
+  "/api/contact/sessions/{session_id}/page-actions/{action_id}/result": {
+   "post": {
+    "operationId": "tokens_contact_resolve_page_action"
+   }
+  },
+  "/api/contact/sessions/{session_id}/page-state": {
+   "put": {
+    "operationId": "tokens_contact_declare_page_state"
+   }
+  },
+  "/api/contact/sessions/{session_id}/send": {
+   "post": {
+    "operationId": "tokens_contact_send"
+   }
+  },
+  "/api/contact/sessions/{session_id}/stop": {
+   "post": {
+    "operationId": "stop"
+   }
+  },
+  "/api/contact/turns/unclaimable": {
+   "get": {
+    "operationId": "my_unclaimable"
+   }
+  },
+  "/api/contact/turns/{turn_id}": {
+   "get": {
+    "operationId": "my_turn"
+   }
+  },
+  "/api/contact/turns/{turn_id}/transcript": {
+   "get": {
+    "operationId": "my_turn_transcript"
+   }
+  },
+  "/api/contact/ws-ticket": {
+   "post": {
+    "operationId": "contact_ws_ticket"
+   }
+  },
+  "/api/contacts/": {
+   "get": {
+    "operationId": "list_contacts"
+   }
+  },
+  "/api/contacts/{contact_id}/": {
+   "get": {
+    "operationId": "get_contact"
+   },
+   "patch": {
+    "operationId": "patch_contact"
+   }
+  },
+  "/api/ddd/narratives/": {
+   "get": {
+    "operationId": "list_narratives"
+   }
+  },
+  "/api/ddd/narratives/{slug}/": {
+   "delete": {
+    "operationId": "delete_narrative"
+   },
+   "get": {
+    "operationId": "get_narrative"
+   }
+  },
+  "/api/ddd/narratives/{slug}/move/": {
+   "post": {
+    "operationId": "move_narrative"
+   }
+  },
+  "/api/ddd/narratives/{slug}/sources/": {
+   "get": {
+    "operationId": "list_narrative_sources"
+   },
+   "post": {
+    "operationId": "upload_narrative_source"
+   }
+  },
+  "/api/ddd/narratives/{slug}/sources/{source_id}/content": {
+   "get": {
+    "operationId": "get_narrative_source_content"
+   }
+  },
+  "/api/ddd/narratives/{slug}/versions/{version}/": {
+   "delete": {
+    "operationId": "delete_version"
+   }
+  },
+  "/api/ddd/narratives/{slug}/visibility/": {
+   "patch": {
+    "operationId": "set_narrative_visibility"
+   }
+  },
+  "/api/ddd/release/{run_id}/": {
+   "get": {
+    "operationId": "get_run_release"
+   }
+  },
+  "/api/ddd/runs/{run_id}/": {
+   "delete": {
+    "operationId": "delete_run"
+   },
+   "get": {
+    "operationId": "runs_get_run"
+   }
+  },
+  "/api/dynamic-views/": {
+   "get": {
+    "operationId": "list_dynamic_views"
+   },
+   "post": {
+    "operationId": "create_dynamic_view"
+   }
+  },
+  "/api/dynamic-views/guide/": {
+   "get": {
+    "operationId": "get_dynamic_view_guide"
+   }
+  },
+  "/api/dynamic-views/{view_id}": {
+   "delete": {
+    "operationId": "delete_dynamic_view"
+   },
+   "get": {
+    "operationId": "get_dynamic_view"
+   },
+   "patch": {
+    "operationId": "update_dynamic_view"
+   }
+  },
+  "/api/dynamic-views/{view_id}/revisions/": {
+   "get": {
+    "operationId": "list_dynamic_view_revisions"
+   }
+  },
+  "/api/dynamic-views/{view_id}/rollback": {
+   "post": {
+    "operationId": "rollback_dynamic_view"
+   }
+  },
+  "/api/embed/agents": {
+   "get": {
+    "operationId": "list_embeddable_agents"
+   }
+  },
+  "/api/embed/default-agent": {
+   "put": {
+    "operationId": "set_embed_default_agent"
+   }
+  },
+  "/api/embed/host-grant": {
+   "delete": {
+    "operationId": "stop_panel_host_grant"
+   },
+   "get": {
+    "operationId": "panel_host_grant"
+   }
+  },
+  "/api/embed/host-grant/confirm/begin": {
+   "post": {
+    "operationId": "begin_confirm_host_grant"
+   }
+  },
+  "/api/embed/host-grant/confirm/finish": {
+   "post": {
+    "operationId": "finish_confirm_host_grant"
+   }
+  },
+  "/api/embed/self": {
+   "get": {
+    "operationId": "embed_self"
+   }
+  },
+  "/api/embed/sessions/{session_id}/agent-memory": {
+   "get": {
+    "operationId": "embed_session_memory"
+   }
+  },
+  "/api/embed/sign-offs/{sign_off_id}": {
+   "get": {
+    "operationId": "get_framed_sign_off"
+   }
+  },
+  "/api/embed/sign-offs/{sign_off_id}/approve/begin": {
+   "post": {
+    "operationId": "begin_framed_approval"
+   }
+  },
+  "/api/embed/sign-offs/{sign_off_id}/approve/finish": {
+   "post": {
+    "operationId": "finish_framed_approval"
+   }
+  },
+  "/api/embed/sign-offs/{sign_off_id}/decline": {
+   "post": {
+    "operationId": "decline_framed_sign_off"
+   }
+  },
+  "/api/embed/token": {
+   "post": {
+    "operationId": "embed_self_token"
+   }
+  },
+  "/api/embed/ws-ticket": {
+   "post": {
+    "operationId": "embed_ws_ticket"
+   }
+  },
+  "/api/engagement/summary": {
+   "get": {
+    "operationId": "engagement_summary"
+   }
+  },
+  "/api/engagement/view": {
+   "post": {
+    "operationId": "record_engagement_view"
+   }
+  },
+  "/api/events/": {
+   "get": {
+    "operationId": "list_events"
+   },
+   "post": {
+    "operationId": "record_events"
+   }
+  },
+  "/api/events/mcp-calls": {
+   "get": {
+    "operationId": "list_mcp_calls"
+   }
+  },
+  "/api/events/setting-changes": {
+   "get": {
+    "operationId": "list_setting_changes"
+   }
+  },
+  "/api/feedback/": {
+   "get": {
+    "operationId": "list_feedback"
+   },
+   "post": {
+    "operationId": "ingest_feedback"
+   }
+  },
+  "/api/feedback/{feedback_id}/resolve": {
+   "post": {
+    "operationId": "resolve_feedback"
+   }
+  },
+  "/api/harness/drills/{drill_id}/report": {
+   "post": {
+    "operationId": "report_drill"
+   }
+  },
+  "/api/harness/failure-investigations/": {
+   "get": {
+    "operationId": "list_failure_investigations"
+   }
+  },
+  "/api/harness/failure-investigations/{investigation_id}": {
+   "get": {
+    "operationId": "get_failure_investigation"
+   }
+  },
+  "/api/harness/failure-investigations/{investigation_id}/hand-off": {
+   "post": {
+    "operationId": "hand_off_failure_investigation"
+   }
+  },
+  "/api/harness/failure-investigations/{investigation_id}/resolve": {
+   "post": {
+    "operationId": "resolve_failure_investigation"
+   }
+  },
+  "/api/harness/fleet-hold": {
+   "get": {
+    "operationId": "get_fleet_hold"
+   },
+   "post": {
+    "operationId": "hold_fleet"
+   }
+  },
+  "/api/harness/fleet-hold/release": {
+   "post": {
+    "operationId": "release_fleet_hold"
+   }
+  },
+  "/api/harness/fleet-stop": {
+   "post": {
+    "operationId": "stop_fleet"
+   }
+  },
+  "/api/harness/local-turns/": {
+   "post": {
+    "operationId": "open_local_turn"
+   }
+  },
+  "/api/harness/local-turns/{turn_id}/renew": {
+   "post": {
+    "operationId": "renew_local_turn"
+   }
+  },
+  "/api/harness/runner-credential-sets/": {
+   "get": {
+    "operationId": "list_runner_credential_sets"
+   },
+   "post": {
+    "operationId": "create_runner_credential_set"
+   }
+  },
+  "/api/harness/runner-credential-sets/runners/{runner_id}": {
+   "put": {
+    "operationId": "set_runner_credential_set"
+   }
+  },
+  "/api/harness/runner-fleets/": {
+   "get": {
+    "operationId": "list_runner_fleets"
+   },
+   "post": {
+    "operationId": "create_runner_fleet"
+   }
+  },
+  "/api/harness/runner-fleets/{fleet_id}": {
+   "get": {
+    "operationId": "get_runner_fleet"
+   }
+  },
+  "/api/harness/runner-fleets/{fleet_id}/retire": {
+   "post": {
+    "operationId": "retire_runner_fleet"
+   }
+  },
+  "/api/harness/runner-fleets/{fleet_id}/size": {
+   "put": {
+    "operationId": "set_runner_fleet_size"
+   }
+  },
+  "/api/harness/runner-invitations/": {
+   "post": {
+    "operationId": "create_runner_invitation"
+   }
+  },
+  "/api/harness/runner-invitations/check": {
+   "get": {
+    "operationId": "check_runner_invitation"
+   }
+  },
+  "/api/harness/runner-invitations/{invitation_id}": {
+   "get": {
+    "operationId": "get_runner_invitation"
+   }
+  },
+  "/api/harness/runner-invitations/{invitation_id}/approve": {
+   "post": {
+    "operationId": "approve_runner_invitation"
+   }
+  },
+  "/api/harness/runner-pairings/": {
+   "post": {
+    "operationId": "create_runner_pairing"
+   }
+  },
+  "/api/harness/runner-pairings/{pairing_id}/claim": {
+   "post": {
+    "operationId": "claim_runner_pairing"
+   }
+  },
+  "/api/harness/runner-pairings/{user_code}": {
+   "get": {
+    "operationId": "get_runner_pairing"
+   }
+  },
+  "/api/harness/runner-pairings/{user_code}/approve": {
+   "post": {
+    "operationId": "approve_runner_pairing"
+   }
+  },
+  "/api/harness/runner-pairings/{user_code}/decline": {
+   "post": {
+    "operationId": "decline_runner_pairing"
+   }
+  },
+  "/api/harness/runner-releases/current": {
+   "get": {
+    "operationId": "current_runner_release"
+   }
+  },
+  "/api/harness/runner-releases/downloads": {
+   "get": {
+    "operationId": "runner_downloads"
+   }
+  },
+  "/api/harness/runners/": {
+   "get": {
+    "operationId": "list_runners"
+   },
+   "post": {
+    "operationId": "pair_runner"
+   }
+  },
+  "/api/harness/runners/box-egress": {
+   "post": {
+    "operationId": "box_egress"
+   }
+  },
+  "/api/harness/runners/pair-by-role": {
+   "post": {
+    "operationId": "pair_runner_by_role"
+   }
+  },
+  "/api/harness/runners/{runner_id}": {
+   "patch": {
+    "operationId": "update_runner_capabilities"
+   }
+  },
+  "/api/harness/runners/{runner_id}/": {
+   "get": {
+    "operationId": "get_runner"
+   }
+  },
+  "/api/harness/runners/{runner_id}/admins": {
+   "get": {
+    "operationId": "list_runner_admins"
+   },
+   "post": {
+    "operationId": "grant_runner_admin"
+   }
+  },
+  "/api/harness/runners/{runner_id}/admins/{user_id}": {
+   "delete": {
+    "operationId": "revoke_runner_admin"
+   }
+  },
+  "/api/harness/runners/{runner_id}/admission-notices": {
+   "post": {
+    "operationId": "claim_admission_notices"
+   }
+  },
+  "/api/harness/runners/{runner_id}/admission-notices/{notice_id}": {
+   "post": {
+    "operationId": "report_admission_notice"
+   }
+  },
+  "/api/harness/runners/{runner_id}/agents": {
+   "get": {
+    "operationId": "runner_agents"
+   }
+  },
+  "/api/harness/runners/{runner_id}/backfills": {
+   "get": {
+    "operationId": "list_backfills"
+   }
+  },
+  "/api/harness/runners/{runner_id}/claim": {
+   "post": {
+    "operationId": "claim_turn"
+   }
+  },
+  "/api/harness/runners/{runner_id}/close-results": {
+   "post": {
+    "operationId": "post_close_results"
+   }
+  },
+  "/api/harness/runners/{runner_id}/closes": {
+   "get": {
+    "operationId": "list_closes"
+   }
+  },
+  "/api/harness/runners/{runner_id}/connections/{connection_id}/reconnect-required": {
+   "post": {
+    "operationId": "connection_reconnect_required"
+   }
+  },
+  "/api/harness/runners/{runner_id}/connections/{connection_id}/refresh-lease": {
+   "post": {
+    "operationId": "take_refresh_lease"
+   }
+  },
+  "/api/harness/runners/{runner_id}/connections/{connection_id}/refresh-lease/{lease_id}": {
+   "delete": {
+    "operationId": "release_refresh_lease"
+   }
+  },
+  "/api/harness/runners/{runner_id}/connections/{connection_id}/revoked": {
+   "post": {
+    "operationId": "post_connection_revoked"
+   }
+  },
+  "/api/harness/runners/{runner_id}/connections/{connection_id}/sealed": {
+   "put": {
+    "operationId": "write_back_connection"
+   }
+  },
+  "/api/harness/runners/{runner_id}/credential": {
+   "get": {
+    "operationId": "get_runner_credential"
+   }
+  },
+  "/api/harness/runners/{runner_id}/credential/resolve": {
+   "get": {
+    "operationId": "resolve_runner_credential"
+   }
+  },
+  "/api/harness/runners/{runner_id}/credential/status": {
+   "get": {
+    "operationId": "get_runner_credential_status"
+   }
+  },
+  "/api/harness/runners/{runner_id}/credential/swap": {
+   "post": {
+    "operationId": "swap_runner_logins"
+   }
+  },
+  "/api/harness/runners/{runner_id}/credentials/order": {
+   "put": {
+    "operationId": "order_runner_credentials"
+   }
+  },
+  "/api/harness/runners/{runner_id}/credentials/{key}": {
+   "delete": {
+    "operationId": "remove_runner_credential"
+   },
+   "patch": {
+    "operationId": "update_runner_credential"
+   }
+  },
+  "/api/harness/runners/{runner_id}/delegated-checks": {
+   "post": {
+    "operationId": "post_delegated_checks"
+   }
+  },
+  "/api/harness/runners/{runner_id}/directed": {
+   "put": {
+    "operationId": "set_runner_directed"
+   }
+  },
+  "/api/harness/runners/{runner_id}/drill": {
+   "post": {
+    "operationId": "start_runner_drill"
+   }
+  },
+  "/api/harness/runners/{runner_id}/drills": {
+   "get": {
+    "operationId": "list_runner_drills"
+   }
+  },
+  "/api/harness/runners/{runner_id}/egress": {
+   "put": {
+    "operationId": "set_runner_egress"
+   }
+  },
+  "/api/harness/runners/{runner_id}/engine": {
+   "put": {
+    "operationId": "set_runner_engine"
+   }
+  },
+  "/api/harness/runners/{runner_id}/flags": {
+   "put": {
+    "operationId": "set_runner_flags"
+   }
+  },
+  "/api/harness/runners/{runner_id}/github-readiness": {
+   "get": {
+    "operationId": "runner_github_readiness"
+   }
+  },
+  "/api/harness/runners/{runner_id}/google-mint/{mint_id}/challenge": {
+   "post": {
+    "operationId": "post_google_mint_challenge"
+   }
+  },
+  "/api/harness/runners/{runner_id}/google-mint/{mint_id}/result": {
+   "post": {
+    "operationId": "post_google_mint_result"
+   }
+  },
+  "/api/harness/runners/{runner_id}/handoffs": {
+   "get": {
+    "operationId": "list_handoffs_due"
+   }
+  },
+  "/api/harness/runners/{runner_id}/handoffs/{handoff_id}/archive": {
+   "get": {
+    "operationId": "get_handoff_archive"
+   },
+   "post": {
+    "operationId": "post_handoff_part"
+   }
+  },
+  "/api/harness/runners/{runner_id}/handoffs/{handoff_id}/captured": {
+   "post": {
+    "operationId": "post_handoff_captured"
+   }
+  },
+  "/api/harness/runners/{runner_id}/handoffs/{handoff_id}/close-result": {
+   "post": {
+    "operationId": "post_handoff_close"
+   }
+  },
+  "/api/harness/runners/{runner_id}/handoffs/{handoff_id}/restored": {
+   "post": {
+    "operationId": "post_handoff_restored"
+   }
+  },
+  "/api/harness/runners/{runner_id}/heartbeat": {
+   "post": {
+    "operationId": "runner_heartbeat"
+   }
+  },
+  "/api/harness/runners/{runner_id}/kept-conversations": {
+   "post": {
+    "operationId": "kept_conversations"
+   }
+  },
+  "/api/harness/runners/{runner_id}/local-apps/": {
+   "get": {
+    "operationId": "list_runner_local_apps"
+   }
+  },
+  "/api/harness/runners/{runner_id}/local-apps/runs/{run_id}/canopy": {
+   "post": {
+    "operationId": "call_canopy_for_local_app"
+   }
+  },
+  "/api/harness/runners/{runner_id}/local-apps/runs/{run_id}/finish": {
+   "post": {
+    "operationId": "finish_runner_local_app"
+   }
+  },
+  "/api/harness/runners/{runner_id}/local-apps/runs/{run_id}/heartbeat": {
+   "post": {
+    "operationId": "beat_runner_local_app"
+   }
+  },
+  "/api/harness/runners/{runner_id}/local-apps/{key}/package": {
+   "get": {
+    "operationId": "get_runner_local_app_package"
+   }
+  },
+  "/api/harness/runners/{runner_id}/local-apps/{key}/runs/": {
+   "post": {
+    "operationId": "start_runner_local_app"
+   }
+  },
+  "/api/harness/runners/{runner_id}/logins": {
+   "post": {
+    "operationId": "add_runner_login"
+   }
+  },
+  "/api/harness/runners/{runner_id}/logins/order": {
+   "put": {
+    "operationId": "order_runner_logins"
+   }
+  },
+  "/api/harness/runners/{runner_id}/logins/report": {
+   "post": {
+    "operationId": "report_runner_logins"
+   }
+  },
+  "/api/harness/runners/{runner_id}/logins/{key}": {
+   "delete": {
+    "operationId": "remove_runner_login"
+   }
+  },
+  "/api/harness/runners/{runner_id}/menu-answer-result": {
+   "post": {
+    "operationId": "post_menu_answer_result"
+   }
+  },
+  "/api/harness/runners/{runner_id}/menu-answers": {
+   "get": {
+    "operationId": "list_menu_answers"
+   }
+  },
+  "/api/harness/runners/{runner_id}/mint": {
+   "get": {
+    "operationId": "get_runner_mint"
+   },
+   "post": {
+    "operationId": "start_runner_mint"
+   }
+  },
+  "/api/harness/runners/{runner_id}/mint/claim": {
+   "get": {
+    "operationId": "claim_runner_mint"
+   }
+  },
+  "/api/harness/runners/{runner_id}/mint/code": {
+   "post": {
+    "operationId": "post_runner_mint_code"
+   }
+  },
+  "/api/harness/runners/{runner_id}/mint/entry": {
+   "post": {
+    "operationId": "post_runner_mint_entry"
+   }
+  },
+  "/api/harness/runners/{runner_id}/mint/result": {
+   "post": {
+    "operationId": "post_runner_mint_result"
+   }
+  },
+  "/api/harness/runners/{runner_id}/mint/url": {
+   "post": {
+    "operationId": "post_runner_mint_url"
+   }
+  },
+  "/api/harness/runners/{runner_id}/name": {
+   "put": {
+    "operationId": "set_runner_name"
+   }
+  },
+  "/api/harness/runners/{runner_id}/only-agents": {
+   "get": {
+    "operationId": "get_runner_only_agents"
+   },
+   "put": {
+    "operationId": "set_runner_only_agents"
+   }
+  },
+  "/api/harness/runners/{runner_id}/pause": {
+   "post": {
+    "operationId": "pause_runner"
+   }
+  },
+  "/api/harness/runners/{runner_id}/private": {
+   "put": {
+    "operationId": "set_runner_private"
+   }
+  },
+  "/api/harness/runners/{runner_id}/projects": {
+   "get": {
+    "operationId": "list_runner_projects"
+   },
+   "post": {
+    "operationId": "add_runner_project"
+   }
+  },
+  "/api/harness/runners/{runner_id}/projects/{request_id}": {
+   "delete": {
+    "operationId": "delete_runner_project_request"
+   }
+  },
+  "/api/harness/runners/{runner_id}/projects/{request_id}/result": {
+   "post": {
+    "operationId": "report_runner_project_result"
+   }
+  },
+  "/api/harness/runners/{runner_id}/record-session": {
+   "post": {
+    "operationId": "record_session"
+   }
+  },
+  "/api/harness/runners/{runner_id}/refresh": {
+   "post": {
+    "operationId": "refresh_runner"
+   }
+  },
+  "/api/harness/runners/{runner_id}/resolve-session": {
+   "post": {
+    "operationId": "resolve_session"
+   }
+  },
+  "/api/harness/runners/{runner_id}/retire": {
+   "post": {
+    "operationId": "retire_runner"
+   }
+  },
+  "/api/harness/runners/{runner_id}/session-backfill": {
+   "post": {
+    "operationId": "post_session_backfill"
+   }
+  },
+  "/api/harness/runners/{runner_id}/session-interrupt-result": {
+   "post": {
+    "operationId": "post_session_interrupt_result"
+   }
+  },
+  "/api/harness/runners/{runner_id}/session-interrupts": {
+   "get": {
+    "operationId": "list_session_interrupts"
+   }
+  },
+  "/api/harness/runners/{runner_id}/session-menu": {
+   "post": {
+    "operationId": "post_session_menu"
+   }
+  },
+  "/api/harness/runners/{runner_id}/session-stream": {
+   "post": {
+    "operationId": "post_session_stream"
+   }
+  },
+  "/api/harness/runners/{runner_id}/session-subagents": {
+   "post": {
+    "operationId": "post_session_subagents"
+   }
+  },
+  "/api/harness/runners/{runner_id}/sessions": {
+   "post": {
+    "operationId": "report_sessions"
+   }
+  },
+  "/api/harness/runners/{runner_id}/sessions/": {
+   "get": {
+    "operationId": "list_runner_sessions"
+   }
+  },
+  "/api/harness/runners/{runner_id}/sessions/{session_id}/close": {
+   "post": {
+    "operationId": "close_runner_session"
+   }
+  },
+  "/api/harness/runners/{runner_id}/sign-in-request": {
+   "post": {
+    "operationId": "post_sign_in_request"
+   }
+  },
+  "/api/harness/runners/{runner_id}/sign-in-requests/{request_id}/result": {
+   "post": {
+    "operationId": "post_sign_in_request_result"
+   }
+  },
+  "/api/harness/runners/{runner_id}/slash-commands": {
+   "put": {
+    "operationId": "report_slash_commands"
+   }
+  },
+  "/api/harness/runners/{runner_id}/streams": {
+   "get": {
+    "operationId": "list_streams"
+   }
+  },
+  "/api/harness/runners/{runner_id}/turns/{turn_id}/agent-token": {
+   "post": {
+    "operationId": "turn_agent_token"
+   }
+  },
+  "/api/harness/runners/{runner_id}/turns/{turn_id}/attachments/{attachment_id}/content": {
+   "get": {
+    "operationId": "turn_attachment_content"
+   }
+  },
+  "/api/harness/runners/{runner_id}/turns/{turn_id}/connections": {
+   "get": {
+    "operationId": "turn_connections"
+   }
+  },
+  "/api/harness/runners/{runner_id}/turns/{turn_id}/connections/{provider}": {
+   "get": {
+    "operationId": "turn_connection_material"
+   }
+  },
+  "/api/harness/runners/{runner_id}/turns/{turn_id}/connections/{provider}/temporary": {
+   "get": {
+    "operationId": "turn_temporary_token"
+   }
+  },
+  "/api/harness/runners/{runner_id}/turns/{turn_id}/github-token": {
+   "post": {
+    "operationId": "turn_github_token"
+   }
+  },
+  "/api/harness/runners/{runner_id}/unpause": {
+   "post": {
+    "operationId": "unpause_runner"
+   }
+  },
+  "/api/harness/runners/{runner_id}/unretire": {
+   "post": {
+    "operationId": "unretire_runner"
+   }
+  },
+  "/api/harness/runners/{runner_id}/usage": {
+   "post": {
+    "operationId": "post_runner_usage"
+   }
+  },
+  "/api/harness/runners/{runner_id}/usage-scope": {
+   "get": {
+    "operationId": "runner_usage_scope"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault": {
+   "post": {
+    "operationId": "create_runner_vault"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault-keeper": {
+   "get": {
+    "operationId": "get_vault_keeper_work"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault-keeper/connections": {
+   "get": {
+    "operationId": "get_connection_keeper_work"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault-keeper/connections/{connection_id}": {
+   "put": {
+    "operationId": "put_connection_reseal"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault-keeper/slot-secrets": {
+   "get": {
+    "operationId": "get_slot_secret_keeper_work"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault-keeper/vaults/{vault_id}/pins": {
+   "put": {
+    "operationId": "put_vault_keeper_workspace_pins"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault-keeper/vaults/{vault_id}/wraps": {
+   "post": {
+    "operationId": "post_vault_keeper_workspace_wraps"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault-keeper/{slug}/delegated/{name}": {
+   "put": {
+    "operationId": "put_delegated_reseal"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault-keeper/{slug}/pins": {
+   "put": {
+    "operationId": "put_vault_keeper_pins"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault-keeper/{slug}/slot-secrets/{capability}/{slot}/{key}": {
+   "put": {
+    "operationId": "put_slot_secret_reseal"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault-keeper/{slug}/wraps": {
+   "post": {
+    "operationId": "post_vault_keeper_wraps"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault/entries": {
+   "post": {
+    "operationId": "add_vaulted_runner_credential"
+   }
+  },
+  "/api/harness/runners/{runner_id}/vault/values": {
+   "put": {
+    "operationId": "put_runner_vault_values"
+   }
+  },
+  "/api/harness/runners/{runner_id}/workspaces": {
+   "get": {
+    "operationId": "list_runner_workspaces"
+   },
+   "post": {
+    "operationId": "enroll_runner_workspace"
+   }
+  },
+  "/api/harness/runners/{runner_id}/workspaces/{workspace}": {
+   "delete": {
+    "operationId": "unenroll_runner_workspace"
+   }
+  },
+  "/api/harness/schedules/": {
+   "get": {
+    "operationId": "sync_schedules"
+   }
+  },
+  "/api/harness/schedules/{schedule_id}/fire": {
+   "post": {
+    "operationId": "fire_schedule_route"
+   }
+  },
+  "/api/harness/sessions": {
+   "get": {
+    "operationId": "harness_list_sessions"
+   }
+  },
+  "/api/harness/sign-in-requests/mine": {
+   "get": {
+    "operationId": "list_my_sign_in_requests"
+   }
+  },
+  "/api/harness/turns/": {
+   "get": {
+    "operationId": "harness_list_turns"
+   },
+   "post": {
+    "operationId": "enqueue_turn"
+   }
+  },
+  "/api/harness/turns/unclaimable": {
+   "get": {
+    "operationId": "list_unclaimable_turns"
+   }
+  },
+  "/api/harness/turns/{turn_id}": {
+   "get": {
+    "operationId": "get_turn"
+   }
+  },
+  "/api/harness/turns/{turn_id}/abort": {
+   "post": {
+    "operationId": "abort_turn"
+   }
+  },
+  "/api/harness/turns/{turn_id}/caller-context": {
+   "get": {
+    "operationId": "get_turn_caller_context"
+   }
+  },
+  "/api/harness/turns/{turn_id}/cancel": {
+   "post": {
+    "operationId": "cancel_turn"
+   }
+  },
+  "/api/harness/turns/{turn_id}/events": {
+   "get": {
+    "operationId": "read_turn_events"
+   },
+   "post": {
+    "operationId": "append_turn_events"
+   }
+  },
+  "/api/harness/turns/{turn_id}/finish": {
+   "post": {
+    "operationId": "finish_turn"
+   }
+  },
+  "/api/harness/turns/{turn_id}/messages": {
+   "get": {
+    "operationId": "read_turn_messages"
+   }
+  },
+  "/api/harness/turns/{turn_id}/start": {
+   "post": {
+    "operationId": "start_turn"
+   }
+  },
+  "/api/harness/turns/{turn_id}/transcript": {
+   "get": {
+    "operationId": "read_turn_transcript"
+   },
+   "post": {
+    "operationId": "append_turn_transcript"
+   }
+  },
+  "/api/harness/workspaces/{slug}/hold": {
+   "get": {
+    "operationId": "get_workspace_hold"
+   },
+   "post": {
+    "operationId": "hold_workspace"
+   }
+  },
+  "/api/harness/workspaces/{slug}/hold/release": {
+   "post": {
+    "operationId": "release_workspace_hold"
+   }
+  },
+  "/api/harness/workspaces/{slug}/stop": {
+   "post": {
+    "operationId": "stop_workspace"
+   }
+  },
+  "/api/hcp-admin/clients": {
+   "get": {
+    "operationId": "hcp_listClients"
+   },
+   "post": {
+    "operationId": "hcp_registerClient"
+   }
+  },
+  "/api/hcp-admin/clients/{client_id}": {
+   "patch": {
+    "operationId": "hcp_updateClient"
+   }
+  },
+  "/api/hcp/.well-known/hcp-configuration": {
+   "get": {
+    "operationId": "hcp_configuration"
+   }
+  },
+  "/api/hcp/v1/audit": {
+   "get": {
+    "operationId": "hcp_listAudit"
+   }
+  },
+  "/api/hcp/v1/export": {
+   "get": {
+    "operationId": "hcp_export"
+   }
+  },
+  "/api/hcp/v1/grants": {
+   "get": {
+    "operationId": "hcp_listGrants"
+   }
+  },
+  "/api/hcp/v1/grants/{grant_id}": {
+   "delete": {
+    "operationId": "hcp_revokeGrant"
+   }
+  },
+  "/api/hcp/v1/preferences": {
+   "post": {
+    "operationId": "hcp_createEntry"
+   }
+  },
+  "/api/hcp/v1/preferences/add": {
+   "post": {
+    "operationId": "hcp_addPreference"
+   }
+  },
+  "/api/hcp/v1/preferences/search": {
+   "post": {
+    "operationId": "hcp_searchPreferences"
+   }
+  },
+  "/api/hcp/v1/preferences/{entry_id}": {
+   "delete": {
+    "operationId": "hcp_deletePreference"
+   },
+   "get": {
+    "operationId": "hcp_getPreference"
+   },
+   "put": {
+    "operationId": "hcp_updatePreference"
+   }
+  },
+  "/api/health/": {
+   "get": {
+    "operationId": "health"
+   }
+  },
+  "/api/huddles/": {
+   "get": {
+    "operationId": "list_huddles"
+   }
+  },
+  "/api/huddles/{huddle_id}": {
+   "get": {
+    "operationId": "get_huddle"
+   }
+  },
+  "/api/inbound/config/{workspace}": {
+   "get": {
+    "operationId": "get_push_config"
+   },
+   "put": {
+    "operationId": "set_push_config"
+   }
+  },
+  "/api/inbound/gmail/{workspace}/": {
+   "post": {
+    "operationId": "gmail_push"
+   }
+  },
+  "/api/inbound/mailboxes/{workspace}": {
+   "get": {
+    "operationId": "list_mailboxes"
+   },
+   "post": {
+    "operationId": "create_mailbox"
+   }
+  },
+  "/api/inbound/mailboxes/{workspace}/{mailbox_id}": {
+   "delete": {
+    "operationId": "delete_mailbox"
+   },
+   "patch": {
+    "operationId": "update_mailbox"
+   }
+  },
+  "/api/inbound/runner-mailboxes": {
+   "get": {
+    "operationId": "runner_mailboxes"
+   }
+  },
+  "/api/inbound/watch/": {
+   "post": {
+    "operationId": "report_watch"
+   }
+  },
+  "/api/issues/": {
+   "get": {
+    "operationId": "list_issues"
+   },
+   "post": {
+    "operationId": "upsert_issue"
+   }
+  },
+  "/api/issues/{repo_slug}/{number}/": {
+   "delete": {
+    "operationId": "delete_issue"
+   },
+   "get": {
+    "operationId": "get_issue"
+   }
+  },
+  "/api/labels/": {
+   "get": {
+    "operationId": "list_labels"
+   },
+   "post": {
+    "operationId": "create_label"
+   }
+  },
+  "/api/labels/{label_id}": {
+   "delete": {
+    "operationId": "delete_label"
+   },
+   "patch": {
+    "operationId": "update_label"
+   }
+  },
+  "/api/local-apps/installations/": {
+   "get": {
+    "operationId": "list_my_local_apps"
+   }
+  },
+  "/api/local-apps/installations/{installation_id}": {
+   "delete": {
+    "operationId": "remove_local_app"
+   },
+   "patch": {
+    "operationId": "configure_local_app"
+   }
+  },
+  "/api/local-apps/installations/{installation_id}/accept": {
+   "post": {
+    "operationId": "accept_local_app_changes"
+   }
+  },
+  "/api/local-apps/runs/{run_id}/stop": {
+   "post": {
+    "operationId": "stop_local_app_run"
+   }
+  },
+  "/api/local-apps/store/": {
+   "get": {
+    "operationId": "list_local_app_store"
+   }
+  },
+  "/api/local-apps/store/apps/{key}": {
+   "get": {
+    "operationId": "get_local_app"
+   }
+  },
+  "/api/local-apps/store/apps/{key}/install": {
+   "post": {
+    "operationId": "install_local_app"
+   }
+  },
+  "/api/local-apps/submissions/": {
+   "get": {
+    "operationId": "list_local_app_submissions"
+   },
+   "post": {
+    "operationId": "submit_local_app"
+   }
+  },
+  "/api/local-apps/submissions/{submission_id}": {
+   "get": {
+    "operationId": "get_local_app_submission"
+   }
+  },
+  "/api/local-apps/submissions/{submission_id}/revoke": {
+   "post": {
+    "operationId": "revoke_local_app"
+   }
+  },
+  "/api/mail/agents/{slug}/mailbox": {
+   "get": {
+    "operationId": "get_agent_mailbox"
+   },
+   "put": {
+    "operationId": "set_agent_mailbox"
+   }
+  },
+  "/api/mail/domains/{workspace}": {
+   "get": {
+    "operationId": "list_mail_domains"
+   },
+   "post": {
+    "operationId": "add_mail_domain"
+   }
+  },
+  "/api/mail/domains/{workspace}/{domain_id}": {
+   "delete": {
+    "operationId": "remove_mail_domain"
+   },
+   "patch": {
+    "operationId": "update_mail_domain"
+   }
+  },
+  "/api/mail/domains/{workspace}/{domain_id}/inbound": {
+   "get": {
+    "operationId": "list_inbound_log"
+   }
+  },
+  "/api/mail/domains/{workspace}/{domain_id}/refresh": {
+   "post": {
+    "operationId": "refresh_mail_domain"
+   }
+  },
+  "/api/mail/domains/{workspace}/{domain_id}/routes": {
+   "put": {
+    "operationId": "save_mail_route"
+   }
+  },
+  "/api/mail/domains/{workspace}/{domain_id}/routes/{route_id}": {
+   "delete": {
+    "operationId": "delete_mail_route"
+   }
+  },
+  "/api/mail/domains/{workspace}/{domain_id}/shares": {
+   "put": {
+    "operationId": "share_mail_domain"
+   }
+  },
+  "/api/mail/domains/{workspace}/{domain_id}/shares/{share_workspace}": {
+   "delete": {
+    "operationId": "unshare_mail_domain"
+   }
+  },
+  "/api/mail/drafts/{workspace}": {
+   "get": {
+    "operationId": "list_mail_drafts"
+   }
+  },
+  "/api/mail/drafts/{workspace}/{draft_id}": {
+   "delete": {
+    "operationId": "delete_mail_draft"
+   },
+   "put": {
+    "operationId": "save_mail_draft"
+   }
+  },
+  "/api/mail/empty-folder/{workspace}": {
+   "post": {
+    "operationId": "empty_mail_folder"
+   }
+  },
+  "/api/mail/resolve": {
+   "get": {
+    "operationId": "resolve_mail_address"
+   }
+  },
+  "/api/mail/send/{workspace}": {
+   "post": {
+    "operationId": "send_mail"
+   }
+  },
+  "/api/mail/ses/events/": {
+   "post": {
+    "operationId": "ses_events"
+   }
+  },
+  "/api/mail/ses/inbound/": {
+   "post": {
+    "operationId": "ses_inbound"
+   }
+  },
+  "/api/mail/threads/{workspace}": {
+   "get": {
+    "operationId": "list_mail_threads"
+   }
+  },
+  "/api/mail/threads/{workspace}/{uuid}": {
+   "delete": {
+    "operationId": "delete_mail_thread"
+   },
+   "get": {
+    "operationId": "get_mail_thread"
+   }
+  },
+  "/api/mail/threads/{workspace}/{uuid}/reply": {
+   "post": {
+    "operationId": "reply_mail_thread"
+   }
+  },
+  "/api/mail/threads/{workspace}/{uuid}/state": {
+   "post": {
+    "operationId": "set_mail_thread_state"
+   }
+  },
+  "/api/mail/uploads/{workspace}": {
+   "post": {
+    "operationId": "upload_mail_attachment"
+   }
+  },
+  "/api/mcp-servers/": {
+   "get": {
+    "operationId": "list_mcp_servers"
+   }
+  },
+  "/api/me/": {
+   "get": {
+    "operationId": "me"
+   }
+  },
+  "/api/me/act-as-requests/": {
+   "get": {
+    "operationId": "list_my_act_as_requests"
+   },
+   "post": {
+    "operationId": "create_act_as_request"
+   }
+  },
+  "/api/me/act-as-requests/{request_id}": {
+   "get": {
+    "operationId": "get_act_as_request"
+   }
+  },
+  "/api/me/act-as-requests/{request_id}/approve/begin": {
+   "post": {
+    "operationId": "begin_approve_act_as_request"
+   }
+  },
+  "/api/me/act-as-requests/{request_id}/approve/finish": {
+   "post": {
+    "operationId": "finish_approve_act_as_request"
+   }
+  },
+  "/api/me/act-as-requests/{request_id}/decline": {
+   "post": {
+    "operationId": "decline_act_as_request"
+   }
+  },
+  "/api/me/act-as-requests/{request_id}/stop": {
+   "post": {
+    "operationId": "stop_act_as_request"
+   }
+  },
+  "/api/me/agent-login-requests/": {
+   "get": {
+    "operationId": "list_my_agent_login_requests"
+   }
+  },
+  "/api/me/agent-login-requests/{request_id}/accept": {
+   "post": {
+    "operationId": "accept_agent_login_request"
+   }
+  },
+  "/api/me/agent-login-requests/{request_id}/decline": {
+   "post": {
+    "operationId": "decline_agent_login_request"
+   }
+  },
+  "/api/me/agents/": {
+   "get": {
+    "operationId": "list_my_agents"
+   }
+  },
+  "/api/me/alerts/": {
+   "get": {
+    "operationId": "list_alerts"
+   }
+  },
+  "/api/me/alerts/{id}/act": {
+   "post": {
+    "operationId": "act_on_alert"
+   }
+  },
+  "/api/me/alerts/{id}/history": {
+   "get": {
+    "operationId": "alert_history"
+   }
+  },
+  "/api/me/alerts/{id}/undismiss": {
+   "post": {
+    "operationId": "undismiss_alert"
+   }
+  },
+  "/api/me/attention/": {
+   "get": {
+    "operationId": "list_attention"
+   }
+  },
+  "/api/me/attention/hide": {
+   "post": {
+    "operationId": "hide_attention"
+   }
+  },
+  "/api/me/attention/hide/{key}": {
+   "delete": {
+    "operationId": "unhide_attention"
+   }
+  },
+  "/api/me/canopy-projects/": {
+   "get": {
+    "operationId": "get_project_opt_in"
+   },
+   "put": {
+    "operationId": "set_project_opt_in"
+   }
+  },
+  "/api/me/connected-accounts/": {
+   "get": {
+    "operationId": "list_my_connected_accounts"
+   }
+  },
+  "/api/me/connections/{connection_id}/reconnect-required": {
+   "post": {
+    "operationId": "my_connection_reconnect_required"
+   }
+  },
+  "/api/me/connections/{connection_id}/refresh-lease": {
+   "post": {
+    "operationId": "take_my_refresh_lease"
+   }
+  },
+  "/api/me/connections/{connection_id}/refresh-lease/{lease_id}": {
+   "delete": {
+    "operationId": "release_my_refresh_lease"
+   }
+  },
+  "/api/me/connections/{connection_id}/sealed": {
+   "put": {
+    "operationId": "write_back_my_connection"
+   }
+  },
+  "/api/me/connections/{provider}/material": {
+   "get": {
+    "operationId": "my_connection_material"
+   }
+  },
+  "/api/me/delegated-credentials/": {
+   "get": {
+    "operationId": "list_my_delegated_credentials"
+   }
+  },
+  "/api/me/delegated-credentials/{credential_id}": {
+   "delete": {
+    "operationId": "withdraw_my_delegated_credential"
+   }
+  },
+  "/api/me/host-grants/": {
+   "get": {
+    "operationId": "list_my_host_grants"
+   }
+  },
+  "/api/me/host-grants/{grant_id}": {
+   "delete": {
+    "operationId": "revoke_my_host_grant"
+   },
+   "get": {
+    "operationId": "get_my_host_grant"
+   }
+  },
+  "/api/me/host-grants/{grant_id}/confirm/begin": {
+   "post": {
+    "operationId": "begin_confirm_my_host_grant"
+   }
+  },
+  "/api/me/host-grants/{grant_id}/confirm/finish": {
+   "post": {
+    "operationId": "finish_confirm_my_host_grant"
+   }
+  },
+  "/api/me/presence-preference/": {
+   "get": {
+    "operationId": "get_presence_preference"
+   },
+   "patch": {
+    "operationId": "set_presence_preference"
+   }
+  },
+  "/api/me/projects/": {
+   "get": {
+    "operationId": "list_my_projects"
+   }
+  },
+  "/api/me/runner-app/": {
+   "get": {
+    "operationId": "get_runner_app_preference"
+   },
+   "patch": {
+    "operationId": "set_runner_app_preference"
+   }
+  },
+  "/api/me/session-sharing/": {
+   "get": {
+    "operationId": "list_session_sharing"
+   }
+  },
+  "/api/me/session-sharing/{project_id}": {
+   "put": {
+    "operationId": "set_session_sharing"
+   }
+  },
+  "/api/me/session-workspace/": {
+   "get": {
+    "operationId": "get_session_workspace_preference"
+   },
+   "patch": {
+    "operationId": "set_session_workspace_preference"
+   }
+  },
+  "/api/me/sessions/": {
+   "get": {
+    "operationId": "list_my_sessions"
+   }
+  },
+  "/api/me/tasks/": {
+   "get": {
+    "operationId": "list_my_tasks"
+   }
+  },
+  "/api/meetings/": {
+   "get": {
+    "operationId": "list_meetings"
+   },
+   "post": {
+    "operationId": "create_meeting"
+   }
+  },
+  "/api/meetings/{meeting_id}": {
+   "delete": {
+    "operationId": "delete_meeting"
+   },
+   "get": {
+    "operationId": "get_meeting"
+   },
+   "patch": {
+    "operationId": "update_meeting"
+   }
+  },
+  "/api/meetings/{meeting_id}/artifacts": {
+   "post": {
+    "operationId": "add_meeting_artifact"
+   }
+  },
+  "/api/meetings/{meeting_id}/follow-up": {
+   "post": {
+    "operationId": "start_meeting_follow_up"
+   }
+  },
+  "/api/oauth/google/callback": {
+   "get": {
+    "operationId": "google_callback"
+   }
+  },
+  "/api/passkeys/": {
+   "get": {
+    "operationId": "list_passkeys"
+   }
+  },
+  "/api/passkeys/register/begin": {
+   "post": {
+    "operationId": "begin_passkey_registration"
+   }
+  },
+  "/api/passkeys/register/finish": {
+   "post": {
+    "operationId": "finish_passkey_registration"
+   }
+  },
+  "/api/passkeys/step-up": {
+   "get": {
+    "operationId": "passkey_step_up_status"
+   }
+  },
+  "/api/passkeys/step-up/begin": {
+   "post": {
+    "operationId": "begin_passkey_step_up"
+   }
+  },
+  "/api/passkeys/step-up/finish": {
+   "post": {
+    "operationId": "finish_passkey_step_up"
+   }
+  },
+  "/api/passkeys/{passkey_id}": {
+   "delete": {
+    "operationId": "delete_passkey"
+   }
+  },
+  "/api/people/addresses/": {
+   "get": {
+    "operationId": "list_workspace_addresses"
+   }
+  },
+  "/api/people/coverage/": {
+   "get": {
+    "operationId": "people_coverage"
+   }
+  },
+  "/api/people/lookup/": {
+   "get": {
+    "operationId": "lookup_person"
+   }
+  },
+  "/api/people/me/": {
+   "get": {
+    "operationId": "people_me"
+   }
+  },
+  "/api/people/me/addresses/": {
+   "post": {
+    "operationId": "add_my_address"
+   }
+  },
+  "/api/people/me/addresses/{address_id}/": {
+   "delete": {
+    "operationId": "remove_my_address"
+   }
+  },
+  "/api/people/me/agent-memory/": {
+   "put": {
+    "operationId": "set_my_agent_memory"
+   }
+  },
+  "/api/people/me/default-agent/": {
+   "get": {
+    "operationId": "get_my_default_agent"
+   },
+   "put": {
+    "operationId": "set_my_default_agent"
+   }
+  },
+  "/api/people/me/grants/{grant_id}/collection/": {
+   "put": {
+    "operationId": "set_my_grant_collection"
+   }
+  },
+  "/api/people/me/memory-collections/": {
+   "get": {
+    "operationId": "list_my_memory_collections"
+   },
+   "post": {
+    "operationId": "create_my_memory_collection"
+   }
+  },
+  "/api/people/me/memory-collections/{collection_id}/": {
+   "delete": {
+    "operationId": "delete_my_memory_collection"
+   },
+   "put": {
+    "operationId": "update_my_memory_collection"
+   }
+  },
+  "/api/people/me/memory-search-preview/": {
+   "post": {
+    "operationId": "preview_my_memory_search"
+   }
+  },
+  "/api/people/me/memory-searches/": {
+   "get": {
+    "operationId": "list_my_memory_searches"
+   }
+  },
+  "/api/people/me/session-reviewers/": {
+   "get": {
+    "operationId": "list_my_session_reviewers"
+   },
+   "post": {
+    "operationId": "add_my_session_reviewer"
+   }
+  },
+  "/api/people/me/session-reviewers/sessions/{session_id}/": {
+   "delete": {
+    "operationId": "withdraw_my_session_review"
+   },
+   "get": {
+    "operationId": "get_my_session_review"
+   },
+   "post": {
+    "operationId": "ask_my_session_review"
+   }
+  },
+  "/api/people/me/session-reviewers/{agent_slug}/": {
+   "delete": {
+    "operationId": "remove_my_session_reviewer"
+   }
+  },
+  "/api/people/me/sessions/{session_id}/agent-grants/": {
+   "post": {
+    "operationId": "grant_my_session_agent"
+   }
+  },
+  "/api/people/me/sessions/{session_id}/agent-memory/": {
+   "get": {
+    "operationId": "get_my_session_memory"
+   },
+   "put": {
+    "operationId": "set_my_session_memory"
+   }
+  },
+  "/api/people/me/viewers/": {
+   "get": {
+    "operationId": "list_my_viewers"
+   },
+   "post": {
+    "operationId": "add_my_viewer"
+   }
+  },
+  "/api/people/me/viewers/{agent_slug}/": {
+   "delete": {
+    "operationId": "remove_my_viewer"
+   }
+  },
+  "/api/people/pages/shared-with-me/": {
+   "get": {
+    "operationId": "list_shared_pages"
+   }
+  },
+  "/api/people/session-reviewers/granted-to-me/": {
+   "get": {
+    "operationId": "list_session_granters"
+   }
+  },
+  "/api/people/{person_id}/": {
+   "get": {
+    "operationId": "get_person"
+   }
+  },
+  "/api/people/{person_id}/addresses/": {
+   "get": {
+    "operationId": "list_person_addresses"
+   }
+  },
+  "/api/people/{person_id}/conversations/": {
+   "get": {
+    "operationId": "list_person_conversations"
+   }
+  },
+  "/api/people/{person_id}/facts/": {
+   "post": {
+    "operationId": "add_person_fact"
+   }
+  },
+  "/api/people/{person_id}/facts/{fact_id}/retract/": {
+   "post": {
+    "operationId": "retract_person_fact"
+   }
+  },
+  "/api/people/{person_id}/page/": {
+   "get": {
+    "operationId": "get_memory_page"
+   }
+  },
+  "/api/people/{person_id}/page/audit/": {
+   "get": {
+    "operationId": "get_memory_page_audit"
+   }
+  },
+  "/api/people/{person_id}/page/searches/": {
+   "get": {
+    "operationId": "get_memory_page_searches"
+   }
+  },
+  "/api/people/{person_id}/projects/": {
+   "get": {
+    "operationId": "list_person_projects"
+   }
+  },
+  "/api/private-runners/": {
+   "get": {
+    "operationId": "list_private_runners"
+   },
+   "post": {
+    "operationId": "register_private_runner"
+   }
+  },
+  "/api/private-runners/used": {
+   "get": {
+    "operationId": "list_workspace_private_runners"
+   }
+  },
+  "/api/private-runners/{private_runner_id}/retire": {
+   "post": {
+    "operationId": "retire_private_runner"
+   }
+  },
+  "/api/projects/": {
+   "get": {
+    "operationId": "list_fleet_projects"
+   }
+  },
+  "/api/public-apps/{workspace}/{key}": {
+   "get": {
+    "operationId": "get_public_app"
+   }
+  },
+  "/api/public-apps/{workspace}/{key}/actions/{action}": {
+   "post": {
+    "operationId": "act_public_app"
+   }
+  },
+  "/api/public-apps/{workspace}/{key}/feed/{collection}.json": {
+   "get": {
+    "operationId": "feed_public_app"
+   }
+  },
+  "/api/public-apps/{workspace}/{key}/feed/{collection}.xml": {
+   "get": {
+    "operationId": "feed_xml_public_app"
+   }
+  },
+  "/api/public-apps/{workspace}/{key}/files": {
+   "post": {
+    "operationId": "upload_public_app_file"
+   }
+  },
+  "/api/public-apps/{workspace}/{key}/link/{token}": {
+   "get": {
+    "operationId": "get_link_page"
+   }
+  },
+  "/api/public-apps/{workspace}/{key}/link/{token}/actions/{action}": {
+   "post": {
+    "operationId": "act_link_page"
+   }
+  },
+  "/api/public-apps/{workspace}/{key}/query": {
+   "get": {
+    "operationId": "query_public_app"
+   }
+  },
+  "/api/push/preferences": {
+   "get": {
+    "operationId": "get_preferences"
+   },
+   "patch": {
+    "operationId": "set_preferences"
+   }
+  },
+  "/api/push/subscribe": {
+   "delete": {
+    "operationId": "unsubscribe"
+   },
+   "post": {
+    "operationId": "subscribe"
+   }
+  },
+  "/api/push/vapid-public-key": {
+   "get": {
+    "operationId": "vapid_public_key"
+   }
+  },
+  "/api/reviews/": {
+   "get": {
+    "operationId": "list_reviews"
+   },
+   "post": {
+    "operationId": "create_review"
+   }
+  },
+  "/api/reviews/{rid}/": {
+   "delete": {
+    "operationId": "delete_review"
+   },
+   "get": {
+    "operationId": "get_review"
+   }
+  },
+  "/api/reviews/{rid}/destination": {
+   "get": {
+    "operationId": "get_review_destination"
+   }
+  },
+  "/api/reviews/{rid}/submit/": {
+   "post": {
+    "operationId": "submit_review"
+   }
+  },
+  "/api/reviews/{rid}/suggest/": {
+   "post": {
+    "operationId": "suggest_review"
+   }
+  },
+  "/api/runner-device-key-requests/": {
+   "post": {
+    "operationId": "request_runner_device_key"
+   }
+  },
+  "/api/runner-device-keys/": {
+   "get": {
+    "operationId": "list_runner_device_keys"
+   },
+   "post": {
+    "operationId": "register_runner_device_key"
+   }
+  },
+  "/api/runner-device-keys/{key_id}": {
+   "delete": {
+    "operationId": "revoke_runner_device_key"
+   }
+  },
+  "/api/runner-device-keys/{key_id}/approve": {
+   "post": {
+    "operationId": "approve_runner_device_key"
+   }
+  },
+  "/api/runner-sessions/": {
+   "post": {
+    "operationId": "create_runner_session"
+   }
+  },
+  "/api/session-secrets/key": {
+   "get": {
+    "operationId": "list_for_key"
+   }
+  },
+  "/api/session-secrets/key/{name}": {
+   "get": {
+    "operationId": "value_for_key"
+   }
+  },
+  "/api/sessions/": {
+   "get": {
+    "operationId": "session_sharing_list_sessions"
+   }
+  },
+  "/api/sessions/arcs": {
+   "get": {
+    "operationId": "list_arcs"
+   },
+   "post": {
+    "operationId": "create_arc"
+   }
+  },
+  "/api/sessions/arcs/{slug}": {
+   "delete": {
+    "operationId": "delete_arc"
+   },
+   "get": {
+    "operationId": "get_arc"
+   },
+   "patch": {
+    "operationId": "patch_arc"
+   }
+  },
+  "/api/sessions/arcs/{slug}/rotate-token": {
+   "post": {
+    "operationId": "rotate_arc_token"
+   }
+  },
+  "/api/sessions/upload": {
+   "post": {
+    "operationId": "upload_session"
+   }
+  },
+  "/api/sessions/{slug}": {
+   "delete": {
+    "operationId": "delete_session"
+   },
+   "get": {
+    "operationId": "session_sharing_get_session"
+   },
+   "patch": {
+    "operationId": "patch_session"
+   }
+  },
+  "/api/sessions/{slug}/rotate-token": {
+   "post": {
+    "operationId": "session_sharing_rotate_token"
+   }
+  },
+  "/api/share/{token}": {
+   "get": {
+    "operationId": "public_share_view"
+   }
+  },
+  "/api/shareouts/": {
+   "get": {
+    "operationId": "list_shareouts"
+   },
+   "post": {
+    "operationId": "create_shareouts"
+   }
+  },
+  "/api/shareouts/clear/": {
+   "post": {
+    "operationId": "clear_shareouts"
+   }
+  },
+  "/api/sign-offs/{sign_off_id}": {
+   "get": {
+    "operationId": "get_sign_off"
+   }
+  },
+  "/api/sign-offs/{sign_off_id}/approve": {
+   "post": {
+    "operationId": "approve_sign_off"
+   }
+  },
+  "/api/sign-offs/{sign_off_id}/decline": {
+   "post": {
+    "operationId": "decline_sign_off"
+   }
+  },
+  "/api/sites/agents": {
+   "get": {
+    "operationId": "get_site_agents"
+   }
+  },
+  "/api/sites/resources-updated": {
+   "post": {
+    "operationId": "resources_updated"
+   }
+  },
+  "/api/sites/sign-offs": {
+   "post": {
+    "operationId": "create_site_sign_off"
+   }
+  },
+  "/api/sites/sign-offs/{sign_off_id}": {
+   "get": {
+    "operationId": "get_site_sign_off"
+   }
+  },
+  "/api/slack-config/{workspace}": {
+   "get": {
+    "operationId": "get_config"
+   }
+  },
+  "/api/slack-config/{workspace}/channel-ingest": {
+   "put": {
+    "operationId": "set_channel_ingest"
+   }
+  },
+  "/api/slack-config/{workspace}/channel-ingest/allowed": {
+   "post": {
+    "operationId": "allow_channel_ingest"
+   }
+  },
+  "/api/slack-config/{workspace}/channel-ingest/allowed/{allow_id}": {
+   "delete": {
+    "operationId": "disallow_channel_ingest"
+   }
+  },
+  "/api/slack-config/{workspace}/config-token": {
+   "delete": {
+    "operationId": "clear_config_token"
+   },
+   "put": {
+    "operationId": "set_config_token"
+   }
+  },
+  "/api/slack-config/{workspace}/declare-agent": {
+   "post": {
+    "operationId": "declare_agent"
+   }
+  },
+  "/api/slack-config/{workspace}/history": {
+   "put": {
+    "operationId": "set_history"
+   }
+  },
+  "/api/slack-config/{workspace}/sync": {
+   "post": {
+    "operationId": "sync"
+   }
+  },
+  "/api/slack-ingests/": {
+   "get": {
+    "operationId": "list_channel_ingests"
+   },
+   "post": {
+    "operationId": "create_channel_ingest"
+   }
+  },
+  "/api/slack-ingests/{ingest_id}": {
+   "get": {
+    "operationId": "get_channel_ingest"
+   }
+  },
+  "/api/slack-ingests/{ingest_id}/read-mark": {
+   "post": {
+    "operationId": "mark_channel_ingest_read"
+   }
+  },
+  "/api/slack-ingests/{ingest_id}/revoke": {
+   "post": {
+    "operationId": "revoke_channel_ingest"
+   }
+  },
+  "/api/slack-ingests/{ingest_id}/transcript": {
+   "get": {
+    "operationId": "get_channel_ingest_transcript"
+   }
+  },
+  "/api/storyboards/": {
+   "get": {
+    "operationId": "list_storyboards"
+   },
+   "post": {
+    "operationId": "create_storyboard"
+   }
+  },
+  "/api/storyboards/{slug}": {
+   "get": {
+    "operationId": "get_storyboard"
+   },
+   "patch": {
+    "operationId": "patch_storyboard"
+   }
+  },
+  "/api/storyboards/{slug}/decisions/{key}/edit": {
+   "post": {
+    "operationId": "edit_storyboard_decision"
+   }
+  },
+  "/api/storyboards/{slug}/feedback": {
+   "post": {
+    "operationId": "leave_feedback"
+   }
+  },
+  "/api/storyboards/{slug}/narratives/{narrative_slug}": {
+   "get": {
+    "operationId": "get_board_narrative"
+   }
+  },
+  "/api/storyboards/{slug}/notes": {
+   "get": {
+    "operationId": "list_notes"
+   }
+  },
+  "/api/storyboards/{slug}/notes/{note_id}": {
+   "delete": {
+    "operationId": "delete_storyboard_round_note"
+   }
+  },
+  "/api/storyboards/{slug}/rotate-token": {
+   "post": {
+    "operationId": "storyboards_rotate_token"
+   }
+  },
+  "/api/storyboards/{slug}/rounds": {
+   "post": {
+    "operationId": "open_storyboard_round"
+   }
+  },
+  "/api/storyboards/{slug}/rounds/{number}": {
+   "get": {
+    "operationId": "get_storyboard_round"
+   }
+  },
+  "/api/storyboards/{slug}/rounds/{number}/close": {
+   "post": {
+    "operationId": "close_storyboard_round"
+   }
+  },
+  "/api/storyboards/{slug}/rounds/{number}/consume": {
+   "post": {
+    "operationId": "consume_storyboard_round"
+   }
+  },
+  "/api/storyboards/{slug}/share": {
+   "post": {
+    "operationId": "ensure_token"
+   }
+  },
+  "/api/system/operators": {
+   "get": {
+    "operationId": "list_operators"
+   },
+   "post": {
+    "operationId": "add_operator"
+   }
+  },
+  "/api/system/operators/{user_id}": {
+   "delete": {
+    "operationId": "remove_operator"
+   }
+  },
+  "/api/system/overview": {
+   "get": {
+    "operationId": "overview"
+   }
+  },
+  "/api/system/public-stats": {
+   "get": {
+    "operationId": "public_stats"
+   }
+  },
+  "/api/system/{kind}/{name}": {
+   "get": {
+    "operationId": "detail"
+   }
+  },
+  "/api/task-settings/": {
+   "get": {
+    "operationId": "get_task_settings"
+   },
+   "patch": {
+    "operationId": "set_task_settings"
+   }
+  },
+  "/api/tasks/": {
+   "get": {
+    "operationId": "list_fleet_tasks"
+   },
+   "post": {
+    "operationId": "create_task"
+   }
+  },
+  "/api/tasks/bulk": {
+   "post": {
+    "operationId": "bulk_tasks"
+   }
+  },
+  "/api/tasks/count/": {
+   "get": {
+    "operationId": "count_tasks"
+   }
+  },
+  "/api/tasks/{key}/": {
+   "get": {
+    "operationId": "get_task_by_key"
+   },
+   "patch": {
+    "operationId": "patch_task_by_key"
+   }
+  },
+  "/api/tasks/{key}/actions": {
+   "post": {
+    "operationId": "act_on_task_by_key"
+   }
+  },
+  "/api/tasks/{key}/relations/": {
+   "post": {
+    "operationId": "add_task_relation"
+   }
+  },
+  "/api/tasks/{key}/relations/{kind}/{other}": {
+   "delete": {
+    "operationId": "remove_task_relation"
+   }
+  },
+  "/api/threads/": {
+   "get": {
+    "operationId": "list_threads"
+   },
+   "post": {
+    "operationId": "open_thread"
+   }
+  },
+  "/api/threads/{thread_id}": {
+   "get": {
+    "operationId": "get_thread"
+   }
+  },
+  "/api/threads/{thread_id}/close": {
+   "post": {
+    "operationId": "close_thread"
+   }
+  },
+  "/api/timeline/": {
+   "get": {
+    "operationId": "list_timeline"
+   }
+  },
+  "/api/tokens/": {
+   "get": {
+    "operationId": "list_tokens"
+   },
+   "post": {
+    "operationId": "create_token"
+   }
+  },
+  "/api/tokens/connected-apps": {
+   "get": {
+    "operationId": "tokens_list_connected_apps"
+   }
+  },
+  "/api/tokens/connected-apps/{grant_id}": {
+   "delete": {
+    "operationId": "tokens_disconnect_app"
+   }
+  },
+  "/api/tokens/github": {
+   "delete": {
+    "operationId": "github_disconnect"
+   },
+   "get": {
+    "operationId": "github_connection"
+   }
+  },
+  "/api/tokens/github/installations": {
+   "get": {
+    "operationId": "github_installations"
+   }
+  },
+  "/api/tokens/{pk}/": {
+   "delete": {
+    "operationId": "revoke_token"
+   }
+  },
+  "/api/triage/": {
+   "get": {
+    "operationId": "list_triage"
+   }
+  },
+  "/api/vault/client-report": {
+   "post": {
+    "operationId": "post_vault_client_report"
+   }
+  },
+  "/api/vault/keyset": {
+   "get": {
+    "operationId": "get_vault_keyset"
+   },
+   "put": {
+    "operationId": "put_vault_keyset"
+   }
+  },
+  "/api/vault/setup": {
+   "get": {
+    "operationId": "get_vault_setup"
+   }
+  },
+  "/api/vaults/{vault_id}": {
+   "get": {
+    "operationId": "get_workspace_vault"
+   }
+  },
+  "/api/vaults/{vault_id}/attachments": {
+   "post": {
+    "operationId": "attach_workspace_vault"
+   }
+  },
+  "/api/vaults/{vault_id}/attachments/{attachment_id}": {
+   "delete": {
+    "operationId": "detach_workspace_vault"
+   }
+  },
+  "/api/vaults/{vault_id}/members": {
+   "post": {
+    "operationId": "add_workspace_vault_member"
+   }
+  },
+  "/api/vaults/{vault_id}/members/{user_id}": {
+   "delete": {
+    "operationId": "remove_workspace_vault_member"
+   }
+  },
+  "/api/vaults/{vault_id}/secrets/{name}": {
+   "delete": {
+    "operationId": "delete_workspace_vault_secret"
+   }
+  },
+  "/api/vaults/{vault_id}/zk": {
+   "get": {
+    "operationId": "get_workspace_vault_zk"
+   }
+  },
+  "/api/vaults/{vault_id}/zk/enable": {
+   "post": {
+    "operationId": "enable_workspace_vault_zk"
+   }
+  },
+  "/api/vaults/{vault_id}/zk/pins": {
+   "put": {
+    "operationId": "put_workspace_vault_pins"
+   }
+  },
+  "/api/vaults/{vault_id}/zk/rotate": {
+   "post": {
+    "operationId": "rotate_workspace_vault_zk"
+   }
+  },
+  "/api/vaults/{vault_id}/zk/values": {
+   "put": {
+    "operationId": "set_workspace_vault_values"
+   }
+  },
+  "/api/vaults/{vault_id}/zk/wraps": {
+   "post": {
+    "operationId": "add_workspace_vault_wraps"
+   }
+  },
+  "/api/views/": {
+   "get": {
+    "operationId": "list_views"
+   },
+   "post": {
+    "operationId": "create_view"
+   }
+  },
+  "/api/views/{view_id}": {
+   "delete": {
+    "operationId": "delete_view"
+   },
+   "patch": {
+    "operationId": "update_view"
+   }
+  },
+  "/api/walkthroughs/": {
+   "get": {
+    "operationId": "list_walkthroughs"
+   },
+   "post": {
+    "operationId": "upload_walkthrough"
+   }
+  },
+  "/api/walkthroughs/{wid}/": {
+   "delete": {
+    "operationId": "delete_walkthrough"
+   },
+   "get": {
+    "operationId": "get_walkthrough"
+   },
+   "patch": {
+    "operationId": "patch_walkthrough"
+   }
+  },
+  "/api/walkthroughs/{wid}/rotate-token": {
+   "post": {
+    "operationId": "rotate_walkthrough_token"
+   }
+  },
+  "/api/workspace-app-store/{workspace}/": {
+   "get": {
+    "operationId": "list_app_store"
+   }
+  },
+  "/api/workspace-app-store/{workspace}/detail": {
+   "get": {
+    "operationId": "get_app_store_detail"
+   }
+  },
+  "/api/workspace-app-store/{workspace}/screenshot": {
+   "get": {
+    "operationId": "get_app_store_screenshot"
+   }
+  },
+  "/api/workspace-apps/{workspace}/": {
+   "get": {
+    "operationId": "list_workspace_apps"
+   },
+   "post": {
+    "operationId": "install_workspace_app"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}": {
+   "delete": {
+    "operationId": "uninstall_workspace_app"
+   },
+   "get": {
+    "operationId": "get_workspace_app"
+   },
+   "patch": {
+    "operationId": "update_workspace_app"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/actions/{action}": {
+   "post": {
+    "operationId": "act_workspace_app"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/actions/{action}/bulk": {
+   "post": {
+    "operationId": "bulk_act_workspace_app"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/draft": {
+   "delete": {
+    "operationId": "discard_workspace_app_draft"
+   },
+   "get": {
+    "operationId": "get_workspace_app_draft"
+   },
+   "post": {
+    "operationId": "start_workspace_app_draft"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/draft/checks": {
+   "post": {
+    "operationId": "check_workspace_app_draft"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/draft/helpers": {
+   "post": {
+    "operationId": "add_workspace_app_helper"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/draft/ops": {
+   "post": {
+    "operationId": "add_workspace_app_change"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/draft/ops/{op_id}": {
+   "delete": {
+    "operationId": "remove_workspace_app_change"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/draft/publish": {
+   "post": {
+    "operationId": "publish_workspace_app_draft"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/files": {
+   "post": {
+    "operationId": "upload_workspace_app_file"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/files/{file_id}": {
+   "get": {
+    "operationId": "download_workspace_app_file"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/grants": {
+   "get": {
+    "operationId": "list_workspace_app_grants"
+   },
+   "post": {
+    "operationId": "add_workspace_app_grant"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/grants/{grant_id}": {
+   "delete": {
+    "operationId": "delete_workspace_app_grant"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/guide": {
+   "get": {
+    "operationId": "get_workspace_app_guide"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/helpers": {
+   "get": {
+    "operationId": "list_workspace_app_helpers"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/links/{link}/{record_id}": {
+   "post": {
+    "operationId": "make_workspace_app_link"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/query": {
+   "get": {
+    "operationId": "query_workspace_app"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/records/{record_id}/history": {
+   "get": {
+    "operationId": "workspace_app_record_history"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/retention": {
+   "get": {
+    "operationId": "preview_workspace_app_retention"
+   },
+   "post": {
+    "operationId": "apply_workspace_app_retention"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/rollback": {
+   "post": {
+    "operationId": "rollback_workspace_app"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/setup": {
+   "get": {
+    "operationId": "get_workspace_app_setup"
+   },
+   "post": {
+    "operationId": "update_workspace_app_setup"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/subject-export": {
+   "get": {
+    "operationId": "export_workspace_app_subject"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/versions": {
+   "get": {
+    "operationId": "list_workspace_app_versions"
+   }
+  },
+  "/api/workspace-projects/": {
+   "get": {
+    "operationId": "list_workspace_projects"
+   },
+   "post": {
+    "operationId": "create_workspace_project"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/": {
+   "get": {
+    "operationId": "get_workspace_project"
+   },
+   "patch": {
+    "operationId": "patch_workspace_project"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/file": {
+   "get": {
+    "operationId": "kb_file"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/objects/have": {
+   "post": {
+    "operationId": "kb_objects_have"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/objects/links": {
+   "post": {
+    "operationId": "kb_objects_links"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/originals": {
+   "post": {
+    "operationId": "kb_upload_originals"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/publish": {
+   "post": {
+    "operationId": "publish_kb"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/results": {
+   "post": {
+    "operationId": "kb_upload_results"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/settings": {
+   "put": {
+    "operationId": "kb_settings"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/sources": {
+   "get": {
+    "operationId": "kb_list_sources"
+   },
+   "post": {
+    "operationId": "kb_put_source"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/upload": {
+   "post": {
+    "operationId": "kb_upload_target"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/versions": {
+   "get": {
+    "operationId": "kb_list_versions"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/kb/versions/{number}/rollback": {
+   "post": {
+    "operationId": "kb_rollback"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/members/": {
+   "get": {
+    "operationId": "list_project_members"
+   },
+   "post": {
+    "operationId": "add_project_member"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/members/{user_id}/": {
+   "delete": {
+    "operationId": "remove_project_member"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/milestones/": {
+   "get": {
+    "operationId": "list_milestones"
+   },
+   "post": {
+    "operationId": "create_milestone"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/milestones/{milestone_id}": {
+   "delete": {
+    "operationId": "delete_milestone"
+   },
+   "patch": {
+    "operationId": "update_milestone"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/services/": {
+   "get": {
+    "operationId": "list_project_services"
+   },
+   "post": {
+    "operationId": "add_project_service"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/services/{service_id}": {
+   "delete": {
+    "operationId": "remove_project_service"
+   },
+   "patch": {
+    "operationId": "update_project_service"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/shares/": {
+   "get": {
+    "operationId": "list_project_shares"
+   },
+   "post": {
+    "operationId": "add_project_share"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/shares/{share_workspace}/": {
+   "delete": {
+    "operationId": "remove_project_share"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/update-settings": {
+   "patch": {
+    "operationId": "set_project_update_settings"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/updates/": {
+   "get": {
+    "operationId": "list_project_updates"
+   },
+   "post": {
+    "operationId": "post_project_update"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/updates/{update_id}/publish": {
+   "post": {
+    "operationId": "publish_project_update"
+   }
+  },
+  "/api/workspaces/": {
+   "get": {
+    "operationId": "list_workspaces"
+   },
+   "post": {
+    "operationId": "create_workspace"
+   }
+  },
+  "/api/workspaces/invites/mine": {
+   "get": {
+    "operationId": "my_invites"
+   }
+  },
+  "/api/workspaces/invites/{token}/accept": {
+   "post": {
+    "operationId": "accept_invite"
+   }
+  },
+  "/api/workspaces/invites/{token}/preview": {
+   "get": {
+    "operationId": "preview_invite"
+   }
+  },
+  "/api/workspaces/requestable": {
+   "get": {
+    "operationId": "list_requestable_workspaces"
+   }
+  },
+  "/api/workspaces/{slug}/": {
+   "delete": {
+    "operationId": "delete_workspace"
+   },
+   "get": {
+    "operationId": "get_workspace"
+   }
+  },
+  "/api/workspaces/{slug}/access-requests": {
+   "get": {
+    "operationId": "list_access_requests"
+   },
+   "post": {
+    "operationId": "request_workspace_access"
+   }
+  },
+  "/api/workspaces/{slug}/access-requests/{request_id}": {
+   "get": {
+    "operationId": "get_access_request"
+   }
+  },
+  "/api/workspaces/{slug}/access-requests/{request_id}/approve": {
+   "post": {
+    "operationId": "approve_access_request"
+   }
+  },
+  "/api/workspaces/{slug}/access-requests/{request_id}/deny": {
+   "post": {
+    "operationId": "deny_access_request"
+   }
+  },
+  "/api/workspaces/{slug}/access-settings": {
+   "put": {
+    "operationId": "set_access_settings"
+   }
+  },
+  "/api/workspaces/{slug}/admission-rules": {
+   "get": {
+    "operationId": "list_admission_rules"
+   },
+   "post": {
+    "operationId": "create_admission_rule"
+   }
+  },
+  "/api/workspaces/{slug}/admission-rules/{rule_id}": {
+   "delete": {
+    "operationId": "delete_admission_rule"
+   },
+   "patch": {
+    "operationId": "update_admission_rule"
+   }
+  },
+  "/api/workspaces/{slug}/admission-settings": {
+   "put": {
+    "operationId": "set_admission_settings"
+   }
+  },
+  "/api/workspaces/{slug}/agent-defaults": {
+   "get": {
+    "operationId": "list_agent_defaults"
+   },
+   "post": {
+    "operationId": "add_agent_default"
+   }
+  },
+  "/api/workspaces/{slug}/agent-defaults/{line_id}": {
+   "delete": {
+    "operationId": "remove_agent_default"
+   }
+  },
+  "/api/workspaces/{slug}/agent-roles": {
+   "get": {
+    "operationId": "list_agent_roles"
+   },
+   "post": {
+    "operationId": "create_agent_role"
+   }
+  },
+  "/api/workspaces/{slug}/agent-roles/{key}": {
+   "delete": {
+    "operationId": "delete_agent_role"
+   },
+   "patch": {
+    "operationId": "change_agent_role"
+   }
+  },
+  "/api/workspaces/{slug}/agent-roles/{key}/reset": {
+   "post": {
+    "operationId": "reset_agent_role"
+   }
+  },
+  "/api/workspaces/{slug}/agent-topology": {
+   "get": {
+    "operationId": "agent_topology"
+   }
+  },
+  "/api/workspaces/{slug}/analytics": {
+   "get": {
+    "operationId": "workspace_analytics"
+   }
+  },
+  "/api/workspaces/{slug}/connected-apps": {
+   "get": {
+    "operationId": "tokens_connected_apps_list_connected_apps"
+   },
+   "post": {
+    "operationId": "connect_app"
+   }
+  },
+  "/api/workspaces/{slug}/connected-apps/discover": {
+   "get": {
+    "operationId": "discover_site"
+   }
+  },
+  "/api/workspaces/{slug}/connected-apps/{app_id}": {
+   "delete": {
+    "operationId": "tokens_connected_apps_disconnect_app"
+   },
+   "patch": {
+    "operationId": "update_connected_app"
+   }
+  },
+  "/api/workspaces/{slug}/connected-apps/{app_id}/needs": {
+   "get": {
+    "operationId": "connected_app_needs"
+   }
+  },
+  "/api/workspaces/{slug}/connected-apps/{app_id}/test": {
+   "post": {
+    "operationId": "test_connected_app"
+   }
+  },
+  "/api/workspaces/{slug}/health": {
+   "get": {
+    "operationId": "workspace_health"
+   }
+  },
+  "/api/workspaces/{slug}/health/setup": {
+   "get": {
+    "operationId": "workspace_health_setup"
+   }
+  },
+  "/api/workspaces/{slug}/invites/": {
+   "get": {
+    "operationId": "list_invites"
+   },
+   "post": {
+    "operationId": "create_invite"
+   }
+  },
+  "/api/workspaces/{slug}/invites/{invite_id}/reissue": {
+   "post": {
+    "operationId": "reissue_invite"
+   }
+  },
+  "/api/workspaces/{slug}/invites/{invite_id}/revoke": {
+   "post": {
+    "operationId": "revoke_invite"
+   }
+  },
+  "/api/workspaces/{slug}/member-tree": {
+   "get": {
+    "operationId": "member_tree"
+   }
+  },
+  "/api/workspaces/{slug}/members/": {
+   "get": {
+    "operationId": "list_members"
+   },
+   "post": {
+    "operationId": "add_member"
+   }
+  },
+  "/api/workspaces/{slug}/members/{user_id}/": {
+   "delete": {
+    "operationId": "remove_member"
+   },
+   "patch": {
+    "operationId": "set_member_role"
+   }
+  },
+  "/api/workspaces/{slug}/members/{user_id}/profile/": {
+   "get": {
+    "operationId": "get_member"
+   }
+  },
+  "/api/workspaces/{slug}/network": {
+   "get": {
+    "operationId": "workspace_network"
+   }
+  },
+  "/api/workspaces/{slug}/parent": {
+   "put": {
+    "operationId": "set_workspace_parent"
+   }
+  },
+  "/api/workspaces/{slug}/retention": {
+   "get": {
+    "operationId": "get_retention"
+   }
+  },
+  "/api/workspaces/{slug}/retention/preview": {
+   "get": {
+    "operationId": "retention_preview"
+   }
+  },
+  "/api/workspaces/{slug}/retention/rules": {
+   "post": {
+    "operationId": "create_retention_rule"
+   }
+  },
+  "/api/workspaces/{slug}/retention/rules/{rule_id}": {
+   "delete": {
+    "operationId": "delete_retention_rule"
+   },
+   "put": {
+    "operationId": "update_retention_rule"
+   }
+  },
+  "/api/workspaces/{slug}/runner-order": {
+   "get": {
+    "operationId": "get_runner_order"
+   },
+   "put": {
+    "operationId": "set_runner_order"
+   }
+  },
+  "/api/workspaces/{slug}/runner-topology": {
+   "get": {
+    "operationId": "runner_topology"
+   }
+  },
+  "/api/workspaces/{slug}/vaults": {
+   "get": {
+    "operationId": "list_workspace_vaults"
+   },
+   "post": {
+    "operationId": "create_workspace_vault"
+   }
+  },
+  "/api/workspaces/{workspace}/connection-apps": {
+   "get": {
+    "operationId": "list_connection_apps"
+   }
+  },
+  "/api/workspaces/{workspace}/connection-apps/{provider}": {
+   "delete": {
+    "operationId": "remove_connection_app"
+   },
+   "put": {
+    "operationId": "configure_connection_app"
+   }
+  }
+ }
+}

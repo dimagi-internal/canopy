@@ -35,7 +35,7 @@ class FakeWeb:
                                   "outcome": body.get("outcome", ""), "repo_slug": body.get("repo_slug", ""),
                                   "status": "active"})
             return 201, {"ext_id": ext}
-        if path == f"{run_store.BASE}projects/":
+        if path == "/api/projects/" and method == "GET":
             return 200, [p for p in self.projects if p["repo_slug"] == query.get("repo_slug")]
         if path == run_store.BASE and method == "GET":
             out = [r for r in self.runs.values() if r["subject"] == query.get("subject", r["subject"])]

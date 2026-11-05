@@ -1,7 +1,6 @@
 """This machine's device key — the thing a Canopy Vault resolve proves it holds (canopy#946).
 
-canopy-web can require that an agent's credentials be read only from a machine it has
-APPROVED (`Agent.require_device_binding`, canopy-web#1538). The proof is an RFC 9449 DPoP
+canopy-web hands an agent's credentials only to a machine it has APPROVED (canopy-web#1538; always, since canopy-web#2322). The proof is an RFC 9449 DPoP
 JWS in a ``DPoP`` header on ``GET /credentials/resolve``, signed by a P-256 key that lives
 on this machine and nowhere else:
 

@@ -4,7 +4,6 @@
     canopy vault device  [--enroll | --reenroll | --refresh] [--runner ID] [--kind K | --software]
     canopy vault device  --public-jwk [--kind software]      this key's PUBLIC JWK (made if missing)
     canopy vault device  --registered KEY_ID --runner ID     record a registration made elsewhere
-    canopy vault binding --agent X on|off                    require an approved device key
     canopy vault zk status|enable|set|grant|rotate --agent X zero-knowledge (vault_zk_cli.py)
     canopy vault open-slot-data  < lease.json               a pool lease's sealed slot secrets
     canopy vault google-mint --agent X < work.json          finish a Google sign-in on a runner
@@ -156,8 +155,8 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh
                public_jwk, registered_id, reg_status, as_json):
     """This machine's device key: show it, enroll it, or re-enroll it.
 
-    canopy-web hands a `require_device_binding` agent's credentials only to a request
-    carrying a proof from an APPROVED device key: a DPoP JWS (secure-enclave, tpm,
+    canopy-web hands an agent's credentials only to a request carrying a proof from an
+    APPROVED device key (always — there is no per-agent switch, canopy-web#2322): a DPoP JWS (secure-enclave, tpm,
     software) or, on an EC2 cloud runner, a signed STS GetCallerIdentity for the
     instance role (aws-iam). Enrolling registers it as pending; a person approves it in
     canopy-web with a passkey step-up."""
@@ -376,32 +375,6 @@ def _runner_and_token(runner_id: str, base_url: str) -> tuple[str, str]:
         raise VaultCliError("no runner token: run as the canopy runner (CANOPY_TOKEN), or on a "
                             "machine whose approved device key can buy one")
     return runner_id, token
-
-
-@vault_group.command("binding")
-@AGENT_OPT
-@click.argument("state", type=click.Choice(["on", "off"]))
-@click.option("--json", "as_json", is_flag=True)
-def binding_cmd(slug, state, as_json):
-    """Turn device binding on or off for an agent (`require_device_binding`).
-
-    On: canopy-web resolves the agent's credentials only for a request carrying a proof
-    from an APPROVED device key of a runner the agent routes to — enroll and approve every
-    such runner's key first (`canopy vault device`), or its turns lose their credentials.
-    Owner/admin only; canopy-web may ask for a passkey step-up."""
-    res = run_binding(slug, state == "on", token=_token())
-    click.echo(json.dumps(res, sort_keys=True) if as_json else
-               f"agent {slug}: require_device_binding={'on' if res['require_device_binding'] else 'off'}")
-
-
-def run_binding(slug: str, on: bool, *, token: str, transport=None) -> dict:
-    web = _web(token, transport)
-    body = web("PATCH", f"/api/agents/{slug}/device-binding",
-               {"require_device_binding": bool(on)}) or {}
-    got = body.get("require_device_binding")
-    if got is not None and bool(got) != bool(on):
-        raise VaultCliError(f"canopy-web answered require_device_binding={got!r}, expected {on!r}")
-    return {"agent": slug, "require_device_binding": bool(on if got is None else got)}
 
 
 def run_public_jwk(kind: Optional[str] = None) -> dict:
