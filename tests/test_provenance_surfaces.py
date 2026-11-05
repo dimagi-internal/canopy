@@ -1,7 +1,7 @@
 """Provenance beyond `canopy_web.call` (#768): the canopy-web MCP headersHelper and the
 uploaders that build their own requests.
 
-#768 put the headers on the CLI's shared client. These are the other doors to
+#768 put the headers on the CLI's shared client. These are the other routes to
 canopy-web a session uses — the MCP server (remote, but canopy owns its
 `headersHelper`) is the one an agent calls most, so without it a dispatch through
 `enqueue_turn` still arrived anonymous.

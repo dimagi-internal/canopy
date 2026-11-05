@@ -305,11 +305,17 @@ def test_a_refused_caller_is_told_plainly_nothing_is_open(tmp_path):
     assert "refused: no permission here" in line
 
 
-def test_a_confined_caller_names_its_capability(tmp_path):
+def test_a_confined_caller_names_read_mode(tmp_path):
     line = _access(tmp_path, profile="confined", role="read_only", permissions=["read"],
                    granted_by="grant:workspace:connect", capability={"name": "ask"})
     assert "profile=confined" in line and "permissions=read" in line
-    assert "capability=ask" in line
+    assert ", read mode" in line and "capability" not in line
+
+
+def test_a_confined_caller_names_its_connected_site(tmp_path):
+    line = _access(tmp_path, profile="confined", role="read_only", permissions=["read", "use:connect"],
+                   granted_by="grant:workspace:connect", capability={"name": "connect"})
+    assert "connected site=connect" in line and "capability" not in line
 
 
 TRIGGER = {"id": 22, "name": "AWS CloudWatch alarms", "kind": "inbound_mail",
@@ -379,7 +385,7 @@ V2_GOLDEN = (
     "- who: Xavier <x@partner.org> (contact), via email\n"
     "- relationship: contact — a CONTACT — not a member of the agent's workspace\n"
     "- verified: NO (assurance: none) — who they say they are is a claim, not proven\n"
-    "- access: profile=confined, granted_by=interface, capability=ask\n"
+    "- access: profile=confined, granted_by=interface, read mode\n"
     "- turn mode: manual (agent) — outbound or irreversible actions (push, deploy, merge, "
     "send, publish) need the OWNER's approval first\n"
     "- channel: email, runner r1\n"

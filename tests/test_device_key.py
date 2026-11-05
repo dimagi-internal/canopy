@@ -223,7 +223,7 @@ def _refused(*_a):
     raise RuntimeError("canopy-web refused POST /api/runner-device-keys/: -> 401: Authentication required")
 
 
-def test_a_revoked_token_asks_through_the_stranded_door(keydir):
+def test_a_revoked_token_asks_through_the_stranded_box_route(keydir):
     """canopy-web#1611: a box whose PAT was revoked before it had a key still gets a
     PENDING key — the token rides in the body, the key proves itself with DPoP."""
     seen = {}

@@ -85,8 +85,8 @@ It prints the client this machine should use for the agent's mailbox: the declar
 `canopy`, then `canopy-web`; else the single other client holding the mailbox. `canopy` and
 `canopy-web` are ONE Google app with two ways to sign in (a laptop's `gog login`, and
 canopy-web's "Connect Google mailbox" button, which can only mint under the Web client), so
-a mailbox signed in from either door works. Hardcoding `--client canopy` breaks the second
-door; omitting `--client` leans on gog's `account_clients` map, which nothing keeps in step.
+a mailbox signed in either way works. Hardcoding `--client canopy` breaks the second
+way; omitting `--client` leans on gog's `account_clients` map, which nothing keeps in step.
 Code calls the same rule directly: `agent_email.reconcile_client` (Python) or
 `canopy email client --json` (anything else).
 

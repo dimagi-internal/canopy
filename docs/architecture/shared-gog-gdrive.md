@@ -48,7 +48,7 @@ identity, rules, secrets, and domain skills are the agent's"*):
 > GCP project behind the same consent screen, and a token under either reads and sends the same.
 > They are `FLEET_CLIENTS`, in that order: when the declared client holds no token for the
 > mailbox, the first fleet client that does is used — holding both is NOT ambiguity — so an
-> agent signed in from either door just works. An agent with no `gog_client` declares `canopy`
+> agent signed in either way just works. An agent with no `gog_client` declares `canopy`
 > (`DEFAULT_CLIENT`), never a client named after itself.
 > The account is NEVER substituted — borrowing a sibling's token is identity bleed, the one
 > hard rule. Two or more candidates is a refusal, not a guess. `canopy agent doctor` reports

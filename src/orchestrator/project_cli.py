@@ -36,7 +36,7 @@ def _runners_path(workspace: str = "") -> str:
     (canopy-web #509 scoped the read by tenant rather than by who paired what), so
     preflighting on it and then POSTing to one workspace can pass on workspace A's
     runners and enqueue into workspace B, where nothing serves the repo. That is
-    #428's queue-forever failure reached through a new door.
+    #428's queue-forever failure reached by a new route.
     """
     workspace = (workspace or "").strip()
     return f"/api/w/{workspace}/harness/runners/" if workspace else RUNNERS_PATH

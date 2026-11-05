@@ -125,7 +125,7 @@ def test_client_is_taken_from_token_not_agent_json(tmp_path):
     cfg = json.loads((tmp_path / "gog" / "config.json").read_text())
     assert cfg["account_clients"]["ace@dimagi-ai.com"] == "canopy-web"
     assert b.verified == [("ace@dimagi-ai.com", "canopy-web")]
-    # ...and a `canopy-web` token serves a `canopy` declaration: one app, two doors
+    # ...and a `canopy-web` token serves a `canopy` declaration: one app, two sign-in routes
     # (FLEET_CLIENTS). This was a MISMATCH failure until 2026-10-04, which failed every
     # mailbox signed in through canopy-web's "Connect Google mailbox" button.
     assert rep.turn == "OK (canopy-web; declared canopy)"

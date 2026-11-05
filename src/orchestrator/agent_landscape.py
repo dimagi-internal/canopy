@@ -16,6 +16,8 @@ import datetime as dt
 import re
 
 # Skills every agent carries — plumbing, not a reason to bring an agent into a work group.
+# `ask` is the older agents' read-mode entry, kept while canopy-web still stores `/<slug>:ask`;
+# a new agent's is `answer-caller`.
 BOILERPLATE = {
     "agent-turn-review", "setup", "shipping", "task-tracker", "gdoc-writer", "turn", "ask",
     "manager-sync", "answer-caller", "update", "doctor", "email-communicator", "inbox-triage",

@@ -17,8 +17,8 @@ that combines the two, so no agent re-derives it:
               they may steer it. WHETHER A HUMAN APPROVES an outbound action is a
               separate axis — the envelope's `turn_mode` (reported as `manual`),
               never the tier. For an agent with no interface: allowlisted AND verified
-  caller      confined to one capability (the envelope's `profile: confined`, or a
-              `use:<capability>` permission without `write`)
+  caller      confined to read mode or one connected site (the envelope's
+              `profile: confined`, or a `use:<site>` permission without `write`)
   unverified  allowlisted address, but THIS message is not verified: treat as
               unknown (read-only, surface to the human) and say why
   unlisted    not on the allowlist — the agent derives any narrower tier
@@ -37,7 +37,7 @@ reason tells the agent to tell the owner rather than treat them as an outsider.
 The envelope's words (agent roles `owner` / `admin` / `member` / `contact` / `system`,
 access `full` / `confined` / `none`, `role`, `permissions`, `turn_mode`, `granted_by`) are
 defined in canopy-web's `docs/architecture/access.md`. canopy-web decides who may make an
-agent do what in PERMISSIONS (read, write, agent_edit, admin, own, scoped `use:<capability>`);
+agent do what in PERMISSIONS (read, write, agent_edit, admin, own, scoped `use:<site>`);
 a role (owner > admin > editor > read_write > read_only) is a named bundle of them. This
 module reads that decision in its own vocabulary — `permissions`, then `profile` — and only
 an older canopy-web with neither falls back to the one-word `granted_by`. Envelope VERSION 2
@@ -57,8 +57,18 @@ from pathlib import Path
 import click
 
 ACT, UNVERIFIED, UNLISTED, SYSTEM, BLOCKED = "act", "unverified", "unlisted", "system", "blocked"
-#: Confined by canopy to one capability of the declared interface.
+#: Confined by canopy to read mode or one connected site.
 CALLER = "caller"
+
+# Wire names. Deployed canopy-web and runners still send these in the caller envelope,
+# so they are read here and nowhere else in this module; the words in prose and
+# messages are "read mode" and "connected site".
+#: The envelope field naming the confined profile a turn runs: `{"name": …}`.
+ENVELOPE_PROFILE_FIELD = "capability"
+#: The `granted_by` prefix for a turn confined to a profile (`capability:<name>`).
+GRANTED_BY_PROFILE_PREFIX = "capability:"
+#: The stored name of read mode (a turn stamped with it runs read mode).
+READ_MODE_STAMP = "ask"
 
 #: Envelope VERSION 1 words, and what they are called now.
 _LEGACY_RELATIONSHIP = {"caller": "contact"}
@@ -167,25 +177,36 @@ def is_manual(env: dict) -> bool:
     return mode == "manual" or env.get("manual_only") is True
 
 
-def _capability_of(env: dict, perms: list[str] | None, granted: str) -> str | None:
-    cap = env.get("capability")
-    if isinstance(cap, dict) and cap.get("name"):
-        return str(cap["name"])
+def _confined_profile_of(env: dict, perms: list[str] | None, granted: str) -> str | None:
+    """The stored name of the confined profile this turn runs (read mode's is
+    `READ_MODE_STAMP`, a connected site's is the site), or None."""
+    named = env.get(ENVELOPE_PROFILE_FIELD)
+    if isinstance(named, dict) and named.get("name"):
+        return str(named["name"])
     for p in perms or []:
         if p.startswith("use:"):
             return p.split(":", 1)[1]
-    if granted.startswith("capability:"):
+    if granted.startswith(GRANTED_BY_PROFILE_PREFIX):
         return granted.split(":", 1)[1]
     return None
+
+
+def profile_label(name: str | None) -> str:
+    """A confined profile in words: read mode, or the connected site it is."""
+    if not name:
+        return "read mode or a connected site"
+    if name == READ_MODE_STAMP:
+        return "read mode"
+    return f"the connected site '{name}'"
 
 
 def _act(why: str) -> dict:
     return {"tier": ACT, "reason": why}
 
 
-def _confined(cap: str | None) -> dict:
+def _confined(name: str | None) -> dict:
     return {"tier": CALLER,
-            "reason": f"confined by canopy to '{cap or 'one capability'}': answer within it; "
+            "reason": f"confined by canopy to {profile_label(name)}: answer within it; "
                       "anything more is for the agent's owner"}
 
 
@@ -196,31 +217,31 @@ def _decide(env: dict, granted: str, perms: list[str] | None, role: str | None) 
     if granted == "no-interface":
         return None
     # Never an act, whatever else the envelope says: canopy refused this asker, or the
-    # capability is sensitive (its words are sealed to its people).
+    # profile is sensitive (its words are sealed to its people).
     if granted == "refused" or granted.startswith("sensitive:"):
         return {"tier": UNLISTED,
                 "reason": f"canopy refused or sealed this ({granted}): do not act; "
                           "derive any narrower tier from your own state"}
-    cap = _capability_of(env, perms, granted)
+    confined_to = _confined_profile_of(env, perms, granted)
     profile = normalize_profile(env.get("profile"))
     via = f" ({granted})" if granted else ""
     if perms is not None:
         if "write" in perms:
             return _act(f"this asker holds `write` on this agent{via}: they may steer it")
-        if profile == "confined" or cap:
-            return _confined(cap)
+        if profile == "confined" or confined_to:
+            return _confined(confined_to)
         return {"tier": UNLISTED,
-                "reason": f"this asker holds no `write` and no capability here (permissions: "
+                "reason": f"this asker holds no `write`, read mode or connected site here (permissions: "
                           f"{', '.join(perms) or 'none'}); derive any narrower tier from your own state"}
     if profile == "full":
         return _act(f"canopy runs this asker's whole profile: they hold `write`{via}")
     if profile == "confined":
-        return _confined(cap)
+        return _confined(confined_to)
     # An older canopy-web: neither `permissions` nor `profile`. Read `granted_by`.
     if granted in ("owner", "admin", "editor") or granted.startswith("full:"):
         return _act(f"canopy grants this sender the whole agent ({granted})")
-    if granted.startswith("capability:"):
-        return _confined(cap)
+    if granted.startswith(GRANTED_BY_PROFILE_PREFIX):
+        return _confined(confined_to)
     if granted.startswith("session:"):
         r = granted.split(":", 1)[1]
         if r in _WRITE_ROLES:
@@ -229,8 +250,8 @@ def _decide(env: dict, granted: str, perms: list[str] | None, role: str | None) 
     if granted.startswith("grant:"):
         if role in _WRITE_ROLES:
             return _act(f"an access-list line gives this {role} `write` ({granted})")
-        if cap:
-            return _confined(cap)
+        if confined_to:
+            return _confined(confined_to)
         return {"tier": UNLISTED,
                 "reason": f"{granted}: the envelope does not say it carries `write`; "
                           "derive any narrower tier from your own state"}
@@ -299,7 +320,7 @@ def caller_group():
 def caller_tier(caller_path, repo):
     """Resolve the sender's tier → JSON {tier, reason, address, verified, …}.
 
-    Tiers: act (asker holds `write`) · caller (confined to one capability) · unverified ·
+    Tiers: act (asker holds `write`) · caller (confined to read mode or a connected site) · unverified ·
     unlisted · system · blocked. `manual` (turn mode) is reported separately. For an agent
     with no interface, `act` requires BOTH an allowlisted address AND a verified message.
     Exit 2 = no usable envelope."""

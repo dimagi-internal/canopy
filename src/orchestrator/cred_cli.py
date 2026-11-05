@@ -398,7 +398,7 @@ def decide(slug: str, *, refresh: bool = False, local_env_counts: bool = True) -
         msg = (f"This is {who} runner turn ({sess.turn_id}), so it may act only as "
                f"{repr(sess.agent) if sess.agent else 'no agent'} — not as '{slug}'. To get "
                f"work done as '{slug}', dispatch it or ask it (`canopy agent dispatch --slug "
-               f"{slug} …`, or `{slug}:ask`); never resolve another agent's credentials.")
+               f"{slug} …`, or `/{slug}:answer-caller`); never resolve another agent's credentials.")
         return Verdict(slug, False, "agent-turn", via=None, reason="turn-is-another-agent",
                        message=msg, exit_code=EXIT_REFUSED)
 

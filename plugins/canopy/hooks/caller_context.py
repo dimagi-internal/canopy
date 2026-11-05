@@ -91,6 +91,16 @@ _LEGACY_PROFILE = {"restricted": "confined"}
 _BASIS = {
     "refused": "refused: no permission here",
 }
+# Wire names, as deployed canopy-web writes the envelope; read here and nowhere else.
+#: The envelope field naming the confined profile a turn runs: `{"name": …}`.
+ENVELOPE_PROFILE_FIELD = "capability"
+#: The stored name of read mode.
+READ_MODE_STAMP = "ask"
+
+
+def confined_profile_words(name) -> str:
+    """A confined profile's stored name in words: `read mode`, or `connected site=<name>`."""
+    return "read mode" if name == READ_MODE_STAMP else f"connected site={name}"
 
 
 def relationship_of(env: dict) -> str:
@@ -105,7 +115,7 @@ def profile_of(env: dict) -> str:
     return _LEGACY_PROFILE.get(prof, prof)
 
 
-def _access_line(env: dict, cap: dict) -> str:
+def _access_line(env: dict, confined_to: dict) -> str:
     """The `access:` line. `permissions` is canopy-web's decision about the agent; a turn with
     no agent / no interface (`granted_by: no-interface`) has none to report, so say that
     rather than a contradictory `permissions=none` beside `profile=full`."""
@@ -127,8 +137,8 @@ def _access_line(env: dict, cap: dict) -> str:
     out += f", granted_by={granted or 'unknown'}"
     if granted in _BASIS:
         out += f" ({_BASIS[granted]})"
-    if cap.get("name"):
-        out += f", capability={cap.get('name')}"
+    if confined_to.get("name"):
+        out += f", {confined_profile_words(confined_to.get('name'))}"
     if isinstance(perms, list) and perms and not no_agent:
         out += (" — `write` means they may steer you; whether a person approves outbound is "
                 "the turn mode below, a separate axis")
@@ -308,7 +318,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     mode = (env.get("turn_mode") or {}).get("mode") or "unknown"
     basis = (env.get("turn_mode") or {}).get("basis") or ""
     trigger = env.get("trigger") or {}
-    cap = env.get("capability") or {}
+    confined_to = env.get(ENVELOPE_PROFILE_FIELD) or {}
     tid = turn_id or env.get("turn_id") or ""
     # Manual mode gates what reaches PEOPLE or other systems. It does not gate code
     # shipping on the agent's own turns: the GitHub credential the agent holds is
@@ -332,7 +342,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         f"- relationship: {rel} — {_RELATIONSHIP.get(rel, 'unknown')}",
         f"- verified: {'yes' if verified else 'NO'} (assurance: {assurance})"
         + ("" if verified else " — who they say they are is a claim, not proven"),
-        _access_line(env, cap),
+        _access_line(env, confined_to),
         f"- turn mode: {mode}" + (f" ({basis})" if basis else "") + mode_note,
         f"- channel: {trigger.get('origin') or 'unknown'}"
         + (f", runner {trigger['runner']}" if trigger.get("runner") else "")

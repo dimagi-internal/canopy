@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Confine a CALLER's session to its capability — the enforcement half of read mode and connected sites.
+"""Confine a CALLER's session to its profile — the enforcement half of read mode and connected sites.
 
 canopy-web decides, per turn, whether the person who asked is the agent's owner
-or an admin (full profile) or a caller — anyone else — who reaches only the
-capability the agent's DECLARED INTERFACE gives them (held on canopy-web; canopy-web
-`apps/agents/interface.py`). The runner opens every caller turn in its OWN
-emdash session, named `cx-…`, and writes that capability's profile to
+or an admin (full access) or a caller — anyone else — who reaches only what the
+agent's read mode or one of its connected sites may do (held on canopy-web). The
+runner opens every caller turn in its OWN emdash session, named `cx-…`, and writes
+that profile to
 `~/.canopy/profiles/<task>.json` BEFORE the session starts. This hook, registered
 by the canopy plugin for every session on the box, is what makes the profile
 binding: in a `cx-` session, a tool call that the profile does not list is
@@ -31,6 +31,9 @@ ordinary tool call on the box one JSON parse and one substring test.
 Profile shape (written by the runner from canopy-web's envelope):
     {"version": 1, "capability": {"name", "tools", "bash", "read_paths", …},
      "thread_id": "…", "turn_id": "…"}
+
+  (`capability` is the wire name of the profile's key, `PROFILE_FILE_KEY`; its `name`
+  is read mode's stored name `ask`, or a connected site's.)
 
   tools       fnmatch patterns over the TOOL NAME (`Read`, `mcp__canopy-web__who_is_asking`)
   bash        patterns over the command's ARGUMENTS, token for token: `*` is one
@@ -72,6 +75,12 @@ import sys
 PROFILE_ENFORCEMENT_VERSION = 4
 
 PROFILE_ROOT = os.path.expanduser("~/.canopy/profiles")
+# Wire names: the runner writes the profile file in these words, so they are read here
+# and nowhere else; messages say "read mode" and "connected site".
+#: The key in a profile file that holds what the turn may do.
+PROFILE_FILE_KEY = "capability"
+#: The stored name of read mode.
+READ_MODE_STAMP = "ask"
 _ANCHOR = re.compile(r"-worktrees-.+?-emdash-(?P<leaf>.+)$")
 _RESTRICTED = "cx-"
 #: Refused anywhere in a caller's command, quoted or not: the shell still expands
@@ -159,8 +168,8 @@ def load_profile(candidates, root=None):
                 prof = json.load(fh)
         except (OSError, ValueError):
             continue
-        cap = prof.get("capability") if isinstance(prof, dict) else None
-        if isinstance(cap, dict):
+        allowed = prof.get(PROFILE_FILE_KEY) if isinstance(prof, dict) else None
+        if isinstance(allowed, dict):
             return prof
     return None
 
@@ -172,7 +181,7 @@ def load_profile_file(path: str):
             prof = json.load(fh)
     except (OSError, ValueError):
         return None
-    return prof if isinstance(prof, dict) and isinstance(prof.get("capability"), dict) else None
+    return prof if isinstance(prof, dict) and isinstance(prof.get(PROFILE_FILE_KEY), dict) else None
 
 
 def _subst(pattern: str, prof: dict, cwd: str) -> str:
@@ -273,7 +282,7 @@ def _is_own_attachment(tool: str, tool_input: dict, prof: dict) -> bool:
     """A file a person sent with THIS turn (a private conversation's, canopy-web
     `private_attachments`): the runner puts it in the turn's own directory and names
     that directory in `attachment_dirs`. Read only, a file inside one of them, resolved
-    — the one exception beside the envelope, and no wider: the capability's own
+    — the one exception beside the envelope, and no wider: the profile's own
     read_paths and tools are unchanged."""
     dirs = prof.get("attachment_dirs") or []
     if tool != "Read" or not isinstance(dirs, list):
@@ -284,44 +293,51 @@ def _is_own_attachment(tool: str, tool_input: dict, prof: dict) -> bool:
     return any(isinstance(d, str) and os.path.isabs(d) and _in_dir(target, d, "/") for d in dirs)
 
 
+def _profile_words(name) -> str:
+    """The profile a refusal names: read mode, or the connected site it is."""
+    if name == READ_MODE_STAMP:
+        return "read mode"
+    return f"the connected site '{name}'" if name else "its profile"
+
+
 def decide(tool: str, tool_input: dict, prof: dict, cwd: str, results_dir=None):
     """None to allow, else the reason to refuse. `results_dir` is the session's own
     tool-results directory (see `own_results_dir`), readable by any listed read tool."""
     if _is_own_envelope(tool, tool_input, prof) or _is_own_attachment(tool, tool_input, prof):
         return None
-    cap = prof["capability"]
-    name = cap.get("name") or "?"
-    tools = cap.get("tools") or []
+    may = prof[PROFILE_FILE_KEY]
+    name = _profile_words(may.get("name"))
+    tools = may.get("tools") or []
     if tool == "Bash":
         cmd = str((tool_input or {}).get("command") or "").strip()
         toks = argv(cmd)
         if toks is None:
-            return (f"this session answers a caller through '{name}'; a command here is one "
+            return (f"this session answers a caller through {name}; a command here is one "
                     "program with its arguments — no chaining, pipes, redirection, $() or backticks, "
                     "and no unquoted {}, *, ?, [ or ~")
-        if any(_argv_matches(toks, p, prof, cwd) for p in cap.get("bash") or []):
+        if any(_argv_matches(toks, p, prof, cwd) for p in may.get("bash") or []):
             return None
-        return f"this session answers a caller through '{name}', which does not allow: {cmd[:160]}"
+        return f"this session answers a caller through {name}, which does not allow: {cmd[:160]}"
     if not any(fnmatch.fnmatchcase(tool, p) for p in tools):
-        return f"this session answers a caller through '{name}', which does not include the {tool} tool"
+        return f"this session answers a caller through {name}, which does not include the {tool} tool"
     if tool == "Glob":
         # The PATTERN can name a path too (`/etc/**`, `../**`), and would list
         # names outside the worktree whatever `path` says.
         pat = str((tool_input or {}).get("pattern") or "")
         if pat.startswith(("/", "~")) or ".." in pat.split("/"):
-            return f"this session answers a caller through '{name}'; that pattern reaches outside what it may touch"
+            return f"this session answers a caller through {name}; that pattern reaches outside what it may touch"
     keys = _PATH_KEYS.get(tool)
     if keys:
         paths = [str((tool_input or {}).get(k) or "") for k in keys]
         if tool in ("Glob", "Grep", "LS") and not any(paths):
             paths = [cwd]
         writes = tool in _WRITE_TOOLS
-        allowed = cap.get("write_paths") if writes else cap.get("read_paths")
+        allowed = may.get("write_paths") if writes else may.get("read_paths")
         for p in paths:
             if not writes and _in_dir(p, results_dir, cwd):
                 continue
             if not _path_ok(p, allowed or [], prof, cwd):
-                return f"this session answers a caller through '{name}'; {p or 'that path'} is outside what it may touch"
+                return f"this session answers a caller through {name}; {p or 'that path'} is outside what it may touch"
     return None
 
 

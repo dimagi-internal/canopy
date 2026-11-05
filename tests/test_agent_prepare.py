@@ -226,7 +226,7 @@ def test_a_canopy_web_client_token_gets_its_client_from_the_canopy_vault(tmp_pat
                    values={"gog-oauth-client-web": "{}"})
     rep = _prep(tmp_path, box, creds=creds).prepare("ace")
     assert rep.gog_client == "canopy-web" and rep.token.startswith("canopy-web canopy-web")
-    # turns declare `canopy`; a canopy-web token serves them (one app, two doors)
+    # turns declare `canopy`; a canopy-web token serves them (one app, two sign-in routes)
     assert (rep.turn_client, rep.turn_ready) == ("canopy-web", True)
     assert rep.client_creds_ok
 

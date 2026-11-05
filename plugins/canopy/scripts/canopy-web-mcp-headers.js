@@ -43,7 +43,7 @@ import { fileURLToPath } from "node:url";
 
 // A CONFINED session — a caller's, not the agent owner's — must never reach canopy
 // with the owner's PAT. The runner leaves the session's own credential (a caller
-// token, `cct_…`, which canopy runs as the caller and scopes to their capability)
+// token, `cct_…`, which canopy runs as the caller and scopes to their read mode or connected site)
 // in the session's profile, found either from CANOPY_PROFILE (a runner that spawns
 // claude itself) or from the `emdash-cx-<task>-<suffix>` directory emdash starts
 // the session in. A confined session with no token gets an invalid header: the

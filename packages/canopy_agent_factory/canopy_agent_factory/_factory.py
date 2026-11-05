@@ -535,19 +535,19 @@ _ALLOWLIST = '''# LEGACY FALLBACK — consulted ONLY while {{AGENT_NAME}} has no
 # A line may be a full address (name@example.com) or a whole domain (@example.com).
 '''
 
-_ASK_SKILL = '''---
+_ANSWER_CALLER_SKILL = '''---
 name: answer-caller
 description: Answer a caller (not {{AGENT_NAME}}'s owner or an admin) in a canopy-confined session.
-# Started by canopy as the `ask` capability's entry, never self-dispatched: a
-# full-profile turn has no business running the caller path.
+# Started by canopy as read mode's default entry, never self-dispatched: a
+# whole-agent turn has no business running the caller path.
 disable-model-invocation: true
 ---
 
 # Answer a caller
 
 You were started as `/{{AGENT_SLUG}}:answer-caller --thread <id> --caller <path>`. This session is
-CONFINED: only what the agent's declared interface (on canopy-web) lists for this
-capability will run, and everything
+CONFINED: only what the agent's read mode or connected site (set on canopy-web) lists
+will run, and everything
 else is refused by canopy's guard. That is the design, not a fault — do not look for a
 way around a refusal; say in the reply what you cannot do and that a human will follow up.
 
@@ -889,7 +889,7 @@ _TEMPLATES: dict[str, str] = {
     "bin/{{AGENT_SLUG}}-email": _EMAIL_SHIM,
     "config/gating.json": _GATING_JSON,
     "config/allowlist.txt": _ALLOWLIST,
-    "skills/answer-caller/SKILL.md": _ASK_SKILL,
+    "skills/answer-caller/SKILL.md": _ANSWER_CALLER_SKILL,
     "config/agent.json": _AGENT_JSON,
     ".claude/settings.json": _SETTINGS_JSON,
     "skills/turn/SKILL.md": _TURN_SKILL,

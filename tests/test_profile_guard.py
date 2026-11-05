@@ -1,4 +1,4 @@
-"""profile_guard: a caller's `cx-` session may do only what its capability lists."""
+"""profile_guard: a caller's `cx-` session may do only what its profile (read mode or a connected site) lists."""
 import importlib.util
 import io
 import json
@@ -46,6 +46,11 @@ def test_an_ordinary_session_is_untouched_and_opens_no_file(monkeypatch, capsys,
     monkeypatch.setattr(pg, "PROFILE_ROOT", str(tmp_path / "does-not-exist"))
     tp = f"/Users/a/.claude/projects/{ROOT_DIR}c-daily-turn-6886-rn860/x.jsonl"
     assert _run(monkeypatch, capsys, "Bash", {"command": "rm -rf /"}, tp=tp)[0] == 0
+
+
+def test_a_refusal_names_read_mode_or_the_connected_site():
+    assert pg._profile_words("ask") == "read mode"
+    assert pg._profile_words("connect") == "the connected site 'connect'"
 
 
 def test_the_task_is_read_from_the_transcript_dir():
@@ -239,21 +244,21 @@ def test_the_sessions_own_envelope_is_readable_and_nothing_beside_it(monkeypatch
 # the worktree could overwrite bin/ace-email — the script their bash allowlist
 # runs — and then run it.
 
-def _with_cap(profiles, **cap):
+def _with_profile(profiles, **cap):
     doc = json.loads(json.dumps(PROFILE))
     doc["capability"].update(cap)
     (profiles / f"{TASK}.json").write_text(json.dumps(doc))
 
 
 def test_a_write_inside_write_paths_passes(monkeypatch, capsys, profiles):
-    _with_cap(profiles, tools=["Read", "Write"], write_paths=["{cwd}/.ace-ask/*"])
+    _with_profile(profiles, tools=["Read", "Write"], write_paths=["{cwd}/.ace-ask/*"])
     assert _run(monkeypatch, capsys, "Write", {"file_path": "/Users/a/w/.ace-ask/body.md"})[0] == 0
 
 
 @pytest.mark.parametrize("target", ["/Users/a/w/bin/ace-email", "/Users/a/w/.ace-ask/../bin/x",
                                     "/Users/a/w/README.md"])
 def test_a_readable_path_is_not_writable(monkeypatch, capsys, profiles, target):
-    _with_cap(profiles, tools=["Read", "Write", "Edit"], write_paths=["{cwd}/.ace-ask/*"])
+    _with_profile(profiles, tools=["Read", "Write", "Edit"], write_paths=["{cwd}/.ace-ask/*"])
     for tool in ("Write", "Edit"):
         code, err = _run(monkeypatch, capsys, tool, {"file_path": target})
         assert code == 2 and "outside what it may touch" in err
@@ -263,7 +268,7 @@ def test_a_readable_path_is_not_writable(monkeypatch, capsys, profiles, target):
 def test_no_write_paths_means_no_writes(monkeypatch, capsys, profiles):
     # An interface published before write_paths existed must not keep the old,
     # wide-open behaviour: fail closed.
-    _with_cap(profiles, tools=["Read", "Write"])
+    _with_profile(profiles, tools=["Read", "Write"])
     assert _run(monkeypatch, capsys, "Write", {"file_path": "/Users/a/w/.ace-ask/body.md"})[0] == 2
 
 
@@ -318,7 +323,7 @@ def test_a_symlink_out_of_tool_results_is_refused(monkeypatch, capsys, profiles,
 
 
 def test_tool_results_are_readable_not_writable(monkeypatch, capsys, profiles, tmp_path):
-    _with_cap(profiles, tools=["Read", "Write"], write_paths=["{cwd}/.ace-ask/*"])
+    _with_profile(profiles, tools=["Read", "Write"], write_paths=["{cwd}/.ace-ask/*"])
     proj, results = _session(tmp_path)
     code, _ = _run(monkeypatch, capsys, "Write", {"file_path": str(results / "b1l2.txt")},
                    tp=str(proj / "0e1f.jsonl"))
@@ -326,7 +331,7 @@ def test_tool_results_are_readable_not_writable(monkeypatch, capsys, profiles, t
 
 
 def test_tool_results_still_need_a_listed_read_tool(monkeypatch, capsys, profiles, tmp_path):
-    _with_cap(profiles, tools=["mcp__canopy-web__who_is_asking"])
+    _with_profile(profiles, tools=["mcp__canopy-web__who_is_asking"])
     proj, results = _session(tmp_path)
     code, err = _run(monkeypatch, capsys, "Read", {"file_path": str(results / "b1l2.txt")},
                      tp=str(proj / "0e1f.jsonl"))
@@ -383,9 +388,9 @@ def test_a_wildcard_slot_cannot_hold_a_flag(monkeypatch, capsys, profiles, tmp_p
         assert _run(monkeypatch, capsys, "Bash", {"command": cmd}, cwd=str(w))[0] == 2, subject
 
 
-# The live interfaces' `ask` allowlists (ACE's; Hal's has the same shape — read
+# The live read-mode allowlists (ACE's; Hal's has the same shape — read
 # 2026-10-06): what their answer-caller skills actually run must keep passing.
-LIVE_ASK = {"version": 1, "thread_id": "18c9abc", "turn_id": "t1", "capability": {
+LIVE_READ_MODE = {"version": 1, "thread_id": "18c9abc", "turn_id": "t1", "capability": {
     "name": "ask",
     "tools": ["Read", "Grep", "Glob", "Write"],
     "bash": [
@@ -401,8 +406,8 @@ LIVE_ASK = {"version": 1, "thread_id": "18c9abc", "turn_id": "t1", "capability":
 }}
 
 
-def test_the_live_ask_commands_still_pass(monkeypatch, capsys, profiles, tmp_path):
-    (profiles / f"{TASK}.json").write_text(json.dumps(LIVE_ASK))
+def test_the_live_read_mode_commands_still_pass(monkeypatch, capsys, profiles, tmp_path):
+    (profiles / f"{TASK}.json").write_text(json.dumps(LIVE_READ_MODE))
     w = tmp_path / "w"
     a = w / ".ace-ask"
     a.mkdir(parents=True)

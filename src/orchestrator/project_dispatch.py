@@ -66,7 +66,7 @@ of them (merged + deployed 2026-07-28):
   what you paired and usually collapsed to one tenant; now it genuinely spans them,
   so a two-workspace caller could preflight GREEN off workspace A's runners and
   enqueue into workspace B, where nothing serves the repo — the #428 failure exactly,
-  re-reachable through a new door. So the preflight reads
+  re-reachable by a new route. So the preflight reads
   `/api/w/<ws>/harness/runners/`: the same tenant, asked the same question.
 
 Because that read is tenant-pinned and membership is already gated by the middleware
