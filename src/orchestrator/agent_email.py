@@ -1669,7 +1669,11 @@ def read_thread(
                    attachments: [{attachment_id, filename, mime_type, size}],
                    auto_submitted, precedence, sender, is_automated}],
        reply_all: {to, cc, reply_to_message_id},
-       has_unseen_quoted}
+       has_unseen_quoted,
+       unsent_drafts: [message_id]}
+
+    `messages` holds mail that was actually sent; an unsent draft on the thread is listed
+    only in `unsent_drafts`, which tells a later turn a reply is already parked here.
 
     `body_text` is the message's readable text (base64 MIME parts decoded, quoted reply
     tail trimmed) — text/plain when present, otherwise the text/html twin flattened, so an
@@ -1708,6 +1712,12 @@ def read_thread(
     except ValueError:
         raise AgentEmailError(f"read: unparseable gog read output for {thread_id}")
     raw = data.get("thread", {}).get("messages", [])
+    # An unsent draft is not a message: Gmail returns it in the thread, last, From the
+    # agent. Left in, it reads as "the agent replied" -- dangling_threads drops the thread
+    # ("the ball is with them") and turn.md's newest-message-is-mine rule says mark it read,
+    # so the reply parked at the approval gate vanishes from the one sweep meant to find it.
+    unsent_drafts = [m.get("id") for m in raw if "DRAFT" in (m.get("labelIds") or ())]
+    raw = [m for m in raw if "DRAFT" not in (m.get("labelIds") or ())]
     messages, tails = [], []
     for m in raw:
         h = _headers_of(m)
@@ -1754,6 +1764,7 @@ def read_thread(
         "messages": messages,
         "reply_all": _reply_all_of(raw, identity),
         "has_unseen_quoted": any(msg["quoted_unseen"] for msg in messages),
+        "unsent_drafts": unsent_drafts,
     }
 
 

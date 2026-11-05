@@ -1,6 +1,6 @@
 [project]
 name = "canopy"
-version = "0.2.847"
+version = "0.2.848"
 description = "Self-improving MCP orchestration with autoresearch"
 requires-python = ">=3.11"
 dependencies = [
