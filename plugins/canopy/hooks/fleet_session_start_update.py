@@ -194,6 +194,53 @@ def _default_branch(clone: str) -> str:
     return "main"
 
 
+# ── release channel ─────────────────────────────────────────────────────────
+#
+# A merge used to reach every machine on its next session. A repo can now publish a
+# `fleet-stable` tag (canopy's `.github/workflows/fleet-stable.yml` advances it to the newest
+# main commit whose required checks passed and that has soaked on the `main` channel). The
+# fleet follows the tag; a canary machine follows `main` with CANOPY_FLEET_CHANNEL=main or a
+# `main` line in ~/.claude/canopy/fleet-channel. A repo without the tag is followed at main.
+
+STABLE_TAG = "fleet-stable"
+CHANNEL_FILE = CANOPY_DIR / "fleet-channel"
+
+
+def fleet_channel() -> str:
+    val = os.environ.get("CANOPY_FLEET_CHANNEL", "").strip().lower()
+    if not val:
+        try:
+            val = CHANNEL_FILE.read_text(encoding="utf-8").strip().lower()
+        except OSError:
+            val = ""
+    return "main" if val == "main" else "stable"
+
+
+def _is_ancestor(clone: str, older: str, newer: str) -> bool:
+    if not older or not newer:
+        return False
+    rc, _, _ = run(["git", "merge-base", "--is-ancestor", older, newer], 15, cwd=clone)
+    return rc == 0
+
+
+def target_ref(clone: str, branch: str) -> str:
+    """The ref this machine should run: the repo's fleet-stable tag, else origin/<branch>.
+
+    The tag is honoured only while it points into main's history, so a stray tag can never
+    send the fleet somewhere main has not been."""
+    main_ref = f"origin/{branch}"
+    if fleet_channel() == "main":
+        return main_ref
+    rc, _, _ = run(["git", "fetch", "--quiet", "--force", "origin",
+                    f"+refs/tags/{STABLE_TAG}:refs/tags/{STABLE_TAG}"], FETCH_TIMEOUT, cwd=clone)
+    if rc != 0:
+        return main_ref                      # no tag published: follow main, as before
+    rc, tag_sha, _ = run(["git", "rev-parse", f"{STABLE_TAG}^{{commit}}"], 10, cwd=clone)
+    if rc != 0 or not _is_ancestor(clone, tag_sha, main_ref):
+        return main_ref
+    return f"refs/tags/{STABLE_TAG}"
+
+
 def _current_branch(clone: str) -> str:
     rc, out, _ = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], 10, cwd=clone)
     return out if rc == 0 else ""
@@ -415,9 +462,16 @@ def update_one(target: dict) -> dict:
         result.update(status="error", error=f"fetch: {err or rc}")
         return result
 
-    rc, remote_sha, err = run(["git", "rev-parse", f"origin/{branch}"], 10, cwd=clone)
+    ref = target_ref(clone, branch)
+    rc, remote_sha, err = run(["git", "rev-parse", f"{ref}^{{commit}}"], 10, cwd=clone)
     if rc != 0 or not remote_sha:
-        result.update(status="error", error=f"rev-parse: {err or rc}")
+        result.update(status="error", error=f"rev-parse {ref}: {err or rc}")
+        return result
+
+    if remote_sha != target["sha"] and _is_ancestor(clone, remote_sha, target["sha"]):
+        # Installed is AHEAD of the channel (a manual /canopy:update, or a machine that left
+        # the main channel): never move a machine backwards; it rejoins when the channel passes.
+        result.update(status="up-to-date")
         return result
 
     if remote_sha == target["sha"]:
@@ -444,7 +498,7 @@ def update_one(target: dict) -> dict:
     if err:
         result.update(status="error", error=err)
         return result
-    rc, _, err = run(["git", "reset", "--hard", f"origin/{branch}"], PULL_TIMEOUT, cwd=clone)
+    rc, _, err = run(["git", "reset", "--hard", remote_sha], PULL_TIMEOUT, cwd=clone)
     if rc != 0:
         result.update(status="error", error=f"reset: {err or rc}")
         return result

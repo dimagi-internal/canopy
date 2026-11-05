@@ -150,3 +150,89 @@ def test_preflight_refuses_a_gating_guard_that_stops_blocking(plugins, tmp_path)
     (staged / "agent-core" / "gating_guard.py").write_text("import sys; sys.exit(0)\n")
     err = flu.preflight("canopy", staged)
     assert "gating_guard.py" in err and "want 2" in err
+
+
+# ── the release channel: fleet-stable tag, canaries on main ──────────────────────────
+
+import subprocess  # noqa: E402
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+                          cwd=str(cwd), check=True, capture_output=True, text=True).stdout.strip()
+
+
+@pytest.fixture
+def repo(tmp_path, monkeypatch):
+    """origin with three commits on main, a clone of it; returns (work, clone, [shas])."""
+    monkeypatch.delenv("CANOPY_FLEET_CHANNEL", raising=False)
+    monkeypatch.setattr(flu, "CHANNEL_FILE", tmp_path / "fleet-channel")
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    _git(origin, "init", "--bare", "-b", "main")
+    work = tmp_path / "work"
+    work.mkdir()
+    _git(work, "init", "-b", "main")
+    _git(work, "remote", "add", "origin", str(origin))
+    shas = []
+    for i in range(3):
+        (work / "f").write_text(str(i))
+        _git(work, "add", "-A")
+        _git(work, "commit", "-m", f"c{i}")
+        shas.append(_git(work, "rev-parse", "HEAD"))
+    _git(work, "push", "origin", "main")
+    _git(tmp_path, "clone", str(origin), "clone")
+    return work, tmp_path / "clone", shas
+
+
+def _resolve(clone, ref):
+    return _git(clone, "rev-parse", f"{ref}^{{commit}}")
+
+
+def test_no_tag_means_main(repo):
+    _work, clone, shas = repo
+    assert _resolve(clone, flu.target_ref(str(clone), "main")) == shas[-1]
+
+
+def test_the_fleet_follows_the_stable_tag(repo):
+    work, clone, shas = repo
+    _git(work, "tag", "fleet-stable", shas[0])
+    _git(work, "push", "origin", "refs/tags/fleet-stable")
+    assert _resolve(clone, flu.target_ref(str(clone), "main")) == shas[0]
+    # the tag moves: the next run sees it (forced fetch)
+    _git(work, "tag", "-f", "fleet-stable", shas[1])
+    _git(work, "push", "--force", "origin", "refs/tags/fleet-stable")
+    assert _resolve(clone, flu.target_ref(str(clone), "main")) == shas[1]
+
+
+def test_a_canary_follows_main(repo, monkeypatch):
+    work, clone, shas = repo
+    _git(work, "tag", "fleet-stable", shas[0])
+    _git(work, "push", "origin", "refs/tags/fleet-stable")
+    flu.CHANNEL_FILE.write_text("main\n")
+    assert _resolve(clone, flu.target_ref(str(clone), "main")) == shas[-1]
+    flu.CHANNEL_FILE.unlink()
+    monkeypatch.setenv("CANOPY_FLEET_CHANNEL", "main")
+    assert _resolve(clone, flu.target_ref(str(clone), "main")) == shas[-1]
+
+
+def test_a_tag_off_main_is_ignored(repo):
+    work, clone, shas = repo
+    _git(work, "checkout", "-q", "-b", "side", shas[0])
+    (work / "g").write_text("side")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "side")
+    _git(work, "tag", "fleet-stable")
+    _git(work, "push", "origin", "refs/tags/fleet-stable")
+    assert _resolve(clone, flu.target_ref(str(clone), "main")) == shas[-1]
+
+
+def test_update_one_never_moves_a_machine_backwards(repo, monkeypatch, tmp_path):
+    work, clone, shas = repo
+    _git(work, "tag", "fleet-stable", shas[0])
+    _git(work, "push", "origin", "refs/tags/fleet-stable")
+    monkeypatch.setattr(flu, "PLUGINS_DIR", tmp_path / "plugins")
+    target = {"key": "x@x", "name": "x", "marketplace": "x", "install_path": "",
+              "version": "0.1.0", "sha": shas[-1], "clone": str(clone)}
+    assert flu.update_one(target)["status"] == "up-to-date"
+    assert _git(clone, "rev-parse", "HEAD") == shas[-1]      # clone not reset backwards

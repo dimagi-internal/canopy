@@ -122,6 +122,13 @@ install`s, and patches `installed_plugins.json`: what `/canopy:update` does by h
   same one, so the swap is two renames; the old tree is kept under `retired-*` for a day. A failed build,
   preflight or swap (Windows refuses to rename a dir in use) leaves the installed version untouched and the
   registry unpatched; the next session retries.
+- **Channel:** a repo that publishes a `fleet-stable` tag is followed at that tag; without one, at `main`.
+  canopy's `.github/workflows/fleet-stable.yml` (every 20 min) moves the tag to the newest main commit that
+  has soaked 60 min and passed every required check. Canary machines follow `main`:
+  `CANOPY_FLEET_CHANNEL=main`, or `main` in `~/.claude/canopy/fleet-channel`. A tag that is not on main
+  is ignored, and a machine already ahead of the channel is never moved back, so a rollback is a revert
+  on main promoted by hand (run the workflow with `sha`). Repo variable `FLEET_HOLD=1` freezes the tag.
+  `/canopy:update` still installs `main`.
 - **Preflight:** the staged `hooks/hooks.json`, `plugin.json`, `config/gating.json` and gating baseline must
   parse, and for canopy each PreToolUse guard must run under this machine's python, allowing a plain command,
   with the gating guard blocking a raw send. Guards fail closed, so one that cannot start would block every
