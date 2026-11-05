@@ -41,7 +41,7 @@ If your recommendation contradicts a page you have just read, say so and reconci
 |---|---|---|
 | How do I use / run an agent? Local vs runner | `docs/running-an-agent.md` | `canopy agent use --help`, `canopy agent runs-as` |
 | How does a person get an agent's plugin? The `canopy-agents` catalog | canopy-web `docs/architecture/plugin-marketplace.md` | the catalog (`GET /plugins/marketplace.json`), `canopy agent use` output |
-| Who can do what; licences; turn modes | canopy-web `docs/architecture/access.md`, `roles.md` | `who_is_asking`, `canopy agent interface get --slug <slug>` |
+| Who can do what; licences; turn modes | canopy-web `docs/architecture/access.md`, `roles.md` | `who_is_asking`, `canopy agent read-mode get --slug <slug>`, `canopy agent sites list --slug <slug>` |
 | Runners, schedules, routing | canopy-web `docs/architecture/runners.md` | `canopy agent doctor`, the runner list |
 | Setting up / vaults / device grants | `docs/architecture/agent-setup-lifecycle.md` | `canopy agent doctor`, the agent's vault members |
 | Words used here (plugin, instance, runner, local turn…) | `docs/GLOSSARY.md` | — |

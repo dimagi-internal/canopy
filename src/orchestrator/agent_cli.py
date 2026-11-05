@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import click
+import yaml
 
 from orchestrator.agent_client import AgentClient, catalog_from_repo, CanopyError
 
@@ -203,9 +204,100 @@ def agent_skills(slug, skills_root, url_template, json_file):
         raise click.ClickException(str(e))
 
 
+def _settings_file(file_) -> dict:
+    """The fields to change, from a YAML or JSON file (JSON is YAML). A mapping or nothing."""
+    fields = yaml.safe_load(Path(file_).read_text(encoding="utf-8")) if file_ else {}
+    if not isinstance(fields or {}, dict):
+        raise click.ClickException(f"{file_} must hold a mapping of the fields to change")
+    return fields or {}
+
+
+@agent.group("read-mode")
+def agent_read_mode():
+    """What someone who may only read gets from an agent: canopy's default, or the agent's own list.
+    LIVE STATE on canopy-web. Reading needs a member; changing needs the owner or an admin."""
+
+
+@agent_read_mode.command("get")
+@click.option("--slug", required=True)
+def agent_read_mode_get(slug):
+    """Print read mode: where it comes from, and what it may do."""
+    try:
+        _emit(_client(slug).get_read_mode())
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
+@agent_read_mode.command("set")
+@click.option("--slug", required=True)
+@click.option("--file", "file_", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="YAML or JSON of the fields to change: description, entry, tools, bash, read_paths, write_paths.")
+@click.option("--dry-run", is_flag=True, help="Check it without saving.")
+def agent_read_mode_set(slug, file_, dry_run):
+    """Customise read mode. Only the fields in the file change."""
+    try:
+        _emit(_client(slug).put_read_mode({**_settings_file(file_), "dry_run": dry_run}))
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
+@agent_read_mode.command("reset")
+@click.option("--slug", required=True)
+def agent_read_mode_reset(slug):
+    """Put read mode back on canopy's default."""
+    try:
+        _emit(_client(slug).reset_read_mode())
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
+@agent.group("sites")
+def agent_sites():
+    """The sites an agent can be reached from, one row per site. LIVE STATE on canopy-web. Reading
+    needs a member; changing needs the owner or an admin. Who may use it from a site is the access list."""
+
+
+@agent_sites.command("list")
+@click.option("--slug", required=True)
+def agent_sites_list(slug):
+    """Print the agent's sites, the workspace's sites it could add, and what a new one starts with."""
+    try:
+        _emit(_client(slug).list_connected_sites())
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
+@agent_sites.command("set")
+@click.option("--slug", required=True)
+@click.option("--site", required=True, help="The connected site's name.")
+@click.option("--file", "file_", type=click.Path(exists=True, dir_okay=False),
+              help="YAML or JSON of the fields to change: description, entry, tools, bash, read_paths, write_paths, "
+                   "ceiling, own_login, sensitive. None: a new site takes its defaults.")
+@click.option("--dry-run", is_flag=True, help="Check it without saving.")
+def agent_sites_set(slug, site, file_, dry_run):
+    """Add a site or change one. Only the fields in the file change."""
+    try:
+        _emit(_client(slug).put_connected_site(site, {**_settings_file(file_), "dry_run": dry_run}))
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
+@agent_sites.command("remove")
+@click.option("--slug", required=True)
+@click.option("--site", required=True, help="The connected site's name.")
+def agent_sites_remove(slug, site):
+    """Remove a site from the agent. A turn already on it can do nothing more."""
+    try:
+        _emit(_client(slug).delete_connected_site(site))
+    except (CanopyError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+
+
 @agent.group("interface")
 def agent_interface():
-    """An agent's DECLARED INTERFACE — the capabilities it publishes, each a door that
+    """Deprecated: use `read-mode` and `sites`.
+
+    An agent's DECLARED INTERFACE — the capabilities it publishes, each a door that
     says only what it IS: description, entry, tools, bash, read_paths, write_paths, input,
     pages, sites, ceiling, own_login, data. Who may use one is NOT here: it is the agent's
     ACCESS LIST on canopy-web (roles read_only < read_write < editor < admin < owner =
