@@ -15,8 +15,10 @@
 # under WindowsApps is the Store stub and is skipped. On macOS/Linux the first
 # candidate wins, so this is one `exec` on top of what ran before.
 #
-# --guard: no working interpreter → exit 2 (block the tool call, show the reason).
-# Without it the hook is advisory: warn and exit 0 rather than block every prompt.
+# --guard: the guard must answer 0 (allow) or 2 (block). Anything else (a traceback's
+# exit 1, an interpreter that cannot start, a stub's 49) would be read by Claude Code
+# as "allow", so it becomes exit 2 with the reason. No working interpreter → exit 2.
+# Without --guard the hook is advisory: warn and exit 0 rather than block every prompt.
 
 guard=0
 if [ "$1" = "--guard" ]; then
@@ -24,16 +26,31 @@ if [ "$1" = "--guard" ]; then
   shift
 fi
 
+# A guard runs as a child so its exit code can be checked; an advisory hook is exec'd.
+run_hook() {
+  if [ "$guard" = 0 ]; then
+    exec "$@"
+  fi
+  "$@"
+  rc=$?
+  case "$rc" in
+    0|2) exit "$rc" ;;
+  esac
+  echo "canopy: the guard $script exited $rc instead of answering allow (0) or block (2), so it did not check this tool call — blocking it rather than running unguarded. Run /canopy:canopy-doctor or /canopy:update; if it persists, report the guard's error above." >&2
+  exit 2
+}
+
+script="$1"
 for cand in python3 python; do
   path=$(command -v "$cand" 2>/dev/null) || continue
   case "$path" in
     *WindowsApps*) continue ;;
   esac
-  exec "$path" "$@"
+  run_hook "$path" "$@"
 done
 
 if command -v py >/dev/null 2>&1; then
-  exec py -3 "$@"
+  run_hook py -3 "$@"
 fi
 
 if [ "$guard" = 1 ]; then

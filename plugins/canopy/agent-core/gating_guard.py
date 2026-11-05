@@ -28,7 +28,7 @@ own rails + its `channels` mounts), identity, persona, domain skills. Not the en
 
 Reads `<repo>/config/gating.json` and enforces, at the tool-call boundary:
 
-  - `deny`    -> exit 2 (hard block the agent cannot bypass), with a message naming the RIGHT
+  - `deny`    -> exit 2 (a hard block of the matching call — a rail against honest mistakes, not a security boundary: a regex over the command text can be worded around), with a message naming the RIGHT
                  path. Rails, not gates: a block that doesn't say what to do instead just
                  stalls the turn.
   - `approve` -> escalate to a human via a PreToolUse `permissionDecision` of "ask".
@@ -364,13 +364,26 @@ def matches(rule, tool_name, subject):
 def run(repo_dir, payload):
     """Evaluate one PreToolUse payload against the agent repo at `repo_dir`.
     Returns (exit_code, stdout, stderr)."""
-    try:
-        cfg = json.load(open(config_path(repo_dir), encoding="utf-8"))
-    except Exception:
-        return 0, "", ""          # no/broken config = no extra gating
+    cfg = _load_config(repo_dir)
+    if cfg is None:
+        # A missing, unreadable or non-object config/gating.json is treated like an unknown
+        # one (run_session): every channel mounted, so the fleet's raw-send rails still apply.
+        # Deleting or corrupting the file must never switch an agent's rails off.
+        slug = repo_slug(repo_dir)
+        return _evaluate({"slug": slug, "channels": "*"}, repo_dir, payload, slug, slug.title())
 
     slug, name = agent_labels(repo_dir, cfg)
     return _evaluate(cfg, repo_dir, payload, slug, name)
+
+
+def _load_config(repo_dir):
+    """The agent's config/gating.json as a dict, or None when it is missing or unusable."""
+    try:
+        with open(config_path(repo_dir), encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except Exception:
+        return None
+    return cfg if isinstance(cfg, dict) else None
 
 
 # Read-only file tools reach this hook since the agent credential read rails (2026-10-19).
@@ -559,10 +572,6 @@ def run_loader(repo_dir, payload, env=None):
     the session's agent's rails, so a sibling agent's loader must stand down — that is the
     whole bug (canopy#849). In the agent's OWN session it still enforces, which keeps its
     fail-closed contract even if the session hook were somehow absent."""
-    try:
-        cfg = json.load(open(config_path(repo_dir), encoding="utf-8"))
-    except Exception:
-        return 0, "", ""
     own = repo_slug(repo_dir)
     session_slug, _ = session_agent(payload, env)
     if session_slug != own:
@@ -1639,22 +1648,34 @@ def own_repo_refusal(subject, payload, slug, repo_dir, env=None):
 
 def main(repo_dir=None, argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    # Fail closed: Claude Code reads any exit but 2 as "allow", so a payload this guard cannot
+    # read, or a crash while evaluating it, blocks the call with the reason instead.
     try:
         payload = json.load(sys.stdin)
-    except Exception:
-        sys.exit(0)               # never block on a parse failure
+    except Exception as exc:
+        _fail_closed(f"could not read the hook payload ({type(exc).__name__})")
     if not isinstance(payload, dict):
-        sys.exit(0)
-    if "--session" in argv:
-        code, out, err = run_session(payload)
-    else:
-        repo_dir = repo_dir or os.environ.get("CANOPY_AGENT_REPO") or os.getcwd()
-        code, out, err = run_loader(repo_dir, payload)
+        _fail_closed("the hook payload is not a JSON object")
+    try:
+        if "--session" in argv:
+            code, out, err = run_session(payload)
+        else:
+            repo_dir = repo_dir or os.environ.get("CANOPY_AGENT_REPO") or os.getcwd()
+            code, out, err = run_loader(repo_dir, payload)
+    except Exception as exc:
+        _fail_closed(f"crashed evaluating this call ({type(exc).__name__}: {exc})")
     if out:
         print(out)
     if err:
         sys.stderr.write(err)
     sys.exit(code)
+
+
+def _fail_closed(why):
+    sys.stderr.write(
+        f"BLOCKED (fail closed): canopy's gating guard {why}, so it could not check this tool "
+        "call. Run /canopy:update; if it persists, report this message to canopy.\n")
+    sys.exit(2)
 
 
 if __name__ == "__main__":

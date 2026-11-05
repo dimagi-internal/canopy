@@ -13,19 +13,9 @@ name: Hook Python compatibility
 # in hooks/, and reach five repos instead of one. They were outside this gate
 # until 2026-08-27.
 
-on:
-  push:
-    paths:
-      - 'hooks/**.py'
-      - 'plugins/canopy/hooks/**.py'
-      - 'plugins/canopy/agent-core/**.py'
-      - '.github/workflows/hook-compat.yml'
-  pull_request:
-    paths:
-      - 'hooks/**.py'
-      - 'plugins/canopy/hooks/**.py'
-      - 'plugins/canopy/agent-core/**.py'
-      - '.github/workflows/hook-compat.yml'
+# Runs on every push and PR (no path filter) because it is a REQUIRED check: a path-filtered
+# required check never reports on unrelated PRs and blocks them. It takes seconds.
+on: [push, pull_request]
 
 jobs:
   compile:
@@ -51,3 +41,31 @@ jobs:
             echo "::error::One or more hooks fail to compile under python ${{ matrix.python-version }}"
             exit 1
           fi
+      - name: run the guards under this python
+        # py_compile misses runtime-only breakage (an unquoted `str | None` annotation without
+        # `from __future__ import annotations` fails at import, not compile). A guard that
+        # crashes is now a block for every tool call, so prove each one runs: allow a plain
+        # command, block a raw send in an agent session.
+        run: |
+          set -e
+          export CANOPY_PLUGIN_DIR="$PWD/plugins/canopy"
+          agent="$RUNNER_TEMP/agent"; mkdir -p "$agent/config"
+          echo '{"slug": "zed", "channels": ["email"], "deny": [], "approve": []}' > "$agent/config/gating.json"
+          ok='{"tool_name": "Bash", "tool_input": {"command": "git status"}, "cwd": "'"$agent"'"}'
+          send='{"tool_name": "Bash", "tool_input": {"command": "gog gmail send --to a@b.c --subject s --body b"}, "cwd": "'"$agent"'"}'
+          G=plugins/canopy/agent-core/gating_guard.py
+          echo "$ok" | python "$G" --session
+          set +e; echo "$send" | python "$G" --session; rc=$?; set -e
+          [ "$rc" = 2 ] || { echo "::error::gating_guard did not block a raw send under python ${{ matrix.python-version }} (exit $rc)"; exit 1; }
+          for h in profile_guard one_shot_turn_guard; do
+            echo "$ok" | python "plugins/canopy/hooks/$h.py"
+          done
+          echo "$ok" | python plugins/canopy/hooks/credential_guard.py --pre
+
+  # The one context branch protection requires, whatever the matrix becomes.
+  hook-compat:
+    needs: compile
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: '[ "${{ needs.compile.result }}" = success ]'
