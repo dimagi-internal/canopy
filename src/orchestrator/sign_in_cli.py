@@ -346,6 +346,18 @@ def _say_link(prov: Provider, link: str, *, again: bool) -> None:
                f"`canopy sign-in status {prov.name}`.")
 
 
+class ChatUnreadable(click.ClickException):
+    """canopy-web refused this process's read of the chat's secrets: its login or chat key is
+    no longer valid. That says nothing about the sign-in itself."""
+
+
+def _chat_read(fn, *args):
+    try:
+        return fn(*args)
+    except click.ClickException as exc:
+        raise ChatUnreadable(exc.message) from None
+
+
 def _deliver(prov: Provider, key: str, *, wait: bool, seconds: float = SECRET_WAIT) -> None:
     """Hand the chat secret to the waiting sign-in and record the result. Raises ClickException."""
     meta = read_meta(key)
@@ -359,7 +371,7 @@ def _deliver(prov: Provider, key: str, *, wait: bool, seconds: float = SECRET_WA
     deadline = NOW() + (seconds if wait else 0)
     # Only a secret nothing has read yet: the code is single-use, so one that was already used
     # (an earlier attempt's) is dead, and taking it would fail this sign-in for nothing.
-    while prov.secret not in {r.get("name") for r in secret_cli.list_secrets(chat)
+    while prov.secret not in {r.get("name") for r in _chat_read(secret_cli.list_secrets, chat)
                               if not r.get("last_used_at")}:
         if NOW() >= deadline or not _alive(meta.get("pid")):
             raise click.ClickException(
@@ -367,7 +379,7 @@ def _deliver(prov: Provider, key: str, *, wait: bool, seconds: float = SECRET_WA
                 f"the page showed under that name (chat menu → Secrets…)"
                 + ("." if wait else "; the sign-in picks it up by itself."))
         SLEEP(3)
-    code = secret_cli.fetch_value(chat, prov.secret).strip()
+    code = _chat_read(secret_cli.fetch_value, chat, prov.secret).strip()
     if not _CODE.match(code):
         raise click.ClickException(
             f"{prov.secret} does not look like a sign-in code (it is `<code>#<state>`). "
@@ -412,6 +424,15 @@ def watch_cmd(provider_name):
     key = _key()
     try:
         _deliver(prov, key, wait=True, seconds=WATCH_WAIT)
+    except ChatUnreadable:
+        # The watcher outlives the turn that started it, and acts with THAT turn's canopy-web
+        # login and chat key, which are revoked when the turn stops executing. Its read then
+        # fails (401/404) although nothing is wrong with the sign-in: stop watching and leave
+        # the sign-in waiting, so the next turn's `canopy sign-in code` (with its own, live
+        # login) hands the code over. Recording the 401 as the sign-in's failure made the next
+        # turn's `canopy sign-in status` print it, and credential_guard aborted that turn on it
+        # (2026-11-06, Ada chat turn 17ad8ed7 on cloud-ec2-live, failure investigation 34).
+        return
     except click.ClickException as exc:
         meta = read_meta(key) or {}
         if meta.get("phase") != "failed":  # `_fail` already wrote why for a refused code

@@ -20,6 +20,7 @@ import textwrap
 import time
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -280,6 +281,31 @@ def test_the_watcher_gives_up_quietly_when_the_link_lapses(box, secrets, monkeyp
     r = run("watch", "design")
     assert r.exit_code == 0
     assert "designOauth" not in creds(box)
+
+
+def test_the_watcher_outliving_its_turn_login_leaves_the_sign_in_waiting(box, secrets, monkeypatch):
+    """2026-11-06, investigation 34: the turn that ran `start` ended, its canopy-web login was
+    revoked, and the watcher's next read got a 401. That must not fail the sign-in (nor leave a
+    401 for `status` to print, which credential_guard aborts the next turn on): the next turn's
+    `code`, with its own login, hands the code over."""
+    run("start", "design")
+
+    def refused(key, **k):
+        raise click.ClickException("GET /api/session-secrets/key -> 401: Authentication required")
+
+    monkeypatch.setattr(secret_cli, "list_secrets", refused)
+    r = run("watch", "design")
+    assert r.exit_code == 0, r.output
+    status = run("status", "design").output
+    assert "401" not in status and "failed" not in status, status
+    assert json.loads(run("status", "design", "--json-output").output)["status"] == "waiting"
+
+    secrets.values["CLAUDE_DESIGN_CODE"] = CODE
+    monkeypatch.setattr(secret_cli, "list_secrets",
+                        lambda key, **k: [{"name": "CLAUDE_DESIGN_CODE", "last_used_at": None}])
+    r = run("code", "design")
+    assert r.exit_code == 0, r.output
+    assert creds(box)["designOauth"]["accessToken"] == TOKEN
 
 
 def test_a_used_secret_is_not_taken_again(box, secrets):
