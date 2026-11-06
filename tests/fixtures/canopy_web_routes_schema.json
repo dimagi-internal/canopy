@@ -212,19 +212,6 @@
     "operationId": "set_agent_clis"
    }
   },
-  "/api/agents/{slug}/connected-sites": {
-   "get": {
-    "operationId": "list_connected_sites"
-   }
-  },
-  "/api/agents/{slug}/connected-sites/{site}": {
-   "delete": {
-    "operationId": "delete_connected_site"
-   },
-   "put": {
-    "operationId": "put_connected_site"
-   }
-  },
   "/api/agents/{slug}/connections": {
    "get": {
     "operationId": "agent_connections"
@@ -327,6 +314,19 @@
   "/api/agents/{slug}/hold/release": {
    "post": {
     "operationId": "release_agent_hold"
+   }
+  },
+  "/api/agents/{slug}/host-sites": {
+   "get": {
+    "operationId": "list_agent_host_sites"
+   }
+  },
+  "/api/agents/{slug}/host-sites/{site}": {
+   "delete": {
+    "operationId": "delete_agent_host_site"
+   },
+   "put": {
+    "operationId": "put_agent_host_site"
    }
   },
   "/api/agents/{slug}/inherit-workspace-defaults": {
@@ -3887,14 +3887,14 @@
     "operationId": "create_token"
    }
   },
-  "/api/tokens/connected-apps": {
+  "/api/tokens/authorized-apps": {
    "get": {
-    "operationId": "tokens_list_connected_apps"
+    "operationId": "list_authorized_apps"
    }
   },
-  "/api/tokens/connected-apps/{grant_id}": {
+  "/api/tokens/authorized-apps/{grant_id}": {
    "delete": {
-    "operationId": "tokens_disconnect_app"
+    "operationId": "disconnect_authorized_app"
    }
   },
   "/api/tokens/github": {
@@ -4476,37 +4476,6 @@
     "operationId": "workspace_analytics"
    }
   },
-  "/api/workspaces/{slug}/connected-apps": {
-   "get": {
-    "operationId": "tokens_connected_apps_list_connected_apps"
-   },
-   "post": {
-    "operationId": "connect_app"
-   }
-  },
-  "/api/workspaces/{slug}/connected-apps/discover": {
-   "get": {
-    "operationId": "discover_site"
-   }
-  },
-  "/api/workspaces/{slug}/connected-apps/{app_id}": {
-   "delete": {
-    "operationId": "tokens_connected_apps_disconnect_app"
-   },
-   "patch": {
-    "operationId": "update_connected_app"
-   }
-  },
-  "/api/workspaces/{slug}/connected-apps/{app_id}/needs": {
-   "get": {
-    "operationId": "connected_app_needs"
-   }
-  },
-  "/api/workspaces/{slug}/connected-apps/{app_id}/test": {
-   "post": {
-    "operationId": "test_connected_app"
-   }
-  },
   "/api/workspaces/{slug}/health": {
    "get": {
     "operationId": "workspace_health"
@@ -4515,6 +4484,37 @@
   "/api/workspaces/{slug}/health/setup": {
    "get": {
     "operationId": "workspace_health_setup"
+   }
+  },
+  "/api/workspaces/{slug}/host-sites": {
+   "get": {
+    "operationId": "list_host_sites"
+   },
+   "post": {
+    "operationId": "register_host_site"
+   }
+  },
+  "/api/workspaces/{slug}/host-sites/discover": {
+   "get": {
+    "operationId": "discover_site"
+   }
+  },
+  "/api/workspaces/{slug}/host-sites/{app_id}": {
+   "delete": {
+    "operationId": "revoke_host_site"
+   },
+   "patch": {
+    "operationId": "update_host_site"
+   }
+  },
+  "/api/workspaces/{slug}/host-sites/{app_id}/needs": {
+   "get": {
+    "operationId": "host_site_needs"
+   }
+  },
+  "/api/workspaces/{slug}/host-sites/{app_id}/test": {
+   "post": {
+    "operationId": "test_host_site"
    }
   },
   "/api/workspaces/{slug}/invites/": {

@@ -36,7 +36,7 @@ server-side list of routes. Every call you make with it is logged as **"<agent> 
 - **The person is not there** — a scheduled turn, an inbound email, another agent asked. Nobody
   can approve; say what you could not reach instead. (canopy-web answers 403 when the turn has no
   verified human asker.)
-- **A confined turn** (a read-mode or connected-site session for a caller) or a **local turn** (it already acts as
+- **A confined turn** (a read-mode or host-site session for a caller) or a **local turn** (it already acts as
   them) — `canopy act-as` refuses both.
 - **For someone other than the asker.** It is always the person who started this turn.
 

@@ -76,7 +76,7 @@ CREDENTIAL_FAILURE = [re.compile(p, re.IGNORECASE) for p in (
     r"\b(?:ENOENT|no such file)[^\n]{0,160}(?:key|credential|token)[\w.-]*\.json",
 )] + [re.compile(r"\bUNAUTHENTICATED\b")]                     # gRPC status, upper case only
 
-#: canopy-web's 401s from a route whose credential is a machine's signature (a connected site's
+#: canopy-web's 401s from a route whose credential is a machine's signature (a host site's
 #: key, a box's device key or instance role). No agent can make that signature, so the 401 says
 #: nothing about the agent's login, and the agent can simply carry on. 2026-11-04, ACE's Slack
 #: turn 9f55abcc was aborted on `get_site_agents` (failure investigation 29). canopy-web no

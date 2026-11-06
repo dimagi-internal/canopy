@@ -546,7 +546,7 @@ disable-model-invocation: true
 # Answer a caller
 
 You were started as `/{{AGENT_SLUG}}:answer-caller --thread <id> --caller <path>`. This session is
-CONFINED: only what the agent's read mode or connected site (set on canopy-web) lists
+CONFINED: only what the agent's read mode or host site (set on canopy-web) lists
 will run, and everything
 else is refused by canopy's guard. That is the design, not a fault — do not look for a
 way around a refusal; say in the reply what you cannot do and that a human will follow up.

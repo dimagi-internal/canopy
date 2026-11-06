@@ -262,14 +262,14 @@ def agent_sites():
 def agent_sites_list(slug):
     """Print the agent's sites, the workspace's sites it could add, and what a new one starts with."""
     try:
-        _emit(_client(slug).list_connected_sites())
+        _emit(_client(slug).list_agent_host_sites())
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 
 
 @agent_sites.command("set")
 @click.option("--slug", required=True)
-@click.option("--site", required=True, help="The connected site's name.")
+@click.option("--site", required=True, help="The host site's name.")
 @click.option("--file", "file_", type=click.Path(exists=True, dir_okay=False),
               help="YAML or JSON of the fields to change: description, entry, tools, bash, read_paths, write_paths, "
                    "ceiling, own_login, sensitive. None: a new site takes its defaults.")
@@ -277,18 +277,18 @@ def agent_sites_list(slug):
 def agent_sites_set(slug, site, file_, dry_run):
     """Add a site or change one. Only the fields in the file change."""
     try:
-        _emit(_client(slug).put_connected_site(site, {**_settings_file(file_), "dry_run": dry_run}))
+        _emit(_client(slug).put_agent_host_site(site, {**_settings_file(file_), "dry_run": dry_run}))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 
 
 @agent_sites.command("remove")
 @click.option("--slug", required=True)
-@click.option("--site", required=True, help="The connected site's name.")
+@click.option("--site", required=True, help="The host site's name.")
 def agent_sites_remove(slug, site):
     """Remove a site from the agent. A turn already on it can do nothing more."""
     try:
-        _emit(_client(slug).delete_connected_site(site))
+        _emit(_client(slug).delete_agent_host_site(site))
     except (CanopyError, RuntimeError) as e:
         raise click.ClickException(str(e))
 

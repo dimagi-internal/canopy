@@ -1,4 +1,4 @@
-"""profile_guard: a caller's `cx-` session may do only what its profile (read mode or a connected site) lists."""
+"""profile_guard: a caller's `cx-` session may do only what its profile (read mode or a host site) lists."""
 import importlib.util
 import io
 import json
@@ -48,9 +48,9 @@ def test_an_ordinary_session_is_untouched_and_opens_no_file(monkeypatch, capsys,
     assert _run(monkeypatch, capsys, "Bash", {"command": "rm -rf /"}, tp=tp)[0] == 0
 
 
-def test_a_refusal_names_read_mode_or_the_connected_site():
+def test_a_refusal_names_read_mode_or_the_host_site():
     assert pg._profile_words("ask") == "read mode"
-    assert pg._profile_words("connect") == "the connected site 'connect'"
+    assert pg._profile_words("connect") == "the host site 'connect'"
 
 
 def test_the_task_is_read_from_the_transcript_dir():
