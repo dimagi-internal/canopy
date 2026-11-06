@@ -312,10 +312,10 @@ def test_a_confined_caller_names_read_mode(tmp_path):
     assert ", read mode" in line and "capability" not in line
 
 
-def test_a_confined_caller_names_its_connected_site(tmp_path):
+def test_a_confined_caller_names_its_host_site(tmp_path):
     line = _access(tmp_path, profile="confined", role="read_only", permissions=["read", "use:connect"],
                    granted_by="grant:workspace:connect", capability={"name": "connect"})
-    assert "connected site=connect" in line and "capability" not in line
+    assert "host site=connect" in line and "capability" not in line
 
 
 TRIGGER = {"id": 22, "name": "AWS CloudWatch alarms", "kind": "inbound_mail",

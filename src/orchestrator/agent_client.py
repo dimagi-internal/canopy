@@ -100,7 +100,7 @@ class AgentIdentity(BaseModel):
     # It is worth setting. Joining a workspace is explicit, but the default
     # (`dimagi`) lists @dimagi.com in its self-join domains and a self-joiner
     # lands as EDITOR — and DELETE /api/agents/{slug} is editor-tier
-    # (`agent.work`). Only an agent's keys (credentials, vault, read mode and connected sites) need
+    # (`agent.work`). Only an agent's keys (credentials, vault, read mode and host sites) need
     # its owner or an admin. So an agent left on the default can be reshaped or
     # deleted by any employee who chooses to join it; a division or own
     # workspace limits that to people someone actually let in.
@@ -245,17 +245,17 @@ class AgentClient:
         """Put read mode back on canopy's default."""
         return self._call("DELETE", f"/api/agents/{self.slug}/read-mode")
 
-    def list_connected_sites(self) -> dict:
+    def list_agent_host_sites(self) -> dict:
         """The sites this agent can be reached from: {sites, available, new_site_defaults}."""
-        return self._call("GET", f"/api/agents/{self.slug}/connected-sites")
+        return self._call("GET", f"/api/agents/{self.slug}/host-sites")
 
-    def put_connected_site(self, site: str, fields: dict) -> dict:
-        """Add or change one connected site. Only the fields sent change; `dry_run` checks without saving."""
-        return self._call("PUT", f"/api/agents/{self.slug}/connected-sites/{site}", fields)
+    def put_agent_host_site(self, site: str, fields: dict) -> dict:
+        """Add or change one host site. Only the fields sent change; `dry_run` checks without saving."""
+        return self._call("PUT", f"/api/agents/{self.slug}/host-sites/{site}", fields)
 
-    def delete_connected_site(self, site: str) -> dict:
-        """Remove one connected site from this agent."""
-        return self._call("DELETE", f"/api/agents/{self.slug}/connected-sites/{site}")
+    def delete_agent_host_site(self, site: str) -> dict:
+        """Remove one host site from this agent."""
+        return self._call("DELETE", f"/api/agents/{self.slug}/host-sites/{site}")
 
     def create_tasks(self, tasks: list[dict]) -> "list[dict]":
         """Create tasks — the body is a BARE list. Returns the tasks as created.

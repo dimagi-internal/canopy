@@ -47,7 +47,7 @@ def test_read_mode_set_sends_the_files_fields(tmp_path, fake):
 
 def test_a_new_site_needs_no_file(fake):
     assert _run("sites", "set", "--slug", "ace", "--site", "connect-labs").exit_code == 0
-    assert fake.calls == [("put_connected_site", "connect-labs", {"dry_run": False})]
+    assert fake.calls == [("put_agent_host_site", "connect-labs", {"dry_run": False})]
 
 
 def test_sites_set_list_and_remove(tmp_path, fake):
@@ -56,8 +56,8 @@ def test_sites_set_list_and_remove(tmp_path, fake):
     assert _run("sites", "set", "--slug", "ace", "--site", "s", "--file", str(f)).exit_code == 0
     assert _run("sites", "list", "--slug", "ace").exit_code == 0
     assert _run("sites", "remove", "--slug", "ace", "--site", "s").exit_code == 0
-    assert fake.calls == [("put_connected_site", "s", {"sensitive": True, "dry_run": False}),
-                          ("list_connected_sites",), ("delete_connected_site", "s")]
+    assert fake.calls == [("put_agent_host_site", "s", {"sensitive": True, "dry_run": False}),
+                          ("list_agent_host_sites",), ("delete_agent_host_site", "s")]
 
 
 def test_a_file_that_is_not_a_mapping_is_refused(tmp_path, fake):
@@ -76,10 +76,10 @@ def test_the_client_calls_the_routes_canopy_web_publishes():
     client.get_read_mode()
     client.put_read_mode({"tools": []})
     client.reset_read_mode()
-    client.list_connected_sites()
-    client.put_connected_site("s", {"sensitive": True})
-    client.delete_connected_site("s")
+    client.list_agent_host_sites()
+    client.put_agent_host_site("s", {"sensitive": True})
+    client.delete_agent_host_site("s")
     assert sent == [("GET", "/api/agents/ace/read-mode", None), ("PUT", "/api/agents/ace/read-mode", {"tools": []}),
-                    ("DELETE", "/api/agents/ace/read-mode", None), ("GET", "/api/agents/ace/connected-sites", None),
-                    ("PUT", "/api/agents/ace/connected-sites/s", {"sensitive": True}),
-                    ("DELETE", "/api/agents/ace/connected-sites/s", None)]
+                    ("DELETE", "/api/agents/ace/read-mode", None), ("GET", "/api/agents/ace/host-sites", None),
+                    ("PUT", "/api/agents/ace/host-sites/s", {"sensitive": True}),
+                    ("DELETE", "/api/agents/ace/host-sites/s", None)]

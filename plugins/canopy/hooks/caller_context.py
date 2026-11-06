@@ -99,8 +99,8 @@ READ_MODE_STAMP = "ask"
 
 
 def confined_profile_words(name) -> str:
-    """A confined profile's stored name in words: `read mode`, or `connected site=<name>`."""
-    return "read mode" if name == READ_MODE_STAMP else f"connected site={name}"
+    """A confined profile's stored name in words: `read mode`, or `host site=<name>`."""
+    return "read mode" if name == READ_MODE_STAMP else f"host site={name}"
 
 
 def relationship_of(env: dict) -> str:
@@ -488,7 +488,7 @@ def _page_lines(page) -> list:
 
 
 def _site_lines(site) -> list:
-    """The Connected site this conversation is held on (canopy-web `site`, v3 additive):
+    """The host site this conversation is held on (canopy-web `site`, v3 additive):
     there the agent reaches the site ONLY through canopy's site_tools / site_call /
     site_read, as the person who sent, under the act-as-you permission they granted
     from the page — owners included — and its own login there is not in this turn."""

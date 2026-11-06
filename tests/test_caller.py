@@ -220,10 +220,10 @@ def test_a_scoped_use_permission_alone_is_caller_even_without_profile():
     assert resolve(_web(permissions=["read", "use:ask"], granted_by=_GRANT_LINE), [])["tier"] == CALLER
 
 
-def test_a_connected_site_is_named_in_the_reason():
+def test_a_host_site_is_named_in_the_reason():
     got = resolve(_web(permissions=["read", "use:connect"], profile="confined",
                        capability={"name": "connect"}), [])
-    assert got["tier"] == CALLER and "the connected site 'connect'" in got["reason"]
+    assert got["tier"] == CALLER and "the host site 'connect'" in got["reason"]
 
 
 def test_read_without_a_confined_profile_is_unlisted():

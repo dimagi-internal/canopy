@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Confine a CALLER's session to its profile — the enforcement half of read mode and connected sites.
+"""Confine a CALLER's session to its profile — the enforcement half of read mode and host sites.
 
 canopy-web decides, per turn, whether the person who asked is the agent's owner
 or an admin (full access) or a caller — anyone else — who reaches only what the
-agent's read mode or one of its connected sites may do (held on canopy-web). The
+agent's read mode or one of its host sites may do (held on canopy-web). The
 runner opens every caller turn in its OWN emdash session, named `cx-…`, and writes
 that profile to
 `~/.canopy/profiles/<task>.json` BEFORE the session starts. This hook, registered
@@ -33,7 +33,7 @@ Profile shape (written by the runner from canopy-web's envelope):
      "thread_id": "…", "turn_id": "…"}
 
   (`capability` is the wire name of the profile's key, `PROFILE_FILE_KEY`; its `name`
-  is read mode's stored name `ask`, or a connected site's.)
+  is read mode's stored name `ask`, or a host site's.)
 
   tools       fnmatch patterns over the TOOL NAME (`Read`, `mcp__canopy-web__who_is_asking`)
   bash        patterns over the command's ARGUMENTS, token for token: `*` is one
@@ -76,7 +76,7 @@ PROFILE_ENFORCEMENT_VERSION = 4
 
 PROFILE_ROOT = os.path.expanduser("~/.canopy/profiles")
 # Wire names: the runner writes the profile file in these words, so they are read here
-# and nowhere else; messages say "read mode" and "connected site".
+# and nowhere else; messages say "read mode" and "host site".
 #: The key in a profile file that holds what the turn may do.
 PROFILE_FILE_KEY = "capability"
 #: The stored name of read mode.
@@ -294,10 +294,10 @@ def _is_own_attachment(tool: str, tool_input: dict, prof: dict) -> bool:
 
 
 def _profile_words(name) -> str:
-    """The profile a refusal names: read mode, or the connected site it is."""
+    """The profile a refusal names: read mode, or the host site it is."""
     if name == READ_MODE_STAMP:
         return "read mode"
-    return f"the connected site '{name}'" if name else "its profile"
+    return f"the host site '{name}'" if name else "its profile"
 
 
 def decide(tool: str, tool_input: dict, prof: dict, cwd: str, results_dir=None):
