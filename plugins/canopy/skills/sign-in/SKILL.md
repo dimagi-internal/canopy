@@ -7,8 +7,7 @@ description: |
   design-system authorization" and `/design-login` cannot run here) and the person is in the
   conversation. Give them the link, they approve on the provider's own page and add the code to
   the chat's Secrets, `canopy sign-in code` picks it up, do the work, then `stop`. Never for a
-  person who is not there, and never to keep a sign-in: it is removed at stop, at session end
-  and after an hour.
+  person who is not there, and never to keep a sign-in: it is removed at stop and after 30 minutes.
 ---
 
 # Sign in — the person approves, you finish it, then it is gone
@@ -26,19 +25,25 @@ transcript. It is also useless without the verifier held by that process, and ca
   link: say what you could not do and stop; `canopy sign-in start` refuses there anyway.
 - Not when the provider is already signed in on the box (it says so, and leaves it alone).
 
-## The flow (one turn, with the person)
+## The flow (a chat: two turns; nothing waits)
 
-1. `canopy sign-in start design` — prints the link. **Say it to the person as a message** with
-   what you will do (e.g. "sync the design system to claude.ai/design") and tell them to add the
-   code the page shows as the chat secret `CLAUDE_DESIGN_CODE` (chat menu → Secrets…), **not** as
-   a chat message. The link is good for about 5 minutes.
-2. `canopy sign-in code design --wait` — waits up to 4 minutes for that secret, hands it to the
-   sign-in and prints only the result. If the person pastes the code into chat anyway, don't
-   repeat it; tell them to use Secrets and start again.
+A chat reply reaches the person only when your turn ends, so do not wait inside the turn.
+
+1. `canopy sign-in start design` — prints the link and leaves a background watcher. **Say the
+   link to the person** with what you will do (e.g. "sync the design system to claude.ai/design")
+   and tell them to add the code the page shows as the chat secret `CLAUDE_DESIGN_CODE`
+   (chat menu → Secrets…), **not** as a chat message. The link is good for about 5 minutes.
+   **End the turn.** The watcher signs in by itself the moment the secret appears.
+2. On their next message: `canopy sign-in status design` — `signed_in` means go on; `none`
+   means the link lapsed or the code was refused (start again). If they pasted the code into chat
+   anyway, don't repeat it; tell them to use Secrets and start again.
 3. Do only what you said (e.g. `DesignSync`).
-4. `canopy sign-in stop design` as soon as you are done — don't wait for the hour.
+4. `canopy sign-in stop design` as soon as you are done — don't wait for the 30 minutes.
 5. Say what you did: "Signed in to Claude Design at 14:02 with your approval; synced X; signed
    out at 14:06. It stays valid at claude.ai until you revoke it (`/design-revoke`)."
+
+`canopy sign-in code design [--wait]` hands the secret over right now if you need it (a script
+or a local terminal where the person is watching); the watcher does it otherwise.
 
 ## Limits to say out loud
 

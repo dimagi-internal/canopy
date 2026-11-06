@@ -17,9 +17,10 @@ else and canopy-web never holds the credential. Unlike ``act-as`` nothing here i
 login, so there is no server side and no second approval: the provider's consent page is the
 approval, and ``code`` is the person's yes.
 
-**Ephemeral by construction.** What the provider writes is removed again at ``stop``, when the
-Claude session ends (``hooks/sign_in_cleanup.py``) and once ``LIFETIME`` has passed, whichever is
-first; a sign-in that was already on the box before ``start`` is never touched. The code never
+**Ephemeral by construction.** What the provider writes is removed again at ``stop`` and once
+``LIFETIME`` (30 minutes, never extended) has passed, whichever is first; the SessionEnd hook
+(``hooks/sign_in_cleanup.py``) sweeps expired ones but does not end a live one, because in a chat
+every turn is a new Claude process; a sign-in that was already on the box before ``start`` is never touched. The code never
 leaves this process's memory and the output never prints a token.
 
 **Honest limits.** The credential sits where the provider's own CLI keeps it, so every session
@@ -52,11 +53,13 @@ import click
 from orchestrator import act_as_cli, secret_cli
 
 #: How long a finished sign-in lives on this box, from the code. Never extended.
-LIFETIME = 60 * 60
+LIFETIME = 30 * 60
 #: How long to wait for the provider's process to print its link.
 START_WAIT = 20
 #: How long `code --wait` waits for the person to add the secret (under the fleet's 270 s cap).
 SECRET_WAIT = 240
+#: The background watcher outlives a turn: as long as the provider's own link (5 minutes).
+WATCH_WAIT = 300
 #: How long to wait for it to trade the code for a credential.
 CODE_WAIT = 40
 #: A code is `<code>#<state>`: URL-safe characters only, bounded. Refusing the rest means
@@ -66,6 +69,7 @@ _CODE = re.compile(r"^[A-Za-z0-9_\-.~]{10,300}#[A-Za-z0-9_\-.~]{10,300}$")
 _KEY = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 
 # Test seams.
+SPAWN_WATCHER = True
 NOW = time.time
 SLEEP = time.sleep
 
@@ -179,6 +183,15 @@ def _end(key: str, *, clear: bool) -> bool:
         except OSError:
             pass
     return cleared
+
+
+def _fail(key: str, message: str) -> None:
+    """End the sign-in but keep a short record of why, for `status` (no code, no token)."""
+    meta = read_meta(key) or {}
+    _end(key, clear=True)
+    write_meta(key, {"provider": meta.get("provider", ""), "phase": "failed",
+                     "error": str(message)[:300], "expires_at": NOW() + 15 * 60,
+                     "claude_session_id": meta.get("claude_session_id", ""), "made_credential": False})
 
 
 def sweep_expired() -> None:
@@ -316,6 +329,11 @@ def start_cmd(provider_name):
         _end(key, clear=False)
         raise click.ClickException(f"{prov.what}: the sign-in did not give a link. "
                                    "Nothing was changed; try again.")
+    if SPAWN_WATCHER:
+        subprocess.Popen([sys.executable, "-c", "from orchestrator.cli import main; main()",
+                          "sign-in", "watch", prov.name],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True, cwd=tempfile.gettempdir())
     _say_link(prov, link, again=False)
 
 
@@ -324,30 +342,30 @@ def _say_link(prov: Provider, link: str, *, again: bool) -> None:
     click.echo(f"Open this link: {link}")
     click.echo(f"Approve, then add the code the page shows as the chat secret {prov.secret} "
                "(chat menu → Secrets…) — not in the chat itself — within about 5 minutes.")
-    click.echo(f"Then: `canopy sign-in code {prov.name} --wait`.")
+    click.echo("It signs in by itself the moment the secret is there; check with "
+               f"`canopy sign-in status {prov.name}`.")
 
 
-@sign_in_group.command("code")
-@click.argument("provider_name", metavar="PROVIDER")
-@click.option("--wait/--no-wait", default=False,
-              help="Wait for the person to add the secret (up to 4 minutes).")
-def code_cmd(provider_name, wait):
-    """Give PROVIDER the code the person put in this chat's secrets (never typed in chat)."""
-    prov = _provider(provider_name)
-    key = _key()
+def _deliver(prov: Provider, key: str, *, wait: bool, seconds: float = SECRET_WAIT) -> None:
+    """Hand the chat secret to the waiting sign-in and record the result. Raises ClickException."""
     meta = read_meta(key)
     if not meta or meta.get("provider") != prov.name or not _alive(meta.get("pid")):
         raise click.ClickException(
             f"no {prov.name} sign-in is waiting for a code (it times out after 5 minutes). "
             f"Run `canopy sign-in start {prov.name}` again.")
+    if meta.get("phase") == "signed_in":
+        return
     chat = secret_cli.this_chat()
-    deadline = NOW() + (SECRET_WAIT if wait else 0)
-    while prov.secret not in {r.get("name") for r in secret_cli.list_secrets(chat)}:
+    deadline = NOW() + (seconds if wait else 0)
+    # Only a secret nothing has read yet: the code is single-use, so one that was already used
+    # (an earlier attempt's) is dead, and taking it would fail this sign-in for nothing.
+    while prov.secret not in {r.get("name") for r in secret_cli.list_secrets(chat)
+                              if not r.get("last_used_at")}:
         if NOW() >= deadline or not _alive(meta.get("pid")):
             raise click.ClickException(
                 f"the secret {prov.secret} is not in this chat yet. Ask the person to add the code "
-                f"the page showed under that name (chat menu → Secrets…), then run this again"
-                + ("" if wait else " (add --wait to wait for them)") + ".")
+                f"the page showed under that name (chat menu → Secrets…)"
+                + ("." if wait else "; the sign-in picks it up by itself."))
         SLEEP(3)
     code = secret_cli.fetch_value(chat, prov.secret).strip()
     if not _CODE.match(code):
@@ -366,13 +384,38 @@ def code_cmd(provider_name, wait):
     ev = _wait_event(key, prov.done_event, CODE_WAIT)
     if ev is None or not ev.get("ok"):
         message = (ev or {}).get("message") or "no answer from the sign-in"
-        _end(key, clear=True)
+        _fail(key, message)
         raise click.ClickException(f"{prov.what}: {message} Run `canopy sign-in start {prov.name}` for a new link.")
     meta.update(phase="signed_in", expires_at=NOW() + LIFETIME, signed_in_at=NOW(),
                 made_credential=meta["made_credential"] and prov.present())
     write_meta(key, meta)
-    click.echo(f"Signed in: {prov.what} for up to {_fmt_left(LIFETIME)} or until this session ends.")
+
+
+@sign_in_group.command("code")
+@click.argument("provider_name", metavar="PROVIDER")
+@click.option("--wait/--no-wait", default=False,
+              help="Wait for the person to add the secret (up to 4 minutes).")
+def code_cmd(provider_name, wait):
+    """Hand PROVIDER the code from this chat's secrets now (`start` already watches for it)."""
+    prov = _provider(provider_name)
+    _deliver(prov, _key(), wait=wait)
+    click.echo(f"Signed in: {prov.what} for up to {_fmt_left(LIFETIME)}.")
     click.echo(f"`canopy sign-in stop {prov.name}` the moment you are done.")
+
+
+@sign_in_group.command("watch", hidden=True)
+@click.argument("provider_name", metavar="PROVIDER")
+def watch_cmd(provider_name):
+    """Internal: started by `start`. Hands the code over the moment the person adds the secret,
+    so no turn has to be waiting for it. Ends with the sign-in (5 minutes at most)."""
+    prov = _provider(provider_name)
+    key = _key()
+    try:
+        _deliver(prov, key, wait=True, seconds=WATCH_WAIT)
+    except click.ClickException as exc:
+        meta = read_meta(key) or {}
+        if meta.get("phase") != "failed":  # `_fail` already wrote why for a refused code
+            _fail(key, exc.message)
 
 
 @sign_in_group.command("status")
@@ -387,7 +430,12 @@ def status_cmd(provider_name, as_json):
     if not meta or (provider_name and meta.get("provider") != provider_name):
         doc = {"status": "none"}
     else:
-        prov = PROVIDERS[meta["provider"]]
+        prov = PROVIDERS.get(meta.get("provider", ""))
+        if prov is None or meta.get("phase") == "failed":
+            doc = {"status": "failed", "provider": meta.get("provider", ""), "error": meta.get("error", ""),
+                   "expires_in_seconds": 0, "credential_present": False}
+            click.echo(json.dumps(doc) if as_json else f"sign-in failed: {doc['error']}")
+            return
         left = float(meta.get("expires_at") or 0) - NOW()
         doc = {"status": meta.get("phase", "waiting"), "provider": prov.name,
                "expires_in_seconds": max(0, int(left)), "credential_present": prov.present()}

@@ -80,7 +80,7 @@ What each `canopy` command does and what backs it. `canopy <cmd> --help` is auth
 - `canopy test-audit [...]` — build a test corpus for the agent to judge and prune dumb tests
 - `canopy verify-findings` — re-verify session-review proposals against the current state of their target repos
 - `canopy act-as {request|status|get|call|stop}` — act as the person who started this turn, only after their passkey approval. Skill: `act-as-you`. Backed by `src/orchestrator/act_as_cli.py`.
-- `canopy sign-in {start|code|status|stop} PROVIDER` — sign this session in to a third party (today `design`: Claude Design) with the person's own approval, gone at stop / session end / after an hour. Skill: `sign-in`. Backed by `src/orchestrator/sign_in_cli.py`.
+- `canopy sign-in {start|code|status|stop} PROVIDER` — sign this session in to a third party (today `design`: Claude Design) with the person's own approval, gone at stop or after 30 minutes. Skill: `sign-in`. Backed by `src/orchestrator/sign_in_cli.py`.
 - `canopy aws` — AWS sessions an agent can get approved. See `canopy aws --help`.
 - `canopy google-account` — an agent's Google Workspace account. See `canopy google-account --help`.
 - `canopy local` / `canopy private-runner` — this computer's registration for local use, and Claude Code sessions recorded as local turns. `canopy local use` is an alias of `canopy agent use`.
