@@ -866,11 +866,32 @@ def resolve_project_ref(client, ref):
     """
     raw = str(ref or "").strip()
     projects = client.list_projects()
+    # A `P<N>` is unique per creating agent, not across the board: an agent's own P5
+    # and a P5 another agent made that it works on are listed side by side, and the
+    # server resolves a bare "P5" to the agent's own. So a shared alias is never sent;
+    # the address names exactly one project. (2026-11-06: `--project "Canopy support"`
+    # became "P5" and filed hal's task into its own ARCHIVED P5, Supply, with no error.)
+    alias_count: dict[str, int] = {}
+    for project in projects:
+        key = str(project.get("ext_id") or "").strip().casefold()
+        if key:
+            alias_count[key] = alias_count.get(key, 0) + 1
+
     def ref_of(project):
         # A project made outside an agent's route carries no `P<N>`: name it by its
         # workspace address, which every agent route also accepts.
-        return project.get("ext_id") or project.get("address") or project.get("handle")
+        ext_id = str(project.get("ext_id") or "").strip()
+        if ext_id and alias_count.get(ext_id.casefold(), 0) > 1 and project.get("address"):
+            return project["address"]
+        return ext_id or project.get("address") or project.get("handle")
 
+    by_alias = [p for p in projects if str(p.get("ext_id") or "").strip().casefold() == raw.casefold()]
+    if len(by_alias) > 1:
+        choices = ", ".join(f"{ref_of(p)} ({p.get('name') or ''})" for p in by_alias)
+        raise click.ClickException(
+            f"{raw!r} is the alias of {len(by_alias)} projects on this board — pass the address "
+            f"instead: {choices}. Nothing was written."
+        )
     for project in projects:
         if raw.casefold() in {str(project.get(k) or "").strip().casefold()
                               for k in ("ext_id", "handle", "address")} - {""}:
