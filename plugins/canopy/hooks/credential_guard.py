@@ -93,6 +93,11 @@ CREDENTIALED_COMMAND = re.compile(r"^\s*(?:\S+/)?(?:canopy|gog|bin/[\w.-]+)\b")
 _SEGMENTS = re.compile(r"&&|\|\||[;|\n]")
 _CD = re.compile(r"^\s*cd(?:\s|$)")
 _ERROR_LINE = re.compile(r"error|fail|refus|denied|exception|traceback", re.IGNORECASE)
+#: A line of quoted content, never a tool's own error: a git commit body (`git log`/`git show`
+#: indent it 4 spaces), a diff line, an email-style quote. 2026-11-06, Ada's email turn 1f130551
+#: on jj-mbp-cdp was aborted (failure investigation 32) because a failed Bash line that also ran
+#: `bin/ada-…` printed `git log`, whose commit subject read "Salesforce 'Not authenticated' = …".
+_QUOTED_LINE = re.compile(r"^(?:    |\t|[+-](?![+-])|>)")
 _ABORT_COMMAND = re.compile(r"^\s*(?:\S+/)?canopy\s+turn\s+abort\b")
 #: Tools whose whole job is to report "you need to sign in".
 _AUTH_TOOL = re.compile(r"__(?:complete_)?authenticat", re.IGNORECASE)
@@ -194,14 +199,14 @@ def credential_failure(data: dict) -> str:
         if not runs_credentialed(command) or is_abort(command):
             return ""
         tail = text[-SHORT_RESULT:]
+        lines = [line for line in tail.splitlines() if not _QUOTED_LINE.match(line)]
         if failed:
-            return tail if match(tail) else ""
+            return tail if any(match(line) for line in lines) else ""
         # Exit 0 can still be a failure (`canopy email send … 2>&1 | tail -2`): judged only
         # when short, and only on a line that itself reads as an error.
         if len(text) > SHORT_RESULT:
             return ""
-        return tail if any(match(line) and _ERROR_LINE.search(line)
-                           for line in tail.splitlines()) else ""
+        return tail if any(match(line) and _ERROR_LINE.search(line) for line in lines) else ""
     return ""
 
 

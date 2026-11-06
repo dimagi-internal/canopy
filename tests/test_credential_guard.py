@@ -235,6 +235,25 @@ def test_grepping_for_the_words_is_not_a_failure():
     assert not g.credential_failure(data)
 
 
+def test_a_commit_message_quoting_the_words_is_not_a_failure():
+    # 2026-11-06, failure investigation 32 (Ada turn 1f130551): `git log` printed a commit whose
+    # subject quoted "Not authenticated", in a failed Bash line that also ran bin/ada-….
+    log = ("commit 59f2ad03013cf915f9667b55585441fb923765e4\n"
+           "Author: Jonathan Jackson <jjackson@dimagi.com>\n"
+           "Date:   Fri Nov 6 04:32:47 2026 -0700\n\n"
+           "    fleet-remediate: Salesforce 'Not authenticated' = agent has no borrowed SF identity\n"
+           "\n    Co-authored-by: Claude\n")
+    data = {"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+            "tool_input": {"command": "git log -1 && bin/ada-close --x"},
+            "error": "Exit code 2\n" + log + "usage: ada-close: unknown option --x"}
+    assert not g.credential_failure(data)
+    diff = dict(data, error="Exit code 1\n+    raise RuntimeError('Not authenticated')\n")
+    assert not g.credential_failure(diff)
+    # The same words as the command's own error still abort.
+    real = dict(data, error="Exit code 1\n" + log + "Error: not authenticated (run gog login)")
+    assert g.credential_failure(real)
+
+
 def test_reading_an_email_that_quotes_it_is_not_a_failure():
     data = _post(tool="Bash", tool_input={"command": "canopy email read 1a17"},
                  response={"stdout": '{"body_text": "the log said invalid_grant yesterday"}'})
