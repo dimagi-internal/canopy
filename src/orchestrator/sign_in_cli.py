@@ -3,10 +3,11 @@
 Some sign-ins cannot be done by an agent and should not be kept: Claude Design's OAuth only
 runs outside a Claude Code session, wants a browser the runner does not have, and its
 credential should not outlive the work. The person does the one thing only they can (approve on
-the provider's own consent page and paste back the code it shows); this box does the rest:
+the provider's own consent page and put the code it shows into the chat's Secrets, never as
+chat text); this box does the rest:
 
     canopy sign-in start design     # starts the provider's sign-in as its own process, prints the link
-    canopy sign-in code design      # the code the person pasted back (arg, or stdin with `-`)
+    canopy sign-in code design      # hands over the code the person put in the chat's Secrets
     canopy sign-in status [design]
     canopy sign-in stop [design]    # sign out now: drop what the sign-in wrote, end the process
 
@@ -25,7 +26,8 @@ leaves this process's memory and the output never prints a token.
 on this box can use it while it lives (it is the person's design access, not this session's).
 Removing it locally does not revoke it at the provider: ``/design-revoke`` does, from an
 interactive session. Providers are a table (``PROVIDERS``); only a provider whose sign-in is a
-separate process with a pasted-code leg fits.
+separate process with a pasted-code leg fits. The code travels as a chat secret (`canopy secret`:
+sealed to this machine, opened here), so it never enters the transcript.
 
 State: ``~/.canopy/sign-in/<claude session>.json`` (0600, dir 0700), plus the process's stdin
 FIFO and output file beside it. Keyed by the Claude session, like ``act-as``.
@@ -47,12 +49,14 @@ from typing import Callable, Optional
 
 import click
 
-from orchestrator import act_as_cli
+from orchestrator import act_as_cli, secret_cli
 
 #: How long a finished sign-in lives on this box, from the code. Never extended.
 LIFETIME = 60 * 60
 #: How long to wait for the provider's process to print its link.
 START_WAIT = 20
+#: How long `code --wait` waits for the person to add the secret (under the fleet's 270 s cap).
+SECRET_WAIT = 240
 #: How long to wait for it to trade the code for a credential.
 CODE_WAIT = 40
 #: A code is `<code>#<state>`: URL-safe characters only, bounded. Refusing the rest means
@@ -76,6 +80,7 @@ class Provider:
     present: Callable[[], bool]  # is a credential of this provider on the box now
     clear: Callable[[], bool]  # remove it; True when something was removed
     what: str  # "Claude Design access" — for the person
+    secret: str  # the chat-secret name the person puts the pasted code under
 
 
 # --- Claude Design: the provider's CLI keeps `designOauth` in ~/.claude/.credentials.json -----
@@ -112,7 +117,7 @@ PROVIDERS = {
     "design": Provider(
         name="design", argv=("design-login", "--json"), link_event="pages", link_field="manual_url",
         done_event="done", present=_design_present, clear=_design_clear,
-        what="Claude Design access"),
+        what="Claude Design access", secret="CLAUDE_DESIGN_CODE"),
 }
 
 
@@ -317,26 +322,38 @@ def start_cmd(provider_name):
 def _say_link(prov: Provider, link: str, *, again: bool) -> None:
     click.echo(("Still waiting. " if again else "") + f"Sign-in for {prov.what} is ready.")
     click.echo(f"Open this link: {link}")
-    click.echo("Approve, then paste the code the page shows back here (within about 5 minutes). "
-               f"Then: `canopy sign-in code {prov.name} -` with the code on stdin, or as the argument.")
+    click.echo(f"Approve, then add the code the page shows as the chat secret {prov.secret} "
+               "(chat menu → Secrets…) — not in the chat itself — within about 5 minutes.")
+    click.echo(f"Then: `canopy sign-in code {prov.name} --wait`.")
 
 
 @sign_in_group.command("code")
 @click.argument("provider_name", metavar="PROVIDER")
-@click.argument("code", default="-")
-def code_cmd(provider_name, code):
-    """Give PROVIDER the code the person pasted (`-` reads stdin)."""
+@click.option("--wait/--no-wait", default=False,
+              help="Wait for the person to add the secret (up to 4 minutes).")
+def code_cmd(provider_name, wait):
+    """Give PROVIDER the code the person put in this chat's secrets (never typed in chat)."""
     prov = _provider(provider_name)
-    code = (sys.stdin.read() if code == "-" else code).strip()
-    if not _CODE.match(code):
-        raise click.ClickException("that is not a sign-in code (it looks like `<code>#<state>`). "
-                                   "Ask the person to paste the whole thing the page showed.")
     key = _key()
     meta = read_meta(key)
     if not meta or meta.get("provider") != prov.name or not _alive(meta.get("pid")):
         raise click.ClickException(
             f"no {prov.name} sign-in is waiting for a code (it times out after 5 minutes). "
             f"Run `canopy sign-in start {prov.name}` again.")
+    chat = secret_cli.this_chat()
+    deadline = NOW() + (SECRET_WAIT if wait else 0)
+    while prov.secret not in {r.get("name") for r in secret_cli.list_secrets(chat)}:
+        if NOW() >= deadline or not _alive(meta.get("pid")):
+            raise click.ClickException(
+                f"the secret {prov.secret} is not in this chat yet. Ask the person to add the code "
+                f"the page showed under that name (chat menu → Secrets…), then run this again"
+                + ("" if wait else " (add --wait to wait for them)") + ".")
+        SLEEP(3)
+    code = secret_cli.fetch_value(chat, prov.secret).strip()
+    if not _CODE.match(code):
+        raise click.ClickException(
+            f"{prov.secret} does not look like a sign-in code (it is `<code>#<state>`). "
+            "Ask the person to add the whole thing the page showed.")
     meta["made_credential"] = not prov.present()
     try:
         fd = os.open(_paths(key)["fifo"], os.O_WRONLY | os.O_NONBLOCK)

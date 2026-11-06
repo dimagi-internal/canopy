@@ -5,8 +5,8 @@ description: |
   only — today Claude Design, so `DesignSync` / `/design-sync` works on a cloud runner. Use
   when a tool says it needs a sign-in that cannot run in this session (e.g. "DesignSync needs
   design-system authorization" and `/design-login` cannot run here) and the person is in the
-  conversation. Give them the link, they approve on the provider's own page and paste the code
-  back, you hand the code to `canopy sign-in code`, do the work, then `stop`. Never for a
+  conversation. Give them the link, they approve on the provider's own page and add the code to
+  the chat's Secrets, `canopy sign-in code` picks it up, do the work, then `stop`. Never for a
   person who is not there, and never to keep a sign-in: it is removed at stop, at session end
   and after an hour.
 ---
@@ -14,10 +14,10 @@ description: |
 # Sign in — the person approves, you finish it, then it is gone
 
 Some sign-ins can't be done by an agent and shouldn't be kept. The person does the one thing
-only they can (approve on the provider's consent page, paste back the code it shows); this box
+only they can (approve on the provider's consent page, put the code it shows into the chat's Secrets); this box
 runs the provider's own sign-in as a separate process and removes what it wrote afterwards.
-The code is useless without the verifier held by that process, so it is safe to paste in chat,
-and canopy-web never holds anything (this is not `act-as`: no canopy-web login is involved).
+The code goes in as a chat secret (sealed to this machine), never as chat text: it stays out of the
+transcript. It is also useless without the verifier held by that process, and canopy-web never holds anything (this is not `act-as`: no canopy-web login is involved).
 
 ## When
 
@@ -29,10 +29,12 @@ and canopy-web never holds anything (this is not `act-as`: no canopy-web login i
 ## The flow (one turn, with the person)
 
 1. `canopy sign-in start design` — prints the link. **Say it to the person as a message** with
-   what you will do (e.g. "sync the design system to claude.ai/design") and that they paste back
-   the code the page shows. The link is good for about 5 minutes.
-2. They paste `<code>#<state>`. Hand it over without echoing it back:
-   `canopy sign-in code design -` with the code on stdin.
+   what you will do (e.g. "sync the design system to claude.ai/design") and tell them to add the
+   code the page shows as the chat secret `CLAUDE_DESIGN_CODE` (chat menu → Secrets…), **not** as
+   a chat message. The link is good for about 5 minutes.
+2. `canopy sign-in code design --wait` — waits up to 4 minutes for that secret, hands it to the
+   sign-in and prints only the result. If the person pastes the code into chat anyway, don't
+   repeat it; tell them to use Secrets and start again.
 3. Do only what you said (e.g. `DesignSync`).
 4. `canopy sign-in stop design` as soon as you are done — don't wait for the hour.
 5. Say what you did: "Signed in to Claude Design at 14:02 with your approval; synced X; signed
