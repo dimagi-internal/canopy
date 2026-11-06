@@ -141,6 +141,21 @@
       "message": "BLOCKED: {slug} touching the act-as credential store (~/.canopy/act-as). That file holds a credential that acts as a PERSON; read or hand-rolled into curl, it lands in the transcript and skips the scope and expiry checks. Use it only through canopy:\n  canopy act-as get <path> [--param k=v]   |   canopy act-as call <METHOD> <path> [--json BODY]\n  canopy act-as status   |   canopy act-as stop\nProcedure: the canopy:act-as-you skill."
     },
     {
+      "_pattern_doc": "A sign-in's state (canopy sign-in, sign_in_cli.py): the provider process's stdin FIFO and the metadata of a sign-in a person approved. Writing to the FIFO by hand bypasses the code check `canopy sign-in code` applies; the sanctioned path never spells the path. Anchored at a home directory so a repo grep for the string stays free.",
+      "tool": "Bash",
+      "per_statement": true,
+      "agent_only": true,
+      "pattern": "(?:~|\\$HOME|\\$\\{HOME\\}|/(?:Users|home)/[^/\\s\"']+|/root)/\\.canopy/sign-in(?![\\w-])",
+      "message": "BLOCKED: {slug} touching the sign-in store (~/.canopy/sign-in). Use it only through canopy:\n  canopy sign-in start <provider>   |   canopy sign-in code <provider> -\n  canopy sign-in status   |   canopy sign-in stop\nProcedure: the canopy:sign-in skill."
+    },
+    {
+      "_pattern_doc": "The same store through the file tools. See the Bash rail above.",
+      "tool_pattern": "^(?:Read|Grep|Glob|Edit|Write|NotebookEdit|NotebookRead)$",
+      "agent_only": true,
+      "pattern": "/\\.canopy/sign-in(?![\\w-])",
+      "message": "BLOCKED: {slug} touching the sign-in store (~/.canopy/sign-in). Use it only through canopy:\n  canopy sign-in start <provider>   |   canopy sign-in code <provider> -\n  canopy sign-in status   |   canopy sign-in stop\nProcedure: the canopy:sign-in skill."
+    },
+    {
       "tool": "Bash",
       "agent_only": true,
       "_agent_only_doc": "A person's own session has no turn envelope to forge.",
