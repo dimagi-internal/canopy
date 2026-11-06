@@ -204,7 +204,7 @@ def test_run_agent_doctor_all_green(tmp_path):
         client_factory=_client_factory(),
         registry_path=str(_plugin_registry(tmp_path)))
     assert ok
-    assert [r.ok for r in results] == [True] * 14
+    assert [r.ok for r in results] == [True] * 15
 
 
 def test_run_agent_doctor_hosted_only_agent_skips_gog_and_stays_green(tmp_path, monkeypatch):
@@ -220,7 +220,7 @@ def test_run_agent_doctor_hosted_only_agent_skips_gog_and_stays_green(tmp_path, 
         registry_path=str(_plugin_registry(tmp_path)))
     by_name = {r.name: r for r in results}
     assert ok, [r for r in results if not r.ok]
-    assert len(results) == 14
+    assert len(results) == 15
     assert "google_account" in by_name["Email auth (gog)"].detail
     for name in ("Auth client", "Auth services", "Gog keychain trust"):
         assert by_name[name].detail.startswith("skipped — hosted mailbox")
@@ -253,7 +253,7 @@ def test_cli_agent_doctor_json_and_exit_code(tmp_path, monkeypatch):
     assert payload["ok"] is False
     names = [c["name"] for c in payload["checks"]]
     assert names == ["Identity", "Plugin install", "Required plugins", "Gating rails",
-                     "Hook wiring", "Secrets materialized",
+                     "Hook wiring", "canopy-web token source", "Secrets materialized",
                      "Secrets backend", "Rails enforced", "Email auth (gog)", "Auth client", "Auth services",
                      "canopy-web setup", "Dependency upgrades", "Gog keychain trust"]
 
@@ -1022,3 +1022,43 @@ def test_check_setup_reports_an_unreachable_canopy_web_instead_of_crashing():
     ident = type("I", (), {"slug": "hal"})()
     res = agent_doctor.check_setup(ident, client_factory=Offline)
     assert res.ok is False and "canopy-web unreachable" in res.detail
+
+
+# ── canopy-web token source ─────────────────────────────────────────────────────────────
+from orchestrator.agent_doctor import check_token_source  # noqa: E402
+
+
+def _script(repo, rel, text):
+    p = repo / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
+def test_token_source_passes_when_scripts_ask_canopy(tmp_path):
+    _script(tmp_path, "bin/_http.py",
+            'subprocess.run(["canopy", "agent", "token", "--slug", S])\n'
+            'fallback = os.environ.get("CANOPY_WEB_PAT")  # phase-1, behind canopy\n')
+    _script(tmp_path, "bin/other", "from _http import token\n")
+    assert check_token_source(tmp_path).ok
+
+
+def test_token_source_fails_a_script_that_reads_the_pat_itself(tmp_path):
+    _script(tmp_path, "bin/feed", 'tok = os.environ["CANOPY_WEB_PAT"]\n')
+    r = check_token_source(tmp_path)
+    assert not r.ok and "bin/feed" in r.detail and "canopy agent token" in r.detail
+
+
+def test_token_source_fails_the_workbench_token_even_behind_canopy(tmp_path):
+    _script(tmp_path, "lib/pat.ts",
+            "execFileSync('canopy', ['agent', 'token', '--slug', 'ace'])\n"
+            "readFileSync(home + '/.claude/canopy/workbench-token')\n")
+    assert not check_token_source(tmp_path).ok
+
+
+def test_token_source_honours_the_allow_marker_and_skips_tests(tmp_path):
+    _script(tmp_path, "bin/park",
+            "# canopy-token: allow (acts as the runner owner)\n"
+            "open('~/.claude/canopy/workbench-token')\n")
+    _script(tmp_path, "tests/test_x.py", 'os.environ["CANOPY_WEB_PAT"] = "t"\n')
+    _script(tmp_path, "lib/x.test.ts", "process.env.CANOPY_WEB_PAT\n")
+    assert check_token_source(tmp_path).ok

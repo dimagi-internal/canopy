@@ -153,7 +153,10 @@ canopy cred exec  --agent <slug> -- <cmd>   # the agent's env in <cmd>'s process
   canopy-web issued for it, else the stored PAT while one exists; never the operator's
   workbench-token. Non-zero exit = no identity, with the reason on stderr. A script that reads
   the stored PAT directly acts as the agent inside someone's local turn, and stops working when
-  the stored PAT is retired (turn-scoped agent token, phase 2).
+  the stored PAT is retired (turn-scoped agent token, phase 2). `canopy agent doctor` enforces
+  this (check *canopy-web token source*): it fails an agent whose script reads `CANOPY_WEB_PAT`
+  without asking canopy first, or names the workbench-token. A script that must act as someone
+  else on purpose (a runner-owner tool) says so with a `canopy-token: allow (<why>)` comment.
 
 Contract, exit codes and a Node/TS snippet: `docs/architecture/session-identity.md` in the canopy repo.
 
