@@ -1,15 +1,21 @@
 name: Advance fleet-stable
 
-# The fleet's session-start updater follows the `fleet-stable` tag; canary machines follow
+# The fleet's session-start updater follows the `fleet-stable` tag; a machine can opt into
 # `main` (CANOPY_FLEET_CHANNEL=main). This moves the tag to the newest main commit that
-#   - has been on main at least SOAK_MINUTES (canaries have run it), and
+#   - has been on main at least SOAK_MINUTES (0: no canaries, the fleet fixes forward), and
 #   - passed every required check on its own push run.
+# It runs when any required-check workflow finishes on main, so the tag follows main within
+# minutes of a green push; the cron is only a fallback (GitHub runs it every few hours at best).
 # Hold the fleet where it is: set the repo variable FLEET_HOLD=1 (Settings → Variables).
 # Promote now (an urgent fix, or the revert that rolls a bad change back): run this workflow by
 # hand with `sha` set. The updater never moves a machine backwards, so a rollback is a revert on
 # main, promoted.
 
 on:
+  workflow_run:
+    workflows: ['Python tests', 'Hook Python compatibility', 'Structure drift', 'Version sync check']
+    types: [completed]
+    branches: [main]
   schedule:
     - cron: '*/20 * * * *'
   workflow_dispatch:
@@ -27,7 +33,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SOAK_MINUTES: '60'
+  SOAK_MINUTES: '0'
   REQUIRED: 'pytest check-version structure-drift hook-compat'
 
 jobs:

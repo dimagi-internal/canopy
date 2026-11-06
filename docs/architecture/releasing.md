@@ -123,8 +123,9 @@ install`s, and patches `installed_plugins.json`: what `/canopy:update` does by h
   preflight or swap (Windows refuses to rename a dir in use) leaves the installed version untouched and the
   registry unpatched; the next session retries.
 - **Channel:** a repo that publishes a `fleet-stable` tag is followed at that tag; without one, at `main`.
-  canopy's `.github/workflows/fleet-stable.yml` (every 20 min) moves the tag to the newest main commit that
-  has soaked 60 min and passed every required check. Canary machines follow `main`:
+  canopy's `.github/workflows/fleet-stable.yml` moves the tag to the newest main commit that passed every
+  required check, each time a required-check workflow finishes on main (a 20-min cron is the fallback).
+  There is no soak and no canary stage: a bad change is fixed forward. A machine can still follow `main`:
   `CANOPY_FLEET_CHANNEL=main`, or `main` in `~/.claude/canopy/fleet-channel`. A tag that is not on main
   is ignored, and a machine already ahead of the channel is never moved back, so a rollback is a revert
   on main promoted by hand (run the workflow with `sha`). Repo variable `FLEET_HOLD=1` freezes the tag.
