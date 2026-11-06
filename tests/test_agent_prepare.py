@@ -425,12 +425,15 @@ def test_the_refresh_asks_only_for_the_gog_token():
     assert (c.web_gog_token, c.values) == ("{}", {"gog-token": "{}"})
 
 
-def test_a_refresh_of_an_agent_without_a_gog_token_names_none():
-    """Naming an undeclared ref raises an owner alert; a box must not cause one."""
-    transport, resolves = _recording(["CANOPY_WEB_PAT"])
-    ap.fetch_runner_credentials("eva", base_url="https://c.test", token="t",
-                                transport=transport, minimal=True)
-    assert resolves == []
+def test_a_refresh_does_not_depend_on_what_the_agent_declares():
+    """canopy-web reads no declared list any more: the refresh names `gog-token` for every
+    agent and gets it back when one is stored (an agent whose token was minted on a runner
+    never declared it)."""
+    transport, resolves = _recording([])
+    c = ap.fetch_runner_credentials("eva", base_url="https://c.test", token="t",
+                                    transport=transport, minimal=True)
+    assert resolves == ["https://c.test/api/agents/eva/credentials/resolve?refs=gog-token"]
+    assert c.web_gog_token == "{}"
 
 
 def test_a_full_prepare_still_resolves_everything():

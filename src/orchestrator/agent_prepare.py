@@ -143,8 +143,9 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
     """`/credentials/resolve` with the runner's token. Unreachable is not unregistered: it
     returns an `error` the report states, so a human retries instead of registering.
 
-    `minimal`: the credentials-only pass — ask only for those of REFRESH_VALUES the agent
-    declares (an undeclared name would raise an owner alert).
+    `minimal`: the credentials-only pass — ask only for REFRESH_VALUES. canopy-web hands back
+    those that are stored and nothing for the rest; whether the agent "declares" a name is
+    no part of it (canopy-web no longer reads a second list).
 
     `purpose`: what the read says it is (X-Canopy-Read-Purpose). Default the box's own
     refresh; a person's verification run says `check: …` (see `verification_purpose`),
@@ -157,10 +158,7 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         repo_url = str(rt.get("repo_url") or "").strip()
     except Exception:  # noqa: BLE001 — the report says "no repo" if it matters
         rt, repo_url = {}, ""
-    refs = None
-    if minimal:
-        declared = set(rt.get("secret_refs") or [])
-        refs = [n for n in REFRESH_VALUES if n in declared]
+    refs = list(REFRESH_VALUES) if minimal else None
     try:
         from orchestrator import cred_resolve
         # A box staging an agent outside any turn (bootstrap, the runner-update timer)
@@ -168,13 +166,10 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         # maintenance every hour (canopy-web#1563).
         # A claim resolving the env FOR a turn (`in_turn`, the turn id rides
         # X-Canopy-Turn-Id) is the read the alert is about — it carries no refresh label.
-        if minimal and not refs:
-            body = {}   # nothing the refresh uses is declared: ask for nothing, never everything
-        else:
-            body = cred_resolve.resolve(slug, base_url=base_url, token=token,
-                                        transport=transport, refs=refs, fallback=not minimal,
-                                        purpose=purpose or ("" if in_turn else
-                                                            cred_resolve.RUNNER_REFRESH)) or {}
+        body = cred_resolve.resolve(slug, base_url=base_url, token=token,
+                                    transport=transport, refs=refs, fallback=not minimal,
+                                    purpose=purpose or ("" if in_turn else
+                                                        cred_resolve.RUNNER_REFRESH)) or {}
     except Exception as e:  # noqa: BLE001
         return RunnerCredentials(error=f"could not reach canopy-web for {slug}'s credentials: "
                                        f"{_first_line(str(e), 200)}")
