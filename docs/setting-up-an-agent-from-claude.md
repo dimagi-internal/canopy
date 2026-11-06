@@ -95,3 +95,4 @@ Claude stops at these on purpose. None of them is a gap in the tools.
 | Muse | Gillian Javetski, Amie Vaccaro | `commcare` | canopy vault |
 | Fizzy | Shayoni Mazumdar | `strategy` | canopy vault |
 | Jarvis | Andrea King | `connect` | not created yet, see [moving an OpenClaw](moving-an-openclaw-onto-canopy.md) |
+| SureAdhere | Matthew Hayto | `sureadhere` | not created yet: repo scaffolded, not registered |
