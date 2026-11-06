@@ -600,3 +600,54 @@ def test_vault_device_falls_back_to_this_computers_runner_id(home, monkeypatch):
     assert vault_cli._computer_runner_id() == "comp-9"
     (home / ".canopy/private-runner.json").write_text('{"id": "pr-1"}')
     assert vault_cli._computer_runner_id() == ""
+
+
+def _runner_box(tmp_path, monkeypatch, hook):
+    for var in ("CANOPY_TURN_ID", "CANOPY_PROFILE", *hook.RUNNER_ENV_MARKERS):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("EMDASH_TASK_ID", "x")
+    (tmp_path / ".canopy").mkdir()
+    (tmp_path / ".canopy/private-runner.json").write_text("{}")
+    (tmp_path / ".canopy/runner.json").write_text("{}")
+    wt = tmp_path / "worktrees" / "ada" / "emdash-fix-the-thing-a1b2"
+    wt.mkdir(parents=True)
+    return str(wt)
+
+
+def test_an_emdash_task_started_by_hand_on_a_runner_box_is_a_local_turn(tmp_path, monkeypatch):
+    """No pointer, no by-task record, no fresh pointer anywhere: the person started it."""
+    hook = _load("agent_session_start")
+    wt = _runner_box(tmp_path, monkeypatch, hook)
+    assert hook.local_eligible(str(tmp_path), wt)
+
+
+@pytest.mark.parametrize("sub,name", [("pending", "fix-the-thing-a1b2"),
+                                      ("pending", "fix-the-thing"),
+                                      ("by-task", "fix-the-thing")])
+def test_an_emdash_task_the_runner_left_a_trace_for_is_the_runners(tmp_path, monkeypatch, sub, name):
+    hook = _load("agent_session_start")
+    wt = _runner_box(tmp_path, monkeypatch, hook)
+    d = tmp_path / ".canopy" / "caller" / sub
+    d.mkdir(parents=True)
+    (d / f"{name}.json").write_text("{}")
+    assert not hook.local_eligible(str(tmp_path), wt)
+
+
+def test_a_fresh_pointer_under_another_name_counts_as_the_runners(tmp_path, monkeypatch):
+    """emdash renamed the task: the runner's pointer still sits under the asked name."""
+    hook = _load("agent_session_start")
+    wt = _runner_box(tmp_path, monkeypatch, hook)
+    d = tmp_path / ".canopy" / "caller" / "pending"
+    d.mkdir(parents=True)
+    p = d / "c-ada-9f9f.json"
+    p.write_text("{}")
+    assert not hook.local_eligible(str(tmp_path), wt)
+    old = p.stat().st_mtime - hook.RUNNER_POINTER_SECONDS - 5    # a stale, unclaimed pointer
+    os.utime(p, (old, old))
+    assert hook.local_eligible(str(tmp_path), wt)
+
+
+def test_an_emdash_task_whose_name_cannot_be_worked_out_stays_the_runners(tmp_path, monkeypatch):
+    hook = _load("agent_session_start")
+    _runner_box(tmp_path, monkeypatch, hook)
+    assert not hook.local_eligible(str(tmp_path), "")

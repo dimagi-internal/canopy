@@ -147,6 +147,13 @@ canopy cred exec  --agent <slug> -- <cmd>   # the agent's env in <cmd>'s process
 - An MCP server that acts as an agent (ace-gdrive, chrome-sales gdrive; canopy-gws when registered) calls
   `canopy cred check --agent <its agent>` before acting and, on non-zero, returns the stderr as
   its refusal — **never** falls back to a bundled key.
+- **A script's canopy-web token comes from `canopy agent token --slug <slug>`** (piped, never a
+  terminal), not from reading `CANOPY_WEB_PAT` or `~/.<slug>/.env` itself. It answers exactly as
+  the canopy CLI does: a person's local turn acts as that person, a runner turn with the login
+  canopy-web issued for it, else the stored PAT while one exists; never the operator's
+  workbench-token. Non-zero exit = no identity, with the reason on stderr. A script that reads
+  the stored PAT directly acts as the agent inside someone's local turn, and stops working when
+  the stored PAT is retired (turn-scoped agent token, phase 2).
 
 Contract, exit codes and a Node/TS snippet: `docs/architecture/session-identity.md` in the canopy repo.
 

@@ -210,3 +210,44 @@ def test_session_token_refuses_to_print_to_a_terminal(monkeypatch):
     monkeypatch.setattr(turn_agent_token, "resolve", lambda slug, session_only=False: "session-tok")
     r = CliRunner().invoke(agent, ["session-token", "--slug", "hal"])
     assert r.exit_code == 0 and r.output.strip() == "session-tok"   # piped (CliRunner is not a tty)
+
+
+def _token_cli(*args):
+    from click.testing import CliRunner
+
+    from orchestrator.agent_cli import agent
+
+    return CliRunner().invoke(agent, ["token", *args])
+
+
+def test_token_prints_what_the_cli_itself_resolves_for_the_agent(monkeypatch):
+    for v in ("CANOPY_AGENT", "CANOPY_AGENT_SLUG"):
+        monkeypatch.delenv(v, raising=False)
+    seen = {}
+
+    def fake(token, *, agent_strict=False):
+        seen.update(slug=os.environ.get("CANOPY_AGENT"), strict=agent_strict)
+        return "turn-tok"
+
+    monkeypatch.setattr(cw, "resolve_token", fake)
+    r = _token_cli("--slug", "ada")
+    assert r.exit_code == 0 and r.output.strip() == "turn-tok"
+    assert seen == {"slug": "ada", "strict": True}       # never the operator's token
+
+
+def test_token_refuses_another_agents_session(monkeypatch):
+    monkeypatch.setenv("CANOPY_AGENT", "hal")
+    monkeypatch.setattr(cw, "resolve_token", lambda *a, **k: "x")
+    r = _token_cli("--slug", "ada")
+    assert r.exit_code != 0 and "works for 'hal'" in r.output
+
+
+def test_token_says_why_when_there_is_no_identity(monkeypatch):
+    monkeypatch.setenv("CANOPY_AGENT", "ada")
+
+    def refuse(*a, **k):
+        raise cw.AgentIdentityError("ada has no PAT of its own")
+
+    monkeypatch.setattr(cw, "resolve_token", refuse)
+    r = _token_cli("--slug", "ada")
+    assert r.exit_code != 0 and "no PAT of its own" in r.output
