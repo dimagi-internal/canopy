@@ -147,7 +147,7 @@ administrable from the top. Pass `"parent": "dimagi"` when creating a workspace 
 (you must own the parent); the rules are in canopy-web's `docs/architecture/roles.md`.
 
 Editor is not a read-only role: `DELETE /api/agents/{slug}` is editor-tier
-(only an agent's keys — credentials, vault, interface — need its owner or an
+(only an agent's keys — credentials, vault, read mode and connected sites — need its owner or an
 admin). So an agent left in `dimagi` can have its board, tasks, turns and work
 products read — **and can be deleted outright** — by any Dimagi employee who
 chooses to join it. Nobody has done this, but it is not a boundary you

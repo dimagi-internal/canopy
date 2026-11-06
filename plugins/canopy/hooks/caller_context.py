@@ -117,14 +117,19 @@ def profile_of(env: dict) -> str:
 
 def _access_line(env: dict, confined_to: dict) -> str:
     """The `access:` line. `permissions` is canopy-web's decision about the agent; a turn with
-    no agent / no interface (`granted_by: no-interface`) has none to report, so say that
-    rather than a contradictory `permissions=none` beside `profile=full`."""
+    no agent (`granted_by: no-interface`) has none to report, so say that rather than a
+    contradictory `permissions=none` beside `profile=full`. `access` (full | confined |
+    refused) is the Turn Context's word and leads when present: a refused turn's `profile`
+    still says `full`, for older runners."""
     perms = env.get("permissions")
     granted = env.get("granted_by")
     prof = profile_of(env)
-    no_agent = granted == "no-interface" or (
-        prof == "full" and not env.get("role") and not perms)
-    out = f"- access: profile={prof}"
+    access = env.get("access")
+    no_agent = access != "refused" and (granted == "no-interface" or (
+        prof == "full" and not env.get("role") and not perms))
+    out = f"- access: {access}, profile={prof}" if access else f"- access: profile={prof}"
+    if access == "refused":
+        out += " (canopy refused this turn: do not act)"
     if env.get("role"):
         out += f", role={env['role']}"
     if isinstance(perms, list):

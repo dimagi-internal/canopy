@@ -245,6 +245,21 @@ def test_permissions_never_act_on_a_refused_or_sensitive_basis():
         assert resolve(_web(permissions=["write"], profile="full", granted_by=g), [])["tier"] == UNLISTED
 
 
+def test_access_refused_is_never_an_act_whatever_else_the_envelope_says():
+    # canopy-web's Turn Context word. A refused turn's `profile` stays `full` for older runners,
+    # and its `granted_by` may describe the whole agent: `access` decides.
+    env = _web(access="refused", permissions=["read", "write"], profile="full", granted_by="owner")
+    got = resolve(env, [])
+    assert got["tier"] == UNLISTED and "access: refused" in got["reason"]
+    assert resolve({**_env(), "access": "refused", "granted_by": "no-interface"}, RULES)["tier"] == UNLISTED
+
+
+def test_access_full_or_confined_changes_nothing():
+    assert resolve(_web(access="full", permissions=["write"], profile="full"), [])["tier"] == ACT
+    assert resolve(_web(access="confined", permissions=["read", "use:ask"], profile="confined",
+                        capability={"name": "ask"}), [])["tier"] == CALLER
+
+
 def test_the_allowlist_does_not_override_a_refusal():
     env = {**_env(), "granted_by": "refused"}
     assert resolve(env, RULES)["tier"] == UNLISTED

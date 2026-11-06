@@ -100,7 +100,7 @@ class AgentIdentity(BaseModel):
     # It is worth setting. Joining a workspace is explicit, but the default
     # (`dimagi`) lists @dimagi.com in its self-join domains and a self-joiner
     # lands as EDITOR — and DELETE /api/agents/{slug} is editor-tier
-    # (`agent.work`). Only an agent's keys (credentials, vault, interface) need
+    # (`agent.work`). Only an agent's keys (credentials, vault, read mode and connected sites) need
     # its owner or an admin. So an agent left on the default can be reshaped or
     # deleted by any employee who chooses to join it; a division or own
     # workspace limits that to people someone actually let in.
