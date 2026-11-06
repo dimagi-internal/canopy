@@ -58,8 +58,6 @@ LIFETIME = 30 * 60
 START_WAIT = 20
 #: How long `code --wait` waits for the person to add the secret (under the fleet's 270 s cap).
 SECRET_WAIT = 240
-#: The background watcher outlives a turn: as long as the provider's own link (5 minutes).
-WATCH_WAIT = 300
 #: How long to wait for it to trade the code for a credential.
 CODE_WAIT = 40
 #: A code is `<code>#<state>`: URL-safe characters only, bounded. Refusing the rest means
@@ -69,7 +67,6 @@ _CODE = re.compile(r"^[A-Za-z0-9_\-.~]{10,300}#[A-Za-z0-9_\-.~]{10,300}$")
 _KEY = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 
 # Test seams.
-SPAWN_WATCHER = True
 NOW = time.time
 SLEEP = time.sleep
 
@@ -329,11 +326,6 @@ def start_cmd(provider_name):
         _end(key, clear=False)
         raise click.ClickException(f"{prov.what}: the sign-in did not give a link. "
                                    "Nothing was changed; try again.")
-    if SPAWN_WATCHER:
-        subprocess.Popen([sys.executable, "-c", "from orchestrator.cli import main; main()",
-                          "sign-in", "watch", prov.name],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True, cwd=tempfile.gettempdir())
     _say_link(prov, link, again=False)
 
 
@@ -342,11 +334,22 @@ def _say_link(prov: Provider, link: str, *, again: bool) -> None:
     click.echo(f"Open this link: {link}")
     click.echo(f"Approve, then add the code the page shows as the chat secret {prov.secret} "
                "(chat menu → Secrets…) — not in the chat itself — within about 5 minutes.")
-    click.echo("It signs in by itself the moment the secret is there; check with "
-               f"`canopy sign-in status {prov.name}`.")
+    click.echo(f"Once they have added it, run `canopy sign-in code {prov.name}` (in the turn "
+               "their next message starts: a chat's secrets can only be read inside a turn).")
 
 
-def _deliver(prov: Provider, key: str, *, wait: bool, seconds: float = SECRET_WAIT) -> None:
+def _secrets(fn, *args):
+    """A chat-secret read whose failure says what it means and carries no server text (a raw 401
+    in Bash output reads, to canopy's credential guard, as the agent's own login failing)."""
+    try:
+        return fn(*args)
+    except click.ClickException:
+        raise click.ClickException(
+            "could not read this chat's secrets from here (this process holds no valid chat key). "
+            "Run this inside the turn the person's message started.") from None
+
+
+def _deliver(prov: Provider, key: str, *, wait: bool) -> None:
     """Hand the chat secret to the waiting sign-in and record the result. Raises ClickException."""
     meta = read_meta(key)
     if not meta or meta.get("provider") != prov.name or not _alive(meta.get("pid")):
@@ -356,18 +359,18 @@ def _deliver(prov: Provider, key: str, *, wait: bool, seconds: float = SECRET_WA
     if meta.get("phase") == "signed_in":
         return
     chat = secret_cli.this_chat()
-    deadline = NOW() + (seconds if wait else 0)
+    deadline = NOW() + (SECRET_WAIT if wait else 0)
     # Only a secret nothing has read yet: the code is single-use, so one that was already used
     # (an earlier attempt's) is dead, and taking it would fail this sign-in for nothing.
-    while prov.secret not in {r.get("name") for r in secret_cli.list_secrets(chat)
+    while prov.secret not in {r.get("name") for r in _secrets(secret_cli.list_secrets, chat)
                               if not r.get("last_used_at")}:
         if NOW() >= deadline or not _alive(meta.get("pid")):
             raise click.ClickException(
                 f"the secret {prov.secret} is not in this chat yet. Ask the person to add the code "
                 f"the page showed under that name (chat menu → Secrets…)"
-                + ("." if wait else "; the sign-in picks it up by itself."))
+                + ".")
         SLEEP(3)
-    code = secret_cli.fetch_value(chat, prov.secret).strip()
+    code = _secrets(secret_cli.fetch_value, chat, prov.secret).strip()
     if not _CODE.match(code):
         raise click.ClickException(
             f"{prov.secret} does not look like a sign-in code (it is `<code>#<state>`). "
@@ -396,26 +399,11 @@ def _deliver(prov: Provider, key: str, *, wait: bool, seconds: float = SECRET_WA
 @click.option("--wait/--no-wait", default=False,
               help="Wait for the person to add the secret (up to 4 minutes).")
 def code_cmd(provider_name, wait):
-    """Hand PROVIDER the code from this chat's secrets now (`start` already watches for it)."""
+    """Hand PROVIDER the code from this chat's secrets (run it inside a turn)."""
     prov = _provider(provider_name)
     _deliver(prov, _key(), wait=wait)
     click.echo(f"Signed in: {prov.what} for up to {_fmt_left(LIFETIME)}.")
     click.echo(f"`canopy sign-in stop {prov.name}` the moment you are done.")
-
-
-@sign_in_group.command("watch", hidden=True)
-@click.argument("provider_name", metavar="PROVIDER")
-def watch_cmd(provider_name):
-    """Internal: started by `start`. Hands the code over the moment the person adds the secret,
-    so no turn has to be waiting for it. Ends with the sign-in (5 minutes at most)."""
-    prov = _provider(provider_name)
-    key = _key()
-    try:
-        _deliver(prov, key, wait=True, seconds=WATCH_WAIT)
-    except click.ClickException as exc:
-        meta = read_meta(key) or {}
-        if meta.get("phase") != "failed":  # `_fail` already wrote why for a refused code
-            _fail(key, exc.message)
 
 
 @sign_in_group.command("status")
