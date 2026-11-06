@@ -248,6 +248,65 @@ def legacy_gating_hooks(repo: Path) -> list[str]:
     return found
 
 
+# Token-source rail (turn-scoped agent token, phase 2). Canopy alone decides an agent's
+# canopy-web token: `canopy agent token --slug <slug>` (agent-core/agent-runtime.md
+# § Session identity). A script that reads CANOPY_WEB_PAT itself breaks when the stored PAT
+# is retired; one that reads the operator's workbench-token acts as the wrong person.
+_TOKEN_CODE_DIRS = ("bin", "scripts", "lib", "mcp", "src", "hooks")
+_TOKEN_CODE_EXT = {".py", ".ts", ".js", ".mjs", ".cjs", ".sh", ""}
+_TOKEN_SKIP_PARTS = {"node_modules", "tests", "test", "__tests__", ".venv", "dist", "build"}
+_READS_PAT = re.compile(r"CANOPY_WEB_PAT")
+_OPERATOR_FILE = re.compile(r"canopy/workbench-token")
+_ASKS_CANOPY = re.compile(r"""agent["'`,\s]+token\b""")
+TOKEN_SOURCE_MARKER = "canopy-token: allow"
+
+
+def _token_source_offenders(repo: Path) -> list[str]:
+    out: list[str] = []
+    for top in _TOKEN_CODE_DIRS:
+        base = repo / top
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*")):
+            if not f.is_file() or f.suffix not in _TOKEN_CODE_EXT:
+                continue
+            if _TOKEN_SKIP_PARTS & set(f.relative_to(repo).parts):
+                continue
+            if f.name.startswith("test_") or ".test." in f.name or ".spec." in f.name:
+                continue
+            try:
+                text = f.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if TOKEN_SOURCE_MARKER in text:
+                continue
+            if _OPERATOR_FILE.search(text) or (
+                    _READS_PAT.search(text) and not _ASKS_CANOPY.search(text)):
+                out.append(str(f.relative_to(repo)))
+    return out
+
+
+def check_token_source(repo: Path) -> CheckResult:
+    """No agent script decides its own canopy-web token.
+
+    Fails on a code file (bin/ scripts/ lib/ mcp/ src/ hooks/, tests excluded) that names the
+    operator's `~/.claude/canopy/workbench-token`, or reads `CANOPY_WEB_PAT` without asking
+    `canopy agent token` first (a stored-PAT fallback BEHIND canopy's answer is phase-1
+    compatibility and passes). A script that must act as someone else on purpose (e.g. a
+    runner-owner tool) says so with a `canopy-token: allow (<why>)` comment.
+    """
+    name = "canopy-web token source"
+    bad = _token_source_offenders(Path(repo))
+    if not bad:
+        return CheckResult(name, True, "every script asks `canopy agent token`")
+    shown = ", ".join(bad[:6]) + (f" (+{len(bad) - 6} more)" if len(bad) > 6 else "")
+    return CheckResult(
+        name, False,
+        f"{len(bad)} script(s) pick their own canopy-web token: {shown} — get it from "
+        f"`canopy agent token --slug <slug>` (agent-runtime.md § Session identity), or mark a "
+        f"deliberate other-identity script `{TOKEN_SOURCE_MARKER} (<why>)`")
+
+
 def check_hook_wiring(repo: Path) -> CheckResult:
     """Who enforces this agent's rails — canopy's session hook, not the agent (canopy#849).
 
@@ -963,6 +1022,7 @@ def run_agent_doctor(
         check_required_plugins(repo, registry_path=registry_path),
         check_gating(repo),
         check_hook_wiring(repo),
+        check_token_source(repo),
         check_secrets_materialized(repo),
         check_secrets_backend(identity, probe=secrets_probe),
         check_rails_fire(repo),

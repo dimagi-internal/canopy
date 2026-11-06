@@ -11,10 +11,11 @@ reading the Python client.
 ## Auth + base URL
 
 - **Auth header:** `Authorization: Bearer <PAT>`.
-- **PAT resolution (precedence):** explicit arg → `CANOPY_WEB_PAT` env →
-  `~/.claude/canopy/workbench-token`. Mint one with `/canopy:canopy-web-pat-mint`.
-  In a person's local turn (`CANOPY_LOCAL_TURN=1`) every call acts as that person (their PAT,
-  else their private runner's token), never as the agent — `canopy_web.resolve_token`.
+- **Which token:** `canopy_web.resolve_token` decides, and is the only place that does (its
+  docstring holds the order). An agent's scripts ask it through `canopy agent token --slug
+  <slug>` (`plugins/canopy/agent-core/agent-runtime.md` § Session identity) rather than reading
+  `CANOPY_WEB_PAT` or a token file; `canopy agent doctor` checks that. A person's own token is
+  minted with `/canopy:canopy-web-pat-mint`.
 - **Base URL (precedence):** explicit arg → `CANOPY_WEB_API_URL` env →
   `https://canopy.dimagi.com` (prod default).
 - **Content-Type:** `application/json` on bodies. Non-2xx responses are errors.

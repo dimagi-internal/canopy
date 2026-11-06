@@ -213,8 +213,9 @@ VIDEO_ABS="$(realpath <video_path>)"
 
 **Identity and workspace are checked before anything is written** (ace#2805):
 every DDD write — the narrative post, `upload-video`, render uploads, this upload —
-refuses in an agent's session (`$CANOPY_AGENT`) that has no PAT of its own (it will
-not borrow the operator's workbench-token; set `CANOPY_WEB_PAT`), and refuses when no
+refuses in an agent's session (`$CANOPY_AGENT`) where canopy has no identity for the agent
+(`canopy agent token --slug <slug>` says why; it never borrows the operator's
+workbench-token), and refuses when no
 workspace is named (set `CANOPY_WEB_WORKSPACE`, or commit `workspace: <slug>` in the
 target repo's `.canopy/ddd/config.yaml` — an agent provides it, it is never guessed). Each write
 is then read back from that workspace and prints `landed in workspace '<slug>'`. Fix
