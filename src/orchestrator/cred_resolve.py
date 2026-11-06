@@ -327,8 +327,9 @@ def has_sealed(body) -> bool:
 #: Said when canopy-web gives no reason (an older canopy-web). Never offers
 #: `canopy vault zk keep` as the reader's fix: a keeper runs it every couple of minutes
 #: already, and it cannot grant a machine nobody confirmed.
-NO_COPY_WHY = ("this device holds no copy of its key — its person can see why on canopy-web "
-               "Settings → Device keys")
+NO_COPY_WHY = ("this device holds no copy of its key — an admin of the vault gives it access on "
+               "the vault's page on canopy-web (Machines → Give access), or its person confirms it "
+               "under Settings → Device keys")
 
 
 def no_copy_why(layer: dict) -> dict:

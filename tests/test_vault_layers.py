@@ -80,5 +80,5 @@ def test_without_a_reason_the_fallback_never_offers_zk_keep():
     out = cred_resolve.merge_vault_layers(
         "ace", {"values": {}, "vaults": [_layer("Locked", {"x": "y"}, mine=False)]}, ecdh=_ecdh())
     assert "zk keep" not in out["vault_layers"][0]["why"]
-    assert "Device keys" in cred_resolve.shut_vaults_note(out)
+    assert "Machines → Give access" in cred_resolve.shut_vaults_note(out)
     assert cred_resolve.shut_vaults_note({"vault_layers": [{"vault": "Org", "opened": True}]}) == ""
