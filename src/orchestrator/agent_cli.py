@@ -2272,6 +2272,41 @@ def agent_turns(slug, limit, as_json):
             click.echo(f"    prompt: {first[:110]}")
 
 
+@agent.command("token", hidden=True)
+@click.option("--slug", required=True, help="The agent the calling script works for.")
+def agent_token_cmd(slug):
+    """Print the canopy-web token a script working for agent SLUG should act with — the
+    exact answer the canopy CLI gives itself (`canopy_web.resolve_token`, strict):
+
+    \b
+      a person's LOCAL turn  → that person (their PAT, else their private runner's token)
+      a runner turn          → the login canopy-web issued for that turn / session
+      otherwise              → the agent's stored PAT, while one exists (phase 1)
+      never                  → the operator's workbench-token
+
+    Agent scripts call this instead of reading CANOPY_WEB_PAT / ~/.<slug>/.env themselves,
+    so the stored PAT can be retired in one place (canopy-web
+    docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md, phase 2). Exits
+    non-zero with the reason when there is no identity to act with. Refuses to print to a
+    terminal: it is a credential."""
+    from orchestrator import canopy_web
+
+    if sys.stdout.isatty():
+        raise click.ClickException("this prints a credential: pipe it to the program that needs it")
+    if not canopy_web._SLUG_RE.match(slug or ""):
+        raise click.ClickException(f"not an agent slug: {slug!r}")
+    named = next((os.environ.get(v, "").strip() for v in canopy_web._AGENT_ENV_VARS
+                  if os.environ.get(v, "").strip()), "")
+    if named and named.lower() != slug.lower():
+        raise click.ClickException(f"this session works for {named!r}, not {slug!r}")
+    os.environ.setdefault("CANOPY_AGENT", slug)
+    try:
+        token = canopy_web.resolve_token(None, agent_strict=True)
+    except (canopy_web.AgentIdentityError, canopy_web.ScopedSessionError, RuntimeError) as e:
+        raise click.ClickException(str(e)) from None
+    click.echo(token)
+
+
 @agent.command("session-token", hidden=True)
 @click.option("--slug", required=True, help="The agent this session runs as.")
 def agent_session_token_cmd(slug):

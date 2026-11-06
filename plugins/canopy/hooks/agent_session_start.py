@@ -24,6 +24,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 
 def stage_delegated(canopy: str, slug: str) -> None:
@@ -110,7 +111,7 @@ RUNNER_ENV_MARKERS = ("CANOPY_HEADLESS", "CANOPY_ONE_SHOT_TURN")
 RUNNER_DESKTOP_CHANNEL = ".canopy-desktop"
 
 
-def local_eligible(home: str, cwd: str = "") -> bool:
+def local_eligible(home: str, cwd: str = "", transcript: str = "") -> bool:
     """Is this a person's own session on their registered private runner?
 
     Yes when `~/.canopy/private-runner.json` exists (`canopy agent use <slug>` registered this
@@ -118,9 +119,10 @@ def local_eligible(home: str, cwd: str = "") -> bool:
     session is not a runner's: no `$CANOPY_TURN_ID` (a cloud turn), no confined profile,
     no headless/one-shot marker (the runner app's headless engine starts claude with
     `CANOPY_HEADLESS=1 CANOPY_ONE_SHOT_TURN=1` and no turn id), not inside a desktop-engine
-    worktree (`<cwd>/.canopy-desktop/`), and not an emdash task on a machine that runs the
-    runner app (`~/.canopy/runner.json` — emdash cannot pass a turn id, so on a runner box
-    every emdash session is presumed the runner's, whose turn already exists). A private
+    worktree (`<cwd>/.canopy-desktop/`), and not an emdash task the runner app started
+    (:func:`_emdash_task_is_runners` — emdash cannot pass a turn id, so on a box that runs
+    the runner app an emdash session is the runner's unless the runner left no trace of it;
+    an emdash task the person starts by hand is a local turn too). A private
     runner may itself be a runner app working only for its owner (canopy-web#1705): its
     turns are already turns, and a second, local one would switch their credential reads
     from the runner to the license. canopy-web#1704."""
@@ -133,9 +135,49 @@ def local_eligible(home: str, cwd: str = "") -> bool:
     if cwd and os.path.isdir(os.path.join(cwd, RUNNER_DESKTOP_CHANNEL)):
         return False
     if (os.environ.get("EMDASH_TASK_ID", "").strip()
-            and os.path.isfile(os.path.join(home, ".canopy", "runner.json"))):
+            and os.path.isfile(os.path.join(home, ".canopy", "runner.json"))
+            and _emdash_task_is_runners(home, cwd, transcript)):
         return False
     return True
+
+
+#: How long after the runner leaves a pointer an emdash session it creates still counts as
+#: the runner's. Far above the caller hook's 120 s claim window on purpose: a wrong "yours"
+#: opens a local turn AS THE PERSON inside a runner's session, while a wrong "the runner's"
+#: only leaves a hand-started session as it was before this check existed.
+RUNNER_POINTER_SECONDS = 600
+
+
+def _emdash_task_is_runners(home: str, cwd: str, transcript: str = "") -> bool:
+    """Did the runner app start this emdash session? True unless it left no trace.
+
+    The runner writes `caller/pending/<task>.json` BEFORE it asks emdash to create the task
+    (canopy-web runner/canopy_runner/execute.py), and the caller hook turns it into
+    `caller/by-task/<task>.json` at the first prompt. So at SessionStart a runner session has
+    a pointer or a record under its task name — or, when emdash renamed the task, a fresh
+    pointer under the name the runner asked for, until it repoints. Any of those, or a task
+    name this cannot work out, means the runner's. Nothing at all means a person started it."""
+    caller = os.path.join(home, ".canopy", "caller")
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from caller_context import task_candidates  # noqa: PLC0415 — sibling hook, stdlib only
+        names = task_candidates(transcript, cwd)
+    except Exception:  # noqa: BLE001 — cannot tell: the runner's, as before
+        return True
+    if not names:
+        return True
+    for name in names:
+        for sub in ("pending", "by-task"):
+            if os.path.isfile(os.path.join(caller, sub, f"{name}.json")):
+                return True
+    try:
+        now = time.time()
+        for entry in os.scandir(os.path.join(caller, "pending")):
+            if entry.name.endswith(".json") and now - entry.stat().st_mtime < RUNNER_POINTER_SECONDS:
+                return True
+    except OSError:
+        pass
+    return False
 
 
 def open_local_turn(canopy: str, slug: str, data: dict, env_file: str) -> str:
@@ -192,7 +234,8 @@ def main() -> int:
     # A person's own session on their private runner: record it as a local turn FIRST, and
     # carry its id into every credential read below (canopy-web#1704) — that is what
     # admits a license holder, and what the read log names.
-    if canopy and local_eligible(os.path.expanduser("~"), str(data.get("cwd") or os.getcwd())):
+    if canopy and local_eligible(os.path.expanduser("~"), str(data.get("cwd") or os.getcwd()),
+                                 str(data.get("transcript_path") or "")):
         turn_id = open_local_turn(canopy, slug, data, env_file)
         if turn_id:
             os.environ["CANOPY_TURN_ID"] = turn_id
