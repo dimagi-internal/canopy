@@ -139,3 +139,46 @@ def test_rail_blocks_printing_keys(cmd):
 ])
 def test_rail_lets_the_profile_path_and_mentions_pass(cmd):
     assert not blocks(cmd)
+
+
+def test_labs_readwrite_never_asks_the_box_broker(tmp_path):
+    # The broker cannot verify which agent asks, so the write role comes from canopy-web only.
+    path, seen = _broker(GOOD)
+    calls = []
+    out = aws_cli.aws_credentials("labs-readwrite", "hal", socket_path=path, cache_dir=tmp_path,
+                                  call=lambda *a: calls.append(a) or GOOD)
+    assert calls == [("POST", "/api/agents/hal/aws-credentials", {"role": "labs-readwrite"})]
+    assert "req" not in seen
+    assert out["AccessKeyId"] == "ASIA"
+
+
+def test_labs_read_falls_back_to_the_old_name_where_a_source_predates_it(tmp_path):
+    asked = []
+
+    def old_canopy_web(method, path, body):
+        asked.append(body["role"])
+        if body["role"] != "labs-observe":
+            raise aws_cli.canopy_web.CanopyError("404 canopy does not vend an AWS role named 'labs-read'")
+        return GOOD
+
+    out = aws_cli.aws_credentials("labs-read", "hal", socket_path=str(tmp_path / "none"),
+                                  cache_dir=tmp_path, call=old_canopy_web)
+    assert asked == ["labs-read", "labs-observe"]
+    assert out["AccessKeyId"] == "ASIA"
+    assert (tmp_path / "hal--labs-read.json").exists()
+
+
+def test_a_refusal_of_every_name_reports_the_new_one(tmp_path):
+    def refuse(method, path, body):
+        raise aws_cli.canopy_web.CanopyError(f"403 not for {body['role']}")
+
+    with pytest.raises(click.ClickException, match="labs-read for hal"):
+        aws_cli.aws_credentials("labs-read", "hal", socket_path=str(tmp_path / "none"),
+                                cache_dir=tmp_path, call=refuse)
+
+
+@pytest.mark.parametrize("role", ["labs-read", "labs-readwrite", "labs-observe"])
+def test_profiles_for_both_roles_and_the_old_name(tmp_path, role):
+    cfg = tmp_path / "config"
+    assert aws_cli.write_profile(role, cfg) is True
+    assert f"credential_process = canopy aws credentials --role {role}\nregion = us-east-1" in cfg.read_text()
