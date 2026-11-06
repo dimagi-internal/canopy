@@ -1062,3 +1062,25 @@ def test_token_source_honours_the_allow_marker_and_skips_tests(tmp_path):
     _script(tmp_path, "tests/test_x.py", 'os.environ["CANOPY_WEB_PAT"] = "t"\n')
     _script(tmp_path, "lib/x.test.ts", "process.env.CANOPY_WEB_PAT\n")
     assert check_token_source(tmp_path).ok
+
+
+def test_token_source_ignores_prose_that_names_the_workbench_token(tmp_path):
+    _script(tmp_path, "bin/_tok.py",
+            '"""Never the operator\'s ~/.claude/canopy/workbench-token."""\n'
+            'r = subprocess.run([exe, "agent", "token", "--slug", "hal"])  # not canopy/workbench-token\n')
+    _script(tmp_path, "lib/pat.ts", "// never ~/.claude/canopy/workbench-token\n/* nor canopy/workbench-token */\n")
+    _script(tmp_path, "scripts/setup.sh", "# ~/.claude/canopy/workbench-token is the operator's\n")
+    assert check_token_source(tmp_path).ok
+
+
+def test_token_source_counts_reads_not_mentions_of_the_pat(tmp_path):
+    _script(tmp_path, "lib/env.ts", "const ALLOW = /^(?:NOVA_API_KEY$|CANOPY_WEB_PAT$)/;\n")
+    _script(tmp_path, "bin/smoke", 'os.environ.pop("CANOPY_WEB_PAT", None)\n')
+    assert check_token_source(tmp_path).ok
+    for name, body in [("bin/a.sh", 'curl -H "Authorization: Bearer $CANOPY_WEB_PAT"\n'),
+                       ("lib/b.ts", "const t = process.env.CANOPY_WEB_PAT;\n"),
+                       ("bin/c.py", 'tok = load().get("CANOPY_WEB_PAT")\n'),
+                       ("bin/d.py", 'TOKEN = Path.home() / ".claude/canopy/workbench-token"\n')]:
+        d = tmp_path / name.replace("/", "_")
+        _script(d, name, body)
+        assert not check_token_source(d).ok, name

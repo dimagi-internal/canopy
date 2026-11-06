@@ -255,8 +255,16 @@ def legacy_gating_hooks(repo: Path) -> list[str]:
 _TOKEN_CODE_DIRS = ("bin", "scripts", "lib", "mcp", "src", "hooks")
 _TOKEN_CODE_EXT = {".py", ".ts", ".js", ".mjs", ".cjs", ".sh", ""}
 _TOKEN_SKIP_PARTS = {"node_modules", "tests", "test", "__tests__", ".venv", "dist", "build"}
-_READS_PAT = re.compile(r"CANOPY_WEB_PAT")
+# A READ of the stored PAT — env/.env lookups, $VAR, process.env — not a mention (an env
+# allowlist naming it, a `pop` that clears it, prose saying "never read it").
+_READS_PAT = re.compile(
+    r"""(?:environ\s*\[|environ\.get\s*\(|getenv\s*\(|\.get\s*\(|process\.env\s*\[)\s*["']CANOPY_WEB_PAT"""
+    r"""|process\.env\.CANOPY_WEB_PAT|\$\{?CANOPY_WEB_PAT\b""")
 _OPERATOR_FILE = re.compile(r"canopy/workbench-token")
+# Comments and docstrings name the workbench-token to say "never this" — strip them first.
+_TOKEN_PROSE = re.compile(
+    r'''"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'|/\*[\s\S]*?\*/|(?:^|\s)(?:#|//).*$''',
+    re.MULTILINE)
 _ASKS_CANOPY = re.compile(r"""agent["'`,\s]+token\b""")
 TOKEN_SOURCE_MARKER = "canopy-token: allow"
 
@@ -280,8 +288,9 @@ def _token_source_offenders(repo: Path) -> list[str]:
                 continue
             if TOKEN_SOURCE_MARKER in text:
                 continue
-            if _OPERATOR_FILE.search(text) or (
-                    _READS_PAT.search(text) and not _ASKS_CANOPY.search(text)):
+            code = _TOKEN_PROSE.sub(" ", text)
+            if _OPERATOR_FILE.search(code) or (
+                    _READS_PAT.search(code) and not _ASKS_CANOPY.search(code)):
                 out.append(str(f.relative_to(repo)))
     return out
 
