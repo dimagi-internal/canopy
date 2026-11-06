@@ -64,7 +64,6 @@ def box(tmp_path, monkeypatch):
     fake = bindir / "claude"
     fake.write_text(FAKE_CLAUDE.format(python=sys.executable, code=CODE, token=TOKEN))
     fake.chmod(0o755)
-    monkeypatch.setattr(sign_in_cli, "SPAWN_WATCHER", False)  # the watcher is tested in-process
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESS)
@@ -254,34 +253,6 @@ def test_hook_is_inert_without_a_state_dir(tmp_path):
     assert mod.main() == 0
 
 
-def test_the_watcher_hands_the_code_over_by_itself(box, secrets, monkeypatch):
-    """`start` leaves a watcher that signs in the moment the secret appears: no turn waits."""
-    run("start", "design")
-    calls = {"n": 0}
-
-    def later(_s):
-        calls["n"] += 1
-        if calls["n"] == 3:
-            secrets.values["CLAUDE_DESIGN_CODE"] = CODE
-
-    monkeypatch.setattr(sign_in_cli, "SLEEP", later)
-    r = run("watch", "design")
-    assert r.exit_code == 0, r.output
-    assert creds(box)["designOauth"]["accessToken"] == TOKEN
-    assert json.loads(run("status", "design", "--json-output").output)["status"] == "signed_in"
-    assert CODE not in r.output
-
-
-def test_the_watcher_gives_up_quietly_when_the_link_lapses(box, secrets, monkeypatch):
-    run("start", "design")
-    t = {"now": time.time()}
-    monkeypatch.setattr(sign_in_cli, "NOW", lambda: t["now"])
-    monkeypatch.setattr(sign_in_cli, "SLEEP", lambda s: t.__setitem__("now", t["now"] + 120))
-    r = run("watch", "design")
-    assert r.exit_code == 0
-    assert "designOauth" not in creds(box)
-
-
 def test_a_used_secret_is_not_taken_again(box, secrets):
     """The code is single-use: an earlier attempt's secret must not fail this sign-in."""
     secrets.values["CLAUDE_DESIGN_CODE"] = CODE
@@ -290,3 +261,15 @@ def test_a_used_secret_is_not_taken_again(box, secrets):
     r = run("code", "design")
     assert r.exit_code != 0 and "not in this chat yet" in r.output
     assert "designOauth" not in creds(box)
+
+
+def test_an_unreadable_secret_store_says_so_without_server_text(box, secrets, monkeypatch):
+    run("start", "design")
+
+    def boom(*a, **k):
+        raise sign_in_cli.click.ClickException("GET /api/session-secrets/key -> 401: Authentication required")
+
+    monkeypatch.setattr(secret_cli, "list_secrets", boom)
+    r = run("code", "design")
+    assert r.exit_code != 0 and "no valid chat key" in r.output
+    assert "401" not in r.output and "Authentication" not in r.output
