@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""SessionEnd: end this session's `canopy sign-in` (and any expired one).
+"""SessionEnd: end every `canopy sign-in` whose lifetime has passed.
 
 `canopy sign-in start|code` (``src/orchestrator/sign_in_cli.py``) signs a session in to a
 third party with the person's approval; what the provider wrote must not outlive the work.
-This removes it when the Claude session ends, and for every sign-in whose lifetime passed:
-the provider's process is ended, the credential it made (only what THIS sign-in made, never
-one already on the box) is dropped, and the state files go. The credential removal mirrors
+This runs when a Claude session ends and removes every sign-in whose lifetime has passed: the
+provider's process is ended, the credential it made (only what THIS sign-in made, never one
+already on the box) is dropped, and the state files go. It deliberately does NOT end a live
+sign-in just because a session ended: in a canopy chat every turn is a new Claude process, so
+that would tear the sign-in down between the turn that starts it and the one that uses it.
+The lifetime (30 minutes, never extended) and `canopy sign-in stop` are the ends. The credential removal mirrors
 ``sign_in_cli._design_clear`` (stdlib only here; ``tests/test_sign_in_cli.py`` runs both).
 
 Inert when ``~/.canopy/sign-in`` does not exist: every other session pays one `stat`.
@@ -65,11 +68,6 @@ def _end(name: str, doc: dict) -> None:
 def main() -> int:
     if not os.path.isdir(ROOT):
         return 0
-    try:
-        data = json.load(sys.stdin)
-    except (OSError, ValueError):
-        data = {}
-    session_id = str((data or {}).get("session_id") or "") if isinstance(data, dict) else ""
     now = time.time()
     for fname in os.listdir(ROOT):
         if not fname.endswith(".json"):
@@ -82,12 +80,11 @@ def main() -> int:
             doc = {}
         if not isinstance(doc, dict):
             doc = {}
-        mine = bool(session_id) and (doc.get("claude_session_id") == session_id or name == session_id)
         try:
             expired = float(doc.get("expires_at") or 0) <= now
         except (TypeError, ValueError):
             expired = True
-        if mine or expired:
+        if expired:
             _end(name, doc)
     return 0
 
