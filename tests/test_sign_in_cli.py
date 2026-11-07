@@ -56,6 +56,15 @@ FAKE_CLAUDE = textwrap.dedent('''\
 ''')
 
 
+def _alive_by_pgrep(pid) -> bool:
+    try:
+        pids = subprocess.run(["pgrep", "-f", "design-login"], capture_output=True, text=True,
+                              check=False).stdout.split()
+        return str(int(pid)) in pids
+    except (ValueError, TypeError):
+        return False
+
+
 @pytest.fixture
 def box(tmp_path, monkeypatch):
     home = tmp_path / "home"
@@ -71,6 +80,9 @@ def box(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESS)
     monkeypatch.setenv("CLAUDE_CODE_CHILD_SESSION", "1")  # what a real session exports
     monkeypatch.setattr(sys, "platform", "linux")
+    if not Path("/proc").is_dir():
+        # `_alive` reads /proc (sign-in runs only on Linux); a laptop has none, so ask pgrep the same question.
+        monkeypatch.setattr(sign_in_cli, "_alive", _alive_by_pgrep)
     creds = home / ".claude" / ".credentials.json"
     creds.write_text(json.dumps({"mcpOAuth": {"keep": "me"}}))
     creds.chmod(0o600)
