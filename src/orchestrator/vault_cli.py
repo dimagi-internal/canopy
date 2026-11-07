@@ -252,8 +252,7 @@ def run_runner_proof(url: str, body: bytes) -> tuple[str, str]:
     forwards it to canopy-web, which says who holds the key. Single-use; make it just before
     sending, and send exactly `body`. Raises VaultCliError when this machine has no
     registered device key."""
-    bound = device_key.bound_htu(url, body)
-    proof, why = device_key.proof_or_reason("POST", bound)
+    proof, why = device_key.site_proof(url, body)
     if "DPoP" in proof:
         return RUNNER_PROOF_HEADER, f"dpop {proof['DPoP']}"
     aws = proof.get("X-Canopy-Aws-Proof")

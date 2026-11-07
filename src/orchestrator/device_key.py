@@ -929,6 +929,16 @@ def bound_htu(site_url: str, content: bytes) -> str:
     return f"{base}/attest/{hashlib.sha256(content).hexdigest()}"
 
 
+#: A proof for a host site is for a POST of the request it vouches for.
+SITE_PROOF_METHOD = "POST"
+
+
+def site_proof(site_url: str, content: bytes) -> tuple[dict, str]:
+    """`proof_or_reason` for a request to a HOST SITE (not canopy-web): the proof headers, or
+    why there are none."""
+    return proof_or_reason(SITE_PROOF_METHOD, bound_htu(site_url, content))
+
+
 def dpop_proof(key: DeviceKey, method: str, url: str, *, now: Optional[float] = None,
                jti: Optional[str] = None) -> str:
     header = {"typ": "dpop+jwt", "alg": "ES256", "jwk": key.public_jwk}
