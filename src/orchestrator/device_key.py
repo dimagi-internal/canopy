@@ -920,6 +920,15 @@ def normalize_htu(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
+def bound_htu(site_url: str, content: bytes) -> str:
+    """The `htu` a proof for a HOST SITE signs: the site's endpoint and a sha256 of the exact
+    request body, so the proof vouches for that request only. Must equal canopy-web's
+    `canopy_sdk.runner_attestations.bound_url` (pinned by tests/test_runner_proof.py)."""
+    parts = urlsplit(site_url)
+    base = urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
+    return f"{base}/attest/{hashlib.sha256(content).hexdigest()}"
+
+
 def dpop_proof(key: DeviceKey, method: str, url: str, *, now: Optional[float] = None,
                jti: Optional[str] = None) -> str:
     header = {"typ": "dpop+jwt", "alg": "ES256", "jwk": key.public_jwk}
