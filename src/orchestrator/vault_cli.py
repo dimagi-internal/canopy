@@ -243,6 +243,37 @@ def run_runner_session(runner_id: str, base_url: str = "", *, transport=None) ->
     return json.loads(text)
 
 
+RUNNER_PROOF_HEADER = "X-Canopy-Runner-Proof"
+
+
+def run_runner_proof(url: str, body: bytes) -> tuple[str, str]:
+    """`(header name, value)` proving to a HOST SITE that this machine's approved device key
+    made the request `POST url` with `body`: `dpop <jws>` or `aws-iam <proof>`. The site
+    forwards it to canopy-web, which says who holds the key. Single-use; make it just before
+    sending, and send exactly `body`. Raises VaultCliError when this machine has no
+    registered device key."""
+    proof, why = device_key.site_proof(url, body)
+    if "DPoP" in proof:
+        return RUNNER_PROOF_HEADER, f"dpop {proof['DPoP']}"
+    aws = proof.get("X-Canopy-Aws-Proof")
+    if aws:
+        return RUNNER_PROOF_HEADER, f"aws-iam {aws}"
+    raise VaultCliError(f"no runner proof can be made: {why}")
+
+
+@vault_group.command("runner-proof")
+@click.option("--url", required=True, help="The site endpoint the request will be POSTed to.")
+@click.option("--body-file", "body_file", type=click.Path(exists=True, dir_okay=False), required=True,
+              help="The exact request body that will be sent (its sha256 is signed).")
+def runner_proof_cmd(url, body_file):
+    """Print `X-Canopy-Runner-Proof: <kind> <proof>` for a request to a host site, made with
+    this machine's approved device key (the site learns which runner sent it, via canopy-web).
+    One line on stdout; the proof is single-use and good for two minutes."""
+    with open(body_file, "rb") as f:
+        name, value = run_runner_proof(url, f.read())
+    click.echo(f"{name}: {value}")
+
+
 @vault_group.command("runner-session")
 @click.option("--runner", "runner_id", default="",
               help="Runner id (default: ~/.canopy/runner.json's).")
