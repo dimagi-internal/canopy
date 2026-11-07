@@ -556,9 +556,9 @@ OUTSIDE_OWN_WRITES = [
     GQL_COMMIT.format(repo=OWN_KEY),
     f"gh api graphql -f query='{MERGE_BY_NODE}'",
 ]
-# What read mode and each connected site really run. Taken from the agents' settings: read mode on
+# What read mode and each host site really run. Taken from the agents' settings: read mode on
 # every agent (with its `review-receipt` step; `.hal-ask/` is its stored scratch dir), Trellis's
-# `canopy` connected site, Oolong's Confluence reads.
+# `canopy` host site, Oolong's Confluence reads.
 CONFINED_PROFILE_COMMANDS = [
     "canopy email read --repo . 19a2",
     "canopy email review-receipt --repo . --body-file /w/.hal-ask/draft.md",

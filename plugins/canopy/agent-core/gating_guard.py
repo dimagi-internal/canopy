@@ -963,7 +963,7 @@ def read_caller_envelope(turn_id):
 
 def may_edit_agent(env):
     """(allowed, held) for an envelope. `permissions` is canopy-web's own list of what the
-    asker holds on THIS agent for THIS turn (a confined turn lists read and its read mode or connected site only);
+    asker holds on THIS agent for THIS turn (a confined turn lists read and its read mode or host site only);
     an older canopy-web sent none, so fall back to the relationship (owner/admin/system).
 
     A turn with no agent holds no permissions, so `own_box_turn` decides it: a person's own work on

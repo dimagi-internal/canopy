@@ -312,10 +312,10 @@ def test_a_confined_caller_names_read_mode(tmp_path):
     assert ", read mode" in line and "capability" not in line
 
 
-def test_a_confined_caller_names_its_connected_site(tmp_path):
+def test_a_confined_caller_names_its_host_site(tmp_path):
     line = _access(tmp_path, profile="confined", role="read_only", permissions=["read", "use:connect"],
                    granted_by="grant:workspace:connect", capability={"name": "connect"})
-    assert "connected site=connect" in line and "capability" not in line
+    assert "host site=connect" in line and "capability" not in line
 
 
 TRIGGER = {"id": 22, "name": "AWS CloudWatch alarms", "kind": "inbound_mail",
@@ -797,3 +797,22 @@ def test_a_non_canopy_session_gets_no_presence_file(box, monkeypatch, capsys):
 def test_a_hostile_session_id_writes_nothing(box):
     cc.record_presence("../../etc/x", "canopy_web_chat", root=str(box))
     assert not (box / "presence").exists()
+
+
+# `access` (full | confined | refused) is the Turn Context's word; a refused turn's `profile`
+# still says `full`, which must not read as "no agent in this turn".
+
+def test_a_refused_turn_says_refused_not_no_agent(tmp_path):
+    env = {**ENV, "access": "refused", "granted_by": "refused", "role": None, "permissions": []}
+    text = cc.summarize(env, str(tmp_path / "env.json"), TID)
+    assert "access: refused" in text and "do not act" in text
+    assert "no agent in this turn" not in text
+
+
+def test_access_leads_the_line_when_present(tmp_path):
+    env = {**ENV, "access": "full", "role": "owner", "permissions": ["read", "write"], "granted_by": "owner"}
+    assert "- access: full, profile=full, role=owner" in cc.summarize(env, str(tmp_path / "e"), TID)
+
+
+def test_an_older_envelope_without_access_reads_as_before(tmp_path):
+    assert "- access: profile=full" in cc.summarize(ENV, str(tmp_path / "e"), TID)
