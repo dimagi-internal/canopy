@@ -20,7 +20,7 @@ without one there is no read. canopy-web then starts the project's agent with
 `propose` falls back to a `suggested` task in the project on a canopy-web without the
 `…/tasks/propose/` route.
 
-Spec: canopy-web docs/superpowers/specs/2026-10-17-project-check-ins-design.md (§6).
+Design record: canopy-web's project check-ins design, under docs/superpowers/specs/ (§6).
 """
 from __future__ import annotations
 

@@ -29,7 +29,7 @@ Drive (`huddle_store`).
     view      → the huddle page URL
 
 The leader's procedure (what to run in what order, and the judgment between the steps) is
-`plugins/canopy/agent-core/huddle.md`. Spec: docs/superpowers/specs/2026-10-06-huddle-design.md.
+`plugins/canopy/agent-core/huddle.md`. Design record: the huddle design under docs/superpowers/specs/.
 """
 from __future__ import annotations
 
@@ -1155,8 +1155,9 @@ def round1_blocks(detail: dict) -> dict:
 @click.option("--huddle", "hid", required=True)
 @click.option("--merges", "merges_path", default=None, type=click.Path(exists=True),
               help="The leader's merges.json (absorbs / distinct_from).")
-@click.option("--principal", default="Jonathan", show_default=True,
-              help="Whose asks `asks_of_jonathan` collects (round-1 needs `from` this name).")
+@click.option("--principal", default="Jonathan", show_default=False,
+              help="Whose asks `asks_of_jonathan` collects (round-1 needs `from` this name); "
+                   "default: the fleet owner.")
 @click.option("--out", default=None, type=click.Path(dir_okay=False))
 def proposals_cmd(hid, merges_path, principal, out):
     """Round-2/3 proposals merged with round-3 co-sign answers and how each amend settled —

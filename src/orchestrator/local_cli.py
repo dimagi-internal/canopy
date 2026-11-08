@@ -3,13 +3,13 @@
 What a person runs is `canopy agent use <slug>` (agent_use.py), which does all of local use
 in one go; this module holds the pieces it calls and the hook-facing `canopy local` verbs.
 
-canopy-web#1704. Three objects:
+Three objects:
 
 * **this computer** — registered once for local use with YOUR canopy token (canopy-web
   calls the record a "private runner"; `register_this_computer`, run by `canopy agent use`).
   It belongs to you and serves every agent you use.
   When the machine also runs the runner app, the two are linked and the runner works
-  only for you (canopy-web#1705); otherwise it never claims a turn. Recorded in
+  only for you; otherwise it never claims a turn. Recorded in
   ``~/.canopy/private-runner.json``.
 * a **local turn** — one Claude Code session here using one agent. The canopy
   plugin's SessionStart hook opens it (`canopy local open`), the prompt hook
@@ -173,8 +173,8 @@ def private_runner_register(name, no_runner, as_json):
 
     Idempotent. It lets a Claude Code session here that uses an agent be recorded as a
     local turn — yours, with the agent's envelope, rails and (when its caller list allows
-    you) its credentials. When this computer also runs the runner app, the two are linked
-    (canopy-web#1705): sessions here prove themselves with the runner's device key, and
+    you) its credentials. When this computer also runs the runner app, the two are linked:
+    sessions here prove themselves with the runner's device key, and
     `canopy private-runner set private|shared` says which it is."""
     doc = register_this_computer(name, link_runner=not no_runner)
     if as_json:
@@ -197,7 +197,7 @@ def private_runner_set(mode, as_json):
 
     To run as a lower role, start the TURN that way (`canopy agent dispatch --as
     editor`), or put a client in that mode with CANOPY_ACTS_AS=editor|viewer — a
-    property of a turn or a process, never a setting left on a machine (canopy-web#1705)."""
+    property of a turn or a process, never a setting left on a machine."""
     doc = read_private_runner()
     rid = doc.get("runner_id") or ""
     if not rid:

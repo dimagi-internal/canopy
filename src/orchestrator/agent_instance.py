@@ -3,8 +3,7 @@ that instance's Canopy vault (canopy-web).
 
 A plugin is code. An **instance** is canopy-web's Agent record: identity, workspace and
 credentials. A local install is bound to exactly ONE instance, chosen once at setup and never
-switched mid-session; using another instance means running setup again (Jonathan,
-2026-10-14).
+switched mid-session; using another instance means running setup again.
 
     canopy agent env --plugin <name> [--out ~/.<name>/.env] [--agent <instance>] [--force]
                      [--print]

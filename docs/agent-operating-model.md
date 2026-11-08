@@ -340,8 +340,8 @@ the same boundary as §4a (shared capability, per-agent binding) applied across 
 - **Private + per-operator:** provider code stays private (grant GitHub access per-person); creds
   are per-operator secrets, never committed. For service-account auth, the target resource (a sheet,
   a Drive folder) is shared with the SA email.
-- **Future:** a `canopy capabilities` discovery so agents enumerate available MCPs/plugins instead
-  of hardcoding — keeps this current as the stack changes (echoes Hal's "weekly tool review").
+- **Not built:** a discovery command so agents enumerate available MCPs/plugins instead of
+  hardcoding them (echoes Hal's "weekly tool review").
 
 ## 4d. Runs in emdash worktrees — keep the loop worktree-clean (decided)
 
@@ -366,7 +366,7 @@ agent the factory produces:
 
 Agents need credentials (service-account keys, OAuth creds, PATs) that must never be in git yet
 must be available wherever the agent runs — main checkout, any emdash worktree, every operator's
-machine. They live in **the agent's Canopy vault on canopy-web** (its Settings → Credentials), and
+machine. They live in **the agent's Canopy vault on canopy-web** (its Settings → Security tab), and
 nothing in an agent repo names a secret — see `agent-core/agent-runtime.md`.
 
 A plugin is code; an *instance* is canopy-web's Agent record (identity, workspace, credentials).

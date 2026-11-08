@@ -1403,7 +1403,7 @@ def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders,
     click.echo("  2. Add domain skills under skills/<name>/SKILL.md.")
     click.echo("  3. Add each outbound action as a deny rail in config/gating.json naming its one")
     click.echo("     sanctioned path; keep `approve` empty (approval is the turn checklist's job).")
-    click.echo("  4. Store secrets in its Canopy vault (canopy-web → Settings → Credentials); /<slug>:setup")
+    click.echo("  4. Store secrets in its Canopy vault (canopy-web → Settings → Security); /<slug>:setup")
     click.echo("     (already stamped) fills ~/.<slug>/.env from it — the vault is the one list.")
     click.echo("  5. Push to GitHub, then `canopy agent-publish register` from the repo — it records")
     click.echo("     the repo URL runners clone (from the git origin).")
@@ -1607,7 +1607,7 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
         click.echo("  ⚠ could not read the process table — liveness fell back to file mtime "
                    "alone, so a turn parked at an approval gate may be graded as finished.")
     if corrections:
-        click.echo("  ⚑ HUMAN CORRECTIONS (highest signal — what Jonathan had to override):")
+        click.echo("  ⚑ HUMAN CORRECTIONS (highest signal — what the operator had to override):")
         for c in corrections:
             click.echo(f"      [{','.join(c['kinds'])}] {c['quote']}")
 
@@ -1691,7 +1691,7 @@ def fleet_align_cmd(extra_repos, hours, no_evidence, no_llm, model, as_json):
     Claude Code agent by the `fleet-align` skill — matching canopy's pipeline-stops-at-proposals
     architecture — not done by brittle programmatic splicing here. `--json-output` emits each
     distribute finding's change brief (target file + the template's reference text) for that agent.
-    See docs/superpowers/specs/2026-07-03-fleet-align-design.md.
+    Design record: the fleet-align design under docs/superpowers/specs/.
     """
     import json as json_mod
     import os
@@ -1803,8 +1803,8 @@ def harvest_strip(session_path, mode):
               help="USD cap for the claude -p audit pass (default: 2.0)")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 def harvest_intent_audit(session_path, no_llm, model, max_budget_usd, as_json):
-    """Intent-fidelity audit for ONE session: reconstruct what Jonathan was actually going for
-    (in his own words) and judge whether the agent did that — not whether its output looks
+    """Intent-fidelity audit for ONE session: reconstruct what the operator was actually going for
+    (in their own words) and judge whether the agent did that — not whether its output looks
     reasonable in isolation. Findings are validated against the SP1 evidence-record schema
     before they're trusted (see `orchestrator.harvest.intent_audit`)."""
     import json as json_mod

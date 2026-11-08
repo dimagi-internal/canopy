@@ -23,7 +23,12 @@ migration labels like contacts/0022) unless a repo file ends with them, and bare
 filenames found nowhere in the repo (usually runtime files). Prints one MISSING / SYMBOL line per broken reference and a
 "checked N, broken M" summary. Exit 1 if anything is broken.
 
-    python3 check_refs.py [--root DIR] FILE.md [FILE.md ...]
+    python3 check_refs.py [--root DIR] [--ignore-file PATH | --no-ignore] FILE.md [FILE.md ...]
+
+References that are not this repo's (another repo's file, build output, an event
+name) are listed once, with a reason, in `.docs-ignore` at the repo root; see
+docs_ignore.py. `--no-ignore` shows everything. Entries nothing matched print
+as UNUSED.
 
 Stdlib only.
 """
@@ -34,6 +39,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import docs_ignore  # noqa: E402
 
 EXTENSIONS = {
     "py", "md", "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "yaml", "yml",
@@ -228,10 +236,13 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("files", nargs="+", type=Path)
     ap.add_argument("--root", type=Path, help="repo root (default: git toplevel of the first file)")
+    ap.add_argument("--ignore-file", type=Path, help="ignore file (default: <root>/.docs-ignore)")
+    ap.add_argument("--no-ignore", action="store_true", help="report everything, ignore file or not")
     args = ap.parse_args(argv)
 
     root = (args.root or repo_root(args.files[0].resolve().parent)).resolve()
     checker = Checker(root)
+    ign = docs_ignore.Ignores([], root) if args.no_ignore else docs_ignore.load(root, args.ignore_file)
     checked = broken = 0
     for doc in args.files:
         doc = doc.resolve()
@@ -252,9 +263,13 @@ def main(argv: list[str] | None = None) -> int:
             checked += 1
             kind, detail = res
             if kind != "ok":
+                if ign.ref(ign.rel(doc), tok):
+                    continue
                 broken += 1
                 print(f"{kind} {shown}:{line_no} `{tok}` — {detail}")
     print(f"checked {checked}, broken {broken}")
+    for line in docs_ignore.report(ign, "check_refs"):
+        print(line)
     return 1 if broken else 0
 
 

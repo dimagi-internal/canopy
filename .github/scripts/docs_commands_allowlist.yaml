@@ -1,0 +1,8 @@
+# Commands shown in end-user pages that docs_commands_check.py must not resolve against the CLI:
+# placeholders and deliberate non-commands. One entry per command text, exactly as the page
+# shows it (up to the first pipe, redirect or comment), each with a reason. An entry no page
+# shows any more fails the check, so this file cannot outlive what it excuses.
+#
+# - command: canopy <placeholder> --flag
+#   reason: why this is not a real canopy command
+[]

@@ -834,7 +834,7 @@ def test_relogin_remedies_never_name_the_web_client():
         {"email": "someone-else@dimagi-ai.com", "client": "canopy", "services": ["gmail"]}]))
     assert not r.ok
     assert "--client canopy-web" not in r.detail
-    assert "Connect Google mailbox" in r.detail
+    assert "Connect Google" in r.detail
 
 
 def test_auth_client_relogin_fix_preserves_granted_scopes():

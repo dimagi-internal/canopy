@@ -4,7 +4,7 @@ The presentation sibling of `canopy gdoc` / `canopy gsheet` (agent_gdoc.py), wit
 filing contract (agent-core/deliverables.md): authored as the agent's own Workspace identity
 via gog, filed under `<agent root>/<area>/<project>`, shared, and permission-verified.
 
-Why this exists (2026-10-07): a deck built as a Claude Slides artifact has a built-in "send
+Why this exists: a deck built as a Claude Slides artifact has a built-in "send
 to Google Drive" export, but it rides the claude.ai Google Drive connector — and a Workspace
 admin can switch connectors off for the whole org. The deck's own **.pptx download** does not
 depend on any connector, so the dependable route is: download the .pptx, then let the agent

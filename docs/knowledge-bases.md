@@ -69,7 +69,7 @@ bundle/
 
 ## Curating with no local state
 
-A refresh runs from an empty disk on any machine (canopy-web#1925): canopy-web keeps
+A refresh runs from an empty disk on any machine: canopy-web keeps
 everything it needs from the last one, so no runner's disk matters and none is a copy
 to lose. A curator's refresh builds a `canopy_kb.curate.Curation` over
 `orchestrator.kb_remote.RemoteStore` (the project's host) and:
@@ -104,7 +104,7 @@ canopy kb build bundle/ --out kb.sqlite [--previous last.sqlite]   # diff → ch
 canopy kb push --kb connect/givewell-kb kb.sqlite --originals bundle/   # originals, then the whole file
 ```
 
-**canopy-web never builds an index** (canopy-web#1971: building in its web process ran
+**canopy-web never builds an index** (building in its web process runs
 it out of memory). The machine that refreshes builds the file (`canopy kb build`, or a
 curated refresh's `canopy_kb.apply` of what changed onto the served file) and `push`
 publishes it whole, as a version made from the one served now; canopy-web stores and
@@ -189,7 +189,7 @@ GiveWell questions with the same agent, this set answered 35.5 of 40 fact questi
 against 28.5 with one-shot passage search over embeddings, and won 18.5 of 30 research
 questions head to head.
 
-There are no read subcommands (`canopy kb search` …): they would only duplicate the tools.
+There are no read subcommands (no search, no get): they would only duplicate the tools.
 A script that needs a query imports `canopy_kb.KB`.
 
 ## A skill per library

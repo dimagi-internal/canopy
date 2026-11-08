@@ -1,4 +1,4 @@
-"""`canopy people` — the deterministic half of the fleet brain (canopy#804).
+"""`canopy people` — the deterministic half of the fleet brain.
 
 canopy-web holds what the fleet knows about each human it talks to, keyed on its
 `Person` model: append-only **facts** (six work-context kinds, each `declared` or
@@ -169,7 +169,7 @@ def _emit(doc, as_json: bool) -> None:
 
 @click.group("people")
 def people_group() -> None:
-    """What the fleet knows about the people it talks to (canopy#804)."""
+    """What the fleet knows about the people it talks to."""
 
 
 @people_group.command("show")

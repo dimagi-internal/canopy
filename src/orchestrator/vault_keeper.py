@@ -1,5 +1,5 @@
 """`canopy vault zk keep` — this runner passes on the vault keys it holds, with nobody asked
-(canopy-web spec 2026-10-22-vault-access-follows-canopy-access-design.md §1).
+(canopy-web's vault-access-follows-canopy-access design, §1).
 
 Under zero-knowledge only a holder of an agent's vault key can give a copy to someone new.
 A runner that holds one is a holder and is online, so on its own clock it asks canopy-web
@@ -10,7 +10,7 @@ whom it trusts, so a server that lies can delay a grant but never add a reader:
 * **a person** (a member of the agent's vault) is trusted on first sight: their key is
   pinned in ``~/.canopy/vault-pins.json`` (the pin store ``vault zk set --sealed`` uses,
   keyed by person like ``known_hosts``). A pinned person whose key CHANGED is skipped until
-  an admin confirms it with them (Jonathan's decision 2, 2026-10-22);
+  an admin confirms it with them;
 * **a machine** needs an endorsement (zk-v1 §7) of its exact key by a person this box
   trusts — pinned, or pinned now on first sight under the same rule. Approving a machine
   makes that endorsement (canopy-web ``approveAndGrant``).
@@ -27,7 +27,7 @@ written back over the version it read (a stale write is retried on the next pass
 box re-seals one it holds for a waiting machine under the same machine rule — an
 endorsement of its exact key by a person it trusts — and to nobody else (``keep_delegated``).
 
-**Connections** (canopy-web spec 2026-10-31-connections-zero-knowledge-design.md §4.1, §4.5)
+**Connections** (canopy-web's connections zero-knowledge design, §4.1, §4.5)
 are the same job under stricter rules, in ``connections.keep``: a box re-seals a connection
 it holds for waiting machines the owner's signed statement allows, and revokes one being
 disconnected, then confirms. They have their own route, their own pin file and a device

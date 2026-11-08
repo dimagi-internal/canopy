@@ -33,10 +33,10 @@ def _runners_path(workspace: str = "") -> str:
 
     With a workspace, the TENANT route — the same tenant the turn is enqueued into.
     The flat route returns the union of every workspace the caller belongs to
-    (canopy-web #509 scoped the read by tenant rather than by who paired what), so
+    (canopy-web scopes the read by tenant rather than by who paired what), so
     preflighting on it and then POSTing to one workspace can pass on workspace A's
     runners and enqueue into workspace B, where nothing serves the repo. That is
-    #428's queue-forever failure reached by a new route.
+    a queue-forever failure reached by a new route.
     """
     workspace = (workspace or "").strip()
     return f"/api/w/{workspace}/harness/runners/" if workspace else RUNNERS_PATH
@@ -85,7 +85,7 @@ def project():
                    "a different dispatch and an identical retry dedupes. Pass a fresh one "
                    "to deliberately re-dispatch the same work.")
 @click.option("--runner", "runner_ref", default="",
-              help="Pin the turn to ONE runner, by name (e.g. jj-mbp-cdp) or id — for work "
+              help="Pin the turn to ONE runner, by name (e.g. cloud-ec2-2) or id — for work "
                    "that must land on a specific box. Only it may claim the turn. Read from "
                    "the target workspace's fleet; refused if the runner is unknown/ambiguous/"
                    "retired or does not report the project. See --queue-if-not-ready for "
@@ -247,8 +247,8 @@ def project_runners_cmd(project_name, workspace, as_json):
     would claim it now, who would once they recover or wake, and which machines would
     need the repo opened on them.
 
-    Ownership is shown on rows you may not mutate. Since canopy-web #509 the list is
-    scoped by tenant rather than by who paired what, so it now contains runners you
+    Ownership is shown on rows you may not mutate. The list is
+    scoped by tenant rather than by who paired what, so it contains runners you
     can see and cannot touch — printing them unmarked would imply otherwise, and the
     remedy for those is a different person's action.
     """

@@ -61,7 +61,7 @@ and it is in the caller envelope; `--caller` reads it from there. An `auto` rule
 sender only applies to a VERIFIED message from them — otherwise the basis says `auto withheld`
 and the turn is manual. Run exactly the mode the command prints, even if the agent-wide switch
 says otherwise. Without `--caller` (a turn started by hand, an older runner) it reads the
-agent-wide switch. The human sets it in the agent's Settings → Routing on canopy-web (or
+agent-wide switch. The human sets it in the agent's Settings → Overview → Routing on canopy-web (or
 `PATCH /api/agents/<slug>/turn-mode` / `PUT …/runner-rules`) — never by editing a repo file, and
 never the agent itself mid-turn (the API enforces this: the agent-repo self-publish upsert cannot
 touch either).

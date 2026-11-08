@@ -136,7 +136,7 @@ real work. Its `command` starts that session; in it, apply the judgment below.
    install user-scope, so it would fire in every other agent's sessions too.
 
 Secrets the domain skill needs are stored in the agent's Canopy vault (canopy-web → its
-Settings → Credentials), named as the env var each becomes — that vault is the ONE declaration;
+Settings → Security tab), named as the env var each becomes — that vault is the ONE declaration;
 the repo holds no secrets list (agent-core/agent-runtime.md § One declaration). `/<slug>:setup`
 materializes them. canopy-web can't see this machine, so before the first turn on a laptop also run
 `uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .` (and again on any new machine).

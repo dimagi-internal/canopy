@@ -4,7 +4,7 @@
                          [--env-only] [--report] [--json]
     canopy agent bootstrap [--slug …]          # a PERSON's laptop: the same steps, person mode
 
-WHY ONE IMPLEMENTATION (2026-10-15, docs/architecture/agent-setup-lifecycle.md phase 2).
+WHY ONE IMPLEMENTATION (docs/architecture/agent-setup-lifecycle.md phase 2).
 Preparing an agent had five homes: canopy-web's runner/ec2/bootstrap_agents.sh (1,400 lines
 of bash, a fleet-wide batch at box start), cloud_runner.py's per-claim patches (env refresh,
 lazy clone, pull), this module's laptop twin, `canopy agent env`, and an unwired runtime
@@ -348,7 +348,7 @@ class RunnerPreparer(Bootstrapper):
             # A clone that could not be UPDATED is still a clone — provision it as it is,
             # the way a turn runs in a clone whose pull failed (#965).
             rep.notes.append(f"repo not updated: {err} — its owner may have lent no GitHub "
-                             "token that can read it (Settings → Credentials → GitHub)")
+                             "token that can read it (Settings → External accounts → GitHub)")
         elif err:
             rep.fail(f"repo: clone of {url} failed: {err}")
             return None

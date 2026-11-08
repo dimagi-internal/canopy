@@ -21,7 +21,7 @@ Three subcommands:
   echo: contact-memory) so inbound triage can route the reply.
 - `mark-read` — remove the UNREAD label via `gog gmail thread modify` (API reads don't
   clear the flag). Auth rides gog's own token bucket — never the macOS Keychain, which
-  blocks forever on a GUI prompt in non-interactive shells (dimagi-internal/ace#827).
+  blocks forever on a GUI prompt in non-interactive shells.
 - `archive` — the other half of turn housekeeping: drop INBOX + UNREAD so a handled or
   non-actionable thread leaves the agent's own inbox instead of lingering. Own mailbox
   only, reversible, no approval gate (agent-core/turn.md Step 2).
@@ -292,9 +292,9 @@ def login_command(account: str, client: str, services: str = "") -> str:
 
 
 def button_remedy(slug: str) -> str:
-    """The browser alternative to a terminal `gog login` — an equal path since 2026-10-04."""
-    return (f"or, from a browser: canopy-web /w/<ws>/agents/{slug}/settings#credentials → "
-            f"\"Connect Google mailbox\" (mints under `canopy-web`; either fleet client serves "
+    """The browser alternative to a terminal `gog login` — an equal path."""
+    return (f"or, from a browser: canopy-web /w/<ws>/agents/{slug}/settings/accounts → "
+            f"\"Connect Google\" (mints under `canopy-web`; either fleet client serves "
             f"turns), then `canopy agent bootstrap --slug {slug}` on a laptop / Refresh on a "
             f"cloud runner")
 
@@ -3114,7 +3114,7 @@ def email_group():
 @click.option("--attach-from-thread", "attach_from_thread",
               help="Re-attach EVERY attachment on this thread (de-duplicated) — the "
                    "forward path. Without it a forward silently degrades to a body-text "
-                   "summary plus whatever links were in the original (canopy#462). "
+                   "summary plus whatever links were in the original. "
                    "Combines with --attach.")
 @click.option("--from", "from_address",
               help="Which of the agent's OWN addresses starts this NEW thread (agent.json "
@@ -3361,7 +3361,7 @@ def _dangling_options(fn):
                      help="Emit JSON instead of a table."),
         click.option("--no-owners", is_flag=True,
                      help="Skip the canopy-web lookup that bands an unread thread OWNED "
-                          "when a turn keyed to it is working it (canopy#758)."),
+                          "when a turn keyed to it is working it."),
     ]):
         fn = opt(fn)
     return fn
@@ -3471,7 +3471,7 @@ def email_dangling(repo, agent, account, client, days, limit, stale_after, older
 
     Run this EVERY turn, BEFORE any "inbox clear" early return. A dangling thread
     generates no new inbound by definition, so a turn driven by unread mail can never
-    surface it, and a quiet inbox is exactly when it matters most (ace#1931: 42 days).
+    surface it, and a quiet inbox is exactly when it matters most.
 
     FINDING ONE IS NOT A VERDICT. What decides is whether a turn ever DISPOSED of it:
 

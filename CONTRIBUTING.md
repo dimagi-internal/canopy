@@ -126,3 +126,22 @@ uv run pytest        # from the project root
 
 A handful of browser-dependent tests error on collection unless the optional
 extras are installed: `pip install -e '.[browser]'`.
+
+### Docs tests, in a clean environment
+
+```
+scripts/test-docs.sh            # about 4 s once the uv cache is warm
+scripts/test-docs.sh -k budget  # extra arguments go to pytest
+```
+
+Runs only the docs-related tests (CLAUDE.md budget, version-bump rules, the doc-regeneration
+scripts and `.docs-ignore`, `--help` text history, the `docs-commands` gate, the canopy-web labels
+the pages name) and then the `docs-commands` check itself. It uses a throwaway `HOME` and an
+environment holding only `PATH` and the uv cache location, so your real tokens, device keys and
+`CANOPY_*` / `GH_*` variables are never read; `tests/test_hermetic_env.py` fails the run if that
+stops being true. Use it before pushing a docs change. The full suite is still `uv run pytest`
+(several minutes, and on a machine with real credentials some token and device-key tests can fail
+for reasons unrelated to your change).
+
+To check the canopy-web labels against a canopy-web checkout too:
+`CANOPY_WEB_PATH=~/src/canopy-web scripts/test-docs.sh` (the one variable the script passes through).

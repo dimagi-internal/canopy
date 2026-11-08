@@ -56,10 +56,11 @@ ciphertext; values are opened on a device that holds a grant of the agent's vaul
 
 - **The recovery code** is printed once, when zero-knowledge is turned on. The admin who enabled
   it keeps it offline. It opens the vault if every device and passkey is lost.
-- **A device needs a grant.** A new computer or runner appears under **Grant pending** on the
-  agent's page (`/agents/<slug>`). An admin who holds a grant presses it (or runs
+- **A device needs a grant.** A new computer or runner shows as **Grant pending** on the
+  agent's page (`/agents/<slug>`). An admin who holds a grant presses **Give them access** on its
+  Settings → Security tab (or runs
   `canopy vault zk grant --agent <slug>` from a machine that has access).
-- **Changing a value**: the agent's Settings → Credentials, or `canopy vault zk set --agent <slug>
+- **Changing a value**: the agent's Settings → Security tab, or `canopy vault zk set --agent <slug>
   NAME`. The next session picks it up.
 
 A computer with no runner app holds its device key too: registering it for local use gives it

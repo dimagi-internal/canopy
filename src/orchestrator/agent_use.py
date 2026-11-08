@@ -481,14 +481,13 @@ def _google_step(rep: UseReport, slug: str, deps: Deps, *, may_resolve: bool, is
     """The agent's Google login on this computer: what `canopy agent bootstrap` does for an
     admin, so the agent's first Gmail or Drive call (gog, `canopy cred google-token`) works.
 
-    2026-10-28, failure investigation 17, turn c10c9748: a licensee set up ace on a Windows
-    laptop with `canopy agent use`, which had no Google step — so the turn died on its first
-    `gog gmail search` ("OAuth client credentials missing … credentials-canopy.json") and
-    the fix it printed was `canopy agent bootstrap`, an admin's command. The agent acts on
-    Google as itself (Jonathan, 2026-10-28). A licence holder reads its login only inside
+    Without this step a licensee's turn on a fresh laptop dies on its first
+    `gog gmail search` ("OAuth client credentials missing … credentials-canopy.json"), and
+    the fix it would print is `canopy agent bootstrap`, an admin's command. The agent acts on
+    Google as itself. A licence holder reads its login only inside
     their own local turn, so for them the session's start does the import
     (`canopy agent google-login --if-needed`, hooks/agent_session_start.py) and this step says so.
-    No fix here ever says `gog login <agent mailbox>` or "Connect Google mailbox": a
+    No fix here ever says `gog login <agent mailbox>` or "Connect Google": a
     licence holder can do neither."""
     blocked = [s.name for s in rep.needs
                if s.name in ("device key", "vault access", "licence", "plugin")]

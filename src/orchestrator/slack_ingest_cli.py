@@ -1,6 +1,6 @@
 """`canopy slack ingest` — read a whole Slack channel, with a person's permission.
 
-canopy-web does the reading (canopy-web#1533): an agent ASKS, canopy posts an
+canopy-web does the reading: an agent ASKS, canopy posts an
 Approve / Decline message in the channel, and only after a channel member who
 administers the agent's workspace (or created the channel) approves does canopy
 page the channel's history into a transcript. The agent never holds a Slack token
