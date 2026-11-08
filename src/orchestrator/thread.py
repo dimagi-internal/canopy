@@ -19,7 +19,7 @@ resumable: run it again from anywhere and it picks up where the thread is.
 
 First use: the huddle's agreement step. When a teammate answers `amend` on a proposal, the
 proposal's author and that teammate settle it directly (kind `agreement`) instead of one relayed
-hop. Contract: canopy-web + canopy agree on docs/architecture/agent-threads.md.
+hop. Contract: docs/architecture/agent-threads.md.
 """
 from __future__ import annotations
 

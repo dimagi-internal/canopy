@@ -86,7 +86,10 @@ session's agent IS their agent and exit 0 otherwise — so a sibling's rails nev
 your session, whether or not that sibling has dropped its hook yet.
 
 STDLIB ONLY by design: a PreToolUse hook runs under whatever python3 is on PATH, which may not
-have PyYAML. That is why the gating config is JSON, not YAML.
+have PyYAML. That is why the gating config is JSON, not YAML. For the same reason the baseline
+rails are DATA read from the plugin directory (`load_baseline`), not an import of canopy (it
+lives in its own tool venv, unreachable from this interpreter) and not a `canopy` subprocess
+(its startup cost would be paid on every Bash/Edit/Write call). Do not replace either.
 """
 import json
 import os

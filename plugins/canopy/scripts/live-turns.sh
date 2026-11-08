@@ -3,114 +3,80 @@
 #
 # WHY THIS IS A SCRIPT AND NOT A ONE-LINER IN THE PROCEDURE
 # --------------------------------------------------------
-# turn.md used to print this, three times:
+# A one-liner such as
 #
 #     ps aux | grep '[c]laude --session-id' | grep -c -- '--thread <the-ref>'
 #
-# It reads the scope out of the process's argv, and argv does not survive a
-# resume. A session that is resumed — after an interrupt, a stall, a crash, or a
-# context handoff — runs as `claude --resume <uuid>` with NO `--thread` and no
-# `/<slug>:` in its command line. So the check returns **0**, for every live turn
-# including the one running it.
+# reads the scope out of the process's argv, and argv does not survive a resume.
+# A session that is resumed (after an interrupt, a stall, a crash, or a context
+# handoff) runs as `claude --resume <uuid>` with NO `--thread` and no `/<slug>:`
+# in its command line. So that check returns **0**, for every live turn including
+# the one running it.
 #
 # Zero reads as "nobody else is here." It is the all-clear, and it is produced by
 # the check failing, silently, in exactly the situation the check exists for: a
 # long or resumed turn is precisely the turn a recovery dispatch was sent to
-# replace. Measured 2026-09-01 — a hal turn re-ran the documented check mid-turn
-# and got 0 while FOUR hal turns were live, two of them holding the very ref it
-# was asking about.
+# replace.
 #
-# The fix is to stop reading scope from argv. A session's scope is in its
+# So this script never reads scope from argv. A session's scope is in its
 # transcript, which survives a resume because the resume replays it.
 #
-# Three wrong versions of that got written before this one, which is the tell
-# that it belongs in code:
-#   1. matching `^claude ` in `ps` output — misses absolute-path invocations;
-#   2. `head -c 20000` of the transcript — a transcript opens with large
+# Wrong ways to read scope from a transcript, each of which returns a confident
+# wrong number rather than an error (which is why this belongs in code):
+#   1. matching `^claude ` in `ps` output: misses absolute-path invocations;
+#   2. `head -c 20000` of the transcript: a transcript opens with large
 #      system-reminder blocks, so the scope line sits past the truncation and
 #      every session reports "not scoped to this ref";
-#   3. grepping the whole transcript for the bare ref — matches any sibling that
+#   3. grepping the whole transcript for the bare ref: matches any sibling that
 #      merely DISCUSSED the ref (checking for duplicates is itself a mention), so
 #      it over-reports and the stand-down rules fire against innocent turns.
-# Each returned a confident wrong number rather than an error.
 #
-# FOURTH FAILURE, measured live 2026-09-02 — SCOPE IS NOT ONLY SET BY `:turn`.
-# Version 4 read scope from the transcript, which fixed the resume case, but it
-# recognised exactly two shapes: `command-args>--thread <ref><` and
-# `command-name>/<slug>:turn<`. A turn dispatched as **/eva:chief-of-staff**
-# matches NEITHER — a chief-of-staff cycle drains the inbox as one of its
-# pillars, so it discovers a thread by scanning and never records it as an arg,
-# and its command name is not `:turn`. Both counts therefore came back all-clear
-# (`--ref` 1, `--slug` 2) while that session was, at that moment, creating a
-# calendar event on the asking turn's ref and starting to write the same Google
-# Doc tab. The asking turn was one call from a last-write-wins clobber of a
-# shared team doc, mid-write. This matters more than it sounds: the unattended
-# dispatches a fleet actually runs on a schedule — chief-of-staff, morning
-# briefings, weekly goals — are all non-`:turn` entry points, so `--slug`, whose
-# whole job is the wider "a sibling of mine is live somewhere" count, was blind
-# to the most common shape of sibling there is.
-#
-# Fixed here by (a) matching ANY `/<slug>:` entry point for --slug, (b) listing,
-# separately from COUNT, live sessions that mention the ref without being scoped
-# to it, and (c) warning when live sessions carry no scope line at all. (b) and
-# (c) are deliberately NOT folded into COUNT: over-reporting fires the stand-down
-# rules against innocent turns, which is wrong version 3 above. They are pointers
+# SCOPE IS NOT ONLY SET BY `:turn`. A turn dispatched as /eva:chief-of-staff has
+# neither `command-args>--thread <ref><` nor `command-name>/<slug>:turn<`: an
+# inbox-draining entry point discovers a thread by scanning and never records it
+# as an arg. The unattended dispatches a fleet runs on a schedule (chief-of-staff,
+# morning briefings, weekly goals) are all non-`:turn` entry points, so:
+#   (a) --slug matches ANY `/<slug>:` entry point;
+#   (b) live sessions that mention the ref without being scoped to it are listed
+#       separately from COUNT;
+#   (c) live sessions that carry no scope line at all are warned about.
+# (b) and (c) are deliberately NOT folded into COUNT: over-reporting fires the
+# stand-down rules against innocent turns (wrong way 3 above). They are pointers
 # to go READ, and the reading is what decides.
 #
-# FIFTH FAILURE, measured live 2026-09-04 — THE CHECK CONTAMINATED ITSELF.
-# Version 5 matched `command-args>--thread <ref><` anywhere in the transcript.
-# But turn.md instructs a turn to READ THE OTHER SESSIONS' TRANSCRIPTS, and
-# doing so prints the read session's first user prompt — command-args and all —
-# into the READER's transcript as tool output. The reader then matches the read
-# session's scope pattern exactly, and every subsequent check sees a duplicate
-# that does not exist. The false positives COMPOUND: the more faithfully the
-# fleet follows the procedure, the more sessions carry each other's scope lines.
+# THE CHECK MUST NOT CONTAMINATE ITSELF. agent-core/turn.md tells a turn to READ
+# THE OTHER SESSIONS' TRANSCRIPTS, and doing so prints the read session's first
+# user prompt (command-args and all) into the READER's transcript as tool output.
+# A reader that matches the full command-args pattern anywhere in its file then
+# sees a duplicate that does not exist, and the false positives compound as more
+# of the fleet follows the procedure. The stand-down language in turn.md is
+# deliberately emphatic ("two agent emails to one person is worse than no email"),
+# so a compliant turn acting on a phantom COUNT drops real work. The lesson is
+# about WHERE, not WHAT: tightening the PATTERN cannot fix it, because a quoted
+# prompt reproduces the full pattern verbatim. Only bounding the REGION can, so
+# only the FIRST `"type":"user"` record is matched, which is where a slash
+# command's args are, and which still survives a resume (a resume replays the
+# original prompt).
 #
-# A hal turn scoped to the `ALARM:` thread of one CloudWatch alarm was told
-# COUNT=2 by a sibling scoped to an entirely different thread, whose only
-# involvement was having read its transcript one minute earlier. turn.md's
-# stand-down language is deliberately emphatic ("two agent emails to one person
-# is worse than no email"), so a compliant turn acting on that number drops real
-# work — the precise cost wrong version 3 was fixed to avoid.
-#
-# This is version 3 in a narrower disguise, and the lesson is about WHERE, not
-# WHAT: version 5 tightened the PATTERN (bare ref -> the full command-args
-# string) and left the REGION as the whole file. A quoted prompt reproduces the
-# full pattern verbatim, so no amount of pattern-tightening can fix it. Only
-# bounding the region can. Fixed by matching the FIRST `"type":"user"` record
-# only, which is where a slash command's args actually are — and which still
-# survives a resume, because a resume replays the original prompt.
-#
-# SIXTH FAILURE, measured live 2026-09-04 — `ps` CANNOT SEE A SESSION BETWEEN
-# PROCESSES. Found independently, the same day, by a second hal turn.
-#
-# Enumeration was `ps` and nothing else. But a session being RESUMED has no
+# `ps` CANNOT SEE A SESSION BETWEEN PROCESSES. A session being RESUMED has no
 # process for a few seconds: the old one has exited and the new one has not been
-# exec'd. Its transcript is on disk, correctly scoped, and it is completely
-# invisible. Measured: `--slug hal` at 07:07 returned COUNT=1 while THREE hal
-# turns were live, their transcripts written at 07:05:34, 07:05:47 and 07:06:03,
-# every one carrying `<command-name>/hal:turn`. Their `--resume` processes only
-# showed up in `ps` at 07:07-07:08. Cost ~40 minutes of duplicated work before
-# the collision was found by tripping over the other session's scratch worktree.
+# exec'd. Its transcript is on disk, correctly scoped, and invisible to `ps`.
+# That gap is exactly the window a recovery dispatch fires in, because a stalled
+# turn is what a recovery dispatch replaces. So a SECOND liveness source is used:
+# transcripts modified in the last CANOPY_LIVE_TURNS_RECENT_MIN minutes (default
+# 10) whose session has no live process. They are reported OUTSIDE COUNT: they
+# are read-these pointers, not stand-down evidence, for the same reason as the
+# mention block.
 #
-# That gap is not a random few seconds — it is PRECISELY the window a recovery
-# dispatch fires in, because a stalled turn is what a recovery dispatch replaces.
-# So the one moment the check is blind is the one moment it is most needed.
+# The phantom-duplicate failure (contamination) and the invisible-session failure
+# (resume gap) point in OPPOSITE directions: one over-reports, the other
+# under-reports. A check exposed to both is wrong in both directions at once,
+# which is why COUNT alone is never safe to act on and the blocks under it carry
+# the real answer.
 #
-# Fixed by adding a SECOND liveness source: transcripts modified in the last
-# CANOPY_LIVE_TURNS_RECENT_MIN minutes (default 10) whose session has no live
-# process. Deliberately reported OUTSIDE COUNT — they are read-these pointers,
-# not stand-down evidence, for the same reason as the mention block.
-#
-# Note how five and six point in OPPOSITE directions: five over-reported
-# (phantom duplicates), six under-reported (invisible real ones). A check with
-# both is wrong in both directions at once, which is why COUNT alone was never
-# a safe thing to act on and why the blocks under it carry the real answer.
-#
-# THE INVARIANT ALL SIX VIOLATE, AND THE ONE TO TEST ANY VERSION 8 AGAINST:
-# a check that cannot see something must SAY SO. Every count this prints is a
-# lower bound, and it now says that out loud rather than rendering "I could not
-# look" as "nobody is there."
+# THE INVARIANT, AND THE ONE TO TEST ANY CHANGE AGAINST: a check that cannot see
+# something must SAY SO. Every count this prints is a lower bound, and it says
+# that out loud rather than rendering "I could not look" as "nobody is there."
 #
 # USAGE
 #   live-turns.sh --ref <gmail-thread-id|slack-ts>   # turns scoped to THAT ref
@@ -126,17 +92,13 @@
 # to act on either way: OTHERS>=1 means go read that session's transcript and
 # apply turn.md's stand-down rules before you write or send.
 #
-# EIGHTH FAILURE, measured live 2026-09-30 (ace) and again 2026-10-01 (hal) —
-# THE LABEL INVERTED THE ANSWER. Every COUNT line used to end "(includes you)",
-# unconditionally. turn.md tells an unscoped turn to run --ref on the thread it
-# just picked, and that turn is never in the --ref count — so a live
-# `--thread <ref>` sibling came back as `COUNT=1 (includes you)`, which reads as
-# "just me". Both times the unscoped turn started the work; both times it found
-# the owner only by accident (a sibling transcript, a worktree named after the
-# subject line). `--require-solo` had the same hole: it tripped at COUNT>1. The
-# caller is now identified by CLAUDE_CODE_SESSION_ID (CANOPY_LIVE_TURNS_SELF
-# overrides it — the test seam), it is also dropped from the "mentions" block
-# (its own earlier check mentions the ref, which made every unscoped turn's
+# THE LABEL ON EACH COUNT LINE IS THE ANSWER. A COUNT line ending "(includes you)"
+# unconditionally would read as "just me" even when a live `--thread <ref>`
+# sibling is the only session listed: turn.md tells an unscoped turn to run --ref
+# on the thread it just picked, and that turn is never in the --ref count. So the
+# caller is identified by CLAUDE_CODE_SESSION_ID (CANOPY_LIVE_TURNS_SELF overrides
+# it, which is the test seam), it is dropped from the "mentions" block (its own
+# earlier check mentions the ref, which would make every unscoped turn's
 # --require-solo re-check refuse on itself), and when the caller CANNOT be
 # identified the line says so instead of guessing.
 #
@@ -145,7 +107,7 @@
 # your scope that are active on disk but have NO live process (a resume in
 # flight); and live sessions with no scope line at all. Any of the three can be
 # a sibling working your item, and none of them can enter COUNT without
-# re-creating the over-reporting of wrong version 3.
+# re-creating the over-reporting of wrong way 3 above.
 #
 # Exit 0 always when it could look; exit 2 if it could not enumerate sessions at
 # all, because "I could not check" must never render as "nothing found".
@@ -157,12 +119,9 @@
 #     live-turns.sh --ref <ref> --slug <slug> --require-solo && <the write>
 #
 # Without it, "re-run the counts right before you write" is a printout, and a
-# printout chained into the write does not stop it. (Measured 2026-09-29, hal: a
-# pre-write re-check printed COUNT=2 plus a "go read these" mention in the SAME
-# command as a prod write, and the write ran before anyone read the output. The
-# sibling turned out to be benign — a confined caller session — which is luck,
-# not a check.) Live sessions with no scope line do NOT trip it: every machine
-# has some, and a gate that always fires is a gate people route around.
+# printout chained into the write does not stop it: the write can run before
+# anyone reads the output. Live sessions with no scope line do NOT trip it: every
+# machine has some, and a gate that always fires is a gate people route around.
 
 set -uo pipefail
 
@@ -176,8 +135,7 @@ while [ $# -gt 0 ]; do
     --ref)  REF="${2:-}"; shift 2 ;;
     --slug) SLUG="${2:-}"; shift 2 ;;
     # Whole header block, found by SHAPE not by line number: a hardcoded range
-    # goes stale the moment the header grows (it was '1,79p' while the header
-    # ran to 103 lines, silently truncating --help mid-sentence).
+    # goes stale the moment the header grows and silently truncates --help.
     -h|--help) awk '/^#/{print;next}{exit}' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
@@ -191,19 +149,19 @@ fi
 PROJECTS="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 
 # Who is asking. Claude Code exports the running session's id to every Bash
-# call; without it the COUNT line cannot say whether you are in it (EIGHTH
-# FAILURE above), so the unknown case is labelled as unknown, never as "you".
+# call; without it the COUNT line cannot say whether you are in it (see THE LABEL
+# ON EACH COUNT LINE above), so the unknown case is labelled as unknown, never as "you".
 SELF="${CANOPY_LIVE_TURNS_SELF-${CLAUDE_CODE_SESSION_ID:-}}"
 if [ ! -d "$PROJECTS" ]; then
   echo "cannot read $PROJECTS — NOT a clean result, do not treat as all-clear" >&2
   exit 2
 fi
 
-# Session ids of every live claude process, from EITHER flag. `--resume` is the
-# one the old check missed entirely.
+# Session ids of every live claude process, from EITHER flag (`--session-id`
+# or `--resume`; a resumed session has only the latter).
 #
 # This is the FIRST of two liveness sources, and on its own it is not enough: a
-# session mid-resume has no process at all (see SIXTH FAILURE above). The second
+# session mid-resume has no process at all (see the resume gap in the header). The second
 # source is RECENT_IDS below.
 #
 # CANOPY_LIVE_TURNS_SESSION_IDS overrides enumeration entirely — a test seam, so
@@ -235,24 +193,24 @@ transcript_for() {
 # the duplicate check is what makes a session look like a duplicate, and the
 # false positives COMPOUND as more of the fleet follows the procedure.
 #
-# That is wrong version 3 from the header returning in a narrower disguise:
-# version 5 tightened the PATTERN (bare ref -> the full command-args string) but
-# left the REGION as the whole file, and a quoted prompt reproduces the full
-# pattern too. Tightening the pattern can never fix this; only bounding the
-# region can. (Measured 2026-09-04, hal: a --thread-scoped turn was told COUNT=2
-# and "you are a duplicate" by a sibling that was scoped to a DIFFERENT thread
-# and had merely read its transcript. Standing down on that reading would have
-# dropped real work — turn.md's stand-down language is deliberately emphatic.)
+# That is wrong way 3 from the header in a narrower disguise: matching the full
+# command-args string instead of the bare ref tightens the PATTERN but leaves the
+# REGION as the whole file, and a quoted prompt reproduces the full pattern too.
+# Tightening the pattern can never fix this; only bounding the region can. A
+# --thread-scoped turn would otherwise be told COUNT=2 and "you are a duplicate"
+# by a sibling scoped to a DIFFERENT thread that merely read its transcript, and
+# standing down on that reading drops real work (turn.md's stand-down language is
+# deliberately emphatic).
 #
-# Taking the first `"type":"user"` record still survives a resume, which is the
-# invariant version 4 exists to protect: a resume REPLAYS the original prompt,
-# so the scope line is still in the first user message.
+# Taking the first `"type":"user"` record still survives a resume: a resume
+# REPLAYS the original prompt, so the scope line is still in the first user
+# message.
 # Tolerant of JSON whitespace on purpose. Claude Code writes compact records
-# (`{"type":"user"`), so a fixed-string match works today — but if that ever
-# gains a space this returns NOTHING, matches_scope then returns false for every
+# (`{"type":"user"`), so a fixed-string match would work — but if that
+# ever gained a space it would return NOTHING, matches_scope then returns false for every
 # session, and COUNT collapses to 0. That is a false ALL-CLEAR produced by a
 # formatting change, i.e. the check failing silently in the safe-looking
-# direction, which is the one shape this file has been burned by six times.
+# direction, which is the failure shape this whole file guards against.
 first_user_message() {
   grep -m1 -E '"type"[[:space:]]*:[[:space:]]*"user"' "$1" 2>/dev/null
 }
@@ -266,8 +224,7 @@ fi
 
 # SECOND liveness source: transcripts touched in the last few minutes whose
 # session has NO live process. That is either a session being resumed right now —
-# the blind spot that cost 40 minutes on 2026-09-04 — or one that stopped moments
-# ago. Both are worth reading before you write; neither is a duplicate you can
+# the blind spot `ps` has — or one that stopped moments ago. Both are worth reading before you write; neither is a duplicate you can
 # count, so these never enter COUNT.
 RECENT_MIN="${CANOPY_LIVE_TURNS_RECENT_MIN:-10}"
 RECENT_IDS=""
@@ -276,8 +233,7 @@ RECENT_IDS=""
 # unquoted here deliberately, to collapse the newlines to spaces. Without this
 # the `case` never matches and EVERY live session leaks into RECENT_IDS, so the
 # "NO live process" block lists the very sessions `ps` just found and tells the
-# reader to go chase sessions already sitting in COUNT. (Measured 2026-09-04:
-# all four live hal turns appeared simultaneously in both lists.)
+# reader to go chase sessions already sitting in COUNT.
 IDS_FLAT="$(echo $IDS)"
 if [ "$RECENT_MIN" -gt 0 ] 2>/dev/null; then
   while IFS= read -r f; do
@@ -325,7 +281,7 @@ report() {
       count=$((count + 1))
     fi
   done
-  # The label is the answer, not decoration: see EIGHTH FAILURE in the header.
+  # The label is the answer, not decoration: see THE LABEL ON EACH COUNT LINE in the header.
   if [ -z "$SELF" ]; then
     others=$((count > 0 ? count - 1 : 0))
     echo "COUNT=$count OTHERS>=$others (could not identify this session — CLAUDE_CODE_SESSION_ID unset;"
@@ -374,8 +330,8 @@ unscoped_sessions() {
 # so the ref is NOT necessarily the last arg: requiring `--thread <ref><` (the
 # ref immediately followed by `</command-args>`) made every runner-dispatched
 # turn invisible to COUNT — a false all-clear in exactly the case this check
-# exists for. (Measured 2026-09-28, eva: a `/eva:turn --thread <ref> --caller
-# <path>` session was told `COUNT=0 (includes you)` about its OWN ref.) So match
+# exists for (a `/eva:turn --thread <ref> --caller <path>` session would be told
+# `COUNT=0 (includes you)` about its OWN ref). So match
 # `--thread <ref>` anywhere inside the command-args, ended by a space or `<`
 # (the ref is escaped so a Slack-style ref's `.` stays literal, and a longer ref
 # sharing this one as a prefix never matches).
@@ -418,7 +374,7 @@ if [ -n "$REF" ]; then
     echo
   fi
 
-  # SEVENTH FAILURE, measured 2026-09-17, ace — A FINISHED TURN IS NOT NO TURN.
+  # A FINISHED TURN IS NOT NO TURN.
   #
   # Both liveness sources above are real-time: `ps`, and transcripts touched in
   # the last RECENT_MIN minutes. A turn that ran yesterday and ENDED is invisible
@@ -432,12 +388,9 @@ if [ -n "$REF" ]; then
   # told it is alone, and re-derives the identical triage from scratch — every
   # poll, unbounded, until a human answers.
   #
-  # Measured: thread 1a0ab6342ccdfa76, subject-only mail to ace@. Session
-  # 61830f67 triaged it on 2026-09-16 (46 assistant messages: read the thread,
-  # swept the sender, drained the board, ranked three options) and ended
-  # "Session paused — waiting on you". Nobody answered. The next day's turn got
-  # COUNT=0 here and redid all of it, finding the prior turn only by noticing a
-  # worktree directory named after the subject line. dimagi-internal/canopy#656.
+  # Without this block, a thread whose earlier turn ended "Session paused —
+  # waiting on you" gets COUNT=0 here and the next turn redoes all of the
+  # earlier turn's triage, finding it only by chance.
   #
   # Printed OUTSIDE and UNDER the count, like the no-process block, and for the
   # same reason: a completed turn is NEVER a duplicate to stand down on. It is a
@@ -455,14 +408,13 @@ if [ -n "$REF" ]; then
       # window end to end (~9s over 920 files here, because a non-match reads the
       # whole file); bounding the read to the head makes it ~4s. The scope line
       # lives in the FIRST user message, which sits at line <=20 in every
-      # transcript sampled, so 200 is ~10x margin. If Claude Code ever pushes it
-      # deeper this silently finds nothing — the fail-toward-silence shape this
-      # file has been burned by six times — so widen the bound, never tighten it.
+      # transcript sampled, so 200 is ~10x margin. If Claude Code pushed it
+      # deeper this would silently find nothing (the fail-toward-silence shape),
+      # so widen the bound, never tighten it.
       # NOT `head … | grep -q`: this script runs under `set -o pipefail`, and
       # `grep -q` exits the moment it matches, which SIGPIPEs `head` (141). With
       # pipefail the pipeline then reports FAILURE **on a match**, so the guard
-      # skips exactly the sessions it is meant to find. Caught in validation
-      # against the real 61830f67 case before this shipped. Keep it pipe-free.
+      # skips exactly the sessions it is meant to find. Keep it pipe-free.
       hdr="$(head -n 200 "$f" 2>/dev/null)"
       case "$hdr" in *"$REF"*) ;; *) continue ;; esac
       matches_scope "$f" E "$REF_SCOPE" \

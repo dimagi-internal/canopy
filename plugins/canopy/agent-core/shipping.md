@@ -5,19 +5,16 @@
 > your stub.
 
 Branch → commit → PR → wait → merge → **verify it landed** → say so. The expensive part is the
-**wait**, and it was being re-invented per agent and per turn — hal, eva and ace each wrote their
-own copy of these rules, and ace additionally shipped a *prescribed* poll loop that could not run.
-The mechanics live here now.
+**wait**; the mechanics live here so no agent re-invents them.
 
 Applies to every repo an agent ships into: its own, canopy, canopy-web, and any product repo.
 
 ## Whose name is on it — the GitHub identity, and `Requested-by:`
 
 **You act on GitHub as your OWNER.** On a cloud runner each turn is handed your owner's token for
-you (canopy-web `AgentDelegation`, canopy-web#747): `GH_TOKEN`/`GITHUB_TOKEN`, a git credential
-helper, and `GIT_AUTHOR_*`/`GIT_COMMITTER_*` set to the owner's GitHub identity — so `git push` and
-`gh pr create` just work, and commits are no longer `Ubuntu <ubuntu@ip-…>`. Its repository
-selection is exactly what you may touch.
+you (canopy-web `AgentDelegation`): `GH_TOKEN`/`GITHUB_TOKEN`, a git credential helper, and
+`GIT_AUTHOR_*`/`GIT_COMMITTER_*` set to the owner's GitHub identity — so `git push` and
+`gh pr create` just work. Its repository selection is exactly what you may touch.
 
 - **Don't `git config user.*`, and don't go looking for another token.** An empty `GH_TOKEN` or a
   403 means your owner has not lent you one (or it lacks that repo): that is the finding. Say it in
@@ -32,15 +29,16 @@ selection is exactly what you may touch.
 ## Step 0 — is there anything to wait FOR?
 
 **This is the step that pays**, because most of the time the answer removes the wait entirely. One
-call, and the answer is **not guessable**:
+call, and the answer is **not guessable** ("agent repos have no CI" is not a safe assumption;
+re-derive each repo's row, do not carry a table of them):
 
 ```bash
 gh pr checks <n> 2>&1 | head -3     # "no checks reported" => nothing to wait for, merge now
 ```
 
 ⚠️ **"no checks reported" has TWO meanings and this command cannot tell them apart.** It is also
-what you get when a provider outage DROPPED the `pull_request` event on a repo that very much does
-have gates — and merging on the Step-0 reading then ships genuinely unverified code. Disambiguate before acting on it:
+what you get when a provider outage DROPPED the `pull_request` event on a repo that does have
+gates — and merging on the Step-0 reading then ships unverified code. Disambiguate before acting on it:
 
 ```bash
 # Best, WHEN IT WORKS: the repo's own list of required checks.
@@ -50,10 +48,9 @@ gh api repos/<owner>/<repo>/branches/main/protection --jq .required_status_check
 **Required contexts non-empty + `gh pr checks` reporting none = the event was dropped**, not "no
 CI here."
 
-⚠️ **That call 403s on a private repo without branch protection** — which is every agent repo
-(`hal`, `eva`, `echo`, `ada`): `Upgrade to GitHub Pro or make this repository public…`. A 403 is
-NOT "no required checks"; it means you cannot ask. Fall back to the workflow files plus the run
-list, which work everywhere:
+⚠️ **That call 403s on a private repo without branch protection** (`Upgrade to GitHub Pro or make
+this repository public…`), as agent repos typically are. A 403 is NOT "no required checks"; it
+means you cannot ask. Fall back to the workflow files plus the run list, which work everywhere:
 
 ```bash
 grep -l 'pull_request' .github/workflows/*.yml   # does this repo gate PRs at all?
@@ -64,35 +61,12 @@ gh run list --branch <branch> --limit 5          # did anything actually fire?
 **No workflow triggers on `pull_request` = genuinely no gates; merge.**
 See § Dropped events below.
 
-Measured 2026-08-13, re-verified 2026-08-17 — "agent repos have no CI" is **false**, which is
-exactly why you check instead of assuming:
-
-| Repo | PR checks? | Merge shape |
-|---|---|---|
-| **hal, echo, eva, ada** | **no** — single workflow on `push: main` | `gh pr merge <n> --squash`, immediately |
-| **ace** | **yes** — required: `clean-install` only (`version-check` is advisory) | arm `--auto --merge`, wait, ~70s |
-| **canopy** | **yes** — required: `pytest`, `check-version`, `structure-drift` | **merge queue** — see below (a strategy flag is REJECTED) |
-| **canopy-web** | **yes** — required: `Backend tests`, `Frontend build` | **merge queue** — see below |
-| **connect-labs** | **yes** — required: `linter`, `pytest` | **merge queue** — see below |
-| **ace-web** | **yes** | wait, then merge |
-
-Re-derive the row (`ls .github/workflows/`, `grep -l pull_request`, plus the protection read
-below) rather than trusting the table if a repo has been touched since. `gh pr checks` is the
-fact; the table is a starting point.
-
 **A repo can be gated two different ways and NEITHER endpoint sees both — read both.** GitHub
-has legacy *branch protection* and newer *rulesets*. This doc used to print only
-`gh api repos/<owner>/<repo>/branches/main/protection --jq .required_status_checks.contexts`,
-which is blind to rulesets, and its blindness is a **404**:
-
-```
-{"message":"Branch not protected", ... "status":"404"}
-```
-
-`Branch not protected` on a branch that is in fact protected — failing toward **"no gates"**,
-the expensive direction, because Step 0 above reads an absence of checks as permission to merge
-now. The rules endpoint has the mirror-image blind spot: it reports ruleset rules and omits
-legacy protection entirely. So run both and union them:
+has legacy *branch protection* and newer *rulesets*. The `branches/main/protection` endpoint above
+is blind to rulesets, and its blindness is a **404** (`Branch not protected`) on a branch that is in
+fact protected — failing toward **"no gates"**, the expensive direction. The rules endpoint has the
+mirror-image blind spot: it reports ruleset rules and omits legacy protection. Run both and union
+them:
 
 ```bash
 # rulesets (invisible to the legacy endpoint)
@@ -104,26 +78,17 @@ gh api repos/<owner>/<repo>/branches/main/protection --jq .required_status_check
 ```
 
 The `[.[].type]` call is also how you learn the **merge shape** without discovering it from a
-rejected merge: a `merge_queue` rule means no strategy flag (see below).
+rejected merge: a `merge_queue` rule means no strategy flag (see below). Repos without a queue take
+`gh pr merge <n> --squash` (or `--auto` when gates are required).
 
-Measured 2026-09-16, and the two repos land on opposite sides, which is the point:
-
-| Repo | legacy `branches/main/protection` | `rules/branches/main` |
-|---|---|---|
-| **canopy** | `404 Branch not protected` | `pull_request`, `required_status_checks` (pytest, check-version, structure-drift), `merge_queue` |
-| **ace** | `clean-install`, `enforce_admins: true` | `merge_queue` only — **does not show `clean-install`** |
-
-Read either one alone and you get a confident, wrong answer about one of them.
-
-**Know the merge latency too, not just the shape.** An ace PR merges in ~70 seconds (measured
-2026-08-17: 72s, 67s, 81s, 76s). A poll interval longer than the merge is how a wait costs more
-than the thing it waits on.
+**Know the merge latency too, not just the shape.** Time the first merge on a repo; a poll interval
+longer than the merge costs more than the thing it waits on.
 
 ## Step 1 — the wait: never a foreground polling loop
 
-**A foreground `sleep` used to wait is blocked by the harness Bash contract.** This is not a
+**A foreground `sleep` as the wait is blocked by the harness Bash contract.** This is not a
 gating rail and no config can exempt it — no `sleep` rule exists in `gating-baseline.json` or in
-any agent's `config/gating.json`. It is the tool contract. Reproducer, 2026-08-17:
+any agent's `config/gating.json`. It is the tool contract:
 
 ```
 $ sleep 30; echo "survived"
@@ -134,9 +99,8 @@ block.
 ```
 
 Short sleeps pass (`sleep 3; gh pr view …` runs fine), which is why this keeps being rediscovered
-the expensive way: the pattern looks like it works until the interval is long enough to matter.
-**Do not chain shorter sleeps to get under the threshold** — the block message names that
-workaround specifically, and the block is not the real cost. What follows it is: the blocked
+the expensive way. **Do not chain shorter sleeps to get under the threshold** — the block message
+names that workaround specifically, and what follows the block is the real cost: the blocked
 command dies, the fallback runs in the foreground anyway, and the turn eats the full 10-minute
 Bash timeout as `Exit code 143 Command timed out`.
 
@@ -152,19 +116,15 @@ run via **`Bash` with `run_in_background: true`** — one background task, one n
 settles, and the turn keeps working meanwhile. Don't schedule a wakeup to poll it either; the
 harness re-invokes you when it exits.
 
-**Read the STATE TABLE, never `--watch`'s exit code — and do not add `--fail-fast`.** This recipe
-used to be `--watch --fail-fast` followed by `| tail -5`, and that pair reported a clean green on a
-PR carrying two FAILED checks. Measured 2026-09-04 on canopy#590: the backgrounded command **exited
-0** and the `tail -5` showed five passing rows, while `--json name,state` on the same PR at the same
-moment reported `SUCCESS: 13, IN_PROGRESS: 2, FAILURE: 2`. Three things conspire, each individually
-reasonable:
+**Read the STATE TABLE, never `--watch`'s exit code — and do not add `--fail-fast`, and do not pipe
+the result through `tail`.** Three things conspire, each individually reasonable:
 
 - **`--fail-fast` returns as soon as it decides, so it can exit while checks are still running** —
   and a still-`IN_PROGRESS` check is not a passing one.
-- **`tail -5` is an arbitrary window on an unordered list.** The failures simply were not in the
+- **`tail -5` is an arbitrary window on an unordered list.** The failures simply are not in the
   last five rows, and five green lines read as "green".
 - **Exit 0 from `gh pr checks` is not "all checks passed."** It is also what you get from *"no
-  checks reported"* — the case the dropped-events section below is entirely about.
+  checks reported"* — the case § Dropped events is about.
 
 So the wait tells you *when to look*; it never tells you *what you found*. Group by state and read
 the counts — `IN_PROGRESS` means look again, not merge. **If you cannot point at a state table, you
@@ -172,11 +132,8 @@ have not verified CI; you have verified that a command exited.**
 
 **The same trap catches any gate you run through a pipe, not just `gh`.** A backgrounded
 `make test … 2>&1 | tail -25` reports the *pipeline's* status, which is `tail`'s, so a gate that
-never ran comes back as exit 0. (2026-09-07, connect-labs#1531: `pytest -n auto` copied verbatim
-from the CI workflow died with `unrecognized arguments: -n auto` — `pytest-xdist` is pinned in
-`requirements/dev.txt` but was absent from the local venv — and the harness reported the background
-task as *"completed (exit code 0)"*. Reading the captured output, not the status, was the only
-thing that caught it.) Same rule, one level out: **confirm the gate printed its OWN success output
+never ran (say `pytest -n auto` copied from CI into a venv without `pytest-xdist`:
+`unrecognized arguments`) comes back as exit 0. **Confirm the gate printed its OWN success output
 — a pass count, an `ok`, a named verdict — before believing it.**
 
 A bounded loop is fine *inside* a backgrounded command, and is what you want when the terminal
@@ -196,16 +153,16 @@ The `sleep` inside is fine — the block is on *foreground* sleeps. **Always bou
 surfaces as a *result* instead of a hang.
 
 **In a one-shot cloud-runner turn, wait in the FOREGROUND instead.** There the backgrounded
-wait above is DENIED by `hooks/one_shot_turn_guard.py` (see `turn.md`): the session ends with
-the turn, so the notification would never arrive. Run the same bounded wait as a foreground
-`Bash` call, keep each call under the 5-minute prompt-cache window (`timeout 270 gh pr checks
-<n> --watch` — `gh` blocks for you, no `sleep` needed), read the state table, and re-issue
+wait above is DENIED by `plugins/canopy/hooks/one_shot_turn_guard.py` (see `turn.md`): the session
+ends with the turn, so the notification would never arrive. Run the same bounded wait as a
+foreground `Bash` call, keep each call under the 5-minute prompt-cache window (`timeout 270 gh pr
+checks <n> --watch` — `gh` blocks for you, no `sleep` needed), read the state table, and re-issue
 until it settles. A foreground wait longer than that wakes into a cold cache and re-writes the
-whole context; `hooks/sleep_cap_guard.py` refuses foreground *sleeps* over 270 s for that reason. Laptop (emdash) and interactive turns keep the backgrounded recipe.
+whole context; `plugins/canopy/hooks/sleep_cap_guard.py` refuses foreground *sleeps* over 270 s
+(`DEFAULT_CAP_S`) for that reason. Laptop (emdash) and interactive turns keep the backgrounded recipe.
 
-**`run_in_background`, not `Monitor`.** The two read as if they disagree; they don't. `Monitor` is
-for one notification *per occurrence*; a merge-wait wants exactly one at the end, and Monitor's own
-guidance sends that shape back here. Reach for `Monitor` only if you want running commentary.
+**`run_in_background`, not `Monitor`.** `Monitor` is for one notification *per occurrence*; a
+merge-wait wants exactly one at the end. Reach for `Monitor` only if you want running commentary.
 
 ## Step 1b — a `gh` command that ERRORS may still have DONE the thing
 
@@ -237,8 +194,7 @@ never force-merge past a CI system that is genuinely down. Say so and leave the 
 A green suite proves your tests pass. It does not prove they would have caught the bug — and for a
 test written *to* catch a specific bug, that is the only property that matters. So before you ship a
 fix, **run the new tests against the unfixed code and watch them fail.** Revert the source (not the
-tests), run, confirm red, restore, confirm green. It costs two commands and it is the only thing
-that distinguishes a regression test from a decoration:
+tests), run, confirm red, restore, confirm green.
 
 **Use `scripts/falsify.py` — don't hand-roll the revert.** It snapshots, reverts, runs, restores in
 a `finally`, and verifies the restore by hash:
@@ -247,68 +203,39 @@ a `finally`, and verifies the restore by hash:
 uv run python -m scripts.falsify <the/file/you/fixed> [--base origin/main] -- <run the new tests>
 ```
 
-| exit | verdict | what it means |
-|---|---|---|
-| 0 | **GATE** | the test failed without the fix — real evidence. Still read the failure message. |
-| 1 | **DECORATION** | the test PASSED without the fix. It guards nothing; tighten it. |
-| 3 | **INCONCLUSIVE** | the test never *ran* — it died at import/collection. Not evidence either way. |
-| 2 | usage | bad path, nothing to revert, or **the tree could not be restored** — fix that first. |
+Exit codes (0 GATE, 1 DECORATION, 2 usage or tree not restored, 3 INCONCLUSIVE) are in the
+`scripts/falsify.py` module docstring. Exit 1 means the test guards nothing; tighten it. Exit 3
+means the test never *ran* (died at import/collection) and is not evidence either way.
 
-The hand-rolled version below is what this replaces, and it is kept only to show the two traps,
-because both are silent:
-
-```bash
-git show origin/main:<the/file/you/fixed> > <the/file/you/fixed>   # tests stay
-<run the new tests>            # MUST fail, and for the RIGHT reason — read the assertion
-git checkout <the/file/you/fixed>     # ⚠ DESTROYS uncommitted work — see below
-<run again>                    # green
-```
-
-- **`git checkout <file>` restores from a COMMIT**, so an edit you have not committed yet is
-  silently replaced, `git status` goes clean, and nothing errors. It cost a retyped skill edit on
-  2026-09-07 — in the same turn that wrote the warning against it. `falsify` snapshots *content*,
-  so this cannot happen.
-- **The window between revert and restore holds the unfixed code.** Any non-local exit in it — an
-  exception, a timeout, Ctrl-C — leaves your branch containing `origin/main`'s version of the file
-  while claiming to fix it. `falsify` restores in a `finally` and refuses to report a verdict until
-  the restore verifies.
+Why not by hand: `git checkout <file>` restores from a COMMIT, so an uncommitted edit is silently
+replaced and nothing errors; and any non-local exit between revert and restore (an exception, a
+timeout, Ctrl-C) leaves your branch holding `origin/main`'s version of the file while claiming to
+fix it. `falsify` snapshots *content* and refuses to report a verdict until the restore verifies.
 
 **Read *why* it failed, not just that it did.** A test that errors because a helper you added does
 not exist yet has told you nothing about the bug; that is the import failing, not the defect being
 detected. Only a failure on the assertion that encodes the defect counts. **This is the common case,
 not an edge one** — reverting a whole file removes every symbol your fix added, so every test that
-imports one dies at collection and exits non-zero, which looks exactly like the red you wanted.
-`falsify` calls that **INCONCLUSIVE** rather than GATE; when you get it, revert the *rule* (put the
-old expression back by hand) instead of the file. (Found by pointing the tool at the first fix it
-was written for, canopy#546, whose author had already hit this by hand and worked around it.)
+imports one dies at collection, which looks exactly like the red you wanted. When `falsify` says
+INCONCLUSIVE, revert the *rule* (put the old expression back by hand) instead of the file.
 
-The trap this catches is not carelessness — it is a test that exercises a **different code path than
-production does**, which looks completely correct on the page. The harness you reach for by default
-is often not the one the bug lives in:
+The trap this catches is a test that exercises a **different code path than production does**,
+which looks completely correct on the page. The harness you reach for by default is often not the
+one the bug lives in:
 
 | you wrote the test against | the bug actually lives in | result |
 |---|---|---|
-| Django's default (WSGI) test client | an ASGI-only request path | passes on the broken code |
+| Django's default (WSGI) test client | an ASGI-only request path (`ASGIRequest.path` is `scope["path"]` verbatim; `WSGIRequest` rebuilds it from `SCRIPT_NAME + PATH_INFO`) | passes on the broken code |
 | the host platform | the `win32` branch | never executes |
 | a mocked boundary | the real serialisation | passes on the broken code |
 
 When the two differ, **make the platform- or protocol-specific logic a pure, parameterised function
 and test both branches** — `f(x, plat)` rather than reading `platform()` inside. Otherwise the branch
-you cannot run locally is exactly the branch that stays broken, permanently, while the suite reports
-green.
+you cannot run locally is exactly the branch that stays broken, while the suite reports green.
 
 And when a branch genuinely *cannot* be reproduced on this machine, say so **in the test**, and pin
 the defect's underlying class with something that does run — then state the limit in the PR rather
 than implying coverage you do not have.
-
-(2026-09-01, canopy-web#655: a fix for a URL that lost its `/canopy` prefix under the ASGI
-prefix-stripping wrapper. Three view tests were written with the ordinary Django test client and all
-three passed — correctly, because `WSGIRequest` rebuilds `path` as `SCRIPT_NAME + PATH_INFO`, so the
-prefix was already there and the bug could not appear. `ASGIRequest` instead assigns
-`self.path = scope["path"]` verbatim, which is where the defect lives. Rewritten against
-`AsyncRequestFactory`, the tests failed on `origin/main` and passed on the fix. Had they shipped as
-first written, the PR would have carried three tests, a green suite, and no coverage of the thing it
-claimed to fix.)
 
 **A test double that is more PERMISSIVE than the tool it doubles cannot fail.** The table above is
 about reaching for the wrong *harness*; this is encoding the wrong *contract*, and it is harder to
@@ -316,64 +243,49 @@ see because the double is usually yours and looks right. A hand-written fake rec
 believed the tool does, so a rule you did not know about is missing from it **by construction** —
 and every test built on it then passes against code the real tool rejects. Write the double's
 REFUSALS first: each non-zero exit and precondition you have actually observed goes in before the
-happy path, so the fake is stricter than the tool rather than kinder.
+happy path, so the fake is stricter than the tool rather than kinder. (Example: `gog docs export
+--out <path>` refuses a path that already EXISTS; a fake that writes the file whatever path it is
+handed never shows a verifier passing it a `NamedTemporaryFile` path — see
+`src/orchestrator/agent_gdoc.py::verify_published_render`.)
 
 This compounds badly with a **fail-open** check, which is otherwise a sound design — degrade to
 "unverified" rather than fail a good deliverable. Fail-open plus fail-*silent* means a check that
-never runs is indistinguishable from a check that passes, and it will stay that way indefinitely,
-because the signal it emits on success is the same one it emits when dead. **If a check may fail
-open, make it say so on the way**; a permanent failure should be visible the first time, not
-archaeological.
-
-(2026-09-16, canopy#648. `gog docs export --out <path>` refuses a path that already EXISTS, and
-canopy's gdoc verifier handed it a `NamedTemporaryFile(delete=False)` path — which exists by
-construction, since creating the file is what `NamedTemporaryFile` does. The export therefore
-returned 1 on every call for months, the fail-open swallowed it, and every `"degraded": []` canopy
-printed meant *"we did not look"* while reading as *"we looked and it was fine"*. Six tests covered
-that verifier; none could see it, because the fake wrote the export file whatever path it was
-handed. It surfaced only when the check was run against real Drive and a deliberately-wrong source
-still came back clean. The issue it was found under, #568, had reported the SYMPTOM — "reports
-clean" — nine weeks earlier, and it read as a missing rule in the comparison table rather than a
-check that was never running at all.)
+never runs is indistinguishable from a check that passes. **If a check may fail open, make it say
+so on the way**; a permanent failure should be visible the first time, not archaeological.
 
 ## Local gates — a suite you contaminate reports a FALSE failure
 
 Running the repo's suite in the background and then poking at a database in the foreground is the
-natural shape of a turn — the suite is slow, so you use the time. It is also how you manufacture a
-red result that has nothing to do with your change.
+natural shape of a turn. It is also how you manufacture a red result that has nothing to do with
+your change.
 
-Django's pytest plugin reuses **one** database per repo (`--reuse-db` is in connect-labs'
-`addopts`), named `test_<db>`. A backgrounded `pytest` owns it for the whole run. Any other process
-that writes there — a scratch `manage.py` command, an inline script that inserts rows, a psql
-session — is mutating state the suite is asserting against, and the failures surface somewhere
-unrelated to what you touched.
+Django's pytest plugin reuses **one** database per repo where `--reuse-db` is in `addopts`, named
+`test_<db>`. A backgrounded `pytest` owns it for the whole run. Any other process that writes
+there — a scratch `manage.py` command, an inline script that inserts rows, a psql session — is
+mutating state the suite is asserting against, and the failures surface somewhere unrelated to what
+you touched.
 
 **So: while a suite is running, do not touch its test DB.** If you need a database to experiment in,
 use the dev database (`postgres`, not `test_postgres`), or wait. If you have already done it, the
 run is void — kill it, drop the database, re-run. Use psycopg2 rather than `psql`, which is
-frequently not installed on this Mac:
+frequently not installed:
 
     pkill -f 'pytest <pkg>'
     # then, in python: terminate backends on test_postgres, DROP DATABASE, and re-run pytest
 
 `--create-db` is NOT the escape hatch: it fails with *"database is being accessed by other users"*
-while the suite still holds a connection, which reads like a permissions problem and isn't.
-
-**Why this is a section rather than a shrug:** the contaminated run reported a real `F`, at 42%, in
-a file I had not touched. The two tempting readings are "flaky suite" and "my change broke something
-subtle" — both wrong, and both expensive. The correct reading was "I wrote to the test DB ninety
-seconds ago." The clean re-run was **4543 passed, 3 skipped, exit 0**. Same shape as the
-gate-output rule elsewhere in this skill: a result you trust has to come from a gate nothing else
-was interfering with. (2026-08-24, connect-labs #1268.)
+while the suite still holds a connection, which reads like a permissions problem and isn't. A
+contaminated run reports a real `F` in a file you never touched; the readings "flaky suite" and "my
+change broke something subtle" are both wrong.
 
 ### The OTHER flavour: a reused DB that has gone stale reports failures nobody caused
 
-Step 0b above is about a CONCURRENT writer. This one needs no second writer at all — it is
+The section above is about a CONCURRENT writer. This one needs no second writer at all — it is
 `--reuse-db` accumulating drift across many runs, and it looks completely different: a stable,
 reproducible set of failures in files you never touched, which survives re-running and therefore
 reads as a real upstream breakage rather than as noise.
 
-The tells, all of which showed up together on 2026-08-27:
+The tells:
 
 - `cannot truncate a table referenced in a foreign key constraint` from any
   `django_db(transaction=True)` test — the flush is missing a table Django no longer knows about,
@@ -387,7 +299,7 @@ The tells, all of which showed up together on 2026-08-27:
 **Baselining on a clean checkout does NOT distinguish this from a real breakage, and that is the
 trap.** Checking out `origin/main` into a fresh worktree and re-running proves only "my branch did
 not cause it" — the clean checkout uses the SAME stale database, so it fails identically. That is a
-correct answer to *attribution* and it is silently the wrong answer to *"is main broken?"*.
+correct answer to *attribution* and the wrong answer to *"is main broken?"*.
 
 **The discriminator is CI, and it costs one call:**
 
@@ -397,11 +309,13 @@ gh run list --repo <owner>/<repo> --workflow ci.yml --branch main --limit 5 \
 ```
 
 CI always builds a fresh database. Green there plus red locally means the local DB is stale — full
-stop. Then drop it and re-run; do not go looking for the bug.
+stop. Then drop it and re-run; do not go looking for the bug. Never report "main is broken" to
+someone else on the strength of a local baseline alone: when a checker and the thing it checks
+disagree, **the checker is a suspect too**.
 
 ```python
 # Drop the stale test DB, then re-run. psycopg2 rather than psql, which is
-# frequently not installed on this Mac. Confirm no suite is running first:
+# frequently not installed. Confirm no suite is running first:
 #   pgrep -fl pytest
 import re, urllib.parse as up, psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
@@ -419,29 +333,14 @@ cur.execute("""SELECT pg_terminate_backend(pid) FROM pg_stat_activity
 cur.execute(f'DROP DATABASE IF EXISTS "{target}"')
 ```
 
-*Why this is here:* on 2026-08-26 I reported to Jonathan, twice, that "the connect_labs/mcp tests
-are broken on main" — 8 failures plus 8 errors, and I had done the clean-checkout baseline and
-believed it settled the question. CI was green on every one of those SHAs. Dropping
-`test_commcare_connect` and re-running turned all 16 into **40 passed**. Nothing was broken. That is
-a false finding about someone else's code, delivered with evidence that looked rigorous, and the
-step that would have caught it was one `gh run list`.
-
-Generalises to the rule this skill already states elsewhere: when a checker and the thing it checks
-disagree, **the checker is a suspect too** — and "I baselined it" is a claim about the baseline's
-environment as much as about the code.
-
 ## A `git commit` that FAILED looks exactly like one that worked, if you piped it away
 
 `pre-commit` runs on commit and **fails the commit when a hook rewrites a file**
 (black, isort). That is by design — you re-stage and commit again. But chain it
 as `git add -A && git commit -q -m ... >/dev/null 2>&1 && echo DONE` and the
 failure is invisible: DONE never prints, or prints from the next clause, and the
-work simply is not committed.
-
-This shipped a real defect on 2026-08-25. connect-labs#1283 merged **four source
-files and none of its nine tests**, and the PR body listed those tests as
-shipped. The squash commit had failed on a hook rewrite; the output was
-suppressed; nothing else in the chain noticed. It went to `main` and deployed.
+work simply is not committed. A PR can then merge its source files and none of its
+tests while the body lists the tests as shipped.
 
 Two rules, and the second is the one that actually catches it:
 
@@ -457,32 +356,30 @@ git ls-tree HEAD <path> --name-only     # the file is really on main
 gh pr view <n> --json files --jq '.files[].path'
 ```
 
-Same class as the `--all-files` trap in hal's `labs-perf` §0 and the `pip install`
-that exited 0 through a pipe while installing nothing: **a local check that
-reports success without having done the thing.** Those are worse than no check,
+Same class as a `pip install` that exits 0 through a pipe while installing nothing: **a local
+check that reports success without having done the thing.** Those are worse than no check,
 because they are trusted.
 
 ## Dropped events — an Actions outage silently un-CIs your PR
 
-Measured 2026-08-26 on `ace#1671` during a GitHub Actions **major outage**: the branch pushed and
-the PR opened normally, and **zero workflow runs were ever created**. Not queued, not failed, not
-`startup_failure` — absent. `gh pr checks` reported "no checks reported", which is exactly the
-Step 0 string meaning "merge now."
+During a GitHub Actions **major outage** the branch pushes and the PR opens normally, and **zero
+workflow runs are ever created**. Not queued, not failed, not `startup_failure` — absent. `gh pr
+checks` reports "no checks reported", which is exactly the Step 0 string meaning "merge now."
 
-Four facts, each of which cost a turn to establish:
+Four facts:
 
 1. **The dropped event is never replayed.** GitHub builds check runs from the webhook; one lost to
    an outage is gone. The PR sits at `mergeStateStatus: BLOCKED` with no runs, silently,
    indefinitely — nothing times out and nothing complains. **Something has to push again** to
    re-fire it:
    ```bash
-   git commit --allow-empty -m "chore: re-fire CI after <date> Actions outage dropped the PR event"
+   git commit --allow-empty -m "chore: re-fire CI after an Actions outage dropped the PR event"
    git push
    ```
 
 2. **`--admin` does not rescue it.** Admin merge bypasses a check that FAILED; it refuses one that
    never reported — `Required status check "<name>" is expected. (mergePullRequest)`. There is no
-   force path, which is the correct outcome. Know it before spending a turn hunting the flag.
+   force path, which is the correct outcome.
 
 3. **Arm auto-merge and let it finish.** It survives the outage, survives later pushes, and merges
    the instant the gates go green — no second turn:
@@ -491,9 +388,9 @@ Four facts, each of which cost a turn to establish:
    gh pr view <n> --json autoMergeRequest --jq '.autoMergeRequest != null'   # confirm ARMED
    ```
 
-4. **A partial recovery re-drops it.** Actions came back long enough to run one set of checks, then
-   went down again — so a subsequent force-push was dropped a second time. Re-check the provider
-   feed after every push during an incident; do not assume one successful run means recovery.
+4. **A partial recovery re-drops it.** Actions can come back long enough to run one set of checks,
+   then go down again, dropping a later force-push. Re-check the provider feed after every push
+   during an incident; do not assume one successful run means recovery.
 
 **Reproducing the gates locally while you wait is worth something — but only if `main` has not
 moved.** Run each gate's own `run:` commands, then:
@@ -516,24 +413,22 @@ gate that then fails is not about your change at all:
 trees behind one version, and the plugin cache is keyed by version.
 ```
 
-This is the same-day sequel to the outage above: ace#1671 waited out the incident, another PR
-merged 0.13.999 meanwhile, and the re-fired run failed on the collision rather than on anything in
-the diff. Recover **without losing the race** — disable auto-merge FIRST, or it races your rebase:
+Recover **without losing the race** — disable auto-merge FIRST, or it races your rebase:
 
 ```bash
 gh pr merge <n> --disable-auto
-bash scripts/version-bump.sh --rebase-first     # ace/canopy ship this; rebases then bumps
+git rebase origin/main
+bash scripts/version-bump.sh --rebase-first     # your repo's own bump script (the canopy repo: `canopy version bump`)
 git push --force-with-lease
 gh pr merge <n> --squash --auto                 # re-arm only after the new VERSION is pushed
 ```
 
-Then **re-run the suite before trusting it**: the rebase pulled in main's new commits, so the
-pre-rebase green is void by the rule above (ace#1671: 5056 tests before the rebase, 5100 after —
-main's two new commits brought their own).
+Then **re-run the suite before trusting it**: the rebase pulled in main's new commits, so a
+pre-rebase green is void by the rule above. See `docs/architecture/releasing.md` for canopy's bump.
 
 ## Step 1c — never build a markdown PR/issue body inside an inline `python3 -c`
 
-A PR body is markdown: backticks, parentheses, `[text](url)` links, quotes, `$`. An inline
+A PR body is markdown: backticks, parentheses, markdown links, quotes, `$`. An inline
 `python3 -c "…body='''…'''…"` — or any heredoc whose delimiter is **unquoted** — puts all of that
 somewhere bash still expands, where backticks and `$(…)` are command substitution and the quoting
 collapses on the first link. That is not a "be careful with escaping" problem; it is unfixable in
@@ -563,15 +458,10 @@ sees them — and when the payload is markdown you are *editing into a doc*, the
 silently in the file rather than erroring. Quote the delimiter unless you specifically want
 expansion, and re-read the file after writing it.
 
-(Real misses, both 2026-08-17: two consecutive `python3 -c` PR-body attempts died on bash quoting
-before the session converged on `body=open(...).read()`; separately, a `python3 - <<PY` patch of
-`agent-core/turn.md` had its replacement text mangled by command substitution and had to be
-reverted with `git checkout --` and redone with a quoted delimiter.)
-
 ## Step 2 — merge, reconcile, verify it LANDED
 
 ```bash
-gh pr merge <n> --squash        # or --merge / --auto per the Step 0 row
+gh pr merge <n> --squash        # or --merge / --auto per the Step 0 reading
 git fetch origin main && git log --oneline origin/main..HEAD    # expect EMPTY
 ```
 
@@ -605,10 +495,7 @@ gh pr view <n> --json mergeable,mergeStateStatus -q '{m:.mergeable,s:.mergeState
 ```
 
 Doing this backwards is the expensive part: a turn that trusts the message starts resolving a
-conflict that does not exist — re-merging, or force-pushing over a clean branch. One read
-distinguishes them. (Origin: 2026-08-20, an eva turn whose branch was clean the whole time; a
-sibling turn merged into the same file mid-turn, and the retry reported `not mergeable` once
-before reporting `MERGEABLE / CLEAN` moments later.)
+conflict that does not exist — re-merging, or force-pushing over a clean branch.
 
 **After a squash-merge, merge `origin/main` back before the next commit** — a long-lived turn
 branch plus squash merges otherwise conflicts with your own squashed history on every subsequent
@@ -621,18 +508,10 @@ NOT enough — MCP subprocesses bind their tool list and schemas at spawn, so qu
 
 ## Green tests + a verified API is NOT a verified page
 
-Measured 2026-08-27, and it took a screenshot from the user to catch.
-
-A cross-run view shipped **blank** — an empty bar on every row, a
-"PHASE 1 -> 1" axis, "queued" in every label. Throughout: component tests
-green, backend suite green, and the endpoint hand-verified as returning the
-new fields. All three were true. The page was still broken.
-
-The UI read a DIFFERENT serializer. Three code paths built that payload;
-the new fields went into two of them, and the one the screen actually used
-hand-wrote a six-field subset. The component tests passed because they hand
-the component a fixture — **nothing asserted the endpoint produces that
-fixture's shape.**
+Component tests green, backend suite green, and the endpoint hand-verified as returning the new
+fields can all be true while the page is blank: the UI may read a DIFFERENT serializer than the one
+you touched (a payload with several authors, the new fields added to two of them), and a
+fixture-fed component test never asserts the endpoint produces the fixture's shape.
 
 So, before claiming a UI works:
 
@@ -643,45 +522,21 @@ So, before claiming a UI works:
   SERIALIZER, not just against the component. Parametrise over the fields
   so adding a column means adding it there first.
 - **`grep` for every place that shape is built.** "I added the field" is a
-  claim about one function; the payload may have three authors.
+  claim about one function; the payload may have several authors.
 
-The general form: **a fixture-fed component test and a hand-checked
-endpoint can both be green while the two never meet.** The seam between
-them is exactly where this hides, and only loading the real page closes it.
+The seam between a fixture-fed component test and a hand-checked endpoint is exactly where this
+hides, and only loading the real page closes it.
 
 ## Optimise what you MEASURED, not what you assumed
 
-Same day, three wrong diagnoses on one slow page — worth the section
-because each was confident and each was cheap to have disproved.
-
-A run-listing endpoint took ~50s. The obvious culprit was a 1+2N
-sequential Drive loop, so it got batched: ~25 calls to 2. **No
-improvement.** Then a second copy of the same loop turned up one layer up,
-and that got batched too. **Still no improvement.** Somewhere in there the
-deploy pipeline got blamed for shipping a stale image; it hadn't, and
-reading the workflow would have shown it builds its own.
-
-Profiling the real path against real data took one command and settled it:
-
-```
-list_opp_runs: 12 runs in 19.52s
-  get_content      12 calls   8.73s   <-- the actual bill
-  list_folder      17 calls   5.66s
-  get_contents      2 calls   3.77s   (the new fast path, working)
-  find_in_folders   2 calls   0.90s   (the new fast path, working)
-```
-
-Twelve content reads for twelve runs: a per-run helper re-read the same
-`opp.yaml` every iteration. Memoising it took four lines — 19.5s -> 8.9s,
-and 43-100s -> 8-10s in production.
-
-The batching was real work that made its own path 12x faster and moved the
-page not at all. The tell was available before any of it: an isolated
-timing showed the batched query at 0.5s and a read at 1s, so that whole
-path's FLOOR was ~2s against a 50s endpoint. **When the part you are
-optimising cannot account for the time, stop and profile.** A wrapper that
-counts calls and seconds per method is usually a few lines and it ends the
-argument.
+A confident diagnosis of a slow page is cheap to disprove. Batching a loop that looked like the
+culprit can make its own path many times faster and move the page not at all, because the time was
+somewhere else (here: a per-item helper re-reading the same file every iteration;
+memoising it was the cure). **When the part you are optimising cannot account for the time** (time it in
+isolation: if its floor is a small fraction of the total, it is not the bill), **stop and profile
+the real path against real data.** A wrapper that counts calls and seconds per method is usually a
+few lines and it ends the argument. Read the deploy workflow before blaming the pipeline for a
+stale image.
 
 ## Step 3 — the ship checkpoint (unconditional)
 
@@ -695,7 +550,7 @@ every time:
 3. **The next planned action** — update run, restart needed, issue closed, or "nothing further."
 
 ```
-Ship: PR #1465 state=MERGED mergedAt=2026-08-17T18:22:03Z
+Ship: PR #<n> state=MERGED mergedAt=<timestamp>
 Next: /ace:update run in-session; no MCP change, so no restart needed.
 ```
 
@@ -707,10 +562,8 @@ gets **verified, not asserted**.
 
 ## Merge-queue repos — the verify step lies THREE ways
 
-**Do not carry a list of which repos these are — check.** This section said "canopy-web today" for
-weeks while **connect-labs** also had a queue, so an agent shipping there met the refusal-shaped
-messages below with nothing to match them against, and the repo table above actively told it to
-expect a plain merge. One call settles it:
+**Do not carry a list of which repos these are — check.** The repo's table of habits may predict a
+plain merge where a queue exists. One call settles it:
 
 ```bash
 gh api repos/<owner>/<repo>/rulesets --jq '.[]|"\(.id) \(.name)"'
@@ -729,18 +582,15 @@ Where a queue exists:
    `gh pr merge <n> --squash --delete-branch` fails with
    `X Cannot use '-d' or '--delete-branch' when merge queue enabled` and **nothing happens at all**.
    This is the trap inside the trap: having learned that (1) succeeds despite its error, the
-   natural read of a *second* error is that it also succeeded. It did not. Merging-and-tidying in
-   one call — the normal habit everywhere else — silently does neither. Drop both flags.
+   natural read of a *second* error is that it also succeeded. It did not. Drop both flags.
 
 ```bash
 gh pr merge <n>                                # no strategy flag, no --delete-branch
 ```
 
 **The definitive check is `isInMergeQueue`, and it is GraphQL-only.** `gh pr view --json` does not
-expose it (it errors with `Unknown JSON field: "isInMergeQueue"` and prints the valid field list),
-and `mergeStateStatus` is **not** a queue indicator — a queued PR reads `CLEAN`, exactly like an
-un-queued mergeable one. So the field that actually answers "did my merge take" is reachable only
-this way:
+expose it (it errors with `Unknown JSON field: "isInMergeQueue"`), and `mergeStateStatus` is **not**
+a queue indicator — a queued PR reads `CLEAN`, exactly like an un-queued mergeable one:
 
 ```bash
 gh api graphql -f query='{repository(owner:"<owner>",name:"<repo>"){
@@ -750,10 +600,9 @@ gh api graphql -f query='{repository(owner:"<owner>",name:"<repo>"){
 ```
 
 **A queued PR can sit at `OPEN` for minutes with everything green, by configuration.** Read
-`min_entries_to_merge_wait_minutes` off the ruleset before concluding anything is stuck —
-connect-labs sets it to **5**, so a single PR waits five minutes for a batch that never comes and
-then merges alone. Nothing is wrong during that window; an agent that goes looking will find only
-healthy state and may "help" by re-pushing.
+`min_entries_to_merge_wait_minutes` off the ruleset before concluding anything is stuck: a single
+PR waits that long for a batch that never comes and then merges alone. Nothing is wrong during that
+window; an agent that goes looking will find only healthy state and may "help" by re-pushing.
 
 ```bash
 gh api repos/<owner>/<repo>/rulesets/<id> --jq '.rules[]|select(.type=="merge_queue")|.parameters'
@@ -762,10 +611,7 @@ gh api repos/<owner>/<repo>/rulesets/<id> --jq '.rules[]|select(.type=="merge_qu
 Then wait for `MERGED` per Step 1 (bound it — the queue's own check timeout is 60min). Treat
 `OPEN` + `CLEAN` + "already queued" as **merging**, not failed. The failure this prevents is
 *acting on the false negative* — re-pushing, force-merging, or opening a duplicate PR on top of a
-merge already in flight. (2026-08-13, canopy-web#594: the strategy-flag error plus `state=OPEN`
-looked like two independent confirmations of failure; it landed as `fed3f2b`. 2026-09-07,
-connect-labs#1548: same two messages on a repo this section did not list, plus the
-`--delete-branch` refusal above; it landed as `dbe2fec` five minutes after the queue accepted it.)
+merge already in flight.
 
 **Never report "shipped" on a merge-queue repo without `state=MERGED`.**
 

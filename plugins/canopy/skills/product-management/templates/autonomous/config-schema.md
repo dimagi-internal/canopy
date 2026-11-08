@@ -16,10 +16,10 @@ The skill is deliberately project-agnostic — every project-specific knob lives
 | `shipping.pr_label` | str | GitHub label applied to every autonomous PR (visibility) |
 | `shipping.merge` | str | One of `squash`, `merge`, `rebase` |
 | `shipping.deploy_command` | str | Shell command to trigger deploy after merge |
-| `shipping.deploy_workflow` | str | Workflow filename, used to poll deploy status |
+| `shipping.deploy_workflow` | str | Workflow filename; polled for deploy status |
 | `shipping.post_deploy_health` | list[str] | Non-empty list of URLs polled after deploy |
 | `testing.unit` / `testing.lint` / `testing.types` | str | Mechanical-check commands run by the gate |
-| `testing.prepare` | str (optional) | Bootstrap command run once per sprint at the top of Phase 0, BEFORE any mechanical check. Use this when fresh worktrees lack `.venv` / `node_modules` / similar. Two confirming cycles on ace-web showed mechanical checks fail in fresh emdash worktrees because deps aren't built — prepare closes that gap. **Must be lockfile-non-mutating** (`npm ci`, `uv sync --frozen`, `pnpm install --frozen-lockfile`, etc.) — Phase 0 enforces this. A mutating prepare both drags lockfile churn into the autonomous PR and re-trips the clean-worktree precondition on every re-run |
+| `testing.prepare` | str (optional) | Bootstrap command run once per sprint at the top of Phase 0, BEFORE any mechanical check. Use this when fresh worktrees lack `.venv` / `node_modules` / similar. Mechanical checks fail in fresh worktrees whose deps aren't built. **Must be lockfile-non-mutating** (`npm ci`, `uv sync --frozen`, `pnpm install --frozen-lockfile`, etc.) — Phase 0 enforces this. A mutating prepare both drags lockfile churn into the autonomous PR and re-trips the clean-worktree precondition on every re-run |
 | `testing.dogfood.start_command` | str | Brings the local stack up |
 | `testing.dogfood.wait_for` | str | URL polled until the stack is ready |
 | `testing.dogfood.base_url` | str | Root URL the headless browser drives |

@@ -16,10 +16,9 @@ description: |
 
 ## Why this lens exists
 
-Every other DDD judge scores one SCENE at a time against the demo's own script.
-On connect-labs `supply-sophie-unanswered-round` (2026-10-02..04) that
-machinery ran ~24 judged iterations and 12 PRs and never blocked on any of
-these — then one ten-minute human look at the slides found all of them:
+Every other DDD judge scores one SCENE at a time against the demo's own script,
+so that machinery can iterate indefinitely without blocking on what a quick
+human look at the slides finds at once:
 
 - "big walls of text that are hard to organize"
 - "a lot of AI generated text as opposed to just representing the facts"
@@ -28,9 +27,8 @@ these — then one ten-minute human look at the slides found all of them:
 - "I thought we weren't calling it a round anymore?"
 - "you picked a different font and color scheme" than the rest of labs
 
-The redesign that review triggered deleted 4,148 lines, most of them added by
-the loop's own fix batches. This lens is that ten-minute look, run every
-checkpoint. Its job is the question a scene judge structurally cannot ask:
+Fix batches that only answer scene findings tend to add text and chrome. This
+lens is that quick human look, run every checkpoint. Its job is the question a scene judge structurally cannot ask:
 **would the persona want to use this product, and what is the biggest thing
 stopping them?**
 

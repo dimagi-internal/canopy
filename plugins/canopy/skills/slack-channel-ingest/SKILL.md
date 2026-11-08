@@ -13,9 +13,9 @@ description: |
 
 # Slack channel ingest — ask, wait for a yes, read, digest
 
-**The rule (Jonathan, 2026-10-16): an agent may go back through a Slack channel only with
+**The rule: an agent may go back through a Slack channel only with
 permission, and never without it — and an allow-listed channel only when a person asks for it in
-Slack.** canopy-web enforces that, not this page (canopy-web#1533, #1562):
+Slack.** canopy-web enforces that, not this page:
 
 - **An allow-listed channel is read only by `/<you> read-channel <ask>`, typed by a person in that
   channel.** canopy reads everything since your last read there (all of it the first time) and
@@ -79,7 +79,7 @@ canopy slack ingest wait <id> --timeout 1800      # exit 0 ready · 4 declined/r
   `canopy slack ingest status <id>`. Don't re-request, and don't nag the channel.
 - **Exit 4 (declined or revoked) is final.** Report it and stop. Ask again only if a human
   explicitly asks you to, and then as a new request with a better purpose.
-- **Exit 5 (failed)**: the status line carries Slack's error (e.g. the bot was removed from the
+- **Exit 5 (failed)**: the status line carries Slack's error (e.g. the bot is not in the
   channel). Report it as it is.
 
 ## 3. Read and digest

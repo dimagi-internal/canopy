@@ -37,9 +37,8 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
    command output, the merged PR, the live link) BEFORE it ships, exactly as you'd ground an "I'll
    X". A done-claim is *more* dangerous than a promise: it reads as finished, so no one follows up
    and the gap ships silently. If you cannot point to the evidence right now, either DO it before
-   sending or cut the claim. Origin: 2026-07-21, an agent wrote "I've noted that in the skill" in a
-   turn-back when it had made no such edit — true only as an intention, and it would have shipped
-   unnoticed had the human not asked. (This is §13's "evidence before assertion" applied to the
+   sending or cut the claim. "I've noted that in the skill" with no such edit made is true only as
+   an intention, and ships unnoticed. (This is §13's "evidence before assertion" applied to the
    deliverable's own claims, not just the review's.)
 5b. **A "nothing outstanding" claim requires ZERO running background tasks — checked, not
    assumed.** "Done", "nothing left running", "all finished", "no work outstanding" is a
@@ -49,9 +48,8 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
    output can still turn a green summary red, which is the whole reason it was started. So the
    evidence is the live state of your background tasks, and "I don't think anything is running"
    is not that. If something IS still draining, say what it is and what its result would change;
-   that is a complete answer, and it is not the same as "done". Origin: 2026-08-27, an agent
-   asserted "done, nothing outstanding" three separate times in one session while background
-   tasks were still draining — each claim true of the foreground work and false of the session.
+   that is a complete answer, and it is not the same as "done". "Done, nothing outstanding" while
+   background tasks still drain is true of the foreground work and false of the session.
 
 6. **Vague coordination verbs about a PERSON are the red flag** — "sync with / coordinate with /
    loop in / check with / align with / run it by <someone>". They almost always hide a human
@@ -61,9 +59,8 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
    sanctioned send path — or **(b) cut the claim.** Never promise a human-in-the-loop step you
    have no way to perform.
    - Running the concrete check often **CORRECTS a false premise** — grounding a claim surfaces
-     facts, not just honesty. Origin: an agent wrote "I'll sync with Sarvesh, audit's a hot area";
-     the check showed the feature lived in a different repo with zero in-flight PRs — wrong repo
-     AND no conflict. (Jonathan, 2026-07-08.)
+     facts, not just honesty ("I'll sync with <person>, audit's a hot area" — the check shows the
+     feature lives in a different repo with zero in-flight PRs: wrong repo AND no conflict).
 
 ## C. Presentation
 7. **Lead with what you DID** + your recommendation + what else we could do — not junior questions.
@@ -79,12 +76,9 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
     decision, or told it's over, and dense technical exposition before the verdict reads as an
     unresolved crisis. Bad: *"the template text is machine-generated — `bin/ada-dispatch-resume`
     emits it verbatim, and agent-review's classifier…"*. Good: *"Nothing to do — both findings
-    were wrong and nothing is broken. Detail below if you want it."* (Origin: 2026-08-17 — Hal
-    opened a close-out with machine-generated-text forensics before stating the verdict; Jonathan
-    replied *"I'm not following any of this, are we done and good to close, am I suppoed to have
-    gotten any value from thi?"* An independent ACE review the same cycle produced the identical
-    finding — turn updates delivering raw step traces instead of a decision-first digest — so this
-    is a fleet-wide failure, not one agent's tic.)
+    were wrong and nothing is broken. Detail below if you want it."* Raw step traces instead of a
+    decision-first digest read as an unresolved crisis to the human; this is a fleet-wide failure,
+    not one agent's tic.
 7aa. **Every artifact you link or show must be the REAL, deployed thing — never a rendering of
     it.** Before sending, walk the deliverable's links and visuals and confirm each one *is* what
     was asked for: a working URL to the live dashboard / doc / page / PR, not a mockup, a
@@ -96,9 +90,7 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
     not "it loads" (see your agent's own link-verification rule; hal's is `bin/hal-verify-link`).
     If the real asset does not exist yet, say so plainly and give the link to what *does* exist —
     substituting a depiction for the thing silently answers a different question than the one you
-    were asked. Origin: 2026-08-27, Jonathan: *"stop using claude design, give me links to the real
-    thing I asked for (which looks nothing like claude design now just FYI)"* — the mockup was also
-    stale, which is the second cost: a depiction drifts from the asset and nobody can tell.
+    were asked. A mockup has a second cost: a depiction drifts from the asset and nobody can tell.
 
 7b. **When the turn surfaces a PROBLEM, arrive with a DECISION — the problem alone is not a
     deliverable.** §7 governs the ORDER of a reply that already contains a decision, and §7a governs
@@ -117,16 +109,10 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
     on the issue … Why I didn't just fix it: it's an authorization boundary."* / *"Bounded fix,
     ~30 min. Say the word and I'll ship it; default is it stays open."* / *"My call is report-only
     … I didn't ship it. ⏸ waiting on you."* Good: *"The gate was paginating and reading absence as
-    denial — fixed in PR #N, it walks the pages now; the clones re-profile clean."* / *"Wired the
+    denial — resolved in the PR, it walks the pages now; the clones re-profile clean."* / *"Wired the
     drift check in as report-only — it exits clean against prod today, so it blocks nothing. Say
-    if you'd rather it hard-gate."* (Origin: 2026-08-25 — the SAME correction issued to THREE
-    agents inside one 26-hour window, each after a turn that surfaced a diagnosed problem and
-    asked instead of deciding: eva *"I'm lost, do you konw what to fix, if so, do it, if not, why
-    is it an issue"*; hal *"I can't follow what you're suggesting, if its a good idea, go for
-    it"*; ace *"I'm confused on 1613, do you konw the right approach and can you implement and
-    close it if so"* and *"what is the right answer, I'm lost as to why this is challenging, just
-    make it work as expected"*. Each agent's own review independently proposed a local fix, and
-    three repos proposing the same edit is the tell that it belongs here.)
+    if you'd rather it hard-gate."* The failure is fleet-wide: a turn that surfaces a diagnosed
+    problem and asks instead of deciding gets the same correction from the human every time.
 8. **Enumerate multiple asks**, one line each, showing how each was handled (✓ done / link / status).
 9. **Substantial artifacts go in a shared doc the reply links** — never a wall of pasted text,
    never a loose local file; present the reply body itself inline for approval. **The final body
@@ -142,10 +128,9 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
     `html`. Confirm the structure you intended SURVIVED — headings on their own line,
     timeline/table rows still separate rows, lists still lists, links clickable. A block that
     arrives as one run-on paragraph is a defect even when every word is right.
-    (Origin: 2026-08-12 — `normalize()` joined adjacent non-bullet lines with a space, so every
-    briefing timeline shipped as a single mashed paragraph in BOTH MIME parts for about three
-    weeks. Every pre-send review in that window passed, because each one read the body file and
-    none rendered it. Docs have `gdoc-review` for exactly this; email had no equivalent.)
+    (A body-file read cannot see a renderer that joins adjacent non-bullet lines into one
+    paragraph in both MIME parts; only the dry-run output shows it. Docs have `gdoc-review` for
+    the same check.)
 10. **Verify recipients** from the structured reader / `--reply-all`, never a raw text mail view
     (it hides `Cc:`). Confirm reply-all vs. direct on purpose.
 10a. **Strip session-internal framing — write the copy COLD, as the recipient reads it.** Your
@@ -158,10 +143,7 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
     read the thread?"* — if it references a state or a remark outside the thread, cut it or restate
     it as a plain fact ("drafted to send from Neal", not "you're right, so it's Neal's note"). This
     also applies to the "How I improved this turn" bullets: state what changed as a capability, not
-    relative to a mistake the recipient didn't witness. (Origin: 2026-07-23 — a reply carried "you're
-    right, Neal asked, so it's his note" and "fixed on both counts," both answering the operator's
-    in-session correction, into an email whose recipients had never seen that exchange; the operator
-    flagged it as a turn-review miss.)
+    relative to a mistake the recipient didn't witness.
 10b. **Politeness is fine; manufactured value is not — never attribute a benefit, feeling, or worth
     you can't back up.** Thanking, welcoming, and acknowledging are allowed and good. What is banned
     is dressing a courtesy up as a substantive claim the agent has no basis to assert. Two forms,
@@ -177,11 +159,8 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
     data"* — you can point to the line; *"the field definitions let us wire the indicator directly"*
     — you read them). Grounded-and-specific is fine; effusive-and-general is filler. This is the
     presentation-twin of §B/§5a grounding: same rule — don't assert what you can't substantiate —
-    applied to warmth rather than to commitments and done-claims. (Origin: Jon, 2026-07-24 — TWO
-    same-day ACE replies: one padded a call-decline with "it's genuinely useful to know you're a
-    message away," another opened to a reviewer with "that genuinely means a lot coming from you …
-    Grateful for the careful reviews throughout." Both passed the rest of the review because no lens
-    tested for unbackable warmth; the fix in each was to cut to the plain thank-you.)
+    applied to warmth rather than to commitments and done-claims. When no other lens tests for
+    unbackable warmth, the fix is to cut to the plain thank-you.
 
 ## D. Revision check — full re-review + repetition pass, EVERY revision
 
@@ -199,10 +178,9 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
 > `--commitment "<substring>=grounded:<mechanism>"` or `--commitment "<substring>=cut"`.
 > GROUNDED for an agent = re-render, reply on the thread, open a PR, produce a doc.
 > NOT grounded = anything needing you to be a person in real time. Why a gate and not a
-> line of prose: on 2026-07-23 a review ran, caught three real body defects, recorded
-> clean — and still shipped *"Happy to walk anyone through it live"*, a session the agent
-> cannot hold. The RULE (§6) was already written; what failed was applying it to every
-> instance, and completeness is exactly what prose cannot enforce. So the tool enumerates
+> line of prose: a review can catch real body defects and still ship *"Happy to walk anyone
+> through it live"*, a session the agent cannot hold. The RULE (§6) is written; applying it to
+> every instance is the completeness that prose cannot enforce. So the tool enumerates
 > and the send stays blocked until each is ruled — you cannot skip the sign-off line.
 11. **Re-run this whole review on every revision of a draft, not only the first.** A "delta check"
     of just your latest edits is how edit-introduced defects ship — the requester's corrections
@@ -214,8 +192,7 @@ adds agent-specifics (send path, paired reviewers); the general discipline lives
 13. **Evidence before assertion — quote, don't claim.** This pass is trivially faked as a checklist:
     reporting "collapsed X, de-duped Y" without doing the read is how the misses survive. Quote each
     repetition you find verbatim; "none found" is valid only after you have read the final paragraph
-    back to yourself. (Origin: an agent reported its repetition fixes done, then the requester
-    immediately caught four it had missed — Jonathan, 2026-07-13.)
+    back to yourself.
 
 ## E. Counterpart framing — how the reply LANDS with an external counterpart
 Run this whenever the recipient is an external counterpart (a partner, funder, or client),
@@ -233,10 +210,9 @@ still lands wrong on the person — this is the lens that catches that.
     counterpart's own field data as better than any public source.
 16. **Own initiative honestly.** Describe extra work you chose to do as your own idea, in your own
     voice — never imply you were asked or assigned to do something you weren't (and never that you
-    weren't, when you were). (Origin: 2026-07-22, a Spark reply passed §A–D three times while the
-    human had to catch, on each revision, that it audited the partner's own figures, asserted
-    contested numbers as fact, and implied assigned research — none of which the
-    fidelity/grounding/presentation/repetition lenses test for.)
+    weren't, when you were). The fidelity, grounding, presentation and repetition lenses do not
+    test for auditing the partner's own figures, asserting contested numbers as fact, or implying
+    assigned research; this lens does.
 
 ## Adopting it in an agent (the thin extension)
 Keep a repo-local `skills/agent-turn-review/SKILL.md` that (a) names **`<slug>:agent-turn-review`
@@ -245,15 +221,11 @@ agent-specifics: the sanctioned send path (§B's draft-then-ask target), where t
 and any paired reviewer (e.g. a `story-review`). The factory (`canopy create-agent`) scaffolds
 this thin extension by default.
 
-**Never write "invoke `canopy:agent-turn-review`" as the wrapper's instruction.** This section
-said exactly that until 2026-08-27, and the factory stamped it, so echo, eva and ada were all
-born with byte-identical wording telling the agent to call the body and skip its own wrapper —
-the fleet-wide bypass `canopy agent-review` then found, traced back to its source. ACE caught it
-first and refused to follow this section ("that instruction is the origin of this whole failure
-mode"), which is what surfaced it. The wrapper is the entry point; this file is the body. An
-adoption instruction that inverts the two makes every agent it stamps walk around its own gates.
+**Never write "invoke `canopy:agent-turn-review`" as the wrapper's instruction.** The wrapper is
+the entry point; this file is the body. An adoption instruction that inverts the two makes every
+agent the factory stamps it into walk around its own gates.
 
-The naming is now RAILED as well as documented: `agent-core/gating-baseline.json` `always` denies
+The naming is RAILED as well as documented: `agent-core/gating-baseline.json` `always` denies
 a bare or `canopy:`-prefixed `agent-turn-review` `Skill` call from any agent that ships a wrapper
 (`requires_path`), naming that agent's own `<slug>:` form in the block message. Agents need
 `Skill` in their `.claude/settings.json` PreToolUse matcher for it to reach them.

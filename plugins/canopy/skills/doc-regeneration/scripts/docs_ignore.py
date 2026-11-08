@@ -1,13 +1,14 @@
 """The ignore file both regen scripts read: `.docs-ignore` at the repo root.
 
 check_refs.py and find_history.py cannot tell a broken reference from a file that
-lives in another repo, or a history marker from a design record's own content. A
+lives in another repo, or a history marker that must stay (an event name, a quoted
+identifier). A
 person says so once, in `.docs-ignore`, with the reason:
 
     # <tool>  <pattern>     # <reason>
     check_refs   packages/canopy_kb                 # lives in canopy-web
     check_refs   docs/old.md::dist/*                # build output, generated on deploy
-    find_history docs/agent-operating-model.md      # a design record: its dated notes are the content
+    find_history docs/a.md                          # a whole doc whose dates are data
     find_history docs/a.md::2026-06-19              # only lines containing this text
 
   tool      check_refs | find_history | * (both)

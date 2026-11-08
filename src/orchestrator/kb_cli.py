@@ -3,9 +3,8 @@
 
 Four commands, because only these are work a prompt cannot do: `build` (index + dated
 diff), `push` / `pull` (a workspace project's KB goes to canopy-web, which serves it as
-the project's own remote MCP server — `push` sends only the documents that changed, as a
-new version, and the whole file only for a first build; any other KB's copy lives in its
-Drive folder) and `mcp` (serve a local copy over stdio). Reading is the MCP tools' job,
+the project's own remote MCP server — `push` sends the originals it lacks, then the
+whole built file as a new version; any other KB's copy lives in its Drive folder) and `mcp` (serve a local copy over stdio). Reading is the MCP tools' job,
 and HOW to read a given library — what to cite, which table beats prose — is a skill's (e.g. Eva's `givewell-kb`). There are
 deliberately no read subcommands duplicating the tools.
 

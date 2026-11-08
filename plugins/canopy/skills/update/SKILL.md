@@ -51,24 +51,21 @@ git pull --ff-only origin main 2>&1 && \
   --clone "$CLONE" --version "$NEW_VERSION"
 ```
 
-**No `rsync`.** This step used to shell out to it twice. rsync does not exist on Windows, and
-both calls were inside this one `&&` chain, so Step 2 died at `rsync: command not found`
-(exit 127) **after** the git pull and **before** the cache sync and the registry patch. That
-leaves the worst available state, silently: the marketplace clone is on the new commit while
-`installed_plugins.json` still points at the old cache dir, so the plugin is half-updated and
-nothing says so, and unlike the session-start hook's version of this skew it cannot self-heal.
-(Measured 2026-09-14 on a Windows operator's machine: cache stuck at 0.2.459, clone at 0.2.476.)
-`--sync-cache` reuses `mirror_tree`, the pure-Python mirror the hook in that same file already
-had for exactly this reason — one mirror in the codebase, covered by the hook's tests.
+**No `rsync`.** rsync does not exist on Windows. A command that dies in this `&&` chain after the
+git pull and before the cache sync and the registry patch leaves the worst available state,
+silently: the marketplace clone is on the new commit while `installed_plugins.json` still points
+at the old cache dir, so the plugin is half-updated and nothing says so, and unlike the
+session-start hook's version of this skew it cannot self-heal. `--sync-cache` uses `mirror_tree`,
+the pure-Python mirror in the hook's file — one mirror in the codebase, covered by the hook's tests.
 
 `PY=$(command -v python3 || command -v python)` because a Windows git-bash often has only
 `python`; a hardcoded `python3` is the same class of assumption as rsync.
 
-Four details are load-bearing, the first three learned the hard way on 2026-07-28:
+Four details are load-bearing:
 
 - **`git checkout main` first.** The clone gets parked on feature branches, and
   `git pull origin main` from a parked branch merges main INTO that branch instead
-  of updating the channel. (It was found on `ddd/preflight-applies-scroll`.)
+  of updating the channel.
 - **`--ff-only`.** If local main has diverged, fail loudly rather than quietly
   writing a merge commit into the update channel.
 - **Mirror-with-delete on the plugin dir.** The cache dir is keyed by version, so when a
@@ -85,24 +82,23 @@ Four details are load-bearing, the first three learned the hard way on 2026-07-2
 
 ## Step 3: Deploy the global CLI (ONE command) — convenience + fleet compat
 
-Since the runtime bundle (Step 2), canopy **skills** no longer depend on the global `canopy`
+canopy **skills** do not depend on the global `canopy`
 command — they run the bundled runtime via `scripts/canopy-runtime.sh` + `uv run --project`,
 version-locked to the plugin. The global CLI remains deployed for humans at a shell and for
 fleet agents' shims (e.g. ACE's `bin/ace-email`), from the SAME marketplace clone the plugin
 came from (never an editable dev-checkout, which silently drifts with whatever branch is
-checked out — that bug stranded `canopy harvest` from a fresh session).
+checked out).
 
 **`--reinstall` is required, not optional.** `uv tool install --force` alone keys on the package
 version and serves a **cached build** when that version is unchanged — silently shipping stale CLI
-code (this stranded `harvest --full` back when the package sat pinned at `0.1.0`). `canopy version
-bump` now keeps `pyproject.toml` in lockstep with VERSION, but this step is SHA-driven: a commit
+code. `canopy version
+bump` keeps `pyproject.toml` in lockstep with VERSION, but this step is SHA-driven: a commit
 that reached main without a bump reuses the version, and only `--reinstall` rebuilds it from the
 freshly-pulled source.
 
 **Keep what was installed beside canopy.** `uv tool install --reinstall --force <clone>` installs
 exactly what it is told and drops every `--with` — the knowledge-base engine (`canopy-kb`) a
-curator's box needs for `canopy kb build|push` vanished that way on the next release (cloud-ec2-2,
-2026-10-23). When the CLI already comes from the clone, `uv tool upgrade --reinstall canopy` rebuilds
+curator's box needs for `canopy kb build|push` vanishes that way. When the CLI already comes from the clone, `uv tool upgrade --reinstall canopy` rebuilds
 it from that same source and keeps every requirement uv's receipt records; only a CLI from
 anywhere else (a VCS or dev install) is re-pointed with `install`.
 
@@ -130,7 +126,7 @@ else
 fi
 ```
 
-**Why this is a loop and not a one-liner** — two separate defects, both reported 2026-09-14:
+**Why this is a loop and not a one-liner** — two separate defects:
 
 - **`… | tail -3 && …` read `tail`'s exit status, not `uv`'s.** A pipeline's status is its LAST
   command's, and `tail` succeeds on anything. So a failed install fell through to the success

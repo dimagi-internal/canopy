@@ -1,4 +1,22 @@
-"""Build the canonical render manifest (walkthrough-run-data.json, superset)."""
+"""Build the canonical render manifest (walkthrough-run-data.json, superset).
+
+The manifest is the one boundary object between the render engine
+(``record_video.py``) and its consumers (the deck builder, ``scripts/ddd/upload.py``,
+``assemble_run_state``, ``walkthrough-eval``, ``walkthrough-defect-creator``).
+
+Ownership: the engine writes only capture facts (``url``, ``urls_visited``, paths,
+``mp4_start_offset``, ``ok``, screenshots). ``ai_evaluation`` is a judgment overlay
+the engine leaves null; a separate scoring step merges into it. The engine never scores.
+
+Do not rename the file or remove a key: ``generate_presentation.py`` and the eval
+fixtures read it by name (``slides[].screenshot_b64``, ``ai_evaluation``, ``personas``,
+``name``, ``narrative``, ``generated_at``). Add keys only. Action telemetry stays in the
+separate ``run-report.json``; do not merge the two.
+
+``urls_visited`` is what the page actually showed, including URLs created at run time
+(an on-camera audit page) that no ``scene.url`` template contains. Link lists for a
+package come from it, never from the spec's raw ``url``.
+"""
 from __future__ import annotations
 
 import base64

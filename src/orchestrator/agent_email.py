@@ -1067,7 +1067,7 @@ def derive_reply_all(
 
     Cc is de-duped and excludes the agent's own address and the sender. Uses `--json`
     because the default text view omits Cc — silently dropping cc'd people is the bug
-    this guards against (it happened; operating-model §1b rule 3).
+    this guards against (see the reply-quality rules in agent-core/turn.md Step 2).
     """
     from email.utils import getaddresses
 

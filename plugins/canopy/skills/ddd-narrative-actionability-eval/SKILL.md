@@ -103,8 +103,7 @@ For EACH scene in the unified spec, perform a **cold derivation**:
   instruct it explicitly NOT to read the codebase, grep, or open any file — derive purely
   from the text. A derivation agent that reads the implementation is no longer cold; it
   will "infer" features it actually just read, inflating coverage and consistency and
-  hiding genuine narrative vagueness. (This leak was caught dogfooding the eval on DDD
-  itself: agents that browsed the repo scored ~4 where blind derivation would land ~3.)
+  hiding genuine narrative vagueness. (Agents that browse the repo score about a point higher than blind derivation.)
 - Write out the concrete build steps you would execute to make this scene real: what
   endpoints, UI elements, data structures, or behaviors need to exist?
 
@@ -118,8 +117,8 @@ Record:
 - `cold_plan_1`, `cold_plan_2`, `cold_plan_3` — the three lists of inferred build steps
 - `consensus_plan` — the items that appeared consistently across ≥2 derivations
 
-**Each derivation SEALS its own result — this is what makes a verdict provable
-(canopy#548).** Tell every derivation pass, in its dispatch prompt, to end by
+**Each derivation SEALS its own result — this is what makes a verdict provable.**
+Tell every derivation pass, in its dispatch prompt, to end by
 writing its plan to `<run_dir>/passes/actionability/d<N>.md` and running, as its
 very last act:
 
@@ -139,11 +138,9 @@ under `passes/`.** Then, before Step 3:
 ```
 
 Non-zero exit means a derivation did not return. **Re-dispatch it under a new id
-(`d4`, …) and do not score around the gap.** This exact judge, on
-`hh-poverty-targeting-answer-quality-2026-08-27-001`, had its derivation
-sub-agents killed mid-generation and wrote a verdict anyway — quoting passes
-that never returned. The orchestrator applied four narration edits on it before
-it was quarantined. If a pass cannot be made to return, the verdict is `blocked`
+(`d4`, …) and do not score around the gap.** A verdict written over killed
+derivation sub-agents quotes passes that never returned, and narration edits
+made on it are built on nothing. If a pass cannot be made to return, the verdict is `blocked`
 with `blocking_reason` naming the missing pass — never synthesised. Keep the
 manifest's `passes:` output; it goes in the verdict verbatim.
 
@@ -258,7 +255,7 @@ actionability_findings:
     fix_recommendation: "..."
 ```
 
-### Step 7b — Gate the verdict before you report (canopy#547, #548)
+### Step 7b — Gate the verdict before you report
 
 ```bash
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.validate verdict "$(realpath <run_dir>/verdict-actionability.yaml)") || exit 1

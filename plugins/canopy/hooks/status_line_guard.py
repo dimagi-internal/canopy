@@ -6,22 +6,19 @@ close." or "⏸ Session paused — waiting on you for: …". That line exists fo
 turn (an email, a schedule, a dispatch): nobody is watching, so the last line is the only
 signal of whether the work finished. When the person is chatting with the agent, the line is
 wrong twice over. They are right there, so it tells them nothing. And it is a claim of
-completion that a live conversation cannot back: on 2026-10-27 an ada session that started
-from Jonathan's email and continued in canopy-web chat ended three replies in a row on
-"✅ Session complete — safe to close." with work it had just promised still undone. He asked:
-"are you just auto-printing that out?" — it was, because the rule was keyed on the turn's
-MODE (auto), which is fixed at claim, instead of on who is present, which changes with
-every message.
+completion that a live conversation cannot back: a session that began from an email and
+continued in canopy-web chat would end every reply on "✅ Session complete — safe to close."
+with work it had just promised still undone. The rule is therefore keyed on who is present,
+which changes with every message, not on the turn's MODE (auto), which is fixed at claim.
 
 Presence is the latest message's channel. `caller_context.py` records it on every prompt at
 `~/.canopy/caller/presence/<claude_session_id>.json`; this Stop hook reads that record and,
 when it says present, blocks a stop whose closing message carries the status line, once
 (`stop_hook_active` → never loop). It matches only the two fixed tokens the procedure itself
-mandates, so it is not a phrase classifier: the retired regex decide-guard taught that
-judging free-form hand-backs by pattern is whack-a-mole (agent-core/decide_guard.py).
-It reads only the message's last line, because that is where a status line goes. On
-2026-11-03 it blocked an answer to "why are you saying session is complete", because the
-answer quoted the phrase, and the agent had to send the whole message again.
+mandates, so it is not a phrase classifier: judging free-form hand-backs by pattern is
+whack-a-mole (see agent-core/decide_guard.py). It reads only the message's last line,
+because that is where a status line goes: an answer that merely quotes the phrase mid-message
+must not be blocked.
 
 No presence record (a non-canopy session, or one that predates this hook), ABSENT, or any
 error → exit 0 silently. Never blocks an unattended turn.

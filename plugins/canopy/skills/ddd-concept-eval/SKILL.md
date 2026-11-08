@@ -113,11 +113,10 @@ restate it.** Print the list you will score before scoring anything:
 That prints every dimension id, its weight, and whether it is advisory, plus the
 gating set the weakest-link rule runs over. Score exactly that set. If the count
 differs from what this SKILL's prose says anywhere, the RUBRIC wins and the prose
-is a bug — file it. (This step exists because it happened: three consecutive ACE
-runs judged six dimensions against a seven-dimension rubric and recorded a weight
-vector that matched neither. The omitted dimension, `use_case_soundness`, is the
-one whose findings are always `route=CONCEPT, fix_kind=redesign` — so the loop
-under-detected the exact class it most needed to catch. canopy#491.)
+is a bug — file it. (Judging fewer dimensions than the rubric defines drops
+`use_case_soundness`, whose findings are always `route=CONCEPT,
+fix_kind=redesign`, so the loop under-detects the class it most needs to catch,
+and the recorded weight vector matches neither list.)
 
 ### Step 2 — Per-scene dispatch to canopy:visual-judge
 
@@ -147,7 +146,7 @@ byte-identical, so a new draw would only sample judge noise.
 snapshots came from more than one render — which happens when an iteration
 re-renders into the run dir while a judge is still reading it. A verdict scored
 against a mixed dir describes frames that no longer exist and is
-indistinguishable from a real one; it has already cost a full judge cycle. Do
+indistinguishable from a real one. Do
 not judge a run dir that fails this check; ask for a clean re-render first.
 
 **Build the per-scene action trace once, before the loop**, so the concept
@@ -255,7 +254,7 @@ Collect the per-scene verdict object. Extract all dimension scores. If
 any verdict comes back `self_assessed: true`, surface that prominently
 in the report — those scores are not trustworthy as a convergence gate.
 
-**Each judge seals its own result (canopy#548).** Tell every dispatch to end by
+**Each judge seals its own result.** Tell every dispatch to end by
 writing its full verdict object to `<run_dir>/passes/concept/scene_<N>.json`
 (Step 4a's re-judges: `scene_<N>_r2.json`, `scene_<N>_r3.json`) and running, as
 its very last act, `(cd <DDD_REPO> && uv run python -m scripts.ddd.passes seal
@@ -270,11 +269,10 @@ in Step 6b:
 
 Non-zero exit names the scene whose judge did not return — **re-dispatch that
 scene; never fill its cells in.** This is the mechanical form of Step 4's
-"refuse to assemble" rule: a missing scene can no longer be a gap you narrate
+"refuse to assemble" rule: a missing scene cannot be a gap you narrate
 around, because the verdict cannot pass Step 6b without it. The orchestrator
-never writes under `passes/`. (Two judges did exactly this on one run,
-`hh-poverty-targeting-answer-quality-2026-08-27-001`: sub-agents killed or
-stalled, verdicts written anyway with invented per-pass quotes.)
+never writes under `passes/` (a verdict written for a killed or stalled
+sub-agent carries invented per-pass quotes).
 
 ### Step 3 — Tag design_findings per scene
 
@@ -332,7 +330,7 @@ assertion-side fix when your recommendation offered a choice the artifact does
 not actually leave open. Only strategy findings can open the `concept_change`
 gate.
 
-**Fix direction — every `fix_recommendation`, every route (canopy#786).** Read the
+**Fix direction — every `fix_recommendation`, every route.** Read the
 rubric's ADDED-EXPLANATION + HARDCODING standing rules before writing one:
 
 - Prefer REMOVING or RESTRUCTURING over adding. Name the structural change —
@@ -348,7 +346,7 @@ rubric's ADDED-EXPLANATION + HARDCODING standing rules before writing one:
 
 Route assignment rules:
 - `concept_clarity` findings → CONCEPT
-- `use_case_soundness` findings → **always CONCEPT, fix_kind `redesign`**. A thin/trivial use case can only be fixed by changing WHAT the walkthrough demonstrates — i.e. the narrative — so it surfaces as a `concept_change` gate (which re-opens even a LOCKED narrative for redraft). NEVER route this to PRODUCT and NEVER mark it `mechanical`/`options`; the whole point is that no pixel-polish can fix "this use is trivial". Judge it against the WHOLE walkthrough (score once for the story, attach the finding to the most-emblematic scene), and emit it on EVERY render — an accepted narrative is not immune. Litmus for a finding: *would a skeptical buyer say the feature is doing something that matters, or "so what"?* (e.g. an AI coach invoked on a one-line answer → score ≤2, route CONCEPT/redesign, recommendation = "redraft the narrative so the feature does load-bearing work — invoke the coach on a full multi-question application, not a trivial single field").
+- `use_case_soundness` findings → **always CONCEPT, fix_kind `redesign`**. A thin/trivial use case can only be repaired by changing WHAT the walkthrough demonstrates — i.e. the narrative — so it surfaces as a `concept_change` gate (which re-opens even a LOCKED narrative for redraft). NEVER route this to PRODUCT and NEVER mark it `mechanical`/`options`; the whole point is that no pixel-polish can fix "this use is trivial". Judge it against the WHOLE walkthrough (score once for the story, attach the finding to the most-emblematic scene), and emit it on EVERY render — an accepted narrative is not immune. Litmus for a finding: *would a skeptical buyer say the feature is doing something that matters, or "so what"?* (e.g. an AI coach invoked on a one-line answer → score ≤2, route CONCEPT/redesign, recommendation = "redraft the narrative so the feature does load-bearing work — invoke the coach on a full multi-question application, not a trivial single field").
 - `design_soundness` findings → **PRODUCT** if the fix changes how the product is *presented* without changing what it does (e.g. interaction wording, affordance labelling, flow ordering); → **CONCEPT** if fixing it requires changing *what the product does* (e.g. a core interaction is incoherent because the underlying idea is wrong)
 - `visual_polish` findings → **PRODUCT** (almost always — visual fixes are CSS/template changes that don't change *what* the product does, only how it looks). Rare exception: if the rendered chrome reveals a CONCEPT-level information-architecture problem (e.g. the layout fights the user's mental model), route CONCEPT. **Two hard rules (see the rubric's visual_polish standing rules):** (1) the host-product chrome's *presence* is grounding — never a finding; only genuinely broken/occluding/placeholder chrome is. (2) Every visual_polish `fix_recommendation` must be a **PRODUCT** change (bigger hero, a focused/expanded view, progressive disclosure, fix the occluding layout) — **never a capture/camera workaround** ("zoom in", "crop", "set full_page:false"). If the load-bearing content is too small to read, the product should present it legibly; the camera must not paper over a product-readiness gap. (The lone capture-side note allowed: a full-PAGE strip of a long scrolling page is an inaccurate capture — judge the real viewport, flag once, don't deduct the product for it.)
 - `why_groundedness` findings → RESEARCH (if provenance is missing) or CONCEPT (if the claim contradicts the why_brief)
@@ -409,12 +407,10 @@ writing the verdict without it.
 
 `overall_rule: lowest` makes the headline the **minimum over every
 (scene x gating dimension) cell** — 72 cells for a 12-scene spec. The measured
-per-cell judge variance is +/-1 on byte-identical frames (ACE
-`spark-facilitator/20260813-2126`: scene 12 drew 3/2/3 and scene 10 drew 4/3 on
-the same PNG), so the minimum of ~72 noisy draws is biased low and barely
-responds to real improvement. In that run iteration 4 fixed its entire target
-scene and the headline did not move, because the floor migrated to untouched
-scenes that had drawn 3 the round before (ace#1393).
+per-cell judge variance is +/-1 on byte-identical frames (the same PNG can draw 3/2/3), so the minimum of ~72 noisy draws is biased low
+and barely responds to real improvement: fixing a whole target scene can leave
+the headline unmoved, because the floor migrates to untouched scenes that drew
+3 the round before.
 
 So: **a cap must be confirmed before it blocks.**
 
@@ -444,7 +440,7 @@ are STILL recorded per scene in the `dimensions{}` map and STILL generate
 DEFER-routed `design_findings`, but they play no role in computing `overall_score`
 or the final verdict.
 
-#### Step 4b — Score the run's target outcomes (canopy#790)
+#### Step 4b — Score the run's target outcomes
 
 Print the rubric the run converges on:
 `(cd "$DDD_REPO" && uv run python -m scripts.ddd.target_rubric show <run_id> --spec <spec_path>)`.
@@ -545,7 +541,7 @@ fix_recommendation: |
 ]
 ```
 
-### Step 6b — Gate both outputs before you report (canopy#547, #548)
+### Step 6b — Gate both outputs before you report
 
 **Do not skip this because the files "look right".** The expensive part of this
 skill — the per-scene multimodal passes and the k=3 re-judging of capping cells

@@ -36,7 +36,7 @@ the tokened share link, rotate it, or delete. Non-owners just see the player.
   walkthroughs are owned by whoever minted the token, no separate `--as`
   flag needed. In an **agent's** session (`$CANOPY_AGENT` set) the agent's own
   PAT (`~/.<slug>/.env` or `CANOPY_WEB_PAT`) is required — the operator's
-  workbench-token is refused, so an agent never uploads as the human (ace#2805).
+  workbench-token is refused, so an agent never uploads as the human.
 - **Workspace**: `--workspace <slug>` (default `$CANOPY_WEB_WORKSPACE`) is
   required. With neither, the upload refuses — it never lands in the server's
   default. After uploading

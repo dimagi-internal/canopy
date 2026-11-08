@@ -13,8 +13,8 @@ description: >
 
 This scaffolds a **new agent in its own git repo** that leverages the common canopy operating
 model. Each agent is independently shippable and team-runnable; the shared framework is what
-lets a fleet improve together. Read `docs/agent-operating-model.md` (§1 primitives, §4a topology,
-§6.6 gating) if you want the why.
+lets a fleet improve together. Read `docs/agent-operating-model.md` (parts, the common-vs-agent
+boundary, invariants) if you want the why.
 
 ## Step 1 — Gather the spec
 You need, at minimum, a **slug** (lowercase id, e.g. `sales`) and a **mandate** (one line). Ask
@@ -51,11 +51,11 @@ uv run --project "$CANOPY_ROOT" canopy create-agent <slug> \
   --into <path>            # default: ./<slug>
 ```
 Drop `--google-account` when the mailbox is itself the Google account (a Gmail mailbox).
-This writes 22 files: `persona.md`, `CLAUDE.md`, the `turn`, `agent-turn-review`, `task-tracker`,
+This writes: `persona.md`, `CLAUDE.md`, the `turn`, `agent-turn-review`, `task-tracker`,
 `shipping`, `manager-sync`, `answer-caller` and `setup` skills,
 `config/gating.json` (the reads-free / writes-gated rails, shipped deny-rails-only with an empty
 `approve` list — enforced by canopy's own session gating hook, so the agent registers NO hook of its
-own; canopy#849), `.claude/settings.json` (sets `CANOPY_AGENT=<slug>`, which tells canopy whose
+own), `.claude/settings.json` (sets `CANOPY_AGENT=<slug>`, which tells canopy whose
 session it is),
 `bin/<slug>-email` (thin shim over the shared `canopy email` engine; raw `gog gmail send` is
 deny-railed out of the box), `config/agent.json` (identity: mailbox + `gog_client`),
@@ -63,7 +63,7 @@ deny-railed out of the box), `config/agent.json` (identity: mailbox + `gog_clien
 `canopy cred env`, from the agent's Canopy vault),
 `config/allowlist.txt`, the plugin manifest, and `.claude-plugin/marketplace.json` — the manifest a
 runner installs the agent's plugin from (without it a box installs nothing).
-`config/allowlist.txt` is a **legacy fallback**: `canopy caller tier` consults it only while the
+`config/allowlist.txt` is a **fallback**: `canopy caller tier` consults it only while the
 agent has published no settings on canopy-web. Once it has, canopy-web
 (access list + workspace membership) decides who may steer the agent and the file is not read —
 grant people on canopy-web, not there.
@@ -124,7 +124,7 @@ real work. Its `command` starts that session; in it, apply the judgment below.
      `task-tracker` and `agent-turn-review` this way). Keeps them out of the `/` menu.
    - `disable-model-invocation: true` → human-only. Set this on side-effecting actions whose
      timing you must control (a `/deploy`-style command).
-3. **Gating rules — rails, not gates** (operating model §1a revision): for EVERY outbound
+3. **Gating rules — rails, not gates** (`docs/agent-operating-model.md` § Invariants): for EVERY outbound
    action the agent will take (send on a channel, public write), add a `deny` rail to
    `config/gating.json` that blocks the wrong path and NAMES the sanctioned one. Keep
    `approve` empty — a PreToolUse "ask" is a blocking modal that stalls autonomous work;

@@ -45,7 +45,7 @@ A failure on any question DROPS the proposal — write the question number and a
 
 For any change that's named in a `Try it:` line of the target email, the dogfood is on **deployed prod**, not on a local stack. Localhost dogfood does not count and is not an acceptable substitute.
 
-This is a hard rule. Surfaced across three confirming sprints on ace-web (2026-05-01 cycles 1–3): in every case the local stack was unreachable on the dev's machine (docker socket permissions, port 8000 owned by another tenant, no local Postgres binary, etc.) and the cycle defaulted to "skip dogfood, hope the post-deploy screenshot capture works." That worked — but only because the *real* dogfood was the post-deploy capture all along. The localhost step was ceremony in front of the actual proof.
+This is a hard rule: the local stack is often unreachable on the dev's machine (docker socket permissions, port owned by another tenant, no local Postgres binary), and the post-deploy capture is the real proof; a localhost step is ceremony in front of it.
 
 ### Why prod, not localhost
 

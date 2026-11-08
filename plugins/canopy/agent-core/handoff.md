@@ -12,16 +12,10 @@ thread.**
 
 ## 1. Run the command (finds the sessions, opens the project)
 
-```bash
-canopy agent handoff --from <source> --to <you> --name "<Project>" \
-  --ref <gmail-thread-id> --ref <doc-or-folder-id> [--ref <url> …] \
-  [--from-project "<P<N> or name on the source board>"] \
-  --drive-folder-url <your Projects/<Project> folder> \
-  --outcome "…" --owner "<principal>" --note "<why it moved>" \
-  --exclude-session <your session id>          # --dry-run first; it writes nothing
-```
+`canopy agent handoff --from <source> --to <you> --name "<Project>" --ref <id> [--ref …]` (flags:
+`--help`; run `--dry-run` first, it writes nothing; pass `--exclude-session <your session id>`).
 
-It scans the local session transcripts for the refs and lists every session that touched them —
+It (`src/orchestrator/agent_handoff.py`) scans the local session transcripts for the refs and lists every session that touched them —
 the source agent's first (matched by worktree dir OR slash command, so a resumed session still
 counts), the session matching **more** refs leading. It opens the project on your board with
 notes naming those sessions, and closes it on the source board when you pass `--from-project`
@@ -80,8 +74,3 @@ name it, don't absorb it.
 3. Every temporary grant revoked and verified.
 4. The project on your board (`P<N>`), and on the source board closed or the manual step named.
 5. Which thread you now own, and what still routes to the source agent.
-
-*(Origin: 2026-10-02, the fleet's first agent-to-agent transfer — ACE → Eva, a funder concept
-note. The principal asked for it as "a first class canopy operation". Finding the source session
-took a hand-rolled grep across ~300 project dirs; the first cross-drive move was refused and
-fell back to share + shortcut.)*

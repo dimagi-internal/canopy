@@ -108,7 +108,7 @@ value from the render invocation below, or `--storage-state <state.json>` where
 the recorder uses that (storage_state wins if both are given). Preflight's whole
 value is that it navigates the way the recorder will, and a logged-out preflight
 of a session-authenticated spec misses EVERY selector: an all-red report on a
-correct recipe, indistinguishable from a genuinely broken one (canopy#532). If
+correct recipe, indistinguishable from a genuinely broken one. If
 you ever see 100% unresolved, read the `hint:` line before touching a selector.
 
 **On a run with an inner loop, preflight the LOCAL build too** — add
@@ -116,7 +116,7 @@ you ever see 100% unresolved, read the `hint:` line before touching a selector.
 but not locally means that scene's data is not reproducible locally (a clone or
 seed that exists only remotely): reproduce it locally (export the clone, extend
 the seed) before the scene is admitted. Do not answer it by turning the inner
-loop off — a run that loses its inner loop mid-run stops (canopy#787).
+loop off — a run that loses its inner loop mid-run stops.
 
 Exit 1 means one or more targets will not resolve against the live app. **Fix
 the recipe and re-run preflight — do not render.** It walks scenes in order in
@@ -124,14 +124,14 @@ one browser and applies state-changing actions as it goes, so it catches the
 class the first loop lost most time to: a tab switch a later scene never undid,
 and a modal left open whose backdrop blocked everything after it.
 
-**Applying those actions makes preflight a mutator, and it now restores the
+**Applying those actions makes preflight a mutator, and it restores the
 world on the way out — but only when it CAN.** It reseeds via `setup.command`
 before the walk and again after it whenever the render will not reseed
 (`rerun: once`, where `record_video.run_setup` skips the command). A recipe that
 mutates state and declares **no `setup:` block at all** cannot be restored by
 anyone; preflight prints a `WARNING` and carries it on the result as
 `restore.warning`. **Treat that warning as a blocker, not a note** — it is the
-shape that produces canopy#546: the payoff action fires during preflight, the
+shape where the payoff action fires during preflight, the
 render films already-mutated state, and the no-op scores 10/10 because the click
 *dispatched*. Nothing in `run-report.json` models "and it changed something", so
 an orchestrator that trusts `failed: 0` burns a full judge round on a take that
@@ -182,8 +182,8 @@ this is not a checkpoint) → start/refresh the local build (`inner_loop.setup`,
 under the watchdog), `python -m scripts.ddd.target ready <run_id>`, and pass
 `--base-url <base_url>` to the recorder. The periodic full passes (every
 `loop.full_rejudge_every`-th batch) also run locally; only a pass after
-`checkpoint` / `confirm_full` renders the real deploy target (canopy#787;
-`inner_loop.deploy_checkpoints: true` restores deploy for every full pass).
+`checkpoint` / `confirm_full` renders the real deploy target
+(`inner_loop.deploy_checkpoints: true` restores deploy for every full pass).
 
 **Render with ONE command** — never re-assemble the recorder call by hand:
 
@@ -202,8 +202,8 @@ live product-objective run the orchestrator re-assembled this by hand every
 iteration — reading an old run's render log to recover the command, adding
 `PYTHONPATH` and the Playwright extra by trial and error.
 
-**What gets filmed is decided for you** (`scripts.ddd.capture_scope`,
-canopy#785) and printed as `capture` in the JSON:
+**What gets filmed is decided for you** (`scripts.ddd.capture_scope`)
+and printed as `capture` in the JSON:
 
 - `full` — every scene. **With video** only where a video is the thing being
   made: the first capture, a new render target, a spec change outside its
@@ -226,8 +226,7 @@ canopy#785) and printed as `capture` in the JSON:
 
 A finding the judges name by spec id or title (`scene: partner-benchmarks`) is
 attributed to its index at `assemble`; one with no scene at all goes to
-`batch_plan.global` and never forces a video re-film (ACE smallholder,
-2026-10-16: two such arc findings made iterations 1–2 full video re-films).
+`batch_plan.global` and never forces a video re-film.
 
 After every successful capture, `iteration render` runs the pre-judge frame
 lint (`scripts.ddd.product_lint`: run ids / `ace <opp>/` on screen, jargon like
@@ -298,7 +297,7 @@ procedure is the `ddd-recorded-walkthrough` skill.
 | `--base-url <origin>` | Only on an **inner-loop** pass (`target plan` says `target: inner`) | Renders against the locally served fix branch instead of the spec's `base_url`; the manifest records the origin used. Never on a checkpoint pass. |
 | `--input <run.json>` | Only for `--scene` partial runs (when reusing a previous walkthrough's capture set) | Without this, the spec is the only source of truth. |
 | `--skip-setup` | **Never in the iterate loop** | Specs with a `setup:` block run their synthetic generator before every render (`rerun: per_render`) — that reseed is load-bearing for state-mutating demos (a scene that creates an audit must find no audit on the next take). `--skip-setup` is a human escape hatch for one-off re-renders on known-fresh, non-mutating data; the orchestrator must not pass it. |
-| `--allow-viewport-change` | **Never in the iterate loop** | The recorder writes the resolved default viewport to `<run_dir>/snapshots/render-viewport.json` and REFUSES a later render at a different size (#625): a spec rebuilt mid-run that dropped `video_viewport_width`/`_height` would otherwise re-render a 1440x900 run at 1280x720, breaking every scroll offset and the cross-iteration score stall. On that refusal, restore the two keys the error names; don't override. The flag is for a deliberate frame-size change, after which scores are not like-for-like with earlier iterations. |
+| `--allow-viewport-change` | **Never in the iterate loop** | The recorder writes the resolved default viewport to `<run_dir>/snapshots/render-viewport.json` and REFUSES a later render at a different size: a spec rebuilt mid-run that dropped `video_viewport_width`/`_height` would otherwise re-render a 1440x900 run at 1280x720, breaking every scroll offset and the cross-iteration score stall. On that refusal, restore the two keys the error names; don't override. The flag is for a deliberate frame-size change, after which scores are not like-for-like with earlier iterations. |
 | `--prewarm` / `--no-prewarm` | Usually neither — the spec's `prewarm:` value is the right default and the recorder honors it automatically (CLI overrides per invocation, CLI wins) | The pre-warm pass visits each unique resolved scene URL once in a NON-recorded context before filming, so cold caches (first-hit page renders, remote image fetches) are paid off camera instead of as frozen frames mid-scene. Best-effort: failures land in `run-report.json` (`prewarm` key: `{pages, duration_seconds, failures}`), never abort the render. Full model: walkthrough SKILL § "Recording time & dead space". |
 
 **DDD orchestrator default flag set** — what `iteration render` passes to
@@ -491,40 +490,35 @@ RUN_DIR="<run_dir>"; SPEC_ABS="$(realpath <unified_spec>)"
 (cd "$DDD_REPO" && DDD_DIR="$DDD_DIR" uv run python -m scripts.ddd.product_lint "$RUN_DIR" --spec "$SPEC_ABS")
 ```
 
-- **regression_guard** — a previously-passing action now failing is a hard
+- **regression_guard** — an action that passed last iteration and fails now is a hard
   fail; a score that moved is reported, not gated (a judge is not
   deterministic). An action that ran last iteration and is simply **absent**
-  now is a `warn` (`?` lines) — actions are keyed by their spec-form target, so a
+  this iteration is a `warn` (`?` lines) — actions are keyed by their spec-form target, so a
   reseeded `${var}` id is the same action, not a disappeared one: confirm the recipe dropped it on purpose — the
   documented `scroll_to` → pixel `scroll` framing fix does exactly that — and
-  move on (canopy#624). This exists because a correct fix in one iteration removed
-  the control the next scene clicked, and nothing noticed.
+  move on. The guard exists because a correct fix in one iteration can remove
+  the control the next scene clicks, and nothing else notices.
 - **data_fidelity** — identical derived columns, duplicate rows, round-robin
-  ids, implausibly flat ratios. This was the most-repeated judge finding of the
-  first narrative, arriving from a different angle every round.
+  ids, implausibly flat ratios (judges re-find these from a new angle every
+  round unless a mechanical check holds them).
 - **narrated_numbers** — "Kukawa is eleven days out" over a screen that says
-  nine. Survived three iterations because only a judge who happened to check
-  would catch it.
+  nine; only a judge who happened to check would catch it.
 - **product_lint** — words per screen, prose lines of 20+ words (table rows
   excluded), explanatory lines ADDED since the run's first render
   (`lint-baseline.json`), banned terms from `product.lint.glossary` (screens
-  and narration), and fonts outside `product.lint.fonts`. On the
-  pre-redesign supply screens it reports 10 findings; on the redesigned ones,
-  1. In the `product` objective these block (severity medium/high); in `demo`
+  and narration), and fonts outside `product.lint.fonts`. In the `product` objective these block (severity medium/high); in `demo`
   they are reported only — except `prose_density`, which blocks in both
-  (canopy#786: prose accreting on a screen is a product defect whatever the
+  (prose accreting on a screen is a product defect whatever the
   loop optimizes).
 - **visual_geometry** — the first lens in this pipeline that is not reading
-  text. Three invisible-element defects on one run scored `data_fidelity` 9/9
-  and `narrated_numbers` 9/9 across FOUR iterations and were only found by a
-  hand-written probe after the loop had already stopped (canopy#525): twelve
-  chart bars at 0px, labels at contrast 2.47, and a pay-affecting red rendering
-  near-black. Text presence and text legibility are different properties, and
-  until now the pipeline only had an instrument for the first. Reads
+  text. Invisible-element defects (chart bars at 0px, labels at contrast 2.47,
+  a red rendering near-black) score full marks on `data_fidelity` and
+  `narrated_numbers`: text presence and text legibility are different
+  properties, and only this lens measures the second. Reads
   `scene_<N>_visual.json`, written by the recorder from the same frame as the
   PNG. A zero-height element the narration NAMES exits 1 (the frame does not
   show what is being said about it); everything else is a warn you fold in with
-  the judges' findings. A run recorded before this capture existed reports
+  the judges' findings. A run recorded without this capture reports
   `skip` with the reason, never a green that means nothing.
 
 ### Step 2e — Judge gate: deployed fix + no deterministic hard-fail
@@ -580,11 +574,10 @@ RUBRIC="$_CANOPY_PLUGIN/skills/ddd-concept-eval/rubric.yaml"
 **Pass no scope flags.** `plan` reads `<run_dir>/run_state.yaml` and derives
 full vs incremental, tiering and any recipe-only scene list from the loop's own
 decision (`target.expected_scope`). Never type a literal `--full`, and never
-re-use an earlier pass's command line: on connect-labs
-`supply-sophie-rutf-2026-09-26-001` a copied `plan ... --full` judged all 7
-scenes with all three judges on three passes the loop had made incremental, and
-the record said only "full pass requested". A `--full` that contradicts
-run_state now exits 2; if a pass genuinely must be full anyway, pass
+re-use an earlier pass's command line: a copied `plan ... --full` judges every
+scene with all three judges on a pass the loop made incremental, and the record
+says only "full pass requested". A `--full` that contradicts
+run_state exits 2; if a pass genuinely must be full anyway, pass
 `--full --reason "<why>"` — the reason is written to `judge-scope.json`
 (`override`) and printed by `assemble`. `plan` also refuses when run_state was
 rewritten after the last `assemble` or when that `assemble` returned a stop
@@ -592,7 +585,7 @@ rewritten after the last `assemble` or when that `assemble` returned a stop
 
 `plan` fingerprints each scene's judge INPUTS per component and compares each
 with the ledger of the last judged iteration (`judge-cache/`) — impact-aware
-(`scripts.ddd.impact`, canopy#780): a scene re-judges only when an input its
+(`scripts.ddd.impact`): a scene re-judges only when an input its
 judges read COULD have changed the verdict. The components:
 
 - `context` (why-brief + rubric), `spec` (the scene's spec entry), `trace` (its
@@ -692,7 +685,7 @@ the `per_scene` and the `scenes:` list shapes); run the arc judge only when
 `arc: true` (otherwise its verdict and sealed pass were carried). On a full
 pass, everything below applies unchanged.
 
-**Time every judge** (canopy#780 — `assemble` records each pass's fix, render
+**Time every judge** (`assemble` records each pass's fix, render
 and per-judge minutes in `state.pass_timings`): wrap each dispatch in the
 watchdog, `python -m scripts.ddd.watchdog start <run_id> judge:<concept|user|arc>`
 before and `... finish <run_id> judge:<name> --status ok|failed` after. A judge
@@ -854,7 +847,7 @@ Skill('canopy:visual-judge', args={
 ```
 
 Collect the verdict object and write it as `verdict-user.yaml` in the run dir,
-stamping the unified verdict metadata (canopy#265 item 1) at the top:
+stamping the unified verdict metadata at the top:
 
 ```yaml
 kind: user_artifact
@@ -898,7 +891,7 @@ what the product does from the product itself — same meaning as in
 `ddd-concept-eval` Step 3; at the run's end it becomes a documentation / UI-copy
 issue in the product repo (`scripts.ddd.owner_routing`). Omit it otherwise.
 
-**Gate the verdict before Step 4 loads it (canopy#547).** `verdict-user.yaml` is
+**Gate the verdict before Step 4 loads it.** `verdict-user.yaml` is
 written here and not checked until `load_verdict` in Step 4, so a contract
 mismatch surfaces as an assembly `ValidationError` — after both judge dispatches
 are paid for, and reading like a run failure rather than a schema one. One call
@@ -910,11 +903,11 @@ DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR:
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.validate verdict "$(realpath <run_dir>/verdict-user.yaml)") || exit 1
 ```
 
-Two traps this catches, both measured on `hh-poverty-targeting/20260827-0323`:
+Two traps this catches:
 
 - **the judge's own field name.** `canopy:visual-judge` is a general-purpose
   skill with its own output shape; the verdict it hands back is *collected* here,
-  not authored here, so its top-level key may not be the contract's. It emitted
+  not authored here, so its top-level key may not be the contract's. It may emit
   `overall_verdict`, where `load_verdict` requires `verdict`. **Rename it when
   you write the file — do not alias it in the loader.** Aliasing turns one
   contract into two and every later judge inherits the ambiguity.
@@ -1009,7 +1002,7 @@ every strategy finding on a parked scene   -> continue while unparked work remai
 a STRATEGY CONCEPT/redesign finding        -> stop_concept_change
 FLAT: `loop.plateau_rounds` (3) full judges
   with neither the score nor the open
-  backlog improving (findings may churn)   -> stop_max_iter   (a DIRECTION question, canopy#782/#788)
+  backlog improving (findings may churn)   -> stop_max_iter   (a DIRECTION question)
 STALLED: no progress signal improved
   across the last 2 iterations (an open-
   findings fall within 15% of the best
@@ -1054,30 +1047,23 @@ predicted vs actual (`python -m scripts.ddd.predict report <run_id>` reprints it
   the config pins one) and `state.next_judge_full` for Step 2f.
 
 **Why stall reads four signals, not the floor.** The gating score is a minimum
-over ~70 cells; on five freshly-built supply narratives it sat at 2 for 19 of 23
-iterations while the mean cell rose 3.14 → 3.68 and open findings fell 61 → 21.
-A floor-only stall would have stopped real progress; and because the old
-`mechanical → continue` branch preceded the stall check, it in fact never fired
-at all while mechanical findings existed. Now a pinned floor with a shrinking
-backlog keeps going, and a run where nothing improves stops.
+over ~70 cells and can sit pinned while the mean cell rises and open findings
+fall; a floor-only stall would stop real progress. A pinned floor with a
+shrinking backlog keeps going, and a run where nothing improves stops.
 
-**A trickle is not a shrinking backlog.** On a v1 product the judges find new
-nits as old ones are fixed. On `supply-sophie-rutf-2026-09-26-001` open findings
-went 42 → 39 → 36 → 35 → 34 over iterations 5–9 while the mean cell sat at
-3.60 ± 0.05, no cap was fixed after iteration 6, and the floor flipped
-2/3/3/2/3 on one cap — and each 1–3 finding drop counted as progress, so the
-stall detector never fired across ~4.6 hours. An open-findings fall now counts
-only when it exceeds `progress.TRICKLE_FRACTION` (15%) of the best count so far
-(below ~7 findings every fix still counts); that run now stops at iteration 8.
-Severity was considered and not used: 20 of that run's 21 concept findings were
-`low`, so a severity filter would have left the signal almost empty.
+**A trickle is not a shrinking backlog.** The judges find new nits as old ones
+are fixed, so open findings can fall 1–3 per iteration while the mean cell and
+the capped cells do not move. An open-findings fall counts only when it exceeds
+`progress.TRICKLE_FRACTION` (15%) of the best count so far (below ~7 findings
+every fix still counts). It is not filtered by severity: most concept findings
+are `low`, so a severity filter would leave the signal almost empty.
 
-**Two things the score alone cannot tell you, both now folded in:**
+**Two things the score alone cannot tell you, both folded in:**
 
 - **The noise band.** Per-cell judge variance is ±1 on byte-identical frames, so a
   move smaller than `denoise.NOISE_BAND` (0.5) is not evidence of improvement OR
-  of regression. Reading noise as either is how a round of real fixes got recorded
-  as a stall (ace#1393).
+  of regression. Reading noise as either records a round of real fixes
+  as a stall.
 - **The finding plateau.** Two iterations producing an identical
   finding-fingerprint set with no real score move means the loop is re-deriving,
   not progressing. Unlike the score, this signal does not wobble: the judge's
@@ -1086,8 +1072,8 @@ Severity was considered and not used: 20 of that run's 21 concept findings were
 > **Why this is a function call, not inline logic.** The trajectory-gating decision
 > (progress-aware loop, not a raw `MAX_ITERATIONS=3` count) lives in ONE place —
 > `run_pipeline.compute_auto_iterate`, which is unit-tested. Re-implementing it in
-> this SKILL would drift from the code. A raw count stopped good runs mid-progress
-> and was blind to regressions; trajectory-gating keeps looping while the score
+> this SKILL would drift from the code. A raw count stops good runs mid-progress
+> and is blind to regressions; trajectory-gating keeps looping while the score
 > improves and stops the instant it stalls or regresses.
 
 `assemble` has already stamped `auto_iterate_next_action`, `auto_iterate_reason`
@@ -1098,7 +1084,7 @@ and **`state.terminal_status`** — `converged_clean` |
 Every verdict line comes from `run_pipeline.format_verdict_line` (the
 `assemble` output already uses it) — a capped verdict renders as
 `4.0/5 (pass — capped from 4.8, not live-state verified)`, never as a bare
-`4.0/5` (canopy#273 item 3). Print the summary:
+`4.0/5`. Print the summary:
 
 ```
 DDD Run — <run_id>
@@ -1117,7 +1103,7 @@ DDD Run — <run_id>
   Progress:   score <s>  open findings <f>  mean cell <m>  confirmed caps <c>   # vs last iteration
   Loop mode:  backlog | polish   (next judge: full | incremental)
 
-  Rubric:     <source> — <n>/<m> criteria passing                      # the run's target rubric (canopy#790)
+  Rubric:     <source> — <n>/<m> criteria passing                      # the run's target rubric
   Convergence (filtered): YES | NO                                      # "filtered" tag if partial
 
   Auto-iterate: <action>  (<reason>)                                    # NEW

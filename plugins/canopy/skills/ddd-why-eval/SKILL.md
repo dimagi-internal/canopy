@@ -97,7 +97,7 @@ For each dimension in the rubric, score it 1–5 starting from `default_score: 3
 - For every score ≥ 4: write a one-sentence justification a skeptical stranger would accept.
 - For every score ≤ 2: write a one-sentence reason citing a specific observable problem.
 
-**Out-of-chain anchoring for `evidence_sufficiency`** (canopy#265 item 3): an
+**Out-of-chain anchoring for `evidence_sufficiency`**: an
 evidence item counts as real (non-assumed) ONLY when the run's evidence
 inventory — `evidence.json`, produced by ddd-evidence-audit's probes —
 classifies it `documented` or `implemented`. The why-brief's own evidence
@@ -119,8 +119,7 @@ the why-brief passed QA, so blocked should not occur in normal operation.
 
 ### Step 6 — Write verdict
 
-Write `<run_dir>/verdict-why.yaml` (the unified `verdict-<kind>.yaml` naming —
-canopy#265 item 1):
+Write `<run_dir>/verdict-why.yaml` (the unified `verdict-<kind>.yaml` naming):
 
 ```yaml
 schema_version: 1

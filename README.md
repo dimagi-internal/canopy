@@ -80,7 +80,7 @@ uv run canopy --help          # CLI entry point (orchestrator.cli:main)
 uv run pytest                 # test suite
 ```
 
-Canopy targets Python 3.11+ and depends on PyYAML, Click, and Pydantic.
+Canopy targets Python 3.11+ (dependencies are in `pyproject.toml`).
 
 ## Key concepts
 
@@ -89,20 +89,21 @@ Canopy targets Python 3.11+ and depends on PyYAML, Click, and Pydantic.
 - **Two kinds of state.** Per-project state lives under `<repo>/.canopy/` and is
   committed to that project's git repo — e.g. `<repo>/.canopy/pm/` for
   product-management state and `<repo>/.canopy/lenses/` for per-project lenses.
-  The global "self-improvement brain" (observations, proposals, the session log)
+  The global "self-improvement brain" (observations, proposals, the repo map)
   lives under `$HOME/.claude/canopy/` and is intentionally cross-project on a
-  single machine.
+  single machine. Canopy keeps no session log; Claude Code's own transcripts are
+  the record.
 - **The plugin surface.** `plugins/canopy/` ships skills, slash commands, and
   agents — including the DDD (demo-driven-development) authoring pipeline, the
-  product-management supervisor, portfolio review/guide, the alignment
-  cross-system drift sweep, walkthrough rendering and eval, and the website
-  builder. Skill descriptions are surfaced in the Claude Code system prompt, so
+  product-management supervisor, the alignment cross-system drift sweep
+  (`fleet-align`), walkthrough rendering and eval, and the website builder. Skill descriptions are surfaced in the Claude Code system prompt, so
   canopy enforces description and naming budgets (see `canopy skills budget`,
   `canopy skills dropped`, and `canopy structure-drift`).
 - **Always-PR shipping.** Changes ship as pull requests, and any change under
   `plugins/canopy/` must be accompanied by a version bump (`canopy version bump`)
-  — the bump is the only signal that tells installed sessions to pick up new work.
-  The full discipline lives in `CLAUDE.md`.
+  — the bump is what keeps the installed version label honest about which code a
+  machine has. The full discipline lives in `CLAUDE.md` and
+  `docs/architecture/releasing.md`.
 
 ## Using canopy
 

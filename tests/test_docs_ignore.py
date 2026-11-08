@@ -16,8 +16,21 @@ SCRIPTS = ROOT / "plugins" / "canopy" / "skills" / "doc-regeneration" / "scripts
 sys.path.insert(0, str(SCRIPTS))
 import docs_ignore  # noqa: E402
 
+# Every page an agent or a person reads as documentation: the root pages, everything under docs/,
+# and the fleet process docs agents read at runtime.
+def _procedure_docs():
+    root = ROOT / "plugins" / "canopy"
+    return sorted(
+        p.relative_to(ROOT).as_posix()
+        for pat in ("skills/*/SKILL.md", "agents/*.md", "commands/*.md")
+        for p in root.glob(pat)
+    )
+
+
 PAGES = ["CLAUDE.md", "README.md", "CONTRIBUTING.md", *sorted(
-    p.relative_to(ROOT).as_posix() for pat in ("docs/*.md", "docs/architecture/*.md") for p in ROOT.glob(pat)
+    p.relative_to(ROOT).as_posix()
+    for pat in ("docs/**/*.md", "plugins/canopy/agent-core/*.md")
+    for p in ROOT.glob(pat)
 )]
 
 
@@ -49,7 +62,7 @@ def test_matching_scopes_to_doc_and_counts_hits():
 def test_both_scripts_read_the_ignore_file(tmp_path):
     (tmp_path / "docs").mkdir()
     doc = tmp_path / "docs" / "a.md"
-    doc.write_text("See `other/repo/file.py` and docs/superpowers/specs/2026-10-06-x.\nFixed in PR 12 on 2026-01-02.\n")
+    doc.write_text("See `other/repo/file.py` and docs/runs/2026-10-06-x.\nFixed in PR 12 on 2026-01-02.\n")
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     assert _run("check_refs.py", "--root", str(tmp_path), str(doc)).returncode == 0  # not rooted here: not a ref
     doc.write_text("See `docs/gone.md`.\nFixed in PR 12 on 2026-01-02.\n")
@@ -67,14 +80,33 @@ def test_both_scripts_read_the_ignore_file(tmp_path):
     assert _run("find_history.py", "--no-ignore", "--root", str(tmp_path), str(doc)).returncode == 1
 
 
-def test_dated_slug_of_a_design_record_is_not_history(tmp_path):
+def test_dated_slug_of_a_file_is_not_history(tmp_path):
     doc = tmp_path / "a.md"
-    doc.write_text("The design is `docs/superpowers/specs/2026-10-06-caller-brain` and 2026-10-06-caller-brain.md.\n")
+    doc.write_text("The run is `docs/runs/2026-10-06-caller-brain` and 2026-10-06-caller-brain.md.\n")
     assert _run("find_history.py", str(doc)).returncode == 0
 
 
 def test_repo_docs_are_clean_and_the_ignore_file_has_no_stale_entry():
     refs = _run("check_refs.py", *PAGES)
     assert refs.returncode == 0 and "UNUSED" not in refs.stdout, refs.stdout
-    hist = _run("find_history.py", *PAGES)
+    hist = _run("find_history.py", *PAGES, *_procedure_docs())
     assert hist.returncode == 0 and "UNUSED" not in hist.stdout, hist.stdout
+
+
+def test_no_history_docs_exist():
+    """Specs, plans and changelogs are history: git keeps them, the working tree does not."""
+    for gone in ("docs/superpowers", "docs/plans", "docs/archive", "CHANGELOG.md"):
+        assert not (ROOT / gone).exists(), f"{gone} is history; delete it (git keeps it)"
+
+
+def test_the_page_list_covers_every_doc():
+    assert {"README.md", "docs/documentation.md", "docs/architecture/modules.md",
+            "plugins/canopy/agent-core/turn.md", "plugins/canopy/agent-core/using-canopy.md"} <= set(PAGES)
+
+
+def test_plugin_skills_agents_and_commands_carry_no_history():
+    """The procedure docs agents load (skills, agents, commands) hold current state too."""
+    pages = _procedure_docs()
+    assert pages
+    hist = _run("find_history.py", *pages)
+    assert hist.returncode == 0, hist.stdout

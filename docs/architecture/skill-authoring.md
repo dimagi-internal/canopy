@@ -1,74 +1,40 @@
 # Authoring skills and commands
 
-## Bash Positional Parameters
-Bash code blocks in skill/command markdown files must NOT use `$1`, `$2`, etc.
-for function arguments. Claude Code's slash-command argument expansion strips
-these before the shell sees them, causing silent failures (empty strings).
+## Bash positional parameters
+Bash code blocks in skill/command markdown must NOT use `$1`, `$2`, etc. for function arguments. Claude
+Code's slash-command argument expansion strips them before the shell sees them, so they silently become
+empty strings. Move complex bash logic to a standalone script in `bin/` or `scripts/` and invoke it from
+the skill; simple inline commands (no functions) are fine. `canopy structure-drift`
+(`src/orchestrator/structure_drift.py`) audits this.
 
-**Workaround:** Move complex bash logic to standalone scripts in `bin/` or
-`scripts/` and invoke them from the skill. Simple inline commands (no functions)
-are fine.
+## Command/skill name collisions
 
-## Command/Skill Name Collisions
+If `commands/<name>.md` AND `skills/<name>/SKILL.md` both exist, the Skill tool silently resolves
+`canopy:<name>` to the slash-command file. The SKILL.md never lands in context and the agent improvises
+from memory.
 
-If `commands/<name>.md` AND `skills/<name>/SKILL.md` both exist, the Skill tool
-silently resolves `canopy:<name>` to the slash-command file — the actual
-SKILL.md never lands in context, and the agent improvises from memory.
+**Rule:** a colliding command follows Pattern B: it reads SKILL.md from disk explicitly before following
+it. Copy the shape from `plugins/canopy/commands/find-session.md` (resolve `installPath` from
+`installed_plugins.json`, `Read` `<installPath>/skills/<name>/SKILL.md`, follow it exactly).
+`tests/test_command_skill_collisions.py` fails CI for a colliding command whose body does not reference
+`skills/<name>/SKILL.md`.
 
-**Rule:** colliding commands MUST follow Pattern B — read SKILL.md from disk
-explicitly before following it:
+## Built-in command namespace
 
-```bash
-python3 -c "import json; d=json.load(open('$HOME/.claude/plugins/installed_plugins.json')); print(d['plugins']['canopy@canopy'][0]['installPath'] + '/skills/<name>/SKILL.md')"
-```
+Claude Code reserves built-in slash-command names (`/help`, `/doctor`, `/config`, `/model`, ...). A plugin
+skill, command or agent with the same name collides silently: `canopy:<name>` routes to the built-in
+handler instead of your skill, and the skill description block can be truncated from the system prompt.
 
-Then `Read` that path and follow the SKILL.md exactly.
+**Rule:** before naming a new skill/command/agent, check that the bare name is not already a slash command
+in a stock Claude Code session; if it is, pick a different name (or namespace-prefix it, as
+`canopy-doctor`). `tests/test_builtin_command_collisions.py` fails CI on a reserved name; its
+`RESERVED_BUILTINS` is the list, and you update it when Claude Code adds built-ins.
 
-`tests/test_command_skill_collisions.py` enforces this — every colliding
-command must reference `skills/<name>/SKILL.md` in its body. Adding a new
-colliding command without Pattern B will fail CI.
+## Description limits
 
-## Built-in Command Namespace
-
-Claude Code reserves a set of built-in slash command names (`/help`, `/clear`,
-`/doctor`, `/config`, `/compact`, `/model`, `/fast`, `/login`, `/logout`,
-`/agents`, `/mcp`, `/permissions`, etc.). Naming a plugin skill / command /
-agent the same as a built-in causes a silent collision:
-
-- `canopy:<name>` invocations route to the built-in handler, NOT your skill
-- Worse, the entire skill description block can be truncated from the system
-  prompt at session start
-
-**Rule:** before naming a new skill/command/agent, check whether the bare name
-already works as a slash command in a stock Claude Code session. If yes, pick a
-different name. The canonical fix when a native built-in lands on top of an
-existing plugin entry is to namespace-prefix it (e.g. `doctor` →
-`canopy-doctor`).
-
-`tests/test_builtin_command_collisions.py` enforces this — adding a new
-plugin entry with a reserved name will fail CI. The reserved-set list lives
-in that test; update it when Claude Code introduces new built-ins.
-
-## Description Limits
-
-Claude Code surfaces every installed skill's frontmatter `description` in the
-system prompt at session start. Two budgets apply:
-
-- **Per-skill cap**: Anthropic's authoring guidance recommends ≤1024 chars
-  per description. Over the cap, Claude Code truncates.
-- **Aggregate cap**: across all installed skills, the system prompt has a
-  hard ceiling. Once it's hit, subsequent skills are dropped wholesale and
-  Claude Code prints something like "N skills dropped" with no detail on
-  which ones.
-
-When a session reports dropped skills, run:
-
-```bash
-canopy skills budget               # ranked size table + aggregate gauge
-canopy skills dropped              # simulated drop list under default caps
-canopy skills dropped --aggregate-limit 30000   # try a different cap
-```
-
-The defaults (`--per-skill-limit 1024 --aggregate-limit 1500`) are
-conservative — `--aggregate-limit` is the one to tune since the real
-Claude Code ceiling is not publicly documented and shifts with releases.
+Claude Code puts every installed skill's frontmatter `description` in the system prompt at session
+start. A description over 1024 chars is truncated, and once the aggregate ceiling is hit, later skills are
+dropped wholesale with no detail on which ones (the real ceiling is not published and shifts, so the
+aggregate default is a calibration, not a fact). When a session reports dropped skills, run
+`canopy skills budget` (ranked sizes) and `canopy skills dropped` (simulated drop list); the limits and
+flags are in `src/orchestrator/skill_budget.py` and `--help`.

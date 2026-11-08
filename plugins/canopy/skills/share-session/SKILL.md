@@ -189,9 +189,8 @@ So: **if a human asked you to share a session, do not pass `--private`.** The
 link default is what makes the artifact readable. Reach for `--private` only when
 the intent is genuinely "upload it to my own account and show nobody" — and say
 so plainly, because the command will otherwise report a success that produced
-something the requester cannot open. (dimagi-internal/canopy#484: a private share
-was handed over as a link, rendered a black screen, and appeared on nobody's
-`/sessions` page.)
+something the requester cannot open: a private share handed over as a link renders a
+black screen and appears on nobody's `/sessions` page.
 
 ## Managing shared sessions
 

@@ -2,8 +2,7 @@
 check-in's project + task backings + `checkins/runs/<id>/finished`, and `canopy checkin
 material|propose|finish` — against a fake canopy-web serving the check-in routes.
 
-The routes follow canopy-web docs/superpowers/specs/2026-10-17-project-check-ins-design.md §3,
-§5, §6. A huddle outside a check-in run (proposed projects) is tests/test_huddle_propose.py."""
+The fake mirrors canopy-web's check-in routes (material, propose, finish). A huddle outside a check-in run (proposed projects) is tests/test_huddle_propose.py."""
 import json
 import re
 from urllib.parse import unquote, urlparse

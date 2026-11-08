@@ -8,6 +8,9 @@
 # the legacy ~/.canopy/pm/<derived-project>/ directory exists with state,
 # copy files in and commit on the current branch (best-effort).
 #
+# The .migrated marker in the legacy dir is a one-way signal: while it exists the
+# legacy state is never copied in again, even if <repo>/.canopy/pm was later
+# deleted on purpose.
 # Stdout: the resolved path.
 # Stderr: human-readable migration notes, if any.
 

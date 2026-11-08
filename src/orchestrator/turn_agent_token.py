@@ -1,8 +1,7 @@
 """An agent's runner turn acts with a login canopy-web issued for THAT turn.
 
 canopy-web hands the runner holding a turn a short-lived login as the turn's agent
-(`POST /api/harness/runners/{rid}/turns/{tid}/agent-token`, revoked when the turn ends;
-canopy-web docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md). It
+(`POST /api/harness/runners/{rid}/turns/{tid}/agent-token`, revoked when the turn ends). It
 replaces the agent's stored, never-expiring `canopy-pat` (`CANOPY_WEB_PAT` in
 ``~/.<slug>/.env``) for runner turns.
 

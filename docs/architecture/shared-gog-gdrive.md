@@ -1,197 +1,46 @@
-# Shared GOG email + Google Workspace capability for the agent fleet
+# Shared gog email and Google Workspace for the agent fleet
 
-**What this is:** how every agent uses gog and Google Workspace through canopy, with per-agent settings carved out.
-**Companion:** `docs/agent-operating-model.md` (§4a common-vs-agent boundary; §4c capability
-borrowing) · ACE's adoption spec (`ace: docs/superpowers/specs/2026-07-01-agent-operating-model-adoption.md`)
+**What this is:** how every agent uses gog (mail) and Google Workspace through canopy, and which parts are common versus per-agent. **Companion:** `docs/agent-operating-model.md` (the common-vs-agent boundary, in its 'How the parts connect' and 'Invariants' sections).
 
-## 1. What exists today (the parts of the ideal, scattered)
+## 1. What is common and what is per-agent
 
-Every proven piece already exists — in three different repos:
+The boundary (see the operating model): logic, adapters and cross-agent skills are common; identity, rules, secrets and domain skills are the agent's.
 
-| Piece | Where it lives | State |
-|---|---|---|
-| Google Workspace MCP (~50 domain-neutral atoms: `drive_*`, `docs_*`, `sheets_*`, `slides_*`, forms read, markdown→doc, template-copy) | ACE `mcp/google-drive-server.ts` | Production-hard: shared-drive write probe, transient-retry envelope, large-payload resolver, `google-shim` (194 MB `googleapis` → per-API subpackages) |
-| HTML email send wrapper (multipart, reflowing; Gmail display-wraps plain text at ~72 cols) | echo `bin/echo_email.py` → adapted as ACE `bin/ace-email` | Proven in echo turns; ACE copy adds plugin-data `.env` resolution |
-| Mark-read (gog has no mark-read; API reads don't clear UNREAD) | echo `bin/echo_mark_read.py` → ACE `bin/ace-mark-read` | Works; gog-credential reuse via keychain |
-| Raw-send deny rail | echo `block_raw_gog_send.py` → hal's generalized `hooks/gating_guard.py` → ACE's copy (+ `tool_pattern` for MCP atom names) | Three near-identical copies |
-| Inbound routing contract (send records `thread_id` → inbound triage routes the reply to the right state scope) | ACE (comms-log per run) · echo (contact-memory per sender) | Same shape, agent-specific routing map |
-| Counterpart tiers (act / correspond / none) | `act` = canopy-web's grant (declared interface + workspace membership, resolved by `canopy caller tier`; `config/allowlist.txt` only for an agent with no interface) + ACE's derived correspond tier | ACE innovation — see §3 |
-| Per-agent gog MAILBOX (`<slug>@dimagi-ai.com`, never shared) over the SHARED fleet OAuth app (clients `canopy` / `canopy-web`) | Mailbox enforced by convention in echo AND ace; client shared fleet-wide | The mailbox is the identity that must not bleed — the client is just the app |
-
-The problems with the status quo: echo consumes ACE's Drive MCP **under ACE's service-account
-identity** (it cannot see the Connect Marketing drive — wrong identity, no per-agent scoping); hal
-has email documented but unwired (nothing to build on); every new agent re-copies the wrapper +
-mark-read + hook trio; and fixes don't propagate.
-
-## 2. Decision: what goes common vs what stays per-agent
-
-Per the operating model's §4a boundary (*"logic, adapters, and cross-agent skills are common;
-identity, rules, secrets, and domain skills are the agent's"*):
-
-| Canopy provides (engine/adapter, fix-once-propagate) | Each agent supplies (mounts/carve-outs) |
+| Canopy provides (fix once, propagates by `/canopy:update`) | Each agent supplies |
 |---|---|
-| `canopy email` adapter: guarded HTML send, reply-threading, mark-read, login preflight | Mailbox + gog client name (`config/agent.json`: `email`, `gog_client`), the allowlist, the routing map (thread → agent-state scope) |
+| `canopy email`: guarded HTML send, reply-threading, mark-read, archive, login preflight (`src/orchestrator/agent_email.py`) | Mailbox and gog client name (`config/agent.json`: `email`, `gog_client`), the routing map (thread to agent-state scope) |
+| `canopy gdoc|gsheet|gslides publish` (`agent_gdoc.py`, `agent_gslides.py`) | `gdrive_root_folder` and `gdrive_share_default` in `config/agent.json` (optional) |
+| The gating engine (`plugins/canopy/agent-core/gating_guard.py`) and fleet-baseline rails | The gating rules in `config/gating.json`: deny rails only (§4) |
+| The canopy-gws MCP server (`plugins/canopy/mcp/gws-server.ts`, §5) | Identity mode and scope (env from the agent's Canopy vault) |
+| Factory templates wiring all of the above (`packages/canopy_agent_factory/canopy_agent_factory/_factory.py`) | Persona, domain skills, turn checklist text |
 
-> **The mailbox is the identity; the gog client is plumbing — and only one of them is
-> per-machine.** `gog` keys credentials on the PAIR (mailbox, client), but `gog_client` is a
-> single repo-global value while the token store lives on each box. A fleet migration onto the
-> shared `canopy` client therefore has to be performed box by box, and any box it misses is
-> pinned to a pair with no credentials: every read and send dies on `No auth for gmail
-> <mailbox>` with a working token sitting beside it under the old client name. **Re-pinning does not fix
-> it, it only moves which box is broken.** So the engine resolves the client from evidence at call time
-> (`agent_email.reconcile_client`): the declared pin wins when it holds a token, otherwise the
-> single client that actually holds this mailbox is used and the substitution is announced.
->
-> **Two fleet clients, one app.** `canopy` (a Desktop client — gog's loopback
-> login on a laptop) and `canopy-web` (a Web client — the only kind Google lets run a browser
-> redirect, so the one canopy-web's "Connect Google mailbox" button mints under) are in the same
-> GCP project behind the same consent screen, and a token under either reads and sends the same.
-> They are `FLEET_CLIENTS`, in that order: when the declared client holds no token for the
-> mailbox, the first fleet client that does is used — holding both is NOT ambiguity — so an
-> agent signed in either way just works. An agent with no `gog_client` declares `canopy`
-> (`DEFAULT_CLIENT`), never a client named after itself.
-> The account is NEVER substituted — borrowing a sibling's token is identity bleed, the one
-> hard rule. Two or more candidates is a refusal, not a guess. `canopy agent doctor` reports
-> the drift separately (**Auth client**) so self-healing at runtime never hides a box whose
-> provisioning is out of step.
-| The gating **engine** (`gating_guard.py`, already factory-templated) | The gating **rules** (`config/gating.json`) — deny rails only, see §4 |
-| Google Workspace MCP (extracted from ACE, atoms unchanged) | Identity mode + scope: SA key path OR gog-OAuth client; root folder / allowed shared drives |
-| Factory templates that wire all of the above | Persona, domain skills, turn checklist text |
+## 2. Identity: the mailbox is the identity, the client is plumbing
 
-## 3. Email: the idealized adapter
+- **One agent per mailbox.** An address is minted at agent-creation time and never shared. An agent may hold several addresses (`config/agent.json` `email` is the primary, `addresses` the rest, all counting as "self" for reply-all and dangling checks), and its Google account (`google_account`, default `email`) is separate from its mail: an agent whose only mail address is canopy-hosted still does Drive and Docs as its Google account. Every gog call runs as that account (`agent_email.py::EmailIdentity.account`). On a hosted domain outside dimagi-ai.com the Google account is a Google Workspace Essentials Starter account on the hosted address (no Gmail). Calendar is off by default in the admin console; calendar calls return `403 notACalendarUser` until it is turned on.
+- **The account is NEVER substituted.** Borrowing a sibling's token is identity bleed, the one hard rule (`agent_email.py::reconcile_client`).
+- **The gog client is an app identity, shared fleet-wide.** There are two fleet clients on one GCP project and consent screen, `canopy` (Desktop: gog's loopback login on a laptop) and `canopy-web` (Web: the kind canopy-web's "Connect Google mailbox" button mints under); a token under either reads and sends the same (`agent_email.py::FLEET_CLIENTS`, `DEFAULT_CLIENT`). Never log in with `--client canopy-web` at a terminal: a Web client cannot run gog's loopback login. An agent with no `gog_client` declares `canopy`, never a client named after itself.
+- **The engine resolves the client from evidence at call time.** `gog` keys credentials on the PAIR (mailbox, client) but `gog_client` is one repo-wide value while token stores are per machine, so a box missing a migration would die with `No auth for gmail <mailbox>` beside a working token under the other client name. `reconcile_client` keeps the declared client when it holds a token, otherwise uses the first fleet client that does, otherwise the single other client holding the mailbox (announced); two or more candidates is a refusal. Re-pinning `gog_client` does not fix a drifted box, it only moves which box is broken. `canopy agent doctor` reports the drift separately as **Auth client**.
+- **Where the pieces live.** Both fleet clients' id and secret are in the workspace's Canopy vault (`gog-oauth-client` for `canopy`, `gog-oauth-client-web` for `canopy-web`); each mailbox's refresh token is the agent's `gog-token` on canopy-web. A box imports the token (`canopy agent prepare` on a runner, `canopy agent bootstrap` on a laptop) and writes the client the token names as `credentials-<client>.json` into gog's DATA dir and the home itself, the paths gog reads for that home (`agent_email.py::gog_data_dir`). A copy in the box-wide XDG dir does not count for a per-agent `$GOG_HOME`: every turn fails "OAuth client credentials missing" while canopy-web shows the mailbox Connected.
+- **The shared OAuth app stays "External" and "In Production": do not switch it to Internal.** canopy-web uses the same `canopy` client to let `dimagi-associate.com` accounts (outside the Dimagi Workspace) sign in, which "Internal" would lock out; "In Production" is what keeps refresh tokens long-lived (the 7-day expiry applies only to "Testing"). When fleet email breaks it is a provisioning problem (a missing OAuth client in the vault so `credentials-canopy.json` never lands), which `canopy email preflight` diagnoses; it is not the OAuth app config. (Console setting: not checkable from this repo.)
 
-**Engine** (canopy Python package, `canopy email <send|mark-read|archive|preflight>`):
-- `send` — the echo/ACE HTML wrapper, parameterized by agent config: `--agent <slug>` resolves
-  mailbox + client from the agent repo's `config/agent.json`; body-file contract (single-line
-  paragraphs, bullets); `--reply-to-message-id`; `--dry-run`; JSON result with `message_id` +
-  `thread_id`. The wrapper is the ONLY send path (each agent keeps a thin `bin/<slug>-email` shim
-  or calls the CLI; the deny rail points at it).
-- `mark-read` — Gmail API UNREAD-label removal via the agent's own gog credentials.
-- `archive` — the other half of turn housekeeping: removes INBOX + UNREAD so a handled thread
-  leaves the agent's own inbox. Own mailbox only and reversible, so it rides no approval gate.
-- `preflight` — gog auth liveness for the agent's client, with the exact remediation: `gog login …
-  --client canopy` at a terminal, or canopy-web's "Connect Google mailbox" button (never
-  `--client canopy-web` at a terminal — a Web client cannot run gog's loopback login).
+## 3. Email: `canopy email`
 
-**Per-agent carve-outs:**
-- **Identity:** one agent per mailbox — an address is minted at agent-creation time and never
-  shared. An agent may hold SEVERAL addresses (agent.json `email` = the primary, `addresses` = the
-  rest — e.g. a Gmail `ada@dimagi-ai.com` plus a canopy-hosted `ada@dimagi.ai`), and its Google
-  account (`google_account`, default `email`) is separate from its mail: an agent whose only mail
-  address is canopy-hosted still does Drive/Docs as `<slug>@dimagi-ai.com`. On a hosted domain outside
-  dimagi.ai (no dimagi-ai.com seat), the Google account is a free Google Workspace Essentials
-  Starter account on the hosted address itself — no Gmail, no cost, never a paid Workspace seat.
-  Calendar is included but OFF by default — turn it on in admin.google.com → Apps → Google
-  Workspace → Calendar, or Calendar calls return `403 notACalendarUser`. Every gog call runs as
-  that Google account (`EmailIdentity.account`), over the ONE shared fleet OAuth app — two clients, `canopy` and `canopy-web`, one
-  GCP project (`canopy-494811`), interchangeable for every call. A gog "client" is the app identity
-  (client_id + client_secret) — reusing it across agents is fine and reduces setup; the failure the
-  fleet was built to avoid is acting as another agent's MAILBOX, governed by `--account`, not the
-  client.
-- **The shared OAuth app is intentionally "External" + "In Production" — do NOT switch it to
-  Internal.** The `canopy` OAuth client (Google Cloud project `canopy-494811`) stays **External**
-  because canopy-web also uses it to let **`dimagi-associate.com`** accounts — which are *outside*
-  the Dimagi Workspace — OAuth in; "Internal" user type would lock those logins out. Its publishing
-  status is **In Production**, so refresh tokens are long-lived. (The 7-day refresh-token expiry that
-  bites automated OAuth apps only affects the **"Testing"** publishing status — NOT this app, which
-  is in Production. Don't "fix" a non-problem by flipping user type.) So when fleet email breaks, it's
-  a **provisioning** issue — a missing OAuth client in the workspace vault so `credentials-canopy.json` never
-  lands — which `canopy email preflight` now diagnoses precisely; it is not the OAuth app config.
-- **Where the pieces live today.** Both fleet clients' id+secret are
-  in the workspace's canopy vault "Shared" on canopy-web (`gog-oauth-client` for `canopy`,
-  `gog-oauth-client-web` for `canopy-web`); each mailbox's refresh token is the agent's `gog-token`
-  on canopy-web (the "Connect Google mailbox" button). A box imports that token (cloud:
-  `canopy agent prepare` via `runner/ec2/bootstrap_agents.sh`; laptop: `canopy agent bootstrap`)
-  and writes the client the token names as `credentials-<client>.json` into gog's DATA dir and
-  the home itself — the paths gog actually reads for that home (`agent_email.gog_data_dir`). A
-  per-agent `$GOG_HOME` never reads the box-wide XDG dir, so a copy there does not count
-  (every turn fails "OAuth client credentials missing" while canopy-web shows the mailbox Connected). Every agent and the
-  factory declare `gog_client: canopy`; the per-agent clients (`echo`, `ace`) are retired.
-- **Tiers (generalizing ACE's model):** `act` = canopy-web's grant — the agent's declared
-  interface plus workspace membership, resolved per message by `canopy caller tier` — senders who
-  may steer the agent's work (a static `config/allowlist.txt` is consulted only for an agent with
-  no declared interface; ACE retired its own in dimagi-internal/ace#2773); `correspond` = **derived from the agent's own state** (ACE: LLO
-  contacts in the routed run's `run_state.yaml`; echo: contacts with an existing contact-memory
-  page) — approval-gated replies only; unknown = read-only triage. The derived tier is the important
-  invention: the allowlist stays in sync with the source of truth instead of rotting in a file. This
-  is also the **internal + external** answer — agents can face external counterparts safely because
-  the external tier is scoped to state the agent itself created.
-- **Routing map:** the send-side contract is universal (every send records `thread_id` into the
-  agent's state layer); *where* it lands is the agent's choice.
+Engine: `src/orchestrator/agent_email.py`; flags and verbs are in `canopy email --help`.
 
-## 4. Gating: rails, not approval gates 
+- **`send` is the ONLY send path.** It is an HTML multipart wrapper (Gmail display-wraps plain text at about 72 columns; HTML reflows) configured from the agent repo's `config/agent.json` (`--agent <slug>` or `--repo`). Each agent keeps a thin `bin/<slug>-email` shim (factory-templated) and a deny rail blocking raw `gog gmail send|reply`. The JSON result carries `message_id` and `thread_id`; every caller records `thread_id` into the agent's state layer, which is how an inbound reply is routed back to the right scope. *Where* it lands is the agent's choice.
+- **`send` refuses without a pre-send review receipt** keyed to the body, not to the agent's memory (`review_receipt.py::require`).
+- **`mark-read` and `archive`** use the Gmail API because gog has no mark-read and API reads do not clear UNREAD. `archive` removes INBOX and UNREAD on the agent's own mailbox only and is reversible, so it rides no approval gate.
+- **`preflight`** checks gog auth liveness for the agent's client and prints the exact remediation: `gog login ... --client canopy` at a terminal, or the "Connect Google mailbox" button.
+- **Backend per mailbox.** canopy-web's `GET /api/mail/resolve` says whether a mailbox is served by SES (workspace email domains) or Gmail; SES mailboxes route `send` / `mark-read` / `archive` / `thread` through canopy-web's `/api/mail/*` (no gog; `--attach` refused). A 404 means Gmail; any other resolve failure falls back to Gmail with one loud stderr line: SES is never chosen on a guess.
+- **Counterpart tiers.** Who may steer the agent is canopy-web's grant, resolved per message by `canopy caller tier` (`src/orchestrator/caller.py` module docstring lists the tiers); `From:` is forgeable and is never the tier. `config/allowlist.txt` is consulted only for an agent with no declared interface. A narrower `correspond` tier is derived by the agent from its own state (contacts it created), with approval-gated replies only; unknown senders are read-only triage. Deriving the tier from the agent's own state keeps the list from rotting in a file and makes external counterparts safe.
 
-Operational experience: hal's approve/ask hook rules **worked poorly** — a PreToolUse "ask" is a
-blocking modal that stalls autonomous work and nags interactive sessions. ACE's model is better:
-**hooks carry deny rails only** (make the wrong path impossible; the agent hits the rail, reads the
-message naming the right path, self-corrects, keeps going — zero autonomy cost), and **approval
-lives in the procedural layer** (ACE: pause-point mode matrix persisted to `run_state.yaml`; echo:
-the turn's explicit approval step; both: review posture). Procedural gates are *state* — resumable,
-auditable, non-blocking — not modals.
+## 4. Gating: deny rails, not approval gates
 
-Consequences:
-- `create-agent` factory: the templated `config/gating.json` should default to deny rails +
-  an empty `approve` list, and the generated `turn` skill should carry the approval step
-  procedurally (it already does — Step 2's "present for approval").
-- `docs/agent-operating-model.md` §1a's enforcement ladder stands, with this revision: "hooks make
-  the wrong path impossible" ≠ "hooks ask permission." Asking is the turn checklist's job.
-- hal: convert its three approve rules (`git push`, `gh pr create|merge`, `gh repo create|delete`)
-  to procedural turn steps + (where a genuinely wrong path exists) deny rails.
+Hooks carry **deny rails only**: they make the wrong path impossible and name the right one, so the agent self-corrects at zero autonomy cost. A PreToolUse "ask" is a blocking modal that stalls autonomous work, so the `approve` list in `config/gating.json` stays EMPTY (the factory template defaults to that). Approval lives in the procedural layer: the turn checklist's "present for approval" step and persisted pause-point state, which is resumable and auditable and never a modal. "Hooks make the wrong path impossible" is not "hooks ask permission." Add a new outbound action? Add a deny rail pointing at its one sanctioned path. Rail engine and baseline: `plugins/canopy/agent-core/gating_guard.py`, `plugins/canopy/agent-core/gating-baseline.json`; the operating model's §1a revision.
 
-## 5. Google Workspace: extraction path
+## 5. Google Workspace
 
-**Endgame:** the ~50 domain-neutral Workspace atoms leave ACE and become a standalone shared MCP
-(working name `gws-mcp`; TS + `npx tsx`, no build step, exactly as they run today), consumed by any
-agent via a `.mcp.json` entry (operating model §4c — the echo↔chrome-sales borrowing pattern,
-formalized). ACE's ACE-aware atoms (`resolve_opp_path`, `validate_run_state`,
-`classify_phase_writeback`, `update_yaml_file`, …) stay in ACE, layered on the shared server.
-
-**Per-agent settings contract** (env, from the agent's Canopy vault):
-
-```
-GWS_IDENTITY_MODE = sa | gog          # service-account (headless) or agent-OAuth via gog creds
-GWS_SA_KEY_PATH   = <path>            # sa mode: per-agent SA key (or shared SA + per-drive grants)
-GWS_GOG_CLIENT    = <optional>        # gog mode: acts AS the agent; default = `canopy email client`
-GWS_ROOT_FOLDER_ID / GWS_ALLOWED_DRIVE_IDS   # scope: writes probe-checked against this allowlist
-```
-
-Two identity modes are both real needs today: ACE writes headlessly as a service account; echo
-authors Docs *as echo* on the Connect Marketing drive. The scoping env is what fixes "echo runs
-ACE's server under ACE's SA": each agent mounts the same server with its own identity + scope.
-
-**Interim (until extraction lands):** borrowing ACE's installed `ace-gdrive` stays acceptable for
-SA-mode reads/writes on drives the ACE SA can reach — but no NEW agent should take a dependency on
-`mcp__plugin_ace_…` tool names; wire a `.mcp.json` entry pointing at the server file instead, so the
-rename to `gws-mcp` is a config change.
-
-**Interim doc adapter — `canopy gdoc` (`orchestrator/agent_gdoc.py`).** The one
-Workspace operation the fleet does constantly — publish a markdown deliverable as a *rendered* Google
-Doc authored **as the agent** — did not need to wait for the full extraction, and its absence had the
-fleet re-copying the wrapper anyway (echo `bin/echo_gdoc.py`, eva's `gog drive upload --convert` prose,
-hal's `--convert-to doc` stub — three implementations of one procedure, drifting on format + share
-posture). So it gets the same treatment email did: a thin `canopy gdoc publish` adapter, sibling of
-`canopy email`, that resolves identity from `config/agent.json` and does convert→share→verify in one
-place. It authenticates through **gog's token bucket** (`--account`/`--client`), *not* the macOS
-Keychain echo's REST route used (which blocks in non-interactive turn shells) and *not* ace-gdrive's
-service account (which can't author as the agent — the whole point). Per-agent carve-outs are two
-optional agent.json keys: `gdrive_root_folder` (Projects-root, so `--parent` defaults) and
-`gdrive_share_default`. This does **not** preempt §5: the full `gws-mcp` extraction still owns the rich
-`docs_*`/`sheets_*`/`slides_*` batch surface and can absorb this verb later; `gdoc` covers only the
-single high-frequency op. Each agent's `gdoc-writer` skill collapses to identity + a call to it.
-
-**Travels with the extraction:** `google-shim.ts`, `transient-retry.ts`, `atom-payload-resolver.ts`,
-the shared-drive write probe, and ACE's drift gates (registration-coverage, schema-dump staleness)
-as the new repo's CI.
-
-## 6. Sequencing
-
-1. **Now (this PR):** this design doc + tracking issues; ACE ships its side (turn framework, rails,
-   guarded email).
-2. **Adapter first** (small, high leverage): `canopy email` engine + factory template updates +
-   rails-only gating default. hal gets a working email channel as the validation case (its README
-   already promises one).
-3. **Extraction second** (bigger): `gws-mcp` repo, per-agent env contract, echo migrates off
-   `mcp__plugin_ace_…` names, ACE consumes the shared server + keeps its domain atoms local.
-4. **Not decided here:** ace-web vs canopy-web consolidation (explicitly deferred by Jon); Slack/
-   Telegram adapters (the email adapter's interface should not preclude them — same
-   send/receive/route shape).
+- **`canopy gdoc|gsheet|gslides publish`** (`src/orchestrator/agent_gdoc.py`, `agent_gslides.py`): publish a deliverable as a *rendered* native Google file authored **as the agent**: convert, share, verify in one place. It authenticates through **gog's token bucket** (`--account` / `--client`), not the macOS Keychain (blocks in non-interactive turn shells) and not a service account (cannot author as the agent). `gdrive_share_default` is `domain | anyone | none` (default `domain`). Each agent's `gdoc-writer` skill reduces to identity plus a call to it. Filing contract: `plugins/canopy/agent-core/deliverables.md`.
+- **canopy-gws MCP** (`plugins/canopy/mcp/gws-server.ts`, not registered in `plugin.json`): the domain-neutral Drive / Docs / Sheets / Slides atoms for agents that mount it via `.mcp.json`; ACE-aware atoms stay in ACE. Per-agent settings are env from the agent's Canopy vault; the contract (`GWS_IDENTITY_MODE`, `GWS_SA_KEY_PATH`, `GWS_GOG_ACCOUNT`, `GWS_GOG_CLIENT`, `GWS_ROOT_FOLDER_ID`, `GWS_ALLOWED_DRIVE_IDS`) is documented in `plugins/canopy/mcp/gws/lib/identity.ts`, and resolving it from the session's agent is `plugins/canopy/mcp/gws/lib/session-identity.ts` (`docs/architecture/session-identity.md` § Agent-identity MCP servers). Only `sa` mode is implemented for the googleapis client; `gog` mode fails at startup. There is no default-identity fallback: a human session or missing identity refuses every call. The scoping env is what lets each agent mount the same server under its own identity: never run another agent's server under its identity (for example, a service account that cannot see the drive the agent writes to).
+- **Travels with the server:** `mcp/gws/lib/google-shim.ts`, `mcp/gws/lib/transient-retry.ts`, the Shared-Drive write probe, and the registration-coverage and schema-staleness drift gates in `.github/workflows/gws-tests.yml`.
+- **No new agent should depend on another plugin's tool names** (`mcp__plugin_ace_...`); wire a `.mcp.json` entry pointing at the server file so a rename is a config change.

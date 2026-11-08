@@ -12,7 +12,7 @@ description: >
 
 # Agent Review — the self-improvement loop, pointed at an agent
 
-This is Build 2 of `docs/agent-operating-model.md`: canopy reviewing an agent's *turns* and
+This is the self-improvement lens of `docs/agent-operating-model.md`: canopy reviewing an agent's *turns* and
 shipping improvements back into that agent's repo. reef could *see* friction but never *act* on
 it — this skill owns all three verbs: **spread** (find the fix), **execute** (PR it into the
 agent repo), **measure** (re-run and confirm the friction dropped).
@@ -35,8 +35,8 @@ in canopy); `pack` = the capability is shared but the setting is taste (house st
 marking) — ship the mechanism to canopy parameterized and record this agent's setting as a
 default. A hook, a bin/ tool, or a shared-channel (gdoc/gmail/drive/calendar) helper placed at
 `agent` with no persona-specific `placement_basis` is re-routed to `canopy` (`↻ placement
-re-routed` in the table). This exists because the old prompt routed EVERY fix into the agent repo
-by construction — eva's fleet-generic gdoc share gate shipped as eva's `hooks/gdoc_gate.py`.
+re-routed` in the table). The re-route exists because a fleet-generic mechanism (e.g. a gdoc share
+gate) placed in one agent's repo never reaches the others.
 
 ## Step 2 — Triage the findings
 Present the findings as a ranked table (friction_type · title · fix_kind · placement · target · confidence).

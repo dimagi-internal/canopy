@@ -37,10 +37,10 @@ This skill is for the **headless** path: agent turns, walkthrough renders and
 any machine without Aside, where `browse` runs gstack's bundled
 `chrome-headless-shell`.
 
-## Two patches, since gstack #2709
+## Two patches
 
-1. **Add SwiftShader** to the headless launch args (the original patch).
-2. **Stop gstack switching it back off.** gstack #2709 (v1.7x) added
+1. **Add SwiftShader** to the headless launch args.
+2. **Stop gstack switching it back off.** gstack's
    `headlessGpuArgs()`: on macOS headless it appends `--disable-gpu`,
    `--disable-software-rasterizer`, `--disable-gpu-compositing` and
    `--disable-gpu-watchdog`, to tame a runaway GPU process. Those flags win over
@@ -52,7 +52,7 @@ any machine without Aside, where `browse` runs gstack's bundled
    but has to be in the environment of whichever `browse` call happens to start
    the daemon — every agent, every shell. Patching the source makes it hold.
 
-   **Trade-off:** this gives up #2709's GPU-spin taming while WebGL is on. If a
+   **Trade-off:** this gives up `headlessGpuArgs()`'s GPU-spin taming while WebGL is on. If a
    headless session pins a CPU core with a GPU process at idle, set
    `BROWSE_DISABLE_WEBGL=1` for runs that do not need WebGL.
 

@@ -12,7 +12,7 @@ engine only TAGS what it dispatches and reads the conversation back from canopy-
 leader's Drive (`Process State/Huddles/<id>.json`), which the next huddle of the same team
 reads so it does not re-raise what the principal already declined.
 
-Spec: docs/superpowers/specs/2026-10-06-huddle-design.md.
+The leader procedure is `plugins/canopy/agent-core/huddle.md`.
 """
 from __future__ import annotations
 
@@ -450,10 +450,8 @@ def priority_label(v, brief: str) -> str:
 # principal's goals sheet, is what the huddle works toward: its topic plus the project's outcome
 # is the brief's ONE priority, and what the channel said in the run's read window goes into
 # rounds 1–2 as QUOTED material — people's words, not instructions. Every survivor becomes a
-# proposed TASK in the project. Spec: canopy-web
-# docs/superpowers/specs/2026-10-17-project-check-ins-design.md (§6). A run from an older
-# canopy-web (a work group, layer 4 of 2026-10-16-work-group-huddles-design.md) has the same
-# shape here, minus the project when the group had none.
+# proposed TASK in the project. A run from a canopy-web that predates check-ins (a work group)
+# has the same shape here, minus the project when the group had none.
 MATERIAL_LIMIT = 24_000     # chars of channel material quoted into a round prompt
 
 

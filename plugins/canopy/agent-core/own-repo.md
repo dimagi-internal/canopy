@@ -11,7 +11,8 @@ the session-side half.
 
 ## What is refused (when the turn's asker lacks `agent_edit`)
 
-Only writes to YOUR OWN repo (the `origin` of your clone, the repo URL in `config/agent.json` /
+The matcher is `gating_guard.py::own_repo_violation` (its block comment above `own_repo_refusal`
+is the design note); this list is its summary. Only writes to YOUR OWN repo (the `origin` of your clone, the repo URL in `config/agent.json` /
 `.claude-plugin/plugin.json`, or the envelope's `agent_repo`, which holds wherever the session's
 directory is):
 
@@ -83,7 +84,7 @@ running Claude Code in your repo by hand has no turn and is untouched; so is can
 
 The envelope is read from `~/.canopy/caller/<turn_id>.json` only (the file's own `turn_id` must
 match its name, no symlink out). For a turn that has one and wants an own-repo write, a missing,
-unreadable or mismatched envelope fails CLOSED. An older canopy-web envelope with no
+unreadable or mismatched envelope fails CLOSED. An envelope with no
 `permissions` list falls back to `relationship` (owner, admin, system allowed).
 
 ### A turn with no agent, in your clone
@@ -95,7 +96,7 @@ is working on a box they own, which is the same as that person by hand. Everythi
 - a teammate's own session on someone else's box, though its `relationship` also says `owner`,
 - an agent's own login, even on its owner's box (`system`), or anyone with no edit on an agent could
   have it dispatch a repo turn into its own clone. The owner can run that turn themselves,
-- a scheduled repo turn, a confined turn, and an envelope from a canopy-web without the field.
+- a scheduled repo turn, a confined turn, and an envelope without the field.
 
 ### When no repo is known
 
@@ -105,9 +106,9 @@ cannot compare a target to anything. What happens depends on what the envelope s
 | Envelope | Asker lacks `agent_edit` | Asker holds it |
 |---|---|---|
 | `agent_repo` is `""`: canopy-web has no repo set for you | **fails closed**: every write above is refused, on any repo | allowed |
-| No `agent_repo`: an older canopy-web | rail off, as before | allowed |
+| No `agent_repo` key in the envelope | rail off | allowed |
 | `agent_repo` is `null`: the turn has no agent | rail off | rail off |
-| No envelope at all | rail off, as before | rail off |
+| No envelope at all | rail off | rail off |
 
 A missing envelope cannot fail closed here: the runner prunes envelopes after a week and a laptop's
 by-task record outlives them, so it is routine, and refusing would lock out the owner's own turns.
@@ -140,8 +141,8 @@ only the GraphQL it can recognise as GraphQL. It does not see:
 - a request body from a file or stdin on a REST path: `gh api --input`, `curl -d @file`,
   `wget --post-file` (the mutating call to a repo path is still refused; the unseen body only decides
   a PATCH of an issue's `state`),
-- a turn in a session outside your clone, with no installed copy of you, whose envelope is missing or
-  comes from a canopy-web older than `agent_repo`, where the whole rail is off (see above),
+- a turn in a session outside your clone, with no installed copy of you, whose envelope is missing
+  or has no `agent_repo` key, where the whole rail is off (see above),
 - a session that is not known to be yours at all: no `CANOPY_AGENT_SLUG` or `CANOPY_AGENT` in its
   env and a directory that is no agent's repo, which no rail of yours applies to,
 - `gh issue close|reopen <n>` when `<n>` is a PR: gh closes it, and a number alone does not say

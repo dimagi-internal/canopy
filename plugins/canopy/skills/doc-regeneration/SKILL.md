@@ -18,13 +18,12 @@ If output shows `UPGRADE_AVAILABLE <old> <new>`: tell the user "canopy **v{new}*
 
 ## The model this skill enforces
 
-Documentation has four layers. Each fact belongs in exactly one of them:
+Documentation has three layers. Each fact belongs in exactly one of them:
 
 | Layer | Holds | Loaded |
 |---|---|---|
 | **`CLAUDE.md`** | The CURRENT state as an index: what the system is, how to run/test/ship it, and every rule an agent must not break, each as a short statement plus a pointer to where it is enforced and detailed. | Every session — so every character costs every session. |
-| **Topic docs** (`docs/architecture/<topic>.md` or the repo's equivalent) | Current-state detail for one subject: how it works, the moving parts, the gotchas, phrased in the present tense. | On demand, when an agent works on that subject. |
-| **Design specs** (`docs/**/specs/`) | The design record: why it was built this way, alternatives rejected. | Rarely; only when someone wants to dig. |
+| **Topic docs** (`docs/architecture/<topic>.md` or the repo's equivalent) | What the code cannot say about one subject: what it is for, how its parts connect, the invariants, refusals and gotchas (each with a `file::symbol` pointer), where to start reading. Present tense. | On demand, when an agent works on that subject. |
 | **GitHub** (commits, PRs, issues) | History: what changed, when, what broke, what was measured, who decided. | Never by default — `git log -S`, `gh pr view`. |
 
 **Optimize every doc for clarity about the current state. History is wasted context.** "It used to…", "was X, now Y", "this replaced…", "observed on 2026-07-26", "cost us 52 minutes", "PR #378 fixed one site, then #421…", a completed rollout or migration runbook, a measurement of past behaviour — all of it is already in GitHub, and every reader pays for it in every doc that carries it. The codebase moves fast; a doc is only as good as how clearly it says what is true *now* and what to do *now*.
@@ -33,13 +32,18 @@ This holds for every audience, including docs outside integrators read (an embed
 
 **The only exception** is a present-tense constraint that stops an agent reintroducing a mistake: "don't relax this to X: Y depends on it" — a rule, not a story.
 
+**There is no design-spec, plan, decision-record, archive, case-study or changelog layer.** Those are history: the repo does not keep them as docs. The *why* of a rule lives in the rule, in present tense. A doc exists only for what the code cannot say.
+
+**A doc must not restate what the code states.** Route lists and tables, field lists, defaults, enum values, UI copy, counts and flag lists are stated by the code, the OpenAPI schema, generated types or `--help`: leave a one-line pointer instead. A second copy only goes stale.
+
+**When a doc exists because the code is hard to follow, fix the code's clarity instead**: a module docstring saying what the module is for and where to start, a comment on the non-obvious function, a clearer name (only where tests cover it; behaviour-neutral). The doc then keeps one line pointing at it.
+
 The way this goes wrong, and what this skill reverses: every PR appends a paragraph justifying itself with its own history. Each is reasonable alone; together they push the file past Claude Code's size warning (150k chars) and bury the rules in narrative.
 
 ## Modes and scope
 
 - **`--dry-run` (default):** write everything under `docs/.dry-run/` mirroring the repo layout. Nothing is committed.
-- **`--apply`:** branch `docs/regen-YYYY-MM-DD`, write in place, verify (Phase 4), open a PR.
-- **`--prune` (with `--apply`):** also delete docs classified SUPERSEDED/CONTRADICTED (git keeps them). Without it they are listed in the PR body for the user to confirm.
+- **`--apply`:** branch `docs/regen-YYYY-MM-DD`, write in place, verify (Phase 4), open a PR. History docs (Check 6) are deleted in the same PR; git keeps them.
 
 Scope is detected, not chosen — `regen_status.py` prints it:
 
@@ -53,7 +57,7 @@ Measure in **characters** (`wc -c`), not lines — Claude Code's limit is in cha
 
 - **CLAUDE.md target ≤ 40,000; hard ceiling 60,000.** Above the ceiling the regen is not done. A large multi-app system fits: 1–2 lines per rule, one line per route, pointers for the rest.
 - **Topic doc soft warning: 50,000 each.** Report any above it and recommend a split by sub-subject, or a searchable index at its top; the CLAUDE.md pointer to it says *grep it, don't read it whole*. Report, don't force — a long reference doc can be right.
-- Every section faces one test: *would the next agent do something wrong without this in its context at session start?* If not, it belongs in a topic doc, a spec, or GitHub.
+- Every section faces one test: *would the next agent do something wrong without this in its context at session start?* If not, it belongs in a topic doc, or nowhere.
 
 ## Tools (use these; don't hand-roll greps)
 
@@ -66,15 +70,15 @@ python3 "$_DR/find_history.py" CLAUDE.md docs/architecture/*.md # dated, PR-numb
 ```
 
 - `check_refs.py` resolves backticked tokens and relative link targets: repo paths (also relative to the doc), `path::symbol`, and dotted forms (`apps/agents/access.decide`, `apps.agents.access.decide` → module file, then `def|class|name =`). It skips placeholders (`< * { … $`), routes and other repos' paths. Output `MISSING`/`SYMBOL` lines and `checked N, broken M`; exit 1 if broken.
-- `find_history.py` flags ISO dates, `#1234` / `repo#1234`, and history phrases, but not dated spec filenames/links or section numbers. Output `file:line: [kinds] text` and a per-file count. A flag is a candidate, not a verdict — judge each line.
-- **`.docs-ignore`** (repo root) is the one place a person says a flag is not a defect: another repo's file, build output, an event name, a design record's own dated notes. Both scripts read it (`--ignore-file PATH` for another file, `--no-ignore` to see everything). One entry per line, `<check_refs|find_history|*> <pattern>  # <reason>`; no reason is an error. `check_refs` patterns are `[DOC_GLOB::]TOKEN_GLOB` (the token as written); `find_history` patterns are `DOC_GLOB[::TEXT]` (a whole doc, or lines containing TEXT). Each run prints `ignored N` and `UNUSED` for entries nothing matched. Before adding an entry, confirm the flag is a false positive, not a rotted pointer; an entry covers one thing, never a whole class of tokens. The repo's own `tests/test_docs_ignore.py` fails on a stale entry. Format: `scripts/docs_ignore.py`.
+- `find_history.py` flags ISO dates, `#1234` / `repo#1234`, and history phrases, but not a date inside a filename/link target or section numbers. Output `file:line: [kinds] text` and a per-file count. A flag is a candidate, not a verdict — judge each line.
+- **`.docs-ignore`** (repo root) is the one place a person says a flag is not a defect: another repo's file, build output, an event name. Both scripts read it (`--ignore-file PATH` for another file, `--no-ignore` to see everything). One entry per line, `<check_refs|find_history|*> <pattern>  # <reason>`; no reason is an error. `check_refs` patterns are `[DOC_GLOB::]TOKEN_GLOB` (the token as written); `find_history` patterns are `DOC_GLOB[::TEXT]` (a whole doc, or lines containing TEXT). Each run prints `ignored N` and `UNUSED` for entries nothing matched. Before adding an entry, confirm the flag is a false positive, not a rotted pointer; an entry covers one thing, never a whole class of tokens. The repo's own `tests/test_docs_ignore.py` fails on a stale entry. Format: `scripts/docs_ignore.py`.
 - `regen_status.py --since <ref>` overrides the detected last regen.
 
 ## Phase 1 — Read (no output yet)
 
 1. `regen_status.py` — record the mode, the last regen, the changed-docs list and the growth line.
 2. CLAUDE.md in full, plus any nested `CLAUDE.md` / `AGENTS.md` that load with it. **Full:** every topic doc (`docs/architecture/`, `ARCHITECTURE.md`, `README.md`, `find docs -maxdepth 2 -name '*.md'`) — know what exists before deciding where a fact moves, or you create a second copy. **Incremental:** the changed docs; the rest only where a check points.
-3. Design-doc dirs (`docs/specs/`, `docs/superpowers/{specs,plans}/`, `docs/archive/`…) — headers and status only.
+3. History dirs and files (`docs/specs/`, `docs/superpowers/{specs,plans}/`, `docs/plans/`, `docs/archive/`, `CHANGELOG.md`, dated records…) — list them and what reads or writes them (docs, skills, scripts, workflows, tests); they are deleted in Check 6.
 4. Tests and scripts that READ docs (`regen_status.py` lists those naming CLAUDE.md; also `grep -rlE 'docs/' tests scripts .github`). They pin doc content; moving a pinned sentence breaks them.
 5. `gh pr list --state merged --limit 100` and `gh issue list --state open --limit 100` — to confirm what is current (incremental: merged since the last regen). Warn if truncated.
 
@@ -82,7 +86,9 @@ python3 "$_DR/find_history.py" CLAUDE.md docs/architecture/*.md # dated, PR-numb
 
 **Check 1 — Size map.** Chars per section and per bullet, largest first; topic docs over the soft warning.
 
-**Check 2 — History.** Run `find_history.py`, then read each paragraph and separate: *rule* (what is true now), *enforcement/pointer* (what holds it), *gotcha* (a present-tense trap), *history* (everything else: what it replaced, "was X, now Y", when, incidents, measurements of past behaviour, who decided, PR chains, completed rollout or migration runbooks). History is cut from CLAUDE.md and every topic doc, integrator-facing ones included; a migration note becomes the current requirement it implies, or goes. If real design rationale is worth keeping and a spec holds it, link the spec; never move history into a new doc to avoid deleting it.
+**Check 2 — History.** Run `find_history.py`, then read each paragraph and separate: *rule* (what is true now), *enforcement/pointer* (what holds it), *gotcha* (a present-tense trap), *history* (everything else: what it replaced, "was X, now Y", when, incidents, measurements of past behaviour, who decided, PR chains, completed rollout or migration runbooks). History is cut from CLAUDE.md and every topic doc, integrator-facing ones included; a migration note becomes the current requirement it implies, or goes. A rationale that still holds is rewritten as the rule's present-tense reason; never move history into a new doc to avoid deleting it.
+
+**Check 2b — Derivable content (the derivable-content test).** For each paragraph, table and list ask: *can an agent read this from the code, the schema, generated types or `--help` in one step?* If yes (routes, fields, defaults, enum values, flag lists, UI copy, counts, a command's options), replace it with a one-line pointer after opening the code to confirm it states the thing unambiguously. Keep only orientation, invariants, refusals and gotchas the code does not make obvious, each with a `file::symbol` pointer that resolves. If the doc exists because the code is hard to follow, add a module docstring or a comment next to the code (current-state words, no behaviour change) and keep the one-line pointer. When unsure between KEEP and POINT, KEEP and say so in the report. Never cut a refusal, a security rule or an invariant to save space.
 
 **Check 3 — Placement.** Needed *before* an agent knows what it is working on (cross-cutting invariants, CI-enforced boundaries, how to ship, safety rules)? → CLAUDE.md, one or two lines. Only inside one subject? → that subject's topic doc; CLAUDE.md keeps at most a one-line pointer in a "where to read before touching X" index. Merge into an existing topic doc when one covers the subject.
 
@@ -90,7 +96,7 @@ python3 "$_DR/find_history.py" CLAUDE.md docs/architecture/*.md # dated, PR-numb
 
 **Check 5 — Staleness and references.** Run `check_refs.py` over CLAUDE.md and every topic doc (both modes). A broken reference is a finding even inside "history" prose — it is often a current rule whose worked example rotted: fix the pointer or drop it. Claims about counts, flags, defaults and settings are re-derived from code, never copied. Contradictions between CLAUDE.md, topic docs and code: code wins; report each.
 
-**Check 6 — Retirement.** Classify each standing spec/plan/learning: LIVING / SHIPPED-RECORD (keep untouched — it is the design record) / SUPERSEDED / CONTRADICTED (would misdirect an agent today). No status banners on shipped records. Delete SUPERSEDED/CONTRADICTED only with `--prune`. Incremental: only specs added or referenced since the last regen.
+**Check 6 — Retirement.** Specs, plans, decision records, archives, case studies, changelogs and other dated records are history, not docs: delete them (git and GitHub keep them). Before deleting each, find every live reference (docs, skills, scripts, workflows, tests, `CLAUDE.md`; a changelog's readers and writers too) and move any rule that is still true and stated nowhere current into the owning topic doc or a code docstring, in present tense; then fix or remove the references. A changelog that tooling writes or reads needs that tooling changed so history lives only in git and releases. List in the PR body each deleted file and what was rescued where. Incremental: only history docs added or referenced since the last regen. Docs that are live but SUPERSEDED or CONTRADICTED by the code are fixed or deleted the same way.
 
 ## Phase 3 — Produce
 
@@ -100,7 +106,7 @@ python3 "$_DR/find_history.py" CLAUDE.md docs/architecture/*.md # dated, PR-numb
 3. Architecture in a few lines, dev/test/ship commands, cross-cutting invariants (one line each + pointer), and an **index of topic docs** ("touching auth → read `docs/architecture/access.md`").
 4. Route/URL tables: one line per route; behaviour detail lives in the topic doc.
 
-**Topic docs** — present tense, organized by how the thing works today, each rule keeping its enforcement pointer. Move content *verbatim-in-substance*: every rule, constraint and gotcha removed from CLAUDE.md lands somewhere; only history may disappear.
+**Topic docs** — present tense, organized by how the thing works today, each rule keeping its enforcement pointer. Move content *verbatim-in-substance*: every rule, constraint and gotcha removed from CLAUDE.md lands somewhere; only history and derivable content (replaced by a pointer) may disappear.
 
 **Guards** (apply mode; add whichever the repo lacks, in its own test framework, where CI already runs):
 - **Size guard:** fails when CLAUDE.md exceeds the ceiling; message: "move detail to docs/<topic>.md; history belongs in the PR description".
@@ -122,21 +128,21 @@ python3 "$_DR/find_history.py" CLAUDE.md docs/architecture/*.md # dated, PR-numb
 3. **Growth trajectory:** chars/day since the last regen that rewrote CLAUDE.md, the projected dates for the target and the ceiling (from `regen_status.py`), and when to run the next regen — before the projected target date.
 4. The conservation table; what moved where; history dropped (counts, examples).
 5. References: "checked N, broken M" before and after, and how each break was fixed.
-6. Duplications removed, contradictions found, the retirement table.
+6. Duplications removed, contradictions found, the history docs deleted and what was rescued from each. A disposition table (section → KEEP / POINT / CUT / MOVED-TO-CODE with the code pointer verified) for the derivable-content test.
 7. **Steps not performed:** every phase step skipped or cut short — e.g. the PR/issue cross-check, count/flag re-derivation, the duplication check, retirement — each with why. Silence means it was done.
 8. What would still confuse an agent starting today.
 
 **Commit and PR title describe the actual diff**, in every mode — the change, not the skill's name. "docs: regenerate CLAUDE.md as a current-state index" fits only a diff that does that; an incremental pass that strips topic-doc history and fixes references is "docs: strip history from topic docs, fix stale refs". End the commit message with a `Doc-Regen: full|incremental` trailer — the next run finds its baseline by it.
 
 - **Dry-run:** write under `docs/.dry-run/`, present the report, suggest `--apply`.
-- **Apply:** branch, commit, open a PR with the repo's conventions (auto-merge if its CLAUDE.md says so); add "Retirements needing your call" when `--prune` was not passed.
+- **Apply:** branch, commit, open a PR with the repo's conventions (auto-merge if its CLAUDE.md says so).
 
 ## Principles
 
 - **Clarity about the current state is the goal.** Every line of history is context a reader pays for and does not need; GitHub keeps it.
 - **Index, not encyclopedia.** CLAUDE.md points; topic docs explain.
 - **Restructure, don't append.** A regen that only adds is not a regen.
-- **Conserve rules, drop narrative** — and show the before→after for each rule you touched.
+- **Conserve rules, drop narrative and derivable content** — and show the before→after for each rule you touched.
 - **Verify every reference with the tool**, not by eye.
 - **Say what you skipped.** An unreported skip reads as done.
 - **Leave guards.** Size and history checks in CI, plus the "how to write this file" note, so the next hundred PRs do not undo the work.

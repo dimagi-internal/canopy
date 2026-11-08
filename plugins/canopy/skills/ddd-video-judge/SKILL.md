@@ -95,12 +95,12 @@ ffmpeg -loglevel error -ss <t0> -i output.mp4 -t <dur> \
 # however correct the final frame looks.
 ```
 
-Observed (`microplans-study-groups` s6, 2026-09): the line said "the map reframes
-on both" over a map whose `fitBounds` had already finished OFF-SCREEN — the click
-that triggered it fired while the page was scrolled down to the table, and the
-scroll back up arrived after the 900ms animation was over. Every sampled frame
-showed both arms correctly framed, so a still-frame read passed it. 102 of 117
-frames were byte-identical: nothing moved on camera.
+Example failure: the line says "the map reframes on both" over a map whose
+`fitBounds` already finished OFF-SCREEN — the click that triggered it fired while
+the page was scrolled down to the table, and the scroll back up arrived after
+the animation was over. Every sampled frame shows both arms correctly framed, so
+a still-frame read passes it; most frames are byte-identical because nothing
+moved on camera.
 
 Route it `NARRATION` (describe the state the frames actually show) or `FOOTAGE`
 (stage the change so it happens on camera — bring the target into view BEFORE the

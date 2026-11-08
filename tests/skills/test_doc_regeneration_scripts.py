@@ -127,11 +127,11 @@ def test_history_found_by_date_pr_and_phrase(tmp_path):
     assert "total flagged: 7" in out
 
 
-def test_history_ignores_specs_sections_and_present_tense(tmp_path):
+def test_history_ignores_dated_paths_sections_and_present_tense(tmp_path):
     doc = tmp_path / "doc.md"
     doc.write_text(
-        "Design: docs/superpowers/specs/2026-10-06-huddle-design.md\n"
-        "Design: [the spec](docs/superpowers/specs/2026-10-06-huddle-design.md)\n"
+        "Design: docs/runs/2026-10-06-huddle-run.md\n"
+        "Design: [the run](docs/runs/2026-10-06-huddle-run.md)\n"
         "Per section (4.1.5.1) of the contract.\n"
         "Seam #2 is the one allowlisted exception.\n"
         "The token is used to sign requests.\n"

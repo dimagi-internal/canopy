@@ -15,8 +15,7 @@ A bold `Subject:` line followed by a quoted body is **not** a draft email. It lo
 but clicking it does nothing. Always use the block.
 
 The Docs API has no request that inserts a block by name. The engine builds the same table
-with the native block's styling constants (originally chrome-sales' `docs_insert_email_block`),
-and Docs gives it the Gmail icon.
+with the native block's styling constants, and Docs gives it the Gmail icon.
 
 ## Procedure
 
@@ -66,13 +65,12 @@ and Docs gives it the Gmail icon.
 
 The engine runs as the agent's own Google account, via gog (`gog api call docs v1 …`), and
 resolves identity the same way `canopy email` does. The agent that published the doc can
-edit it, so no sharing step is needed. That is the reason this moved off chrome-sales, whose
-service account had to be granted writer on every doc first.
+edit it, so no sharing step is needed.
 
 One exception: **ACE's run docs are owned by its Drive service account**, and ace@ gets a 403
 on them. ACE also runs some turns with no shell. ACE therefore keeps a TypeScript copy of this
-engine as an MCP tool (`docs_insert_email_blocks`, `ace/lib/docs-email-block.ts`). Change the
-two together.
+engine as an MCP tool (`docs_insert_email_blocks`). Change the two together
+(`src/orchestrator/gdoc_email_blocks.py` module docstring).
 
 ## Related
 

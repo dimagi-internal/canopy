@@ -30,9 +30,9 @@ BEFORE any rendering, judging, or gap-routing**.  The narrative is the north sta
 and the user's irreplaceable-taste call.  Nothing should be built, rendered, or
 judged until the story arc is approved.
 
-## When to run this gate (it is now OPT-IN)
+## When to run this gate (it is OPT-IN)
 
-Routine narrative edits no longer pause here. Since canopy-web owns the story,
+Routine narrative edits do not pause here. Because canopy-web owns the story,
 an edit made on the review surface **is** the new version the moment it is
 posted — there is nothing to reconcile and nothing to approve a second time.
 `ddd-run` Step 1b just calls `scripts.ddd.narrative pull` to fetch it into the
@@ -44,7 +44,7 @@ approve/redraft gate only when:
 - **The user explicitly asks** to review the narrative (e.g. "let me approve the
   story before we render").
 
-In **build** mode (`loop.narrative_mode`, canopy#789 — the default unless the
+In **build** mode (`loop.narrative_mode` — the default unless the
 objective is `demo`) the first post does not block: post, report the link, and
 proceed. Mid-run revisions never come here in either mode — they go through
 `python -m scripts.ddd.narrative_guard check`, which reviews them autonomously
@@ -59,11 +59,11 @@ For every other narrative change, do NOT run this gate — edit the story on
 canopy-web, where posting IS the new version. The only durable human approval in
 the routine loop is the **`external_release`** gate at upload.
 
-The posted review now carries:
+The posted review carries:
 - **Per-scene `features[]`** — the concrete buildable units the author declared,
   so the user can see at a glance what is being committed to.
-- **Actionability score** — from the `ddd-narrative-actionability-eval` that ran
-  before this gate, so the user knows whether the narrative is machine-verifiable.
+- **Actionability score** — from the `ddd-narrative-actionability-eval` that runs
+  ahead of this gate, so the user knows whether the narrative is machine-verifiable.
 
 ## Why this gate exists
 
@@ -180,9 +180,8 @@ This returns JSON with **two explicit link fields** — use the right one:
 ```
 
 Every link is workspace-scoped (`/w/<workspace>/…`). Never send, paste or
-hand-build a flat `<base>/review/<id>` link — that route is removed
-(canopy-web#1337) and a flat link from this output once reached an external
-reviewer. Copy the URL the command printed; don't reconstruct one.
+hand-build a flat `<base>/review/<id>` link — that route does not exist
+and a flat link reaches an external reviewer unscoped. Copy the URL the command printed; don't reconstruct one.
 
 - **`internal_url` — present THIS to the user.** It opens inside the workbench
   with the left rail / navigation because the user is signed in. This is the
@@ -192,15 +191,14 @@ reviewer. Copy the URL the command printed; don't reconstruct one.
   this out when the user explicitly asks to share externally — never as their
   primary review link.
 
-(The bare `url` / `share_token` fields are the raw server response, kept for
-back-compat. Prefer `internal_url`. `narrative post` also prints both links to
+(The bare `url` / `share_token` fields are the raw server response. Prefer `internal_url`. `narrative post` also prints both links to
 stderr labelled "internal (owner, left rail)" / "external (share, no rail)".)
 
 **`post` stamps `run_state.yaml` for you — do NOT stamp it by hand.** The
 command writes both `narrative_review_id` (the raw review UUID) and a
 token-bearing `narrative_review_url` onto the run, and sends the run's explicit
 `narrative_slug` with the review so it files under the right narrative even if
-the slug was renamed. Those stamps are what `ddd-upload` reads to (a) attach this
+the slug changed mid-flow. Those stamps are what `ddd-upload` reads to (a) attach this
 run's artifacts to the exact narrative version and (b) prove a narrative review
 ran — without them, upload refuses to publish (the run would show as "no
 narrative"). If `post` prints a `WARNING` that it could not find `run_state`,
@@ -277,7 +275,7 @@ A response with no decision is never an approval.
 | `approve` | Narrative is **APPROVED** — proceed to `ddd-run` (Render + Judge). |
 | `redraft` | The narrative needs a structural re-draft — **loop back to `/ddd-spec`** to re-draft the narrative from the spine. Do NOT proceed to render. |
 
-Legacy v2 values are accepted by the `apply` command and coerced automatically:
+Alternate values are accepted by the `apply` command and coerced (`scripts/ddd/narrative.py`):
 `"agree"`/`"edit"` → `"approve"`; `"rethink"` → `"redraft"`.
 
 **Critical:** Do NOT proceed to Render + Judge until the decision is `approve`.

@@ -20,8 +20,7 @@ window state lives there — **not in a repo file.**
   splits state across the fleet.
 - **An empty list means "no syncs", so sanity-check it before trusting a project-start window.**
   If your board or mailbox shows a sync you clearly sent, the window is wrong — don't re-report
-  months of already-reported work. (A client bug once returned `[]` for every agent; the fix is
-  in, but the cross-check is free and the failure is expensive.)
+  months of already-reported work. The cross-check is free and the failure is expensive.
 
 ## Correcting a posted sync
 - `canopy agent sync …` is **idempotent per (period_start, period_end, source)** — re-posting the
@@ -116,18 +115,10 @@ Rules that make this bite:
 Evidence-based grading is symmetric — it raises grades too. When a human demonstrably *used*
 something, say so and score it accordingly; that is the only kind of high grade worth reporting.
 
-> Origin: Jonathan, 2026-07-23, on Echo's manager sync #3 — *"You can't possibly confidently rate
-> your skills at A− … because we haven't yet really used the outputs you are working on yet you
-> are in iteration mode. You should ALWAYS ALWAYS be skeptical of your skills until a human has
-> really been able to consume the output and use it for their goal."* The audit that followed
-> found the inversion above in that very window: the three deliverables with **zero** evidence of
-> use were graded A−, while the one output a human actually used (an advisor submitting a drafted
-> award entry herself) was graded B.
-
 **Enforce this in your board, not just in prose.** Your task tracker's completion path should
 refuse a score that has no evidence tier and refuse a grade above that tier's ceiling, so an
-unearned A− is impossible rather than merely discouraged (Echo's `bin/echo_tasks.py set` is the
-reference implementation). Prose you must remember loses to a rail that runs every time.
+unearned A− is impossible rather than merely discouraged. Prose you must remember loses to a rail
+that runs every time.
 
 ## Asks discipline (your advisor's scarce time)
 Your advisor is the **advisor, not the requester**. Two rules:

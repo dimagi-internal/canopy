@@ -87,17 +87,15 @@ deterministic-only), `--hours N` (evidence window, default 14d), `--no-evidence`
 **"No agent repos found" means the SEARCH SPACE is wrong, not that the fleet is empty.** The two
 default bases (`~/emdash/repositories`, `~/emdash-projects`) are one operator's layout; a machine
 that keeps its repos anywhere else — say `C:\Projects` — discovers nothing, and this skill's own
-"just run it, no arguments" is what makes that read as a real verdict. The error now lists every
+"just run it, no arguments" is what makes that read as a real verdict. The error lists every
 directory it searched. Fix it once, for the machine, rather than per invocation:
 
 ```bash
 export CANOPY_AGENT_BASES="/c/Projects"        # os.pathsep-separated; dirs that CONTAIN agent repos
 ```
 
-(Reported 2026-09-14: combined with a Windows path-separator bug in the template lookup — since
-fixed — fleet-align had never once returned a true result on that machine, and reported a
-confidently-reasoned fabrication instead of an error. `analyze()` now raises `BaselineUnusable`
-rather than judging against a baseline that resolved to nothing.)
+(`analyze()` raises `BaselineUnusable` rather than judging against a baseline that resolved to
+nothing; without that, the verdict would be a confidently-reasoned fabrication.)
 
 ## Step 2 — Triage
 
@@ -105,7 +103,7 @@ Present the findings as a table (kind · artifact · reference · → laggards �
 Decide implement / defer / skip per finding. Bias:
 - **Evidence-backed DISTRIBUTE first** — a stale artifact that already cost a laggard a real miss.
 - **PROMOTE** when ≥2 agents converged — that's the strongest signal the template is behind
-  (the §1b story: "ACE re-did echo's fixes by hand" → it belonged in canopy).
+  (e.g. one agent re-doing another's fixes by hand means the fix belongs in canopy).
 - **PROMOTE candidates (agent-unique)** — lift the mechanism into canopy (a CLI under
   `src/orchestrator/`, a fleet hook under `plugins/canopy/agent-core/`), parameterize any
   per-agent setting, then thin the agent copy to a stub (or delete it). If canopy already ships
@@ -143,7 +141,7 @@ into the **laggard's own repo**, handing it the finding + its `change_brief`. In
   then one PR per owning agent removing/thinning its copy to call canopy's.
 - **PROMOTE** → the PR goes into **canopy**, editing the factory template string in
   `packages/canopy_agent_factory/canopy_agent_factory/_factory.py` (the factory is its own
-  published package since #636). Bump that package's own `[project] version` in
+  published package). Bump that package's own `[project] version` in
   `packages/canopy_agent_factory/pyproject.toml` (it publishes to PyPI on its own clock, for
   canopy-web) AND run `canopy version bump` (canopy's runtime bundle carries the package, so
   installs only pick the change up on a canopy release), then follow the plugin-update flow. Existing agents then adopt it via the
@@ -166,16 +164,15 @@ not a report.
   minimal in-place splice, and it is made by a dispatched AI with judgment — not a template re-stamp
   and not deterministic string surgery.
 - **Gating is delicate.** `config/gating.json` carries agent-specific channel config. Drop the
-  deprecated `approve` block; add a missing deny rail *only if the agent has that channel* (heed the
+  `approve` block; add a missing deny rail *only if the agent has that channel* (heed the
   `change_brief` applicability instruction).
-- **`gating-hook` findings are warnings (canopy#849).** canopy's plugin registers the one gating
+- **`gating-hook` findings are warnings.** canopy's plugin registers the one gating
   hook and applies the session's agent's `config/gating.json`; an agent that still registers its
   own PreToolUse `gating_guard.py` entry (`.claude/settings.json` or `hooks/hooks.json`) carries a
   leftover. Nothing misfires today (the engine makes a sibling's loader stand down), so the fix is a
   cleanup PR: remove the entry and `hooks/gating_guard.py`, keep `config/gating.json`, and make sure
   `.claude/settings.json` sets `"env": {"CANOPY_AGENT": "<slug>"}`.
-- Legacy agents (no `config/agent.json`, e.g. echo) are never stale laggards — they're the ancestor.
+- Agents without `config/agent.json` (e.g. echo) are never stale laggards — they're the ancestor.
   Harvest their good ideas via PROMOTE, don't "fix" them toward the template.
 - `canopy fleet-align` is read-only analysis; it emits `change_brief`s for the apply agent. Backed
-  by `src/orchestrator/fleet_align.py`; sibling to `agent-review`. Design:
-  `docs/superpowers/specs/2026-07-03-fleet-align-design.md`.
+  by `src/orchestrator/fleet_align.py`; sibling to `agent-review`.

@@ -43,9 +43,9 @@ Determine the product name from the argument. Set EVAL_DIR to `evals/<product>` 
 
 3. Copy outputs to the run directory (output/ and screenshots/ subdirs).
 
-4. Save the exact prompt used to input-prompt.md in the run directory.
+4. Save the exact input prompt to input-prompt.md in the run directory.
 
-5. Save the design system used to design-system.md in the run directory.
+5. Save the design system to design-system.md in the run directory.
 
 ### Step 3: Score
 

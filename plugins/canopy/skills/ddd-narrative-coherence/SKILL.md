@@ -49,20 +49,14 @@ outcomes:
 This skill is the rule-based gate that catches the most common failure mode:
 **outcome leakage** — citing specific output values in per-scene fields.
 
-## What it catches (v1 — outcome leakage)
+## What it catches (outcome leakage)
 
 The rule-based detector flags numeric patterns in per-scene `show` and
 `concept_claim` fields that name **system-generated KPIs or counts**, while
-leaving **input config values** alone. The catalog of patterns lives in
-`scripts/ddd/narrative_coherence.py:OUTCOME_PATTERNS` and currently includes:
-
-| Pattern | Why it's an outcome |
-|---|---|
-| `<N> work area(s)` | Per-plan work-area count is computed by the materializer. |
-| `<N>% imbalance` / `imbalance <N>%` | Workload imbalance is a KPI computed after assignment. |
-| `fit (score) <N>` / `★ <N>` | Fit score is a KPI computed from work areas + footprints. |
-| `<N> km (max) travel` / `<N> km max spread` | Travel/spread is a KPI computed from geometry. |
-| `<N> Approved + <N> In review` (etc.) | Lifecycle split is the consequence of LLO decisions. |
+leaving **input config values** alone. The patterns (work-area counts,
+imbalance %, fit scores, travel/spread km, lifecycle split counts), each with
+the reason it is an outcome, live in
+`scripts/ddd/narrative_coherence.py:OUTCOME_PATTERNS`.
 
 Inputs (e.g. `100 buildings per work area`, `opportunity 123`, `program 135`,
 `balance tolerance ±10%`) are NOT flagged — they're values the persona enters,
@@ -72,16 +66,15 @@ The top-level `spec.narrative` paragraph is INTENTIONALLY NOT audited — that's
 an overview field allowed to mention outcomes in passing. The discipline is
 per-scene.
 
-## What it doesn't catch yet (v2 backlog)
+## What it does not catch
 
-These need LLM judgment and are not in v1:
+These need LLM judgment, which the rule-based check does not apply:
 - **Temporal order** — a beat references state no prior beat (or initial
   demo state) produces.
 - **Persona-can't-do-that** — a beat assigns an action to a persona whose
   declared role doesn't cover it.
 
-Both can be added as a complementary LLM-judge sub-skill that runs after the
-rule-based check passes.
+Both would need a complementary LLM-judge step after the rule-based check passes.
 
 ## Inputs
 
@@ -116,13 +109,3 @@ If `fail`: print the `blocking_reason` verbatim. Do NOT proceed to actionability
 eval or to the human narrative-review gate — the narrative must be revised first.
 A revised spec must re-pass `ddd-spec-qa` and `ddd-narrative-coherence` before
 re-running actionability.
-
-## Provenance
-
-Surfaced during DDD-on-microplans dogfooding (2026-05-29): a spec for the
-ten-Kano-wards run cited per-plan work-area counts (Galinja 7 / Jibga 43 /
-Gora 53 / Dawakin Gulu 6) and KPI values (Jibga 106% imbalance / 15.3 km
-travel / fit 20.0, Galinja ★ 98.7, Madobi 100%) in the materialize beat —
-all values the materializer would only produce after running. The user caught
-it; the loop didn't. Recorded as `gap-narrative-coherence-check` in DDD's
-own why-brief, then built.

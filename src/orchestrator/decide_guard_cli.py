@@ -160,7 +160,7 @@ def add_example_cmd(closing, handback, why, in_prompt, repo):
     dg.sync_hooks_json(hooks, examples)
     click.echo(json.dumps(row, ensure_ascii=False))
     if dg.PLUGIN_WIDE:
-        click.echo(f"re-rendered {hooks} — now `uv run canopy version bump`, add a CHANGELOG line, and ship")
+        click.echo(f"re-rendered {hooks} — now `uv run canopy version bump` and ship")
     else:
         click.echo("opt-in scope: ship this, then `canopy decide-guard stamp --user` on each "
                    "account that opted in")

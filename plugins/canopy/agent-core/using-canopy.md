@@ -40,9 +40,9 @@ If your recommendation contradicts a page you have just read, say so and reconci
 | Question | Read | Then verify with |
 |---|---|---|
 | How do I use / run an agent? Local vs runner | `docs/running-an-agent.md` | `canopy agent use --help`, `canopy agent runs-as` |
-| How does a person get an agent's plugin? The `canopy-agents` catalog | canopy-web `docs/architecture/plugin-marketplace.md` | the catalog (`GET /plugins/marketplace.json`), `canopy agent use` output |
-| Who can do what; licences; turn modes | canopy-web `docs/architecture/access.md`, `roles.md` | `who_is_asking`, `canopy agent read-mode get --slug <slug>`, `canopy agent sites list --slug <slug>` |
-| Runners, schedules, routing | canopy-web `docs/architecture/runners.md` | `canopy agent doctor`, the runner list |
+| How does a person get an agent's plugin? The `canopy-agents` catalog | canopy-web [plugin-marketplace.md](https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/plugin-marketplace.md) | the catalog (`GET /plugins/marketplace.json`), `canopy agent use` output |
+| Who can do what; licences; turn modes | canopy-web [access.md](https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/access.md), [roles.md](https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/roles.md) | `who_is_asking`, `canopy agent read-mode get --slug <slug>`, `canopy agent sites list --slug <slug>` |
+| Runners, schedules, routing | canopy-web [runners.md](https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/runners.md) | `canopy agent doctor`, the runner list |
 | Setting up / vaults / device grants | `docs/architecture/agent-setup-lifecycle.md` | `canopy agent doctor`, the agent's vault members |
 | Words used here (plugin, instance, runner, local turn…) | `docs/GLOSSARY.md` | — |
 | How this repo's docs are kept honest | `docs/documentation.md` | — |

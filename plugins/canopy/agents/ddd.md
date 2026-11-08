@@ -106,7 +106,7 @@ A DDD run optimizes ONE of two things, set by `loop.objective` in
 | Narrative | approve the USE CASE (persona, job, the 3–4 moments); scene recipes follow the product without re-gating | locked scene by scene |
 | Video phase | skipped unless asked | runs on convergence |
 
-**Target rubric — what "converged" means (canopy#790, `scripts/ddd/target_rubric.py`).**
+**Target rubric — what "converged" means (`scripts/ddd/target_rubric.py`).**
 A run converges on the rubric its caller sends, not on a fixed 4.0. The caller
 sends the outcomes the build or demo must demonstrate (each with a pass
 condition), the generic dimensions that block (anything else is advisory), and
@@ -136,29 +136,27 @@ Each outcome and each blocking dimension is one criterion, and noise is handled
 two ways. First, a criterion is read by the **median** of its cells, never the
 minimum; only a cap the concept judge *confirmed* (median of 3 draws ≤ 2) fails
 it outright. Second, it passes when it passed on the **majority of its last
-`draws` full passes**, so one pass flipping 3→2 with nothing changed no longer
-un-converges a run (#492). An outcome with a `pass_when` is scored by the concept
+`draws` full passes**, so one pass flipping 3→2 with nothing changed does not
+un-converge a run. An outcome with a `pass_when` is scored by the concept
 judge directly (`target_outcomes:`, k=3 draws). A finding blocks only when it sits
 on a failing criterion or has a severity in `block_severities`. Everything else is
 advisory: it never holds the run open, but if it is mechanical it still rides the
 next batch (`target_role: advisory`) — the rubric decides what blocks, not what
-gets fixed (canopy#788). Only an advisory finding that needs a decision
-(`options`/`redesign`) becomes `route: DEFER, deferred_by: target_rubric`. That is
-why arc `visual_variety` no longer holds a build run open for 11 iterations.
+gets fixed. Only an advisory finding that needs a decision
+(`options`/`redesign`) becomes `route: DEFER, deferred_by: target_rubric`, so an
+advisory dimension such as arc `visual_variety` cannot hold a build run open.
 When you start a run for a caller who said what it is FOR, write their rubric.
 
 `auto` picks `product` when the first full pass has ≥ `loop.backlog_min_findings`
-open findings. Why this exists: on connect-labs `supply-sophie-unanswered-round`
-(2026-10-02..04) the demo objective ran ~24 iterations and 12 PRs over ~33 h and
-never converged — the weakest of ~70 noisy cells was always a polish nit — while
-fix batches accreted explanatory copy and special-case rules to satisfy scene
-judges. One human look at the slides found the real product problems (no
-"state of this procurement" view, walls of text, wrong vocabulary, off-brand
-fonts). The product objective gates on exactly those: the **product lens**
+open findings. Why this exists: under the demo objective the weakest of many
+noisy cells is always a polish nit, so the run never converges, while fix batches
+accrete explanatory copy and special-case rules to satisfy scene judges. The real
+problems are product-level (a missing summary view, walls of text, wrong
+vocabulary, off-brand fonts). The product objective gates on exactly those: the **product lens**
 (`ddd-product-review`, every full pass) and **product lint**
 (`scripts.ddd.product_lint`, every render).
 
-**Fix direction (EVERY objective — every fixer brief carries it verbatim, canopy#786):**
+**Fix direction (EVERY objective — every fixer brief carries it verbatim):**
 1. Prefer REMOVING or RESTRUCTURING over adding. The best fix deletes something
    or reshapes what is there; adding copy, a control or a rule is the last resort.
 2. When narration and product disagree, the NARRATION moves. Change the product
@@ -170,7 +168,7 @@ fonts). The product objective gates on exactly those: the **product lens**
    product code, no rule keyed on a label's wording or on one record, no
    "comparable"-style rules invented so one scene's number comes out. A few
    general rules over a rule per scene.
-5. No comments narrating the fix (what the screen used to show, which batch or
+5. No comments narrating the fix (what the screen showed before, which batch or
    scene it was for, the demo's dates and names). The PR body narrates; the code
    does not. Test files are named for the behaviour, never the demo or batch.
 6. Use the product's existing design system and vocabulary
@@ -180,9 +178,8 @@ The **fixer-diff gate** (`scripts.ddd.fix_gate`) enforces 3–5 on every batch's
 diff in every objective; see `continue` below.
 
 **Before adding more loop machinery, ask whether the objective is the problem.**
-Twenty-two DDD commits between 2026-09-01 and 2026-10-04 tuned the loop's
-economics; none changed what it was aiming at, and none of the supply narratives
-converged.
+Tuning the loop's economics does not change what it is aiming at; a run that
+never converges is usually aiming at the wrong objective.
 
 ## Pause policy (load-bearing — read this first)
 
@@ -365,14 +362,12 @@ bootstrap pattern exactly.
   and where the product's own docs live (its product decisions, design specs, demo
   data notes). Never write product context into it — what is being built, decisions
   made, current phase, run history. That goes stale here and is invisible to anyone
-  not running DDD (connect-labs' copy grew to 123 lines naming a narrative two
-  generations old, 2026-10-17). A product decision belongs in the product repo's
+  not running DDD. A product decision belongs in the product repo's
   docs (open an issue or PR there); run history is on canopy-web. Read the docs it
   points to.
 - **Earlier runs of this narrative** — not a notes file. There is NO
-  `.canopy/ddd/learnings.md` any more (retired 2026-10-16: it never reached the
-  next run across machines or ACE's per-run DDD dirs, and product lessons in it
-  went stale). Each finished run's summary is part of that run on canopy-web;
+  `.canopy/ddd/learnings.md`: it would not reach the next run across machines
+  or ACE's per-run DDD dirs, and product lessons in it go stale. Each finished run's summary is part of that run on canopy-web;
   bootstrap step 4b reads the last few (`scripts.ddd.prior_runs`). Never create,
   read, append to or commit a `learnings.md` for DDD.
 
@@ -684,7 +679,7 @@ independently derive the declared `features[]` from the narration alone.
 | `warn`  | Borderline — review the `fix_recommendation` in the output, then proceed with caution to Step 6c. |
 | `fail`  | Narrative is **too vague to act on** — **loop back to Step 5 (`ddd-spec`)** to add specificity to the flagged scenes before the human reviews. Do NOT advance to Step 6c with a `fail`. |
 
-**Narrative mode — build vs polish (canopy#789; decide before Step 6c):**
+**Narrative mode — build vs polish (decide before Step 6c):**
 `loop.narrative_mode` (`auto` | `build` | `polish`); `auto` = `polish` for the
 `demo` objective, else `build`. Print it:
 `(cd "$DDD_REPO" && uv run python -m scripts.ddd.narrative_guard mode --run <run_id>)`.
@@ -882,7 +877,7 @@ created record) needs three things, all declared in the recipe:
 - **`before:` on a scene** (`before: "<command>"` or `{command, timeout_seconds}`)
   — a state change BETWEEN scenes that nothing on camera can do (a supplier
   answers, a second seat acts). The recorder runs it off camera after the
-  previous scene's capture and before this scene's persona swap and nav, with
+  preceding scene's capture and ahead of this scene's persona swap and nav, with
   `${var}` resolved late, from the `setup.command` cwd; a non-zero exit aborts
   the render. Its pause is recorded as a load-wait, so the explainer cuts it.
   `recipe_preflight` runs the same hook at the same point, so every later scene
@@ -931,9 +926,8 @@ so it is auditable), and substitutes the canonical assertion-side fix when the
 judge offered a choice the artifact does not actually leave open.
 `compute_auto_iterate` calls it before deciding anything, so an accuracy finding
 structurally cannot reach `stop_concept_change`. Regression:
-`tests/ddd/test_loop_termination.py`. Why it exists: ACE
-`spark-facilitator/20260813-2126` burned four iterations and ~2M tokens and then
-escalated two ordinary accuracy defects to the operator as product decisions.
+`tests/ddd/test_loop_termination.py`. Without it, ordinary accuracy defects are
+escalated to the operator as product decisions.
 
 **The second question is `fix_kind` (no modes).** Route by `fix_kind`, not by any
 `review_mode`: a finding with `fix_kind: mechanical` is something the loop can act
@@ -1005,7 +999,7 @@ Two optional accelerators between checkpoints (a checkpoint = every
 - **inner loop** (`inner_loop: {base_url, setup, health_url}` in
   `.canopy/ddd/config.yaml`). Batches are committed to the fix branch, served
   locally, and rendered with `--base-url` — no merge, CI or deploy. The periodic
-  full passes run locally too (canopy#787); only the pass that DECIDES (after
+  full passes run locally too; only the pass that DECIDES (after
   `checkpoint` / `confirm_full`) lands the accumulated batches and renders the
   real target through the deploy gate — deployed labs is for the final record.
   A scene whose data exists only on the deployed target is a BUILD gap: export
@@ -1014,11 +1008,10 @@ Two optional accelerators between checkpoints (a checkpoint = every
   `dropped`) until it is restored or `python -m scripts.ddd.target
   accept-remote <run_id> --reason "…"` records why not. `ddd-run` Step 2 runs `target plan`; the progress
   point records `target` per iteration. **Configure it for any v1 (backlog)
-  run on a product that deploys through CI**: on
-  `supply-sophie-rutf-2026-09-26-001` about 35 of every 60-minute cycle was
+  run on a product that deploys through CI**: otherwise most of each cycle is
   PR → CI → deploy. `judge_gate check` prints a one-line `RECOMMENDATION` when
   it is unset and a batch waited longer than `loop.inner_loop_hint_minutes`
-  (default 15) — put that line in the digest. **Since 0.2.554 it is required**
+  (default 15) — put that line in the digest. **It is required**
   on a repo with a `deploy_gate`: a backlog loop there without `inner_loop:`
   stops with `stop_inner_loop_required` (below). Declaring `inner_loop: off`
   with `inner_loop_off_reason: <why>` allows it; the reason is stamped in
@@ -1038,12 +1031,12 @@ Two optional accelerators between checkpoints (a checkpoint = every
   the gating floor, on the floor's scenes when they changed; every other
   verdict is carried to the checkpoint.
 
-**Impact-aware reuse (canopy#780).** A scene re-judges only when an input its
+**Impact-aware reuse.** A scene re-judges only when an input its
 judges read could have changed the verdict: its spec/trace, the page text
 (minus volatile stamps), the DOM text and crops of what the scene is ABOUT (its
 action targets and narrated elements, `scene_<N>_regions.json`), or — the guard
 — a large change to the frame's layout. A template edit that leaves a scene's
-subject alone no longer re-judges it. `judge-scope.json` names the changed
+subject alone does not re-judge it. `judge-scope.json` names the changed
 component per scene and keeps every pass in `passes`.
 
 Any stop, gate or convergence a non-checkpoint pass would return becomes
@@ -1072,10 +1065,10 @@ digest will carry it. `compute_auto_iterate` stops on these conditions, and
 | condition | detector | action |
 |-----------|----------|--------|
 | converged | both gating judges ≥ threshold | `stop_done` / `stop_partial` |
-| stalled | NONE of the progress signals improved over the last 2 iterations (score and workable score through `denoise.NOISE_BAND` ±0.5, mean cell through `progress.MEAN_BAND` ±0.15, confirmed caps must fall by more than `progress.CAPS_BAND` = 1 cell and caps on pinned cells do not count, open findings must fall by more than `progress.TRICKLE_FRACTION` = 15% of the best count). Checked BEFORE pending mechanical work — it used to sit behind `mechanical → continue` and could never fire on a v1 run. The trickle band exists because judges re-find new nits as old ones are fixed: 42 → 39 → 36 → 35 → 34 with a flat mean and no cap fixed ran ~4.6 hours without stalling. A stall read on a partial pass stops DIRECTLY (no checkpoint full pass) unless scenes were held. | `stop_max_iter` |
+| stalled | NONE of the progress signals improved over the last 2 iterations (score and workable score through `denoise.NOISE_BAND`, mean cell through `progress.MEAN_BAND`, confirmed caps must fall by more than `progress.CAPS_BAND` and caps on pinned cells do not count, open findings must fall by more than `progress.TRICKLE_FRACTION` of the best count). Checked BEFORE pending mechanical work: behind `mechanical → continue` it could never fire on a v1 run. The trickle band exists because judges re-find new nits as old ones are fixed, so a slowly falling finding count with a flat mean is not progress. A stall read on a partial pass stops DIRECTLY (no checkpoint full pass) unless scenes were held. | `stop_max_iter` |
 | **finding plateau** | two consecutive iterations produced an **identical finding-fingerprint set** with no real score move — the loop is re-deriving, not progressing. Unlike the score this signal does not wobble: an LLM's score for a cell moves ±1 on the same frame; the defect it names does not. | `stop_max_iter` |
-| runaway | `HARD_CAP` (10) iterations | `stop_max_iter` |
-| **nothing workable left** | some cell is PINNED (`state.cell_floor`, `scripts.ddd.floor.classify_cells`: below the bar, has findings, every one outside the loop's edit scope — `route: DEFER`, a `[DATA]`/`[REGISTRY]`/`[EXTERNAL]`/`[UPSTREAM]`/`[SEED]` fix, a narration edit under a locked narrative, a `loop.fixed_surfaces` match, a declined fix, or a finding id declined on an earlier pass) AND no workable cell below the bar has an in-scope finding left. Pinned cells alone never stop the run: they are reported and parked, and the loop keeps optimizing the workable cells (smallholder ended `blocked_out_of_scope` with arc work still open; noora iterated six passes on a pinned floor). | `stop_out_of_scope` |
+| runaway | `HARD_CAP` (`run_pipeline.HARD_CAP`) iterations | `stop_max_iter` |
+| **nothing workable left** | some cell is PINNED (`state.cell_floor`, `scripts.ddd.floor.classify_cells`: below the bar, has findings, every one outside the loop's edit scope — `route: DEFER`, a `[DATA]`/`[REGISTRY]`/`[EXTERNAL]`/`[UPSTREAM]`/`[SEED]` fix, a narration edit under a locked narrative, a `loop.fixed_surfaces` match, a declined fix, or a finding id declined on an earlier pass) AND no workable cell below the bar has an in-scope finding left. Pinned cells alone never stop the run: they are reported and parked, and the loop keeps optimizing the workable cells. | `stop_out_of_scope` |
 | **no predicted gain** | `predict declare` (before the fixers run): no workable cell's predicted best beats its current value. | `stop_no_predicted_gain` |
 | **prediction failed** | after the pass: every predicted cell that was re-judged stayed inside the noise band (`denoise.improved`). | `stop_prediction_failed` |
 
@@ -1300,12 +1293,11 @@ shared test DB another session held; nothing timed it out):
 - paste the six **Fix direction** rules (see "Objective" above) into the brief
   verbatim — in EVERY objective; apply every finding that is not `route: DEFER`,
   blocking and ride-along alike — each pass fixes everything it can. A finding
-  stamped `recurring: N` (canopy#788) has been open
+  stamped `recurring: N` has been open
   on its cell for N passes: the last fix did not clear it, so say so in the
   brief and ask for a DIFFERENT fix, not the same one again;
 - fix the SHARED template or component the screen is built from, never a
-  per-demo fork or copy of it (Spark lost 21 fixes that landed in per-demo
-  template forks and had to be moved back by hand);
+  per-demo fork or copy of it (fixes landed in a fork are lost to every other demo);
 
 - start the step first — `python -m scripts.ddd.watchdog start <run_id> fixer:<batch>`
   prints the heartbeat file; put it in the brief;
@@ -1321,7 +1313,7 @@ shared test DB another session held; nothing timed it out):
 
 Skip findings stamped `parked: true` (see `park_and_continue`).
 
-**Floor first** (canopy#780). When the `continue` reason opens with `FLOOR
+**Floor first.** When the `continue` reason opens with `FLOOR
 FIRST`, the findings stamped `floor: true` (ordered first in `state.findings`)
 hold the gating score down: brief them first, make sure every one is in this
 batch, and give them to the fixer that owns their surface before the polish
@@ -1337,8 +1329,7 @@ of iterating:
 ```
 
 Decline by `--finding-id`, not `--match`: the id survives the judge re-wording
-the finding next pass (noora's text-matched `out_of_scope.json` grew to 145
-entries for a handful of defects); `--match "<text>"` remains the fallback.
+the finding next pass, whereas text-matched entries multiply; `--match "<text>"` remains the fallback.
 
 Better still, declare the surfaces a repo's loop may never edit ONCE, in
 `.canopy/ddd/config.yaml` `loop.fixed_surfaces` — a regex, or
@@ -1354,7 +1345,7 @@ as with ACE on Connect Labs — list them in `loop.writable_scopes` (e.g.
 of parked. Reserve out-of-scope for a real product bug or a missing feature.
 
 **Fixer-diff gate — after every fixer batch, before its PR merges, every
-objective** (canopy#786). Run it on the batch's branch in the target repo:
+objective**. Run it on the batch's branch in the target repo:
 
 ```bash
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.fix_gate "<target repo>" --base origin/main \
@@ -1408,8 +1399,8 @@ fundamentally IS — irreplaceable-taste territory per project memory. Emit a
 `ReviewRequest` (gate: concept_change) with each redesign-level finding as a
 decision item.
 
-An **accuracy** finding can no longer land here: `normalize_findings` forces it to
-`mechanical` before this branch is evaluated, so "the narration says the wrong
+An **accuracy** finding cannot land here: `normalize_findings` forces it to
+`mechanical` ahead of evaluating this branch, so "the narration says the wrong
 word" is fixed and re-fired rather than asked about. Whatever reaches this gate is
 legibly a strategy question — *is this the right thing to demonstrate?* — which is
 the only kind worth a human's taste.
@@ -1428,18 +1419,12 @@ confident fixes inverts "mechanical comes first"; and the gate exists to buy a
 human's judgment on *direction*, which is wasted if it is spent over an artifact
 carrying defects nobody disputes — and "clean" is a property of the artifact, not
 a count of passes. Regression:
-`tests/ddd/test_loop_termination.py::TestConceptGateWaitsForMechanicalWork`. Why it
-exists: ACE `spark-facilitator/20260820-0817` fired this gate on iteration 0
-alongside five accuracy findings; none were applied, the run ended
-`stopped_not_converged` with `score_history: [2.0]`, and its hero video filmed the
-defective artifact. Why it is no longer "once" (canopy#588): with a count of 1,
-ACE `spark-fcap-facilitation-2026-09-09-001`/`-002` each did real work on the
-deferred pass and still stopped `stop_concept_change` with 29 then 14 mechanical
-fixes pending; applying the pending 29 moved every judge +1.0 (`[2.0] -> [2.0, 3.0]`).
-And a pass killed mid-flight spent the same budget on nothing
-(`hh-poverty-targeting-census-sweep-2026-09-01-001`). Under the exhaustion rule a
-flat pass — whether it applied nothing or applied fixes that changed nothing —
-buys no further deferral, so both cases end the same honest way.
+`tests/ddd/test_loop_termination.py::TestConceptGateWaitsForMechanicalWork`. The
+gate waits for pending mechanical work, not for a count of passes (a count of 1
+stops with fixes still pending that would move every judge, and a pass killed
+mid-flight spends the same budget on nothing). Under the exhaustion rule a flat
+pass — whether it applied nothing or applied fixes that changed nothing — buys
+no further deferral, so both cases end the same honest way.
 
 **Unattended:** resolve through `gates.resolve('concept_change', …)`, which returns
 `defer` immediately rather than waiting. This action fires only when nothing

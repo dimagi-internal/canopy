@@ -1,8 +1,8 @@
 """The knowledge-base engine behind `canopy kb build` and `canopy kb mcp`.
 
 There is one engine, canopy-web's `packages/canopy_kb` (stdlib-only): canopy-web serves
-every published KB with it, and these two commands import it. canopy used to carry its
-own copy, and the two drifted (passage size, schema, tools). Only a curator who builds,
+every published KB with it, and these two commands import it; do not fork a second copy (passage size,
+schema and tools would drift). Only a curator who builds,
 or someone serving a KB offline, needs it installed; `push` and `pull` only move a file,
 and check it here without the engine.
 """

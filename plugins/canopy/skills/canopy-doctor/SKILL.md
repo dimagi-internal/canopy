@@ -6,7 +6,7 @@ description: Diagnose canopy plugin health — workbench token, repo-map, hook r
 # Canopy Doctor
 
 Check that the canopy plugin is correctly configured. The substantive checks
-now live in the `canopy doctor` CLI subcommand — this skill runs it and
+live in the `canopy doctor` CLI subcommand — this skill runs it and
 interprets the result, plus runs the two checks the CLI deliberately leaves
 out (system-python hook compatibility and auth preflight, which are
 environment-specific and/or network-dependent).
