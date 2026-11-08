@@ -10,8 +10,7 @@ Any agent can lead a huddle when told to. You run it as YOURSELF: your own ident
 canopy-web token, turn mode and sanctioned send path, and every ACL canopy-web enforces applies
 (a member you may not run is "not reached", never forced).
 
-Arguments: `$ARGUMENTS` (`--group-run <id>` is the old name of `--checkin-run <id>`: treat it the
-same.)
+Arguments: `$ARGUMENTS`
 
 ## 1. A team binding wins
 

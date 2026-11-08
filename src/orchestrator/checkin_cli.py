@@ -17,10 +17,8 @@ without one there is no read. canopy-web then starts the project's agent with
     finish   → POST /api/checkins/runs/<id>/finished {huddle_id?, result_url, summary,
                tasks_proposed}
 
-Until canopy-web serves the check-in routes, every read and the finish fall back to the
-`/api/huddle-groups/runs/<id>` aliases (a run there is a work-group run: `group` is a slug),
-and `propose` falls back to a `suggested` task in the project. `canopy huddle-group …` is the
-old name of this group, kept as an alias for one release.
+`propose` falls back to a `suggested` task in the project on a canopy-web without the
+`…/tasks/propose/` route.
 
 Spec: canopy-web docs/superpowers/specs/2026-10-17-project-check-ins-design.md (§6).
 """
@@ -36,8 +34,6 @@ from orchestrator import canopy_web
 from orchestrator.agent_client import CanopyError
 
 RUNS_PATH = "/api/checkins/runs/"
-LEGACY_RUNS_PATH = "/api/huddle-groups/runs/"
-GROUPS_PATH = "/api/huddle-groups/"
 # A run in one of these is over: nothing reads it to start work.
 ENDED = {"done", "skipped", "expired", "failed"}
 # A 404 that names the missing thing is a real "not found", not a route this server lacks.
@@ -46,10 +42,6 @@ _NAMED_404 = re.compile(r"(agent '[^']*'|project \S+|run \S+|check-?in \S+|task 
 
 class CheckinRunError(click.ClickException):
     exit_code = 2
-
-
-# The old name, for callers that still import it.
-GroupRunError = CheckinRunError
 
 
 def _call(method: str, path: str, body=None):
@@ -96,9 +88,8 @@ def normalize(run: dict) -> dict:
         {name, slug, topic, lead_email, channel_name, agents, leader_agent,
          project: {agent, ref, name?, outcome?, url?} | None, format: solo|huddle}
 
-    A check-in run (`checkin` a dict or a name, `project` a dict or a ref) or a work-group run
-    (`group` a slug, completed from `GET /api/huddle-groups/<slug>`). The leader is the
-    project's agent; on an old work group, its `leader_agent`."""
+    A check-in run names its check-in (`checkin` a dict or a name) and its project (`project`
+    a dict or a ref). The leader is the project's agent."""
     c = run.get("checkin") if isinstance(run.get("checkin"), dict) else {}
     agent_hint = str(run.get("agent") or run.get("project_agent") or c.get("agent") or "")
     project = _proj(c.get("project"), agent_hint) or _proj(run.get("project"), agent_hint)
@@ -114,19 +105,6 @@ def normalize(run: dict) -> dict:
                 project = {**(_proj(got.get("project"), project["agent"]) or {}), **project}
         except CanopyError:
             pass
-    if not c and run.get("group") not in (None, ""):
-        g = run.get("group")
-        if not isinstance(g, dict):
-            try:
-                g = _call("GET", f"{GROUPS_PATH}{quote(str(g), safe='')}")
-            except CanopyError as e:
-                raise CheckinRunError(f"cannot read work group {run.get('group')!r} of run "
-                                      f"{run.get('id')}: {e}")
-        if not isinstance(g, dict) or not g.get("slug"):
-            raise CheckinRunError(f"run {run.get('id')} names no check-in or work group")
-        c = {**g, "name": g.get("name") or g["slug"]}
-        project = project or _proj(g.get("project"), g.get("leader_agent") or "")
-        name = c["name"]
     if not c and not project:
         raise CheckinRunError(f"check-in run {run.get('id')} names no check-in")
     agents = [str(a).strip() for a in (c.get("agents") or []) if str(a).strip()]
@@ -145,70 +123,30 @@ def normalize(run: dict) -> dict:
 
 
 def get_run(run_id) -> dict:
-    """The run with `checkin` normalized (see `normalize`) and `via` = the route that answered:
-    `checkins`, or `huddle-groups` (the alias / an older canopy-web)."""
+    """The run with `checkin` normalized (see `normalize`) and `via` = `checkins`, the route
+    that answered."""
     rid = _run_id(run_id)
     try:
-        run, via = _call("GET", f"{RUNS_PATH}{rid}"), "checkins"
+        run = _call("GET", f"{RUNS_PATH}{rid}")
     except CanopyError as e:
-        if not is_404(e):
-            raise CheckinRunError(f"cannot read check-in run {rid} from canopy-web: {e}")
-        try:
-            run, via = _call("GET", f"{LEGACY_RUNS_PATH}{rid}"), "huddle-groups"
-        except CanopyError as e2:
-            raise CheckinRunError(f"cannot read check-in run {rid} from canopy-web: {e} "
-                                  f"(and the /api/huddle-groups alias: {e2})")
+        raise CheckinRunError(f"cannot read check-in run {rid} from canopy-web: {e}")
     if not isinstance(run, dict):
         raise CheckinRunError(f"check-in run {rid}: canopy-web returned {type(run).__name__}")
-    return {**run, "checkin": normalize(run), "via": via}
-
-
-def list_runs(checkin: dict) -> list[dict]:
-    """The check-in's earlier runs: the project timeline (`…/checkin-runs`), else the old work
-    group's runs. [] when neither answers."""
-    paths = []
-    p = checkin.get("project")
-    if p:
-        paths.append(f"/api/agents/{quote(p['agent'])}/projects/{quote(p['ref'], safe='')}/checkin-runs")
-    if checkin.get("slug"):
-        paths.append(f"{GROUPS_PATH}{quote(checkin['slug'], safe='')}/runs")
-    for path in paths:
-        try:
-            raw = _call("GET", path)
-        except CanopyError as e:
-            if is_404(e):
-                continue
-            raise
-        if isinstance(raw, dict):
-            raw = raw.get("items") or raw.get("results") or raw.get("runs") or []
-        rows = [r for r in raw or [] if isinstance(r, dict)]
-        name = checkin.get("name")
-        if path.endswith("/checkin-runs") and name:   # the timeline holds every check-in's runs
-            rows = [r for r in rows if not isinstance(r.get("checkin"), (str, dict))
-                    or (r["checkin"].get("name") if isinstance(r["checkin"], dict)
-                        else r["checkin"]) == name] or rows
-        return rows
-    return []
+    return {**run, "checkin": normalize(run), "via": "checkins"}
 
 
 def finish_run(run_id, *, result_url: str, summary: str, huddle_id: str = "",
                tasks_proposed: int | None = None) -> dict:
     """Close the run: canopy-web marks it `done` and posts ONE pointer line in the channel
     thread (a run with a channel). Raises CanopyError (the caller decides whether a 409 means
-    "already done"). Falls back to the /api/huddle-groups alias — without `tasks_proposed`,
-    which the old route does not take — when canopy-web has no check-in route."""
+    "already done")."""
     rid = _run_id(run_id)
     body = {"result_url": result_url, "summary": summary}
     if huddle_id:
         body["huddle_id"] = huddle_id
-    try:
-        return _call("POST", f"{RUNS_PATH}{rid}/finished",
-                     {**body, **({"tasks_proposed": int(tasks_proposed)}
-                                 if tasks_proposed is not None else {})})
-    except CanopyError as e:
-        if not route_missing(e):
-            raise
-    return _call("POST", f"{LEGACY_RUNS_PATH}{rid}/finished", body)
+    if tasks_proposed is not None:
+        body["tasks_proposed"] = int(tasks_proposed)
+    return _call("POST", f"{RUNS_PATH}{rid}/finished", body)
 
 
 def already_finished(err: Exception) -> bool:
@@ -328,8 +266,7 @@ def _propose(run_id, title, why, done_when, steps, partners, source_url, new_evi
     c = run["checkin"]
     project = c.get("project")
     if not project:
-        raise CheckinRunError(f"check-in run {run_id} has no project to propose a task in "
-                              "(an older multi-agent work group: run the huddle instead)")
+        raise CheckinRunError(f"check-in run {run_id} has no project to propose a task in")
     if str(run.get("status") or "") in ENDED:
         raise CheckinRunError(f"check-in run {run_id} is {run['status']} — not yours to work")
     why = why.strip()
@@ -367,7 +304,7 @@ def _build_group(name: str, tag: str, doc: str) -> click.Group:
 
     @grp.command("material")
     @click.option("--run", "run_id", required=True,
-                  help="The check-in run id (`--checkin-run`; `--group-run` before).")
+                  help="The check-in run id (the `--checkin-run` the turn was started with).")
     @click.option("--json", "as_json", is_flag=True,
                   help="Print the run (check-in, project, read window, status, material) as JSON.")
     def material_cmd(run_id, as_json):
@@ -413,7 +350,3 @@ checkin_group = _build_group(
     "checkin", "checkin",
     "A project check-in's run (read its material, propose tasks, finish it). Procedure: "
     "agent-core checkin.md.")
-# The old verbs, kept as an alias for one release.
-huddle_group_group = _build_group(
-    "huddle-group", "huddle-group",
-    "Old name of `canopy checkin` (kept for one release): a check-in run's material / finish.")

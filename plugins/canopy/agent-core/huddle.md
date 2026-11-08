@@ -266,8 +266,7 @@ and the run starts at once. You lead as yourself: your identity, repo, token and
   WARNS and falls back to proposed projects (then, without that route either, to suggested board
   tasks).
 - **Then the run is finished** — `file` calls `POST /api/checkins/runs/<id>/finished` with the
-  huddle page, a one-line summary and `tasks_proposed` (falling back to the old
-  `/api/huddle-groups/runs/<id>/finished` alias on an older canopy-web). With a channel, Slack
+  huddle page, a one-line summary and `tasks_proposed`. With a channel, Slack
   gets only that pointer; the content lives in the UI, and the run lands on the project's
   timeline.
 - **No email (step 6 is skipped).** Close your turn naming the huddle page and the project.
@@ -275,9 +274,7 @@ and the run starts at once. You lead as yourself: your identity, repo, token and
   `"dispatched": false` and `not_reached: <why>` instead of failing. Go on without it; name it in
   your close. The huddle never needs every member.
 
-`--group-run <id>` and `canopy huddle-group …` are the old names (work groups), kept as aliases
-for one release. Outside a check-in run, `file` proposes projects (same calls, minus the
-finish).
+Outside a check-in run, `file` proposes projects (same calls, minus the finish).
 
 ## When something goes wrong
 - **A round turn `failed` / never claimed:** check remediation (unclaimable turns, runner health),

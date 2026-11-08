@@ -70,18 +70,16 @@ def round_origin_ref(huddle: str, type_: str, round_no: int, member: str, attemp
 
 
 def anchor_origin_ref(huddle: str, type_: str, team: str, leader: str, members,
-                      priorities_brief: str = "", group: str = "", run=None,
+                      priorities_brief: str = "", run=None,
                       checkin: str = "", project: dict | None = None) -> dict:
     """The anchor's tags. A huddle planned with a brief carries it, so canopy-web's huddle page
     can say which priority each idea serves ("Serves priority 2: …"). A check-in run's huddle
     carries `checkin` (its name), `project` ({agent, ref}) and `run` (id), so the page links back
-    to the project and the check-in; an old work-group run's carries `group` (slug)."""
+    to the project and the check-in."""
     ref = {"kind": "huddle", "huddle": huddle, "type": type_, "team": team,
            "leader": leader, "members": list(members)}
     if priorities_brief:
         ref["priorities_brief"] = priorities_brief
-    if group:
-        ref["group"] = group
     if checkin:
         ref["checkin"] = checkin
     if project and project.get("agent") and project.get("ref"):
@@ -485,9 +483,6 @@ def checkin_brief(checkin: dict) -> str:
     return f"{line} — hard dates: none — source: {where}"
 
 
-group_brief = checkin_brief     # the old name
-
-
 def read_window(run: dict) -> dict:
     """{messages, first_ts, last_ts, since} from a run — nested `read` or flat `read_*`."""
     r = run.get("read") if isinstance(run.get("read"), dict) else {}
@@ -506,12 +501,11 @@ def quote_material(material: str, limit: int = MATERIAL_LIMIT) -> tuple[str, boo
     return "\n".join(f"> {line}" if line else ">" for line in text.splitlines()), truncated
 
 
-def checkin_section(checkin: dict, material: str, window: dict, reactions: str = "",
+def checkin_section(checkin: dict, material: str, window: dict,
                     limit: int = MATERIAL_LIMIT, proposed: str = "") -> str:
     """What rounds 1–2 of a check-in huddle add after the brief: the check-in and its project,
-    the channel's material (quoted, newest kept when huge), where proposals go, the project's
-    open and recently decided proposed tasks with people's reactions (`proposed`), and — from
-    an older canopy-web — reactions to earlier proposed projects (`reactions`)."""
+    the channel's material (quoted, newest kept when huge), where proposals go, and the
+    project's open and recently decided proposed tasks with people's reactions (`proposed`)."""
     name = checkin.get("name") or checkin.get("slug") or "the check-in"
     project = checkin.get("project") or {}
     pname = project.get("name") or project.get("ref") or ""
@@ -560,13 +554,7 @@ def checkin_section(checkin: dict, material: str, window: dict, reactions: str =
                   "", "Do not re-propose what is open; revise it under the same title only with "
                       "something new, and do not bring back what was declined without new "
                       "evidence."]
-    if (reactions or "").strip():
-        lines += ["", "## How people reacted to this check-in's earlier proposed projects", "",
-                  reactions.strip()]
     return "\n".join(lines) + "\n\n"
-
-
-group_section = checkin_section     # the old name
 
 
 def _reaction_lines(p: dict) -> list[str]:
@@ -584,19 +572,6 @@ def _reaction_lines(p: dict) -> list[str]:
     if not (p.get("backings") or p.get("comments")):
         out.append("    no reactions yet")
     return out
-
-
-def reactions_text(projects: list[dict]) -> str:
-    """One block per earlier proposed project: its status, who backed / passed (with their
-    line) and the replies on its decision card — so people's reactions steer this huddle."""
-    out = []
-    for p in projects or []:
-        head = f"- {p.get('name')} (lead {p.get('agent')}, {p.get('status') or '?'})"
-        if p.get("notes") and p.get("status") == "archived":
-            head += f" — {_clip_line(p['notes'], 160)}"
-        out.append(head)
-        out += _reaction_lines(p)
-    return "\n".join(out)
 
 
 def proposed_tasks_text(tasks: list[dict]) -> str:

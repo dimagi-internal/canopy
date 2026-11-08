@@ -545,10 +545,10 @@ def huddle_group():
 @click.option("--type", "type_", default="work", show_default=True, help="Huddle type.")
 @click.option("--members", default="", help="Comma-separated member slugs (a check-in run: the "
                                             "check-in's agents).")
-@click.option("--checkin-run", "--group-run", "checkin_run_id", default="",
+@click.option("--checkin-run", "checkin_run_id", default="",
               help="A check-in run id: members, brief (the check-in's topic + the project's "
                    "outcome), channel material and the project's proposed tasks all come from "
-                   "canopy-web /api/checkins/runs/<id>. `--group-run` is its old name.")
+                   "canopy-web /api/checkins/runs/<id>.")
 @click.option("--days", default=7, show_default=True, type=int, help="Review window.")
 @click.option("--principal", default="the principal", show_default=True,
               help="Whom the work is for (a check-in run: default its lead).")
@@ -617,14 +617,13 @@ def plan_cmd(leader, team, type_, members, checkin_run_id, days, principal, shar
     hid = H.huddle_id(ht.name, team, now.date(), taken)
     leader_client = _client(leader)
     rid = crun.get("id", checkin_run_id) if crun else None
-    legacy_group = c.get("slug") if crun and crun.get("via") == "huddle-groups" else ""
     try:
         workspace = (leader_client.get_agent() or {}).get("workspace") or None
         anchor = leader_client.post_turn(
             cli_session_id=f"huddle:{hid}", title=f"Huddle {hid}", summary="", source="huddle",
             emdash_task_id="",
             origin_ref=H.anchor_origin_ref(hid, ht.name, team, leader, roster, brief,
-                                           group=legacy_group, run=rid,
+                                           run=rid,
                                            checkin=c.get("name") or "",
                                            project=c.get("project") if crun else None))
     except (CanopyError, RuntimeError) as e:
@@ -656,10 +655,6 @@ def plan_cmd(leader, team, type_, members, checkin_run_id, days, principal, shar
         plan["checkin"] = c
         plan["checkin_material"] = crun.get("material") or ""
         plan["checkin_proposed"] = proposed_text
-        # An older canopy-web's multi-agent work group has no project: steer by people's
-        # reactions to the projects its earlier huddles proposed instead.
-        plan["checkin_reactions"] = ("" if c.get("project")
-                                     else checkin_reactions(c, rid, leader, roster))
     Path(out).write_text(json.dumps(plan, indent=2), encoding="utf-8")
     _emit({"huddle": hid, "anchor_turn_id": plan["anchor_turn_id"], "members": roster,
            "page": plan["page"], "plan": str(out),
@@ -759,31 +754,6 @@ def checkin_proposals(checkin: dict, limit: int = 15) -> str:
     return H.proposed_tasks_text(cards) if cards else "(no proposed tasks in the project yet)"
 
 
-def checkin_reactions(checkin: dict, run_id, leader: str, roster: list[str], limit: int = 10) -> str:
-    """People's reactions to an OLD work group's earlier proposed projects (canopy-web without
-    check-ins): every project an earlier run's huddle proposed (`GET /api/huddles/<id>` →
-    `projects`), its status, its backings and the replies on its decision card. Advisory."""
-    from orchestrator.checkin_cli import list_runs
-    try:
-        runs = [r for r in list_runs(checkin)
-                if r.get("huddle_id") and str(r.get("id")) != str(run_id)]
-    except (CanopyError, RuntimeError) as e:
-        return f"(could not read check-in {checkin.get('name')}'s earlier runs: {str(e)[:160]})"
-    runs.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
-    found, notes = [], []
-    for r in runs[:5]:
-        try:
-            d = _call("GET", f"/api/huddles/{quote(str(r['huddle_id']), safe='')}")
-        except (CanopyError, RuntimeError) as e:
-            notes.append(f"(could not read huddle {r['huddle_id']}: {str(e)[:120]})")
-            continue
-        found += [p for p in d.get("projects") or [] if isinstance(p, dict)]
-    return "\n".join([H.reactions_text(found[:limit]), *notes]).strip()
-
-
-group_reactions = checkin_reactions     # the old name
-
-
 def _resolve_pin(ref: str, agents: list[str]) -> dict:
     from orchestrator.runner_pin import PinError, resolve_pin
     try:
@@ -852,7 +822,6 @@ def prompt_cmd(plan_path, member, round_no, critique_path, merges_path, out):
             _plan_checkin(plan),
             plan.get("checkin_material", plan.get("group_material")) or "",
             {**(crun.get("read") or {}), "run": crun.get("id")},
-            plan.get("checkin_reactions", plan.get("group_reactions")) or "",
             proposed=plan.get("checkin_proposed") or "")
     if round_no == 1:
         ctx.update(days=plan.get("days", 7), since=plan.get("since", ""),
@@ -1777,12 +1746,6 @@ def _proposal_body(p: dict, plan: dict, page: str) -> dict:
     checkin = _plan_checkin(plan)
     if checkin.get("lead_email"):
         body["owner_email"] = checkin["lead_email"]
-    crun = _crun(plan) or {}
-    # `group` is the old work-group field of ProjectProposeIn — sent only to the canopy-web
-    # that served the run through /api/huddle-groups (a plan from before the rename: always).
-    if checkin.get("slug") and (crun.get("via") == "huddle-groups"
-                                or (plan.get("group_run") and not plan.get("checkin_run"))):
-        body["group"] = checkin["slug"]
     return body
 
 

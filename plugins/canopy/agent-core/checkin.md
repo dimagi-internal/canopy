@@ -58,6 +58,3 @@ Below, `canopy …` is `uv run --project "$CANOPY_ROOT" canopy …` (how to find
    project's timeline and, with a channel, posts ":white_check_mark: done — … <link>" in the
    announcement's thread.
 5. **Close** your turn naming the project page and what you proposed.
-
-`canopy huddle-group material|finish` and `--group-run` are the old names (work groups), kept
-as aliases for one release.

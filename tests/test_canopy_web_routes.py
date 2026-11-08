@@ -31,7 +31,6 @@ ALLOWED_MISSING = R.ALLOWED_MISSING
 # here with a reason in the PR.
 UNRESOLVED_CEILING = {
     "src/orchestrator/act_as_cli.py": 1,
-    "src/orchestrator/checkin_cli.py": 1,
     "src/orchestrator/connections/access.py": 7,
     "src/orchestrator/connections/keep.py": 2,
     "src/orchestrator/cred_resolve.py": 1,
