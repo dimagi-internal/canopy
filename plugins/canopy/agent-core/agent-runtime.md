@@ -53,7 +53,7 @@ in a repo can't vary; a **credential in the agent's Canopy vault** can.
 ## One declaration — the agent's Canopy vault
 
 **An agent's secrets are named in exactly one place: its Canopy vault on canopy-web** (the
-agent's Settings → Credentials). Every agent is on it (2026-10-22). Each stored name is one env
+agent's Settings → Security tab). Every agent is on it (2026-10-22). Each stored name is one env
 var: `canopy cred env --agent <slug>` (laptop, `/<agent>:setup`) and a runner's prepare write
 `~/.<slug>/.env` straight from it — no template is read. The vault's names are also what
 canopy-web hands a runner and what its undeclared-read alert checks.
@@ -84,7 +84,7 @@ It prints the client this machine should use for the agent's mailbox: the declar
 `gog_client` when this machine holds a token under it; else the fleet client it does hold —
 `canopy`, then `canopy-web`; else the single other client holding the mailbox. `canopy` and
 `canopy-web` are ONE Google app with two ways to sign in (a laptop's `gog login`, and
-canopy-web's "Connect Google mailbox" button, which can only mint under the Web client), so
+canopy-web's "Connect Google" button, which can only mint under the Web client), so
 a mailbox signed in either way works. Hardcoding `--client canopy` breaks the second
 way; omitting `--client` leans on gog's `account_clients` map, which nothing keeps in step.
 Code calls the same rule directly: `agent_email.reconcile_client` (Python) or
@@ -194,7 +194,7 @@ request to rotate your key if you leak it, do it now.")
 
 ## Adding a new value — the recipe
 
-Store it in the agent's Settings → Credentials on
+Store it in the agent's Settings → Security tab on
 canopy-web (or `canopy vault zk set --agent <slug> <NAME>`, value on stdin), named as the env var
 it becomes; a value every agent in the workspace needs goes in the workspace vault instead
 (`canopy vault zk set --vault <id> <NAME>`; ids from `canopy vault ws list`). Then

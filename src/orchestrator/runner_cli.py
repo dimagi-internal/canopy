@@ -16,16 +16,15 @@ daemon pushes up on change, this is the same command over HTTP. So there is one
 value, and reaching it no longer requires a shell on the box — which is the whole
 point, because the case that needs it most is a box you cannot log into.
 
-That case is Jonathan's two macOS accounts (`Runner.host`: "Jonathan runs the fleet
-under two accounts (token-limit failover)"). When one hits its session limit the
+That case is one person's two macOS accounts on one machine (`Runner.host` says
+"runs the fleet under two accounts (token-limit failover)"). When one hits its session limit the
 work moves to the other, and the limited account's runner should stop firing its own
 schedules and inbox polls — but `~/.canopy` over there is owned by that account, so
 the other one gets EPERM.
 
 NOT `retire`, which is what people reached for before this existed: retire deletes
 the runner's RunnerAssignment rows, `unretire` explicitly does not restore them, and
-it 404s the daemon's own heartbeat and claim calls. It cost jj-mbp-cdp ten sessions
-on 2026-07-25. Retire is a decommission; this is a park.
+it 404s the daemon's own heartbeat and claim calls. It strands the runner's sessions. Retire is a decommission; this is a park.
 """
 from __future__ import annotations
 
@@ -240,7 +239,7 @@ def transfer_cmd(session, target, brief, brief_file, stop, workspace, as_json):
     two macOS accounts — carrying its message history across.
 
     \b
-      canopy runner transfer 169212e2 --to jj-mbp-cdp --brief-file handoff.md
+      canopy runner transfer 169212e2 --to cloud-ec2-2 --brief-file handoff.md
 
     The target opens a FRESH session (it cannot resume another box's claude
     session), so the brief is not decoration — it is the entire context the
@@ -250,9 +249,9 @@ def transfer_cmd(session, target, brief, brief_file, stop, workspace, as_json):
 
     Not the same as `canopy_sessions`' `place`, which re-pins one queued turn and
     leaves the binding on the old box — so the next ship 404s and the next send
-    sticks to where you were moving away FROM. Doing it that way by hand on
-    2026-09-12 moved execution correctly and silently dropped the session's whole
-    pre-transfer history.
+    sticks to where you were moving away FROM. Doing it that way by hand
+    moves execution correctly but silently drops the session's whole pre-transfer
+    history.
 
     Reports LAUNCHED, never done: a pinned turn lands within seconds, and the
     agent picking the thread up is a separate question from the move succeeding.
@@ -420,7 +419,7 @@ def runner_credential(name_or_id, workspace):
     to change them.
 
     A runner's tokens and API keys live in a vault only its own device key opens
-    (canopy-web spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md): a
+    : a
     token is signed in on the box and sealed there, an API key sealed in your browser.
     Nothing takes a pasted value any more, so this prints the list (never a value) and
     the runner's Credentials tab, where you make its vault key, sign a token in, add

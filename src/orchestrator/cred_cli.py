@@ -1,7 +1,6 @@
 """`canopy cred` — may this session act as agent X, and if so, give it X's env.
 
-The contract is docs/architecture/session-identity.md (canopy#850, "Design
-revision", 2026-10-09). In short:
+The contract is docs/architecture/session-identity.md. In short:
 
 * **A runner turn** (a turn id is known: ``$CANOPY_TURN_ID``, the caller
   envelope, or the laptop's by-task record) may act only as the agent it was
@@ -312,7 +311,7 @@ def machine_mode(slug: str, *, transport: Optional["canopy_web.Transport"] = Non
 
     A licence holder repairs the agent's Google login with `canopy agent use` /
     `canopy agent google-login`, never with `canopy agent bootstrap` or a mailbox
-    re-connect (2026-10-28, failure investigation 17: ace on a licensee's laptop)."""
+    re-connect (ace on a licensee's laptop)."""
     if slug in _MODES:
         return _MODES[slug]
     mode = "unknown"

@@ -28,9 +28,9 @@ must already mean being the owner.
 hour-long runner token its approved device key buys (`runner_session`, cached in
 `~/.canopy/runner-session.json`). Only a box with no device key falls back to
 the legacy `token` in `~/.canopy/runner.json`. A paired laptop keeps that field
-EMPTY, and an empty token used to fall through to whatever PAT the session held
-(the agent's), which owns no runner: canopy-web answered 404 "runner not found"
-for a runner that was online (jj-mbp-cdp, 2026-10-29).
+EMPTY, and an empty token falls through to whatever PAT the session held
+(the agent's), which owns no runner: canopy-web answers 404 "runner not found"
+for a runner that is online, so that case is handled first.
 
 When no device was reached (push not enabled, no runner on this box, canopy-web
 unreachable) it prints the link so the caller can deliver it another way. It

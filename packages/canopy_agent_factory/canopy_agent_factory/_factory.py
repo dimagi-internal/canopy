@@ -315,7 +315,7 @@ this session happens to be running.
   on canopy-web. NOT a per-worktree repo `.env` (that gets recreated every turn). Scripts read it
   via `bin/_env.py`.
 - **Secrets are declared in ONE place: the agent's Canopy vault** (canopy-web → the agent's
-  Settings → Credentials). Each stored name becomes one env var; values shared by every agent in
+  Settings → Security). Each stored name becomes one env var; values shared by every agent in
   a workspace (the fleet's gog OAuth clients) live in that workspace's vault, layered under this
   one. This repo names no secret and no vault, and keeps no secret list in a runtime spec
   (canopy agent-core/agent-runtime.md § One declaration).
@@ -617,7 +617,7 @@ follows it: preflight → process inbound (one counterpart at a time) → skill 
      address (e.g. `{{AGENT_SLUG}}@dimagi-ai.com`): name it in `config/agent.json`
      `google_account` (`canopy create-agent --google-account`), or gog runs as the mail address.
    - **Google** (Gmail / Google Workspace mail): sign it in once — the agent's Settings →
-     Credentials → **Connect Google mailbox**, or `gog login {{MAILBOX}} --client canopy --services
+     External accounts → **Connect Google**, or `gog login {{MAILBOX}} --client canopy --services
      gmail,drive,docs,sheets,forms,appscript`. The gog OAuth client is the SHARED fleet app (`canopy`
      on a laptop, `canopy-web` from the button); never type a client in a gog command — use
      `"$(canopy email client --repo .)"`.
@@ -663,7 +663,7 @@ It prints the path it wrote (`~/.{{AGENT_SLUG}}/.env`, 0600 — the worktree-cle
 `bin/` script reads through `bin/_env.py`) and, on stderr, where the values came from. Relay a
 refusal **verbatim** and act on it — it names its own fix: not a member of the agent's workspace,
 or not one of its admins. Never guess past it. Missing values on
-the Canopy vault are filled in the agent's Settings → Credentials on canopy-web.
+the Canopy vault are filled in the agent's Settings → Security tab on canopy-web.
 
 **2. Check readiness.**
 

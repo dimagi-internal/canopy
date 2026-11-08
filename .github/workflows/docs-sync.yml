@@ -32,3 +32,18 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python .github/scripts/docs_sync_check.py
+
+  # Every `canopy ...` command shown in an end-user page must exist, and every long
+  # flag it shows must be one the command has. A CLI change that removes either
+  # fails here until the page is fixed. Placeholders: docs_commands_allowlist.yaml.
+  docs-commands:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Check commands shown in end-user docs
+        run: |
+          uv sync --extra browser
+          uv run python .github/scripts/docs_commands_check.py

@@ -25,10 +25,10 @@ that combines the two, so no agent re-derives it:
               (e.g. ACE's run-derived `correspond`) from its own state
   system      canopy itself started the turn (schedule, drill, agent dispatch),
               or this agent's OWN login did — another agent's login is graded
-              by its grants like anyone's (canopy-web #986)
+              by its grants like anyone's
   blocked     the workspace has blocked this person: do not act, do not reply
 
-`unproven_member` (canopy-web#1265, informational): a workspace MEMBER whose message
+`unproven_member` (informational): a workspace MEMBER whose message
 could not be tied to their account because their domain's mail is not DMARC/DKIM
 aligned, so canopy graded them a `contact`. It grants nothing and the tier is
 unchanged; it is passed through in the output and, on `caller` / `unlisted`, the

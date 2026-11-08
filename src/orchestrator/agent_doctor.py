@@ -382,7 +382,7 @@ def check_secrets_materialized(repo: Path, *, home: Path | None = None) -> Check
         return CheckResult(
             name, False,
             f"{target}: empty {', '.join(empty)} (set them in its Canopy vault — /agents/{slug} "
-            f"→ Settings → Credentials — then `/{slug}:setup`)")
+            f"→ Settings → Security — then `/{slug}:setup`)")
     return CheckResult(name, True, f"{target} has all {len(have)} var(s) with values")
 
 

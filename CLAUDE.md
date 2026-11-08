@@ -20,6 +20,7 @@ checks size and history.
 
 ## Test
 
+- Docs-related tests, hermetically (throwaway HOME, scrubbed env), about 4 s: `scripts/test-docs.sh`.
 - `uv run --extra browser pytest` from the root. The browser extra is **required**: without it `scripts/walkthrough/record_video.py` calls `sys.exit` during collection and the session aborts. It installs only the `playwright` package, as CI does.
 - `(cd packages/canopy_agent_factory && uv run --with pytest pytest -q)` — sits outside `testpaths`.
 - `uv run canopy structure-drift --strict` — the structural self-audit CI runs.

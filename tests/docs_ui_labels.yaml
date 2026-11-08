@@ -1,0 +1,61 @@
+# Every canopy-web screen label or runner-install detail an end-user page names, with the
+# canopy-web file that defines it. tests/test_docs_ui_labels.py checks (always) that each
+# label is still named in its pages, and (when CANOPY_WEB_PATH points at a canopy-web
+# checkout) that the file still contains every needle. Add an entry when a page starts
+# naming a button, tab or installer detail; drop it when the page stops.
+- label: "Give it its canopy login"
+  pages: [docs/setting-up-an-agent-from-claude.md, docs/onboarding-a-new-operator.md]
+  file: frontend/src/pages/agents/AgentCanopyLogin.tsx
+  needles: ["Give it its canopy login"]
+- label: "Connect Google"
+  pages: [docs/setting-up-an-agent-from-claude.md, docs/onboarding-a-new-operator.md]
+  file: frontend/src/pages/agents/AgentAccountsPanel.tsx
+  needles: ["Connect Google"]
+- label: "Give them access"
+  pages: [docs/setting-up-an-agent-from-claude.md, docs/onboarding-a-new-operator.md, docs/running-an-agent.md]
+  file: frontend/src/pages/agents/AgentZkSection.tsx
+  needles: ["Give ${pending.length === 1 ? 'them'", "access`"]
+- label: "Grant pending"
+  pages: [docs/setting-up-an-agent-from-claude.md, docs/onboarding-a-new-operator.md, docs/running-an-agent.md]
+  file: frontend/src/components/agents/AgentHowItRuns.tsx
+  needles: ["Grant pending"]
+- label: "External accounts"
+  pages: [docs/setting-up-an-agent-from-claude.md]
+  file: frontend/src/pages/agents/settingsTabs.ts
+  needles: ["label: 'External accounts'"]
+- label: "Security"
+  pages: [docs/setting-up-an-agent-from-claude.md, docs/onboarding-a-new-operator.md, docs/running-an-agent.md]
+  file: frontend/src/pages/agents/settingsTabs.ts
+  needles: ["label: 'Security'"]
+- label: "Overview → Routing"
+  pages: [docs/onboarding-a-new-operator.md]
+  file: frontend/src/pages/agents/settingsTabs.ts
+  needles: ["label: 'Overview'", "routing: 'overview'"]
+- label: "Members"
+  pages: [docs/onboarding-a-new-operator.md]
+  file: frontend/src/pages/WorkspaceSettingsPage.tsx
+  needles: ["label: 'Members'"]
+- label: "Add a runner"
+  pages: [docs/onboarding-a-new-operator.md]
+  file: frontend/src/pages/topology/panels/AddRunnerPanel.tsx
+  needles: ["Add a runner"]
+- label: "Refresh runner"
+  pages: [docs/onboarding-a-new-operator.md]
+  file: frontend/src/components/supervisor/RunnerRefresh.tsx
+  needles: ["Refresh runner"]
+- label: "Private"
+  pages: [docs/onboarding-a-new-operator.md]
+  file: frontend/src/components/supervisor/RunnerPrivate.tsx
+  needles: ['label="Private"']
+- label: "install-runner.ps1"
+  pages: [docs/onboarding-a-new-operator.md]
+  file: runner/canopy_runner/scripts/install-runner.ps1
+  needles: ["-NoTasks", '$TASK_FOLDER  = "\Canopy"', '$UPDATER_TASK = "canopy-runner-updater"']
+- label: "canopy-runner update-check"
+  pages: [docs/onboarding-a-new-operator.md]
+  file: runner/canopy_runner/canopy_runner/main.py
+  needles: ['"update-check"']
+- label: "--remote-debugging-port=9222"
+  pages: [docs/onboarding-a-new-operator.md]
+  file: runner/canopy_runner/README.md
+  needles: ["--remote-debugging-port=9222", "emdash4.db", "Emdash CDP"]

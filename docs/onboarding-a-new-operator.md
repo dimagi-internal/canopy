@@ -252,7 +252,7 @@ This opens a browser, and writes the token to `~/.claude/canopy/workbench-token`
 > *"falling back to the operator's workbench-token"*, that is canopy telling you
 > the agent has no identity of its own yet — expected before §5, a problem after.
 >
-> **Giving the agent its token:** on the agent's Settings → Credentials in canopy-web,
+> **Giving the agent its token:** on the agent's Settings → Security tab in canopy-web,
 > press **Give it its canopy login**. canopy-web mints the agent's own token and stores it in
 > the agent's canopy vault (sealed — it is never shown). The next `canopy cred env --agent
 > <slug>` (or session) puts it in `~/.<slug>/.env`; the fallback warning should be gone.
@@ -371,15 +371,15 @@ factory cannot do for you. Work them in this order:
    provisioned first; ask Jonathan. Then sign the mailbox in EITHER way — they
    are one Google app (`canopy` / `canopy-web`, `agent_email.FLEET_CLIENTS`) and a token
    under either serves the agent's turns:
-   - browser: canopy-web `/w/<ws>/agents/<slug>/settings#credentials` → **Connect Google
-     mailbox** (mints under `canopy-web`, stored in canopy-web; boxes pick it up on their
-     next bootstrap — `canopy agent bootstrap` here, **Refresh** on a cloud runner);
+   - browser: canopy-web `/w/<ws>/agents/<slug>/settings/accounts` → **Connect Google** (mints under `canopy-web`, stored in canopy-web; boxes pick it up on their
+     next bootstrap — `canopy agent bootstrap` here, **Refresh runner** on a cloud runner's page);
    - terminal: `gog login <slug>@dimagi-ai.com --client canopy --services gmail,drive,docs,sheets,forms,appscript`
      (never `--client canopy-web` — that Web client cannot run gog's loopback login).
 4. **Secrets** — they live in the agent's **canopy vault**. Set the values on its Settings →
-   Credentials page (or `canopy vault zk set --agent <slug> NAME`), turn zero-knowledge on
+   Security tab (or `canopy vault zk set --agent <slug> NAME`), turn zero-knowledge on
    (`canopy vault zk enable --agent <slug>` — keep the recovery code it prints offline), and
-   press **Grant pending** for each device that needs them. Then `canopy cred env --agent
+   press **Give them access** (Settings → Security) for each device the agent's page shows as
+   *Grant pending*. Then `canopy cred env --agent
    <slug>` writes `~/.<slug>/.env` here; `doctor`'s *Secrets backend* line says whether this
    device has access.
 
@@ -429,13 +429,14 @@ Everything above works without a runner: you use the agent yourself in Claude Co
 **without you** — the turns canopy-web starts from email, from a schedule, or from a dispatch.
 Schedules fire from canopy-web, so any runner the agent routes to picks them up.
 
-- **Your own Mac** — install the Canopy runner app from canopy-web's Runners page and pair
+- **Your own Mac** — install the Canopy runner app (**Add a runner** on canopy-web's Runners page) and pair
   it. Set it **Private** (`canopy private-runner set private`) and it does only your work: your
   pinned turns and your own sessions, never fleet work.
 - **A fleet cloud box** — already running; an admin routes the agent to it.
 
 Either way the runner opens the agent's canopy vault with its own device key, which an admin
-grants once (**Grant pending** on `/agents/<slug>`).
+grants once (shown as *Grant pending* on `/agents/<slug>`; **Give them access** on its
+Settings → Security tab).
 
 ### Windows
 
@@ -497,7 +498,7 @@ That is it. The turn procedure is fleet-canonical: the agent reads its inbound
 channels, decides one action per counterpart, and closes with an explicit status
 line. Outbound actions (email, public writes) pause for your approval by default —
 that is the agent's **turn mode**, and it is board-side state you can read with
-`canopy agent mode --slug <slug>`. A routing rule in the agent's Settings → Routing
+`canopy agent mode --slug <slug>`. A routing rule in the agent's Settings → Overview → Routing
 can override it for one channel or one sender (e.g. a trusted colleague's email runs
 auto); a turn reads its own mode with `--caller <path>`.
 

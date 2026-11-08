@@ -1,0 +1,23 @@
+# Read by plugins/canopy/skills/doc-regeneration/scripts/check_refs.py and find_history.py.
+# Format and matching rules: plugins/canopy/skills/doc-regeneration/scripts/docs_ignore.py.
+# Every entry carries its reason after ' # '; tests/test_docs_ignore.py fails on an entry
+# nothing matches, so this file cannot outlive what it excuses.
+
+# --- check_refs: files that live in another repo, named where they are explained ---
+check_refs packages/canopy_kb                         # canopy-web's knowledge-base package
+check_refs docs/architecture/roles.md                 # canopy-web's roles page
+check_refs docs/architecture/access.md                # canopy-web's access page
+check_refs docs/vault/zk-v1/zk_v1_reference.py        # canopy-web's zero-knowledge reference implementation
+check_refs docs/research/agentic-frameworks.md        # echo's research note, cited as the companion to the model
+check_refs docs/proposals/2026-10-07-caller-context-brain.md  # the design record, in the agent repo that owns it
+check_refs scripts/hooks/block_raw_gog_send.py        # echo's hook, cited as the origin of the raw-send deny rail
+check_refs hooks/gating_guard.py                      # hal's copy of the gating engine, named as a historical lineage row
+
+# --- find_history: a design record states its own dates and decisions ---
+find_history docs/agent-operating-model.md::2026-06-19  # the model's status line: author and date of the draft
+find_history docs/agent-operating-model.md::2026-06-20  # the research pass the model's evidence section reports
+find_history docs/agent-operating-model.md::2026-07-01  # the rails-not-gates revision is a recorded decision
+find_history docs/agent-operating-model.md::2026-10-07  # the fleet-brain trigger is a recorded decision
+find_history docs/agent-operating-model.md::2026-10-09  # where gating landed is a recorded decision
+find_history docs/agent-operating-model.md::canopy#804  # the record the fleet-brain decision cites
+find_history docs/agent-operating-model.md::canopy-web #1343  # the record the protocol-entries decision cites

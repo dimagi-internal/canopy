@@ -22,7 +22,7 @@ selection is exactly what you may touch.
 - **Don't `git config user.*`, and don't go looking for another token.** An empty `GH_TOKEN` or a
   403 means your owner has not lent you one (or it lacks that repo): that is the finding. Say it in
   the report — "no GitHub identity for this turn; the owner lends one at the agent's Settings →
-  Credentials → GitHub" — and stop the ship step there. There is no shared fallback on purpose.
+  External accounts → GitHub" — and stop the ship step there. There is no shared fallback on purpose.
 - **Say who caused the change.** The credential says whose authority; the trailer says who asked.
   When `$CANOPY_REQUESTED_BY` is non-empty, end every commit message with
   `Requested-by: $CANOPY_REQUESTED_BY` and put the same line in the PR body. On a laptop turn

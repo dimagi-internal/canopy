@@ -11,9 +11,9 @@ identity instead of the runner's. Per agent:
   2. env      — ~/.<slug>/.env written (0600) from the Canopy vault: canopy-web's
                 `/credentials/resolve`.
   3. token    — the gog Gmail token from canopy-web's `/credentials/resolve` — the one copy
-                ("Connect Google mailbox" mints it).
+                ("Connect Google" mints it).
   4. client   — the OAuth client the TOKEN names (never config/agent.json — that inference
-                broke echo's working mailbox on 2026-09-05, canopy-web#661), written from the
+                breaks a working mailbox), written from the
                 workspace's canopy vault (`SHARED_CLIENT_ITEMS`) to gog's data dir AND the
                 home itself — the paths gog actually reads (`gog_data_dir`).
   5. import   — `gog auth tokens import`, skipped when gog already holds that exact token
@@ -24,7 +24,7 @@ identity instead of the runner's. Per agent:
                 token's client. Either FLEET client (`canopy` / `canopy-web`) serves a fleet
                 declaration — turns reconcile to the one this machine holds. Any OTHER
                 mismatch is a mailbox that verifies green while every email turn fails
-                (ACE, 2026-09-08), reported loudly, never "fixed" by remapping.
+                , reported loudly, never "fixed" by remapping.
 
 Secrets hygiene: no secret is printed, passed in argv, or left on disk — tokens travel
 in-process and through 0600 temp files that are deleted. The macOS Keychain prompts on
@@ -76,7 +76,7 @@ KNOWN_MARKETPLACES = "~/.claude/plugins/known_marketplaces.json"
 SHARED_CLIENT_ITEMS = {"canopy": "gog-oauth-client", "canopy-web": "gog-oauth-client-web"}
 
 CONNECT_MAILBOX_HINT = ("connect it on canopy-web: the agent's Settings → External accounts → "
-                        "Connect Google mailbox")
+                        "Connect Google")
 
 KEYCHAIN_HEADS_UP = (
     "Heads-up: gog reads its tokens from the macOS login Keychain — if a dialog asks to "

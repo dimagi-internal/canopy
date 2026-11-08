@@ -8,7 +8,7 @@
     canopy vault open-slot-data  < lease.json               a pool lease's sealed slot secrets
     canopy vault google-mint --agent X < work.json          finish a Google sign-in on a runner
 
-Values are declared on the agent's Credentials page on canopy-web. Here, a PERSON who is the
+Values are declared on the agent's Settings → Security tab on canopy-web. Here, a PERSON who is the
 agent's owner or admin sees which credentials are set, when each was last read, and this
 machine's device key. Values pass through this process's memory and the canopy-web API; none
 is ever printed, logged or put in argv.
@@ -139,7 +139,7 @@ def status_cmd(slug, as_json):
 @click.option("--ecdh-jwk", "ecdh_jwk", is_flag=True,
               help="Make this machine's ECDH key if needed (for --kind, else the existing "
                    "key's kind) and print {kind, jkt, jwk} — its PUBLIC half. A cloud runner "
-                   "enrolling itself uses this (canopy-web#1550).")
+                   "enrolling itself uses this.")
 @click.option("--public-jwk", "public_jwk", is_flag=True,
               help="Make this machine's SIGNING key if needed (for --kind, else the "
                    "strongest) and print {kind, jkt, jwk, created} — its PUBLIC half, with no "
@@ -156,7 +156,7 @@ def device_cmd(enroll, reenroll, refresh, runner_id, software, kind, label, ecdh
     """This machine's device key: show it, enroll it, or re-enroll it.
 
     canopy-web hands an agent's credentials only to a request carrying a proof from an
-    APPROVED device key (always — there is no per-agent switch, canopy-web#2322): a DPoP JWS (secure-enclave, tpm,
+    APPROVED device key (always — there is no per-agent switch): a DPoP JWS (secure-enclave, tpm,
     software) or, on an EC2 cloud runner, a signed STS GetCallerIdentity for the
     instance role (aws-iam). Enrolling registers it as pending; a person approves it in
     canopy-web with a passkey step-up."""

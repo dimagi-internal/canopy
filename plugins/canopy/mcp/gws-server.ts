@@ -510,7 +510,7 @@ server.tool(
         const loginClient = client === 'canopy-web' ? 'canopy' : client;
         const reauth =
           `gog login ${account} --client ${loginClient} --services gmail,drive,docs,sheets,forms,appscript` +
-          ` (for an agent mailbox, canopy-web's "Connect Google mailbox" button works too)`;
+          ` (for an agent mailbox, canopy-web's "Connect Google" button works too)`;
         return error(
           `gog drive download failed: ${stderr || 'no output written'}. ` +
           `If the error mentions scope/permission/insufficient, re-auth gog with Drive scope: ${reauth}`,

@@ -891,7 +891,7 @@ def test_a_licence_holders_bad_token_never_says_sign_in_as_the_agent(tmp_path, m
     ok, lines = preflight(IDENT, gog_dir=_gog_home(tmp_path), runner=runner)
     joined = "\n".join(lines)
     assert not ok and "canopy agent google-login --slug hal" in joined
-    assert "gog login" not in joined and "Connect Google mailbox" not in joined
+    assert "gog login" not in joined and "Connect Google" not in joined
 
 
 @pytest.mark.parametrize("plat,want,never", [
@@ -1498,7 +1498,7 @@ def test_reconcile_client_ambiguity_guard_is_reachable_via_the_token_store():
     ("canopy-web", ["canopy", "canopy-web"], "canopy-web"),
 ])
 def test_a_fleet_client_is_used_when_the_declared_one_has_no_token(declared, tokens, expected):
-    """2026-10-04: the "Connect Google mailbox" button can only mint under
+    """2026-10-04: the "Connect Google" button can only mint under
     `canopy-web` (Google allows a browser redirect on a Web client only), while
     every agent declares `canopy`. Both are the fleet's one app, so either works."""
     from orchestrator.agent_email import reconcile_client

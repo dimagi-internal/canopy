@@ -6,7 +6,7 @@ adapter of docs/architecture/shared-gog-gdrive.md: publish a markdown deliverabl
 filed into a shared Drive folder, shared, and permission-verified — one place, fixed
 once, propagated to the whole fleet.
 
-Why this exists (the friction Hal hit, 2026-07-21): §3's email adapter shipped, but the
+Why this exists (the friction hal hit): §3's email adapter shipped, but the
 doc-authoring capability was parked behind §5's bigger `gws-mcp` extraction. In the gap,
 echo / eva / hal each hand-rolled their own gdoc publisher — three different
 upload/convert/share implementations of one procedure, drifting on the details that
@@ -18,12 +18,12 @@ Why gog, not the Drive REST API (echo's route): the shared engine auths the SAME
 `canopy email` does — through gog's own token bucket (`--account` + `--client`), never
 the macOS Keychain. echo_gdoc.py minted a bearer token via `security find-generic-password`,
 which blocks forever on a GUI prompt in the non-interactive shells turns run in
-(dimagi-internal/ace#827). gog v0.12+ covers every operation we need — `drive upload
+. gog v0.12+ covers every operation we need — `drive upload
 --convert-to doc` (create), the `docs write` + `docs find-replace --format markdown` pair
 (in-place body replace of a NATIVE Doc, preserving its id/link/permissions), `drive share`,
 and `drive permissions` (the share-verify step both echo and hal hand-rolled).
 
-Why the replace path edits through the Docs API, not a Drive media overwrite (issue #353):
+Why the replace path edits through the Docs API, not a Drive media overwrite (a Drive API restriction):
 a `files.update` with media — what `drive upload --replace` does — is **forbidden by the
 Drive API on Workspace-native files** (`mimeType=application/vnd.google-apps.document`),
 which is exactly the type `--replace` targets. So it always errored, and agents fell back
@@ -34,7 +34,7 @@ find-replace --format markdown`, which does the md→Doc conversion). Same id, s
 same permissions.
 
 **The replace path renders WORSE than the create path, and it is gog's converter, not
-ours** (measured 2026-08-12, issue #451). The create path runs our own `md_to_html` and
+ours** (measured). The create path runs our own `md_to_html` and
 imports HTML, which Drive renders correctly. `docs find-replace --format markdown` builds
 no Docs list structures at all:
 
@@ -45,7 +45,7 @@ no Docs list structures at all:
 | inline `code`  | `<code>`             | formatting dropped                |
 | two paragraphs | two paragraphs       | merged with a soft line break     |
 | headings/bold  | correct              | correct                           |
-| pipe tables    | real `<table>` (since 2026-10-04; literal `|` text before) | correct |
+| pipe tables    | real `<table>` (real tables) | correct |
 | `**bold**` wrapped across a line | correct | literal `**` — so replace unwraps first |
 
 gog exposes only `--format plain|markdown` (no HTML), so we cannot route the replace
@@ -397,7 +397,7 @@ def unwrap_markdown(md: str) -> str:
 def build_replace_commands(identity: GdocIdentity, *, doc_id: str, md_path: str,
                            name: str | None = None) -> list[list[str]]:
     """The ordered gog calls that replace a NATIVE Doc's body in place, keeping its
-    id/link/permissions (issue #353).
+    id/link/permissions (a Drive API restriction).
 
     A Drive media overwrite (`files.update` with media) is forbidden on Workspace-native
     Docs, so we edit through the Docs API instead:
@@ -818,7 +818,7 @@ def publish(identity: GdocIdentity, *, name: str | None, parent: str | None, md_
 
     Create: convert HTML→Doc into `parent`, share, and verify the share landed.
     Replace: update an existing native Doc's body in place via the Docs API — same
-    id/link/permissions (issue #353). dry_run reports the commands without touching Drive."""
+    id/link/permissions (a Drive API restriction). dry_run reports the commands without touching Drive."""
     if not replace and not (name and parent):
         raise AgentGdocError("--name and --parent are required for a new doc "
                              f"(set --parent, or provision ${GDRIVE_ROOT_ENV}); "

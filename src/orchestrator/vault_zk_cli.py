@@ -1,4 +1,4 @@
-"""`canopy vault zk` — run an agent's zero-knowledge vault from THIS device (canopy-web#1550).
+"""`canopy vault zk` — run an agent's zero-knowledge vault from THIS device.
 
 For an agent with zero-knowledge on, canopy-web stores only ciphertext and wrapped keys.
 This command acts as this machine's device, which is a member of the vault through its
@@ -31,7 +31,7 @@ list every target (label + thumbprint) and ask before wrapping; ``--yes`` skips 
 question for unattended use. Nothing here prints, logs or sends a value, the vault key or
 a recovery code — except the recovery code, printed exactly once on the terminal.
 
-``set --sealed`` (give an agent a secret, canopy-web#1712) trusts the server for even
+``set --sealed`` (give an agent a secret) trusts the server for even
 less: it seals only to recipients carrying a zk-v1 §7 endorsement by a person pinned in
 ``~/.canopy/vault-pins.json`` (keyed by person, like ``known_hosts``). Every thumbprint
 is recomputed here; a first-seen endorser is shown (email + fingerprint) and confirmed
@@ -838,7 +838,7 @@ def _vault(slug: str, vault_id: str = "") -> ZkVault:
 
 @click.group("zk")
 def zk_group():
-    """Zero-knowledge vault (canopy-web#1550): this device as a member of an agent's vault.
+    """Zero-knowledge vault: this device as a member of an agent's vault.
 
     canopy-web stores only ciphertext and wrapped keys; values are encrypted and the vault
     key wrapped HERE. Never prints a value or a key (a recovery code is shown once)."""
@@ -978,7 +978,7 @@ def rotate_cmd(slug, yes, drops, recovery_file):
 @AGENT_OPT
 def settle_cmd(slug):
     """Re-encrypt values canopy-web sealed to this device (``zks1:`` — a Gmail token from
-    Connect Google mailbox, a rotated canopy-pat) under the vault key, so every member and
+    Connect Google, a rotated canopy-pat) under the vault key, so every member and
     device can read them. Import and switch do this on their own."""
     click.echo(render(run_settle(_vault(slug))))
 

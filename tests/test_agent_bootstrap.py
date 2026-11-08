@@ -110,7 +110,7 @@ def test_no_web_token_says_to_connect_the_mailbox(tmp_path):
     repo = _repo(tmp_path)
     rep = _boot(tmp_path, FakeRunner(), installed=("ace",)).bootstrap_one("ace", repo)
     assert not rep.ok and rep.token == "NONE"
-    assert any("Connect Google mailbox" in n for n in rep.notes)
+    assert any("Connect Google" in n for n in rep.notes)
 
 
 def test_client_is_taken_from_token_not_agent_json(tmp_path):
@@ -127,7 +127,7 @@ def test_client_is_taken_from_token_not_agent_json(tmp_path):
     assert b.verified == [("ace@dimagi-ai.com", "canopy-web")]
     # ...and a `canopy-web` token serves a `canopy` declaration: one app, two sign-in routes
     # (FLEET_CLIENTS). This was a MISMATCH failure until 2026-10-04, which failed every
-    # mailbox signed in through canopy-web's "Connect Google mailbox" button.
+    # mailbox signed in through canopy-web's "Connect Google" button.
     assert rep.turn == "OK (canopy-web; declared canopy)"
     assert not any("TURN-CLIENT MISMATCH" in n for n in rep.notes)
 
@@ -447,7 +447,7 @@ def test_a_licence_holders_missing_token_never_says_connect_the_mailbox(tmp_path
     b.mailbox_hint = "ask an admin of ace to connect its Google mailbox on canopy-web"
     rep = b.google_login("ace", repo)
     assert not rep.ok and any("ask an admin of ace" in n for n in rep.notes)
-    assert not any("Connect Google mailbox" in n for n in rep.notes)
+    assert not any("Connect Google" in n for n in rep.notes)
 
 
 def test_google_login_present_needs_both_the_mapping_and_the_client_file(tmp_path):

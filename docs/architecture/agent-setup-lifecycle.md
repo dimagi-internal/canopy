@@ -11,9 +11,9 @@ does.
 |---|---|---|
 | Create the repo | `canopy_agent_factory` (templates + push) | canopy-web New-agent page; `/canopy:create-agent` |
 | What's left to do | canopy-web `apps/agents/setup.py` (`GET /api/agents/<slug>/setup`) | Settings page, create wizard, `/canopy:create-agent` (MCP `agent_setup`) |
-| Vault + its values | **canopy vault** (canopy-web; zero-knowledge: `canopy vault zk`, `vault_zk_cli.py`) | the agent's Settings → Credentials; the checklist's Vault step; `/canopy:create-agent` |
-| A device's access to the vault | canopy-web's pending grants (`GET …/vault/zk`), granted with a holder's key | **Grant pending** on `/agents/<slug>`; `canopy vault zk grant --agent X`; `canopy agent use <slug>` says when one is missing |
-| The agent's canopy identity | canopy-web `POST /api/agents/<slug>/canopy-login` (sealed into canopy vault, never shown) | Settings → Credentials → **Give it its canopy login** |
+| Vault + its values | **canopy vault** (canopy-web; zero-knowledge: `canopy vault zk`, `vault_zk_cli.py`) | the agent's Settings → Security tab; the checklist's Vault step; `/canopy:create-agent` |
+| A device's access to the vault | canopy-web's pending grants (`GET …/vault/zk`), granted with a holder's key | **Grant pending** on `/agents/<slug>`, then **Give them access** (Settings → Security); `canopy vault zk grant --agent X`; `canopy agent use <slug>` says when one is missing |
+| The agent's canopy identity | canopy-web `POST /api/agents/<slug>/canopy-login` (sealed into canopy vault, never shown) | Settings → Security → **Give it its canopy login** |
 | Use an agent yourself, no runner | `canopy agent use <slug>` (`agent_use.py`) | a person on their own computer ([running-an-agent.md](../running-an-agent.md)) |
 | Make an agent runnable here | `canopy agent prepare` (`agent_prepare.py`; person mode = `canopy agent bootstrap`) | cloud box bootstrap + each claim, laptop runner at claim — **phase 2 switches them over** |
 | Is it working | fleet facts: canopy-web `agent_setup` (+ `readiness`); this machine: `canopy agent doctor` | the doctor's `canopy-web setup` check reads `agent_setup` |
@@ -21,7 +21,7 @@ does.
 ## What a person types vs what the system produces
 
 Each credential in an agent's Canopy vault has a kind: **minted** (`canopy-pat`, by canopy-web),
-**linked** (`gog-token`: Connect Google mailbox), **shared** (`gog-oauth-client`: the workspace's
+**linked** (`gog-token`: Settings → External accounts → Connect Google), **shared** (`gog-oauth-client`: the workspace's
 shared vault), or **asked** — only values a person alone has, like an outside service's key.
 
 ## Phases

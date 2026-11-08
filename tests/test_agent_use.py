@@ -541,14 +541,14 @@ def test_a_canopy_hosted_agent_needs_no_google_login(w, tmp_path):
 
 def test_no_fix_ever_tells_a_non_admin_to_sign_in_as_the_agent(w, tmp_path):
     # Defensive: a non-admin reaching the import (a licence read) gets "ask the owner",
-    # never `gog login <agent>` or "Connect Google mailbox".
+    # never `gog login <agent>` or "Connect Google".
     w.access.update(may_resolve=True, via="license")
     w.google_result = {"ok": False, "summary": "NONE",
                        "notes": ["token: no gog token on canopy-web for eva — connect it on "
-                                 "canopy-web: … Connect Google mailbox"]}
+                                 "canopy-web: … Connect Google"]}
     s = _step(_run(w, tmp_path), "google login")
     assert s.status == au.NEEDS and "ask jj@dimagi.com" in s.fix
-    assert "Connect Google mailbox" not in s.fix and "gog login" not in s.fix
+    assert "Connect Google" not in s.fix and "gog login" not in s.fix
 
 
 def test_the_real_google_check_names_the_os_install_line(monkeypatch, tmp_path):

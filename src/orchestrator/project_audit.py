@@ -3,7 +3,7 @@
 agent-core/task-tracker.md § "Projects — one name, two halves" says a project is a Drive
 folder `<agent root>/Projects/<name>/` plus a canopy-web project of the SAME name, with its
 tasks filed in, and every turn that advances a task recorded with `canopy agent turn`. That
-was prose the agent had to remember, and it decayed: on 2026-10-04 ACE's board had one
+was prose the agent had to remember, and it decayed: ACE's board once had one
 registered project with no folder linked, five `Projects/` folders with no project, and a
 six-PR, multi-deliverable piece of work living as a loose task with no turn records. Nothing
 checked it. This is the check — read-only, and it never fails (an audit that can crash the
@@ -18,8 +18,8 @@ so each is unit testable without a network:
   b. NOFOLDER — an active project with no Drive folder linked.
   c. DORMANT — `Projects/<name>/` folders with no project pointing at them. INFORMATIONAL
               ONLY, never a finding: the board holds ACTIVE work and Drive is the durable
-              archive, so a folder is EXPECTED to outlive its board entry (owner decision,
-              2026-10-04). Reported as a count; the folders are also used to suggest
+              archive, so a folder is EXPECTED to outlive its board entry (the owner's
+              decision). Reported as a count; the folders are also used to suggest
               re-registering a returning project against its existing folder (same name).
   d. DRIFT  — an ACTIVE project whose linked folder's name differs from the project name, or
               whose linked folder is not under `Projects/` at all.
@@ -30,12 +30,12 @@ so each is unit testable without a network:
               in its links, source_url or title) is CLOSED or MERGED. Free-text notes are NOT
               read: they cite merged PRs as history, so they would flag live work. A
               dispatched task is created by one session and shipped by another, and nothing
-              closes the card; on 2026-10-21 hal's board had eight such cards, the oldest
+              closes the card; hal's board once had eight such cards, the oldest
               two weeks stale, all still saying "Work this dispatch".
               A card UPDATED AFTER its last ref closed is not flagged: someone touched it
               with the merged state in front of them and kept it open, because its refs
               were prerequisites and its next step is off GitHub (waiting on a person,
-              parked, step 3 of 5). On 2026-10-22 all 9 of hal's (f) hits were that, and
+              parked, step 3 of 5). All 9 of hal's (f) hits once were that, and
               every turn re-spent the same judgment to leave them open. A ref whose close
               time is unknown keeps the old rule — over-report, never hide.
 
@@ -88,8 +88,8 @@ def _is_manual(task: dict) -> bool:
 def _is_off_queue(task: dict, now: datetime | None = None) -> bool:
     """Taken off the agent's queue on purpose: `[MANUAL`, a parked next action (`Parked:` /
     `[PARKED`), or snoozed until a time still ahead. Flagging these every turn trained agents
-    to ignore the audit line (hal, 2026-10-30: the same 15-loose/1-shipped line, three parked
-    Supply tasks among them, reported turn after turn and never acted on)."""
+    to ignore the audit line: the same 15-loose/1-shipped line, three parked
+    Supply tasks among them, reported turn after turn and never acted on."""
     if _is_manual(task):
         return True
     if PARKED_RE.match(str(task.get("next_action") or "")):

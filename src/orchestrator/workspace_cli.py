@@ -1,4 +1,4 @@
-"""`canopy agents connect` — register the person's ONE agent catalog (canopy#851, rev. 2026-10-14).
+"""`canopy agents connect` — register the person's ONE agent catalog .
 
 The new-user half of `/canopy:setup`: after the browser sign-in (the PAT mint), this
 registers `canopy-agents` — `https://<canopy-web>` + AGENTS_MARKETPLACE_PATH, which lists

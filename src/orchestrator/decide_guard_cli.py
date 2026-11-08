@@ -79,8 +79,7 @@ def stamp_cmd(agent_repos, user, check, repo):
 
     decide-guard is a PER-PERSON preference. Nothing else carries it: not the plugin, and
     not an agent repo — a repo's settings run for whoever runs the agent, and on the first
-    runner not owned by Jonathan (stewari-mbp-cdp, Claude Code 2.1.220) the judge 400'd on
-    every Stop and wedged the session (failure investigation 1, turn bb892462)."""
+    runner not owned by its author the judge 400s on every Stop and wedges the session."""
     if agent_repos:
         raise click.ClickException(
             "decide-guard is a per-person preference, not an agent's: an agent repo's "

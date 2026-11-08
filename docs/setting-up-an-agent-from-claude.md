@@ -54,16 +54,17 @@ Skip any step that is already done, and show me each result before moving on.
    to do and wait.
 2. Read the agent's setup checklist (agent_setup) and its vault state
    (get_agent_zk_state). Tell me which credentials are still missing. I set values on
-   the agent's Settings → Credentials page, or with `canopy vault zk set --agent <slug>
+   the agent's Settings → Security tab, or with `canopy vault zk set --agent <slug>
    NAME` in my own terminal.
 3. If the agent has no canopy login yet, tell me to press "Give it its canopy login" on
-   its Settings → Credentials page (it goes straight into the vault, never shown).
+   its Settings → Security tab (it goes straight into the vault, never shown).
 4. Invite <slug>@dimagi-ai.com to the "<workspace>" workspace as an editor, so the
    agent's own login can see its own board.
 5. Run `canopy agent doctor --repo <the checkout>` (clone dimagi-internal/<slug> if there
    is none) and fix every failing check it names. Stop and walk me through any step that
    needs a person: signing in to Google as <slug>@dimagi-ai.com and accepting that
-   invite as the agent, and pressing Grant pending for a device that needs access.
+   invite as the agent, and pressing "Give them access" on the Settings → Security tab for a device the agent's page
+   shows as Grant pending.
 6. Run `canopy agent use <slug>` again. When it ends with "Start a new Claude Code
    session …", mark the matching setup cards done on the agent's board and tell me to
    start that session and run /<slug>:turn.
@@ -74,8 +75,8 @@ Skip any step that is already done, and show me each result before moving on.
 Claude stops at these on purpose. None of them is a gap in the tools.
 
 - **Signing in as the agent.** One private browser window, signed in as `<slug>@dimagi-ai.com`,
-  covers two things: the mailbox login (the agent's Settings → Credentials → **Connect Google
-  mailbox** in canopy-web, or `gog login <mailbox> --client canopy` at a terminal — either fleet
+  covers two things: the mailbox login (the agent's Settings → External accounts → **Connect Google**
+  in canopy-web, or `gog login <mailbox> --client canopy` at a terminal — either fleet
   client serves the agent's turns) and accepting the workspace invite. Whoever holds the
   agent's Google login does this. (The agent's own canopy-web token is not minted by hand any
   more: **Give it its canopy login** puts it in the vault.)
@@ -84,7 +85,8 @@ Claude stops at these on purpose. None of them is a gap in the tools.
 - **Changing an agent's owner or admins.** This is browser-only by design: the owner is whose
   GitHub access the agent borrows, so a person decides it in the canopy-web app. Changing the
   agent's credentials needs you to be its owner or admin, or an owner of its workspace.
-- **Granting a device.** Pressing **Grant pending** wraps the vault key for a new device with
+- **Granting a device.** A device the agent's page marks *Grant pending* waits for **Give them
+  access** (Settings → Security). Pressing it wraps the vault key for a new device with
   your passkey; only someone who already holds a grant can.
 - **Inviting someone to a workspace.** Only that workspace's owner can do it.
 

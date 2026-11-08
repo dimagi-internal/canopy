@@ -45,10 +45,9 @@ def agent_register(slug, name, email, description, persona, avatar_url, workspac
     """Upsert agent identity.
 
     canopy-web's upsert REPLACES every identity field and requires `name`, so on an agent
-    that already exists an omitted option is filled from its current record. Without
-    that, `register --slug fizzy --workspace strategy` 422'd, and adding `--name` to get
-    past it silently blanked the agent's email, description and persona (Shayoni,
-    2026-09-29)."""
+    that already exists an omitted option is filled from its current record, so
+    `register --slug fizzy --workspace strategy` needs no `--name`, and changing one
+    field never blanks the agent's email, description or persona."""
     given = {"name": name, "email": email, "description": description,
              "persona": persona, "avatar_url": avatar_url}
     try:
@@ -835,7 +834,7 @@ def agent_tasks(slug, open_only, statuses):
     Unfiltered by default, because computing the next ext_id needs the FULL set including
     resolved tasks. Pass `--open` for the turn-start board drain, which wants the opposite:
     a board's signal is its handful of unresolved tasks, while its payload grows without
-    bound as tasks close (canopy#516).
+    bound as tasks close.
     """
     if open_only and statuses:
         raise click.ClickException("--open and --status are alternatives; pass one or the other.")
@@ -1910,7 +1909,7 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
                    "different prompt is a different dispatch and an identical retry dedupes. "
                    "Pass a fresh key to deliberately re-dispatch the same work.")
 @click.option("--runner", "runner_ref", default="",
-              help="Pin the turn to ONE runner, by name (e.g. jj-mbp-cdp) or id — for work "
+              help="Pin the turn to ONE runner, by name (e.g. cloud-ec2-2) or id — for work "
                    "only that box can do. Only it may claim the turn. Refused if the runner "
                    "is unknown/ambiguous/retired or does not list the agent in "
                    "capabilities.agents; see --queue-if-not-ready for paused/offline.")
@@ -2302,12 +2301,11 @@ def agent_token_cmd(slug):
     \b
       a person's LOCAL turn  → that person (their PAT, else their private runner's token)
       a runner turn          → the login canopy-web issued for that turn / session
-      otherwise              → the agent's stored PAT, while one exists (phase 1)
+      otherwise              → the agent's stored PAT, while one exists
       never                  → the operator's workbench-token
 
     Agent scripts call this instead of reading CANOPY_WEB_PAT / ~/.<slug>/.env themselves,
-    so the stored PAT can be retired in one place (canopy-web
-    docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md, phase 2). Exits
+    so the identity rule lives in one place. Exits
     non-zero with the reason when there is no identity to act with. Refuses to print to a
     terminal: it is a credential."""
     from orchestrator import canopy_web
@@ -2332,7 +2330,7 @@ def agent_token_cmd(slug):
 @click.option("--slug", required=True, help="The agent this session runs as.")
 def agent_session_token_cmd(slug):
     """Print the login canopy-web issued for THIS laptop session as agent SLUG (tied to the
-    session its turn opened; canopy-web spec 2026-10-21-turn-scoped-agent-token-design.md),
+    session its turn opened),
     or nothing. For the canopy-web MCP headers helper, which connects once per session and
     so needs a login that lasts it. Refuses to print to a terminal: it is a credential."""
     import sys
