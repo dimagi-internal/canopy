@@ -46,18 +46,7 @@ _MAX_DEPTH = 12
 # Calls canopy-web does not serve, kept on purpose — each with its reason and its way
 # out. `routes` prints them, so canopy-web's check skips them rather than failing on a
 # route it already removed.
-ALLOWED_MISSING = {
-    ("GET", "/api/huddle-groups/{}"):
-        "dead fallback in checkin_cli.normalize for a work-group run; canopy-web#1800 removed "
-        "the /api/huddle-groups aliases, so no run names a `group` any more. Remove it with "
-        "tests/test_huddle_group.py.",
-    ("GET", "/api/huddle-groups/runs/{}"):
-        "dead fallback in checkin_cli.get_run, tried only after /api/checkins/runs/{id} 404s; "
-        "removed by canopy-web#1800. Same cleanup.",
-    ("POST", "/api/huddle-groups/runs/{}/finished"):
-        "dead fallback in checkin_cli.finish_run, tried only when /api/checkins/runs/{id}/"
-        "finished is missing; removed by canopy-web#1800. Same cleanup.",
-}
+ALLOWED_MISSING: dict = {}
 
 _NOT_PATH_BUILDERS = frozenset({"quote", "quote_plus", "urlencode", "str", "int", "get", "dumps"})
 

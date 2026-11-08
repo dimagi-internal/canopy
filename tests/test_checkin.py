@@ -3,7 +3,7 @@ check-in's project + task backings + `checkins/runs/<id>/finished`, and `canopy 
 material|propose|finish` — against a fake canopy-web serving the check-in routes.
 
 The routes follow canopy-web docs/superpowers/specs/2026-10-17-project-check-ins-design.md §3,
-§5, §6. The fallback onto a canopy-web without them is tests/test_huddle_group.py."""
+§5, §6. A huddle outside a check-in run (proposed projects) is tests/test_huddle_propose.py."""
 import json
 import re
 from urllib.parse import unquote, urlparse
@@ -189,15 +189,21 @@ def test_plan_takes_members_brief_material_and_proposed_tasks_from_the_checkin(t
     assert 'neal@dimagi.com: backs_with_changes — "only for the cloud runner"' in text
     assert "- T6 Old declined idea (declined) — not now — after the release" in text
     assert "Ancient done work" not in text and "a step" not in text   # old / a child step
-    assert plan["checkin_reactions"] == ""          # a project: its tasks are the memory
     # every check-in route, none of the old ones
     assert not paths(web, "GET", "/api/huddle-groups/")
 
 
-def test_group_run_is_an_alias_of_checkin_run(tmp_path, web):
-    r, plan = _plan(tmp_path, flag="--group-run")
-    assert r.exit_code == 0, r.output
-    assert plan["checkin_run"]["id"] == 77 and plan["members"] == ["eva", "echo"]
+def test_group_run_and_huddle_group_are_gone(tmp_path, web):
+    r = CliRunner().invoke(main, ["huddle", "plan", "--group-run", RUN_ID, "--out",
+                                  str(tmp_path / "plan.json")])
+    assert r.exit_code == 2 and "--group-run" in r.output
+    assert CliRunner().invoke(main, ["huddle-group", "material", "--run", RUN_ID]).exit_code == 2
+
+
+def test_a_missing_run_is_one_clear_error_with_no_second_route(web):
+    r = run("checkin", "material", "--run", "9")
+    assert r.exit_code == 2 and "cannot read check-in run 9" in r.output
+    assert "huddle-groups" not in r.output and not paths(web, "GET", "/api/huddle-groups/")
 
 
 def test_a_run_that_names_its_checkin_reads_the_checkin(tmp_path, web):
@@ -350,12 +356,11 @@ def test_file_holds_a_task_declined_before(tmp_path, web):
 
 # ── canopy checkin ───────────────────────────────────────────────────────────────
 def test_material_prints_the_material_with_project_and_window_on_stderr(web):
-    for verb in ("checkin", "huddle-group"):
-        r = run(verb, "material", "--run", RUN_ID)
-        assert r.exit_code == 0, r.output
-        assert r.stdout.strip() == RUN["material"]
-        assert "Weekly check-in" in r.stderr and "project ada/P12 (Canopy support)" in r.stderr
-        assert "2 messages" in r.stderr and "huddle" in r.stderr
+    r = run("checkin", "material", "--run", RUN_ID)
+    assert r.exit_code == 0, r.output
+    assert r.stdout.strip() == RUN["material"]
+    assert "Weekly check-in" in r.stderr and "project ada/P12 (Canopy support)" in r.stderr
+    assert "2 messages" in r.stderr and "huddle" in r.stderr
 
 
 def test_propose_files_one_task_in_the_checkins_project(web):
