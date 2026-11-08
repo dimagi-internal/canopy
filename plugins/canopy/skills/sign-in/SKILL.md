@@ -29,21 +29,22 @@ transcript. It is also useless without the verifier held by that process, and ca
 
 A chat reply reaches the person only when your turn ends, so do not wait inside the turn.
 
-1. `canopy sign-in start design` — prints the link and leaves a background watcher. **Say the
+1. `canopy sign-in start design` — prints the link. **Say the
    link to the person** with what you will do (e.g. "sync the design system to claude.ai/design")
    and tell them to add the code the page shows as the chat secret `CLAUDE_DESIGN_CODE`
    (chat menu → Secrets…), **not** as a chat message. The link is good for about 5 minutes.
-   **End the turn.** The watcher signs in by itself the moment the secret appears.
-2. On their next message: `canopy sign-in status design` — `signed_in` means go on; `none`
-   means the link lapsed or the code was refused (start again). If they pasted the code into chat
+   **End the turn.**
+2. On their next message: `canopy sign-in code design` — it reads the secret (a chat's secrets
+   can only be read inside a turn) and signs in. It errors if the link lapsed or the code was
+   refused (start again). If they pasted the code into chat
    anyway, don't repeat it; tell them to use Secrets and start again.
 3. Do only what you said (e.g. `DesignSync`).
 4. `canopy sign-in stop design` as soon as you are done — don't wait for the 30 minutes.
 5. Say what you did: "Signed in to Claude Design at 14:02 with your approval; synced X; signed
    out at 14:06. It stays valid at claude.ai until you revoke it (`/design-revoke`)."
 
-`canopy sign-in code design [--wait]` hands the secret over right now if you need it (a script
-or a local terminal where the person is watching); the watcher does it otherwise.
+`canopy sign-in code design --wait` waits up to 4 minutes for the secret, for a script or a local
+terminal where the person is watching.
 
 ## Limits to say out loud
 

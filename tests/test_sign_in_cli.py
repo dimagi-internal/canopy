@@ -74,7 +74,6 @@ def box(tmp_path, monkeypatch):
     fake = bindir / "claude"
     fake.write_text(FAKE_CLAUDE.format(python=sys.executable, code=CODE, token=TOKEN))
     fake.chmod(0o755)
-    monkeypatch.setattr(sign_in_cli, "SPAWN_WATCHER", False)  # the watcher is tested in-process
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESS)
@@ -267,49 +266,27 @@ def test_hook_is_inert_without_a_state_dir(tmp_path):
     assert mod.main() == 0
 
 
-def test_the_watcher_hands_the_code_over_by_itself(box, secrets, monkeypatch):
-    """`start` leaves a watcher that signs in the moment the secret appears: no turn waits."""
-    run("start", "design")
-    calls = {"n": 0}
-
-    def later(_s):
-        calls["n"] += 1
-        if calls["n"] == 3:
-            secrets.values["CLAUDE_DESIGN_CODE"] = CODE
-
-    monkeypatch.setattr(sign_in_cli, "SLEEP", later)
-    r = run("watch", "design")
+def test_start_leaves_no_background_process(box, secrets):
+    """A watcher outlives its turn's login and chat key, so its secret reads can only 401
+    (2026-11-06, investigation 34). `start` leaves only the provider's own process."""
+    r = run("start", "design")
     assert r.exit_code == 0, r.output
-    assert creds(box)["designOauth"]["accessToken"] == TOKEN
-    assert json.loads(run("status", "design", "--json-output").output)["status"] == "signed_in"
-    assert CODE not in r.output
+    assert "watch" not in r.output.lower().replace("watching", "")
+    assert not hasattr(sign_in_cli, "watch_cmd")
 
 
-def test_the_watcher_gives_up_quietly_when_the_link_lapses(box, secrets, monkeypatch):
-    run("start", "design")
-    t = {"now": time.time()}
-    monkeypatch.setattr(sign_in_cli, "NOW", lambda: t["now"])
-    monkeypatch.setattr(sign_in_cli, "SLEEP", lambda s: t.__setitem__("now", t["now"] + 120))
-    r = run("watch", "design")
-    assert r.exit_code == 0
-    assert "designOauth" not in creds(box)
-
-
-def test_the_watcher_outliving_its_turn_login_leaves_the_sign_in_waiting(box, secrets, monkeypatch):
-    """2026-11-06, investigation 34: the turn that ran `start` ended, its canopy-web login was
-    revoked, and the watcher's next read got a 401. That must not fail the sign-in (nor leave a
-    401 for `status` to print, which credential_guard aborts the next turn on): the next turn's
-    `code`, with its own login, hands the code over."""
+def test_a_refused_secret_read_carries_no_server_text(box, secrets, monkeypatch):
+    """A raw 401 in Bash output makes credential_guard abort the turn as if the agent's own
+    login failed; the sign-in stays waiting and a live turn's `code` can still finish it."""
     run("start", "design")
 
     def refused(key, **k):
         raise click.ClickException("GET /api/session-secrets/key -> 401: Authentication required")
 
     monkeypatch.setattr(secret_cli, "list_secrets", refused)
-    r = run("watch", "design")
-    assert r.exit_code == 0, r.output
-    status = run("status", "design").output
-    assert "401" not in status and "failed" not in status, status
+    r = run("code", "design")
+    assert r.exit_code != 0
+    assert "401" not in r.output and "Authentication" not in r.output, r.output
     assert json.loads(run("status", "design", "--json-output").output)["status"] == "waiting"
 
     secrets.values["CLAUDE_DESIGN_CODE"] = CODE
