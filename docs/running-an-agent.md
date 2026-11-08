@@ -34,6 +34,9 @@ with the exact URL or person. It is safe to re-run until everything is ok:
 - this device holds a grant of the agent's vault,
 - you have a licence to use the agent (requested automatically at your first session; an admin
   approves it unless the agent's caller list already gives you the whole agent),
+- for each credential a person delegated to the agent (their GitHub token), you are signed in to
+  your own account on this computer (`gh auth status`), because only the machines that run the
+  agent get the delegated one,
 - the agent's plugin is installed (`/plugin install <slug>@canopy-agents`),
 - `$CANOPY_AGENT` is set for the project, and the agent's env is synced,
 - the agent's Google login is in gog (its OAuth client file, its token, the account mapped),
@@ -60,5 +63,6 @@ ciphertext; values are opened on a device that holds a grant of the agent's vaul
   NAME`. The next session picks it up.
 
 A computer with no runner app holds its device key too: registering it for local use gives it
-its own private "computer" runner on canopy-web, which never runs turns. Until that canopy-web
-change is live, `canopy agent use` says "this computer can't hold a vault key yet".
+its own private "computer" runner on canopy-web, which never runs turns. If canopy-web returns no
+runner id at registration, `canopy agent use` says "this computer can't hold a vault key yet" and
+asks you to re-run it later.

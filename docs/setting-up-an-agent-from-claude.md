@@ -11,7 +11,7 @@ No. `doctor` is half of it:
 | | What it covers | How Claude reaches it |
 |---|---|---|
 | **This laptop** | The agent's plugin, its `.env`, its mailbox login, its rails | `canopy agent bootstrap` sets it up and `canopy agent doctor` checks it and names each fix |
-| **canopy-web** | The agent's canopy vault, workspace invites, turn mode, runners, board | The **canopy-web MCP tools**. Every canopy-web route is one ([canopy-web #1032](https://github.com/dimagi-internal/canopy-web/pull/1032)), and each call runs **as you** |
+| **canopy-web** | The agent's canopy vault, workspace invites, turn mode, runners, board | The **canopy-web MCP tools**. Every canopy-web route is one, and each call runs **as you** |
 
 `doctor` never changes canopy-web. The MCP tools close that gap. They come with the canopy plugin and sign in with the
 token `/canopy:setup` gives you, so there's nothing extra to connect. (Without that token, the

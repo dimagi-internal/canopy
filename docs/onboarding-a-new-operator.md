@@ -241,7 +241,7 @@ The CLI talks to canopy-web as **you**, using a token minted once per machine:
 This opens a browser, and writes the token to `~/.claude/canopy/workbench-token`.
 
 > **The MCP tools don't need this file.** Claude Code's canopy-web MCP server signs you in
-> through the browser on first use when there is no token (canopy-web #1034). The token is
+> through the browser on first use when there is no token. The token is
 > for the `canopy` CLI and skills, which call canopy-web's REST API directly and cannot
 > borrow Claude Code's sign-in.
 
@@ -267,7 +267,7 @@ This opens a browser, and writes the token to `~/.claude/canopy/workbench-token`
 > `create-agent` scaffolds from scratch. Pointed at an agent that already lives on
 > an OpenClaw droplet, it produces a skeleton and leaves the persona, memory and
 > skills behind on a box you are about to decommission. Use the harvest route
-> instead — it is a shipped command, and this doc used to not mention it anywhere:
+> instead — it is a shipped command:
 >
 > ```bash
 > canopy openclaw-harvest snapshot   root@<droplet> --into ./snap
@@ -397,23 +397,20 @@ when the token is under a NON-fleet client the agent's turns would not use.
 
 ### 5a. Mailbox setup on Windows — four things that bite
 
-From Shayoni's first Windows onboarding (Fizzy, 2026-09-29). The first three are fixed in
-canopy; the fourth is PowerShell and stays your problem.
+Four things to know on Windows. The first three are handled by canopy; the fourth is PowerShell
+and stays your problem.
 
 - **The shared OAuth client.** `agent bootstrap` reads it from the workspace's canopy vault
-  "Shared" on canopy-web (`gog-oauth-client`) If bootstrap says it cannot read it,
+  "Shared" on canopy-web (`gog-oauth-client`). If bootstrap says it cannot read it,
   this machine needs a key to that vault: ask a workspace owner to give it one on canopy-web.
 - **Where gog keeps things.** gog on Windows defaults to `%APPDATA%\gogcli`. gog 0.40+ puts the
   client credentials in a `data\` subfolder (`<GOG_HOME>\data\credentials-canopy.json`) and
-  `config.json` in `config\` when `GOG_HOME` is set. `agent doctor` now looks in all of these, so
-  a working mailbox no longer shows as failing.
+  `config.json` in `config\` when `GOG_HOME` is set. `agent doctor` looks in all of these.
 - **Moving an agent between workspaces.** Use `canopy agent move --slug <x> --to <ws> --dry-run`
   first: it lists what moves (turns, chats, mail, grants), what stays, and what will stop working
   (e.g. a mail address on a domain the new workspace cannot use). Drop `--dry-run` to move it,
   history and all. `canopy agent register --slug <x> --workspace <ws>` runs the same move, and
-  keeps the agent's existing name, email, description and persona. Before, it failed with a 422
-  without `--name`, and passing `--name` blanked the rest. If you moved an agent that way, check
-  its page on canopy-web and re-register with the missing fields.
+  keeps the agent's existing name, email, description and persona unless you pass them.
 - **PowerShell, not canopy:** write `--client=canopy`, not `--client canopy`. A long command
   pasted from chat can break at the space.
 
@@ -476,8 +473,7 @@ Everything else — Claude Code, emdash (stable ships `emdash-x64.exe` and
 
 **One honest caveat.** The Windows runner's logic is shared with the macOS one
 and unit-tested on both platforms' branches, and the installer is lint-clean —
-but it has not yet been run on a real Windows machine, because there wasn't one
-in the fleet when it was written. Treat your first install as a bring-up: run it
+but it has not been run on a real Windows machine. Treat your first install as a bring-up: run it
 with `-NoTasks` first, check `canopy-runner update-check --config <your config>`
 answers, then re-run without the flag to register the tasks. If something breaks,
 that is a bug worth reporting, not something you did wrong.
@@ -528,8 +524,7 @@ session into a one-line fix. The logs live under
 `%LOCALAPPDATA%\claude-cli-nodejs\<project>\mcp-logs-<server>\` on Windows;
 the newest `.jsonl` there, last few lines.
 
-`canopy-gws` is not registered (2026-10-09): no agent used it — agents reach Google
-through `gog` and `canopy gdoc` — so it no longer appears in `/mcp` at all. If you
+There is no `canopy-gws` MCP server: agents reach Google through `gog` and `canopy gdoc`. If you
 see an old `canopy-gws` failure, update the canopy plugin.
 
 ---
