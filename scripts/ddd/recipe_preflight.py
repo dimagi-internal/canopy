@@ -22,14 +22,14 @@ afterwards whenever the render will not — i.e. ``rerun: once``, where
 ``record_video.run_setup`` skips the command and would otherwise film the state
 this walk consumed. A recipe that mutates and declares no setup command at all
 cannot be restored by anyone, and preflight says so loudly instead of assuming
-it was non-mutating (canopy#546).
+it was non-mutating.
 
 Auth is the recorder's, not a second one. A spec whose surfaces sit behind a
 login is preflighted with the SAME session the render will use — pass
 ``--storage-state`` (or ``--cookies``) exactly as ``record_video.py`` takes it.
 Without that, preflight walked such a spec logged out and reported every target
 as ``target did not resolve``, which is indistinguishable from a genuinely
-broken recipe: a full-red report on a correct recipe (canopy#532).
+broken recipe: a full-red report on a correct recipe.
 
 Exit codes: 0 clean, 1 unresolved targets found, 2 usage/setup error.
 
@@ -193,15 +193,14 @@ def restore_plan(setup, scenes) -> dict:
       passes, ``run-report.json`` scores 10/10. Preflight must restore.
     - **no setup command at all** — nothing reseeds, ever. Preflight has no
       contract to restore with, so it cannot fix this; it can only say so.
-      The old comment here assumed such a recipe was non-mutating. That is an
-      assumption, not a fact, and when it is wrong it is wrong silently.
+      Assuming such a recipe is non-mutating is an assumption, not a fact, and
+      when it is wrong it is wrong silently.
 
     ``--skip-setup`` makes the render skip too, but it is a render-side operator
     flag preflight cannot see, and ``ddd-run`` is forbidden from passing it.
 
-    (canopy#546, reproduced three times on ``hh-poverty-targeting/20260827-0323``
-    and again on ``spark-fcap-facilitation-2026-09-08-001``, where both LLM
-    judges caught the manufactured defect and it cost the run its gating score.)
+    (An unrestored mutation is a manufactured defect that LLM judges catch, and it
+    costs the run its gating score.)
     """
     block = _setup_block(setup)
     command = (block.get("command") or "").strip()
@@ -236,7 +235,7 @@ def logged_out_hint(
 
     A 100%-unresolved result is far more likely "you are logged out" than "every
     selector is wrong", and saying so is the difference between re-running with
-    a session and rewriting selectors that were never broken (canopy#532). It is
+    a session and rewriting selectors that were never broken. It is
     deliberately narrow: one surviving target proves the browser could see the
     app, so the hint stays silent.
     """
@@ -264,8 +263,7 @@ def preflight(
     ``storage_state`` / ``cookies`` are the recorder's own auth inputs, with the
     recorder's precedence (storage_state wins) and the recorder's consequence
     (a supplied session skips the spec's URL-auth nav). Preflight exists to
-    navigate the way the recorder will; before canopy#532 it could not, because
-    it had no way to be handed a session at all.
+    navigate the way the recorder will, so it can be handed a session.
     """
     from scripts.ddd.spec_io import load_spec
 
@@ -311,8 +309,8 @@ def preflight(
     setup_block = _setup_block(getattr(spec, "setup", None))
     command, setup_timeout = _setup_command(getattr(spec, "setup", None))
     # The recorder runs setup from the git toplevel holding the spec, because
-    # setup commands are written repo-root-relative. Preflight used to guess
-    # `parents[2]` — right only for a spec that happens to sit exactly two
+    # setup commands are written repo-root-relative. Guessing
+    # `parents[2]` would be right only for a spec that happens to sit exactly two
     # directories below the root, and silently the wrong tree otherwise.
     setup_cwd = resolve_setup_cwd(Path(recipe_path))
     outputs_rel = setup_block.get("outputs")
@@ -561,7 +559,7 @@ def preflight(
 def _cli() -> int:
     # Real parsing, not a `startswith("--")` filter: that filter drops the flag
     # and KEEPS its value as a positional, so any value-bearing option silently
-    # became the recipe path's neighbour (canopy#532).
+    # became the recipe path's neighbour.
     parser = argparse.ArgumentParser(
         prog="python -m scripts.ddd.recipe_preflight",
         description="Resolve every selector in a recipe against the live app.",

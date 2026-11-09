@@ -8,14 +8,14 @@ Composes the point-checks that already exist (`resolve_email_identity`,
 `AgentClient.pending_actions`) into one command, so "the agent was set up on
 some machine once" stops diverging from "this machine can run the agent".
 
-Born from hal (2026-07-02): hal's gog client existed somewhere, but this
+Born from hal: hal's gog client existed somewhere, but this
 machine had no credentials file and no
 canopy-web registration — and nothing in the framework would have said so
 short of an actual failed turn. `canopy create-agent` documents these steps
 for NEW agents; this doctor verifies them for any agent, any machine, any day.
 
 A check that cries wolf is worse than no check: three of the five agents reported FAIL on a
-healthy machine (2026-07-23), and every one was a false positive — gating counted only the
+healthy machine, and every one was a false positive — gating counted only the
 local `deny` array while the rails actually in force come from the fleet baseline mounted via
 `channels`; hook wiring recognized only `.claude/settings.json` and not the plugin-style
 `hooks/hooks.json` that ace uses; and auth-services demanded the fleet-wide LOGIN_SERVICES of
@@ -230,7 +230,7 @@ def legacy_gating_hooks(repo: Path) -> list[str]:
     """Where this agent repo still registers its OWN PreToolUse gating hook (labels), if anywhere.
 
     Two historical registration paths: `.claude/settings.json` (repo-style agents) and
-    `hooks/hooks.json` (agents shipped as a plugin — ace). Since canopy#849 neither is needed:
+    `hooks/hooks.json` (agents shipped as a plugin — ace). Neither is needed:
     canopy's own plugin registers one session hook (`agent-core/gating_guard.py --session`)
     that applies the session's agent's `config/gating.json`. A plugin-registered agent hook is
     the harmful one — every plugin is installed user-scope, so it fires in every session."""
@@ -317,14 +317,13 @@ def check_token_source(repo: Path) -> CheckResult:
 
 
 def check_hook_wiring(repo: Path) -> CheckResult:
-    """Who enforces this agent's rails — canopy's session hook, not the agent (canopy#849).
+    """Who enforces this agent's rails — canopy's session hook, not the agent.
 
-    Until 2026-10-09 every agent registered its own PreToolUse hook running
-    hooks/gating_guard.py, and this check FAILED an agent that didn't. Agent plugins are
-    installed user-scope, so a hook registered by one fires in every session on the machine:
-    ACE's rails blocked a `gh pr create` in an Ada session. canopy now registers ONE hook that
+    Agent plugins are installed user-scope, so a PreToolUse hook registered by one fires
+    in every session on the machine (one agent's rails would block another agent's
+    `gh pr create`). canopy registers ONE hook that
     resolves the session's agent and applies that agent's config/gating.json, so an agent that
-    still registers its own is a migration leftover: harmless while the engine makes a sibling's
+    still registers its own is a leftover: harmless while the engine makes a sibling's
     loader stand down, but redundant — a WARNING, never a failure.
     """
     name = "Hook wiring"
@@ -446,13 +445,13 @@ def check_rails_fire(repo: Path, *, runner=subprocess.run) -> CheckResult:
             "enforces config/gating.json. Install or update the canopy plugin (/canopy:update)",
         )
     # Probe the hook that actually runs: canopy's SESSION hook, as it would fire in this
-    # agent's own session (canopy#849). Probing an agent's legacy loader proved only the loader.
+    # agent's own session. Probing an agent's legacy loader proved only the loader.
     env = {k: v for k, v in os.environ.items()
            if k not in ("CANOPY_AGENT", "CANOPY_AGENT_SLUG", "CANOPY_AGENT_REPO")}
     env["CLAUDE_PROJECT_DIR"] = str(Path(repo).resolve())
-    # Probe from EVERY shell, not just Bash. Until 2026-09-22 this sent one Bash payload, so it
-    # reported "rails are in force" on an agent whose rails did nothing at all in PowerShell —
-    # the guard answered the one question it was asked. Each shell is its own way in.
+    # Probe from EVERY shell, not just Bash. A single Bash payload would report "rails are
+    # in force" on an agent whose rails do nothing at all in PowerShell — the guard
+    # answers only the question it is asked. Each shell is its own way in.
     for shell in SHELL_TOOLS:
         payload = json.dumps({"tool_name": shell, "tool_input": {"command": RAILS_PROBE}})
         try:
@@ -524,10 +523,10 @@ def check_auth_client(
     credentials — reads and sends die on `No auth for gmail <mailbox>` while a perfectly good
     token sits beside them under the old client name.
 
-    Nothing here saw that state before. `granted_services` looks up the pair, so a mailbox
-    authed under a DIFFERENT client returned None — indistinguishable from "gog isn't
-    installed" — and `check_auth_services` treats None as a skip. The check that should have
-    named it reported green (echo, cloud box, 2026-08-10). Hence this check, and hence
+    `granted_services` looks up the pair, so a mailbox
+    authed under a DIFFERENT client returns None — indistinguishable from "gog isn't
+    installed" — and `check_auth_services` treats None as a skip, which would report
+    green on a broken box. Hence this check, and hence
     `clients_for_account` separating "cannot look" from "looked, nothing there".
 
     Runtime now self-heals this (`agent_email.reconcile_client` follows the token, because
@@ -549,7 +548,7 @@ def check_auth_client(
     # repo pinning one is served by a token under the other, and turns resolve to it
     # (reconcile_client). Not drift — "Connect Google mailbox" can ONLY mint under
     # `canopy-web`, so calling this a disagreement failed every button-minted mailbox and
-    # told the operator to re-mint at a terminal (2026-10-04).
+    # told the operator to re-mint at a terminal.
     fleet = sorted(e["client"] for e in holders if is_fleet_client(e["client"]))
     if is_fleet_client(identity.client) and fleet:
         return CheckResult(
@@ -572,8 +571,7 @@ def check_auth_client(
     keep = (set().union(*(e["services"] or set() for e in holders))
             | required_services(identity)[0])
     # Name BOTH directions. Which side is stale is not knowable from here — the box may have
-    # missed the migration, or this checkout may simply predate a pin that already moved (on
-    # 2026-08-11 both ace and echo flagged here for exactly the latter reason). A one-way fix
+    # missed the migration, or this checkout may simply predate a pin that already moved. A one-way fix
     # would be wrong half the time, and the wrong half costs a browser re-login and a
     # scope-replacing grant.
     return CheckResult(
@@ -604,8 +602,8 @@ def check_auth_services(
 
     Score the client that ACTUALLY holds the mailbox's token, not the one the repo pins. The
     two diverge on any box the fleet's client migration never reached, and scoring the pinned
-    pair there yields no grant set at all — which this check used to read as "can't tell" and
-    skip, going green on a genuinely broken box (echo, cloud, 2026-08-10). The mismatch
+    pair there yields no grant set at all — which would read as "can't tell" and
+    skip, going green on a genuinely broken box. The mismatch
     itself is `check_auth_client`'s finding; here it must not stop the scopes being scored.
 
     "Cannot introspect gog" and "this mailbox has no token anywhere" remain skips —
@@ -723,13 +721,13 @@ def _plugin_source(repo: Path) -> str:
         pass
     # RESOLVE before taking `.name`: the documented invocation is
     # `canopy agent doctor --repo .`, and `Path(".").name` is the EMPTY STRING.
-    # Unresolved, the last-resort fallback rendered the remediation as
+    # Unresolved, the last-resort fallback would render the remediation as
     # "`/plugin marketplace add ` then `/plugin install scout@scout`" — a command
     # a new operator cannot run and cannot guess the missing argument for. This
     # fallback fires exactly when the other two legs are empty, which is the
     # freshly-scaffolded repo (`create-agent` writes no `repo` key and `git init`s
     # with no remote) — i.e. the one case where the reader is newest and least able
-    # to recover. Found 2026-08-27 walking the onboarding path end to end.
+    # to recover.
     return Path(repo).resolve().name
 
 
@@ -811,9 +809,8 @@ def check_required_plugins(repo: Path, *, registry_path: str | None = None) -> C
     `check_plugin_install` covers the agent's OWN plugin; an agent whose capabilities come
     from a sibling plugin passes that check and still can't work. Eva's Salesforce + Drive
     tools are `mcp__plugin_chrome-sales_*` from the chrome-sales plugin — a dependency stated
-    only in her CLAUDE.md and `.mcp.json` `_doc`, i.e. prose no check reads. Her 2026-07-25
-    readiness drill reported it missing; nothing enforced it, so the next turn would have
-    reached for a tool that wasn't there.
+    only in her CLAUDE.md and `.mcp.json` `_doc`, i.e. prose no check reads. Without a
+    check, a turn would reach for a tool that isn't there.
 
     Declared per-agent in config/agent.json `required_plugins` — the AGENT's dependency, not a
     fleet constant (same rule as `gog_services`: hal must not fail over a plugin only eva

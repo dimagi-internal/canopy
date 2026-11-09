@@ -224,7 +224,7 @@ def _alias_hints(raw: Any, problems: list[str]) -> list[str]:
 def _validate_findings(raw: Any) -> tuple[bool, list[str]]:
     """Validate a findings artifact — a JSON list of Finding records.
 
-    This is the gate canopy#547 asked for: the loop DISPATCHES on ``fix_kind``
+    This is the schema gate for findings: the loop DISPATCHES on ``fix_kind``
     (``run_pipeline.compute_auto_iterate``), so a value outside :data:`FIX_KINDS`
     is not a cosmetic schema nit — it is a finding that cannot be routed by
     either branch. Catching it here means the failure names the offending
@@ -341,7 +341,7 @@ def validate(
     elif kind == "unified_spec":
         problems = _semantic_unified_spec(obj, spec_path)  # type: ignore[arg-type]
     elif kind == "verdict":
-        # canopy#548: a multi-pass judge must prove its passes returned. A
+        # A multi-pass judge must prove its passes returned. A
         # verdict synthesised around a killed sub-agent is well-formed YAML, so
         # the model check above cannot see it — only the sealed pass files can.
         from scripts.ddd.passes import check_verdict_passes

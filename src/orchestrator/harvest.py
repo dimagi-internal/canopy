@@ -309,14 +309,14 @@ def build_intent_prompt(stripped: str, human_msgs: list[str]) -> str:
     reconstructing intent is the agent's native job). This is that reconstruction's
     prompt, not the reconstruction itself.
 
-    Assembled INLINE by the framework-tier convention (#352): framework logic-prompts
-    stay inline — static, co-located with their logic, immune to the #351 packaging
-    class — while PRODUCT, user-editable templates go external via `prompts/load_prompt`.
+    Assembled INLINE by the framework-tier convention: framework logic-prompts
+    stay inline — static, co-located with their logic, immune to packaging
+    problems — while PRODUCT, user-editable templates go external via `prompts/load_prompt`.
     Sibling site: `agent_review.build_review_prompt`.
 
     `stripped` is the prompt<->response corpus for the session(s) under audit (see
-    `strip_session`); `human_msgs` is Jonathan's own standing instructions / steering
-    for the same span (see `human_messages`) — HIS words are the ground truth here,
+    `strip_session`); `human_msgs` is the human's own standing instructions / steering
+    for the same span (see `human_messages`) — THEIR words are the ground truth here,
     not a paraphrase of them.
     """
     human_msgs_block = "\n".join(f"- {m}" for m in human_msgs) if human_msgs else "(none)"
@@ -437,7 +437,7 @@ def _quote_span(source_ref: str) -> str:
 def intent_audit(path: str, *, use_llm: bool = True, model: str = "sonnet",
                  max_budget_usd: float = 2.0) -> dict:
     """Orchestrate the intent-fidelity audit for one session: extract the material
-    (stripped conversation + Jonathan's own words), build the audit prompt, run the
+    (stripped conversation + the human's own words), build the audit prompt, run the
     LLM judgment pass, and validate every emitted finding against the SP1 evidence
     schema (`agent_review.qualify_findings`) before it can be trusted.
 
@@ -464,7 +464,7 @@ def intent_audit(path: str, *, use_llm: bool = True, model: str = "sonnet",
     qualified, dropped = qualify_findings(findings or [], require_placement=False)
 
     # Grounding pass: qualify_findings only validates the evidence record's SHAPE —
-    # a fabricated source_ref quote (the LLM inventing a Jonathan quote) passes that
+    # a fabricated source_ref quote (the LLM inventing a human quote) passes that
     # check just fine. Verify the quoted span actually appears in the session material
     # before a finding can be trusted; see the module's `_norm`/`_quote_span` helpers.
     material_norm = _norm(stripped + "\n" + "\n".join(hm))

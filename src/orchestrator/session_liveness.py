@@ -5,7 +5,7 @@ only meaningful over a session that has ENDED: a live session has not skipped th
 steps it simply has not reached yet. Scoring one anyway produces a confident false
 finding, and `agent_review`'s own module comments record twice what that costs —
 "a wrong metric doesn't just mislead, it dispatches work", once literally dispatching
-an agent to build the wrong fix (canopy#593).
+an agent to build the wrong fix.
 
 ## Two sources, because either alone is wrong
 
@@ -22,13 +22,12 @@ That script's header records six wrong versions; the two that survived are:
 
 **Neither source is redundant, and the failure directions are opposite.**
 
-Source 2 alone — which is what canopy#593 proposed — misses the single most common
+Source 2 alone misses the single most common
 live-but-idle state there is: a MANUAL-mode turn parked at an approval gate. It has
 drafted a reply, run its review, and is waiting on a human, so nothing writes to its
-transcript for as long as the human takes. Measured 2026-09-04 while fixing #593:
-hal session `96444cd8` sat 56.8 minutes stale at an approval gate and was a live
-process the whole time. A 10-minute mtime window calls that finished and scores it —
-reintroducing the exact bug, via the fix.
+transcript for as long as the human takes: such a session can sit close to an hour
+stale and be a live process the whole time. A 10-minute mtime window calls that
+finished and scores it — the exact bug this module exists to prevent.
 
 Source 1 alone misses the resume gap, which is failure six in `live-turns.sh`.
 

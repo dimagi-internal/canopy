@@ -33,7 +33,7 @@ if [ "${1:-}" = "--runs" ]; then
     # the shared <main>/.git even from inside a `git worktree add` checkout,
     # whereas --show-toplevel returns the worktree root; keying on the latter
     # gave every worktree a private empty runs dir and silently reset
-    # score_history (canopy#627). Keep in sync with runstate._repo_identity().
+    # score_history. Keep in sync with runstate._repo_identity().
     COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
     if [ -n "${COMMON_DIR:-}" ]; then
       PROJECT=$(basename "$(dirname "$COMMON_DIR")")

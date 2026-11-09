@@ -88,22 +88,16 @@ def infer_repo_from_project_key(project_key: str, repo_map: dict) -> str | None:
     When multiple owners map to the same short name (rare), we return None
     rather than guessing.
 
-    THE CHECKOUT-HASH SEGMENT is newer than this function. On 2026-08-28 emdash
-    began stamping the checkout into the worktree directory, so `worktrees/ace`
-    became `worktrees/ace-1476c35d`. The old pattern captured non-greedily up to
-    the NEXT `-emdash-`, which yielded ``ace-1476c35d`` — a short name no
-    ``owner/repo`` ever ends with — so this fallback returned None for EVERY
-    hashed worktree, i.e. for every worktree created since that date.
-
-    Measured 2026-09-09 on one operator's machine: 5 of 51 hashed worktree
-    project dirs with activity in the last 14 days (4 ace, 1 hal, 57 session
-    files) had no hook-captured entry and so resolved to None. They are
-    invisible to every repo-filtered query — `canopy sessions list --project X`
+    THE CHECKOUT-HASH SEGMENT: emdash stamps the checkout into the worktree
+    directory, so `worktrees/ace` becomes `worktrees/ace-1476c35d`. A pattern
+    that captured non-greedily up to the NEXT `-emdash-` would yield
+    ``ace-1476c35d`` -- a short name no ``owner/repo`` ever ends with -- and the
+    fallback would return None for EVERY hashed worktree. Such sessions are
+    invisible to every repo-filtered query (`canopy sessions list --project X`
     drops them, because `(s.get("repo") or "").endswith("/X")` is False for
-    None. The docstring above promised the opposite ("deleted-worktree sessions
-    still get classified correctly"), which is exactly the shape of failure that
-    does not announce itself: a review of 90% of the sessions reads identically
-    to a review of all of them.
+    None), and a review of 90% of the sessions reads identically to a review of
+    all of them. So the hash is stripped when matching, and deleted-worktree
+    sessions still get classified correctly.
 
     Returns the inferred ``owner/repo`` or None if no confident match.
     """

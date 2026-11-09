@@ -1,12 +1,11 @@
 """One-shot dispatch at a PROJECT (a repo), the sibling of `agent_dispatch`.
 
-`canopy agent dispatch --slug hal` sends the Hal AGENT at work. There was no way to
-send a coding session at a REPO — asked to put an agent on connect-labs, the only
-reachable command targeted the agent, which is a different thing and lands the work
-in a different place. The harness has supported project turns the whole time
-(`TurnIn.project`, `enqueue_turn`'s agent_slug-XOR-project 422, and the runner's
-`turn["agent_slug"] or turn["project"]` target resolution); the gap was entirely in
-this CLI wrapper.
+`canopy agent dispatch --slug hal` sends the Hal AGENT at work. This command sends a
+coding session at a REPO instead: the agent command targets an agent, which is a
+different thing and lands the work in a different place. The harness supports project
+turns (`TurnIn.project`, `enqueue_turn`'s agent_slug-XOR-project 422, and the runner's
+`turn["agent_slug"] or turn["project"]` target resolution); this CLI wrapper exposes
+them.
 
 A project turn is NOT an agent turn with a different field. Three things differ, and
 each of the three is a silent failure if you get it wrong:
@@ -26,23 +25,19 @@ claimed by anything. That is the worst outcome available here: it reads exactly 
 "nothing happened". So the dispatch preflights the runner fleet and refuses, loudly,
 rather than enqueueing into a hole.
 
-That list is now REPORTED by the runner, not typed by a human. canopy-web #513
-(merged + deployed 2026-07-29) replaces `capabilities["projects"]` on every heartbeat
-from what the box actually has — emdash's own projects table on a laptop,
-`RUNNER_PROJECTS` on a cloud runner — and 422s any PATCH body carrying `projects`.
-So there is no client-side way to make a repo routable, by design: you make it real
-on the machine, you do not assert it from here. `canopy project declare` and
-`--declare` PATCHed exactly that key and are therefore gone (#433), along with
-`--no-preflight`, which existed because the preflight's answer could not be trusted.
-Both halves of that distrust are now fixed server-side — the fleet is visible (#509)
-and the list is true (#513) — so a refusal from this preflight is a fact, and the
+That list is REPORTED by the runner, not typed by a human. canopy-web replaces
+`capabilities["projects"]` on every heartbeat from what the box actually has —
+emdash's own projects table on a laptop, `RUNNER_PROJECTS` on a cloud runner — and
+422s any PATCH body carrying `projects`. So there is no client-side way to make a
+repo routable, by design: you make it real on the machine, you do not assert it from
+here. There is no declare command and no `--no-preflight` override. The fleet is
+visible and the list is true, so a refusal from this preflight is a fact, and the
 correct response to it is to make the repo real, never to route around the check.
-Routing around it is what queued a turn forever in #428.
+Routing around it queues a turn forever.
 
-Removing that flag did leave one case with no path, though, and `dormant` is the
-answer to it. #513 changed what the project list IS: an online runner's list is now
-fresh by construction, so the only staleness left is TEMPORAL — a runner that
-reported the repo and is currently asleep. Blocking there is a false negative, since
+One case needs a path of its own, and `dormant` is the answer to it. An online
+runner's list is fresh by construction, so the only staleness is TEMPORAL — a runner
+that reported the repo and is currently asleep. Blocking there is a false negative, since
 a QUEUED turn is never expired and the box claims it on wake; but it is also not a
 case for an override, because a flag that skips the whole preflight answers it by
 equally waving through the case that genuinely queues forever. So the preflight
@@ -50,28 +45,24 @@ answers it itself: warn, enqueue, and say the turn is waiting on a machine. What
 stays refused is exactly what would never be claimed.
 
 That refusal is only sound when the fleet it inspected is the fleet that will be
-asked to claim. Two server-side facts decide that, and canopy-web #509 changed one
-of them (merged + deployed 2026-07-28):
+asked to claim. Two server-side facts decide that:
 
-- **Runner listing is scoped by TENANT, not by ownership (`owner`, formerly `paired_by`).** It used to be the
-  latter, so a caller who paired nothing saw zero runners no matter how many were
-  live, and refusing on that empty list stated a conclusion drawn from no evidence.
-  That is fixed: `_runner_read_q` now serves a workspace's whole fleet to any
-  member, and each row carries `can_manage` for the ownership half (seeing a runner
-  and being allowed to mutate it are different questions).
-- **The read must be taken in the tenant the turn is enqueued into.** This is the
-  half #509 made sharper rather than solved. The flat `/api/harness/runners/` route
-  returns the union of every workspace the caller belongs to, while the turn goes to
-  exactly one (`/api/w/<ws>/harness/turns/`). Before #509 that union was narrowed to
-  what you paired and usually collapsed to one tenant; now it genuinely spans them,
-  so a two-workspace caller could preflight GREEN off workspace A's runners and
-  enqueue into workspace B, where nothing serves the repo — the #428 failure exactly,
-  re-reachable by a new route. So the preflight reads
+- **Runner listing is scoped by TENANT, not by ownership (`owner`).** Scoping by
+  ownership would show a caller who paired nothing zero runners no matter how many
+  were live, and refusing on that empty list would state a conclusion drawn from no
+  evidence. `_runner_read_q` serves a workspace's whole fleet to any member, and each
+  row carries `can_manage` for the ownership half (seeing a runner and being allowed
+  to mutate it are different questions).
+- **The read must be taken in the tenant the turn is enqueued into.** The flat
+  `/api/harness/runners/` route returns the union of every workspace the caller
+  belongs to, while the turn goes to exactly one (`/api/w/<ws>/harness/turns/`). A
+  two-workspace caller could therefore preflight GREEN off workspace A's runners and
+  enqueue into workspace B, where nothing serves the repo. So the preflight reads
   `/api/w/<ws>/harness/runners/`: the same tenant, asked the same question.
 
 Because that read is tenant-pinned and membership is already gated by the middleware
-before it answers, an EMPTY list from it is now a real finding — "this workspace has
-no runners" — rather than the absence of evidence it used to be. So the verdicts
+before it answers, an EMPTY list from it is a real finding — "this workspace has
+no runners" — rather than the absence of evidence. So the verdicts
 split by how the fleet was read: a tenant-pinned read has two (serving → go,
 otherwise blocked → refuse), and only an untenanted read keeps the third, `unknown`
 (nothing visible and no tenant to attribute it to — warn, enqueue, and point at
@@ -84,7 +75,7 @@ board — canopy-web's `Project` model carries context/actions, not a task list 
 project dispatch writes NO board state. Hanging it off some agent's board would be
 inventing a record that nothing reads and nobody owns.
 
-**Pinning (`--runner`, #663).** `TurnIn.runner_id` works for project turns exactly as
+**Pinning (`--runner`).** `TurnIn.runner_id` works for project turns exactly as
 for agent turns: only that runner may claim, and a pin BYPASSES the server's target
 matching (`claim_next_turn`'s `match_q = Q(pinned_runner=runner) | …`) — including the
 `capabilities.projects` match. So the server would hand a pinned project turn to a box
@@ -126,13 +117,13 @@ ONLINE = "online"
 #
 # The other two are excluded deliberately, and that exclusion is what keeps `dormant`
 # from becoming the queue-forever bug wearing a warning: `disconnected` means the
-# runner has NEVER heartbeated (so any project list on it is pre-#513 residue rather
+# runner has NEVER heartbeated (so any project list on it is residue rather
 # than an observation of the box), and `retired` is terminal.
 STALE, DEGRADED = "stale", "degraded"
 RECOVERABLE = frozenset({STALE, DEGRADED})
 
-# An OPERATOR pause (canopy-web #528). `live_status` serves it in `status`, so a
-# parked runner no longer reads `online` — which is what makes it fall out of
+# An OPERATOR pause. `live_status` serves it in `status`, so a
+# parked runner does not read `online` — which is what makes it fall out of
 # `serving` here without a special case. It gets its own bucket anyway, because
 # the remedy is specific ("unpause it") and lumping it into `offline` would say
 # "not live" about a box that is heartbeating perfectly well.
@@ -219,7 +210,7 @@ def build_project_turn_payload(project: str, *, prompt: str = "",
     # from an empty one, so send nothing rather than "".
     # Stamped machine-dispatched for the same reason as the agent path: downstream the
     # runner hands this to Claude Code as typed input, and `agent-review` read the result
-    # as the human speaking (canopy #488). See `agent_dispatch.stamp_dispatched`.
+    # as the human speaking. See `agent_dispatch.stamp_dispatched`.
     if (prompt or "").strip():
         payload["prompt"] = stamp_dispatched(prompt, sender=local_agent_slug())
     # A pin (TurnIn.runner_id): only that runner may claim. Omitted, not null, when unpinned.
@@ -235,7 +226,7 @@ def check_project_runner_pin(runner: dict,
     The agent pin's contract (`agent_dispatch.check_runner_pin`), with the target check
     swapped: the box must REPORT the repo. A pin bypasses the server's
     `capabilities.projects` match, so without this the turn would be claimed by a
-    machine that has no checkout and fail there — and since #513 the list is reported
+    machine that has no checkout and fail there — and the list is reported
     by the box, not typed, so "not in it" means "not on that machine".
 
     No cloud exemption, unlike the agent check: a cloud runner serves exactly the repos
@@ -263,7 +254,7 @@ def declared_projects(runner: dict) -> list[str]:
 def can_manage(runner: dict) -> bool:
     """Whether THIS caller may mutate `runner` (retire it, set agents/sessions).
 
-    `RunnerOut.can_manage` (canopy-web #509) is the ownership half that the widened,
+    `RunnerOut.can_manage` is the ownership half that the widened,
     tenant-scoped read gave up: the list now shows runners the caller can see but may
     not touch. Defaults True for the older servers that omit the field, and because
     every non-list route returning a RunnerOut resolved it through the act-on gate
@@ -292,20 +283,19 @@ def classify_runners(runners: list[dict], project: str, *,
                     caller controls (`can_manage`). The fix is on that box: open the
                     repo in emdash there, or add it to `RUNNER_PROJECTS`.
     - `unreported_theirs` — online, does not report it, and belongs to someone else.
-                    Visible since #509 widened the read past ownership. Split out
+                    Visible because the read is wider than ownership. Split out
                     because the remedy is a different person's action, so the message
                     must say "ask its owner" rather than describe a box the caller
                     cannot touch.
     - `dormant`   — reports it, but its heartbeat has lapsed: the box is asleep.
-                    A warning rather than a refusal, for two reasons that only hold
-                    post-#513. The list is REPORTED by the box, so `stale` means "this
+                    A warning rather than a refusal, for two reasons. The list is REPORTED by the box, so `stale` means "this
                     repo was really there when the machine last spoke" rather than
                     "someone once typed this"; and a QUEUED turn is never expired
                     (canopy-web's release sweep exempts them so "laptop offline over a
                     weekend must not retire Friday's slot"), so the runner claims it on
-                    return. Refusing would be a false negative — and since
-                    `--no-preflight` was retired there is no override to escape it
-                    with, so the work would simply be undispatchable until someone
+                    return. Refusing would be a false negative — and with no
+                    preflight override to escape it,
+                    the work would simply be undispatchable until someone
                     opened a laptop.
 
     Everything else (disconnected/retired, and anything not live that does not report
@@ -426,8 +416,8 @@ def blocked_message(classified: dict, workspace: str = "") -> str:
     ]
     lines.extend(_runner_line(r) for r in seen)
 
-    # The fix is always on a machine, never in this CLI — canopy-web #513 made
-    # `projects` runner-reported precisely so that a repo becomes routable by being
+    # The fix is always on a machine, never in this CLI — `projects` is
+    # runner-reported precisely so that a repo becomes routable by being
     # real on the box. Which machine, and whose, is the only thing that varies.
     # Paused first among the remedies: a parked box that DOES report the project is
     # one `unpause` away from serving, and telling someone to go open the repo in
@@ -460,8 +450,8 @@ def blocked_message(classified: dict, workspace: str = "") -> str:
             "The list refreshes on the next heartbeat; then re-run this dispatch.",
         ]
     elif classified["unreported_theirs"]:
-        # Visible-but-not-yours is a distinct dead end from nothing-there, and #509
-        # is what made it distinguishable.
+        # Visible-but-not-yours is a distinct dead end from nothing-there, and the
+        # tenant-wide read is what makes it distinguishable.
         owners = sorted({owner_email(r)
                          for r in classified["unreported_theirs"]} - {""})
         who = ", ".join(owners) if owners else "their owner"
@@ -482,18 +472,17 @@ def dormant_message(classified: dict) -> str:
     """Why a runner that reports the repo but is asleep warns instead of refusing.
 
     The judgement this encodes, and the reason it is not simply optimism: `stale`
-    means the heartbeat lapsed, not that the runner is gone, and canopy-web #513 makes
-    the project list it left behind an OBSERVATION of that box rather than a human's
+    means the heartbeat lapsed, not that the runner is gone, and the
+    project list it left behind is an OBSERVATION of that box rather than a human's
     assertion about it. So "this repo was really there when the machine last spoke" is
     evidence. And the turn it queues is not lost work — the release sweep deliberately
     exempts QUEUED turns ("laptop offline over a weekend must not retire Friday's
     slot"), so the runner claims it on return.
 
-    This is what #433 item 2 was actually asking about. Retiring `--no-preflight` is
-    right — an override that skips the whole check answers this case by also waving
-    through the case that genuinely queues forever — but the case itself is real, and
-    without this bucket it has no path at all: dispatching work for the laptop to pick
-    up when it wakes would simply fail until someone opened it.
+    There is no preflight override, because one that skips the whole check answers this
+    case by also waving through the case that genuinely queues forever. The case itself
+    is real, and without this bucket it has no path at all: dispatching work for the
+    laptop to pick up when it wakes would simply fail until someone opened it.
     """
     names = ", ".join(sorted(str(r.get("name") or "") for r in classified["dormant"]))
     project = classified["project"]
@@ -508,18 +497,12 @@ def dormant_message(classified: dict) -> str:
 def unknown_message(project: str) -> str:
     """Why an untenanted empty fleet warns instead of refusing.
 
-    This used to be the common case and is now the rare one. canopy-web scoped
-    runner listing to `paired_by == caller`, so whoever paired the runner was the
-    only identity that could list it and every other user saw an empty fleet — which
-    the preflight read as "no live runner can serve this, refusing" even while a
-    runner claimed the turn within seconds (observed 2026-07-28 from Hal's identity
-    on connect-labs: the preflight refused, then `--no-preflight` enqueued a turn
-    that went `running` almost immediately). #509 fixed the cause server-side.
-
-    What survives is the case with no tenant to attribute the emptiness to: an
+    Runner listing is tenant-scoped, so an empty list from a tenant-pinned read is a
+    finding, not an unknown. The unknown case is the one with no tenant to attribute
+    the emptiness to: an
     unpinned read (`canopy project runners` with no --workspace) by a caller with no
     workspace memberships. There the list is empty because there was nowhere to look,
-    not because a fleet was found wanting — so blocking would again assert a fact not
+    not because a fleet was found wanting — so blocking would assert a fact not
     in evidence. The dispatch path cannot reach this (it always has a workspace, and
     reads through it); its empty answer is BLOCKED, not this.
     """

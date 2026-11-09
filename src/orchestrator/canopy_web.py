@@ -55,7 +55,7 @@ def resolve_base_url(base_url: Optional[str]) -> str:
 #
 # Deliberately NOT every app: a pinned path reaches exactly one workspace, so
 # pinning e.g. /api/agents/<slug>/ to dimagi would 404 an agent that lives in
-# connect. Lists canopy-web refuses unpinned (canopy-web#1411) are handled where
+# connect. Lists canopy-web refuses unpinned are handled where
 # the refusal arrives — see "Lists a multi-organisation identity must pin" below
 # (`pinned_api_path`, `_read_within_home_tree`).
 SCOPED_APPS = ("projects", "walkthroughs", "reviews", "shareouts", "ddd", "timeline")
@@ -98,17 +98,16 @@ def scoped_app_path(path: str, workspace: Optional[str] = None) -> str:
     return f"/w/{ws}{path}"
 
 
-# Artifact pages canopy-web serves ONLY under /w/<workspace>/ (canopy-web#1289,
-# #1337, #1338, #1340): the flat forms are a plain 404, never redirected. A link the CLI prints or stores is always built by
+# Artifact pages canopy-web serves ONLY under /w/<workspace>/: the flat forms are a
+# plain 404, never redirected. A link the CLI prints or stores is always built by
 # app_url / scope_link, never by gluing a flat path onto the base URL — a flat
-# /review/<id> copied out of `narrative post` went to an external reviewer
-# (ace, 2026-10-08).
+# /review/<id> copied out of `narrative post` would reach an external reviewer as a 404.
 # ddd-release before ddd: a regex alternation takes the first that fits.
 ARTIFACT_ROUTES = ("walkthrough", "review", "share", "ddd-release", "ddd",
                    "storyboard", "narrative")
 
 #: An absolute link whose path STARTS with a flat artifact route — the page, its
-#: ``/content`` byte stream (scoped too since canopy-web#1338) — or with the
+#: ``/content`` byte stream (scoped too) — or with the
 #: pre-tenancy ``/w/<uuid>`` walkthrough form. canopy-web answers every one with
 #: a 404. The ratchet in tests/test_scoped_artifact_urls.py runs every
 #: link-printing path through this, and ``canopy email send`` refuses a body
@@ -154,12 +153,12 @@ def app_url(path: str, workspace: Optional[str], base_url: Optional[str] = None)
     ``workspace`` is the workspace the artifact was written into (a write's
     resolved target, or the slug the server echoed back). There is no flat
     fallback: with none, this raises :class:`WorkspaceRequiredError` rather than
-    print a link that 404s once canopy-web#1337 lands."""
+    print a link that 404s."""
     ws = (workspace or "").strip()
     if not ws:
         raise WorkspaceRequiredError(
             f"cannot build a canopy-web link for {path!r} without its workspace — "
-            "artifact pages exist only under /w/<workspace>/ (canopy-web#1337)."
+            "artifact pages exist only under /w/<workspace>/."
         )
     if not path.startswith("/"):
         path = "/" + path
@@ -172,7 +171,7 @@ def scope_link(url: str, workspace: Optional[str], base_url: Optional[str] = Non
     query (``?t=``) and fragment.
 
     A link already under ``/w/<ws>/`` keeps the server's workspace. A relative
-    link, or one minted on ``localhost`` (canopy-web#1289's MCP-in-process bug),
+    link, or one minted on ``localhost`` (an MCP-in-process server),
     is rebased onto ``base_url``. A non-artifact URL (an external embed, a
     Drive link) is returned unchanged. A flat artifact link with no workspace
     to put it under raises :class:`WorkspaceRequiredError`."""
@@ -246,7 +245,7 @@ def _warn_borrowed_identity(slug: str) -> None:
     This fallback is legitimate (a human working in an agent repo must not be
     blocked), so this warns rather than refuses. What it must not be is SILENT:
     ACE ran for a full day attributed to a human because `~/.ace/.env` was never
-    materialized, and nothing anywhere said so (dimagi-internal/ace#1005).
+    materialized, and nothing anywhere said so.
     """
     global _WARNED_BORROWED_IDENTITY
     if _WARNED_BORROWED_IDENTITY:
@@ -336,7 +335,7 @@ def agent_context_slug(start: Optional[Path] = None) -> str:
     The env wins over the cwd walk-up because the cwd lies in exactly the case that
     matters: every `python -m scripts.ddd.*` runs with cwd = the canopy runtime
     (inside the canopy plugin, a non-agent), so an ACE session posting a narrative
-    looked like nobody's — and fell through to the operator's token (ace#2805).
+    looked like nobody's — and fell through to the operator's token.
     """
     for var in _AGENT_ENV_VARS:
         slug = os.environ.get(var, "").strip()
@@ -430,8 +429,7 @@ def scoped_caller_token(cwd: Optional[Path] = None) -> tuple[bool, str]:
 def _local_turn_token(slug: str) -> str:
     """In a person's local turn, their own token: their PAT, else their linked private
     runner's token. "" outside a local turn. A license holder's box may still hold the
-    agent's login in ``~/.<slug>/.env`` (canopy-web leaked it to license reads until
-    canopy-web#2265), and acting as the agent is exactly what a local turn replaces —
+    agent's login in ``~/.<slug>/.env`` and acting as the agent is exactly what a local turn replaces —
     so it is never used here."""
     from orchestrator import private_runner_session
 
@@ -454,11 +452,11 @@ def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
     """The canopy-web PAT this process acts with.
 
     A session with no agent identity that a runner SCOPED to its asker (a project
-    turn or project chat, canopy-web#1782) acts with that conversation's caller
+    turn or project chat) acts with that conversation's caller
     token, ahead of every PAT, and never falls back to one
     (:func:`scoped_caller_token`). An agent's own session keeps acting as the agent.
 
-    A person's LOCAL turn (``CANOPY_LOCAL_TURN=1``, canopy-web#1704) acts as that person
+    A person's LOCAL turn (``CANOPY_LOCAL_TURN=1``) acts as that person
     (:func:`_local_turn_token`), never as the agent, whatever agent login the box holds.
 
     Precedence otherwise: explicit arg → env ``CANOPY_WEB_PAT`` (a cloud runner's turn login) →
@@ -470,7 +468,7 @@ def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
     In an agent's session (:func:`agent_context_slug` is non-empty) that last tier
     is never used, and neither is a ``CANOPY_WEB_PAT`` that is just the operator's
     token copied into the env: the agent acts as itself or raises
-    :class:`AgentIdentityError` (canopy#813 — the board drain and dispatch acted as
+    :class:`AgentIdentityError` (a board drain or dispatch must not act as
     the machine's owner). ``CANOPY_ALLOW_OPERATOR_IDENTITY=1`` lets a human working
     in an agent repo opt back into the warned fallback; ``agent_strict=True`` (DDD
     and walkthrough-share writes, which publish under a name) ignores even that.
@@ -533,8 +531,8 @@ def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
 
 # --- Say who a write acts as -------------------------------------------------
 #
-# canopy#813: nothing on the write path said WHOSE identity it carried, so the
-# fleet's board drains ran as the owner for as long as nobody looked. Before the
+# Nothing on the write path says WHOSE identity it carries, so a board drain could
+# run as the owner unnoticed. Before the
 # first write with a resolved token, read `/api/me/` back and print it — once per
 # (server, token) per process, on stderr so stdout stays machine-readable.
 
@@ -728,10 +726,9 @@ def call_text(method: str, path: str, *,
 #
 # A write with no workspace goes to the flat route, and canopy-web files it in the
 # caller's default workspace — for a human in dimagi + connect that is `dimagi`,
-# whatever the content is about. ace#2805 / canopy-web#1289: an ACE session posted
-# the chlorine narrative (Connect's) into dimagi, as the operator, and nothing said
-# so. These helpers make a write name its tenant up front and confirm afterwards
-# where it actually landed.
+# whatever the content is about: a narrative belonging to Connect could land in
+# dimagi, as the operator, with nothing saying so. These helpers make a write name
+# its tenant up front and confirm afterwards where it actually landed.
 
 class WorkspaceRequiredError(RuntimeError):
     """A canopy-web write refused because the caller named no workspace."""
@@ -798,7 +795,7 @@ def confirm_landed(app: str, obj_id: str, workspace: str, *, query: Optional[dic
     )
 
 
-# --- Lists a multi-organisation identity must pin (canopy-web#1411) -----------
+# --- Lists a multi-organisation identity must pin -----------
 #
 # canopy-web refuses an UNPINNED list or search (422, problem type
 # `…/workspace-required`) when the caller's workspaces sit in more than one tenant
@@ -810,9 +807,8 @@ def confirm_landed(app: str, obj_id: str, workspace: str, *, query: Optional[dic
 #
 # The client therefore keeps sending flat, and only when the server says a pin is
 # required does it read within the HOME workspace's tree — exactly what the flat
-# list returned before #1411, minus the other organisation. Since canopy-web#1422
-# a pinned read covers the caller's workspaces below the pin, and the server says
-# so (`pinned_read_covers_descendants` on `GET /api/workspaces/`): then it is ONE
+# list returned, minus the other organisation. A pinned read covers the caller's
+# workspaces below the pin, and the server says so (`pinned_read_covers_descendants` on `GET /api/workspaces/`): then it is ONE
 # GET pinned to the tree's root. Against a server that does not say so, the same
 # GET pinned to each of the caller's workspaces in the tree, merged. No home named
 # → a clear error naming how to set one, never a guess.
@@ -841,7 +837,7 @@ class ReadWorkspaceRequiredError(CanopyError, WorkspaceRequiredError):
 
 
 def is_workspace_required(status: int, text: str) -> bool:
-    """True for canopy-web's 422 `workspace-required` problem (canopy-web#1411)."""
+    """True for canopy-web's 422 `workspace-required` problem."""
     if status != 422 or not text:
         return False
     try:
@@ -924,7 +920,7 @@ def _home_tree_info(home: str, *, base: str, token: str, transport: "Transport")
 
     ``tree``: the caller's workspaces in that tree, ``home`` first. ``subtree``:
     the server advertises that a pinned read covers the workspaces below the pin
-    (``pinned_read_covers_descendants`` on every row, canopy-web#1422). ``pins``:
+    (``pinned_read_covers_descendants`` on every row). ``pins``:
     the fewest of ``tree`` whose pinned reads cover all of it — the tree's ROOT
     alone when the caller is in it, else each workspace with no ancestor among
     the caller's. Read from ``GET /api/workspaces/`` (never refused): a row's
@@ -1025,7 +1021,7 @@ def _read_within_home_tree(method: str, path: str, refusal: str, send, *, base: 
 
     GET with a JSON body (``parse`` set) reads the whole tree: ONE read pinned to
     the tree's root when the server advertises that a pinned read covers the
-    workspaces below the pin (canopy-web#1422), else fanned out over each of the
+    workspaces below the pin, else fanned out over each of the
     caller's workspaces in the tree and merged. A GET that cannot be merged, a
     text read, or a non-GET goes to the home workspace alone (a narrower answer,
     never a wider one)."""

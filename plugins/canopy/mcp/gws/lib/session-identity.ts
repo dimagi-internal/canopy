@@ -1,5 +1,5 @@
 /**
- * Session identity for canopy-gws (canopy#850): act as the SESSION's agent,
+ * Session identity for canopy-gws: act as the SESSION's agent,
  * resolved through the `canopy cred` broker, never as a fixed account.
  *
  * canopy-gws is one server shared by every agent, so "who am I" can only come

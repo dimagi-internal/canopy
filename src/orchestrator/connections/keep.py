@@ -11,7 +11,7 @@ server that lies can delay a machine but never add a reader. Six rules:
 * **A re-seal changes who can read and nothing else.** The same plaintexts, each envelope's
   own ``statement_floor`` and ``owner_key`` as they are. The readers are those holding it now
   and those waiting, each only if ``trust.allowed`` admits them. A waiter who does not pass
-  is named and left waiting. A holder who no longer passes is not sealed to again, and if
+  is named and left waiting. A holder who stops passing is not sealed to again, and if
   canopy-web still lists it, its refusal (``zk_rewrap_required``) stops the write.
 * **Both envelopes or neither.** canopy-web takes a re-seal only with ``access`` too, so an
   ``access`` this box cannot open or validate stops this connection for this pass. It is

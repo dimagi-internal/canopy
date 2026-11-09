@@ -10,11 +10,10 @@ run ``record_video.py`` under the watchdog with eleven flags, keep its exit code
 ``render_check`` against both, generate the deck, upload the deck and the clip
 (grepping a ``View:`` line out of each, never the ``Share:`` one), hand the deck
 URL to the clip as a companion, then edit ``run_state`` with inline Python to
-stamp the URLs. On the first live product-objective run
-(connect-labs ``supply-sophie-unanswered-round-2026-10-04-001``) the orchestrator
-re-assembled that by hand every iteration — went looking for a previous run's
-render log to recover the command, wrote ``s.iteration_decks[...] = ...`` in an
-inline ``python -c``, and hit a runtime without Playwright. Each hand assembly is
+stamp the URLs. Re-assembling that by hand every iteration means hunting for a
+previous run's render log to recover the command, writing
+``s.iteration_decks[...] = ...`` in an inline ``python -c``, and hitting a runtime
+without Playwright. Each hand assembly is
 a place for the contract to drift (a wrong flag, the wrong URL line, a stale
 render uploaded), which is the exact failure ``render_check`` exists to stop.
 

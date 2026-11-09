@@ -219,8 +219,8 @@ def write_composed(path_or_slug, out_path, *, base_dir=None) -> dict:
     """Write the composed spec to *out_path* with an ABSOLUTE ``why_brief``.
 
     A composed copy lives somewhere else (usually the run dir), so a relative
-    ``why_brief:`` no longer resolves from it and ``spec_qa`` failed with "why_brief
-    declared but not resolvable" on every judge pass until the judge copied the
+    ``why_brief:`` does not resolve from it and ``spec_qa`` fails with "why_brief
+    declared but not resolvable" on every judge pass unless the judge copies the
     brief beside it by hand. Pinning the canonical brief by absolute path makes
     the copy self-contained. Returns ``{"spec", "why_brief"}``.
     """

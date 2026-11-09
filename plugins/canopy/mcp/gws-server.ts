@@ -5,10 +5,10 @@
  * using the Model Context Protocol. Ported from ACE's battle-hardened
  * google-drive-server (the ACE-aware atoms — opp-path resolution, run-state
  * validation, YAML patching, manifest generation — stay in ACE; only the
- * domain-neutral Workspace surface lives here). See jjackson/canopy#262.
+ * domain-neutral Workspace surface lives here).
  *
  * Identity is the SESSION's agent, resolved through the `canopy cred` broker at
- * the first tool call (canopy#850, ./gws/lib/session-identity.ts):
+ * the first tool call (./gws/lib/session-identity.ts):
  * `canopy cred check --agent <session agent>` must allow it, and the agent's
  * GWS_* values (GWS_IDENTITY_MODE, GWS_SA_KEY_PATH, GWS_ROOT_FOLDER_ID,
  * GWS_ALLOWED_DRIVE_IDS — see ./gws/lib/identity.ts) come from the env file
@@ -146,7 +146,7 @@ function error(msg: string) {
  * canonical signal — no scope checks, no quota probes, no second API call
  * beyond the one `files.get`.
  *
- * Inflight-dedupe + 30s TTL cache (added 2026-05-10, perf lens). When N
+ * Inflight-dedupe + 30s TTL cache. When N
  * parallel writes target the same parent — common when a caller bootstraps
  * a folder tree (several files land in the same new parent in one batched
  * message) — the first
@@ -255,7 +255,7 @@ const server = new McpServer({
   name: 'canopy-gws',
   version: '0.1.0',
 });
-// Session identity (canopy#850): every tool acts as the session's agent only
+// Session identity: every tool acts as the session's agent only
 // when `canopy cred check` allows it — resolved lazily at the first call, so
 // startup never blocks. Must run before the first registration.
 installSessionGate(server as never, createSessionGate(applySessionIdentity));
@@ -980,7 +980,7 @@ export async function handleCreateFolder(
  * `text/plain; charset=utf-8` so non-ASCII text (em-dashes, accented
  * characters, smart quotes, etc.) round-trips correctly — without the
  * charset hint Drive's import path mis-decodes the bytes and the upload
- * fails with `Internal Error` (observed live, 2026-05-06).
+ * fails with `Internal Error`.
  *
  * Default behavior is find-or-update: if a same-name file exists under
  * `parentFolderId` (non-trashed), the existing file's content is replaced

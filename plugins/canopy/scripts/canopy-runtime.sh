@@ -44,10 +44,10 @@ NEED_GIT=0
 #     error: Distribution not found at: file:///.../runtime/packages/<pkg>
 # — an opaque failure with no mention of the bundle. Skipping such a candidate lets the
 # ladder fall through to the marketplace clone, so a mis-bundled cache degrades to a
-# working runtime instead of taking every consumer down. (#636 shipped exactly this
-# breakage: packages/canopy_agent_factory became a path dep while runtime.json still
-# listed only src/scripts/evals/pyproject.toml, which killed every agent's bin/* and
-# all 18 skills that run `uv run --project "$CANOPY_ROOT"`.)
+# working runtime instead of taking every consumer down. (The breakage: a package
+# becomes a path dep while runtime.json still lists only src/scripts/evals/pyproject.toml,
+# which kills every agent's bin/* and every skill that runs
+# `uv run --project "$CANOPY_ROOT"`.)
 _path_deps_ok() {
   local root="$1" dep
   while IFS= read -r dep; do

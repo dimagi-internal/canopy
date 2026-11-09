@@ -12,18 +12,17 @@ objective (``product`` and ``demo`` alike) — and 0 when the diff is clean. Wit
 refuses to judge (or record a fix SHA) while it reads ``fail``: a flagged batch
 goes back to its fixer to restructure, not to annotate.
 
-Why each check exists — canopy#786, Hal's audit of the ACE Spark
-(``spark-facilitator-programme-cascade`` -001..-005) and connect-labs supply
-(``supply-sophie-sheets``) runs, ~9 h each, neither converged:
+Why each check exists — what a fixer reaches for when it answers a judge instead
+of improving the product:
 
 * **user_prose** — a NEW user-visible sentence (a template text node, or a string
-  literal of ``prose_words``+ words). Spark's batch shipped "Click a column name
-  for its definition · ↕ sorts" and "Short of target, not yet off target"; 32 of
-  232 Spark fix recommendations were "add a tooltip / legend / definition".
+  literal of ``prose_words``+ words). a batch can ship "Click a column name
+  for its definition · ↕ sorts" and "Short of target, not yet off target"; the usual judge
+  recommendation answered this way is "add a tooltip / legend / definition".
 * **fix_comment** — a comment or docstring narrating the fix: the loop's own
   vocabulary (DDD, batch 3, scene 4, the judge, the viewer), a concrete demo date,
   or the before/after story ("read as a contradiction", "were six lines
-  differing only in…"). 42 of 263 supply template lines were such comments.
+  differing only in…").
   A template comment of ``template_comment_words``+ words is flagged too: a
   template states the UI, it does not explain it.
 * **persona_name** — a persona from the spec (or a ``fix_gate.demo_terms`` name)
@@ -34,8 +33,7 @@ Why each check exists — canopy#786, Hal's audit of the ACE Spark
   keyword regex that guesses meaning from wording
   (``/repeat|duplicat|identical|same/`` — "tuned to Spark's labels").
 * **demo_test** — a NEW test file named for the demo rather than the behaviour
-  (``test_sophie_batch5.py``, ``test_unanswered_round_1004_b4.py``); connect-labs
-  main carries 56 of them.
+  (``test_sophie_batch5.py``, ``test_unanswered_round_1004_b4.py``).
 
 Out of scope by construction: docs, lock files, JSON/YAML/CSV, migrations, and seed
 / fixture / walkthrough paths (seed data legitimately names the personas). Tests

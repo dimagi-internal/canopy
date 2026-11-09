@@ -51,15 +51,14 @@ no Docs list structures at all:
 gog exposes only `--format plain|markdown` (no HTML), so we cannot route the replace
 through our good renderer, and a Drive media overwrite is forbidden on native Docs — the
 degradation is currently unavoidable. What is NOT acceptable is doing it *silently*: this
-module used to return `"verified": true` for a replaced doc it had never read back. It now
+module must not return `"verified": true` for a doc it never read back. It
 exports the doc after **every publish — create as well as replace** — and compares it to the
 source (`replace_degradations`), so a mangled deliverable fails loudly instead of being
-handed to a stakeholder. Origin: Echo's PRIDE drafts doc, which a reviewer called
-"unreadable… each line is numbered as bullet points."
+handed to a stakeholder.
 
-Create was exempt from that read-back until #568, on the reasoning that the HTML→Doc import
-renders faithfully. It does — for the constructs in the table above. It dropped every
-HYPERLINK, which none of those signatures can see, and reported the doc clean. The general
+The create path needs that read-back too, even though the HTML→Doc import renders the
+constructs in the table above faithfully: it can drop HYPERLINKS, which none of those
+signatures can see, and the doc would be reported clean. The general
 lesson is in `verify_published_render`: an unexamined path is one whose degradations reach
 the reader first.
 
@@ -171,8 +170,8 @@ def _gdoc_identity_from_opts(repo, agent, account, client) -> GdocIdentity:
     the process env wins and the agent's .env is the fallback.
 
     Identity failures surface as AgentGdocError, so every gdoc command prints one line
-    naming --agent instead of a traceback (2026-10-08: a connect-labs session ran
-    `canopy gdoc publish` for Hal's project and got `AgentEmailError: no
+    naming --agent instead of a traceback (a session outside an agent repo running
+    `canopy gdoc publish` would otherwise get `AgentEmailError: no
     .claude-plugin/plugin.json …` as an uncaught exception)."""
     try:
         base: EmailIdentity = _identity_from_opts(repo, agent, account, client)
@@ -269,9 +268,8 @@ def md_to_html(md: str) -> str:
             flush_p(para)
             # NOT <hr/>: Drive's HTML→Doc import merges the rule into a FOLLOWING heading,
             # producing a heading whose text is "---" and demoting the real heading text to
-            # a bold paragraph. A plain divider paragraph imports cleanly. Proven in echo's
-            # own engine first (dimagi-internal/echo#113, round-trip verified) and brought
-            # here so the whole fleet gets it — see issue #451.
+            # a bold paragraph. A plain divider paragraph imports cleanly (round-trip
+            # verified).
             out.append("<p>—&nbsp;&nbsp;—&nbsp;&nbsp;—</p>")
             i += 1
             continue
@@ -353,8 +351,8 @@ def build_upload_command(identity: GdocIdentity, *, html_path: str, name: str | 
     """`gog drive upload` for a fresh create — convert HTML→Doc into --parent.
 
     Create-only. An in-place --replace of an existing native Doc does NOT go through
-    `drive upload` (a Drive media overwrite is forbidden on Workspace-native Docs, issue
-    #353) — see build_replace_commands for the Docs-API path."""
+    `drive upload` (a Drive media overwrite is forbidden on Workspace-native Docs)
+    — see build_replace_commands for the Docs-API path."""
     cmd = ["gog", "drive", "upload", html_path,
            "--account", identity.account, "--client", identity.client, "--json",
            "--convert-to", "doc"]
@@ -372,7 +370,7 @@ def unwrap_markdown(md: str) -> str:
     markup within a line, so a `**bold span**` that a text editor wrapped across two
     source lines ships with both `**` visible — and it turns the continuation of a list
     item into a separate paragraph. Authors wrap at ~90 columns by habit, so this was a
-    recurring leak that a careful read of the markup could not catch (eva, 2026-09-14).
+    recurring leak that a careful read of the markup could not catch.
     Our own create-path renderer already joins wrapped lines, so this makes the two paths
     agree. Fenced code, headings, tables, blockquotes and rules are left untouched."""
     out: list[str] = []
@@ -449,7 +447,7 @@ _SRC_BULLET = re.compile(r"^\s*[-*+]\s+\S", re.M)
 # A real list item in a Drive markdown export (it prefixes list blocks with `> `).
 _EXP_LIST = re.compile(r"^\s*>?\s*(?:\d+\.|[-*+])\s+\S", re.M)
 
-# ---- Hyperlinks (issue #568) -------------------------------------------------------------
+# ---- Hyperlinks -------------------------------------------------------------
 #
 # A dropped hyperlink is the degradation a READER notices first and the check was blindest
 # to: the anchor text survives, so the doc looks and reads perfectly, and every citation
@@ -460,13 +458,10 @@ _EXP_LIST = re.compile(r"^\s*>?\s*(?:\d+\.|[-*+])\s+\S", re.M)
 # because a lost link leaves NO artefact behind — unlike a flattened list, which at least
 # leaves an escaped `1\.`. There is nothing to pattern-match; only the absence is evidence.
 #
-# WHY THIS IS A STANDING GUARD AND NOT A ONE-OFF FIX: #568 reported both paths dropping
-# every link, and on 2026-09-16 neither path reproduced it — 2 of 2 links survived create
-# AND replace, confirmed in the HTML export's `<a href>` (Docs' own redirect wrapper).
-# Nothing in canopy or gog changed in that window (gog 0.38.1 predates the report), so the
-# import's link handling moved underneath us, server-side, with no release to point at. A
-# behaviour that can flip without a version bump is exactly the thing that needs a live
-# check rather than a fix: we cannot pin it, so we must be able to SEE it.
+# WHY THIS IS A STANDING GUARD AND NOT A ONE-OFF FIX: the import's link handling lives
+# server-side in Docs, with no release to pin. A behaviour that can flip without a
+# version bump is exactly the thing that needs a live check rather than a fix: we
+# cannot pin it, so we must be able to SEE it.
 _MD_LINK = re.compile(r"\[[^\]]*\]\((https?://[^)\s]+)\)")
 # Inline code spans: `[x](y)` inside backticks is content being shown, not a live link.
 _INLINE_CODE = re.compile(r"`[^`\n]+`")
@@ -521,7 +516,7 @@ def replace_degradations(source_md: str, exported_md: str) -> list[str]:
         if exp.count(token) > src.count(token):
             findings.append(what)
 
-    # Hyperlinks (#568). Compare URL sets, not counts: the export legitimately gains links
+    # Hyperlinks. Compare URL sets, not counts: the export legitimately gains links
     # (Drive auto-links a bare URL), so only a source URL MISSING from the export is a loss.
     src_urls = _link_targets(source_md)
     if src_urls:
@@ -644,7 +639,7 @@ def resolve_subfolder(identity: GdocIdentity, *, area: str = "Projects",
     instead of spawning a duplicate. Requires a resolved Drive root; pass --parent to bypass.
 
     Pass `trace` (a list) to learn which folders were REUSED vs CREATED. Reuse is silent
-    otherwise, and silence is the problem: on 2026-08-12 Eva built a trip roster while a
+    otherwise, and silence is the problem: Eva built a trip roster while a
     project folder for that same trip already existed holding a doc that contradicted her
     assumptions — she never saw it, and the deliverable was wrong as a result. The layout is
     only worth having if the agent notices when it is landing on top of prior work."""
@@ -755,11 +750,10 @@ def verify_published_render(identity: GdocIdentity, doc_id: str, *, md_path: str
                             runner=subprocess.run) -> list[str]:
     """Export a just-published Doc and report what the conversion destroyed.
 
-    Runs on BOTH paths. It was `verify_replace_render` and replace-only, on the reasoning
-    that create (HTML→Doc import) renders faithfully while gog's markdown find-replace does
-    not. That reasoning was sound about LISTS and wrong in general: #568 was reported against
-    the CREATE path, which had no read-back at all and returned `verified: true` for a doc
-    whose every citation had been stripped. A path we never look at is a path whose
+    Runs on BOTH paths. Create (HTML→Doc import) renders LISTS faithfully while gog's
+    markdown find-replace does not, but that does not make create safe in general: a
+    create path with no read-back could return `verified: true` for a doc whose every
+    citation had been stripped. A path we never look at is a path whose
     degradations we learn about from the reader.
 
     Returns [] when the render is faithful. **A failed export returns [] (treated as
@@ -769,16 +763,14 @@ def verify_published_render(identity: GdocIdentity, doc_id: str, *, md_path: str
     which is deterministic, not the export, which is a network call.
 
     **But it SAYS SO on stderr, because a check that can silently never run is worse than
-    no check at all.** It never ran. `gog docs export --out <path>` refuses to write a file
-    that already exists (`open <path>: file exists`, exit 1) and this function handed it a
-    `NamedTemporaryFile(delete=False)` path — which exists by construction, because
-    creating the file is what NamedTemporaryFile does. So the export returned 1 on every
-    call since #451 shipped, the fail-open below swallowed it, and every `"degraded": []`
-    canopy has ever reported was "we did not look", rendered indistinguishable from "we
-    looked and it was fine". That is exactly the silence #568 filed as "replace_degradations
-    reports clean".
+    no check at all.** `gog docs export --out <path>` refuses to write a file
+    that already exists (`open <path>: file exists`, exit 1), so handing it a
+    `NamedTemporaryFile(delete=False)` path — which exists by construction — would make
+    the export return 1 on every call, the fail-open would swallow it, and every
+    `"degraded": []` would mean "we did not look", indistinguishable from "we
+    looked and it was fine".
 
-    The output path is now a fresh name inside a private `mkdtemp()` directory — nothing
+    The output path is a fresh name inside a private `mkdtemp()` directory — nothing
     creates it, so gog writes it. Deliberately NOT gog's `--overwrite` flag: that couples
     this to a gog version (the module targets v0.12+, the flag is newer), and not creating
     the file is correct against every version."""
@@ -860,8 +852,8 @@ def _publish_replace(identity: GdocIdentity, *, replace: str, name: str | None, 
                 f"{(r.stderr or r.stdout or '').strip()[:400]}"
             )
     # Read the doc back and confirm it actually renders what we published. gog's
-    # markdown find-replace silently flattens lists (see module docstring), so this
-    # path used to hand out "verified": true for a body it had never looked at.
+    # markdown find-replace silently flattens lists (see module docstring), so
+    # "verified": true must not be handed out for a body nobody looked at.
     degraded = verify_published_render(identity, replace, md_path=md_path, runner=runner)
     # Replace preserves the doc's existing sharing — never re-share (posture would drift).
     return {"id": replace, "url": url, "raw": "", "replaced": True,
@@ -899,7 +891,7 @@ def _publish_create(identity: GdocIdentity, *, name: str | None, parent: str | N
 
         result["shared"] = share if share != "none" else "none"
         result["verified"] = True
-        # Read the created doc back too (#568). `verified` keeps meaning "the share landed";
+        # Read the created doc back too. `verified` keeps meaning "the share landed";
         # a mangled body reports through `degraded`, which the CLI checks first.
         result["degraded"] = verify_published_render(identity, file_id, md_path=md_path,
                                                      runner=runner)
@@ -920,15 +912,15 @@ def _publish_create(identity: GdocIdentity, *, name: str | None, parent: str | N
 # --------------------------------------------------------------------------------------
 # Sheets — the same filing contract for tabular deliverables
 #
-# WHY THIS EXISTS (2026-08-13). `publish` above renders markdown into a Doc, files it under
+# WHY THIS EXISTS. `publish` above renders markdown into a Doc, files it under
 # the agent's root, shares it and verifies. There was no equivalent for a SPREADSHEET, so a
 # skill that legitimately needs one — a target roster, a tracker, any grid a human works in
 # — had nothing to call and fell through to raw `gog sheets create`, which lands in My Drive
-# root, unshared. That is exactly what happened on 2026-08-12.
+# root, unshared. That is exactly what happened.
 #
 # The filing rails can only ever say "no". Adding a rail without adding this would just have
-# blocked the work with nowhere to send it — the failure named in Eva's 2026-07-30 learning,
-# "a rail can be right about the risk and wrong about the remedy."
+# blocked the work with nowhere to send it: a rail can be right about the risk and wrong
+# about the remedy.
 # --------------------------------------------------------------------------------------
 
 def read_table(path: str) -> list[list[str]]:
@@ -1076,9 +1068,9 @@ def _report_reuse(identity: GdocIdentity, trace: list, parent: str | None, *,
                   dry_run: bool = False) -> None:
     """Say out loud when we landed in a folder that ALREADY holds work.
 
-    Reuse used to be silent, and silence cost a real deliverable: on 2026-08-12 an agent
-    built a trip roster while a project folder for that same trip already existed, holding
-    a doc that contradicted the window the roster was built on. Nothing surfaced it. The
+    Silent reuse costs real deliverables: an agent can build a trip roster while a
+    project folder for that same trip already exists, holding
+    a doc that contradicted the window the roster was built on. The
     filing layout's whole value is that the next turn finds the last one's work — so when
     it does, it has to be visible. Advisory only: never fails the publish."""
     if dry_run or not trace:

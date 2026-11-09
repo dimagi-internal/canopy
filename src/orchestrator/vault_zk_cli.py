@@ -390,7 +390,7 @@ def run_set(v: ZkVault, values: dict) -> ZkResult:
     if v.state().get("kv") == 0 and not v.vault_id:
         # Born zero-knowledge, no vault key yet (every new agent until a machine is
         # approved for it): canopy-web's credentials write seals each value to the
-        # agent's readers as it arrives (canopy-web#1567). Nobody sets a key up first.
+        # agent's readers as it arrives. Nobody sets a key up first.
         v.web("PUT", f"/api/agents/{v.slug}/credentials", {"values": values})
         return ZkResult(v.slug, kv=0, actions=[f"stored {len(values)} value(s), sealed by "
                                                "canopy-web to its readers (no vault key yet): "
@@ -1002,8 +1002,7 @@ def keep_cmd(as_json):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# `canopy vault ws` — a workspace's vaults (canopy-web spec 2026-10-22-vault-access-follows-
-# canopy-access-design.md §4): make one, say what it serves, add people. Its values and key
+# `canopy vault ws` — a workspace's vaults: make one, say what it serves, add people. Its values and key
 # copies go through `canopy vault zk … --vault <id>`, exactly as an agent's do.
 # ──────────────────────────────────────────────────────────────────────────────
 

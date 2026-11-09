@@ -2,7 +2,7 @@
 """SessionEnd: upload a LOCAL turn's transcript to canopy-web, then finish the turn.
 
 A session a person opens on their private runner with an agent is a local turn
-(canopy-web#1704; `agent_session_start.py` opened it, `caller_context.py` showed its envelope).
+(`agent_session_start.py` opened it, `caller_context.py` showed its envelope).
 Without the runner app nothing else would send its transcript anywhere: it stays only
 in Claude Code's own `~/.claude/projects/`. This hook hands `transcript_path` to
 `canopy local close`, which appends it to the turn in batches (each with a batch id,
@@ -42,8 +42,8 @@ def main() -> int:
     if transcript and os.path.isfile(transcript):
         cmd += ["--transcript", transcript]
     # DETACHED, never waited on: Claude Code cancels a SessionEnd hook as it exits
-    # ("Hook cancelled" — measured on `claude -p`, 2026-10-19), so an upload run inline
-    # never finished. The child gets its own session and outlives this process; what it
+    # ("Hook cancelled" — seen on `claude -p`), so an upload run inline
+    # would never finish. The child gets its own session and outlives this process; what it
     # says goes to a log beside the session's state. A close that still never happens
     # (power loss) is caught up by the next `canopy local open` on this machine.
     log = os.path.join(LOCAL_ROOT, f"{session_id}.close.log")

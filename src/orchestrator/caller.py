@@ -117,7 +117,7 @@ def _address(env: dict) -> str:
 
 
 #: Appended to a `caller` / `unlisted` reason when canopy-web says the sender is an
-#: UNPROVEN MEMBER (canopy-web#1265): a workspace member whose message could not be
+#: UNPROVEN MEMBER: a workspace member whose message could not be
 #: tied to their account. It grants nothing; it changes what the agent says.
 UNPROVEN_MEMBER_NOTE = (
     "; {email} is a member of this workspace{role}, but this message could not be tied to "
@@ -143,7 +143,7 @@ def _unproven_note(um: dict, address: str) -> str:
 def resolve(env: dict, rules: list[str]) -> dict:
     """The tier for one envelope. Pure: no I/O, so it is testable exhaustively.
 
-    `unproven_member` (canopy-web#1265) never changes the tier: it is reported as-is
+    `unproven_member` never changes the tier: it is reported as-is
     and, on the `caller` / `unlisted` tiers, explained in `reason`."""
     out = _resolve(env, rules)
     um = unproven_member_of(env)

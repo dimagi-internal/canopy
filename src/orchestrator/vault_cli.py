@@ -219,9 +219,9 @@ RUNNER_SESSIONS_PATH = "/api/runner-sessions/"
 
 def run_runner_session(runner_id: str, base_url: str = "", *, transport=None) -> dict:
     """Sign this runner in AS ITSELF: trade a proof of this machine's approved device
-    key for an hour-long runner token (canopy-web `POST /api/runner-sessions/`, #1594).
+    key for an hour-long runner token (canopy-web `POST /api/runner-sessions/`).
     No person's PAT is sent — the proof is the whole authority, so a token tidied up
-    in Settings → Tokens can never strand a runner again (2026-10-17, cloud-ec2-2).
+    in Settings → Tokens can never strand a runner.
 
     Returns `{access_token, expires_at, runner}`. Raises VaultCliError when there is
     no runner id, no proof this machine can make (no key, or not registered), or

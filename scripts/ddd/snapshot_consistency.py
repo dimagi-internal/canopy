@@ -4,13 +4,11 @@ Iterations of a narrative reuse one run dir. A re-render therefore OVERWRITES
 the snapshots a judge may still be reading, one scene at a time, while it reads
 them — and nothing anywhere says so. The judge returns a verdict scored against
 a mixture of two iterations: some scenes as they are now, some as they were
-before the fix, and findings that describe frames which no longer exist.
+before the fix, and findings that describe frames that have since been replaced.
 
-That happened. A fourteen-minute concept-eval came back describing a review
-queue that had been fixed two renders earlier, and the only reason it was caught
-is that a human noticed the prose did not match the current frames. Acting on
-those findings would have meant "fixing" things that were already right and
-re-breaking things that were not.
+Acting on those findings means "fixing" things that are already right and
+re-breaking things that are not, and only a human noticing that the prose does
+not match the current frames would catch it.
 
 The render now stamps every ``scene_<N>_page_text.json`` with the id of the
 render that wrote it (``Recorder.render_id``). This checks they all agree.

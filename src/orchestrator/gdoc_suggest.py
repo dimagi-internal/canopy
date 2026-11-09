@@ -3,13 +3,12 @@ r"""Edit someone else's Google Doc as TRACKED SUGGESTIONS — backs `canopy gdoc
 When a human asks an agent to edit their doc "in edit mode" / "with track changes", they
 mean Suggesting mode: every change visible, accepted or rejected one by one. A direct write
 (`gog docs find-replace`, `insert`, `delete`) lands silently and its only trace is version
-history. Origin: eva, 2026-10-02, eight direct edits to a teammate's concept note that had
-been asked for as suggestions, then undone by hand.
+history. Suggesting mode is therefore the only safe way to edit a doc the caller does not own.
 
 The Docs API does this natively: `documents.batchUpdate` with
 `"writeControl": {"writeMode": "SUGGEST"}` turns every request into a suggestion. It is a
 Workspace Developer Preview feature; the Dimagi Workspace and the Cloud project behind the
-fleet's gog client were enrolled 2026-10-04 (verified as eva and fleet-wide). Without
+fleet's gog client are enrolled in it. Without
 enrollment the call fails `400 Unsupported WriteControl mode.` — reported here as exactly that.
 
 Why edits are located by TEXT, not by index. An agent knows "change X to Y", not "delete
@@ -135,7 +134,7 @@ def suggestion_ids(response: dict) -> list[str]:
 
     An insert right next to a delete in the same batch does not get its own suggestion: Docs
     folds it into the delete's and answers `updatedSummarySuggestionIds` instead of
-    `createdSuggestionIds` (measured 2026-10-04 — every "replace" does this)."""
+    `createdSuggestionIds` (every "replace" does this)."""
     ids: list[str] = []
     for r in response.get("suggestionResponses") or []:
         for k in ("createdSuggestionIds", "updatedSummarySuggestionIds"):

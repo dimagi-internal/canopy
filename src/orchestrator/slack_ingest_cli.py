@@ -169,7 +169,7 @@ def transcript_cmd(ingest_id: str, out: Path | None, read_all: bool, no_mark: bo
     after = 0
     if not read_all:
         mark = _call("GET", f"{BASE}{ingest_id}").get("read_mark")
-        if mark is None:   # a canopy-web without the read mark (canopy-web#1557): a whole read
+        if mark is None:   # a canopy-web without the read mark: a whole read
             click.echo("canopy-web has no read mark for channel ingests yet: reading the whole transcript.",
                        err=True)
         after = int(mark or 0)

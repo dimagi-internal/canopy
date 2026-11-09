@@ -1,8 +1,8 @@
 """Impact-aware scene fingerprints — re-judge only what COULD have changed a verdict.
 
-The problem, measured (canopy#780)
+The problem, measured
 ----------------------------------
-Over about 40 judged passes on four ACE Spark runs (2026-10-06), scoped judging
+Over about 40 judged passes on four ACE Spark runs, scoped judging
 (:mod:`scripts.ddd.judge_scope`) reused zero scenes. Every fix batch edited a
 shared report template, so every scene sat on a changed page, and the v2
 fingerprint read any change anywhere on that page as a change to the scene:
@@ -43,7 +43,7 @@ Each is compared on its own, and ``changed`` names the ones that moved:
     :data:`LAYOUT_FRACTION` of its cells did, or its size changed. A large
     layout change re-judges a scene even when its own region looks the same.
 
-Reseeded ids and volatile stamps ON SCREEN (canopy#785)
+Reseeded ids and volatile stamps ON SCREEN
 --------------------------------------------------------
 Text comparisons already put reseeded ids back in ``${var}`` form, but pixels
 cannot be un-substituted: a region showing "Tender 341" one take and "Tender 342"

@@ -39,7 +39,7 @@ the command's outputs JSON. ``--skip-setup`` skips the command (but still
 loads the outputs) for fast re-renders when the data is known-fresh; demos
 that mutate state during recording must not use it.
 
-``--capture-scenes 3,6`` (the DDD loop's scene-scoped capture, canopy#785)
+``--capture-scenes 3,6`` (the DDD loop's scene-scoped capture)
 records only those scenes — replaying the scenes before them off the record when
 their state depends on it — and folds them into the existing ``--snapshots``,
 ``--report`` and ``--manifest`` instead of overwriting them, so every other
@@ -590,7 +590,7 @@ def build_scenes_from_spec(
             "before": s.get("before"),
             # What the scene SAYS. The recorder captures the elements these
             # words name (``scene_<N>_regions.json``) so DDD's judge scope can
-            # re-judge a scene only when its subject changed (canopy#780).
+            # re-judge a scene only when its subject changed.
             "narrative": s.get("narrative"),
             "show": s.get("show"),
             "features": s.get("features"),
@@ -1048,7 +1048,7 @@ def main() -> None:
 
     print(f"Recording {len(scenes)} scenes at pace={pace} ({viewport_w}x{viewport_h})")
 
-    # ---- Guardrail: same frame size as the last render into --snapshots (#625) --
+    # ---- Guardrail: same frame size as the last render into --snapshots --
     if args.snapshots:
         snap_dir = Path(args.snapshots)
         overridden = {

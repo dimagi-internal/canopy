@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 # Runaway backstop only — NOT the normal stop. The loop stops on real gates,
 # options/redesign findings, or a score stall/regression long before this.
 HARD_CAP: int = 10
-# Back-compat alias for older callers; no longer a hard 3-iteration cap.
+# Back-compat alias for older callers; an alias of HARD_CAP, not a 3-iteration cap.
 MAX_ITERATIONS: int = HARD_CAP
 
 # There is deliberately NO count bound on how many passes pending MECHANICAL work
@@ -48,8 +48,8 @@ MAX_ITERATIONS: int = HARD_CAP
 # pass moving the score outside denoise.NOISE_BAND. A flat pass — one that applied
 # nothing, or applied fixes that changed nothing — buys no more waiting, so a
 # self-regenerating backlog cannot starve the gate and a crashed pass cannot
-# spend it. HARD_CAP is the runaway backstop. See compute_auto_iterate and
-# canopy#588 (a count of 1 cut consecutive clean runs off mid-climb).
+# spend it. HARD_CAP is the runaway backstop. See compute_auto_iterate (a count of 1
+# would cut consecutive clean runs off mid-climb).
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ def assemble_run_state(
         Optional additional verdict artifacts to record, keyed by verdict kind
         (e.g. ``{"timing": "verdict-timing.json", "why": "verdict-why.yaml"}``).
         Recorded alongside the gating pair in ``state.verdicts`` — the assembler
-        is generic over kinds (canopy#265 item 1). The ``concept`` /
+        is generic over kinds. The ``concept`` /
         ``user_artifact`` keys cannot be shadowed.
 
     Returns
@@ -131,7 +131,7 @@ def compute_convergence_all(
     *,
     threshold: float = 4.0,
 ) -> bool:
-    """Generic convergence over N verdicts (canopy#265 item 1).
+    """Generic convergence over N verdicts.
 
     Only verdicts with ``gate == "gating"`` participate; ``advisory`` verdicts
     (timing, video, why, actionability) are recorded and reported but a low
@@ -141,7 +141,7 @@ def compute_convergence_all(
     2. not be ``blocked``
     3. not carry ``live_state_verified is False`` — an eval whose grading anchor
        never touched live state cannot converge a run, whatever its score says
-       (the out-of-chain fitness law, canopy#265 item 3). ``None`` (legacy
+       (the out-of-chain fitness law). ``None`` (legacy
        emitters, unknown) is allowed for back-compat.
 
     Returns False when no gating verdict is present at all — convergence must be
@@ -208,7 +208,7 @@ def compute_convergence(
 
 
 # ---------------------------------------------------------------------------
-# Verdict report line (cap visibility — canopy#273 item 3)
+# Verdict report line (cap visibility)
 # ---------------------------------------------------------------------------
 
 
@@ -252,7 +252,7 @@ def _routable_fix_kind(raw: object) -> str:
     of the decision. The loop then reports "No options/redesign ... re-fire" —
     actively asserting there is nothing needing a human — and re-fires the
     expensive judge dispatch on a defect it will never apply and never escalate,
-    until the hard cap. Measured on canopy#547's ``fix_kind: targeted``.
+    until the hard cap. (``fix_kind: targeted`` is an example of such a value.)
 
     Falling back to ``options`` surfaces it to a human. That direction is the
     safe one and the choice is not symmetric: routing an unclassified finding to
@@ -329,8 +329,8 @@ def compute_auto_iterate(
        function's own invariant. It also spends the gate badly: the human is
        asked "is this the right direction?" over an artifact wrong in ways nobody
        disputes, and the score and video they judge measure a product that is
-       about to stop existing. The bound is exhaustion, not a count
-       (canopy#588): the first deferral is free, and every further one requires
+       about to stop existing. The bound is exhaustion, not a count:
+       the first deferral is free, and every further one requires
        the previous pass to have moved the score outside the noise band
        (``denoise.improved(hist[-2], hist[-1]) is True``). A stall, a plateau, or
        the hard cap ends it regardless. ``state.concept_gate_deferred`` records
@@ -389,7 +389,7 @@ def compute_auto_iterate(
     before ``stop_done``. ``product_config`` is the repo's ``product:`` block and
     ``extra_verdicts`` the advisory/arc verdicts (for the floor check).
 
-    Floor (see :mod:`scripts.ddd.floor`, canopy#780): ``floor`` is the cell
+    Floor (see :mod:`scripts.ddd.floor`): ``floor`` is the cell
     holding the gating score down (:func:`scripts.ddd.floor.locate`) and
     ``edit_scope`` what this loop may edit (``{narrative_locked,
     fixed_surfaces, declined}``). Both are optional; without ``floor`` nothing
@@ -409,7 +409,7 @@ def compute_auto_iterate(
       ``state.findings``, and the reason opens with them, so the batch fixes
       what holds the gate before anything else.
 
-    Target rubric (see :mod:`scripts.ddd.target_rubric`, canopy#790):
+    Target rubric (see :mod:`scripts.ddd.target_rubric`):
     ``target_rubric`` is a resolved :class:`~scripts.ddd.target_rubric.Rubric`, or
     its sources ``{run, spec, config}`` (resolved here, once the objective is
     settled, so the default matches it), and ``run_dir`` where the judges' per-scene rows live. When given, it
@@ -652,7 +652,7 @@ def compute_auto_iterate(
     fingerprints = denoise.fingerprint_findings(findings)
     state.finding_fingerprints = (state.finding_fingerprints or []) + [fingerprints]
     fp_hist = state.finding_fingerprints
-    # Every pass fixes everything it can (canopy#788). A cell whose finding has
+    # Every pass fixes everything it can. A cell whose finding has
     # been open N passes running was not cleared by the last fix: stamp it, and
     # brief it right after the floor, so the next fixer tries something else.
     recurring = _stamp_recurring(findings, fp_hist, loop_config.recurring_after)
@@ -763,8 +763,8 @@ def compute_auto_iterate(
     mechanical = [f for f in mechanical_all if not f.get("parked")]
     unclear = [f for f in non_defer if f["fix_kind"] in ("options", "redesign") and not f.get("out")]
     # Only a STRATEGY finding can open the concept gate. An accuracy finding was
-    # already forced mechanical above, so this can no longer fire on "the wrong
-    # word is on screen" — which is what escalated two fixable defects to a human.
+    # already forced mechanical above, so this cannot fire on "the wrong
+    # word is on screen" — which would escalate a fixable defect to a human.
     strategy_all = [
         f
         for f in non_defer
@@ -780,7 +780,7 @@ def compute_auto_iterate(
         # Fidelity: an inner-loop or concept-only pass may not decide anything.
         from scripts.ddd import target as target_mod
 
-        # An uneditable floor stops NOW (canopy#788): no checkpoint can move a
+        # An uneditable floor stops NOW: no checkpoint can move a
         # cell the loop may not edit, and floor-first already re-judged the
         # floor's scenes if they changed. Only a held scene (changed, not
         # re-judged) could still be hiding a different floor. The same holds for
@@ -932,7 +932,7 @@ def compute_auto_iterate(
     prose_hold = ""
     if converged and not product_objective:
         # Every judge >= 4 is not "done" while a screen is accreting prose: that
-        # lint blocks in the demo objective too (canopy#786).
+        # lint blocks in the demo objective too.
         prose = objective_mod.open_prose_blockers(findings, block_severities=product_config.block_severities)
         if prose:
             converged = False
@@ -1065,7 +1065,7 @@ def compute_auto_iterate(
     # is. So pending mechanical work holds the concept gate open WHILE IT IS
     # STILL CLEANING THE ARTIFACT, and the human gets the direction question over
     # a clean artifact instead of one carrying defects nobody disputes. The bound
-    # is exhaustion, not a count (canopy#588): the first deferral is free; each
+    # is exhaustion, not a count: the first deferral is free; each
     # further one must be paid for by the last pass moving the score outside the
     # noise band. A flat pass buys nothing — which is what makes a crashed pass
     # (applied nothing, score unchanged) and a spent one (applied fixes, score
@@ -1143,7 +1143,7 @@ def compute_auto_iterate(
             "pending decision."
             + (" Unattended: reported, not waited on." if unattended else ""),
         )
-    # Flat (canopy#782/#788): N full judges with neither the score nor the open
+    # Flat: N full judges with neither the score nor the open
     # backlog improving is a direction problem, not a fixing one — even when the
     # findings churn (fix one email-wording finding, the judge raises the next),
     # which the identical-findings plateau never sees. Stop and ask.
@@ -1164,9 +1164,9 @@ def compute_auto_iterate(
             + (f" (+{len(cells) - 20} more)" if len(cells) > 20 else "")
             + f" (history={hist}).",
         )
-    # A stall is checked BEFORE pending mechanical work: that branch used to come
-    # first, so on a v1 product (which always has mechanical findings) stall
-    # detection could never fire. Stall is now progress-aware, so a run whose
+    # A stall is checked BEFORE pending mechanical work: if that branch came
+    # first, stall detection could never fire on a v1 product (which always has
+    # mechanical findings). Stall is progress-aware, so a run whose
     # floor is pinned while its backlog shrinks is NOT stalled and keeps going.
     if stalled:
         return _finish(
@@ -1282,7 +1282,7 @@ def _floor_label(floor: dict | None) -> str:
 
 
 def _floor_first_reason(floor: dict | None, cls: dict) -> str:
-    """The FLOOR-FIRST preamble of a ``continue`` reason (canopy#780)."""
+    """The FLOOR-FIRST preamble of a ``continue`` reason."""
     rows = [r for r in cls.get("findings") or [] if r.get("edit_scope") == "in"]
     if not rows:
         return ""
@@ -1408,7 +1408,7 @@ def classify_termination(
         trend alone decides, as before.
     ``blocked_out_of_scope``
         The gating floor is held only by findings this loop may not fix
-        (``stop_out_of_scope``, canopy#780). Not a stall and not divergence:
+        (``stop_out_of_scope``). Not a stall and not divergence:
         the loop stopped because nothing it can do moves the gate.
     ``running``
         Not terminal — keep looping.

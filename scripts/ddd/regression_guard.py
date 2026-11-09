@@ -1,11 +1,10 @@
 """Did this iteration break something the last one had working?
 
 An improvement loop that only measures the thing it is trying to fix will
-happily trade one defect for another. It happened on the first narrative through
-the loop: a fix that made a row reflect an already-open shortfall — correct, and
-what a judge asked for — removed the button the next scene clicked, and the
-render went from 29/29 to 26/29 with the regression invisible until the run
-report was read by hand.
+happily trade one defect for another: a fix that makes a row reflect an
+already-open shortfall — correct, and what a judge asked for — can remove the
+button the next scene clicks, taking the render from 29/29 to 26/29 with the
+regression invisible until the run report is read by hand.
 
 Two comparisons, both cheap, both from artifacts the loop already writes:
 
@@ -21,18 +20,17 @@ that might be.
 
 An action that ran last iteration and is **absent** now is the second kind, so
 it is a ``warn``, not a ``fail``. Its own message says it cannot tell which it
-is — "either the recipe dropped it or the scene no longer reaches it" — and the
+is — "either the recipe dropped it or the scene cannot reach it" — and the
 common cause is a deliberate recipe edit: canopy's own framing remedy replaces a
 no-op ``scroll_to`` with a pixel ``scroll``, which removes an action by design.
-Failing that gated a run that went 20/20 -> 23/23 with nothing regressed
-(canopy#624). The case the guard exists for still fails: a scene that no longer
-reaches its controls has an action that now FAILS, and that is the other branch.
+Failing on that would gate a run that went 20/20 -> 23/23 with nothing regressed.
+The case the guard exists for still fails: a scene that cannot reach its controls
+has an action that now FAILS, and that is the other branch.
 
 Actions are keyed by their SPEC-form target (``${round2_tender_id}``, not 94):
 a narrative that reseeds per render mints new ids every take, and keying on the
-resolved id reported every id-bearing action as "absent now" every iteration
-(canopy 0.2.528). A history entry written before this (no ``actions_spec``) is
-compared by its resolved keys, exactly as it was.
+resolved id would report every id-bearing action as "absent now" every iteration.
+A history entry with no ``actions_spec`` is compared by its resolved keys.
 
     python -m scripts.ddd.regression_guard <run_dir> [--json]
 """

@@ -1,14 +1,11 @@
-"""Capture scope — re-film only what a fix batch could have changed (canopy#785).
+"""Capture scope — re-film only what a fix batch could have changed.
 
-The problem, measured
----------------------
-Every DDD pass re-recorded every scene as video. connect-labs
-``supply-sophie-sheets-2026-10-06-001`` made 11 full recordings (9 scenes, a
-~112 s mp4 each) and ACE Spark run ``-002`` 32, while the judges between
-checkpoints read only each scene's still frame and page text, and most fixes
-were product copy or styling on two or three scenes (Spark: ~169 PRODUCT, ~10
-SCRIPTING, ~12 narration). The full narrated video is made once, by the Video
-phase, after convergence.
+The problem
+-----------
+Re-recording every scene as video on every DDD pass is wasteful: the judges between
+checkpoints read only each scene's still frame and page text, and most fixes are
+product copy or styling on two or three scenes. The full narrated video is made
+once, by the Video phase, after convergence.
 
 The rule
 --------
@@ -34,17 +31,10 @@ The rule
 
 Shared templates (DDD-2)
 ------------------------
-A product batch can change a scene it did not name. Before DDD-2 a ``scenes``
-pass re-filmed only the named scenes and marked the rest ``carried_unverified``,
-so the pass could not decide and the next checkpoint re-filmed (with video) and
-re-judged everything; and a batch with ONE finding whose scene the loop could
-not read went straight to a full video re-film. Measured on 2026-10-15/16:
-ACE noora (``newborn-care-classes-programme-cascade-2026-10-15-001``) — every
-product batch "edited scene(s) [1..5]" (one labs template); ACE smallholder
-(``smallholder-seasonal-programme-cascade-2026-10-16-001``) — iterations 1 and 2
-were full video re-films because the arc judge named a scene by its spec id.
-
-Now a product batch takes STILLS of every scene (cheap: ~15 s a scene, and a
+A product batch can change a scene it did not name (one labs template feeds several
+scenes), and an arc judge may name a scene by its spec id rather than its number.
+Re-filming only the named scenes would leave the rest ``carried_unverified``, so the
+pass could not decide; so a product batch takes STILLS of every scene (cheap: ~15 s a scene, and a
 reseeding ``setup`` replays the earlier scenes anyway) with
 ``verify_by_impact: true``, and :mod:`scripts.ddd.judge_scope` decides per scene
 from :mod:`scripts.ddd.impact` (region DOM, region crops, the layout guard)
@@ -53,7 +43,7 @@ attributed by spec id first (:func:`scripts.ddd.fix_scope.attribute_scenes`);
 what still has no scene goes to ``batch_plan.global`` — words (arc / narrative)
 film nothing and re-run the arc judge; product means stills of every scene.
 The safety rule is unchanged — if this module cannot tell, it re-captures — but
-it re-captures as stills, and "cannot tell" no longer includes "a template".
+it re-captures as stills, and "cannot tell" does not include "a template".
 
 When a pass records video
 -------------------------
@@ -347,13 +337,11 @@ def _write_plan(run: Path, current: dict[str, Any]) -> None:
 # recorder guard — no capture into a run dir without this pass's plan (DDD-3)
 # ---------------------------------------------------------------------------
 #
-# ACE noora (``newborn-care-classes-programme-cascade-2026-10-15-001``)
-# iterations 3–5: the recorder was run by hand, its command copied out of an
-# earlier render log — ``--ddd-orchestrated`` included, so the hand-drive guard
-# was silent. No plan was written, so none of the incremental rules applied
-# (stills only, carry unchanged scenes, video once): each was a full video
-# re-film nobody watched, and ``report`` could only call them "unplanned". The
-# flag proves nothing about who is calling; a plan for THIS pass does — it is
+# A recorder run by hand, its command copied out of an earlier render log —
+# ``--ddd-orchestrated`` included — would leave the hand-drive guard silent. With no
+# plan written, none of the incremental rules would apply (stills only, carry
+# unchanged scenes, video once): each run would be a full video re-film nobody
+# watches, and ``report`` could only call them "unplanned". The flag proves nothing about who is calling; a plan for THIS pass does — it is
 # what ``iteration render`` writes immediately before it starts the recorder.
 
 #: The recorder's escape hatch. Takes a reason, which is kept in capture-plan.json.

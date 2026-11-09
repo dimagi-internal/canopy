@@ -35,16 +35,14 @@ def git_log_recent(repo: Path, since: str = "14 days ago") -> str:
 # already in the agent repo's current origin/main?" — so the evidence must come from
 # origin/main, NOT from whatever happens to be checked out.
 #
-# This was silently wrong. `git grep <pat>` and `open(repo/"CHANGELOG.md")` both read the
-# WORKING TREE, while the callers fetch origin/main first and their prompts announce the
-# results as origin/main. Agent repos are normally parked on a feature branch — work
-# happens in worktrees, so the main checkout is left wherever it last was. Measured
-# 2026-08-19: `hal` was parked on `hal/cursor-version-note`, and grepping for
-# `hal:agent-turn-review` returned NOTHING from the working tree while origin/main had it
-# in three files, including the finding's own target. So the source-verification gate was
-# told "no hits", concluded the fix was absent, and kept an already-shipped finding —
-# which is precisely the waste the gate exists to prevent. chrome-sales was parked too;
-# this is the steady state, not an outlier.
+# `git grep <pat>` and `open(repo/"CHANGELOG.md")` both read the WORKING TREE, while the
+# callers fetch origin/main first and their prompts announce the results as origin/main.
+# Agent repos are normally parked on a feature branch — work happens in worktrees, so the
+# main checkout is left wherever it last was. Grepping the working tree can therefore
+# return NOTHING for a symbol that origin/main has in several files, including the
+# finding's own target. The source-verification gate would be told "no hits", conclude the
+# fix was absent, and keep an already-shipped finding — which is precisely the waste the
+# gate exists to prevent. A parked checkout is the steady state, not an outlier.
 #
 # Falling back to the working tree when origin/main is unreadable is deliberate (a fresh
 # clone with no remote, a repo mid-rebase), but the fallback is LABELLED in the output —
@@ -97,8 +95,8 @@ def _path_head(repo: Path, path: str, ref: str | None, lines: int = 40) -> str |
     A symbol that names a FILE needs its CONTENT shown, not a content-grep for its own
     name. `git grep 'skills/agent-turn-review/SKILL.md'` searches for that string INSIDE
     files — it never looks at the file itself — so a target whose fix lives in its own
-    body reports "(no hits)" and reads as unfixed. That is the second half of the
-    2026-08-19 miss: the target existed AND carried the fix, and the gate saw neither.
+    body reports "(no hits)" and reads as unfixed. Without it the
+    target exists AND carries the fix, and the gate sees neither.
     """
     try:
         if ref:

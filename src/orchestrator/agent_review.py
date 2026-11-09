@@ -38,26 +38,25 @@ from orchestrator.transcripts import (
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 
-# Kept as the module default for `find_turn_transcripts`, but `run_review` no longer
-# scans it directly — see the `session_sources` seam below. One home is one account,
+# The module default for `find_turn_transcripts`; `run_review` does not
+# scan it directly — see the `session_sources` seam below. One home is one account,
 # and an agent's corpus is routinely split across the two this human alternates
 # between; a review drawn from half a corpus reads as complete and isn't.
 
 # Wall-clock budgets for the two claude -p passes. Named constants, not magic numbers
 # buried at the call site, so the CLI can expose them and tests can assert the default.
 #
-# BOTH DEFAULT TO None — NO TIMEOUT. They used to be 180s and 300s, and the budget was
-# routinely shorter than the work: a 7-turn hal corpus timed out the synthesis pass on
-# the 180s default, repeatably. That is the worst possible failure for this tool,
-# because a timed-out pass returns ZERO findings — so the budget didn't bound a slow
-# review, it silently converted one into an empty one, which is exactly the "no
-# findings == clean bill of health" misread the surrounding code already shouts about.
-# A review that takes six minutes is fine; a review that invents a clean result is not.
-# (Jonathan, 2026-08-13: "just get rid of the timeout, there is no need to have one".)
+# BOTH DEFAULT TO None — NO TIMEOUT. A fixed budget is routinely shorter than the work (a
+# 7-turn corpus can outlast a 180s synthesis budget, repeatably). That is the worst possible
+# failure for this tool, because a timed-out pass returns ZERO findings — so the budget
+# would not bound a slow review, it would silently convert one into an empty one, which is
+# exactly the "no findings == clean bill of health" misread the surrounding code already
+# shouts about. A review that takes six minutes is fine; a review that invents a clean
+# result is not.
 #
-# The timeout PLUMBING stays — `--timeout` still works, and TimeoutExpired is still
-# caught into a well-formed error — so an operator or a cron that wants a bound can
-# set one and still get the fail-loud error shape that a live incident paid for.
+# The timeout PLUMBING is kept — `--timeout` works, and TimeoutExpired is caught into a
+# well-formed error — so an operator or a cron that wants a bound can set one and still get
+# the fail-loud error shape.
 SYNTHESIS_TIMEOUT = None   # `run_review`'s synthesis pass
 VERIFY_TIMEOUT = None      # `_call_verify_llm`'s source-verification pass
 
@@ -91,20 +90,18 @@ FRICTION_TYPES = (
     "verify_late",     # a completion claim whose only substantiating tool_use lands in a LATER turn
 )
 
-# WHERE a finding's fix lives. Until 2026-10 the synthesis prompt said `target: the file/path in
-# the agent repo the fix touches`, so every finding was routed into the agent's own repo BY
-# CONSTRUCTION — there was no "this is generic, it belongs in canopy" outcome. That is how eva
-# grew a private copy of fleet-generic Google-Docs tooling: the 2026-09-07 review emitted
-# "[checklist_gap/high] Enforce gdoc-review before any Drive share … fix: hook_rule → eva repo"
-# and it shipped as eva's hooks/gdoc_gate.py, a share gate every doc-publishing agent needs.
+# WHERE a finding's fix lives. A finding is not routed into the agent's own repo BY
+# CONSTRUCTION: there is a "this is generic, it belongs in canopy" outcome, so an agent does
+# not grow a private copy of fleet-generic tooling (for example a Drive share gate that every
+# doc-publishing agent needs).
 #   agent  — only this agent's persona/domain needs it
 #   canopy — any agent would want it, the same way (a mechanism: CLI, hook, rail, checker, engine fix)
 #   pack   — the capability is shared but the SETTING is taste (house style, edit marking, titles):
 #            the mechanism ships to canopy parameterized; the setting is recorded as a default.
 PLACEMENTS = ("agent", "pack", "canopy")
 
-# Human-correction mining — the lens agent-review was BLIND to (echo's last turn taught us: it
-# flagged git pathspec errors but missed Jonathan demanding "NEVER EVER submit without review").
+# Human-correction mining — the lens mechanical friction scanning is BLIND to (it flags git
+# pathspec errors but misses a human demanding "NEVER EVER submit without review").
 # A human overriding a safety behavior, or expressing confusion, outranks any mechanical friction.
 _CORRECTION_PATTERNS = (
     # safety override — the agent did (or was about to do) something it must NOT do autonomously
@@ -113,10 +110,9 @@ _CORRECTION_PATTERNS = (
         r"without (?:human |explicit )?(?:review|approval|sign-?off|permission)|"
         r"\bmust not\b|\bshould never\b|\bdo ?n['’o]?t ever\b|\bnever ever\b", re.I)),
     # confusion — the agent's output didn't make sense to the human.
-    # The CAN'T variants were missing until 2026-08-18, when this lens was run live against a
-    # session whose human turn was "I can't follow what the fuck you're doing" and scored it as a
-    # neutral steer. `i don['’]t follow` was there; `i can't follow` was not, and inability is the
-    # more common phrasing when someone is actually lost. Same for the intensified form of "what
+    # The CAN'T variants are needed: "I can't follow what the fuck you're doing" must not score
+    # as a neutral steer. Inability ("i can't follow") is a more common phrasing than
+    # `i don['’]t follow` when someone is actually lost. Same for the intensified form of "what
     # are you doing" — a human who swears mid-sentence is not less confused for it.
     ("confusion", re.compile(
         r"\bi['’ ]?m lost\b|\bi am lost\b|\bconfus|why are you|why did you|"
@@ -134,8 +130,8 @@ _CORRECTION_PATTERNS = (
 # Blocks the HARNESS injects as `user` turns. They are string-content messages like a real
 # human turn, but nobody typed them — and their own boilerplate trips the patterns above
 # (the local-command caveat contains "DO NOT respond to these messages", which scores
-# `emphasis`; task notifications carry "instead of" and sentence-initial "no"). Measured on
-# ACE 2026-07-28: 4 of 6 reported "human corrections" were these. Stripped wherever they
+# `emphasis`; task notifications carry "instead of" and sentence-initial "no"). Left in, they
+# dominate the reported "human corrections". Stripped wherever they
 # appear, not just as a prefix, because the harness APPENDS system-reminders to genuine
 # messages — so a prefix test would keep the human's words and still score the boilerplate.
 _HARNESS_BLOCK_RX = re.compile(
@@ -172,17 +168,16 @@ _HARNESS_AUTHORED_PREFIXES = (
 #    input), so the marker has to come from the dispatcher. `agent_dispatch.stamp_dispatched`
 #    puts DISPATCH_MARKER on every prompt canopy sends; this strips any turn carrying it.
 #
-# Measured on hal 2026-08-14 (canopy #488): of 6 reported "human corrections", 5 were these —
-# two hook replays, two agent dispatch briefs, one generated resume brief; ONE was Jonathan.
-# The cost was not cosmetic. A generated brief became a fleet-scope finding, promoted on the
+# Left in, they dominate the reported "human corrections" (hook replays, agent dispatch
+# briefs, generated resume briefs). The cost is not cosmetic. A generated brief becomes a fleet-scope finding, promoted on the
 # grounds that it appeared in two agents' transcripts in the same window — which is what a
 # six-session dispatch batch looks like. Co-occurrence is this bug's SIGNATURE, and it reads
 # as exactly the evidence that justifies escalating.
 #
 # Self-amplifying, too: agent-review's own findings are delivered to agents AS dispatch
 # briefs, which the next cycle mines back as `strong_correction`.
-# Imported, not re-declared: this used to be a hand-kept copy of the stamper's literal, which
-# was safe only while the marker was a fixed string. It now carries an optional `from=<slug>`, so
+# Imported, not re-declared: a hand-kept copy of the stamper's literal would be safe only
+# while the marker was a fixed string. It carries an optional `from=<slug>`, so
 # a copy would drift the moment a sender was attached — and a stripper that misses the marker
 # silently un-suppresses every brief. One definition, one regex, one import.
 from orchestrator.agent_dispatch import (  # noqa: E402
@@ -250,7 +245,7 @@ def human_corrections(entries: list[dict]) -> list[dict]:
     git errors, but the mechanical signals miss it entirely. Returns [{kinds, quote}].
 
     Only genuinely human-authored text is mined: harness-injected `user` turns are stripped
-    first (`_human_text`), so the caveat/notification boilerplate can't masquerade as Jonathan
+    first (`_human_text`), so the caveat/notification boilerplate can't masquerade as the human
     overriding something. `isMeta` turns (replayed hook feedback) and canopy-dispatched prompts
     (another agent's brief) are dropped whole — see DISPATCH_MARKER above."""
     out: list[dict] = []
@@ -466,9 +461,9 @@ def overclaim_signals(entries: list[dict]) -> list[dict]:
 # SCOPE MATTERS, and getting it wrong recreates the bug. Read each half from the party whose
 # words actually settle it:
 #   * "the human asked"  -> the HUMAN's messages only. The agent's own narration is not
-#     evidence of what was asked, and it is actively misleading: eva's 2026-08-19 closeout
-#     said "nothing published to canopy-web (not asked)" — a correct report of correctly
-#     skipping the step — and a first cut of this check read that as the step being owed.
+#     evidence of what was asked, and it is actively misleading: a closeout
+#     saying "nothing published to canopy-web (not asked)" is a correct report of correctly
+#     skipping the step, and must not be read as the step being owed.
 #     A negation-blind grep over the agent's prose is how the false gap comes back.
 #   * "auto mode" -> either party. turn.md requires the agent to state the mode in its turn
 #     opening, so its own text is the canonical carrier; a human may also set it in-prompt.
@@ -516,14 +511,12 @@ def _owes_publish(user_text: str, asst_text: str) -> bool:
 # script becomes invisible: the command string lives in the file, and only the script's
 # own name reaches the haystack.
 #
-# That is not hypothetical. `workspace-refresh` matched only `agent-publish` / `/agents/`,
-# but every agent now performs it via its close-out script (`bin/<slug>-turn-close`, which
-# shells `canopy agent-publish`). Measured on hal over 12 turn-sessions, 2026-08-19:
-# the close-out ran in 10, and the OLD markers detected 1. The metric was reporting an
-# 11/12 failure rate for a step that was running 10/12 — so it penalized the agent for
-# adopting the rail, and the better hal behaved the worse it scored. A finding was already
-# being raised off that false signal, which is the expensive part: a wrong metric doesn't
-# just mislead, it dispatches work.
+# That is not hypothetical. Every agent performs `workspace-refresh` via its close-out
+# script (`bin/<slug>-turn-close`, which shells `canopy agent-publish`), so markers limited
+# to `agent-publish` / `/agents/` would miss most runs. The metric would report a high
+# failure rate for a step that is running, penalizing the agent for adopting the rail: the
+# better it behaved the worse it would score. A finding raised off that false signal is the
+# expensive part: a wrong metric doesn't just mislead, it dispatches work.
 #
 # `self-review` had the same shape from vocabulary drift — hal and ace renamed the step to
 # `agent-turn-review` (eva/echo still use the old name), so the marker missed the renamed
@@ -545,9 +538,8 @@ def _owes_publish(user_text: str, asst_text: str) -> bool:
 #     Do any of these ONLY when the human explicitly asks to publish/share.
 #
 # So on an ordinary manual turn, NOT publishing is the documented correct behavior, and the
-# scan was counting it as a gap every time. Measured on eva over the 26h to 2026-08-19: 8 of
-# the 10 graded turn-sessions "missing" it — i.e. the metric's headline number was mostly
-# just eva following the procedure. That false signal was then dispatched at eva as a fix
+# scan would count it as a gap every time, so the metric's headline number would be mostly
+# just the agent following the procedure. That false signal would then be dispatched as a fix
 # order (add `git fetch origin main` to `bin/eva-preflight`) — which could not have moved the
 # number, because the label reads like a git refresh and the markers are all canopy-web
 # publish. Same lesson as the paragraph above, one rung further along: a wrong metric doesn't
@@ -606,7 +598,7 @@ _AUTH_MARKERS = re.compile(
 )
 # A completed file write is never runtime friction — but its success result (or a path/filename
 # that happens to contain "oauth", "error", …) would otherwise match the error/auth markers.
-# hal's 2026-07 review flagged a successful Write of `email-oauth-not-minted.md` as auth_friction.
+# A successful Write of `email-oauth-not-minted.md` must not be flagged as auth_friction.
 _EDITOR_TOOLS = {"Edit", "Write", "NotebookEdit"}
 _WRITE_OK = re.compile(
     r"file (?:created|updated|written) successfully|successfully (?:created|wrote|updated|saved)|"
@@ -625,7 +617,7 @@ _STRONG_ERROR_MARKERS = re.compile(
     re.I,
 )
 # The turn-step checklist only means something for a TURN. Applying it to an `architect ddd` /
-# harvest session flagged every one as a 4-gap "failure storm" (hal's 2026-07 review). A session
+# harvest session flags every one as a 4-gap "failure storm". A session
 # counts as a turn only if it actually engaged the turn loop.
 _TURN_MARKERS = re.compile(
     r"skills/turn|/turn/skill|[\w-]*turn-close|\bdo a turn\b|\btake a turn\b", re.I
@@ -647,7 +639,7 @@ def agent_slug(repo: Path) -> str:
     The dir name is only the slug on a laptop checkout (`~/emdash-projects/hal`). A cloud
     runner checks each turn out as `<work>/agents/<slug>/<turn-id>`, so the dir name there
     is a turn id — and reviewing "518e26c8" fetched nothing from canopy-web (404) and
-    reported "No findings", which reads as a clean bill of health (2026-10-20, Ada).
+    reported "No findings", which reads as a clean bill of health.
     """
     try:
         name = json.loads((repo / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")).get("name")
@@ -767,9 +759,9 @@ class TranscriptScan(NamedTuple):
 
     `dropped_roots` maps each `/worktrees/<root>/` the scan REJECTED to how many
     in-window transcripts it cost. It is the only field that survives a PARTIAL
-    blindness: `considered`/`matched` catch a scan that attributed nothing, but the
-    matcher bug of 2026-09-01 left eva at 2-of-15 and ace at 1-of-9 — non-zero, so
-    `confidence: blind` stayed silent while 87% of the corpus was dropped. A named
+    blindness: `considered`/`matched` catch a scan that attributed nothing, but a
+    matcher bug that attributes 2 of 15 transcripts is non-zero, so
+    `confidence: blind` stays silent while most of the corpus is dropped. A named
     root with a count next to it makes that visible without a threshold to tune:
     `dropped_roots: {"hal-8ac55e86": 14}` reads as the bug it is.
     """
@@ -806,8 +798,8 @@ def scan_turn_transcripts(
         # `glob`, deliberately NOT `rglob`: a session's SUBAGENT transcripts live at
         # `<session-id>/subagents/agent-*.jsonl` underneath this dir, and they are not
         # turns — they are one turn's fan-out. Recursing swamps the corpus with them
-        # (one ace session contributed 291 sidecars against 7 real sessions on
-        # 2026-09-02) and every per-turn metric downstream silently changes meaning.
+        # (one session can contribute hundreds of sidecars against a handful of real
+        # sessions) and every per-turn metric downstream silently changes meaning.
         # The failure mode is a wrong number, not an error, so it is pinned by
         # `test_scan_ignores_subagent_sidecar_transcripts` rather than left to a reader.
         for f in d.glob("*.jsonl"):
@@ -888,13 +880,12 @@ def friction_signals(
 
         # Trust the harness's own verdict over a grep of the result text.
         #
-        # Every tool_result block carries `is_error`; this extractor used to drop it
-        # and re-derive failure from the prose, which made the SUBJECT of a result
-        # indistinguishable from its OUTCOME. Measured on 36 ACE turns: a doctor line
-        # reading `PASS cchq_connect_features: … OAuth connection … configured` was
+        # Every tool_result block carries `is_error`; re-deriving failure from the prose
+        # alone would make the SUBJECT of a result indistinguishable from its OUTCOME. For
+        # example a doctor line reading `PASS cchq_connect_features: … OAuth connection … configured` was
         # counted as BOTH a failure and auth friction; so were `--- tsc exit: 0 ---`
         # (the "404" lived in a release URL), a 200 response, and reading the source
-        # of `apps/api/auth.py`. See dimagi-internal/canopy#416.
+        # of `apps/api/auth.py`.
         #
         # `is_error is None` means the transcript predates the flag — fall through to
         # the markers, so old sessions review exactly as they did before.
@@ -975,8 +966,8 @@ def friction_signals(
 def build_review_prompt(repo: Path, corpus: list[dict]) -> str:
     """Assemble the friction corpus + agent identity into an evaluator–optimizer prompt.
 
-    Assembled INLINE by the framework-tier convention (#352): framework logic-prompts
-    stay inline — static, co-located with their logic, and immune to the #351 packaging
+    Assembled INLINE by the framework-tier convention: framework logic-prompts
+    stay inline — static, co-located with their logic, and immune to the packaging
     class (a Python string literal always ships, unlike an external `.md`) — while
     PRODUCT, user-editable templates go external via `prompts/load_prompt`. Loading from
     the PRODUCT `prompts/` package here would also break the framework→product boundary
@@ -1074,14 +1065,11 @@ _CONF_LEVELS = {"high", "medium", "low"}
 # is still sound. Dropping the finding throws away the expensive half (a read source,
 # a ran already_fixed_check, a written basis) to punish the cheap half (one enum word).
 #
-# Measured on the 2026-08-18 cycle: `canopy agent-review ace --hours 24` over 13 turns
-# synthesized FIVE findings and dropped ALL FIVE on this gate, so the run reported
-# "No findings synthesized" — a clean bill of health on the agent with the loudest
-# human-correction signal in the fleet that day. The titles matched Jonathan's own
-# verbatim corrections in the same window. A validator that turns 5 findings into 0
-# is not enforcing rigor, it is manufacturing silence.
+# A validator that turns every synthesized finding into a drop reports "No findings
+# synthesized" — a clean bill of health on an agent that may have the loudest
+# human-correction signal. That is not enforcing rigor, it is manufacturing silence.
 #
-# Two failure modes hide behind the ONE message the old gate emitted:
+# Two failure modes hide behind a single drop message:
 #   (a) the value is a near-miss of the enum ("very high", "Medium", 0.8, 85)
 #   (b) the key is ABSENT from `evidence` because the model satisfied the OTHER
 #       `confidence` the synthesis prompt asks for — the finding-level one. The prompt
@@ -1092,10 +1080,10 @@ _CONF_LEVELS = {"high", "medium", "low"}
 # that is genuinely absent evidence, and `confidence_basis` stays hard-gated
 # regardless, so an unjustified level can never be laundered into a level.
 #
-# The drop reasons are also split apart, because the single old message made (a) and
-# (b) indistinguishable in the log: the 2026-08-18 stderr printed the reason but never
-# the offending VALUE, so nobody could tell a mislabel from an omission without
-# re-running. `_confidence_coerced` records `from` verbatim to close that for good.
+# The drop reasons are also split apart, because a single message makes (a) and
+# (b) indistinguishable in the log: printing the reason without the offending VALUE
+# leaves nobody able to tell a mislabel from an omission without
+# re-running. `_confidence_coerced` records `from` verbatim.
 _CONF_ALIASES = {
     # near-misses of "high"
     "very high": "high", "veryhigh": "high", "vhigh": "high", "highest": "high",
@@ -1158,14 +1146,13 @@ def normalize_confidence(raw: object) -> tuple[str | None, str]:
 # relies on the model choosing to comply, which is exactly what an invariant can't
 # rely on (see CLAUDE.md's "Invariants are hooks, not memory").
 #
-# This rail used to DROP such a finding. That threw away the expensive half (the
+# This rail does not DROP such a finding: that would throw away the expensive half (the
 # evidence) to punish the cheap half (a label). The synthesis prompt already tells
 # the model "an invariant finding MUST use hook_rule or schema_validator" — so when
 # it writes `skill_edit` anyway, the finding isn't wrong, its ROUTING is, and the
-# routing is the one part we can fix ourselves. Deterministically. Measured on the
-# 2026-08-11 cycle: eva twice, hal once, each losing exactly one evidence-valid
-# finding per run this way — including eva's recurring Goals-sheet permission
-# failure and hal's global-CLI resolution bug.
+# routing is the one part we can fix ourselves. Deterministically. Dropping would lose an
+# evidence-valid finding per run this way, including recurring permission and CLI
+# resolution failures.
 #
 # So the fix-kind branch REPAIRS instead of discarding: coerce to the structural kind
 # and annotate it (`_fix_kind_coerced`) so the triager sees both the correction and
@@ -1463,10 +1450,9 @@ def _finding_symbols(findings: list[dict]) -> list[str]:
             if not tok or len(tok) > 80:
                 continue
             # A path, OR a bare filename with a known extension. The slash-only rule
-            # silently dropped `persona.md` and `CLAUDE.md` — two of the eight findings
-            # in the real 2026-08-18 ace run named a bare file as their target and
-            # therefore reached the verification gate with NO evidence at all, which
-            # resolves to `unverifiable` and is KEPT. Same shape as the miss #504 fixed:
+            # would silently drop `persona.md` and `CLAUDE.md` — findings naming a bare
+            # file as their target would reach the verification gate with NO evidence at
+            # all, which resolves to `unverifiable` and is KEPT. The same shape of miss:
             # the gate cannot see the target, so it cannot tell shipped from live, and an
             # already-fixed finding survives to waste a turn.
             if "/" in tok or tok.lower().endswith(_TARGET_FILE_EXTS):

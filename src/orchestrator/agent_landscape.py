@@ -4,11 +4,10 @@ it. Plus a skill-based membership rule for team work (huddles).
 
 Scope is canopy-web's `GET /api/workspaces/<slug>/agent-topology`: one tree, never the whole
 system. That is the point — any workspace with its own conductor agent (Ada for dimagi) reads
-its own tree with the same command (Jonathan, 2026-10-16). Admin and above on that workspace.
+its own tree with the same command. Admin and above on that workspace.
 
-Origin: Jonathan, 2026-10-16 ("Re: AI Learning Champions: next steps") — "an easy way to
-understand the agentic landscape within Canopy dynamically", and "we do NOT want all agents to
-be participating in the huddles unless they are bringing specific skills / value".
+The purpose: understand the agentic landscape within Canopy dynamically, and keep huddles to
+the agents that bring specific skills or value rather than all of them.
 """
 from __future__ import annotations
 

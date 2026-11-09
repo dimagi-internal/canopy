@@ -8,8 +8,8 @@ installs the agent's plugin from.
 
 The repo carries only what is the agent's own: persona, thin skill stubs over canopy's
 fleet-canonical `agent-core/` procedures, and a JSON gating config. It registers NO
-gating hook — canopy's plugin owns the one session hook that reads that config
-(canopy#849). Gating defaults to DENY RAILS ONLY with an empty `approve` list — approval
+gating hook — canopy's plugin owns the one session hook that reads that config.
+Gating defaults to DENY RAILS ONLY with an empty `approve` list — approval
 lives procedurally in the turn checklist, never in a blocking hook modal (the §1a
 "rails, not gates" revision; see docs/architecture/shared-gog-gdrive.md §4). The email
 channel is a thin `bin/<slug>-email` shim over the shared `canopy email` engine
@@ -204,7 +204,7 @@ _GATING_JSON = '''{
 }
 '''
 
-# No PreToolUse gating hook here (canopy#849). The canopy plugin registers ONE hook that works
+# No PreToolUse gating hook here. The canopy plugin registers ONE hook that works
 # out whose session it is and applies that agent's config/gating.json. An agent registering its
 # own hook made its rails fire in sibling agents' sessions once plugins went user-scope.
 # `CANOPY_AGENT` is what tells canopy (gating, canopy-web identity) that this is the agent's session.

@@ -146,6 +146,6 @@ def test_message_names_the_safe_path():
 def test_pattern_doc_records_the_evidence():
     """A rail whose reasoning is not written down gets deleted by a later turn that doubts it."""
     doc = RULE["_pattern_doc"]
-    assert "2026-08-26" in doc
+    assert "Verified on a throwaway doc" in doc
     for verb in ("insert", "delete", "find-replace"):
         assert verb in doc, f"_pattern_doc must record the verified verb {verb!r}"

@@ -83,7 +83,7 @@ def _load_findings(run_dir: Path, *, demo: bool = False) -> list[dict]:
     ``demo``: the run's objective is ``demo`` — the product lens/lint findings are
     still loaded (and reported) but as ``route: DEFER``, so they never drive the
     demo loop. The exception is prose density
-    (:data:`scripts.ddd.objective.ALWAYS_BLOCKING_LINT`, canopy#786): explanatory
+    (:data:`scripts.ddd.objective.ALWAYS_BLOCKING_LINT`): explanatory
     copy accreting on a screen blocks in every objective.
     """
     from scripts.ddd.objective import blocks_every_objective, feeds_every_objective
@@ -118,7 +118,7 @@ def _load_findings(run_dir: Path, *, demo: bool = False) -> list[dict]:
 
 
 def _narrative_guard(state: Any, spec: str | None, run_dir: Path, cfg: Any) -> dict | None:
-    """The safety net under canopy#789: a narrative edit nobody ran through the guard.
+    """The safety net under the narrative guard: a narrative edit nobody ran through the guard.
 
     Every narrative revision is meant to go through ``narrative_guard check``
     when it is made. If the spec's story changed since the run's last recorded

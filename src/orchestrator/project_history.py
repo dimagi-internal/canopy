@@ -1,9 +1,9 @@
 """Project history — reconstruct everything a person and canopy agents did on ONE
 project, as one deterministic analysis that several outputs render from.
 
-Why this exists (hal T66, 2026-10-09): Jonathan wanted "the Supply story" told
-back to him and to the Connect team — every session in order, the artifacts
-that actually helped, and how the agent reads his thinking — and wanted it to
+Why this exists: a project's story ("the Supply story") has to be told
+back to its owner and team — every session in order, the artifacts
+that actually helped, and how the agent reads the owner's thinking — and has to
 work on ANY project, not as a one-off. `canopy harvest map` answered the
 adjacent question badly: it selects sessions by KEYWORD ("supply" hit 842
 sessions, mostly morning briefings and unrelated talks) and dates them by file
@@ -17,8 +17,8 @@ does work, and this module encodes it:
 * **Canopy first, local transcripts only where canopy falls short.** The
   session index, per-session activity (repos, branches, PRs, edited dirs, MCP
   tools), human inputs and artifacts all come from canopy-web. A canopy session
-  that merged several conversations under one task name (sessions created
-  before canopy-web T74) has lost the earlier conversations' messages
+  that merged several conversations under one task name (an older session)
+  has lost the earlier conversations' messages
   server-side; for those, and only those, the local Claude transcripts (every
   readable `/Users/*/.claude/projects`) split it back into conversations and
   supply the prompts. Every conversation records which source it came from.
@@ -270,7 +270,7 @@ def project_prs(spec: ProjectSpec, checkout: Optional[Path] = None,
     """``{number: {number, head, title, url, merged_at}}`` for every PR merged
     into the default branch since ``spec.since`` that touched a project path.
 
-    The PR list comes from the squash-merge subjects (``… (#1234)``) of
+    The PR list comes from the squash-merge subjects (``…``) of
     ``git log <remote>/main -- <paths>`` in a local checkout — exact and cheap —
     and head branches from one ``gh pr list`` call."""
     if not spec.paths:
@@ -735,7 +735,7 @@ def _claim_transcripts(picked: list, users_root: str) -> dict[str, list[Path]]:
     no cwd) can be named by several sessions — emdash task keys repeat across
     runners (three different ``supply`` sessions, one per account) — so it goes
     to the session whose runner name best matches the worktree's account
-    (``jj-mbp-cdp`` ↔ ``jjackson``), earliest-created on a tie."""
+    (a runner named for a machine ↔ the account that owns it), earliest-created on a tie."""
     claims: dict[str, list[Path]] = {}
     owner: dict[Path, tuple] = {}
     for s, sig, _weak in picked:
@@ -889,7 +889,7 @@ def collect(selection: dict, *, call: Caller, tiers: Iterable[str] = ("core", "a
         if c["tier"] not in tiers:
             continue
         # Canopy indexes; for the TEXT, a claimed local transcript wins when there
-        # is one. canopy-web's human-inputs read (2026-10-09) still returns
+        # is one. canopy-web's human-inputs read still returns
         # subagent dispatch prompts, injected skill bodies and compaction summaries
         # as human input — 51 "human" rows for 22 real prompts on one DDD session —
         # because the flags that tell them apart (isSidechain / isMeta /
@@ -1047,7 +1047,7 @@ def _artifact_row(kind: str, r: dict, ws: str, why: str, base_url: str) -> dict:
         "storyboard": f"/storyboard/{r.get('slug') or ident}",
         "narrative": f"/ddd/{ident}",
     }[kind]
-    try:  # artifact pages live only under /w/<workspace>/ (canopy-web#1337)
+    try:  # artifact pages live only under /w/<workspace>/
         url = canopy_web.app_url(page, ws, base_url)
     except canopy_web.WorkspaceRequiredError:
         url = ""  # listed without a workspace: name `workspaces` in the spec to get links

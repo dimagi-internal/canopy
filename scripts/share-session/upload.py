@@ -249,7 +249,7 @@ def _owner_clause(owner_email: str) -> str:
 def _share_line(label: str, api: str, token: str, share_url: str | None,
                 workspace: str | None) -> str:
     """``<label>: https://<host>/w/<workspace>/share/<token>`` — the only share
-    page canopy-web serves (canopy-web#1337 removes the flat ``/share/<token>``).
+    page canopy-web serves (there is no flat ``/share/<token>``).
     Built from the server's ``share_url`` when it sent one, else from the token
     and the ``workspace`` it echoed. With neither, there is no correct link to
     print, so the line says so instead of printing a flat one."""
@@ -266,18 +266,17 @@ def format_session_result(
 ) -> list[str]:
     """The stdout block for one uploaded session.
 
-    Two rules here, both paid for by dimagi-internal/canopy#484 — a share an
-    agent made for a human that was a black screen nobody could open:
+    Two rules here, so a share an agent made for a human is never a black
+    screen nobody can open:
 
-    1. **One URL per line, with nothing trailing it.** The private line used to
-       read ``View (dimagi login required): <api>/sessions  (slug: ABC123)`` —
-       a URL and a bare identifier on the same line, which reads as one thing
-       and gets concatenated into ``<api>/sessions/ABC123``. That is not a
-       route (``/sessions`` and ``/share/<token>`` are the only two), so it
-       serves the empty SPA shell: a blank page that looks like a broken share
-       rather than a URL that was never real.
+    1. **One URL per line, with nothing trailing it.** A URL and a bare
+       identifier on the same line (``<api>/sessions  (slug: ABC123)``) read as
+       one thing and get concatenated into ``<api>/sessions/ABC123``. That is
+       not a route (``/sessions`` and ``/share/<token>`` are the only two), so
+       it serves the empty SPA shell: a blank page that looks like a broken
+       share rather than a URL that was never real.
     2. **Never promise access the artifact doesn't grant.** "dimagi login
-       required" claimed any logged-in dimagi user could view it. Private
+       required" would claim any logged-in dimagi user could view it. Private
        sessions are owner-only, and agents upload under their OWN accounts (the
        uploader resolves its PAT from the repo it runs in) — so the reader is
        usually not the person who asked for the share. Name the owner instead.
@@ -301,7 +300,7 @@ def format_arc_result(
 
     Same two rules as ``format_session_result``, plus one fact that makes a
     private arc worse than a private session: canopy-web has **no arcs UI at
-    all** (verified 2026-08-14 — ``arcs`` appears only in the generated API
+    all** (``arcs`` appears only in the generated API
     types; ``SessionsPage`` lists sessions, and ``/share/<token>`` is the only
     arc surface there is). So a private arc isn't merely unlisted, it has no
     page whatsoever — and the member sessions it was stitched from are private

@@ -2,9 +2,9 @@
 
 Why
 ---
-A DDD run used to write what it could not fix into ``.canopy/ddd/learnings.md``
-— a file the owner of the fix never reads (and, across machines, the next run
-did not either). A finding with an owner belongs in that owner's tracker, with
+A DDD run does not write what it could not fix into ``.canopy/ddd/learnings.md``:
+the owner of the fix never reads that file (and, across machines, neither does the
+next run). A finding with an owner belongs in that owner's tracker, with
 this run's evidence; a lesson about the PRODUCT belongs in the product's docs or
 UI copy. So at the end of a run (``run_summary.finalize``):
 

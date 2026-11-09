@@ -428,10 +428,10 @@ class Recorder:
         # Which render each snapshot came from.
         #
         # Iterations of a narrative reuse one run dir, so a re-render OVERWRITES
-        # the snapshots a judge may still be reading. That produced a verdict
-        # scored against a mixture of two iterations, whose findings described
-        # scenes that no longer existed — a whole judge cycle spent, and the
-        # only reason it was caught is that the prose did not match the frames.
+        # the snapshots a judge may still be reading. That yields a verdict
+        # scored against a mixture of two iterations, whose findings describe
+        # scenes that have been replaced — a whole judge cycle spent, and only
+        # a prose/frame mismatch would reveal it.
         # Stamping every page-text dump makes the mixture detectable instead of
         # silent; see scripts/ddd/snapshot_consistency.py.
         self.render_id = f"{int(time.time() * 1000):x}"
@@ -583,7 +583,7 @@ class Recorder:
         A full-page ``page.screenshot`` resizes the live viewport for the
         beyond-viewport paint (after a scroll-to-top), and the video recorder
         films it: the page shrinks onto a grey canvas for ~1.5 s at the scene
-        boundary (canopy#912 — ddd-video-judge flagged it critical, in cut after
+        boundary (ddd-video-judge flags it critical, in cut after
         cut). The capture cannot be taken off the filmed page (the frame must be
         THIS page's state), so instead its span lands in
         ``RunReport.capture_spans`` and the emitter cuts it out of the footage.
@@ -740,13 +740,13 @@ class Recorder:
         # losing the PNG degrades the eval but losing the text removes the
         # scene from the input entirely.
         text_path.write_text(json.dumps(payload, indent=2))
-        # Geometry + colour for the visual lens (canopy#525). Same frame, same
+        # Geometry + colour for the visual lens. Same frame, same
         # steady state, same scene index as the PNG and the text dump.
         self.take_visual_capture(page, scene_index)
         # What the scene is ABOUT — its action targets and narrated elements,
         # with their DOM text and frame boxes — so DDD's judge scope can tell a
         # change to the scene's subject from a change elsewhere on a shared
-        # template (canopy#780).
+        # template.
         self.take_region_capture(page, scene, scene_index, full_page=full_page)
         if png_ok:
             self.snapshots_taken.append(scene_index)
@@ -791,7 +791,7 @@ class Recorder:
         the element carrying a claim rendered at 0px or that its label is white
         on white. Three such defects scored 9/9 on every text lens across four
         iterations of one run and were only caught by a hand-written probe after
-        the loop had given up (canopy#525).
+        the loop had given up.
 
         Read from the page already open, at the same steady state as the PNG, in
         one ``page.evaluate``. Best-effort: a failure here degrades the lens to

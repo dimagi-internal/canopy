@@ -2,22 +2,17 @@
 
 Why this module exists
 ----------------------
-Until now a run converged when every gating judge's ``overall_score`` reached 4
-(``demo``) or every product dimension's weakest cell reached 3 (``product``).
-Both are a MINIMUM over ~60 noisy integer cells, and neither says what the run is
-FOR. From Hal's audit of the last two days of runs (canopy#790):
+A fixed bar -- every gating judge's ``overall_score`` reaching 4 (``demo``) or every
+product dimension's weakest cell reaching 3 (``product``) -- is a MINIMUM over ~60
+noisy integer cells, and says nothing about what the run is FOR:
 
-* Neither run converged. ACE Spark (``demo``): five runs, scores stuck at 2-3,
-  ``-005`` had every judge at 3.0 and was published unconverged by instruction.
-  connect-labs supply-sophie-sheets (``product``, floor 3): score_history
-  ``[2,2,2,3,3,3,3,3,3,3,2]``, ``stopped_not_converged`` — the last full pass
-  flipped 3 -> 2 with no relevant change (#492: the min of ~60 cells whose
-  per-cell draw is +/-1 on identical frames).
-* Generic dimensions kept raising findings unrelated to the run's purpose: arc
-  ``visual_variety`` never cleared in 11 supply iterations; email findings cost
-  about six rounds (#783).
-* Jonathan: "the arbitrary 4 goal might be too high and maybe it's better to
-  have a rubric we send in that we are trying to hit."
+* A minimum over noisy cells does not converge: one full pass flipping 3 -> 2 with
+  no relevant change (the min of ~60 cells whose per-cell draw is +/-1 on identical
+  frames) un-converges a run that had held 3 for many passes.
+* Generic dimensions keep raising findings unrelated to the run's purpose, and
+  those findings cost extra rounds.
+* A fixed number is arbitrary; a rubric the caller sends in, naming what the run
+  is trying to hit, is not.
 
 The target rubric
 -----------------
@@ -45,12 +40,12 @@ Criteria = one per outcome + one per blocking dimension.
   judges' per-scene rows). It passes this pass when the MEDIAN cell reaches its
   bar and none of its cells is a confirmed break (a capping cell whose confirmed
   score is <= 2 — ``ddd-concept-eval`` Step 4a re-judges those k=3). The median,
-  not the minimum: one cell drawing a point low no longer fails the run.
+  not the minimum: one cell drawing a point low does not fail the run.
 * An outcome the concept judge scored directly (``target_outcomes:`` in
   ``verdict-concept.yaml`` — k=3 draws, majority) uses that result instead.
 * NOISE across passes: a criterion is passing when it passed on the MAJORITY of
   its last ``draws`` full judged passes (a tie goes to the current pass). One
-  pass flipping 3 -> 2 with nothing changed no longer un-converges a run.
+  pass flipping 3 -> 2 with nothing changed does not un-converge a run.
 
 Findings: a finding on a FAILING criterion (its dimension, or an outcome's scene
 and dimension) at ``high``/``medium`` blocks; everything else — a finding on a
@@ -58,7 +53,7 @@ passing criterion, or on a dimension the rubric does not name — is advisory
 unless its severity is in ``block_severities`` (default ``high``). Advisory
 never holds the run open, but a MECHANICAL advisory finding on an unparked scene
 still rides the next batch (``target_role: advisory``, route unchanged): the
-rubric decides what blocks, not what gets fixed (canopy#788). Only an advisory
+rubric decides what blocks, not what gets fixed. Only an advisory
 finding no batch can fix without a decision (``options`` / ``redesign``, or a
 parked scene) becomes ``route: DEFER``, ``deferred_by: target_rubric``.
 
@@ -454,7 +449,7 @@ def partition(findings: list[dict], rubric: Rubric, status: list[dict]) -> list[
         if (on_failing and sev in CRITERION_SEVERITIES) or sev in block:
             f["target_role"] = "blocking"
         elif rides_the_batch(f):
-            # Advisory, but a confident fix still goes in the batch (canopy#788):
+            # Advisory, but a confident fix still goes in the batch:
             # the rubric decides what holds the run open, not what gets fixed.
             f["target_role"] = "advisory"
             if f.get("objective_role") == "blocking":

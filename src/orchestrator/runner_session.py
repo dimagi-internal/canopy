@@ -2,16 +2,15 @@
 no person's PAT will do.
 
 A paired runner buys an hour-long runner token with its approved device key
-(`canopy vault runner-session`, canopy-web#1594). canopy-web lets that token stage
+(`canopy vault runner-session`). canopy-web lets that token stage
 exactly the agents its own box serves (`/credentials/resolve`, `/credentials/access`,
-`/runtime` — canopy-web#1604). So a box whose owner's PAT was revoked, or a turn whose
+`/runtime`). So a box whose owner's PAT was revoked, or a turn whose
 only token is the agent's own (which `/credentials/resolve` always refuses), still
 gets its secrets — as the box, never as a person.
 
-Why: on 2026-10-17 the laptop runner's owner PAT was revoked in a token cleanup. The
-runner itself carried on (it signs in with its key), but every `canopy agent prepare`
-and `canopy cred` on it was refused, so Hal's and Eva's turns there would have had
-no secrets.
+Why: a laptop runner whose owner's PAT is revoked still signs in with its key,
+but every `canopy agent prepare` and `canopy cred` on it would be refused, so the
+turns there would have no secrets.
 
 `canopy_web.call` uses this for credential reads only, and only after the token it
 was given is refused. The token is cached in ``~/.canopy/runner-session.json`` (0600)

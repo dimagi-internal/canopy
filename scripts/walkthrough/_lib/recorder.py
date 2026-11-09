@@ -905,11 +905,10 @@ _SCROLL_SETTLE_JS = """([timeoutMs, quiet]) => new Promise(res => {
 def wait_scroll_settled(page: Page, *, timeout_ms: int = 2500, quiet_frames: int = 6) -> float | None:
     """Block until an in-flight smooth scroll has LANDED; return the settled scrollY.
 
-    A smooth ``window.scrollTo`` is asynchronous. ``scroll: top`` used to return
-    after a fixed 600 ms, so on a long page an immediately following
-    ``scroll_to`` measured the page mid-animation and reported "did not move the
-    page: already framed at scrollTop 765" — the scroll to top had not arrived
-    yet (0.2.528, M13). Best-effort: a page that cannot evaluate returns None.
+    A smooth ``window.scrollTo`` is asynchronous. Returning after a fixed delay
+    would let, on a long page, an immediately following ``scroll_to`` measure the
+    page mid-animation and report "did not move the page: already framed at
+    scrollTop 765" while the scroll to top had not arrived yet. Best-effort: a page that cannot evaluate returns None.
     """
     try:
         y = page.evaluate(_SCROLL_SETTLE_JS, [int(timeout_ms), int(quiet_frames)])

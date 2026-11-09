@@ -10,9 +10,7 @@ So the first job of a handoff is to FIND those sessions, by the refs the work is
 known by (a Gmail thread id, a Doc id, a folder id), and hand the receiver a list
 it can read. Everything here is read-only.
 
-(Origin: 2026-10-02 — the first agent-to-agent transfer, ACE → Eva on a funder
-concept note. The principal asked for it as "a first class canopy operation";
-until then the receiver had to grep ~/.claude/projects by hand to find the
+(Without this, the receiver would have to grep ~/.claude/projects by hand to find the
 session that did the work.)
 """
 from __future__ import annotations

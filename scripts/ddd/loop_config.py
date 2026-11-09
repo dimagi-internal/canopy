@@ -23,9 +23,9 @@ module reads the two blocks the v1/backlog loop adds::
       floor_first: true       # between checkpoints, the judge holding the gating
                               # floor re-judges its capping scene(s) every pass, and
                               # the next batch fixes the floor's findings first
-                              # (scripts.ddd.floor, canopy#780)
+                              # (scripts.ddd.floor)
       narrative_mode: auto    # auto | build | polish — how the narrative is reviewed
-                              # (scripts.ddd.narrative_guard, canopy#789). build: a
+                              # (scripts.ddd.narrative_guard). build: a
                               # living spec the loop may evolve, every revision
                               # guarded autonomously, nothing waits on a human;
                               # polish: the first version blocks on the human gate.
@@ -40,7 +40,7 @@ module reads the two blocks the v1/backlog loop adds::
         - match: "Ask an agent|floating .*launcher"
           name: connect-labs-chrome
           owner: Connect Labs
-          issue: dimagi/connect-labs#2578  # the run comments its evidence here
+          issue: dimagi/connect-labs#N  # the run comments its evidence here
           repo: dimagi/connect-labs        # no issue -> find/open one here (owner_routing)
       writable_scopes: [data, registry, seed]  # [DATA]/[REGISTRY]/[SEED] fixes are
                               # out by default; list the ones this loop CAN write
@@ -49,13 +49,13 @@ module reads the two blocks the v1/backlog loop adds::
                               # issue here (default: the target repo's origin)
       max_new_issues: 3       # new issues one run may open across all owners
       recurring_after: 2      # a cell with an open finding this many passes running is
-                              # stamped `recurring` and briefed first (canopy#788)
+                              # stamped `recurring` and briefed first
       plateau_rounds: 3       # this many full judges with neither the score nor the
                               # open backlog improving -> stop with a direction
-                              # question, even while the findings churn (canopy#782)
+                              # question, even while the findings churn
       scoped_capture: true    # between checkpoints, re-film only the scenes a batch
                               # changed, as stills; narration-only batches film
-                              # nothing (scripts.ddd.capture_scope, canopy#785)
+                              # nothing (scripts.ddd.capture_scope)
 
     deploy_gate:
       health_url: https://labs.connect.dimagi.com/health/
@@ -70,7 +70,7 @@ module reads the two blocks the v1/backlog loop adds::
       setup: make serve-demo                   # (re)start it; run under the watchdog
       health_url: http://localhost:8000/health/  # optional readiness probe
       ready_timeout_seconds: 120
-      deploy_checkpoints: false                # true = every full pass on deploy (pre-#787);
+      deploy_checkpoints: false                # true = every full pass on deploy;
                                                # default: only the pass that decides
 
     # ...or, deliberately without one (the reason is recorded in run_state and
@@ -214,8 +214,8 @@ class InnerLoopConfig:
     setup: str | None = None
     health_url: str | None = None
     ready_timeout_seconds: float = 120.0
-    # canopy#787: full passes between decisions run locally; true = every full
-    # pass on the deploy target (the pre-#787 behaviour).
+    # Full passes between decisions run locally; true = every full
+    # pass on the deploy target.
     deploy_checkpoints: bool = False
     # ``inner_loop: off`` — declared deliberately, rather than just missing.
     off: bool = False
@@ -241,7 +241,7 @@ class DeployGateConfig:
 
 
 #: Built-in per-step budgets (minutes), under any configured ``<step>_minutes``.
-#: Judges: measured 2-10 min per judge on the 2026-10-15 ACE runs; a user judge on
+#: Judges: measured 2-10 min per judge ACE runs; a user judge on
 #: ``noora-health/20261015-1129`` iteration 2 ran 98 min under the 45-min default
 #: and the whole pass waited on it. 20 is twice the slowest healthy judge.
 STEP_DEFAULT_MINUTES: dict[str, float] = {"judge": 20.0}

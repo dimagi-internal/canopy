@@ -456,7 +456,7 @@ def build_evidence(
 # ``base`` captures the host AND any deployment sub-path (e.g. ``/canopy`` on
 # labs.connect.dimagi.com/canopy) so the derived ``…/content`` URL keeps the
 # prefix — otherwise the clip stream 404s and the review drops clip_url. Only
-# the scoped page ``/w/<ws>/walkthrough/<id>`` has a stream (canopy-web#1338):
+# the scoped page ``/w/<ws>/walkthrough/<id>`` has a stream:
 # a flat or pre-tenancy ``/w/<id>`` page has no address, so no clip.
 _SCOPED_PAGE_RE = re.compile(
     r"^(?P<base>https?://[^/]+(?:/[^/]+)*?)/w/(?P<ws>[^/?#]+)/walkthrough/(?P<wid>[0-9a-fA-F-]{36})"
@@ -932,7 +932,7 @@ def _cmd_post(args: argparse.Namespace) -> None:
     rs.save(state)
 
     # Every link here is /w/<workspace>/… — the server's raw `url` is replaced,
-    # never echoed (canopy-web#1337).
+    # never echoed.
     out = dict(result)
     out["posted"] = True
     out["clusters"] = len(request.findings)

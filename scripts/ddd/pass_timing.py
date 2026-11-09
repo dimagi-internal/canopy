@@ -1,6 +1,6 @@
-"""Per-pass timing — where each DDD pass spent its wall clock (canopy#780).
+"""Per-pass timing — where each DDD pass spent its wall clock.
 
-"Why is this slow" was answered on 2026-10-06 by reconstructing four runs from
+"Why is this slow" was answered by reconstructing four runs from
 step timestamps by hand: about 13 minutes per partial pass (fixers ~5, render
 2–4, concept judge ~6), plus the user-artifact and arc judges on full passes.
 ``RunState.steps`` holds only the LAST entry per step name, so the render of
@@ -17,8 +17,7 @@ iteration 3 overwrote iteration 2's, and judges were never timed at all.
 ``rejudged`` / ``reused`` / ``held`` count the scenes the judge scope re-judged
 and carried; ``capture`` is the pass's capture mode (``full`` | ``scenes`` |
 ``none``, :mod:`scripts.ddd.capture_scope`) with ``captured`` / ``carried``
-scene counts — so what scoping saved is read off the table, not reconstructed
-(canopy#785).
+scene counts — so what scoping saved is read off the table, not reconstructed.
 
 Steps come from the watchdog (``fixer:<batch>``, ``render``, and
 ``judge:<name>`` when the orchestrator wraps each judge dispatch). A judge with

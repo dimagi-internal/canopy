@@ -44,8 +44,8 @@ DEFAULT_BASES = (
     Path.home() / "emdash-projects",
 )
 
-# Where an operator keeps their repos is a local convention, and these two are Jonathan's. An
-# operator whose work lives anywhere else (e.g. `C:\Projects`) got "No agent repos found" and no
+# Where an operator keeps their repos is a local convention, and these two are only defaults. An
+# operator whose work lives anywhere else (e.g. `C:\Projects`) would get "No agent repos found" and no
 # hint that the search space was the thing that was wrong — with `--repo` documented only in
 # `--help`, while the skill says to invoke fleet-align with no arguments at all. This env var makes
 # the machine's own layout a one-time setting rather than an argument every invocation must carry.
@@ -74,7 +74,7 @@ def _artifacts() -> tuple:
     """Shared-artifact taxonomy: `(name, relpath, kind)`.
 
     Skill artifacts are DERIVED from the factory's stamp table (`canopy_agent_factory.templates()`)
-    rather than hardcoded — so a newly-stamped shared skill (e.g. `task-tracker`, added 2026-07-09)
+    rather than hardcoded — so a newly-stamped shared skill (e.g. `task-tracker`)
     is auto-covered and can never silently go un-checked. Gating is added explicitly (different
     extractor). The template TEXT is looked up at call time (`_template_text`) so it always reflects
     the current factory. `kind` picks the extractor at compare time.
@@ -97,10 +97,7 @@ def _template_text(relpath, kind):
     agent, below `_DIVERGENT_OVERLAP`, so the whole fleet was labelled "a divergent lineage
     that likely predates the template" while DISTRIBUTE and PROMOTE were structurally
     unreachable. The judgment pass then wrote a confident rationale over a comparison that had
-    never happened. (Reported by @smazumdar 2026-09-14 against f27c8ff, proven both directions:
-    before, two fabricated RECONCILE findings against `fizzy`; after, template markers 4/1/4/4/4
-    across turn, agent-turn-review, task-tracker, shipping and manager-sync, with `fizzy`
-    overlapping 1.00 on every one. See `assert_baseline_usable` for the rail.)
+    never happened. See `assert_baseline_usable` for the rail.
     """
     if kind == "gating":
         return canopy_agent_factory.gating_config()
@@ -192,8 +189,8 @@ def checkout_warnings(bases=None, extra_repos=()) -> list[str]:
     """Offline checkout-drift check (local refs only — never fetches): a repo whose origin
     default branch carries the agent marker but whose WORKING TREE is on another branch or
     behind it is stale — or entirely invisible — to discovery, with no error. This is the
-    failure mode that hid ACE (2026-07-13: primary checkout parked on a feature branch 621
-    commits behind main → "Fleet (3)")."""
+    failure mode that hides an agent (primary checkout parked on a feature branch hundreds of
+    commits behind main → a short fleet list)."""
     warnings: list[str] = []
     candidates: list[Path] = []
     for base in agent_bases(bases):
@@ -452,7 +449,7 @@ def _compare_gating(name, agents, template_g, per_agent) -> list[Finding]:
 #       ignoring lines that are just an --account / env / default value) AND that is a helper for
 #       a shared channel (gdoc / gmail / drive / calendar — named for it, or mentioning it often).
 # Thresholds are conservative and documented; both rules ignore trivial stubs. (b)'s channel
-# clause is the conservative part: measured on the 2026-10-04 fleet, "persona-free" alone flagged
+# clause is the conservative part: measured fleet, "persona-free" alone flagged
 # ~55 single-agent artifacts, most of them domain tools (hal's labs scripts, ace's PDD QA skills)
 # that are persona-free but not fleet-generic. A shared-channel helper is the class the
 # agent-review placement heuristic also defaults to canopy — the class eva's gdoc tooling was in.
@@ -498,8 +495,8 @@ def _channel_hits(name: str, text: str) -> int:
     return len(_SHARED_CHANNEL.findall(text))
 
 
-# Files the factory USED to stamp and no longer does. Not agent-unique work, so never a PROMOTE
-# candidate — a leftover is reported by `legacy_gating_hook_findings` instead (canopy#849).
+# Files the factory does not stamp any more. Not agent-unique work, so never a PROMOTE
+# candidate — a leftover is reported by `legacy_gating_hook_findings` instead.
 _RETIRED_STAMPS = frozenset({"hooks/gating_guard.py"})
 
 
@@ -669,7 +666,7 @@ _LEGACY_HOOK_FILES = (".claude/settings.json", "hooks/hooks.json")
 def legacy_gating_hooks(path: Path) -> list[str]:
     """Where an agent repo still registers its OWN PreToolUse gating hook (repo-relative files).
 
-    Since canopy#849 canopy's plugin registers one session hook (`agent-core/gating_guard.py
+    canopy's plugin registers one session hook (`agent-core/gating_guard.py
     --session`) that applies the session's agent's config/gating.json, so an agent-registered
     hook is redundant — and a plugin-registered one (hooks/hooks.json) fires in EVERY session on
     the machine, because agent plugins are installed user-scope."""
@@ -907,8 +904,8 @@ def _run_claude(prompt: str, model: str = "sonnet", timeout: int = 180) -> str:
 def build_judgment_prompt(findings: list[Finding]) -> str:
     """Assemble the fleet-alignment judge prompt.
 
-    Inline by the framework-tier convention (#352 / `TIERS.md`): framework logic-prompts
-    stay inline (static, co-located, immune to the #351 packaging class); PRODUCT
+    Inline by the framework-tier convention (`TIERS.md`): framework logic-prompts
+    stay inline (static, co-located, immune to the packaging class); PRODUCT
     editable templates go external via `prompts/load_prompt`. Sibling site:
     `agent_review.build_review_prompt`."""
     rows = []

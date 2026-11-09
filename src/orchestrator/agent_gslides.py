@@ -13,7 +13,7 @@ this engine does no rendering of its own — it only files, converts, shares and
 
 Why every publish is a NEW file (no in-place replace): Drive forbids a media overwrite
 (`files.update` with content — what `gog drive upload --replace` does) on Workspace-native
-files, the same wall `canopy gdoc` hit in #353, and the Slides API has no way to copy slides
+files, the same wall `canopy gdoc` hits, and the Slides API has no way to copy slides
 in from another presentation. So a re-export makes a new deck; `--supersede <old id>` trashes
 the previous one AFTER the new one verified, so the folder holds one current copy. The link
 changes on every export — callers must report the new url, never assume the old one.

@@ -6,31 +6,28 @@ Writes ``<run_dir>/lint_findings.json`` (read by ``scripts.ddd.assemble`` as
 ``source: product_lint``) and prints one line per finding. Always exits 0: these
 are findings to fix, not a broken take.
 
-Why each check exists — connect-labs ``supply-sophie-unanswered-round``
-(2026-10-02..04), ~24 judged iterations, none of which flagged any of these as a
-blocker; one human look at the slides flagged all of them:
+Why each check exists — these are defects the judges do not block on, though one
+human look at the slides flags all of them:
 
 * **prose density / long lines** — fixers answered every "this is unclear" with
-  another explanatory sentence in the template. The pre-redesign screens carried
-  ~5.2k words and 36 lines of 20+ words; the redesigned ones ~3.3k and 10.
+  another explanatory sentence in the template, so screens accrete prose.
 * **new long lines** — the same accretion measured against the run's OWN first
   render (``lint-baseline.json``), so a screen that was already wordy is not
   re-flagged forever, but a loop that keeps adding prose is caught on the batch
   that adds it.
-* **terminology** — "round" had been renamed "tender" in the product (#2037) and
-  DDD batches put it back. ``product.lint.glossary`` maps banned -> preferred.
+* **terminology** — when a term is renamed in the product (say "round" to
+  "tender"), DDD batches can put the old one back. ``product.lint.glossary`` maps banned -> preferred.
 * **design system fonts** — the screens drifted off the labs font. Checked from
-  the recorder's ``scene_<N>_visual.json`` (``font_family`` per text element,
-  captured since 0.2.559) against ``product.lint.fonts``.
+  the recorder's ``scene_<N>_visual.json`` (``font_family`` per text element)
+  against ``product.lint.fonts``.
 
 Thresholds live in ``.canopy/ddd/config.yaml`` ``product: lint:`` (see
 :mod:`scripts.ddd.loop_config`). A check whose config is empty is skipped.
 
 Pre-judge frame lint (DDD-2) — always on, no config
 ---------------------------------------------------
-ACE noora (``newborn-care-classes-programme-cascade-2026-10-15-001``) held its
-score at 2.0 for six iterations on findings a function finds in milliseconds;
-the judges rediscovered them, in prose, every pass:
+A score can sit at 2.0 for many iterations on findings a function finds in
+milliseconds; the judges rediscover them, in prose, every pass:
 
 * **internal_id_leak** — "synthetic, ace noora-health/20261015-1129" in the
   report H1 and the opportunity picker (``\\d{8}-\\d{4}``, ``ace <opp>/``). Owner

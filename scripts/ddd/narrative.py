@@ -64,9 +64,9 @@ class UnstampedRunIdError(ValueError):
     """A run id with no ``-YYYY-MM-DD-NNN`` stamp would mint a NEW narrative.
 
     ``_narrative_slug_from_run_id`` only strips a numeric stamp, so a run id
-    like ``chlorine-2026-10-14-rerecord`` derives itself as the narrative slug
+    like ``chlorine-rerecord`` derives itself as the narrative slug
     and canopy-web silently creates a fresh narrative for it while the spec's
-    real narrative never moves (canopy#907).
+    real narrative never moves.
     """
 
 
@@ -243,7 +243,7 @@ def _beat_status_map(why_brief: dict | None) -> dict[str, str]:
     ``new``, not ``built``. Everything else (grounded, no open gap) is
     ``built``.
 
-    A gap carrying ``resolved`` is CLOSED and no longer forces its beat to
+    A gap carrying ``resolved`` is CLOSED and does not force its beat to
     ``new``. Without that, a narrative refreshed after the work shipped has no
     way to say so: the gap is the record of why the work happened, so deleting
     it to flip the badge throws away the reasoning, and keeping it open pins
@@ -260,7 +260,7 @@ def _beat_status_map(why_brief: dict | None) -> dict[str, str]:
         if not isinstance(gap, dict) or not gap.get("claim_ref"):
             continue
         if str(gap.get("resolved") or "").strip():
-            continue  # closed: the work landed, so it no longer pins the beat
+            continue  # closed: the work landed, so it does not pin the beat
         referenced_by_gap.add(gap["claim_ref"])
 
     status: dict[str, str] = {}
@@ -500,10 +500,9 @@ def narrative_decision(response_json) -> str:
     """Return the v3 decision (``approve`` | ``redraft``) a response carries.
 
     FAILS CLOSED. A missing, unknown or malformed decision raises
-    :class:`InvalidReviewResponse` — it is never read as an approval. The old
-    behaviour (``decisions.get("narrative-verdict", "approve")``) locked a spec
-    as approved when an orchestrator wrote a redraft in the wrong shape
-    (connect-labs run ``supply-sophie-unanswered-round-2026-10-02-001``).
+    :class:`InvalidReviewResponse` — it is never read as an approval. (Defaulting
+    ``decisions.get("narrative-verdict", "approve")`` would lock a spec
+    as approved when an orchestrator wrote a redraft in the wrong shape.)
     """
     accepted = ", ".join(repr(k) for k in NARRATIVE_DECISIONS)
     hint = f"Accepted decisions: {accepted}. Expected shape: {_EXPECTED_NARRATIVE_SHAPE}"
@@ -748,7 +747,7 @@ def apply_narrative_edits(
                 # - When narration changes, write to scene.narrative (the
                 #   canonical per-scene field). spec.narrative is rebuilt as
                 #   the join of per-scene narratives after the apply loop.
-                # - concept_claim is no longer touched by narration edits;
+                # - concept_claim is not touched by narration edits;
                 #   it stays a separate testable claim.
                 scene_dict = scenes[idx]
                 if narration:
@@ -872,7 +871,7 @@ def apply_narrative_edits(
             # No build_order in response: preserve the spec's existing value,
             # but still append newly-added scene slugs at the end.
             existing_bo: list[str] = raw.get("build_order") or []
-            # Drop any slugs that no longer map to surviving scenes
+            # Drop any slugs that do not map to surviving scenes
             build_order_out = [s for s in existing_bo if s in surviving_slugs]
             listed_set = set(build_order_out)
             for slug in newly_added_slugs:
@@ -1056,7 +1055,7 @@ def _tokenized_review_url(result: dict, base_url: str | None = None) -> str | No
     Prefers an already-tokenized ``url``; otherwise appends ``?t=<share_token>``
     so a non-owner viewer (e.g. the user reading on another device) can open it.
     Always the scoped ``https://<host>/w/<workspace>/review/<id>…`` form: the flat
-    ``/review/<id>`` route is going away (canopy-web#1337), and a flat link from
+    ``/review/<id>`` route is going away, and a flat link from
     this output already reached an external reviewer once. A result with no
     workspace to scope a flat link under raises ``WorkspaceRequiredError``.
     """
@@ -1080,7 +1079,7 @@ def _internal_review_url(result: dict, base_url: str) -> str | None:
     owner wants the page WITHOUT the token, which opens inside the workbench (left
     rail intact). Prefer building ``<base>/w/<ws>/review/<id>`` from the review id;
     fall back to stripping the query off the returned ``url``. Returns an absolute,
-    workspace-scoped URL (canopy-web#1337) so it is click-ready regardless of
+    workspace-scoped URL so it is click-ready regardless of
     whether the server returned a relative, flat or scoped ``url``.
     """
     from scripts.ddd.auth import scope_link
@@ -1130,7 +1129,7 @@ def _stamp_run_state(run_id: str, result: dict) -> None:
 def _scoped_or_warn(build, result: dict, *args) -> str | None:
     """``build(result, *args)``, or None with a warning when the result names no
     workspace to scope its link under — a stamp records no link rather than a
-    flat one (canopy-web#1337)."""
+    flat one."""
     from scripts.ddd.auth import WorkspaceRequiredError
 
     try:
@@ -1181,7 +1180,7 @@ def post_narrative_version(spec_path_str: str, run_id: str, rv=None) -> dict:
     spec = load_spec(spec_path)
     if not narrative_slug:
         # No run_state names the slug, so it comes from the run id — refuse an
-        # unstamped one that would silently mint a new narrative (canopy#907).
+        # unstamped one that would silently mint a new narrative.
         _check_run_id_targets_spec_narrative(run_id, getattr(spec, "name", None), rv)
     why_brief = load_why_brief(spec_path, spec)
     request = build_narrative_review_request(
@@ -1210,7 +1209,7 @@ def _cmd_post(spec_path_str: str, run_id: str, *, force: bool = False) -> None:
     Refuses (exit 3) while this run's last narrative review is still pending: a
     revision made while nobody has answered is recorded by ``narrative_guard
     check`` and reported in the digest, not minted as another pending review
-    (canopy#789 — 20 pending versions on one narrative). ``--force`` posts anyway.
+    (so versions do not pile up pending on one narrative). ``--force`` posts anyway.
     """
     from scripts.ddd import review as rv  # local import — network-touching
 
@@ -1240,8 +1239,8 @@ def _cmd_post(spec_path_str: str, run_id: str, *, force: bool = False) -> None:
     #   internal_url — owner view, opens inside the workbench (LEFT RAIL). Default.
     #   share_url    — token-bearing standalone share link (NO rail), externals only.
     # All three are /w/<workspace>/… links; the server's raw `url` is replaced,
-    # never echoed (a flat /review/<id> from this JSON reached an external
-    # reviewer — canopy-web#1337).
+    # never echoed (a flat /review/<id> from this JSON would reach an external
+    # reviewer).
     base = rv._resolve_base_url(None)
     out = dict(result)
     internal = _internal_review_url(result, base)
@@ -1288,7 +1287,7 @@ def record_feedback_steers(spec_path, result: dict, *, source: str = "", by: str
     """File every free-text comment a human left on the narrative in the intent ledger.
 
     The reviewer's words are the steers later revisions are checked against
-    (:mod:`scripts.ddd.narrative_guard`, canopy#789). Only the quote is recorded
+    (:mod:`scripts.ddd.narrative_guard`). Only the quote is recorded
     here; the orchestrator adds the terms it forbids / limits / requires with
     ``narrative_guard steer`` once it has read it. Best-effort: returns how many
     were recorded and never fails the apply.
@@ -1555,8 +1554,8 @@ def _cmd_pull(slug: str, target: str) -> None:
     recipe = base_dir / f"{slug}.recipe.yaml"
 
     # "renderable" means the loop can actually render it: the recipe COMPOSES
-    # with the lock just written (canopy#908 — a recipe with two scenes the
-    # story lacked was reported renderable, and `recorded lint` then failed).
+    # with the lock just written (a recipe with two scenes the
+    # story lacks is not renderable, and `recorded lint` would fail).
     recipe_error = None
     if recipe.exists():
         from scripts.ddd import sources as narrative_sources

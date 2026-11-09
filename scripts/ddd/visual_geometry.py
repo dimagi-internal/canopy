@@ -6,7 +6,7 @@ element carrying a claim rendered at zero height, or that its label is white on
 white. On the ACE run ``bednet-check-2-visit/20260825-1310`` three separate
 invisible-element defects scored ``data_fidelity`` 9/9 and ``narrated_numbers``
 9/9 across four iterations, and were only found by a hand-written probe after
-the loop had already given up (canopy#525):
+the loop had already given up:
 
   * twelve weekly chart bars at 0px — ``h-28`` was purged from the bundle
   * segment bar labels at contrast 2.47 — effectively white on white

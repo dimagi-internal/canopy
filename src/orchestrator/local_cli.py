@@ -128,7 +128,7 @@ def person_token(slug: str = "") -> str:
 
 def session_token(slug: str = "") -> str:
     """The token a local session's own calls use: on your linked private runner the box's
-    key-bought runner token (no PAT needed, canopy-web#1705), else your PAT."""
+    key-bought runner token (no PAT needed), else your PAT."""
     from orchestrator import private_runner_session
 
     return private_runner_session.token() or person_token(slug)
@@ -148,7 +148,7 @@ def private_runner_group():
 def register_this_computer(name: str | None = None, *, link_runner: bool = True) -> dict:
     """Register this computer for local use (idempotent) and record it in
     ``~/.canopy/private-runner.json``. Returns the recorded doc. When the runner app runs
-    here too (``~/.canopy/runner.json``), the two are linked (canopy-web#1705)."""
+    here too (``~/.canopy/runner.json``), the two are linked."""
     from orchestrator.runner_pin import _machine_runner_id
 
     host = socket.gethostname()
@@ -339,7 +339,7 @@ def open_turn(slug: str, session_id: str, *, cwd: str = "", transcript: str = ""
 def local_renew(session_id, force):
     """Keep this session's local turn alive (at most every 10 minutes unless --force).
 
-    When canopy-web says the turn is no longer running — swept `lost` after the session
+    When canopy-web says the turn has stopped running — swept `lost` after the session
     sat idle past its 8-hour lease, or finished — the session would otherwise go on
     naming a dead turn (credential reads refused, close a no-op). So a NEW local turn is
     opened for the same session, its id appended to the session's env file (sourced

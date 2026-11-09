@@ -29,7 +29,7 @@ import time
 
 def stage_delegated(canopy: str, slug: str) -> None:
     """Stage the credentials this agent BORROWS (`canopy agent stage-delegated`):
-    today the Salesforce identity lent to it (canopy-web#1291), which chrome-sales
+    today the Salesforce identity lent to it, which chrome-sales
     reads from ~/.canopy/delegated/<slug>/chrome-sales/ in agent sessions. Silent
     when it worked or there is nothing to stage; one line when it failed."""
     try:
@@ -72,9 +72,9 @@ def google_login(canopy: str, slug: str) -> None:
     during their own turn, so `canopy agent use` cannot do it beforehand. Local files only
     once it is in place (no gog call, no network). Silent when present; one line otherwise.
 
-    2026-10-28, failure investigation 17, turn c10c9748: a licensee's first ace turn on a
-    Windows laptop died on `gog gmail search` — "OAuth client credentials missing" — because
-    nothing on the licence path ever wrote gog's client file or imported ace's login."""
+    Without it a licensee's first turn on a Windows laptop dies on `gog gmail search` —
+    "OAuth client credentials missing" — because nothing else on the licence path writes
+    gog's client file or imports the agent's login."""
     try:
         r = subprocess.run([canopy, "agent", "google-login", "--slug", slug, "--if-needed",
                             "--no-verify"], capture_output=True, text=True, timeout=90)
@@ -123,9 +123,9 @@ def local_eligible(home: str, cwd: str = "", transcript: str = "") -> bool:
     (:func:`_emdash_task_is_runners` — emdash cannot pass a turn id, so on a box that runs
     the runner app an emdash session is the runner's unless the runner left no trace of it;
     an emdash task the person starts by hand is a local turn too). A private
-    runner may itself be a runner app working only for its owner (canopy-web#1705): its
+    runner may itself be a runner app working only for its owner: its
     turns are already turns, and a second, local one would switch their credential reads
-    from the runner to the license. canopy-web#1704."""
+    from the runner to the license."""
     if not os.path.isfile(os.path.join(home, ".canopy", "private-runner.json")):
         return False
     if os.environ.get("CANOPY_TURN_ID", "").strip() or os.environ.get("CANOPY_PROFILE"):
@@ -229,10 +229,10 @@ def main() -> int:
     confined = bool(os.environ.get("CANOPY_PROFILE"))   # a caller's confined turn
     # A runner turn (it has a turn id) already had its borrowed credentials staged by the
     # runner with the runner's own identity (cloud_runner._stage_salesforce). Asking again
-    # here would use the agent's PAT, which /credentials/resolve refuses (lex, 2026-10-16).
+    # here would use the agent's PAT, which /credentials/resolve refuses.
     on_runner = bool(os.environ.get("CANOPY_TURN_ID", "").strip())
     # A person's own session on their private runner: record it as a local turn FIRST, and
-    # carry its id into every credential read below (canopy-web#1704) — that is what
+    # carry its id into every credential read below — that is what
     # admits a license holder, and what the read log names.
     if canopy and local_eligible(os.path.expanduser("~"), str(data.get("cwd") or os.getcwd()),
                                  str(data.get("transcript_path") or "")):

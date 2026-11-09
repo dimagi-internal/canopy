@@ -1,13 +1,12 @@
 """A project's Drive folder is a property of the project.
 
 agent-core/task-tracker.md says a project has two halves with one name: the canopy-web project
-(P<N>) and the Drive folder `<agent root>/Projects/<name>/`. Nothing joined them. `project-add`
-recorded a folder only if one was passed, and `canopy gdoc publish --project` found-or-created
-`Projects/<name>` BY NAME and never wrote the id back. So the record a session can see
-(`get_project`) carried an empty `drive_folder_id` and no way to fill it. On 2026-10-08 a
-connect-labs session told to "write to Hal's project folder" found P1 with no folder and P4
-with an empty one, asked the human which was meant, and gave up. Six of eighteen active fleet
-projects had no folder at all.
+(P<N>) and the Drive folder `<agent root>/Projects/<name>/`. Without a join, `project-add`
+records a folder only if one is passed, and `canopy gdoc publish --project` finds-or-creates
+`Projects/<name>` BY NAME without writing the id back, so the record a session can see
+(`get_project`) carries an empty `drive_folder_id` and no way to fill it. A session told to
+"write to the agent's project folder" then finds projects with no folder and cannot tell
+which is meant.
 
 `ensure_project_folder` is the one operation: find-or-create the folder as the agent and PATCH
 it onto the project. It is idempotent, and a folder the project already links always wins. The
@@ -120,7 +119,7 @@ def resolve_project_destination(ident: GdocIdentity, project_ref: str, *, client
 
 
 def _by_name(ident: GdocIdentity, name: str, runner, trace, dry_run: bool) -> str:
-    """`Projects/<name>`, found or created; a dry run only finds (2026-10-08: a dry run of
-    `--project P3` created an empty `Projects/P3` folder in Hal's Drive)."""
+    """`Projects/<name>`, found or created; a dry run only finds, so a dry run of
+    `--project P3` never creates an empty `Projects/P3` folder in the agent's Drive."""
     return (resolve_subfolder(ident, project=name, runner=runner, trace=trace, create=not dry_run)
             or f"(would create Projects/{name.strip()})")

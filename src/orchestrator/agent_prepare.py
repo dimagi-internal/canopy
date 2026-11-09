@@ -101,7 +101,7 @@ RESOLVE_EXTRAS = ("delegated",)
 #: What the credentials-only pass (the runner-update timer, every 30 minutes) actually
 #: uses: canopy-web's copy of the gog token. Never the agent's other secrets — it writes no
 #: env (a turn's claim does, naming its turn), so reading them every 30 minutes outside a
-#: turn only put them on the wire (canopy-web#1563).
+#: turn only put them on the wire.
 REFRESH_VALUES = ("gog-token",)
 
 
@@ -165,7 +165,7 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         from orchestrator import cred_resolve
         # A box staging an agent outside any turn (bootstrap, the runner-update timer)
         # says so, or canopy-web emails the owner "read outside a turn" for routine
-        # maintenance every hour (canopy-web#1563).
+        # maintenance every hour.
         # A claim resolving the env FOR a turn (`in_turn`, the turn id rides
         # X-Canopy-Turn-Id) is the read the alert is about — it carries no refresh label.
         if minimal and not refs:
@@ -224,7 +224,7 @@ def turn_readiness(repo: Path, tok, mailbox_ok: bool) -> tuple[str, Optional[boo
     """(the client turns will present, can they read the mailbox). Turns ask for what
     config/agent.json declares; either FLEET client serves a fleet declaration (one app,
     two sign-in routes — reconcile_client), so then they present the live token's. None
-    when nothing was checked: never report "broken" for "did not look" (2026-09-08)."""
+    when nothing was checked: never report "broken" for "did not look"."""
     from orchestrator.agent_email import AgentEmailError, is_fleet_client, resolve_email_identity
 
     try:
@@ -268,7 +268,7 @@ class RunnerPreparer(Bootstrapper):
         self.no_secret_files = secrets_off_disk() if no_secret_files is None else no_secret_files
         self.agent_root = Path(agent_root)
         # The agent's GitHub token for THIS turn, when a runner prepares an agent inside
-        # one (canopy-web returns it from credentials/resolve no longer: it reaches a box
+        # one (canopy-web does not return it from credentials/resolve: it reaches a box
         # only per turn). Taken out of the environment so no setup child inherits it;
         # only `_git` uses it.
         self._turn_github_token = os.environ.pop(TURN_GITHUB_TOKEN_ENV, "").strip()
@@ -305,7 +305,7 @@ class RunnerPreparer(Bootstrapper):
         """The Google account THIS instance's token must be for — canopy-web's
         `google_account` when it records one (an SES-primary agent keeps Drive/Docs under
         a separate Google account), else its mailbox (`Agent.email`). Never the repo's or
-        the slug's: instances share a repo, so either would point two at one inbox (#984)."""
+        the slug's: instances share a repo, so either would point two at one inbox."""
         c = self.creds(slug)
         return (c.google_account or c.mailbox).lower()
 
@@ -346,7 +346,7 @@ class RunnerPreparer(Bootstrapper):
                                  self.creds(slug).github_token)
         if err and (dest / ".git").is_dir():
             # A clone that could not be UPDATED is still a clone — provision it as it is,
-            # the way a turn runs in a clone whose pull failed (#965).
+            # the way a turn runs in a clone whose pull failed.
             rep.notes.append(f"repo not updated: {err} — its owner may have lent no GitHub "
                              "token that can read it (Settings → External accounts → GitHub)")
         elif err:
@@ -384,7 +384,7 @@ class RunnerPreparer(Bootstrapper):
     def node_deps(self, path: Path) -> str:
         """`npm ci` (or install) when there are no node_modules, or the lockfile is newer than
         the one npm last installed from — a dependency added upstream otherwise never
-        arrives and the MCP server dies at import (canopy-web#1237)."""
+        arrives and the MCP server dies at import."""
         if not (path / "package.json").is_file():
             return ""
         nm, lock = path / "node_modules", path / "package-lock.json"
@@ -451,8 +451,8 @@ class RunnerPreparer(Bootstrapper):
                 installed += 1
         else:
             # No manifest = the agent's own plugin is never installed, so its turns run
-            # without its skills. That used to pass as "0 ok"; it is a failure the box's
-            # report must show (the factory stamps this file since agent-factory 1.2.0).
+            # without its skills. Counting it as "0 ok" would hide it; it is a failure the box's
+            # report must show (the factory stamps this file).
             problems.append(f"{slug}: no .claude-plugin/marketplace.json in {repo} — the "
                             f"agent's own plugin cannot be installed; add one (name "
                             f"'{slug}', plugins[0] source './')")
@@ -468,7 +468,7 @@ class RunnerPreparer(Bootstrapper):
                                  f"{s.name}@{s.marketplace_name}")
                 continue
             # Pulled EVERY pass, installed or not — a plugin installed once was never updated
-            # again, and never got its node deps (canopy-web#1237).
+            # again, and never got its node deps.
             err = self.clone_or_pull(f"https://github.com/{s.marketplace}.git", pdir,
                                      self.creds(slug).github_token)
             if err and not (pdir / ".git").is_dir():
@@ -502,7 +502,7 @@ class RunnerPreparer(Bootstrapper):
         # What this pass already resolved, handed over so the installer need not resolve
         # it again: the .env the env step just filled. An agent's setup re-resolving it goes
         # through `canopy agent env`, which needs a PERSON's canopy-web token — a runner has
-        # none, so ACE's setup died there on every pass (cloud-ec2-2, 2026-10-18).
+        # none, so the setup would die there on every pass.
         transient = None
         if self.no_secret_files:
             # Off disk: the values this pass resolved in memory, through a 0600 file under

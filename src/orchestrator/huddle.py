@@ -292,9 +292,9 @@ _DATE_PREFIX = re.compile(r"^\s*(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})
 
 
 def undated(step) -> str:
-    """A plan step with any leading date ("2026-10-13: …", "10/13 - …") removed. Plans are
+    """A plan step with any leading date ("Oct 13: …", "10/13 - …") removed. Plans are
     ordered, never scheduled: agents can do unlimited work, so dates on agent steps told the
-    principal nothing (Jonathan, 2026-10-12). Round 2 asks for undated steps; this keeps an
+    principal nothing. Round 2 asks for undated steps; this keeps an
     older or disobedient reply from putting dates on a board task anyway."""
     return _DATE_PREFIX.sub("", str(step or ""), count=1).strip()
 
@@ -738,7 +738,7 @@ _ASK_IDS = re.compile(r"\b[TP]\d+\b")
 
 
 def is_principal(who, principal: str) -> bool:
-    """Whether a round-1 `needs[].from` names the principal ("jonathan", "Jonathan Jackson")."""
+    """Whether a round-1 `needs[].from` names the principal ("alex", "Alex Smith")."""
     w = norm(who)
     names = {"principal", norm(principal)}
     if norm(principal):

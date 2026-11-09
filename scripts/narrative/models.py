@@ -119,7 +119,7 @@ class Feature(BaseModel):
 # same spirit as ACTION_KINDS below: the validator, the loop's router and the
 # judge-facing skills all read these rather than re-listing the words, so the
 # contract cannot drift between the place that ACCEPTS a value and the place
-# that ACTS on it — which is exactly how canopy#547 happened.
+# that ACTS on it — a value accepted but unroutable fails late and expensively.
 #
 # ``fix_kind`` is NOT merely a triage hint here. ``run_pipeline.compute_auto_iterate``
 # DISPATCHES on it: ``mechanical`` is auto-applied and keeps the loop running,
@@ -157,8 +157,7 @@ class Finding(BaseModel):
     without prescribing the fix).
 
     Both stay plain ``str`` rather than ``Literal`` **deliberately**. Tightening
-    them here would move the failure to LOAD time, which is the cost canopy#547
-    is about: a judge dispatch is the expensive part of the loop, and rejecting
+    them here would move the failure to LOAD time, which is the cost this contract avoids: a judge dispatch is the expensive part of the loop, and rejecting
     the whole artifact at load discards every good finding in it alongside the
     one mislabelled word. The enum is enforced at EMIT instead —
     ``scripts.ddd.validate.validate("findings", ...)`` — where the failure names
@@ -212,7 +211,7 @@ class _ActionBase(BaseModel):
 
     ``extra="forbid"`` is the whole point of the discriminated union — a spec
     that puts ``target`` on a ``type`` action (or ``value`` on a ``click``)
-    used to silently no-op at runtime; now it fails validation with the
+    would silently no-op at runtime; it fails validation instead, with the
     field name and the action it lives on. The dispatcher (``execute_action``)
     still accepts the raw dict at runtime so legacy callers that bypass the
     schema keep working.
@@ -913,7 +912,7 @@ class Dimension(BaseModel):
     weight: float
 
 
-# Out-of-chain fitness law (canopy#265 item 3, adopted from ACE's _eval-template):
+# Out-of-chain fitness law (from ACE's _eval-template):
 # inflation risk is proportional to how close the grading anchor sits to the AI
 # authoring chain. An eval that never touched live state (AI text graded against
 # AI text) may pass, but can never claim excellence — its emittable overall_score

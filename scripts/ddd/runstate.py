@@ -563,7 +563,7 @@ def _write_state(run_dir: Path, state: RunState) -> None:
     state_file = run_dir / "run_state.yaml"
     # Dump via model_dump to get Python-native types (no pydantic objects)
     data = state.model_dump()
-    # Write-back contract (canopy#265 item 4): Pydantic v2 does not validate on
+    # Write-back contract: Pydantic v2 does not validate on
     # assignment, so an in-place mutation can break the schema silently. Validate
     # the dumped dict BEFORE touching the file — a bad state must never reach
     # disk, or the next load() fails and resume breaks.

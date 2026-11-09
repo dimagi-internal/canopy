@@ -4,9 +4,8 @@
 An agent task (canopy-web `/api/agent-tasks/`, docs/architecture/agent-tasks.md there) is a
 page or backend calling an agent INLINE: a task, structured input, and a JSON Schema the
 answer must match. It is done only when the agent calls `submit_agent_task_result` and
-canopy-web accepts the result — never because the turn ended. Jonathan, designing it
-(2026-10-27): "we will likely have you respond too soon." An agent that writes its answer as
-a chat reply, or summarises and stops, leaves the page waiting on nothing.
+canopy-web accepts the result — never because the turn ended, since an agent is likely to respond too soon.
+An agent that writes its answer as a chat reply, or summarises and stops, leaves the page waiting on nothing.
 
 So this Stop hook reads the turn's caller envelope (via the session's presence record, which
 names the turn — `caller_context.py`), and when it carries `agent_task`, asks canopy-web for

@@ -296,7 +296,7 @@ def _described_entries(repo_root: Path) -> list[tuple[str, str, Path]]:
     Yields ``(kind, name, path)``. Claude Code surfaces the description of skills
     **and** agents **and** commands, so all three count against the per-entry cap
     and the aggregate budget — scanning only `skills/` is how a 1133-char agent
-    description sat over the cap while the audit reported clean (#389).
+    description sat over the cap while the audit reported clean.
     """
     plugin = _plugin_root(repo_root)
     entries: list[tuple[str, str, Path]] = []

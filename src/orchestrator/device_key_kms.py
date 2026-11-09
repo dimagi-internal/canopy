@@ -1,4 +1,4 @@
-"""An EC2 cloud runner's zero-knowledge ECDH key, held in AWS KMS (canopy-web#1550).
+"""An EC2 cloud runner's zero-knowledge ECDH key, held in AWS KMS.
 
 A Mac keeps the key a zero-knowledge vault key is wrapped to in its Secure Enclave and a
 Windows box in its TPM; an EC2 box has neither, so until now its ECDH key was a 0600 PEM

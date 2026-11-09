@@ -19,8 +19,6 @@ without one there is no read. canopy-web then starts the project's agent with
 
 `propose` falls back to a `suggested` task in the project on a canopy-web without the
 `…/tasks/propose/` route.
-
-Design record: canopy-web's project check-ins design, under docs/superpowers/specs/ (§6).
 """
 from __future__ import annotations
 
@@ -340,7 +338,7 @@ def _build_group(name: str, tag: str, doc: str) -> click.Group:
     def finish_cmd(run_id, result_url, summary, huddle_id, tasks_proposed):
         """Mark the run done. With a channel, canopy-web posts one pointer line in the thread —
         the output itself lives in the UI. Re-running on a finished run is a no-op; a run that
-        is no longer running (skipped / expired / failed) is refused (exit 2)."""
+        is not running any more (skipped / expired / failed) is refused (exit 2)."""
         _finish(run_id, result_url, summary, huddle_id, tasks_proposed)
 
     return grp

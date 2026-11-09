@@ -6,20 +6,17 @@ INSTALLED canopy plugin. Nothing here is agent-specific: the agent's slug and di
 are read from its own repo config at call time, so this file is byte-identical for everyone
 and a fix reaches the fleet through `/canopy:update` like the rails already do.
 
-## Why this moved here (2026-08-13)
+## Why the engine lives here
 
-The rails were centralized (`agent-core/gating-baseline.json`, shipped with the plugin) but
-the ENGINE that read them was COPIED into every agent repo at scaffold time and never
-updated. Config was shared; code was forked. All three predictable symptoms had arrived:
+The rails are centralized (`agent-core/gating-baseline.json`, shipped with the plugin) and so
+is the ENGINE that reads them. A copy of the engine in every agent repo would fork the code
+while the config stays shared, with three predictable symptoms:
 
-  1. A one-line engine fix needed N pull requests, one per agent.
-  2. The copies drifted. Measured 2026-08-13: of four agents, three were behind — missing
-     `tool_pattern` and the MCP `_subject` fallback, i.e. the Drive-filing rails silently did
-     nothing for them.
-  3. **Improvements flowed the wrong way.** Ada independently built `per_statement` (below)
-     against a real false positive, and it stayed in Ada: canopy never got it, so eva, hal and
-     echo could not use it — and on 2026-08-13 eva was bitten by a sibling of the very bug Ada
-     had already solved. Value invented at a leaf could not reach the fleet.
+  1. A one-line engine fix would need N pull requests, one per agent.
+  2. The copies would drift: an agent on an old copy lacks `tool_pattern` and the MCP
+     `_subject` fallback, so the Drive-filing rails silently do nothing for it.
+  3. Improvements would flow the wrong way: a feature built at one agent (like `per_statement`,
+     below) would stay there instead of reaching the fleet.
 
 What legitimately stays per-agent is CONFIG and CONTENT — `config/gating.json` (that agent's
 own rails + its `channels` mounts), identity, persona, domain skills. Not the engine.
@@ -60,11 +57,11 @@ A rule is `{"tool": ..., "tool_pattern": ..., "pattern": ..., "per_statement": .
                  translate an AGENT's own rails (e.g. PowerShell HTTP writes -> the agent's curl
                  rails): a human's session has no such rails, so the translation only blocks.
 
-## Whose rails: the SESSION's agent (canopy#849, 2026-10-09)
+## Whose rails: the SESSION's agent
 
 Every agent plugin is installed at user scope, so a gating hook an agent plugin registers
-fires in EVERY session on the machine — ACE's body-file rail blocked a `gh pr create` in an
-Ada session on 2026-10-09. The fix is that canopy registers ONE PreToolUse hook (this file,
+fires in EVERY session on the machine — one agent's body-file rail would block a
+`gh pr create` in another agent's session. So canopy registers ONE PreToolUse hook (this file,
 run with `--session`) and that hook works out whose session it is:
 
   1. `$CANOPY_AGENT_SLUG`, then `$CANOPY_AGENT` — a runner turn, or an agent repo's own
@@ -211,7 +208,7 @@ def baseline_rails(cfg, slug, agent=True):
                   one means a raw send or a My-Drive-root file lands unblocked. Unresolvable
                   baseline + mounted channels -> None, and the caller fails CLOSED.
       `always`    rails that apply to EVERY agent regardless of what it mounts, because what
-                  they govern is not a channel (added 2026-08-27 for the review-wrapper rail).
+                  they govern is not a channel (the review-wrapper rail).
                   A per-channel home would have meant every agent editing its own gating.json to
                   opt in — i.e. the rail is absent for exactly the agent that forgot, which is
                   the failure mode being fixed. These are nudges, not safety, so an agent with
@@ -236,15 +233,12 @@ def baseline_rails(cfg, slug, agent=True):
 
 
 # Every tool that takes a command LINE. On Windows, Claude Code offers PowerShell beside Bash,
-# and until 2026-09-22 every rail in the fleet silently applied to Bash alone, in two layers:
-# the factory matcher never routed PowerShell to this hook, and even when it did, `subject_for`
-# fell through to the JSON-of-input path, so the command arrived as `{"command": "gog gmail
-# send …"}` and every rail anchored on `(?:^|[\n;&|(])` missed on the leading quote. And a
-# third layer neither of those fixes would have reached: every rail says `"tool": "Bash"`,
-# which `matches` compared EXACTLY. Measured on fizzy (Shayoni Mazumdar): `gog gmail send`, a
-# Salesforce `curl -X POST` and `python sf-refresh.py` were blocked in Bash and allowed in
-# PowerShell. So a shell rail means every shell — one family, not a PowerShell copy of each
-# rail, which would drift the day someone added a rail and forgot its twin.
+# and a rail applies to every one of them, not to Bash alone. Three layers make that hold:
+# the factory matcher routes PowerShell to this hook, `subject_for` returns the bare command
+# (not the JSON of the input, whose leading quote would defeat every rail anchored on
+# `(?:^|[\n;&|(])`), and `matches` treats `"tool": "Bash"` as the whole family. One family,
+# not a PowerShell copy of each rail, which would drift the day someone added a rail and
+# forgot its twin.
 SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
 
 
@@ -252,10 +246,8 @@ def subject_for(tool_name, tool_input):
     """The string a rule's pattern is tested against, per tool.
 
     Anything that is not a known built-in falls back to the JSON of its whole input — which is
-    how an MCP tool becomes railable at all. Before 2026-08-13 this returned "" for every MCP
-    tool, so a rail could not inspect an MCP call's ARGUMENTS: a rule with a pattern could
-    never match, and a rule without one matched unconditionally (blocking the tool outright).
-    That left every Drive-creating MCP tool outside the filing rails while Bash was railed."""
+    how an MCP tool becomes railable at all: a rail can inspect an MCP call's ARGUMENTS, so
+    the Drive-creating MCP tools fall under the filing rails like Bash."""
     if not isinstance(tool_input, dict):
         return ""
     if tool_name in SHELL_TOOLS:
@@ -351,12 +343,8 @@ def matches(rule, tool_name, subject):
         # (e.g. "a curl AND this URL AND a write verb") otherwise conjoins fragments from
         # UNRELATED statements in the same call: a free GET of /items in one statement plus an
         # unrelated -X POST in the next satisfied every lookahead and blocked a legitimate read
-        # (ada, 2026-07-24: this fired on a compound command, and again on a python heredoc that
-        # merely quoted the pattern's own example strings). Default stays whole-string, so
-        # existing rails are unchanged.
-        #
-        # Promoted from ada's private copy to the fleet on 2026-08-13. It had been stranded
-        # there for three weeks — the concrete case for why this engine is shared now.
+        # (a compound command, or a python heredoc that merely quoted the pattern's own example
+        # strings). Default stays whole-string.
         if rule.get("per_statement"):
             return any(re.search(pat, s) is not None for s in _statements(subject))
         return re.search(pat, subject) is not None
@@ -389,7 +377,7 @@ def _load_config(repo_dir):
     return cfg if isinstance(cfg, dict) else None
 
 
-# Read-only file tools reach this hook since the agent credential read rails (2026-10-19).
+# Read-only file tools reach this hook for the agent credential read rails.
 # A person's own session was never gated on them, and still is not: every rail that
 # applies to them is an agent rail, so in a session that belongs to no agent they pass.
 READ_TOOLS = frozenset({"Read", "Grep", "Glob", "NotebookRead"})
@@ -572,8 +560,8 @@ def run_loader(repo_dir, payload, env=None):
     """A per-agent LOADER's call (no `--session`). Enforce only in that agent's own session.
 
     During the migration both this and the session hook fire. The session hook already applies
-    the session's agent's rails, so a sibling agent's loader must stand down — that is the
-    whole bug (canopy#849). In the agent's OWN session it still enforces, which keeps its
+    the session's agent's rails, so a sibling agent's loader must stand down — otherwise
+    one agent's rails would fire in another agent's session. In the agent's OWN session it still enforces, which keeps its
     fail-closed contract even if the session hook were somehow absent."""
     own = repo_slug(repo_dir)
     session_slug, _ = session_agent(payload, env)

@@ -1,6 +1,6 @@
 """Fleet inbox filters — the Gmail half of the fleet's inbound-email table.
 
-The rules themselves live in ``orchestrator/inbox_rules.py`` (canopy#679): one table, one
+The rules themselves live in ``orchestrator/inbox_rules.py``: one table, one
 row per kind of mail, each row WAKE or ARCHIVE. This module turns every archive row that
 Gmail search can express into Gmail filters on any/all agent mailboxes, each one archiving,
 marking read and labelling the mail with its row's name. Edit the table, not this file,
@@ -199,10 +199,8 @@ def sweep_existing(mailbox: str, client: str, *, runner=subprocess.run, dry_run:
     Run ``apply_filters`` first: it creates the labels this names.
 
     Counts reflect threads whose modify actually SUCCEEDED, and each rule pages
-    past gog's per-search result cap until its matches are drained. (Ada's
-    2026-07-14 fleet sweep reported 184 'swept' messages that never moved: the
-    modify used a nonexistent --remove-label flag, its result was discarded, and
-    search matches were reported as swept. Never count what you didn't verify.)
+    past gog's per-search result cap until its matches are drained.
+    Never count what you didn't verify: a search match is not a swept message.
     """
     swept = {}
     for flt in FILTERS:

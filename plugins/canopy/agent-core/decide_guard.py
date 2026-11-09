@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """RETIRED — the fleet's decide-don't-offer rail is now a native prompt hook.
 
-This file used to be a regex Stop-hook engine that blocked once per session when an
-agent's closing message handed back a call it was authorized to make ("Want me to ship
-the PR?"). It was whack-a-mole: on 2026-10-04 a single ada session got past it three
-times with shapes nobody had written a pattern for ("It's a small canopy PR if you want
-it.", "I'd ship all three now … unless you'd rather …", "… would be a small follow-up.").
+A regex Stop-hook engine cannot hold this rail: the shapes of an offered call ("It's a small
+canopy PR if you want it.", "I'd ship all three now … unless you'd rather …", "… would be a
+small follow-up.") are open-ended, and a pattern per shape never keeps up.
 
 The rail is now a `{"type": "prompt"}` Stop hook: an LLM judges the closing message
 against labelled examples in `agent-core/decide_guard_examples.jsonl`. It is a per-person

@@ -4,16 +4,15 @@
 #
 #   sh python.sh [--guard] <script.py> [args...]
 #
-# Every hook used to be launched as bare `python3`. On Windows that name is usually
+# A hook launched as bare `python3` is unsafe on Windows, where that name is usually
 # the Microsoft Store stub (…\WindowsApps\python3.exe), which prints "Python was not
 # found" and exits 49. Claude Code treats any hook exit other than 2 as NON-blocking,
 # so on such a box the gating guard, the confinement guard and the one-shot guard
-# simply never ran — every fleet rail was off, silently (2026-10-15, the first real
-# Windows agent: a raw send was allowed until the hook was hand-edited to `py -3`).
+# would simply never run — every fleet rail off, silently.
 #
 # Order: a real `python3`, then `python`, then the Windows `py -3` launcher. A path
 # under WindowsApps is the Store stub and is skipped. On macOS/Linux the first
-# candidate wins, so this is one `exec` on top of what ran before.
+# candidate wins, so this costs one `exec`.
 #
 # --guard: the guard must answer 0 (allow) or 2 (block). Anything else (a traceback's
 # exit 1, an interpreter that cannot start, a stub's 49) would be read by Claude Code

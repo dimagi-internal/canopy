@@ -1,6 +1,6 @@
 """Scene-scoped capture — record a few scenes, keep the rest of the last render.
 
-Why this module exists (canopy#785)
+Why this module exists
 -----------------------------------
 A DDD fix batch usually touches two or three scenes, but every pass re-recorded
 all of them: a ``--scene`` render overwrote ``run-report.json`` and the manifest
@@ -121,7 +121,7 @@ def adopt_scene_files(scratch: Path, snapshots: Path, targets: Iterable[int]) ->
     """Move the targets' files from ``scratch`` into ``snapshots``.
 
     A target's previous files are removed first, so a frame the new take did not
-    write (a ``_before`` frame the scene no longer has) does not survive it.
+    write (a ``_before`` frame the scene does not have) does not survive it.
     """
     snapshots.mkdir(parents=True, exist_ok=True)
     moved: list[str] = []

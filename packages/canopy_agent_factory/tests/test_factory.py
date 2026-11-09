@@ -81,7 +81,7 @@ def test_create_agent_writes_full_layout(tmp_path):
 
 
 def test_create_agent_stamps_auto_bump(tmp_path):
-    """Issue #357: every new agent ships bump-on-every-merge automation."""
+    """Every new agent ships bump-on-every-merge automation."""
     written = create_agent(_spec(), tmp_path / "echo")
     names = {p.relative_to(tmp_path / "echo").as_posix() for p in written}
     assert "scripts/bump-plugin-version.py" in names
@@ -214,7 +214,7 @@ def test_create_agent_refuses_nonempty_dir(tmp_path):
 
 
 def test_gating_defaults_to_deny_rails_only(tmp_path):
-    """Issue #263 / shared-gog-gdrive.md §4: rails, not approval gates — now mounts-based.
+    """Rails, not approval gates — mounts-based.
 
     The templated gating carries channel MOUNTS (baseline deny rails ship centrally in the
     canopy plugin's agent-core/gating-baseline.json and are merged by the hook at call time)
@@ -231,7 +231,7 @@ def test_gating_defaults_to_deny_rails_only(tmp_path):
 
 
 def test_agent_json_carries_email_identity(tmp_path):
-    """Issue #261: `canopy email` resolves mailbox + gog client from config/agent.json."""
+    """`canopy email` resolves mailbox + gog client from config/agent.json."""
     create_agent(_spec(), tmp_path / "echo")
     agent = json.loads((tmp_path / "echo" / "config" / "agent.json").read_text())
     assert agent["email"] == "echo@dimagi-ai.com"
@@ -265,9 +265,9 @@ def test_stub_skills_reference_agent_core(tmp_path):
 
 
 def test_factory_stamps_no_gating_hook(tmp_path):
-    """canopy#849: canopy's plugin registers the ONE gating hook and applies the session's
-    agent's config/gating.json. An agent registering its own made its rails fire in every
-    sibling's session once plugins were installed user-scope (ACE's rail blocked Ada's PR)."""
+    """canopy's plugin registers the ONE gating hook and applies the session's
+    agent's config/gating.json. An agent registering its own would make its rails fire in
+    every sibling's session once plugins are installed user-scope."""
     create_agent(_spec(), tmp_path / "echo")
     root = tmp_path / "echo"
     assert not (root / "hooks" / "gating_guard.py").exists()

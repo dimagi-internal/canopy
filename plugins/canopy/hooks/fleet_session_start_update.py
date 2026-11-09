@@ -6,7 +6,7 @@ echo, ace, …), so a canopy SessionStart hook fires on EVERY Claude Code
 session across all projects. This script uses that reach to keep the whole
 fleet's *installed plugin cache* in lock-step with each repo's `main`.
 
-Why this exists (GitHub #357): fleet agents run from a versioned plugin cache
+Why this exists: fleet agents run from a versioned plugin cache
 (`~/.claude/plugins/cache/<p>/<p>/<version>/`), NOT their repo. Merging a PR to
 an agent's `main` changes the repo but does nothing to the running harness
 (interactive sessions AND cron turns) until the plugin is re-installed. There
@@ -196,9 +196,8 @@ def _default_branch(clone: str) -> str:
 
 # ── release channel ─────────────────────────────────────────────────────────
 #
-# A merge used to reach every machine on its next session. A repo can now publish a
-# `fleet-stable` tag (canopy's `.github/workflows/fleet-stable.yml` advances it to the newest
-# main commit whose required checks passed and that has soaked on the `main` channel). The
+# A repo can publish a `fleet-stable` tag (canopy's `.github/workflows/fleet-stable.yml`
+# advances it to the newest main commit whose required checks passed and that has soaked on the `main` channel). The
 # fleet follows the tag; a canary machine follows `main` with CANOPY_FLEET_CHANNEL=main or a
 # `main` line in ~/.claude/canopy/fleet-channel. A repo without the tag is followed at main.
 
@@ -261,7 +260,7 @@ def ensure_on_branch(clone: str, branch: str) -> str:
     `git reset --hard origin/<branch>` rewrites whatever ref HEAD points at, not
     the ref named in the argument. So when the clone sits on a feature branch —
     which happens, despite the clone being documented as never-a-workspace; the
-    canopy one was found on `ddd/preflight-applies-scroll` on 2026-07-28 — the
+    canopy one was found on `ddd/preflight-applies-scroll` — the
     reset silently moved THAT branch to main's tip. Those commits survived only
     because they had been pushed.
 
@@ -318,18 +317,16 @@ def _read_version(plugin_dir: Path) -> str:
 
 
 def mirror_tree(src: Path, dest: Path, *, exclude: set[str], delete: bool = False) -> str:
-    """Copy `src` into `dest` — the rsync this hook used to shell out to, in pure Python.
+    """Copy `src` into `dest`, in pure Python (an rsync-style mirror).
 
     WHY NOT rsync: it does not exist on Windows, and this hook runs on EVERY Claude Code
-    session, so on a Windows machine the fleet self-updater failed every single time —
-    `fleet-update: canopy error: rsync not found`, eight consecutive failures and no
-    successes, written to a log nobody opens. The agent stayed frozen on whatever plugin
-    version it was installed with, and the only visible symptom was the *other* half of the
-    same cause: `canopy doctor` reporting the CLI and the marketplace clone drifting apart.
+    session, so shelling out would fail the fleet self-updater every time on a Windows
+    machine. The agent would stay frozen on whatever plugin version it was installed with,
+    and the only visible symptom would be `canopy doctor` reporting the CLI and the
+    marketplace clone drifting apart.
 
-    Semantics kept from the two call sites: `exclude` matches a path COMPONENT (as
-    `--exclude=node_modules` did), and `delete=True` reproduces `--delete` by removing
-    entries in dest that are no longer in src — except the ones we deliberately preserve
+    Semantics: `exclude` matches a path COMPONENT (like `--exclude=node_modules`), and
+    `delete=True` behaves like `--delete`, removing entries in dest that are not in src — except the ones we deliberately preserve
     (`.venv`/`uv.lock`, which uv materializes and a same-version resync must not thrash).
 
     Returns "" on success, else an error string — matching the callers' contract.
@@ -419,7 +416,7 @@ def install_node_deps(name: str, cache_dir: Path) -> None:
     A plugin that ships `bin/<name>-install-deps` owns how its deps are installed, and
     this defers to it. ACE's links one runtime-only store per lockfile into each version
     and prunes long-orphaned versions — a full `npm install` per version, here, had left
-    one machine holding 93 ACE versions, 16GB (2026-10-19). Anything else, or no bash to
+    one machine holding 93 ACE versions, 16GB. Anything else, or no bash to
     run the script with, gets the plain in-place install it always had.
     """
     script = cache_dir / "bin" / f"{name}-install-deps"
@@ -895,18 +892,13 @@ def main() -> int:
 
 # ── `--sync-cache`: the /canopy:update skill's Step 2, sharing this module's mirror ─────────
 #
-# The update SKILL.md used to do this in bash with two `rsync` calls. rsync does not exist on
-# Windows, and both calls sat inside a single `&&` chain, so Step 2 died at `rsync: command not
-# found` (exit 127) AFTER the git pull and BEFORE the cache sync and the registry patch. The
-# result is the worst available state and it is SILENT: the marketplace clone is on the new
-# commit while installed_plugins.json still points at the old cache dir, so the plugin is
-# half-updated with nothing to indicate it. Measured on @smazumdar's machine 2026-09-14 — cache
-# stuck at 0.2.459 with the clone at 0.2.476.
+# A bash `rsync` in the update SKILL.md would not exist on Windows, and a failure there after
+# the git pull but before the cache sync and the registry patch is the worst available state
+# and SILENT: the marketplace clone is on the new commit while installed_plugins.json still
+# points at the old cache dir, so the plugin is half-updated with nothing to indicate it.
 #
-# The mirror this needs already existed here (`mirror_tree`, added for exactly this reason on the
-# hook path). Re-deriving it in the skill is what produced a fourth rsync call site; the fix is
-# for the skill to CALL this, so there is one mirror in the codebase and the hook's tests cover
-# the updater too.
+# So the skill CALLS this module's `mirror_tree` rather than re-deriving a mirror: there is
+# one mirror in the codebase and the hook's tests cover the updater too.
 
 SYNC_RETRIES = 3
 SYNC_RETRY_DELAY = 2.0
@@ -917,7 +909,7 @@ def _retry_sync(what: str, fn) -> str:
 
     Windows Defender holds freshly-written files open for a moment, so a copy or an unlink
     intermittently fails with `Access is denied. (os error -2147024891)` and then succeeds on a
-    plain retry — the same pattern `claude plugin marketplace add` shows. Reported 2026-09-14.
+    plain retry — the same pattern `claude plugin marketplace add` shows.
     Retries are bounded and only for errors that look like contention; anything else returns at
     once, because retrying a real error just delays the message.
     """

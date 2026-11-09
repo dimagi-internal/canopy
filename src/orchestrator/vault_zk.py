@@ -1,4 +1,4 @@
-"""Canopy Vault zero-knowledge v1 — the byte formats, client side (canopy-web#1550).
+"""Canopy Vault zero-knowledge v1 — the byte formats, client side.
 
 The NORMATIVE definition is canopy-web ``docs/vault/zk-v1/zk_v1_reference.py`` and its
 vectors ``zk_v1_vectors.json``; ``tests/fixtures/vault_zk/`` holds verbatim copies of both,

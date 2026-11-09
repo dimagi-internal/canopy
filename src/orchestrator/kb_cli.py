@@ -163,7 +163,7 @@ def push(ref: str, repo: Path, path: Path, originals: Path | None = None) -> dic
 
     A workspace project's goes to canopy-web, which serves it as the project's own
     MCP: its originals first (when given), then the whole file, as a new version made
-    from the one it serves now. canopy-web never builds an index (canopy-web#1971). A
+    from the one it serves now. canopy-web never builds an index. A
     curator that refreshes incrementally does it through `canopy_kb.curate` (e.g. eva's
     GiveWell refresh), which also skips an unchanged publish;
     this is the hand-built file's path. Nothing is written to Drive (a project that

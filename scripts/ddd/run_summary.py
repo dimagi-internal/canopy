@@ -1,10 +1,8 @@
 """What a finished DDD run found — a part of its RUN PACKAGE, never a notes file.
 
-Why this replaced ``.canopy/ddd/learnings.md`` (Jonathan, 2026-10-16)
+Why the summary travels with the run and not in ``.canopy/ddd/learnings.md``
 ---------------------------------------------------------------------
-canopy#788 made every run-ending ``assemble`` append a block to
-``<repo>/.canopy/ddd/learnings.md`` so the next run's bootstrap could read it.
-In practice that file never reached the next run:
+A notes file in the repo never reaches the next run:
 
 * the operator works across four machines, and ACE runs resolve their DDD dir to
   per-run home directories (``~/.canopy/ddd/ace-<opp>-<run>/learnings.md``,
@@ -15,7 +13,7 @@ In practice that file never reached the next run:
   product — a lesson about the product belongs in the product's docs or as a
   product fix, not in a side file only the loop reads.
 
-So the summary now travels WITH THE RUN:
+So the summary travels WITH THE RUN:
 
 * ``state.run_summary`` — pushed to canopy-web on every ``runstate.save`` as part
   of the run document, and a compact :func:`actionable` digest rides in the run
@@ -32,7 +30,7 @@ So the summary now travels WITH THE RUN:
 uploaded is still written locally, and the run's ending is never changed by it.
 
     python -m scripts.ddd.run_summary <run_id>     # (re)write it by hand
-    python -m scripts.ddd.run_learnings <run_id>   # the old name; same thing
+    python -m scripts.ddd.run_learnings <run_id>   # alias; same thing
 """
 from __future__ import annotations
 

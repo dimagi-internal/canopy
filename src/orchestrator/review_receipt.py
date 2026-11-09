@@ -1,13 +1,13 @@
 """Pre-send review rail — a receipt keyed to the BODY, not to the agent's memory.
 
-WHY THIS EXISTS (Eva, 2026-07-15; Jonathan): every agent's `agent-turn-review` skill says
+WHY THIS EXISTS: every agent's `agent-turn-review` skill says
 "re-run this whole review on every revision of a draft, not only the first." That
 instruction is prose, and prose fails under load in one specific, reproducible way: the
 agent reviews draft v1, then revises twice as new findings land, and each revision feels
 like *improving already-reviewed work* rather than *a new draft needing review*. The
 turn's own close-checklist then reports "review ran ✅" — truthfully, about v1 — and v3
-ships unreviewed. On the turn that motivated this, re-running the review on the final body
-caught a named shortlist target missing from the email entirely.
+ships unreviewed. Re-running the review on the final body can catch a named shortlist
+target missing from the email entirely.
 
 The fleet's stated principle is "invariants are hooks, not memory" — prose relies on the
 model choosing to comply. So this makes the failure IMPOSSIBLE rather than discouraged:
@@ -77,7 +77,7 @@ def _path_for(slug: str, fp: str) -> Path:
 
 
 # ── Commitment scan: §6 as a gate, not a checklist line ──────────────────────
-# Why this is enforced by the tool: on 2026-07-23 a review ran, caught three real
+# Why this is enforced by the tool: a review ran, caught three real
 # body defects, recorded "clean" — and still shipped "Happy to walk anyone through
 # it live", a real-time human session the agent has no way to hold. The RULE was
 # already written (§6: name the executable mechanism or cut it). What failed was
@@ -105,8 +105,8 @@ _COMMITMENT_PATTERNS: tuple[tuple[str, str], ...] = (
     # rule it". This is a different thing: the pattern matching a DIFFERENT TOKEN than the
     # verb it names. A real "align with <person>" is never preceded by a hyphen, so the
     # narrowing costs zero genuine hits. `\b` is kept wherever the phrase cannot be a
-    # compound's tail (`run it by`, `reach out to`). (2026-09-14: a hal reply citing the
-    # `fleet-align` skill was refused a receipt over its own skill's name.)
+    # compound's tail (`run it by`, `reach out to`). (A reply citing the
+    # `fleet-align` skill must not be refused a receipt over its own skill's name.)
     (_NL + r"sync\s+(?:up\s+)?with\b|" + _NL + r"loop\s+in\b|" + _NL + r"check\s+with\b"
      r"|\brun\s+it\s+by\b|" + _NL + r"coordinate\s+with\b|" + _NL + r"align\s+with\b"
      r"|\breach\s+out\s+to\b", "human dependency"),

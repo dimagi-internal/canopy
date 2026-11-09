@@ -5,12 +5,12 @@ canopy-web writes a CALLER ENVELOPE for every turn (who asked, whether THIS mess
 is verified, their relationship to the agent, the turn's mode) and the runner saves
 it to `~/.canopy/caller/<turn_id>.json`. A slash-command prompt names it with
 `--caller <path>`; a FREE-TEXT prompt (Slack, the web chat, the widget) is the
-person's own words and is left byte-for-byte alone — so until this hook, the agent
-answering a chat message never learned who sent it. On 2026-09-26 Hal, driven from
-Slack by a non-member, pushed and deployed code while its envelope said
-relationship=caller, verified=false, turn_mode=manual.
+person's own words and is left byte-for-byte alone — so without this hook, the agent
+answering a chat message would never learn who sent it (a Slack-driven turn from a
+non-member would read as trusted while its envelope says relationship=caller,
+verified=false, turn_mode=manual).
 
-This UserPromptSubmit hook closes that gap without touching the prompt: it returns
+This UserPromptSubmit hook supplies that without touching the prompt: it returns
 the summary as `additionalContext`, which Claude Code adds beside it.
 
 **How it finds the envelope.**
@@ -37,9 +37,8 @@ summary. Presence is the latest message's channel, nothing more: a chat (`canopy
 `canopy_scheduler` and `api` mean nobody is watching. Turn MODE (auto/manual) is decided once,
 at claim, and only governs whether a send waits for approval. Presence changes mid-session —
 an emailed turn the owner then joins in chat — and the unattended rules (never ask, record
-instead of pause, end on a status line) stop applying the moment they do (Jonathan,
-2026-10-27: "once I start talking to you in the session directly … you shouldn't still be
-applying the same ruleset"). `status_line_guard.py` reads this file at Stop. A prompt with no
+instead of pause, end on a status line) stop applying the moment they do (once the person talks to the
+agent in the session directly, the unattended ruleset stops fitting). `status_line_guard.py` reads this file at Stop. A prompt with no
 envelope in a session that already has a record is the owner at the keyboard: present.
 
 **No pointer, no output.** A human typing at the keyboard is the machine's owner and
@@ -53,7 +52,7 @@ prompt always goes through, and the agent still has `who_is_asking` and the file
 `permissions`, `granted_by`, turn mode — is defined in canopy-web's
 `docs/architecture/access.md` (ACCESS_DOC below). Envelope VERSION 2 renamed
 `relationship: caller` → `contact` and `profile: restricted` → `confined`; this
-hook reads both and always prints the new word. VERSION 3 adds `person` (canopy#804):
+hook reads both and always prints the new word. VERSION 3 adds `person`:
 what the fleet has recorded about the asker — printed here, never left in the file, because
 every earlier "brain" died of being optional to read. No `person` → nothing new is printed.
 """
@@ -299,7 +298,7 @@ def _on_behalf_lines(who: dict) -> list[str]:
     """For a turn another agent's login started: the person it was working for, which
     canopy-web works out itself (canopy-web turn_asker) — or that it worked for no one.
     Said on every such turn, so the receiving agent never has to guess whether a human
-    is behind the work (2026-10-26: ACE read Jonathan's re-runs as "ada, admin")."""
+    is behind the work (a re-run by a person would otherwise read as "ada, admin")."""
     login = who.get("agent_login")
     if not login or who.get("self") or "on_behalf_of" not in who:
         return []  # a person's turn, the agent's own, or a canopy-web that does not say
@@ -328,7 +327,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     # Manual mode gates what reaches PEOPLE or other systems. It does not gate code
     # shipping on the agent's own turns: the GitHub credential the agent holds is
     # already the record of which repos it may push to, so a second approval would
-    # only duplicate it (Jonathan, 2026-10-08). A member's or contact's say-so still
+    # only duplicate it. A member's or contact's say-so still
     # never pushes anything (the "Act accordingly" line below).
     own = rel in ("owner", "admin", "system") and verified
     if mode == "auto":
@@ -358,7 +357,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     lines.extend(_slack_lines(env.get("conversation"), tid))
     um = env.get("unproven_member")
     if isinstance(um, dict) and um:
-        # canopy-web#1265: informational, grants nothing — but without it a member
+        # Informational, grants nothing — but without it a member
         # whose domain lacks aligned DMARC/DKIM reads as an outsider.
         needs = um.get("needs") if isinstance(um.get("needs"), list) else []
         lines.append(
@@ -393,10 +392,10 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
 
 
 def _parent_lines(env: dict, tid: str) -> list:
-    """The ids to pass as `parent` when this turn starts canopy work (canopy#994).
+    """The ids to pass as `parent` when this turn starts canopy work.
 
     A session created with a parent the creator can read takes that parent's
-    people (canopy-web#1658), so the person who asked sees what was started for
+    people, so the person who asked sees what was started for
     them. The MCP headersHelper cannot carry this reliably: Claude Code runs it
     once per connection, from the plugin dir. The payload is per call, and it is
     the one place a per-turn id is never stale."""
@@ -431,10 +430,10 @@ def _clean(value, limit: int = 200) -> str:
 
 # canopy-web relays every reply of a Slack-born (or bound) turn into its thread
 # (apps/slack/relay.py). An agent told only "here is the thread, and here is the tool
-# that posts to it" read its own answer as an unsent draft: an ACE turn in #connect-rutf
-# closed two replies with "I haven't posted this to the Slack thread — want me to?"
-# while both were already in it, written to the owner instead of the thread
-# (2026-10-25). So the line says the reply IS the post, and who reads it.
+# that posts to it" reads its own answer as an unsent draft: a turn in a Slack channel
+# could close a reply with "I haven't posted this to the Slack thread — want me to?"
+# while it was already in it, written to the owner instead of the thread.
+# So the line says the reply IS the post, and who reads it.
 _SLACK_REPLY = ("Your reply to this turn posts automatically, as you, into this {where} — "
                 "write it to the people there, and never offer to \"post it to Slack\" or say it "
                 "hasn't been posted; that reply is not a separate send needing approval.")
@@ -444,7 +443,7 @@ def _slack_lines(conversation, tid: str) -> list:
     """Where in Slack this conversation is (canopy-web `conversation.slack`), that the
     turn's reply lands there, and the one call that moves it to a fresh thread in the
     same channel. A Slack turn asked to "post a new clean thread in the channel" used
-    to have to ask which channel it was in (2026-10-16)."""
+    to have to ask which channel it was in."""
     slack = conversation.get("slack") if isinstance(conversation, dict) else None
     if not isinstance(slack, dict) or not slack.get("channel_id"):
         return []
@@ -466,8 +465,8 @@ def _slack_lines(conversation, tid: str) -> list:
 def _page_lines(page) -> list:
     """What the person is looking at, when the conversation is embedded in a page
     that declared it. Here — in context, not in the person's message — because
-    the widget used to paste this under their first message, and every
-    transcript opened with a JSON dump (canopy-web, 2026-09-26). It is the
+    pasted under their first message, it would open every transcript with a
+    JSON dump. It is the
     SELECTION (ids + filters, ≤8 KiB), never the rows: read those with the
     backing tool, or re-read the page with current_page."""
     if not isinstance(page, dict) or not page.get("resource"):
@@ -507,7 +506,7 @@ def _site_lines(site) -> list:
     return out
 
 
-#: canopy-web's MCP Apps block (spec 2026-10-08): calls a person made by clicking in
+#: canopy-web's MCP Apps block: calls a person made by clicking in
 #: a site's View, RECORDED BY canopy (the host), and each View's latest model
 #: context. Bounded here as well as server-side: it rides every prompt.
 APPS_RECEIPT_CAP = 5
@@ -547,10 +546,10 @@ def _apps_lines(apps) -> list:
     return out
 
 
-#: Envelope VERSION 3 `person` block (canopy#804, the fleet brain). The hook prints it so
-#: the model cannot skip it: every earlier brain died because reading it was optional.
-#: But it rides on EVERY prompt, so it is an INDEX, not the record (Jon, 2026-10-07: "it
-#: shouldn't be a ton … just some minimal amount and the session knows to call back"):
+#: Envelope VERSION 3 `person` block (the fleet brain). The hook prints it so
+#: the model cannot skip it: a brain whose reading is optional goes unread.
+#: But it rides on EVERY prompt, so it is an INDEX, not the record (minimal, and the
+#: session knows to call back):
 #: corrections (binding) + a couple of orienting facts + the command that reads the rest.
 #: The digest and the full fact list stay in the envelope file and `canopy people show`.
 PERSON_CORRECTION_CAP = 5     # corrections shown (binding, so they come first)
@@ -614,8 +613,8 @@ def person_lines(person) -> list:
     # record = agents may learn about them (write); use = agents may be told it
     # (read); `available` = what the person allows at all, so "off in this session"
     # and "not turned on" read differently. Absent (an older canopy-web) = the
-    # behaviour below, unchanged; no `available` (canopy-web #1380) = not per session.
-    # Since canopy-web #1389 grants are per agent and only the person's act: `record` /
+    # behaviour below, unchanged; no `available` = not per session.
+    # Grants are per agent and only the person's act: `record` /
     # `use` are the switch AND a grant to THIS agent, and `awaiting_grant` lists what is
     # on in this session but not yet granted — canopy's UI asks the person; the agent
     # never does. Absent `awaiting_grant` (older canopy-web) = nothing awaiting.
@@ -644,7 +643,7 @@ def person_lines(person) -> list:
         if may_record and not may_use:
             # Record-only: nothing is served and search is refused, so the agent adds
             # without searching first; HCP's conflict quarantine handles a duplicate or
-            # a contradiction (judgment call, 2026-10-09).
+            # a contradiction.
             rec = person.get("record") if isinstance(person.get("record"), dict) else {}
             turn = _one_line(rec.get("turn"), 40) or "<this turn id>"
             return [f"[canopy] {name} (person {pid}) lets agents learn about them here, but "
@@ -710,7 +709,7 @@ LOCAL_ROOT = os.path.expanduser("~/.canopy/local")
 
 
 def local_turn(session_id: str, *, root=None, renew=True):
-    """(envelope path, turn id) for THIS session's LOCAL turn (canopy-web#1704), the
+    """(envelope path, turn id) for THIS session's LOCAL turn, the
     first time a prompt asks; (None, None) otherwise.
 
     A session on a person's private runner that uses an agent is a local turn, opened

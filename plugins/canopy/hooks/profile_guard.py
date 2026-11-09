@@ -43,7 +43,7 @@ Profile shape (written by the runner from canopy-web's envelope):
               `{cwd}` is the session's working directory. Empty → no path allowed.
   write_paths the same, for tools that CHANGE a file (Write/Edit/MultiEdit/
               NotebookEdit). Checked INSTEAD of read_paths. Empty or absent →
-              no writes at all. Separate since 2026-09-26: with one list, a
+              no writes at all. Separate: with one list, a
               caller who could read the worktree could overwrite the script its
               `bash` allowlist runs (bin/ace-email) and then run it.
 

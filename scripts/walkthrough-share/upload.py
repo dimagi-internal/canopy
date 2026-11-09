@@ -78,7 +78,7 @@ def _describe_error(body: dict) -> str:
 def resolve_pat() -> str:
     """Read the PAT via the canonical canopy_web precedence (env → the agent's own
     ~/.<slug>/.env → token file), STRICT about agent identity: in an agent's session
-    with no PAT of its own this fails rather than upload as the operator (ace#2805)."""
+    with no PAT of its own this fails rather than upload as the operator."""
     try:
         return canopy_web.resolve_token(None, agent_strict=True)
     except RuntimeError as exc:
@@ -479,7 +479,7 @@ def main(argv: list[str] | None = None) -> int:
         fail(str(exc))
 
     # The viewer lives at /w/<workspace>/walkthrough/<id> on the API host; the
-    # flat /walkthrough/<id> is gone (canopy-web#1337), so never print it.
+    # flat /walkthrough/<id> is gone, so never print it.
     print(f"View: {canopy_web.app_url(f'/walkthrough/{wid}', workspace, api)}")
     # Public walkthroughs are token-gated: the API returns the owner-only
     # share_url (…/walkthrough/<id>?t=<token>) and never the raw token. It may

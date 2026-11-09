@@ -4,11 +4,9 @@ A ``scroll_to`` whose target is already in the viewport scrolls zero pixels. It
 does not fail, it does not warn, and the scene captures the frame the previous
 one already captured. The narration keeps going over a picture that has stopped.
 
-This happened twice in two iterations of one narrative, and neither time did
-anything mechanical notice. Both were found by an LLM arc judge pixel-diffing
-screenshots by hand — a ten-minute, non-deterministic pass spent on a comparison
-that is four lines of arithmetic. The second time, the "fix" for the first was
-itself the no-op.
+Nothing mechanical notices it otherwise. An LLM arc judge pixel-diffing
+screenshots by hand is a ten-minute, non-deterministic pass spent on a comparison
+that is four lines of arithmetic.
 
 The rubric already prices this: *"two scenes make the same point with
 different pixels: max 2"*, and its harsher sibling *"more than half the scenes
@@ -20,22 +18,20 @@ judge does is worth the twenty milliseconds this takes.
 
 Exit codes: 0 clean, 1 duplicates found, 2 usage/setup error.
 
-Compares EVERY pair of scenes, not just consecutive ones. This module used to
-compare only neighbours, on the theory that "two similar frames a long way apart
-are a legitimate callback; two in a row are a stall." Measurement overturned it.
-The camera bug that produces a duplicate has no opinion about scene order: a
+Compares EVERY pair of scenes, not just consecutive ones. Comparing only neighbours
+would assume that "two similar frames a long way apart are a legitimate callback;
+two in a row are a stall," and that assumption is wrong. The camera bug that produces a duplicate has no opinion about scene order: a
 ``scroll_to`` that cannot move the page leaves the viewport wherever the *last
-scroll* left it, which is often several scenes back. Two runs of one narrative
-each shipped a NON-adjacent byte-identical pair — ``hh-poverty-targeting-
-answer-quality-2026-08-29-001`` scenes 3 and 5 differ by 0.00% of pixels while
-every adjacent pair in it differs by more than 27% — and this gate called both
-of them ``pass``. Both were caught instead by an LLM arc judge, the only lens
-that sees all the scenes at once, which is precisely the tell that the
-mechanical check was looking through a keyhole.
+scroll* left it, which is often several scenes back. A narrative
+can ship a NON-adjacent byte-identical pair — scenes 3 and 5 differing by 0.00% of
+pixels while every adjacent pair differs by more than 27% — which an
+adjacent-only gate would call ``pass``. An LLM arc judge is the only other lens
+that sees all the scenes at once; an adjacent-only mechanical check looks through
+a keyhole.
 
 ``itertools.combinations`` over a handful of scenes is O(n²) on single digits.
 The cost of the wider comparison is microseconds; the cost of the narrower one
-was two undetected shipped runs.
+is undetected shipped runs.
 
 A real callback — a deliberate return to an earlier screen — will now be
 reported. That is the intended trade: it is rare, it is one line to confirm by
@@ -129,7 +125,7 @@ def check(run_dir: str | Path, threshold: float = DEFAULT_THRESHOLD) -> dict[str
                 "scenes": [index_a, index_b],
                 "difference": round(diff, 5),
                 "duplicate": diff < threshold,
-                # Adjacency no longer decides whether a pair is COMPARED, but it
+                # Adjacency does not decide whether a pair is COMPARED, but it
                 # still decides how it reads: neighbours are a stall the viewer
                 # sits through, a distant pair is a camera that never moved off a
                 # screen several scenes back. Reported so the author can tell the

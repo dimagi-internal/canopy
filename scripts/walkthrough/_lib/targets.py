@@ -196,7 +196,7 @@ def _visible_now(locator: Locator) -> Locator | None:
 
     Never waits: ``count()`` and ``is_visible()`` both answer from the current
     DOM. Used to prefer an exact text match without paying a timeout when there
-    is none (canopy#912).
+    is none.
     """
     try:
         if locator.count() > 0 and locator.first.is_visible():
@@ -229,8 +229,7 @@ def _resolve_via_text(page: Page, value: str, *, timeout_ms: int) -> Locator | N
     # a larger node ("Rijiyar Kwara" inside "Rijiyar Kwara (Kano)") the exact
     # wait burned its whole half-budget (~3 s at the default) before the
     # substring fallback ran — 3.83 s per hover vs 0.83 s with ``text:``, which
-    # pushed every later beat of a ``style: recorded`` cut off its spoken word
-    # (canopy#912).
+    # pushed every later beat of a ``style: recorded`` cut off its spoken word.
     text_budget = max(500, timeout_ms // 2)
     substring = page.get_by_text(value)
     exact = page.get_by_text(value, exact=True)
@@ -294,8 +293,8 @@ def resolve_target(page: Page, target: str, *, timeout_ms: int = 6000) -> Resolv
     # auto — heuristic dispatch with FALL-THROUGH to text on CSS miss.
     #
     # The heuristic is fast but not infallible; a bare-leading combinator
-    # (``+ Foo``) used to read as CSS and throw, which silently killed the
-    # action. Now we try the selector engine first when the shape says so,
+    # (``+ Foo``) would read as CSS and throw, which silently kills the
+    # action. So we try the selector engine first when the shape says so,
     # and if it doesn't resolve in half the budget, we fall through to the
     # visible-text path. Heuristic is helpful when right and recoverable
     # when wrong.

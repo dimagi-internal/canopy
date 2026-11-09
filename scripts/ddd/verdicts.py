@@ -1,4 +1,4 @@
-"""Unified verdict loader — one schema over six judge artifacts (canopy#265 item 1).
+"""Unified verdict loader — one schema over six judge artifacts.
 
 DDD's judges historically emitted three structural schemas:
 
@@ -67,7 +67,7 @@ _FILENAME_KINDS = {
 
 # The out-of-chain verdict artifacts a run dir may carry beyond the gating pair
 # (concept / user_artifact). /canopy:ddd-run Step 4 discovers whichever of these
-# are present and feeds them through the aggregator (canopy#273 item 1).
+# are present and feeds them through the aggregator.
 EXTRA_VERDICT_FILENAMES: tuple[str, ...] = (
     "verdict-arc.yaml",
     "verdict-timing.json",

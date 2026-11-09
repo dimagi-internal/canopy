@@ -8,7 +8,7 @@ in ``scripts/ddd/review.py`` and ``scripts/ddd/upload.py``:
               then the on-disk :data:`TOKEN_FILE` — but NEVER the latter in an
               agent's session (``$CANOPY_AGENT``): DDD writes publish under a name,
               so an agent without its own PAT fails loudly instead of posting as
-              the operator (ace#2805).
+              the operator.
   - Workspace: every write names one (:func:`require_write_workspace`) and is
               read back from it (:func:`confirm_landed`).
 
