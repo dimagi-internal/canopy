@@ -97,9 +97,9 @@ What improves is the scaffolding (skills, hooks, rails, `CLAUDE.md`), never the 
   (`plugins/canopy/hooks/caller_context.py`), and the agent records new ones in the session that has
   the context (`agent-core/turn.md` Step 4, `hcp_addPreference`). Keep memory behind the MCP/CLI
   boundary so it can be swapped.
-- **Docs and skills hold current state only.** Every stamped agent carries
-  `tests/test_docs_current_state.py` (stamped verbatim from `_factory.py`, run by the stamped
-  `.github/workflows/test.yml`), which fails on dates, issue/PR numbers and before-and-after narrative in
+- **Docs and skills hold current state only.** Every stamped agent carries a
+  `test_docs_current_state` test and a workflow that runs it (`_DOCS_CURRENT_STATE_TEST` and
+  `_TEST_WORKFLOW` in `_factory.py`, stamped verbatim), which fails on dates, issue/PR numbers and before-and-after narrative in
   its CLAUDE.md, persona, README, docs, skills and config `_doc` strings. Existing agents receive it
   through `canopy fleet-align` (a whole-file DISTRIBUTE finding with a verbatim brief); what stays
   per-repo is fixing the history the guard reports and making CI run `tests/`.
