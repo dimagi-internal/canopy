@@ -57,6 +57,8 @@ RUNNER_CONFIG_ENV = "CANOPY_RUNNER_CONFIG"
 DEFAULT_RUNNER_CONFIG = Path.home() / ".canopy" / "runner.json"
 # The line `aws sso login --use-device-code` prints with the code already in it.
 _DEVICE_URL = re.compile(r"(https://\S*[?&]user_code=[A-Za-z0-9-]+)")
+# How much of the CLI's output a failed login quotes back: the tail is where its error is.
+_SEEN_LINES = 12
 
 
 def parse_device_url(line: str) -> str:
@@ -191,12 +193,18 @@ def caller_identity(profile: str) -> str:
         return ""
 
 
-def _read_device_url(proc: subprocess.Popen, found: threading.Event, box: list) -> None:
+def _read_device_url(proc: subprocess.Popen, found: threading.Event, box: list,
+                     seen: Optional[list] = None) -> None:
     """Drain the CLI's output (so it can never block on a full pipe), keeping the
-    first device URL it prints."""
+    first device URL it prints. Until a URL turns up, every non-blank line also
+    goes into ``seen`` (at most ``_SEEN_LINES``), so a login that never gets one
+    can say what the CLI printed instead of guessing at a cause."""
     assert proc.stdout is not None
     for line in proc.stdout:
         if not box:
+            if seen is not None and line.strip():
+                seen.append(line.rstrip())
+                del seen[:-_SEEN_LINES]
             url = parse_device_url(line)
             if url:
                 box.append(url)
@@ -232,13 +240,19 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
     proc = subprocess.Popen(
         ["aws", "sso", "login", "--profile", profile, "--use-device-code", "--no-browser"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-    found, box = threading.Event(), []
-    threading.Thread(target=_read_device_url, args=(proc, found, box), daemon=True).start()
+    found, box, seen = threading.Event(), [], []
+    threading.Thread(target=_read_device_url, args=(proc, found, box, seen), daemon=True).start()
     found.wait(timeout=60)
     if not box:
+        exited = proc.poll()
         proc.kill()
+        said = ("\n".join(f"  | {line}" for line in seen) if seen else "  (it printed nothing)")
+        how = (f"exited {exited}" if exited is not None
+               else "was still running after 60s")
         raise click.ClickException(
-            "`aws sso login --use-device-code` printed no approval URL. Is this profile "
+            f"`aws sso login --use-device-code` {how} without printing an approval URL. "
+            f"What it printed:\n{said}\n"
+            "If that does not name the cause: is this profile "
             "an IAM Identity Center (SSO) profile, and is the AWS CLI v2.22 or newer?")
     url = box[0]
 
