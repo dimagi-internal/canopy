@@ -1,8 +1,8 @@
-"""Uploaded artifacts say which project they belong to (canopy-web T76).
+"""Uploaded artifacts say which project they belong to.
 
-0 of 63 supply walkthroughs carried a project: the DDD uploader never sent one,
-and the only default anywhere was the cwd's directory name — which inside an
-emdash worktree is `emdash-<task>-<suffix>` and names nothing.
+The DDD uploader must send a project: the only default otherwise is the cwd's
+directory name, which inside an emdash worktree is `emdash-<task>-<suffix>` and
+names nothing.
 """
 from __future__ import annotations
 

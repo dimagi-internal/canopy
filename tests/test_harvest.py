@@ -200,7 +200,7 @@ def _evidence(source_ref):
 
 def test_intent_audit_drops_fabricated_quote(tmp_path, monkeypatch):
     """SP3 gap: qualify_findings validates evidence SHAPE, not that source_ref is real —
-    an LLM can fabricate a Jonathan quote and it would pass. The grounding pass added in
+    an LLM can fabricate a user quote and it would pass. The grounding pass in
     intent_audit must catch it."""
     from orchestrator import harvest
     j = tmp_path / "s.jsonl"
@@ -254,7 +254,7 @@ def test_intent_audit_keeps_class1_with_positive_phrasing(tmp_path, monkeypatch)
 
 
 def test_run_intent_llm_garbage_is_error(tmp_path, monkeypatch):
-    """SP3 gap: rc=0 with non-YAML prose stdout parses to [] and used to masquerade as a
+    """SP3 gap: rc=0 with non-YAML prose stdout parses to [] and would masquerade as a
     clean (no-findings) audit. It must fail loud instead."""
     from orchestrator import harvest
 

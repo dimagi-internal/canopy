@@ -2,13 +2,13 @@
 (`canopy_web.resolve_token`): CANOPY_WEB_PAT, then the agent's own PAT from
 `~/.<slug>/.env`, and only then the operator's workbench-token file.
 
-It used to read only the file. On a headless cloud runner that file does not
-exist by design, so no header was sent, canopy-web 401'd, and Claude Code fell
-into OAuth discovery at the ORIGIN — where connect-labs, sharing the domain,
-answered with its own resource metadata: "Protected resource
+Reading only the file is not enough. On a headless cloud runner that file does not
+exist by design, so no header would be sent, canopy-web would 401, and Claude Code
+would fall into OAuth discovery at the ORIGIN — where connect-labs, sharing the
+domain, answers with its own resource metadata: "Protected resource
 https://labs.connect.dimagi.com/mcp/ does not match expected". Every hal session
-on cloud-ec2-1 had no canopy-web MCP (2026-09-22). On a laptop the same gap was
-silent in the other direction: every agent's MCP calls ran as the OPERATOR.
+on such a runner would have no canopy-web MCP. On a laptop the same gap is silent
+in the other direction: every agent's MCP calls would run as the OPERATOR.
 """
 import json
 import os

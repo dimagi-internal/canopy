@@ -36,7 +36,7 @@ def _stub_verdict(
     ``gate`` is stamped explicitly (default ``gating``): these stubs stand in
     for the concept / user_artifact pair, which the skills stamp at write time
     and ``load_verdict`` stamps at load time. The MODEL default is ``advisory``
-    (canopy#273 item 4) — an unstamped legacy verdict must never gate.
+    — an unstamped legacy verdict must never gate.
     """
     return Verdict(
         schema_version=1,
@@ -285,9 +285,9 @@ class TestComputeConvergence:
 
 class TestMaxIterations:
     def test_hard_cap_is_backstop_not_a_low_count(self) -> None:
-        # The loop is progress-aware now; the old raw 3-iteration cap is gone.
+        # The loop is progress-aware: there is no raw 3-iteration cap.
         # HARD_CAP is a runaway backstop only, and MAX_ITERATIONS is a
-        # back-compat alias for it (no longer 3).
+        # back-compat alias for it (not 3).
         from scripts.ddd.run_pipeline import HARD_CAP, MAX_ITERATIONS
 
         assert HARD_CAP >= 8  # generous backstop, not the normal stop
@@ -386,7 +386,7 @@ class TestComputeAutoIterate:
 
 
 # ---------------------------------------------------------------------------
-# canopy#265 item 1 — generic aggregation + convergence over N verdicts
+# generic aggregation + convergence over N verdicts
 # ---------------------------------------------------------------------------
 
 
@@ -495,7 +495,7 @@ class TestComputeConvergenceAll:
         )
 
     def test_capped_advisory_with_passing_gating_pair_converges(self) -> None:
-        """canopy#273 item 5: a capped advisory verdict (live_state_verified
+        """A capped advisory verdict (live_state_verified
         False, uncapped score above the 4.0 cap) rides along with a passing
         gating pair — the cap fires, the extra stays advisory, and convergence
         is still True."""
@@ -523,7 +523,7 @@ class TestComputeConvergenceAll:
         )
 
     def test_legacy_unstamped_verdict_is_advisory_not_gating(self) -> None:
-        """canopy#273 item 4: Verdict.gate defaults to 'advisory', so a legacy
+        """Verdict.gate defaults to 'advisory', so a legacy
         verdict loaded via bare model_validate cannot hard-block convergence —
         and alone it cannot converge a run either (no gating verdict present →
         False, demonstrated not defaulted)."""
@@ -550,7 +550,7 @@ class TestComputeConvergenceAll:
 
 
 # ---------------------------------------------------------------------------
-# canopy#273 item 3 — cap-visible verdict report lines
+# cap-visible verdict report lines
 # ---------------------------------------------------------------------------
 
 

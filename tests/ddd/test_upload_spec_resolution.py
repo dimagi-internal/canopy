@@ -1,12 +1,12 @@
-"""Tests for upload.py's authored-spec resolution (canopy#620).
+"""Tests for upload.py's authored-spec resolution.
 
-`upload_run` hardcoded `run_dir / "unified_spec.yaml"`. That is right for a run
+`upload_run` must not hardcode `run_dir / "unified_spec.yaml"`. That is right for a run
 whose spec was authored into the run dir and wrong for every run that was not —
 which is every ACE-originated run, because ACE authors the spec at the demo root
 under the narrative's own slug. Those runs pass every gate and then die at the
 last step, after the render and judging are already paid for.
 
-The shape that broke, from `bednet-check-2-visit/20260907-1126`:
+The shape that must resolve (an ACE run for `bednet-check-2-visit`):
 
     ~/.ace/demo/<opp>-<run>/bednet-followup-verification.yaml    <- authored
     ~/.ace/demo/<opp>-<run>/why_brief.yaml

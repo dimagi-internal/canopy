@@ -1,5 +1,5 @@
 """Drift gate: every scripts.* module / attribute / rubric file referenced by a
-plugin markdown file must actually resolve (canopy#265 item 5).
+plugin markdown file must actually resolve.
 
 The per-skill structure tests pin load-bearing STRINGS ("SKILL.md mentions
 scripts.ddd.spec_qa") but never check the reference RESOLVES — renaming a

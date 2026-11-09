@@ -1,6 +1,6 @@
 """`canopy runner credential` shows a runner's Claude credentials and where to change
 them — and takes no value: a runner's tokens and API keys live in a vault only its own
-device key opens (canopy-web spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md)."""
+device key opens."""
 from __future__ import annotations
 
 from click.testing import CliRunner

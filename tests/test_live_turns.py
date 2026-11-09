@@ -212,11 +212,10 @@ def test_a_completed_turn_on_this_ref_is_surfaced(projects):
     That is the state a parked item spends almost all of its life in: a manual-mode
     turn triages the thread, asks the human something, ends, and correctly leaves
     the thread UNREAD. The poller fires on unread, so the next turn runs this check,
-    is told COUNT=0, and re-derives the identical triage. Measured on ace thread
-    1a0ab6342ccdfa76 across 2026-09-16/17 (canopy#656).
+    is told COUNT=0, and re-derives the identical triage.
 
-    Also pins the pipefail trap this shipped with first: the prefilter was
-    `head … | grep -q`, and under `set -o pipefail` grep's early exit SIGPIPEs
+    Also pins the pipefail trap: for a prefilter of `head … | grep -q`,
+    under `set -o pipefail` grep's early exit SIGPIPEs
     head, so the pipeline reports failure ON A MATCH and the guard skips exactly
     the sessions it exists to find. Reverting to a pipe fails this test.
     """
@@ -332,9 +331,9 @@ def _runner_prompt(ref: str, slug: str = "eva") -> str:
 def test_runner_dispatched_turn_with_trailing_caller_is_counted(projects):
     """SEVENTH FAILURE. `--thread <ref> --caller <path>` must count as scoped to <ref>.
 
-    The pattern used to require `--thread <ref><`, so a runner-dispatched turn —
-    whose ref is followed by ` --caller …` — matched nothing: a live turn on the
-    ref was told `COUNT=0 (includes you)` about its OWN ref (2026-09-28, eva).
+    A pattern requiring `--thread <ref><` would miss a runner-dispatched turn —
+    whose ref is followed by ` --caller …` — so a live turn on the
+    ref would be told `COUNT=0 (includes you)` about its OWN ref.
     """
     a, b = "aaaaaaaa-0000-0000-0000-000000000001", "bbbbbbbb-0000-0000-0000-000000000002"
     _write_transcript(projects, a, _runner_prompt(REF_A))
@@ -384,7 +383,7 @@ def test_require_solo_exits_3_when_a_second_turn_holds_the_ref(projects):
 
 
 def test_require_solo_exits_3_on_a_mention_alone(projects):
-    """COUNT=1 with a mention is the 2026-09-29 case: the mention was the whole signal."""
+    """COUNT=1 with a mention is the case where the mention was the whole signal."""
     a, b = "aaaaaaaa-0000-0000-0000-000000000001", "bbbbbbbb-0000-0000-0000-000000000002"
     _write_transcript(projects, a, _prompt(REF_A))
     _write_transcript(projects, b, _prompt(REF_B), later_lines=[f"reading thread {REF_A}"])
@@ -417,7 +416,6 @@ def test_without_the_flag_exit_stays_0(projects):
 #
 # An unscoped turn that picked a ref out of its inbox is never in that ref's
 # count, so `COUNT=1 (includes you)` on it described a live sibling as "just me".
-# Measured 2026-09-30 (ace) and 2026-10-01 (hal). canopy#713.
 
 
 def _unscoped_prompt(slug: str = "hal") -> str:
@@ -429,7 +427,7 @@ def _unscoped_prompt(slug: str = "hal") -> str:
 
 
 def test_unscoped_caller_is_told_a_scoped_sibling_is_not_it(projects):
-    """The #713 repro: an unscoped turn checks the ref a --thread sibling holds."""
+    """Repro: an unscoped turn checks the ref a --thread sibling holds."""
     me, sib = "eeeeeeee-0000-0000-0000-000000000005", "aaaaaaaa-0000-0000-0000-000000000001"
     _write_transcript(projects, me, _unscoped_prompt())
     _write_transcript(projects, sib, _prompt(REF_A))

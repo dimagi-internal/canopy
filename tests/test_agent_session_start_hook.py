@@ -79,7 +79,7 @@ def test_a_callers_confined_turn_never_stages_borrowed_creds(tmp_path, monkeypat
 
 def test_a_runner_turn_never_stages_borrowed_creds_itself(tmp_path):
     # The cloud runner already staged them with ITS credentials; the hook would ask
-    # /credentials/resolve with the agent's own PAT, which 403s (lex, 2026-10-16).
+    # /credentials/resolve with the agent's own PAT, which 403s.
     r, _, log = _run(tmp_path, turn_id="6f1c0000-0000-0000-0000-000000000001")
     assert r.returncode == 0
     assert log.read_text().splitlines() == ["cred sync --agent eva"]

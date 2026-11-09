@@ -1,4 +1,4 @@
-"""Local use of an agent (canopy-web#1704): `canopy private-runner`, `canopy local`, and the
+"""Local use of an agent: `canopy private-runner`, `canopy local`, and the
 three hooks that make a person's own session a recorded local turn.
 
 * SessionStart (`agent_session_start.py`) opens the local turn on a registered private runner and
@@ -218,10 +218,9 @@ def test_session_start_opens_the_local_turn_before_reading_credentials(tmp_path)
      "Google login is not set up on this computer"),
 ])
 def test_a_local_turn_puts_the_agents_google_login_in_place(tmp_path, rc, out, said):
-    """2026-10-28, failure investigation 17, turn c10c9748: a licensee's ace turn died on
-    gog's missing OAuth client file — `canopy agent use` cannot import the agent's login (a
-    licence reads it only inside the person's own turn), so the session's start does, with
-    the turn id on the call."""
+    """A licensee's turn would die on gog's missing OAuth client file — `canopy agent use`
+    cannot import the agent's login (a licence reads it only inside the person's own turn),
+    so the session's start does, with the turn id on the call."""
     home = tmp_path / "home"
     (home / ".canopy").mkdir(parents=True)
     (home / ".canopy/private-runner.json").write_text('{"id": "pr-1"}')

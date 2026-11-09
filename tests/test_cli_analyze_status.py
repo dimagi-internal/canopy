@@ -1,8 +1,8 @@
 """Tests for the STATUS sentinel lines emitted by `canopy analyze`.
 
-Surfaced from the 2026-05-02 session-review run that fanned out 10 parallel
-background `canopy analyze` calls — 9 produced 0-byte output files. Without
-the STARTED/DONE/FAILED sentinels, "0 bytes" was indistinguishable from
+A session-review run can fan out many parallel background `canopy analyze`
+calls, and some may produce 0-byte output files. Without the
+STARTED/DONE/FAILED sentinels, "0 bytes" is indistinguishable from
 "command was never invoked," "venv contention killed the launch," and
 "command ran but found no observations." These tests pin the contract.
 """

@@ -1,5 +1,5 @@
-"""The one resolve client (canopy#946): `?refs=`, `X-Canopy-Turn-Id`, a DPoP proof when
-this machine holds a registered device key — and EXACTLY the old behaviour when the server
+"""The one resolve client: `?refs=`, `X-Canopy-Turn-Id`, a DPoP proof when
+this machine holds a registered device key — and EXACTLY the plain behaviour when the server
 ignores all three. canopy-web is faked at the transport boundary."""
 from __future__ import annotations
 

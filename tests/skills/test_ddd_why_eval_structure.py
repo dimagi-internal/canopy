@@ -103,12 +103,12 @@ def test_command_has_allowed_tools() -> None:
 
 
 # ---------------------------------------------------------------------------
-# canopy#265 items 1+3 — unified verdict metadata + out-of-chain anchoring
+# Unified verdict metadata + out-of-chain anchoring
 # ---------------------------------------------------------------------------
 
 
 def test_skill_writes_verdict_why_yaml() -> None:
-    """Filename follows the verdict-<kind>.yaml convention (canopy#265 item 1)."""
+    """Filename follows the verdict-<kind>.yaml convention."""
     content = (SKILL_DIR / "SKILL.md").read_text()
     assert "verdict-why.yaml" in content
     assert "why_eval.yaml" not in content, (
@@ -118,7 +118,7 @@ def test_skill_writes_verdict_why_yaml() -> None:
 
 
 def test_skill_verdict_carries_out_of_chain_metadata() -> None:
-    """The emitted verdict must self-describe as out-of-chain (canopy#265 item 3):
+    """The emitted verdict must self-describe as out-of-chain:
     why-eval grades AI text against AI text, so live_state_verified is false and
     the schema caps its emittable overall_score."""
     content = (SKILL_DIR / "SKILL.md").read_text()

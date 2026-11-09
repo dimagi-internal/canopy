@@ -5,8 +5,8 @@ content hash over five of its fields standing between the user and a merge.
 With the story on canopy-web and the recipe in git there is nothing to
 reconcile: you cannot diverge from something you do not duplicate.
 
-The concrete cost of the old model, measured 2026-07-26: 68 local copies of
-three narratives across two user accounts, in 10 distinct states.
+The cost of a model with two writers: 68 local copies of three narratives
+across two user accounts, in 10 distinct states.
 """
 from __future__ import annotations
 

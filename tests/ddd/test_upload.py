@@ -183,7 +183,7 @@ class TestBuildDocsPage:
         """A canopy-web /w/<ws>/walkthrough/<id> viewer URL (what uploads return)
         must embed its /content byte stream as <video> — NOT an <iframe> to the
         viewer page, which is auth-gated and X-Frame-Options: DENY, so it renders
-        blank. The stream stays workspace-scoped (canopy-web#1338: the flat
+        blank. The stream stays workspace-scoped (the flat
         /walkthrough/<id>/content is a 404) and the share token is kept."""
         spec = _make_spec()
         why = _make_why_brief()
@@ -292,7 +292,7 @@ class TestPublishArtifact:
             base_url="https://canopy.test",
             _post=mock,
         )
-        # A flat share_url from the server is normalized, never echoed (canopy-web#1337).
+        # A flat share_url from the server is normalized, never echoed.
         assert url == "https://canopy.test/w/connect/walkthrough/abc?t=s1"
 
     def test_falls_back_to_bare_viewer_url_without_share_url(self, monkeypatch):
@@ -464,7 +464,7 @@ class TestUploadRun:
 
         # Point _resolve_ddd_dir to tmp_path. Patching it on runstate is enough:
         # upload resolves through runstate.run_dir_for, which looks the resolver
-        # up at call time — it no longer joins "runs"/run_id for itself.
+        # up at call time — it does not join "runs"/run_id itself.
         monkeypatch.setattr(rs, "_resolve_ddd_dir", lambda: tmp_path)
         # Package links are /w/<workspace>/ddd/… — a real upload names one.
         monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")

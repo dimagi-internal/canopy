@@ -1,8 +1,8 @@
-"""A runner's credential reads fall back to its own device-key token (canopy-web#1604).
+"""A runner's credential reads fall back to its own device-key token.
 
-2026-10-17: the laptop runner's owner PAT was revoked; the runner carried on with its
-device key, but `canopy agent prepare` / `canopy cred` on it were refused. These pin
-the fallback: only credential reads, only after a refusal, with a fresh proof.
+When the laptop runner's owner PAT is revoked, the runner carries on with its
+device key, and `canopy agent prepare` / `canopy cred` on it must not be refused. These
+pin the fallback: only credential reads, only after a refusal, with a fresh proof.
 """
 import datetime as dt
 import json

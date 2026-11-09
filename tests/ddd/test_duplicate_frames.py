@@ -51,14 +51,13 @@ def test_a_real_scroll_passes(tmp_path):
 
 
 def test_a_non_adjacent_duplicate_is_caught(tmp_path):
-    """The regression this module was widened for.
+    """The regression this module is widened to guard.
 
-    This assertion used to read the other way — "two similar frames far apart is
-    a callback; two in a row is a stall" — and that premise is what let two real
-    runs ship. `hh-poverty-targeting-answer-quality-2026-08-29-001` has scenes 3
-    and 5 byte-identical while every ADJACENT pair in it differs by more than
-    27%, so the consecutive-only gate reported `pass` on a run with two
-    identical pictures in it. A camera that cannot move films the screen it was
+    The premise "two similar frames far apart is a callback; two in a row is a
+    stall" is wrong, and it would let a run ship with scenes 3 and 5
+    byte-identical while every ADJACENT pair differs by more than 27%: a
+    consecutive-only gate would report `pass` on a run with two identical
+    pictures in it. A camera that cannot move films the screen it was
     last left on, and nothing constrains that screen to be the previous scene's.
     """
     _write(tmp_path, 1, fill=40)

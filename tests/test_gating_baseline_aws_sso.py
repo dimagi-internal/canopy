@@ -1,12 +1,12 @@
 """The fleet `aws sso login` rail (agent-core/gating-baseline.json `always`).
 
-WHY THIS FILE EXISTS (2026-10-09). An expired AWS SSO session used to be fixable only
-by a human at that box's terminal, so agents learned to stop and ask. `canopy aws
-login` now pushes a tap-to-approve alert to the runner owner's phone, saying who is
-asking, on which runner, and why. The rail turns every raw `aws sso login` into that
-command, for every agent, without each one having to have read about it.
+WHY THIS FILE EXISTS. An expired AWS SSO session is fixable only by a human at that
+box's terminal, so an agent that types `aws sso login` just stalls. `canopy aws login`
+pushes a tap-to-approve alert to the runner owner's phone, saying who is asking, on
+which runner, and why. The rail turns every raw `aws sso login` into that command, for
+every agent, without each one having to have read about it.
 
-The NEGATIVE half matters most: the remedy (`canopy aws login`) and a grep for the old
+The NEGATIVE half matters most: the remedy (`canopy aws login`) and a grep for the raw
 string must both pass, or the rail blocks its own fix and every search for it.
 
 Run: uv run pytest tests/test_gating_baseline_aws_sso.py

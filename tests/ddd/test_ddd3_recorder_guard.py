@@ -1,10 +1,9 @@
-"""DDD-3 — two #954 follow-ups.
+"""DDD-3 — two recorder follow-ups.
 
 1. The recorder refuses a DDD run dir with no capture plan for the current
-   iteration. ACE noora (``newborn-care-classes-programme-cascade-2026-10-15-001``)
-   iterations 3–5 ran the recorder by hand from a command copied out of a render
-   log (``--ddd-orchestrated`` included), so no plan was written and every pass
-   skipped the incremental capture rules. ``--unplanned-capture "<why>"`` is the
+   iteration. A recorder run by hand from a command copied out of a render
+   log (``--ddd-orchestrated`` included) writes no plan, so every pass would
+   skip the incremental capture rules. ``--unplanned-capture "<why>"`` is the
    one override; it is recorded and ``capture_scope report`` flags it.
 2. The pre-judge frame lint's jargon list is config (``product.lint.jargon``),
    merged onto the built-in default so a repo (ACE) can extend it.

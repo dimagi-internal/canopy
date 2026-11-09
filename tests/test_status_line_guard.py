@@ -1,7 +1,7 @@
 """status_line_guard: no "Session complete/paused" line while the person is in the conversation.
 
-Evidence (2026-10-27, ada): a turn began on Jonathan's email in auto mode; he joined in chat and
-it ended three replies in a row on "✅ Session complete — safe to close." with promised work undone.
+Failure this guards: a turn begins on an owner's email in auto mode; the owner joins in chat and
+the turn ends three replies in a row on "✅ Session complete — safe to close." with promised work undone.
 """
 import importlib.util
 import io

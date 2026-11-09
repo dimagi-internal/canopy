@@ -1,6 +1,6 @@
-"""canopy#788 / #782 — every pass fixes everything it can; flat runs stop and ask.
+"""Every pass fixes everything it can; flat runs stop and ask.
 
-Measured on the 2026-10-05..07 DDD runs:
+Measured on real DDD runs:
 
 * supply-sophie-sheets: 50 final findings, 43 deferred (33 mechanical) to a polish
   pass that only runs on convergence, which never came; five cells (4:clarity,

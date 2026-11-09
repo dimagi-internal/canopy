@@ -1,4 +1,4 @@
-"""ddd-video-judge must bind each scene to ITS OWN voiceover (canopy#910).
+"""ddd-video-judge must bind each scene to ITS OWN voiceover.
 
 Recorded cuts share a required opener ("This is a quick overview of how we ..."),
 so a prefix key handed every cut whichever sidecar was listed first.

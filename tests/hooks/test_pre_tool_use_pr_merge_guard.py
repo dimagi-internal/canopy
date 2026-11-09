@@ -2,18 +2,17 @@
 
 The sibling push guard re-checks the version bump at `git push`. That leaves a
 window: CI checks the branch against main *as it was when CI ran*, and GitHub
-does not re-run it when the base moves. On 2026-07-28 two PRs opened from the
-same base both bumped to v0.2.369; #423 merged, then #429 merged forty seconds
-later — both claiming the same version. The plugin cache is keyed by version, so
-the second merge landed in a dir that already existed with the first one's code,
-and `/canopy:update` reported UP_TO_DATE.
+does not re-run it when the base moves. Two PRs opened from the same base can
+both bump to the same version and merge shortly after one another. The plugin
+cache is keyed by version, so the second merge would land in a dir that already
+exists with the first one's code, and `/canopy:update` would report UP_TO_DATE.
 
 This guard closes that window by re-running the same check at `gh pr merge`,
 against a freshly fetched origin/main.
 
 It must:
   - allow anything that isn't a real `gh pr merge`,
-  - block a merge whose VERSION no longer advances past main,
+  - block a merge whose VERSION does not advance past main,
   - only judge the branch it can actually reason about (the PR being merged must
     be the checked-out branch's PR — otherwise fail open),
   - honour CANOPY_ALLOW_MERGE_NO_BUMP=1,
@@ -100,7 +99,7 @@ def test_non_bash_tool_allowed(hook):
 # ── the collision ───────────────────────────────────────────────────────────
 
 def test_blocks_a_merge_whose_version_no_longer_advances(hook, monkeypatch):
-    """The exact 2026-07-28 shape: another PR took the number after CI passed."""
+    """The collision shape: another PR took the number after CI passed."""
     _stub(monkeypatch, hook, COLLIDED)
     action, info = hook.evaluate(_payload("gh pr merge 429 --merge"))
     assert action == "block"

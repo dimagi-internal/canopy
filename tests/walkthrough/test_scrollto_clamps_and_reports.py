@@ -5,8 +5,7 @@ half of the page that is NEGATIVE, the browser clamps it to 0, the page does not
 move, and the scene captures whatever screen the camera was last left on. It
 fails in the worst possible way: the scroll "succeeds", the cursor glide
 re-measures and lands correctly, and the frame looks like a perfectly legitimate
-screenshot of the wrong thing. Only an LLM arc judge ever caught it, twice, on
-two different runs (canopy#587).
+screenshot of the wrong thing. Only an LLM arc judge can catch it.
 
 Two things are pinned here. The clamp — the evaluated JS must never ask the
 browser for an out-of-range scrollTop, so the arithmetic can report that the

@@ -105,7 +105,7 @@ def test_blocked_still_wins_over_a_grant():
     assert resolve(env, RULES)["tier"] == BLOCKED
 
 
-# --- envelope VERSION 2 words (canopy-web, 2026-10-04) -------------------------------
+# --- envelope VERSION 2 words -------------------------------
 
 @pytest.mark.parametrize("rel", ["caller", "contact"])
 def test_relationship_is_reported_in_todays_word(rel):
@@ -145,7 +145,7 @@ def test_a_person_carries_no_agent_trigger():
     assert resolve(_env(), RULES)["agent_trigger"] is None
 
 
-# --- unproven_member (canopy-web#1265): a member whose mail can't be tied to them ----
+# --- unproven_member: a member whose mail can't be tied to them ----
 
 _UNPROVEN = {"email": "member@example.org", "role": "editor",
              "this_message_grade": "contact", "needs": ["dmarc", "dkim_aligned"],

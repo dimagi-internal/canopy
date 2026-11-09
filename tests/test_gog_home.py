@@ -145,7 +145,7 @@ def test_prepare_imports_into_the_agents_own_gog_home(secret_file, tmp_path, mon
         assert env["GOG_KEYRING_PASSWORD"] == gh.derive_password(SECRET, "ace")
         assert env["GOG_KEYRING_BACKEND"] == "file"
     # The OAuth client landed in the agent's own home — in data/, where gog >= 0.40 reads
-    # it (cloud-ec2-2, 2026-10-26) — not the box's shared gog dir.
+    # it — not the box's shared gog dir.
     assert (home / ".gog" / "ace" / "data" / "credentials-canopy.json").is_file()
     assert (home / ".gog" / "ace" / "credentials-canopy.json").is_file()
     assert not (tmp_path / "gog" / "credentials-canopy.json").exists()

@@ -1,11 +1,11 @@
 """repo_evidence — the "is this already in origin/main?" helpers.
 
-Regression guard for 2026-08-19. `git grep <pat>` and `open(repo/'CHANGELOG.md')` read the
+Regression guard: `git grep <pat>` and `open(repo/'CHANGELOG.md')` read the
 WORKING TREE, while both callers (agent_review's source-verification gate and
 verify_findings) fetch origin/main first and present the results AS origin/main. Agent
 repos are normally parked on a feature branch — work happens in worktrees, so the main
 checkout is left wherever it last was (`hal` on `hal/cursor-version-note`, `chrome-sales`
-on a feature branch, both measured the same day). So the gate routinely answered about
+on a feature branch). So the gate routinely answered about
 the wrong tree, and a finding whose fix was plainly on main survived as "not fixed".
 
 The second half: a symbol naming a FILE was grepped as a content pattern, so a fix living
@@ -60,7 +60,7 @@ def parked_repo(tmp_path):
 
 
 def test_grep_finds_a_fix_that_is_on_main_but_not_in_the_parked_work_tree(parked_repo):
-    """The 2026-08-19 miss: work tree says nothing, origin/main has it."""
+    """Work tree says nothing, origin/main has it."""
     out = grep_repo(parked_repo, ["hal:agent-turn-review"])
     assert "(no hits)" not in out
     assert "hal:agent-turn-review" in out

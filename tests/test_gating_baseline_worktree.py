@@ -1,20 +1,19 @@
 """The fleet scratch-worktree deny rail (agent-core/gating-baseline.json `always`).
 
-WHY THIS FILE EXISTS (2026-09-04). Agents stand up throwaway worktrees constantly — deploying
+WHY THIS FILE EXISTS. Agents stand up throwaway worktrees constantly — deploying
 a clean `origin/main`, grounding a finding in a sibling repo, checking CI gates somewhere else
-— and the skills that taught it handed out a FIXED path. hal's `skills/turn` taught
-`worktree add /tmp/canopy-main` in the procedure it repeats most, so every later invention
-(`/tmp/canopy-win`, `/tmp/canopy-harvest`, `/tmp/cl-1427`) inherited the shape.
+— and a skill that hands out a FIXED path (`worktree add /tmp/canopy-main`) gets copied by
+every later invention (`/tmp/canopy-win`, `/tmp/canopy-harvest`, `/tmp/cl-1427`).
 
-Two sessions of the same agent run concurrently as a matter of course. `canopy agent-review
-hal` measured three failures from this in a single 6h window, across two sessions:
+Two sessions of the same agent run concurrently as a matter of course, and a fixed path
+fails like this:
 
     fatal: '/tmp/canopy-win' is a missing but already registered worktree
     fatal: 'hal/windows-text-encoding' is already used by worktree at '/private/tmp/canopy-win'
     fatal: a branch named 'hal/windows-text-encoding' already exists
 
-The same day that repo carried 15 abandoned `/tmp/canopy-*` worktrees, every one merged and
-clean, one still holding the branch a later session then failed to create.
+Abandoned `/tmp/canopy-*` worktrees pile up, merged and clean, and one can still hold the
+branch a later session then fails to create.
 
 The rail is `always` (not a channel) because every agent does this — a per-channel opt-in
 leaves it missing for exactly the agent that forgot. The point of the test is the NEGATIVE
@@ -52,7 +51,7 @@ def test_the_rail_exists():
 @pytest.mark.parametrize("cmd", [
     # the line skills/turn taught, verbatim
     'git -C "$CANOPY_REPO" worktree add /tmp/canopy-main origin/main --detach',
-    # the three 2026-09-04 failures' own paths
+    # the failures' own paths
     "git worktree add /tmp/canopy-win -b hal/windows-text-encoding",
     "git worktree add /tmp/canopy-harvest origin/main --detach",
     "git -C ~/emdash/repositories/connect-labs worktree add /tmp/cl-1427 origin/main --detach",

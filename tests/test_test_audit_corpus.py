@@ -27,7 +27,7 @@ def test_build_corpus_includes_every_test(tmp_path):
     ])
     assert corpus["test_count"] == len(corpus["tests"])
     assert corpus["ran_tests"] is False
-    assert "ran_pytest" not in corpus  # legacy field removed in 0.2.88
+    assert "ran_pytest" not in corpus  # the legacy field is not emitted
 
 
 def test_build_corpus_attaches_source_and_static(tmp_path):

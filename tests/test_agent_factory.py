@@ -18,7 +18,7 @@ from pathlib import Path
 from canopy_agent_factory import AgentSpec, create_agent
 
 
-# canopy#849: stamped agents carry no hook of their own — canopy's plugin runs the engine in
+# Stamped agents carry no hook of their own — canopy's plugin runs the engine in
 # `--session` mode and resolves the agent from the project dir. These tests drive exactly that.
 ENGINE = Path(__file__).resolve().parents[1] / "plugins" / "canopy" / "agent-core" / "gating_guard.py"
 
@@ -145,12 +145,12 @@ def test_agent_core_docs_exist_and_are_agent_agnostic():
 
 
 def test_gating_hook_rails_mcp_drive_creates_and_reads_their_arguments(tmp_path):
-    """The MCP half of the deliverable-filing rails (2026-08-13).
+    """The MCP half of the deliverable-filing rails.
 
-    Two structural gaps made this impossible before, and both are in the hook, not the
-    rules: `_subject` returned "" for any non-built-in tool (so a pattern could never see an
-    MCP call's arguments), and rules could only pin ONE exact tool name (while the same
-    gdrive server is mounted under a different prefix per agent). Result: every rail was
+    Two structural capabilities are needed, and both live in the hook, not the
+    rules: `_subject` must return the arguments of a non-built-in tool (so a pattern can
+    see an MCP call's arguments), and rules must match a tool name across prefixes (the same
+    gdrive server is mounted under a different prefix per agent). Without them every rail is
     `tool: "Bash"`, and an agent holding a Drive-creating MCP tool could file anywhere.
     """
     create_agent(_spec(), tmp_path / "echo")
@@ -194,7 +194,7 @@ def test_gating_hook_rails_mcp_drive_creates_and_reads_their_arguments(tmp_path)
 
 def test_gating_hook_rails_raw_gog_sheets_create(tmp_path):
     """`gog sheets create` with no --parent — the exact command that put a 45-row roster in
-    Eva's My Drive root on 2026-08-12, unshared and dead-linked to the human who asked."""
+    Eva's My Drive root, unshared and dead-linked to the human who asked."""
     create_agent(_spec(), tmp_path / "echo")
     root = tmp_path / "echo"
     cfg_path = tmp_path / "echo" / "config" / "gating.json"
@@ -255,10 +255,10 @@ def test_gating_hook_delegates_to_the_shared_engine(tmp_path):
 
 
 def test_per_statement_reaches_every_agent(tmp_path):
-    """ada's `per_statement`, promoted to the shared engine on 2026-08-13.
+    """ada's `per_statement`, a feature of the shared engine.
 
-    It sat in ada's private copy for three weeks; eva, hal and echo could not use it. This
-    test is the guarantee that a feature invented at one leaf now reaches the fleet.
+    A feature invented at one leaf must not stay in that leaf's private copy; this
+    test is the guarantee that it reaches the fleet (eva, hal, echo).
     """
     create_agent(_spec(), tmp_path / "echo")
     root = tmp_path / "echo"

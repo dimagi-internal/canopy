@@ -1,10 +1,10 @@
-"""One gating hook applies the SESSION's agent's rails (canopy#849).
+"""One gating hook applies the SESSION's agent's rails.
 
-WHY THIS FILE EXISTS (2026-10-09). Every agent plugin is installed at user scope, so a gating
+WHY THIS FILE EXISTS. Every agent plugin is installed at user scope, so a gating
 hook an agent plugin registers fires in EVERY session on the machine: ACE's body-file rail
 blocked a `gh pr create` in an Ada session. canopy now registers one PreToolUse hook
 (`agent-core/gating_guard.py --session`) that works out whose session it is and applies that
-agent's rails only; the per-agent loaders that still fire during the migration stand down
+agent's rails only; the per-agent loaders that also fire stand down
 outside their own agent's session.
 
 Drives the real engine against the real shipped baseline.
@@ -111,12 +111,12 @@ def test_canopy_itself_is_not_an_agent(guard, tmp_path):
 # ---------------------------------------------------------------- Ada session vs ACE rails
 
 def test_ada_session_ignores_ace_rails_and_applies_its_own(guard, fleet):
-    """The 2026-10-09 incident: ACE's body-file rail blocked a PR in an Ada session."""
+    """Regression guard: ACE's body-file rail must not block a PR in an Ada session."""
     env = {"CLAUDE_PROJECT_DIR": fleet["ada"], "CANOPY_AGENT": "ada"}
     assert session(guard, bash(PR_CREATE), **env) == 0
     assert session(guard, bash("ada-forbidden now"), **env) == 2
     assert session(guard, bash(RAW_SEND), **env) == 2          # ada mounts email
-    # ACE's legacy plugin hook still fires during the migration — and must stand down here.
+    # ACE's per-agent plugin hook also fires — and must stand down here.
     assert loader(guard, fleet["ace"], bash(PR_CREATE), **env) == 0
     # Ada's own legacy loader still enforces Ada's rails in Ada's session.
     assert loader(guard, fleet["ada"], bash("ada-forbidden now"), **env) == 2

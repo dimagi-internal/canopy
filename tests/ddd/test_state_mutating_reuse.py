@@ -1,6 +1,6 @@
 """State-mutating narratives: per-render reseed must not defeat reuse or the guard.
 
-Measured on connect-labs ``supply-sophie-rutf-2026-09-26-001`` (canopy 0.2.528):
+Measured on a connect-labs ``supply-sophie-rutf`` run:
 ``setup: rerun: per_render`` minted new ids every take, so ``judge_scope plan``
 re-judged 7/7 scenes every iteration (the fingerprints hashed resolved ids) and
 ``regression_guard`` warned on ~10 "disappeared" id-bearing actions per
@@ -148,7 +148,7 @@ class TestReuseAcrossReseeds:
         _render(tmp_path, 94, 232, png=b"other")
         scope = judge_scope.plan(tmp_path, spec)
         assert scope["full"] is False and scope["rejudge"] == [1, 2]
-        # v3 (canopy#780): a frame that does not decode falls back to exact bytes,
+        # v3: a frame that does not decode falls back to exact bytes,
         # and both image components (the region crop and the layout guard) say so.
         assert scope["changed_components"] == {
             "1": ["layout", "region_image"],
@@ -167,7 +167,7 @@ class TestReuseAcrossReseeds:
         spec = _render(tmp_path, 92, 227)
         cache = tmp_path / "judge-cache"
         cache.mkdir()
-        # exactly what 0.2.528 wrote: no fingerprint_version, no components
+        # an index from before fingerprint versioning: no fingerprint_version, no components
         (cache / "index.json").write_text(
             json.dumps({"iteration": 2, "full": False, "fingerprints": {"1": "a", "2": "b"}})
         )

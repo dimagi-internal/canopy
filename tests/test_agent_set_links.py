@@ -1,14 +1,12 @@
 """`canopy agent set` must be able to fix a task's links.
 
 Links are the task field most likely to rot — they point at runs, run summaries and
-docs, which advance — and until this landed `agent set` had no `--links` option at all.
-The only CLI surface that accepted links was `agent add`, which builds a COMPLETE task
-dict and pushed it through the old task sync, so using it to correct one stale link blanked
-`next_action`, `notes`, `owner`, `assigned`, `status` and `due` unless the caller
-re-supplied every one of them. The one field that rots had no safe update path.
-
-Found during an ACE turn on 2026-08-19 (dimagi-internal/canopy#508), correcting a board
-card whose run-summary link still pointed at a superseded run.
+docs, which advance — so `agent set` takes a `--links` option. The other CLI surface
+that accepts links is `agent add`, which builds a COMPLETE task dict, so using it to
+correct one stale link would blank `next_action`, `notes`, `owner`, `assigned`, `status`
+and `due` unless the caller re-supplied every one of them. The one field that rots needs
+a safe update path: correcting a board card whose run-summary link points at a
+superseded run.
 """
 import pytest
 
@@ -133,11 +131,10 @@ class TestAnUnparseableLinkRaisesInsteadOfVanishing:
 class TestCommasInALabelOrUrlAreKept:
     """A comma inside a label or URL is not a link separator.
 
-    The parser used to `split(",")` the whole cell before looking for `|`, so a label with
-    a comma was cut in half and its first half rejected as an unparseable link. Nothing was
-    written (the guard above held), but there was no way to write the label you meant.
-    Seen twice in eva (2026-09-27, 2026-09-30); both calls were retried with the commas
-    stripped out of the label.
+    Splitting the whole cell on "," before looking for `|` would cut a label with a comma
+    in half and reject its first half as an unparseable link. Nothing would be written
+    (the guard above holds), but there would be no way to write the label you meant, so
+    callers would have to strip the commas out of the label.
     """
 
     def test_a_label_with_a_comma(self):
@@ -152,7 +149,7 @@ class TestCommasInALabelOrUrlAreKept:
         ]
 
     def test_two_links_whose_labels_both_have_commas(self):
-        """The 2026-09-30 eva call, verbatim in shape."""
+        """A real call, verbatim in shape."""
         cell = ("Slide deck (Dimagi brand, canonical)|https://claude.ai/artifact/C, "
                 "Slide deck (neutral, retired 2026-09-30)|https://claude.ai/artifact/D")
         assert parse_task_links(cell) == [
@@ -182,7 +179,7 @@ class TestCommasInALabelOrUrlAreKept:
 
     def test_the_wrong_separator_still_raises_after_a_good_link(self):
         """The space after the comma marks a separator, so the bad part is not swallowed
-        into the previous URL — the #579 guard holds."""
+        into the previous URL — the guard holds."""
         with pytest.raises(Exception) as exc:
             parse_task_links("Good|https://example.com/1, Bad=https://example.com/2")
         assert "Bad=https://example.com/2" in str(exc.value)

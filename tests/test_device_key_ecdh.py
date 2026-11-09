@@ -1,4 +1,4 @@
-"""This machine's ECDH key — what a zero-knowledge vault key is wrapped to (canopy-web#1550).
+"""This machine's ECDH key — what a zero-knowledge vault key is wrapped to.
 
 Every backend is driven to the SAME normative answer: the vector's device key is planted in
 it (a software PEM, a fake Secure Enclave helper speaking the real helper's protocol, a
@@ -273,8 +273,8 @@ def test_device_key_drives_the_tpm_ecdh_key(monkeypatch):
 
 
 def test_a_tpm_that_will_not_make_an_ecdh_key_falls_back_to_software(monkeypatch):
-    # Raising here used to enroll the TPM signing key with no ECDH key at all, so no
-    # vault key could be wrapped to the device (DIM-SI-W021, 2026-10-26).
+    # Raising here would enroll the TPM signing key with no ECDH key at all, so no
+    # vault key could be wrapped to the device.
     class Refuses:
         def __getattr__(self, name):
             raise OSError("NTE_NOT_SUPPORTED")

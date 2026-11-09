@@ -1,4 +1,4 @@
-"""Unit tests for ``wait_for``'s per-action ``seconds:`` timeout override (PR #107).
+"""Unit tests for ``wait_for``'s per-action ``seconds:`` timeout override.
 
 Two surfaces to pin:
 

@@ -1,12 +1,12 @@
 """DDD-2 — stop re-walking everything.
 
-Measured on two ACE runs of 2026-10-15/16 (shapes copied, minimally, from their
-run dirs):
+Two ACE runs motivate these tests (shapes copied, minimally, from their run
+dirs):
 
-* smallholder ``smallholder-seasonal-programme-cascade-2026-10-16-001`` —
+* smallholder (a ``smallholder-seasonal-programme-cascade`` run) —
   iterations 1 and 2 were full VIDEO re-films of all four scenes because the arc
   judge named two findings ``scene: partner-benchmarks`` (a spec id).
-* noora ``newborn-care-classes-programme-cascade-2026-10-15-001`` — every
+* noora (a ``newborn-care-classes-programme-cascade`` run) — every
   product batch "edited scene(s) [1..5]" (one shared labs template), and the
   judge ledger was salted with different context files than every plan, so the
   ``context`` component moved on every scene of every pass: 0 of 30 scene

@@ -81,7 +81,7 @@ def test_the_head_is_the_served_version_and_the_state_it_was_built_from(web):
     web.versions = [{"number": 4, "current": False, "curation_sha": "x" * 64},
                     {"number": 3, "current": True, "curation_sha": "r" * 64}]  # 4 failed; 3 serves
     assert s.head() == {"version": 3, "curation": "r" * 64}
-    web.versions = [{"number": 3, "current": True}]  # a canopy-web from before canopy-web#1986
+    web.versions = [{"number": 3, "current": True}]  # a canopy-web that does not report curation_sha
     with pytest.raises(KBError, match="deploy it first"):
         s.head()
 

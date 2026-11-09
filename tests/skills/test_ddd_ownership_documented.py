@@ -47,7 +47,7 @@ def test_ddd_spec_requires_a_stable_scene_id():
 
 
 def test_no_skill_still_advertises_the_deleted_sync_command():
-    """`narrative sync` and `pull --force` no longer exist."""
+    """`narrative sync` and `pull --force` are not commands."""
     offenders = []
     for path in SKILLS.rglob("SKILL.md"):
         text = path.read_text()

@@ -245,7 +245,7 @@ def test_holder_is_the_process_account_not_logname(monkeypatch):
 
 
 class TestWorkspaceRequired:
-    """canopy-web#1411: an unpinned list by a caller in two organisations is a 422."""
+    """An unpinned list by a caller in two organisations is a 422."""
 
     REFUSAL = b'{"type": "https://canopy-web.dimagi.com/problems/workspace-required", "detail": "x"}'
 

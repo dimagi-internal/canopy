@@ -1,4 +1,4 @@
-"""Structural invariants for the slack-channel-ingest skill (canopy-web#1533).
+"""Structural invariants for the slack-channel-ingest skill.
 
 Pins what the skill's behaviour hangs on: the CLI verbs it runs (a rename breaks the
 skill silently), the exit codes it branches on (they must match `slack_ingest_cli`),

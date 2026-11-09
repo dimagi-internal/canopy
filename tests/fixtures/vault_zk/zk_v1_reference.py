@@ -1,6 +1,6 @@
 """Canopy Vault zero-knowledge v1 — REFERENCE implementation + test-vector generator.
 
-Normative definition of every byte format in Phase 2 (canopy-web#1550). Every
+Normative definition of every byte format in Phase 2. Every
 implementation (browser WebCrypto, the Python client, any server validation) must
 reproduce `zk_v1_vectors.json` byte for byte.
 

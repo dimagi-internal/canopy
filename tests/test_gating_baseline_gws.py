@@ -1,17 +1,15 @@
 """The fleet gws deny rails — deliverable filing (agent-core/gating-baseline.json).
 
-WHY THIS FILE EXISTS (2026-08-13). `agent-core/deliverables.md` rule 1 is "never My Drive
-root", and it was enforced by pattern-matching a hand-listed set of creation verbs. The list
-was short and, worse, mostly lived in ONE agent's local config: the baseline shipped a single
-rail (`gog drive upload --convert`), Eva had added two more locally, and hal/ada/echo had
-none and did not even mount the `gws` channel.
+WHY THIS FILE EXISTS. `agent-core/deliverables.md` rule 1 is "never My Drive root", and a
+hand-listed set of creation verbs cannot enforce it: such a list is short and, worse, tends
+to live in ONE agent's local config, so other agents lack it.
 
-`gog sheets create` was in nobody's list. On 2026-08-12 Eva built a 45-row target roster with
-it, straight into her own My Drive root, unshared — a dead link to the @dimagi.com human who
-asked for it. Nothing errored.
+`gog sheets create` is the example: left off a verb list, it builds a roster straight into
+an agent's own My Drive root, unshared — a dead link to the @dimagi.com human who asked for
+it. Nothing errors.
 
-So these rails moved to the baseline (one fix reaches every agent via /canopy:update) and
-were broadened from a verb list to the SHAPE of "creates a Drive object with no destination".
+So these rails live in the baseline (one fix reaches every agent via /canopy:update) and
+are broad: the SHAPE of "creates a Drive object with no destination".
 A denylist of verbs always trails the tool surface; that is the failure being pinned here.
 
 Run: uv run pytest tests/test_gating_baseline_gws.py
@@ -47,7 +45,7 @@ def mcp_blocks(tool: str, tool_input: dict) -> bool:
 # --------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("cmd", [
-    "gog sheets create 'SF Trip Targets'",          # the 2026-08-12 miss, verbatim shape
+    "gog sheets create 'SF Trip Targets'",          # a miss on a verb list, verbatim shape
     "gog docs create 'Concept note'",
     "gog slides create 'Deck'",
     "gog forms create 'Intake'",
@@ -93,7 +91,7 @@ def test_reads_stay_free(cmd):
 ])
 def test_help_is_never_railed(cmd):
     """Blocking `--help` blocks reading the usage of the command you are being told to use.
-    The pre-2026-08-13 canopy-gdoc rail did exactly this."""
+    A rail that blocks `--help` does exactly this."""
     assert not bash_blocks(cmd)
 
 
@@ -139,7 +137,7 @@ def test_engine_requires_a_destination(cmd, blocked):
 
 
 # --------------------------------------------------------------------------------------
-# the MCP half — every rail used to be tool:"Bash", so these were wide open
+# the MCP half — a rail keyed to tool:"Bash" leaves these wide open
 # --------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("tool", [

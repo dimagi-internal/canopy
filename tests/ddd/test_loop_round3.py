@@ -1,6 +1,6 @@
 """DDD loop, round 3 — what the first live v1-mode run taught.
 
-Evidence: connect-labs ``supply-sophie-rutf-2026-09-26-001`` (canopy 0.2.528),
+Evidence: a connect-labs ``supply-sophie-rutf`` run,
 five judged iterations. It stopped at iteration 4 as ``stop_concept_change`` /
 ``diverging`` from ONE recipe-caused cap while the mean moved 3.71 -> 3.60 and
 findings 16 -> 20 (M17); a fixer stalled 4 h on a shared test DB with no

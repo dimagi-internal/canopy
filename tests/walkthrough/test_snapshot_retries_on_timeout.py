@@ -4,10 +4,9 @@ timeout.
 Background: WebGL / Mapbox / Canvas-heavy pages hang
 ``Page.captureScreenshot`` in headless Chromium — the recurring SwiftShader-
 headless bug
-(``reference_browse_webgl_swiftshader``). The DDD agent's manual workaround on
-``microplans-10-wards-fullrun-2026-06-02-001`` was to re-capture the failing
-scene in a separate ``playwright.sync_api`` session with an explicit 8-10s
-sleep before retrying ``page.screenshot()``. This should be a built-in retry
+(``reference_browse_webgl_swiftshader``). The manual workaround is to re-capture
+the failing scene in a separate ``playwright.sync_api`` session with an explicit
+8-10s sleep before retrying ``page.screenshot()``. That is a built-in retry
 path.
 
 Contract:

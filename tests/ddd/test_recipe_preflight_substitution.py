@@ -113,7 +113,7 @@ def test_outputs_path_resolves_against_the_recorders_cwd_not_a_guess(tmp_path):
 def test_the_reported_symptom_cannot_be_produced_from_a_real_spec(tmp_path):
     """The end-to-end shape, on the fixture whose class actually broke.
 
-    Issue #523's traceback is one string:
+    The reported traceback is one string:
 
         net::ERR_NAME_NOT_RESOLVED at
         https://labs.connect.dimagi.com${primary_par_url}/

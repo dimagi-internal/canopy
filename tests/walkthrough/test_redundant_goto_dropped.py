@@ -1,9 +1,9 @@
 """Tests for the redundant-first-goto strip in ``build_scenes_from_spec``.
 
-Background: PR #100 added ``Scene.url`` as the declarative entry point — the
+Background: ``Scene.url`` is the declarative entry point — the
 orchestrator's ``run_scene`` already does ``page.goto(scene.url)`` before
 running the action list. But many existing specs *also* lead with
-``{kind: goto, target: <same-url>}`` (the pre-#100 entry pattern), so the
+``{kind: goto, target: <same-url>}`` (the legacy entry pattern), so the
 recorder ends up navigating twice — a ~2.5s reload that the viewer sees as
 dead-air right after the scene title.
 
@@ -76,9 +76,9 @@ def test_leading_goto_to_different_url_is_preserved():
 
 def test_leading_goto_no_explicit_url_is_dropped():
     """No ``url:`` field — the orchestrator inferred URL from the leading
-    goto's target (pre-#100 behavior). The goto still must be dropped from
+    goto's target (legacy behavior). The goto still must be dropped from
     the action list, otherwise it dispatches twice (orchestrator's nav +
-    action loop). This is the live bug for the pre-#100 spec dialect."""
+    action loop). This is the live bug for the legacy spec dialect."""
     spec = _spec([
         {
             "title": "Old-style scene",

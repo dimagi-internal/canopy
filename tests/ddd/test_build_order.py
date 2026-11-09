@@ -377,7 +377,7 @@ class TestNarrationBuildStatus:
         result = build_narrative_review_request(_make_spec(), "run-001", why_brief=wb)
         by_prov = {n.provenance: n.status for n in result.narration}
         assert by_prov["S1"] == "built"
-        assert by_prov["S2"] == "new"  # no longer in spine -> new
+        assert by_prov["S2"] == "new"  # not in spine -> new
         assert by_prov["S3"] == "new"
 
 

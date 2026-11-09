@@ -3,11 +3,11 @@
 `write_lock` and `web_narrative_to_spec_parts` are unit-tested against a
 hand-written five-key dict. That proves the code does what I wrote it to do; it
 does not prove it survives what canopy-web actually sends. These fixtures are
-verbatim `request_json` bodies captured 2026-07-26 from the current version of
-the three RF Surveys narratives — the ones a domain expert actually reviewed.
+verbatim `request_json` bodies captured from the three RF Surveys
+narratives — the ones a domain expert actually reviewed.
 
 Captured (not fetched live) so the suite stays offline and deterministic, and so
-it keeps testing the payload shape as it was when this code was written.
+it keeps testing the payload shape the fixtures were captured with.
 
 The chain under test is the whole cloud→disk path:
 

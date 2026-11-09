@@ -1,9 +1,9 @@
-"""canopy#911: `say:` anchors added to the spec AFTER recording were silently ignored.
+"""`say:` anchors added to the spec AFTER recording must not be silently ignored.
 
-Marks are built from the recorder report's actions, which froze the spec's
+Marks are built from the recorder report's actions, which freeze the spec's
 `say:` words at recording time. A hover with a css target (no `id_…` token) and
-no note yields no candidate words at all, so a `say:` added afterwards was the
-only thing that could bind it — and it never reached the marks. The emitter now
+no note yields no candidate words at all, so a `say:` added afterwards is the
+only thing that can bind it, and it must reach the marks. The emitter
 re-anchors from the current spec when the scene's actions still pair 1:1 with
 the filmed ones, and refuses (naming the anchors, telling you to re-record) when
 they do not.

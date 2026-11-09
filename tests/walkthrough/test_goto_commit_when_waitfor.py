@@ -5,9 +5,8 @@ Background: when leaving a WebGL / Mapbox-heavy scene to a new page, the torn-
 down GL context's residual telemetry and tile-fetch network activity can stall
 Playwright's lifecycle tracking — the ``load`` event signal can hang for the
 full ``load_settle_timeout_ms`` while Chromium hasn't painted the new page's
-first frame yet. Frame-sampling
-``microplans-10-wards-fullrun-2026-06-02-001/iter1_clip.mp4`` showed a ~7s gray
-viewport window between scenes 4 and 5 caused by exactly this.
+first frame yet. The symptom is a multi-second gray
+viewport window between scenes (about 7s when measured by frame-sampling a clip).
 
 The fix: when ``skip_settle=True`` (the caller already knows the next action
 is ``wait_for``), use ``wait_until="commit"`` — return as soon as the

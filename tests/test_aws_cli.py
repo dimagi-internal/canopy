@@ -81,7 +81,7 @@ def test_no_runner_config_is_none_not_an_error(tmp_path):
 
 # The laptop runner signs in with its device key and keeps runner.json's token
 # EMPTY. Sending "" let canopy_web.call swap in the session's own PAT (an agent's,
-# which owns no runner): 404 "runner not found" for an online runner, 2026-10-29.
+# which owns no runner): 404 "runner not found" for an online runner.
 PAIRED = {"base_url": "https://c", "token": "", "runner_id": "r-1"}
 
 

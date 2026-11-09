@@ -95,7 +95,7 @@ def test_explicit_env_still_wins_over_agent_env(monkeypatch, tmp_path):
 
 def test_agent_repo_without_env_refuses_the_operator_token(monkeypatch, tmp_path):
     """DDD writes publish under a name: an unprovisioned agent must NOT quietly post
-    as the operator (ace#2805 — ACE posted a narrative as Jonathan). It fails loud,
+    as the operator (a narrative posted under the operator's name is the failure). It fails loud,
     naming CANOPY_WEB_PAT, instead of falling back to the workbench-token."""
     from scripts.ddd.auth import AgentIdentityError
 

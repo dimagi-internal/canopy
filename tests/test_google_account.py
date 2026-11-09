@@ -100,7 +100,7 @@ def test_create_refuses_an_existing_address_before_touching_the_vault():
 
 
 def test_create_reads_403_on_lookup_as_absent_because_google_says_403_for_no_such_user():
-    """Measured 2026-10-25: the OU-fenced provisioner gets 403, not 404, for an address
+    """The OU-fenced provisioner gets 403, not 404, for an address
     that does not exist — so a 403 that stopped `create` meant it could create nobody."""
     g, v = FakeGoogle(fail={"GET"}), Vault()
     ga.run_create(_dir(g), v, email="trellis@dimagi-ai.com", given="Trellis", family="Agent",

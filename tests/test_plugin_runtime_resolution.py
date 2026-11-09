@@ -118,9 +118,9 @@ def _pyproject_path_deps() -> list[str]:
 def test_runtime_manifest_covers_every_pyproject_path_dep():
     """A path dep outside the bundle makes the bundle unrunnable, invisibly.
 
-    THE REGRESSION THIS PINS (#636): packages/canopy_agent_factory was wired as an
+    THE REGRESSION THIS PINS: a package such as packages/canopy_agent_factory wired as an
     editable path dep in the root pyproject.toml, which ships as the bundle's
-    runtime/pyproject.toml — but "packages" was never added to runtime.json's paths.
+    runtime/pyproject.toml, while "packages" is missing from runtime.json's paths.
     Every shape check still passed (pyproject.toml, src/orchestrator, scripts/ddd all
     present), so scripts/canopy-runtime.sh selected the bundle, and then every
     `uv run --project "$CANOPY_ROOT"` died with

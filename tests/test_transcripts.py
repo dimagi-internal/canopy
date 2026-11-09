@@ -102,7 +102,7 @@ class TestGetSessionId:
 def test_extract_tool_calls_keeps_the_harness_error_flag():
     """`is_error` is the recorded outcome; dropping it forces consumers to re-derive
     failure from the result prose. None when absent, so "unknown" stays distinct
-    from "succeeded". See dimagi-internal/canopy#416."""
+    from "succeeded"."""
     from orchestrator.transcripts import extract_tool_calls
 
     def _pair(tid, name, result, **extra):

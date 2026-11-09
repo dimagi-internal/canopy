@@ -265,8 +265,8 @@ def test_command_allowed_tools_includes_skill() -> None:
 
 
 def test_skill_verdict_carries_live_state_metadata() -> None:
-    """canopy#265 items 1+3: the concept judge scores live per-scene screenshots,
-    so its verdict declares live_state_verified: true and participates in gating."""
+    """The concept judge scores live per-scene screenshots, so its verdict
+    declares live_state_verified: true and participates in gating."""
     content = (SKILL_DIR / "SKILL.md").read_text()
     assert "kind: concept" in content
     assert "gate: gating" in content

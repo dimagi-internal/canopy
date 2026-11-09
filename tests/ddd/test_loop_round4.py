@@ -1,7 +1,7 @@
-"""Loop round 4 — three inefficiencies measured on one real v1 run.
+"""Loop round 4 — three inefficiencies seen on one real v1 run.
 
-connect-labs ``supply-sophie-rutf-2026-09-26-001`` (canopy 0.2.543, backlog
-mode, no ``inner_loop``), iterations 5-9, ~60 minutes per cycle:
+A connect-labs ``supply-sophie-rutf`` run (backlog mode, no
+``inner_loop``), ~60 minutes per cycle:
 
 1. every pass judged all 7 scenes with all three judges ("full pass
    requested") although the loop had asked for incremental passes — the

@@ -2,9 +2,9 @@
 
 `agent set` passed `--status` to the board raw, and the board coerces an unknown value to
 "suggested". So `--status blocked` on an in-progress card demoted it to an unaccepted
-proposal and printed the patched task as success (dimagi-internal/canopy#659, observed on
-hal's board 2026-09-17). `agent add` normalised first, but its normaliser ALSO fell back
-to "suggested" for anything it did not recognise — same demotion, one hop earlier.
+proposal and printed the patched task as success. `agent add` normalises first, but a
+normaliser that ALSO falls back to "suggested" for anything it does not recognise gives
+the same demotion, one hop earlier.
 
 A wrong answer rather than an error: the closeout reads the board by status, so a silently
 demoted card changes what the next turn is told it has outstanding.

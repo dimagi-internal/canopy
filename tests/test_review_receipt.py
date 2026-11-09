@@ -3,10 +3,10 @@
 The rail exists because the pre-send review is an invariant that fails under load, and
 prose can't hold it: an agent reviews draft v1, revises twice as new findings land, and
 sends v3 unreviewed — each revision feeling like "improving reviewed work" rather than a
-new draft needing review. (Eva, 2026-07-15: the re-review caught a named shortlist target
-missing from the body entirely.) Keying the receipt to the BODY's fingerprint is what
+new draft needing review (a re-review can catch a named shortlist target missing from the
+body entirely). Keying the receipt to the BODY's fingerprint is what
 makes that specific failure impossible: revise the body, the fingerprint moves, the stale
-receipt no longer matches.
+receipt does not match.
 """
 import json
 
@@ -197,9 +197,9 @@ def test_cli_receipt_does_not_unblock_a_different_body(tmp_path):
 
 
 # --- commitment scan (§6 as a gate) -----------------------------------------------------
-# The rule ("name the executable mechanism or cut it") was already written; what failed was
-# applying it to EVERY instance. On 2026-07-23 a review caught three body defects, recorded
-# clean, and still shipped "Happy to walk anyone through it live" — a real-time human
+# The rule ("name the executable mechanism or cut it") is written; what fails is
+# applying it to EVERY instance: a review can catch three body defects, record
+# clean, and still ship "Happy to walk anyone through it live" — a real-time human
 # session an agent cannot hold. These lock the gate that makes that impossible.
 
 THE_MISS = (
@@ -252,7 +252,7 @@ def test_send_stays_blocked_when_the_receipt_was_refused():
         rr.require("eva", THE_MISS)
 
 
-# ── token boundaries: a hyphenated identifier is not the verb (2026-09-14) ───────────────────
+# ── token boundaries: a hyphenated identifier is not the verb ───────────────────
 
 
 def test_hyphenated_skill_name_is_not_a_commitment():

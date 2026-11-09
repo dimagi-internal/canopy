@@ -1,9 +1,9 @@
 """The fleet rail around SES sending domains (gating-baseline `always`).
 
-WHY (2026-10-15). canopy-web's add-mail-domain is the one path that sets a sending domain
+WHY. canopy-web's add-mail-domain is the one path that sets a sending domain
 up: Easy DKIM, the bounce.<domain> MAIL FROM, the tenant configuration set, and the DNS
 records to publish. It refuses to adopt an identity that already exists in SES, so a
-hand-made one (dimagi.ai, that day) skips the standard and blocks the proper add.
+hand-made one (dimagi.ai, say) skips the standard and blocks the proper add.
 
 The NEGATIVE half: reading identities and other SES calls stay free.
 

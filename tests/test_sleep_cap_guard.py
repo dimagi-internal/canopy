@@ -1,8 +1,8 @@
 """sleep_cap_guard: no foreground shell wait may sleep past the 5-minute prompt-cache window.
 
-Evidence (ACE runs 2026-10-15/16): phase agents waited on children with `sleep 300..595`
-and `perl -e 'select(undef,undef,undef,590)'`, waking 7-9 times per wait into a cold
-cache — each wake re-writing a 450-720k context.
+Why: an agent that waits on children with `sleep 300..595` or
+`perl -e 'select(undef,undef,undef,590)'` wakes repeatedly into a cold cache — each
+wake re-writing the whole (hundreds of thousands of tokens) context.
 """
 import importlib.util
 import io

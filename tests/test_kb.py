@@ -220,7 +220,7 @@ def test_a_workspace_projects_first_push_publishes_the_whole_file_to_canopy_and_
 
 
 def test_a_push_is_a_version_made_from_the_head_and_loses_to_one_that_landed_first(tmp_path, monkeypatch):
-    """canopy-web never builds an index (canopy-web#1971): a push sends the whole file this
+    """canopy-web never builds an index: a push sends the whole file this
     machine built, made from the version served now; one that landed meanwhile wins."""
     from orchestrator import canopy_web
 

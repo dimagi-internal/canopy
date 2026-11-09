@@ -2,14 +2,14 @@
 
 Two regressions locked in here:
 
-1. **An accuracy finding must not open the concept gate.** ACE
-   ``spark-facilitator/20260813-2126`` escalated "narration says cost over a panel
+1. **An accuracy finding must not open the concept gate.** An
+   ACE run escalated "narration says cost over a panel
    titled FACILITATOR EARNINGS" and "an n=1 pre/post framed as causal" as product
    decisions. Both are fixable from the artifact; neither needed a human.
 2. **The loop must say WHICH kind of ending this is.** An orchestrator inventing
    "hard stop after this pass" is the symptom of a loop with no stopping rule.
-3. **A strategy finding must not preempt pending mechanical work.** ACE
-   ``spark-facilitator/20260820-0817`` produced one strategy redesign alongside
+3. **A strategy finding must not preempt pending mechanical work.** An
+   ACE run produced one strategy redesign alongside
    five accuracy findings on iteration 0. The accuracy findings were correctly
    normalized to mechanical — and ``stop_concept_change`` fired anyway, so none
    of them were ever applied. The run ended ``stopped_not_converged`` with a
@@ -202,8 +202,8 @@ class TestConceptGateWaitsForMechanicalWork:
     """A confident fix must never sit behind an uncertain one — redesign included.
 
     The gate is deferred WHILE THE ARTIFACT IS STILL GETTING CLEANER, and opens the
-    moment it stops. "Clean" is a property of the artifact, not a count of passes
-    (canopy#588): a count of 1 cut two consecutive clean runs off with 29 and 14
+    moment it stops. "Clean" is a property of the artifact, not a count of passes:
+    a count of 1 cut two consecutive clean runs off with 29 and 14
     mechanical fixes pending while the score was demonstrably still climbing
     (`[2.0] -> [2.0, 3.0]`, +1.0 on every judge from exactly the deferred work), and
     a crashed pass spent the same budget on nothing. So the bound is exhaustion:
@@ -241,7 +241,7 @@ class TestConceptGateWaitsForMechanicalWork:
         assert action == "continue", reason
         assert state.concept_gate_deferred == 1
         assert "first deferral" in reason.lower(), reason
-        assert "/1" not in reason, reason  # no count-of-N bound is printed any more
+        assert "/1" not in reason, reason  # no count-of-N bound is printed
 
     def test_the_gate_is_deferred_while_improving_and_opens_when_it_stalls(self) -> None:
         """The new invariant, end to end: [2.0] defer -> [2.0, 3.0] defer again (the
@@ -267,7 +267,7 @@ class TestConceptGateWaitsForMechanicalWork:
         assert state.score_history == [2.0, 3.0, 3.0]
 
     def test_a_second_deferral_is_granted_when_the_score_really_climbed(self) -> None:
-        """canopy#588 clean case: spark-fcap-facilitation-2026-09-09-002 stopped
+        """Clean case: a run stopped
         `stop_concept_change` at history=[2.0, 3.0] with 14 mechanical pending. A
         +1.0 move is outside the +/-0.5 noise band — the deferred pass paid for
         itself, so the gate keeps waiting."""
@@ -288,7 +288,7 @@ class TestConceptGateWaitsForMechanicalWork:
 
     @pytest.mark.parametrize("second", [2.0, 2.4])
     def test_a_second_deferral_is_refused_when_the_score_is_flat(self, second: float) -> None:
-        """canopy#588 clean case, run -001: history=[2.0, 2.0]. Flat, or a move
+        """Clean case: history=[2.0, 2.0]. Flat, or a move
         inside the noise band (2.4 - 2.0 < NOISE_BAND), is not evidence the fixes
         are cleaning anything — the gate opens with the strategy finding standing."""
         from scripts.ddd import denoise
@@ -308,7 +308,7 @@ class TestConceptGateWaitsForMechanicalWork:
         assert state.concept_gate_deferred == 1
 
     def test_a_crashed_deferred_pass_does_not_spend_the_budget(self) -> None:
-        """canopy#588 crash case: hh-poverty-targeting-census-sweep-2026-09-01-001
+        """Crash case: a run
         deferred (counter=1 persisted to disk), the pass was killed before applying
         anything, and the resumed pass found the gate already spent. Under the
         exhaustion rule the persisted counter is a record, not a budget: the

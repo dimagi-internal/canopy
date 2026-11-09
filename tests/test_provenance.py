@@ -79,7 +79,7 @@ def _pointer(root, *, task=TASK, turn=TURN, age=5.0):
 
 def test_session_start_finds_the_turn_from_the_runners_pointer(root):
     """SessionStart runs before the first prompt, so before the hook writes by-task.
-    Its `cred sync` must still name the turn (canopy-web#1563)."""
+    Its `cred sync` must still name the turn."""
     path = _pointer(root)
     assert pv.resolve_parent(cwd=CWD)["turn_id"] == TURN
     assert path.exists(), "read, never consumed: the prompt hook still claims it"
@@ -166,7 +166,7 @@ def test_hook_claim_writes_a_record_the_cli_then_reads(root, monkeypatch, capsys
 
 
 def test_emdash_task_name_finds_the_record_when_the_cwd_is_elsewhere(root, monkeypatch, tmp_path):
-    """canopy#994: a process emdash started but whose cwd is not the worktree (the MCP
+    """A process emdash started but whose cwd is not the worktree (the MCP
     headersHelper runs from the plugin dir) still finds its by-task record."""
     (root / "by-task" / f"{TASK}.json").write_text(json.dumps(
         {"turn_id": TURN, "session_id": SESSION}))

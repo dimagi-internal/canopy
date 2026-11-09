@@ -1,4 +1,4 @@
-"""Zero-knowledge agents end to end on the client (canopy-web#1550): the resolve client
+"""Zero-knowledge agents end to end on the client: the resolve client
 opens a ZK answer with this device's ECDH key, and `canopy vault zk enable|set|grant|rotate`
 act as this device against canopy-web's endpoints.
 
@@ -511,7 +511,7 @@ def test_switch_settles_on_the_way(server, me, monkeypatch):
 
 
 # ── set --sealed: give an agent a secret, sealed to ENDORSED readers (zk-v1 §6 + §7) ──
-# canopy-web#1712's `GET …/vault/zk/recipients` is the server's CLAIM; the endorsements
+# canopy-web's `GET …/vault/zk/recipients` is the server's CLAIM; the endorsements
 # are a pinned person's signatures. These tests make the server lie in every way it can
 # and check the value only ever reaches keys a trusted person vouched for.
 
@@ -539,7 +539,7 @@ def _recipient(kind, target, jwk, label=""):
 
 
 class FakeSealServer:
-    """Only what canopy-web#1712 serves: public keys, endorsements, ciphertext."""
+    """Only what canopy-web serves: public keys, endorsements, ciphertext."""
 
     def __init__(self, recipients, endorsements, *, request_name="GITHUB_TOKEN"):
         self.recipients, self.endorsements = recipients, endorsements

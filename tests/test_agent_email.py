@@ -59,7 +59,7 @@ def test_resolve_identity_from_agent_json(tmp_path):
 
 
 def test_resolve_identity_client_defaults_to_the_fleet_client(tmp_path):
-    """Not the slug: a client named after the agent exists for nobody (2026-10-04)."""
+    """Not the slug: a client named after the agent exists for nobody."""
     ident = resolve_email_identity(_agent_repo(tmp_path))
     assert ident.client == "canopy"
 
@@ -146,21 +146,21 @@ def test_to_html_paragraphs_and_bullets():
 
 
 def test_to_html_numbered_list_becomes_ol_keeping_numbers():
-    # canopy #291: `1. `/`2. ` must render as <ol> (auto-numbered), not a number-stripped <ul>.
+    # `1. `/`2. ` must render as <ol> (auto-numbered), not a number-stripped <ul>.
     out = to_html("1. alpha\n2. beta\n")
     assert "<ol><li>alpha</li><li>beta</li></ol>" in out
     assert "<ul>" not in out
 
 
 def test_to_html_coalesces_list_run_across_blank_lines():
-    # canopy #291: blank-separated bullets must be ONE <ul>, not several single-item lists.
+    # Blank-separated bullets must be ONE <ul>, not several single-item lists.
     out = to_html("- one\n\n- two\n\n- three\n")
     assert "<ul><li>one</li><li>two</li><li>three</li></ul>" in out
     assert out.count("<ul>") == 1
 
 
 def test_to_html_ace836_repro_ol_then_ul():
-    # The exact repro from ace#836 / canopy #291: an ordered list then a bullet list.
+    # The exact repro: an ordered list then a bullet list.
     out = to_html("1. alpha\n2. beta\n\n- one\n- two\n")
     assert "<ol><li>alpha</li><li>beta</li></ol>" in out
     assert "<ul><li>one</li><li>two</li></ul>" in out
@@ -168,7 +168,7 @@ def test_to_html_ace836_repro_ol_then_ul():
 
 
 def test_to_html_numbered_headings_keep_their_numbers():
-    """canopy #520: numbered section HEADINGS must not all render as "1.".
+    """Numbered section HEADINGS must not all render as "1.".
 
     A numbered line whose body is prose closes its list after one item, so each later
     heading opens a fresh <ol> — and a bare <ol> restarts at 1. The reported symptom was a
@@ -240,7 +240,7 @@ def test_to_html_markdown_link_inside_bullet():
 
 
 def test_to_html_bare_url_sheds_trailing_sentence_punctuation():
-    # echo → Fiorenzo 2026-07-13: "…/edit." linkified whole sent two broken gdoc
+    # A trailing "…/edit." linkified whole would send two broken gdoc
     # links (Google 404s the id + trailing dot). Punctuation stays in the prose.
     out = to_html("guide is at https://docs.google.com/document/d/abc123/edit. Next point.\n")
     assert '<a href="https://docs.google.com/document/d/abc123/edit">' in out
@@ -375,7 +375,7 @@ def test_send_dry_run_shows_cc():
     assert result["cc"] == "boss@x.com"
 
 
-# canopy#883: a reply derived from a Google Docs comment notification goes to
+# A reply derived from a Google Docs comment notification goes to
 # comments-noreply@docs.google.com; the reply after its bounce goes to mailer-daemon@.
 # Both "succeed" and reach nobody, so the engine refuses them.
 
@@ -432,7 +432,7 @@ def test_ses_send_refuses_noreply_recipient():
 
 
 # --------------------------------------------------------------------------------------
-# attachments (canopy#462 — forwards used to silently degrade to links)
+# attachments (a forward carries its PDFs, not links to them)
 # --------------------------------------------------------------------------------------
 
 def test_build_send_command_repeats_attach_per_file():
@@ -462,7 +462,7 @@ def test_send_rejects_missing_attachment_before_invoking_gog(tmp_path):
 
 def test_send_dry_run_shows_attachments(tmp_path):
     """The dry-run is where an agent verifies what will actually ride along — the same
-    reason cc is always present. A forward that lost its PDFs is exactly canopy#462."""
+    reason cc is always present. A forward that lost its PDFs is the failure this guards."""
     f = tmp_path / "invoice.pdf"
     f.write_bytes(b"%PDF-")
     result = send(IDENT, to="a@x.com", subject="s", body_text="hi\n",
@@ -492,7 +492,7 @@ def test_send_passes_attachments_through_to_gog(reviewed, tmp_path):
 
 def _thread_runner(attachments_per_message, downloads, cache_dir, headers=None, sent=None):
     """Fake gog: `gmail read` returns a thread, `gmail attachment` writes a cache file
-    named the way gog really names it (`<msg>_<att>_attachment.bin`, canopy#580)."""
+    named the way gog really names it (`<msg>_<att>_attachment.bin`)."""
     def run(cmd, capture_output, text, timeout):
         if cmd[1:3] == ["gmail", "read"]:
             return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(
@@ -533,7 +533,7 @@ def test_collect_thread_attachments_downloads_every_file(tmp_path):
 
 
 def test_collect_thread_attachments_stages_under_original_filename(tmp_path):
-    """canopy#580: attaching gog's cache path sent `*_attachment.bin` — the staged copy
+    """Attaching gog's cache path would send `*_attachment.bin`; the staged copy
     must carry the sender's filename, since that basename is what the recipient sees."""
     runner = _thread_runner([
         ("m1", [{"filename": "Invoice-KIMYKKKJ-0006.pdf", "attachment_id": "a1", "size": 10},
@@ -702,15 +702,15 @@ def test_derive_reply_all_thread_mode_targets_latest_non_self_message():
                                       runner=_reply_runner(_multi_message_thread()))
     assert to == "k@partner.org"          # sender of the latest NON-hal message (m2)
     # m2's other recipient first, then the rest of the WHOLE thread: ops@ was cc'd on m1
-    # and used to be silently dropped here (this assertion pinned the bug until 2026-09-29).
+    # and must not be silently dropped.
     assert cc == "c@partner.org, ops@partner.org"
     assert msg_id == "m2"                 # threading targets m2, NOT the thread id
 
 
 def test_derive_reply_all_keeps_the_threads_opener_and_cc_after_a_subset_reply():
-    """2026-09-29, hal: Jonathan wrote to hal cc'ing five people; Gillian replied to hal +
-    Amie only; hal's own reply followed. Reply-all derived To=Gillian, Cc=Amie — dropping
-    the person who ASKED and four of his five cc's."""
+    """A person writes to hal cc'ing five people; a second replies to hal + one cc only;
+    hal's own reply follows. Reply-all must not derive To=second person, Cc=that one cc,
+    dropping the person who ASKED and four of his five cc's."""
     def msg(mid, frm, to, cc=""):
         return {"id": mid, "payload": {"headers": [
             {"name": "From", "value": frm}, {"name": "To", "value": to},
@@ -730,7 +730,7 @@ def test_derive_reply_all_keeps_the_threads_opener_and_cc_after_a_subset_reply()
 
 
 # --------------------------------------------------------------------------------------
-# mark-read (via gog thread modify — NEVER the macOS Keychain, dimagi-internal/ace#827)
+# mark-read (via gog thread modify — NEVER the macOS Keychain)
 # --------------------------------------------------------------------------------------
 
 def test_mark_read_shells_gog_thread_modify_per_thread():
@@ -750,7 +750,7 @@ def test_mark_read_shells_gog_thread_modify_per_thread():
 
 
 def test_mark_read_never_touches_the_keychain():
-    """The #827 hang class: `security find-generic-password` blocks forever on a GUI
+    """The hang class: `security find-generic-password` blocks forever on a GUI
     prompt in non-interactive shells. The runner must only ever see gog commands."""
     def fake_runner(cmd, capture_output, text, timeout):
         assert cmd[0] == "gog", f"non-gog subprocess in mark_read: {cmd}"
@@ -840,8 +840,8 @@ def test_preflight_missing_creds_gives_exact_login_remediation(tmp_path):
 
 
 def test_a_missing_client_file_is_never_reported_as_a_bad_token(tmp_path):
-    # cloud-ec2-2, 2026-10-26: gog's own "OAuth client credentials missing" read as
-    # "token bad" and sent two sessions to reconnect a mailbox that was Connected.
+    # gog's own "OAuth client credentials missing" must not read as
+    # "token bad" and send a session to reconnect a mailbox that was Connected.
     def runner(cmd, **kw):
         return subprocess.CompletedProcess(cmd, 1, "", "OAuth client credentials missing "
                                            "(OAuth client ID JSON).")
@@ -850,8 +850,8 @@ def test_a_missing_client_file_is_never_reported_as_a_bad_token(tmp_path):
     assert not ok and "OAuth client file missing" in joined and "token bad" not in joined
 
 
-# 2026-10-28, failure investigation 17, turn c10c9748: a licensee's ace turn aborted on a
-# missing gog client file and was told `canopy agent bootstrap` — an admin's command.
+# A licensee's ace turn that aborts on a missing gog client file must not be told
+# `canopy agent bootstrap` — an admin's command.
 
 @pytest.mark.parametrize("mode,want,never", [
     ("license", "canopy agent google-login --slug hal", "canopy agent bootstrap"),
@@ -945,7 +945,7 @@ def test_preflight_api_not_enabled_self_heal(tmp_path):
     assert "https://console.developers.google.com" in joined
 
 
-# --- engine staleness guard (the 2026-07-10 Arial-email regression) ---------
+# --- engine staleness guard (regression guard: the Arial-email case) ---------
 
 from orchestrator.agent_email import _version_tuple, engine_staleness_error
 
@@ -1005,8 +1005,8 @@ def test_staleness_env_bypass(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------------------
-# narrow-reply guard (dropped_participants — hal 2026-07-10: a reply on a 4-person
-# thread went to one person; the item's owner never saw the answer)
+# narrow-reply guard (dropped_participants: a reply on a 4-person
+# thread must not go to one person only, or the item's owner never sees the answer)
 # --------------------------------------------------------------------------------------
 
 from orchestrator.agent_email import dropped_participants
@@ -1219,9 +1219,9 @@ _ASK = ("Questions only you can answer:\n\n"
         "   - May Echo close its three tasks for the IDM talk, which is done?\n"
         "   - What are Connect's 'bucket 1 and 2' priorities? No agent can find a\n"
         "   definition.\n\nAda\n")
-# Jonathan, 2026-10-17, as Gmail's plain part delivered it: the attribution line first,
+# As Gmail's plain part delivers it: the attribution line first,
 # each answer's FIRST line carrying the same "> " as the quote around it, wrapped lines
-# bare. The old reader returned body_text == "" for this.
+# bare. The reader must not return body_text == "" for this.
 _INLINE = ("On Fri, Oct 16, 2026 at 8:38 AM <ada@dimagi-ai.com> wrote:\n\n"
            "> Questions only you can answer:\n>\n"
            ">    - May Echo close its three tasks for the IDM talk, which is done?\n>\n"
@@ -1280,8 +1280,8 @@ def test_read_thread_computes_reply_all():
 def test_read_thread_survives_a_header_with_no_value():
     """An empty Subject comes back from gog as {"name": "Subject"} with no "value" key.
 
-    read_thread and derive_reply_all used to KeyError on it, so a mail with a blank
-    subject could be neither read nor replied to through canopy (2026-10-28, ACE).
+    read_thread and derive_reply_all must not KeyError on it, or a mail with a blank
+    subject could be neither read nor replied to through canopy.
     """
     raw = json.loads(_inbound_thread_json([{"mimeType": "text/plain", "body": {"size": 2, "data": "aGk="}}]))
     for m in (raw.get("thread") or raw)["messages"]:
@@ -1294,14 +1294,10 @@ def test_read_thread_survives_a_header_with_no_value():
 # --------------------------------------------------------------------------------------
 # reconcile_client — the OAuth client follows the token, because identity is the MAILBOX
 #
-# Echo went dark twice on the same defect pointing opposite ways (2026-07-31 and 2026-08-10).
-# The fleet migrated every agent onto the shared `canopy` client, but that migration is
+# The fleet uses the shared `canopy` client, but the migration onto it is
 # per-MACHINE (re-login each mailbox on each box) while `gog_client` is one repo-global
-# value. The laptop got migrated; the cloud box did not. Before 2026-08-06 the config said
-# `echo` — right for cloud, wrong for the laptop. #117 flipped it to `canopy` and verified
-# green on the laptop. Echo prefers the cloud runner, so the very next turn to land there
-# failed the other way. Whichever value is pinned, one box is broken, and which one only
-# surfaces when a turn happens to land on it.
+# value. A laptop can be migrated while the cloud box is not. Whichever value is pinned,
+# one box is broken, and which one only surfaces when a turn happens to land on it.
 # --------------------------------------------------------------------------------------
 
 def _auth_accounts_runner(accounts, *, returncode=0, token_keys=(), tokens_rc=None):
@@ -1309,7 +1305,7 @@ def _auth_accounts_runner(accounts, *, returncode=0, token_keys=(), tokens_rc=No
 
     `clients_for_account` reads the token store (`gog auth tokens list`) for the authoritative
     (client, mailbox) pairs and the account listing (`gog auth list`) for scopes, so a stub
-    that answers only one of them no longer describes a real box. `token_keys` defaults to
+    that answers only one of them does not describe a real box. `token_keys` defaults to
     empty, which keeps every pre-existing caller's meaning exactly: nothing extra in the
     token store, so the account listing alone decides.
     """
@@ -1415,7 +1411,7 @@ def test_clients_for_account_distinguishes_unreadable_from_absent():
 
 
 # --------------------------------------------------------------------------------------
-# canopy#489 — the client set must come from the TOKEN STORE, not the account listing.
+# The client set must come from the TOKEN STORE, not the account listing.
 # `gog auth list` collapses to one row per ACCOUNT, so a mailbox holding two credentials
 # shows only one. reconcile_client then judged the configured client absent and "self-healed"
 # onto the stale one — with the working token sitting right beside it.
@@ -1442,7 +1438,7 @@ def test_token_pairs_ignores_malformed_keys_and_reports_unreadable_as_none():
 
 
 def test_clients_for_account_surfaces_a_client_only_the_token_store_knows():
-    """THE canopy#489 regression. The account listing collapses echo onto `echo`; the token
+    """The regression guard for the client set. The account listing collapses echo onto `echo`; the token
     store proves `canopy` holds it too. Scopes are unknowable per-pair, so `services` is
     None — UNKNOWN, never an empty grant set."""
     from orchestrator.agent_email import clients_for_account
@@ -1455,7 +1451,7 @@ def test_clients_for_account_surfaces_a_client_only_the_token_store_knows():
 
 
 def test_reconcile_client_keeps_a_valid_pin_the_account_listing_hides():
-    """ACE, 2026-08-14: repo pinned `canopy`, `token:canopy:ace@` was valid, and the listing
+    """Repo pinned `canopy`, `token:canopy:ace@` was valid, and the listing
     showed only the REVOKED `ace` row — so the self-heal moved onto the revoked credential
     and every read/send died with invalid_grant. The pin must now survive untouched."""
     from orchestrator.agent_email import reconcile_client
@@ -1498,7 +1494,7 @@ def test_reconcile_client_ambiguity_guard_is_reachable_via_the_token_store():
     ("canopy-web", ["canopy", "canopy-web"], "canopy-web"),
 ])
 def test_a_fleet_client_is_used_when_the_declared_one_has_no_token(declared, tokens, expected):
-    """2026-10-04: the "Connect Google" button can only mint under
+    """The "Connect Google" button can only mint under
     `canopy-web` (Google allows a browser redirect on a Web client only), while
     every agent declares `canopy`. Both are the fleet's one app, so either works."""
     from orchestrator.agent_email import reconcile_client
@@ -1523,7 +1519,7 @@ def test_clients_for_account_falls_back_when_gog_has_no_tokens_subcommand():
 
 
 def test_clients_for_account_uses_the_token_store_when_the_listing_fails():
-    """The listing failing is no longer "cannot look" if the token store answered — we know
+    """The listing failing is not "cannot look" if the token store answered — we know
     which clients hold the mailbox, just not what they were granted."""
     from orchestrator.agent_email import clients_for_account
 
@@ -1547,8 +1543,8 @@ def test_granted_services_reports_unknown_scopes_as_none_not_empty():
     assert granted_services(_echo(client="canopy"), runner=runner) is None
 
 
-# --- HTML-only inbound mail + automation headers (2026-08-19) -------------------------
-# Origin: an echo turn was handed a Gmail thread whose ONLY body part was `text/html`
+# --- HTML-only inbound mail + automation headers -------------------------
+# Case: an echo turn handed a Gmail thread whose ONLY body part was `text/html`
 # (an out-of-office auto-reply: top-level mimeType text/html, no `parts`). The fleet's
 # sanctioned reader decoded it to "" and every agent rendered it as "(no plain-text
 # body)" — so the turn could not satisfy the core rule "display the inbound message
@@ -1690,10 +1686,9 @@ def test_read_thread_flags_machine_sender_despite_human_from():
 # reason the agent was brought back, and the read still looks complete because every
 # message the agent HAS is present and intact.
 #
-# Measured 2026-09-05: an ACE turn was told "see Neal's email", found no such mail in the
-# mailbox, and drafted a reply asking for it to be forwarded. Neal's message — and two
-# further off-list exchanges — were sitting in the quoted tail of the very message that
-# triggered the turn. The operator had to correct it by hand.
+# Case: a turn told "see Neal's email" finds no such mail in the mailbox and drafts a
+# reply asking for it to be forwarded, when that message — and further off-list
+# exchanges — sit in the quoted tail of the very message that triggered the turn.
 # --------------------------------------------------------------------------------------
 
 def _addback_thread_json(bodies_b64):
@@ -1755,7 +1750,7 @@ def test_unseen_quoted_surfaces_an_off_list_message_the_mailbox_never_received()
 
 
 def test_unseen_quoted_matches_the_agents_own_MARKDOWN_body_against_its_rendered_quote():
-    """canopy#1085. The commonest thread there is: the agent sends, a person replies. The
+    """The commonest thread there is: the agent sends, a person replies. The
     agent's stored body is the markdown it sent; the reply quotes the RENDERED mail, where
     `[text](url)` became `text <url>` and `**bold**` became `*bold*`. Matching on raw
     words reported the agent's own message as mail it was never sent."""
@@ -1828,13 +1823,13 @@ def test_read_thread_reports_no_unseen_quoted_on_an_ordinary_chain():
     assert all(m["quoted_unseen"] == "" for m in res["messages"])
 
 
-# ── fenced code blocks (2026-09-14) ─────────────────────────────────────────────────────────
+# ── fenced code blocks ─────────────────────────────────────────────────────────
 #
-# A ``` block is the one construct whose SOURCE is the content. Before this, it fell through
-# to the paragraph path: the literal fences shipped as text, inline markdown chewed on the
-# code, indentation was stripped by normalize(), and _autolink turned a URL inside a shell
-# command into an <a href>. Caught by a pre-send render check on a reply whose whole point was
-# a curl command the recipient had to copy and run.
+# A ``` block is the one construct whose SOURCE is the content. Through the paragraph
+# path, the literal fences would ship as text, inline markdown would chew on the
+# code, indentation would be stripped by normalize(), and _autolink would turn a URL inside a shell
+# command into an <a href>, which breaks a reply whose whole point is a curl command the
+# recipient has to copy and run.
 
 
 CURL_BLOCK = """Jon, this is one call:

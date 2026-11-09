@@ -10,8 +10,7 @@ complete on the kanban card — no ellipsis, nothing errored — so the agent th
 believes the whole instruction is recorded, and the next turn acts on one whose final
 clause (often the actual constraint) is gone.
 
-Observed during an ACE turn on 2026-08-19 (dimagi-internal/canopy#510, split out of
-#508). The caps mirror canopy-web `apps/agents/schemas.py`.
+The caps mirror canopy-web `apps/agents/schemas.py`.
 """
 import click
 import pytest

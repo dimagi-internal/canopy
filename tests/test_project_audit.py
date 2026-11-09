@@ -1,7 +1,7 @@
 """`canopy agent project-audit` — one test per check, plus the never-fail contract.
 
-Fixtures mirror the 2026-10-04 ACE board that motivated it: a registered project with no
-folder, Projects/ folders with no project, and a multi-PR task living loose.
+Fixtures mirror an ACE board: a registered project with no folder, Projects/ folders
+with no project, and a multi-PR task living loose.
 """
 import json
 import subprocess
@@ -108,7 +108,7 @@ def test_name_drift_between_project_and_linked_folder():
     assert "not under Projects/" in out[1]["reason"]
     closed = [project("P5", "Old name", status="archived", folder_url=pa.folder_url("fold_x")),
               project("P6", "Done", status="done", folder_id="fold_kmc_000000001")]
-    assert pa.check_name_drift(closed, FOLDERS) == []  # hal 2026-10-30: an archived P1, every turn
+    assert pa.check_name_drift(closed, FOLDERS) == []  # an archived project is not flagged on every turn
 
 
 def test_folder_id_parsed_from_either_url_shape():
@@ -268,7 +268,7 @@ def test_shipped_check_ignores_notes_closed_and_manual_tasks():
 
 
 def test_parked_and_snoozed_tasks_are_off_queue_for_every_check():
-    """hal 2026-10-30: three parked Supply tasks re-flagged every turn until the line was noise."""
+    """Parked Supply tasks must not be re-flagged every turn until the line is noise."""
     later = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
     parked = [task("T1", links=3, next_action="Parked: Jon doesn't want Supply now.",
                    link_urls=[f"{GH}/x/issues/1", f"{GH}/x/issues/2"]),
@@ -310,9 +310,9 @@ def test_fetch_github_states_one_call_and_partial_data_survives_errors():
 
 
 def test_shipped_check_skips_a_card_touched_after_its_last_ref_closed():
-    # 2026-10-22: every one of hal's 9 (f) hits had been updated after its PRs merged —
-    # prerequisites shipped, the card's own next step off GitHub. T132 is the real hit:
-    # filed 22:19, both PRs merged after it, card never touched again.
+    # A card updated after its PRs merged is not a shipped-but-open hit: the
+    # prerequisites shipped and the card's own next step is off GitHub. T132 is the real
+    # hit: filed 22:19, both PRs merged after it, card never touched again.
     refs = {"dimagi-internal/canopy-web#1712": {"state": "MERGED", "closed_at": "2026-10-19T22:57:15Z"},
             "dimagi-internal/canopy-web#1724": {"state": "MERGED", "closed_at": "2026-10-19T23:51:31Z"}}
     urls = [f"{GH}/canopy-web/pull/1712", f"{GH}/canopy-web/pull/1724"]

@@ -1,6 +1,6 @@
-"""Fixer-diff gate (canopy#786) — the positives are lines DDD fixers actually shipped
-to connect-labs on the Spark and supply runs (2026-10); the negatives are ordinary
-product code the gate must leave alone."""
+"""Fixer-diff gate — the positives are lines DDD fixers actually shipped to
+connect-labs on the Spark and supply runs; the negatives are ordinary product code
+the gate must leave alone."""
 from __future__ import annotations
 
 import json

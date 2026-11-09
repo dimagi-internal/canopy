@@ -24,7 +24,7 @@ def test_clean_doc_passes():
 
 
 def test_empty_doc_fails_even_though_nothing_else_is_wrong():
-    """An emptied doc trips no defect detector, so it used to score a clean pass."""
+    """An emptied doc trips no defect detector, so without an explicit check it would score a clean pass."""
     r = gdoc_review.review_html("<html><body><p>tiny</p></body></html>")
     assert not r["passed"] and r["fails"][0].startswith("EMPTY DOC")
 
@@ -35,8 +35,8 @@ def test_replace_sentinel_left_behind_fails():
 
 
 def test_italic_bleed_is_a_ratio_not_a_count():
-    """A brief that quotes its sources has many italic runs and is fine (2026-07-26:
-    34 quotes failed a `count > 1` rule); a body that is mostly italic is the bleed."""
+    """A brief that quotes its sources has many italic runs and is fine (a `count > 1` rule would
+    fail 34 quotes); a body that is mostly italic is the bleed."""
     quotes = '<span style="font-style:italic">q</span>' * 10
     normal = '<span style="font-style:normal">n</span>' * 40
     assert gdoc_review.review_html(_html(quotes + normal))["passed"]
@@ -109,7 +109,7 @@ def test_an_export_failure_is_not_reviewed_and_writes_no_receipt(tmp_path, monke
 # ---- converter fixes ---------------------------------------------------------------------
 
 def test_pipe_tables_render_as_tables():
-    """Measured 2026-10-04: a GFM table published fresh shipped as `| a | b | |---|---|`."""
+    """A GFM table published fresh must not ship as `| a | b | |---|---|`."""
     h = md_to_html("| Col 1 | Col 2 |\n|---|:---:|\n| **a** | b |\n\nafter")
     assert "<table>" in h and "<th>Col 1</th>" in h and "<td><strong>a</strong></td>" in h
     assert "|" not in h.replace("<table>", "")
@@ -121,7 +121,7 @@ def test_a_lone_pipe_line_is_still_a_paragraph():
 
 
 def test_unwrap_joins_soft_wrapped_bold_for_the_replace_path():
-    """Measured 2026-10-04: on `--replace`, `**bold that wraps\\nacross a line**` shipped
+    """On `--replace`, `**bold that wraps\\nacross a line**` must not ship
     with both `**` visible and the list item split in two."""
     src = ("Para **bold that wraps\nacross the line** end.\n\n"
            "- Item **wraps\n  here** too.\n- Next item\n")

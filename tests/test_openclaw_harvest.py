@@ -113,7 +113,7 @@ def test_port_new_skills_never_clobbers(tmp_path):
 # ── bootstrap fidelity: what an OpenClaw actually loses in the crossing ──────────────────
 
 def _rich_openclaw(tmp_path):
-    """A snapshot with the files bootstrap used to drop on the floor."""
+    """A snapshot with the files bootstrap must carry across."""
     d = _fake_openclaw(tmp_path)
     (d / "USER.md").write_text("# User\nWorks for Jonathan. Never DM anyone but him.\n")
     (d / "TOOLS.md").write_text("# Tools\nslack, gcal\n")
@@ -131,11 +131,10 @@ def _spec_args():
 def test_bootstrap_carries_memory_and_user_md(tmp_path):
     """The whole reason to pick bootstrap over create-agent is that it preserves the agent.
 
-    It used to fold SOUL.md and IDENTITY.md into persona.md and silently drop everything
-    else — USER.md (who the agent works for) and the entire memory/ directory — while
-    reporting persona_seeded: true. A real harvest lost four months of daily memory and the
-    agent's hard rule about who it may message; one dropped memory file held the fix to a
-    blocker the same agent had logged three times.
+    Folding SOUL.md and IDENTITY.md into persona.md while silently dropping everything
+    else — USER.md (who the agent works for) and the entire memory/ directory — would still
+    report persona_seeded: true. That would lose the daily memory and the agent's hard rule
+    about who it may message.
     """
     inv = inventory_snapshot(_rich_openclaw(tmp_path))
     out = bootstrap_from_snapshot(inv, into=tmp_path / "repo", **_spec_args())

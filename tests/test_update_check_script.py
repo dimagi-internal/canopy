@@ -1,15 +1,14 @@
 """`canopy-update-check.sh` — the gate Step 1 of `/canopy:update` stops on.
 
-It used to compare VERSION *numbers* only, which made it blind to the one case
-that matters most: two different commits on `main` carrying the SAME version.
-That is not hypothetical — it happened on 2026-07-28. PR #423 merged v0.2.369 to
-main; PR #429, whose CI had checked against main *before* #423 landed, merged a
-different v0.2.369 forty seconds later. The plugin cache is keyed by version, so
-the installed dir already existed, held #423's code, and the check reported
-`UP_TO_DATE` — telling the agent to STOP while the merged fix was nowhere on the
-machine.
+Comparing VERSION *numbers* only would be blind to the one case that matters
+most: two different commits on `main` carrying the SAME version. That is not
+hypothetical: when two PRs race, the second can merge a different commit under the
+version the first already used. The plugin cache is keyed by version, so the
+installed dir already exists, holds the first PR's code, and a number-only check
+would report `UP_TO_DATE` — telling the agent to STOP while the merged fix is
+nowhere on the machine.
 
-So the check is SHA-driven now, like the fleet session-start updater already was.
+So the check is SHA-driven, like the fleet session-start updater.
 A SHA advances on every merge whether or not the version label does.
 """
 from __future__ import annotations
@@ -155,11 +154,11 @@ def test_reads_main_even_when_the_clone_is_parked_on_a_branch(tmp_path, home):
     assert _run(home, clone).startswith("UP_TO_DATE")
 
 
-# ─── The CLI is a second artifact (canopy#615) ───────────────
+# ─── The CLI is a second artifact ───────────────
 # The plugin can be at main while the global `canopy` CLI still runs an older
-# install: Step 3 (the CLI reinstall) only runs on an upgrade, so UP_TO_DATE kept
-# a stale CLI stale indefinitely. 2026-10-12, hal: plugin current, `canopy aws`
-# "No such command" in the middle of an alarm turn.
+# install: Step 3 (the CLI reinstall) only runs on an upgrade, so UP_TO_DATE would keep
+# a stale CLI stale indefinitely (plugin current, but `canopy aws` fails with
+# "No such command" in the middle of a turn).
 
 def _origin_with_cli_source(tmp_path, code):
     origin, work = _origin_with_version(tmp_path, "0.2.369")

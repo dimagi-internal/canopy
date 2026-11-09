@@ -3,7 +3,7 @@
 Same rule as CLAUDE.md (tests/test_claude_md_budget.py): a date, a PR/issue reference or a
 person's name says WHEN or WHO decided something, which is history, and history lives in the
 PR description and the commit log. Help text is read by people and agents deciding what to
-run; a note that "Shayoni hit this on 2026-09-29" teaches them nothing they can act on.
+run; a note that "a colleague hit this on a given day" teaches them nothing they can act on.
 
 Covers, for every command in the tree: its help, its short help, each option's help (and its
 shown default). And the module docstring of every module that defines a command or opens with

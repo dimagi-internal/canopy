@@ -110,7 +110,7 @@ class TestCheckHookRegistered:
         assert r.ok is False
 
     def test_legacy_settings_entry_alone_does_not_pass(self, tmp_path):
-        """The retired capture hook is a no-op; it no longer counts as registration."""
+        """The retired capture hook is a no-op; it does not count as registration."""
         _write_legacy_capture_registration(tmp_path)
         r = doctor.check_hook_registered(home=tmp_path)
         assert r.ok is False
@@ -260,7 +260,7 @@ class TestRunDoctor:
         canopy_dir = home / ".claude" / "canopy"
         home.mkdir()
         _make_healthy_home(home, canopy_dir)
-        # Break one check. (Removing repo-map.json no longer breaks anything — a missing map
+        # Break one check. (Removing repo-map.json does not break anything — a missing map
         # is the normal fresh-install state and only warns; a malformed one is a real fault.)
         (canopy_dir / "repo-map.json").write_text("[not, valid")
         results, overall_ok = doctor.run_doctor(home=home, canopy_dir=canopy_dir)
@@ -326,7 +326,7 @@ class TestCheckCliInstallSource:
         assert r.ok is True, r.detail
 
     def test_dev_checkout_fails(self, tmp_path):
-        """The real 2026-07-24 failure: receipt pointing at a dev checkout."""
+        """A receipt pointing at a dev checkout fails."""
         dev = tmp_path / "emdash-projects" / "canopy"
         dev.mkdir(parents=True)
         _make_cli_install(tmp_path, version="0.2.342", source=dev)
@@ -453,8 +453,8 @@ class TestExternalTools:
 
 
 # ---------------------------------------------------------------------------
-# Windows bring-up: two checks that reported FALSE failures, with a remediation
-# that looped (@smazumdar, 2026-09-01).
+# Windows bring-up: two checks that must not report FALSE failures, with a remediation
+# that loops.
 #
 # There is no Windows machine in the fleet, so these drive the platform branch
 # through monkeypatched sys.platform / env rather than the real host —

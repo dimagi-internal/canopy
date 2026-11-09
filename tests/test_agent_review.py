@@ -63,10 +63,10 @@ def test_friction_signals_flags_checklist_gaps(tmp_path):
 
 
 def test_in_progress_turn_checklist_is_not_graded(tmp_path):
-    """canopy#593: a STILL-RUNNING turn was scored as having skipped every step it had
+    """A STILL-RUNNING turn is not scored as having skipped every step it has
     simply not reached yet.
 
-    Measured 2026-09-04: `agent-review hal --hours 44` reported two of five PR-creating
+    Measured: `agent-review hal --hours 44` reported two of five PR-creating
     sessions ran `gh pr create` with no `agent-turn-review` anywhere. Both were still
     running when measured; one invoked the review at 13:20:02, after the window scored
     it a miss. The finding survived a human grounding pass before reaching the agent it
@@ -106,7 +106,7 @@ def test_manual_turn_not_penalized_for_skipping_publish(tmp_path):
     """The regression that dispatched work: a compliant manual turn scored as failing.
 
     turn.md Step 4 — "Publishing to canopy-web is MANUAL ... ONLY when the human explicitly
-    asks". 8 of eva's 10 graded turns tripped this in the 26h to 2026-08-19, and the false
+    asks". 8 of eva's 10 graded turns tripped this in one 26h window, and the false
     signal was dispatched at eva as a fix order.
     """
     t = tmp_path / "turn.jsonl"
@@ -159,7 +159,7 @@ def test_human_asking_to_publish_makes_it_expected(tmp_path):
 def test_agent_saying_it_did_not_publish_is_not_a_trigger(tmp_path):
     """The false positive the first cut of this check shipped with.
 
-    eva's 2026-08-19 closeout said "nothing published to canopy-web (not asked)" — a correct
+    an eva closeout said "nothing published to canopy-web (not asked)" — a correct
     report of correctly SKIPPING the step — and a negation-blind grep over the agent's own
     prose read it as the step being owed. "The human asked" is settled by the human's words.
     """
@@ -190,7 +190,7 @@ def test_investigating_the_publish_step_does_not_trigger_it(tmp_path):
 
 def test_non_turn_session_not_graded_against_turn_steps(tmp_path):
     # An `architect ddd` / harvest session is NOT a turn — grading it against the turn-step
-    # checklist flagged every one as a 4-gap "failure storm" (hal's 2026-07 review). No turn
+    # checklist flagged every one as a 4-gap "failure storm" (seen in a hal review). No turn
     # marker anywhere -> no checklist gaps.
     t = tmp_path / "architect.jsonl"
     _write_transcript(t, str(tmp_path), [
@@ -321,7 +321,7 @@ def test_run_review_marks_an_empty_scan_blind(tmp_path):
 def _partial_blind_case(tmp_path):
     """One agent, two worktree containers: `ace-c89535f9` (matches) and `wt-ace-8ac55e86`
     (a container shape the matcher does not recognise). Two transcripts in, one
-    attributed — the shape of the 2026-09-01 bug, where emdash's naming drifted."""
+    attributed — the shape of a past matcher bug, where emdash's naming drifted."""
     root = tmp_path / "emdash"
     for name in ("ace", "ace-web"):
         (root / "repositories" / name).mkdir(parents=True, exist_ok=True)
@@ -338,7 +338,7 @@ def _partial_blind_case(tmp_path):
 
 
 def test_scan_names_the_worktree_roots_it_dropped(tmp_path):
-    """`considered`/`matched` cannot see a PARTIAL blindness — the 2026-09-01 matcher bug
+    """`considered`/`matched` cannot see a PARTIAL blindness — a past matcher bug
     left eva at 2-of-15 and ace at 1-of-9, both non-zero, so `blind` never fired. Naming
     the rejected roots makes the dropped corpus legible without a ratio threshold."""
     from orchestrator.agent_review import scan_turn_transcripts
@@ -365,7 +365,7 @@ def test_run_review_reports_dropped_roots_on_a_partially_blind_scan(tmp_path):
 def test_scan_ignores_subagent_sidecar_transcripts(tmp_path):
     """A session's fan-out lives at `<session-id>/subagents/agent-*.jsonl` under the same
     project dir. Those are one turn's subagents, not turns: counting them inflates the
-    corpus without erroring (291 sidecars against 7 real sessions for ace, 2026-09-02),
+    corpus without erroring (291 sidecars against 7 real sessions for ace),
     so every per-turn metric downstream quietly changes meaning. Pins `glob` vs `rglob`."""
     from orchestrator.agent_review import scan_turn_transcripts, _transcript_cwd
     repo, projects = _worktree_case(tmp_path, "ace", ["ace", "ace-web"], "ace-c89535f9")
@@ -434,7 +434,7 @@ def test_build_review_prompt_and_parse_findings(tmp_path):
 
 
 def test_pr_status_output_is_not_a_gating_block_or_failure(tmp_path):
-    # Hal's 2026-07 review: `gh pr view` output ("mergeable: MERGEABLE/BLOCKED",
+    # A hal review: `gh pr view` output ("mergeable: MERGEABLE/BLOCKED",
     # "blocked only on required review") was misread as gating friction / failures.
     t = tmp_path / "turn.jsonl"
     _write_transcript(t, str(tmp_path), [
@@ -502,7 +502,7 @@ def test_retry_loop_requires_similar_subject_not_just_tool_reuse(tmp_path):
 
 
 def test_auth_marker_does_not_fire_on_successful_write(tmp_path):
-    # hal's 2026-07 review: a SUCCESSFUL Write of a memory file named
+    # A hal review: a SUCCESSFUL Write of a memory file named
     # `email-oauth-not-minted.md` was flagged as auth_friction because "oauth" is in the path.
     # A completed file write is never runtime friction.
     t = tmp_path / "turn.jsonl"
@@ -516,7 +516,7 @@ def test_auth_marker_does_not_fire_on_successful_write(tmp_path):
 
 
 def test_skill_collision_flags_loading_another_plugins_same_named_skill(tmp_path):
-    # hal's 2026-07 review: "do a turn" loaded `ace:turn` (ACE's turn loop) instead of hal's own
+    # A hal review: "do a turn" loaded `ace:turn` (ACE's turn loop) instead of hal's own
     # skills/turn — a silent wrong-skill load the mechanical signals were blind to.
     t = tmp_path / "turn.jsonl"
     _write_transcript(t, str(tmp_path), [
@@ -549,7 +549,7 @@ def test_human_corrections_catches_safety_override_and_confusion():
     assert "go ahead" not in quotes and "take a turn" not in quotes   # neutral msgs ignored
 
 def test_run_review_surfaces_stdout_error_and_sane_budget(tmp_path, monkeypatch):
-    # Echo's 2026-07 review: claude -p exited 1 with "Error: Exceeded USD budget (0.5)"
+    # An echo review: claude -p exited 1 with "Error: Exceeded USD budget (0.5)"
     # on STDOUT (stderr empty), so the report said 'claude -p failed: ' — undiagnosable.
     # Pin both fixes: (a) stdout errors surface, (b) the default budget clears $0.50,
     # which a real 7-turn corpus empirically exceeds.
@@ -575,7 +575,7 @@ def test_run_review_surfaces_stdout_error_and_sane_budget(tmp_path, monkeypatch)
 
     assert "Exceeded USD budget" in result["error"]          # (a) stdout not swallowed
     # Find the synthesis call by SHAPE, not by position: `run_review` also enumerates the
-    # process table for session liveness (canopy#593), and patching `ar.subprocess.run`
+    # process table for session liveness, and patching `ar.subprocess.run`
     # patches the shared module object, so that `ps` lands in `seen_cmds` too. Indexing
     # [0] pinned an ordering the test never meant to assert.
     claude_cmds = [c for c in seen_cmds if "--max-budget-usd" in c]
@@ -1234,7 +1234,7 @@ def test_agent_review_cli_accepts_timeout_option():
 # `run_review` scanned `CLAUDE_PROJECTS = Path.home()/".claude"/"projects"` --
 # the CURRENT user's home, one place. JJ alternates two macOS accounts
 # (jjackson + acedimagi) on rate-limit, so an agent's real corpus is routinely
-# split across both. Measured 2026-07-28: `canopy agent-review ace --hours 48`
+# split across both. Measured: `canopy agent-review ace --hours 48`
 # reported 2 turns from jjackson while acedimagi held the sessions the review
 # was actually about. Findings drawn from half a corpus are worse than no
 # findings -- they read as complete.
@@ -1345,14 +1345,14 @@ def test_agent_review_cli_exposes_projects_dir_option():
 # --- Task: human_corrections must not mine HARNESS-INJECTED user turns ------
 #
 # `human_corrections` is documented as "the highest-signal friction" and the CLI
-# prints it under "⚑ HUMAN CORRECTIONS (highest signal — what Jonathan had to
+# prints it under "⚑ HUMAN CORRECTIONS (highest signal — what the operator had to
 # override)". But it mined every string-content `user` entry, and Claude Code
 # injects several of those on the human's behalf: <local-command-caveat>,
 # <task-notification>, <system-reminder>, <command-message>. Their own
 # boilerplate trips the patterns — the caveat block literally contains "DO NOT
 # respond to these messages", which scores `emphasis`.
 #
-# Measured on ACE 2026-07-28: 4 of the 6 corrections shown were harness blocks.
+# Measured on ACE: 4 of the 6 corrections shown were harness blocks.
 # A reviewer told these are the highest-signal lines reads noise first.
 
 def test_human_corrections_ignores_harness_injected_turns():
@@ -1412,11 +1412,11 @@ def test_human_corrections_ignores_the_compaction_summary():
     assert human_corrections(entries) == []
 
 
-# --- #416: a call's OUTCOME is recorded, not inferred -------------------------
+# --- A call's OUTCOME is recorded, not inferred -------------------------
 #
-# Every tool_result block carries `is_error`. The extractor used to drop it and
-# re-derive failure by grepping the result prose, which made the SUBJECT of a
-# result indistinguishable from its OUTCOME. These lock in the real 2026-07-28
+# Every tool_result block carries `is_error`. A reader that dropped it would have to
+# re-derive failure by grepping the result prose, which makes the SUBJECT of a
+# result indistinguishable from its OUTCOME. These lock in real
 # false positives, measured over 36 ACE turns.
 
 def _write_transcript_with_status(path, cwd, calls):
@@ -1697,7 +1697,7 @@ def test_an_explicit_timeout_still_works_and_still_fails_loud(tmp_path, monkeypa
     assert result["findings"] == []
 
 
-# --- #488: human_corrections must not mine MACHINE-authored user turns --------
+# --- human_corrections must not mine MACHINE-authored user turns --------
 #
 # Sibling of the harness-injected-turns task above, one layer out. Those blocks are
 # tag-delimited, so a regex finds them. These are plain strings that read exactly like a
@@ -1706,9 +1706,9 @@ def test_an_explicit_timeout_still_works_and_still_fails_loud(tmp_path, monkeypa
 #   * a Stop hook's `reason`, replayed into the conversation ("Stop hook feedback: …")
 #   * a dispatch brief another agent wrote to open a dispatched session
 #
-# Measured on hal 2026-08-14 (`canopy agent-review hal`, last 24h): 6 reported "human
+# Measured on hal (`canopy agent-review hal`, last 24h): 6 reported "human
 # corrections", of which 5 were machine-authored — two hook replays of hal's own
-# turn_close_guard, two Ada dispatch briefs, one generated resume brief. One was Jonathan.
+# turn_close_guard, two Ada dispatch briefs, one generated resume brief. One was the human.
 # The same ratio the harness-block filter was built for, via a class it doesn't cover.
 #
 # Not cosmetic: the generated resume brief became a fleet-scope finding, escalated because
@@ -1753,7 +1753,7 @@ def test_dispatch_marker_is_the_same_string_on_both_sides():
 
 def test_human_corrections_survives_a_transcript_with_no_isMeta_key():
     """Older transcripts and other harness versions don't carry `isMeta`. Absent must mean
-    "assume human" — a stricter default would start dropping Jonathan."""
+    "assume human" — a stricter default would start dropping the human."""
     from orchestrator.agent_review import human_corrections
 
     entries = [{"type": "user", "message": {"content": "stop, that's wrong"}}]
@@ -1763,7 +1763,7 @@ def test_human_corrections_survives_a_transcript_with_no_isMeta_key():
 
 
 def test_human_corrections_keeps_the_one_real_correction_beside_the_five_fakes():
-    """The hal 2026-08-14 corpus, reduced: five machine turns and Jonathan's one line.
+    """A hal corpus, reduced: five machine turns and the human's one line.
     Mining it must yield exactly his."""
     from orchestrator.agent_dispatch import stamp_dispatched
     from orchestrator.agent_review import human_corrections
@@ -1796,7 +1796,7 @@ def test_human_corrections_keeps_the_one_real_correction_beside_the_five_fakes()
 
 
 # --- Confidence rail: repair the label, keep the evidence ---------------------
-# Regression guard for the 2026-08-18 cycle, where `agent-review ace --hours 24`
+# Regression guard for a cycle where `agent-review ace --hours 24`
 # synthesized 5 findings and dropped all 5 on a malformed `evidence.confidence`,
 # reporting "No findings synthesized" for the noisiest agent in the fleet.
 from orchestrator.agent_review import normalize_confidence
@@ -1900,7 +1900,7 @@ def test_confidence_coercion_is_logged_to_stderr(capsys):
 
 
 def test_five_findings_with_bad_confidence_all_survive():
-    """The exact 2026-08-18 shape: five evidence-valid findings whose only defect was
+    """The exact shape of a past drop: five evidence-valid findings whose only defect was
     the confidence word. The run reported 'No findings synthesized'; it must not again."""
     raws = ["very high", "VeryHigh", 0.9, "moderate", "Certain"]
     findings = [
@@ -1938,14 +1938,14 @@ def test_sibling_fallback_also_normalizes_the_displayed_label():
 
 
 def test_prompt_says_the_two_confidence_fields_are_one_judgment(tmp_path):
-    """Root cause of the 2026-08-18 drops: the prompt asked for `confidence` twice with
+    """Root cause of those drops: the prompt asked for `confidence` twice with
     no hint they were the same value, so the model filled exactly one."""
     prompt = build_review_prompt(tmp_path, corpus=[])
     assert "SAME value as evidence.confidence" in prompt
 
 
 # --- Turn-step markers must track how the step is performed TODAY ---------------
-# Regression guard for 2026-08-19. The haystack is assistant text + user text + tool
+# Regression guard: the haystack is assistant text + user text + tool
 # NAMES/INPUTS — never tool RESULTS. So when a step's mechanics move inside a script,
 # only the script's name reaches the haystack and the old marker goes blind. Measured on
 # hal over 12 turn-sessions: the close-out ran in 10, `workspace-refresh` detected 1.
@@ -2000,11 +2000,11 @@ def test_markers_do_not_fire_on_an_unrelated_turn():
 
 
 # --- A bare-filename target must reach the verification gate as evidence ----------
-# 2 of the 8 findings in the real 2026-08-18 `agent-review ace` run named a bare file
+# 2 of the 8 findings in one real `agent-review ace` run named a bare file
 # (`persona.md`, `CLAUDE.md`) as their target. `_finding_symbols` only accepted tokens
 # containing "/", so those findings reached the source-verification gate with NO symbols
 # — no grep, no file content — which resolves to `unverifiable` and is KEPT. Same shape
-# as the miss #504 fixed: the gate cannot see the target, so an already-shipped finding
+# as an earlier miss: the gate cannot see the target, so an already-shipped finding
 # survives to waste a turn.
 from orchestrator.agent_review import _finding_symbols
 
@@ -2043,7 +2043,7 @@ def test_backticked_symbols_still_win():
 # ~/.claude/projects. The corpus is therefore legitimately "whole-corpus" — every readable
 # source WAS read — while attributing zero turns, and the BLIND SCAN guard cannot help:
 # that one fires on considered>0 with none attributed, and here nothing was even a
-# candidate. Measured 2026-09-14: `agent-review echo --hours 75` printed "Turns reviewed: 0"
+# candidate. Measured: `agent-review echo --hours 75` printed "Turns reviewed: 0"
 # then "No findings synthesized", while the harness held two completed echo turns in that
 # window. echo was structurally invisible to the fleet's self-improvement lens, silently.
 
@@ -2121,9 +2121,9 @@ def test_unreachable_canopy_web_does_not_break_the_review(monkeypatch):
 
 
 # --- Placement rail: every finding says WHERE its fix lives (agent | pack | canopy) ---------
-# Root cause it closes: the prompt used to say `target: the file/path in the agent repo`, so
-# every finding routed into the agent's repo by construction — which is how eva grew a private
-# hooks/gdoc_gate.py (a fleet-generic share gate) out of the 2026-09-07 review.
+# Root cause it closes: a prompt saying `target: the file/path in the agent repo` routes
+# every finding into the agent's repo by construction — which is how eva grew a private
+# hooks/gdoc_gate.py (a fleet-generic share gate) out of a review.
 
 
 def test_finding_without_placement_is_dropped():

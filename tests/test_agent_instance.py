@@ -1,5 +1,5 @@
 """`canopy agent env` — bind an install to ONE agent instance, fill its .env from that
-instance's Canopy vault (Jonathan, 2026-10-14). canopy-web is faked."""
+instance's Canopy vault. canopy-web is faked."""
 from __future__ import annotations
 
 import json

@@ -1,5 +1,5 @@
-"""`canopy vault zk keep` — a runner passes on the vault keys it holds (canopy-web spec
-2026-10-22-vault-access-follows-canopy-access-design.md §1).
+"""`canopy vault zk keep` — a runner passes on the vault keys it holds (canopy-web design:
+vault access follows canopy access).
 
 Real crypto throughout: a target "got access" iff its own private key opens the wrap the
 keeper made. canopy-web is a fake `call` that records what the keeper posts.
@@ -320,7 +320,7 @@ def test_a_custodial_answer_with_a_delegated_credential_is_opened_too():
     assert out["delegated"] == {"github-token": "github_pat_jj"}
 
 
-# ---- an unendorsed machine names its real fixer (ada brief 2026-11-05, DIM-SA-W175) ----------
+# ---- an unendorsed machine names its real fixer ----------
 
 def test_an_unendorsed_machine_says_its_own_person_confirms_it(vk):
     row = {**_machine(), "label": "DIM-SA-W175 · tpm", "runner_name": "DIM-SA-W175"}

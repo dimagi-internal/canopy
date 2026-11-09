@@ -1,10 +1,10 @@
 """DDD loop, round 3 part B — storyboard critique, inner-loop target, judge tiering.
 
-Evidence (connect-labs ``supply-sophie-rutf-2026-09-26-001``): arc-level story
-decisions (move a scene, data scale) surfaced only at iteration 4; every batch
-paid build + CI 7–9 + deploy 8–11 min before a judge could look; every judge
-round ran all three judges (~450k tokens: concept ~170k, user ~150k, arc
-~130k) although most batches only changed a few scenes.
+Why: arc-level story decisions (move a scene, data scale) must surface early,
+not at a late iteration; a batch should not pay build + CI + deploy (many
+minutes) before a judge can look; and a judge round should not run all three
+judges (about 450k tokens: concept ~170k, user ~150k, arc ~130k) when most
+batches only change a few scenes.
 """
 from __future__ import annotations
 
@@ -190,7 +190,7 @@ class TestTargetChoice:
             assert (out["target"], out["judges"], out["checkpoint"]) == ("deploy", ["concept", "user", "arc"], True)
 
     def test_a_periodic_full_pass_runs_on_the_local_build(self) -> None:
-        # canopy#787: deployed labs is for the pass that decides, not the regression net.
+        # Deployed labs is for the pass that decides, not the regression net.
         out = target.choose(_state(next_judge_full=True, loop_mode="backlog"), _cfg())
         assert (out["target"], out["judges"], out["checkpoint"], out["full"]) == (
             "inner", ["concept", "user", "arc"], False, True
@@ -255,8 +255,8 @@ class TestOnlyACheckpointDecides:
         assert action == "checkpoint"
 
     def test_a_stall_on_a_concept_only_pass_stops_directly(self) -> None:
-        # DDD-1: a stall read on a partial pass used to become a checkpoint (one
-        # more full pass on noora/smallholder that decided nothing new).
+        # DDD-1: a stall read on a partial pass stops directly; it must not become a
+        # checkpoint (one more full pass that decides nothing new).
         st = _state()
         for i in range(3):  # three flat passes -> stall
             action, _ = compute_auto_iterate(

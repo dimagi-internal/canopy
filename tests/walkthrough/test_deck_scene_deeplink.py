@@ -6,8 +6,8 @@ emits stable ``id="scene-N"`` anchors on scene slides, and the DDD pipeline
 documents + surfaces ``<DECK_URL>#scene-N`` deep-links (findings, reviews) so a
 reviewer lands on the exact judged scene.
 
-The bug (issue #103): the deck had no ``location.hash``/``hashchange`` handling,
-so every deep-link opened on scene 1. These tests pin the contract:
+The bug guarded against: a deck with no ``location.hash``/``hashchange`` handling,
+so every deep-link opens on scene 1. These tests pin the contract:
 
   1. scene anchors are emitted using the ORIGINAL spec index (``scene_index``),
      so a partial run that renders spec scene 2 anchors at ``#scene-2``;

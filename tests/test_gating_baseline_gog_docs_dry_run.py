@@ -1,7 +1,7 @@
-"""Pins the fleet `gog docs --dry-run` rail (gws baseline; promoted from eva 2026-10-04): the flag PERFORMS the write, so it must never be typed.
+"""Pins the fleet `gog docs --dry-run` rail (gws baseline): the flag PERFORMS the write, so it must never be typed.
 
 WHY THE RAIL EXISTS. On gog v0.12.0 `--dry-run` on a `gog docs` WRITE verb prints the intended
-action and then does it anyway. Verified 2026-08-26 on a throwaway doc, three verbs, three
+action and then does it anyway. Verified on a throwaway doc, three verbs, three
 confirmations:
 
     insert       printed `inserted 4 bytes`      -> the document really began "ZULU"
@@ -12,12 +12,11 @@ That makes the printed output indistinguishable from an honest dry run, which is
 dangerous: the failure lands on the MOST careful turn, because `--dry-run` is exactly the flag an
 agent reaches for in order to be safe. A dry-run-then-run pair therefore applies TWICE.
 
-WHAT IT COST. On 2026-08-26 a turn mirroring an event into the UNGA 2026 planning doc ran
-dry-run-then-run three times. The bullet was inserted twice; the follow-up `delete` of the 998-char
-duplicate ran twice and took the NEXT 998 characters with it, destroying the "Target outreach list"
-HEADING_1, its intro paragraph, the status-values line, the "Added for UNGA 2026" HEADING_2, the
-whole Navyn Salem entry and most of Ron Dalgliesh. Nothing errored; every command exited 0. It was
-recovered only because that turn happened to be holding a full `gog docs cat` capture taken before
+WHAT IT COSTS. A turn mirroring an event into a planning doc that runs dry-run-then-run
+three times inserts the bullet twice; the follow-up `delete` of the 998-char duplicate
+runs twice and takes the NEXT 998 characters with it, destroying a HEADING_1, its intro
+paragraph, the status-values line, a HEADING_2 and whole entries. Nothing errors; every
+command exits 0. Recovery is possible only from a full `gog docs cat` capture taken before
 the first edit.
 
 WHY IT IS NARROW. Reads are the overwhelming majority of `gog docs` use and are completely safe --
@@ -25,7 +24,7 @@ WHY IT IS NARROW. Reads are the overwhelming majority of `gog docs` use and are 
 rail fires only on a write verb carrying the lying flag.
 
 WHY IT IS ANCHORED. This repo documents its own railed commands in skills, tests and commit
-messages. The calendar-delete rail paid for that lesson three times in two days, so this pattern
+messages. A rail that matches quoted text trips on that documentation, so this pattern
 requires a REAL invocation position -- command start, or after a shell separator -- and prose that
 merely quotes the command does not trip it.
 
@@ -64,7 +63,7 @@ PAT = re.compile(RULE["pattern"])
 
 
 BLOCKED = [
-    # The three invocations verified to mutate on 2026-08-26.
+    # The three invocations verified to mutate.
     f'gog docs insert DOCID "ZULU" --index 1 -a eva@dimagi-ai.com {DRY}',
     f"gog docs delete DOCID --start=5687 --end=6685 -a eva@dimagi-ai.com {DRY}",
     f'gog docs find-replace DOCID "old" "new" -a eva@dimagi-ai.com {DRY}',

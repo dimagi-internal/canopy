@@ -1,11 +1,10 @@
-"""canopy#785 — an unchanged scene is reused across two renders with different seeds.
+"""An unchanged scene is reused across two renders with different seeds.
 
-Measured on connect-labs ``supply-sophie-sheets-2026-10-06-001``: the narrative
-reseeds every take (``setup: rerun: per_render``), so the tender on screen was
-309, 318, 321 ... 342 across eleven renders. Text comparisons already put a
-reseeded id back in ``${var}`` form, but the frame cannot be un-substituted, so a
-scene whose subject SHOWS the id moved its crop every render and was re-judged
-every iteration (``reuse: []`` on every pass of the run).
+A narrative can reseed every take (``setup: rerun: per_render``), so the tender
+on screen differs across renders (309, 318, 321 ...). Text comparisons already
+put a reseeded id back in ``${var}`` form, but the frame cannot be
+un-substituted, so a scene whose subject SHOWS the id would move its crop every
+render and be re-judged every iteration (``reuse: []`` on every pass).
 
 These fixtures render real PNGs that draw the id, and pin: the same scene with a
 new id is reused; a real change on the same element is not; and a scene the last

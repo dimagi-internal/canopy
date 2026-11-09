@@ -1,6 +1,6 @@
 """one_shot_turn_guard: a one-shot runner turn may leave nothing running in the background.
 
-Evidence (2026-10-04, cloud-ec2-1, ACP): Ada's fleet-sync turn ended with background Bash
+Evidence (cloud runner): Ada's fleet-sync turn ended with background Bash
 jobs outstanding and the sync stalled; ACE's fix turn backgrounded its test suite, ended,
 and the fix was never committed. Nothing can resume a cloud-runner turn once it ends.
 """

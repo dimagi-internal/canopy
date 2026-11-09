@@ -1,4 +1,4 @@
-"""Local sessions on your private runner sign in with the box's own key (canopy-web#1705)."""
+"""Local sessions on your private runner sign in with the box's own key."""
 import json
 
 import pytest

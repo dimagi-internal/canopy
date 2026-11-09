@@ -38,7 +38,7 @@ AGENTS_DIR = PLUGIN_ROOT / "agents"
 RESERVED_BUILTINS: frozenset[str] = frozenset({
     "help",       # /help — built-in help
     "clear",      # /clear — clear conversation
-    "doctor",     # /doctor — diagnose Claude Code install (collided with canopy:doctor in 0.2.78)
+    "doctor",     # /doctor — diagnose Claude Code install (collides with canopy:doctor)
     "config",     # /config — open settings
     "compact",    # /compact — manual context compaction
     "model",      # /model — switch model

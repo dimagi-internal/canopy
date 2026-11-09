@@ -1,7 +1,7 @@
 """An accuracy finding must never reach a human gate.
 
-Regression for ACE ``spark-facilitator/20260813-2126``: four iterations, ~2M
-subagent tokens, never passed, and the final two blockers were escalated to the
+Regression guard: an ACE run that spent four iterations and ~2M subagent
+tokens without passing, because the final two blockers were escalated to the
 operator as product decisions when both were ordinary accuracy defects —
 narration saying "cost" over a panel titled FACILITATOR EARNINGS, and an n=1
 uncontrolled pre/post framed as a causal coaching arc.

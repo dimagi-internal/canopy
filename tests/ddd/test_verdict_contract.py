@@ -1,7 +1,7 @@
-"""The verdict/finding contract, enforced at EMIT rather than only at load (canopy#547).
+"""The verdict/finding contract, enforced at EMIT rather than only at load.
 
 Two judges were measured emitting fields outside the contract on
-``hh-poverty-targeting/20260827-0323``:
+a ``hh-poverty-targeting`` run:
 
   1. the user-artifact judge wrote ``overall_verdict`` where ``load_verdict``
      requires ``verdict`` — a hard ValidationError, discovered at ASSEMBLY, i.e.
@@ -68,7 +68,7 @@ def _finding(**overrides) -> dict:
 
 class TestUnroutableFixKindDoesNotVanish:
     def test_targeted_escalates_instead_of_silently_refiring(self) -> None:
-        """The measured canopy#547 case: `targeted` from the arc judge.
+        """The measured case: `targeted` from the arc judge.
 
         On origin/main this returned ``continue`` with the reason "No
         options/redesign and score still moving — re-fire."

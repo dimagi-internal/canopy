@@ -1,12 +1,11 @@
 """Tests for the per-scene viewport override (Scene.viewport).
 
 Background: ``video_viewport_width`` / ``video_viewport_height`` work at the
-spec top level but you can't bump one dense scene without bumping the whole
-recording. The DDD agent's pain point on
-``microplans-10-wards-fullrun-2026-06-02-001`` was wanting scene 4 at 1440×900
-to fit a Mapbox + inspector panel without inflating the other 5 scenes.
+spec top level, but bumping one dense scene would bump the whole recording. The
+per-scene override lets scene 4 run at 1440×900 to fit a Mapbox + inspector
+panel without inflating the other 5 scenes.
 
-The fix: ``Scene.viewport: {"width": int, "height": int}`` (optional). When set,
+The mechanism: ``Scene.viewport: {"width": int, "height": int}`` (optional). When set,
 ``Recorder.run_scene`` calls ``page.set_viewport_size`` BEFORE the goto so the
 freshly-loaded page lays out at the requested size, then restores the spec-
 level default after ``final_hold_ms``.

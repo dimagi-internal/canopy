@@ -180,7 +180,7 @@ def test_run_reads_the_client_and_the_vault_key_with_the_boxs_own_key(monkeypatc
 
 
 def test_a_box_with_no_copy_of_the_shared_vault_is_told_why_and_who_fixes_it(monkeypatch):
-    """DIM-SA-W175, 2026-11-05: the box held no copy of the Shared vault's key because its
+    """The box held no copy of the Shared vault's key because its
     person had never confirmed it; a bare "give the box a key" sent a turn asking a key
     holder to run `canopy vault zk keep`, which can never grant it."""
     monkeypatch.setattr(device_key, "proof_headers", lambda m, u: {})

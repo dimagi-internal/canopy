@@ -1,7 +1,7 @@
 """The product objective — the loop optimizes the PRODUCT, not the demo's weakest cell.
 
-Measured case: connect-labs ``supply-sophie-unanswered-round-2026-10-03-002``
-iteration 6. Every judge sat at 3/5; 25 of 27 open findings were severity
+Worked case: a connect-labs ``supply-sophie-unanswered-round`` run.
+Every judge sat at 3/5; 25 of 27 open findings were severity
 ``low``; the two ``medium`` ones were a claim/reality wording note and an arc
 option. Under the demo objective that run could only stall
 (``stopped_not_converged``). Under the product objective it is done: one polish
@@ -262,7 +262,7 @@ class TestLoop:
         action, reason = _iterate(s, self.FINDINGS + [MEDIUM_DOMAIN])
         assert action == "continue"
         assert "POLISH" not in reason
-        # Mechanical polish rides in the product batch alongside the blocker (#788).
+        # Mechanical polish rides in the product batch alongside the blocker.
         assert s.batch_plan["findings"] == 3
 
     def test_progress_score_is_the_weakest_product_dimension(self):
@@ -347,7 +347,7 @@ class TestAssembleLoadsLensFindings:
 
 
 class TestProseBlocksInDemo:
-    """canopy#786: prose_density lint blocks in the demo objective too."""
+    """prose_density lint blocks in the demo objective too."""
 
     PROSE = {
         "scene": 6,

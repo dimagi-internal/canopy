@@ -1,9 +1,9 @@
 """`canopy agent set --append-notes` — add a turn's log without restating the history.
 
 `--notes` replaces the field wholesale (the board PATCH does), and a multi-turn task's
-notes ARE its history. Until this landed the only way to append was read-modify-write by
-hand, and passing just the new entry to `--notes` succeeded while deleting every earlier
-turn's log. Found on a hal turn, 2026-10-02, appending to a ~7,000-char triage log.
+notes ARE its history. Without `--append-notes` the only way to append is read-modify-write
+by hand, and passing just the new entry to `--notes` succeeds while deleting every earlier
+turn's log (a ~7,000-char triage log is enough to hit it).
 """
 import pytest
 from click.testing import CliRunner

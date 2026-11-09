@@ -409,7 +409,7 @@ def test_prompt_round3_shows_the_partner_the_joint_asks(tmp_path, web):
 
 
 def test_prompt_round3_reaches_a_lead_named_by_someone_else(tmp_path, web):
-    # The 2026-10-06 miss: eva proposed work with "lead": "hal"; hal's round 3 said "none".
+    # Regression guard: eva proposed work with "lead": "hal"; hal's round 3 said "none".
     r2 = {"huddle": H, "round": 2, "member": "eva",
           "proposals": [prop("Diagnose chrome-sales MCP connect failures", "hal", ["hal", "eva"])]}
     web.detail[H] = detail([_cell("eva", 1, r1("eva")), _cell("hal", 1, r1("hal")),
@@ -762,7 +762,7 @@ def test_file_resolves_a_project_by_its_ext_id_in_parentheses(tmp_path, web):
 
 
 def test_file_resolves_a_project_by_a_leading_ext_id(tmp_path, web):
-    """2026-10-08: "P1 IDM AI Talk" was filed as a NEW project beside P1 "IDM AI Talk"."""
+    """A leading ext_id ("P1 IDM AI Talk") resolves to the existing project P1, not a NEW one."""
     _one_proposal_huddle(web, "P1 IDM AI Talk")
     web.projects = {"eva": [{"ext_id": "P1", "name": "IDM AI Talk"}],
                     "echo": [{"ext_id": "P4", "name": "IDM AI Talk"}]}
@@ -982,7 +982,7 @@ def test_a_huddle_without_amends_never_needs_round4(tmp_path, web):
     assert not any("continue with round 4" in n for n in nxt)
 
 
-# ── huddle prompting v2 (Jonathan, 2026-10-08, after work-fleet-20261006) ─────────
+# ── huddle prompting v2 ──────────────────────────────────────────────────────────
 BRIEF = ("1. Close two Q4 funders — hard dates: 2026-10-20 — source: goals sheet\n"
          "2. IDM talk lands well — hard dates: 2026-10-15 — source: calendar\n"
          "Not now: new products")
@@ -1009,7 +1009,7 @@ def propb(title, lead, with_=(), priority=2, cost=None, **kw):
 
 
 def _dup_huddle(web, members=("ace", "eva", "echo")):
-    """The 2026-10-06 duplicate: Ace's and Eva's IDM-demo proposals were the same work."""
+    """A duplicate: Ace's and Eva's IDM-demo proposals were the same work."""
     ace_r2 = {"huddle": H, "round": 2, "member": "ace", "critique_answers": [{"title": "t",
                                                                               "answer": "a"}],
               "proposals": [propb("Pre-flight the IDM live demo", "ace", ["echo"],
@@ -1079,7 +1079,7 @@ def test_prompt_round1_with_a_brief_opens_with_it_and_asks_for_levers(tmp_path, 
 
 
 def test_prompt_round1_builds_on_each_goals_known_state(tmp_path, web):
-    # Jonathan, 2026-10-08: Eva's brief carries each goal's known state; agents build on it.
+    # Eva's brief carries each goal's known state; agents build on it.
     web.detail[H] = detail([])
     p = write_plan(tmp_path, priorities_brief=BRIEF)
     out = tmp_path / "eva-r1.md"
@@ -1232,7 +1232,7 @@ def test_file_with_a_brief_files_the_merged_proposal_and_one_ask_list(tmp_path, 
     assert "Needs from Jonathan: 20 min rehearsal Tue" in t["notes"]
     assert "Would fail if: the demo env is down" in t["notes"]
     assert "Merged in: IDM talk: live demo + story slide." in t["notes"]
-    assert t["confidence"] == "low"          # no confidence any more; Jonathan decides
+    assert t["confidence"] == "low"          # filed tasks carry low confidence; the principal decides
     text = digest.read_text()
     assert 'serves "priority 2: IDM talk lands well"' in text
     assert "would fail if the demo env is down" in text and "%" not in text

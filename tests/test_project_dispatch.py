@@ -12,7 +12,7 @@ skill file:
     derive tenancy from and the server fails a workspace-less project turn closed;
   - the runner must REPORT the project in its capabilities or nothing ever claims
     the turn — it is accepted with a 201 and then sits queued forever. That list is
-    reported by the box on every heartbeat (canopy-web #513), so there is no
+    reported by the box on every heartbeat, so there is no
     client-side way to declare it and no way to skip the check;
   - its idempotency key must not share a namespace with the agent key, because this
     fleet has repos and agents with the same name and the key column is globally
@@ -49,7 +49,7 @@ def _runner(name, *, status="online", ready=True, projects=(), agents=(), rid=No
             can_manage=True, owner=""):
     return {"id": rid or f"id-{name}", "name": name, "status": status, "ready": ready,
             "ready_note": "" if ready else "emdash CDP unreachable on :9223",
-            # canopy-web #509: the list is scoped by tenant, so it can contain runners
+            # The list is scoped by tenant, so it can contain runners
             # this caller may see but not mutate. Defaults True, as the schema does.
             "can_manage": can_manage,
             "owner_email": owner,
@@ -183,11 +183,10 @@ def test_an_UNTENANTED_empty_fleet_is_UNKNOWN_not_blocked():
     """An empty list with nowhere to have looked is no information, not bad
     information.
 
-    canopy-web USED to scope runner listing to `paired_by == caller`, so every caller
-    who did not pair a runner saw zero of them — including when a runner declared the
-    repo and claimed the turn within seconds. #509 fixed that server-side, but the
-    verdict survives for the one read that still has no tenant behind it: an unpinned
-    listing by a caller with no workspace memberships."""
+    canopy-web scopes runner listing by tenant, not by `paired_by == caller`, so a
+    caller who did not pair a runner still sees the tenant's runners. The "unknown"
+    verdict is for the one read that has no tenant behind it: an unpinned listing by
+    a caller with no workspace memberships."""
     c = classify_runners([], "connect-labs")
     assert c["unknown"] is True
     assert c["blocked"] is False
@@ -197,7 +196,7 @@ def test_a_TENANT_SCOPED_empty_fleet_is_BLOCKED_not_unknown():
     """The same empty list means the opposite thing when it came from one tenant.
 
     `/api/w/<ws>/harness/runners/` answers only after the middleware has gated
-    membership of `<ws>`, and #509 scopes the read to the tenant rather than to who
+    membership of `<ws>`, and the read is scoped to the tenant rather than to who
     paired what — so an empty answer is the fleet, not the caller's blind spot. A
     dispatch there would 201 and queue forever, which is exactly what the preflight
     exists to refuse."""
@@ -225,7 +224,7 @@ def test_a_stale_runner_that_REPORTS_the_repo_is_DORMANT_not_a_refusal():
     than assumed.
 
     `claim_next_turn` gates on live_status, so a lapsed runner claims nothing NOW —
-    but it is asleep, not gone, and post-#513 the project list it left behind is an
+    but it is asleep, not gone, and the project list it left behind is an
     observation of that box rather than a human's claim about it. A QUEUED turn is
     never expired (canopy-web exempts them so "laptop offline over a weekend must not
     retire Friday's slot"), so the turn is claimed on wake. Refusing would be a false
@@ -242,7 +241,7 @@ def test_a_degraded_runner_that_reports_the_repo_is_a_warning_too():
     """`live_status` serves `degraded` for a runner self-reporting trouble while still
     heartbeating. It cannot claim (claim gates on ONLINE) and it recovers, which is
     the `not ready` case wearing a status instead of a flag — so it warns rather than
-    blocks. It previously fell into `offline` and refused."""
+    blocks. It must not fall into `offline` and refuse."""
     c = classify_runners([_runner("j", status="degraded", projects=["connect-labs"])],
                          "connect-labs", tenant_scoped=True)
     assert c["blocked"] is False
@@ -255,7 +254,7 @@ def test_a_runner_that_will_NOT_come_back_still_blocks(status):
     queue-forever bug wearing a warning.
 
     `disconnected` means the runner has NEVER heartbeated, so any project list on it
-    is pre-#513 residue rather than an observation of a box; `retired` is terminal.
+    is residue rather than an observation of a box; `retired` is terminal.
     Neither returns, so neither is evidence the turn will ever be claimed."""
     c = classify_runners([_runner("x", status=status, projects=["connect-labs"])],
                          "connect-labs", tenant_scoped=True)
@@ -296,7 +295,7 @@ def test_a_declaring_but_not_ready_runner_is_a_warning_not_a_refusal():
 # --- can_manage: seeing a runner vs being allowed to act on it ---------------
 
 def test_a_runner_you_cannot_manage_is_bucketed_separately():
-    """#509 widened the READ past ownership. A runner you can see and cannot touch
+    """The READ reaches past ownership. A runner you can see and cannot touch
     needs a different remedy — its owner has to open the repo — so it must not be
     pooled with your own machines, whose fix is yours to make."""
     c = classify_runners([_runner("theirs", can_manage=False, owner="ace@dimagi.com")],
@@ -317,7 +316,7 @@ def test_blocked_on_a_foreign_fleet_names_the_owner_to_ask():
 
 
 def test_blocked_on_your_own_fleet_names_the_machine_and_the_real_fix():
-    """Post-#513 the fix is always on a box. The message must name which one and
+    """The fix is always on a box. The message must name which one and
     both ways to do it — that is the entire replacement for `--declare`."""
     c = classify_runners([_runner("jj-mbp", projects=["canopy-web"])], "connect-labs")
     msg = blocked_message(c, "dimagi")
@@ -327,7 +326,7 @@ def test_blocked_on_your_own_fleet_names_the_machine_and_the_real_fix():
 
 
 def test_can_manage_defaults_true_for_a_server_that_does_not_send_it():
-    """The field arrived with #509; an older canopy-web omits it, and every non-list
+    """An older canopy-web omits the field, and every non-list
     route that returns a runner already proved the caller can act on it."""
     assert can_manage({"name": "old"}) is True
 
@@ -401,7 +400,7 @@ def test_cli_dispatch_writes_no_board_task(net):
 
 def test_cli_dispatch_REFUSES_and_names_the_MACHINE_when_nothing_reports_the_repo(net):
     """The single worst outcome available here is a 201 followed by silence. Fail
-    loudly at dispatch time instead — and since canopy-web #513 the remedy is never
+    loudly at dispatch time instead — and the remedy is never
     a flag on this command, it is an action on a box. The message has to say which
     box and both ways to do it, because that is all the caller can now do."""
     calls = []
@@ -418,7 +417,7 @@ def test_cli_dispatch_REFUSES_and_names_the_MACHINE_when_nothing_reports_the_rep
 
 
 def test_cli_dispatch_NEVER_PATCHES_capabilities(net):
-    """The done-when of #433: no command PATCHes `projects`. canopy-web replaces the
+    """No command PATCHes `projects`. canopy-web replaces the
     list from the box on every heartbeat and 422s a body carrying it, so any PATCH
     from here is both futile and a lie about where the truth lives."""
     calls = []
@@ -449,10 +448,9 @@ def test_cli_declare_FLAG_is_gone(net):
 
 
 def test_cli_no_preflight_is_gone_so_the_check_cannot_be_routed_around(net):
-    """The flag existed because the preflight's answer could not be trusted — the
-    fleet was invisible to non-pairers (#509) and the list was hand-typed (#513).
-    Both are fixed server-side, so the refusal is a fact, and the one recorded use
-    of routing around it (#428) queued a turn forever. No escape hatch."""
+    """The preflight's answer is trustworthy — the fleet is visible to non-pairers and
+    the list is reported by the box, not hand-typed — so the refusal is a fact, and
+    routing around it queues a turn forever. No escape hatch."""
     calls = []
     net(calls, [_runner("jj-mbp", projects=["canopy-web"])])
     r = CliRunner().invoke(main, ["project", "dispatch", "connect-labs",
@@ -465,15 +463,13 @@ def test_cli_no_preflight_is_gone_so_the_check_cannot_be_routed_around(net):
 
 
 def test_cli_dispatch_REFUSES_when_the_TARGET_WORKSPACE_has_no_runners(net):
-    """The empty fleet is now a real answer, because the preflight asks the right
+    """The empty fleet is a real answer, because the preflight asks the right
     tenant.
 
-    This case used to warn-and-enqueue: the list was scoped to what the caller had
-    paired, so empty carried no information (Hal, who paired none, was told a
-    dispatch "would queue forever" and then watched `--no-preflight` enqueue a turn
-    claimed within seconds). #509 scopes the read by tenant, and the preflight now
-    reads the tenant it enqueues into — so empty means this workspace has no runners,
-    and enqueueing would be the queue-forever bug rather than the fix for it."""
+    A list scoped to what the caller had paired would make empty carry no
+    information. The read is scoped by tenant, and the preflight reads the tenant it
+    enqueues into — so empty means this workspace has no runners, and enqueueing
+    would be the queue-forever bug rather than the fix for it."""
     calls = []
     net(calls, [])
 
@@ -486,13 +482,13 @@ def test_cli_dispatch_REFUSES_when_the_TARGET_WORKSPACE_has_no_runners(net):
 
 
 def test_cli_dispatch_PREFLIGHTS_THE_TENANT_IT_ENQUEUES_INTO(net):
-    """The bug #509 made newly reachable, and the reason this read moved.
+    """The reason this read carries the workspace.
 
     The flat runners route returns the union of every workspace the caller belongs
     to, while the turn goes to exactly ONE. A caller in {dimagi, connect} whose only
     runners live in dimagi would preflight GREEN off those and enqueue into connect,
-    where nothing serves the repo — a 201 that queues forever, which is #428 again
-    by a different route. So the GET must carry the workspace."""
+    where nothing serves the repo — a 201 that queues forever, which is the
+    queue-forever bug by a different route. So the GET must carry the workspace."""
     calls = []
     net(calls, [_runner("jj-mbp", projects=["connect-labs"])])
 
@@ -593,7 +589,7 @@ def test_cli_runners_scoped_to_a_workspace_reads_that_tenant_and_concludes(net):
 
 
 def test_cli_runners_shows_which_rows_you_may_act_on(net):
-    """Since #509 the list contains runners the caller cannot mutate. Printing them
+    """The list contains runners the caller cannot mutate. Printing them
     with no marker implies every row is actionable, which is how you discover
     ownership from a bare 404 instead of from the listing."""
     calls = []
@@ -682,7 +678,7 @@ def test_agent_dispatch_does_not_preflight_runners(net):
     assert not [c for c in calls if "/harness/runners/" in c[1]]
 
 
-# --- operator pause (canopy-web #528) --------------------------------------------
+# --- operator pause --------------------------------------------
 #
 # `live_status` serves the pause in `status`, so a parked runner stops reading
 # `online` and falls out of `serving` with no special case here. It still gets its
@@ -751,7 +747,7 @@ def test_the_paused_field_alone_is_enough():
 # routinely visible but not actionable. canopy-web's _runner_visibility_q calls that
 # asymmetry deliberate and says the client must carry the invariant via can_manage
 # rather than let someone "discover ownership from a bare 404 on an action it was
-# told to try". Observed 2026-07-29: `canopy runner pause` from inside an agent repo
+# told to try". Example: `canopy runner pause` from inside an agent repo
 # 404'd with no hint that the CLI was acting AS the agent (resolve_token prefers the
 # agent's own PAT), and the same command from /tmp worked.
 
@@ -787,7 +783,7 @@ def test_owner_email_reads_owner_email():
     assert owner_email(None) == ""
 
 
-# --- --runner: pin a project turn to one box (#663) ---------------------------
+# --- --runner: pin a project turn to one box ---------------------------
 
 from orchestrator.project_dispatch import check_project_runner_pin  # noqa: E402
 

@@ -1,10 +1,10 @@
 """No human-facing doc sends a reader to canopy's OLD address.
 
-canopy moved from https://labs.connect.dimagi.com/canopy/ to
-https://canopy.dimagi.com/ on 2026-10-05. The old address still serves machine
+canopy lives at https://canopy.dimagi.com/; the old address
+https://labs.connect.dimagi.com/canopy/ still serves machine
 traffic and 302s browser pages to the new one, so a stale link in a doc looks
 like it works (a ``curl -L`` check follows the 302 and sees 200) — which is how
-ACE shipped one in ace#2762 (canopy#803).
+a stale link can ship unnoticed.
 
 This checks the markdown a person or an agent reads for instructions — docs,
 the plugin's skills and commands, agent-core. It allows a line that names BOTH

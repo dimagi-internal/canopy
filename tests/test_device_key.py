@@ -1,4 +1,4 @@
-"""The device key behind a Canopy Vault resolve (canopy#946): key kinds, the RFC 9449
+"""The device key behind a Canopy Vault resolve: key kinds, the RFC 9449
 DPoP proof, enrollment, and the rule that a proof is an ADDITION — never a new failure.
 
 The Secure Enclave path is exercised through a FAKE `canopy-device-key` on disk that
@@ -224,7 +224,7 @@ def _refused(*_a):
 
 
 def test_a_revoked_token_asks_through_the_stranded_box_route(keydir):
-    """canopy-web#1611: a box whose PAT was revoked before it had a key still gets a
+    """A box whose PAT was revoked before it had a key still gets a
     PENDING key — the token rides in the body, the key proves itself with DPoP."""
     seen = {}
 
@@ -278,7 +278,7 @@ def test_default_label_names_macos_not_its_kernel(monkeypatch):
     assert dk.default_label(lambda: "") == "DIM-SA-A126 (unknown)"
 
 
-# --- Windows: the software key sealed with DPAPI (canopy-web#2203) -----------------
+# --- Windows: the software key sealed with DPAPI -----------------
 
 class _FakeDpapi:
     """Stands in for CryptProtectData/CryptUnprotectData: a reversible, non-PEM blob."""

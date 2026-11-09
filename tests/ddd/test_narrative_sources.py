@@ -1,11 +1,10 @@
 """A narrative's iteration sources live on canopy-web (scripts/ddd/sources.py).
 
-The chlorine demo (2026-10-14): eight recorded cuts were on canopy-web, but the
-recipe, the master recording and the capture report they were cut from lived
-in one machine's temp dir. When that dir was cleaned, no machine could
-re-record the narrative, and the agent asked to re-cut it could only reply
-that it did not know where the files were. Everything it takes to keep
-iterating is now pinned to the narrative version and restored by `pull`.
+Recorded cuts live on canopy-web, but the recipe, the master recording and the
+capture report they were cut from would live in one machine's temp dir. If that
+dir were cleaned, no machine could re-record the narrative. So everything it
+takes to keep iterating is pinned to the narrative version and restored by
+`pull`.
 """
 from __future__ import annotations
 
@@ -61,7 +60,7 @@ def web(monkeypatch):
     monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")
     monkeypatch.setenv("CANOPY_WEB_PAT", "pat")
     monkeypatch.setenv("CANOPY_WEB_API_URL", API)
-    # A recipe push reads its version's story to compose against (canopy#908).
+    # A recipe push reads its version's story to compose against.
     monkeypatch.setattr(rv, "get_review", lambda rid, **_k: {"request_json": STORY})
     return FakeCanopyWeb()
 
@@ -214,16 +213,16 @@ def test_posting_a_version_pins_its_recipe(tmp_path, monkeypatch, request):
     assert request.node.pushed_sources == [
         ("chlorine", "rev-9", {"recipe": spec}),
     ]
-    # ... checked against the story it just posted, not refetched (canopy#908).
+    # ... checked against the story it just posted, not refetched.
     assert [s["id"] for s in locks[0]["scenes"]] == ["s1"]
 
 
 # ---------------------------------------------------------------------------
-# canopy#908 — a pinned recipe must compose with its version's story. The
-# chlorine v4 recipe carried two off-camera priming scenes the story did not
-# have; it was pinned anyway, `pull` reported it renderable, and `recorded
-# lint` failed on the next machine with "recipe has scene(s) absent from the
-# narrative: cut1-prime, cut5b-prime".
+# A pinned recipe must compose with its version's story. A recipe carrying
+# off-camera priming scenes the story does not have would otherwise be pinned,
+# `pull` would report it renderable, and `recorded lint` would fail on the next
+# machine with "recipe has scene(s) absent from the narrative: cut1-prime,
+# cut5b-prime".
 # ---------------------------------------------------------------------------
 
 _ORPHANED = RECIPE + "- id: cut1-prime\n  show: {url: /}\n- id: cut5b-prime\n  show: {url: /}\n"

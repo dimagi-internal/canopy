@@ -1,4 +1,4 @@
-"""A repo with a deploy gate must say how it renders between checkpoints (0.2.554).
+"""A repo with a deploy gate must say how it renders between checkpoints.
 
 On connect-labs every v1 fix batch paid PR -> CI -> deploy (~35 of every 50
 minutes) before a frame could be judged, because nothing required the repo to

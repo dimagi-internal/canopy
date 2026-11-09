@@ -5,19 +5,15 @@ Why this exists, and why it is a test rather than a paragraph.
 A turn driven by *new inbound* is structurally incapable of noticing the one failure
 that actually costs a relationship: a thread where someone asked us something and we
 never answered. Such a thread generates no new mail **by definition** — the counterpart
-is waiting on us — so the quieter the inbox, the more certain the miss. ACE went 42 days
-without replying to a partner who had answered all three of its questions and attached
-the file it asked for (dimagi-internal/ace#1931); the deliverable he was waiting for had
-been finished for a week and simply sat there. Nobody noticed because nothing in a turn
-ever looked.
+is waiting on us — so the quieter the inbox, the more certain the miss. A partner can wait
+weeks on a deliverable that is finished and simply sits there, because nothing in a turn
+ever looks.
 
-ACE's fix made its own aging section *reachable* on a quiet inbox. That fix lives only in
-ACE's repo, and every other agent lacks even the section to reach — echo, eva and hal had
-zero owed-reply sweep between them, and so did this file's own turn.md. So the sweep is
-built HERE, once, as engine + procedure, and every agent inherits it.
+The sweep makes the aging section *reachable* on a quiet inbox. It is built HERE, once, as
+engine + procedure, and every agent inherits it, rather than each repo carrying its own.
 
-Prose already failed at this exact spot once: ACE's section was headed "every turn" and was
-skipped anyway, because a line 95 lines above it ended the turn first. Hence tests, not text.
+Prose fails at this exact spot: a section headed "every turn" gets skipped when a line far
+above it ends the turn first. Hence tests, not text.
 """
 from __future__ import annotations
 
@@ -69,9 +65,9 @@ def _searcher(threads: list[dict], unread_ids: "set[str] | None" = None):
     the threads in `unread_ids` (default: none — a thread is read unless a test
     says otherwise).
 
-    A fake that returned one canned list for every query is what let canopy#608
-    through: it made the row `labels` look like a usable proxy for thread state,
-    and the real `gog` never populates them that way.
+    A fake that returned one canned list for every query would make the row `labels`
+    look like a usable proxy for thread state, and the real `gog` never populates
+    them that way.
     """
     calls: list[list[str]] = []
     unread = unread_ids or set()
@@ -144,7 +140,7 @@ def test_the_ENUMERATION_query_never_filters_on_unread():
     it is.
 
     Scoped to the FIRST call deliberately: the sweep does ask `is:unread` separately,
-    to learn which of the enumerated threads nobody has looked at (canopy#608). That
+    to learn which of the enumerated threads nobody has looked at. That
     is banding, not enumeration, and the distinction is the whole design — so the
     assertion pins the enumeration call rather than the absence of the string."""
     runner = _searcher([])
@@ -155,7 +151,7 @@ def test_the_ENUMERATION_query_never_filters_on_unread():
 
 
 def test_unread_comes_from_the_thread_level_query_not_the_row_labels():
-    """canopy#608 — the bug that told an agent to archive a live ask.
+    """Reading unread off the row labels would tell an agent to archive a live ask.
 
     gog's search row is a PER-MESSAGE projection: one row per thread carrying the
     ORIGINATING message's labels. A long thread whose newest message is unread comes
@@ -331,17 +327,14 @@ def test_turn_md_puts_the_sweep_before_any_early_return():
 
 
 # --------------------------------------------------------------------------------------
-# DETECTION IS NOT A VERDICT — the half that shipped wrong the first time
+# DETECTION IS NOT A VERDICT
 # --------------------------------------------------------------------------------------
 #
-# The sweep's first live run surfaced a 79-day thread and confidently proposed a late
-# apology. Jonathan, 2026-09-04: "Old events like this weren't not handled. They were not
-# good enough in terms of what you had written in response. And I killed the thread. So
-# evidence of a dangling thread this old does not mean we should then go respond to it. It
-# means we should make sure it's pruned."
+# A very old dangling thread (say 79 days) is not a reason to send a late apology: old
+# events like that were handled, or ended, and evidence of a dangling thread this old
+# means the thread should be pruned, not answered.
 #
-# That is the opposite verdict from the one the sweep gave, on the same true finding. So
-# the disposition is pinned harder than the detection was: a sweep that manufactures
+# So the disposition is pinned harder than the detection is: a sweep that manufactures
 # apologies is one an agent learns to stop running, and then the detection is worth zero.
 
 def _one(thread_id: str, date: str, **kw):
@@ -383,11 +376,9 @@ def test_turn_md_says_handled_threads_are_not_answered_late():
 # HANDLED-NESS, not age — the discriminator that actually matches how a turn works
 # --------------------------------------------------------------------------------------
 #
-# Jonathan, 2026-09-05, correcting the age heuristic that replaced the first wrong verdict:
-# "The issue is less the response window and more whether the thread was handled... The
-# primary mode of operating is something comes in, you fire right away, and if we don't
-# conclude that session with a response, we didn't intend to come back to it (sometimes I
-# forget but this is less common than implicit failure)."
+# The question is less the response window and more whether the thread was handled. The
+# primary mode of operating is that something comes in and the turn fires right away; if
+# that session does not conclude with a response, there was no intent to come back to it.
 #
 # A turn is synchronous. So READ + no reply is a DECISION — the exchange finished, moved to
 # Slack, or a human ended it. UNREAD is the failure: nothing ever disposed of it.
@@ -401,7 +392,7 @@ def _row(*, unread: bool, date: str = "Wed, 17 Jun 2026 12:00:00 +0000", **kw):
 
     The row's own `labels` are pinned to the shape a REAL gog row has — a category
     and nothing else, no UNREAD and no INBOX even on an inbox thread — so every
-    banding assertion below doubles as a guard on canopy#608: read the labels
+    banding assertion below doubles as a guard: read the labels
     instead of the query and all of these flip.
     """
     runner = _searcher(
@@ -456,9 +447,8 @@ def test_banding_costs_one_query_for_the_whole_sweep_not_one_per_thread():
     """Handled-ness must stay cheap. A per-thread fetch would make the sweep expensive
     enough to skip, and a sweep that gets skipped catches nothing.
 
-    This replaces an assertion that banding came off the search ROW at zero cost. It
-    did — and it was wrong (canopy#608); the row's labels are per-message and cannot
-    see thread state. Correctness is worth one query. What must NOT return is a cost
+    Banding cannot come off the search ROW at zero cost: the row's labels are
+    per-message and cannot see thread state. Correctness is worth one query. What must NOT return is a cost
     that scales with the inbox, so the bound is asserted over THREE threads: two
     searches total, however many threads are enumerated.
     """
@@ -502,15 +492,15 @@ def test_turn_md_bands_on_handled_ness_rather_than_age():
 
 
 # --------------------------------------------------------------------------------------
-# OWNED — an unread thread a canopy-web turn is working (canopy#758)
+# OWNED — an unread thread a canopy-web turn is working
 # --------------------------------------------------------------------------------------
 #
-# 2026-10-05, ace: the sweep printed "KMC Workflows ... [never replied]" under NEEDS
-# ATTENTION while ten canopy-web chat turns keyed to that exact thread had run over two
-# days — the principal steering the ask in chat on another runner. live-turns.sh sees
-# only local processes, so it said COUNT=0. Read-state could not tell "nobody looked"
-# from "someone is working it elsewhere"; only canopy-web knows. A turn that trusted the
-# band would have answered the email cold on top of a live conversation.
+# Without ownership the sweep would print a thread as "[never replied]" under NEEDS
+# ATTENTION while canopy-web chat turns keyed to that exact thread are running — the
+# principal steering the ask in chat on another runner. live-turns.sh sees only local
+# processes, so it says COUNT=0. Read-state cannot tell "nobody looked" from "someone is
+# working it elsewhere"; only canopy-web knows. A turn that trusted the
+# band would answer the email cold on top of a live conversation.
 
 from orchestrator.agent_email import harness_turn_owners
 
@@ -559,9 +549,9 @@ def test_without_owners_the_sweep_bands_exactly_as_before():
     assert _row(unread=True)["disposition"] == "respond"
 
 
-# 2026-10-29, hal: a cc'd colleague's message landed on 10-26 while the thread's only
-# owner, a chat session, had last run on 10-25. The sweep printed OWNED, "leave it
-# unread — the owner disposes of it". An owner that finished before a message arrived
+# A cc'd colleague's message can land a day after the thread's only owner, a chat
+# session, last ran. The sweep must not print OWNED, "leave it unread — the owner
+# disposes of it", then. An owner that finished before a message arrived
 # never read it, so a question there would have waited on nobody, indefinitely.
 
 def test_a_message_newer_than_a_finished_owner_needs_attention():

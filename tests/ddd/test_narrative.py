@@ -1479,7 +1479,7 @@ class TestNarrativeLock:
 
 class TestStampRunState:
     # Every link is /w/<workspace>/review/<id> — the flat /review/<id> route is
-    # removed (canopy-web#1337); a flat one from `narrative post` reached an
+    # removed; a flat one from `narrative post` reached an
     # external reviewer once.
     def test_tokenized_url_appends_share_token(self):
         from scripts.ddd.narrative import _tokenized_review_url
@@ -1678,9 +1678,9 @@ def _seed_run_state_with_review(tmp_path, monkeypatch, run_id, slug, review_id):
 
 
 class TestPostNarrativeVersion:
-    """Cover the path PAST `_stamp_run_state` — nothing did, which is how #402
-    left a call to the deleted `_stamp_spec_sync` in `post_narrative_version`
-    and every successful post exited 1 on a NameError (#404)."""
+    """Cover the path PAST `_stamp_run_state` — nothing else does, so a stale
+    call to a deleted helper in `post_narrative_version` would exit every
+    successful post 1 on a NameError."""
 
     def test_returns_post_result_when_run_state_has_a_slug(self, tmp_path, monkeypatch):
         from scripts.ddd.narrative import post_narrative_version
@@ -1720,7 +1720,7 @@ class TestPostNarrativeVersion:
     def test_refuses_unstamped_run_id_that_would_mint_a_new_narrative(
         self, tmp_path, monkeypatch
     ):
-        """canopy#907: `…-2026-10-14-rerecord` has no numeric stamp, so the run
+        """A run id such as `…-rerecord` has no numeric stamp, so the run
         id derived ITSELF as the slug and canopy-web made a new narrative while
         the spec's narrative never moved. It must refuse, naming both."""
         import scripts.ddd.runstate as rs
@@ -2075,7 +2075,7 @@ def test_pull_reports_a_narrative_it_cannot_render(tmp_path, monkeypatch, capsys
     assert "no render recipe" not in out.err
 
     # A recipe that exists but does not compose with the story is NOT
-    # renderable (canopy#908): the loop renders compose(recipe, lock).
+    # renderable: the loop renders compose(recipe, lock).
     (tmp_path / "demo.recipe.yaml").write_text(
         "base_url: https://example.test\nscenes:\n- id: s1\n- id: prime\n"
     )
@@ -2086,9 +2086,9 @@ def test_pull_reports_a_narrative_it_cannot_render(tmp_path, monkeypatch, capsys
 
 
 # ---------------------------------------------------------------------------
-# canopy#623 — a scene's `narrative` may be a LIST of beats. The review-surface
-# text resolver called `.strip()` on the raw field, so the list form raised
-# AttributeError and the review page could not be built at all. Both shapes
+# A scene's `narrative` may be a LIST of beats. The review-surface text
+# resolver must not call `.strip()` on the raw field (the list form would raise
+# AttributeError and the review page could not be built). Both shapes
 # must resolve to prose, and the list must WIN over the sentence-split
 # fallback exactly as a plain string does.
 # ---------------------------------------------------------------------------
@@ -2130,10 +2130,9 @@ class TestSceneNarrativeListFormReachesTheReviewSurface:
 # ---------------------------------------------------------------------------
 # apply FAILS CLOSED on a missing / unknown / malformed decision.
 #
-# Incident: in connect-labs run supply-sophie-unanswered-round-2026-10-02-001
-# the orchestrator wrote a REDRAFT response in the wrong shape (no
-# decisions["narrative-verdict"]) and `narrative apply` defaulted it to
-# "approve" and locked the spec. A missing decision must refuse, exit non-zero,
+# Regression guard: when an orchestrator writes a REDRAFT response in the wrong
+# shape (no decisions["narrative-verdict"]), `narrative apply` must not default it
+# to "approve" and lock the spec. A missing decision must refuse, exit non-zero,
 # and leave the spec and its lock byte-for-byte untouched.
 # ---------------------------------------------------------------------------
 

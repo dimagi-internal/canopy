@@ -1,5 +1,4 @@
-"""Follow-ups from the first live v1/backlog DDD run (connect-labs
-``supply-sophie-rutf-2026-09-26-001``, canopy 0.2.528, loop-metrics M1–M14).
+"""Follow-ups for the v1/backlog DDD run (loop-metrics M1–M14).
 
 One class per item; M1 lives in ``test_runstate.py``, M9/M11/M14 in
 ``test_state_mutating_reuse.py``.

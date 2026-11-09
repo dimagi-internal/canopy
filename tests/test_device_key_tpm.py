@@ -1,4 +1,4 @@
-"""A Windows machine's TPM device key (canopy-web#1549): ctypes over ncrypt.dll.
+"""A Windows machine's TPM device key: ctypes over ncrypt.dll.
 
 These tests cannot touch a real TPM — that needs Windows with TPM 2.0. They drive the
 wrapper with a FAKE ncrypt that speaks the same calling convention (byref handles, caller

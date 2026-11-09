@@ -69,8 +69,8 @@ def _no_ambient_agent_identity(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_ambient_dispatched_turn(monkeypatch, tmp_path_factory):
-    """A dispatched turn's caller envelope also marks the session as an agent's
-    (canopy#813), and is found from env or — on a laptop — from the emdash task the
+    """A dispatched turn's caller envelope also marks the session as an agent's,
+    and is found from env or — on a laptop — from the emdash task the
     cwd belongs to. A suite run inside a turn would inherit the real one, so point
     the envelope root at an empty dir and clear the env that names a turn."""
     from orchestrator import canopy_web, provenance
@@ -78,7 +78,7 @@ def _no_ambient_dispatched_turn(monkeypatch, tmp_path_factory):
     for var in ("CANOPY_CALLER", "CANOPY_TURN_ID", "CANOPY_SESSION_ID", "CANOPY_SCOPED_TURN"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(provenance, "CALLER_ROOT", tmp_path_factory.mktemp("caller"))
-    # Nor a runner-left scoped caller token (canopy-web#1782): it would make every
+    # Nor a runner-left scoped caller token: it would make every
     # resolve in a project-repo worktree act as that conversation's asker.
     scoped = tmp_path_factory.mktemp("scoped")
     monkeypatch.setattr(canopy_web, "scoped_root", lambda: scoped)
@@ -87,18 +87,18 @@ def _no_ambient_dispatched_turn(monkeypatch, tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _no_ambient_device_key(monkeypatch, tmp_path_factory):
-    """A resolve attaches a DPoP proof when THIS machine holds a registered device key
-    (canopy#946). The suite must not sign with — or create — the real one in
+    """A resolve attaches a DPoP proof when THIS machine holds a registered device key.
+    The suite must not sign with — or create — the real one in
     ~/.canopy/device-key, so point the key dir at an empty temp dir and the Secure
     Enclave helper at nothing."""
     monkeypatch.setenv("CANOPY_DEVICE_KEY_DIR", str(tmp_path_factory.mktemp("device-key")))
     monkeypatch.setenv("CANOPY_DEVICE_KEY_BIN", "/nonexistent/canopy-device-key")
-    # Nor probe a real EC2 instance metadata service (aws-iam, canopy-web#1549): a closed
+    # Nor probe a real EC2 instance metadata service (aws-iam): a closed
     # local port refuses at once, so "not EC2" costs nothing and a CI VM's IMDS is never hit.
     monkeypatch.setenv("CANOPY_AWS_IMDS_URL", "http://127.0.0.1:9")
     from orchestrator import device_key_aws
     device_key_aws._reset_cache()
-    # Nor reuse (or delete) a real runner token this machine cached (canopy-web#1604).
+    # Nor reuse (or delete) a real runner token this machine cached.
     from orchestrator import runner_session
     monkeypatch.setattr(runner_session, "CACHE", tmp_path_factory.mktemp("runner-session") / "t.json")
     # Nor a turn-scoped agent login cached by a real turn (turn_agent_token).
@@ -114,8 +114,8 @@ def _no_real_network(request, monkeypatch):
     """No test reaches a real host. The suite hides the device key (above) but not the
     developer's token, so a test that falls through to the real transport asks PRODUCTION
     canopy-web as that person with no device proof — and a device-bound agent's owner
-    gets a "Resolve refused: bad or missing device proof" alert for it (eva, 2026-10-22:
-    test_agent_bootstrap's vault read of the gog clients, four alerts in one evening). A
+    gets a "Resolve refused: bad or missing device proof" alert for it (for example,
+    test_agent_bootstrap's vault read of the gog clients). A
     non-loopback urlopen fails here the way an unreachable host does, so fail-open code
     takes its offline path. Mark a test ``real_network`` to let it out."""
     if request.node.get_closest_marker("real_network"):
@@ -138,7 +138,7 @@ def _no_real_network(request, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _write_identity_readback_off_by_default(monkeypatch):
-    """Every write with a resolved token first reads `/api/me/` back (canopy#813).
+    """Every write with a resolved token first reads `/api/me/` back.
     Tests that fake the transport and count its calls are about their own route, so
     the read-back is off unless a test asks for it via `real_identity_readback`."""
     from orchestrator import canopy_web

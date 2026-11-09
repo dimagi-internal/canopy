@@ -98,12 +98,12 @@ def test_skill_has_procedure_section() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Resolved-invocation pattern (DDD_REPO resolution — same as PR #63)
+# Resolved-invocation pattern (DDD_REPO resolution)
 # ---------------------------------------------------------------------------
 
 
 def test_skill_uses_ddd_repo_resolution() -> None:
-    """Must use the resolved DDD_REPO pattern from PR #63."""
+    """Must use the resolved DDD_REPO pattern."""
     content = SKILL_FILE.read_text()
     assert "DDD_REPO" in content, (
         "SKILL.md must resolve DDD_REPO (the PR #63 resolution pattern) "

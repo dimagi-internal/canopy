@@ -489,8 +489,8 @@ def test_huddle_agree_end_to_end_through_thread_run(web, tmp_path):
 
 
 def test_agreement_context_names_the_others_and_that_there_is_no_thread_with_them():
-    # First live thread (2026-10-08): told only "Ace is not in this thread", the author
-    # invented "Ace's side is a separate thread" — Ace had simply co-signed.
+    # Told only "Ace is not in this thread", the author could invent "Ace's side is a
+    # separate thread" — Ace had simply co-signed.
     from orchestrator.huddle_cli import agreement_context
     p = {"title": "IDM talk", "lead": "eva", "with": ["ace", "echo"],
          "answers": {"ace": "co-sign", "echo": "amend"},

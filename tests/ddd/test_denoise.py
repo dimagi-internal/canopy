@@ -1,9 +1,9 @@
-"""De-noising the weakest-link verdict (ace#1393).
+"""De-noising the weakest-link verdict.
 
-Measured in ACE ``spark-facilitator/20260813-2126``: scene 12 scored 3/2/3 and
-scene 10 scored 4/3 on BYTE-IDENTICAL frames, and iteration 4 fixed its entire
-target scene (2/3/2/3/3 -> 4/3/3/4/4) while the headline stayed 2 because the
-minimum migrated to untouched scenes that had drawn 3 the round before.
+The noise being removed: scene 12 scored 3/2/3 and scene 10 scored 4/3 on
+BYTE-IDENTICAL frames, and an iteration can fix its entire target scene
+(2/3/2/3/3 -> 4/3/3/4/4) while the headline stays 2 because the
+minimum migrates to untouched scenes that had drawn 3 the round before.
 """
 from __future__ import annotations
 

@@ -131,7 +131,7 @@ def test_prompt_for_the_last_message_and_an_opening_message():
 
 
 def test_prompt_says_any_message_may_be_the_last():
-    # First live thread (2026-10-08): the author promised the slot constraints "in my next
+    # First live thread: the author promised the slot constraints "in my next
     # message", the asker agreed, the thread settled, and that message never came.
     text = T.render_message_prompt(thread(), "eva", 1, NOW)
     assert "ANY message may be the last" in text

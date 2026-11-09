@@ -4,14 +4,14 @@ Replays the evidence shape of two real runs (fixtures under
 ``tests/ddd/fixtures/ddd1_replay/``, minimal anonymised copies of their verdict
 and finding files):
 
-* ``noora`` — noora-health/20261015-1129, iteration 5: six passes at 2.0, the
-  floor held by a labs-template defect the loop may not edit (ace#2337), 145
+* ``noora`` — a noora-health run, iteration 5: six passes at 2.0, the
+  floor held by a labs-template defect the loop may not edit, 145
   text-matched declines, ended ``stop_max_iter`` on the stall rule.
-* ``smallholder`` — smallholder-seasonal/20261015-1402, iteration 3: four passes
+* ``smallholder`` — a smallholder-seasonal run, iteration 3: four passes
   at 2.0, ended ``blocked_out_of_scope`` although arc cells still had in-scope
   work.
 
-Requirements (Jonathan, 2026-10-16): pinned cells are reported and parked, the
+Requirements: pinned cells are reported and parked, the
 loop keeps optimizing the workable ones, and it stops — with a clear blocked
 report — only when nothing workable is predicted to improve or the predictions
 proved wrong.
@@ -182,7 +182,7 @@ class TestNooraReplay:
 
 
 # ---------------------------------------------------------------------------
-# smallholder: an out-of-scope floor no longer stops the run
+# smallholder: an out-of-scope floor does not stop the run
 # ---------------------------------------------------------------------------
 
 
@@ -283,7 +283,7 @@ class TestStableFindingIds:
                              edit_scope={"declined": declined})
         assert st.findings[0]["edit_scope"] == "out"
         assert st.out_of_scope_ids["s1.visual_polish.1"]["via"] == "decline"
-        # next pass: re-worded — the text decline no longer matches, the id does
+        # next pass: re-worded — the text decline does not match, the id does
         st.iteration += 1
         compute_auto_iterate(st, *verdicts, [dict(REWORDED)], converged=False, unattended=True,
                              edit_scope={"declined": declined})

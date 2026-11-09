@@ -97,7 +97,7 @@ def test_items_older_than_the_prune_horizon_are_treated_as_seen():
     assert [i["id"] for i in filter_new(cur, [item("fresh", "2026-07-09T00:00:00Z")])] == ["fresh"]
 
 
-# --- bookkeeping Jonathan asked for -----------------------------------------
+# --- bookkeeping -----------------------------------------
 
 def test_advance_stamps_time_id_and_run_count():
     now = dt.datetime(2026, 7, 28, 13, 0, tzinfo=dt.timezone.utc)

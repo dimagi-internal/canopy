@@ -1,7 +1,7 @@
 """The v1 / backlog DDD loop: progress signal, judge scope, score reuse, gates.
 
-Measured on five freshly-built connect-labs supply narratives
-(``supply-*-2026-09-23-001``): 19 of 23 judged iterations scored 2 while the
+Measured on five freshly-built connect-labs supply narratives:
+19 of 23 judged iterations scored 2 while the
 mean cell rose 3.14 -> 3.68 and open findings fell 61 -> 21; stall detection
 could never fire while mechanical findings existed; every pass re-judged every
 scene; judges ran against undeployed fixes; the narrated video was rendered at a
@@ -711,7 +711,7 @@ class TestAssemble:
 class TestOpenFindingsComparedLikeForLike:
     """A concept-only (tiered) pass reports fewer findings than a full pass;
     comparing the two counts manufactures progress or regression. Measured on
-    supply-sophie-unanswered-round-2026-10-04-001: 9 (full) -> 8, 7 (concept) -> 11 (full)."""
+    a supply-sophie-unanswered-round run: 9 (full) -> 8, 7 (concept) -> 11 (full)."""
 
     FULL = ["arc", "concept", "user"]
 

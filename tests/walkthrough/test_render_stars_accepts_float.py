@@ -1,10 +1,9 @@
-"""Unit tests for ``_render_stars`` float tolerance (PR #105 gap 3).
+"""Unit tests for ``_render_stars`` float tolerance.
 
 The judge schema (``ai_evaluation.score``) is a float — 4.0, 4.5, 5.0.
-``_render_stars`` used to be ``"★" * score``, which throws ``TypeError`` on
-float multiplication. The DDD agent in the microplans-10-wards run worked
-around this with an inline ``int(round(score))`` at the call site; the fix is
-to push that round into the renderer so every caller benefits.
+A plain ``"★" * score`` throws ``TypeError`` on
+float multiplication, so the rounding (``int(round(score))``) lives in the
+renderer rather than at each call site, and every caller benefits.
 
 These tests pin:
   - ``_render_stars(4.5)`` doesn't raise, renders 4 or 5 stars (rounded)
@@ -94,8 +93,8 @@ def test_render_stars_empty_never_negative():
     """An out-of-range score doesn't render a negative number of empty stars.
 
     Guards against a future contributor mistake (``max_score=3, score=4`` →
-    ``-1`` empty stars used to be ``"" * -1 = ""`` which was fine but
-    confusing). The new ``max(0, …)`` makes it explicit.
+    ``-1`` empty stars, where ``"" * -1 = ""`` would be fine but
+    confusing). ``max(0, …)`` makes it explicit.
     """
     out = _render_stars(7, max_score=5)
     assert out.count(STAR_FILLED) == 7

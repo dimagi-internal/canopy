@@ -48,7 +48,7 @@ scenes:
     impressive_because: "The whole loop closes: real delivery GPS becomes a boundary becomes a plannable area, with no export, no redraw, no leaving the map"
     ai_quality: "The boundary carried over from the Service delivery tab is intact and editable on the Plan tab — one continuous workflow, not two disconnected tools"
 
-  # --- Admin-boundaries (Boundaries) layer — issue #347 -------------------------
+  # --- Admin-boundaries (Boundaries) layer -------------------------
   - persona: maya
     title: "Official boundaries, every level at once"
     show: "On the unified create/edit page, Maya turns on the 'Boundaries' layer in the map panel (top-right). Purple outlines fill the viewport — state, LGA and ward lines together — finer levels drawn with thinner strokes. The layer body shows a source dropdown ('Local data (bespoke)' selected) and a search box."

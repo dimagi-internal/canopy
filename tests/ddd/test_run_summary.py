@@ -1,8 +1,8 @@
-"""A finished run's summary is part of the RUN, not a learnings.md (2026-10-16).
+"""A finished run's summary is part of the RUN, not a learnings.md.
 
 ``.canopy/ddd/learnings.md`` never reached the next run: four machines, ACE runs
 writing to per-run home dirs nobody read, nine diverging repo copies. The summary
-now lives on the run document (pushed to canopy-web), in the run dir, and owned
+lives on the run document (pushed to canopy-web), in the run dir, and owned
 findings go to their owners.
 """
 from __future__ import annotations

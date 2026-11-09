@@ -1,8 +1,8 @@
 """DDD + walkthrough-share writes: whose name, which workspace, and where it landed.
 
-ace#2805 / canopy-web#1289: an ACE session posted the chlorine narrative (meant
-for `connect`) as Jonathan — his workbench-token — into `dimagi`, the server's
-default for a flat route. Nothing said so. Three guards now stand in the way:
+Without guards, an ACE session could post a narrative meant for `connect` as the
+operator — via the operator's workbench-token — into `dimagi`, the server's
+default for a flat route, with nothing saying so. Three guards stand in the way:
 
 1. In an agent's session the operator's workbench-token is refused (test_auth.py).
 2. A write with no workspace named refuses — no guessing from memberships —

@@ -1,8 +1,8 @@
 """`snippets upload-video --cut` — a recorded narrative's video, by cut.
 
-A ``style: recorded`` narrative renders one mp4 per cut (#796). canopy-web
+A ``style: recorded`` narrative renders one mp4 per cut. canopy-web
 keeps one video per cut id on the narrative version and shows each beside its
-narration on the review link (canopy-web#1288), so the upload has to say which
+narration on the review link, so the upload has to say which
 cut it is — and which scenes that cut plays, resolved from the recipe rather
 than typed by hand.
 """
@@ -45,7 +45,7 @@ def _pushes():
 
 @pytest.fixture(autouse=True)
 def _workspace(monkeypatch):
-    """The narrative link is /w/<workspace>/ddd/<slug> — never flat (canopy-web#1337)."""
+    """The narrative link is /w/<workspace>/ddd/<slug> — never flat."""
     monkeypatch.setenv("CANOPY_WEB_WORKSPACE", "connect")
 
 
@@ -120,10 +120,9 @@ def test_a_plain_upload_is_unchanged(tmp_path):
     ],
 )
 def test_a_video_is_refused_without_what_it_takes_to_rerender(tmp_path, cut, given, missing):
-    """The chlorine demo (2026-10-14): eight cuts were published to canopy-web
-    while the recipe and master lived only in one machine's temp dir, and the
-    next turn could not re-record. A video without its sources is refused, and
-    nothing is uploaded."""
+    """A video published to canopy-web while the recipe and master live only in one
+    machine's temp dir cannot be re-recorded by the next turn. A video without its
+    sources is refused, and nothing is uploaded."""
     mp4 = tmp_path / "v.mp4"
     mp4.write_bytes(b"\x00")
     up = _capture()
@@ -237,9 +236,8 @@ def test_cli_refuses_a_cut_of_an_explainer_spec(monkeypatch, tmp_path):
 
 # ---------------------------------------------------------------------------
 # The product screens a cut films travel with it as `reference` links, so the
-# review link and the storyboard can send a reviewer to the live page
-# (canopy-web#1512). The RUTF cuts went up with none because this path never
-# built them.
+# review link and the storyboard can send a reviewer to the live page.
+# The upload path must build them for every cut.
 # ---------------------------------------------------------------------------
 
 RECIPE = """\

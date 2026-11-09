@@ -1,7 +1,7 @@
 """hooks/python.sh — every canopy hook runs through it, and a guard BLOCKS when
 there is no working Python.
 
-Origin (2026-10-15): on Windows `python3` is usually the Microsoft Store stub, which
+Reason: on Windows `python3` is usually the Microsoft Store stub, which
 exits 49. Claude Code treats any hook exit other than 2 as non-blocking, so the
 gating, confinement and one-shot guards never ran on that box and a raw send went
 through. These tests fake each interpreter on PATH, so they run on any POSIX host.

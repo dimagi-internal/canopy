@@ -386,7 +386,7 @@ def test_command_allowed_tools_includes_skill_or_agent() -> None:
 
 
 def test_skill_verdict_carries_out_of_chain_metadata() -> None:
-    """canopy#265 item 3: actionability grades narration text against declared
+    """Actionability grades narration text against declared
     features[] — no live state — so the verdict must self-describe as such."""
     content = (SKILL_DIR / "SKILL.md").read_text()
     assert "kind: actionability" in content

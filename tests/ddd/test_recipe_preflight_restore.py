@@ -1,4 +1,4 @@
-"""Preflight must put the world back before the render films it (canopy#546).
+"""Preflight must put the world back before the render films it.
 
 Preflight applies state-changing actions on purpose, so a scene that depends on
 an earlier click is checked against the screen it will really face. That makes
@@ -16,12 +16,11 @@ shape, not a coincidence:
                                 state. The payoff action is a no-op and every
                                 signal says it worked: the action dispatches,
                                 ``must_succeed`` passes, run-report is 10/10;
-  * no setup command          — nothing can restore it, and preflight's old
-                                comment ASSUMED such a recipe was non-mutating.
+  * no setup command          — nothing can restore it, so preflight must not
+                                assume such a recipe is non-mutating.
 
-Reproduced three times on ``hh-poverty-targeting/20260827-0323`` and again on
-``spark-fcap-facilitation-2026-09-08-001``, where both LLM judges independently
-caught the manufactured defect and it cost the run its gating score.
+The failure is silent to the render but both LLM judges catch the manufactured
+defect, and it costs the run its gating score.
 
 Unit-level on purpose: the decision is a pure function of the spec, so it is
 testable without chromium — which is the point, since the failure it prevents

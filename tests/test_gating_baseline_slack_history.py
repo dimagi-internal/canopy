@@ -1,7 +1,7 @@
-"""The fleet rail on direct Slack history reads (gating-baseline `always`, canopy-web#1533).
+"""The fleet rail on direct Slack history reads (gating-baseline `always`).
 
-WHY (Jonathan, 2026-10-16): an agent may go back through a Slack channel only by asking
-for permission — "you are never allowed to do this without permission". canopy-web's
+WHY: an agent may go back through a Slack channel only with permission, never without
+it. canopy-web's
 channel ingest is the permissioned path (an in-channel approval; canopy reads, the agent
 gets a transcript), so every OTHER way to read history is a rail, not a remembered rule.
 
