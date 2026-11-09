@@ -100,7 +100,7 @@ def test_a_mutating_recipe_with_no_setup_command_is_a_loud_warning():
     assert plan["render_reseeds"] is False
     assert plan["restore_after"] is False, "nothing to restore WITH"
     assert plan["warning"] and "setup.command" in plan["warning"]
-    assert "canopy#546" in plan["warning"]
+    assert "setup block" in plan["warning"]
 
 
 def test_an_empty_setup_command_counts_as_none():

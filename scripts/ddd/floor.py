@@ -846,7 +846,7 @@ def _main(argv: list[str] | None = None) -> int:
     d.add_argument("--match", default=None, help="text the finding's detail/fix contains (fallback)")
     d.add_argument("--reason", required=True, help="where the fix lives and who owns it")
     d.add_argument("--owner", default=None, help="who can make the fix (printed in the blocked report)")
-    d.add_argument("--issue", default=None, help="tracking issue, e.g. dimagi/ace#2337")
+    d.add_argument("--issue", default=None, help="tracking issue, as owner/repo#number")
     d.add_argument("--scene", default=None)
     d.add_argument("--dimension", default=None)
     args = ap.parse_args(argv)

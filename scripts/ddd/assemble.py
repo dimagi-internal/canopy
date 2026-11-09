@@ -319,7 +319,7 @@ def assemble(run_id: str, *, spec: str | None = None, ddd_dir: Path | None = Non
     guard = _narrative_guard(state, spec, run_dir, cfg)
     if guard and guard.get("decision") == "reject":
         reason = (
-            "NARRATIVE EDIT REJECTED (scripts.ddd.narrative_guard, canopy#789) — revert it "
+            "NARRATIVE EDIT REJECTED (scripts.ddd.narrative_guard) — revert it "
             "before the next batch: "
             + "; ".join(f"[{v.get('rule')}] {v.get('detail')}" for v in guard.get("violations") or [])
             + ". "

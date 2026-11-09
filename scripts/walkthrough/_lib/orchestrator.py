@@ -82,7 +82,7 @@ _CROSSFADE_JS = r"""
 
 _VISUAL_CAPTURE_JS = r"""
 () => {
-  // Geometry + colour capture for the DDD visual lens (canopy#525).
+  // Geometry + colour capture for the DDD visual lens.
   //
   // Two things a text capture cannot express: whether the element carrying a
   // claim is actually on screen with a non-zero box, and whether its text is
@@ -116,7 +116,7 @@ _VISUAL_CAPTURE_JS = r"""
   }
 
   // --- which utilities actually EXIST -------------------------------------
-  // Method note 1 of canopy#525: ask the stylesheet, not the computed style.
+  // Method: ask the stylesheet, not the computed style.
   // `text-*` / `border-*` fall back to currentColor, so a computed-style probe
   // returns a plausible colour for a utility that was never emitted.
   const defined = new Set();

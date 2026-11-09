@@ -699,7 +699,7 @@ def legacy_gating_hook_findings(agents: list[Agent]) -> list[Finding]:
                 "gating hook (canopy's session hook enforces config/gating.json now)",
         detail=[f"{slug}: remove the gating_guard.py PreToolUse entry from {', '.join(hits[slug])}"
                 " and delete hooks/gating_guard.py" for slug in laggards],
-        note="Warning, not breakage (canopy#849): canopy's own plugin registers one hook that applies "
+        note="Warning, not breakage: canopy's own plugin registers one hook that applies "
              "the SESSION's agent's rails, and the engine makes an agent's legacy loader stand down "
              "outside that agent's session. Keep config/gating.json — that is still the agent's rails.",
     )]

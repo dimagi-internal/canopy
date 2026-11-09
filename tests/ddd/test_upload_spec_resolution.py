@@ -118,7 +118,7 @@ class TestFailureIsLegible:
             _resolve_authored_path(run_dir, SLUG, "unified_spec.yaml")
 
         message = str(excinfo.value)
-        assert "canopy#620" in message
+        assert "re-render" in message
         assert "divergent" in message
 
 

@@ -876,7 +876,7 @@ class UnifiedSpec(BaseModel):
     do, in the reader's terms) — distinct from each scene's ``show`` (which is the
     demo's on-screen walkthrough, not adoption instructions)."""
     target_rubric: dict | None = None
-    """What this narrative's runs converge on (canopy#790): the outcomes it must
+    """What this narrative's runs converge on: the outcomes it must
     demonstrate (each with a pass condition), the generic dimensions that block,
     the bar, and how many full passes a criterion is read over. Shape and
     precedence: ``scripts.ddd.target_rubric``. None = the objective's default."""
@@ -924,7 +924,7 @@ class Verdict(BaseModel):
     schema_version: int = 1
     kind: str | None = None
     """Verdict family (concept | user_artifact | why | actionability | timing |
-    video | ...). One unified shape for every judge (canopy#265 item 1) — the
+    video | ...). One unified shape for every judge — the
     aggregator and convergence are generic over kinds, so adding a judge is data,
     not assembler code. ``scripts.ddd.verdicts.load_verdict`` stamps this (and the
     two fields below) from KIND_DEFAULTS when the emitter didn't."""
@@ -934,7 +934,7 @@ class Verdict(BaseModel):
     convergence (e.g. timing/video/why/actionability). Phase gates (why-eval's
     pass-to-proceed) are a separate mechanism — this field is convergence-only.
 
-    Defaults to ``advisory`` (canopy#273 item 4): a legacy/unstamped verdict
+    Defaults to ``advisory``: a legacy/unstamped verdict
     loaded via a bare ``model_validate`` must not become a gating, possibly
     unverified verdict that hard-blocks convergence forever. The safe direction:
     ``compute_convergence_all`` returns False when NO gating verdict is present,

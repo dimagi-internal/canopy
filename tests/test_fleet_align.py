@@ -675,7 +675,7 @@ def test_agent_still_registering_its_own_gating_hook_is_flagged(tmp_path):
            if f.artifact == "gating-hook"]
     assert f.kind == "distribute" and f.laggards == ["ace", "ada"]
     assert any("hooks/hooks.json" in d for d in f.detail)
-    assert "canopy#849" in f.note
+    assert "Warning, not breakage" in f.note
 
 
 def test_settings_without_a_gating_hook_is_not_flagged(tmp_path):

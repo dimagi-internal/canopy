@@ -292,7 +292,7 @@ def test_hook_wiring_warns_when_agent_still_registers_its_own_guard(tmp_path):
     migration leftover — WARN (so fleet health names it), never FAIL."""
     result = check_hook_wiring(_agent_repo(tmp_path))
     assert result.ok and result.warn
-    assert ".claude/settings.json" in result.detail and "canopy#849" in result.detail
+    assert ".claude/settings.json" in result.detail and "hooks/gating_guard.py" in result.detail
 
 
 def test_hook_wiring_green_without_any_agent_hook(tmp_path):

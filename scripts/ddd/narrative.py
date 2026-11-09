@@ -90,7 +90,7 @@ def _check_run_id_targets_spec_narrative(run_id: str, spec_name: str | None, rv)
     raise UnstampedRunIdError(
         f"run id {run_id!r} has no -YYYY-MM-DD-NNN stamp, so it would create a NEW "
         f"narrative {derived!r} instead of a version of the spec's narrative {name!r}. "
-        f"Use a stamped run id such as '{name}-YYYY-MM-DD-001' (canopy#907)."
+        f"Use a stamped run id such as '{name}-YYYY-MM-DD-001'."
     )
 
 

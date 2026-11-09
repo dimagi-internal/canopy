@@ -119,7 +119,7 @@ class RemoteStore:
         if cur is None:
             return {"version": None, "curation": None}
         if "curation_sha" not in cur:
-            raise KBError("canopy-web predates versions that carry their curation state (canopy-web#1986): "
+            raise KBError("canopy-web predates versions that carry their curation state: "
                           "deploy it first")
         return {"version": cur["number"], "curation": cur.get("curation_sha") or None}
 

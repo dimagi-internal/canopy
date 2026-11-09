@@ -767,12 +767,12 @@ _BUMP_SCRIPT = r'''#!/usr/bin/env python3
 """Bump this agent plugin's PATCH version in lock-step across every file that
 carries it. Run from the repo root (or anywhere — paths resolve off this file).
 
-The three fields that MUST agree, and drifted in the past when hand-bumped:
+The three fields that MUST agree:
   * .claude-plugin/plugin.json          -> version
   * .claude-plugin/marketplace.json     -> metadata.version
   * .claude-plugin/marketplace.json     -> plugins[*].version
 
-Used by the auto-version-bump GitHub Action (bump-on-every-merge, GitHub #357)
+Used by the auto-version-bump GitHub Action (bump-on-every-merge)
 and runnable by hand. Prints "OLD -> NEW". stdlib only.
 """
 import json
@@ -831,7 +831,7 @@ _AUTO_BUMP_WORKFLOW = r'''name: Auto version bump
 # Bump the PATCH version on EVERY merge to main, so canopy's fleet
 # session-start auto-updater always sees a fresh version and `claude plugin
 # list` stays honest. Bumping often is intentional — "landed on main" must mean
-# "the running agent (and its crons) will pick it up next session" (GitHub #357).
+# "the running agent (and its crons) will pick it up next session".
 #
 # The updater self-heals on the git SHA regardless, so this is the label-honesty
 # half, not the load-bearing half — but it closes the "skill changed, version

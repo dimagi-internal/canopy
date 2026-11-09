@@ -194,7 +194,7 @@ class RunReport:
     (and scrolls to top first), and the video recorder films that: the page
     shrinks onto a grey canvas for ~1.5 s. The emitter (``scripts.ddd.snippets``)
     cuts these spans out of every segment UNCONDITIONALLY, so the film never
-    shows them (canopy#912). Empty ⇒ key omitted from :meth:`as_dict`."""
+    shows them. Empty ⇒ key omitted from :meth:`as_dict`."""
 
     scene_hooks: list[dict] = field(default_factory=list)
     """Provenance of each scene ``before:`` hook that ran —
