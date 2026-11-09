@@ -18,16 +18,16 @@ from canopy_agent_factory import gating_config, templates
 
 def test_templates_is_non_empty_with_expected_count():
     t = templates()
-    # 20 entries verified at extraction time (EXTRACTION-BRIEF.md), +1 on 2026-09-22 for
+    # 20 entries verified at extraction time (EXTRACTION-BRIEF.md), +1 for
     # skills/answer-caller. The declared interface itself is NOT a template: it is live
     # state on canopy-web, never a file in the agent's repo — a change to this number
     # should be a deliberate template addition/removal, not a silent regression.
-    # -1 on 2026-10-09 (canopy#849): hooks/gating_guard.py — canopy's plugin owns the hook.
-    # +1 on 2026-10-14: skills/setup/SKILL.md — the /<agent>:setup that binds an install to one
+    # -1: hooks/gating_guard.py — canopy's plugin owns the hook.
+    # +1: skills/setup/SKILL.md — the /<agent>:setup that binds an install to one
     # instance (`canopy agent env`).
-    # +1 on 2026-10-21: .claude-plugin/marketplace.json — a runner installs the agent's plugin
+    # +1: .claude-plugin/marketplace.json — a runner installs the agent's plugin
     # only from it (canopy agent_prepare `step_runner_plugins`).
-    # -1 on 2026-10-22: the repo stamps no secrets template — the agent's Canopy vault is the one
+    # -1: the repo stamps no secrets template — the agent's Canopy vault is the one
     # secrets declaration.
     assert len(t) == 21
     assert ".claude-plugin/marketplace.json" in t
@@ -61,7 +61,7 @@ def test_gating_config_is_present_and_non_empty():
 
 
 def test_answer_caller_reads_the_person_block_and_resolves_the_instance():
-    """canopy#804: a read-mode session gets the fleet's record of the asker from the
+    """A read-mode session gets the fleet's record of the asker from the
     envelope (no tool needed) and must not answer about a generic template as if it were
     the asker's own instance."""
     t = templates()["skills/answer-caller/SKILL.md"]
@@ -76,7 +76,7 @@ def test_answer_caller_reads_the_person_block_and_resolves_the_instance():
 
 
 def test_no_env_template_secrets_live_only_in_the_canopy_vault():
-    """2026-10-22 (Jonathan: no duplicate declarations): the agent's Canopy vault is the one
+    """The agent's Canopy vault is the one
     place its secrets are declared, so no repo file names a vault."""
     t = templates()
     assert not [n for n in t if n.endswith(".tpl")]

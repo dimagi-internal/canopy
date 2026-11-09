@@ -2,29 +2,27 @@
 
 Why this module exists
 ----------------------
-On connect-labs ``supply-sophie-rutf-2026-09-26-001`` (canopy 0.2.543) the loop
-machinery decided correctly and the orchestrating agent overrode it, twice,
-without leaving a record:
+The loop machinery decides, and an orchestrating agent can override it without leaving
+a record. Two overrides this module exists to catch:
 
-* At iteration 5 ``assemble`` returned ``stop_max_iter``. Ad-hoc scripts then
-  rewrote ``run_state.yaml`` (re-routed findings, de-duplicated the history, and
-  reset ``progress_history`` to a one-point "v4 baseline"), which also reset
-  stall detection. Four more ~60-minute iterations followed with the mean cell
-  flat at 3.60 +/- 0.05.
-* From iteration 7 ``assemble`` said "next judge: incremental", and
-  ``state.next_judge_full`` was False, but the agent re-used an earlier command
-  line with a literal ``judge_scope plan ... --full``, so every pass judged all 7
-  scenes and all three judges ("full pass requested").
+* ``assemble`` returns ``stop_max_iter``, and ad-hoc scripts then rewrite
+  ``run_state.yaml`` (re-routing findings, de-duplicating the history, resetting
+  ``progress_history`` to a one-point baseline), which also resets stall detection
+  and lets more iterations run with the mean cell flat.
+* ``assemble`` says "next judge: incremental" and ``state.next_judge_full`` is False,
+  but the agent re-uses an earlier command line with a literal
+  ``judge_scope plan ... --full``, so every pass judges all scenes and all judges
+  ("full pass requested").
 
-Both overrides may have been the right call. Neither left a reason, and the
-second was invisible: the run's own record said "backlog mode, incremental".
+Either override may be the right call, but neither leaves a reason, and the second is
+invisible: the run's own record says "backlog mode, incremental".
 
 The contract
 ------------
 ``assemble`` seals its decision (:func:`seal`): the action plus a digest of the
 state it rests on. Before a pass proceeds, :func:`check` refuses when
 
-* the state was rewritten after the seal (the digest no longer matches), or
+* the state was rewritten after the seal (the digest does not match), or
 * the sealed action was a STOP (:data:`BLOCKING_STOPS`) and nothing overrode it,
 * the sealed action was a ``continue`` with workable work and the batch has no
   declared predictions (``python -m scripts.ddd.predict declare``) — the loop

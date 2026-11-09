@@ -1,15 +1,14 @@
 """The closeout verdict: whether an unattended, incident-style turn may say it is done.
 
-A turn used to END on a free-typed "✅ Session complete — safe to close." and nothing checked
-it. The rule (agent-core/turn.md) was "complete is a claim: write it only when nothing YOU SAID
-you would do is still undone" — which checks the turn's own promises, not whether the incident
-is closed out. Across Hal's CloudWatch alarm turns 2026-08-26..10-29, 36 ended "complete" and
-about 12 had actually closed the incident. The rest left the alarm still firing with the cause
-unconfirmed and the next step owned by "someone with SSO", a merged-but-not-live fix, a
-decision for Jonathan buried inside a "complete", promised future work, filed issues nobody
-was assigned, and a close-out script whose success was inferred from the tail of its output.
+A free-typed "✅ Session complete — safe to close." is not checked by anything, and the
+turn rule (agent-core/turn.md) "complete is a claim: write it only when nothing YOU SAID you
+would do is still undone" checks the turn's own promises, not whether the incident is closed
+out. An incident turn can end "complete" with the alarm still firing and the cause
+unconfirmed, the next step owned by "someone with SSO", a merged-but-not-live fix, a decision
+for a person buried inside a "complete", promised future work, filed issues nobody was
+assigned, or a close-out script whose success was inferred from the tail of its output.
 
-So the turn no longer gets to type the claim. It records FACTS, and this module computes the
+So the turn does not get to type the claim. It records FACTS, and this module computes the
 verdict from them:
 
 - ``incident`` — the incident's CURRENT state, ``OK`` | ``ALARM`` | ``UNKNOWN``, plus
@@ -33,9 +32,9 @@ verdict from them:
   touches the agent's own prose (``improvement_policy.prose_only``: repo + path globs, the
   agent's config) is rejected. The one exception, ``{"kind": "already_diagnosable", "query":
   <the one command>, "output": <link to its output>}``, holds only when ``cause`` is
-  ``confirmed`` with ``identified_by`` equal to that same query. Why: of 24 labs alarm
-  incidents since 2026-08-26, ~10 ended "cause unknown, needs someone with AWS SSO" and ~8
-  "improved" only Hal's own skill prose — the next page was exactly as hard to answer.
+  ``confirmed`` with ``identified_by`` equal to that same query. Why: an incident that ends
+  "cause unknown, needs someone with AWS SSO", or "improves" only the agent's own skill prose,
+  leaves the next page exactly as hard to answer.
 
 Verdict, in order:
 

@@ -5,7 +5,7 @@ resolved via ``importlib.resources`` rather than ``Path(__file__).parent`` so th
 lookup is install-safe — it finds the ``.md`` even when ``orchestrator`` is
 installed as a wheel or relocated/zipped, where a filesystem-relative path may not
 point at the data files. Belt-and-suspenders with the ``package-data`` declaration
-in ``pyproject.toml`` (#351): the data ships AND is addressed portably.
+in ``pyproject.toml``: the data ships AND is addressed portably.
 """
 from importlib.resources import files
 

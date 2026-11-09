@@ -30,7 +30,7 @@ import json, re, statistics, subprocess, sys
 # --- fixed, objective thresholds (a region must exceed these to be flagged) ---
 DEAD_AIR_FLAG_S = 1.5      # a frozen+silent stretch this long is a bad-video moment
 SILENT_MOTION_FLAG_S = 3.0  # silent moving footage this long = shown-loading / sparse-VO
-WAIT_LEADIN_S = 1.2        # the #240 excision keeps this much spinner per wait — expected
+WAIT_LEADIN_S = 1.2        # the wait excision keeps this much spinner per wait — expected
 SILENCE_NOISE_DB = -40     # below this = "silence" (no narration)
 SILENCE_MIN_S = 0.5
 FREEZE_NOISE_DB = -55      # within this of prev frame = "no motion" (matches the cap)

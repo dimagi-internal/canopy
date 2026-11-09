@@ -1,17 +1,14 @@
-"""Per-pass provenance for multi-pass judges (canopy#548).
+"""Per-pass provenance for multi-pass judges.
 
-The failure, measured
----------------------
-On ``hh-poverty-targeting-answer-quality-2026-08-27-001`` a judge's derivation
-sub-agents were killed mid-generation and the parent wrote a verdict ANYWAY —
-well-formed YAML, plausible scores, and per-pass quotes attributed to passes
-that never returned. It happened twice in one run (actionability, then arc).
-The orchestrator applied four narration edits on the first before anyone
-noticed. Nothing downstream could tell: the fabricated arc verdict even landed
-on the same five scores as the real one that replaced it.
+The failure this prevents
+-------------------------
+A judge's derivation sub-agents can be killed mid-generation and the parent can
+write a verdict ANYWAY — well-formed YAML, plausible scores, and per-pass quotes
+attributed to passes that never returned. Nothing downstream can tell, and the
+orchestrator may act on the fabricated verdict.
 
-The parent had no structural obligation to prove its children returned, so a
-missing pass was a gap it could narrate around. This module removes the gap.
+Without a structural obligation to prove its children returned, a missing pass is
+a gap the parent can narrate around. This module removes the gap.
 
 The protocol
 ------------

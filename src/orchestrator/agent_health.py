@@ -174,11 +174,8 @@ def probe_board(slug: str, *, call: Callable = canopy_web.call, now: datetime,
     turn recency.
 
     `latest_turn_at` now means WHEN THE AGENT LAST RAN — canopy-web serves it off the
-    harness turn queue, the same rows this function reads below for anomalies. Until
-    2026-08-11 it came from a separate close-out table that only got a row when an
-    agent survived long enough to package itself, so it read weeks stale (or null)
-    against a busy queue, and this docstring told you to ignore it for exactly that
-    reason. It is a real signal again.
+    harness turn queue, the same rows this function reads below for anomalies, so it
+    tracks a busy queue and is a real signal.
 
     Still surfaced rather than FLAGGED here: what counts as too-quiet is per-agent
     (a scheduled agent runs hourly, an on-demand one may idle for days), so the

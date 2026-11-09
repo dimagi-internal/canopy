@@ -1,4 +1,4 @@
-"""Refuse a render whose frame size silently differs from the previous one (#625).
+"""Refuse a render whose frame size silently differs from the previous one.
 
 The render viewport is a spec default (1280x720). For a one-shot render that is
 fine; for the DDD iterate loop it is not, because the loop's whole premise is

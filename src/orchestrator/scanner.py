@@ -18,8 +18,8 @@ def summarize_prompt(first_msg: str, width: int = 72) -> str:
     (`<command-message>`/`<command-name>`/`<command-args>`), so truncating the raw
     text to a display width cuts inside the preamble and every turn of one agent
     renders identically — the scope in `<command-args>` is always the part
-    discarded. Measured 2026-09-04: six live hal turns on six different items all
-    rendered as `"<command-message>hal:turn</command-message>\n<comma..."`.
+    discarded: turns on different items would all render as
+    `"<command-message>hal:turn</command-message>\n<comma..."`.
 
     That matters because `agent-core/turn.md` sends a turn here to answer "is a
     sibling already on this?", and several turns of the SAME agent is the only case

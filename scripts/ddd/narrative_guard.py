@@ -3,23 +3,19 @@
 Why this module exists
 ----------------------
 The narrative-agreement gate was built for high-polish demos: a human reads the
-story and approves it before anything renders. DDD now also drives ordinary
-builds, and the human rarely reviews narratives (Jonathan, 2026-10-06: "I'm not
-going to review and approve but go for it"). What happened instead, from Hal's
-audit of the last two days of runs (canopy#789):
+story and approves it before anything renders. DDD also drives ordinary
+builds, where the human rarely reviews narratives. Without a guard, three things
+slip through un-reviewed:
 
-* ACE Spark: 20 narrative versions, every one still ``pending``; 9 posted on
-  10-06 alone, 5 with no run attached. connect-labs supply-sophie-sheets: v1..v8,
-  all agent-authored, each a new pending review.
-* What slipped through un-reviewed: "comparable" became a narrated feature
-  (``all-comparable``, "three of three comparable") that Jonathan later rejected
-  ("not a key feature ... a ton of hardcoded 'comparable' rules"); the email
-  focus came back after he had said "the video I saw was way too focused on the
-  e-mail aspect", and he had to re-steer.
-* Narrative edits were used to make judge findings go away rather than to tell
+* every agent-authored narrative version sits as a ``pending`` review that nobody
+  reads;
+* a concept becomes a narrated feature (``all-comparable``, "three of three
+  comparable") that the human would reject, or a rejected focus (e.g. email) comes
+  back after a steer;
+* narrative edits are used to make judge findings go away rather than to tell
   a better story.
 
-So the narrative is no longer frozen OR left unwatched. Every revision is
+So the narrative is neither frozen NOR left unwatched. Every revision is
 reviewed here, autonomously, against three references:
 
 1. **the prior version** — what this edit actually changed;

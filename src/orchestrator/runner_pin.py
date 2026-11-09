@@ -2,9 +2,9 @@
 
 A huddle's rounds and a thread's messages are sent by a LEADER (a moderator) from one of its
 own turns. Left to default routing, each member's turn follows that member's own runner order,
-so one huddle can scatter across a cloud box and whichever laptops are online (2026-10-14: ada
-led from cloud-ec2-2 and ace's three rounds landed on Jonathan's laptop, because ace follows
-its workspace's default order and the laptop is first in it). The fix is not a routing rule
+so one huddle can scatter across a cloud box and whichever laptops are online (a leader on a
+cloud box can have a member's rounds land on a laptop, because the member follows its
+workspace's default order and the laptop is first in it). The answer is not a routing rule
 per agent: the leader says where its fan-out runs, and the default is where the leader is.
 
     caller  the runner the calling turn is on (the default). Found from the turn's own record:

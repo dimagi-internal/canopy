@@ -2,11 +2,11 @@
 
 Why this module exists
 ----------------------
-The first live v1 run had THREE canopy versions in play at once: the plugin
-auto-updated 0.2.528 -> 0.2.530 mid-run, the orchestrator kept the 0.2.528
-runtime by typing its path by hand, and judge subagents loaded skill text from
-0.2.524 because the session's Skill registry is fixed at session start. Nothing
-errored; the instructions and the code simply stopped describing one contract.
+A run can have several canopy versions in play at once: the plugin auto-updates
+mid-run, the orchestrator keeps the older runtime by its typed path, and judge
+subagents load skill text from whichever version the session's Skill registry fixed
+at session start. Nothing errors; the instructions and the code simply stop
+describing one contract.
 
 A run now records, at start, the canopy version and the runtime root it began
 with (``RunState.plugin_version`` / ``runtime_root``) and resolves the runtime
@@ -23,7 +23,7 @@ Use the root for every ``scripts.ddd`` call of the run::
     DDD_REPO="$(cd "$DDD_REPO" && uv run python -m scripts.ddd.pin root <run_id>)"
     export CANOPY_RUNTIME_ROOT="$DDD_REPO"   # canopy-runtime.sh honours it first
 
-A pinned root that no longer exists (the cache was pruned) is a warning and a
+A pinned root that is missing (the cache was pruned) is a warning and a
 fallback to the current runtime — never a crash.
 """
 from __future__ import annotations

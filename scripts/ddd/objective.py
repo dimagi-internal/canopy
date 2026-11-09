@@ -2,29 +2,25 @@
 
 Why this module exists
 ----------------------
-Until 0.2.559 there was one objective: every gating judge's ``overall_score``
->= 4, where each score is the weakest cell over ~7 scenes x ~5 dimensions from a
-judge that starts every cell at 3/5 and moves +/-1 on a byte-identical frame.
-On a mature product that is the right bar (``nutrition-demo`` converged on it).
-On a v1 product it is unreachable and it points the loop at the wrong work:
+The default bar is: every gating judge's ``overall_score`` >= 4, where each score
+is the weakest cell over ~7 scenes x ~5 dimensions from a judge that starts every
+cell at 3/5 and moves +/-1 on a byte-identical frame. On a mature product that is
+the right bar. On a v1 product it is unreachable and it points the loop at the
+wrong work:
 
-* connect-labs ``supply-sophie-unanswered-round`` (2026-10-02..04): 4 runs,
-  ~24 iterations, 12 PRs, ~33 h wall time, never converged. 25 of the final 27
-  open findings were severity ``low`` ("outlined vs filled chip", "date shown
-  three times", a scroll offset); every judge sat at 3/5.
-* The work the loop DID do accreted. Each "this is unclear" became an
-  explanatory sentence or a narrow rule in product code, and "make the narrated
-  claim literally on screen" became product changes. Total UI text on the
-  pre-redesign screens: ~5.2k words, 36 lines of 20+ words. One ten-minute human
-  look at the slides ("walls of text", "AI-generated prose instead of facts",
-  "no clear state of this procurement", "we renamed round to tender") produced
-  the redesign that deleted 4,148 lines; the clean screens carry ~3.3k words and
-  10 such lines. No judge had ever raised those as blockers.
+* The open findings are mostly severity ``low`` ("outlined vs filled chip", "date
+  shown three times", a scroll offset) and every judge sits at 3/5, so the loop
+  never converges.
+* The work the loop does accretes. Each "this is unclear" becomes an explanatory
+  sentence or a narrow rule in product code, and "make the narrated claim literally
+  on screen" becomes product changes. UI text grows into walls of text that a
+  human sees at once ("AI-generated prose instead of facts", "no clear state of this
+  procurement") while no judge raises them as blockers.
 
-So there are now two objectives, picked once per run and then sticky:
+So there are two objectives, picked once per run and then sticky:
 
 ``demo``
-    Today's loop, unchanged. The walkthrough is the deliverable; every gating
+    The default loop. The walkthrough is the deliverable; every gating
     judge must reach the threshold.
 
 ``product``
@@ -47,7 +43,7 @@ So there are now two objectives, picked once per run and then sticky:
 
     Riding along is not a licence to accrete: the fix-direction rules (no
     explanatory copy, no special cases) apply to a ride-along fix exactly as to
-    a blocking one. What changed (canopy#788) is that the polish pass only ran on
+    a blocking one. What changed is that the polish pass only ran on
     convergence, and the audited runs never converged — so a "deferred"
     mechanical fix was in practice a fix never made (supply-sophie-sheets: 33
     mechanical findings still deferred at stop).
@@ -97,9 +93,8 @@ PRODUCT_DIMENSIONS = frozenset(
 PRODUCT_SOURCES = frozenset({"product_lens", "product_lint"})
 
 #: Product-lint dimensions that block in EVERY objective, ``demo`` included
-#: (canopy#786). Spark ran ``demo``, so "added 1 explanatory line to scene 6"
-#: was report-only and stayed open for nine passes while fixers kept adding
-#: copy. Prose accreting on a screen is a product defect whatever the loop is
+#: (a ``demo`` run would otherwise leave "added 1 explanatory line to scene 6"
+#: report-only and open for many passes while fixers kept adding copy). Prose accreting on a screen is a product defect whatever the loop is
 #: optimizing.
 ALWAYS_BLOCKING_LINT = frozenset({"prose_density"})
 

@@ -279,15 +279,14 @@ def _seed_persona(repo: Path, inv: dict) -> None:
 def _carry_workspace(snapshot_dir: Path, repo: Path) -> dict:
     """Copy the OpenClaw's memory and remaining workspace text into the new repo.
 
-    Bootstrap used to fold SOUL.md and IDENTITY.md into persona.md and drop EVERYTHING else on
-    the floor — USER.md (who the agent works for), the whole memory/ directory, and every other
-    workspace file — while reporting `"persona_seeded": true` and saying nothing about the loss.
+    Bootstrap folds SOUL.md and IDENTITY.md into persona.md; this carries EVERYTHING else —
+    USER.md (who the agent works for), the whole memory/ directory, and every other workspace
+    file — rather than dropping it while reporting `"persona_seeded": true`.
 
     That is the difference between preserving an agent and preserving its voice, and preserving
-    the agent is the entire reason someone picks bootstrap over create-agent. Measured on a real
-    harvest: four months of daily memory, an agent's calendar conventions and its hard rule about
-    who it may message were all dropped silently. One of those memory files even held the fix to
-    a blocker the same agent had logged three times.
+    the agent is the entire reason someone picks bootstrap over create-agent. Daily memory, an
+    agent's calendar conventions and its hard rules about who it may message all live in these
+    files.
 
     Returns what was carried, so the caller can report it instead of implying it.
     """

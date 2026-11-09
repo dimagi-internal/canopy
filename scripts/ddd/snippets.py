@@ -210,7 +210,7 @@ def dedwell_segments(
 # "Generating…"/"Reviewing…" spinner precisely, even in a teach scene and even
 # when the spinner ANIMATES (which the freeze-based render cap can't see, since
 # animation reads as motion). This is the durable mechanism; the render-time
-# freeze cap (#231/#239) is the fallback for waits with no recorded action.
+# freeze cap is the fallback for waits with no recorded action.
 
 LOAD_WAIT_LEAD_IN_SECONDS = 1.2
 LOAD_WAIT_MIN_SECONDS = 3.0
@@ -270,7 +270,7 @@ def excise_capture_spans(
 
     A full-page per-scene snapshot (``record_video --snapshots``) resizes the live
     viewport, so the master shows the page shrunk onto grey for the span
-    (``RunReport.capture_spans``, canopy#912). Unlike a loading wait there is no
+    (``RunReport.capture_spans``). Unlike a loading wait there is no
     threshold and no lead-in: no part of it is something a viewer should see.
     PURE."""
     out = list(segs)
@@ -350,7 +350,7 @@ def _mark_words(action: dict[str, Any]) -> list[str]:
 class SayAnchorDriftError(ValueError):
     """The spec's ``say:`` anchors differ from the recording's and can't be re-paired.
 
-    Raised at emit when a scene's CURRENT spec actions no longer line up 1:1 with
+    Raised at emit when a scene's CURRENT spec actions stop lining up 1:1 with
     the actions the recorder filmed, so the edited ``say:`` words cannot be
     attached to the right footage moments. The only correct fix is a re-record."""
 
@@ -383,14 +383,14 @@ def reconcile_say_anchors(
 
     The recorder copies ``say:`` onto each action result, and the marks are built
     from those report actions — so a ``say:`` added to (or changed in) the recipe
-    AFTER recording silently never reached the render (canopy#911). ``say:`` has
+    AFTER recording silently never reached the render. ``say:`` has
     no effect on what the recorder does (it is only carried onto the result), so
     re-anchoring is safe whenever the scene's spec actions still pair 1:1 with
     the filmed ones: same count, same kinds, same targets (``${var}`` matching
     any resolution). Those scenes get the spec's words copied onto a COPY of the
     report actions — added, changed, and removed alike.
 
-    A scene whose actions no longer pair (an action added, dropped or reordered
+    A scene whose actions do not pair (an action added, dropped or reordered
     since recording) cannot be re-anchored without guessing which footage moment
     a word belongs to. If its ``say:`` anchors differ from the recording's, this
     raises :class:`SayAnchorDriftError` naming them — re-record. Scenes whose
@@ -765,7 +765,7 @@ def build_snippets(
         print(line)
 
     # The report froze the spec's say: words at recording time; honour edits made
-    # since (or refuse, naming them) before any mark is built — canopy#911.
+    # since (or refuse, naming them) before any mark is built.
     report, _say_notes = reconcile_say_anchors(spec, report)
     for line in _say_notes:
         print(line)
@@ -1070,9 +1070,9 @@ def build_explainer_spec(
     # Without an overview scene, the tagline itself is spoken (a real headline —
     # NOT "<slug>: …", which read the raw narrative slug aloud).
     #
-    # This is the fix for the opening-slide mismatch: the card used to narrate
-    # the raw `tagline` while the overview replayed as a separate body scene, so
-    # the video opened on a stale headline instead of the narrated overview.
+    # This keeps the opening slide matched to the narration: a card narrating the
+    # raw `tagline` while the overview replays as a separate body scene would open
+    # the video on a stale headline instead of the narrated overview.
     overview_id: str | None = None
     if any((s.get("role") or "") != "overview" for s in snippets):
         # never absorb the ONLY scene — that would leave a body-less title card

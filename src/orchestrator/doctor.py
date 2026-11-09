@@ -212,7 +212,6 @@ def check_workbench_token(
     # icacls. Checking it there reports a false failure and, worse, sends the
     # operator to chmod — which does nothing. Access control on NTFS is an ACL
     # question; this check only has meaning where the mode bits are real.
-    # (@smazumdar, first Windows bring-up, 2026-09-01.)
     if sys.platform == "win32":
         return CheckResult(
             name,
@@ -256,11 +255,10 @@ def check_plugin_version(home: Path | None = None) -> CheckResult:
 def _uv_tool_dir(home: Path) -> Path:
     """Where `uv tool install` put canopy, on THIS platform.
 
-    uv does not use one layout everywhere, and hardcoding the POSIX one made
-    doctor report two false failures on Windows whose remediation LOOPED: the
+    uv does not use one layout everywhere, and hardcoding the POSIX one would
+    make doctor report false failures on Windows whose remediation LOOPS: the
     suggested fix is to reinstall, which puts the files back at the same
     (correct) place doctor was not looking, so the check fails again forever.
-    Reported by @smazumdar on the first Windows bring-up, 2026-09-01.
 
       UV_TOOL_DIR   explicit override, honoured on every platform
       Windows       %APPDATA%\\uv\\tools      (~/AppData/Roaming/uv/tools)
@@ -331,10 +329,8 @@ def check_cli_install_source(home: Path | None = None) -> CheckResult:
     CLI is a separate `uv tool install`. Installing it from a dev checkout
     couples the CLI to whatever branch happens to be checked out there — it then
     silently serves stale or in-progress code to every agent. `skills/update`
-    has documented "NEVER an editable install of ~/emdash-projects/canopy" since
-    the drift stranded `canopy harvest`, but nothing enforced it, and a machine
-    was found back on the dev checkout (CLI two versions behind main) on
-    2026-07-24. Prose lost; this check is the enforcement.
+    documents "NEVER an editable install of ~/emdash-projects/canopy"; prose
+    alone does not hold, so this check is the enforcement.
     """
     home = home or Path.home()
     name = "CLI install source"

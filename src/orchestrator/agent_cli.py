@@ -553,7 +553,7 @@ def agent_google_login(slug, if_needed, no_verify):
 
 def delegated_chrome_sales_home(slug: str) -> Path:
     """Where chrome-sales reads Salesforce creds in this agent's sessions — the same
-    path the cloud runner stages to (canopy-web#1291), so chrome-sales has one rule."""
+    path the cloud runner stages to, so chrome-sales has one rule."""
     return Path.home() / ".canopy" / "delegated" / slug / "chrome-sales"
 
 
@@ -579,7 +579,7 @@ def agent_stage_delegated(slug):
     token = _operator_token()
     if is_agents_own_token(slug, token):
         # No operator token on this machine — only the agent's own, which the route
-        # refuses (canopy#945). Skip without touching a copy staged by someone who could.
+        # refuses. Skip without touching a copy staged by someone who could.
         click.echo(f"salesforce: skipped — the only canopy-web token here is {slug}'s own, "
                    f"and borrowed credentials are released to the operator; run "
                    f"/canopy:canopy-web-pat-mint as the person who runs this machine")
@@ -868,8 +868,8 @@ def resolve_project_ref(client, ref):
     # A `P<N>` is unique per creating agent, not across the board: an agent's own P5
     # and a P5 another agent made that it works on are listed side by side, and the
     # server resolves a bare "P5" to the agent's own. So a shared alias is never sent;
-    # the address names exactly one project. (2026-11-06: `--project "Canopy support"`
-    # became "P5" and filed hal's task into its own ARCHIVED P5, Supply, with no error.)
+    # the address names exactly one project. (Otherwise `--project "Canopy support"`
+    # becomes "P5" and files the task into the agent's own ARCHIVED P5 with no error.)
     alias_count: dict[str, int] = {}
     for project in projects:
         key = str(project.get("ext_id") or "").strip().casefold()
@@ -1350,7 +1350,7 @@ def _merge_links(current, spec):
     --append-link), de-duplicated on url (first label wins). Shared by a task's and a
     project's --append-link.
 
-    `spec` became a list on 2026-10-22: the option took ONE value, so a turn passing
+    `spec` became a list: the option took ONE value, so a turn passing
     `--append-link A --append-link B` got exit 0 and only B — click keeps the last
     value of a repeated single option, without a word."""
     specs = [spec] if isinstance(spec, str) else list(spec)
@@ -1367,7 +1367,7 @@ def _appended_notes(client, task_id, text):
 
     Read-modify-write for the same reason as `_appended_links`: the PATCH replaces
     `notes` wholesale, and a multi-turn task's notes ARE its history. The only append
-    path used to be reading the card, concatenating by hand and passing the whole thing
+    path without this is reading the card, concatenating by hand and passing the whole thing
     back through --notes. Passing just the new entry there instead succeeds and silently
     deletes every earlier turn's log.
     """
@@ -1420,7 +1420,7 @@ def check_task_status(value):
     The lenient fallback above is wrong on a write path: an unrecognised status became
     "suggested", so `agent set --status <typo>` demoted a live in-progress card to an
     unaccepted proposal and reported success. The server coerces the same way, so the
-    raw value was no safer (dimagi-internal/canopy#659). Same contract as
+    raw value was no safer. Same contract as
     `check_task_field`: reject, write nothing, name the valid values.
     """
     token = _task_status_token(value)
@@ -1476,9 +1476,9 @@ def check_task_field(name, value):
     final clause (often the actual constraint) is gone. Being told to shorten costs one
     retry; losing the tail of an instruction is undetectable and permanent.
 
-    This is also what makes the writers agree: `agent add` used to truncate here while
-    `agent set` passed the text through to a 422 — same cap, opposite failure modes
-    (dimagi-internal/canopy#510).
+    This is also what makes the writers agree: `agent add` and `agent set` both reject
+    here, rather than one truncating while the other passes the text through to a 422
+    (same cap, opposite failure modes).
     """
     limit = TASK_FIELD_LIMITS.get(name)
     text = (value or "").strip()
@@ -1523,8 +1523,7 @@ def _split_task_links(cell):
     missing a comma is merely less pretty.
 
     A label with no `label|url` after it to join is returned whole as its own part, so
-    `parse_task_links` still raises on it, naming the full label — the #579 guard is
-    unchanged.
+    `parse_task_links` still raises on it, naming the full label.
     """
     parts, pending = [], []
     for frag in cell.split(","):
@@ -1549,7 +1548,7 @@ def _split_task_links(cell):
 
 
 def parse_quote_by(spec: str) -> dict:
-    """`"Jonathan Jackson <jj@dimagi.com>"` -> {name, email}; a bare address or a bare
+    """`"Ada Lovelace <ada@example.com>"` -> {name, email}; a bare address or a bare
     name fills the one it is."""
     import re
 
@@ -1585,19 +1584,17 @@ def parse_task_links(cell):
     Over-length parts raise (see `check_task_field`): a URL cut to fit is a dead link,
     which is a worse outcome than being asked to shorten it.
 
-    An unparseable part RAISES rather than being skipped. It used to fall off the end of
-    the if/elif and vanish, so `--append-link "label=url"` — the wrong separator, and the
-    one people reach for first — wrote nothing, returned the patched task as JSON, and
-    exited 0. A write that reports success and stores nothing is the worst shape a CLI
-    has: the caller has no reason to re-read the card, so the link is simply missing
-    later, with no error anywhere to explain it. (2026-09-01, hal: two links onto a board
-    task, both silently dropped; caught only because the card was re-read for an unrelated
-    reason.)
+    An unparseable part RAISES rather than being skipped. Skipping it would let
+    `--append-link "label=url"` — the wrong separator, and the one people reach for
+    first — write nothing, return the patched task as JSON, and exit 0. A write that
+    reports success and stores nothing is the worst shape a CLI has: the caller has no
+    reason to re-read the card, so the link is simply missing later, with no error
+    anywhere to explain it.
 
-    Commas inside a label or a URL are kept. A naive `split(",")` cut
-    `"Slide deck (Dimagi brand, canonical)|https://…"` in half and rejected the first
-    half as an unparseable link, so the only way to write that label was to drop its
-    commas (2026-09-27 and 2026-09-30, eva — both retried without commas). See
+    Commas inside a label or a URL are kept. A naive `split(",")` cuts
+    `"Slide deck (Dimagi brand, canonical)|https://…"` in half and rejects the first
+    half as an unparseable link, so the only way to write that label would be to drop its
+    commas. See
     `_split_task_links` for how a comma is assigned to a label, a URL, or a separator.
     """
     out = []
@@ -2128,8 +2125,8 @@ def agent_dispatch(slug, title, prompt, prompt_file, task_ext_id, no_task, links
 
 
 def _note_local_use(slug, canopy_web) -> None:
-    """One stderr line steering a PERSON without local use of `slug` to `canopy agent use`
-    (canopy-web#1955). Silent in an agent's turn; never fails or blocks the dispatch."""
+    """One stderr line steering a PERSON without local use of `slug` to `canopy agent use`.
+    Silent in an agent's turn; never fails or blocks the dispatch."""
     from orchestrator.agent_dispatch import local_use_note_for
 
     try:

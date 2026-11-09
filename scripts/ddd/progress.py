@@ -1,18 +1,16 @@
 """Progress signal for the DDD loop — what "getting better" means on a v1 product.
 
-The problem, measured
----------------------
+The problem
+-----------
 The loop's gating score is ``min(concept, user)``, and the concept score is
 itself a minimum over every (scene x gating dimension) cell. One bad cell pins
-it. Across five freshly-built supply narratives (connect-labs,
-``supply-*-2026-09-23-001``) 19 of 23 judged iterations scored 2 while the mean
-cell rose 3.14 -> 3.68, confirmed caps fell 13 -> 1 and open findings fell
-61 -> 21. The loop read that as "flat". Worse, the ``mechanical -> continue``
-branch sat ahead of the stall check, so stall detection could never fire while
-any mechanical finding existed — which on a v1 product is always.
+it, so the score can read "flat" while the mean cell rises, confirmed caps fall
+and open findings fall. The ``mechanical -> continue`` branch comes after the
+stall check, so stall detection can fire even while mechanical findings exist —
+which on a v1 product is always.
 
-The fix
--------
+The approach
+------------
 Record four signals per judged iteration and call it a stall only when NONE of
 them improved across the last two iterations:
 
@@ -50,12 +48,10 @@ FINDINGS_BAND: int = 2
 
 # A FALL in open findings is only progress when it is more than this fraction of
 # the best (lowest) count so far. On a v1 product the judges find new nits as old
-# ones are fixed, so the backlog trickles down whatever the fixes did: the
-# connect-labs run ``supply-sophie-rutf-2026-09-26-001`` (canopy 0.2.543) went
-# 42 -> 39 -> 36 -> 35 -> 34 over iterations 5-9 while the mean cell sat at
-# 3.60 +/- 0.05, the floor flipped 2/3/3/2/3 on a single cap, and every pass
-# cost ~60 minutes — and the stall detector never fired, because each 1-3
-# finding drop counted as "progress". Below ~7 findings the band is zero, so on
+# ones are fixed, so the backlog trickles down whatever the fixes did: a
+# 1-3 finding drop per pass while the mean cell stays put and the floor flips on a
+# single cap is a stall, and counting each drop as "progress" would stop the
+# stall detector firing. Below ~7 findings the band is zero, so on
 # a small backlog every fixed finding still counts.
 TRICKLE_FRACTION: float = 0.15
 

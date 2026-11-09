@@ -2,14 +2,12 @@
 
 Why this module exists
 ----------------------
-On the 2026-10-15 ACE runs the loop kept fixing without ever asking whether the
-fixes could move the number it was judged on. ``noora-health/20261015-1129``
-ran six passes at a flat 2.0: the floor was a labs-template defect the loop may
-not edit (ace#2337) and the in-scope fixes it did make were on cells that were
-not holding anything down. ``smallholder-seasonal/20261015-1402`` ran four
-passes at 2.0, every one re-filming every scene. Nobody had written down, before
-a batch, what it was expected to change — so nothing could notice that the
-answer was "nothing", and nothing could check the prediction afterwards.
+A loop that keeps fixing without asking whether the fixes could move the number it
+is judged on can run many passes at a flat score: the floor may be a defect the loop
+may not edit, and in-scope fixes may land on cells that are not holding anything
+down. Unless someone writes down, before a batch, what it is expected to change,
+nothing can notice that the answer is "nothing", and nothing can check the
+prediction afterwards.
 
 The contract
 ------------

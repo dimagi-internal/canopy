@@ -5,11 +5,11 @@ A cloud-runner turn is one prompt. When the model ends its turn, `claude -p` exi
 (or, under the ACP executor, the prompt request resolves and the runner closes the
 agent — canopy-web `runner/ec2/cloud_runner.py::run_acp`, `agent.close()` in its
 `finally`). A background task's completion notification then has nobody to deliver
-to: the session is gone, and nothing re-opens it. Evidence, 2026-10-04 on
-cloud-ec2-1 (ACP): Ada's fleet-sync turn started collection as background Bash jobs,
-said "I'll pick this back up as soon as each one reports back" and ended 3 minutes in
-— the sync stalled; ACE's fix turn ran its full test suite with run_in_background,
-said "I'll wait for the task notification", and the fix was never committed.
+to: the session is gone, and nothing re-opens it. Typical failures (ACP): a sync turn
+starts collection as background Bash jobs, says "I'll pick this back up as soon as each
+one reports back" and ends — the sync stalls; a fix turn runs its full test suite with
+run_in_background, says "I'll wait for the task notification", and the fix is never
+committed.
 
 **Scoped to where that is true.** A LAPTOP runner turn is different: the runner
 types the prompt into a persistent, interactive emdash session

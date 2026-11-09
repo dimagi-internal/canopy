@@ -1,7 +1,7 @@
 """`canopy aws login` — get an AWS SSO session approved from the owner's phone.
 
-An agent turn that hits an expired AWS SSO session used to stop and ask a person
-to run `aws sso login --profile labs` in a terminal on the box. This runs the
+An agent turn that hits an expired AWS SSO session does not need a person at a
+terminal on the box running `aws sso login --profile labs`. This runs the
 real CLI in its device-code form instead:
 
     canopy aws login --profile labs --reason "confirm the 5xx cause in /ecs/labs-jj-canopy-web"

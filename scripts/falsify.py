@@ -10,8 +10,7 @@ modes that are worse than not running it at all:
 1. **Restoring from a commit destroys uncommitted work.** The prose warns against
    ``git checkout <branch> -- <file>`` for exactly this reason: it reads the file
    out of a *commit*, so an edit not yet committed is silently replaced, ``git
-   status`` goes clean, and nothing errors. It cost a retyped skill edit on
-   2026-09-07, in the same turn that wrote the warning.
+   status`` goes clean, and nothing errors. It costs a retyped edit.
 2. **A mutation left behind ships.** The revert is the whole point, so the window
    between "revert" and "restore" contains the unfixed code. Any non-local exit in
    that window — an exception, a timeout, Ctrl-C — leaves the tree holding
@@ -104,7 +103,7 @@ def restore(saved: dict[Path, bytes | object]) -> list[str]:
 # function makes the whole file's revert an ImportError, so every test importing
 # that symbol dies at collection. It exits non-zero, which looks exactly like the
 # red you were hoping for. Found by pointing this tool at the first fix it was
-# written for (canopy#546), whose own author had already hit it by hand and
+# written for, whose own author had already hit it by hand and
 # switched to mutating the rule instead.
 _COLLECTION_FAILURE = (
     "error during collection",

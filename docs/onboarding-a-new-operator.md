@@ -273,8 +273,8 @@ registered). They are the things the factory cannot do for you. Work them in thi
    `canopy agent-publish register --repo .`
    In more than one workspace? Name the agent's home with `--workspace <slug>` (or `"workspace"` in
    `config/agent.json`, or `CANOPY_WEB_WORKSPACE=<slug>`): canopy-web refuses to guess, and the register
-   fails until you do. Registration is reversible: an agent's owner or a workspace owner can delete it in
-   canopy-web (it takes the agent's projects, tasks, turns and skills with it). Deleting the GitHub repo
+   fails until you do. Registration is reversible: only an agent's owner or a workspace owner can delete it in
+   canopy-web, not an editor who does not own it (it takes the agent's projects, tasks, turns and skills with it). Deleting the GitHub repo
    is `gh repo delete dimagi-internal/<slug>`.
 3. **Email auth** — only if the agent has a mailbox. Needs a real Google account provisioned first; ask a
    dimagi-ai.com admin. Then sign the mailbox in EITHER way: they are one Google app (`canopy` /

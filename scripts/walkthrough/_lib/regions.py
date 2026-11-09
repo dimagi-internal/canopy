@@ -1,12 +1,12 @@
 """Per-scene judged REGIONS — what a scene is about, captured at render time.
 
-Why this exists (canopy#780)
+Why this exists
 ----------------------------
 DDD's scoped judging re-judges a scene only when an input its judges read
-changed. Its fingerprint used to be the whole frame, byte for byte, so any edit
-to a page template a scene sits on — a legend restyle, a footer line — re-judged
-every scene on that template, even when nothing the scene narrates moved. Over
-about 40 judged passes on four ACE Spark runs, it reused zero scenes.
+changed. A whole-frame, byte-for-byte fingerprint would re-judge every scene on a
+page template after any edit to it — a legend restyle, a footer line — even when
+nothing the scene narrates moved, and would reuse almost no scenes. Regions
+fingerprint only what the scene is about.
 
 A scene is ABOUT a few elements: the ones its actions click, hover and wait for,
 and the ones its narration names ("MEETING REGULARITY reads 66.0%", "Ulemu

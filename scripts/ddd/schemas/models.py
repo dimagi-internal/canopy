@@ -126,7 +126,7 @@ class RunState(BaseModel):
     #   stop_out_of_scope     — the gating floor is held only by findings this
     #                           loop may not fix (DEFER, a narration edit under a
     #                           locked narrative, data/registry, a declined fix):
-    #                           no batch can move the gate (canopy#780).
+    #                           no batch can move the gate.
     auto_iterate_next_action: str | None = None
     auto_iterate_reason: str | None = None
     # Hosted artifact URLs per iteration (0.2.135). Populated by
@@ -172,16 +172,14 @@ class RunState(BaseModel):
     inner_loop_policy: dict | None = None
     # How many times the concept gate has been HELD OPEN for pending mechanical
     # work, incremented by run_pipeline.compute_auto_iterate. A strategy redesign
-    # finding used to preempt confidently-fixable defects sitting alongside it, so
-    # the gate asked a human "is this the right direction?" over an artifact known
-    # to be wrong, and the fixes were never applied (ACE
-    # spark-facilitator/20260820-0817: five accuracy findings dropped, zero
-    # iterations completed). The gate now waits for that work for as long as it
-    # is demonstrably cleaning the artifact. This field is a LEDGER of deferrals
-    # taken, not a budget: the first deferral is free, and each further one is
-    # granted only if the previous pass moved the score outside the noise band
-    # (canopy#588 — a count bound of 1 cut consecutive clean runs off mid-climb
-    # with 29 and 14 mechanical fixes pending, and a crashed pass spent it on
+    # finding must not preempt confidently-fixable defects sitting alongside it, or
+    # the gate would ask a human "is this the right direction?" over an artifact
+    # known to be wrong and the fixes would never be applied. The gate waits for that
+    # work for as long as it is demonstrably cleaning the artifact. This field is a
+    # LEDGER of deferrals taken, not a budget: the first deferral is free, and each
+    # further one is granted only if the previous pass moved the score outside the
+    # noise band (a count bound of 1 would cut consecutive clean runs off mid-climb
+    # with many mechanical fixes pending, and a crashed pass would spend it on
     # nothing). A persisted non-zero value therefore never blocks a resumed run
     # by itself; what decides is whether the score moved. Never reset within a
     # run; HARD_CAP is the runaway backstop.
@@ -243,7 +241,7 @@ class RunState(BaseModel):
     # Merge SHA of the last fix batch (PR) — what the deploy gate waits for the
     # target's health endpoint to report before any judge runs.
     last_fix_sha: str | None = None
-    # The last fix batch's diff gate (scripts.ddd.fix_gate, canopy#786):
+    # The last fix batch's diff gate (scripts.ddd.fix_gate):
     # {status: pass|fail, counts: {check: n}, head, checked_at}. While it reads
     # ``fail`` judge_gate refuses to judge — the batch goes back to its fixer.
     fix_gate: dict | None = None
@@ -291,16 +289,16 @@ class RunState(BaseModel):
     # `judge_scope plan`, `judge_gate check` and `target plan` refuse to proceed
     # when run_state was rewritten after the seal, or when the sealed action was
     # a stop — unless `python -m scripts.ddd.decision override` logged a reason.
-    # Measured: supply-sophie-rutf-2026-09-26-001 ran four extra ~60-minute
-    # iterations after ad-hoc scripts reset its progress history past a
-    # ``stop_max_iter`` and forced every judge pass full. See scripts.ddd.decision.
+    # Ad-hoc scripts that reset a run's progress history past a ``stop_max_iter``
+    # would force every judge pass full and run extra ~60-minute iterations; the seal
+    # makes that visible. See scripts.ddd.decision.
     decision_seal: dict | None = None
     # Every logged override of a sealed decision: {iteration, action, reason, at}.
     decision_overrides: list[dict] = []
     # Where this run lives on canopy-web (scripts.ddd.run_store): the agent
     # project it serves and the state_version this runner last wrote or read —
     # {agent, project, version, synced_at, pending, error}. None = local-only
-    # (no token, CANOPY_DDD_STORE=local, or a run started before 0.2.563 that
+    # (no token, CANOPY_DDD_STORE=local, or a run that
     # has not been bound to a project yet).
     store: dict | None = None
     # What the batch a ``continue`` asked for touches (scripts.ddd.fix_scope.batch_plan):
@@ -309,7 +307,7 @@ class RunState(BaseModel):
     # pass skips the deploy gate (nothing to deploy) and may re-render only the
     # touched scenes; it is between checkpoints and cannot decide.
     batch_plan: dict | None = None
-    # --- canopy#780 — impact-aware reuse, floor-first, per-pass timing ----------
+    # --- impact-aware reuse, floor-first, per-pass timing ----------
     # The cell holding the gating score down, stamped by every assemble
     # (scripts.ddd.floor.locate + run_pipeline.compute_auto_iterate):
     # {score, objective, cells: [{verdict, judge, dimension, scenes}], judges,
@@ -323,12 +321,12 @@ class RunState(BaseModel):
     # judge_minutes: {concept, user, arc, ...}, other_minutes, steps}. Appended,
     # never overwritten, so "why is this slow" is answered from data.
     pass_timings: list[dict] = []
-    # --- canopy#789 — autonomous narrative review ------------------------------
+    # --- autonomous narrative review ------------------------------
     # The last narrative-guard result assemble saw (scripts.ddd.narrative_guard):
     # {iteration, mode, decision, version, material, material_why, violations,
     # standing}. A rejected revision is named in the next action's reason.
     narrative_guard: dict | None = None
-    # --- canopy#790 — converge on a target rubric (scripts.ddd.target_rubric) ----
+    # --- converge on a target rubric (scripts.ddd.target_rubric) ----
     # A rubric pinned to this run by the caller (`target_rubric set`) — it wins
     # over the spec's and the config's. None = not pinned.
     target_rubric: dict | None = None
@@ -354,7 +352,7 @@ class RunState(BaseModel):
     finding_ledger: list[dict] = []
     # Finding ids once out of scope by configuration or a decline:
     # {id: {reason, via, surface, owner, issue, since}} — they stay out when the
-    # judge re-words them and the text no longer matches.
+    # judge re-words them and the text stops matching.
     out_of_scope_ids: dict = {}
     # Batch predictions (scripts.ddd.predict), keyed by the iteration whose
     # assemble planned the batch: {"<n>": {iteration, declared_at, items: [{finding_id,

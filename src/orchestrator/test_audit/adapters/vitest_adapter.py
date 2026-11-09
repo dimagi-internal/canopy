@@ -74,7 +74,7 @@ class VitestAdapter:
         Source-walking is the primary signal: the vitest list reporter has
         historically emitted only leaf names for some shapes, which would
         otherwise collapse multiple `it('shared', ...)` calls under sibling
-        describes into a single nodeid (issue #42). We use the list output
+        describes into a single nodeid. We use the list output
         for file discovery and to backfill dynamic-name tests (e.g.
         `it.each([...])`) that can't be recovered from a static scan.
 

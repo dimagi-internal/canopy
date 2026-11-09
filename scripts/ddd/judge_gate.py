@@ -1,11 +1,10 @@
 """Pre-judge gate — never pay for a judge round the loop already knows is wasted.
 
-Two measured ways a judge round was burned for nothing:
+Two ways a judge round is burned for nothing:
 
 1. **Judging before the fix was deployed.** A batch of fixes merged, the render
-   ran against the still-old deployment, and the judges re-found the same caps
-   ("Iteration 2 must render AFTER #1989 is deployed or the same caps recur" —
-   connect-labs learnings). Labs deploys are rolling; a single healthy sample
+   runs against the still-old deployment, and the judges re-find the same caps.
+   Labs deploys are rolling; a single healthy sample
    can come from an old task mid-rollout. So the gate samples the target's
    health endpoint N times and requires EVERY sample to report the merge SHA of
    the last fix batch (``state.last_fix_sha``).

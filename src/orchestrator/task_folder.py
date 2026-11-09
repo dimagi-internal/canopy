@@ -1,7 +1,7 @@
-"""A task's Drive folder is a property of the task (T72, canopy-web#1403).
+"""A task's Drive folder is a property of the task.
 
 A product area is ONE project board, and a big piece of work inside it is a task with
-subtasks — not a subproject (Jonathan, 2026-10-09). The files follow the same shape:
+subtasks — not a subproject. The files follow the same shape:
 
     <agent root>/Projects/<project>/<task ext_id> <task title>/
     <agent root>/Projects/<project>/<parent folder>/<subtask ext_id> <subtask title>/

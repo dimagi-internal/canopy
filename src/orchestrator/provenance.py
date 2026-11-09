@@ -36,7 +36,7 @@ WHERE THE PARENT COMES FROM — first source with a value wins, per field:
      LEFT for the hook, only while fresh. The by-task record does not exist until the
      first prompt is submitted, and SessionStart runs before that: its `canopy cred
      sync` read the agent's vault with no turn, and canopy-web emailed the owner
-     "read outside a turn" for the turn's own start (hal, 2026-10-17, canopy-web#1563).
+     "read outside a turn" for the turn's own start.
 The Claude session id is `CLAUDE_CODE_SESSION_ID` (what Claude Code exports to its
 tools), `CLAUDE_SESSION_ID`, then the by-task record's `claude_session_id` (the hook
 input's `session_id`).
@@ -120,7 +120,7 @@ def task_candidates(cwd: Optional[str] = None) -> list:
     """
     out: list = []
     # emdash exports the task name into the session; it reaches a process whose cwd
-    # is not the worktree (canopy#994 measured the MCP headersHelper running from
+    # is not the worktree (the MCP headersHelper runs from
     # the plugin root). It is already the bare task name, so it is used as given.
     # Ignored when the caller names a cwd explicitly.
     named = "" if cwd else os.environ.get("EMDASH_TASK_NAME", "").strip()
@@ -297,7 +297,7 @@ def provenance_headers(client: str = DEFAULT_CLIENT, *, cwd: Optional[str] = Non
 
 def _with_acts_as(headers: dict) -> dict:
     """`CANOPY_ACTS_AS=editor|viewer` puts this client in a lower mode: every request
-    carries `X-Canopy-Acts-As`, and canopy-web judges it at that role (canopy-web#1705)."""
+    carries `X-Canopy-Acts-As`, and canopy-web judges it at that role."""
     cap = os.environ.get("CANOPY_ACTS_AS", "").strip().lower()
     if cap in ("editor", "viewer"):
         headers[HEADER_ACTS_AS] = cap

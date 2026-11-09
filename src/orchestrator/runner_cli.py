@@ -13,7 +13,7 @@ LOGS — a different noun that happens to share a word.)
 The remote half of the runner's local `~/.canopy/PAUSED` sentinel. Both set the
 SAME state (canopy-web `Runner.paused`): the local file is a control surface the
 daemon pushes up on change, this is the same command over HTTP. So there is one
-value, and reaching it no longer requires a shell on the box — which is the whole
+value, and reaching it requires no shell on the box — which is the whole
 point, because the case that needs it most is a box you cannot log into.
 
 That case is one person's two macOS accounts on one machine (`Runner.host` says
@@ -261,8 +261,8 @@ def transfer_cmd(session, target, brief, brief_file, stop, workspace, as_json):
         brief = Path(brief_file).read_text(encoding="utf-8")
     s = _resolve_session(session, workspace)
     r = _resolve(target, workspace)
-    # No client-side ownership refusal here, unlike pause/unpause: since
-    # canopy-web#1055 the SERVER decides. Onto a box you administer, or between two
+    # No client-side ownership refusal here, unlike pause/unpause: the
+    # SERVER decides. Onto a box you administer, or between two
     # boxes with the same owner, it moves now; onto someone else's it opens a
     # transfer request for them to approve (status "pending" below).
 

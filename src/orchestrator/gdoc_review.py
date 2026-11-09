@@ -8,7 +8,7 @@ flags the defects that have actually shipped to people:
 
 - **An empty doc.** `publish --replace` clears the body before it injects the new one; a
   timeout in between leaves only the engine's sentinel. Every other check here is a defect
-  detector, and an empty doc trips none of them, so it used to score a clean pass.
+  detector, and an empty doc trips none of them, so it would score a clean pass.
 - **Italic bleed.** `--replace` reuses the old doc's run styling, so one italic line in an
   early version can italicise the whole body of every later one.
 - **Wrong font / size**, e.g. email-block labels that inherited a heading's 18pt.
@@ -16,8 +16,7 @@ flags the defects that have actually shipped to people:
   asterisk span a markdown export cannot show.
 - **Dropped links and email blocks**, against counts the caller derives from its source.
 
-Ported from Eva's `skills/gdoc-review/check_gdoc.py`, which caught each of these on a real
-deliverable between 2026-07 and 2026-09 before it moved here so every agent gets it.
+Each of these has shipped on a real deliverable; the check lives here so every agent gets it.
 
 A PASS also writes a RECEIPT (`<agent home>/gdoc-gate/passed/<docId>`). The fleet Stop
 hook `agent-core/gdoc_gate.py` refuses to let a turn end on a link to a doc the agent

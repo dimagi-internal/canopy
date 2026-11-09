@@ -4,10 +4,10 @@
 Sibling of `status_line_guard.py` (which handles the person being PRESENT). This one covers the
 other half: an UNATTENDED, incident-style turn — an alarm, a page — that recorded its closeout
 facts with `canopy closeout record` (orchestrator/closeout.py computes the verdict: CLOSED |
-MONITORING | NEEDS_YOU | INCOMPLETE). Before this, "✅ Session complete — safe to close." was a
-free-typed claim nothing checked: across Hal's CloudWatch alarm turns 2026-08-26..10-29, 36
-ended "complete" and about 12 had the incident actually closed (alarm still firing, cause
-unconfirmed, the next step owned by "someone with SSO").
+MONITORING | NEEDS_YOU | INCOMPLETE). Without it, "✅ Session complete — safe to close." is a
+free-typed claim nothing checks, and an alarm turn can end "complete" with the incident
+still open (alarm still firing, cause unconfirmed, the next step owned by "someone with
+SSO").
 
 The record lives at `~/.canopy/closeout/<claude_session_id>.json`. This Stop hook blocks, once
 (`stop_hook_active` → never loop), a closing message that says "Session complete" / "safe to

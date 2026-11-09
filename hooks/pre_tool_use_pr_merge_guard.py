@@ -2,23 +2,22 @@
 """Claude Code PreToolUse hook: block a `gh pr merge` that would reuse a version.
 
 The sibling guard (``pre_tool_use_version_bump_guard.py``) re-checks the bump at
-``git push``. That still leaves a window open, and canopy fell through it on
-2026-07-28:
+``git push``. That still leaves a window open:
 
   1. Two PRs are opened from the same base. Each runs ``canopy version bump``,
      which picks ``max(local, origin/main) + 1`` — so BOTH pick v0.2.369.
   2. Each PR's ``check-version`` passes, because each was checked against main as
      it was when that PR's CI ran.
-  3. #423 merges. GitHub does NOT re-run #429's check against the new base
-     (branch-up-to-date is not required), so #429's green check is now stale.
-  4. #429 merges forty seconds later. `main` now has two different commits both
+  3. PR A merges. GitHub does NOT re-run PR B's check against the new base
+     (branch-up-to-date is not required), so PR B's green check is now stale.
+  4. PR B merges shortly after. `main` now has two different commits both
      labelled v0.2.369.
 
 The damage is downstream and silent: the plugin cache is keyed by version, so the
 second merge's cache dir already existed holding the FIRST merge's code, and a
 version-comparing update check reports UP_TO_DATE — whose documented response is
 "STOP. Do nothing else." The fix simply never reaches the machine.
-``canopy-update-check.sh`` is SHA-driven now so the *detection* survives this,
+``canopy-update-check.sh`` is SHA-driven, so the *detection* survives this,
 but the collision itself is still worth refusing: two commits sharing a version
 makes every version-keyed thing (cache dirs, `claude plugin list`, rollback)
 ambiguous.

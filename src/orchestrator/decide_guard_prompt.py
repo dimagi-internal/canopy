@@ -2,10 +2,9 @@
 
 An agent must not end a session by handing back a call it was authorized to make
 ("Want me to ship the PR?", "It's a small canopy PR if you want it.") instead of making
-it. This used to be a regex engine (`agent-core/decide_guard.py`), and it was
-whack-a-mole: on 2026-10-04 one ada session got past it three times with shapes nobody
-had written a pattern for. Jonathan's call: judge it with an LLM fed labelled examples,
-and let it use its judgment on phrasings the examples don't show.
+it. A regex engine cannot hold this rail: sessions get past it with shapes nobody
+has written a pattern for. So an LLM judges it, fed labelled examples, and uses its
+judgment on phrasings the examples don't show.
 
 The prompt can be wired at two scopes, and `PLUGIN_WIDE` picks between them:
 
@@ -18,21 +17,17 @@ The prompt can be wired at two scopes, and `PLUGIN_WIDE` picks between them:
   with `unstamp --user`. Cost: a new example reaches a person only when they re-stamp
   (`stamp --user --check` finds a stale one).
 
-Never an agent repo. Stamping `.claude/settings.json` in ace/ada/eva/echo/hal (2026-10-08 to
-2026-10-13) made one person's preference run for EVERY person who runs that agent — with no
-opt-out and no Claude Code version floor. On the first runner Jonathan does not own
-(stewari-mbp-cdp, Claude Code 2.1.220) the prompt-hook evaluator 400'd on every Stop ("send
-thinking between_tools instead of disabled"), and the session wedged with no composer
-(failure investigation 1, turn bb892462). `stamp --agent-repo` now refuses, and
-`unstamp --agent-repo DIR` removes a copy.
+Never an agent repo. Stamping `.claude/settings.json` in an agent repo would make one
+person's preference run for EVERY person who runs that agent, with no opt-out and no Claude
+Code version floor: on an older Claude Code (2.1.220) the prompt-hook evaluator 400s on every
+Stop ("send thinking between_tools instead of disabled") and the session wedges with no
+composer. `stamp --agent-repo` refuses, and `unstamp --agent-repo DIR` removes a copy.
 
 The `--user` stamp also refuses on a Claude Code older than `MIN_CLAUDE_CODE`, the oldest
-version seen to run the prompt hook cleanly.
+version known to run the prompt hook cleanly.
 
-History: plugin-wide from 2026-10-04 (Jonathan's choice at the time); opt-in on 2026-10-08,
-when Jonathan asked that it stop being imposed on every canopy user; per-person only on
-2026-10-13 (Jonathan: "making stop hooks configurable per person since people will have
-different preferences").
+Scope is per person because people have different preferences about stop hooks; a plugin-wide
+hook would impose one person's preference on every canopy user.
 
 THIS module is the only thing that writes the prompt:
 
@@ -43,7 +38,7 @@ THIS module is the only thing that writes the prompt:
   plugin's hooks.json agree with `PLUGIN_WIDE`; `stamp_settings()` writes a person's
   settings. `tests/hooks/test_agent_core_decide_guard.py` fails if hooks.json drifts.
 
-Facts the prompt depends on (probed live 2026-10-04):
+Facts the prompt depends on (probed live):
 * the hook's `$ARGUMENTS` carries `last_assistant_message` and `stop_hook_active`;
 * WITHOUT the stop_hook_active rule a blocking prompt hook re-blocks forever (the probe
   blocked 10x in a row) — so that rule is the prompt's FIRST instruction;
@@ -62,7 +57,7 @@ HOOKS_JSON_PATH = PLUGIN_ROOT / "hooks" / "hooks.json"
 # Where Claude Code keeps the plugin a uv-tool-installed CLI (which ships no plugin files) reads.
 MARKETPLACE_PLUGIN_ROOT = Path.home() / ".claude" / "plugins" / "marketplaces" / "canopy" / "plugins" / "canopy"
 
-# Chosen by the 2026-10-04 eval (see the PR that introduced this module): held-out
+# Chosen by eval: held-out
 # accuracy, the three live misses, and the flag rate on real closing messages.
 MODEL = "claude-sonnet-5-5"
 TIMEOUT_S = 30
@@ -71,8 +66,8 @@ TIMEOUT_S = 30
 PLUGIN_WIDE = False
 
 # The oldest Claude Code seen to run a `{"type": "prompt"}` Stop hook on MODEL cleanly:
-# Jonathan's machines on 2.1.296 do; 2.1.220 400s on every Stop (failure investigation 1,
-# turn bb892462). The exact boundary between them is unknown, so the floor is the known-good.
+# 2.1.296 does; 2.1.220 400s on every Stop. The exact boundary between them is
+# unknown, so the floor is the known-good.
 MIN_CLAUDE_CODE = (2, 1, 296)
 
 # The regex loader command hook that an agent-only stamp replaces.
@@ -82,8 +77,7 @@ LOADER_MARKER = "hooks/decide_guard.py"
 STATUS_MESSAGE = "decide-guard: checking whether the close hands back a call"
 
 # The prompt is sent on EVERY Stop of every canopy session, and shown to the agent in full
-# when it blocks — so it must stay SHORT (Jonathan, 2026-10-04: the 12K-char first version
-# was "way way too much text"). Only examples marked `"in_prompt": true` are rendered; the
+# when it blocks — so it must stay SHORT (a 12K-char prompt is far too much text). Only examples marked `"in_prompt": true` are rendered; the
 # rest of decide_guard_examples.jsonl is the held-out eval set. PROMPT_BUDGET is enforced.
 PROMPT_BUDGET = 3000
 

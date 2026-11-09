@@ -901,8 +901,8 @@ def stage_delegated_google_token(slug: str, account: str, *, token: Optional[str
                                  post=None, now: Optional[float] = None) -> Path:
     """The RUNNER's half: open the Google account `account` a person delegated to `slug`
     (this machine's own resolve, device proof included), refresh it at Google, and write
-    only the access token to `delegated_google_token_path` (0600). A credential that is no
-    longer delegated (withdrawn, its person no longer an admin) REMOVES the staged file."""
+    only the access token to `delegated_google_token_path` (0600). A credential that is not
+    delegated any more (withdrawn, its person not an admin) REMOVES the staged file."""
     from orchestrator import cred_resolve
     from orchestrator import vault_zk as zk
 

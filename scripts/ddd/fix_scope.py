@@ -2,14 +2,13 @@
 
 Why this module exists
 ----------------------
-The first live v1-mode run (connect-labs ``supply-sophie-rutf-2026-09-26-001``,
-canopy 0.2.528) stopped at iteration 4 as ``stop_concept_change`` /
-``diverging`` because of ONE confirmed cap: scene 4 ``motion_friction`` 2/2/2.
-The cause was the orchestrator's own recipe edit (``scroll: top`` before the
-snapshot cut the narrated card off). The fix was a one-line recipe change — no
-PR, no CI, no deploy — yet the loop read the capped floor as the run going
-backwards and opened a human gate over it, while the mean cell and open
-findings were flat within noise (M17).
+A v1-mode run can stop as ``stop_concept_change`` / ``diverging`` because of ONE
+confirmed cap, e.g. a scene's ``motion_friction`` 2/2/2 caused by the
+orchestrator's own recipe edit (``scroll: top`` before the snapshot cut the
+narrated card off). The fix is a one-line recipe change — no PR, no CI, no
+deploy — yet the loop would read the capped floor as the run going backwards and
+open a human gate over it, while the mean cell and open findings are flat within
+noise.
 
 A recipe (SCRIPTING) fix is the cheapest fix the loop can make: edit the
 recipe, re-render, re-judge the scene. It must be made — and its scene
@@ -106,14 +105,12 @@ def scene_key(raw: object) -> str | None:
 # Scene attribution (DDD-2)
 # ---------------------------------------------------------------------------
 #
-# A finding whose ``scene`` the loop cannot read used to make the whole next
-# batch "unscoped", and an unscoped batch re-filmed EVERY scene WITH VIDEO
-# (capture_scope). Measured on ACE smallholder-seasonal-programme-cascade-
-# 2026-10-16-001: iterations 1 and 2 were full video re-films of all four scenes
-# because the arc judge named its two findings ``scene: partner-benchmarks`` —
-# the scene's spec ``id`` — which the integer-only parser could not read. Both
-# were arc findings (arc_shape, visual_variety): neither could have changed a
-# pixel. So: resolve ids / titles / slugs to the 1-based index the rest of the
+# A finding whose ``scene`` the loop cannot read would make the whole next
+# batch "unscoped", and an unscoped batch re-films EVERY scene WITH VIDEO
+# (capture_scope). For example an arc judge may name a finding
+# ``scene: partner-benchmarks`` — the scene's spec ``id`` — which an integer-only
+# parser cannot read, though arc findings (arc_shape, visual_variety) cannot
+# change a pixel. So: resolve ids / titles / slugs to the 1-based index the rest of the
 # loop speaks, and put what is still unreadable in a GLOBAL bucket that decides
 # its capture by what the fix TOUCHES, not by the missing scene.
 

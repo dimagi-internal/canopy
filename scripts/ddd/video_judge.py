@@ -85,8 +85,8 @@ def find_alignment(audio_dir: str, narration: str) -> dict | None:
     sidecar recording that ``text`` (video-engine/src/lib/voiceover.ts), so the key
     is the FULL text, whitespace-normalized. A prefix match is wrong: recorded cuts
     share a required opener ("This is a quick overview of how we ..."), and a
-    25-char prefix handed every cut whichever sidecar ``os.listdir`` listed first
-    (canopy#910). Several sidecars of the same text with identical timings are
+    25-char prefix handed every cut whichever sidecar ``os.listdir`` listed first.
+    Several sidecars of the same text with identical timings are
     harmless; with different timings (e.g. another voice) the right one cannot be
     told apart, so this raises rather than pick one.
     """

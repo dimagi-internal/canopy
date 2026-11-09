@@ -259,8 +259,7 @@ def _write_private(path: Path, data: str) -> None:
     """Write `data` to `path` via a 0600 temp file in the same dir + atomic rename.
 
     No os.fchmod before Python 3.13 on Windows: an unguarded call made `canopy agent bootstrap`
-    die there before writing gog's OAuth client (2026-10-28, ace turn c10c9748 on a Windows
-    laptop aborted: credentials-canopy.json missing; failure investigation 17)."""
+    die there before writing gog's OAuth client."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-", suffix=path.suffix)
     try:
@@ -283,7 +282,7 @@ def _operator_token() -> str:
     cwd (canopy_web.resolve_token's second tier) is the wrong identity here. Explicit env
     wins outside an agent's session; inside one the workbench-token comes first, because
     there CANOPY_WEB_PAT is usually the agent's OWN PAT (its env sets it) and
-    `/credentials/resolve` refuses an agent's login (canopy#945). Otherwise whatever
+    `/credentials/resolve` refuses an agent's login. Otherwise whatever
     resolve_token finds."""
     env = os.environ.get("CANOPY_WEB_PAT", "").strip()
     try:
@@ -315,7 +314,7 @@ def hosted_identity(repo: Path) -> EmailIdentity | None:
     """The repo's identity when its mail is wholly canopy-hosted (an SES address and no
     Google account — `agent_email.hosted_only`), else None. Such an agent has no gog token
     to import or verify; asking canopy-web for one raises an owner alert about a ref the
-    agent never declares (bailey, 2026-10-25)."""
+    agent never declares."""
     try:
         ident = resolve_email_identity(Path(repo))
     except AgentEmailError:
@@ -474,7 +473,7 @@ class Bootstrapper:
         A laptop turn runs under launchd with no TTY and no GOG_KEYRING_PASSWORD, so the
         file backend (right for the cloud runner, which injects the password at boot)
         makes the agent's email dead in every turn while every check run from a shell
-        that loaded the .env passes. 2026-10-02, a second operator's ACE laptop."""
+        that loaded the .env passes."""
         if self.platform != "darwin":
             return
         cfg_path = self.gog_dir / "config.json"
@@ -632,7 +631,7 @@ class Bootstrapper:
         elif is_fleet_client(turn_client) and is_fleet_client(tok.client):
             # One app, two ways to sign in: turns resolve a `canopy` declaration to a
             # `canopy-web` token (reconcile_client) and vice versa. The cloud box's
-            # bootstrap reads it the same way (canopy-web#1112).
+            # bootstrap reads it the same way.
             rep.turn = f"OK ({tok.client}; declared {turn_client})"
         else:
             rep.turn = f"MISMATCH {turn_client}!={tok.client}"
@@ -664,9 +663,8 @@ class Bootstrapper:
         """The agent's Google login on this machine: keyring (macOS), then — unless its mail
         is canopy-hosted — token, OAuth client file, import, account mapping and (``verify``)
         one Gmail call. `bootstrap_one`'s tail, and all of `canopy agent use`'s and
-        `canopy agent google-login`'s Google step (2026-10-28, failure investigation 17:
-        `agent use` had none, so a licensee's first ace turn died on a missing
-        credentials-canopy.json)."""
+        `canopy agent google-login`'s Google step (without it a licensee's first turn would
+        die on a missing credentials-canopy.json)."""
         rep = rep or AgentReport(slug=slug)
         try:
             self.step_keyring(slug, rep)

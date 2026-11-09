@@ -6,7 +6,7 @@ the fleet delivers emails a person will send (agent-core/email-drafts.md).
 
 The Docs API has no request that inserts a building block by name. This builds the same
 5x2 table with the native block's styling constants — originally chrome-sales'
-`docs_insert_email_block`, then ACE's `lib/docs-email-block.ts` (ace#2477), ported here so
+`docs_insert_email_block`, then ACE's `lib/docs-email-block.ts`, ported here so
 every agent gets it under its OWN identity. That removes the step Eva's `email-macros` had
 to take: sharing each eva@-owned doc to chrome-sales' service account as writer before any
 block could go in.

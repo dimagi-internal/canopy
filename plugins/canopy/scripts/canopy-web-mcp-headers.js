@@ -15,15 +15,14 @@
 // .sh — it returns EMPTY with EXIT 0. That is the worst possible failure shape:
 // no error, no output, indistinguishable from success.
 //
-// What the user saw was three steps removed from the cause. No auth header was sent,
-// so canopy-web returned 401; Claude Code fell back to OAuth discovery and dynamic
-// client registration, which canopy-web did not serve then, and the connection died
-// with "Dynamic Client Registration rejected (HTTP 404)". Measured on a Windows
-// machine 2026-09-01→03: six MCP logs, the same failure in all six. The same file
-// under Git Bash emits the header correctly, which is exactly why it looked fine to
+// What the user sees is three steps removed from the cause. No auth header is sent,
+// so canopy-web returns 401; Claude Code falls back to OAuth discovery and dynamic
+// client registration, which fails when the server does not serve it, and the connection dies
+// with "Dynamic Client Registration rejected (HTTP 404)". The same file
+// under Git Bash emits the header correctly, which is exactly why it looks fine to
 // anyone testing it by hand.
 //
-// NO TOKEN IS NOW A WORKING STATE, NOT A FAILURE (canopy-web #1034, 2026-09-30).
+// NO TOKEN IS NOW A WORKING STATE, NOT A FAILURE.
 // canopy-web serves the MCP OAuth flow, so when this helper emits no header the 401
 // leads Claude Code to a browser sign-in on canopy-web, and the person is connected
 // as themselves. The token sources below still come first, because every one of them
@@ -78,7 +77,7 @@ function confinedProfile() {
   return { confined: true, profile: null };
 }
 
-// ARCHIVE / MARKETPLACE MODE (`--archive`, canopy#851). `/canopy:setup` registers the
+// ARCHIVE / MARKETPLACE MODE (`--archive`). `/canopy:setup` registers the
 // person's agent catalog (`canopy-agents`, `/plugins/marketplace.json`) in USER
 // settings with this helper as its `headersHelper`, so the catalog fetch (and any
 // archive download on that origin) carries the person's own canopy-web token. Claude Code runs it from
@@ -112,7 +111,7 @@ if (confined) {
   process.exit(0);
 }
 
-// A COLLEAGUE'S FULL-PROFILE session (canopy-web#1332, who-is-asking phase 5): the
+// A COLLEAGUE'S FULL-PROFILE session (who-is-asking): the
 // agent's whole profile, asked by someone who is not its owner, an admin or canopy
 // (a `full:` rule, an editor). It is not confined, but its canopy tools must run as
 // the ASKER — with the box's PAT they read every other conversation as the box's
@@ -167,14 +166,14 @@ if (scoped.scoped && !scoped.token) {
 // agent's OWN PAT from ~/.<slug>/.env, and only then the operator's
 // workbench-token file.
 //
-// This used to read the file alone. A headless cloud runner has no such file by
-// design, so it sent no header, canopy-web 401'd, and Claude Code went looking
-// for OAuth metadata at the ORIGIN — where connect-labs, sharing the domain,
-// answered with its own: "Protected resource https://labs.connect.dimagi.com/mcp/
-// does not match expected" (cloud-ec2-1, 2026-09-22). On a laptop the same gap
-// was silent the other way round: every agent's MCP calls ran as the operator.
+// Reading the file alone is not enough. A headless cloud runner has no such file by
+// design, so it would send no header, canopy-web would 401, and Claude Code would go
+// looking for OAuth metadata at the ORIGIN — where connect-labs, sharing the domain,
+// answers with its own: "Protected resource https://labs.connect.dimagi.com/mcp/
+// does not match expected". On a laptop the same gap would be silent the other way
+// round: every agent's MCP calls would run as the operator.
 
-// HOW CLAUDE CODE ACTUALLY RUNS THIS (measured on cloud-ec2-1, 2026-09-22): from
+// HOW CLAUDE CODE ACTUALLY RUNS THIS: from
 // the PLUGIN's own directory, not the session's, and with secret-looking variables
 // stripped from its environment — CANOPY_WEB_PAT does not arrive, while a plain
 // variable like HAL_GMAIL_ACCOUNT does. So neither the env PAT nor the walk-up
@@ -309,8 +308,7 @@ function pluginVersion() {
   }
 }
 
-// WHERE THE TASK COMES FROM (measured in a real `claude -p --debug`, 2026-10-18,
-// canopy#994): the cwd here is ALWAYS the plugin root, so the worktree path below
+// WHERE THE TASK COMES FROM (seen in a real `claude -p --debug`): the cwd here is ALWAYS the plugin root, so the worktree path below
 // never matches when Claude Code runs this. EMDASH_TASK_NAME does arrive (emdash
 // exports it into the session; not secret-looking, so not stripped), and so do
 // CANOPY_TURN_ID / CANOPY_SESSION_ID / CANOPY_CALLER. CLAUDE_CODE_SESSION_ID does

@@ -76,7 +76,7 @@ def check(
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text())
-            # A scene-scoped capture (canopy#785) re-films some scenes and keeps
+            # A scene-scoped capture re-films some scenes and keeps
             # the rest: only the re-filmed ones must be fresh.
             carried = [int(s) for s in manifest.get("carried_scenes") or []]
             scenes = [int(s) for s in (manifest.get("scenes_run") or []) if int(s) not in carried]

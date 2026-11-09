@@ -1,7 +1,7 @@
-"""The one client for ``GET /api/agents/<slug>/credentials/resolve`` (canopy#946).
+"""The one client for ``GET /api/agents/<slug>/credentials/resolve``.
 
 Every canopy caller that reads an agent's credentials from canopy-web goes through
-:func:`resolve`, so the Canopy Vault additions to the contract (canopy-web#1538) are made
+:func:`resolve`, so the Canopy Vault additions to the contract are made
 in one place:
 
 * ``?refs=a,b`` — when the caller needs only some values. The server returns only those
@@ -13,13 +13,12 @@ in one place:
 * ``X-Canopy-Turn-Id`` — when a runner turn is known, so the read log names the turn.
 * ``DPoP`` — a device proof (`device_key.proof_headers`) when this machine holds a
   registered device key; on an EC2 cloud runner enrolled as ``aws-iam``, an
-  ``X-Canopy-Aws-Proof`` instead (canopy-web#1549). canopy-web requires it for every
-  agent (canopy-web#2322 dropped the per-agent ``require_device_binding`` switch).
+  ``X-Canopy-Aws-Proof`` instead. canopy-web requires it for every agent.
 
 A 401 ``device_proof_required`` is turned into an error that says how to get this
 machine approved. Nothing here prints a value.
 
-**Zero-knowledge agents (canopy-web#1550).** For an agent with ZK on, canopy-web holds only
+**Zero-knowledge agents.** For an agent with ZK on, canopy-web holds only
 ciphertext and answers ``{zk: true, kv, values: {name: "zk1:…"}, wrap: {alg: "ecdh-es", …}}``
 — the agent's vault key wrapped to THIS device's ECDH key. :func:`resolve` unwraps it here
 (the ECDH key hands back Z; ``device_info(agent_id, kv, ecdh_jkt)`` binds the wrap), decrypts
@@ -44,7 +43,7 @@ from orchestrator import canopy_web, device_key
 TURN_HEADER = "X-Canopy-Turn-Id"
 #: Why this request carries no device proof (`device_key.proof_or_reason`).
 MISSING_PROOF_HEADER = "X-Canopy-Proof-Missing"
-#: Why a read outside a turn is happening (canopy-web#1563). canopy-web skips its
+#: Why a read outside a turn is happening. canopy-web skips its
 #: "read outside a turn" alert for a named box that sends ``runner-refresh``.
 PURPOSE_HEADER = "X-Canopy-Read-Purpose"
 RUNNER_REFRESH = "runner-refresh"
@@ -135,15 +134,14 @@ def resolve(slug: str, *, token: Optional[str] = None, refs: Optional[Iterable[s
     A scoped answer missing a named VALUE is re-asked unscoped (an older server, or a
     name the runtime does not declare) — unless ``fallback=False``: a caller that names
     only what it uses, extras included, must get exactly that and never everything
-    (the box's refresh, canopy-web#1563)."""
+    (the box's refresh)."""
     wanted = [r for r in dict.fromkeys(refs or []) if r]
     turn = current_turn_id() if turn_id is None else turn_id
     from orchestrator import private_runner_session
 
     if private_runner_session.in_local_turn():
         # A local session on your private runner reads with the box's own key, under your
-        # license, as you (capped only by the turn's own `acts_as`) — not with a PAT
-        # (canopy-web#1705, #1756).
+        # license, as you (capped only by the turn's own `acts_as`) — not with a PAT.
         token = private_runner_session.token() or token
     agent_ids: dict = {}
 
@@ -184,8 +182,7 @@ def runner_resolve_path(runner_id: str) -> str:
 
 def resolve_runner(runner_id: str, *, token: Optional[str] = None, base_url: Optional[str] = None,
                    transport: Optional[canopy_web.Transport] = None, ecdh=None) -> dict:
-    """A cloud runner's OWN Claude credentials, out of the vault that holds them
-    (canopy-web spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md).
+    """A cloud runner's OWN Claude credentials, out of the vault that holds them.
 
     canopy-web answers only the box's own runner token with a proof of its device key,
     and only with ciphertext: ``{vaults: [...]}`` in the shape an agent's resolve gives
@@ -247,7 +244,7 @@ def seal_runner_values(runner_id: str, values: dict, *, token: Optional[str] = N
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# zero-knowledge answers (canopy-web#1550)
+# zero-knowledge answers
 # ──────────────────────────────────────────────────────────────────────────────
 
 def zk_agent_id(slug: str, body: Optional[dict] = None, *, token: Optional[str] = None,
@@ -348,7 +345,7 @@ def no_copy_why(layer: dict) -> dict:
 def shut_vaults_note(body) -> str:
     """For a message about a missing value: the vaults this device could not open and,
     from canopy-web's diagnosis, who can fix each — "" when every layer opened. A turn
-    that only learns "no copy" improvises a remedy (2026-11-05: it asked a key holder to
+    that only learns "no copy" improvises a remedy (such as asking a key holder to
     run `canopy vault zk keep`, which cannot grant an unconfirmed machine); this is the
     real one, to print as is."""
     shut = [lay for lay in (body.get("vault_layers") if isinstance(body, dict) else None) or []
@@ -360,8 +357,7 @@ def shut_vaults_note(body) -> str:
 
 
 def merge_vault_layers(slug: str, body: dict, *, ecdh=None) -> dict:
-    """Layer the workspace vaults canopy-web lists under the agent's own values
-    (canopy-web spec 2026-10-22-vault-access-follows-canopy-access-design.md §4).
+    """Layer the workspace vaults canopy-web lists under the agent's own values.
 
     ``body["vaults"]`` is in order — root workspace first, vaults attached to the agent
     last — and a later layer wins a name clash; the agent's own ``values`` win over all.

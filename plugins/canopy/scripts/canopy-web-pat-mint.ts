@@ -55,8 +55,8 @@ const CANOPY_WEB_BASE = (
   'https://canopy.dimagi.com'
 ).replace(/\/$/, '');
 // 15 minutes, not 5. A first-time operator spends this window signing in to
-// Google, possibly picking an account and clearing MFA. Five minutes expired
-// twice on the first Windows bring-up (@smazumdar, 2026-09-01).
+// Google, possibly picking an account and clearing MFA, which five minutes
+// does not reliably cover.
 const TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_TOKEN_FILE = `${homedir()}/.claude/canopy/workbench-token`;
 const TOKEN_FILE = process.env.TOKEN_FILE_OVERRIDE || DEFAULT_TOKEN_FILE;
@@ -87,7 +87,6 @@ function defaultLabel(): string {
  * `rundll32 url.dll,FileProtocolHandler` takes the URL as a single argv entry
  * with no shell parsing, so `&` survives. The 'error' listener is what makes
  * the failure non-fatal, on every platform.
- * (Reported by @smazumdar, first Windows bring-up, 2026-09-01.)
  */
 export function browserOpenCommand(url: string, plat: string = platform()): [string, string[]] {
   if (plat === 'darwin') return ['open', [url]];
@@ -237,7 +236,7 @@ async function main(): Promise<number> {
 // pathToFileURL, NOT `file://${argv[1]}`. On Windows import.meta.url is
 // `file:///C:/...` while the template produces `file://C:...` — they can never
 // match, so main() never ran, the script exited 0 and printed NOTHING, which
-// looks exactly like success. (Reported by @smazumdar, 2026-09-01.)
+// looks exactly like success.
 if (isDirectInvocation(import.meta.url, process.argv[1])) {
   main().then((code) => process.exit(code));
 }

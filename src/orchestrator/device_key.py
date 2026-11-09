@@ -1,6 +1,6 @@
-"""This machine's device key — the thing a Canopy Vault resolve proves it holds (canopy#946).
+"""This machine's device key — the thing a Canopy Vault resolve proves it holds.
 
-canopy-web hands an agent's credentials only to a machine it has APPROVED (canopy-web#1538; always, since canopy-web#2322). The proof is an RFC 9449 DPoP
+canopy-web hands an agent's credentials only to a machine it has APPROVED, for every agent. The proof is an RFC 9449 DPoP
 JWS in a ``DPoP`` header on ``GET /credentials/resolve``, signed by a P-256 key that lives
 on this machine and nowhere else:
 
@@ -15,13 +15,13 @@ on this machine and nowhere else:
   ``ncrypt.dll`` (no native dependency), with no UI policy so it never prompts. Only a
   marker (``tpm.json``) is on disk. See :mod:`orchestrator.device_key_tpm`.
 * **aws-iam** — on an EC2 cloud runner, no key at all: the box's instance ROLE is its
-  identity (the HashiCorp Vault AWS-auth pattern, canopy-web#1549). A resolve carries an
+  identity (the HashiCorp Vault AWS-auth pattern). A resolve carries an
   ``X-Canopy-Aws-Proof`` header — a SigV4-signed, unsent ``sts:GetCallerIdentity`` that
   canopy-web replays to STS. See :mod:`orchestrator.device_key_aws`. Marker: ``aws-iam.json``.
 * **software** — anywhere else (no enclave, no TPM, not EC2): a P-256 key in a 0600 PEM
   (``sw.pem``), registered as ``kind=software`` so canopy-web can tell them apart. On
   Windows, where a file mode protects nothing, the PEM is sealed at rest with DPAPI
-  (CurrentUser scope), exactly as canopy-web's runner does (canopy-web#2203) — the two
+  (CurrentUser scope), exactly as canopy-web's runner does — the two
   share this file on a box with both, so each must read what the other writes.
 
 Enrollment: ``POST /api/runner-device-keys/`` registers the public JWK for a runner and
@@ -30,7 +30,7 @@ with a passkey step-up, after which its status is ``active``. The answer is cach
 ``status.json`` beside the key, so a resolve can decide whether to attach a proof without
 a round trip.
 
-**The ECDH key (zero-knowledge vault, canopy-web#1550).** Beside the signing key, each
+**The ECDH key (zero-knowledge vault).** Beside the signing key, each
 machine holds a P-256 key-AGREEMENT key, which a ZK agent's vault key is wrapped to
 (ECDH-ES, `orchestrator.vault_zk`). It is a separate key because the Secure Enclave's keys
 are per-purpose: ``se-ecdh.key`` (the helper's ``ecdh-create`` / ``ecdh-public-jwk`` /
@@ -94,11 +94,11 @@ KINDS =(KIND_SE, KIND_TPM, KIND_AWS_IAM, KIND_SOFTWARE)
 
 #: How a person gets the helper built or rebuilt — said the same way everywhere. The
 #: updater is the runner installer at a fixed path; the runner also enrolls again on
-#: its own once the helper changes (canopy-web#1727), so no runner restart is needed.
+#: its own once the helper changes, so no runner restart is needed.
 REBUILD_HELPER = ("run `~/.canopy/canopy-runner-update` (the runner's own updater — it "
                   "builds ~/.canopy/bin/canopy-device-key)")
 
-#: The ECDH (zero-knowledge vault, canopy-web#1550) key needs a newer helper than the
+#: The ECDH (zero-knowledge vault) key needs a newer helper than the
 #: signing key. Not an error for the signing key; the runner retries by itself.
 ECDH_HELPER_TOO_OLD = ("this Mac's canopy-device-key is too old to make the ECDH key the "
                        "zero-knowledge vault needs (canopy-web#1550). The runner enrolls it by "
@@ -123,7 +123,7 @@ DIR_ENV = "CANOPY_DEVICE_KEY_DIR"
 PROOF_STATUSES = ("active", "pending")
 
 REGISTER_PATH = "/api/runner-device-keys/"
-#: A runner whose token was revoked asks here instead (canopy-web#1611): anonymous,
+#: A runner whose token was revoked asks here instead: anonymous,
 #: the owner's token in the body plus a proof of the key; lands pending only.
 REQUEST_PATH = "/api/runner-device-key-requests/"
 
@@ -225,8 +225,8 @@ def _write_private(path: Path, data: bytes) -> None:
 
 
 # --- the software key at rest on Windows (DPAPI) ---------------------------------
-# Byte-for-byte the format canopy-web's runner writes (runner device_proof.py,
-# canopy-web#2203): a DPAPI blob, or a plain PEM from before it.
+# Byte-for-byte the format canopy-web's runner writes (runner device_proof.py):
+# a DPAPI blob, or a plain PEM.
 
 _log = logging.getLogger(__name__)
 CRYPTPROTECT_UI_FORBIDDEN = 0x1
@@ -588,12 +588,12 @@ def ensure(*, allow_software: Optional[bool] = None, kind: Optional[str] = None,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# the ECDH key (zero-knowledge vault, canopy-web#1550)
+# the ECDH key (zero-knowledge vault)
 # ──────────────────────────────────────────────────────────────────────────────
 
 class EcdhUnsupported(DeviceKeyError):
     """This machine's key backend cannot make an ECDH key (e.g. a helper built before
-    canopy-web#1550) — enrollment proceeds without one."""
+    ECDH support) — enrollment proceeds without one."""
 
 
 @dataclass
@@ -861,10 +861,10 @@ def ensure_ecdh(signing_kind: str, *, runner: Runner = subprocess.run,
             key = tpm.create_ecdh_key(tpm.ECDH_KEY_NAME, tpm_lib)
             jwk = key.public_jwk()
         except Exception as e:  # noqa: BLE001 — a TPM that will not make one
-            # Fall back to a software PEM, as aws-iam does. Raising here used to enroll
-            # the TPM signing key with NO ECDH key: the device was approved and signed in,
-            # but no vault key could ever be wrapped to it, and "Grant pending" listed
-            # nothing to grant (a Windows laptop, DIM-SI-W021, 2026-10-26).
+            # Fall back to a software PEM, as aws-iam does. Raising here would enroll
+            # the TPM signing key with NO ECDH key: the device would be approved and signed in,
+            # but no vault key could ever be wrapped to it, and "Grant pending" would list
+            # nothing to grant.
             note = f"the TPM would not make an ECDH key ({str(e)[:200]}); using a software key"
         else:
             _write_private(tpm_ecdh_path(), json.dumps({"provider": tpm.PROVIDER,
@@ -965,7 +965,7 @@ def proof_or_reason(method: str, url: str, *, runner: Runner = subprocess.run,
                     which: Callable[[str], Optional[str]] = shutil.which) -> tuple[dict, str]:
     """``(proof_headers, "")``, or ``({}, why there is none)`` — the reason a resolve sends
     as ``X-Canopy-Proof-Missing`` so the owner's vault alert can say which process asked
-    without a proof and why (2026-10-28: a trellis alert named only the box). Never a
+    without a proof and why (an alert that named only the box would not say). Never a
     secret; never raises."""
     who = _os_user()
     try:
@@ -1027,7 +1027,7 @@ def runner_id_from_config(path: Optional[Path] = None) -> str:
 
 
 #: `platform.system()` reports the kernel; "Darwin" read to a Mac owner as a machine
-#: they had never heard of when it reached them in an approval email (2026-10-21).
+#: they had never heard of when it reached them in an approval email.
 _OS_NAMES = {"Darwin": "macOS"}
 
 
@@ -1060,14 +1060,14 @@ def enroll(*, runner_id: str, call: Call, label: str = "", allow_software: Optio
     ``owner_token``: when canopy-web refuses the token (401 — revoked in a cleanup
     before this box ever had a key), ask through ``REQUEST_PATH`` instead with that same
     token and a proof of the key: canopy-web makes a PENDING key and emails its owner the
-    approve link (canopy-web#1611)."""
+    approve link."""
     if not runner_id:
         raise DeviceKeyError("no runner id — pair this machine as a runner first "
                              "(~/.canopy/runner.json has none), or pass --runner")
     key, created = ensure(allow_software=allow_software, kind=kind, runner=runner,
                           which=which, **ensure_kw)
     label = label or default_label()
-    # The ECDH key a zero-knowledge vault key is wrapped to (canopy-web#1550). Best
+    # The ECDH key a zero-knowledge vault key is wrapped to. Best
     # effort: a backend that cannot make one enrolls the signing key exactly as before.
     ecdh: Optional[EcdhKey] = None
     ecdh_note = ""

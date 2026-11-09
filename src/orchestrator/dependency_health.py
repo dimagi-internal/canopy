@@ -1,7 +1,7 @@
 """External-dependency health for an agent box.
 
-Both checks here exist because of one incident, 2026-09-07, and neither the
-existing doctor checks nor `canopy agent doctor --all` could see any part of it.
+Both checks here exist because the failure they cover is invisible to the
+other doctor checks and to `canopy agent doctor --all`.
 
 `gog` is installed by Homebrew, whose prefix is VERSION-QUALIFIED
 (`/opt/homebrew/Cellar/gogcli/<version>/bin/gog`). macOS keychain items record
@@ -16,7 +16,7 @@ inbox poll went from an 8s to a 26s median gap while it sat waiting on dialogs
 nobody was there to answer. Worse, the obvious remedy does not work: gog is
 ad-hoc signed, so "Always Allow" cannot durably attach a new grant (securityd
 logs `-34018 Client has neither ... entitlements`) and the prompt returns on
-the next read. On 2026-09-07 that was clicked ~50 times without effect.
+the next read. Clicking it repeatedly has no effect.
 
 The repair is to re-mint the items so their ACL pins the CURRENT binary: read
 each refresh token out once, delete the stale item, and `gog auth import` it
@@ -195,7 +195,7 @@ def check_gog_keychain_trust(
     future upgrade without being taught about it.
 
     It is not sufficient on its own, though: a box can hold an old item that gog
-    still reads silently (2026-10-14). So when the dates trip, the verdict is
+    still reads silently. So when the dates trip, the verdict is
     confirmed against securityd's prompt log. ``gog_used`` says whether gog was
     seen working in this same doctor run (the live `Email auth (gog)` call) —
     zero prompts only proves trust if gog actually read the keychain meanwhile.
@@ -218,8 +218,8 @@ def check_gog_keychain_trust(
             name, True,
             f"token for {identity.account} was minted "
             f"{minted:%Y-%m-%d} against the current gog ({binary})")
-    # 2026-10-14: false FAIL on jjackson's Mac — 0 prompts/24h while gog polled 5
-    # mailboxes; cdat heuristic alone over-fires. Confirm against the prompt log.
+    # The cdat date heuristic alone over-fires (a Mac with 0 prompts/24h while gog
+    # polled 5 mailboxes); confirm against the prompt log.
     prompts = _keychain_prompt_count(runner=runner)
     if prompts == 0 and gog_used:
         return CheckResult(

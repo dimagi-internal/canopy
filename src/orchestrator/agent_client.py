@@ -70,12 +70,8 @@ def emdash_task_from_cwd(cwd: "Optional[Path]" = None) -> str:
     on `emdash_task_id` exactly, so an agent closing out from a dispatched worktree
     never found its own dispatch row and orphaned a fresh one instead.
 
-    Measured 2026-09-05 across the fleet — every close-out filed from a dispatched
-    worktree carried the prefix and attached to nothing: `emdash-echo-api-611f-0901-1248`,
-    `emdash-ace-api-2146-0904-1204`, `emdash-hal-api-0255-0904-1210`. The docstring above
-    was already right about the danger; the regex just captured a string that could never
-    match. This is the third place the same prefix has bitten (ada's close-sessions
-    current-task fail-safe was the second), which is why it is stripped here, at the one
+    A close-out filed from a dispatched worktree (`emdash-echo-api-611f-0901-1248`) would
+    carry the prefix and attach to nothing, so the prefix is stripped here, at the one
     function that derives the id, rather than compensated for at each reader.
     """
     name = (cwd or Path.cwd()).name
@@ -173,7 +169,7 @@ class AgentClient:
         return self._call("GET", f"/api/agents/{self.slug}/")
 
     def move(self, workspace: str, *, dry_run: bool = False) -> dict:
-        """Move the agent, with its history, to `workspace` (canopy-web#1532).
+        """Move the agent, with its history, to `workspace`.
         `dry_run` changes nothing and returns the same report."""
         path = f"/api/agents/{self.slug}/move" + ("?dry_run=1" if dry_run else "")
         return self._call("POST", path, {"workspace": workspace})
@@ -185,7 +181,7 @@ class AgentClient:
         treats a failed read as manual (fail safe), and that fallback belongs to
         the caller so it stays a visible decision, not a swallowed error.
 
-        `gated` was this mode's name before 2026-08-01 and is normalized here, so
+        `gated` is an alias of `manual` and is normalized here, so
         a canopy that has updated ahead of its canopy-web still reads a mode it
         understands instead of an unknown string. Only the safe mode has an
         alias — nothing silently resolves TO `auto`."""

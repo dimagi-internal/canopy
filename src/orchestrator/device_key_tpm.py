@@ -1,4 +1,4 @@
-"""A Windows machine's device key in its TPM (canopy-web#1549, Phase 1b).
+"""A Windows machine's device key in its TPM.
 
 The key is an ECDSA P-256 key made by the CNG "Microsoft Platform Crypto Provider" — the
 provider backed by the TPM 2.0 — and persisted there under the name ``canopy-device-key``.
@@ -23,7 +23,7 @@ whenever the provider cannot be opened (no TPM, TPM disabled), and the caller fa
 a software key. The ``lib`` seam lets the unit tests drive the wrapper with a fake
 ``ncrypt`` — they cannot exercise a real TPM, which needs Windows hardware.
 
-**The ECDH key (zero-knowledge vault, canopy-web#1550).** A second persisted key,
+**The ECDH key (zero-knowledge vault).** A second persisted key,
 ``ECDH_P256`` named ``canopy-device-ecdh`` (signing and key-agreement keys are separate, as
 on the Secure Enclave), made with key usage ``NCRYPT_ALLOW_KEY_AGREEMENT_FLAG`` and again no
 UI policy. A vault-key wrap's ephemeral public point is imported as an
@@ -91,7 +91,7 @@ def load_ncrypt():
                            p(d), d],
         "NCryptDeleteKey": [_HANDLE, d],
         "NCryptFreeObject": [_HANDLE],
-        # the ECDH key (canopy-web#1550)
+        # the ECDH key
         "NCryptSetProperty": [_HANDLE, w, ctypes.c_void_p, d, d],
         "NCryptImportKey": [_HANDLE, _HANDLE, w, ctypes.c_void_p, p(_HANDLE), ctypes.c_void_p,
                             d, d],
@@ -271,8 +271,8 @@ class TpmKey:
 
 
 class TpmEcdhKey(TpmKey):
-    """The persisted ECDH P-256 key a zero-knowledge vault key is wrapped to (canopy-web
-    #1550). It never signs; it answers ECDH against a wrap's ephemeral public point."""
+    """The persisted ECDH P-256 key a zero-knowledge vault key is wrapped to.
+    It never signs; it answers ECDH against a wrap's ephemeral public point."""
 
     ALGORITHM = ECDH_ALGORITHM
     PUBLIC_MAGIC = P256_ECDH_PUBLIC_MAGIC

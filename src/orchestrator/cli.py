@@ -192,10 +192,9 @@ def sessions_list(hours, as_json, project, min_turns):
         suffix = f"/{project}"
         recent = [s for s in recent if (s.get("repo") or "").endswith(suffix)]
 
-    # Drop trivial sessions before they reach LLM-driven analysis. A 2026-05-02
-    # session-review run wasted ~2 min on 4 sessions that returned 0 observations
-    # because they were too short to contain meaningful friction signal. Use
-    # --min-turns ~5 to skip these in batch contexts.
+    # Drop trivial sessions before they reach LLM-driven analysis: sessions too short
+    # to contain meaningful friction signal return 0 observations and waste an LLM
+    # call each. Use --min-turns ~5 to skip these in batch contexts.
     if min_turns > 0:
         recent = [s for s in recent if s.get("user_msgs", 0) >= min_turns]
 
@@ -1541,9 +1540,9 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
         # not in any local ~/.claude/projects, so the corpus is legitimately whole (every
         # readable source WAS read) while attributing nothing. The BLIND SCAN guard below
         # cannot catch it: that one fires on considered>0 with none attributed, and here
-        # nothing was even a candidate. Measured 2026-09-14: `agent-review echo --hours 75`
-        # printed "Turns reviewed: 0 / No findings synthesized" while the harness held two
-        # completed echo turns in that window, both run on cloud-ec2-1 — so echo has been
+        # nothing was even a candidate. Without the hint, `agent-review echo --hours 75`
+        # prints "Turns reviewed: 0 / No findings synthesized" while the harness holds
+        # completed echo turns in that window, all run on cloud-ec2-1 — so echo would be
         # structurally invisible to the fleet's own self-improvement lens, silently.
         # Best-effort and never fatal: an unreachable canopy-web must not break a review
         # that is otherwise complete (offline runs, --no-llm) — we just lose the hint.
@@ -1663,11 +1662,11 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
     elif not findings and dropped:
         pass  # all findings were already-shipped; the drop list above says so
     elif not findings and not no_llm:
-        # Guarded on there ACTUALLY being nothing. This used to be a bare `elif not
-        # no_llm`, so every successful run — the one that had just printed
-        # `Findings (N):` — fell through and contradicted itself with "No findings
-        # synthesized." two lines later. A reader (or a cron) skimming the tail of the
-        # output reads the LAST line, which is the one that was wrong.
+        # Guarded on there ACTUALLY being nothing: a bare `elif not no_llm` would let
+        # every successful run — the one that had just printed `Findings (N):` — fall
+        # through and contradict itself with "No findings synthesized." two lines
+        # later. A reader (or a cron) skimming the tail of the output reads the LAST
+        # line, so it must be true.
         click.echo("\nNo findings synthesized.")
 
 
@@ -1690,7 +1689,6 @@ def fleet_align_cmd(extra_repos, hours, no_evidence, no_llm, model, as_json):
     Claude Code agent by the `fleet-align` skill — matching canopy's pipeline-stops-at-proposals
     architecture — not done by brittle programmatic splicing here. `--json-output` emits each
     distribute finding's change brief (target file + the template's reference text) for that agent.
-    Design record: the fleet-align design under docs/superpowers/specs/.
     """
     import json as json_mod
     import os

@@ -1,17 +1,16 @@
 """The concept rubric is the authority for WHICH dimensions exist — read it, don't restate it.
 
-canopy#491: the shipped ``rubric.yaml`` declared seven weighted dimensions while
-``SKILL.md``'s dispatch prose said "It has six dimensions: …" and then told the
-judge to read the rubric in full.  When the two disagreed the prose won, silently.
-Three consecutive ACE runs judged six dimensions and recorded a weight vector that
-matched neither file.  The omitted dimension was ``use_case_soundness`` — whose
-findings are always ``route=CONCEPT, fix_kind=redesign`` — so the loop
-under-detected exactly the class it most needed to catch.
+``rubric.yaml`` declares the weighted dimensions, and ``SKILL.md``'s dispatch prose
+must not restate them: if the two disagreed the prose would win, silently, and the
+judge would score a dimension set and weight vector that match neither file.  An
+omitted ``use_case_soundness`` dimension would be the worst case — its findings are
+always ``route=CONCEPT, fix_kind=redesign`` — so the loop would under-detect exactly
+the class it most needs to catch.
 
 This module is the single reader.  ``python -m scripts.ddd.concept_rubric
 <rubric.yaml>`` prints the dimension set the judge must score; the companion test
 (``tests/ddd/test_concept_eval_rubric.py``) fails CI if SKILL.md's prose ever
-drifts from it again.
+drifts from it.
 """
 from __future__ import annotations
 

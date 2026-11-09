@@ -18,25 +18,23 @@ there is no case where the caller should have to remember this.
 seconds carrying `result_note: "created session '<name>'"`. That is the runner's job
 finishing, not the agent's turn succeeding — no evidence the agent read anything, did
 anything, or exited cleanly. `summarize_turn` therefore reports `launched` +
-`verified: False`, never "complete". (A 5-second `done` was reported as a verified win
-on 2026-07-23; this is that miss, encoded.)
+`verified: False`, never "complete". (A 5-second `done` is not a verified win.)
 
 **3. Re-running a dispatch spawns a second session.** The idempotency key is derived
 from (agent, title, day) so the same work dispatched twice is one turn. With NO title,
 the work is the PROMPT, so a hash of the whole prompt stands in for the title: an
-identical retry still dedupes, a different (say, corrected) brief is a new turn. It
-used to be `prompt[:80]`, and every untitled dispatch whose brief opened the same way
-collapsed onto the first — a corrected re-dispatch to ace on 2026-10-04 returned the
-earlier, finished turn as "launched (unverified)" and nothing ran. A dispatch
+identical retry still dedupes, a different (say, corrected) brief is a new turn. A
+prefix of the prompt would not do: every untitled dispatch whose brief opened the same way
+would collapse onto the first, and a corrected re-dispatch would return the
+earlier, finished turn as "launched (unverified)" and nothing would run. A dispatch
 PINNED to a runner folds the runner into that key, so it never dedupes onto an
 unpinned dispatch of the same title/day (which could be sitting on the wrong box).
 
 **4. A dispatched prompt is indistinguishable from a typed one downstream.** The runner
 hands the prompt to Claude Code as input, so the transcript records `origin: {kind:
 human}` / `promptSource: typed` — truthfully, from the harness's point of view. Nothing
-downstream can tell an agent's brief from something Jonathan typed, and `agent-review`'s
-`human_corrections` lens mined the briefs as the human shouting at the agent (canopy #488;
-measured 5 of 6 reported corrections on hal 2026-08-14). This layer is the one place that
+downstream can tell an agent's brief from something a human typed, and `agent-review`'s
+`human_corrections` lens would mine the briefs as the human shouting at the agent. This layer is the one place that
 KNOWS, so it says so: `stamp_dispatched` appends a marker the extractor strips.
 
 **5. Some work can only run on ONE box** (a file that exists only in one macOS account,
@@ -96,7 +94,7 @@ class DispatchError(Exception):
 
 
 TURN_MODES = ("auto", "manual")
-#: The lower roles a turn may be started as (canopy-web#1705) — only ever lowers.
+#: The lower roles a turn may be started as — only ever lowers.
 ACTS_AS = ("editor", "viewer")
 
 
@@ -106,9 +104,8 @@ def github_links_in(prompt: str, existing=()) -> list[dict]:
 
     The card is the only thing `project-audit` check (f) reads for a dispatch's GitHub work,
     and (f) reads links, not notes. A brief that names its issue only in its prose therefore
-    filed a card nothing could ever see finish: on 2026-10-26 hal's board held two
-    "Fix canopy-web#2092" dispatch cards, still in progress, eleven hours after #2113 had
-    fixed and closed the issue. Copying the brief's own URLs onto the card is what lets (f)
+    filed a card nothing could ever see finish: a "Fix canopy-web#N" dispatch card stays
+    in progress after the issue is fixed and closed. Copying the brief's own URLs onto the card is what lets (f)
     flag it. Shares (f)'s regex so the two can't disagree about what counts as a ref."""
     from orchestrator.project_audit import _GITHUB_REF_RE
 
@@ -138,7 +135,7 @@ def derive_idempotency_key(slug: str, title: str, day: str, runner_id: str = "",
     Scoped to the day rather than forever: dispatching the same title tomorrow is
     usually a deliberate re-run, and a permanent key would silently swallow it.
 
-    `runner_id` (the resolved UUID, never the name — `--runner jj-mbp-cdp` and
+    `runner_id` (the resolved UUID, never the name — `--runner my-laptop` and
     `--runner <its uuid>` are the same pin) joins the key only when the dispatch is
     pinned. Otherwise a pinned re-dispatch of work first sent unpinned would dedupe onto
     the unpinned turn — which may be the very turn that landed on the wrong box. Unpinned
@@ -166,7 +163,7 @@ def resolve_runner(rows: list[dict], needle: str) -> dict:
     """The one runner `needle` names — by exact NAME or UUID. Raises on none or many.
 
     Exact only, no substring: a pin exists because the work must land on ONE specific
-    box, so guessing between `jj-mbp-cdp` and a hypothetical `jj-mbp-cdp-2` is exactly
+    box, so guessing between `my-laptop` and a hypothetical `my-laptop-2` is exactly
     the wrong-box outcome the flag exists to prevent.
     """
     needle = (needle or "").strip()
@@ -279,13 +276,12 @@ def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
     # sender legible to the receiving agent and to a transcript reader, and invisible to
     # anything querying the queue: canopy-web writes the marker and never parses it, and
     # `GET /api/harness/turns/` cannot filter on it. So "which turns did I dispatch?" —
-    # the question any agent must answer to follow up on its own work — had no answer.
+    # the question any agent must answer to follow up on its own work — has no answer from the queue.
     #
     # The thread_key is not a substitute. It encodes the TARGET (`dispatch-<target>-<hash>`),
     # so an agent reading it back cannot tell its own dispatches from another agent's to the
-    # same target, and would follow up on work it never sent. (2026-09-05: ada's
-    # session-review selected on `thread_key.startswith("dispatch-")` and would have closed
-    # emdash sessions that hal's dispatch-work had spawned.)
+    # same target, and would follow up on work it never sent (a session-review selecting on
+    # `thread_key.startswith("dispatch-")` would close sessions another agent's dispatch spawned).
     #
     # origin_ref is free-form JSON server-side, so this needs no migration and no canopy-web
     # change — it is readable through the existing turns projection the moment it is written.
@@ -443,10 +439,9 @@ def local_agent_slug(start: str | Path | None = None) -> str:
     return ""
 
 
-# A PERSON dispatching from their own Claude Code, outside any agent repo. The fallback used to
-# be "another canopy agent", which was simply false for them: 2026-10-19 a teammate's two
-# `canopy agent dispatch --slug ace` tests landed on Jonathan's laptop labelled as agent work,
-# and the receiving session had to call who_is_asking to discover a human had sent them. Still
+# A PERSON dispatching from their own Claude Code, outside any agent repo. Labelling that as
+# "another canopy agent" would be false: the receiving session would otherwise have to call
+# who_is_asking to discover a human sent it. Still
 # not approval for an outbound action — what this person may authorize is the caller envelope's
 # call, not the prompt's.
 _PERSON_PROVENANCE = (
@@ -542,9 +537,9 @@ def summarize_turn(turn: dict) -> dict:
 def waiting_reason(events) -> str:
     """The newest explanation canopy-web wrote on a QUEUED turn (`waiting` events), or "".
 
-    canopy-web says why a queued turn is still queued -- "jj-mbp-cdp is online but has not asked
+    canopy-web says why a queued turn is still queued -- "my-laptop is online but has not asked
     for work for 5h16m", "no runner that could take it is online", the rule a runner passed it
-    over on -- as `waiting` events on the turn (canopy-web#2315). A person reading "no runner has
+    over on -- as `waiting` events on the turn. A person reading "no runner has
     claimed it yet" should not have to know to fetch them."""
     rows = events.get("events") if isinstance(events, dict) else events
     for e in reversed(rows or []):
@@ -558,9 +553,9 @@ def waiting_reason(events) -> str:
     return ""
 
 
-# ── dispatch is for unattended work (canopy-web#1955) ──────────────────────────────────────
+# ── dispatch is for unattended work ──────────────────────────────────────
 # Two `connect` editors asked ACE 17 read-only questions as one-shot dispatches from their own
-# Claude Code (2026-10-23): neither had run `canopy agent use ace`, so `dispatch` was the only
+# Claude Code: neither had run `canopy agent use ace`, so `dispatch` was the only
 # agent command their Claude could find. Each question became a fresh cloud session, cut at
 # 2,000 chars, and every follow-up redid the work. A member who may use an agent never needs
 # to dispatch to reach it; dispatch hands work to a runner to do unattended. So a PERSON who
@@ -631,7 +626,7 @@ def local_use_note_for(slug: str, call) -> str:
     return local_use_note(slug)
 
 
-# ── a follow-up reaches the session it follows (canopy-web#1955 point 2) ───────────────────
+# ── a follow-up reaches the session it follows  ───────────────────
 _UUID_RX = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 
@@ -648,7 +643,7 @@ def session_send_path(session_ref: str) -> str:
 
 
 # A dispatch hands back only a TURN id, and a turn's canopy session is what `reply` sends into.
-# canopy-web names it on the turn (`canopy_session_id`, canopy-web#1974); a turn id and a
+# canopy-web names it on the turn (`canopy_session_id`); a turn id and a
 # session id are both bare UUIDs, so a bare UUID is read as a turn first and, if canopy-web
 # knows no such turn, as a session. A link is always a session (no page addresses a turn).
 

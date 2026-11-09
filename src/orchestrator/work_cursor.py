@@ -38,7 +38,7 @@ and never suppresses an item it cannot positively account for.
 An item is NEW when its id is unknown, or when its timestamp is newer than the one we
 recorded for that id. Both stamps matter and neither alone is sufficient: the id says
 *which* thing, the timestamp says *which version of it*. Below `pruned_before` the map
-can no longer distinguish processed from never-seen, so items there are treated as seen
+cannot distinguish processed from never-seen, so items there are treated as seen
 — bounded memory has to cost something, and re-reading the distant past every run is the
 worse cost. Callers bound their own lookback window; that, not the watermark, is the
 cost control.

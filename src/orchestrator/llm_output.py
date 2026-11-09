@@ -4,39 +4,37 @@ FRAMEWORK tier (see `TIERS.md`): generic, stdlib+yaml only, agent-agnostic. Ever
 `claude -p` gate in the tree asks for "a YAML list" and then has to cope with what a
 model actually returns, which is routinely *a sentence, then a fenced block*.
 
-This module exists because that coping logic was copy-pasted five times — in
+This module is the one place that coping logic lives, shared by
 `agent_review.parse_findings`, `analyzer.parse_analysis_output`,
 `proposer.parse_proposal_output`, `verify_findings._parse_verdict_output` and
-`harvest._looks_like_empty_yaml_list` — each carrying the identical defect: the fence
-was only stripped when the response *started* with it (`text.startswith("```")`), so a
-preamble before the block meant the whole response went to `yaml.safe_load` as prose,
-returned a str, failed the `isinstance(result, list)` check, and the completed verdict
-was discarded.
+`harvest._looks_like_empty_yaml_list`. Stripping a fence only when the response
+*starts* with it (`text.startswith("```")`) is not enough: a preamble before the block
+would send the whole response to `yaml.safe_load` as prose, which returns a str, fails
+the `isinstance(result, list)` check, and discards the completed verdict.
 
-Why that mattered enough to centralise (canopy#487): the callers are *gates*. A gate
+Why that matters enough to centralise: the callers are *gates*. A gate
 that cannot read its own verdict does not fail loudly-and-wrongly, it declines to run —
 `agent-review` then hands findings to the caller stamped UNVERIFIED. The gate's own
-docstring calls a silent no-op "worse than no gate"; the parser upstream of it was
-producing exactly that, on the single most common answer shape there is. Measured
-2026-08-14: a verify pass that had done the work and reached a verdict was thrown away
-because it introduced the block with one sentence.
+docstring calls a silent no-op "worse than no gate", and a parser that required a leading
+fence would produce exactly that on the single most common answer shape there is: a verify
+pass that did the work and reached a verdict would be thrown away because it introduced
+the block with one sentence.
 
 The tolerance is deliberately ordered, most-explicit first, so a well-formed answer is
 never reinterpreted by a looser rule:
 
   1. the contents of each fenced block, in order of appearance;
-  2. the whole response with fence lines removed (the legacy path — preserved so a
-     bare fenced answer parses exactly as it did before);
+  2. the whole response with fence lines removed (so a bare fenced answer still parses);
   3. the tail starting at the first YAML list item, for an answer that was never fenced.
 
 Across those candidates a **list of mappings** wins over any other list, because that is
 what every caller consumes; it is what separates a real verdict block from a prose
 bullet list that merely happens to parse. Only if no candidate yields mappings do we
-accept a bare list, which keeps the legacy contract (including a genuine empty `[]`,
+accept a bare list, which keeps the established contract (including a genuine empty `[]`,
 which `harvest` must still be able to tell apart from garbage).
 
 What is NOT tolerated, on purpose: a response with no parseable list at all still
-returns `[]`, so every caller's loud "did not parse" path stays exactly as it was. The
+returns `[]`, so every caller's loud "did not parse" path stays intact. The
 point is to stop discarding verdicts that are *present*, never to invent one.
 """
 from __future__ import annotations

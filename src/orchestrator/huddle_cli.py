@@ -29,7 +29,7 @@ Drive (`huddle_store`).
     view      → the huddle page URL
 
 The leader's procedure (what to run in what order, and the judgment between the steps) is
-`plugins/canopy/agent-core/huddle.md`. Design record: the huddle design under docs/superpowers/specs/.
+`plugins/canopy/agent-core/huddle.md`.
 """
 from __future__ import annotations
 
@@ -1212,8 +1212,8 @@ _ANSWER_WORDS = {"co-sign": "already said yes (co-signed)", "amend": "asked for 
 
 def _others_line(p: dict, amender: str) -> str:
     """Who else the proposal involves and where they stand — so nobody in the thread invents a
-    side conversation for them (first live thread, 2026-10-08: the author told the asker "Ace's
-    side is a separate thread" when Ace had simply co-signed)."""
+    side conversation for them (otherwise an author may tell the asker "Ace's
+    side is a separate thread" when Ace has simply co-signed)."""
     lead = p.get("lead")
     others = [m for m in H.partners_of(p) if m not in (lead, amender)]
     if not others:
@@ -1352,7 +1352,7 @@ def _task_fields(p: dict, plan: dict, page: str) -> tuple[dict, list[dict]]:
 _TRAILING_PARENS = re.compile(r"\s*\(([^()]*)\)\s*$")
 _PROJECT_EXT_ID = re.compile(r"\(\s*(P\d+)\s*\)", re.I)
 # A LEADING ref, as members also write it: "P1 IDM AI Talk", "P1: IDM AI Talk". Missing it
-# filed "P1 IDM AI Talk" as a new project beside P1 "IDM AI Talk" (eva, 2026-10-08).
+# filed "P1 IDM AI Talk" as a new project beside P1 "IDM AI Talk".
 _LEADING_EXT_ID = re.compile(r"^\s*(P\d+)(?:\s*[:\u2013\u2014-]\s*|\s+)(?=\S)", re.I)
 
 

@@ -98,10 +98,10 @@ def holder() -> str:
 
     The user is the PROCESS's account (uid), never ``getpass.getuser()``: that
     reads ``$LOGNAME`` first, and emdash sessions run with ``LOGNAME=root``, so
-    every macOS account on one machine (haldimagi, ace, jj) reported
-    ``root@<host>`` (2026-10-04, the first live run). Two runners then looked
+    every macOS account on one machine reports
+    ``root@<host>`` (the account name is lost). Two runners would then look
     like one, and :func:`push` FORCES a 409 from "this same runner" — a real
-    conflict between two accounts would have been silently overwritten.
+    conflict between two accounts would be silently overwritten.
     """
     try:
         import pwd
@@ -192,7 +192,7 @@ def _call(method: str, path: str, body: dict | None = None, query: dict | None =
         except Exception:
             payload = {}
         if is_workspace_required(exc.code, raw) and not path.startswith("/api/w/"):
-            # canopy-web#1411: an unpinned list by a caller in two organisations.
+            # canopy-web refuses an unpinned list by a caller in two organisations.
             # A DDD run lives in the DDD workspace, so read it there.
             from scripts.ddd.auth import resolve_ddd_workspace
 
@@ -239,7 +239,7 @@ def resolve(narrative: str, ddd_dir: Path) -> dict:
                 "project_name": proj.get("name"), "from_run": run["ext_id"],
             }
     repo = repo_slug(ddd_dir) or ""
-    # The fleet-wide project list (canopy-web#1249 retired `/api/agent-runs/projects/`).
+    # The fleet-wide project list.
     status, projects = _call("GET", PROJECTS_PATH, query={"repo_slug": repo})
     projects = _ok(status, projects, "list agent projects") or []
     status, agents = _call("GET", "/api/agents/")

@@ -151,10 +151,10 @@ def project_dispatch_cmd(project_name, workspace, prompt, prompt_file, title,
         )
 
         # Unconditional. The escape hatch (`--no-preflight`) existed because this
-        # answer could not be trusted: the fleet was invisible to non-owners (#509)
-        # and the capability list was hand-typed (#513). Both are fixed server-side,
-        # so a refusal here is a fact about the tenant — and routing around it is
-        # precisely what left a turn queued forever in #428.
+        # answer could not be trusted: the fleet was invisible to non-owners
+        # and the capability list was hand-typed. Both are fixed server-side,
+        # so a refusal here is a fact about the tenant — and routing around it
+        # leaves a turn queued forever.
         # Read the fleet of the tenant this turn is going INTO, not the union of
         # every workspace the caller belongs to — see `_runners_path`.
         fleet = _fetch_runners(ws)

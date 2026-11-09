@@ -2,7 +2,7 @@
 
 Why this module exists
 ----------------------
-On the first live v1 run every fix batch paid the full outer loop before a
+On a v1 run every fix batch would pay the full outer loop before a
 single frame could be judged: build 15–22 min, CI 7–9, deploy 8–11, render
 2.5–5.8, judge 4–7 min and ~450k tokens (concept ~170k, user ~150k, arc
 ~130k). Most batches only needed the concept judge to say whether a changed
@@ -18,12 +18,12 @@ Two cheaper tiers, both FIDELITY-SAFE — neither can decide anything:
   real deploy target, through the deploy gate.
 * **judge tiering** (``loop.judge_tiering``, ``auto`` = on in backlog mode).
   Between checkpoints the concept judge runs on changed scenes, and —
-  FLOOR-FIRST (``loop.floor_first``, default on; canopy#780) — so does the judge
+  FLOOR-FIRST (``loop.floor_first``, default on) — so does the judge
   holding the gating floor, on the floor's scenes when they changed
   (``judge_scope plan`` decides from ``state.gating_floor``). Every other
-  verdict is carried from the last full pass. Before floor-first, a floor held
-  by the user-artifact judge could only move at a checkpoint: two of every three
-  passes on ACE Spark run ``-002`` could not change the gating score. Every
+  verdict is carried from the last full pass. Without floor-first, a floor held
+  by the user-artifact judge could only move at a checkpoint, so most passes
+  could not change the gating score. Every
   checkpoint and every decision runs all three.
 * **recipe-only batch** (always on). A batch whose every fix is recorder
   framing, narration or why-brief (``fix_scope.batch_plan``) changes no product
@@ -88,7 +88,7 @@ def recipe_batch(state: Any) -> dict | None:
 def choose(state: Any, cfg: DDDConfig) -> dict[str, Any]:
     """The next pass's target + judges. Pure: reads state, never writes it.
 
-    Local first (canopy#787): with an inner loop configured, a FULL pass (the
+    Local first: with an inner loop configured, a FULL pass (the
     periodic regression net, every ``loop.full_rejudge_every``-th batch) runs on
     the local build too. Only a pass that DECIDES — after ``checkpoint`` /
     ``confirm_full`` — renders the deploy target, so deployed labs serves the
@@ -169,7 +169,7 @@ def inner_loop_policy(cfg: DDDConfig, prior: dict | None = None) -> dict[str, An
     """May this repo run a backlog (v1-product) loop? ``{status, reason}``.
 
     A repo with a configured ``deploy_gate`` ships every fix batch through PR, CI
-    and deploy before a frame can be judged. On connect-labs that was ~35 of every
+    and deploy before a frame can be judged. That is ~35 of every
     50 minutes of an iteration — paid on batches that only needed the concept
     judge to see a changed scene. So such a repo must say how it renders between
     checkpoints: an ``inner_loop:`` (``configured``), or ``inner_loop: off`` WITH a
@@ -179,11 +179,9 @@ def inner_loop_policy(cfg: DDDConfig, prior: dict | None = None) -> dict[str, An
     nothing to wait on: ``not_required``.
 
     ``prior`` is the run's last policy (``state.inner_loop_policy``). A run that
-    STARTED with the inner loop and has lost it is ``dropped`` (canopy#787): on
-    ``supply-sophie-sheets-2026-10-06-001`` the loop rendered locally for two
-    passes, then a new scene filmed a clone "whose data exists only on labs" and
-    the config was switched off for the run — every later fix paid merge + CI +
-    deploy (7 deploys, ~3 of 9.6 hours). Data that exists only remotely is a
+    STARTED with the inner loop and has lost it is ``dropped``: switching the config
+    off mid-run (say, because a new scene films a clone "whose data exists only on
+    labs") makes every later fix pay merge + CI + deploy. Data that exists only remotely is a
     BUILD gap (export or seed it locally), not a reason to move the loop. A
     dropped loop refuses to continue a backlog run until it is configured again
     or ``target accept-remote <run_id> --reason`` records why it must not be.

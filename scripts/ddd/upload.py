@@ -120,7 +120,7 @@ def run_package_url(
     — NOT a loose ``/walkthrough/<artifact-id>`` single-artifact URL. Path segments are
     URL-quoted defensively in case a narrative_slug carries unsafe characters.
 
-    Always ``/w/<workspace>/ddd/…`` (canopy-web#1337): with no DDD workspace
+    Always ``/w/<workspace>/ddd/…``: with no DDD workspace
     resolvable this raises ``WorkspaceRequiredError`` rather than print a flat link.
     """
     feat = urllib.parse.quote(narrative_slug or run_id, safe="")
@@ -163,10 +163,10 @@ def upload_narrative_video(
     ``cut`` (one entry of :func:`scripts.ddd.recorded.resolve_cuts`) uploads the
     video as THAT cut of a ``style: recorded`` narrative: canopy-web keeps one
     video per cut id on the version and shows each beside its narration on the
-    review link, instead of the latest upload replacing the last
-    (canopy-web#1288). A cut defaults to ``role=clip``; pass
+    review link, instead of the latest upload replacing the last.
+    A cut defaults to ``role=clip``; pass
     ``role="hero_video"`` to make it the narrative's hero. Without ``cut`` the
-    video is the version's own (``role=hero_video``), as before.
+    video is the version's own (``role=hero_video``).
 
     Resolves the current narrative version on canopy-web and stamps the uploaded
     artifact with its review id (``narrative_review_id``), so the video attaches
@@ -228,7 +228,7 @@ def upload_narrative_video(
         cut_id=cut["id"] if cut else None,
         cut_scene_ids=list(cut.get("scene_ids") or []) if cut else None,
         # The product screens this video films, so a reviewer can open them
-        # from the review link and the storyboard (canopy-web#1512).
+        # from the review link and the storyboard.
         links=links or None,
         base_url=base_url,
         token=token,
@@ -335,10 +335,8 @@ def _authored_path_candidates(run_dir: Path, narrative_slug: str, filename: str)
     while upload reads the stale copy, silently.
 
     Order matters. The run dir comes first so a run that DOES keep its spec
-    there is completely unaffected; only a run that would previously have
-    raised FileNotFoundError reaches the later candidates.
-
-    dimagi-internal/canopy#620.
+    there is completely unaffected; only a run whose spec is not there
+    (which would otherwise raise FileNotFoundError) reaches the later candidates.
     """
     candidates = [run_dir / filename]
 
@@ -689,7 +687,7 @@ section {
 # A canopy-web walkthrough URL: the viewer page ``/w/<ws>/walkthrough/<id>`` or
 # its byte stream ``…/content`` (optionally with a ``?t=`` share token, kept
 # intact). The flat forms are matched so an old link is still recognised as a
-# canopy artifact, but canopy-web serves neither any more (canopy-web#1338).
+# canopy artifact, but canopy-web serves neither any more.
 _CANOPY_W_RE = re.compile(r"/(?:w|walkthrough)/[^/?#]+(?:/content)?/?$")
 
 
@@ -698,7 +696,7 @@ def _to_content_url(url: str) -> str:
 
     ``https://host/w/<ws>/walkthrough/<id>?t=tok`` ->
     ``https://host/w/<ws>/walkthrough/<id>/content?t=tok`` — the stream is
-    workspace-scoped like the page (canopy-web#1338; the flat
+    workspace-scoped like the page (the flat
     ``/walkthrough/<id>/content`` is a 404). The viewer page is
     auth-gated for anonymous callers and sends ``X-Frame-Options: DENY``, so
     framing it renders blank; the ``/content`` endpoint serves the bytes

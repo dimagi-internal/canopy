@@ -1,22 +1,21 @@
 """The gating FLOOR — which judge, dimension(s) and scene(s) hold the score down.
 
-Why this module exists (canopy#780)
+Why this module exists
 -----------------------------------
 The loop's gating score is a minimum, so at any moment one cell holds it: a
-judge, a dimension, one or a few scenes. Three measured failures on four ACE
-Spark runs (2026-10-06, about 40 judged passes, none converged) all came from
-the loop not knowing which cell that was:
+judge, a dimension, one or a few scenes. A loop that does not know which cell
+that is fails three ways, each of which keeps a run from converging:
 
-* **Partial passes could not move the gate.** Judge tiering ran the
+* **Partial passes cannot move the gate.** Judge tiering runs the
   user-artifact and arc judges only at checkpoints (every third batch). When the
-  floor was the user-artifact judge, two of every three passes could not change
-  the gating score; run ``-002``'s score moved only at full passes.
-* **Fixes did not aim at the floor.** Each batch applied every mechanical
-  finding, in no order, so the cell capping the score competed with dozens of polish
+  floor is the user-artifact judge, two of every three passes cannot change
+  the gating score.
+* **Fixes do not aim at the floor.** A batch that applies every mechanical
+  finding, in no order, makes the cell capping the score compete with dozens of polish
   nits for the fixers' attention.
-* **An unfixable floor did not stop the loop.** In run ``-004`` the floor was a
-  registry text string the loop may not edit (user-artifact clarity 2); the
-  loop iterated on to its stall rule anyway.
+* **An unfixable floor does not stop the loop.** When the floor is a
+  registry text string the loop may not edit (user-artifact clarity 2), the
+  loop iterates on to its stall rule anyway.
 
 This module answers "where is the floor?" (:func:`locate`), "which findings are
 about it?" (:func:`floor_findings`), and "can this loop fix them at all?"
@@ -126,7 +125,7 @@ def scene_scores(raw: dict | None) -> dict[int, dict[str, float]]:
     scenes = raw.get("scenes")
     if isinstance(scenes, dict):
         # ``scenes: {'1': {scene, dimensions: {dim: {score}}}}`` — the user-artifact
-        # judge's shape on the 2026-10-15 ACE runs. Unread, the floor's scenes were
+        # judge's shape ACE runs. Unread, the floor's scenes were
         # unknown (``scenes: []``) on every pass of noora-health/20261015-1129.
         scenes = [
             {**row, "scene": row.get("scene", key)} if isinstance(row, dict) else row
@@ -638,11 +637,10 @@ def assign_ids(findings: list[dict], ledger: list[dict] | None, *, iteration: in
 # ---------------------------------------------------------------------------
 #
 # The gate is a minimum, so one cell the loop may not edit pins the TRUE score
-# forever. Before this, the loop either kept iterating on a pinned score until
-# the stall rule (noora: six passes at 2.0, the floor held by a labs-template
-# defect the loop may not touch, ace#2337) or stopped the whole run as soon as
-# the floor cell was out of scope (smallholder: ``blocked_out_of_scope`` at
-# iteration 3, though other cells still had work). A pinned cell is now
+# forever. Iterating on a pinned score until the stall rule wastes passes (a floor
+# held by a template defect the loop may not touch), and stopping the whole run as
+# soon as the floor cell is out of scope (``blocked_out_of_scope``) abandons cells
+# that still have work. So a pinned cell is
 # reported and parked — removed from the WORKABLE objective — and the loop keeps
 # optimizing the rest. Both scores are reported; convergence is unchanged (every
 # gating judge >= the bar on the true score).

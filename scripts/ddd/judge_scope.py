@@ -1,17 +1,16 @@
 """Judge scope — re-judge only what could have changed; reuse cells whose inputs did not.
 
-The problem, measured
----------------------
-Every DDD iteration re-rendered AND re-judged every scene. One judge round on a
+The problem
+-----------
+Without scoping, every DDD iteration would re-render AND re-judge every scene. One judge round on a
 13-scene narrative costs ~14 minutes and ~600k tokens; a fix cycle costs ~4
-minutes and no judge tokens (connect-labs ``.canopy/ddd/learnings.md``,
-2026-07-30). On a freshly-built (v1) product the loop spends most of its budget
+minutes and no judge tokens. On a freshly-built (v1) product the loop spends most of its budget
 re-judging scenes no fix touched, and a re-draw of byte-identical inputs only
 samples judge noise (+/-1 per cell) — it cannot tell the loop anything new.
 
-The v2 fingerprint still reused nothing on the ACE Spark runs (canopy#780): it
-compared each frame byte for byte, so a fix batch that edited a shared report
-template moved every scene on that template. v3 (:mod:`scripts.ddd.impact`) asks
+Comparing each frame byte for byte would reuse nothing: a fix batch that edits a
+shared report template moves every scene on that template. The fingerprint
+(:mod:`scripts.ddd.impact`) instead asks
 what the scene is ABOUT — its action targets and the elements its narration
 names, captured by the recorder in ``scene_<N>_regions.json`` — and compares
 those elements' DOM text and their crops (tolerant of anti-aliasing), the page
@@ -20,7 +19,7 @@ change still re-judges.
 
 The protocol
 ------------
-Capture is scoped separately (:mod:`scripts.ddd.capture_scope`, canopy#785):
+Capture is scoped separately (:mod:`scripts.ddd.capture_scope`):
 between checkpoints only the scenes a batch changed are re-filmed, as stills,
 and merged into the last render — a carried scene's files are byte-identical,
 so it fingerprints unchanged. Judging is scoped:
@@ -84,7 +83,7 @@ _SCENE_PASS_RE = re.compile(r"^scene_(\d+)(?:_r\d+)?\.json(?:\.seal\.json)?$")
 _ARC_FILES = ("verdict-arc.yaml", "arc_findings.json")
 # v1 (<= 0.2.528): one hash over resolved targets and raw page text.
 # v2: per-component hashes; reseeded ids compared in their ${var} spec form.
-# v3 (canopy#780): the frame is no longer compared byte for byte — region DOM +
+# v3: the frame is not compared byte for byte — region DOM +
 #     region crops (anti-aliasing tolerant) + a whole-frame layout guard; page
 #     text minus volatile stamps.
 FINGERPRINT_VERSION = 3
@@ -167,7 +166,7 @@ def _trace_by_scene(run_dir: Path) -> dict[int, list]:
     # Only what a judge reasons over and is stable take-to-take — notes can
     # carry timings. The target is compared in its SPEC form: a reseeded id
     # (``${round2_tender_id}`` 90 -> 92) is the same action — with the bindings
-    # the scene was filmed with (a carried scene keeps its own, canopy#785).
+    # the scene was filmed with (a carried scene keeps its own).
     return {
         int(k): [
             [
@@ -598,7 +597,7 @@ def plan(
         if cap.get("carried_unverified") and cap.get("carried") and not scope.get("full"):
             # A product batch re-filmed only the scenes it named; what it carried
             # may sit on a template it changed. Like a held scene, that is not a
-            # read this pass may decide on (canopy#785).
+            # read this pass may decide on.
             scope["carried_unverified"] = sorted(int(s) for s in cap["carried"])
             scope["reason"] += (
                 f" — scoped capture after a product batch: scene(s) {scope['carried_unverified']} "
@@ -1008,10 +1007,9 @@ def resolve_plan_args(
 
     The scope is the LOOP's decision (``compute_auto_iterate`` ->
     ``state.next_judge_full`` -> :func:`scripts.ddd.target.expected_scope`), not
-    the caller's. On ``supply-sophie-rutf-2026-09-26-001`` the orchestrator
-    re-used a command line with a literal ``--full`` for three iterations after
-    the loop had switched to incremental, so every pass judged all 7 scenes with
-    all three judges and the record said "full pass requested". Now:
+    the caller's. A caller re-using a command line with a literal ``--full`` after the loop
+    switched to incremental would judge every scene with all three judges while the
+    record said "full pass requested". So:
 
     * no flags -> the state's scope (full or incremental, tiered, recipe scenes);
     * ``--full`` the state agrees with -> full, with the state's reason;
@@ -1037,7 +1035,7 @@ def resolve_plan_args(
         "tiered": tiered or exp["tiered"],
         "full_reason": exp["why"],
         "judge_scenes": exp["judge_scenes"],
-        # Floor-first (canopy#780): the cell the last assemble found holding the
+        # Floor-first: the cell the last assemble found holding the
         # gating score down; plan adds its judge to an incremental pass.
         "floor": getattr(state, "gating_floor", None) if cfg.loop.floor_first else None,
         "iteration": getattr(state, "iteration", None),

@@ -117,8 +117,7 @@ def post_review_request(
     workspace it was posted into and read back from.
 
     Refuses (``WorkspaceRequiredError``) when no workspace is named: the flat
-    route files it in the server's default (ace#2805 — a Connect narrative landed
-    in dimagi).
+    route files it in the server's default workspace, which can be the wrong one.
     """
     api = _resolve_base_url(base_url)
     tok = _resolve_token(token)

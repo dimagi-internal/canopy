@@ -10,11 +10,9 @@ why-brief) and its rendered videos. Re-recording or re-cutting it also takes:
 - ``capture_report``   — the recorder's ``--report`` JSON (scene timings);
 - ``capture_manifest`` — the recorder's ``--manifest`` JSON.
 
-These used to live only where the render ran — a ``mktemp -d`` work dir, a
-scratchpad, an uncommitted recipe — so a narrative could be published that no
-other machine could iterate (the chlorine demo, 2026-10-14: its recipe and
-master were lost with one machine's temp dir). Now every narrative post and
-every video upload pins them to the version on canopy-web
+Left only where the render ran — a ``mktemp -d`` work dir, a scratchpad, an
+uncommitted recipe — a narrative could be published that no other machine could
+iterate. So every narrative post and every video upload pins them to the version on canopy-web
 (``POST /api/ddd/narratives/<slug>/sources/``), and ``narrative pull`` restores
 them. Anything local is a cache that can be pulled again.
 """
@@ -69,7 +67,7 @@ class SourcesError(RuntimeError):
 
 class RecipeLockMismatch(SourcesError):
     """A recipe that does not compose with the narrative version it would be
-    pinned to (canopy#908). ``reason`` is :func:`spec_io.compose`'s own message,
+    pinned to. ``reason`` is :func:`spec_io.compose`'s own message,
     which names the orphan / missing scene ids."""
 
     def __init__(self, message: str, reason: str):
@@ -221,8 +219,8 @@ def push_sources(
     it), else fetched from canopy-web — and refused with the mismatching scene
     ids (:class:`RecipeLockMismatch`) before anything is posted. A recipe that
     does not compose with its own version renders nothing, and pinning it hands
-    the mismatch to the next machine that pulls (canopy#908: a recipe with two
-    priming scenes the story lacked, pinned to chlorine v4).
+    the mismatch to the next machine that pulls (for example a recipe with two
+    priming scenes the story lacks).
 
     Raises on the first failure: a version whose sources did not all land is
     exactly the state this exists to prevent, so the caller must not go on to

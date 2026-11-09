@@ -8,7 +8,7 @@ across parallel emdash worktrees:
 
   A. No bump at all — the agent forgot to run ``canopy version bump``.
   B. Stale/collided bump — the agent bumped to N, but another worktree already
-     claimed N and merged it to main first, so ``local`` no longer exceeds main.
+     claimed N and merged it to main first, so ``local`` does not exceed main.
 
 A git ``pre-push`` hook (``scripts/hooks/pre-push``) already runs this exact
 check, but it is opt-in (``git config core.hooksPath scripts/hooks``) and in
@@ -74,7 +74,7 @@ def _pushed_repo(command: str, hook_data: dict) -> Path:
     """The repo the push is FROM — not the session's project. A session opened in
     a canopy worktree also pushes other repos (`git -C ~/x push`, `cd ~/x && git
     push`); judging those by the canopy worktree's branch blocked a canopy-web
-    push for a canopy bump it could never contain (canopy-web#1337 follow-up).
+    push for a canopy bump it could never contain.
     Order: `git -C <dir>` → a leading `cd <dir>` → the hook's `cwd` →
     :func:`_repo_root`. Resolved to the git toplevel; on any failure, the old
     behaviour (:func:`_repo_root`)."""

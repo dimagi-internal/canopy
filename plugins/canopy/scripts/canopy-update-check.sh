@@ -18,13 +18,13 @@
 #   The version label is not unique across commits. `canopy version bump` picks
 #   max(local, origin/main)+1, so two PRs opened from the same base both claim
 #   the same number, and CI's version check only compares each branch against
-#   main as it was when that branch's CI ran. On 2026-07-28 both #423 and #429
-#   merged as v0.2.369 forty seconds apart. The plugin cache is keyed by version,
-#   so the second merge had a cache dir that already existed holding the FIRST
-#   one's code — and a version-only check reported UP_TO_DATE, whose documented
-#   response is "STOP. Do nothing else." The merged fix simply never reached the
+#   main as it was when that branch's CI ran. Two PRs can therefore merge as the
+#   same version seconds apart. The plugin cache is keyed by version,
+#   so the second merge has a cache dir that already exists holding the FIRST
+#   one's code — and a version-only check would report UP_TO_DATE, whose documented
+#   response is "STOP. Do nothing else." The merged fix would never reach the
 #   machine. A SHA advances on every merge, so it cannot collide this way; this
-#   is the same detection the fleet session-start updater has always used.
+#   is the same detection the fleet session-start updater uses.
 #
 #   Consequence worth knowing: when a version number IS reused, this prints
 #   UPGRADE_AVAILABLE with the same version twice (`… 0.2.369 0.2.369`). That is
@@ -87,7 +87,7 @@ fi
 # The plugin and the `canopy` CLI are two artifacts. The plugin is compared by SHA
 # above; the CLI is installed by Step 3 of /canopy:update, which only runs on an
 # upgrade — so a CLI that missed one deploy stays stale for as long as the plugin
-# stays current, and this script said UP_TO_DATE the whole time (canopy#615).
+# stays current, and this script said UP_TO_DATE the whole time.
 # A CLI version compare can't catch it (labels collide, see above), so compare the
 # installed source to the clone's directly: stateless, and ~40ms.
 # Only when the clone's working tree IS origin/main and clean — a parked or dirty

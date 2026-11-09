@@ -3,11 +3,10 @@
 
 The prompt cache expires 5 minutes after it was last used. A foreground Bash call that
 sleeps longer than that wakes into a COLD cache: the next model call re-writes the whole
-context (450-720k tokens on a long ACE phase agent) and is slower for it. Evidence,
-ACE runs 2026-10-15/16 (noora-health, kaduna-graduation, smallholder-seasonal): phase
-agents waited on children with `sleep 300`..`sleep 595` and
+context (450-720k tokens on a long ACE phase agent) and is slower for it. The pattern
+this catches: phase agents waiting on children with `sleep 300`..`sleep 595` and
 `perl -e 'select(undef,undef,undef,590)'` — the second spelling used because the harness
-refuses a bare long `sleep` — and woke 7-9 times per wait, each wake a full re-cache.
+refuses a bare long `sleep` — waking many times per wait, each wake a full re-cache.
 
 So the cap is 270 s (5 min minus headroom for the call itself), counted the way the
 wait actually runs:

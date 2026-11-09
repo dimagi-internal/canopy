@@ -101,8 +101,8 @@ def fetch_latest_period_end(api_url: str, token: str, timeout: int = 15) -> dt.d
 
     Goes through `canopy_web.call` so the feed read is workspace-scoped like
     every other canopy-web list: pinned when CANOPY_WEB_WORKSPACE is set, and
-    read within the home organisation when canopy-web refuses an unpinned list
-    (canopy-web#1411). A refusal with no workspace set says so on stderr rather
+    read within the home organisation when canopy-web refuses an unpinned list.
+    A refusal with no workspace set says so on stderr rather
     than silently defaulting the range."""
     del timeout  # the shared transport has no per-call timeout
     try:

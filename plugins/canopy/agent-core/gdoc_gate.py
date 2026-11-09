@@ -11,9 +11,9 @@ agent's `.claude/settings.json`:
 WHY IT EXISTS. "It published" is not "it looks right": `--replace` has shipped
 all-italic docs and docs emptied to a sentinel, and the converter has shipped literal
 `**` and `|---|`. Eva had a checker for all of it and a skill that said to run it
-before sharing a link. On 2026-08-28 a turn published three docs, handed over three
-links and ran the checker zero times — with the rule in context the whole time. So
-the check became a hook (in Eva first; promoted here 2026-10-04 for the fleet).
+before sharing a link, but a rule in context is not a guarantee: a turn can publish
+three docs, hand over three links and run the checker zero times. So the check is a
+hook, shared by the fleet.
 
 WHY THE STOP EVENT. The handoff that matters is a link typed into the turn's closing
 message, not a tool call — a PreToolUse rail would see nothing.

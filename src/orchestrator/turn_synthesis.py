@@ -1,11 +1,10 @@
 """Turn-synthesis — reduce a raw Claude Code transcript to the conversation that
 matters: what the human typed and the FINAL assistant reply per turn.
 
-This is the canonical, DRY home for a reduction that had grown three divergent
-copies: the `share-session` uploader (`scripts/share-session/upload.py`), the
-harvest engine (`harvest.py::_ordered_texts` / `strip_session` /
-`session_digest`), and an ad-hoc throwaway used to publish a campaign arc.
-Both real callers now import from here.
+This is the canonical, DRY home for the reduction shared by the `share-session`
+uploader (`scripts/share-session/upload.py`) and the harvest engine
+(`harvest.py::_ordered_texts` / `strip_session` / `session_digest`), which both
+import from here.
 
 A *turn-synthesis* is the list of ``Turn(prompt, response)`` for a session:
 the human prompt paired with the final assistant text that followed it. Tool

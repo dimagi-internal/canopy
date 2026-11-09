@@ -55,9 +55,9 @@ from orchestrator.agent_web import AgentWebError, resolve_identity
 from orchestrator.repo_paths import resolve_repo_path
 
 # The installed `canopy` CLI is a uv tool — it does NOT pick up merges to main until
-# someone reruns `uv tool install --reinstall`. That gap once shipped a stale-engine
-# email (2026-07-10: the no-forced-font fix was merged and in the plugin cache, but the
-# lagging installed engine still sent Arial). Before any send, refuse when the RUNNING
+# someone reruns `uv tool install --reinstall`. That gap can ship a stale-engine
+# email (a fix merged and in the plugin cache, but the lagging installed engine still
+# sends the old output). Before any send, refuse when the RUNNING
 # engine is OLDER than the marketplace clone — merged email fixes exist that this
 # process doesn't have. A dev checkout running AHEAD of the clone is fine.
 MARKETPLACE_CLONE = Path.home() / ".claude/plugins/marketplaces/canopy"
@@ -134,9 +134,9 @@ def gog_data_dir(gog_home: str) -> str:
     `<GOG_HOME>/data` under a $GOG_HOME (flat or split), the sibling `data/` of a split
     `config/` dir, the config dir itself on macOS/Windows defaults, and $XDG_DATA_HOME/gogcli
     only for Linux's DEFAULT home. With $GOG_HOME set gog never reads the box-wide XDG dir —
-    so neither may we (2026-10-26: a box-wide ~/.local/share/gogcli copy satisfied the check
-    for eva's own ~/.gog/eva home, bootstrap skipped writing hers, and every turn on
-    cloud-ec2-2 failed "OAuth client credentials missing")."""
+    so neither may we (a box-wide ~/.local/share/gogcli copy must not satisfy the check
+    for an agent's own gog home, or bootstrap skips writing the home's copy and every turn
+    fails "OAuth client credentials missing")."""
     home = os.path.normpath(os.path.expanduser(gog_home))
     if os.path.basename(home) == "config":
         return os.path.join(os.path.dirname(home), "data")
@@ -170,12 +170,12 @@ def gog_client_credentials(gog_home: str, client: str) -> str | None:
     path gog's "OAuth client credentials missing (expected at …)" error names,
     `gog_data_dir`, or `<home>/data` for a $GOG_HOME this process was not given).
 
-    The legacy `<home>/credentials-<client>.json` is written for older gog, never counted: a legacy `<home>/credentials-<client>.json` an earlier bootstrap left behind
-    satisfied this check while gog read only `<home>/data/`, so bootstrap never wrote the
-    data copy and ace's and ada's mail stayed dead on cloud-ec2-2 (2026-10-26; eva, with no
-    legacy copy, was written and worked). Checking only `<config>/credentials-<client>.json`
-    once called a working Windows mailbox broken (Shayoni, 2026-09-29: gog 0.40 stored it at
-    <GOG_HOME>/data/credentials-canopy.json) — the data dir is where that one was."""
+    The legacy `<home>/credentials-<client>.json` is written for older gog, never counted: a
+    legacy copy would satisfy this check while gog reads only `<home>/data/`, so bootstrap
+    would never write the data copy and mail would stay dead. Checking only
+    `<config>/credentials-<client>.json` would call a working Windows mailbox broken (gog
+    0.40 stores it at <GOG_HOME>/data/credentials-canopy.json) — the data dir is where
+    that one is."""
     home = os.path.normpath(os.path.expanduser(gog_home))
     legacy = os.path.join(home, f"credentials-{client}.json")
     for path in gog_client_credentials_paths(gog_home, client):
@@ -205,8 +205,8 @@ LIST_RE = re.compile(r"^\s*([-*+]|\d+\.)\s+")
 ORDERED_START_RE = re.compile(r"^\s*(\d+)\.\s+")
 URL_RE = re.compile(r"(https?://[^\s<>()]+)")
 # Sentence punctuation that hugs a URL belongs to the prose, not the link.
-# "…/edit." linkified whole once sent two broken doc links (Google 404s the
-# doc id + trailing dot) — echo → Fiorenzo, 2026-07-13.
+# "…/edit." linkified whole gives a broken doc link (Google 404s the
+# doc id + trailing dot).
 TRAILING_PUNCT_RE = re.compile(r"[.,;:!?'\"]+$")
 # Markdown-style inline link: [display text](https://url) — lets agents write a
 # clean anchor label instead of pasting a raw URL into outbound mail.
@@ -265,7 +265,7 @@ class EmailIdentity:
 #: MINTED. `canopy` is a Desktop client (gog's loopback login on a laptop);
 #: `canopy-web` is a Web client, the only kind Google lets run a browser redirect,
 #: so it is what canopy-web's "Connect Google mailbox" button mints under. An
-#: agent's turns must work with a token from EITHER sign-in route (2026-10-04), so the
+#: agent's turns must work with a token from EITHER sign-in route, so the
 #: client follows whichever of these this machine holds for the mailbox.
 FLEET_CLIENTS: tuple[str, ...] = ("canopy", "canopy-web")
 
@@ -303,9 +303,9 @@ GOG_RELEASES = "https://github.com/openclaw/gogcli/releases"
 
 
 def gog_install_hint(platform: str | None = None) -> str:
-    """How to install gog on THIS OS — never brew on Windows (2026-10-28, failure
-    investigation 17: a Windows licensee). gogcli is in homebrew-core (no tap); Windows and
-    Linux take the release archive from GitHub (steipete/gogcli moved to openclaw/gogcli)."""
+    """How to install gog on THIS OS — never brew on Windows. gogcli is in
+    homebrew-core (no tap); Windows and Linux take the release archive from GitHub
+    (openclaw/gogcli)."""
     plat = platform or sys.platform
     if plat == "darwin":
         return "brew install gogcli"
@@ -334,7 +334,7 @@ def reimport_command(slug: str, mode: str | None = None) -> str:
     """The one command that (re)writes the agent's gog OAuth client and imports its Google
     login on THIS machine, by how it runs the agent. A licence holder's is `canopy agent
     google-login` (it reads the login only inside their own turn) — never `bootstrap`, which
-    is an admin's (2026-10-28, failure investigation 17, turn c10c9748)."""
+    is an admin's."""
     mode = mode or machine_mode(slug)
     if mode == "license":
         return f"canopy agent google-login --slug {slug}"
@@ -377,7 +377,7 @@ def token_pairs(*, runner=subprocess.run) -> set[tuple[str, str]] | None:
 
     This is the ONLY authoritative per-pair source gog exposes: its keys are literally
     `token:<client>:<mailbox>`, one per credential. `gog auth list` cannot answer this —
-    it collapses to one row per ACCOUNT (verified 2026-08-17: a box holding both
+    it collapses to one row per ACCOUNT (a box holding both
     `token:canopy:echo@…` and `token:echo:echo@…` lists echo exactly once, as client
     `echo`), and `--client` does not scope the listing either.
 
@@ -412,11 +412,10 @@ def clients_for_account(account: str, *, runner=subprocess.run) -> list[dict] | 
     WHAT each was granted comes from `gog auth list`. They are separate calls because gog
     answers only half the question in each: the token store knows every (client, mailbox)
     pair and no scopes, the account listing knows scopes and collapses to ONE row per
-    account. Deriving the client set from the account listing alone — as this did until
-    2026-08-17 — hides every credential but one, which made `reconcile_client` "self-heal"
-    a correctly-pinned mailbox ONTO a stale client while the working token sat beside it
-    (canopy#489: observed on ACE 2026-08-14, and reproduced live on echo, whose repo pins
-    `canopy`, whose `token:canopy:echo@…` was valid, and which still resolved to `echo`).
+    account. Deriving the client set from the account listing alone hides every credential but
+    one, which would make `reconcile_client` "self-heal" a correctly-pinned mailbox ONTO a
+    stale client while the working token sat beside it (a repo pinning `canopy`, whose
+    `token:canopy:echo@…` is valid, would still resolve to `echo`).
 
     `services` is therefore `set | None`, and **None means UNKNOWN, not empty** — gog
     publishes no per-pair scope data, so a client visible only in the token store has no
@@ -425,10 +424,10 @@ def clients_for_account(account: str, *, runner=subprocess.run) -> list[dict] | 
     this whole area exists to remove.
 
     Returns None when gog cannot be introspected at all and [] when it can and this mailbox
-    simply has no token. Collapsing those two into one falsy value is precisely what let the
-    doctor SKIP its services check in the one state it exists to catch (2026-08-10, echo on
-    the cloud box: the account was authed, just under a different client, so the (account,
-    client) lookup missed and the check reported "not introspectable").
+    simply has no token. Collapsing those two into one falsy value would let the
+    doctor SKIP its services check in the one state it exists to catch (the account is
+    authed, just under a different client, so the (account, client) lookup misses and the
+    check reports "not introspectable").
     """
     want = (account or "").lower()
     pairs = token_pairs(runner=runner)
@@ -481,8 +480,8 @@ def reconcile_client(
     repo-global value and the token store is per-machine. So a fleet migration onto the
     shared `canopy` client — which has to be performed box by box — leaves any un-migrated
     box pinned to a pair that has no token, and every read and send dies with
-    `No auth for gmail <mailbox>`. Echo hit this twice, in opposite directions: the pin was
-    wrong for the laptop until 2026-08-06 and wrong for the cloud box from then on. Pinning
+    `No auth for gmail <mailbox>`. The pin can be wrong for a laptop and
+    wrong for the cloud box at once. Pinning
     the other value does not fix it; it only moves which box is broken.
 
     The agent operating model already says which half is the identity: the MAILBOX is the
@@ -726,8 +725,8 @@ def _autolink(escaped: str) -> str:
     exactly wrong for the thing code spans are for: a command you copy and run.
 
     So skip the code regions. Everything between them still gets linkified.
-    (2026-09-01: an onboarding reply carried three PowerShell commands whose
-    `-Uri "https://…"` argument was rewritten into an anchor mid-command.)
+    (Otherwise a PowerShell command's `-Uri "https://…"` argument would be rewritten
+    into an anchor mid-command.)
     """
     def repl(m: re.Match) -> str:
         url = m.group(1)
@@ -809,10 +808,10 @@ def _ordered_start(line: str) -> int | None:
 def to_html(plain: str) -> str:
     """Markdown-ish plain text -> minimal HTML. Numbered lines become <ol> (numbers preserved),
     bullets become <ul>; a run of same-kind items coalesces into ONE list even across blank lines
-    (canopy #291 — numbered lists were losing their numbers and runs were fragmenting into many
+    (so numbered lists keep their numbers and a run does not fragment into many
     single-item lists).
 
-    "Numbers preserved" holds for a list that does NOT start at 1 as well (canopy #520): a bare
+    "Numbers preserved" holds for a list that does NOT start at 1 as well: a bare
     <ol> always renders from 1, so the first item's literal number is emitted as start=. Without
     it, numbered section HEADINGS — a numbered line whose body is prose, so each heading closes
     its list after one item — all rendered as "1.", and a five-part reply arrived 1, 1, 1, 1, 1."""
@@ -895,7 +894,7 @@ def to_html(plain: str) -> str:
     flush_para()
     # No font-family / size / color override: let the mail client render in its own
     # default (e.g. Gmail's default sans) so the message reads as a native reply,
-    # not a styled-looking blast (Jonathan's pet peeve, 2026-07-08).
+    # not a styled-looking blast.
     return "<html><body>" + "".join(parts) + "</body></html>"
 
 
@@ -923,7 +922,7 @@ def build_send_command(
         cmd += ["--reply-to-message-id", reply_to_message_id]
     # gog has carried `--attach` (repeatable file path) all along; the engine simply never
     # passed it, so "forward that to <person>" silently degraded to a body-text summary and
-    # whatever links happened to be in the original (canopy#462).
+    # whatever links happened to be in the original.
     for path in attachments:
         cmd += ["--attach", path]
     return cmd
@@ -982,8 +981,8 @@ def send(
         )
     # Before the dry run, so the recipient set an agent verifies there is one that can send.
     _refuse_undeliverable(to, cc)
-    # A flat canopy-web artifact link is a 404 (canopy-web#1337/#1338) — one copied out
-    # of `narrative post` reached an external reviewer on 2026-10-08. Judged on the
+    # A flat canopy-web artifact link is a 404 — one copied out
+    # of `narrative post` reached an external reviewer. Judged on the
     # agent's own words (a forwarded original is not theirs) and before the dry run,
     # which is where the draft is iterated.
     from orchestrator.canopy_web import flat_canopy_links
@@ -998,8 +997,8 @@ def send(
         # cc must appear here even when empty — the dry-run is HOW an agent verifies
         # recipients before approval, and omitting it hides cc'd people (same failure
         # class as the raw text mail view dropping the Cc: line). `attachments` is here
-        # for exactly the same reason: a forward that silently lost its PDFs is the
-        # failure canopy#462 recorded, and the dry-run is where an agent must be able
+        # for exactly the same reason: a forward that silently lost its PDFs is a
+        # failure the dry-run exists to expose, and the dry-run is where an agent must be able
         # to SEE what will actually ride along.
         return {"dry_run": True, "message_id": "", "thread_id": "",
                 "account": identity.account, "client": identity.client,
@@ -1128,7 +1127,7 @@ def dropped_participants(
     """Thread participants a manual-recipient reply would DROP (best-effort).
 
     A reply sent with explicit --to into an existing thread silently narrows the
-    audience — the exact failure that hit hal on 2026-07-10 (an answer on a
+    audience — the exact failure that hit hal (an answer on a
     4-person thread went to one person; the item's owner never saw it). This
     computes what reply-all WOULD target (latest non-self message's sender +
     To/Cc, via derive_reply_all) minus the agent itself and the chosen To/Cc.
@@ -1174,7 +1173,7 @@ def _remove_labels(
     Shells out to `gog gmail thread modify` — gog's own token bucket handles auth, same
     as every other gog call in a turn. The previous implementation minted an access
     token itself via the macOS Keychain `security` call, which blocks FOREVER on a GUI
-    prompt in non-interactive agent shells (dimagi-internal/ace#827) — never reintroduce
+    prompt in non-interactive agent shells — never reintroduce
     a Keychain read here.
 
     Own-mailbox only: `identity.account` is always the AGENT's box, so this can never
@@ -1222,10 +1221,10 @@ def archive(
 
     Both labels in one call because that is exactly what the turn procedure asks for on a
     handled-or-not-actionable thread ("mark it read and archive it"): a thread left UNREAD
-    in the archive still shows as unread mail, and re-surfaces on the next poll. Before
-    this existed, `canopy email` offered only `mark-read`, so every agent hand-rolled the
-    archive half as a raw `gog gmail thread modify … --remove INBOX` rediscovered from
-    scratch each turn (eva, 2026-07-29: four tool calls spent finding the flag spelling).
+    in the archive still shows as unread mail, and re-surfaces on the next poll. Without
+    this, `canopy email` would offer only `mark-read` and every agent would hand-roll the
+    archive half as a raw `gog gmail thread modify … --remove INBOX`, rediscovering the
+    flag spelling each turn.
     """
     return _remove_labels(identity, thread_ids, "INBOX,UNREAD", runner=runner)
 
@@ -1359,10 +1358,10 @@ def _decode_body(payload: dict) -> str:
     text/html twin flattened.
 
     The fallback is load-bearing. A message whose ONLY body part is `text/html` — an
-    out-of-office auto-reply is the canonical case — used to decode to the empty string,
-    so the fleet's sanctioned reader rendered it as "(no plain-text body)" and an agent
+    out-of-office auto-reply is the canonical case — would decode to the empty string,
+    so the fleet's sanctioned reader would render it as "(no plain-text body)" and an agent
     could not show the human what it had been handed without hand-rolling a raw gog +
-    base64 read. (Origin: 2026-08-19, an echo turn scoped to exactly such a thread.)"""
+    base64 read."""
     plain = _decode_mime(payload, "text/plain")
     if plain.strip():
         return plain
@@ -1380,14 +1379,14 @@ _MACHINE_SENDER = re.compile(
 # A no-reply FROM address. Narrower than `_MACHINE_SENDER` on purpose: `From:` is the
 # address a person writes from, so only the addresses no person uses. Needed because
 # plenty of machine mail carries no Sender: header at all — SES event receipts from
-# `no-reply@sns.amazonaws.com` read as human and started 14 read-mode sessions on one
-# ace@ thread (1a0d0a1632cfde4f, 2026-09-23/24). Mirrors the canopy-web runner's gate.
+# `no-reply@sns.amazonaws.com` read as human and would start a read-mode session per
+# receipt. Mirrors the canopy-web runner's gate.
 _NOREPLY_FROM = re.compile(
     r"(?:^|[<\s\"])(?:noreply|no-reply|donotreply|do-not-reply|mailer-daemon|postmaster)@",
     re.I)
 
 
-# A RECIPIENT no person reads (canopy#883). Matched on the whole local part, so it also
+# A RECIPIENT no person reads. Matched on the whole local part, so it also
 # catches the prefixed forms `_NOREPLY_FROM` deliberately does not — above all
 # `comments-noreply@docs.google.com`, which is where a reply derived from a Google Docs
 # comment notification goes (those carry no Reply-To). Gmail accepts the send, the bounce
@@ -1522,7 +1521,7 @@ def _normalize_for_match(text: str) -> str:
 
     Markup is NOT signal: an agent's stored body is the markdown it sent, and a reply
     quotes the rendered mail — `[text](url)` arrives as `text <url>`, `**bold**` as
-    `*bold*`. So link syntax, URLs and emphasis markers go on both sides (canopy#1085)."""
+    `*bold*`. So link syntax, URLs and emphasis markers go on both sides."""
     text = _MD_LINK.sub(r"\1", text)
     text = _URL.sub(" ", text)
     text = _MD_EMPHASIS.sub("", text)
@@ -1601,11 +1600,11 @@ def _reply_all_of(raw_messages: list[dict], selves) -> dict:
     this, and `read` computes it from the already-parsed messages in ONE gog read.
 
     Whole-thread, not latest-message, because a reply to a SUBSET is routine and must not
-    shrink everyone else's thread. Measured 2026-09-29 (hal): Jonathan opened a thread to
-    hal cc'ing five colleagues; Gillian replied to hal + Amie only; reply-all then derived
-    To=Gillian, Cc=Amie — dropping the person who asked AND four of his five cc's — and
-    the refusal text ("a reply-all goes to the thread's own participants") promised the
-    opposite of what the code did. Narrowing stays possible, but explicit (`--narrow`).
+    shrink everyone else's thread. Example: A opens a thread to the agent cc'ing five
+    colleagues; B replies to the agent + one colleague only; a latest-message reply-all
+    would derive To=B, Cc=that colleague, dropping the person who asked and four of the
+    five cc's, against the promise that "a reply-all goes to the thread's own
+    participants". Narrowing stays possible, but explicit (`--narrow`).
 
     `selves` is the identity (or its addresses): every one of the agent's own addresses
     is "self", so its earlier reply from another of them is not the message replied to
@@ -1746,7 +1745,7 @@ def read_thread(
     bodies = [msg["body_text"] for msg in messages]
     # Nothing above the quote → maybe an inline reply, where the answers ARE the
     # message. Without this the reader returned an empty body for a reply that answered
-    # seven questions (ada, 2026-10-17). Top-posted replies are untouched.
+    # seven questions. Top-posted replies are untouched.
     for i, (msg, tail) in enumerate(zip(messages, tails)):
         if tail and not msg["body_text"]:
             sibs = [b for j, b in enumerate(bodies) if j != i] + \
@@ -1884,8 +1883,8 @@ def _staged_name(filename: str, taken: set[str]) -> str:
     """A safe, unique on-disk name that keeps the sender's filename and extension.
 
     The name is what the recipient sees: gog attaches a file under its basename, so a
-    cache path like `<msg>_<att>_attachment.bin` arrives as an unopenable .bin
-    (canopy#580). Path separators are stripped so a hostile filename cannot escape the
+    cache path like `<msg>_<att>_attachment.bin` arrives as an unopenable .bin.
+    Path separators are stripped so a hostile filename cannot escape the
     staging dir; a repeat name gets a ` (2)` suffix the way a mail client would."""
     base = os.path.basename((filename or "").replace("\\", "/")).strip() or "attachment"
     stem, ext = os.path.splitext(base)
@@ -1907,15 +1906,15 @@ def collect_thread_attachments(
 ) -> list[dict]:
     """Download EVERY attachment on a thread → [{filename, path, saved_to, message_id, ...}].
 
-    This is the forward path. Re-attaching an inbound document used to mean a manual
+    This is the forward path. Re-attaching an inbound document by hand is a
     `email read` → eyeball the attachment ids → N× `fetch-attachment` → N× `--attach`
-    round trip, and the recorded outcome (canopy#462) is that agents skipped it and
-    degraded the forward into a body-text summary instead. One call, so the cheap thing
+    round trip that agents skip, degrading the forward into a body-text summary
+    instead. One call, so the cheap thing
     and the correct thing are the same thing.
 
     `saved_to` is the file to attach: a copy staged under the ORIGINAL filename (in
     out_dir, else a fresh temp dir). `path` is gog's cache file, whose name is an
-    internal id — attaching that sent recipients `*_attachment.bin` (canopy#580).
+    internal id — attaching that sent recipients `*_attachment.bin`.
 
     De-duplicates by (filename, size): a thread whose attachment was quoted forward and
     back carries the same file on several messages, and a forward should not ship it
@@ -2028,7 +2027,7 @@ def forward(
 # Measured cost: ACE went 42 days without replying to a partner who had answered all three
 # of its scoping questions and attached the file it asked for. The deliverable he was
 # waiting on had been finished for a week and simply sat there. Nobody noticed, because
-# nothing in a turn ever looked (dimagi-internal/ace#1931). ACE fixed the reachability of
+# nothing in a turn ever looked. ACE fixed the reachability of
 # its own aging section; every other agent had no such section to reach, and neither did
 # agent-core/turn.md. So the sweep lives here, as a fleet capability, and turn.md Step 2
 # mandates it before any early return.
@@ -2049,25 +2048,13 @@ def forward(
 #
 # Read-state is a PROXY for "a turn disposed of this", and its limits are real: a human
 # reading the mailbox, or a bulk mark-all-read, mutes a genuine miss. It is nevertheless
-# the best signal that exists — agents keep no per-thread turn record — and it beats age
-# outright, which was the first thing tried here and got the right answer for the wrong
-# reason.
-#
-# (Jonathan, 2026-09-04/05. First: the sweep surfaced a 79-day thread and proposed a late
-# apology — "Old events like this weren't not handled. They were not good enough in terms
-# of what you had written in response. And I killed the thread. So evidence of a dangling
-# thread this old does not mean we should then go respond to it. It means we should make
-# sure it's pruned." Then, on the age heuristic that replaced it: "The issue is less the
-# response window and more whether the thread was handled... The primary mode of operating
-# is something comes in, you fire right away, and if we don't conclude that session with a
-# response, we didn't intend to come back to it (sometimes I forget but this is less common
-# than implicit failure)." Every thread the first live run surfaced was already READ — the
-# handled-ness test would have cleared all three without needing a threshold at all.)
+# the best signal that exists — agents keep no per-thread turn record — and it beats age,
+# which gets the right answer only by accident.
 
 SEARCH_TIMEOUT = 90  # seconds — a hung gog search must not hang the whole turn
 OWED_DEFAULT_DAYS = 90
 OWED_DEFAULT_LIMIT = 200
-# Age no longer decides the disposition (handled-ness does). It still qualifies an UNREAD
+# Age does not decide the disposition (handled-ness does). It qualifies an UNREAD
 # thread: past this, nobody looked for a long time AND the answer may be moot, so the move
 # is usually to close it rather than answer it cold (ACE inbox-triage §4b, "a STALE inbound
 # is closed, not answered late").
@@ -2168,7 +2155,7 @@ def _owner_predates(owner: dict, date_header: str) -> bool:
 #: How far back a FINISHED canopy-web turn still counts as owning its thread. A
 #: queued/claimed/running turn always does. A chat session is a conversation the
 #: principal resumes at will — ten turns over two days on one email thread is the
-#: shape that motivated this (canopy#758) — so "finished" does not mean "let go".
+#: shape that motivated this — so "finished" does not mean "let go".
 OWNER_WINDOW_DAYS = 7
 
 _LIVE_TURN_STATUSES = ("queued", "claimed", "running")
@@ -2285,7 +2272,7 @@ def dangling_threads(
       "owned"   (unread) — unread, BUT a canopy-web turn keyed to this thread
                            (`owners`, from `harness_turn_owners`) is working it or did
                            recently — often a chat with the principal on another runner.
-                           Not yours to answer: read that session first (canopy#758).
+                           Not yours to answer: read that session first.
 
     `stale` marks an UNREAD thread older than `stale_after` — nobody looked for a long
     time AND the answer is probably moot, so closing usually beats answering cold.
@@ -2312,7 +2299,6 @@ def dangling_threads(
     # exists to catch, delivered under a "do NOT answer these late" banner.
     # The enumeration query above deliberately stays unfiltered; this second query
     # only asks which of those threads nobody has looked at.
-    # dimagi-internal/canopy#608.
     unread_ids = {
         r.get("id")
         for r in search_threads(
@@ -2362,7 +2348,7 @@ def dangling_threads(
             # means a turn looked and closed out.
             "unread": unread,
             "disposition": disposition,
-            # The canopy-web turn keyed to this thread, if any (canopy#758).
+            # The canopy-web turn keyed to this thread, if any.
             "owner": owner,
             # The newest message landed after that owner's last turn finished.
             "new_since_owner": new_since_owner,
@@ -2388,10 +2374,9 @@ owed_replies = dangling_threads
 # GOG_KEYRING_PASSWORD in the environment or a TTY to prompt on — fine on the cloud
 # runner, which injects the password at boot, and DEAD in every laptop turn.
 #
-# Measured 2026-10-02 on a second operator's laptop runner: ACE's plugin .env selected
-# the file backend + password. `bin/ace-doctor` exports those itself, so doctor passed;
-# the first real caller turn could neither read nor send mail ("no TTY available for
-# keyring file backend password prompt"). The check therefore models what a TURN sees —
+# A plugin env file that selects the file backend + password passes a doctor that exports
+# those itself, yet the first real caller turn can neither read nor send mail ("no TTY
+# available for keyring file backend password prompt"). The check therefore models what a TURN sees —
 # launchd's environment and gog's config.json — never this process's own env.
 
 KEYRING_VARS = ("GOG_KEYRING_BACKEND", "GOG_KEYRING_PASSWORD")
@@ -2545,8 +2530,8 @@ def preflight(
         first_err = (r.stderr or "").strip().splitlines()[:1]
         if re.search(r"OAuth client credentials missing|credentials-[\w-]+\.json", r.stderr or ""):
             # gog could not find the CLIENT file — not a token problem; reconnecting the
-            # mailbox cannot fix it (2026-10-26: this read "token bad" and sent two
-            # sessions to reconnect a mailbox canopy-web showed as Connected).
+            # mailbox cannot fix it (reporting it as "token bad" sends people to reconnect a
+            # mailbox canopy-web shows as Connected).
             return False, [
                 f"FIX: gog `{identity.client}` OAuth client file missing where gog reads it "
                 f"({gog_client_credentials_paths(gog_home, identity.client)[0]}) — the token "

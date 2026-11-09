@@ -1,15 +1,14 @@
-"""Back-compat shim — a finished run's summary is :mod:`scripts.ddd.run_summary` now.
+"""Back-compat shim — a finished run's summary is :mod:`scripts.ddd.run_summary`.
 
-Until 2026-10-16 this module appended a block per run to
-``<repo>/.canopy/ddd/learnings.md`` (canopy#788). That file is retired (it did
-not reach the next run across machines or ACE's per-run DDD dirs, and product
-lessons in it went stale — see :mod:`scripts.ddd.run_summary`). The summary is
-now ``run-summary.json`` + ``.md`` in the run dir and part of the run document
-on canopy-web; owned findings go to their owners as issues.
+The summary is ``run-summary.json`` + ``.md`` in the run dir and part of the run
+document on canopy-web; owned findings go to their owners as issues. There is no
+per-run ``<repo>/.canopy/ddd/learnings.md``: a file there does not reach the next
+run across machines or ACE's per-run DDD dirs, and product lessons in it go stale
+(see :mod:`scripts.ddd.run_summary`).
 
 ``python -m scripts.ddd.run_learnings <run_id>`` still works: it (re)writes the
 run summary, exactly like ``python -m scripts.ddd.run_summary <run_id>``.
-Nothing writes ``learnings.md`` any more.
+Nothing writes ``learnings.md``.
 """
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ def summarize(state: Any) -> str:
 def record(state: Any, ddd_dir: str | Path) -> Path:
     """Write the run summary into the run's dir; returns ``run-summary.json``.
 
-    Kept so an old caller does not break; it no longer touches ``learnings.md``.
+    Kept so an old caller does not break; it does not touch ``learnings.md``.
     """
     from scripts.ddd import run_summary
     from scripts.ddd.runstate import _run_dir_for

@@ -1,4 +1,4 @@
-"""An EC2 cloud runner's device proof: its instance ROLE (canopy-web#1549, Phase 1b).
+"""An EC2 cloud runner's device proof: its instance ROLE.
 
 An EC2 box has no Secure Enclave and no TPM; the strongest machine identity it has is the
 IAM role its instance profile carries. So, as in HashiCorp Vault's AWS auth method, the box
@@ -59,7 +59,7 @@ IAT_HEADER = "X-Canopy-Proof-Iat"
 #: single-use — so two resolves of the same URL in the same second (`resolve` and
 #: `resolve?refs=…` share an htu; the query is ignored) made the SAME proof and the
 #: second was refused as replayed: a spurious 401 device_proof_required on an
-#: active aws-iam key (seen on cloud-ec2-2, 2026-10-17).
+#: active aws-iam key.
 JTI_HEADER = "X-Canopy-Proof-Jti"
 
 STS_URL = "https://sts.amazonaws.com/"

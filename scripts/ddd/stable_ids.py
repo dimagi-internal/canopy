@@ -75,7 +75,7 @@ def resolved_vars(report: dict | None) -> dict[str, str]:
 def scene_vars(report: dict | None, scene: int | str) -> dict[str, str]:
     """The bindings scene ``scene`` was FILMED with.
 
-    A scene-scoped capture (canopy#785) re-films a few scenes and carries the
+    A scene-scoped capture re-films a few scenes and carries the
     rest from an earlier take, whose reseed bound different ids; the merged
     report keeps each carried scene's bindings in ``scene_variables``. Every
     other scene was filmed with this take's :func:`resolved_vars`.

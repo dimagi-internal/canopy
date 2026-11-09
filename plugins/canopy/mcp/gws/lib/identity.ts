@@ -7,7 +7,7 @@
  * fallback to any default identity — if the identity env is absent the
  * server must fail loudly at startup rather than act as a shared account.
  *
- * Contract (jjackson/canopy#262):
+ * Contract:
  *   GWS_IDENTITY_MODE     — "sa" | "gog". Required.
  *   GWS_SA_KEY_PATH       — sa mode: absolute path to the service-account
  *                           JSON key. Required in sa mode.

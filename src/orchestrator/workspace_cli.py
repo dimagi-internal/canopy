@@ -46,7 +46,7 @@ MY_AGENTS_PATH = "/api/me/agents/"
 # The person's one agent catalog (canopy-web). Change the path HERE if it moves.
 AGENTS_MARKETPLACE_NAME = "canopy-agents"
 AGENTS_MARKETPLACE_PATH = "/plugins/marketplace.json"
-# The retired per-workspace catalogs (canopy-web#1376; now 410) — removed from settings.
+# The retired per-workspace catalogs (canopy-web answers 410) — removed from settings.
 LEGACY_MARKETPLACE_RE = re.compile(r"/w/[^/]+/marketplace\.json$")
 HELPER_REL = Path("plugins") / "canopy" / "scripts" / "canopy-web-mcp-headers.js"
 

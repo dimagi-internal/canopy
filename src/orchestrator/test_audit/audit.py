@@ -32,7 +32,7 @@ def collect_corpus(repo: Path, run_tests: bool = True, reruns: int = 0,
 
     `source_roots` overrides the adapter's default source-root discovery
     when building the module inventory — pass a list of repo-relative
-    directories for non-conventional layouts (issue #44).
+    directories for non-conventional layouts.
     """
     repo = repo.resolve()
     adapter = detect_framework(repo, override=framework)
