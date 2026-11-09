@@ -76,6 +76,8 @@ def test_create_agent_writes_full_layout(tmp_path):
         "skills/turn/SKILL.md",
         "skills/agent-turn-review/SKILL.md",
         "skills/task-tracker/SKILL.md",
+        "tests/test_docs_current_state.py",
+        ".github/workflows/test.yml",
     ):
         assert required in names, f"missing {required}"
 
@@ -399,3 +401,29 @@ def test_no_google_account_leaves_agent_json_as_the_template(tmp_path):
     create_agent(_spec(), tmp_path / "echo")
     data = json.loads((tmp_path / "echo" / "config" / "agent.json").read_text())
     assert "google_account" not in data and data["email"] == "echo@dimagi-ai.com"
+
+
+def _run_guard(root):
+    import subprocess
+    import sys
+    return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"],
+                          cwd=root, capture_output=True, text=True)
+
+
+def test_a_fresh_agent_passes_its_own_current_state_guard(tmp_path):
+    root = tmp_path / "echo"
+    create_agent(_spec(), root)
+    assert "tests/test_docs_current_state.py" in (root / "CLAUDE.md").read_text()
+    result = _run_guard(root)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_current_state_guard_fails_on_history(tmp_path):
+    root = tmp_path / "echo"
+    create_agent(_spec(), root)
+    (root / "skills" / "turn" / "SKILL.md").write_text(
+        (root / "skills" / "turn" / "SKILL.md").read_text()
+        + "\nThis step was added on 2026-09-04 (PR 123) and used to differ.\n")
+    result = _run_guard(root)
+    assert result.returncode != 0
+    assert "skills/turn/SKILL.md" in result.stdout

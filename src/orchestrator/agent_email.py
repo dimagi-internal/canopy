@@ -990,7 +990,7 @@ def send(
     if flat:
         raise AgentEmailError(
             "refusing to send a flat canopy-web link — it 404s; links live under "
-            "/w/<workspace>/ (canopy-web#1337). Use the scoped URL the CLI printed "
+            "/w/<workspace>/. Use the scoped URL the CLI printed "
             "(or `canopy_web.scope_link`): " + ", ".join(flat)
         )
     if dry_run:
@@ -1413,7 +1413,7 @@ def _refuse_undeliverable(to: str | None, cc: str | None) -> None:
     if bad:
         raise AgentEmailError(
             "refusing to send to an address no person reads: " + ", ".join(bad) + ". "
-            "It would report success and reach nobody (canopy#883). A Google Docs comment "
+            "It would report success and reach nobody. A Google Docs comment "
             "is answered on its comment thread (`gog drive comments reply <fileId> "
             "<commentId>`), not by email; otherwise address the person with --to."
         )
@@ -2826,7 +2826,7 @@ def ses_send(identity: EmailIdentity, route: dict, *, to: str | None, subject: s
     if flat:
         raise AgentEmailError(
             "refusing to send a flat canopy-web link — it 404s; links live under "
-            "/w/<workspace>/ (canopy-web#1337). Use the scoped URL the CLI printed "
+            "/w/<workspace>/. Use the scoped URL the CLI printed "
             "(or `canopy_web.scope_link`): " + ", ".join(flat)
         )
     if thread_id:

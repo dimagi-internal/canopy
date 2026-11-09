@@ -452,7 +452,7 @@ def reconcile_say_anchors(
     if problems:
         raise SayAnchorDriftError(
             "say: anchors in the spec no longer match the recording — re-record "
-            "the walkthrough so the marks carry them (canopy#911):\n  "
+            "the walkthrough so the marks carry them:\n  "
             + "\n  ".join(problems)
         )
     if new_actions == list(actions):

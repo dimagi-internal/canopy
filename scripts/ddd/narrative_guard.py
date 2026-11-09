@@ -288,7 +288,7 @@ def load_ledger(spec_path: str | Path) -> dict:
 def save_ledger(spec_path: str | Path, ledger: dict) -> Path:
     lp = ledger_path(spec_path)
     header = (
-        "# Intent ledger (scripts/ddd/narrative_guard.py, canopy#789): the narrative's\n"
+        "# Intent ledger (scripts/ddd/narrative_guard.py): the narrative's\n"
         "# baseline and every human steer, verbatim. Every narrative revision is checked\n"
         "# against it. Add a steer with `python -m scripts.ddd.narrative_guard steer`.\n"
     )

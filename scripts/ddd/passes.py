@@ -217,7 +217,7 @@ def check_verdict_passes(raw: Any, verdict_path: Path | None) -> list[str]:
                 f"passes: required for a {kind!r} verdict and absent — this judge "
                 f"synthesises from independent passes, so it must prove they returned. "
                 f"Build it with `python -m scripts.ddd.passes manifest <verdict_dir> {kind} "
-                f"--expect N` (canopy#548)"
+                f"--expect N`"
             ]
         return []
     if verdict_path is None:

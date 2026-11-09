@@ -334,7 +334,7 @@ def check_hook_wiring(repo: Path) -> CheckResult:
             f"still registers its own gating hook via {', '.join(legacy)} — canopy's session "
             "hook (agent-core/gating_guard.py --session) now enforces config/gating.json for "
             "this agent's sessions; remove the gating_guard.py PreToolUse entry and "
-            "hooks/gating_guard.py (canopy#849)",
+            "hooks/gating_guard.py",
             warn=True,
         )
     return CheckResult(name, True,

@@ -390,7 +390,7 @@ def _resolve_authored_path(run_dir: Path, narrative_slug: str, filename: str) ->
         f"Tried, in order:\n{tried}\n"
         f"Author it at one of these paths, or pass an explicit path. Do NOT copy "
         f"it into the run dir as a workaround — that leaves two divergent copies "
-        f"and a later re-render will read the other one (canopy#620)."
+        f"and a later re-render will read the other one."
     )
 
 

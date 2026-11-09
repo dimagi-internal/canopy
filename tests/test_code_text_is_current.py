@@ -7,6 +7,9 @@ code was before. That is history, and history lives in the PR description and `g
 rule's REASON stays, in the present tense ("the pattern is anchored because quoted mentions
 must not trip it").
 
+Runtime strings are held to the same rule for issue/PR numbers (``test_runtime_strings_cite_no_issue_numbers``):
+an error, warning or help text a person reads says what is true and what to do, never "(canopy#123)".
+
 Scans the comments and docstrings of every .py / .sh / .ts / .js under `src/`, `plugins/canopy/`,
 `scripts/`, `hooks/` and `packages/canopy_agent_factory/` (test files of the plugin excluded), and the
 `_doc`-style strings of `plugins/canopy/agent-core/gating-baseline.json`. Run
@@ -46,6 +49,12 @@ PATTERNS = {
     ),
 }
 RX = {k: re.compile(v) for k, v in PATTERNS.items()}
+
+# For string literals: the issue/PR forms only. The bare `#123` form in PATTERNS also matches CSS
+# colours and HTML entities, which are data in a string.
+STRING_REF = re.compile(
+    r"\(#\d+\)|\b(?:PR|GitHub|[Ii]ssue)(?: \w+)? #?\d+|[A-Za-z][\w-]*#\d{2,}\b(?![\w;])"
+)
 
 # (path, regex over the hit's context, reason). Each must still match something.
 ALLOW = [
@@ -96,6 +105,25 @@ def _py_texts(src: str) -> list[tuple[int, str]]:
                     out.append((n.body[0].lineno, d))
     except (SyntaxError, tokenize.TokenError):
         pass
+    return out
+
+
+def _py_strings(src: str) -> list[tuple[int, str]]:
+    """Every string literal that is not a docstring (those are scanned by `_py_texts`)."""
+    out: list[tuple[int, str]] = []
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return out
+    docs = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.body:
+            first = n.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                docs.add(id(first.value))
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs:
+            out.append((n.lineno, n.value))
     return out
 
 
@@ -154,6 +182,19 @@ def scan() -> list[tuple[str, int, str, str]]:
     return hits
 
 
+def scan_strings() -> list[tuple[str, int, str, str]]:
+    """(path, line, 'ref', context) for every issue/PR number in a .py string literal."""
+    hits = []
+    for p in _files():
+        if p.suffix != ".py" or "/tests/" in str(p):   # a test's strings are its fixtures
+            continue
+        rel = str(p.relative_to(ROOT))
+        for line, text in _py_strings(p.read_text(errors="replace")):
+            for m in STRING_REF.finditer(text):
+                hits.append((rel, line, "ref", text[max(0, m.start() - 40): m.end() + 40].replace("\n", " ")))
+    return hits
+
+
 def _allowed(hit: tuple[str, int, str, str]) -> bool:
     return any(hit[0] == path and re.search(rx, hit[3]) for path, rx, _ in ALLOW)
 
@@ -168,8 +209,17 @@ def test_code_text_is_current_state():
     )
 
 
+def test_runtime_strings_cite_no_issue_numbers():
+    bad = [h for h in scan_strings() if not _allowed(h)]
+    assert not bad, (
+        "A string literal (an error, warning, help or template text) cites an issue or PR number. "
+        "Say what is true and what to do; the number belongs in the PR description:\n  "
+        + "\n  ".join(f"{p}:{ln} ...{ctx}..." for p, ln, _, ctx in bad)
+    )
+
+
 def test_allowlist_has_no_stale_entries():
-    hits = scan()
+    hits = scan() + scan_strings()
     stale = [(p, rx) for p, rx, _ in ALLOW if not any(h[0] == p and re.search(rx, h[3]) for h in hits)]
     assert not stale, f"ALLOW entries that match nothing any more (delete them): {stale}"
 
@@ -207,3 +257,19 @@ def test_the_patterns_leave_current_state_alone(text):
 if __name__ == "__main__":
     for h in scan():
         print(f"{h[0]}:{h[1]} [{h[2]}] ...{h[3]}...")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["it 404s (canopy-web#1337).", "see canopy issue #451", "(GitHub #357)", "tracking ace#2805", "fixed in PR 123"],
+)
+def test_the_string_pattern_catches_issue_numbers(text):
+    assert STRING_REF.search(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["color: #111111;", "background:#000;", "&#1234;", "as owner/repo#number", "issue number", "item #fafafa"],
+)
+def test_the_string_pattern_leaves_data_alone(text):
+    assert not STRING_REF.search(text)

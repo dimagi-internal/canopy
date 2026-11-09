@@ -1203,11 +1203,11 @@ def gdoc_publish(repo, agent, account, client, md_file, name, parent, project, a
         # The remedy differs by path, and the replace-path advice ("publish a new doc
         # instead") is nonsense on a create — it already IS a new doc.
         remedy = (
-            "  gog's markdown find-replace builds no Doc lists (canopy issue #451). "
+            "  gog's markdown find-replace builds no Doc lists. "
             "Publish a NEW doc instead (drop --replace), which renders correctly, or "
             "rewrite the affected sections without list syntax.\n"
             if result.get("replaced") else
-            "  Drive's HTML→Doc import dropped this (canopy issue #568). Check the doc "
+            "  Drive's HTML→Doc import dropped this. Check the doc "
             "before sharing it; for lost hyperlinks, writing the URLs out in full survives "
             "the import because they are just text.\n"
         )

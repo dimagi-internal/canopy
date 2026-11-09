@@ -101,7 +101,7 @@ REBUILD_HELPER = ("run `~/.canopy/canopy-runner-update` (the runner's own update
 #: The ECDH (zero-knowledge vault) key needs a newer helper than the
 #: signing key. Not an error for the signing key; the runner retries by itself.
 ECDH_HELPER_TOO_OLD = ("this Mac's canopy-device-key is too old to make the ECDH key the "
-                       "zero-knowledge vault needs (canopy-web#1550). The runner enrolls it by "
+                       "zero-knowledge vault needs. The runner enrolls it by "
                        "itself once the helper is rebuilt, which its next update does; to do it "
                        f"now, {REBUILD_HELPER}")
 

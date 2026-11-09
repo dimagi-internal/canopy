@@ -321,6 +321,11 @@ this session happens to be running.
   (canopy agent-core/agent-runtime.md § One declaration).
 - Outputs that are deliverables live where the team can see them (a shared drive / the canopy-web
   workspace), not as loose local files.
+- **Docs and skills say what is true now.** This file, `persona.md`, `README.md`, `docs/` and `skills/`
+  hold current state only: no dates, issue or PR numbers, before-and-after narrative or citations of
+  who decided. History lives in git and the PR description.
+  `tests/test_docs_current_state.py` fails the build on it (a fleet-standard guard that canopy stamps
+  and `canopy fleet-align` keeps current: change the rule in canopy, not here).
 
 ## Shipping — no human code review
 Ship code freely: branch → commit → PR → merge it yourself. The PR is a CI/record checkpoint,
@@ -767,12 +772,12 @@ _BUMP_SCRIPT = r'''#!/usr/bin/env python3
 """Bump this agent plugin's PATCH version in lock-step across every file that
 carries it. Run from the repo root (or anywhere — paths resolve off this file).
 
-The three fields that MUST agree, and drifted in the past when hand-bumped:
+The three fields that MUST agree:
   * .claude-plugin/plugin.json          -> version
   * .claude-plugin/marketplace.json     -> metadata.version
   * .claude-plugin/marketplace.json     -> plugins[*].version
 
-Used by the auto-version-bump GitHub Action (bump-on-every-merge, GitHub #357)
+Used by the auto-version-bump GitHub Action (bump-on-every-merge)
 and runnable by hand. Prints "OLD -> NEW". stdlib only.
 """
 import json
@@ -831,7 +836,7 @@ _AUTO_BUMP_WORKFLOW = r'''name: Auto version bump
 # Bump the PATCH version on EVERY merge to main, so canopy's fleet
 # session-start auto-updater always sees a fresh version and `claude plugin
 # list` stays honest. Bumping often is intentional — "landed on main" must mean
-# "the running agent (and its crons) will pick it up next session" (GitHub #357).
+# "the running agent (and its crons) will pick it up next session".
 #
 # The updater self-heals on the git SHA regardless, so this is the label-honesty
 # half, not the load-bearing half — but it closes the "skill changed, version
@@ -876,6 +881,93 @@ jobs:
           git push origin HEAD:main
 '''
 
+_TEST_WORKFLOW = r'''name: Tests
+
+# Runs the agent's own tests, including tests/test_docs_current_state.py (the fleet-standard
+# guard that keeps docs and skills on current state). merge_group is for repos with a merge queue.
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: python -m pytest -q tests
+'''
+
+_DOCS_CURRENT_STATE_TEST = r'''"""Docs and skills say what is true now, never what used to be.
+
+Git keeps history, and a history line in a file an agent reads misleads it. This pins the shapes a
+history line takes in CLAUDE.md, persona, README, docs, skills and the config `_doc` strings: an ISO
+date, an issue or PR number, "used to / formerly / was previously / no longer / until now", an
+"owner decision" or "owner's rule" citation, and pointers to docs/superpowers or docs/archive.
+A rule keeps its REASON in the present tense ("do not relax X: Y depends on it"); that is not history.
+
+Fleet-standard guard: canopy's agent factory stamps this file verbatim and `canopy fleet-align`
+distributes updates to it, so change the rule in canopy, not here. State the rule as it holds now
+and put when, why and who in the PR description.
+"""
+import json
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+FILES = (
+    [ROOT / n for n in ("CLAUDE.md", "persona.md", "README.md") if (ROOT / n).is_file()]
+    + sorted((ROOT / "docs").rglob("*.md"))
+    + sorted((ROOT / "skills").rglob("*.md"))
+)
+HISTORY = re.compile(
+    r"\b20\d\d-[01]\d-[0-3]\d\b"                       # an ISO date
+    r"|(?<![\w/&])#\d{3,}\b|\bPR #?\d+"                # a PR or issue number
+    r"|\bowner decision\b|\bowner's rule\b"            # a citation of who decided
+    r"|\bused to\b|\bformerly\b|\bno longer\b|\bwas previously\b|\buntil now\b"
+    r"|docs/superpowers|docs/archive",
+    re.I,
+)
+
+
+def test_no_history_in_the_files_an_agent_reads():
+    bad = []
+    for f in FILES:
+        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if '"used to"' in line or "`used to`" in line:     # a line that NAMES the pattern to avoid
+                continue
+            if HISTORY.search(line):
+                bad.append(f"{f.relative_to(ROOT)}:{n}: {line.strip()[:90]}")
+    assert not bad, "state the rule as it holds now; history belongs in git:\n" + "\n".join(bad)
+
+
+def _doc_strings(node, path=""):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if isinstance(value, str) and key.startswith("_") and key.endswith("doc"):
+                yield f"{path}{key}", value
+            else:
+                yield from _doc_strings(value, f"{path}{key}.")
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            yield from _doc_strings(value, f"{path}{i}.")
+
+
+def test_config_doc_strings_have_no_history():
+    bad = []
+    for f in sorted((ROOT / "config").glob("*.json")):
+        for where, text in _doc_strings(json.loads(f.read_text(encoding="utf-8"))):
+            if HISTORY.search(text):
+                bad.append(f"{f.relative_to(ROOT)}:{where}: {text[:90]}")
+    assert not bad, "state the rule as it holds now; history belongs in git:\n" + "\n".join(bad)
+'''
+
 _TEMPLATES: dict[str, str] = {
     ".claude-plugin/plugin.json": _PLUGIN_JSON,
     ".claude-plugin/marketplace.json": _MARKETPLACE_JSON,
@@ -898,6 +990,8 @@ _TEMPLATES: dict[str, str] = {
     "skills/shipping/SKILL.md": _SHIPPING_SKILL,
     "skills/manager-sync/SKILL.md": _MANAGER_SYNC_SKILL,
     "skills/setup/SKILL.md": _SETUP_SKILL,
+    "tests/test_docs_current_state.py": _DOCS_CURRENT_STATE_TEST,
+    ".github/workflows/test.yml": _TEST_WORKFLOW,
 }
 
 

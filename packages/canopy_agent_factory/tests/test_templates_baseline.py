@@ -27,9 +27,11 @@ def test_templates_is_non_empty_with_expected_count():
     # instance (`canopy agent env`).
     # +1: .claude-plugin/marketplace.json — a runner installs the agent's plugin
     # only from it (canopy agent_prepare `step_runner_plugins`).
+    # +2: tests/test_docs_current_state.py (the fleet-standard current-state guard) and the
+    # .github/workflows/test.yml that runs it.
     # -1: the repo stamps no secrets template — the agent's Canopy vault is the one
     # secrets declaration.
-    assert len(t) == 21
+    assert len(t) == 23
     assert ".claude-plugin/marketplace.json" in t
     assert "skills/setup/SKILL.md" in t
     assert "hooks/gating_guard.py" not in t

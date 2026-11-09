@@ -216,7 +216,7 @@ def restore_plan(setup, scenes) -> dict:
             "the render: the render will film the state this walk consumed. A "
             "payoff action against already-mutated state still reports ok and "
             "still scores 10/10. Declare a setup block whose command resets the "
-            "keys the demo mutates (canopy#546)."
+            "keys the demo mutates."
         )
 
     return {

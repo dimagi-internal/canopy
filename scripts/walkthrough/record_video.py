@@ -824,7 +824,7 @@ def main() -> None:
         help=(
             "Render even though --snapshots was last rendered at a different default "
             "viewport (render-viewport.json). Without it that is refused: a mid-loop "
-            "frame-size change invalidates scroll offsets and cross-iteration scores (#625)."
+            "frame-size change invalidates scroll offsets and cross-iteration scores."
         ),
     )
     ap.add_argument(

@@ -59,7 +59,7 @@ def _call(method: str, path: str, body=None):
         msg = str(exc)
         if " -> 404" in msg and method == "POST" and path == BASE:
             raise click.ClickException(
-                "canopy-web has no /api/slack-ingests/ route (canopy-web#1533 is not deployed "
+                "canopy-web has no /api/slack-ingests/ route (it is not deployed "
                 "there yet), or the agent is not in a workspace you can see. Nothing was asked.") from None
         raise click.ClickException(msg) from None
 

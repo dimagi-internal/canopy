@@ -72,7 +72,7 @@ def _call(method: str, path: str, body=None, *, call=None):
         if " -> 404" in msg:
             if not _people_api_exists(call):
                 raise NoPeopleApi(
-                    "this canopy-web has no /api/people/ routes (the fleet brain, canopy#804, "
+                    "this canopy-web has no /api/people/ routes (the fleet brain "
                     "is not deployed there yet) — nothing was read or written.") from None
             raise click.ClickException(f"not found: {method} {path}") from None
         raise click.ClickException(msg) from None

@@ -367,7 +367,7 @@ def _agent_identity_error(slug: str, why: str) -> "AgentIdentityError":
         f"this is agent '{slug}'s session, but {why}. Refusing to act as the operator "
         f"(workbench-token {TOKEN_FILE}): canopy-web would attribute every call to the "
         f"human with the human's rights, and a write would land in the human's "
-        f"workspaces (canopy#813, ace#2805). Set CANOPY_WEB_PAT to {slug}'s own PAT, or "
+        f"workspaces. Set CANOPY_WEB_PAT to {slug}'s own PAT, or "
         f"materialize its env from its canopy vault (`canopy cred env --agent {slug}`). A human "
         f"deliberately working as themselves in this repo: {ALLOW_OPERATOR_ENV}=1."
     )
@@ -486,7 +486,7 @@ def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
                 raise ScopedSessionError(
                     "this session is scoped to the person who asked, but its caller token "
                     f"is missing under {scoped_root()}. Refusing to fall back to a PAT, which "
-                    "would act as this box's owner instead (canopy-web#1782).")
+                    "would act as this box's owner instead.")
             return caller
     allow_operator = bool(slug) and not agent_strict and \
         os.environ.get(ALLOW_OPERATOR_ENV, "").strip() == "1"
@@ -752,8 +752,8 @@ def require_write_workspace(workspace: Optional[str], *,
         return ws
     raise WorkspaceRequiredError(
         f"no canopy-web workspace named for this write. Refusing to let the server "
-        f"pick its default (that is how a Connect narrative landed in dimagi, "
-        f"ace#2805) — {how_to_set}."
+        f"pick its default (that is how a Connect narrative landed in dimagi) "
+        f"— {how_to_set}."
     )
 
 
@@ -1054,7 +1054,7 @@ def _read_within_home_tree(method: str, path: str, refusal: str, send, *, base: 
         how = (f"one read pinned to {', '.join(pins)}" if info["subtree"]
                else "one read per workspace")
         print(f"[canopy] your workspaces span more than one organisation — reading lists "
-              f"within {home}'s organisation ({', '.join(tree)}; {how}) (canopy-web#1411)",
+              f"within {home}'s organisation ({', '.join(tree)}; {how})",
               file=sys.stderr)
     targets = pins if (method.upper() == "GET" and parse is not None) else [home]
     results = []
